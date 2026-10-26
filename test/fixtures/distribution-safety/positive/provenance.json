@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "producer": {
+    "name": "neutral-harness-producer",
+    "version": "0.0.0"
+  },
+  "builder": {
+    "id": "private-pilot",
+    "version": 1
+  },
+  "distribution": {
+    "id": "private-pilot",
+    "visibility": "private",
+    "publicPromotion": "blocked-until-explicit-review"
+  },
+  "files": [
+    {
+      "source": "payload/guide.md",
+      "target": "guide.md",
+      "sourceCategory": "producer-authored",
+      "origin": {
+        "type": "repository",
+        "path": "payload/guide.md"
+      },
+      "privateAuthority": {
+        "status": "authorized",
+        "scope": "private-internal-use",
+        "basis": "human-directed private-pilot authorship"
+      },
+      "publicEligibility": {
+        "status": "unknown",
+        "basis": "not-assessed"
+      },
+      "transformation": {
+        "kind": "identity"
+      },
+      "expectedSha256": "00f8ed16fe4ba7aad76b1da02e9086304611f0363b2d9607549594c97d0426e6",
+      "mode": "0644",
+      "capabilities": []
+    }
+  ],
+  "dependencyReviews": [
+    {
+      "package": "sample-runtime",
+      "version": "1.0.0",
+      "declaredLicense": "MIT",
+      "privateUseReview": "reviewed",
+      "publicEligibility": "unknown"
+    }
+  ]
+}

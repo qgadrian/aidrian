@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  distribution-safety:
+    name: Distribution safety
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out producer source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26.12.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Check Node.js syntax
+        run: node --check src/build/build-pilot.mjs && for file in src/distribution-safety/*.mjs test/distribution-safety.test.mjs; do node --check "$file"; done
+
+      - name: Test distribution safety
+        run: npm run test:distribution-safety
+
+      - name: Validate provenance and capabilities
+        run: npm run check:provenance && npm run check:capabilities
+
+      - name: Verify disposable deterministic build
+        run: npm run build:pilot -- --check
+
+      - name: Build and scan private pilot artifact
+        run: npm run build:pilot && npm run check:distribution-artifact -- --artifact dist/pilot/private-pilot.tgz
+
+      - name: Inspect private npm package contents
+        run: npm pack --dry-run --json

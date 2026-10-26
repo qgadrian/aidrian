@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+.scratch/
+.cache/
+.claude/runs/
+.claude/session-artifacts/
+*.tgz
+*.tar
+*.tar.gz
+npm-debug.log*

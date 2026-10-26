@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 1,
+  "producer": {
+    "name": "private-harness-producer",
+    "version": "0.0.0"
+  },
+  "builder": {
+    "id": "private-pilot",
+    "version": 1
+  },
+  "distribution": {
+    "id": "private-pilot",
+    "visibility": "private",
+    "publicPromotion": "blocked-until-explicit-review"
+  },
+  "files": [
+    {
+      "source": "README.md",
+      "target": "README.md",
+      "sourceCategory": "producer-authored",
+      "origin": {
+        "type": "repository",
+        "path": "README.md"
+      },
+      "privateAuthority": {
+        "status": "authorized",
+        "scope": "private-internal-use",
+        "basis": "human-directed private-pilot authorship"
+      },
+      "publicEligibility": {
+        "status": "unknown",
+        "basis": "not-assessed"
+      },
+      "transformation": {
+        "kind": "identity"
+      },
+      "expectedSha256": "53a89a8b79429291a53b463ca67b859e2b25d6794a1704f777c64a55052b750c",
+      "mode": "0644",
+      "capabilities": []
+    }
+  ],
+  "dependencyReviews": [
+    {
+      "package": "@isaacs/fs-minipass",
+      "version": "4.0.1",
+      "declaredLicense": "ISC",
+      "privateUseReview": "reviewed",
+      "publicEligibility": "unknown"
+    },
+    {
+      "package": "ajv",
+      "version": "8.20.0",
+      "declaredLicense": "MIT",
+      "privateUseReview": "reviewed",
+      "publicEligibility": "unknown"
+    },
+    {
+      "package": "chownr",
+      "version": "3.0.0",
+      "declaredLicense": "BlueOak-1.0.0",
+      "privateUseReview": "reviewed",
+      "publicEligibility": "unknown"
+    },
+    {
+      "package": "fast-deep-equal",
+      "version": "3.1.3",
+      "declaredLicense": "MIT",
+      "privateUseReview": "reviewed",
+      "publicEligibility": "unknown"
+    },
+    {
+      "package": "fast-uri",
+      "version": "3.1.9",
+      "declaredLicense": "BSD-3-Clause",
+      "privateUseReview": "reviewed",
+      "publicEligibility": "unknown"
+    },
+    {
+      "package": "json-schema-traverse",
+      "version": "1.0.0",
+      "declaredLicense": "MIT",
+      "privateUseReview": "reviewed",
+      "publicEligibility": "unknown"
+    },
+    {
+      "package": "minipass",
+      "version": "7.1.3",
+      "declaredLicense": "BlueOak-1.0.0",
+      "privateUseReview": "reviewed",
+      "publicEligibility": "unknown"
+    },
+    {
+      "package": "minizlib",
+      "version": "3.1.0",
+      "declaredLicense": "MIT",
+      "privateUseReview": "reviewed",
+      "publicEligibility": "unknown"
+    },
+    {
+      "package": "require-from-string",
+      "version": "2.0.2",
+      "declaredLicense": "MIT",
+      "privateUseReview": "reviewed",
+      "publicEligibility": "unknown"
+    },
+    {
+      "package": "tar",
+      "version": "7.5.22",
+      "declaredLicense": "BlueOak-1.0.0",
+      "privateUseReview": "reviewed",
+      "publicEligibility": "unknown"
+    },
+    {
+      "package": "yallist",
+      "version": "5.0.0",
+      "declaredLicense": "BlueOak-1.0.0",
+      "privateUseReview": "reviewed",
+      "publicEligibility": "unknown"
+    },
+    {
+      "package": "yaml",
+      "version": "2.9.1",
+      "declaredLicense": "ISC",
+      "privateUseReview": "reviewed",
+      "publicEligibility": "unknown"
+    }
+  ]
+}

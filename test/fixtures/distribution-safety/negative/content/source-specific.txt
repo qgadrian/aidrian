@@ -1,0 +1,1 @@
+This generic guide still names LegacySourceBrand internals.

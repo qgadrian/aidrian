@@ -1,0 +1,22 @@
+[
+  {
+    "path": "docs/shared-guides/intro.md",
+    "abstract": "Shared introduction.",
+    "tags": ["always"]
+  },
+  {
+    "path": "docs/shared-guides/setup.md",
+    "abstract": "Shared setup notes.",
+    "tags": ["setup"]
+  },
+  {
+    "path": "docs/project-notes/operations.md",
+    "abstract": "Project-local operating notes.",
+    "tags": ["operations"]
+  },
+  {
+    "path": "docs/project-notes/archive.md",
+    "abstract": "Project-local archived note.",
+    "tags": []
+  }
+]

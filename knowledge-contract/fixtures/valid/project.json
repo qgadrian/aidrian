@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "projectId": "sample-project",
+  "knowledge": {
+    "catalog": {
+      "path": "catalog.json",
+      "format": "document-index-v1"
+    },
+    "routeSource": {
+      "path": "routes.json",
+      "format": "routed-inventory-v1"
+    },
+    "folders": [
+      "docs/shared-guides/harness-knowledge.json",
+      "docs/project-notes/harness-knowledge.json"
+    ]
+  }
+}

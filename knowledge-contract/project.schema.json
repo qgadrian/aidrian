@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:aidrian:knowledge-contract:project:v1",
+  "title": "Aidrian project knowledge registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "projectId", "knowledge"],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "projectId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*$"
+    },
+    "knowledge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["catalog", "routeSource", "folders"],
+      "properties": {
+        "catalog": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "format"],
+          "properties": {
+            "path": {
+              "type": "string",
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*//)(?!.*(?:^|/)\\.(?:/|$))[^\\u0000]+$"
+            },
+            "format": {
+              "const": "document-index-v1"
+            }
+          }
+        },
+        "routeSource": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "format"],
+          "properties": {
+            "path": {
+              "type": "string",
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*//)(?!.*(?:^|/)\\.(?:/|$))[^\\u0000]+$"
+            },
+            "format": {
+              "const": "routed-inventory-v1"
+            }
+          }
+        },
+        "folders": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*//)[^\\u0000]+/harness-knowledge\\.json$"
+          }
+        }
+      }
+    }
+  }
+}

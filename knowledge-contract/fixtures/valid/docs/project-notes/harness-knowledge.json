@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "project-notes",
+  "kind": "operations",
+  "owner": "project-team",
+  "visibility": "project-private",
+  "include": ["*.md"],
+  "exclude": [],
+  "allowedLinkRoots": ["docs/shared-guides"],
+  "routeSource": {
+    "format": "routed-inventory-v1",
+    "groupId": "project-notes"
+  },
+  "orphanPolicy": {
+    "mode": "allow-listed",
+    "paths": ["docs/project-notes/archive.md"]
+  },
+  "mayContributeAlwaysLoaded": false
+}

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aidrian.invalid/schemas/skill.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "projectSlots", "source"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "projectSlots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "type", "default", "maxLength"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+          "type": { "enum": ["markdown", "path", "text"] },
+          "default": { "type": "string" },
+          "maxLength": { "type": "integer", "minimum": 1, "maximum": 4096 }
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origin", "internalUse", "publicEligibility", "transformation"],
+      "properties": {
+        "origin": { "const": "consumer-baseline" },
+        "internalUse": { "const": "authorized-private" },
+        "publicEligibility": { "const": "unknown" },
+        "transformation": { "enum": ["identity", "genericized-template"] }
+      }
+    }
+  }
+}

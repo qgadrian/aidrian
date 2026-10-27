@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "grill-me",
+  "projectSlots": [],
+  "source": {
+    "origin": "consumer-baseline",
+    "internalUse": "authorized-private",
+    "publicEligibility": "unknown",
+    "transformation": "identity"
+  }
+}

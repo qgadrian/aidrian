@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "commit": "31e0bccbff568761f27fb83cc6aff4eb872d5089",
+    "kind": "captured-external-candidate-inventory"
+  },
+  "entries": [
+    {
+      "path": ".agents/skills/agent-issue-writer/SKILL.md",
+      "sourcePath": ".agents/skills/agent-issue-writer/SKILL.md",
+      "sourceSha256": "5249aa8a8e7cbf46e95893605f2d935745705edb1cc8a64abf3d58a80cf372e6"
+    },
+    {
+      "path": ".agents/skills/design-import/SKILL.md",
+      "sourcePath": ".agents/skills/design-import/SKILL.md",
+      "sourceSha256": "39a35b3ee0f914cee2d007fc3722de3427a4ca9373817bcd46ac875c37636a83"
+    },
+    {
+      "path": ".agents/skills/grill-me/SKILL.md",
+      "sourcePath": ".agents/skills/grill-me/SKILL.md",
+      "sourceSha256": "60b6a50ff6d1760553771937fc11d1543ba79c6c0cebcdeb0164da0ec79e1db8"
+    },
+    {
+      "path": ".agents/skills/initiative-agent/SKILL.md",
+      "sourcePath": ".agents/skills/initiative-agent/SKILL.md",
+      "sourceSha256": "266c8ce2deabf80cf04b93add47ed79e8200f087f4743876cee9f8b646c4d44d"
+    },
+    {
+      "path": ".agents/skills/planning-agent/SKILL.md",
+      "sourcePath": ".agents/skills/planning-agent/SKILL.md",
+      "sourceSha256": "89942e1439d36f876a842a4b99a5808c38780771478a37b6cc25c1408afcfa6d"
+    },
+    {
+      "path": ".agents/skills/worktree-integrate/SKILL.md",
+      "sourcePath": ".agents/skills/worktree-integrate/SKILL.md",
+      "sourceSha256": "ae841afad93b896d4909a219a6e81de926adffb46ad0ad6fda39456debaf85d2"
+    },
+    {
+      "path": ".claude/agents/agent-issue-writer.md",
+      "sourcePath": ".claude/agents/agent-issue-writer.md",
+      "sourceSha256": "b7683e284789541630fa4b17c127bb18b9bc47fffae568a677dcc7988c0676e9"
+    },
+    {
+      "path": ".claude/agents/design-source-explorer.md",
+      "sourcePath": ".claude/agents/design-source-explorer.md",
+      "sourceSha256": "82f558e7dab6c8b19355dee7856e2f19496906e0e57ecbbf7df59ebb19596b11"
+    },
+    {
+      "path": ".claude/agents/doc-updater.md",
+      "sourcePath": ".claude/agents/doc-updater.md",
+      "sourceSha256": "0e4ca814e6602373db2f3d3c549e3eea2d3867ea6c411bc9b1a690749d00f9c7"
+    },
+    {
+      "path": ".claude/agents/explorer.md",
+      "sourcePath": ".claude/agents/explorer.md",
+      "sourceSha256": "2f942947609927f3062c901ce9006d13defb792ed0c9f1c393ab0883fe51691d"
+    },
+    {
+      "path": ".claude/agents/github-archaeologist.md",
+      "sourcePath": ".claude/agents/github-archaeologist.md",
+      "sourceSha256": "50083dd5c5e4c4a07b52f70870101cebe3b84774c4bfe2a072f26c7e0db1fda6"
+    },
+    {
+      "path": ".claude/agents/harness-engineer.md",
+      "sourcePath": ".claude/agents/harness-engineer.md",
+      "sourceSha256": "14d6297d551d77cc59ba05f632a25562d9f36e01ba2d8ca0176b942e4f1b9423"
+    },
+    {
+      "path": ".claude/agents/initiative-agent.md",
+      "sourcePath": ".claude/agents/initiative-agent.md",
+      "sourceSha256": "3e055db561b7bd5da2fb53d309ddbab194d3f73d0394d46de491a1ed3a5e2a08"
+    },
+    {
+      "path": ".claude/agents/integrator.md",
+      "sourcePath": ".claude/agents/integrator.md",
+      "sourceSha256": "764f1b96f48ae2e0a5186b39db5421458c8386a9ffb1b3370159d12a1c6feb07"
+    },
+    {
+      "path": ".claude/agents/planning-agent.md",
+      "sourcePath": ".claude/agents/planning-agent.md",
+      "sourceSha256": "8b4bec87389320fbc69cc339a9823de41c593640c017601173a5a810c189cc98"
+    }
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "id": "github-archaeologist",
+  "description": "Read-only repository-history investigator that reconstructs decisions and scope from pull requests, issues, reviews, and commits.",
+  "modelTier": "standard",
+  "effort": "medium",
+  "taskTags": ["always"],
+  "conditionalTags": [],
+  "outputMode": "machine_handoff",
+  "coverageExemption": "non-authoring-coordination",
+  "capabilities": {
+    "allow": [
+      "plan.exit",
+      "fs.glob",
+      "text.search",
+      "fs.read",
+      "tool.discover",
+      "connector.github.pull_request.read",
+      "connector.github.issue.read",
+      "connector.github.issue.search",
+      "connector.github.pull_request.search",
+      "connector.github.pull_request.list",
+      "connector.github.commits.list",
+      "connector.github.commit.read",
+      "connector.github.commits.search",
+      "connector.github.branches.list",
+      "connector.github.file.read"
+    ],
+    "deny": ["fs.write", "connector.github.write"]
+  },
+  "logicalConnectors": ["github"],
+  "sandboxIntent": "read-only",
+  "providerSupport": {
+    "claude": "native",
+    "codex": "instruction-only"
+  },
+  "providerRendering": {
+    "claude": {
+      "description": "plain",
+      "taskTags": "flow-bare",
+      "conditionalTags": "flow-bare",
+      "tools": "csv",
+      "disallowedTools": "flow-bare",
+      "emitTools": true,
+      "emitDisallowedTools": true
+    },
+    "codex": {}
+  },
+  "reviewProfile": {
+    "requiredReviewerIds": [],
+    "awaitCodex": false
+  },
+  "instructions": "instructions.md",
+  "projectSlots": [
+    {
+      "id": "project_repository_name",
+      "type": "text",
+      "default": "the repository",
+      "maxLength": 160
+    },
+    {
+      "id": "project_bootstrap",
+      "type": "markdown",
+      "default": "Follow the consuming project's bootstrap, contract, handoff, and product-sensitivity rules.",
+      "maxLength": 1200
+    },
+    {
+      "id": "handoff_path",
+      "type": "path",
+      "default": "docs/handoffs.md",
+      "maxLength": 240
+    },
+    {
+      "id": "durable_doc_clause",
+      "type": "markdown",
+      "default": "",
+      "maxLength": 400
+    },
+    {
+      "id": "project_harness_name",
+      "type": "text",
+      "default": "consumer",
+      "maxLength": 80
+    }
+  ],
+  "providerFragments": [],
+  "source": {
+    "origin": "consumer-baseline",
+    "internalUse": "authorized-private",
+    "publicEligibility": "unknown",
+    "transformation": "genericized-template"
+  }
+}

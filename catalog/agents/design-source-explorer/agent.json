@@ -1,0 +1,118 @@
+{
+  "schemaVersion": 1,
+  "id": "design-source-explorer",
+  "description": "Resolve, extract, and classify a Claude Design handoff bundle (folder or zip), then commit a durable design import — DESIGN.md spec, screen inventory, and curated source — under docs/design-imports/<slug>/. Read-only against all repo source except its own docs/design-imports/<slug>/ output.",
+  "modelTier": "standard",
+  "effort": "medium",
+  "taskTags": [
+    "always",
+    "design_bundle"
+  ],
+  "conditionalTags": [],
+  "outputMode": "machine_handoff",
+  "coverageExemption": null,
+  "capabilities": {
+    "allow": [
+      "shell.execute",
+      "plan.exit",
+      "fs.glob",
+      "text.search",
+      "fs.read",
+      "web.fetch",
+      "fs.create"
+    ],
+    "deny": []
+  },
+  "logicalConnectors": [],
+  "sandboxIntent": "host-default",
+  "providerSupport": {
+    "claude": "native",
+    "codex": "instruction-only"
+  },
+  "providerRendering": {
+    "claude": {
+      "description": "plain",
+      "taskTags": "flow-bare",
+      "conditionalTags": "flow-bare",
+      "tools": "flow-bare",
+      "disallowedTools": "flow-bare",
+      "emitTools": true,
+      "emitDisallowedTools": false
+    },
+    "codex": {}
+  },
+  "reviewProfile": {
+    "requiredReviewerIds": [],
+    "awaitCodex": false
+  },
+  "instructions": "instructions.md",
+  "projectSlots": [
+    {
+      "id": "design_import_root",
+      "type": "path",
+      "default": "docs/design-imports",
+      "maxLength": 240
+    },
+    {
+      "id": "design_system_name",
+      "type": "text",
+      "default": "the project design system",
+      "maxLength": 120
+    },
+    {
+      "id": "global_styles_path",
+      "type": "path",
+      "default": "src/styles.css",
+      "maxLength": 240
+    },
+    {
+      "id": "primary_provider_name",
+      "type": "text",
+      "default": "primary provider",
+      "maxLength": 80
+    },
+    {
+      "id": "project_bootstrap",
+      "type": "markdown",
+      "default": "Follow the consuming project's bootstrap, contract, handoff, and product-sensitivity rules.",
+      "maxLength": 1200
+    },
+    {
+      "id": "project_harness_name",
+      "type": "text",
+      "default": "consumer",
+      "maxLength": 80
+    },
+    {
+      "id": "project_name",
+      "type": "text",
+      "default": "the consuming project",
+      "maxLength": 120
+    },
+    {
+      "id": "runtime_state_root",
+      "type": "path",
+      "default": ".agent",
+      "maxLength": 120
+    },
+    {
+      "id": "styling_config_path",
+      "type": "path",
+      "default": "styling.config",
+      "maxLength": 240
+    },
+    {
+      "id": "ui_component_root",
+      "type": "path",
+      "default": "src/ui",
+      "maxLength": 240
+    }
+  ],
+  "providerFragments": [],
+  "source": {
+    "origin": "consumer-baseline",
+    "internalUse": "authorized-private",
+    "publicEligibility": "unknown",
+    "transformation": "genericized-template"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "id": "planning-agent",
+  "projectSlots": [
+    {
+      "id": "primary_provider_name",
+      "type": "text",
+      "default": "primary provider",
+      "maxLength": 80
+    },
+    {
+      "id": "project_name_lower",
+      "type": "text",
+      "default": "project",
+      "maxLength": 120
+    },
+    {
+      "id": "repository_slug",
+      "type": "text",
+      "default": "owner/repository",
+      "maxLength": 160
+    },
+    {
+      "id": "runtime_state_root",
+      "type": "path",
+      "default": ".agent",
+      "maxLength": 120
+    },
+    {
+      "id": "tracker_team_key",
+      "type": "text",
+      "default": "TEAM",
+      "maxLength": 40
+    }
+  ],
+  "source": {
+    "origin": "consumer-baseline",
+    "internalUse": "authorized-private",
+    "publicEligibility": "unknown",
+    "transformation": "genericized-template"
+  }
+}

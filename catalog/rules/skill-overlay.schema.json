@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aidrian.invalid/schemas/skill-overlay.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "skillId", "slots"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "skillId": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "slots": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_-]*$" },
+      "additionalProperties": { "type": "string", "maxLength": 4096, "pattern": "^[^\\u0000\\r]*$" }
+    },
+    "resources": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Za-z0-9_. -]+(?:/[A-Za-z0-9_. -]+)*$" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sourcePath", "sha256", "mode"],
+        "properties": {
+          "sourcePath": { "type": "string", "pattern": "^[A-Za-z0-9_. -]+(?:/[A-Za-z0-9_. -]+)*$" },
+          "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+          "mode": { "enum": [420, 493] }
+        }
+      }
+    }
+  }
+}

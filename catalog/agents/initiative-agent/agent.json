@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "id": "initiative-agent",
+  "description": "Plan a Linear-first initiative into ordered issue blueprints, dependency links, and publishing topology before the issue writer creates artifacts.",
+  "modelTier": "standard",
+  "effort": "high",
+  "taskTags": [
+    "always",
+    "context_hygiene",
+    "issue_tracker",
+    "testing"
+  ],
+  "conditionalTags": [],
+  "outputMode": "machine_handoff",
+  "coverageExemption": null,
+  "capabilities": {
+    "allow": [],
+    "deny": [
+      "fs.mutate",
+      "shell.execute"
+    ]
+  },
+  "logicalConnectors": [],
+  "sandboxIntent": "read-only",
+  "providerSupport": {
+    "claude": "native",
+    "codex": "instruction-only"
+  },
+  "providerRendering": {
+    "claude": {
+      "description": "plain",
+      "taskTags": "flow-bare",
+      "conditionalTags": "flow-bare",
+      "tools": "flow-bare",
+      "disallowedTools": "flow-bare",
+      "emitTools": false,
+      "emitDisallowedTools": true
+    },
+    "codex": {}
+  },
+  "reviewProfile": {
+    "requiredReviewerIds": [],
+    "awaitCodex": false
+  },
+  "instructions": "instructions.md",
+  "projectSlots": [
+    {
+      "id": "project_bootstrap",
+      "type": "markdown",
+      "default": "Follow the consuming project's bootstrap, contract, handoff, and product-sensitivity rules.",
+      "maxLength": 1200
+    },
+    {
+      "id": "project_harness_name",
+      "type": "text",
+      "default": "consumer",
+      "maxLength": 80
+    },
+    {
+      "id": "runtime_state_root",
+      "type": "path",
+      "default": ".agent",
+      "maxLength": 120
+    }
+  ],
+  "providerFragments": [],
+  "source": {
+    "origin": "consumer-baseline",
+    "internalUse": "authorized-private",
+    "publicEligibility": "unknown",
+    "transformation": "genericized-template"
+  }
+}

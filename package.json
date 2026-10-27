@@ -28,7 +28,7 @@
     "test:knowledge-contract": "node --test test/knowledge-contract",
     "test:pilot:fixture": "node --test test/pilot",
     "test:project-bundle": "node --test test/project-bundle",
-    "typecheck": "tsc --noEmit --project plugins/aidrian-cockpit/tsconfig.json"
+    "check:javascript-syntax": "find adapters src test -type f -name '*.mjs' -exec sh -c 'for file do node --check \"$file\" || exit 1; done' sh {} +"
   },
   "dependencies": {
     "ajv": "8.20.0",

@@ -31,7 +31,7 @@ jobs:
         run: npm ci
 
       - name: Check Node.js syntax
-        run: node --check src/build/build-pilot.mjs && for file in src/distribution-safety/*.mjs test/distribution-safety.test.mjs; do node --check "$file"; done
+        run: npm run check:javascript-syntax
 
       - name: Test distribution safety
         run: npm run test:distribution-safety

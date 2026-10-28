@@ -1,37 +1,20 @@
-# Private Harness Distribution Tooling
+# Aidrian private harness artifact
 
-This repository contains Node.js ESM tooling for a private, allowlisted pilot artifact. The artifact is assembled only from `provenance/distribution-files.json`; every shipped file must declare its origin, private-use authority, public-eligibility state, transformation, checksum, mode, and executable capabilities.
+This private artifact contains the allowlisted Claude and Codex marketplace/plugin assets recorded by its assembly manifest. It is not a public release, has no selected public license, and is not eligible for public promotion.
 
-The current pilot is private. A distribution-level gate blocks public promotion until a separate explicit review changes that contract; every file and runtime dependency would also need to be marked eligible. No public license is selected by this repository.
+## Contents
 
-## Commands
+- Claude marketplace metadata and the Aidrian Claude agents and skills
+- Codex marketplace metadata backed by the same neutral Aidrian content
+- the empty executable-capability contract
+- this artifact guide
 
-Install the exact locked dependencies:
+Producer source, tests, checked project projections, contributor documentation, build tooling, and package scripts are intentionally outside the artifact. Their exclusion keeps the runtime artifact separate from producer self-compliance evidence.
 
-```sh
-npm ci
-```
+## Use boundary
 
-Run the distribution boundary and its focused test corpus:
+Only Claude and Codex are supported. OpenCode has no adapter, artifact, conformance, or compatibility claim.
 
-```sh
-npm run test:distribution-safety
-npm run check:provenance
-npm run check:capabilities
-npm run build:pilot -- --check
-```
+Provider-free assembly and byte checks do not prove provider execution. Provider-attended activation and role invocation remain unverified until their recorded host workflows run with the required authority.
 
-Build and inspect the private pilot artifact locally:
-
-```sh
-npm run build:pilot
-npm run check:distribution-artifact -- --artifact dist/pilot/private-pilot.tgz
-```
-
-`build:pilot -- --check` uses disposable output and reports working inputs without presenting a dirty checkout as an immutable source pin. A normal build writes the scanned assembly, deterministic archive, and `distribution-report.json` under `dist/pilot/`.
-
-Safety failures print only a rule identifier and relative path. An optional neutral policy file may add generic-file terms that are forbidden for a particular producer without embedding source-project identities in this repository:
-
-```sh
-npm run build:pilot -- --check --policy policy.json
-```
+The artifact itself does not authenticate to a provider, change provider trust or status, or collect native inventory. Installation and activation must follow the approved host workflow that supplied this artifact.

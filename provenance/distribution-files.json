@@ -754,7 +754,7 @@
       "transformation": {
         "kind": "identity"
       },
-      "expectedSha256": "53a89a8b79429291a53b463ca67b859e2b25d6794a1704f777c64a55052b750c",
+      "expectedSha256": "c63e7876a5c81d3fc273c4478fd851f0c4b7a6ee89ea9f4ba81ee7fbd49996ff",
       "mode": "0644",
       "capabilities": []
     }

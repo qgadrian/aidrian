@@ -18,6 +18,7 @@ jobs:
       - name: Check out producer source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node.js
@@ -38,6 +39,9 @@ jobs:
 
       - name: Validate provenance and capabilities
         run: npm run check:provenance && npm run check:capabilities
+
+      - name: Verify producer projection and neutral consumers
+        run: node --test test/pilot/producer-self-dogfood.test.mjs test/pilot/lifecycle-fixture.test.mjs test/pilot/cross-project-isolation.test.mjs test/pilot/provider-claims.test.mjs
 
       - name: Verify disposable deterministic build
         run: npm run build:pilot -- --check

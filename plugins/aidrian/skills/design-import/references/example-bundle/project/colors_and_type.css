@@ -1,0 +1,51 @@
+/* Example Home — Colors & Type (fixture)
+   Mirrors the primary provider Design token shape: CSS custom properties,
+   semantic roles as HSL triplets sized for Tailwind consumption. */
+
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+
+:root {
+  /* ---------- Brand ---------- */
+  --brand-green:    #00FF95;   /* primary action */
+  --brand-charcoal: #252B37;   /* dark surfaces */
+
+  /* ---------- Semantic (light, HSL triplets) ---------- */
+  --background:         0 0% 100%;
+  --foreground:         220 20% 13%;
+  --card:               0 0% 100%;
+  --primary:            155 100% 50%;   /* #00FF95 */
+  --primary-foreground: 220 20% 18%;
+  --muted:              0 0% 94%;
+  --muted-foreground:   220 8.9% 46.1%;
+  --border:             220 13% 94%;
+
+  /* ---------- Convenience resolved colors ---------- */
+  --fg:       hsl(var(--foreground));
+  --fg-muted: hsl(var(--muted-foreground));
+  --bg:       hsl(var(--background));
+  --surface:  hsl(var(--card));
+  --border-c: hsl(var(--border));
+
+  /* ---------- Shape ---------- */
+  --radius:      0.5rem;
+  --radius-full: 9999px;
+
+  /* ---------- Type ---------- */
+  --font-sans: 'Poppins', system-ui, -apple-system, sans-serif;
+
+  /* ---------- Motion ---------- */
+  --ease:     cubic-bezier(0.2, 0.8, 0.2, 1);
+  --dur-base: 200ms;
+}
+
+html, body {
+  font-family: var(--font-sans);
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, .h1 { font-size: 1.875rem; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; }
+h2, .h2 { font-size: 1.25rem;  font-weight: 600; letter-spacing: -0.01em; }
+p, .body { font-size: 0.9375rem; line-height: 1.55; color: var(--fg); }
+small, .small { font-size: 0.8125rem; color: var(--fg-muted); }

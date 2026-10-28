@@ -1,0 +1,9 @@
+{
+  "name": "isolated-hook-fixture",
+  "version": "0.0.0",
+  "description": "Excluded native hook discovery fixture.",
+  "author": {
+    "name": "Acme"
+  },
+  "hooks": "./hooks/hooks.json"
+}

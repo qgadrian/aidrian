@@ -1,0 +1,23 @@
+{
+  "name": "aidrian",
+  "displayName": "Aidrian Private Harness",
+  "version": "0.0.0",
+  "description": "Private shared harness agents and skills.",
+  "author": {
+    "name": "Acme"
+  },
+  "agents": [
+    "./agents/agent-issue-writer.md",
+    "./agents/design-source-explorer.md",
+    "./agents/doc-updater.md",
+    "./agents/explorer.md",
+    "./agents/github-archaeologist.md",
+    "./agents/harness-engineer.md",
+    "./agents/initiative-agent.md",
+    "./agents/integrator.md",
+    "./agents/planning-agent.md"
+  ],
+  "skills": [
+    "./skills/"
+  ]
+}

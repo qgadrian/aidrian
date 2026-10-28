@@ -1,0 +1,16 @@
+{
+  "name": "aidrian-private",
+  "owner": {
+    "name": "Acme"
+  },
+  "description": "Private Aidrian harness marketplace.",
+  "plugins": [
+    {
+      "name": "aidrian",
+      "source": "./plugins/aidrian",
+      "description": "Private shared harness agents and skills.",
+      "category": "Development",
+      "strict": true
+    }
+  ]
+}

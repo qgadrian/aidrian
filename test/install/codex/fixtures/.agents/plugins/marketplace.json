@@ -1,0 +1,24 @@
+{
+  "name": "aidrian-hook-fixture",
+  "interface": {
+    "displayName": "Aidrian Hook Fixture"
+  },
+  "plugins": [
+    {
+      "name": "aidrian-codex-hook-fixture",
+      "source": {
+        "source": "local",
+        "path": "./hook-plugin"
+      },
+      "interface": {
+        "displayName": "Aidrian Codex Hook Fixture",
+        "shortDescription": "Excluded native hook trust fixture."
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

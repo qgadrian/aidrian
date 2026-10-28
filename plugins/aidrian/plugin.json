@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "aidrian",
+  "version": "0.0.0",
+  "description": "Private shared harness skills and project-agent resources.",
+  "author": {
+    "name": "Acme"
+  }
+}

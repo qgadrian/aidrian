@@ -1,1 +1,0 @@
-The generated file points at /Users/example/private-workspace/config.json.

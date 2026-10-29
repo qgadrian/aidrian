@@ -1,6 +1,0 @@
-{
-  "name": "aidrian-codex-hook-fixture",
-  "version": "0.0.1",
-  "description": "Excluded native hook trust fixture.",
-  "hooks": "./hooks/hooks.json"
-}

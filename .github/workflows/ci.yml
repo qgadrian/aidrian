@@ -10,15 +10,14 @@ permissions:
   contents: read
 
 jobs:
-  distribution-safety:
-    name: Distribution safety
+  check:
+    name: Check
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Check out producer source
+      - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node.js
@@ -28,26 +27,8 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Install locked dependencies
+      - name: Install dependencies
         run: npm ci
 
-      - name: Check Node.js syntax
-        run: npm run check:javascript-syntax
-
-      - name: Test distribution safety
-        run: npm run test:distribution-safety
-
-      - name: Validate provenance and capabilities
-        run: npm run check:provenance && npm run check:capabilities
-
-      - name: Verify producer projection and neutral consumers
-        run: node --test test/pilot/producer-self-dogfood.test.mjs test/pilot/lifecycle-fixture.test.mjs test/pilot/cross-project-isolation.test.mjs test/pilot/provider-claims.test.mjs
-
-      - name: Verify disposable deterministic build
-        run: npm run build:pilot -- --check
-
-      - name: Build and scan private pilot artifact
-        run: npm run build:pilot && npm run check:distribution-artifact -- --artifact dist/pilot/private-pilot.tgz
-
-      - name: Inspect private npm package contents
-        run: npm pack --dry-run --json
+      - name: Test
+        run: npm test

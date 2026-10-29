@@ -1,39 +1,16 @@
 {
   "name": "aidrian-harness",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
-  "description": "Private multi-provider AI harness build and distribution tooling",
-  "type": "module",
+  "description": "Shared AI harness for Claude Code and Codex: agents, skills, and a knowledge-bucket contract",
   "engines": {
-    "node": ">=26.12.0 <27",
-    "npm": "11.20.0"
+    "node": ">=22"
   },
-  "packageManager": "npm@11.20.0",
   "scripts": {
-    "build": "node src/build/build.mjs",
-    "build:pilot": "node src/build/build-pilot.mjs",
-    "build:pilot-candidate": "node src/build/build-pilot-candidate.mjs",
-    "check:capabilities": "node src/distribution-safety/check-capabilities.mjs",
-    "check:distribution-artifact": "node src/distribution-safety/check-artifact.mjs",
-    "check:generated": "node src/build/check-generated.mjs",
-    "check:provenance": "node src/distribution-safety/check-provenance.mjs",
-    "test": "node --test",
-    "test:distribution-safety": "node --test test/distribution-safety.test.mjs",
-    "test:install": "node --test test/install",
-    "test:install:claude": "node --test test/install/claude",
-    "test:install:codex": "node --test test/install/codex",
-    "test:knowledge-contract": "node --test test/knowledge-contract",
-    "test:pilot:fixture": "node --test test/pilot",
-    "test:project-bundle": "node --test test/project-bundle",
-    "check:javascript-syntax": "find adapters src test -type f -name '*.mjs' -exec sh -c 'for file do node --check \"$file\" || exit 1; done' sh {} +"
-  },
-  "dependencies": {
-    "ajv": "8.20.0",
-    "tar": "7.5.22",
-    "yaml": "2.9.1"
+    "test": "node --test"
   },
   "devDependencies": {
-    "@types/node": "26.6.5",
-    "typescript": "7.0.2"
+    "smol-toml": "1.9.1",
+    "yaml": "2.9.1"
   }
 }

@@ -110,10 +110,11 @@ function docList(root, dir, docs, where, errors) {
 }
 
 // The docs to read for `tags`, in bucket order: each bucket's "always" docs, then its docs per tag.
+// Object.hasOwn: a tag named like an inherited property, such as `constructor`, must not read Object.prototype.
 export function routeKnowledge(buckets, tags) {
   const out = [];
   for (const bucket of buckets) {
-    for (const doc of [...bucket.always, ...tags.flatMap((tag) => bucket.tags[tag] ?? [])]) {
+    for (const doc of [...bucket.always, ...tags.flatMap((tag) => (Object.hasOwn(bucket.tags, tag) ? bucket.tags[tag] : []))]) {
       if (!out.includes(doc)) out.push(doc);
     }
   }

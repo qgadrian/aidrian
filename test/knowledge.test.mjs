@@ -31,6 +31,8 @@ test('routing returns "always" docs first, then tagged docs, in bucket order and
       ],
     },
     { tags: ['testing', 'testing', 'not_a_tag'], docs: ['docs/knowledge/engineering/working-agreement.md', 'docs/knowledge/engineering/testing.md'] },
+    // Names of inherited object properties are not tags.
+    { tags: ['constructor', '__proto__', 'toString'], docs: ['docs/knowledge/engineering/working-agreement.md'] },
   ];
   for (const { tags, docs } of cases) assert.deepEqual(routeKnowledge(buckets, tags), docs, tags.join(','));
   assert.deepEqual(listTags(buckets).map(([tag]) => tag), ['code_style', 'docs', 'issue_tracker', 'orchestration', 'product_sensitive', 'testing']);

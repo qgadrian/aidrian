@@ -144,7 +144,9 @@ is needed, name `explorer` as the next owner.
    block this):
 
    **6a. Supersession check (before writing).** Read the existing
-   `docs/design-imports/*/DESIGN.md` headers and screen inventories. When the
+   `docs/design-imports/*/DESIGN.md` headers and screen inventories, skipping
+   `docs/design-imports/<slug>/` itself: re-running on an existing slug
+   rewrites that import, it never supersedes itself. When the
    new import covers the **same product surface** as an existing,
    non-superseded import (same target route/component — e.g. a new settings
    modal export replacing an earlier settings modal import), this import

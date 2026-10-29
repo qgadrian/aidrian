@@ -95,7 +95,7 @@ Elsewhere, run it by its path, such as `path/to/aidrian-harness/plugins/aidrian/
   A `SKILL.md` of 8,000 bytes or more fails, because Codex cuts it there; one above 7,500 bytes passes with a warning.
 - `agents`: each `.claude/agents/*.md` has `name` equal to its file name, such a `description`, and a known `model` and `effort`.
 - `paths`: no tracked file holds a personal home folder such as `/Users/<name>/`; `--staged` checks the staged files only, as the index holds them.
-- `budget`: the `always` knowledge docs, read at every session start, fit in `docs.alwaysBudgetBytes`. It prints the bytes per bucket.
+- `budget`: the [knowledge budgets](config.md#knowledge-budgets) that `aidrian check` also holds. It prints the `always` bytes per bucket.
 
 `aidrian lint skills <folder>` and `aidrian lint agents <folder>` check other folders.
 

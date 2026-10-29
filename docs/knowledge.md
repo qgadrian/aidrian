@@ -115,6 +115,8 @@ a path leaves its bucket, or a key is unknown.
 A symlink fails too when it leads an index or a bucket outside the project, or a doc outside its bucket.
 It also fails when a `.md` file in a bucket has no entry in `docs`, because no agent would ever find it,
 when a summary is empty, longer than 160 characters, or more than one line, and when an `always` doc has no entry in `docs`.
+It warns when the `always` docs or a tagged doc pass the [knowledge budgets](config.md#knowledge-budgets),
+and fails when the `always` docs pass twice theirs.
 
 ## Indexing a repository that has docs but no buckets
 

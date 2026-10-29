@@ -15,7 +15,7 @@ test('check prints ok in the example consumer, from a subfolder, and with --proj
   for (const [args, cwd] of [[['check']], [['check'], path.join(EXAMPLE, 'src')], [['check', '--project', EXAMPLE], ROOT]]) {
     const { status, stdout, stderr } = run(args, cwd);
     assert.deepEqual([status, stderr], [0, ''], args.join(' '));
-    assert.match(stdout, /^ok: \.aidrian \(2 buckets, 8 docs\)\nstate: \/\S+\n$/, args.join(' '));
+    assert.match(stdout, /^ok: \.aidrian \(2 buckets, 8 docs\)\nstate: \/\S+\nbudget: \d+ of 16384 always-doc bytes \(engineering \d+, product 0\)\n$/, args.join(' '));
   }
 });
 

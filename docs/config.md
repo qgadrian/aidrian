@@ -30,7 +30,8 @@ In a group such as `github`, set only the keys you change; the others keep their
     "ignoreCancelledChecks": [],
     "conditionalChecks": []
   },
-  "docs": { "wrapLimit": 155, "alwaysBudgetBytes": 40000 },
+  "docs": { "wrapLimit": 155 },
+  "knowledge": { "budgets": { "alwaysBytes": 16384, "taggedDocBytes": 24576 } },
   "skills": { "descriptionChars": 160, "listingBytes": 9216 },
   "session": { "handoff": "ask", "maxTokens": 150000, "maxCalls": 250, "maxHours": 4 },
   "models": { "claude": { "agents": {} }, "codex": { "agents": {} } },
@@ -55,7 +56,8 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
 | `github.conditionalChecks` | Parts of check names whose `SKIPPED` or `NEUTRAL` result is routine, such as a job a path filter turns off. Once the list has an entry, `aidrian pr checks` fails on any other skip; `[]` lets every skip pass, named in the output. |
 | `docs.wrapLimit` | The longest line, in characters, allowed in a Markdown file an agent writes; `0` turns the check off. |
-| `docs.alwaysBudgetBytes` | The most bytes all `always` knowledge docs may add up to (`aidrian lint budget`). |
+| `knowledge.budgets.alwaysBytes` | The bytes all `always` knowledge docs may add up to: [Knowledge budgets](#knowledge-budgets). |
+| `knowledge.budgets.taggedDocBytes` | The bytes one tagged knowledge doc may have: [Knowledge budgets](#knowledge-budgets). |
 | `skills.descriptionChars` | The longest skill or agent description, in characters (`aidrian lint skills` and `agents`). |
 | `skills.listingBytes` | The most bytes all skill names and descriptions may add up to (`aidrian lint skills`). |
 | `session.handoff` | What the [session-length reminder](hooks.md#session-length) does once a limit is passed: `"ask"` asks whether to hand off, `"auto"` writes the handoff brief, `"off"` does nothing. |
@@ -135,6 +137,27 @@ A team sets its names in `config.json`, and one developer in the git-ignored `.a
 
 `.aidrian.local.json` wins over `config.json`, one name at a time.
 `aidrian check` names an unknown key and a name that is not a non-empty string.
+
+## Knowledge budgets
+
+Every session and subagent reads the `always` docs, and `aidrian-knowledge route <tag>` lists each doc of the tag to read whole.
+`aidrian check` and `aidrian lint budget` hold both to a size:
+
+- The `always` docs of all buckets together: a warning above `alwaysBytes`, 16 KB by default, and an error above twice that.
+- Each doc with at least one tag: a warning above `taggedDocBytes`, 24 KB by default.
+  Split such a doc into a short rule card and a reference, or drop its tags so that only search finds it.
+
+The warnings print on stderr, and the check still passes. `aidrian check` prints the `always` total on its last line:
+
+```console
+$ aidrian check
+warning: docs/knowledge/engineering/sync-protocol.md: 41230 bytes, over knowledge.budgets.taggedDocBytes (24576); every route to backend reads it whole: split it into a short rule card and a reference, or drop its tags so only search finds it
+ok: .aidrian (2 buckets, 8 docs)
+state: /home/you/.local/state/aidrian/projects/notes-1a2b3c4d
+budget: 2479 of 16384 always-doc bytes (engineering 2479, product 0)
+```
+
+The key `docs.alwaysBudgetBytes` moved here as `alwaysBytes`; a `config.json` that still sets it gets an error naming the new key.
 
 ## Checking
 

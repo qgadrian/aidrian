@@ -4,7 +4,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { insidePath, isDirectory, isFile, isObject, linksOutside, loadConfig, readJson, VERSION, versionProblem } from './config.mjs';
+import { fileBytes, insidePath, isDirectory, isFile, isObject, linksOutside, loadConfig, readJson, VERSION, versionProblem } from './config.mjs';
 
 const BUCKET_ID = /^[a-z0-9][a-z0-9-]*$/;
 const TAG = /^[a-z][a-z0-9_]*$/;
@@ -197,6 +197,30 @@ export function listTags(buckets) {
 // Every doc of every bucket, in bucket order: { path, summary, tags }.
 export function indexRows(buckets) {
   return buckets.flatMap((bucket) => bucket.docs);
+}
+
+// The knowledge budgets, config.json `knowledge.budgets`. Every session and subagent reads the `always` docs, so their
+// total warns above `alwaysBytes` and fails above twice that. A route to a tag reads each of its docs whole, so a tagged
+// doc above `taggedDocBytes` warns. Returns { problems, warnings, summary }.
+export function checkBudgets(root, buckets, { alwaysBytes, taggedDocBytes }) {
+  const size = (doc) => fileBytes(path.resolve(root, doc)) ?? 0;
+  const perBucket = buckets.map((bucket) => [bucket.id, bucket.always.reduce((sum, doc) => sum + size(doc), 0)]);
+  const total = perBucket.reduce((sum, [, bytes]) => sum + bytes, 0);
+  const summary = `${total} of ${alwaysBytes} always-doc bytes${perBucket.length ? ` (${perBucket.map(([id, bytes]) => `${id} ${bytes}`).join(', ')})` : ''}`;
+  const always = (over) =>
+    `always docs: ${total} bytes, over ${over}; every session and subagent reads them: keep one or two short docs, and move the rest behind tags or to search`;
+  const problems = total > 2 * alwaysBytes ? [always(`twice knowledge.budgets.alwaysBytes (${alwaysBytes})`)] : [];
+  const warnings = total > alwaysBytes && !problems.length ? [always(`knowledge.budgets.alwaysBytes (${alwaysBytes})`)] : [];
+  for (const doc of indexRows(buckets)) {
+    const bytes = size(doc.path);
+    if (doc.tags.length && bytes > taggedDocBytes) {
+      warnings.push(
+        `${doc.path}: ${bytes} bytes, over knowledge.budgets.taggedDocBytes (${taggedDocBytes}); every route to ${doc.tags.join(', ')} reads it whole: ` +
+          'split it into a short rule card and a reference, or drop its tags so only search finds it',
+      );
+    }
+  }
+  return { problems, warnings, summary };
 }
 
 // The docs that match `words`, best first. Each word scores 2 when it is part of a tag, 1 when it is part of the path,

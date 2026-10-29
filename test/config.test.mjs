@@ -41,7 +41,9 @@ test('the loaded config is frozen all the way down', (t) => {
 const errorCases = [
   ['unknown top-level key', { version: 1, extra: 1 }, /: unknown key "extra"$/],
   ['the old "pr" group, now "github"', { version: 1, pr: { reviewer: 'x' } }, /: "pr" is now "github": rename the key$/],
+  ['the old "docs.alwaysBudgetBytes", now in "knowledge.budgets"', { version: 1, docs: { alwaysBudgetBytes: 1 } }, /: "docs\.alwaysBudgetBytes" is now "knowledge\.budgets\.alwaysBytes": rename the key$/],
   ['unknown key in a group', { version: 1, github: { reviewers: 'x' } }, /: unknown key "github\.reviewers"$/],
+  ['zero for a knowledge budget', { version: 1, knowledge: { budgets: { taggedDocBytes: 0 } } }, /"knowledge\.budgets\.taggedDocBytes" must be a whole number above 0$/],
   ['inherited property name as a key', JSON.parse('{"version": 1, "__proto__": {}}'), /: unknown key "__proto__"$/],
   ['string instead of a list', { version: 1, commits: { types: 'feat' } }, /"commits\.types" must be a list of non-empty strings$/],
   ['check names that are not a list', { version: 1, github: { conditionalChecks: 'db tests' } }, /"github\.conditionalChecks" must be a list of non-empty strings$/],

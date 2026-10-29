@@ -16,15 +16,17 @@ const SCHEMA = {
   mainCheckout: { guard: 'boolean', allowWrites: 'texts' },
   commits: { types: 'texts' },
   github: { requiredSections: 'texts', reviewer: 'text', maxReviewRounds: 'positive', requiredChecks: 'texts', ignoreCancelledChecks: 'texts', conditionalChecks: 'texts' },
-  docs: { wrapLimit: 'zeroOrMore', alwaysBudgetBytes: 'positive' },
+  docs: { wrapLimit: 'zeroOrMore' },
+  knowledge: { budgets: { alwaysBytes: 'positive', taggedDocBytes: 'positive' } },
   skills: { descriptionChars: 'positive', listingBytes: 'positive' },
   session: { handoff: 'handoffMode', maxTokens: 'zeroOrMore', maxCalls: 'zeroOrMore', maxHours: 'zeroOrMore' },
   models: 'models',
   names: { human: 'text', ai: 'textOrNull' },
 };
 
-// Groups a format change renamed, old name to new. A config that still uses the old name gets an error naming the new one.
-const RENAMED = { pr: 'github' };
+// Keys a format change renamed or moved, old name to new; a key inside a group is named with its group, "group.key".
+// A config that still uses the old name gets an error naming the new one.
+const RENAMED = { pr: 'github', 'docs.alwaysBudgetBytes': 'knowledge.budgets.alwaysBytes' };
 
 // What `models` may set for one of this plugin's agents, per host; null takes any non-empty string.
 // Claude Code's Agent tool takes only these model aliases. Codex reads any model name and names these efforts.
@@ -62,7 +64,8 @@ export const DEFAULTS = deepFreeze({
     ignoreCancelledChecks: [],
     conditionalChecks: [],
   },
-  docs: { wrapLimit: 155, alwaysBudgetBytes: 40000 },
+  docs: { wrapLimit: 155 },
+  knowledge: { budgets: { alwaysBytes: 16384, taggedDocBytes: 24576 } },
   skills: { descriptionChars: 160, listingBytes: 9216 },
   session: { handoff: 'ask', maxTokens: 150000, maxCalls: 250, maxHours: 4 },
   models: { claude: { agents: {} }, codex: { agents: {} } },
@@ -117,8 +120,9 @@ function migratingUrl() {
 
 function merge(schema, defaults, values, prefix, file, errors) {
   for (const key of Object.keys(values)) {
-    if (!prefix && Object.hasOwn(RENAMED, key)) errors.push(`${file}: "${key}" is now "${RENAMED[key]}": rename the key`);
-    else if (!Object.hasOwn(schema, key)) errors.push(`${file}: unknown key "${prefix}${key}"`);
+    const name = `${prefix}${key}`;
+    if (Object.hasOwn(RENAMED, name)) errors.push(`${file}: "${name}" is now "${RENAMED[name]}": rename the key`);
+    else if (!Object.hasOwn(schema, key)) errors.push(`${file}: unknown key "${name}"`);
   }
   const out = {};
   for (const [key, type] of Object.entries(schema)) {

@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -53,4 +53,21 @@ test('Codex installs the plugin, and a project session sees every skill, agent, 
   for (const skill of SKILLS) assert.ok(prompt.includes(`aidrian:${skill}:`), `skill ${skill}`);
   for (const agent of AGENTS) assert.ok(prompt.includes(`aidrian-${agent}:`), `agent ${agent}`);
   assert.ok(prompt.includes('Project rules live in knowledge buckets'), 'the example AGENTS.md');
+});
+
+test('Codex gives a role the model and effort that a project install writes from models.codex', { skip: skipUnless('codex') }, (t) => {
+  const home = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-codex-')));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const env = { ...process.env, HOME: path.join(home, 'home'), CODEX_HOME: path.join(home, 'codex') };
+  const project = path.join(home, 'project');
+  for (const dir of [env.HOME, env.CODEX_HOME, path.join(project, '.aidrian')]) mkdirSync(dir, { recursive: true });
+  run('git', ['init', '-q'], { cwd: project });
+  const models = { codex: { agents: { 'planning-agent': { model: 'gpt-5.5', effort: 'low' } } } };
+  writeFileSync(path.join(project, '.aidrian/config.json'), JSON.stringify({ version: 1, models }));
+  // Codex reads a project's .codex folder only once the project is trusted.
+  writeFileSync(path.join(env.CODEX_HOME, 'config.toml'), `[projects.${JSON.stringify(project)}]\ntrust_level = "trusted"\n`);
+
+  run(process.execPath, [path.join(PLUGIN, 'codex/install-agents.mjs'), '--target', path.join(project, '.codex/agents')], { env });
+  const prompt = run('codex', ['debug', 'prompt-input', 'hello'], { env, cwd: project });
+  assert.match(prompt, /aidrian-planning-agent: \{\\n[^}]*This role's model is set to `gpt-5\.5` and its reasoning effort is set to `low`\./);
 });

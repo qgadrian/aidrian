@@ -89,11 +89,22 @@ test('.aidrian.local.json adds sources after the project folder: ~ is the home f
   ]);
 });
 
+test('.aidrian.local.json may hold models alone; the project passes them on as written, for config.mjs to check', (t) => {
+  const dir = tempDir(t);
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}');
+  const models = { claude: { agents: { explorer: { model: 'haiku' } } } };
+  writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ models }));
+  const project = findProject(dir);
+  assert.deepEqual([project.errors, project.sources.length, project.localModels], [[], 1, models]);
+  assert.equal(findProject(path.join(ROOT, 'examples/consumer')).localModels, undefined);
+});
+
 // Each case expects one error; a source that is not a folder is left out, the others stay.
 const localCases = [
   ['invalid JSON', '{', /^\.aidrian\.local\.json: invalid JSON/, 0],
   ['unknown key', JSON.stringify({ sources: [], dir: 'x' }), /^\.aidrian\.local\.json: unknown key "dir"$/, 0],
-  ['no sources', '{}', /^\.aidrian\.local\.json: "sources" must be a list of folders$/, 0],
+  ['sources that is not a list', JSON.stringify({ sources: 'kb' }), /^\.aidrian\.local\.json: "sources" must be a list of folders$/, 0],
   ['a source that is not text', JSON.stringify({ sources: ['kb', 3] }), /"sources" must be a list of folders$/, 0],
   ['a missing source', JSON.stringify({ sources: ['kb', 'nope'] }), /^\.aidrian\.local\.json: source "nope" is not a folder$/, 1],
   ['a source that is a file', JSON.stringify({ sources: ['notes.md', 'kb'] }), /source "notes\.md" is not a folder$/, 1],

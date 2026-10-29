@@ -27,7 +27,8 @@ In a group such as `pr`, set only the keys you change; the others keep their def
   },
   "docs": { "wrapLimit": 155, "alwaysBudgetBytes": 40000 },
   "skills": { "descriptionChars": 160, "listingBytes": 9216 },
-  "session": { "handoff": "ask", "maxTokens": 150000, "maxCalls": 250, "maxHours": 4 }
+  "session": { "handoff": "ask", "maxTokens": 150000, "maxCalls": 250, "maxHours": 4 },
+  "models": { "claude": { "agents": {} }, "codex": { "agents": {} } }
 }
 ```
 
@@ -54,9 +55,55 @@ In a group such as `pr`, set only the keys you change; the others keep their def
 | `session.maxTokens` | The context, in tokens, of the main session's last model call that counts as long; `0` turns this limit off. |
 | `session.maxCalls` | The main session's model calls that count as long; `0` turns this limit off. |
 | `session.maxHours` | The hours worked that count as long, a pause of more than an hour counting as one; `0` turns this limit off. |
+| `models` | The model and effort of the plugin's agents, per host, in place of the ones the plugin ships: [Models](#models). |
 
 A path in `state.dir` or `worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
+
+## Models
+
+Each agent file in the plugin sets the model and effort the agent ships with.
+A team can choose others in `config.json`, and one developer in the git-ignored `.aidrian.local.json` at the project root:
+
+```json
+{
+  "models": {
+    "claude": { "agents": { "planning-agent": { "model": "opus", "effort": "high" } } },
+    "codex": { "agents": { "planning-agent": { "model": "gpt-5.5", "effort": "medium" } } }
+  }
+}
+```
+
+`.aidrian.local.json` wins over `config.json`, and `config.json` wins over the agent file, one value at a time:
+set `model`, `effort`, or both, and the other keeps the value from below.
+`aidrian check` names an unknown host, agent, or key, and a value the host does not take.
+
+| Host | `model` | `effort` |
+| --- | --- | --- |
+| `claude` | `sonnet`, `opus`, `haiku`, or `fable` | `low`, `medium`, `high`, `xhigh`, or `max` |
+| `codex` | a Codex model name, such as `gpt-5.5` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`, or `persistent` |
+
+In Claude Code, a hook adds the choice to each Agent tool call to that agent, from the next call on.
+
+- An `effort` choice needs Claude Code 2.1.292 or later, the first version whose Agent tool call takes `effort`.
+- The Agent tool takes only the four model names above, never a full model id or `inherit`.
+- A model or effort the dispatching agent passes for one call still wins.
+- An agent that runs the whole session, as with `claude --agent aidrian:planning-agent`, keeps its file's values.
+
+In Codex, the agents are roles outside the plugin, so `install-agents.mjs` writes the choice into them.
+It does that only when it installs into a folder inside the project, because the user folder `~/.codex/agents` serves every project:
+
+```sh
+node ~/.codex/plugins/cache/aidrian-harness/aidrian/*/codex/install-agents.mjs --target .codex/agents
+```
+
+- Run it again after each change to `models.codex`; the next Codex session reads the new roles.
+- Codex reads a project's `.codex/agents` only when the project is trusted.
+- The installed roles carry the personal choice too, so keep `.codex/agents` out of git while `.aidrian.local.json` sets `models.codex`.
+
+Neither host lets a project change the model or effort of a plugin skill, so `models` has no `skills` key, and `aidrian check` refuses one.
+Claude Code reads a skill's `model` and `effort` only from its own `SKILL.md`, and Codex skills have neither.
+The plugin's skills set neither, so they run on the session's model and effort.
 
 ## Checking
 

@@ -46,6 +46,49 @@ const errorCases = [
   ['string for a boolean', { version: 1, mainCheckout: { guard: 'no' } }, /"mainCheckout\.guard" must be true or false$/],
   ['empty string', { version: 1, defaultBranch: ' ' }, /"defaultBranch" must be a non-empty string$/],
   ['handoff mode outside its list', { version: 1, session: { handoff: 'always' } }, /"session\.handoff" must be "off", "ask", or "auto"$/],
+  ['models that is not an object', { version: 1, models: [] }, /"models" must be an object$/],
+  ['models for a host other than claude and codex', { version: 1, models: { gemini: {} } }, /: unknown key "models\.gemini"$/],
+  ['models agents that is not an object', { version: 1, models: { codex: { agents: [] } } }, /"models\.codex\.agents" must be an object$/],
+  [
+    'models for skills, which no host can apply',
+    { version: 1, models: { claude: { skills: { 'pr-write': { model: 'opus' } } } } },
+    /"models\.claude\.skills" is not supported: neither host lets a project set a plugin skill's model or effort$/,
+  ],
+  [
+    'models for an agent the plugin does not ship',
+    { version: 1, models: { codex: { agents: { architect: { effort: 'high' } } } } },
+    /: unknown agent "models\.codex\.agents\.architect"; the plugin's agents are agent-issue-writer, .*, planning-agent$/,
+  ],
+  [
+    'a Claude model the Agent tool cannot take',
+    { version: 1, models: { claude: { agents: { explorer: { model: 'claude-opus-5-5' } } } } },
+    /"models\.claude\.agents\.explorer\.model" must be "sonnet", "opus", "haiku", or "fable"$/,
+  ],
+  [
+    'a Claude effort outside its levels',
+    { version: 1, models: { claude: { agents: { explorer: { effort: 'ultra' } } } } },
+    /"models\.claude\.agents\.explorer\.effort" must be "low", "medium", "high", "xhigh", or "max"$/,
+  ],
+  [
+    'a Codex effort Codex does not name',
+    { version: 1, models: { codex: { agents: { explorer: { effort: 'hihg' } } } } },
+    /"models\.codex\.agents\.explorer\.effort" must be "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", or "persistent"$/,
+  ],
+  [
+    'an empty Codex model',
+    { version: 1, models: { codex: { agents: { explorer: { model: ' ' } } } } },
+    /"models\.codex\.agents\.explorer\.model" must be a non-empty string$/,
+  ],
+  [
+    'an agent entry that is not an object',
+    { version: 1, models: { claude: { agents: { explorer: 'opus' } } } },
+    /"models\.claude\.agents\.explorer" must be an object with "model", "effort", or both$/,
+  ],
+  [
+    'an unknown key in an agent entry',
+    { version: 1, models: { claude: { agents: { explorer: { model: 'opus', temperature: 1 } } } } },
+    /: unknown key "models\.claude\.agents\.explorer\.temperature"$/,
+  ],
 ];
 
 for (const [name, value, expected] of errorCases) {
@@ -75,6 +118,29 @@ for (const [name, value, shown] of versionCases) {
     assert.deepEqual(config, DEFAULTS);
   });
 }
+
+test('models: .aidrian.local.json wins over config.json one field at a time, and a bad value keeps the one below it', (t) => {
+  assert.deepEqual(DEFAULTS.models, { claude: { agents: {} }, codex: { agents: {} } });
+  const team = project(t, {
+    version: 1,
+    models: {
+      claude: { agents: { 'planning-agent': { model: 'opus', effort: 'high' }, explorer: { model: 'haiku' } } },
+      codex: { agents: { 'planning-agent': { model: 'gpt-5.5', effort: 'medium' } } },
+    },
+  });
+  assert.deepEqual(loadConfig(team).errors, []);
+  writeFileSync(
+    path.join(team.root, '.aidrian.local.json'),
+    JSON.stringify({ models: { claude: { agents: { 'planning-agent': { effort: 'max', model: 'gpt-5.5' }, integrator: { effort: 'low' } } } } }),
+  );
+  const { config, errors } = loadConfig(findProject(team.root));
+  assert.deepEqual(errors, ['.aidrian.local.json: "models.claude.agents.planning-agent.model" must be "sonnet", "opus", "haiku", or "fable"']);
+  assert.deepEqual(config.models, {
+    claude: { agents: { 'planning-agent': { model: 'opus', effort: 'max' }, explorer: { model: 'haiku' }, integrator: { effort: 'low' } } },
+    codex: { agents: { 'planning-agent': { model: 'gpt-5.5', effort: 'medium' } } },
+  });
+  assert.throws(() => { config.models.claude.agents.explorer.model = 'opus'; }, TypeError);
+});
 
 test('worktrees.dir defaults to .worktrees and bootstrap to null, and a string replaces each', (t) => {
   assert.deepEqual(DEFAULTS.worktrees, { dir: '.worktrees', bootstrap: null });

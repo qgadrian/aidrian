@@ -58,8 +58,8 @@ const errorCases = [
   ],
   [
     'models for an agent the plugin does not ship',
-    { version: 1, models: { codex: { agents: { architect: { effort: 'high' } } } } },
-    /: unknown agent "models\.codex\.agents\.architect"; the plugin's agents are agent-issue-writer, .*, planning-agent$/,
+    { version: 1, models: { codex: { agents: { 'no-such-agent': { effort: 'high' } } } } },
+    /: unknown agent "models\.codex\.agents\.no-such-agent"; the plugin's agents are agent-issue-writer, .*, planning-agent\b/,
   ],
   [
     'a Claude model the Agent tool cannot take',

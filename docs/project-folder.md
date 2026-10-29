@@ -111,6 +111,8 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 - `<project-id>` is the repository name and a short hash of its `origin` URL, such as `notes-1a2b3c4d`.
   Every worktree and every clone of the repository shares it.
   A repository with no `origin` uses its folder name and a hash of the main checkout's path.
+  A project in a subfolder of the repository adds that subfolder's path to the hash, so two projects in one repository
+  get two state folders; a project at the repository root keeps the id above.
 - `"state": { "dir": "<path>" }` in config.json moves the folder; [config.md](config.md) lists the key.
   A relative path starts at the repository root, and `aidrian check` then requires git to ignore it.
 

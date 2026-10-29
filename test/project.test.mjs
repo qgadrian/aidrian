@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
@@ -160,6 +161,27 @@ test('the state folder is under XDG_STATE_HOME, named for the origin, and shared
   assert.equal(stateDir(findProject(path.join(dir, 'wt/task')), { env }), main);
   assert.equal(stateDir(projectAt(clone), { env }), main);
   assert.equal(worktreesDir(findProject(path.join(dir, 'wt/task'))), path.join(dir, '.worktrees'), 'beside the repository files');
+});
+
+test('two projects in one repository get their own state folders, and a project at the root keeps its id', (t) => {
+  const { dir, git } = repo(t);
+  git('remote', 'add', 'origin', 'git@github.com:acme/Notes.git');
+  for (const sub of ['apps/a', 'apps/b']) {
+    mkdirSync(path.join(dir, sub, '.aidrian'), { recursive: true });
+    writeFileSync(path.join(dir, sub, '.aidrian/config.json'), '{"version": 1}\n');
+  }
+  git('add', '.');
+  git('-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'apps');
+  git('worktree', 'add', '-q', '-b', 'task', path.join(dir, 'wt/task'));
+  const env = { XDG_STATE_HOME: '/state' };
+
+  const root = stateDir(findProject(dir), { env });
+  assert.equal(root, `/state/aidrian/projects/notes-${createHash('sha256').update('github.com/acme/Notes').digest('hex').slice(0, 8)}`);
+  const a = stateDir(findProject(path.join(dir, 'apps/a')), { env });
+  const b = stateDir(findProject(path.join(dir, 'apps/b')), { env });
+  assert.equal(new Set([root, a, b]).size, 3);
+  assert.match(path.basename(a), /^notes-[0-9a-f]{8}$/);
+  assert.equal(stateDir(findProject(path.join(dir, 'wt/task/apps/a')), { env }), a, 'a worktree shares the subfolder project');
 });
 
 test('without XDG_STATE_HOME, or with a relative one, the state folder is under ~/.local/state', (t) => {

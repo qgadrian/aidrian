@@ -107,11 +107,15 @@ export function repoRoot(project) {
 }
 
 // `<repository name>-<8 hex digits>`: the name and a hash of the normalized `origin` URL, so every clone agrees.
-// Without an origin, the main checkout's folder name and absolute path.
+// Without an origin, the main checkout's folder name and absolute path. A project below the repository root adds its
+// path from that root to the hash, so two projects in one repository keep apart; a project at the root keeps its id.
 export function projectId(project) {
   const { status, stdout } = runGit(['config', '--get', 'remote.origin.url'], project.root);
-  const key = (status === 0 && normalizeRemote(stdout)) || realPath(repoRoot(project));
-  const slug = path.posix.basename(key).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
+  const repository = (status === 0 && normalizeRemote(stdout)) || realPath(repoRoot(project));
+  const prefix = runGit(['rev-parse', '--show-prefix'], project.root);
+  const below = prefix.status === 0 ? prefix.stdout.replace(/\/?\n$/u, '') : '';
+  const key = below ? `${repository}\0${below}` : repository;
+  const slug = path.posix.basename(repository).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
   return `${slug}-${createHash('sha256').update(key).digest('hex').slice(0, 8)}`;
 }
 

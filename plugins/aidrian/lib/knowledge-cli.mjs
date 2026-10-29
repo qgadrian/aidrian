@@ -1,14 +1,15 @@
 // Command line for knowledge.mjs. Users run it through bin/aidrian-knowledge; `npm run check` runs it with node directly.
 
-import { MANIFEST, findProjectRoot, listTags, loadKnowledge, pluginTags, routeKnowledge } from './knowledge.mjs';
+import { CONFIG, findProjectRoot } from './config.mjs';
+import { listTags, loadKnowledge, pluginTags, routeKnowledge } from './knowledge.mjs';
 
 const USAGE = `usage: aidrian-knowledge <command> [--project DIR] [tags...]
 
-  check          validate ${MANIFEST} and every bucket it lists
+  check          validate ${CONFIG} and every bucket it lists
   route TAG...   print the docs to read for these tags, "always" docs first
   tags           print each tag and how many docs it loads
 
-DIR defaults to the nearest folder at or above the current one that has ${MANIFEST}.`;
+DIR defaults to the nearest folder at or above the current one that has ${CONFIG}.`;
 
 const args = process.argv.slice(2);
 const command = args.shift();
@@ -30,7 +31,7 @@ while (args.length) {
 if (!['check', 'route', 'tags'].includes(command)) fail(USAGE);
 if (command !== 'route' && rest.length) fail(`${USAGE}\n\nunexpected argument: ${rest[0]}`);
 const root = findProjectRoot(project);
-if (!root) fail(`no ${MANIFEST} at or above ${project}`);
+if (!root) fail(`no ${CONFIG} at or above ${project}`);
 
 const { buckets, errors } = loadKnowledge(root);
 if (errors.length) fail(errors.join('\n'));

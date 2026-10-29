@@ -1,6 +1,6 @@
 ---
 name: knowledge
-description: Load the project's rules from its knowledge buckets (.aidrian/knowledge.json) at the start of a task, before planning, editing, or reviewing.
+description: Load the project's rules from its knowledge buckets (.aidrian/config.json) at the start of a task, before planning, editing, or reviewing.
 ---
 
 # Project knowledge
@@ -11,7 +11,7 @@ This skill is how you find and read them, and which shared defaults apply when a
 
 ## Load before you work
 
-1. Open `.aidrian/knowledge.json` at the repository root. It lists the bucket folders, for example
+1. Open `.aidrian/config.json` at the repository root. Its `buckets` key lists the bucket folders, for example
    `{ "buckets": ["docs/knowledge/engineering", "docs/knowledge/product"] }`.
 2. In each bucket, open `bucket.json`. Its doc paths are relative to the bucket folder.
 3. Read every doc in `always`, then the docs under each tag you were given:
@@ -22,7 +22,7 @@ This skill is how you find and read them, and which shared defaults apply when a
 
 `aidrian-knowledge route <tag>...` prints the same list when that command is on your PATH.
 
-If `.aidrian/knowledge.json` does not exist, read the project's `AGENTS.md`, `CLAUDE.md`, and `README.md` instead,
+If `.aidrian/config.json` does not exist, read the project's `AGENTS.md`, `CLAUDE.md`, and `README.md` instead,
 and report `knowledge: none` in your result.
 Never read every doc in a bucket "to be safe"; load what the tags select, then search for more only when the task needs it.
 

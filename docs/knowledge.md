@@ -4,7 +4,7 @@ A project that uses the aidrian plugin supplies one thing: its knowledge.
 The plugin supplies the agents, the skills, and the rule for loading that knowledge.
 
 A knowledge bucket is a folder of Markdown docs with a `bucket.json` index.
-A project lists its buckets in `.aidrian/knowledge.json`.
+A project lists its buckets in `.aidrian/config.json`.
 Agents read the `always` docs of every bucket, plus the docs of the tags they work with.
 
 [`examples/consumer`](../examples/consumer) is a complete, checked example.
@@ -12,7 +12,7 @@ Agents read the `always` docs of every bucket, plus the docs of the tags they wo
 ## Layout
 
 ```text
-.aidrian/knowledge.json          lists the buckets, in load order
+.aidrian/config.json             lists the buckets, in load order
 docs/knowledge/engineering/
 ├── bucket.json                  the bucket's index
 ├── README.md                    optional: what the bucket covers; agents do not load it
@@ -25,7 +25,7 @@ docs/knowledge/product/
 
 Buckets can live anywhere inside the project. Use one bucket per owner, so each team edits its own folder.
 
-## `.aidrian/knowledge.json`
+## The bucket list
 
 ```json
 {
@@ -33,7 +33,8 @@ Buckets can live anywhere inside the project. Use one bucket per owner, so each 
 }
 ```
 
-`buckets` is a non-empty list of folders, relative to the project root. Agents load buckets in this order.
+`buckets` in `.aidrian/config.json` is a non-empty list of folders, relative to the project root. Agents load buckets in this order.
+The file's other keys are in [config.md](config.md).
 
 ## `bucket.json`
 
@@ -74,7 +75,7 @@ To change one, say so in an `always` doc.
 In Claude Code it is on the PATH while the plugin is enabled. Elsewhere, run it from a checkout of this repository.
 
 ```sh
-aidrian-knowledge check                # validate .aidrian/knowledge.json and every bucket
+aidrian-knowledge check                # validate .aidrian/config.json and every bucket
 aidrian-knowledge route testing        # the docs an agent with the testing tag reads
 aidrian-knowledge tags                 # every tag the project defines
 ```

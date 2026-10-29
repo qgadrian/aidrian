@@ -1,2 +1,5 @@
 .aidrian/plans/
 .aidrian/worktrees/
+.aidrian/lessons/
+.aidrian/handoffs/
+.aidrian/dispatch-log.jsonl

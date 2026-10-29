@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { findProjectRoot, listTags, loadKnowledge, routeKnowledge } from '../plugins/aidrian/lib/knowledge.mjs';
+import { listTags, loadKnowledge, routeKnowledge } from '../plugins/aidrian/lib/knowledge.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXAMPLE = path.join(ROOT, 'examples/consumer');
@@ -44,10 +44,6 @@ test('nested buckets pass when path.relative returns "\\" separators, as on Wind
   assert.deepEqual(loadKnowledge(EXAMPLE).errors, []);
 });
 
-test('the project root is found from a subfolder', () => {
-  assert.equal(findProjectRoot(path.join(EXAMPLE, 'src')), EXAMPLE);
-});
-
 test('the command line checks and routes', () => {
   const run = (...args) => execFileSync(CLI, args, { cwd: path.join(EXAMPLE, 'src'), encoding: 'utf8' });
   assert.equal(run('check'), 'ok: 2 buckets, 8 docs\n');
@@ -83,10 +79,10 @@ test('the command line fails on --project without a folder, an unknown option, a
 
 // Each case writes a one-bucket project, changes one thing, and expects one error.
 const bucketCases = [
-  ['no manifest', (p) => rmSync(path.join(p, '.aidrian/knowledge.json')), /\.aidrian\/knowledge\.json: not found/],
-  ['empty bucket list', (p) => manifest(p, { buckets: [] }), /non-empty list/],
-  ['bucket outside the project', (p) => manifest(p, { buckets: ['../elsewhere'] }), /relative folder inside the project/],
-  ['unknown manifest key', (p) => manifest(p, { buckets: ['kb'], extra: true }), /unknown key "extra"/],
+  ['no config', (p) => rmSync(path.join(p, '.aidrian/config.json')), /\.aidrian\/config\.json: not found/],
+  ['empty bucket list', (p) => writeConfig(p, { buckets: [] }), /non-empty list/],
+  ['bucket outside the project', (p) => writeConfig(p, { buckets: ['../elsewhere'] }), /relative folder inside the project/],
+  ['unknown config key', (p) => writeConfig(p, { buckets: ['kb'], extra: true }), /unknown key "extra"/],
   ['no bucket.json', (p) => rmSync(path.join(p, 'kb/bucket.json')), /kb\/bucket\.json: not found/],
   ['invalid JSON', (p) => writeFileSync(path.join(p, 'kb/bucket.json'), '{'), /invalid JSON/],
   ['bad id', (p) => bucket(p, { id: 'Bad Id' }), /"id" must be/],
@@ -101,7 +97,7 @@ const bucketCases = [
   ['empty tag', (p) => bucket(p, { tags: { testing: ['sub/testing.md'], e2e: [] } }), /tag "e2e" lists no docs/],
   ['doc no tag loads', (p) => writeFileSync(path.join(p, 'kb/sub/orphan.md'), '# Orphan\n'), /kb\/sub\/orphan\.md: no tag loads this doc/],
   // ROOT is this repository, outside the temporary project.
-  ['bucket folder links outside', (p) => { symlinkSync(ROOT, path.join(p, 'ext')); manifest(p, { buckets: ['kb', 'ext'] }); }, /bucket "ext" must be a relative folder inside the project/],
+  ['bucket folder links outside', (p) => { symlinkSync(ROOT, path.join(p, 'ext')); writeConfig(p, { buckets: ['kb', 'ext'] }); }, /bucket "ext" must be a relative folder inside the project/],
   ['doc in a folder that links outside', (p) => { symlinkSync(ROOT, path.join(p, 'kb/ext')); bucket(p, { always: ['rules.md', 'ext/README.md'] }); }, /"ext\/README\.md" must be a relative \.md path inside the bucket/],
   ['bucket.json links outside', (p) => { rmSync(path.join(p, 'kb/bucket.json')); symlinkSync(path.join(ROOT, 'package.json'), path.join(p, 'kb/bucket.json')); }, /kb\/bucket\.json: links outside the project/],
 ];
@@ -123,7 +119,7 @@ test('a duplicate bucket id fails, and a README in the bucket root needs no tag'
   mkdirSync(path.join(project, 'kb2'));
   writeFileSync(path.join(project, 'kb2/a.md'), '# A\n');
   writeFileSync(path.join(project, 'kb2/bucket.json'), JSON.stringify({ id: 'kb', description: 'Copy.', always: ['a.md'] }));
-  manifest(project, { buckets: ['kb', 'kb2'] });
+  writeConfig(project, { buckets: ['kb', 'kb2'] });
   const { errors } = loadKnowledge(project);
   assert.deepEqual(errors, ['kb2/bucket.json: id "kb" is used by another bucket']);
 });
@@ -151,13 +147,13 @@ function validProject(t) {
   writeFileSync(path.join(project, 'outside.md'), '# Outside\n');
   writeFileSync(path.join(project, 'kb/rules.md'), '# Rules\n');
   writeFileSync(path.join(project, 'kb/sub/testing.md'), '# Testing\n');
-  manifest(project, { buckets: ['kb'] });
+  writeConfig(project, { buckets: ['kb'] });
   bucket(project, {});
   return project;
 }
 
-function manifest(project, value) {
-  writeFileSync(path.join(project, '.aidrian/knowledge.json'), JSON.stringify(value));
+function writeConfig(project, value) {
+  writeFileSync(path.join(project, '.aidrian/config.json'), JSON.stringify(value));
 }
 
 function bucket(project, overrides) {

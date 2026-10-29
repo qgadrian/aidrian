@@ -10,7 +10,7 @@ Each project that installs it supplies only its own knowledge buckets: folders o
 | --- | --- |
 | Agents | `planning-agent`, `initiative-agent`, `agent-issue-writer`, `explorer`, `github-archaeologist`, `integrator`, `doc-updater`, `design-source-explorer`, `harness-engineer` |
 | Skills | `knowledge`, `planning-agent`, `initiative-agent`, `agent-issue-writer`, `worktree-integrate`, `design-import`, `grill-me` |
-| Command | `aidrian-knowledge`: checks a project's buckets and prints what a tag loads |
+| Commands | `aidrian`: project commands, such as `aidrian config check`; `aidrian-knowledge`: checks a project's buckets and prints what a tag loads |
 
 The `knowledge` skill is the shared rule set.
 Every agent preloads it: it says how to load the project's buckets, which project rules win, and the defaults a project can override.
@@ -25,13 +25,16 @@ plugins/aidrian/
 ├── plugin.json                     Codex manifest (same name, version, description)
 ├── agents/*.md                     the agents; the only source to edit
 ├── skills/*/SKILL.md               the skills; both hosts read them as they are
-├── bin/aidrian-knowledge           on the Bash PATH in Claude Code sessions
-├── lib/                            the code behind aidrian-knowledge
+├── bin/aidrian                     project commands; on the Bash PATH in Claude Code sessions
+├── bin/aidrian-knowledge           the knowledge command; on the same PATH
+├── hooks/hooks.json                the plugin's hooks, for both hosts
+├── lib/                            the code behind the commands and hooks
 └── codex/
     ├── agents/aidrian-*.toml       generated from agents/*.md; never edit
     └── install-agents.mjs          copies those roles into ~/.codex/agents
 scripts/build.mjs                   generates codex/agents
 examples/consumer/                  a small project that uses the plugin
+docs/config.md                      the project config file, .aidrian/config.json
 docs/knowledge.md                   the knowledge-bucket format
 test/                               node --test suites
 ```
@@ -92,7 +95,7 @@ Claude Code enforces each agent's tool limits; on Codex the read-only agents are
 A project adds knowledge, never agents or skills.
 [`examples/consumer`](examples/consumer) is a complete example; copy it as a start.
 
-1. Write the buckets. List them in `.aidrian/knowledge.json`, and give each folder a `bucket.json`:
+1. Write the buckets. List them in `.aidrian/config.json`, and give each folder a `bucket.json`:
 
    ```json
    { "buckets": ["docs/knowledge/engineering", "docs/knowledge/product"] }
@@ -108,12 +111,12 @@ A project adds knowledge, never agents or skills.
    ```
 
    Use the tags in the [`knowledge` skill](plugins/aidrian/skills/knowledge/SKILL.md#tags), so the agents find your docs.
-   [docs/knowledge.md](docs/knowledge.md) describes every field.
+   [docs/knowledge.md](docs/knowledge.md) describes every bucket field, and [docs/config.md](docs/config.md) every config key.
 
 2. Point the main session at the buckets. Add to `AGENTS.md`, and put `@AGENTS.md` in `CLAUDE.md`:
 
    ```md
-   Project rules live in knowledge buckets, listed in `.aidrian/knowledge.json`.
+   Project rules live in knowledge buckets, listed in `.aidrian/config.json`.
    Load them with the `knowledge` skill before you plan, edit, or review.
    ```
 
@@ -130,20 +133,25 @@ A project adds knowledge, never agents or skills.
 
    Codex users install once per machine, as in [Codex](#codex).
 
-4. Keep local plans and worktrees out of git. Add to `.gitignore`:
+4. Keep the plugin's local state out of git. Add to `.gitignore`:
 
    ```text
    .aidrian/plans/
    .aidrian/worktrees/
+   .aidrian/lessons/
+   .aidrian/handoffs/
+   .aidrian/dispatch-log.jsonl
    ```
 
    To use other folders, say so in an `always` doc; project knowledge overrides the plugin's defaults.
 
-5. Check the buckets, locally and in CI:
+5. Check the config and the buckets, locally and in CI:
 
    ```sh
-   aidrian-knowledge check             # in a Claude Code session, where it is on PATH
-   path/to/aidrian-harness/plugins/aidrian/bin/aidrian-knowledge check   # anywhere else; needs Node 22 or later
+   aidrian config check                # in a Claude Code session, where both commands are on PATH
+   aidrian-knowledge check
+   path/to/aidrian-harness/plugins/aidrian/bin/aidrian config check      # anywhere else; needs Node 22 or later
+   path/to/aidrian-harness/plugins/aidrian/bin/aidrian-knowledge check
    ```
 
 ## Not included

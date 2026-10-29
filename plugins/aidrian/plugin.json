@@ -6,5 +6,6 @@
   "author": {
     "name": "the aidrian authors"
   },
-  "repository": "https://github.com/qgadrian/aidrian-harness"
+  "repository": "https://github.com/qgadrian/aidrian-harness",
+  "hooks": "./hooks/hooks.json"
 }

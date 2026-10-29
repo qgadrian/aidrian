@@ -1,43 +1,24 @@
 // Reads and checks a project's knowledge buckets. The format is described in docs/knowledge.md.
 // No dependencies: this file runs from the installed plugin, which has no node_modules.
 
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-export const MANIFEST = '.aidrian/knowledge.json';
+import { CONFIG, isFile, linksOutside, loadConfig, readJson } from './config.mjs';
+
 const BUCKET_FILE = 'bucket.json';
 const BUCKET_ID = /^[a-z0-9][a-z0-9-]*$/;
 const TAG = /^[a-z][a-z0-9_]*$/;
 
-// Walks up from `start` to the folder that holds .aidrian/knowledge.json.
-export function findProjectRoot(start) {
-  let dir = path.resolve(start);
-  for (;;) {
-    if (existsSync(path.join(dir, MANIFEST))) return dir;
-    const parent = path.dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
-}
-
 // Returns { buckets, errors }. Each bucket path and doc path is relative to the project root.
 export function loadKnowledge(root) {
-  const errors = [];
-  const manifest = readJson(root, MANIFEST, errors);
-  if (!manifest) return { buckets: [], errors };
-
-  checkKeys(manifest, ['buckets'], MANIFEST, errors);
-  if (!Array.isArray(manifest.buckets) || manifest.buckets.length === 0) {
-    errors.push(`${MANIFEST}: "buckets" must be a non-empty list of folders`);
-    return { buckets: [], errors };
-  }
-
+  const { config, errors } = loadConfig(root);
   const buckets = [];
   const ids = new Set();
-  for (const dir of manifest.buckets) {
+  for (const dir of config.buckets) {
     const bucketDir = insidePath(root, '', dir);
     if (!bucketDir) {
-      errors.push(`${MANIFEST}: bucket ${JSON.stringify(dir)} must be a relative folder inside the project`);
+      errors.push(`${CONFIG}: bucket ${JSON.stringify(dir)} must be a relative folder inside the project`);
       continue;
     }
     const bucket = loadBucket(root, bucketDir, errors);
@@ -147,39 +128,6 @@ function insidePath(root, base, rel) {
   return linksOutside(root, joined, base) ? null : joined;
 }
 
-// True when `rel` exists but, with symlinks resolved, lies outside the folder `within` (relative to `root`; the
-// project when empty). A missing path is left to the caller.
-function linksOutside(root, rel, within = '') {
-  let real;
-  try {
-    real = realpathSync(path.join(root, rel));
-  } catch {
-    return false;
-  }
-  const realWithin = realpathSync(path.join(root, within));
-  return real !== realWithin && !real.startsWith(`${realWithin}${path.sep}`);
-}
-
-function readJson(root, rel, errors) {
-  const file = path.join(root, rel);
-  if (!isFile(file)) {
-    errors.push(`${rel}: not found`);
-    return null;
-  }
-  if (linksOutside(root, rel)) {
-    errors.push(`${rel}: links outside the project`);
-    return null;
-  }
-  try {
-    const value = JSON.parse(readFileSync(file, 'utf8'));
-    if (typeof value === 'object' && value !== null && !Array.isArray(value)) return value;
-    errors.push(`${rel}: must be a JSON object`);
-  } catch (error) {
-    errors.push(`${rel}: invalid JSON (${error.message})`);
-  }
-  return null;
-}
-
 function checkKeys(object, allowed, where, errors) {
   for (const key of Object.keys(object)) {
     if (!allowed.includes(key)) errors.push(`${where}: unknown key "${key}"`);
@@ -197,12 +145,4 @@ function markdownFiles(root, dir) {
   };
   walk(dir);
   return out.sort();
-}
-
-function isFile(file) {
-  try {
-    return statSync(file).isFile();
-  } catch {
-    return false;
-  }
 }

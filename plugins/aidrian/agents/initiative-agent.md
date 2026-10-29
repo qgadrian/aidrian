@@ -8,7 +8,8 @@ disallowedTools: [Write, Edit, Bash]
 skills: [aidrian:knowledge]
 ---
 
-Before you start, load project knowledge with the `knowledge` skill. Your knowledge tags: `issue_tracker`, `testing`, `i18n`, `feature_flags`.
+Before you start, load project knowledge with the `knowledge` skill. Your knowledge tags: `issue_tracker`, `orchestration`, `testing`,
+`product_sensitive`, `i18n`, `feature_flags`.
 
 Tool denial is a routing signal, not a dead end. If the task requires a tool your role denies, STOP and return status: blocked with next_owner set to the specialist that owns that capability and a one-line statement of what you needed and why. Never work around a denial.
 

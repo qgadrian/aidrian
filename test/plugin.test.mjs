@@ -58,8 +58,9 @@ test('every tag the agents and skills ask for is in the knowledge skill tag list
   const used = new Set();
   for (const file of markdownFiles(PLUGIN)) {
     const text = readFileSync(file, 'utf8');
-    for (const line of text.match(/[Kk]nowledge tags: .*$/gm) ?? []) {
-      for (const [, tag] of line.matchAll(/`([a-z][a-z0-9_]*)`/g)) used.add(tag);
+    // A tag list may wrap: read on to the end of its paragraph.
+    for (const list of text.match(/[Kk]nowledge tags: .*(?:\n.+)*/g) ?? []) {
+      for (const [, tag] of list.matchAll(/`([a-z][a-z0-9_]*)`/g)) used.add(tag);
     }
     for (const [, tag] of text.matchAll(/`([a-z][a-z0-9_]*)` knowledge\b/g)) used.add(tag);
   }

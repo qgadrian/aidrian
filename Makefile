@@ -17,4 +17,4 @@ check:
 
 ## Install the Codex agents from this checkout into ~/.codex/agents. TARGET=dir installs elsewhere.
 codex-agents:
-	node plugins/aidrian/codex/install-agents.mjs $(if $(TARGET),--target $(TARGET))
+	node plugins/aidrian/codex/install-agents.mjs $(if $(TARGET),--target "$$TARGET")

@@ -100,6 +100,17 @@ test('.aidrian.local.json may hold models alone; the project passes them on as w
   assert.equal(findProject(path.join(ROOT, 'examples/consumer')).localModels, undefined);
 });
 
+test('.aidrian.local.json may hold names alone; the project passes them on as written, for config.mjs to check', (t) => {
+  const dir = tempDir(t);
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}');
+  const names = { human: 'the product owner', extra: 1 };
+  writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ names }));
+  const project = findProject(dir);
+  assert.deepEqual([project.errors, project.sources.length, project.localNames], [[], 1, names]);
+  assert.equal(findProject(path.join(ROOT, 'examples/consumer')).localNames, undefined);
+});
+
 // Each case expects one error; a source that is not a folder is left out, the others stay.
 const localCases = [
   ['invalid JSON', '{', /^\.aidrian\.local\.json: invalid JSON/, 0],

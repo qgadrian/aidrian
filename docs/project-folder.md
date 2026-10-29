@@ -12,7 +12,7 @@ Task worktrees go in `.worktrees/` at the repository root, which git ignores.
 
 ```text
 .aidrian.json                    names another folder as the project folder (optional, committed)
-.aidrian.local.json              adds knowledge sources and model choices on one machine (optional, git-ignored)
+.aidrian.local.json              adds knowledge sources, model choices, and names on one machine (optional, git-ignored)
 .worktrees/                      task worktrees, one folder per branch (git-ignored)
 .aidrian/
 ├── config.json                  the folder version and the project settings (committed)
@@ -74,7 +74,7 @@ It writes nothing at all when a symlink would take a write outside the project, 
 - `config.json`: the version first, then every key and value.
 - Every knowledge index, as [knowledge.md](knowledge.md#checks) describes.
 - `.aidrian.local.json`, when present: every source, as [Local knowledge sources](#local-knowledge-sources) describes,
-  and `models`, as [config.md](config.md#models) describes.
+  `models`, as [config.md](config.md#models) describes, and `names`, as [config.md](config.md#names) describes.
 - `.gitignore`: git ignores `.aidrian.local.json`, and the worktrees and state folders when they are inside the repository.
 
 On success it also prints the state folder:
@@ -149,7 +149,8 @@ without committing it. List the folders in `.aidrian.local.json` at the project 
 ```
 
 `aidrian init` adds the file to `.gitignore`, so it stays on one machine. In a git worktree, the plugin reads it from the main checkout.
-The same file can hold one developer's model and effort choices for the plugin's agents: [config.md](config.md#models).
+The same file can hold one developer's model and effort choices for the plugin's agents, [config.md](config.md#models),
+and the [names](config.md#names) agents use for that developer and for themselves.
 
 - A leading `~` is the home folder. Any other relative path starts at the folder that holds `.aidrian.local.json`.
 - Each source is a folder with the project folder's knowledge layout: `knowledge/<bucket-id>.json`, and optionally a `config.json`

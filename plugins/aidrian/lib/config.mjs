@@ -20,6 +20,7 @@ const SCHEMA = {
   skills: { descriptionChars: 'positive', listingBytes: 'positive' },
   session: { handoff: 'handoffMode', maxTokens: 'zeroOrMore', maxCalls: 'zeroOrMore', maxHours: 'zeroOrMore' },
   models: 'models',
+  names: { human: 'text', ai: 'textOrNull' },
 };
 
 // What `models` may set for one of this plugin's agents, per host; null takes any non-empty string.
@@ -43,6 +44,7 @@ const TYPES = {
 
 // `state.dir: null` is the per-project folder under `$XDG_STATE_HOME` (lib/project.mjs). Task worktrees sit beside the
 // repository's files, where editors and agents expect them; the guard is off until a project opts in.
+// `names.ai: null` is the host's own name, which only the running hook knows.
 export const DEFAULTS = deepFreeze({
   defaultBranch: 'main',
   state: { dir: null },
@@ -60,13 +62,14 @@ export const DEFAULTS = deepFreeze({
   skills: { descriptionChars: 160, listingBytes: 9216 },
   session: { handoff: 'ask', maxTokens: 150000, maxCalls: 250, maxHours: 4 },
   models: { claude: { agents: {} }, codex: { agents: {} } },
+  names: { human: 'the Human', ai: null },
 });
 
 // Returns { config, errors, current }. `config` is frozen and always complete: the file's values over DEFAULTS, one
-// group at a time, with the default kept for any value that is missing or invalid. The local file's `models`
-// (`project.localModels`) then goes over the file's. A hook can use it even when `errors` is not empty. `current` is false
-// when the file is missing, unreadable, or of another version: then nothing in the folder can be trusted to have the shape
-// this plugin reads.
+// group at a time, with the default kept for any value that is missing or invalid. The local file's `models` and
+// `names` (`project.localModels`, `project.localNames`) then go over the file's. A hook can use it even when `errors` is
+// not empty. `current` is false when the file is missing, unreadable, or of another version: then nothing in the folder
+// can be trusted to have the shape this plugin reads.
 export function loadConfig(project) {
   const errors = [];
   const file = project.paths.config;
@@ -77,6 +80,9 @@ export function loadConfig(project) {
   const { version, ...values } = raw;
   const config = merge(SCHEMA, DEFAULTS, values, '', file, errors);
   if (project.localModels !== undefined) config.models = checkModels(project.localModels, project.paths.local, errors, config.models);
+  if (project.localNames !== undefined) {
+    config.names = merge({ names: SCHEMA.names }, config, { names: project.localNames }, '', project.paths.local, errors).names;
+  }
   return { config: deepFreeze(config), errors, current: true };
 }
 

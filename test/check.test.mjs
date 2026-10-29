@@ -82,6 +82,15 @@ test('check follows worktrees.dir: a folder inside the project needs a line, one
   assert.equal(run(['check'], dir).status, 0);
 });
 
+test('check names a bad name in config.json and in .aidrian.local.json', (t) => {
+  const dir = exampleRepo(t);
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, names: { human: '' } }));
+  writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ names: { robot: 'the agent' } }));
+  const { status, stdout, stderr } = run(['check'], dir);
+  assert.deepEqual([status, stdout], [1, '']);
+  assert.equal(stderr, '.aidrian/config.json: "names.human" must be a non-empty string\n.aidrian.local.json: unknown key "names.robot"\n');
+});
+
 test('check fails on a version this plugin does not read, and reads no index then', (t) => {
   const dir = exampleRepo(t);
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 2 }));

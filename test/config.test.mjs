@@ -91,6 +91,10 @@ const errorCases = [
     { version: 1, models: { claude: { agents: { explorer: { model: 'opus', temperature: 1 } } } } },
     /: unknown key "models\.claude\.agents\.explorer\.temperature"$/,
   ],
+  ['names that is not an object', { version: 1, names: 'the agent' }, /"names" must be an object$/],
+  ['an empty human name', { version: 1, names: { human: ' ' } }, /"names\.human" must be a non-empty string$/],
+  ['an AI name that is not text', { version: 1, names: { ai: 3 } }, /"names\.ai" must be a non-empty string or null$/],
+  ['an unknown key in names', { version: 1, names: { user: 'x' } }, /: unknown key "names\.user"$/],
 ];
 
 for (const [name, value, expected] of errorCases) {
@@ -142,6 +146,21 @@ test('models: .aidrian.local.json wins over config.json one field at a time, and
     codex: { agents: { 'planning-agent': { model: 'gpt-5.5', effort: 'medium' } } },
   });
   assert.throws(() => { config.models.claude.agents.explorer.model = 'opus'; }, TypeError);
+});
+
+test('names: "the Human" and the host\'s name by default; .aidrian.local.json wins over config.json one name at a time', (t) => {
+  assert.deepEqual(DEFAULTS.names, { human: 'the Human', ai: null });
+  const team = project(t, { version: 1, names: { human: 'the team lead', ai: 'the agent' } });
+  assert.deepEqual(loadConfig(team), { config: { ...DEFAULTS, names: { human: 'the team lead', ai: 'the agent' } }, errors: [], current: true });
+  const local = path.join(team.root, '.aidrian.local.json');
+  writeFileSync(local, JSON.stringify({ names: { human: 'the product owner', ai: ' ' } }));
+  const { config, errors } = loadConfig(findProject(team.root));
+  assert.deepEqual(errors, ['.aidrian.local.json: "names.ai" must be a non-empty string or null']);
+  assert.deepEqual(config.names, { human: 'the product owner', ai: 'the agent' });
+  writeFileSync(local, JSON.stringify({ names: ['the product owner'] }));
+  assert.deepEqual(loadConfig(findProject(team.root)).errors, ['.aidrian.local.json: "names" must be an object']);
+  writeFileSync(local, JSON.stringify({ names: { ai: null } }));
+  assert.deepEqual(loadConfig(findProject(team.root)).config.names, { human: 'the team lead', ai: null });
 });
 
 test('worktrees.dir defaults to .worktrees and bootstrap to null, and a string replaces each', (t) => {

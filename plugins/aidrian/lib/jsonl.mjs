@@ -1,12 +1,29 @@
 // JSON Lines files for project state, such as the lesson inbox and the dispatch log: one JSON object per line.
 
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 // Appends one row. A single write in append mode: rows from concurrent processes never interleave.
+// A write cut short leaves the file without its last newline; the next row then starts on a line of its own, so the
+// damage stays on the cut line and the new row still reads back. Two appenders that both see the cut add a blank line.
 export function appendRow(file, row) {
   mkdirSync(path.dirname(file), { recursive: true });
-  appendFileSync(file, `${JSON.stringify(row)}\n`);
+  appendFileSync(file, `${endsCut(file) ? '\n' : ''}${JSON.stringify(row)}\n`);
+}
+
+function endsCut(file) {
+  let fd;
+  try {
+    const { size } = statSync(file);
+    if (size === 0) return false;
+    fd = openSync(file, 'r');
+    const last = Buffer.alloc(1);
+    return readSync(fd, last, 0, 1, size - 1) === 1 && last[0] !== 0x0a;
+  } catch {
+    return false;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
 }
 
 // Returns { rows, skipped }: every line that holds a JSON object, and how many lines did not. A missing file has none.

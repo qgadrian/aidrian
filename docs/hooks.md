@@ -17,9 +17,14 @@ A blocking hook exits 2 and tells the agent why on stderr.
 | --- | --- | --- |
 | Git hook bypass | `--no-verify` on commit, push, or merge; `-n` on commit; `-c core.hooksPath=…`; `HUSKY=0` | none |
 | Git amend | `git commit --amend` | `AIDRIAN_ALLOW_GIT_AMEND=1` |
+| Kill by name | `pkill`, `killall`, `pgrep --signal`, `kill` fed by `pgrep` or `ps`, and `kill -- -1`; `kill <pid>` stays allowed | `AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME=1` |
+| Command-line listing | `pgrep -fl`, `pgrep -a`, and `ps` without a format free of `args`, `command`, and `cmd` | `AIDRIAN_ALLOW_PROCESS_ARGS_LISTING=1` |
+| Counting grep in `&&` | `grep -c` whose exit status an `&&` chain reads, such as `grep -c x log && npm test` | `AIDRIAN_ALLOW_GREP_EXIT_CHAIN=1` |
 
 A rule reads the command the way the shell splits it.
 It sees through `sudo`, `env`, `timeout`, `command`, `rtk`, and similar wrappers, and ignores text in quotes, comments, and heredocs.
+The process rules also read `sh -c`, `eval`, `xargs`, and the command substitutions that run.
+A command reached only through a script or an interpreter such as `python -c` is out of their sight.
 
 An override is for a human: set it in your own shell before you start the session.
 Agents must never set one.

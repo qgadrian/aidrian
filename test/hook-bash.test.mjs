@@ -26,6 +26,13 @@ test('rules run in order and the first objection wins', () => {
   assert.equal(bashHook(bash('git commit --amend --no-verify'), { AIDRIAN_ALLOW_GIT_AMEND: '1' }).status, 2);
 });
 
+test('every rule is wired: process kill and listing, and the grep chain', () => {
+  assert.match(bashHook(bash('pkill -f eslint')).stderr, /^Blocked: stopping processes by name/);
+  assert.match(bashHook(bash('ps aux')).stderr, /^Blocked: this process listing prints full command lines/);
+  assert.match(bashHook(bash('grep -c x f && npm test')).stderr, /^Blocked: a counting grep is chained with `&&`/);
+  assert.equal(bashHook(bash('pkill -f eslint'), { AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME: '1' }).status, 0);
+});
+
 test('an allowed command, another tool, and any unreadable stdin exit 0 silently', () => {
   for (const input of [
     bash('git commit -m "fix: x"'),

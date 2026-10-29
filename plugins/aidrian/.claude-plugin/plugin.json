@@ -1,0 +1,9 @@
+{
+  "name": "aidrian",
+  "version": "0.1.0",
+  "description": "Planning, issue-writing, exploration, integration, docs, and design-import agents and skills. Each project supplies its rules as knowledge buckets.",
+  "author": {
+    "name": "the aidrian authors"
+  },
+  "repository": "https://github.com/qgadrian/aidrian-harness"
+}

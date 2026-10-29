@@ -1,0 +1,15 @@
+{
+  "name": "aidrian-harness",
+  "owner": {
+    "name": "the aidrian authors"
+  },
+  "description": "Shared AI harness: generic agents and skills that work from each project's own knowledge buckets.",
+  "plugins": [
+    {
+      "name": "aidrian",
+      "source": "./plugins/aidrian",
+      "description": "Planning, issue-writing, exploration, integration, docs, and design-import agents and skills. Each project supplies its rules as knowledge buckets.",
+      "category": "development"
+    }
+  ]
+}

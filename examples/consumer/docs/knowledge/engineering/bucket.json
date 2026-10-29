@@ -1,0 +1,12 @@
+{
+  "id": "engineering",
+  "description": "How Acme Notes is built, tested, tracked, and shipped.",
+  "always": ["working-agreement.md"],
+  "tags": {
+    "code_style": ["code-style.md"],
+    "testing": ["testing.md"],
+    "issue_tracker": ["issue-tracker.md"],
+    "orchestration": ["branches-and-reviews.md"],
+    "docs": ["docs-ownership.md"]
+  }
+}

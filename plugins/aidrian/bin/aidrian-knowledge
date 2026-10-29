@@ -1,0 +1,3 @@
+#!/bin/sh
+# On PATH in Claude Code sessions while the plugin is enabled. Elsewhere, run it by its path.
+exec node "$(dirname -- "$0")/../lib/knowledge-cli.mjs" "$@"

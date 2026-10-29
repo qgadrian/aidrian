@@ -1,0 +1,20 @@
+{
+  "name": "aidrian-harness",
+  "interface": {
+    "displayName": "Aidrian harness"
+  },
+  "plugins": [
+    {
+      "name": "aidrian",
+      "source": {
+        "source": "local",
+        "path": "./plugins/aidrian"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

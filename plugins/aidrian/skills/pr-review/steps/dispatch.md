@@ -39,7 +39,7 @@ Add to it when it applies:
 
 - An agent without a shell, such as `product-manager`, cannot run `git`: paste the diff of its files into the brief instead.
 - `product-manager` under the critical-flow gate: ask for `critical_flow`, one entry per flow, each with its `sign_off`.
-- A re-review: list the agent's findings whose status is `open` or `fixed` (id, file and line, summary), and ask for each one's state:
+- A re-review: list the agent's `fix_now` findings whose status is `open` or `fixed` (id, file and line, summary), and ask each one's state:
   "resolved", citing the change, or "open".
 
 ## The regression check

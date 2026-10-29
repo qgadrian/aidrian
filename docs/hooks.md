@@ -11,6 +11,7 @@ A blocking hook exits 2 and tells the agent why on stderr.
 | Session and subagent start | One line naming the `always` knowledge docs and the commands that find the rest | no |
 | Before a Bash command | The Bash rules below, in this order, in one process | yes |
 | Before Edit, Write, NotebookEdit, or Codex's `apply_patch` | The main-checkout rule | yes |
+| After Edit or Write of a Markdown file | The line-length check: lines the write made longer than config.json `docs.wrapLimit` | feedback |
 
 ## Bash rules
 
@@ -35,6 +36,13 @@ The main-checkout rule blocks a write to a file git tracks, or would track, in t
 It allows a git-ignored path, a path in `mainCheckout.allowWrites`, and anything in a worktree or outside the repository.
 A project that does not use worktrees turns it off with `"mainCheckout": { "guard": false }`; [config.md](config.md) lists both keys.
 When git cannot answer, an Edit or Write is blocked to be safe, and a Bash command runs.
+
+## Markdown line length
+
+After an Edit or Write of a `.md`, `.markdown`, or `.mdx` file in a project, the hook reads the whole file and names the lines
+the write touched that are longer than `docs.wrapLimit`. The write already happened, so the agent fixes them with a follow-up edit.
+Frontmatter, fenced and indented code, table rows, and a line whose overflow is one unbreakable token such as a URL are never reported.
+`"docs": { "wrapLimit": 0 }` turns it off. Codex has no Edit or Write tool, so it never runs there.
 
 ## Overrides
 

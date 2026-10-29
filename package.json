@@ -8,8 +8,9 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "check": "node scripts/build.mjs --check && node plugins/aidrian/lib/cli.mjs check --project examples/consumer && node --test",
-    "test": "node --test"
+    "check": "node scripts/build.mjs --check && node plugins/aidrian/lib/cli.mjs check --project examples/consumer && npm run lint && node --test",
+    "test": "node --test",
+    "lint": "node plugins/aidrian/lib/cli.mjs lint skills plugins/aidrian/skills && node plugins/aidrian/lib/cli.mjs lint agents plugins/aidrian/agents && node plugins/aidrian/lib/cli.mjs lint paths && node plugins/aidrian/lib/cli.mjs lint --project examples/consumer"
   },
   "devDependencies": {
     "smol-toml": "1.9.1",

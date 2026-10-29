@@ -82,6 +82,16 @@ state: /home/you/.local/state/aidrian/projects/notes-1a2b3c4d
 In a Claude Code session, `aidrian` is on the PATH while the plugin is enabled.
 Elsewhere, run it by its path, such as `path/to/aidrian-harness/plugins/aidrian/bin/aidrian check`. It needs Node 22 or later.
 
+`aidrian lint` keeps the project's AI instructions cheap and portable, with the limits in config.json. Run it beside `aidrian check`:
+
+- `skills`: each `.claude/skills/<name>/SKILL.md` has a one-line YAML `description` within `skills.descriptionChars`,
+  and all skill names and descriptions together fit in `skills.listingBytes`. Both hosts list them in every session.
+- `agents`: each `.claude/agents/*.md` has `name` equal to its file name, such a `description`, and a known `model` and `effort`.
+- `paths`: no tracked file holds a personal home folder such as `/Users/<name>/`; `--staged` checks the staged files only.
+- `budget`: the `always` knowledge docs, read at every session start, fit in `docs.alwaysBudgetBytes`. It prints the bytes per bucket.
+
+`aidrian lint skills <folder>` and `aidrian lint agents <folder>` check other folders.
+
 ## Local state
 
 The plugin writes plans, session handoff briefs, the lesson inbox, and the dispatch log on each machine.
@@ -134,7 +144,7 @@ A doc from a local source prints with its absolute path, and `route`, `search`, 
 $ aidrian-knowledge route testing
 docs/knowledge/engineering/working-agreement.md
 docs/knowledge/engineering/testing.md
-/home/ana/kb/personal/notes/testing-habits.md	~/kb/personal
+/home/you/kb/personal/notes/testing-habits.md	~/kb/personal
 ```
 
 ## Migrating

@@ -46,9 +46,9 @@ In a group such as `pr`, set only the keys you change; the others keep their def
 | `pr.requiredChecks` | Parts of check names that must be present and pass before a pull request is ready. |
 | `pr.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
 | `docs.wrapLimit` | The longest line, in characters, allowed in a Markdown file an agent writes; `0` turns the check off. |
-| `docs.alwaysBudgetBytes` | The most bytes all `always` knowledge docs may add up to. |
-| `skills.descriptionChars` | The longest skill or agent description, in characters. |
-| `skills.listingBytes` | The most bytes all skill descriptions may add up to. |
+| `docs.alwaysBudgetBytes` | The most bytes all `always` knowledge docs may add up to (`aidrian lint budget`). |
+| `skills.descriptionChars` | The longest skill or agent description, in characters (`aidrian lint skills` and `agents`). |
+| `skills.listingBytes` | The most bytes all skill names and descriptions may add up to (`aidrian lint skills`). |
 
 A path in `state.dir` or `worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.

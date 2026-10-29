@@ -1,0 +1,142 @@
+import assert from 'node:assert/strict';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+
+import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
+import { decodeScalar, frontmatter, lintAgents, lintPaths, lintSkills } from '../plugins/aidrian/lib/lint.mjs';
+
+const ROOT = path.resolve(import.meta.dirname, '..');
+const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
+const LIMITS = DEFAULTS.skills;
+// Built at run time, so this file holds no personal path itself.
+const HOME = ['', 'Users', 'ana', ''].join('/');
+
+function tempDir(t) {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-lint-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+function skills(t, entries) {
+  const dir = tempDir(t);
+  for (const [name, head] of Object.entries(entries)) {
+    mkdirSync(path.join(dir, name));
+    writeFileSync(path.join(dir, name, 'SKILL.md'), `---\nname: ${name}\n${head}\n---\n\n# ${name}\n`);
+  }
+  return dir;
+}
+
+test('the plugin`s own skills and agents pass', () => {
+  assert.deepEqual(lintSkills([path.join(ROOT, 'plugins/aidrian/skills')], LIMITS).problems, []);
+  assert.deepEqual(lintAgents([path.join(ROOT, 'plugins/aidrian/agents')], LIMITS).problems, []);
+});
+
+test('a skill description over the limit fails naming the file and both numbers', (t) => {
+  const dir = skills(t, { ok: `description: ${'a'.repeat(160)}`, long: `description: ${'a'.repeat(161)}` });
+  assert.deepEqual(lintSkills([dir], LIMITS).problems, [`${path.join(dir, 'long/SKILL.md')}: description is 161 characters; the limit is 160`]);
+});
+
+test('missing, empty, folded, and invalid YAML descriptions fail; quoted ones are measured after decoding', (t) => {
+  const dir = skills(t, {
+    none: 'user-invocable: true',
+    empty: 'description:',
+    folded: 'description: >\n  Folded text',
+    continued: 'description: Starts here\n  and continues here',
+    colon: 'description: Use when: anything',
+    quoted: 'description: "Use when: anything"',
+    single: "description: 'It''s fine'",
+  });
+  const problems = lintSkills([dir], LIMITS).problems.map((problem) => problem.replace(`${dir}/`, ''));
+  assert.deepEqual(problems, [
+    'colon/SKILL.md: description is not a one-line YAML string: a plain string cannot hold ": " or end with ":"; quote it or use " — "',
+    'continued/SKILL.md: description continues on another line, which hides its length; keep it on one line',
+    'empty/SKILL.md: description is empty',
+    'folded/SKILL.md: description is not a one-line YAML string: a plain string cannot start with ">"; quote it',
+    'none/SKILL.md: no description',
+  ]);
+});
+
+test('decodeScalar rejects what a strict YAML loader reads as structure or as a non-string', () => {
+  for (const raw of ['- a list', '? key', '[a]', '{a}', '#x', '&anchor', '*alias', '!tag', '|', '>', '%x', '@x', '`x']) {
+    assert.ok(decodeScalar(raw).problem, raw);
+  }
+  for (const raw of ['null', '~', 'true', 'No', 'off', '42', '-1.5e3', '.inf', '0x1F', '2026-10-29', 'a #comment', 'ends:']) {
+    assert.ok(decodeScalar(raw).problem, raw);
+  }
+  assert.deepEqual(decodeScalar('"a: b \\" c"'), { value: 'a: b " c' });
+  assert.ok(decodeScalar("'it's'").problem, 'a lone quote inside single quotes');
+  assert.deepEqual(decodeScalar('Plain text, with commas — and dashes'), { value: 'Plain text, with commas — and dashes' });
+});
+
+test('the listing limit counts every skill`s name and description, and a skill nobody can run fails', (t) => {
+  const dir = skills(t, {
+    a: 'description: Twenty characters ok.',
+    b: 'description: Another description.\ndisable-model-invocation: true\nuser-invocable: false',
+  });
+  const { problems, summary } = lintSkills([dir], { ...LIMITS, listingBytes: 40 });
+  assert.equal(summary, '2 skills, 43 of 40 listing bytes');
+  assert.deepEqual(problems.map((problem) => problem.replace(`${dir}/`, '')), [
+    'b/SKILL.md: disable-model-invocation true and user-invocable false leave nobody able to run it',
+    'the 2 skills list 43 bytes of names and descriptions; the limit is skills.listingBytes, 40',
+  ]);
+});
+
+test('agents: name is the file name, and the model and effort are known', (t) => {
+  const dir = tempDir(t);
+  const agent = (file, head) => writeFileSync(path.join(dir, file), `---\n${head}\n---\nBody.\n`);
+  agent('good.md', 'name: good\ndescription: Does good work.\nmodel: claude-opus-5-5\neffort: high');
+  agent('renamed.md', 'name: other\ndescription: Named wrong.');
+  agent('model.md', 'name: model\ndescription: Odd model.\nmodel: gpt\neffort: extreme');
+  writeFileSync(path.join(dir, 'plain.md'), 'No frontmatter.\n');
+  const problems = lintAgents([dir], LIMITS).problems.map((problem) => problem.replace(`${dir}/`, ''));
+  assert.deepEqual(problems, [
+    'model.md: model "gpt" is not one of haiku, sonnet, opus, fable, inherit, or a claude-* model id',
+    'model.md: effort "extreme" is not one of low, medium, high, xhigh, max',
+    'plain.md: no YAML frontmatter',
+    'renamed.md: name must be "renamed", the file name',
+  ]);
+});
+
+test('frontmatter reads top-level keys only', () => {
+  assert.deepEqual(frontmatter('---\nname: x\ntools:\n  - Read\ndescription: d\n---\n'), { descriptionContinues: false, name: 'x', tools: '', description: 'd' });
+  assert.equal(frontmatter('# no frontmatter'), null);
+});
+
+test('paths: a personal home folder in a tracked or staged file fails; CI and placeholder homes pass', (t) => {
+  const dir = tempDir(t);
+  const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' });
+  git('init', '-q');
+  writeFileSync(path.join(dir, 'a.md'), `one\nsee ${HOME}project/notes.md\n`);
+  writeFileSync(path.join(dir, 'ok.md'), '/home/runner/work/x\n/home/you/kb\n/Users/example/x\n/home/\n');
+  writeFileSync(path.join(dir, 'untracked.md'), `${HOME}x\n`);
+  writeFileSync(path.join(dir, 'logo.png'), `${HOME}x\n`);
+  git('add', 'a.md', 'ok.md', 'logo.png');
+  assert.deepEqual(lintPaths(dir).problems, [`a.md:2: a personal home folder: see ${HOME}project/notes.md`]);
+  assert.equal(lintPaths(dir).summary, 'no personal paths in 2 tracked files');
+  git('-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init');
+  assert.deepEqual(lintPaths(dir, true).problems, [], 'nothing staged');
+  git('add', 'untracked.md');
+  assert.deepEqual(lintPaths(dir, true).problems, [`untracked.md:1: a personal home folder: ${HOME}x`]);
+});
+
+test('aidrian lint runs every lint on a project and prints the always-doc budget per bucket', (t) => {
+  const run = (args, cwd = ROOT) => spawnSync(CLI, ['lint', ...args], { cwd, encoding: 'utf8' });
+  const all = run(['--project', 'examples/consumer']);
+  assert.equal(all.status, 0, all.stderr);
+  assert.match(all.stdout, /^skills: 0 skills, 0 of 9216 listing bytes\nagents: 0 agents\npaths: no personal paths in \d+ tracked files\n/);
+  assert.match(all.stdout, /\nbudget: \d+ of 40000 always-doc bytes \(engineering \d+, product 0\)\n$/);
+
+  const dir = tempDir(t);
+  execFileSync('git', ['init', '-q', dir]);
+  mkdirSync(path.join(dir, '.aidrian/knowledge'), { recursive: true });
+  mkdirSync(path.join(dir, 'kb'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, docs: { alwaysBudgetBytes: 10 } }));
+  writeFileSync(path.join(dir, 'kb/rules.md'), '# Rules\n\nAlways read this.\n');
+  writeFileSync(path.join(dir, '.aidrian/knowledge/kb.json'), JSON.stringify({ dir: 'kb', description: 'Rules.', always: ['rules.md'], docs: { 'rules.md': { summary: 'The rules.' } } }));
+  const over = run(['budget'], dir);
+  assert.deepEqual([over.status, over.stderr], [1, 'budget: 27 of 10 always-doc bytes (kb 27); the limit is docs.alwaysBudgetBytes\n']);
+  assert.deepEqual([run(['nope']).status, run(['nope']).stderr], [1, 'unknown lint: nope; use one of skills, agents, paths, budget\n']);
+});

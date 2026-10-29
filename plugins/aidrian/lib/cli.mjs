@@ -7,6 +7,7 @@ const COMMANDS = {
   init: './check.mjs',
   state: './check.mjs',
   'commit-msg': './commit-message.mjs',
+  lint: './lint.mjs',
 };
 
 const [command, ...args] = process.argv.slice(2);

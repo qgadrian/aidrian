@@ -17,6 +17,7 @@ export function allow() {
   process.exit(0);
 }
 
+// Exit 2 with `reason` on stderr: a PreToolUse hook blocks the action; a PostToolUse hook hands the agent feedback.
 // writeSync: a buffered stderr write can be lost when the process exits right after it.
 export function deny(reason) {
   writeSync(2, `${reason}\n`);

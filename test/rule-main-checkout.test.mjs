@@ -54,6 +54,21 @@ test('ignored paths, worktrees inside or beside the repository, and paths outsid
   assert.equal(edit(path.join(tmpdir(), 'scratch.txt'), repo), null);
 });
 
+test('in a repository whose git folder is separate, the main checkout is still guarded', (t) => {
+  const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-guard-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const repo = path.join(base, 'repo');
+  execFileSync('git', ['init', '-q', '-b', 'main', '--separate-git-dir', path.join(base, 'meta.git'), repo]);
+  mkdirSync(path.join(repo, '.aidrian'));
+  writeFileSync(path.join(repo, '.aidrian/config.json'), JSON.stringify({ version: 1, mainCheckout: { guard: true } }));
+  writeFileSync(path.join(repo, 'app.js'), 'export {};\n');
+  execFileSync('git', ['-C', repo, 'add', '.']);
+  const identity = ['-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false'];
+  execFileSync('git', ['-C', repo, ...identity, 'commit', '-q', '-m', 'init']);
+  assert.match(edit(path.join(repo, 'app.js'), repo), /^Blocked: this writes 'app\.js', a tracked file in the main checkout \(/);
+  assert.match(check('echo x > app.js', { cwd: repo, env: ENV }), /'app\.js'/);
+});
+
 test('allowWrites globs, the guard off by default or by config, the override, and no project folder allow the write', (t) => {
   const globs = fixture(t, { version: 1, mainCheckout: { guard: true, allowWrites: ['notes/**', 'docs/*.md', '**/*.snap'] } }).repo;
   assert.equal(edit(path.join(globs, 'notes/a/b.md'), globs), null);
@@ -136,12 +151,27 @@ test('bashTargets finds the certain write targets, resolved against cwd, and not
   assert.deepEqual(at('cd /tmp && x=$(rm a.ts)'), [], 'a relative target after cd, in a substitution too');
 });
 
+test('a cd drops only the relative targets after it, and a cd in a substitution moves only that substitution', () => {
+  const at = (command) => bashTargets(command, '/repo').map((file) => path.relative('/repo', file));
+  assert.deepEqual(at('echo hi > a.ts; cd /tmp'), ['a.ts'], 'a write before the cd');
+  assert.deepEqual(at('rm a.ts && cd /tmp && rm b.ts'), ['a.ts']);
+  assert.deepEqual(at('echo hi > a.ts; x=$(cd /tmp)'), ['a.ts']);
+  assert.deepEqual(at('x=$(cd /tmp); echo hi > a.ts'), ['a.ts'], 'the outer shell never moved');
+  assert.deepEqual(at('x=$(rm a.ts; cd /tmp; rm b.ts)'), ['a.ts'], 'inside a substitution, in its own order');
+  assert.deepEqual(at('cd $(rm a.ts)'), ['a.ts'], 'a substitution in the cd itself runs before it');
+  assert.deepEqual(at('cat <<EOF; cd /tmp\n$(rm a.ts)\nEOF'), ['a.ts'], 'a heredoc expands before the cd after it');
+  assert.deepEqual(at('cd /tmp; git -C /repo rm a.ts; env -C /repo/src rm b.ts'), ['a.ts', 'src/b.ts'], 'an absolute folder is certain');
+  assert.deepEqual(at('cd /tmp; git -C src rm a.ts; env -C src rm b.ts'), [], 'a relative one is not');
+});
+
 test('Bash commands are judged like tool writes', (t) => {
   const { repo } = fixture(t);
   const bash = (command, cwd = repo) => check(command, { cwd, env: ENV });
   assert.match(bash('echo x > src/app.js'), /^Blocked: this command writes 'src\/app\.js', a tracked file/);
   assert.match(bash("cat > src/new.js <<'EOF'\nexport {};\nEOF"), /'src\/new\.js'/);
   assert.match(bash('git status && rm src/app.js'), /'src\/app\.js'/);
+  assert.match(bash('echo x > src/app.js; cd /tmp'), /'src\/app\.js'/, 'a write before a cd');
+  assert.match(bash('echo x > src/app.js; x=$(cd /tmp)'), /'src\/app\.js'/, 'a cd in a substitution moves only it');
   assert.match(bash('mv src/app.js build/app.js'), /'src\/app\.js'/, 'moving a tracked file out removes it from the main checkout');
   assert.match(bash('mv build/a.js src/app.js build/'), /'src\/app\.js'/, 'every source of a multi-source move');
   assert.match(bash('git mv src/app.js src/main.js'), /'src\/app\.js'/);

@@ -15,7 +15,7 @@ import path from 'node:path';
 import { loadConfig } from '../config.mjs';
 import { checkoutRoots, isIgnored } from '../git.mjs';
 import { findProject, worktreesDir } from '../project.mjs';
-import { commandLines, isLongOption, lexCommand, readGit, readInvocation } from '../shell-lex.mjs';
+import { isLongOption, lexSteps, readGit, readInvocation, SUBSTITUTION_DEPTH_LIMIT } from '../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_MAIN_WRITE';
 
@@ -68,26 +68,39 @@ export function checkTool(input, { env = process.env } = {}) {
   return decide(targets.filter((target) => typeof target === 'string' && target !== ''), cwd, true, 'this writes');
 }
 
-// Every path a Bash command writes with certainty, resolved against `cwd`. A relative target after a `cd` is dropped.
+// Every path a Bash command writes with certainty, resolved against `cwd`. Commands are read in the order they run: a
+// relative target after a `cd` is dropped, and one before it stays. A command substitution runs in a shell of its own,
+// which starts where its command runs; a `cd` inside it moves nothing outside it.
 export function bashTargets(command, cwd) {
   const targets = [];
-  let moved = false;
-  for (const segment of commandLines(command).flatMap((line) => lexCommand(line))) {
-    segment.forEach((token, i) => {
-      const next = segment[i + 1];
-      if ((token.operator === '>' || token.operator === '>>') && next && !next.fdDup && !next.operator) targets.push({ token: next, base: cwd });
-    });
-    const { program, args, chdir } = readInvocation(segment);
-    if (CHANGES_DIRECTORY.has(program)) moved = true;
-    // A wrapper's directory change moves the command's own paths, never the shell's redirections above.
-    const base = chdir === null ? cwd : chdir.dynamic ? null : path.resolve(cwd, chdir.text);
-    if (WRITERS.has(program)) for (const token of written(program, args)) targets.push({ token, base });
-    else if (program === 'git') targets.push(...gitWritten(segment, base));
-  }
+  // `base` is the shell's folder, or null once a `cd` may have moved it.
+  const visit = (line, base, depth) => {
+    for (const { segment, substitutions } of lexSteps(line)) {
+      if (depth < SUBSTITUTION_DEPTH_LIMIT) for (const body of substitutions) visit(body, base, depth + 1);
+      segment.forEach((token, i) => {
+        const next = segment[i + 1];
+        if ((token.operator === '>' || token.operator === '>>') && next && !next.fdDup && !next.operator) targets.push({ token: next, base });
+      });
+      const { program, args, chdir } = readInvocation(segment);
+      // A wrapper's directory change moves the command's own paths, never the shell's redirections above.
+      const own = chdir === null ? base : folderAfter(base, chdir);
+      if (WRITERS.has(program)) for (const token of written(program, args)) targets.push({ token, base: own });
+      else if (program === 'git') targets.push(...gitWritten(segment, own));
+      if (CHANGES_DIRECTORY.has(program)) base = null;
+    }
+  };
+  visit(command, cwd, 0);
   return targets
     .filter(({ token }) => !token.dynamic && token.text !== '')
-    .filter(({ token, base }) => path.isAbsolute(token.text) || (base !== null && !(moved && base === cwd)))
+    .filter(({ token, base }) => path.isAbsolute(token.text) || base !== null)
     .map(({ token, base }) => (path.isAbsolute(token.text) ? token.text : path.resolve(base, token.text)));
+}
+
+// The folder a directory change to `to` reaches from `base`, or null when it is not certain: an absolute folder is.
+function folderAfter(base, to) {
+  if (to.dynamic) return null;
+  if (path.isAbsolute(to.text)) return to.text;
+  return base === null ? null : path.resolve(base, to.text);
 }
 
 // git mv and git rm: every path they name, resolved from `git -C`, which moves them as a wrapper's directory change does.
@@ -97,7 +110,7 @@ function gitWritten(segment, base) {
   let dir = base;
   call.globals.forEach((token, i) => {
     const value = call.globals[i + 1];
-    if (token.text === '-C' && value) dir = dir === null || value.dynamic ? null : path.resolve(dir, value.text);
+    if (token.text === '-C' && value) dir = folderAfter(dir, value);
   });
   return written('git', call.rest, GIT_WRITERS.get(call.subcommand)).map((token) => ({ token, base: dir }));
 }

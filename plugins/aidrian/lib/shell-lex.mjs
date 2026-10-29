@@ -9,7 +9,7 @@ import path from 'node:path';
 
 const CONTINUATION = '\n';
 // Command substitutions nest no deeper than this in what commandLines returns; a deeper body goes unread.
-const SUBSTITUTION_DEPTH_LIMIT = 6;
+export const SUBSTITUTION_DEPTH_LIMIT = 6;
 
 const indexOrLimit = (index, limit) => (index === -1 || index >= limit ? limit : index);
 
@@ -97,10 +97,12 @@ function collectSubstitutions(command, from, to, limit, into) {
 // `|`, `|&`, `;`, `&`, or a newline), null for the last one. `substitutions` holds the body of every command
 // substitution that would run: unquoted, in double quotes, `<(…)` and `>(…)`, and in a heredoc whose delimiter is
 // unquoted. Single-quoted text, comments, and quoted heredoc bodies hold none. A heredoc body is data, never commands.
+// `ends[i]` counts the substitutions found up to the end of `segments[i]`: those of segment i run as part of it.
 function lexSegments(command) {
   const segments = [];
   const separators = [];
   const substitutions = [];
+  const ends = [];
   let tokens = [];
   let current = null;
   const pendingHeredocs = [];
@@ -118,6 +120,7 @@ function lexSegments(command) {
     if (tokens.length > 0) {
       segments.push(tokens);
       separators.push(separator);
+      ends.push(substitutions.length);
     } else if (separator !== null && separators.length > 0 && separator !== CONTINUATION) {
       // An empty run between two operators: the later one replaces the earlier. A newline never does: after `&&`,
       // `||`, or `|` it continues the line, and after `&` or `;` the segment already ended the way it ended.
@@ -282,7 +285,7 @@ function lexSegments(command) {
   }
 
   endSegment();
-  return { segments, separators, substitutions };
+  return { segments, separators, substitutions, ends };
 }
 
 // The segments and the operator that ended each one.
@@ -300,6 +303,16 @@ export function lexSubstitutions(command) {
 // The segments alone.
 export function lexCommand(command) {
   return lexSegments(command).segments;
+}
+
+// The segments in the order they run, as { segment, substitutions }: the body of every command substitution that runs
+// as part of the segment, before it. Substitutions with no segment after them, as in a heredoc fed to no command, come
+// last with an empty segment.
+export function lexSteps(command) {
+  const { segments, substitutions, ends } = lexSegments(command);
+  const steps = segments.map((segment, i) => ({ segment, substitutions: substitutions.slice(ends[i - 1] ?? 0, ends[i]) }));
+  const rest = substitutions.slice(ends.at(-1) ?? 0);
+  return rest.length ? [...steps, { segment: [], substitutions: rest }] : steps;
 }
 
 // The command line, then the body of every command substitution in it that would run, nested ones included: each a

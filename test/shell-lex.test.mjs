@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { commandLines, lexCommand, lexPipeline, lexSubstitutions, readGit, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
+import { commandLines, lexCommand, lexPipeline, lexSteps, lexSubstitutions, readGit, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
 
 const texts = (line) => lexCommand(line).map((segment) => segment.map((token) => token.text));
 const programOf = (line) => readInvocation(lexCommand(line)[0]).program;
@@ -94,6 +94,14 @@ test('commandLines lists the line, then every substitution that runs, nested one
   const deep = (depth) => (depth === 0 ? 'x' : `$(${deep(depth - 1)})`);
   assert.equal(commandLines(deep(6)).at(-1), 'x', 'six levels are read');
   assert.equal(commandLines(deep(7)).at(-1), '$(x)', 'and no more');
+});
+
+test('lexSteps gives each segment, in order, the substitutions that run as part of it', () => {
+  const steps = (line) => lexSteps(line).map(({ segment, substitutions }) => [segment.map((token) => token.text).join(' '), substitutions]);
+  assert.deepEqual(steps('a $(b); c "$(d)" <(e) && f'), [['a $', ['b']], ['c $(d) < (e)', ['d', 'e']], ['f', []]]);
+  assert.deepEqual(steps('x=$(cd /tmp $(y)) | z'), [['x=$', ['cd /tmp $(y)']], ['z', []]], 'a nested one stays in its body');
+  assert.deepEqual(steps('cat <<EOF; cd /tmp\n$(rm a)\nEOF'), [['cat', []], ['cd /tmp', ['rm a']]], 'a heredoc runs before the next segment');
+  assert.deepEqual(steps('<<EOF\n$(rm a)\nEOF'), [['', ['rm a']]], 'one with no segment comes last, with an empty one');
 });
 
 test('readInvocation peels the wrappers that return the wrapped command`s status', () => {

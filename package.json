@@ -18,7 +18,6 @@
     "check:generated": "node src/build/check-generated.mjs",
     "check:provenance": "node src/distribution-safety/check-provenance.mjs",
     "test": "node --test",
-    "test:cockpit": "node --test test/cockpit",
     "test:distribution-safety": "node --test test/distribution-safety.test.mjs",
     "test:install": "node --test test/install",
     "test:install:claude": "node --test test/install/claude",

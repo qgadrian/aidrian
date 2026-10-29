@@ -51,8 +51,10 @@ lists the sections and what goes in each.
 
 ## Publish
 
-Write the body to a file inside the worktree, such as `.git/pr-body.md`, never a shared temp folder that another
-session can overwrite. Then:
+Write the body to `<state>/tmp/pr-body-<branch>.md`, where `<state>` is the folder `aidrian state` prints and
+`<branch>` is the branch name with each `/` replaced by `-`. It sits outside the repository, one file per branch, so no
+other session overwrites it; a path under `.git/` fails in a worktree, where `.git` is a file.
+Give gh that path written out, never `$(aidrian state)/…`: the Bash hook checks only a body file it can name. Then:
 
 ```bash
 gh pr create --draft --base <base> --title "<title>" --body-file <file>   # new: draft by default

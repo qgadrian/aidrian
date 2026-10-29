@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -78,10 +78,16 @@ test('the hooks write dispatch, stop, and session rows inside a project, and not
   const transcript = path.join(base, 's1.jsonl');
   const agent = path.join(base, 's1/subagents/agent-a1.jsonl');
   mkdirSync(path.dirname(agent), { recursive: true });
-  writeFileSync(transcript, usageLine('m1', 'claude-opus-5-5', { input_tokens: 1000, output_tokens: 100 }, '2026-10-29T10:00:00Z') + '\n' +
-    usageLine('m2', 'claude-opus-5-5', { input_tokens: 1000, output_tokens: 100 }, '2026-10-29T10:30:00Z'));
-  const read = (file) => JSON.stringify({ type: 'assistant', message: { id: file, model: 'claude-sonnet-5-5', usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: 'tool_use', name: 'Read', input: { file_path: file } }] } });
+  const read = (file, model = 'claude-sonnet-5-5') => JSON.stringify({ type: 'assistant', message: { id: file, model, usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: 'tool_use', name: 'Read', input: { file_path: file } }] } });
+  // The main conversation reads one doc in the project, and one in a worktree that is gone by the end of the session.
+  writeFileSync(transcript, [
+    usageLine('m1', 'claude-opus-5-5', { input_tokens: 1000, output_tokens: 100 }, '2026-10-29T10:00:00Z'),
+    usageLine('m2', 'claude-opus-5-5', { input_tokens: 1000, output_tokens: 100 }, '2026-10-29T10:30:00Z'),
+    read(path.join(dir, 'docs/knowledge/product/product-rules.md'), 'claude-opus-5-5'),
+    read(path.join(base, 'gone-worktree/docs/knowledge/product/sharing.md'), 'claude-opus-5-5'),
+  ].join('\n'));
   writeFileSync(agent, [read(path.join(dir, 'docs/knowledge/engineering/testing.md')), read(path.join(dir, 'src/sharing.js'))].join('\n'));
+  const bytes = (doc) => statSync(path.join(dir, doc)).size;
 
   assert.equal(hook('hook-agent-post.mjs', { session_id: 's1', cwd: dir, tool_name: 'Agent', tool_input: { subagent_type: 'Explore', description: 'Find tests' }, tool_response: { status: 'completed', agentId: 'a1', totalDurationMs: 1000 } }).status, 0);
   const stop = hook('hook-subagent-stop.mjs', { session_id: 's1', cwd: dir, agent_id: 'a1', agent_type: 'Explore', agent_transcript_path: agent, last_assistant_message: 'Done; nothing written.', stop_hook_active: false });
@@ -92,8 +98,11 @@ test('the hooks write dispatch, stop, and session rows inside a project, and not
   const rows = log();
   assert.deepEqual(rows.map((row) => row.event), ['dispatch', 'stop', 'session']);
   assert.deepEqual(rows[1].tokens, { input: 10 + 10, output: 10, cache_read: 0, cache_write: 0 });
-  assert.deepEqual([rows[1].docs_read, rows[1].delivered, rows[1].models], [['docs/knowledge/engineering/testing.md'], 'chat', ['claude-sonnet-5-5']]);
+  const testing = 'docs/knowledge/engineering/testing.md';
+  assert.deepEqual([rows[1].docs_read, rows[1].delivered, rows[1].models], [[{ path: testing, bytes: bytes(testing) }], 'chat', ['claude-sonnet-5-5']]);
   assert.deepEqual([rows[2].duration_min, rows[2].subagent_count, rows[2].models], [30, 1, ['claude-opus-5-5', 'claude-sonnet-5-5']]);
+  const [rules, sharing] = ['docs/knowledge/product/product-rules.md', 'docs/knowledge/product/sharing.md'];
+  assert.deepEqual(rows[2].docs_read, [{ path: rules, bytes: bytes(rules) }, { path: sharing, bytes: bytes(sharing) }], 'main reads only, sized from the project copy once the read one is gone');
   assert.ok(rows[2].cost_usd > 0);
 
   const outside = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-dlog-none-')));
@@ -127,6 +136,7 @@ test('every dispatch-log hook exits 0 silently on a payload it cannot read', () 
 });
 
 test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, delivery, top docs; then sessions', () => {
+  // a1's rows predate sizes in docs_read: bare paths count the same.
   const ts = '2026-10-29T11:00:00Z';
   const rows = [
     { event: 'dispatch', ts, session_id: 's', agent_id: 'a1', agent_type: 'Explore', description: 'Find tests', duration_ms: 1000 },
@@ -134,7 +144,7 @@ test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, del
     { event: 'dispatch', ts, session_id: 's', agent_id: 'a3', agent_type: 'Explore', description: 'Map hooks', duration_ms: 2000 },
     { event: 'stop', ts, agent_id: 'a1', agent_type: 'Explore', tokens: { input: 1000, output: 0, cache_read: 0, cache_write: 0 }, cost_usd: 0.5, delivered: 'missing', docs_read: ['a.md'] },
     { event: 'stop', ts, agent_id: 'a1', agent_type: 'Explore', tokens: { input: 1000, output: 0, cache_read: 0, cache_write: 0 }, cost_usd: 0.5, delivered: 'file', docs_read: ['a.md'] },
-    { event: 'stop', ts, agent_id: 'a2', agent_type: 'Explore', tokens: { input: 3000, output: 0, cache_read: 0, cache_write: 0 }, cost_usd: 0.25, delivered: 'chat', docs_read: ['a.md', 'b.md'] },
+    { event: 'stop', ts, agent_id: 'a2', agent_type: 'Explore', tokens: { input: 3000, output: 0, cache_read: 0, cache_write: 0 }, cost_usd: 0.25, delivered: 'chat', docs_read: [{ path: 'a.md', bytes: 10 }, { path: 'b.md', bytes: 20 }] },
     { event: 'stop', ts, agent_id: 'zz', agent_type: 'planner', tokens: { input: 1, output: 1, cache_read: 0, cache_write: 0 }, cost_usd: 0, delivered: 'chat', docs_read: [] },
     { event: 'session', ts, session_id: 's', cost_usd: 4.5 },
     { event: 'session', ts: '2026-10-01T00:00:00Z', session_id: 'old', cost_usd: 100 },
@@ -166,6 +176,7 @@ test('parseSince takes a span or a date; aidrian report prints the log, --json t
   assert.equal(report(['--prs', '0']).status, 1);
 });
 
-test('sessionRow without a transcript has no models', () => {
-  assert.deepEqual(sessionRow({ session_id: 's' }, { env: {}, now: NOW }).models, []);
+test('sessionRow without a transcript has no models and no docs read', () => {
+  const row = sessionRow({ session_id: 's' }, null, { env: {}, now: NOW });
+  assert.deepEqual([row.models, row.docs_read], [[], []]);
 });

@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { commandConfig } from './config.mjs';
+import { commandConfig, fileBytes } from './config.mjs';
 import { checkoutRoots } from './git.mjs';
 import { readRows } from './jsonl.mjs';
 import { loadKnowledge } from './knowledge.mjs';
@@ -48,7 +48,7 @@ export function dispatchRow(input, { env = process.env, now = Date.now() } = {})
   };
 }
 
-// SubagentStop: the subagent's tokens, cost, the knowledge docs it read, and whether the paths its last message presents
+// SubagentStop: the subagent's tokens, cost, the knowledge docs it read with their sizes, and whether the paths its last message presents
 // as delivered exist. Returns { row, missing }; the hook sends the agent back once when `missing` is not empty.
 export function stopRow(input, project, { now = Date.now() } = {}) {
   const transcript = typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
@@ -72,14 +72,15 @@ export function stopRow(input, project, { now = Date.now() } = {}) {
   return { row, missing };
 }
 
-// SessionEnd: the whole session's tokens and estimated cost, main conversation and subagents together.
-export function sessionRow(input, { env = process.env, now = Date.now() } = {}) {
+// SessionEnd: the whole session's tokens and estimated cost, main conversation and subagents together, and the knowledge
+// docs the main conversation read; each subagent's own reads are on its `stop` row.
+export function sessionRow(input, project, { env = process.env, now = Date.now() } = {}) {
   const main = typeof input.transcript_path === 'string' ? input.transcript_path : null;
   const subagents = main ? subagentTranscripts(main, input.session_id) : [];
+  const mainText = main && readText(main);
   let acc;
-  for (const file of [main, ...subagents].filter(Boolean)) {
-    const content = readText(file);
-    if (content !== null) acc = aggregateUsage(content, acc);
+  for (const content of [mainText, ...subagents.map(readText)]) {
+    if (content) acc = aggregateUsage(content, acc);
   }
   const perModel = acc?.perModel ?? {};
   const minutes = acc?.firstTs && acc.lastTs ? Math.round((Date.parse(acc.lastTs) - Date.parse(acc.firstTs)) / 6000) / 10 : null;
@@ -95,6 +96,7 @@ export function sessionRow(input, { env = process.env, now = Date.now() } = {}) 
     tokens_by_model: tokensByModel,
     cost_usd: estimateCostUsd(perModel).total,
     subagent_count: subagents.length,
+    docs_read: mainText ? knowledgeDocsRead(filesRead(mainText), project) : [],
   };
 }
 
@@ -119,12 +121,20 @@ export function missingPaths(claims, cwd) {
   });
 }
 
-// The knowledge docs among `files`, as the index names them. A project doc matches by its path's end, so a read in
-// a worktree counts too.
+// The knowledge docs among `files`, as { path, bytes }: the path as the index names it, and the size of the copy that
+// was read, or of the project's copy once that one is gone. A project doc matches by its path's end, so a read in a
+// worktree counts too.
 function knowledgeDocsRead(files, project) {
   const docs = loadKnowledge(project).buckets.flatMap((bucket) => bucket.docs.map((doc) => doc.path));
-  return docs.filter((doc) => files.some((file) => (path.isAbsolute(doc) ? file === doc : file.endsWith(`/${doc}`))));
+  return docs.flatMap((doc) => {
+    const file = files.find((each) => (path.isAbsolute(doc) ? each === doc : each.endsWith(`/${doc}`)));
+    return file ? [{ path: doc, bytes: fileBytes(file) ?? fileBytes(path.resolve(project.root, doc)) }] : [];
+  });
 }
+
+// A row's `docs_read` as { path, bytes }. A row written before sizes were logged holds bare paths, of unknown size.
+const docsRead = (row) =>
+  (Array.isArray(row.docs_read) ? row.docs_read : []).map((entry) => (typeof entry === 'string' ? { path: entry, bytes: null } : entry));
 
 const median = (values) => {
   const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
@@ -146,7 +156,7 @@ export function summarize(rows, { sinceMs = 0 } = {}) {
     const done = stops.filter((row) => row.agent_type === type);
     const tasks = new Set(sent.map((row) => `${row.session_id} ${row.description}`));
     const docs = new Map();
-    for (const doc of done.flatMap((row) => row.docs_read ?? [])) docs.set(doc, (docs.get(doc) ?? 0) + 1);
+    for (const { path: doc } of done.flatMap(docsRead)) docs.set(doc, (docs.get(doc) ?? 0) + 1);
     return {
       agent_type: type,
       dispatches: sent.length,

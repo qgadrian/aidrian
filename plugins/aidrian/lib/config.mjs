@@ -261,6 +261,16 @@ export function isFile(file) {
   }
 }
 
+// The size of `file` in bytes, or null when it is not a file.
+export function fileBytes(file) {
+  try {
+    const stat = statSync(file);
+    return stat.isFile() ? stat.size : null;
+  } catch {
+    return null;
+  }
+}
+
 export function isDirectory(dir) {
   try {
     return statSync(dir).isDirectory();

@@ -28,7 +28,7 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | `ts`, `session_id`, `agent_id`, `agent_type` | Which subagent. `agent_id` joins it to its `dispatch` row. |
 | `tokens` | `input`, `output`, `cache_read`, and `cache_write` over the subagent's transcript, counted once per API request. |
 | `models`, `cost_usd` | The models it used, and the cost estimated from list prices (`lib/transcript.mjs`). |
-| `docs_read` | The knowledge docs, as the index names them, that it opened with the Read tool. |
+| `docs_read` | The knowledge docs it opened with the Read tool, as `{ "path", "bytes" }`: the path the index gives, and the doc's size. |
 | `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not, `chat` when it presents none. |
 | `paths` | Those paths, at most 20. |
 
@@ -44,6 +44,7 @@ Its second stop always ends, and writes a second `stop` row; the report counts t
 | `duration_min` | From the first to the last transcript entry. |
 | `models`, `tokens_by_model`, `cost_usd` | Tokens per model and the estimated cost of the whole session: main conversation and subagents together. |
 | `subagent_count` | How many subagent transcripts the session has. |
+| `docs_read` | The knowledge docs the main conversation opened, as on a `stop` row. Each subagent's reads are on its own `stop` row. |
 
 A session whose transcript holds no API usage writes no row.
 
@@ -81,4 +82,7 @@ left on each, the share that passed clean on the first look, and how many needed
 - **The delivery check reads the last message only, line by line.** It cannot know a path the dispatcher expected but
   the agent never named, and it reads a path mentioned on the same line as a delivery word as a claim.
   [hooks.md](hooks.md#delivery-check) has the rule.
+- **`bytes` is the whole doc**, measured when the row is written, even when the agent read only part of it.
+  It is the size of the copy the agent read, or of the project's copy once that one is gone, as with a removed worktree.
+  Rows written before sizes were logged hold bare paths, of unknown size.
 - **No lock.** Rows from concurrent processes never interleave, because each is one append; nothing ever rewrites the file.

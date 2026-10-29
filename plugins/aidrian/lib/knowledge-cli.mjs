@@ -14,7 +14,8 @@ const USAGE = `usage: aidrian-knowledge <command> [--project DIR] [args]
   init FOLDER      draft a knowledge index for FOLDER, a folder of docs, in the project folder
 
 The project is the nearest one at or above DIR, which defaults to the current folder.
-FOLDER is relative to the project root. \`aidrian check\` validates the project folder and every index.`;
+FOLDER is relative to the project root. \`aidrian check\` validates the project folder and every index.
+A doc from a local knowledge source prints its absolute path, and its source as the last column.`;
 
 const args = process.argv.slice(2);
 const command = args.shift();
@@ -48,20 +49,24 @@ if (command === 'init') init(project, rest[0]);
 const { buckets, errors } = loadKnowledge(project);
 if (errors.length) fail(errors.join('\n'));
 
+// One output line: the doc path, `columns`, and the source when the doc comes from a local source.
+const sourceOf = new Map(indexRows(buckets).map((doc) => [doc.path, doc.source]));
+const line = (doc, ...columns) => [doc, ...columns, ...(sourceOf.get(doc) ? [sourceOf.get(doc)] : [])].join('\t');
+
 if (command === 'route') {
   // A tag the plugin asks for may be one the project does not define; it loads nothing. Any other tag is a typo.
   const known = [...new Set([...pluginTags(), ...listTags(buckets).map(([tag]) => tag)])].sort();
   const unknown = rest.filter((tag) => !known.includes(tag));
   if (unknown.length) fail(`unknown tag: ${unknown.join(', ')}\nknown tags: ${known.join(', ')}`);
-  for (const doc of routeKnowledge(buckets, rest)) console.log(doc);
+  for (const doc of routeKnowledge(buckets, rest)) console.log(line(doc));
 } else if (command === 'tags') {
   for (const [tag, count] of listTags(buckets)) console.log(`${tag}\t${count}`);
 } else if (command === 'search') {
   const hits = searchKnowledge(buckets, rest, all ? Infinity : 8);
   if (!hits.length) fail('no match');
-  for (const doc of hits) console.log(`${doc.path}\t${doc.summary}`);
+  for (const doc of hits) console.log(line(doc.path, doc.summary));
 } else {
-  for (const doc of indexRows(buckets)) console.log(`${doc.path}\t${doc.tags.join(',')}\t${doc.summary}`);
+  for (const doc of indexRows(buckets)) console.log(line(doc.path, doc.tags.join(','), doc.summary));
 }
 
 function init(project, folder) {

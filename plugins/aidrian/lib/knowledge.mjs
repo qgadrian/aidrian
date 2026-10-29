@@ -4,28 +4,54 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { insidePath, isDirectory, isFile, isObject, loadConfig, readJson } from './config.mjs';
+import { insidePath, isDirectory, isFile, isObject, loadConfig, readJson, VERSION, versionProblem } from './config.mjs';
 
 const BUCKET_ID = /^[a-z0-9][a-z0-9-]*$/;
 const TAG = /^[a-z][a-z0-9_]*$/;
 // Every summary is read in search results and in the index, so it stays one short line.
 const SUMMARY_MAX = 160;
 
-// Returns { config, buckets, errors } for a project from lib/project.mjs. `errors` also holds the problems of the root
-// files and of config.json, so one call checks everything an agent reads. Doc paths are relative to the project root.
+// Returns { config, buckets, errors } for a project from lib/project.mjs, reading every knowledge source in order.
+// `errors` also holds the problems of the root files and of config.json, so one call checks everything an agent reads.
+// A project doc's path is relative to the project root; a local source's doc has its absolute path and its `source`.
 export function loadKnowledge(project) {
   const { config, errors: configErrors, current } = loadConfig(project);
   const errors = [...project.errors, ...configErrors];
   const buckets = [];
   // A folder of another version may hold indexes of another shape; config.json already reports it.
   if (!current) return { config, buckets, errors };
+  // The index file that defines each bucket id, as errors show it.
+  const owners = new Map();
   for (const source of project.sources) {
-    for (const name of indexFiles(source)) {
-      const bucket = loadBucket(source, name, errors);
-      if (bucket) buckets.push(bucket);
+    // Each error of a local source starts with the source, as the local sources file lists it.
+    const own = [];
+    if (!source.local || localVersion(source, own)) {
+      for (const name of indexFiles(source)) {
+        const bucket = loadBucket(source, name, own);
+        if (!bucket) continue;
+        const shown = source.local ? `${source.label}/${source.index}/${name}` : `${source.index}/${name}`;
+        if (owners.has(bucket.id)) {
+          errors.push(`${shown}: bucket "${bucket.id}" is already defined by ${owners.get(bucket.id)}`);
+          continue;
+        }
+        owners.set(bucket.id, shown);
+        buckets.push(bucket);
+      }
     }
+    errors.push(...own.map((error) => (source.local ? `${source.label}: ${error}` : error)));
   }
   return { config, buckets, errors };
+}
+
+// A local source's optional config.json holds only `version`. Returns whether the source is of this plugin's version.
+function localVersion(source, errors) {
+  if (!isFile(path.join(source.base, 'config.json'))) return true;
+  const raw = readJson(source.base, 'config.json', errors, 'its source');
+  if (!raw) return false;
+  checkKeys(raw, ['version'], 'config.json', errors);
+  const problem = versionProblem('config.json', raw.version);
+  if (problem) errors.push(problem);
+  return raw.version === VERSION;
 }
 
 // The .json files in a source's knowledge folder, in file-name order: the bucket load order.
@@ -38,21 +64,23 @@ function indexFiles(source) {
     .sort();
 }
 
+// Paths in errors are relative to the source; a local source's docs leave with absolute paths.
 function loadBucket(source, name, errors) {
   const root = source.base;
+  const scope = source.local ? 'its source' : 'the project';
   const file = `${source.index}/${name}`;
   const id = name.slice(0, -'.json'.length);
   if (!BUCKET_ID.test(id)) {
     errors.push(`${file}: the file name is the bucket id: use lowercase letters, digits, and "-"`);
     return null;
   }
-  const raw = readJson(root, file, errors);
+  const raw = readJson(root, file, errors, scope);
   if (!raw) return null;
   checkKeys(raw, ['dir', 'description', 'always', 'docs'], file, errors);
 
   const dir = insidePath(root, '', raw.dir);
   if (!dir || !isDirectory(path.join(root, dir))) {
-    errors.push(`${file}: "dir" must be a folder inside the project`);
+    errors.push(`${file}: "dir" must be a folder inside ${scope}`);
     return null;
   }
   if (typeof raw.description !== 'string' || raw.description.trim() === '') {
@@ -88,15 +116,18 @@ function loadBucket(source, name, errors) {
     }
   }
 
+  const shown = (rel) => (source.local ? path.join(root, rel) : rel);
+  const label = source.local ? source.label : null;
+  const out = docs.map((doc) => ({ ...doc, path: shown(doc.path), source: label }));
   // The docs of each tag, in "docs" order.
   const tags = {};
-  for (const doc of docs) {
+  for (const doc of out) {
     for (const tag of doc.tags) {
       if (!Object.hasOwn(tags, tag)) tags[tag] = [];
       tags[tag].push(doc.path);
     }
   }
-  return { id, dir, description: raw.description, always, docs, tags };
+  return { id, source: label, dir: shown(dir), description: raw.description, always: always.map(shown), docs: out, tags };
 }
 
 // Returns the path relative to the project, or null after adding the reason to `errors`.

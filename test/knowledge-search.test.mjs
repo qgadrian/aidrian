@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -133,6 +133,31 @@ test('init needs a project, and refuses a folder outside it, a missing folder, a
   rmSync(path.join(project, '.aidrian'), { recursive: true });
   const none = run(['init', 'docs'], project);
   assert.deepEqual([none.status, none.stderr], [1, `no project folder at or above ${project}; run aidrian init\n`]);
+});
+
+test('a doc from a local source prints its absolute path and, last, its source; check counts each source', (t) => {
+  const project = tempProject(t);
+  assert.equal(run(['init', 'docs'], project).status, 0);
+  const source = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-source-')));
+  t.after(() => rmSync(source, { recursive: true, force: true }));
+  mkdirSync(path.join(source, 'knowledge'));
+  mkdirSync(path.join(source, 'notes'));
+  writeFileSync(path.join(source, 'notes/deploy-habits.md'), '# Deploy habits\n');
+  const docs = { 'deploy-habits.md': { summary: 'How I check a deploy.', tags: ['testing'] } };
+  writeFileSync(path.join(source, 'knowledge/personal.json'), JSON.stringify({ dir: 'notes', description: 'Mine.', always: [], docs }));
+  writeFileSync(path.join(project, '.aidrian.local.json'), JSON.stringify({ sources: [source] }));
+  const habits = path.join(source, 'notes/deploy-habits.md');
+
+  assert.equal(run(['route', 'testing'], project).stdout, `${habits}\t${source}\n`);
+  assert.equal(run(['search', 'deploy'], project).stdout, `docs/guides/deploys.md\tDeploys: Every deploy goes through CI.\n${habits}\tHow I check a deploy.\t${source}\n`);
+  assert.equal(run(['index'], project).stdout.trim().split('\n').at(-1), `${habits}\ttesting\tHow I check a deploy.\t${source}`);
+  const check = spawnSync(AIDRIAN, ['check'], { cwd: project, encoding: 'utf8' });
+  assert.deepEqual([check.status, check.stdout], [0, `ok: .aidrian (1 buckets, 4 docs), ${source} (1 buckets, 1 docs)\n`]);
+
+  renameSync(path.join(source, 'knowledge/personal.json'), path.join(source, 'knowledge/docs.json'));
+  const clash = spawnSync(AIDRIAN, ['check'], { cwd: project, encoding: 'utf8' });
+  assert.deepEqual([clash.status, clash.stderr], [1, `${source}/knowledge/docs.json: bucket "docs" is already defined by .aidrian/knowledge/docs.json\n`]);
+  assert.equal(run(['route', 'testing'], project).status, 1);
 });
 
 // A project with a docs folder, an empty project folder, and the .gitignore lines `aidrian init` writes.

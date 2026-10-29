@@ -30,13 +30,17 @@ export const commands = {
         console.error(errors.join('\n'));
         return 1;
       }
-      console.log(`ok: ${project.dir} (${buckets.length} buckets, ${indexRows(buckets).length} docs)`);
+      const counts = project.sources.map((source) => {
+        const own = buckets.filter((bucket) => bucket.source === (source.local ? source.label : null));
+        return `${source.label} (${own.length} buckets, ${indexRows(own).length} docs)`;
+      });
+      console.log(`ok: ${counts.join(', ')}`);
       return 0;
     },
   },
   init: {
     usage: '[--project DIR]',
-    about: `create the project folder with a version ${VERSION} config.json, and add its local state to .gitignore`,
+    about: `create the project folder with a version ${VERSION} config.json, and add its local files to .gitignore`,
     run(args) {
       const start = path.resolve(parseArgs({ args, options: OPTIONS }).values.project ?? '.');
       const project = findProject(start) ?? openProject(start);
@@ -67,13 +71,14 @@ export const commands = {
   },
 };
 
-// The local state the plugin writes, as .gitignore lines. A worktrees folder outside the project needs no line.
+// The local state the plugin writes, and the local sources file, as .gitignore lines. A worktrees folder outside the
+// project needs no line.
 function localEntries(project, config) {
   const { paths } = project;
   const worktrees = path.posix.normalize(config.worktrees.dir ?? paths.worktrees).replace(/\/$/, '');
   const entries = [`${paths.plans}/`, `${paths.handoffs}/`, `${paths.lessons}/`, paths.dispatchLog];
   if (!path.posix.isAbsolute(worktrees) && !worktrees.startsWith('..')) entries.push(`${worktrees}/`);
-  return entries;
+  return [...entries, paths.local];
 }
 
 // The entries git does not ignore. Outside a git repository, an entry counts as ignored when .gitignore has its line.

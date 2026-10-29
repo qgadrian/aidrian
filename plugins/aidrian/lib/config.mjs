@@ -92,15 +92,15 @@ function merge(schema, defaults, values, prefix, file, errors) {
 
 // File helpers, shared with project.mjs and knowledge.mjs. Paths are relative to `root`.
 
-// The parsed JSON object at `rel`, or null with the reason added to `errors`.
-export function readJson(root, rel, errors) {
+// The parsed JSON object at `rel`, or null with the reason added to `errors`. `scope` names `root` in that reason.
+export function readJson(root, rel, errors, scope = 'the project') {
   const file = path.join(root, rel);
   if (!isFile(file)) {
     errors.push(`${rel}: not found`);
     return null;
   }
   if (linksOutside(root, rel)) {
-    errors.push(`${rel}: links outside the project`);
+    errors.push(`${rel}: links outside ${scope}`);
     return null;
   }
   try {

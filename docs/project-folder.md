@@ -10,6 +10,7 @@ Nothing else in the project configures the plugin.
 
 ```text
 .aidrian.json                    names another folder as the project folder (optional, committed)
+.aidrian.local.json              adds knowledge sources on one machine (optional, git-ignored)
 .aidrian/
 ├── config.json                  the folder version and the project settings (committed)
 ├── knowledge/<bucket-id>.json   one index per knowledge bucket (committed)
@@ -58,7 +59,7 @@ A release that changes the format raises the version and lists, under Migrating,
 ```console
 $ aidrian init
 wrote .aidrian/config.json
-added to .gitignore: .aidrian/plans/, .aidrian/handoffs/, .aidrian/lessons/, .aidrian/dispatch-log.jsonl, .aidrian/worktrees/
+added to .gitignore: .aidrian/plans/, .aidrian/handoffs/, .aidrian/lessons/, .aidrian/dispatch-log.jsonl, .aidrian/worktrees/, .aidrian.local.json
 next: add a knowledge index with aidrian-knowledge init <folder of docs>, then run aidrian check
 ```
 
@@ -70,6 +71,7 @@ It never overwrites a file. Run again, it prints `nothing to do: .aidrian is set
 - `.aidrian.json`, when present: valid JSON, no key but `dir`, and `dir` inside the project.
 - `config.json`: the version first, then every key and value.
 - Every knowledge index, as [knowledge.md](knowledge.md#checks) describes.
+- `.aidrian.local.json`, when present: every source, as [Local knowledge sources](#local-knowledge-sources) describes.
 - `.gitignore`: git ignores every git-ignored entry in the tree above. A `worktrees.dir` outside the project needs no line.
 
 ```console
@@ -79,6 +81,38 @@ ok: .aidrian (2 buckets, 8 docs)
 
 In a Claude Code session, `aidrian` is on the PATH while the plugin is enabled.
 Elsewhere, run it by its path, such as `path/to/aidrian-harness/plugins/aidrian/bin/aidrian check`. It needs Node 22 or later.
+
+## Local knowledge sources
+
+This is an advanced option; most projects never need it.
+
+A developer can add knowledge from outside the repository, such as personal notes or a knowledge base several repositories share,
+without committing it. List the folders in `.aidrian.local.json` at the project root:
+
+```json
+{ "sources": ["~/kb/personal", "../shared-kb"] }
+```
+
+`aidrian init` adds the file to `.gitignore`, so it stays on one machine. In a git worktree, the plugin reads it from the main checkout.
+
+- A leading `~` is the home folder. Any other relative path starts at the folder that holds `.aidrian.local.json`.
+- Each source is a folder with the project folder's knowledge layout: `knowledge/<bucket-id>.json`, and optionally a `config.json`
+  that holds only `version`.
+- A source's index names its doc folder in `dir`, relative to the source, and every doc stays inside that source.
+  The sources are the only paths that may be outside the repository.
+- The project folder is always the first source; the others follow in the listed order.
+  Two sources that define the same bucket id fail, and the error names both index files.
+
+`aidrian check`, the `aidrian-knowledge` commands, and the start hook cover every source.
+`aidrian check` prints a count per source, such as `ok: .aidrian (2 buckets, 8 docs), ~/kb/personal (1 buckets, 1 docs)`.
+A doc from a local source prints with its absolute path, and `route`, `search`, and `index` add its source as the last column:
+
+```console
+$ aidrian-knowledge route testing
+docs/knowledge/engineering/working-agreement.md
+docs/knowledge/engineering/testing.md
+/home/ana/kb/personal/notes/testing-habits.md	~/kb/personal
+```
 
 ## Migrating
 

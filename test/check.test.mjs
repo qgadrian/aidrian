@@ -10,7 +10,7 @@ import { isIgnored } from '../plugins/aidrian/lib/git.mjs';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXAMPLE = path.join(ROOT, 'examples/consumer');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
-const IGNORED = ['.aidrian/plans/', '.aidrian/handoffs/', '.aidrian/lessons/', '.aidrian/dispatch-log.jsonl', '.aidrian/worktrees/'];
+const IGNORED = ['.aidrian/plans/', '.aidrian/handoffs/', '.aidrian/lessons/', '.aidrian/dispatch-log.jsonl', '.aidrian/worktrees/', '.aidrian.local.json'];
 
 const run = (args, cwd) => spawnSync(CLI, args, { cwd, encoding: 'utf8' });
 

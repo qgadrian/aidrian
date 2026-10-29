@@ -211,6 +211,75 @@ test('a doc that links outside its bucket fails, and a link that stays inside pa
   ]);
 });
 
+// A knowledge source in its own temporary folder, outside the project, listed in the project's .aidrian.local.json by its
+// path relative to the project. Its bucket "personal" indexes notes/habits.md.
+function localSource(t, project) {
+  const source = mkdtempSync(path.join(tmpdir(), 'aidrian-source-'));
+  t.after(() => rmSync(source, { recursive: true, force: true }));
+  mkdirSync(path.join(source, 'knowledge'));
+  mkdirSync(path.join(source, 'notes'));
+  writeFileSync(path.join(source, 'notes/habits.md'), '# Habits\n');
+  writeFileSync(path.join(source, 'outside.md'), '# Outside\n');
+  const index = { dir: 'notes', description: 'My notes.', always: ['habits.md'], docs: { 'habits.md': { summary: 'My testing habits.', tags: ['testing'] } } };
+  writeFileSync(path.join(source, 'knowledge/personal.json'), JSON.stringify(index));
+  const label = path.relative(project, source);
+  writeFileSync(path.join(project, '.aidrian.local.json'), JSON.stringify({ sources: [label] }));
+  return { source, label, index };
+}
+
+test('a local source loads after the project folder, with absolute doc paths and its source', (t) => {
+  const project = validProject(t);
+  const { source, label } = localSource(t, project);
+  const { buckets, errors } = loadKnowledge(project);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(buckets.map((bucket) => [bucket.id, bucket.source, bucket.dir]), [['kb', null, 'kb'], ['personal', label, path.join(source, 'notes')]]);
+  assert.deepEqual(buckets[1].docs, [{ path: path.join(source, 'notes/habits.md'), summary: 'My testing habits.', tags: ['testing'], source: label }]);
+  assert.deepEqual(routeKnowledge(buckets, ['testing']), ['kb/rules.md', 'kb/sub/testing.md', path.join(source, 'notes/habits.md')]);
+});
+
+// Each case changes the local source and expects one error, which starts with the source.
+const sourceCases = [
+  ['a bucket id the project folder defines', (s) => renameSync(path.join(s, 'knowledge/personal.json'), path.join(s, 'knowledge/kb.json')),
+    (label) => `${label}/knowledge/kb.json: bucket "kb" is already defined by .aidrian/knowledge/kb.json`],
+  ['dir outside the source', (s, index) => writeIndex(s, { ...index, dir: '..' }), (label) => `${label}: knowledge/personal.json: "dir" must be a folder inside its source`],
+  ['dir that links outside the source', (s, index) => { symlinkSync(ROOT, path.join(s, 'ext')); writeIndex(s, { ...index, dir: 'ext' }); },
+    (label) => `${label}: knowledge/personal.json: "dir" must be a folder inside its source`],
+  ['doc outside its bucket', (s, index) => writeIndex(s, { ...index, docs: { ...index.docs, '../outside.md': { summary: 'Out.' } } }),
+    (label) => `${label}: knowledge/personal.json: "docs": "../outside.md" must be a relative .md path inside the bucket`],
+  ['index that links outside the source', (s) => { rmSync(path.join(s, 'knowledge/personal.json')); symlinkSync(path.join(ROOT, 'package.json'), path.join(s, 'knowledge/personal.json')); },
+    (label) => `${label}: knowledge/personal.json: links outside its source`],
+  ['doc with no entry', (s) => writeFileSync(path.join(s, 'notes/more.md'), '# More\n'),
+    (label) => `${label}: notes/more.md: has no entry in knowledge/personal.json; add it to "docs" with a summary, or delete it`],
+  ['config.json of another version', (s) => writeFileSync(path.join(s, 'config.json'), '{"version": 2}'),
+    (label) => `${label}: config.json: project folder version 2; this plugin reads version 1; see https://github.com/qgadrian/aidrian-harness/blob/main/docs/project-folder.md#migrating`],
+  ['config.json with another key', (s) => writeFileSync(path.join(s, 'config.json'), '{"version": 1, "defaultBranch": "main"}'),
+    (label) => `${label}: config.json: unknown key "defaultBranch"`],
+];
+
+for (const [name, change, expected] of sourceCases) {
+  test(`a local source fails: ${name}`, (t) => {
+    const project = validProject(t);
+    const { source, label, index } = localSource(t, project);
+    writeFileSync(path.join(source, 'config.json'), '{"version": 1}');
+    assert.deepEqual(loadKnowledge(project).errors, [], 'the base source is valid');
+    change(source, index);
+    const { buckets, errors } = loadKnowledge(project);
+    assert.deepEqual(errors, [expected(label)]);
+    assert.equal(buckets[0].id, 'kb', 'the project bucket still loads first');
+  });
+}
+
+test('a local source of another version adds none of its buckets', (t) => {
+  const project = validProject(t);
+  const { source } = localSource(t, project);
+  writeFileSync(path.join(source, 'config.json'), '{"version": 2}');
+  assert.deepEqual(loadKnowledge(project).buckets.map((bucket) => bucket.id), ['kb']);
+});
+
+function writeIndex(source, value) {
+  writeFileSync(path.join(source, 'knowledge/personal.json'), JSON.stringify(value));
+}
+
 function validProject(t) {
   const project = mkdtempSync(path.join(tmpdir(), 'aidrian-knowledge-'));
   t.after(() => rmSync(project, { recursive: true, force: true }));

@@ -1,6 +1,8 @@
-// `aidrian lint`: checks that keep a project's AI instructions cheap and portable. Limits come from config.json.
-//   skills  every <dir>/<name>/SKILL.md: a one-line YAML `description` within skills.descriptionChars, and all skill
-//           names and descriptions within skills.listingBytes (both hosts list them in every session)
+// `aidrian lint`: checks that keep a project's AI instructions cheap and portable. Limits come from config.json,
+// except the SKILL.md size, which is Codex's.
+//   skills  every <dir>/<name>/SKILL.md: a one-line YAML `description` within skills.descriptionChars, all skill
+//           names and descriptions within skills.listingBytes (both hosts list them in every session), and a file
+//           under SKILL_CUT_BYTES, with a warning above SKILL_WARN_BYTES
 //   agents  every <dir>/*.md: `name` equals the file name, a `description` like a skill's, and a known model and effort
 //   paths   tracked files hold no personal home folder such as /Users/<name>/; --staged reads what the index holds
 //   budget  the `always` knowledge docs, read at every session start, fit in docs.alwaysBudgetBytes
@@ -20,6 +22,10 @@ const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 // Home folders of placeholder or CI users are not personal.
 const PERSONAL_PATH = /\/(?:Users|home)\/(?!(?:runner|you|user|example)\/)[A-Za-z_][A-Za-z0-9_.-]*\//;
 const BINARY = /\.(png|jpe?g|gif|webp|ico|woff2?|ttf|eot|otf|pdf|zip|gz|tar|tgz|mp[34]|wav|ogg)$|(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$/i;
+// Codex cuts a SKILL.md longer than 8,000 bytes when it loads it: MAX_SKILL_PROMPT_BYTES in
+// codex-rs/ext/skills/src/render.rs. A file at the cut has no room left, so it fails there; the warning leaves a margin.
+const SKILL_CUT_BYTES = 8000;
+const SKILL_WARN_BYTES = 7500;
 // Room for one staged file read through git: Node's default 1 MiB would leave a larger file unread.
 const STAGED_MAX_BYTES = 64 * 1024 * 1024;
 
@@ -45,7 +51,8 @@ export const commands = {
         budget: () => lintBudget(project.root, buckets, config.docs.alwaysBudgetBytes),
       };
       const results = (kind ? [kind] : KINDS).map((name) => [name, runs[name]()]);
-      for (const [name, { problems, summary }] of results) {
+      for (const [name, { problems, warnings = [], summary }] of results) {
+        if (warnings.length) console.error(warnings.map((warning) => `${name}: warning: ${warning}`).join('\n'));
         if (problems.length) console.error(problems.map((problem) => `${name}: ${problem}`).join('\n'));
         else console.log(`${name}: ${summary}`);
       }
@@ -56,6 +63,8 @@ export const commands = {
 
 export function lintSkills(dirs, { descriptionChars, listingBytes }) {
   const problems = [];
+  const warnings = [];
+  const move = 'move detail into references/ or steps/ files that SKILL.md names';
   let bytes = 0;
   let count = 0;
   for (const dir of dirs.filter(isDirectory)) {
@@ -63,6 +72,9 @@ export function lintSkills(dirs, { descriptionChars, listingBytes }) {
       const file = path.join(dir, name, 'SKILL.md');
       if (!isFile(file)) continue;
       count += 1;
+      const size = statSync(file).size;
+      if (size >= SKILL_CUT_BYTES) problems.push(`${file}: ${size} bytes; Codex cuts a SKILL.md at ${SKILL_CUT_BYTES}, so ${move}`);
+      else if (size > SKILL_WARN_BYTES) warnings.push(`${file}: ${size} bytes, near Codex's ${SKILL_CUT_BYTES}-byte cut; ${move}`);
       const meta = frontmatter(readFileSync(file, 'utf8'));
       const description = checkDescription(meta, file, descriptionChars, problems);
       if (description === null) continue;
@@ -75,7 +87,7 @@ export function lintSkills(dirs, { descriptionChars, listingBytes }) {
   if (bytes > listingBytes) {
     problems.push(`the ${count} skills list ${bytes} bytes of names and descriptions; the limit is skills.listingBytes, ${listingBytes}`);
   }
-  return { problems, summary: `${count} skills, ${bytes} of ${listingBytes} listing bytes` };
+  return { problems, warnings, summary: `${count} skills, ${bytes} of ${listingBytes} listing bytes` };
 }
 
 export function lintAgents(dirs, { descriptionChars }) {

@@ -35,6 +35,15 @@ test('denies amend behind git global options, the rtk proxy, and in a later segm
   deny('git add -A; git commit --amend --no-edit');
 });
 
+test('denies amend inside a subshell, a brace group, if, while, and past a `!`', () => {
+  deny('(git commit --amend)');
+  deny('(cd /tmp/x && git commit --amend --no-edit)');
+  deny('{ git commit --amend; }');
+  deny('if git diff --cached --quiet; then :; else git commit --amend --no-edit; fi');
+  deny('while true; do git commit --amend; done');
+  deny('! git commit --amend');
+});
+
 test('allows ordinary commits, --amend in message text or after --, and other subcommands', () => {
   allow('git commit -m "fix: something"');
   allow('git commit -m "revert the --amend change"');

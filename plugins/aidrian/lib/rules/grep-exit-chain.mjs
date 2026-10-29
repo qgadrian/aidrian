@@ -6,7 +6,7 @@
 // `set -o pipefail` is on: then the pipeline carries it), a `!` inverts it, or a trailing `&` backgrounds the list.
 // A command substitution that runs is a list of its own and is judged the same way.
 
-import { commandLines, isLongOption, lexPipeline, readInvocation } from '../shell-lex.mjs';
+import { commandLines, isLongOption, lexPipeline, readInvocation, readShortOptions } from '../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_GREP_EXIT_CHAIN';
 
@@ -14,14 +14,13 @@ const PIPES = new Set(['|', '|&']);
 const GREP_PROGRAMS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ripgrep']);
 // grep takes `--cou` for `--count` (`--co` is ambiguous with `--color`); ripgrep takes no prefix of `--count-matches`.
 const countsLong = (text) => text === '--count-matches' || isLongOption(text, '--count', '--cou');
-// Options whose value is the next token, so `grep -e -c file` searches for "-c". `--color` is not one: GNU grep's value
-// is optional and attached, and reading it as value-taking would hide the `-c` in `grep --color -c x f`.
+// Options that take a value, so `grep -e -c file` searches for "-c". A short one takes the rest of its bundle when any
+// is left: the `c` in `-A3c` is part of `-A`'s value. `--color` is not one: GNU grep's value is optional and attached,
+// and reading it as value-taking would hide the `-c` in `grep --color -c x f`.
 const VALUE_FLAGS = new Set([
   '-e', '-f', '-m', '-A', '-B', '-C', '-d', '-D', '--regexp', '--file', '--max-count', '--after-context',
   '--before-context', '--context', '--directories', '--devices', '--include', '--exclude', '--exclude-dir', '--glob', '--type',
 ]);
-// Short options that take the rest of their bundle as the value: the `c` in `-A3c` is part of `-A`'s value.
-const SHORT_VALUE_FLAGS = new Set(['e', 'f', 'm', 'A', 'B', 'C', 'd', 'D']);
 
 // The deny reason for `command`, or null.
 export function check(command, { env = process.env } = {}) {
@@ -73,14 +72,9 @@ export function asksForCount(args) {
       continue;
     }
     if (!text.startsWith('-') || text === '-') continue;
-    if (VALUE_FLAGS.has(text)) {
-      i += 1;
-      continue;
-    }
-    for (const letter of text.slice(1)) {
-      if (letter === 'c') return true;
-      if (SHORT_VALUE_FLAGS.has(letter)) break;
-    }
+    const { options, value } = readShortOptions(text, VALUE_FLAGS);
+    if (options.includes('-c')) return true;
+    if (value?.attached === null) i += 1;
   }
   return false;
 }

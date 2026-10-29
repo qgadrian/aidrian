@@ -30,6 +30,19 @@ test('a body with every required section passes, in each way gh takes one', (t) 
   assert.equal(run('gh pr create --title x --body-file=body.md'), null);
 });
 
+test('a short option reads as gh reads it: its value attached, or after a cluster of switches', (t) => {
+  const run = project(t, { version: 1 }, { 'body.md': GOOD, 'short.md': '## Summary\nonly this\n' });
+  for (const command of ['gh pr create -Fshort.md', 'gh pr create -F=short.md', 'gh pr create -dF short.md', `gh pr create -b'## Summary'`]) {
+    assert.match(run(command), /^Blocked: the body has no `## Tests run` section/, command);
+  }
+  const attached = `gh pr create -t x -b"$(cat <<'EOF'\n## Summary\nEOF\n)"`;
+  assert.match(run(attached), /^Blocked: the body has no `## Tests run` section/, 'a heredoc attached to -b');
+  assert.match(run(attached.replace('-b"', '-db "')), /^Blocked: the body has no `## Tests run` section/, 'and after a cluster');
+  assert.match(run('gh pr create -df'), /^Blocked: `--fill`/, '-f in a cluster');
+  assert.equal(run('gh pr create -dFbody.md'), null);
+  assert.equal(run('gh pr create -tF -F body.md'), null, 'the F of -tF is the title');
+});
+
 test('a missing required section is denied, naming it and the config key', (t) => {
   const run = project(t, { version: 1 }, { 'short.md': '## Summary\nonly this\n' });
   const reason = run('gh pr create --title x --body-file short.md');

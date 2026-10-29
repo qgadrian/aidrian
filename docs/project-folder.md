@@ -29,7 +29,9 @@ The docs a bucket indexes stay where they are: each index names its doc folder i
 ## Location
 
 The project root is the nearest folder, at or above the current one, that has `.aidrian.json` or `.aidrian/config.json`.
+In a git checkout the search stops at the checkout's top folder.
 In a git worktree that is the worktree itself, so a branch reads its own committed knowledge.
+A worktree whose branch has no project folder has no project, even inside a main checkout that has one: the hooks stay silent there.
 
 To keep the folder somewhere else, commit `.aidrian.json` at the project root:
 

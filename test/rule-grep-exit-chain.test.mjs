@@ -127,6 +127,7 @@ test('asksForCount reads bundles and value-taking flags the way grep does', () =
   assert.equal(asksForCount(args('-n pattern file')), false);
   assert.equal(asksForCount(args('-- -c file')), false, 'after -- everything is a pattern or a path');
   assert.equal(asksForCount(args('-A3c pattern file')), false, "the bundle's tail is -A's value");
+  assert.equal(asksForCount(args('-re -c file')), false, 'a bundle that ends in -e takes the next token');
   assert.equal(asksForCount(args('--max-count 2 pattern file')), false, 'a cap is not a count');
   assert.equal(asksForCount(args('--exclude-dir=node_modules -c p src')), true, 'a long flag with its own value');
 });

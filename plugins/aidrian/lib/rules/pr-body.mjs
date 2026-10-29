@@ -9,15 +9,18 @@ import path from 'node:path';
 
 import { loadConfig } from '../config.mjs';
 import { findProject } from '../project.mjs';
-import { commandLines, lexCommand, readInvocation } from '../shell-lex.mjs';
+import { commandLines, lexCommand, readInvocation, readShortOptions } from '../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PR_BODY';
 
 const FOOTER = /Generated with \[Claude Code\]/u;
 const FILL = new Set(['--fill', '--fill-first', '--fill-verbose', '-f']);
+// The short options of `gh pr create` and `gh pr edit` that take a value; -d, -e, -f, and -w are switches.
+const SHORT_VALUES = new Set(['-a', '-B', '-b', '-F', '-H', '-l', '-m', '-p', '-r', '-R', '-T', '-t']);
 // The canonical heredoc form, `--body "$(cat <<'EOF' … EOF)"`, read from the raw command: the token holding it is
-// dynamic, and its text has lost the body's quotes. Group 3 is the body.
-const BODY_HEREDOC = /(?:--body|-b)(?:=|\s+)"?\$\([^<]*<<-?\s*(['"]?)(\w+)\1\r?\n([\s\S]*?)\r?\n[ \t]*\2\b/u;
+// dynamic, and its text has lost the body's quotes. -b takes it attached too, or at the end of a cluster. Group 3 is
+// the body.
+const BODY_HEREDOC = /(?:--body(?:=|\s+)|-[A-Za-z]*b=?\s*)"?\$\([^<]*<<-?\s*(['"]?)(\w+)\1\r?\n([\s\S]*?)\r?\n[ \t]*\2\b/u;
 
 // The deny reason for `command`, or null.
 export function check(command, { cwd = process.cwd(), env = process.env } = {}) {
@@ -48,12 +51,20 @@ function readPrCall(segment) {
   if (words[0] !== 'pr' || !['create', 'edit'].includes(words[1])) return null;
   const call = { subcommand: words[1], fill: false, body: null, bodyFile: null };
   for (; i < args.length; i += 1) {
-    const { text } = args[i];
-    const [flag, inline] = text.startsWith('--') && text.includes('=') ? [text.slice(0, text.indexOf('=')), text.slice(text.indexOf('=') + 1)] : [text, null];
-    const value = () => (inline !== null ? { text: inline, dynamic: args[i].dynamic } : args[++i] ?? null);
+    const { text, dynamic } = args[i];
+    let [flag, inline] = text.startsWith('--') && text.includes('=') ? [text.slice(0, text.indexOf('=')), text.slice(text.indexOf('=') + 1)] : [text, null];
+    if (/^-[^-]/u.test(text)) {
+      // A short word as gh reads it: `-dF body.md`, `-Fbody.md`, and `-F=body.md`.
+      const { options, value } = readShortOptions(text, SHORT_VALUES);
+      if (options.includes('-f')) call.fill = true;
+      if (!value) continue;
+      [flag, inline] = [value.option, value.attached?.replace(/^=/u, '') ?? null];
+    }
+    const value = () => (inline !== null ? { text: inline, dynamic } : args[++i] ?? null);
     if (FILL.has(flag)) call.fill = true;
     else if (flag === '--body' || flag === '-b') [call.body, call.bodyFile] = [value(), null];
     else if (flag === '--body-file' || flag === '-F') [call.bodyFile, call.body] = [value(), null];
+    else if (SHORT_VALUES.has(flag)) value();
   }
   return call;
 }

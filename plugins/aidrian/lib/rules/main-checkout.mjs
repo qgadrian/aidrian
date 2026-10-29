@@ -15,21 +15,23 @@ import path from 'node:path';
 import { loadConfig } from '../config.mjs';
 import { checkoutRoots, isIgnored } from '../git.mjs';
 import { findProject, worktreesDir } from '../project.mjs';
-import { isLongOption, lexSteps, readGit, readInvocation, SUBSTITUTION_DEPTH_LIMIT } from '../shell-lex.mjs';
+import { isLongOption, lexSteps, readGit, readInvocation, readShortOptions, SUBSTITUTION_DEPTH_LIMIT } from '../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_MAIN_WRITE';
 
 const PATCH_TARGET = /^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gmu;
 const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
-// Programs whose every operand is written, and the options of each that take the next token as their value. A long one
-// also matches by a prefix, as getopt_long reads it: `sed --fi script.sed` takes `--file`'s value.
+// Programs whose every operand is written, and the options of each that take a value: the rest of a short option's
+// word (`-e's/a/b/'`), or else the next word. A long one also matches by a prefix, as getopt_long reads it:
+// `sed --fi script.sed` takes `--file`'s value.
 const WRITERS = new Map([
   ['tee', new Set()],
   ['rm', new Set()],
   ['unlink', new Set()],
   ['touch', new Set(['-t', '-r', '-d', '--reference', '--date'])],
   ['mkdir', new Set(['-m', '--mode'])],
-  ['sed', new Set(['-e', '-f', '--expression', '--file', '-l', '--line-length'])],
+  // -l takes a value in GNU sed and none in BSD sed, so it is left out and its value reads as one more operand.
+  ['sed', new Set(['-e', '-f', '--expression', '--file', '--line-length'])],
   ['cp', new Set(['-S', '--suffix', '-t', '--target-directory'])],
   ['mv', new Set(['-S', '--suffix', '-t', '--target-directory'])],
   // A value option whose name extends a switch (`--partial-dir`, `--backup-dir`) is left out, so the switch never
@@ -44,6 +46,9 @@ const WRITERS = new Map([
     ]),
   ],
 ]);
+// Options that take only the rest of their word: sed's in-place suffix, `-i.bak`, so `-ie` is -i with the suffix "e".
+// BSD sed's -I edits in place too.
+const REST_VALUES = new Map([['sed', new Set(['-i', '-I'])]]);
 // git subcommands whose every path is written: git mv removes its sources, git rm its paths.
 const GIT_WRITERS = new Map([
   ['mv', new Set()],
@@ -124,9 +129,13 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
   for (let i = 0; i < args.length; i += 1) {
     const { text } = args[i];
     if (!ended && text === '--') ended = true;
-    else if (!ended && text.startsWith('-') && text.length > 1) {
+    else if (!ended && text.startsWith('--')) {
       flags.push(text);
       if (valueFlags.has(text) || (/^--[^=]+$/u.test(text) && [...valueFlags].some((option) => option.startsWith(text)))) i += 1;
+    } else if (!ended && text.startsWith('-') && text.length > 1) {
+      const { options, value } = readShortOptions(text, valueFlags, REST_VALUES.get(program));
+      flags.push(...options);
+      if (value?.attached === null) i += 1;
     } else if (text !== '') {
       operands.push(args[i]); // an empty operand is BSD sed's `-i ''` suffix
     }
@@ -144,9 +153,9 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
   }
   if (program !== 'sed') return operands;
   // GNU sed takes a prefix of a long option: `--i` is `--in-place`, `--e` is `--expression`, `--fi` is `--file`.
-  const inPlace = flags.some((flag) => isLongOption(flag, '--in-place', '--i') || (/^-[^-]*$/u.test(flag) && flag.includes('i')));
+  const inPlace = flags.some((flag) => REST_VALUES.get('sed').has(flag) || isLongOption(flag, '--in-place', '--i'));
   if (!inPlace) return [];
-  const scripted = flags.some((flag) => /^-[ef](=|$)/u.test(flag) || isLongOption(flag, '--expression', '--e') || isLongOption(flag, '--file', '--fi'));
+  const scripted = flags.some((flag) => flag === '-e' || flag === '-f' || isLongOption(flag, '--expression', '--e') || isLongOption(flag, '--file', '--fi'));
   return scripted ? operands : operands.slice(1);
 }
 
@@ -163,9 +172,8 @@ function targetDirectory(args) {
     }
     if (!/^-./u.test(text)) continue;
     // In a cluster, -S takes the rest as its suffix, and -t takes the rest, or the next word, as the directory.
-    for (let j = 1; j < text.length && text[j] !== 'S'; j += 1) {
-      if (text[j] === 't') return j + 1 < text.length ? { text: text.slice(j + 1), dynamic } : args[i + 1] ?? null;
-    }
+    const { value } = readShortOptions(text, WRITERS.get('cp'));
+    if (value?.option === '-t') return value.attached === null ? args[i + 1] ?? null : { text: value.attached, dynamic };
   }
   return null;
 }

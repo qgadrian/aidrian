@@ -107,6 +107,13 @@ test('bashTargets finds the certain write targets, resolved against cwd, and not
   assert.deepEqual(at("sed --i 's/a/b/' src/a.ts"), ['src/a.ts'], 'GNU sed takes a prefix of --in-place');
   assert.deepEqual(at('sed --in-pl=.bak --expr=s/a/b/ src/a.ts'), ['src/a.ts']);
   assert.deepEqual(at('sed --i --fi script.sed src/a.ts'), ['src/a.ts']);
+  assert.deepEqual(at("sed -i -e's/a/b/' src/a.ts"), ['src/a.ts'], 'a script attached to -e');
+  assert.deepEqual(at('sed -i -fscript.sed src/a.ts'), ['src/a.ts'], 'a script file attached to -f');
+  assert.deepEqual(at("sed -Ee 's/a/b/' -i src/a.ts"), ['src/a.ts'], 'a cluster that ends in -e takes the next word');
+  assert.deepEqual(at("sed -ie 's/a/b/' src/a.ts"), ['src/a.ts'], '-i takes the rest of its word as the suffix');
+  assert.deepEqual(at("sed -il 's/a/b/' src/a.ts"), ['src/a.ts']);
+  assert.deepEqual(at("sed -i -l 's/a/b/' src/a.ts"), ['src/a.ts'], 'BSD sed`s -l takes no value');
+  assert.deepEqual(at("sed -I '' 's/a/b/' src/a.ts"), ['src/a.ts'], 'BSD sed`s -I edits in place');
   assert.deepEqual(at('tee -a src/a.ts src/b.ts'), ['src/a.ts', 'src/b.ts']);
   assert.deepEqual(at('cp /tmp/a.ts src/a.ts'), ['src/a.ts']);
   assert.deepEqual(at('mv -f src/a.ts src/b.ts'), ['src/a.ts', 'src/b.ts'], 'a move removes its source');
@@ -132,10 +139,16 @@ test('bashTargets finds the certain write targets, resolved against cwd, and not
   assert.deepEqual(at('rm -rf src'), ['src']);
   assert.deepEqual(at('touch -d "2 days ago" src/a.ts'), ['src/a.ts']);
   assert.deepEqual(at('mkdir -p -m 755 src/new'), ['src/new']);
+  assert.deepEqual(at('mkdir -pm 755 src/new'), ['src/new'], 'a cluster that ends in a value option takes the next word');
+  assert.deepEqual(at('touch -cd yesterday src/a.ts'), ['src/a.ts']);
+  assert.deepEqual(at('rsync -ae ssh --remove-source-files src/a.ts host:/srv/'), ['src/a.ts']);
   assert.deepEqual(at("cat > /tmp/out.md <<'EOF'\nrm -rf src\nEOF\ngit status"), ['../tmp/out.md'], 'a heredoc body is data');
   assert.deepEqual(at('sudo rm src/a.ts'), ['src/a.ts']);
   assert.deepEqual(at('env -C src rm ../package.json'), ['package.json'], 'a wrapper`s directory moves its operands');
   assert.deepEqual(at('env -C src cmd > ../out'), ['../out'], 'but not the shell`s redirections');
+  assert.deepEqual(at('env -iC src rm ../package.json'), ['package.json'], 'a wrapper`s value option at the end of a cluster');
+  assert.deepEqual(at('env -iCsrc rm ../package.json'), ['package.json'], 'and attached to it');
+  assert.deepEqual(at('sudo -nu root rm src/a.ts'), ['src/a.ts']);
   for (const command of ['git status', 'cat src/a.ts', 'git restore src/a.ts', 'npm run build', 'node scripts/x.mjs', 'ls -la']) {
     assert.deepEqual(at(command), [], command);
   }
@@ -149,6 +162,12 @@ test('bashTargets finds the certain write targets, resolved against cwd, and not
   assert.deepEqual(at('cat <(git rm src/a.ts)'), ['src/a.ts']);
   assert.deepEqual(at("cat <<'EOF'\n$(rm src/a.ts)\nEOF"), [], 'a quoted heredoc runs nothing');
   assert.deepEqual(at('cd /tmp && x=$(rm a.ts)'), [], 'a relative target after cd, in a substitution too');
+  assert.deepEqual(at('(rm src/a.ts)'), ['src/a.ts'], 'inside a subshell');
+  assert.deepEqual(at('{ rm src/a.ts; }'), ['src/a.ts'], 'a brace group');
+  assert.deepEqual(at('if true; then rm src/a.ts; fi'), ['src/a.ts']);
+  assert.deepEqual(at('while true; do touch src/a.ts; done'), ['src/a.ts']);
+  assert.deepEqual(at('! rm src/a.ts'), ['src/a.ts']);
+  assert.deepEqual(at('rm "src/a (1).ts"'), ['src/a (1).ts'], 'a name keeps the `)` it opened');
 });
 
 test('a cd drops only the relative targets after it, and a cd in a substitution moves only that substitution', () => {
@@ -175,6 +194,7 @@ test('Bash commands are judged like tool writes', (t) => {
   assert.match(bash('mv src/app.js build/app.js'), /'src\/app\.js'/, 'moving a tracked file out removes it from the main checkout');
   assert.match(bash('mv build/a.js src/app.js build/'), /'src\/app\.js'/, 'every source of a multi-source move');
   assert.match(bash('git mv src/app.js src/main.js'), /'src\/app\.js'/);
+  assert.match(bash("sed -i -e's/x/y/' src/app.js"), /'src\/app\.js'/, 'a script attached to its option');
   assert.match(bash('rsync --remove-source-files src/app.js build/app.js'), /'src\/app\.js'/);
   assert.equal(bash('rsync src/app.js build/app.js'), null, 'a copy out of the main checkout writes nothing in it');
   assert.equal(bash('cp src/app.js build/app.js'), null);

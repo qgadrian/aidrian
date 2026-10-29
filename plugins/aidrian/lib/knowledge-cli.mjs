@@ -76,6 +76,7 @@ function init(project, folder) {
   } catch (error) {
     fail(error.message);
   }
+  for (const warning of result.warnings) console.error(warning);
   console.log(`wrote ${result.file}: ${result.docs} docs in ${result.dir}, each with a drafted summary and no tags`);
   console.log('next: correct the summaries, add tags and "always" docs, then run aidrian check');
   process.exit(0);

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { commandLines, lexCommand, lexPipeline, lexSteps, lexSubstitutions, readGit, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
+import { commandLines, lexCommand, lexPipeline, lexSteps, lexSubstitutions, readGit, readInvocation, readShortOptions } from '../plugins/aidrian/lib/shell-lex.mjs';
 
 const texts = (line) => lexCommand(line).map((segment) => segment.map((token) => token.text));
 const programOf = (line) => readInvocation(lexCommand(line)[0]).program;
@@ -127,6 +127,12 @@ test('readInvocation peels the wrappers that return the wrapped command`s status
   assert.equal(programOf('stdbuf -i0 -oL grep x f'), 'grep', 'an attached value is one token');
   assert.equal(programOf('sudo -u root rm x'), 'rm');
   assert.equal(programOf('sudo -uroot rm x'), 'rm');
+  // A cluster of switches may end in an option that takes the next word, as getopt reads it.
+  assert.equal(programOf('sudo -nu root rm x'), 'rm');
+  assert.equal(programOf('sudo -nuroot rm x'), 'rm');
+  assert.equal(programOf('timeout -vs KILL 5 rm x'), 'rm');
+  assert.equal(programOf('exec -cla name rm x'), 'rm');
+  assert.equal(programOf('env -iu LANG rm x'), 'rm');
 
   assert.equal(programOf('! rm package.json'), 'rm');
   assert.equal(readInvocation(lexCommand('! rm package.json')[0]).negated, true);
@@ -147,12 +153,31 @@ test('readInvocation peels the wrappers that return the wrapped command`s status
   assert.equal(programOf('exec rm package.json'), 'rm');
 });
 
+test('readInvocation reads the command inside a subshell, a brace group, if, and while, and past a `!`', () => {
+  const programs = (line) => lexCommand(line).map((segment) => readInvocation(segment).program);
+  assert.equal(programOf('(git commit --amend)'), 'git', 'a subshell');
+  assert.deepEqual(argsOf('(git commit --amend)'), ['commit', '--amend'], 'its `)` is no part of the last word');
+  assert.deepEqual(argsOf('( git commit --amend )'), ['commit', '--amend']);
+  assert.deepEqual(programs('(cd x && git commit --no-verify)'), ['cd', 'git']);
+  assert.deepEqual(argsOf('git commit -m "fix (x)"'), ['commit', '-m', 'fix (x)'], 'a word keeps the `)` it opened');
+  assert.deepEqual(programs('{ rm f; }'), ['rm', ''], 'a brace group');
+  assert.deepEqual(programs('if test -f x; then git commit -n; elif y; then z; else rm f; fi'), ['test', 'git', 'y', 'z', 'rm', '']);
+  assert.deepEqual(programs('while read -r f; do rm "$f"; done < list'), ['read', 'rm', '']);
+  assert.deepEqual(programs('until x; do y; done'), ['x', 'y', '']);
+  assert.equal(programOf('if ! grep -q x f; then y; fi'), 'grep', 'a `!` after a reserved word');
+  assert.equal(readInvocation(lexCommand('if ! grep -q x f; then y; fi')[0]).negated, true);
+  assert.equal(programOf('! (git commit --amend)'), 'git', 'a `!` before a subshell');
+  assert.equal(programOf('echo done'), 'echo', 'a reserved word after the command is an argument');
+});
+
 test('env -S carries a command line, and its later words are that command`s arguments', () => {
   assert.equal(programOf("env -S 'rm /repo/package.json'"), 'rm');
   assert.deepEqual(argsOf("env -S 'rm' package.json"), ['package.json']);
   assert.deepEqual(argsOf('env --split-string="rm" package.json'), ['package.json']);
   assert.equal(programOf('env --split-string="rm /repo/package.json"'), 'rm');
   assert.equal(programOf('env -S "$CMD"'), '', 'a dynamic value names no program');
+  assert.equal(programOf("env -S'rm /repo/package.json'"), 'rm', 'a value attached to -S');
+  assert.deepEqual(argsOf("env -vS 'rm' package.json"), ['package.json'], 'and -S at the end of a cluster');
 });
 
 test('a wrapper that changes directory reports it, and nested changes compose', () => {
@@ -160,11 +185,22 @@ test('a wrapper that changes directory reports it, and nested changes compose', 
   assert.equal(chdirOf('env -C /src rm ../x'), '/src');
   assert.equal(chdirOf('env --chdir=/src rm ../x'), '/src');
   assert.equal(chdirOf('env -C/src rm ../x'), '/src');
+  assert.equal(chdirOf('env -iC /src rm ../x'), '/src', 'at the end of a cluster');
+  assert.equal(chdirOf('env -iC/src rm ../x'), '/src', 'attached inside a cluster');
   assert.equal(chdirOf('sudo -D /src rm ../x'), '/src');
   assert.equal(chdirOf('env -C src env -C lib rm ../../x'), 'src/lib');
   assert.equal(chdirOf('env -C src env -C /abs rm ../x'), '/abs', 'an absolute inner directory replaces the outer');
   assert.equal(chdirOf('env -C src --split-string="rm x"'), 'src', 'and composes with a command carried by -S');
   assert.equal(chdirOf('rm x'), null);
+});
+
+test('readShortOptions reads one word as getopt does: switches up to the option that takes a value', () => {
+  const values = new Set(['-e', '-f']);
+  assert.deepEqual(readShortOptions('-nE', values), { options: ['-n', '-E'], value: null });
+  assert.deepEqual(readShortOptions('-es/a/b/', values), { options: ['-e'], value: { option: '-e', attached: 's/a/b/' } });
+  assert.deepEqual(readShortOptions('-nf', values), { options: ['-n', '-f'], value: { option: '-f', attached: null } }, 'the next word');
+  assert.deepEqual(readShortOptions('-ie', values, new Set(['-i'])), { options: ['-i'], value: { option: '-i', attached: 'e' } }, 'only the rest');
+  assert.deepEqual(readShortOptions('-i', values, new Set(['-i'])), { options: ['-i'], value: { option: '-i', attached: '' } }, 'never the next word');
 });
 
 test('readGit reads the subcommand past git`s global options, and gives up on a dynamic one', () => {

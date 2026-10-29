@@ -217,8 +217,9 @@ export function searchKnowledge(buckets, words, limit = 8) {
 }
 
 // Drafts a knowledge index for `folder`, a folder of docs: every .md file, a summary drafted from its first heading and
-// first sentence, and no tags. The bucket id is the folder name. Returns { file, dir, docs }; throws when the folder is
-// not usable or the index file exists.
+// first sentence, and no tags. The bucket id is the folder name. Returns { file, dir, docs, warnings }; throws when the
+// folder is not usable or the index file exists. A doc that links outside the folder is never read, since its text
+// would land in a committed index; it is left out, with a warning.
 export function initBucket(project, folder) {
   const { root } = project;
   const rel = insidePath(root, '', folder);
@@ -228,15 +229,20 @@ export function initBucket(project, folder) {
   if (linksOutside(root, file)) throw new Error(`${file}: links outside the project; nothing was written`);
   if (existsSync(path.join(root, file))) throw new Error(`${file} already exists; edit it instead`);
   const docs = {};
+  const warnings = [];
   for (const doc of markdownFiles(root, rel)) {
+    if (linksOutside(root, doc, rel)) {
+      warnings.push(`${doc}: links outside ${rel}; left out`);
+      continue;
+    }
     const summary = draftSummary(readFileSync(path.join(root, doc), 'utf8')) || path.basename(doc, '.md');
     docs[doc.slice(rel.length + 1)] = { summary, tags: [] };
   }
-  if (Object.keys(docs).length === 0) throw new Error(`${rel}: has no .md files`);
+  if (Object.keys(docs).length === 0) throw new Error([...warnings, `${rel}: has no .md files`].join('\n'));
 
   mkdirSync(path.join(root, project.paths.knowledge), { recursive: true });
   writeJson(path.join(root, file), { dir: rel, description: `Docs in ${rel}.`, always: [], docs });
-  return { file, dir: rel, docs: Object.keys(docs).length };
+  return { file, dir: rel, docs: Object.keys(docs).length, warnings };
 }
 
 // "Heading: first sentence.", one line, cut to SUMMARY_MAX. A draft for a person to correct.

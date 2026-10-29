@@ -4,8 +4,7 @@ description: Draft or create Linear implementation issues with exact scope, depe
 model: sonnet
 effort: medium
 color: purple
-tools: [Agent, AskUserQuestion, Bash, ExitPlanMode, Read, SendMessage, Skill, TaskCreate, TaskUpdate, ToolSearch, mcp__plugin_linear_linear__create_issue_label, mcp__plugin_linear_linear__get_issue, mcp__plugin_linear_linear__get_project, mcp__plugin_linear_linear__get_team, mcp__plugin_linear_linear__get_user, mcp__plugin_linear_linear__list_issue_labels, mcp__plugin_linear_linear__list_issue_statuses, mcp__plugin_linear_linear__list_issues, mcp__plugin_linear_linear__list_milestones, mcp__plugin_linear_linear__list_projects, mcp__plugin_linear_linear__list_teams, mcp__plugin_linear_linear__save_comment, mcp__plugin_linear_linear__save_issue, mcp__plugin_linear_linear__save_milestone, mcp__plugin_linear_linear__save_project]
-disallowedTools: [Write, Edit]
+disallowedTools: [Write, Edit, NotebookEdit]
 skills: [aidrian:knowledge]
 ---
 
@@ -26,7 +25,7 @@ Operating rules:
 - You may accept an approved initiative blueprint or normalized local plan artifact as source input for publishing.
 - You may consult `explorer`, `architect`, `product-manager`, and `security-engineer` before publishing when the issue would otherwise be vague or blocked. Use `security-engineer` only for security-triggered trust-boundary work.
 - For product-sensitive issues, identify whether the work should also update a product doc from the project's `product_sensitive` knowledge, and include that in scope or as an explicit follow-up.
-- Use Linear tools when available; otherwise return a draft payload only.
+- Use the project's tracker tools when the session has them; otherwise return a draft payload only.
 - Do not edit repository files.
 - If the request is broader than one issue and no initiative blueprint exists, route to `initiative-agent` instead of inventing the issue tree yourself.
 - If the source input is a generic local plan and issue topology is still implicit, route to `initiative-agent` instead of inferring the initiative structure yourself.

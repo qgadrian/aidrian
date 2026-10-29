@@ -46,6 +46,35 @@ test('every agent has the frontmatter Claude Code needs and preloads the knowled
   }
 });
 
+// A frontmatter `tools` or `disallowedTools` value: Claude Code takes a YAML list or a comma-separated string.
+const toolList = (value) => (value === undefined ? [] : Array.isArray(value) ? value : String(value).split(',')).map((tool) => String(tool).trim());
+const mcpTools = (tools) => toolList(tools).filter((tool) => tool.startsWith('mcp__'));
+
+// Claude Code gives an agent without `tools` every tool the session has, the project's own MCP servers included.
+// An allowlist that names one vendor's MCP tools ties the agent to that setup and hides any other tracker or server.
+// Add an agent here, with the reason, only when its whole purpose is that vendor.
+const MCP_ALLOWLISTS = new Map();
+
+test('no agent allowlists an MCP tool, so a project\'s own MCP tools reach it', () => {
+  assert.deepEqual(mcpTools('Read, mcp__github__get_commit'), ['mcp__github__get_commit']);
+  assert.deepEqual(mcpTools(['Bash', 'mcp__plugin_linear_linear__get_issue']), ['mcp__plugin_linear_linear__get_issue']);
+  const agents = readAgents();
+  for (const { file, meta } of agents) {
+    if (!MCP_ALLOWLISTS.has(meta.name)) assert.deepEqual(mcpTools(meta.tools), [], `${file}: drop the mcp__ tools, or the whole \`tools\` list`);
+  }
+  for (const name of MCP_ALLOWLISTS.keys()) {
+    assert.ok(agents.some(({ meta }) => meta.name === name && mcpTools(meta.tools).length), `${name} allowlists no MCP tool; remove it from MCP_ALLOWLISTS`);
+  }
+});
+
+// With no allowlist, an agent also inherits NotebookEdit, which writes files as Write and Edit do.
+test('an agent denied Write and Edit is denied NotebookEdit too', () => {
+  for (const { file, meta } of readAgents()) {
+    const denied = toolList(meta.disallowedTools);
+    if (denied.includes('Write') && denied.includes('Edit')) assert.ok(denied.includes('NotebookEdit'), `${file}: add NotebookEdit to disallowedTools`);
+  }
+});
+
 test('every skill has a name matching its folder and a description', () => {
   const skills = readdirSync(path.join(PLUGIN, 'skills'));
   assert.ok(skills.includes('knowledge'));

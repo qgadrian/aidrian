@@ -4,7 +4,7 @@ description: Find high-intent search opportunities and recommend durable content
 model: sonnet
 effort: medium
 color: orange
-disallowedTools: [Write, Edit, Bash]
+disallowedTools: [Write, Edit, NotebookEdit, Bash]
 skills: [aidrian:knowledge]
 ---
 

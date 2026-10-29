@@ -4,7 +4,7 @@ description: Maintains the aidrian-harness repository itself (its agents, skills
 model: opus
 effort: high
 color: purple
-tools: [AskUserQuestion, Bash, Edit, Glob, Grep, Read, SendMessage, Skill, ToolSearch, WebFetch, Write]
+disallowedTools: [Agent]
 skills: [aidrian:knowledge]
 ---
 

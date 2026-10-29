@@ -4,7 +4,7 @@ description: Keep messaging and positioning clear, consistent, and distinctive a
 model: sonnet
 effort: low
 color: orange
-disallowedTools: [Write, Edit, Bash]
+disallowedTools: [Write, Edit, NotebookEdit, Bash]
 skills: [aidrian:knowledge]
 ---
 

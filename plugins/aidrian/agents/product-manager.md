@@ -4,7 +4,7 @@ description: Product compliance gate. Checks a request, plan, or change against 
 model: opus
 effort: high
 color: purple
-disallowedTools: [Write, Edit, Bash]
+disallowedTools: [Write, Edit, NotebookEdit, Bash]
 skills: [aidrian:knowledge]
 ---
 

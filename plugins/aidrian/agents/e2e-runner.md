@@ -4,7 +4,6 @@ description: Runs and triages end-to-end tests. Picks the smallest reliable run,
 model: sonnet
 effort: high
 color: yellow
-tools: [Agent, AskUserQuestion, Bash, Edit, ExitPlanMode, Glob, Grep, Monitor, Read, SendMessage, TaskCreate, TaskStop, TaskUpdate, ToolSearch, Write, mcp__plugin_linear_linear__get_issue]
 skills: [aidrian:knowledge]
 ---
 

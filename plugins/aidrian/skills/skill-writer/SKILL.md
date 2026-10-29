@@ -19,17 +19,20 @@ Read it in full on your first run in a session; after that, read it when a phase
 - This plugin's own skills: `plugins/aidrian/skills/<name>/SKILL.md`, in the plugin's repository.
 - A project's skills: the folder its `harness_engineering` knowledge names, else `.claude/skills/<name>/SKILL.md`.
   When that knowledge names a generator or a mirror for another host, run it after every edit.
-- `SKILL.md` stays at or under 7,500 bytes (`wc -c`): Codex cuts it at 8,000 bytes without a warning.
-  Detail that only some runs need moves into `references/` or `steps/` files beside it.
+- `aidrian lint skills <folder>` fails a `SKILL.md` at 8,000 bytes, where Codex cuts it, and warns above 7,500: rely on it, not a count.
 - The `description` is one line of at most 160 characters (config.json `skills.descriptionChars`),
   and all skill names and descriptions together fit in `skills.listingBytes`: both hosts list them in every session.
 
 ## Branches
 
-- **Create** a skill: Phases 1 to 7 in order.
-- **Update** a skill's behavior: Phase 1 to re-scope, then 2 to 7.
+Establish the task worktree with the `worktree-new` skill (`aidrian worktree new <branch>`) and make every edit there.
+A session already in one stays in it; a report-only audit needs none.
+
+- **Create** a skill: the worktree, then Phases 1 to 7 in order.
+- **Update** a skill's behavior: the worktree, then Phase 1 to re-scope, then 2 to 7.
 - **Audit** with no behavior change: Phase 6 first, Phase 4 for each citation the sweep touched, then 5 and 7 if the file changed.
-- **Retire or rename** a skill: § Retire or rename.
+  Establish the worktree before the sweep's first edit.
+- **Retire or rename** a skill: the worktree, then § Retire or rename.
 
 ## Phase 1: Scope
 
@@ -83,10 +86,10 @@ Write placeholders as `<name>`. A path that differs per worktree is derived from
 
 ## Phase 5: Check
 
-Run `aidrian lint skills <folder>` and `wc -c` on each `SKILL.md`; in this plugin's repository, run `npm run check`.
+Run `aidrian lint skills <folder>`; in this plugin's repository, run `npm run check`.
 Run any generator or check the project's `harness_engineering` knowledge names.
 
-**Done when** every command exits 0, and any generated file is staged beside its source.
+**Done when** every command exits 0 with no size warning for this skill, and any generated file is staged beside its source.
 
 ## Phase 6: Prune
 
@@ -107,7 +110,7 @@ When the sweep changed any file, run Phase 5 on the result before Phase 7, gener
 
 Skip this phase only for a report-only audit: an audit that changed no file in any phase of the run.
 
-1. Commit from the task worktree (`aidrian worktree new`), with the Phase 4 commands in the message:
+1. Commit from the task worktree, with the Phase 4 commands in the message:
 
    ```text
    Verification:

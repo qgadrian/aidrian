@@ -87,7 +87,7 @@ test('every skill has a name matching its folder and a description', () => {
   }
 });
 
-// Codex cuts a SKILL.md at 8,000 bytes without a warning: MAX_SKILL_PROMPT_BYTES in codex-rs/ext/skills/src/render.rs.
+// Codex cuts a SKILL.md at 8,000 bytes: MAX_SKILL_PROMPT_BYTES in codex-rs/ext/skills/src/render.rs.
 // Keep a margin. A longer skill keeps its steps in SKILL.md and moves detail into references/ or steps/ files,
 // each named in SKILL.md with when to read it.
 const MAX_SKILL_BYTES = 7500;

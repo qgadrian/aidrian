@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -9,7 +9,9 @@ import { findProject } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXAMPLE = path.join(ROOT, 'examples/consumer');
-const MIGRATING = 'see https://github.com/qgadrian/aidrian-harness/blob/main/docs/project-folder.md#migrating';
+// The link follows the repository the plugin's manifest names.
+const REPOSITORY = JSON.parse(readFileSync(path.join(ROOT, 'plugins/aidrian/plugin.json'), 'utf8')).repository;
+const MIGRATING = `see ${REPOSITORY}/blob/main/docs/project-folder.md#migrating`;
 
 test('the example consumer config is valid, turns the main-checkout guard on, and gets every other default', () => {
   const { config, errors, current } = loadConfig(findProject(EXAMPLE));

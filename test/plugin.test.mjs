@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
@@ -130,13 +131,31 @@ test('plugin content holds no project-specific paths or leftover template marker
     /\{\{(slot|host|provider):/,
     /consuming project/,
     /primary provider/,
-    /acme/i,
     /scripts\/agent-context/,
   ];
   const hits = [];
   for (const file of allFiles(PLUGIN)) {
     const text = readFileSync(file, 'utf8');
     for (const pattern of banned) if (pattern.test(text)) hits.push(`${path.relative(ROOT, file)}: ${pattern}`);
+  }
+  assert.deepEqual(hits, []);
+});
+
+// The repository names no project it came from and no person. The owner's GitHub slug appears only where a user needs it
+// to install the plugin: the README, the manifests' repository URLs, and the example's marketplace source.
+// The brackets keep this file from matching its own patterns; the owner comes from the manifest for the same reason.
+test('no tracked file names a source project, its tracker keys, or a person', () => {
+  const { repository } = json('plugins/aidrian/plugin.json');
+  const slug = new URL(repository).pathname.replace(/^\/|\.git$/g, '');
+  const owner = slug.split('/')[0];
+  const installFiles = ['README.md', 'examples/consumer/.claude/settings.json', 'plugins/aidrian/.claude-plugin/plugin.json', 'plugins/aidrian/plugin.json'];
+  const banned = [/t[a]blesit/i, /T[B]L-\d+/, /\ba[d]ri[aá]n\b/i, /q[u]intas/i];
+  const hits = [];
+  for (const file of execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' }).split('\0').filter(Boolean)) {
+    const text = `${file}\n${readFileSync(path.join(ROOT, file), 'utf8')}`;
+    for (const pattern of banned) if (pattern.test(text)) hits.push(`${file}: ${pattern}`);
+    const outsideInstall = installFiles.includes(file) ? text.replaceAll(slug, '') : text;
+    if (outsideInstall.toLowerCase().includes(owner.toLowerCase())) hits.push(`${file}: the owner's GitHub name`);
   }
   assert.deepEqual(hits, []);
 });

@@ -28,16 +28,16 @@ Do not lock the slice until the artifact is present.
 
 ## Example
 
-A slice touches both the `POST /api/bookings` create branch and the `PUT /api/bookings/:id` update branch of the bookings API route.
+A slice touches both the `POST /api/orders` create branch and the `PUT /api/orders/:id` update branch of the orders API route.
 
-- If both branches call a shared `validateBookingPayload(body)` validator before any handler logic runs, the paths are **convergent** at that validator.
-  The assessment cites `src/app/api/bookings/route.ts:42` (the validator call) and one unit test at that point is sufficient. <!-- lint-skip -->
-- If the create branch calls `createBookingHandler(body)` and the update branch calls `updateBookingHandler(body, id)` with no shared pre-processing, the
+- If both branches call a shared `validateOrderPayload(body)` validator before any handler logic runs, the paths are **convergent** at that validator.
+  The assessment cites `src/app/api/orders/route.ts:42` (the validator call) and one unit test at that point is sufficient. <!-- lint-skip -->
+- If the create branch calls `createOrderHandler(body)` and the update branch calls `updateOrderHandler(body, id)` with no shared pre-processing, the
   paths are **divergent** at the handler level. The plan must emit a parity matrix:
 
   | Surface | Test obligation | E2E obligation |
   |---|---|---|
-  | `POST /api/bookings` (create) | Unit test: `createBookingHandler` reads the changed field | E2E: creates a booking with the field set, asserts stored value |
-  | `PUT /api/bookings/:id` (update) | Unit test: `updateBookingHandler` reads the changed field | E2E: updates a booking with the field set, asserts stored value |
+  | `POST /api/orders` (create) | Unit test: `createOrderHandler` reads the changed field | E2E: creates an order with the field set, asserts stored value |
+  | `PUT /api/orders/:id` (update) | Unit test: `updateOrderHandler` reads the changed field | E2E: updates an order with the field set, asserts stored value |
 
   Both rows must appear in `planned_tests` and `closure_criteria` before the slice is locked.

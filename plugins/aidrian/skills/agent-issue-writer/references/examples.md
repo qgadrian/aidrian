@@ -19,7 +19,7 @@ One bounded helper/types addition with colocated tests and no rollout sequencing
 
 - Create `src/lib/insights/types/insights-overview.ts` with the shared API response contract.
 - Create pure helpers in `src/lib/insights/helpers/` for KPI, volume, attribution, and breakdown aggregation.
-- Add colocated tests for each helper using `buildBooking` fixtures from `src/tests/fixtures/`.
+- Add colocated tests for each helper using `buildOrder` fixtures from `src/tests/fixtures/`.
 
 ## Tasks
 
@@ -105,43 +105,43 @@ Merge into `main` is production deployment for every group above.
 
 ## Initiative Child Issue Example
 
-Title: `[bookings] Fix default selected day when service-hour overrides skip today`
+Title: `[orders] Fix default delivery day when holiday overrides skip today`
 
 Body excerpt:
 
 ```md
 ## Context
 
-Part of the service-hours initiative. This issue fixes the default-day regression before the follow-up UI polish issue can ship.
+Part of the delivery-days initiative. This issue fixes the default-day regression before the follow-up UI polish issue can ship.
 
 ## Size
 
 S
 
-One bounded booking-date logic fix with focused regression coverage.
+One bounded delivery-date logic fix with focused regression coverage.
 
 ## Scope
 
-- Update the default-day selection logic to choose the first actually bookable day.
+- Update the default-day selection logic to choose the first day open for delivery.
 - Add regression coverage for closed-today and open-tomorrow scenarios.
 
 ## Tasks
 
-- Update the default-day selection logic to skip closed-today and choose the first bookable day.
+- Update the default-day selection logic to skip closed-today and choose the first day open for delivery.
 - Add regression coverage for closed-today and open-tomorrow scenarios.
 
 ## Dependencies & Sequencing
 
 - depends on: `none`
-- PR group: `service-hours-default-day`
+- PR group: `delivery-default-day`
 - target branch: `main`
 - merge after: `none`
 - merge is production deployment: `true`
 
 ## Tracker Metadata
 
-- labels: `bug`, `bookings`
-- Linear Project: `Service Hours Reliability`
+- labels: `bug`, `orders`
+- Linear Project: `Delivery Days Reliability`
 - parent issue: `ABC-1234`
 - depends on: `none`
 - Priority: `Medium` (bug, inferred)
@@ -324,7 +324,7 @@ Questions to unblock:
   ],
   "escalation_triggers": [
     "the webhook provider contract is undocumented",
-    "the fix requires a product decision about guest-visible failure handling"
+    "the fix requires a product decision about customer-visible failure handling"
   ],
   "required_agents": ["backend-developer", "security-engineer", "code-reviewer"],
   "agent_responsibilities": [
@@ -383,14 +383,14 @@ Questions to unblock:
 {
   "schema_version": "2.0",
   "tracker": "linear",
-  "initiative_title": "[service-hours] Default day reliability",
-  "initiative_goal": "Ship the service-hours default-day fix with explicit multi-agent review and validation ownership.",
+  "initiative_title": "[delivery-days] Default day reliability",
+  "initiative_goal": "Ship the delivery-days default-day fix with explicit multi-agent review and validation ownership.",
   "topology": "parent_issue_only",
   "create_linear_project": false,
   "create_parent_issue": true,
   "parent_issue_is_canonical_release_plan": true,
   "success_criteria": [
-    "Default-day selection uses the first actually bookable day.",
+    "Default-day selection uses the first day open for delivery.",
     "The issue tree encodes explicit review and validation defaults."
   ],
   "issue_order": ["default-day-fix", "ux-follow-up"],
@@ -405,7 +405,7 @@ Questions to unblock:
   "pr_release_plan": {
     "groups": [
       {
-        "key": "service-hours-default-day",
+        "key": "delivery-default-day",
         "title": "Default selected day fix",
         "summary": "Land the default-day logic fix before the UI follow-up.",
         "issue_keys": ["default-day-fix"],
@@ -421,17 +421,17 @@ Questions to unblock:
   "issue_blueprints": [
     {
       "key": "default-day-fix",
-      "title": "[bookings] Fix default selected day when service-hour overrides skip today",
+      "title": "[orders] Fix default delivery day when holiday overrides skip today",
       "issue_type": "bug",
-      "goal": "Choose the first actually bookable day when today is closed by service-hour overrides.",
+      "goal": "Choose the first day open for delivery when a holiday override closes today.",
       "size": {
         "tshirt": "S",
-        "rationale": "One bounded booking-date logic fix with focused regression coverage.",
+        "rationale": "One bounded delivery-date logic fix with focused regression coverage.",
         "split_alert": null,
         "split_candidates": []
       },
       "scope": [
-        "Update the default-day selection logic to choose the first actually bookable day.",
+        "Update the default-day selection logic to choose the first day open for delivery.",
         "Add regression coverage for closed-today and open-tomorrow scenarios."
       ],
       "tasks": [
@@ -439,11 +439,11 @@ Questions to unblock:
         "Add focused regression coverage."
       ],
       "non_goals": [
-        "Do not change the service-hours UI."
+        "Do not change the delivery-days UI."
       ],
       "dependencies": [],
       "sequencing": {
-        "pr_group": "service-hours-default-day",
+        "pr_group": "delivery-default-day",
         "target_branch": "main",
         "merge_after": [],
         "merge_is_deploy": true,

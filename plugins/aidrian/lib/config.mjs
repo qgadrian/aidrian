@@ -7,7 +7,6 @@ import path from 'node:path';
 
 // The project folder format this plugin reads. A format change raises it and documents the migration.
 export const VERSION = 1;
-const MIGRATING = 'https://github.com/qgadrian/aidrian-harness/blob/main/docs/project-folder.md#migrating';
 
 // The type of every key. A nested object is one group of keys; a project sets any subset of a group.
 const SCHEMA = {
@@ -85,7 +84,13 @@ export function loadConfig(project) {
 export function versionProblem(file, version) {
   if (version === VERSION) return null;
   const found = version === undefined ? 'missing' : JSON.stringify(version);
-  return `${file}: project folder version ${found}; this plugin reads version ${VERSION}; see ${MIGRATING}`;
+  return `${file}: project folder version ${found}; this plugin reads version ${VERSION}; see ${migratingUrl()}`;
+}
+
+// The migration notes in the repository the plugin's manifest names, so a fork links to its own.
+function migratingUrl() {
+  const { repository } = JSON.parse(readFileSync(path.join(import.meta.dirname, '../plugin.json'), 'utf8'));
+  return `${repository}/blob/main/docs/project-folder.md#migrating`;
 }
 
 function merge(schema, defaults, values, prefix, file, errors) {

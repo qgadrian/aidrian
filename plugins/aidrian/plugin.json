@@ -4,7 +4,7 @@
   "version": "0.2.0",
   "description": "Planning, issue-writing, exploration, review-loop, worktree, and session agents and skills, safety hooks, and the aidrian command. Each project supplies its rules and settings in one project folder.",
   "author": {
-    "name": "the aidrian authors"
+    "name": "aidrian"
   },
   "repository": "https://github.com/qgadrian/aidrian-harness",
   "hooks": "./hooks/hooks.json"

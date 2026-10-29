@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -11,6 +11,7 @@ import { findProject } from '../plugins/aidrian/lib/project.mjs';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXAMPLE = path.join(ROOT, 'examples/consumer');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian-knowledge');
+const REPOSITORY = JSON.parse(readFileSync(path.join(ROOT, 'plugins/aidrian/plugin.json'), 'utf8')).repository;
 
 const loadKnowledge = (dir) => loadKnowledgeOf(findProject(dir));
 
@@ -251,7 +252,7 @@ const sourceCases = [
   ['doc with no entry', (s) => writeFileSync(path.join(s, 'notes/more.md'), '# More\n'),
     (label) => `${label}: notes/more.md: has no entry in knowledge/personal.json; add it to "docs" with a summary, or delete it`],
   ['config.json of another version', (s) => writeFileSync(path.join(s, 'config.json'), '{"version": 2}'),
-    (label) => `${label}: config.json: project folder version 2; this plugin reads version 1; see https://github.com/qgadrian/aidrian-harness/blob/main/docs/project-folder.md#migrating`],
+    (label) => `${label}: config.json: project folder version 2; this plugin reads version 1; see ${REPOSITORY}/blob/main/docs/project-folder.md#migrating`],
   ['config.json with another key', (s) => writeFileSync(path.join(s, 'config.json'), '{"version": 1, "defaultBranch": "main"}'),
     (label) => `${label}: config.json: unknown key "defaultBranch"`],
 ];

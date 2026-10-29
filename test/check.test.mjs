@@ -12,6 +12,7 @@ const EXAMPLE = path.join(ROOT, 'examples/consumer');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
 const XDG = path.join(tmpdir(), 'aidrian-check-state');
 const STATE = new RegExp(`^${XDG}/aidrian/projects/[a-z0-9-]+-[0-9a-f]{8}$`);
+const REPOSITORY = JSON.parse(readFileSync(path.join(ROOT, 'plugins/aidrian/plugin.json'), 'utf8')).repository;
 
 const run = (args, cwd) => spawnSync(CLI, args, { cwd, encoding: 'utf8', env: { ...process.env, XDG_STATE_HOME: XDG } });
 const ok = (stdout) => stdout.split('\n')[0];
@@ -90,7 +91,7 @@ test('check fails on a version this plugin does not read, and reads no index the
   assert.equal(
     stderr,
     '.aidrian/config.json: project folder version 2; this plugin reads version 1; ' +
-      'see https://github.com/qgadrian/aidrian-harness/blob/main/docs/project-folder.md#migrating\n',
+      `see ${REPOSITORY}/blob/main/docs/project-folder.md#migrating\n`,
   );
 });
 

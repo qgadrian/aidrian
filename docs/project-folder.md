@@ -100,13 +100,14 @@ Elsewhere, run it by its path, such as `path/to/aidrian-harness/plugins/aidrian/
 
 ## Local state
 
-The plugin writes plans, session handoff briefs, pull request body drafts, the lesson inbox, and the dispatch log on each machine.
-They live in one state folder per project, outside the repository, so git never sees them:
+The plugin writes plans, session handoff briefs, review state, pull request body drafts, the lesson inbox, and the dispatch log
+on each machine. They live in one state folder per project, outside the repository, so git never sees them:
 
 ```text
 $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── plans/                local plans
 ├── handoffs/             session handoff briefs
+├── reviews/              the agents the specialist-review skill keeps warm
 ├── lessons/inbox.jsonl   the lesson inbox
 ├── tmp/                  pull request bodies the pr-write skill drafts
 └── dispatch-log.jsonl    the dispatch log

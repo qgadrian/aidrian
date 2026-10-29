@@ -7,7 +7,7 @@
 // so each agent becomes a standalone TOML role that plugins/aidrian/codex/install-agents.mjs copies
 // into ~/.codex/agents/. Skills need no build: both hosts read the same SKILL.md files.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parse } from 'yaml';
@@ -124,4 +124,7 @@ function main(args) {
   console.log(`wrote ${expected.size} Codex agents to ${path.relative(ROOT, CODEX_AGENTS)}`);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) main(process.argv.slice(2));
+// Run only as the entry script. process.argv[1] is unset under `node -e` and need not be a file under `node -p`.
+// import.meta.url has symlinks resolved, so resolve the entry path too, or a symlinked --check passes having checked nothing.
+const entry = process.argv[1];
+if (entry && existsSync(entry) && import.meta.url === pathToFileURL(realpathSync(entry)).href) main(process.argv.slice(2));

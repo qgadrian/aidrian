@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import { parse } from 'smol-toml';
 
@@ -60,6 +61,21 @@ test('build fails on an unknown argument instead of regenerating the files', () 
     assert.match(stderr, new RegExp(`^usage: node scripts/build\\.mjs \\[--check\\]\nunknown argument: ${args.at(-1)}`));
   }
   assert.equal(statSync(file).mtimeMs, before);
+});
+
+test('build runs only as the entry script, including through a symlinked path', (t) => {
+  // `node -e` leaves process.argv[1] unset; importing the module there must neither throw nor build.
+  const imported = spawnSync(process.execPath, ['-e', `import(${JSON.stringify(pathToFileURL(BUILD).href)})`], { encoding: 'utf8' });
+  assert.equal(imported.status, 0, imported.stderr);
+  assert.equal(imported.stdout, '');
+
+  // A path through a symlink must still run --check, not exit 0 having checked nothing.
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-build-link-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  symlinkSync(path.resolve(import.meta.dirname, '..'), path.join(dir, 'repo'));
+  const linked = spawnSync(process.execPath, [path.join(dir, 'repo/scripts/build.mjs'), '--check'], { encoding: 'utf8' });
+  assert.equal(linked.status, 0, linked.stderr);
+  assert.match(linked.stdout, /^ok: \d+ Codex agents are current/);
 });
 
 test('install-agents adds and updates its own roles, removes stale ones, and leaves other files alone', (t) => {

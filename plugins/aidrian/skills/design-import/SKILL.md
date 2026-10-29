@@ -240,5 +240,3 @@ A single concise report. Skip a section if it has nothing to say.
   fidelity contract implementation slices inherit.
 - The `design-source-explorer` agent — the bundle explorer.
 - The `planning-agent` skill — the Plan-File Schema.
-- `references/example-bundle-pages/` — verification fixture for the current page-based layout.
-- `references/example-bundle/` — verification fixture for the older `project/` layout.

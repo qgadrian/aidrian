@@ -66,7 +66,7 @@ Sessions: 5, $42.10 estimated, main conversation and subagents together
 
 `--since` takes `30m`, `24h`, `7d`, or a date such as `2026-10-01`; the default is `7d`.
 `--json` prints the same summary as one JSON object.
-`--prs N` adds the review rounds of the last N merged pull requests: how many formal reviews config.json `pr.reviewer`
+`--prs N` adds the review rounds of the last N merged pull requests: how many formal reviews config.json `github.reviewer`
 left on each, the share that passed clean on the first look, and how many needed five or more. It needs `gh`.
 
 ## Limits

@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { loadConfig } from './config.mjs';
+import { commandConfig } from './config.mjs';
 import { checkoutRoots } from './git.mjs';
 import { readRows } from './jsonl.mjs';
 import { loadKnowledge } from './knowledge.mjs';
@@ -21,7 +21,8 @@ const CLAIM = /(?<![\w.~/:@<>{}$*%#-])(~?[\w.-]*\/[\w.~/-]*\.(?:md|json))(?![\w/
 // A line that presents a file as delivered: a delivery word that is not part of a path, or the 📄 file marker.
 const DELIVERY_LINE = /(?<![\w./-])(?:wrote|written|created|saved|handoffs?|outputs?)(?![\w./-])|📄/iu;
 
-export const logPath = (project) => path.join(stateDir(project), 'dispatch-log.jsonl');
+// `config` is the project's config when the caller has it; stateDir reads it otherwise.
+export const logPath = (project, config) => path.join(stateDir(project, { config }), 'dispatch-log.jsonl');
 
 const stamp = (now) => new Date(now).toISOString();
 const text = (value, limit = Infinity) => (typeof value === 'string' && value !== '' ? value.slice(0, limit) : null);
@@ -199,6 +200,7 @@ export const commands = {
     async run(args) {
       const { values } = parseArgs({ args, options: { since: { type: 'string' }, prs: { type: 'string' }, json: { type: 'boolean' }, project: { type: 'string' } } });
       const project = projectAt(path.resolve(values.project ?? '.'));
+      const config = commandConfig(project);
       const since = values.since ?? '7d';
       let sinceMs;
       try {
@@ -207,7 +209,7 @@ export const commands = {
         console.error(error.message);
         return 1;
       }
-      const file = logPath(project);
+      const file = logPath(project, config);
       const { rows, skipped } = readRows(file);
       const summary = summarize(rows, { sinceMs });
       if (values.prs !== undefined) {
@@ -217,7 +219,7 @@ export const commands = {
           return 1;
         }
         const { reviewRounds, formatRounds } = await import('./pr-review-rounds.mjs');
-        summary.reviews = reviewRounds(count, loadConfig(project).config.pr.reviewer);
+        summary.reviews = reviewRounds(count, config.github.reviewer);
         if (!values.json) console.log(`${formatReport(summary, { file, since, skipped })}\n${formatRounds(summary.reviews)}`);
       } else if (!values.json) {
         console.log(formatReport(summary, { file, since, skipped }));

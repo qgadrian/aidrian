@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
+import { commandConfig } from './config.mjs';
 import { runGit } from './git.mjs';
 import { appendRow, readRows } from './jsonl.mjs';
 import { projectAt, stateDir } from './project.mjs';
@@ -31,7 +32,8 @@ export const commands = {
     run(args) {
       const { values, positionals } = parseArgs({ args, allowPositionals: true, options: OPTIONS });
       const [action, id, ...extra] = positionals;
-      const file = inboxPath(projectAt(path.resolve(values.project ?? '.')));
+      const project = projectAt(path.resolve(values.project ?? '.'));
+      const file = inboxPath(project, commandConfig(project));
       const fail = (message) => {
         console.error(message);
         return 1;
@@ -71,8 +73,9 @@ export const commands = {
   },
 };
 
-export function inboxPath(project) {
-  return path.join(stateDir(project), 'lessons', 'inbox.jsonl');
+// `config` is the project's config when the caller has it; stateDir reads it otherwise.
+export function inboxPath(project, config) {
+  return path.join(stateDir(project, { config }), 'lessons', 'inbox.jsonl');
 }
 
 // Leading `evidence: <ref>` lines (blank lines between them allowed), then the note, verbatim.

@@ -15,13 +15,16 @@ const SCHEMA = {
   worktrees: { dir: 'text', bootstrap: 'textOrNull' },
   mainCheckout: { guard: 'boolean', allowWrites: 'texts' },
   commits: { types: 'texts' },
-  pr: { requiredSections: 'texts', reviewer: 'text', maxReviewRounds: 'positive', requiredChecks: 'texts', ignoreCancelledChecks: 'texts' },
+  github: { requiredSections: 'texts', reviewer: 'text', maxReviewRounds: 'positive', requiredChecks: 'texts', ignoreCancelledChecks: 'texts', conditionalChecks: 'texts' },
   docs: { wrapLimit: 'zeroOrMore', alwaysBudgetBytes: 'positive' },
   skills: { descriptionChars: 'positive', listingBytes: 'positive' },
   session: { handoff: 'handoffMode', maxTokens: 'zeroOrMore', maxCalls: 'zeroOrMore', maxHours: 'zeroOrMore' },
   models: 'models',
   names: { human: 'text', ai: 'textOrNull' },
 };
+
+// Groups a format change renamed, old name to new. A config that still uses the old name gets an error naming the new one.
+const RENAMED = { pr: 'github' };
 
 // What `models` may set for one of this plugin's agents, per host; null takes any non-empty string.
 // Claude Code's Agent tool takes only these model aliases. Codex reads any model name and names these efforts.
@@ -51,12 +54,13 @@ export const DEFAULTS = deepFreeze({
   worktrees: { dir: '.worktrees', bootstrap: null },
   mainCheckout: { guard: false, allowWrites: [] },
   commits: { types: ['build', 'chore', 'ci', 'docs', 'feat', 'fix', 'perf', 'refactor', 'revert', 'style', 'test'] },
-  pr: {
+  github: {
     requiredSections: ['Summary', 'Tests run'],
     reviewer: 'chatgpt-codex-connector[bot]',
     maxReviewRounds: 10,
     requiredChecks: [],
     ignoreCancelledChecks: [],
+    conditionalChecks: [],
   },
   docs: { wrapLimit: 155, alwaysBudgetBytes: 40000 },
   skills: { descriptionChars: 160, listingBytes: 9216 },
@@ -86,6 +90,18 @@ export function loadConfig(project) {
   return { config: deepFreeze(config), errors, current: true };
 }
 
+// The `code` of the error commandConfig throws; cli.mjs prints its message and exits with its `exitCode`.
+export const CONFIG_ERROR = 'ERR_AIDRIAN_CONFIG';
+
+// The config an `aidrian` command acts on. When loadConfig reports errors, the command must not run on defaults the
+// project did not choose, so this throws: the message lists the errors, and `exitCode` is the command's error code.
+// A project with no config.json yet runs on DEFAULTS. Hooks call loadConfig instead: a broken config never stops a session.
+export function commandConfig(project, { exitCode = 1 } = {}) {
+  const { config, errors } = loadConfig(project);
+  if (!errors.length || !isFile(path.join(project.root, project.paths.config))) return config;
+  throw Object.assign(new Error(errors.join('\n')), { code: CONFIG_ERROR, exitCode });
+}
+
 // The error for a `version` other than VERSION, or null.
 export function versionProblem(file, version) {
   if (version === VERSION) return null;
@@ -101,7 +117,8 @@ function migratingUrl() {
 
 function merge(schema, defaults, values, prefix, file, errors) {
   for (const key of Object.keys(values)) {
-    if (!Object.hasOwn(schema, key)) errors.push(`${file}: unknown key "${prefix}${key}"`);
+    if (!prefix && Object.hasOwn(RENAMED, key)) errors.push(`${file}: "${key}" is now "${RENAMED[key]}": rename the key`);
+    else if (!Object.hasOwn(schema, key)) errors.push(`${file}: unknown key "${prefix}${key}"`);
   }
   const out = {};
   for (const [key, type] of Object.entries(schema)) {

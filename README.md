@@ -33,6 +33,7 @@ plugins/aidrian/
 ├── hooks/hooks.json                the plugin's hooks, for both hosts
 ├── scripts/hook-*.mjs              the programs those hooks run
 ├── lib/                            the code behind the commands and hooks
+│   └── rules/                      the rules the Bash and write hooks run; rules/github/ holds those that read only gh
 └── codex/
     ├── agents/aidrian-*.toml       generated from agents/*.md; never edit
     └── install-agents.mjs          copies those roles into ~/.codex/agents

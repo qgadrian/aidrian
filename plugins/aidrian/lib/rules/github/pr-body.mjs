@@ -1,5 +1,5 @@
 // Bash rule: a pull request body written through `gh pr create` or `gh pr edit` has a `## ` heading for every section in
-// config.json `pr.requiredSections`, and no "Generated with [Claude Code]" footer. `gh pr create --fill` is refused:
+// config.json `github.requiredSections`, and no "Generated with [Claude Code]" footer. `gh pr create --fill` is refused:
 // gh then writes the body from the commit messages. `gh pr edit` without a body flag passes, and so does a body the
 // rule cannot read (a variable, stdin, a missing file): it denies only what it reads. Runs only inside a project. A
 // command substitution that runs, as in `url=$(gh pr create …)`, is read as the command line is.
@@ -7,9 +7,9 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { loadConfig } from '../config.mjs';
-import { findProject } from '../project.mjs';
-import { commandLines, lexCommand, readInvocation, readShortOptions } from '../shell-lex.mjs';
+import { loadConfig } from '../../config.mjs';
+import { findProject } from '../../project.mjs';
+import { commandLines, lexCommand, readInvocation, readShortOptions } from '../../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PR_BODY';
 
@@ -74,16 +74,16 @@ function judge(call, command, cwd) {
   if (!project) return null;
   const { config } = loadConfig(project);
   if (call.fill && call.subcommand === 'create') {
-    return deny(`\`--fill\` writes the body from the commit messages, without the sections config.json \`pr.requiredSections\` asks for. ` +
+    return deny(`\`--fill\` writes the body from the commit messages, without the sections config.json \`github.requiredSections\` asks for. ` +
       'Write the body to a file and pass --body-file (the pr-write skill does).');
   }
   const body = readBody(call, command, cwd);
   if (body === null) return null;
   if (FOOTER.test(body)) return deny('the body carries the "Generated with [Claude Code]" footer. Remove that line.');
-  const missing = config.pr.requiredSections.filter((section) => !hasSection(body, section));
+  const missing = config.github.requiredSections.filter((section) => !hasSection(body, section));
   if (!missing.length) return null;
   return deny(`the body has no ${missing.map((section) => `\`## ${section}\``).join(', ')} section. ` +
-    `config.json \`pr.requiredSections\` lists the sections every body has: ${config.pr.requiredSections.join(', ')}. ` +
+    `config.json \`github.requiredSections\` lists the sections every body has: ${config.github.requiredSections.join(', ')}. ` +
     'Write the body with the pr-write skill.');
 }
 

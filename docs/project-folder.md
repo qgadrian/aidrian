@@ -114,6 +114,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
   A relative path starts at the repository root, and `aidrian check` then requires git to ignore it.
 
 `aidrian state` prints the folder. Skills use it to find plans and handoff briefs.
+`aidrian lesson` adds, lists, and resolves lessons in the inbox; `aidrian handoff` checks a handoff brief against the one it supersedes.
 
 ## Local knowledge sources
 

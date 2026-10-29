@@ -8,6 +8,8 @@ const COMMANDS = {
   state: './check.mjs',
   'commit-msg': './commit-message.mjs',
   lint: './lint.mjs',
+  lesson: './lesson-inbox.mjs',
+  handoff: './handoff-brief.mjs',
 };
 
 const [command, ...args] = process.argv.slice(2);

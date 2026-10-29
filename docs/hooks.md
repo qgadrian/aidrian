@@ -8,10 +8,11 @@ A blocking hook exits 2 and tells the agent why on stderr.
 
 | Event | What runs | Blocks |
 | --- | --- | --- |
-| Session and subagent start | One line naming the `always` knowledge docs and the commands that find the rest | no |
+| Session and subagent start | One line naming the `always` knowledge docs and the commands that find the rest; for the main session, a second line while the lesson inbox holds open lessons | no |
 | Before a Bash command | The Bash rules below, in this order, in one process | yes |
 | Before Edit, Write, NotebookEdit, or Codex's `apply_patch` | The main-checkout rule | yes |
 | After Edit or Write of a Markdown file | The line-length check: lines the write made longer than config.json `docs.wrapLimit` | feedback |
+| Before compaction | A checklist of what the summary must keep, unless instructions were typed after `/compact` | no |
 
 ## Bash rules
 

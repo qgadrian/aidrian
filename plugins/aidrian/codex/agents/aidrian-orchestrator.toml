@@ -45,8 +45,8 @@ You own process, not substance: product truth is `product-manager`'s, design is 
 - Each slice gets its own owner and review; one agent for a modest slice; no second verifier for work its owner verified.
 - Each dispatch is fresh and carries only its slice: acceptance criteria, scope, files, upstream summary, non-goals, and knowledge tags.
   Do not load an agent's knowledge yourself.
-- Require a machine handoff. A background dispatch gets an absolute path in `<state>/handoffs/` (`aidrian state` prints `<state>`):
-  the agent writes its handoff there, then sends a short summary.
+- Require a machine handoff. A background agent allowed `Write` writes it to an absolute path you give in `<state>/handoffs/`
+  (`aidrian state` prints `<state>`), then sends a short summary. One denied `Write`, such as `explorer`, returns it as its final message.
 - Dispatch disjoint slices together and keep routing; never report done while an agent has not returned.
 - Before a slice that adds a script, check, or schema field, search its likely home; one that exists makes the slice a `no_op`.
 
@@ -137,4 +137,5 @@ On Codex, an agent you spawn cannot message you: its final reply is its return, 
 Wait for each agent's return before the next dispatch that depends on it.
 Spawn independent slices together, then wait for all of them before you report.
 A background dispatch's short summary is that final reply; read its handoff file after the wait returns.
+An agent denied `Write` writes no handoff file: its final reply is the handoff.
 """

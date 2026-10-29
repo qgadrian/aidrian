@@ -1,0 +1,111 @@
+import assert from 'node:assert/strict';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import path from 'node:path';
+import test from 'node:test';
+
+import { parse } from 'yaml';
+
+import { readAgents } from '../scripts/build.mjs';
+
+const ROOT = path.resolve(import.meta.dirname, '..');
+const PLUGIN = path.join(ROOT, 'plugins/aidrian');
+const json = (rel) => JSON.parse(readFileSync(path.join(ROOT, rel), 'utf8'));
+
+// The tag list in the knowledge skill is the single source for tag names.
+const KNOWLEDGE_SKILL = readFileSync(path.join(PLUGIN, 'skills/knowledge/SKILL.md'), 'utf8');
+const VOCABULARY = [...KNOWLEDGE_SKILL.split('\n## Tags\n')[1].matchAll(/^- `([a-z][a-z0-9_]*)`: /gm)].map((match) => match[1]);
+
+test('both marketplaces publish the same plugin, and both plugin manifests agree', () => {
+  const claudeMarket = json('.claude-plugin/marketplace.json');
+  const codexMarket = json('.agents/plugins/marketplace.json');
+  assert.equal(claudeMarket.name, codexMarket.name);
+  assert.deepEqual(claudeMarket.plugins.map((p) => [p.name, p.source]), [['aidrian', './plugins/aidrian']]);
+  assert.deepEqual(codexMarket.plugins.map((p) => [p.name, p.source]), [['aidrian', { source: 'local', path: './plugins/aidrian' }]]);
+
+  const claude = json('plugins/aidrian/.claude-plugin/plugin.json');
+  const codex = json('plugins/aidrian/plugin.json');
+  for (const key of ['name', 'version', 'description', 'author', 'repository']) assert.deepEqual(codex[key], claude[key], key);
+  // An explicit "agents" list replaces Claude Code's agents/ scan; with one, Claude Code 2.1.312 loaded no agents at all.
+  assert.equal('agents' in claude, false);
+});
+
+test('every agent has the frontmatter Claude Code needs and preloads the knowledge skill', () => {
+  const agents = readAgents();
+  assert.ok(agents.length > 0);
+  for (const { file, meta, body } of agents) {
+    assert.equal(meta.name, file.replace(/\.md$/, ''), file);
+    assert.ok(meta.description?.length > 20, `${file}: description`);
+    assert.ok(['haiku', 'sonnet', 'opus', 'fable', 'inherit'].includes(meta.model), `${file}: model`);
+    assert.ok(['low', 'medium', 'high', 'xhigh', 'max'].includes(meta.effort), `${file}: effort`);
+    assert.deepEqual(meta.skills, ['aidrian:knowledge'], `${file}: skills`);
+    const loads = body.match(/^Before you start, load project knowledge with the `knowledge` skill\. (.*)$/gm) ?? [];
+    assert.equal(loads.length, 1, `${file}: one knowledge-loading line`);
+  }
+});
+
+test('every skill has a name matching its folder and a description', () => {
+  const skills = readdirSync(path.join(PLUGIN, 'skills'));
+  assert.ok(skills.includes('knowledge'));
+  for (const skill of skills) {
+    const text = readFileSync(path.join(PLUGIN, 'skills', skill, 'SKILL.md'), 'utf8');
+    const meta = parse(/^---\n([\s\S]*?)\n---\n/.exec(text)[1]);
+    assert.equal(meta.name, skill);
+    assert.ok(meta.description?.length > 20, `${skill}: description`);
+  }
+});
+
+test('every tag the agents and skills ask for is in the knowledge skill tag list', () => {
+  assert.ok(VOCABULARY.length >= 5, 'the knowledge skill lists its tags');
+  const used = new Set();
+  for (const file of markdownFiles(PLUGIN)) {
+    const text = readFileSync(file, 'utf8');
+    for (const line of text.match(/[Kk]nowledge tags: .*$/gm) ?? []) {
+      for (const [, tag] of line.matchAll(/`([a-z][a-z0-9_]*)`/g)) used.add(tag);
+    }
+    for (const [, tag] of text.matchAll(/`([a-z][a-z0-9_]*)` knowledge\b/g)) used.add(tag);
+  }
+  // `always` is the bucket list every agent loads, not a tag.
+  const unknown = [...used].filter((tag) => tag !== 'always' && !VOCABULARY.includes(tag));
+  assert.deepEqual(unknown, [], 'add the tag to the knowledge skill, or use an existing one');
+});
+
+test('plugin content holds no project-specific paths or leftover template markers', () => {
+  const banned = [
+    /docs\/ai-rules/,
+    /(^|[^.\w])\.agent\//,
+    /\.agents\/skills/,
+    /\{\{(slot|host|provider):/,
+    /consuming project/,
+    /primary provider/,
+    /acme/i,
+    /scripts\/agent-context/,
+  ];
+  const hits = [];
+  for (const file of allFiles(PLUGIN)) {
+    const text = readFileSync(file, 'utf8');
+    for (const pattern of banned) if (pattern.test(text)) hits.push(`${path.relative(ROOT, file)}: ${pattern}`);
+  }
+  assert.deepEqual(hits, []);
+});
+
+test('the example consumer supplies only knowledge and settings, and enables this plugin', () => {
+  const example = path.join(ROOT, 'examples/consumer');
+  for (const own of ['.claude/agents', '.claude/skills', '.agents/skills', '.codex/agents', 'agents', 'skills']) {
+    assert.equal(existsSync(path.join(example, own)), false, `${own} belongs in the plugin`);
+  }
+  const marketplace = json('.claude-plugin/marketplace.json').name;
+  const settings = json('examples/consumer/.claude/settings.json');
+  assert.deepEqual(Object.keys(settings.extraKnownMarketplaces), [marketplace]);
+  assert.deepEqual(settings.enabledPlugins, { [`aidrian@${marketplace}`]: true });
+});
+
+function allFiles(dir) {
+  return readdirSync(dir).flatMap((name) => {
+    const file = path.join(dir, name);
+    return statSync(file).isDirectory() ? allFiles(file) : [file];
+  });
+}
+
+function markdownFiles(dir) {
+  return allFiles(dir).filter((file) => file.endsWith('.md'));
+}

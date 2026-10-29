@@ -38,6 +38,20 @@ test('required checks must exist and pass: absent is pending, skipped or cancell
   assert.equal(verdict([row('unit', 'SUCCESS')], {}), 'ready', 'no required checks: nothing to wait for');
 });
 
+test('conditionalChecks: once it has an entry, only a listed check may skip; any other skip is unexpected and failing', () => {
+  const rows = [row('lint', 'SUCCESS'), row('db tests', 'SKIPPED'), row('docs', 'NEUTRAL')];
+  assert.equal(verdict(rows, { conditionalChecks: [] }), 'ready', 'an empty list lets every skip pass, as before');
+  const result = computeVerdict(rows, { conditionalChecks: ['db'] });
+  assert.deepEqual(
+    [result.verdict, result.reason, result.skipped, result.unexpected_skips],
+    ['failing', 'unexpected skip: docs', ['db tests'], ['docs']],
+  );
+  assert.equal(verdict(rows, { conditionalChecks: ['db', 'docs'] }), 'ready');
+  assert.equal(verdict([row('docs', 'SKIPPED'), row('unit', 'IN_PROGRESS')], { conditionalChecks: ['db'] }), 'failing', 'a skip is final');
+  const required = computeVerdict([row('e2e', 'SKIPPED')], { requiredChecks: ['e2e'], conditionalChecks: ['e2e'] });
+  assert.deepEqual([required.verdict, required.reason], ['failing', 'e2e=SKIPPED (required)'], 'required wins over conditional');
+});
+
 test('parseCliArgs reads a number, #number, -R, and --json, and reports anything else', () => {
   assert.deepEqual(parseCliArgs(['#12', '-R', 'acme/notes', '--json']), { repo: 'acme/notes', asJson: true, prNumber: '12', unknown: undefined });
   assert.equal(parseCliArgs(['--watch']).unknown, '--watch');

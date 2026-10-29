@@ -3,7 +3,9 @@
 //   - FAILURE, TIMED_OUT, ACTION_REQUIRED, STARTUP_FAILURE, or an unknown terminal state: failing.
 //   - CANCELLED: failing, unless the name contains an `ignoreCancelledChecks` entry (a routine cancel, such as a
 //     preview deploy skipped by an ignored build); those are listed as skipped.
-//   - SKIPPED or NEUTRAL: passes, and is named in the output so nothing skips silently.
+//   - SKIPPED or NEUTRAL: passes, and is named in the output so nothing skips silently. When `conditionalChecks` lists
+//     anything, only a check whose name contains an entry may skip (a job a path filter turns off, say); any other skip
+//     is an unexpected skip, listed under `unexpected_skips`, and failing.
 //   - `requiredChecks`: every check whose name contains an entry must be SUCCESS, and at least one must exist. Checks
 //     register over time, so a required entry with no check yet is pending, never ready.
 // Exit 0 ready, 1 failing, 2 pending, 3 error (gh missing, no pull request, unreadable output).
@@ -14,25 +16,28 @@ const NON_TERMINAL = new Set(['IN_PROGRESS', 'QUEUED', 'PENDING', 'WAITING', 'RE
 const HARD_FAIL = new Set(['FAILURE', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
 const EXIT_BY_VERDICT = { ready: 0, failing: 1, pending: 2 };
 
-// The verdict over `gh pr checks --json name,state` rows: { verdict, reason, failing, pending, skipped }.
-export function computeVerdict(rows, { requiredChecks = [], ignoreCancelledChecks = [] } = {}) {
+// The verdict over `gh pr checks --json name,state` rows: { verdict, reason, failing, pending, skipped, unexpected_skips }.
+export function computeVerdict(rows, { requiredChecks = [], ignoreCancelledChecks = [], conditionalChecks = [] } = {}) {
   const failing = [];
   const pending = [];
   const skipped = [];
+  const unexpected = [];
   const required = (name) => requiredChecks.some((part) => name.includes(part));
+  const maySkip = (name) => !conditionalChecks.length || conditionalChecks.some((part) => name.includes(part));
   for (const row of rows) {
     const state = String(row.state ?? '').toUpperCase();
     if (NON_TERMINAL.has(state)) pending.push(row.name);
     else if (HARD_FAIL.has(state)) failing.push(`${row.name}=${state}`);
     else if (state === 'CANCELLED' && !required(row.name) && ignoreCancelledChecks.some((part) => row.name.includes(part))) skipped.push(`${row.name} (cancelled)`);
-    else if ((state === 'SKIPPED' || state === 'NEUTRAL') && !required(row.name)) skipped.push(row.name);
+    else if ((state === 'SKIPPED' || state === 'NEUTRAL') && !required(row.name)) (maySkip(row.name) ? skipped : unexpected).push(row.name);
     else if (state !== 'SUCCESS') failing.push(`${row.name}=${state || '?'}${required(row.name) ? ' (required)' : ''}`);
   }
   for (const part of requiredChecks) {
     if (!rows.some((row) => row.name.includes(part))) pending.push(`${part} (required, not reported yet)`);
   }
-  const lists = { failing, pending, skipped };
-  if (failing.length) return { verdict: 'failing', reason: failing.join('; '), ...lists };
+  const lists = { failing, pending, skipped, unexpected_skips: unexpected };
+  const problems = [...failing, ...(unexpected.length ? [`unexpected skip: ${unexpected.join(', ')}`] : [])];
+  if (problems.length) return { verdict: 'failing', reason: problems.join('; '), ...lists };
   if (pending.length) return { verdict: 'pending', reason: `${pending.length} not terminal: ${pending.join(', ')}`, ...lists };
   const passed = rows.length - skipped.length;
   return { verdict: 'ready', reason: `${passed} pass${skipped.length ? `; skipped: ${skipped.join(', ')}` : ''}`, ...lists };

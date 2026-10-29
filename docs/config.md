@@ -23,7 +23,8 @@ In a group such as `pr`, set only the keys you change; the others keep their def
     "reviewer": "chatgpt-codex-connector[bot]",
     "maxReviewRounds": 10,
     "requiredChecks": [],
-    "ignoreCancelledChecks": []
+    "ignoreCancelledChecks": [],
+    "conditionalChecks": []
   },
   "docs": { "wrapLimit": 155, "alwaysBudgetBytes": 40000 },
   "skills": { "descriptionChars": 160, "listingBytes": 9216 },
@@ -48,6 +49,7 @@ In a group such as `pr`, set only the keys you change; the others keep their def
 | `pr.maxReviewRounds` | How many bot reviews a pull request may get before `aidrian pr await-review --request` stops asking. |
 | `pr.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. |
 | `pr.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
+| `pr.conditionalChecks` | Parts of check names whose `SKIPPED` or `NEUTRAL` result is routine, such as a job a path filter turns off. Once the list has an entry, `aidrian pr checks` fails on any other skip; `[]` lets every skip pass, named in the output. |
 | `docs.wrapLimit` | The longest line, in characters, allowed in a Markdown file an agent writes; `0` turns the check off. |
 | `docs.alwaysBudgetBytes` | The most bytes all `always` knowledge docs may add up to (`aidrian lint budget`). |
 | `skills.descriptionChars` | The longest skill or agent description, in characters (`aidrian lint skills` and `agents`). |

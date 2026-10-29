@@ -21,10 +21,11 @@ test('the example consumer config is valid, turns the main-checkout guard on, an
 });
 
 test('file values win; a group keeps the defaults for the keys the file leaves out', (t) => {
-  const { config, errors } = loadConfig(project(t, { version: 1, defaultBranch: 'trunk', pr: { maxReviewRounds: 3, requiredChecks: ['e2e'] } }));
+  const pr = { maxReviewRounds: 3, requiredChecks: ['e2e'], conditionalChecks: ['db tests'] };
+  const { config, errors } = loadConfig(project(t, { version: 1, defaultBranch: 'trunk', pr }));
   assert.deepEqual(errors, []);
   assert.equal(config.defaultBranch, 'trunk');
-  assert.deepEqual(config.pr, { ...DEFAULTS.pr, maxReviewRounds: 3, requiredChecks: ['e2e'] });
+  assert.deepEqual(config.pr, { ...DEFAULTS.pr, ...pr });
   assert.deepEqual(config.worktrees, DEFAULTS.worktrees);
 });
 
@@ -42,6 +43,7 @@ const errorCases = [
   ['unknown key in a group', { version: 1, pr: { reviewers: 'x' } }, /: unknown key "pr\.reviewers"$/],
   ['inherited property name as a key', JSON.parse('{"version": 1, "__proto__": {}}'), /: unknown key "__proto__"$/],
   ['string instead of a list', { version: 1, commits: { types: 'feat' } }, /"commits\.types" must be a list of non-empty strings$/],
+  ['check names that are not a list', { version: 1, pr: { conditionalChecks: 'db tests' } }, /"pr\.conditionalChecks" must be a list of non-empty strings$/],
   ['group that is not an object', { version: 1, pr: [] }, /"pr" must be an object$/],
   ['negative number', { version: 1, docs: { wrapLimit: -1 } }, /"docs\.wrapLimit" must be a whole number, 0 or more$/],
   ['zero where a positive number is needed', { version: 1, pr: { maxReviewRounds: 0 } }, /"pr\.maxReviewRounds" must be a whole number above 0$/],

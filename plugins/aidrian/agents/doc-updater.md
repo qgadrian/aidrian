@@ -4,7 +4,7 @@ description: Standalone doc maintenance, such as drift repair and doc-only tasks
 model: sonnet
 effort: medium
 color: green
-tools: [AskUserQuestion, Bash, Edit, EnterWorktree, ExitPlanMode, Monitor, Read, ReportFindings, SendMessage, Skill, TaskGet, TaskList, TaskStop, TaskUpdate, ToolSearch, Write, mcp__plugin_linear_linear__get_issue, mcp__plugin_linear_linear__get_user, mcp__plugin_linear_linear__list_issues]
+disallowedTools: [Agent]
 skills: [aidrian:knowledge]
 ---
 

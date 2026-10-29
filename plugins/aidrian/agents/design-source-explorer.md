@@ -4,7 +4,7 @@ description: Used by the design-import skill to classify a Claude Design bundle 
 model: sonnet
 effort: medium
 color: yellow
-tools: [Bash, ExitPlanMode, Glob, Grep, Read, WebFetch, Write]
+disallowedTools: [Agent]
 skills: [aidrian:knowledge]
 ---
 

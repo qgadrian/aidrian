@@ -107,7 +107,7 @@ on each machine. They live in one state folder per project, outside the reposito
 $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── plans/                local plans
 ├── handoffs/             session handoff briefs
-├── reviews/              the agents the specialist-review skill keeps warm
+├── reviews/              review manifests, and the agents the specialist-review skill keeps warm
 ├── lessons/inbox.jsonl   the lesson inbox
 ├── tmp/                  pull request bodies the pr-write skill drafts
 └── dispatch-log.jsonl    the dispatch log

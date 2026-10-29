@@ -99,6 +99,15 @@ test('every SKILL.md fits in Codex\'s skill size, with a margin', () => {
   assert.deepEqual(over, [], `move detail into references/ or steps/ files; the limit is ${MAX_SKILL_BYTES} bytes`);
 });
 
+// `claude --agent aidrian:orchestrator` makes this file the session's instructions, paid for on every turn.
+// Count bytes, as `wc -c` does: a check that counted characters would pass a file over the limit.
+const MAX_ORCHESTRATOR_BYTES = 9000;
+
+test('the orchestrator agent file fits in 9,000 bytes', () => {
+  const bytes = statSync(path.join(PLUGIN, 'agents/orchestrator.md')).size;
+  assert.ok(bytes <= MAX_ORCHESTRATOR_BYTES, `orchestrator.md is ${bytes} bytes; move detail into the orchestration skill`);
+});
+
 test('a skill names each of its references/ and steps/ files, and every such file the plugin names exists', () => {
   const skills = path.join(PLUGIN, 'skills');
   const extra = (skill) => ['references', 'steps'].flatMap((sub) => {

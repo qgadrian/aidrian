@@ -114,7 +114,9 @@ test('the delivery check sends a subagent back once for a path it named that doe
   assert.equal(hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'a3', last_assistant_message: 'Wrote out/none.json.' }).status, 0, 'no stop_hook_active field: never sent back');
   assert.deepEqual([stop('Wrote out/real.json.', false).status], [0]);
   assert.equal(stop('out/gone.json does not exist, so I skipped it.', false).status, 0, 'a mention is not a claim');
-  assert.deepEqual(log().map((row) => row.delivered), ['missing', 'missing', 'missing', 'file', 'chat']);
+  const inline = JSON.stringify({ status: 'done', role: 'explorer', evidence: [{ file: 'docs/absent.md', shows: 'no such doc' }] }, null, 2);
+  assert.equal(stop(inline, false).status, 0, 'a handoff returned in the last message, as a read-only agent returns it, claims no file');
+  assert.deepEqual(log().map((row) => row.delivered), ['missing', 'missing', 'missing', 'file', 'chat', 'chat']);
 });
 
 test('every dispatch-log hook exits 0 silently on a payload it cannot read', () => {

@@ -18,6 +18,8 @@ const DESCRIPTION_CHARS = 80;
 const CLAIMED_PATHS = 20;
 // A path an agent's last message names: a .md or .json token with a `/`, not inside a URL or a template.
 const CLAIM = /(?<![\w.~/:@<>{}$*%#-])(~?[\w.-]*\/[\w.~/-]*\.(?:md|json))(?![\w/<>{}*-])/gu;
+// A line that presents a file as delivered: a delivery word that is not part of a path, or the 📄 file marker.
+const DELIVERY_LINE = /(?<![\w./-])(?:wrote|written|created|saved|handoffs?|outputs?)(?![\w./-])|📄/iu;
 
 export const logPath = (project) => path.join(stateDir(project), 'dispatch-log.jsonl');
 
@@ -45,8 +47,8 @@ export function dispatchRow(input, { env = process.env, now = Date.now() } = {})
   };
 }
 
-// SubagentStop: the subagent's tokens, cost, the knowledge docs it read, and whether the paths its last message names
-// exist. Returns { row, missing }; the hook sends the agent back once when `missing` is not empty.
+// SubagentStop: the subagent's tokens, cost, the knowledge docs it read, and whether the paths its last message presents
+// as delivered exist. Returns { row, missing }; the hook sends the agent back once when `missing` is not empty.
 export function stopRow(input, project, { now = Date.now() } = {}) {
   const transcript = typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
   const usage = transcript ? aggregateUsage(transcript).perModel : {};
@@ -95,10 +97,13 @@ export function sessionRow(input, { env = process.env, now = Date.now() } = {}) 
   };
 }
 
-// The .md and .json paths a message names, once each, at most CLAIMED_PATHS.
+// The .md and .json paths a message presents as delivered, once each, at most CLAIMED_PATHS. A path on any other line
+// is a mention, such as "docs/old.md does not exist", and is never checked.
 export function claimedPaths(message) {
   if (typeof message !== 'string') return [];
-  return [...new Set([...message.matchAll(CLAIM)].map((match) => match[1].replace(/[.]+$/u, '')))].slice(0, CLAIMED_PATHS);
+  const lines = message.split('\n').filter((line) => DELIVERY_LINE.test(line));
+  const claims = lines.flatMap((line) => [...line.matchAll(CLAIM)].map((match) => match[1].replace(/[.]+$/u, '')));
+  return [...new Set(claims)].slice(0, CLAIMED_PATHS);
 }
 
 // The claimed paths that exist nowhere: not absolute, not from `cwd`, not from its checkout or the main checkout.

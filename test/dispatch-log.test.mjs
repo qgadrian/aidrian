@@ -56,10 +56,21 @@ test('a dispatch row keeps names, counts, and a short description, and never the
 test('claimedPaths finds .md and .json paths with a slash, and skips URLs, templates, and bare names', () => {
   const message = [
     'Wrote `/abs/out/handoff.json` and docs/hooks.md, see docs/hooks.md#rules and src/a.md:12.',
-    'Links: https://github.com/acme/notes/blob/main/README.md, <state>/handoffs/x.md, {dir}/y.json, docs/*.md, README.md, ~/notes/todo.md.',
+    'Saved: https://github.com/acme/notes/blob/main/README.md, <state>/handoffs/x.md, {dir}/y.json, docs/*.md, README.md, ~/notes/todo.md.',
   ].join('\n');
   assert.deepEqual(claimedPaths(message), ['/abs/out/handoff.json', 'docs/hooks.md', 'src/a.md', '~/notes/todo.md']);
   assert.deepEqual(claimedPaths(undefined), []);
+});
+
+test('claimedPaths reads only the lines that present a file as delivered', () => {
+  const message = [
+    'Wrote docs/new.md.',
+    'docs/old.md does not exist, so I left it alone.',
+    '📄 out/plan.json',
+    'Read docs/output-format.md and src/handoff/notes.md first.',
+    'Handoff: /abs/handoff.json',
+  ].join('\n');
+  assert.deepEqual(claimedPaths(message), ['docs/new.md', 'out/plan.json', '/abs/handoff.json']);
 });
 
 test('the hooks write dispatch, stop, and session rows inside a project, and nothing outside one', (t) => {
@@ -102,7 +113,8 @@ test('the delivery check sends a subagent back once for a path it named that doe
   assert.equal(stop('Wrote out/real.json and out/handoff.json.', true).status, 0, 'the second stop always ends');
   assert.equal(hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'a3', last_assistant_message: 'Wrote out/none.json.' }).status, 0, 'no stop_hook_active field: never sent back');
   assert.deepEqual([stop('Wrote out/real.json.', false).status], [0]);
-  assert.deepEqual(log().map((row) => row.delivered), ['missing', 'missing', 'missing', 'file']);
+  assert.equal(stop('out/gone.json does not exist, so I skipped it.', false).status, 0, 'a mention is not a claim');
+  assert.deepEqual(log().map((row) => row.delivered), ['missing', 'missing', 'missing', 'file', 'chat']);
 });
 
 test('every dispatch-log hook exits 0 silently on a payload it cannot read', () => {

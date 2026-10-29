@@ -29,7 +29,7 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | `tokens` | `input`, `output`, `cache_read`, and `cache_write` over the subagent's transcript, counted once per API request. |
 | `models`, `cost_usd` | The models it used, and the cost estimated from list prices (`lib/transcript.mjs`). |
 | `docs_read` | The knowledge docs, as the index names them, that it opened with the Read tool. |
-| `delivered` | `file` when every `.md` or `.json` path its last message names exists, `missing` when one does not, `chat` when it names none. |
+| `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not, `chat` when it presents none. |
 | `paths` | Those paths, at most 20. |
 
 When `delivered` is `missing`, the hook sends the subagent back once:
@@ -78,6 +78,7 @@ left on each, the share that passed clean on the first look, and how many needed
   map counts as zero.
 - **A background dispatch** writes its `dispatch` row at launch, without time or tool counts; its `stop` row has the rest.
   The report counts `stop` rows with no `dispatch` row, so a host change that breaks the join is visible.
-- **The delivery check reads the last message only.** It cannot know a path the dispatcher expected but the agent
-  never named, and it reads a path the agent mentions but did not write as a claim.
+- **The delivery check reads the last message only, line by line.** It cannot know a path the dispatcher expected but
+  the agent never named, and it reads a path mentioned on the same line as a delivery word as a claim.
+  [hooks.md](hooks.md#delivery-check) has the rule.
 - **No lock.** Rows from concurrent processes never interleave, because each is one append; nothing ever rewrites the file.

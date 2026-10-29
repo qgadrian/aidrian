@@ -76,8 +76,12 @@ Frontmatter, fenced and indented code, table rows, and a line whose overflow is 
 
 ## Delivery check
 
-When a subagent's last message names a `.md` or `.json` path that exists nowhere, the stop hook sends it back once
-with the missing paths: it writes them, corrects its report, or says it removed them on purpose. Its second stop always ends.
+When a subagent's last message presents a `.md` or `.json` path as delivered and that path exists nowhere, the stop hook
+sends it back once with the missing paths: it writes them, corrects its report, or says it removed them on purpose.
+Its second stop always ends.
+A path counts as delivered only on a line that also has the 📄 marker or one of the words wrote, written, created, saved,
+handoff, or output, in any case, outside a path.
+A path on any other line is a mention, such as "docs/old.md does not exist", and is never checked.
 [dispatch-log.md](dispatch-log.md) describes the rows and `aidrian report`.
 
 ## Overrides

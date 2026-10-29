@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -17,14 +17,17 @@ test('the generated Codex agents are current (npm run build regenerates them)', 
   assert.deepEqual(compareCodexAgents(), []);
 });
 
+// What the Codex role carries after its preamble: the agent's body, then its Codex add-on.
+const roleText = ({ body, addons }) => (addons.codex ? `${body}\n\n${addons.codex}` : body);
+
 test('each Codex agent is valid TOML that carries its Claude Code agent', () => {
-  for (const { meta, body } of readAgents()) {
+  for (const { meta, body, addons } of readAgents()) {
     const role = parse(readFileSync(path.join(CODEX_AGENTS, `${PREFIX}${meta.name}.toml`), 'utf8'));
     assert.equal(role.name, `${PREFIX}${meta.name}`);
     assert.equal(role.description, meta.description.replace(/\s+/g, ' ').trim());
     assert.equal(role.model_reasoning_effort, meta.effort === 'max' ? 'xhigh' : meta.effort);
     assert.equal('model' in role, false, 'Codex roles inherit the session model');
-    assert.ok(role.developer_instructions.endsWith(`${body}\n`), `${meta.name}: body`);
+    assert.ok(role.developer_instructions.endsWith(`${roleText({ body, addons })}\n`), `${meta.name}: body`);
   }
 });
 
@@ -35,7 +38,7 @@ test('Codex agents that cannot edit in Claude Code are told so', () => {
   assert.doesNotMatch(role('planning-agent'), /read-only|Do not create or edit files/);
 });
 
-const agent = (name, body) => ({ file: `${name}.md`, meta: { name, description: `${name} test agent`, model: 'sonnet', effort: 'low' }, body });
+const agent = (name, body, addons = {}) => ({ file: `${name}.md`, meta: { name, description: `${name} test agent`, model: 'sonnet', effort: 'low' }, body, addons });
 
 test('Codex roles give Codex names only to this plugin\'s agents, never to a project\'s own roles', () => {
   const rendered = renderCodexAgents([agent('lead', 'Ask `helper`, then `architect`. You are `lead`.'), agent('helper', 'Help.')]);
@@ -45,9 +48,9 @@ test('Codex roles give Codex names only to this plugin\'s agents, never to a pro
   assert.doesNotMatch(parse(rendered.get(`${PREFIX}helper.toml`)).developer_instructions, /Codex names/);
 
   const shipped = new Set(readAgents().map(({ meta }) => `${PREFIX}${meta.name}`));
-  for (const { meta, body } of readAgents()) {
+  for (const { meta, body, addons } of readAgents()) {
     const role = parse(readFileSync(path.join(CODEX_AGENTS, `${PREFIX}${meta.name}.toml`), 'utf8')).developer_instructions;
-    const preamble = role.slice(0, -(body.length + 1));
+    const preamble = role.slice(0, -(roleText({ body, addons }).length + 1));
     for (const [, name] of preamble.matchAll(/`(aidrian-[a-z-]+)`/g)) assert.ok(shipped.has(name), `${meta.name}: ${name} is not a plugin agent`);
   }
 });
@@ -60,6 +63,40 @@ test('Codex roles do not rename an agent that is named only as a skill', () => {
 
   const initiative = parse(readFileSync(path.join(CODEX_AGENTS, `${PREFIX}initiative-agent.toml`), 'utf8')).developer_instructions;
   assert.doesNotMatch(initiative, /aidrian-agent-issue-writer/, 'initiative-agent reads the agent-issue-writer skill; it spawns no such agent');
+});
+
+test('a Codex add-on follows the agent body in the Codex role, and the agents it names get their Codex names', () => {
+  const rendered = renderCodexAgents([agent('lead', 'Lead the work.', { codex: 'On Codex, ask `helper` first.' }), agent('helper', 'Help.')]);
+  const lead = parse(rendered.get(`${PREFIX}lead.toml`)).developer_instructions;
+  assert.ok(lead.endsWith('Lead the work.\n\nOn Codex, ask `helper` first.\n'));
+  assert.match(lead, /`helper` is `aidrian-helper`/);
+  assert.ok(parse(rendered.get(`${PREFIX}helper.toml`)).developer_instructions.endsWith('\n\nHelp.\n'));
+});
+
+test('build reads <agent>.codex.md add-ons and fails on any other add-on name', (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-addons-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const agentsDir = path.join(dir, 'agents');
+  const addonsDir = path.join(dir, 'agent-addons');
+  mkdirSync(agentsDir);
+  mkdirSync(addonsDir);
+  writeFileSync(path.join(agentsDir, 'lead.md'), '---\nname: lead\neffort: low\n---\n\nLead.\n');
+  assert.deepEqual(readAgents({ agentsDir, addonsDir }).map(({ addons }) => addons), [{}]);
+  writeFileSync(path.join(addonsDir, 'lead.codex.md'), '\nOn Codex only.\n');
+  assert.deepEqual(readAgents({ agentsDir, addonsDir }).map(({ addons }) => addons), [{ codex: 'On Codex only.' }]);
+
+  const cases = [
+    ['lead.claude.md', /lead\.claude\.md: Claude Code reads agents\/lead\.md as it is/],
+    ['lead.opencode.md', /lead\.opencode\.md: no OpenCode role is generated yet/],
+    ['ghost.codex.md', /ghost\.codex\.md: name it <agent>\.codex\.md after an agent/],
+    ['lead.cursor.md', /lead\.cursor\.md: name it <agent>\.codex\.md/],
+    ['notes.md', /notes\.md: name it <agent>\.codex\.md/],
+  ];
+  for (const [file, message] of cases) {
+    writeFileSync(path.join(addonsDir, file), 'text\n');
+    assert.throws(() => readAgents({ agentsDir, addonsDir }), message, file);
+    rmSync(path.join(addonsDir, file));
+  }
 });
 
 test('build fails on an unknown argument instead of regenerating the files', () => {

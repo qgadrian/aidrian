@@ -26,6 +26,7 @@ plugins/aidrian/
 ├── .claude-plugin/plugin.json      Claude Code manifest
 ├── plugin.json                     Codex manifest (same name, version, description)
 ├── agents/*.md                     the agents; the only source to edit
+├── agent-addons/<name>.codex.md    optional text only Codex gets, after that agent's body
 ├── skills/*/SKILL.md               the skills; both hosts read them as they are
 ├── bin/aidrian                     project commands; on the Bash PATH in Claude Code sessions
 ├── bin/aidrian-knowledge           the knowledge command; on the same PATH
@@ -44,6 +45,18 @@ docs/dispatch-log.md                the dispatch log rows and aidrian report
 docs/knowledge.md                   the knowledge-bucket format
 test/                               node --test suites
 ```
+
+## Host add-ons
+
+An agent is written for every host.
+When Codex needs extra text for one agent, put it in `plugins/aidrian/agent-addons/<name>.codex.md`:
+`npm run build` adds it after the agent's body in the Codex role, and Claude Code never reads it.
+The folder sits beside `agents/` because Claude Code loads every `.md` file in `agents/` as an agent.
+
+There is no Claude add-on. Claude Code reads `agents/<name>.md` as it is, so nothing could add a `<name>.claude.md` to it;
+text only Claude needs stays in the agent until the build generates Claude agents too.
+`<name>.opencode.md` is kept for an OpenCode build, which does not exist.
+The build fails on either name, and on an add-on whose agent does not exist.
 
 ## Build and check
 

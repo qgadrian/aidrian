@@ -122,6 +122,22 @@ test('paths: a personal home folder in a tracked or staged file fails; CI and pl
   assert.deepEqual(lintPaths(dir, true).problems, [`untracked.md:1: a personal home folder: ${HOME}x`]);
 });
 
+test('paths --staged reads what the index holds, so a partly staged file is judged as it will be committed', (t) => {
+  const dir = tempDir(t);
+  const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' });
+  git('init', '-q');
+  writeFileSync(path.join(dir, 'clean.md'), 'clean\n');
+  writeFileSync(path.join(dir, 'fixed.md'), `${HOME}x\n`);
+  writeFileSync(path.join(dir, 'gone.md'), `${HOME}y\n`);
+  git('add', '.');
+  // After staging: a personal path added but not staged, one removed but not staged, and a file deleted but not staged.
+  writeFileSync(path.join(dir, 'clean.md'), `${HOME}z\n`);
+  writeFileSync(path.join(dir, 'fixed.md'), 'fixed in the working tree only\n');
+  rmSync(path.join(dir, 'gone.md'));
+  assert.deepEqual(lintPaths(dir, true).problems, [`fixed.md:1: a personal home folder: ${HOME}x`, `gone.md:1: a personal home folder: ${HOME}y`]);
+  assert.deepEqual(lintPaths(dir).problems, [`clean.md:1: a personal home folder: ${HOME}z`], 'without --staged it reads the working tree');
+});
+
 test('aidrian lint runs every lint on a project and prints the always-doc budget per bucket', (t) => {
   const run = (args, cwd = ROOT) => spawnSync(CLI, ['lint', ...args], { cwd, encoding: 'utf8' });
   const all = run(['--project', 'examples/consumer']);

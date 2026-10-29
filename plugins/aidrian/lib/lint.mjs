@@ -2,7 +2,7 @@
 //   skills  every <dir>/<name>/SKILL.md: a one-line YAML `description` within skills.descriptionChars, and all skill
 //           names and descriptions within skills.listingBytes (both hosts list them in every session)
 //   agents  every <dir>/*.md: `name` equals the file name, a `description` like a skill's, and a known model and effort
-//   paths   tracked files (or staged ones) hold no personal home folder such as /Users/<name>/
+//   paths   tracked files hold no personal home folder such as /Users/<name>/; --staged reads what the index holds
 //   budget  the `always` knowledge docs, read at every session start, fit in docs.alwaysBudgetBytes
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -20,6 +20,8 @@ const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 // Home folders of placeholder or CI users are not personal.
 const PERSONAL_PATH = /\/(?:Users|home)\/(?!(?:runner|you|user|example)\/)[A-Za-z_][A-Za-z0-9_.-]*\//;
 const BINARY = /\.(png|jpe?g|gif|webp|ico|woff2?|ttf|eot|otf|pdf|zip|gz|tar|tgz|mp[34]|wav|ogg)$|(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$/i;
+// Room for one staged file read through git: Node's default 1 MiB would leave a larger file unread.
+const STAGED_MAX_BYTES = 64 * 1024 * 1024;
 
 export const commands = {
   lint: {
@@ -101,18 +103,27 @@ export function lintPaths(root, staged = false) {
   const files = stdout.split('\0').filter((file) => file && !BINARY.test(file));
   const problems = [];
   for (const file of files) {
-    let text;
-    try {
-      text = readFileSync(path.join(root, file), 'utf8');
-    } catch {
-      continue; // a deleted or unreadable file holds nothing to report
-    }
-    if (text.includes('\0')) continue;
+    const text = staged ? stagedText(root, file) : workingText(root, file);
+    if (text === null || text.includes('\0')) continue; // an unreadable file holds nothing to report
     text.split('\n').forEach((line, index) => {
       if (PERSONAL_PATH.test(line)) problems.push(`${file}:${index + 1}: a personal home folder: ${line.trim().slice(0, 120)}`);
     });
   }
   return { problems, summary: `no personal paths in ${files.length} ${staged ? 'staged' : 'tracked'} files` };
+}
+
+function workingText(root, file) {
+  try {
+    return readFileSync(path.join(root, file), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+// The file as the index holds it, which is what a commit takes: a later unstaged edit or deletion does not change it.
+function stagedText(root, file) {
+  const { status, stdout } = runGit(['show', `:${file}`], root, { maxBuffer: STAGED_MAX_BYTES });
+  return status === 0 ? stdout : null;
 }
 
 export function lintBudget(root, buckets, limit) {

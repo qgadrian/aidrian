@@ -5,8 +5,8 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
 // The raw spawn result: { status, stdout, stderr, error }. Some git commands use exit 1 as an answer, not a failure.
-export function runGit(args, cwd) {
-  return spawnSync('git', args, { cwd, encoding: 'utf8' });
+export function runGit(args, cwd, options = {}) {
+  return spawnSync('git', args, { cwd, encoding: 'utf8', ...options });
 }
 
 function firstLine(args, cwd) {

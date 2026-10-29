@@ -89,7 +89,7 @@ Elsewhere, run it by its path, such as `path/to/aidrian-harness/plugins/aidrian/
 - `skills`: each `.claude/skills/<name>/SKILL.md` has a one-line YAML `description` within `skills.descriptionChars`,
   and all skill names and descriptions together fit in `skills.listingBytes`. Both hosts list them in every session.
 - `agents`: each `.claude/agents/*.md` has `name` equal to its file name, such a `description`, and a known `model` and `effort`.
-- `paths`: no tracked file holds a personal home folder such as `/Users/<name>/`; `--staged` checks the staged files only.
+- `paths`: no tracked file holds a personal home folder such as `/Users/<name>/`; `--staged` checks the staged files only, as the index holds them.
 - `budget`: the `always` knowledge docs, read at every session start, fit in `docs.alwaysBudgetBytes`. It prints the bytes per bucket.
 
 `aidrian lint skills <folder>` and `aidrian lint agents <folder>` check other folders.

@@ -1,12 +1,12 @@
 ---
-name: grill-me
-description: Interview the user one question at a time to stress-test a plan or design against the project's docs and code. Use when asked to be grilled.
+name: challenge
+description: Ask the user one question at a time to test a plan or design against the project's docs and code. Use on "challenge this plan" or "stress-test my design".
 ---
 
-# grill-me
+# challenge
 
-Interview the user relentlessly about every part of the plan until both of you share one understanding of it.
-Walk down each branch of the design tree, and resolve the decisions a branch depends on before the branch itself.
+Question the user about the plan until both of you hold the same understanding of every part of it.
+Settle decisions in dependency order: resolve what a branch of the design rests on before the branch itself.
 
 Before you start, follow the `knowledge` skill. Knowledge tags: `product_sensitive`, `docs`.
 Add the tags of each area the plan touches, such as `backend` or `testing`, when you reach it.
@@ -33,7 +33,7 @@ While you ask:
 
 ## Doc drift
 
-When a doc is stale, or contradicts the code or a settled answer, record it as drift and keep grilling:
+When a doc is stale, or contradicts the code or a settled answer, record it as drift and keep asking:
 the doc and heading, what it says, what is true now, and who owns the fix.
 This skill edits no doc; the drift list routes each fix to its owner.
 
@@ -52,6 +52,8 @@ Then write the summary:
 Capture it before the session ends:
 
 - About a plan file: add the decisions to its `## Approach` and the open questions to its `## Open questions`.
+  A plan with an open question is not decision-complete, so when its frontmatter says `status: ready`, set it to `status: open-questions`
+  and say so in the reply. The Decision-complete definition in the `planning-agent` skill's `references/plan-file.md` owns that rule.
   The summary in the reply carries the rest.
 - Otherwise: write the summary into a handoff brief with the `session-handoff` skill, so a fresh session can act on it.
 

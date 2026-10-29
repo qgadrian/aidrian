@@ -141,10 +141,10 @@ test('plugin content holds no project-specific paths or leftover template marker
   assert.deepEqual(hits, []);
 });
 
-// The repository names no project it came from and no person. The owner's GitHub slug appears only where a user needs it
-// to install the plugin: the README, the manifests' repository URLs, and the example's marketplace source.
+// The repository names no project it came from, no person, and no third-party skill. The owner's GitHub slug appears only
+// where a user needs it to install the plugin: the README, the manifests' repository URLs, and the example's marketplace source.
 // The brackets keep this file from matching its own patterns; the owner comes from the manifest for the same reason.
-test('no tracked file names a source project, its tracker keys, or a person', () => {
+test('no tracked file names a source project, its tracker keys, a person, or a third-party skill', () => {
   const { repository } = json('plugins/aidrian/plugin.json');
   const slug = new URL(repository).pathname.replace(/^\/|\.git$/g, '');
   const owner = slug.split('/')[0];

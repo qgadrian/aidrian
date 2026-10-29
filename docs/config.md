@@ -33,6 +33,7 @@ In a group such as `github`, set only the keys you change; the others keep their
   "docs": { "wrapLimit": 155, "alwaysBudgetBytes": 40000 },
   "skills": { "descriptionChars": 160, "listingBytes": 9216 },
   "session": { "handoff": "ask", "maxTokens": 150000, "maxCalls": 250, "maxHours": 4 },
+  "lessons": { "auto": true, "maxOpen": 20, "maxAgeDays": 14 },
   "models": { "claude": { "agents": {} }, "codex": { "agents": {} } },
   "names": { "human": "the Human", "ai": null }
 }
@@ -62,6 +63,8 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `session.maxTokens` | The context, in tokens, of the main session's last model call that counts as long; `0` turns this limit off. |
 | `session.maxCalls` | The main session's model calls that count as long; `0` turns this limit off. |
 | `session.maxHours` | The hours worked that count as long, a pause of more than an hour counting as one; `0` turns this limit off. |
+| `lessons.maxOpen` | The open [lessons](lessons.md) past which the session-start line asks for triage; `0` turns this limit off. |
+| `lessons.maxAgeDays` | The age, in days, of the oldest open lesson past which the session-start line asks for triage; `0` turns this limit off. |
 | `models` | The model and effort of the plugin's agents, per host, in place of the ones the plugin ships: [Models](#models). |
 | `names.human` | What agents call the person they work for: [Names](#names). |
 | `names.ai` | What agents call themselves; `null` is the host's name, Claude or Codex: [Names](#names). |

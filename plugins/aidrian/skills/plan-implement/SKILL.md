@@ -11,7 +11,8 @@ This skill replaces the `issue-implement` skill's phase 0 with the plan's own, t
 Everything else there applies as written. When the two disagree on shared behaviour, `issue-implement` wins: report the drift.
 
 Before you start, follow the `knowledge` skill. Then read the `issue-implement` skill's SKILL.md and `references/hard-rules.md`,
-in `../issue-implement/` from this folder. Read its step files where it says, except `steps/phase-0-resolve.md`: phase 0 below replaces it.
+in `../issue-implement/` from this folder. Read its step files where it says. Phase 0 below replaces `steps/phase-0-resolve.md`,
+except its base branch and re-entry sections, which it cites.
 
 ## Inputs
 

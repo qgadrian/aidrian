@@ -8,7 +8,7 @@ description: Implement one Linear issue end to end. Worktree, slice plan, a fres
 Take one Linear issue to a draft pull request.
 The session that runs this skill coordinates: it resolves the issue, locks a slice plan, dispatches one agent per slice,
 checks each result, and opens the pull request through the `pr-write` skill.
-It never edits a file itself, never merges, and never closes the issue.
+It never edits a repository file itself, never merges, and never closes the issue; it only keeps the plan's slice state.
 
 Before you start, follow the `knowledge` skill. Load your `issue_tracker` docs for the key format, branch names, status names,
 and closing keyword, and your `orchestration` docs for the agent registry. Each dispatched agent loads its own docs.
@@ -22,6 +22,7 @@ This skill adds what an issue needs on top of it.
 ```
 
 - `<issue>`: a Linear issue key in the project's format, such as `ABC-123`, or the issue's URL. Missing: ask once.
+  The step files call that key `<key>`.
   A GitHub reference such as `#123`: ask for the Linear key.
 - `--base`: the branch the pull request targets. Default: the target branch the issue declares, else config.json `defaultBranch`.
 
@@ -44,7 +45,8 @@ Work anchored to a plan with no issue belongs to the `plan-implement` skill, whi
   an upstream summary, the worktree's absolute path, the planned commit subject, its knowledge tags, and when to escalate.
   Never paste this skill, the conversation, or the whole issue description.
 - **Two delivery legs.** An agent allowed to write gets an absolute handoff path,
-  `<state>/dispatch/<branch>-<slice>-<agent>.json`, where `<state>` is the folder `aidrian state` prints.
+  `<state>/dispatch/<branch>-<slice>-<agent>.json`, where `<state>` is the folder `aidrian state` prints
+  and each `/` in the branch becomes `-`.
   It writes its machine handoff there first, then sends a short summary as its last message.
   An agent denied `Write`, such as `explorer`, returns the handoff as its last message instead.
 - **Linear is read-only until the pull request exists**, except one move of the issue to In Progress, made by this session.

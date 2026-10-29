@@ -26,7 +26,7 @@ Before you start, follow the `knowledge` skill. Your knowledge tags: `harness_en
 
 ## Limits the tests hold
 
-- A `SKILL.md` over 7,500 bytes fails, because Codex cuts it at 8,000 without a warning.
+- A `SKILL.md` over 7,500 bytes fails, because Codex cuts it at 8,000.
   Move detail into `references/` or `steps/` files that `SKILL.md` names, with when to read each.
 - Every agent and skill description fits in 160 characters: both hosts list all of them in every session.
 - Plugin text names no project, no project path, and no bare slash command.

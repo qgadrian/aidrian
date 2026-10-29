@@ -29,6 +29,16 @@ function skills(t, entries) {
   return dir;
 }
 
+// A SKILL.md of exactly `bytes` bytes, padded with a three-byte character so a check that counted characters would miss.
+function sized(dir, name, bytes) {
+  const head = `---\nname: ${name}\ndescription: A skill of ${bytes} bytes.\n---\n\n`;
+  const pad = bytes - Buffer.byteLength(head);
+  mkdirSync(path.join(dir, name), { recursive: true });
+  writeFileSync(path.join(dir, name, 'SKILL.md'), head + '—'.repeat(Math.floor(pad / 3)) + 'a'.repeat(pad % 3));
+}
+
+const MOVE = 'move detail into references/ or steps/ files that SKILL.md names';
+
 test('the plugin`s own skills and agents pass', () => {
   assert.deepEqual(lintSkills([path.join(ROOT, 'plugins/aidrian/skills')], LIMITS).problems, []);
   assert.deepEqual(lintAgents([path.join(ROOT, 'plugins/aidrian/agents')], LIMITS).problems, []);
@@ -82,6 +92,39 @@ test('the listing limit counts every skill`s name and description, and a skill n
     'b/SKILL.md: disable-model-invocation true and user-invocable false leave nobody able to run it',
     'the 2 skills list 43 bytes of names and descriptions; the limit is skills.listingBytes, 40',
   ]);
+});
+
+test('a SKILL.md warns above 7,500 bytes and fails at 8,000, where Codex cuts it, counting bytes', (t) => {
+  const dir = tempDir(t);
+  for (const bytes of [7500, 7501, 7999, 8000, 8001]) sized(dir, `s${bytes}`, bytes);
+  const { problems, warnings } = lintSkills([dir], LIMITS);
+  const strip = (lines) => lines.map((line) => line.replace(`${dir}/`, ''));
+  assert.deepEqual(strip(warnings), [
+    `s7501/SKILL.md: 7501 bytes, near Codex's 8000-byte cut; ${MOVE}`,
+    `s7999/SKILL.md: 7999 bytes, near Codex's 8000-byte cut; ${MOVE}`,
+  ]);
+  assert.deepEqual(strip(problems), [
+    `s8000/SKILL.md: 8000 bytes; Codex cuts a SKILL.md at 8000, so ${MOVE}`,
+    `s8001/SKILL.md: 8001 bytes; Codex cuts a SKILL.md at 8000, so ${MOVE}`,
+  ]);
+});
+
+test('aidrian lint skills checks a project`s own skill folder, or the folder given, and a warning alone passes', (t) => {
+  const dir = tempDir(t);
+  execFileSync('git', ['init', '-q', dir]);
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  const own = path.join(dir, '.claude/skills');
+  sized(own, 'near', 7600);
+  const run = (...args) => spawnSync(CLI, ['lint', 'skills', ...args], { cwd: dir, encoding: 'utf8' });
+  const warned = run();
+  assert.deepEqual([warned.status, warned.stderr], [0, `skills: warning: ${own}/near/SKILL.md: 7600 bytes, near Codex's 8000-byte cut; ${MOVE}\n`]);
+  assert.match(warned.stdout, /^skills: 1 skills, \d+ of 9216 listing bytes\n$/);
+
+  const other = path.join(dir, 'skills');
+  sized(other, 'cut', 8000);
+  const failed = run(other);
+  assert.deepEqual([failed.status, failed.stderr], [1, `skills: ${other}/cut/SKILL.md: 8000 bytes; Codex cuts a SKILL.md at 8000, so ${MOVE}\n`]);
 });
 
 test('agents: name is the file name, and the model and effort are known', (t) => {

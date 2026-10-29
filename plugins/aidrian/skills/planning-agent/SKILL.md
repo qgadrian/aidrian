@@ -5,13 +5,13 @@ description: Create or revise decision-complete local planning artifacts in the 
 
 # Planning Agent
 
-Before you start, load project knowledge with the `knowledge` skill. Knowledge tags: `orchestration`, `issue_tracker`, `docs`.
+Before you start, load project knowledge with the `knowledge` skill. Knowledge tags: `orchestration`, `issue_tracker`, `testing`, `docs`.
 
 Create durable local plans for engineers and agents, not tracker artifacts.
 
 The result must be a decision-complete Markdown artifact under `.aidrian/plans/**`
 that another engineer or agent can implement from directly or later normalize
-into GitHub issue artifacts without re-discovering intent.
+into Linear issues without re-discovering intent.
 
 ## Responsibility Boundary
 
@@ -36,8 +36,8 @@ issue-driven plans.
 
 You do not own:
 
-- GitHub-native issue or project creation
-- GitHub initiative topology decisions when the output must be tracker-ready
+- Linear issue or Project creation
+- initiative topology decisions when the output must be tracker-ready
 - implementation execution
 - runtime orchestration after the plan is approved
 
@@ -60,7 +60,7 @@ Rules:
 1. Classify whether the user wants:
    - a new local plan
    - a revision to an existing local plan
-   - a local plan that will later need GitHub initiative publishing
+   - a local plan that will later be published as Linear issues
 2. Inspect the repo and any existing local plan artifacts before planning.
 3. Run bounded planning delegation when repo truth or product truth is missing.
 4. Produce or update the `.aidrian/plans/**` artifact with:
@@ -68,10 +68,10 @@ Rules:
    - chosen implementation shape
    - sequencing or phase order when relevant
    - explicit scope and non-goals when relevant
-   - validation or verification expectations, which must include the specific `jest` commands to run during implementation (not just `typecheck` and `lint`); when affected files have colocated `.test.ts` or `.test.tsx` files, call them out explicitly with `npx jest --testPathPatterns=<affected files> --no-coverage`
+   - validation or verification expectations, which must include the exact test commands to run during implementation (not just typecheck and lint), taken from the project's `testing` knowledge; when affected files have their own test files, name those tests in the commands
    - assumptions that are still intentionally fixed by the plan
 5. Self-critique once before declaring the plan ready (see § Self-critique pass).
-6. If the user later wants GitHub issue or project artifacts:
+6. If the user later wants Linear issues or a Linear Project:
    - treat the local plan as source input
    - route to `initiative-agent` for initiative normalization before `agent-issue-writer` publishes tracker artifacts
 
@@ -81,7 +81,7 @@ Return:
 
 - the updated local plan artifact path
 - a short note on whether the plan is implementation-ready as a local artifact
-- if GitHub publication is likely next, a short note that `initiative-agent` should normalize the plan before `agent-issue-writer` publishes it
+- if Linear publication is likely next, a short note that `initiative-agent` should normalize the plan before `agent-issue-writer` publishes it
 
 ## Plan-File Schema
 
@@ -220,7 +220,7 @@ closure_criteria:
 verification_path:
   - "npm run typecheck"
   - "npm run lint"
-  - "npx jest --testPathPatterns=src/lib/feature-gates --no-coverage"
+  - "npx jest --testPathPatterns=src/lib/feature-gates --no-coverage"  # example only: use the test command the project's testing knowledge names
 planned_tests:
   - "src/lib/feature-gates/__tests__/<feature>.test.ts (new)"
 upstream_dependency: null        # null or another slice_id this slice depends on

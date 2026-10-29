@@ -15,9 +15,10 @@ import path from 'node:path';
 const PREFIX = 'aidrian-';
 const source = path.join(import.meta.dirname, 'agents');
 // Any other argument fails: a mistyped flag must not fall back to the default folder and remove roles there.
+// An option's value never starts with "-": `--target --force` is a missing folder, not a folder named --force.
 const [flag, targetDir, ...extra] = process.argv.slice(2);
 if (flag !== undefined && flag !== '--target') fail(`unknown argument: ${flag}`);
-if (flag && !targetDir) fail('--target needs a folder.');
+if (flag && (!targetDir || targetDir.startsWith('-'))) fail('--target needs a folder.');
 if (extra.length) fail(`unknown argument: ${extra[0]}`);
 const target = targetDir
   ? path.resolve(targetDir)

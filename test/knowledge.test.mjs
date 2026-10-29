@@ -61,11 +61,14 @@ test('the command line rejects a tag neither the plugin nor the project defines,
   assert.match(stderr, /^unknown tag: testng\nknown tags: code_style, design_bundle, docs, e2e, .*\btesting\b/);
 });
 
-test('the command line fails on --project without a folder, and on an unknown option', () => {
+test('the command line fails on --project without a folder, an unknown option, and a stray argument', () => {
   const cases = [
     [['check', '--project'], /--project needs a folder/],
     [['check', '--project', ''], /--project needs a folder/],
+    [['check', '--project', '--bogus'], /--project needs a folder/],
     [['check', '--projcet', EXAMPLE], /unknown option: --projcet/],
+    [['check', 'stray'], /unexpected argument: stray/],
+    [['tags', 'stray'], /unexpected argument: stray/],
   ];
   for (const [args, expected] of cases) {
     const { status, stdout, stderr } = spawnSync(CLI, args, { cwd: EXAMPLE, encoding: 'utf8' });

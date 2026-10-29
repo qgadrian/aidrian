@@ -44,7 +44,8 @@ A project overrides any of these in an `always` doc.
   - `evidence`: at most six items, each a file, command, or link with what it shows.
   - `loaded_docs`, `deferred_refs` (what to read next, in order), `blockers`, `risks`, and `next_owner`.
   - `artifacts`: bulky output such as long search results, so the fields above stay short.
-- Agents named in this plugin's text but not installed (for example `code-reviewer` or `product-manager`) are roles the project may supply.
+- An agent named in this plugin's text, such as `explorer`, is this plugin's agent when the host lists it as `aidrian:<name>` in Claude Code and `aidrian-<name>` in Codex; spawn it by that name.
+  Any other named agent (for example `code-reviewer` or `product-manager`) is a role the project may supply, under its own name.
   If one is missing, say so in `blockers`; never replace it with a generic agent.
 
 ## Tags

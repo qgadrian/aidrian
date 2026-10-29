@@ -1,4 +1,4 @@
-// Command line for knowledge.mjs. Run it through bin/aidrian-knowledge.
+// Command line for knowledge.mjs. Users run it through bin/aidrian-knowledge; `npm run check` runs it with node directly.
 
 import { MANIFEST, findProjectRoot, listTags, loadKnowledge, pluginTags, routeKnowledge } from './knowledge.mjs';
 
@@ -18,7 +18,8 @@ while (args.length) {
   const arg = args.shift();
   if (arg === '--project') {
     project = args.shift();
-    if (!project) fail(`${USAGE}\n\n--project needs a folder.`);
+    // An option's value never starts with "-": `--project --bogus` is a missing folder, not a folder named --bogus.
+    if (!project || project.startsWith('-')) fail(`${USAGE}\n\n--project needs a folder.`);
   } else if (arg.startsWith('-')) {
     fail(`${USAGE}\n\nunknown option: ${arg}`);
   } else {
@@ -27,6 +28,7 @@ while (args.length) {
 }
 
 if (!['check', 'route', 'tags'].includes(command)) fail(USAGE);
+if (command !== 'route' && rest.length) fail(`${USAGE}\n\nunexpected argument: ${rest[0]}`);
 const root = findProjectRoot(project);
 if (!root) fail(`no ${MANIFEST} at or above ${project}`);
 

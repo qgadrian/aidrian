@@ -6,6 +6,7 @@ description: Dispatch the integrator agent to land ordered slice branches into a
 # Worktree Integrate
 
 Thin dispatcher for the `integrator` agent; that agent owns all Git mechanics, mutation limits, conflict routing, and the return schema.
+`integrator` is this plugin's agent: spawn it as `aidrian:<name>` in Claude Code and `aidrian-<name>` in Codex.
 
 Require `task_branch`, `task_worktree_path`, `base_sha`,
 and at least two ordered `slice_branches` entries shaped as `{slice_id, branch, worktree_path, owner}`.

@@ -68,6 +68,20 @@ test('every tag the agents and skills ask for is in the knowledge skill tag list
   assert.deepEqual(unknown, [], 'add the tag to the knowledge skill, or use an existing one');
 });
 
+test('a skill that names this plugin\'s agents says how each host names them, or loads the knowledge skill, which does', () => {
+  const HOST_NAMES = 'as `aidrian:<name>` in Claude Code and `aidrian-<name>` in Codex';
+  const agents = readAgents().map(({ meta }) => meta.name);
+  const skill = (name) => readFileSync(path.join(PLUGIN, 'skills', name, 'SKILL.md'), 'utf8');
+  assert.ok(skill('knowledge').includes(HOST_NAMES), 'the knowledge skill states the rule');
+  for (const name of readdirSync(path.join(PLUGIN, 'skills'))) {
+    const text = skill(name);
+    const named = agents.filter((agent) => agent !== name && text.includes(`\`${agent}\``));
+    if (!named.length) continue;
+    const loadsKnowledge = /^Before you start, load project knowledge with the `knowledge` skill\./m.test(text);
+    assert.ok(loadsKnowledge || text.includes(HOST_NAMES), `${name} names ${named.join(', ')}`);
+  }
+});
+
 test('plugin content holds no project-specific paths or leftover template markers', () => {
   const banned = [
     /docs\/ai-rules/,

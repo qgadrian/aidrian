@@ -34,10 +34,11 @@ export function readAgents() {
 
 // The files Codex should have, keyed by file name.
 export function renderCodexAgents(agents = readAgents()) {
-  return new Map(agents.map((agent) => [`${PREFIX}${agent.meta.name}.toml`, renderAgent(agent)]));
+  const names = agents.map((agent) => agent.meta.name);
+  return new Map(agents.map((agent) => [`${PREFIX}${agent.meta.name}.toml`, renderAgent(agent, names)]));
 }
 
-function renderAgent({ file, meta, body }) {
+function renderAgent({ file, meta, body }, pluginAgents) {
   const effort = EFFORT[meta.effort];
   if (!effort) throw new Error(`${file}: unknown effort ${JSON.stringify(meta.effort)}`);
   return [
@@ -47,23 +48,28 @@ function renderAgent({ file, meta, body }) {
     `description = ${basicString(meta.description)}`,
     `model_reasoning_effort = "${effort}"`,
     `developer_instructions = """`,
-    multilineBody(`${codexPreamble(meta)}\n\n${body}`),
+    multilineBody(`${codexPreamble(meta, body, pluginAgents)}\n\n${body}`),
     `"""`,
     '',
   ].join('\n');
 }
 
-function codexPreamble(meta) {
+function codexPreamble(meta, body, pluginAgents) {
   const denied = toList(meta.disallowedTools);
   const allowed = meta.tools === undefined ? null : toList(meta.tools);
   const canEdit = !denied.includes('Write') && !denied.includes('Edit') && (!allowed || allowed.includes('Write') || allowed.includes('Edit'));
   const canShell = !denied.includes('Bash') && (!allowed || allowed.includes('Bash'));
-  const lines = [
-    'This role comes from the aidrian plugin and was written for Claude Code. On Codex:',
-    `- Other agents named below are installed as \`${PREFIX}<name>\` Codex agents; spawn them by that name.`,
+  const lines = ['This role comes from the aidrian plugin and was written for Claude Code. On Codex:'];
+  // Only this plugin's agents carry the prefix. A project's own roles, such as `architect`, keep their names.
+  const named = pluginAgents.filter((name) => name !== meta.name && body.includes(`\`${name}\``));
+  if (named.length) {
+    const renames = named.map((name) => `\`${name}\` is \`${PREFIX}${name}\``).join(', ');
+    lines.push(`- This plugin's agents named below have Codex names: ${renames}. Spawn them by those names; any other agent named below is the project's own.`);
+  }
+  lines.push(
     '- `Agent` or `subagent_type` means spawn that Codex agent, `SendMessage` means follow up with it, and the `Skill` tool means load the named skill.',
     '- Claude tool names such as `Read`, `Grep`, `Glob`, `Edit`, `Write`, and `Bash` mean your equivalent file and shell tools.',
-  ];
+  );
   if (!canEdit && !canShell) lines.push('- You are read-only: do not create or edit files, and run only commands that change nothing.');
   else if (!canEdit) lines.push('- Do not create or edit files directly; change the repository only through the commands these instructions allow.');
   return lines.join('\n');
@@ -96,6 +102,12 @@ export function compareCodexAgents(expected = renderCodexAgents()) {
 }
 
 function main(args) {
+  // Any other argument fails: a mistyped --check must not fall through to regenerating the files.
+  const unknown = args.find((arg) => arg !== '--check');
+  if (unknown !== undefined) {
+    console.error(`usage: node scripts/build.mjs [--check]\nunknown argument: ${unknown}`);
+    process.exit(1);
+  }
   const expected = renderCodexAgents();
   if (args.includes('--check')) {
     const problems = compareCodexAgents(expected);

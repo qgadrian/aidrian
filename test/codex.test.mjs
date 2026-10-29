@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { parse } from 'smol-toml';
 
-import { CODEX_AGENTS, PREFIX, compareCodexAgents, readAgents } from '../scripts/build.mjs';
+import { CODEX_AGENTS, PREFIX, compareCodexAgents, readAgents, renderCodexAgents } from '../scripts/build.mjs';
 
+const BUILD = path.resolve(import.meta.dirname, '../scripts/build.mjs');
 const INSTALL = path.resolve(import.meta.dirname, '../plugins/aidrian/codex/install-agents.mjs');
 
 test('the generated Codex agents are current (npm run build regenerates them)', () => {
@@ -31,6 +32,34 @@ test('Codex agents that cannot edit in Claude Code are told so', () => {
   assert.match(role('explorer'), /You are read-only/);
   assert.match(role('integrator'), /Do not create or edit files directly/);
   assert.doesNotMatch(role('planning-agent'), /read-only|Do not create or edit files/);
+});
+
+test('Codex roles give Codex names only to this plugin\'s agents, never to a project\'s own roles', () => {
+  const agent = (name, body) => ({ file: `${name}.md`, meta: { name, description: `${name} test agent`, model: 'sonnet', effort: 'low' }, body });
+  const rendered = renderCodexAgents([agent('lead', 'Ask `helper`, then `architect`. You are `lead`.'), agent('helper', 'Help.')]);
+  const lead = parse(rendered.get(`${PREFIX}lead.toml`)).developer_instructions;
+  assert.match(lead, /`helper` is `aidrian-helper`/);
+  assert.doesNotMatch(lead, /aidrian-architect|aidrian-lead/);
+  assert.doesNotMatch(parse(rendered.get(`${PREFIX}helper.toml`)).developer_instructions, /Codex names/);
+
+  const shipped = new Set(readAgents().map(({ meta }) => `${PREFIX}${meta.name}`));
+  for (const { meta, body } of readAgents()) {
+    const role = parse(readFileSync(path.join(CODEX_AGENTS, `${PREFIX}${meta.name}.toml`), 'utf8')).developer_instructions;
+    const preamble = role.slice(0, -(body.length + 1));
+    for (const [, name] of preamble.matchAll(/`(aidrian-[a-z-]+)`/g)) assert.ok(shipped.has(name), `${meta.name}: ${name} is not a plugin agent`);
+  }
+});
+
+test('build fails on an unknown argument instead of regenerating the files', () => {
+  const file = path.join(CODEX_AGENTS, readdirSync(CODEX_AGENTS)[0]);
+  const before = statSync(file).mtimeMs;
+  for (const args of [['--chek'], ['--check', '--force']]) {
+    const { status, stdout, stderr } = spawnSync(process.execPath, [BUILD, ...args], { encoding: 'utf8' });
+    assert.equal(status, 1, args.join(' '));
+    assert.equal(stdout, '');
+    assert.match(stderr, new RegExp(`^usage: node scripts/build\\.mjs \\[--check\\]\nunknown argument: ${args.at(-1)}`));
+  }
+  assert.equal(statSync(file).mtimeMs, before);
 });
 
 test('install-agents adds and updates its own roles, removes stale ones, and leaves other files alone', (t) => {
@@ -57,6 +86,7 @@ test('install-agents fails on a bad argument, and touches nothing', (t) => {
   const cases = [
     [['--target'], /--target needs a folder/],
     [['--target', ''], /--target needs a folder/],
+    [['--target', '--force'], /--target needs a folder/],
     [['--targte', cwd], /unknown argument: --targte/],
     [['--target', cwd, '--force'], /unknown argument: --force/],
   ];

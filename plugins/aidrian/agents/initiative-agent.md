@@ -4,7 +4,7 @@ description: Break a broad goal into a Linear initiative blueprint of ordered is
 model: sonnet
 effort: high
 color: purple
-disallowedTools: [Write, Edit, Bash]
+disallowedTools: [Write, Edit, NotebookEdit, Bash]
 skills: [aidrian:knowledge]
 ---
 

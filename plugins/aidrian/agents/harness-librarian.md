@@ -4,7 +4,6 @@ description: The project's aidrian consultant. Sets up and keeps .aidrian/ and i
 model: sonnet
 effort: high
 color: purple
-tools: [Agent, AskUserQuestion, Bash, Edit, Glob, Grep, Read, SendMessage, Skill, ToolSearch, WebFetch, Write]
 skills: [aidrian:knowledge]
 ---
 

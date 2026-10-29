@@ -31,7 +31,7 @@ Allowed investigation surfaces:
   - `gh api` GET requests only, such as `repos/{owner}/{repo}/pulls/<n>/comments` for inline review threads.
     Never pass `-X`/`--method` with another verb, or `-f`/`-F`/`--input`: those send a write.
 - GitHub MCP read tools, when the session has a GitHub MCP server.
-  The plugin does not ship one; the `mcp__github__*` tools in this agent's list are optional.
+  The plugin does not ship one, so they are optional.
 
 If `gh` is missing or not signed in and no GitHub MCP tools exist, answer from local `git` history alone,
 and name the missing PR and issue context in `blockers`.

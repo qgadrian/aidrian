@@ -4,8 +4,7 @@ description: Design a change before it is built, with its boundaries, interfaces
 model: fable
 effort: high
 color: purple
-tools: [Agent, AskUserQuestion, Bash, ExitPlanMode, Read, SendMessage, TaskUpdate, ToolSearch, mcp__plugin_linear_linear__get_issue]
-disallowedTools: [Write, Edit]
+disallowedTools: [Write, Edit, NotebookEdit]
 skills: [aidrian:knowledge]
 ---
 

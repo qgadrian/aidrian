@@ -1,8 +1,9 @@
-// Bash rule: no skipping git hooks. Denies a hook-running git command (commit, push, merge) that carries `--no-verify`,
-// `-n` on commit (alone or in a bundle such as `-an`), a `-c core.hooksPath=…` override, or a `HUSKY=0|false|` assignment.
+// Bash rule: no skipping git hooks. Denies a hook-running git command (commit, push, merge) that carries `--no-verify`
+// or a prefix git takes for it (`--no-veri`), `-n` on commit (alone or in a bundle such as `-an`), a
+// `-c core.hooksPath=…` override, or a `HUSKY=0|false|` assignment.
 // There is no override: a project that wants an exception changes its hooks, not this rule.
 
-import { lexCommand, readGit } from '../shell-lex.mjs';
+import { isLongOption, lexCommand, readGit } from '../shell-lex.mjs';
 
 // The subcommands that run a hook. `-n` means --no-verify on commit only: it is --dry-run on push and --no-stat on merge.
 const HOOK_RUNNING = new Set(['commit', 'push', 'merge']);
@@ -29,7 +30,8 @@ function skipsHooks(rest, subcommand) {
     const { text, dynamic } = rest[i];
     if (dynamic) continue;
     if (text === '--') return false;
-    if (text === '--no-verify') return true;
+    // Commit and push take `--no-veri`; merge rejects it as ambiguous with `--no-verify-signatures`, so a deny costs nothing.
+    if (isLongOption(text, '--no-verify', '--no-veri')) return true;
     if (subcommand !== 'commit') continue;
     if (COMMIT_VALUE_SHORTS.has(text)) i += 1;
     else if (/^-[A-Za-z]+$/u.test(text) && text.includes('n')) return true;

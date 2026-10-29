@@ -89,6 +89,9 @@ test('bashTargets finds the certain write targets, resolved against cwd, and not
   assert.deepEqual(at("sed -i 's/a/b/' src/a.ts"), ['src/a.ts']);
   assert.deepEqual(at("sed -i '' -e 's/a/b/' src/a.ts"), ['src/a.ts'], 'BSD sed`s empty suffix');
   assert.deepEqual(at("sed -n 's/a/b/p' src/a.ts"), [], 'sed without -i only prints');
+  assert.deepEqual(at("sed --i 's/a/b/' src/a.ts"), ['src/a.ts'], 'GNU sed takes a prefix of --in-place');
+  assert.deepEqual(at('sed --in-pl=.bak --expr=s/a/b/ src/a.ts'), ['src/a.ts']);
+  assert.deepEqual(at('sed --i --fi script.sed src/a.ts'), ['src/a.ts']);
   assert.deepEqual(at('tee -a src/a.ts src/b.ts'), ['src/a.ts', 'src/b.ts']);
   assert.deepEqual(at('cp /tmp/a.ts src/a.ts'), ['src/a.ts']);
   assert.deepEqual(at('mv -f src/a.ts src/b.ts'), ['src/b.ts']);

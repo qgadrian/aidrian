@@ -15,6 +15,8 @@ test('denies a counting grep that gates the rest of an && chain', () => {
   assert.equal(decide('npm run typecheck && grep -c error /tmp/out.log && npm test'), 'deny');
   assert.equal(decide('grep -c TODO src/index.ts && echo done'), 'deny');
   assert.equal(decide('grep --count error build.log && npm run verify'), 'deny');
+  assert.equal(decide('grep --cou error build.log && npm run verify'), 'deny', 'grep takes a prefix of --count');
+  assert.equal(decide('grep --color error build.log && npm run verify'), 'allow');
   assert.equal(decide('rg -c "error" src && echo clean'), 'deny');
 });
 

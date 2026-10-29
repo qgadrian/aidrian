@@ -15,6 +15,19 @@ test('denies --no-verify on every subcommand that runs a hook, and -n on commit,
   deny('git commit -nm "fix: thing"');
 });
 
+test('denies the prefixes git takes for --no-verify, and allows other --no- options', () => {
+  deny('git commit --no-veri -m "fix: thing"');
+  deny('git commit -a --no-verif -m "fix: thing"');
+  deny('git push --no-veri');
+  deny('git push --no-verif origin HEAD');
+  deny('git merge --no-veri origin/main');
+  allow('git commit --no-edit -m "fix: thing"');
+  allow('git commit --no-ver -m "fix: thing"');
+  allow('git commit --verify -m "fix: thing"');
+  allow('git push --no-thin origin HEAD');
+  allow('git merge --no-ff --no-verify-signatures origin/main');
+});
+
 test('-n is --dry-run on push and --no-stat on merge, and a flag value is not a flag', () => {
   allow('git push -n origin HEAD');
   allow('git merge -n origin/main');

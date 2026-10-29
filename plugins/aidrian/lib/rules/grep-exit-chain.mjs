@@ -5,13 +5,14 @@
 // Allowed when `||` follows it, a `;` or newline separates a later command, a pipe takes its status (unless
 // `set -o pipefail` is on: then the pipeline carries it), a `!` inverts it, or a trailing `&` backgrounds the list.
 
-import { lexPipeline, readInvocation } from '../shell-lex.mjs';
+import { isLongOption, lexPipeline, readInvocation } from '../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_GREP_EXIT_CHAIN';
 
 const PIPES = new Set(['|', '|&']);
 const GREP_PROGRAMS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ripgrep']);
-const COUNT_LONG_FLAGS = new Set(['--count', '--count-matches']);
+// grep takes `--cou` for `--count` (`--co` is ambiguous with `--color`); ripgrep takes no prefix of `--count-matches`.
+const countsLong = (text) => text === '--count-matches' || isLongOption(text, '--count', '--cou');
 // Options whose value is the next token, so `grep -e -c file` searches for "-c". `--color` is not one: GNU grep's value
 // is optional and attached, and reading it as value-taking would hide the `-c` in `grep --color -c x f`.
 const VALUE_FLAGS = new Set([
@@ -54,13 +55,13 @@ export function check(command, { env = process.env } = {}) {
   return null;
 }
 
-// Whether grep's arguments ask for a count: `-c`, a bundle such as `-rc`, or `--count`.
+// Whether grep's arguments ask for a count: `-c`, a bundle such as `-rc`, or `--count` and its prefixes.
 export function asksForCount(args) {
   for (let i = 0; i < args.length; i += 1) {
     const { text, dynamic } = args[i];
     if (dynamic) continue;
     if (text === '--') return false;
-    if (COUNT_LONG_FLAGS.has(text)) return true;
+    if (countsLong(text)) return true;
     if (text.startsWith('--')) {
       if (!text.includes('=') && VALUE_FLAGS.has(text)) i += 1;
       continue;

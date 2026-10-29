@@ -47,6 +47,8 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 
 A rule reads the command the way the shell splits it.
 It sees through `sudo`, `env`, `timeout`, `command`, `rtk`, and similar wrappers, and ignores text in quotes, comments, and heredocs.
+A long option it blocks also matches the shorter prefixes the program accepts, such as `--no-veri` for `--no-verify`,
+`--am` for `--amend`, and `--cou` for grep's `--count`.
 The process rules also read `sh -c`, `eval`, `xargs`, and the command substitutions that run.
 A command reached only through a script or an interpreter such as `python -c` is out of their sight.
 

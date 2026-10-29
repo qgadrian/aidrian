@@ -383,3 +383,10 @@ export function readGit(segment) {
   }
   return null;
 }
+
+// Whether `text` is the long option `option`, or a prefix of it no shorter than `shortest`, with or without `=value`.
+// git and getopt_long take any unambiguous prefix, so `git commit --no-veri` is `--no-verify`.
+export function isLongOption(text, option, shortest) {
+  const name = text.split('=', 1)[0];
+  return name.startsWith(shortest) && option.startsWith(name);
+}

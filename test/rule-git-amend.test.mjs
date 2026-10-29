@@ -15,6 +15,16 @@ test('denies git commit --amend, whatever the companion flags and their order', 
   deny('git commit --no-verify --amend -m "better message"');
 });
 
+test('denies the prefixes git takes for --amend, and allows the options that only start alike', () => {
+  deny('git commit --am');
+  deny('git commit --amen --no-edit');
+  deny('git commit --amend=x');
+  allow('git commit --all -m "fix: thing"');
+  allow('git commit --allow-empty -m "chore: empty"');
+  allow('git commit --author="A <a@example.com>" -m "fix: thing"');
+  allow('git commit --a -m "fix: thing"');
+});
+
 test('denies amend behind git global options, the rtk proxy, and in a later segment', () => {
   deny('git -C /somewhere/else commit --amend');
   deny('git -c core.editor=true commit --amend --no-edit');

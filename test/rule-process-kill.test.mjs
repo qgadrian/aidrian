@@ -105,6 +105,9 @@ test('denies a by-name kill behind signal spellings, prefixes, xargs and inline 
   deny('pgrep --signal KILL -f eslint');
   deny('pgrep --signal=TERM eslint');
   deny('sudo pgrep --signal 9 -f node');
+  deny('pgrep --si KILL -f eslint');
+  deny('pgrep --sig=TERM eslint');
+  allow('pgrep --session 1 eslint');
   // sudo options whose attached value carries a slash (sudo is read in place, not re-guessed after a basename)
   deny('sudo --chdir=/tmp pkill -f eslint');
   deny('sudo --chroot=/tmp killall node');

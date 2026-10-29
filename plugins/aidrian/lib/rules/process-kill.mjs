@@ -11,7 +11,7 @@
 // Both look through wrappers, `case` arms, subshells, `sh -c`, `eval`, `env -S`, xargs, and the substitutions that run.
 // A lexer cannot see into a script or an interpreter (`python -c`), so this guards against accidents, not intent.
 
-import { lexCommand, lexSubstitutions } from '../shell-lex.mjs';
+import { isLongOption, lexCommand, lexSubstitutions } from '../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME';
 export const LISTING_OVERRIDE = 'AIDRIAN_ALLOW_PROCESS_ARGS_LISTING';
@@ -66,8 +66,8 @@ function psSelectsOwnPid(args) {
   return selectsPid;
 }
 
-// procps `pgrep --signal <sig>` signals every match: pkill by another name.
-const pgrepSignals = (args) => args.some((token) => !token.dynamic && (token.text === '--signal' || token.text.startsWith('--signal=')));
+// procps `pgrep --signal <sig>`, or `--si…`, signals every match: pkill by another name.
+const pgrepSignals = (args) => args.some((token) => !token.dynamic && isLongOption(token.text, '--signal', '--si'));
 
 // `kill -0`, `-s 0`, `-n 0` send nothing; they test that a pid is alive. A later `-s…`, `-n…`, or `--s…` replaces the 0.
 const LATER_SIGNAL_OPTION = /^(?:-[sn]|--s)/u;

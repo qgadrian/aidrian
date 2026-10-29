@@ -13,13 +13,14 @@ import path from 'node:path';
 import { loadConfig } from '../config.mjs';
 import { checkoutRoots, isIgnored } from '../git.mjs';
 import { findProject, worktreesDir } from '../project.mjs';
-import { lexCommand, readInvocation } from '../shell-lex.mjs';
+import { isLongOption, lexCommand, readInvocation } from '../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_MAIN_WRITE';
 
 const PATCH_TARGET = /^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gmu;
 const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
-// Programs whose every operand is written, and the options of each that take the next token as their value.
+// Programs whose every operand is written, and the options of each that take the next token as their value. A long one
+// also matches by a prefix, as getopt_long reads it: `sed --fi script.sed` takes `--file`'s value.
 const WRITERS = new Map([
   ['tee', new Set()],
   ['rm', new Set()],
@@ -79,16 +80,17 @@ function written(program, args) {
     if (!ended && text === '--') ended = true;
     else if (!ended && text.startsWith('-') && text.length > 1) {
       flags.push(text);
-      if (valueFlags.has(text)) i += 1;
+      if (valueFlags.has(text) || (/^--[^=]+$/u.test(text) && [...valueFlags].some((option) => option.startsWith(text)))) i += 1;
     } else if (text !== '') {
       operands.push(args[i]); // an empty operand is BSD sed's `-i ''` suffix
     }
   }
   if (program === 'cp' || program === 'mv') return operands.length >= 2 ? operands.slice(-1) : [];
   if (program !== 'sed') return operands;
-  const inPlace = flags.some((flag) => flag.startsWith('--in-place') || (/^-[^-]*$/u.test(flag) && flag.includes('i')));
+  // GNU sed takes a prefix of a long option: `--i` is `--in-place`, `--e` is `--expression`, `--fi` is `--file`.
+  const inPlace = flags.some((flag) => isLongOption(flag, '--in-place', '--i') || (/^-[^-]*$/u.test(flag) && flag.includes('i')));
   if (!inPlace) return [];
-  const scripted = flags.some((flag) => /^(-e|-f|--expression|--file)(=|$)/u.test(flag));
+  const scripted = flags.some((flag) => /^-[ef](=|$)/u.test(flag) || isLongOption(flag, '--expression', '--e') || isLongOption(flag, '--file', '--fi'));
   return scripted ? operands : operands.slice(1);
 }
 

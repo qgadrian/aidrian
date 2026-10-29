@@ -1,8 +1,8 @@
 // Bash rule: no `git commit --amend`. An agent sharing a branch or worktree with another may rewrite a commit the other
-// already built on; a new commit is always safe. A literal `--amend` before `--` denies; `--amend` in message text, after
-// `--`, or behind a dynamic token does not.
+// already built on; a new commit is always safe. A literal `--amend` before `--`, or a prefix git takes for it down to
+// `--am`, denies; `--amend` in message text, after `--`, or behind a dynamic token does not.
 
-import { lexCommand, readGit } from '../shell-lex.mjs';
+import { isLongOption, lexCommand, readGit } from '../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_GIT_AMEND';
 
@@ -21,7 +21,7 @@ export function check(command, { env = process.env } = {}) {
     for (const token of git.rest) {
       if (token.dynamic) continue;
       if (token.text === '--') break;
-      if (token.text === '--amend') return REASON;
+      if (isLongOption(token.text, '--amend', '--am')) return REASON;
     }
   }
   return null;

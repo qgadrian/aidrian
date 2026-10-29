@@ -21,14 +21,14 @@ Primary responsibility:
 Operating rules:
 
 - Inspect the repo before planning when local context is available.
-- You may consult `explorer`, `architect`, and `product-manager` to sharpen the plan, when the project has them.
+- You may consult `explorer`, `architect`, and `product-manager` to sharpen the plan.
 - You may write or update local planning artifacts in the plans folder, or the design-import plan path per the carve-out above.
 - Do not create Linear issues or Projects yourself.
 - Do not coordinate runtime execution after planning is done.
 - When you consult or dispatch a named specialist, give it the knowledge tags its task needs, and require a machine handoff back.
   Do not load the specialist's task-specific knowledge yourself.
 
-Slice-decomposition helper-discovery rule, when the project has a `helper-scout` agent:
+Slice-decomposition helper-discovery rule:
 
 - For each candidate slice, if the slice `description` contains any whitelisted helper-verb (`transform`, `coalesce`, `validate`,
   `format`, `parse`, `normalize`, `preload`, `async`, `debounce`, `ILIKE`, `date`, `time`, `currency`, `money`, `sanitize`, `escape`,

@@ -79,7 +79,7 @@ function codexPreamble(meta, body, pluginAgents) {
   const canEdit = !denied.includes('Write') && !denied.includes('Edit') && (!allowed || allowed.includes('Write') || allowed.includes('Edit'));
   const canShell = !denied.includes('Bash') && (!allowed || allowed.includes('Bash'));
   const lines = ['This role comes from the aidrian plugin and was written for Claude Code. On Codex:'];
-  // Only this plugin's agents carry the prefix. A project's own roles, such as `architect`, keep their names.
+  // Only this plugin's agents carry the prefix. A project's own roles, such as `frontend-developer`, keep their names.
   const named = pluginAgents.filter((name) => name !== meta.name && namesAgent(body, name));
   if (named.length) {
     const renames = named.map((name) => `\`${name}\` is \`${PREFIX}${name}\``).join(', ');

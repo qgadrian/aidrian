@@ -57,6 +57,8 @@ npm run check    # what CI runs
 The tests also check that both manifests agree, that every agent preloads the `knowledge` skill,
 that agents only ask for tags the `knowledge` skill lists, and that no project-specific path leaks into the plugin.
 Every agent and skill description must fit in 160 characters: both hosts put all of them into every session, used or not.
+Every `SKILL.md` must fit in 7,500 bytes, because Codex cuts it at 8,000 without a warning.
+A longer skill keeps its steps in `SKILL.md` and moves detail into `references/` files that `SKILL.md` names, with when to read each.
 When `claude` and `codex` are on your PATH, `test/hosts.test.mjs` also checks the real hosts:
 Claude Code validates the plugin and loads every agent, skill, and hook event,
 and Codex installs it and shows every skill and agent in a project session. Neither check runs a model.

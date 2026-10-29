@@ -57,6 +57,40 @@ test('every skill has a name matching its folder and a description', () => {
   }
 });
 
+// Codex cuts a SKILL.md at 8,000 bytes without a warning: MAX_SKILL_PROMPT_BYTES in codex-rs/ext/skills/src/render.rs.
+// Keep a margin. A longer skill keeps its steps in SKILL.md and moves detail into references/ or steps/ files,
+// each named in SKILL.md with when to read it.
+const MAX_SKILL_BYTES = 7500;
+
+test('every SKILL.md fits in Codex\'s skill size, with a margin', () => {
+  const over = readdirSync(path.join(PLUGIN, 'skills'))
+    .map((skill) => [skill, statSync(path.join(PLUGIN, 'skills', skill, 'SKILL.md')).size])
+    .filter(([, bytes]) => bytes > MAX_SKILL_BYTES);
+  assert.deepEqual(over, [], `move detail into references/ or steps/ files; the limit is ${MAX_SKILL_BYTES} bytes`);
+});
+
+test('a skill names each of its references/ and steps/ files, and every such file the plugin names exists', () => {
+  const skills = path.join(PLUGIN, 'skills');
+  const extra = (skill) => ['references', 'steps'].flatMap((sub) => {
+    const dir = path.join(skills, skill, sub);
+    return existsSync(dir) ? readdirSync(dir).map((file) => `${sub}/${file}`) : [];
+  });
+  const shipped = new Set(readdirSync(skills).flatMap(extra));
+  const unnamed = [];
+  for (const skill of readdirSync(skills)) {
+    const text = readFileSync(path.join(skills, skill, 'SKILL.md'), 'utf8');
+    for (const file of extra(skill)) if (!text.includes(file)) unnamed.push(`${skill}/${file}`);
+  }
+  assert.deepEqual(unnamed, [], 'SKILL.md must say when to read each of its files');
+  const dangling = [];
+  for (const file of markdownFiles(PLUGIN)) {
+    for (const [ref] of readFileSync(file, 'utf8').matchAll(/\b(?:references|steps)\/[\w.-]+\.md\b/g)) {
+      if (!shipped.has(ref)) dangling.push(`${path.relative(ROOT, file)}: ${ref}`);
+    }
+  }
+  assert.deepEqual(dangling, []);
+});
+
 test('every tag the agents and skills ask for is in the knowledge skill tag list', () => {
   assert.ok(VOCABULARY.length >= 5, 'the knowledge skill lists its tags');
   const used = new Set();

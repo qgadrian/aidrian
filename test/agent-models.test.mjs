@@ -19,15 +19,24 @@ const MODELS = {
   claude: { agents: { explorer: { model: 'haiku', effort: 'low' }, integrator: { effort: 'high' } } },
   codex: { agents: {} },
 };
+// A call to this plugin's agent with keys the hook never sets, one of them a key Claude Code may add later.
+// updatedInput replaces the whole call, so every one of them must come back as it was.
+const CALL = {
+  description: 'Find the routes',
+  prompt: 'Find them',
+  subagent_type: 'aidrian:explorer',
+  run_in_background: true,
+  name: 'routes',
+  a_later_key: { nested: [1, 'two'] },
+};
 
 test('agentCall adds the chosen model and effort to a call to this plugin\'s agent, and keeps what the call set', () => {
-  const call = { description: 'Find the routes', prompt: 'Find them', subagent_type: 'aidrian:explorer' };
-  assert.deepEqual(agentCall(call, MODELS), { ...call, model: 'haiku', effort: 'low' });
-  assert.deepEqual(agentCall({ ...call, model: 'opus' }, MODELS), { ...call, model: 'opus', effort: 'low' });
-  assert.equal(agentCall({ ...call, model: 'opus', effort: 'max' }, MODELS), null, 'nothing left to add');
-  assert.deepEqual(agentCall({ ...call, subagent_type: 'aidrian:integrator' }, MODELS), { ...call, subagent_type: 'aidrian:integrator', effort: 'high' });
+  assert.deepEqual(agentCall(CALL, MODELS), { ...CALL, model: 'haiku', effort: 'low' });
+  assert.deepEqual(agentCall({ ...CALL, model: 'opus' }, MODELS), { ...CALL, model: 'opus', effort: 'low' });
+  assert.equal(agentCall({ ...CALL, model: 'opus', effort: 'max' }, MODELS), null, 'nothing left to add');
+  assert.deepEqual(agentCall({ ...CALL, subagent_type: 'aidrian:integrator' }, MODELS), { ...CALL, subagent_type: 'aidrian:integrator', effort: 'high' });
   for (const type of ['explorer', 'other:explorer', 'aidrian:planning-agent', 'aidrian:__proto__', 'aidrian:constructor', undefined]) {
-    assert.equal(agentCall({ ...call, subagent_type: type }, MODELS), null, String(type));
+    assert.equal(agentCall({ ...CALL, subagent_type: type }, MODELS), null, String(type));
   }
   assert.equal(agentCall(undefined, MODELS), null);
 });
@@ -52,19 +61,18 @@ test('the Agent hook prints the rewritten call as updatedInput, and nothing outs
   const project = tempProject(t, { version: 1, models: { claude: MODELS.claude } });
   const outside = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-models-')));
   t.after(() => rmSync(outside, { recursive: true, force: true }));
-  const call = { description: 'Find the routes', prompt: 'Find them', subagent_type: 'aidrian:explorer' };
   const run = (input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), encoding: 'utf8' });
 
-  const rewritten = run({ hook_event_name: 'PreToolUse', tool_name: 'Agent', cwd: project, tool_input: call });
+  const rewritten = run({ hook_event_name: 'PreToolUse', tool_name: 'Agent', cwd: project, tool_input: CALL });
   assert.deepEqual([rewritten.status, rewritten.stderr], [0, '']);
   assert.deepEqual(JSON.parse(rewritten.stdout), {
-    hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...call, model: 'haiku', effort: 'low' } },
+    hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...CALL, model: 'haiku', effort: 'low' } },
   });
 
   for (const input of [
-    { tool_name: 'Agent', cwd: outside, tool_input: call },
-    { tool_name: 'Agent', cwd: project, tool_input: { ...call, subagent_type: 'explorer' } },
-    { tool_name: 'Bash', cwd: project, tool_input: call },
+    { tool_name: 'Agent', cwd: outside, tool_input: CALL },
+    { tool_name: 'Agent', cwd: project, tool_input: { ...CALL, subagent_type: 'explorer' } },
+    { tool_name: 'Bash', cwd: project, tool_input: CALL },
   ]) {
     const { status, stdout, stderr } = run(input);
     assert.deepEqual([status, stdout, stderr], [0, '', ''], JSON.stringify(input));

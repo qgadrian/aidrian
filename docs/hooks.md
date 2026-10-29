@@ -36,6 +36,8 @@ After you install the plugin in Codex, open a session, run `git commit --amend -
 
 The start line and the dispatch log have no switch; they act only inside a project folder.
 The Agent hook changes only what config.json or `.aidrian.local.json` sets in `models.claude`.
+Another hook in the same project that rewrites Agent calls may override it, because each rewrite replaces the whole call.
+It never reaches a session started with `claude --agent`, which takes the `--model` and `--effort` flags instead.
 The compaction checklist steps aside whenever instructions are typed after `/compact`.
 
 ## Bash rules

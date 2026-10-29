@@ -88,7 +88,10 @@ In Claude Code, a hook adds the choice to each Agent tool call to that agent, fr
 - An `effort` choice needs Claude Code 2.1.292 or later, the first version whose Agent tool call takes `effort`.
 - The Agent tool takes only the four model names above, never a full model id or `inherit`.
 - A model or effort the dispatching agent passes for one call still wins.
+- Another hook in the project that rewrites Agent calls may override the choice.
+  Claude Code runs matching hooks in parallel, and each rewrite replaces the whole call.
 - An agent that runs the whole session, as with `claude --agent aidrian:planning-agent`, keeps its file's values.
+  Start that session with `--model` and `--effort` to choose others.
 
 In Codex, the agents are roles outside the plugin, so `install-agents.mjs` writes the choice into them.
 It does that only when it installs into a folder inside the project, because the user folder `~/.codex/agents` serves every project:

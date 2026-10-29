@@ -1,13 +1,15 @@
 // Finds a project and its project folder: `.aidrian/` at the project root, or the folder the committed root file
 // `.aidrian.json` names. This is the only file that knows those names; every other file asks it for paths.
-// docs/project-folder.md describes the folder, and the git-ignored `.aidrian.local.json` that adds local knowledge sources.
+// docs/project-folder.md describes the folder, the git-ignored `.aidrian.local.json` that adds local knowledge sources,
+// and the machine-local state folder outside the repository.
 
+import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { insidePath, isDirectory, isFile, readJson } from './config.mjs';
-import { runGit } from './git.mjs';
+import { insidePath, isDirectory, isFile, loadConfig, readJson } from './config.mjs';
+import { mainRoot, runGit } from './git.mjs';
 
 const DEFAULT_DIR = '.aidrian';
 const OVERRIDE = '.aidrian.json';
@@ -24,6 +26,11 @@ export function findProject(start) {
   }
 }
 
+// The project at or above `start`, or one rooted at `start` that has no folder yet. For commands that work either way.
+export function projectAt(start) {
+  return findProject(start) ?? openProject(path.resolve(start));
+}
+
 // The project rooted at `root`, whether or not its folder exists yet: { root, dir, paths, sources, errors }.
 // `dir` and every path are POSIX-style and relative to `root`. `sources` lists where knowledge indexes are read from:
 // the project folder first, then each local source. `errors` lists the problems in the root files; a broken
@@ -31,16 +38,7 @@ export function findProject(start) {
 export function openProject(root) {
   const errors = [];
   const dir = folderDir(root, errors);
-  const paths = {
-    config: `${dir}/config.json`,
-    knowledge: `${dir}/knowledge`,
-    plans: `${dir}/plans`,
-    handoffs: `${dir}/handoffs`,
-    lessons: `${dir}/lessons`,
-    dispatchLog: `${dir}/dispatch-log.jsonl`,
-    worktrees: `${dir}/worktrees`,
-    local: LOCAL,
-  };
+  const paths = { config: `${dir}/config.json`, knowledge: `${dir}/knowledge`, local: LOCAL };
   const sources = [{ label: dir, base: root, index: paths.knowledge, local: false }, ...localSources(root, errors)];
   return { root, dir, paths, sources, errors };
 }
@@ -88,4 +86,58 @@ function inMainCheckout(root) {
   const { status, stdout } = runGit(['rev-parse', '--path-format=absolute', '--git-common-dir', '--show-toplevel'], root);
   const [commonDir, current] = status === 0 ? stdout.trim().split('\n') : [];
   return commonDir && current ? path.join(path.dirname(commonDir), path.relative(current, realpathSync(root))) : null;
+}
+
+// The machine-local state folder: plans, handoffs, the lesson inbox, the dispatch log, and by default task worktrees.
+// `$XDG_STATE_HOME/aidrian/projects/<project id>/`, with `~/.local/state` when that variable is unset or relative, so
+// git never sees it and every worktree and clone of a repository shares it. config.json `state.dir` moves it.
+export function stateDir(project, { config = loadConfig(project).config, env = process.env } = {}) {
+  if (config.state.dir) return localPath(project, config.state.dir);
+  const base = path.isAbsolute(env.XDG_STATE_HOME ?? '') ? env.XDG_STATE_HOME : path.join(homedir(), '.local/state');
+  return path.join(base, 'aidrian', 'projects', projectId(project));
+}
+
+// Task worktrees: config.json `worktrees.dir`, or the state folder's worktrees/.
+export function worktreesDir(project, { config = loadConfig(project).config, env = process.env } = {}) {
+  return config.worktrees.dir ? localPath(project, config.worktrees.dir) : path.join(stateDir(project, { config, env }), 'worktrees');
+}
+
+// The main checkout's top folder, which every worktree shares; the project root outside git.
+export function repoRoot(project) {
+  return mainRoot(project.root) ?? project.root;
+}
+
+// `<repository name>-<8 hex digits>`: the name and a hash of the normalized `origin` URL, so every clone agrees.
+// Without an origin, the main checkout's folder name and absolute path.
+export function projectId(project) {
+  const { status, stdout } = runGit(['config', '--get', 'remote.origin.url'], project.root);
+  const key = (status === 0 && normalizeRemote(stdout)) || realPath(repoRoot(project));
+  const slug = path.posix.basename(key).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
+  return `${slug}-${createHash('sha256').update(key).digest('hex').slice(0, 8)}`;
+}
+
+// One spelling per remote: `git@host:owner/repo.git`, `ssh://git@host:22/owner/repo`, and `https://host/owner/repo/`
+// all become `host/owner/repo`.
+export function normalizeRemote(url) {
+  return url
+    .trim()
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')
+    .replace(/^[^@/]+@/, '')
+    .replace(/^([^/:]+):(\d+\/)?/, '$1/')
+    .replace(/(\.git)?\/*$/, '')
+    .replace(/^[^/]+/, (host) => host.toLowerCase());
+}
+
+// A configured local path: a leading `~` is the home folder, and a relative path starts at the repository root.
+function localPath(project, value) {
+  if (/^~(?=$|\/)/.test(value)) return path.join(homedir(), value.slice(1));
+  return path.resolve(repoRoot(project), value);
+}
+
+function realPath(file) {
+  try {
+    return realpathSync(file);
+  } catch {
+    return path.resolve(file);
+  }
 }

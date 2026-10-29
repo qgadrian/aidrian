@@ -100,7 +100,7 @@ test('init drafts an index for a folder of docs in the project folder, and the r
     },
   });
   const check = spawnSync(AIDRIAN, ['check'], { cwd: project, encoding: 'utf8' });
-  assert.deepEqual([check.status, check.stdout, check.stderr], [0, 'ok: .aidrian (1 buckets, 4 docs)\n', '']);
+  assert.deepEqual([check.status, check.stdout.split('\n')[0], check.stderr], [0, 'ok: .aidrian (1 buckets, 4 docs)', '']);
 });
 
 test('init names the index after the folder, and never overwrites one', (t) => {
@@ -152,7 +152,7 @@ test('a doc from a local source prints its absolute path and, last, its source; 
   assert.equal(run(['search', 'deploy'], project).stdout, `docs/guides/deploys.md\tDeploys: Every deploy goes through CI.\n${habits}\tHow I check a deploy.\t${source}\n`);
   assert.equal(run(['index'], project).stdout.trim().split('\n').at(-1), `${habits}\ttesting\tHow I check a deploy.\t${source}`);
   const check = spawnSync(AIDRIAN, ['check'], { cwd: project, encoding: 'utf8' });
-  assert.deepEqual([check.status, check.stdout], [0, `ok: .aidrian (1 buckets, 4 docs), ${source} (1 buckets, 1 docs)\n`]);
+  assert.deepEqual([check.status, check.stdout.split('\n')[0]], [0, `ok: .aidrian (1 buckets, 4 docs), ${source} (1 buckets, 1 docs)`]);
 
   renameSync(path.join(source, 'knowledge/personal.json'), path.join(source, 'knowledge/docs.json'));
   const clash = spawnSync(AIDRIAN, ['check'], { cwd: project, encoding: 'utf8' });

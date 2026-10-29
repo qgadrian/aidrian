@@ -29,7 +29,7 @@ You own:
 
 You do not own:
 
-- authoring general local planning documents under `.aidrian/plans/**`
+- authoring general local planning documents under `<state>/plans/**`
 - creating Linear-native artifacts directly
 - implementation execution
 - runtime orchestration after an issue is picked up

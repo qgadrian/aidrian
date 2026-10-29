@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { findProject, openProject } from '../plugins/aidrian/lib/project.mjs';
+import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
+import { findProject, normalizeRemote, openProject, projectAt, stateDir, worktreesDir } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXAMPLE = path.join(ROOT, 'examples/consumer');
@@ -14,16 +15,7 @@ test('the project is the nearest folder with .aidrian/config.json, and every pat
   const project = findProject(path.join(EXAMPLE, 'src'));
   assert.equal(project.root, EXAMPLE);
   assert.equal(project.dir, '.aidrian');
-  assert.deepEqual(project.paths, {
-    config: '.aidrian/config.json',
-    knowledge: '.aidrian/knowledge',
-    plans: '.aidrian/plans',
-    handoffs: '.aidrian/handoffs',
-    lessons: '.aidrian/lessons',
-    dispatchLog: '.aidrian/dispatch-log.jsonl',
-    worktrees: '.aidrian/worktrees',
-    local: '.aidrian.local.json',
-  });
+  assert.deepEqual(project.paths, { config: '.aidrian/config.json', knowledge: '.aidrian/knowledge', local: '.aidrian.local.json' });
   assert.deepEqual(project.sources, [{ label: '.aidrian', base: EXAMPLE, index: '.aidrian/knowledge', local: false }]);
   assert.deepEqual(project.errors, []);
 });
@@ -140,6 +132,77 @@ test('a git worktree has no copy of .aidrian.local.json, so its sources come fro
   assert.deepEqual(inWorktree.sources.slice(1), [{ label: path.relative(path.join(dir, 'app'), shared), base: shared, index: 'knowledge', local: true }]);
   assert.deepEqual(findProject(path.join(dir, 'app')).sources.slice(1), inWorktree.sources.slice(1));
 });
+
+test('every spelling of one remote normalizes to host/owner/repo', () => {
+  for (const url of [
+    'git@github.com:Owner/Repo.git',
+    'https://github.com/Owner/Repo',
+    'https://GitHub.com/Owner/Repo.git/',
+    'ssh://git@github.com:22/Owner/Repo.git',
+    'https://user:token@github.com/Owner/Repo.git\n',
+  ]) {
+    assert.equal(normalizeRemote(url), 'github.com/Owner/Repo', url);
+  }
+  assert.equal(normalizeRemote('/srv/git/notes.git'), '/srv/git/notes');
+});
+
+test('the state folder is under XDG_STATE_HOME, named for the origin, and shared by worktrees and clones', (t) => {
+  const { dir, git } = repo(t);
+  git('remote', 'add', 'origin', 'git@github.com:acme/Notes.git');
+  git('worktree', 'add', '-q', '-b', 'task', path.join(dir, 'wt/task'));
+  const clone = tempDir(t);
+  execFileSync('git', ['init', '-q', clone]);
+  execFileSync('git', ['-C', clone, 'remote', 'add', 'origin', 'https://github.com/acme/Notes']);
+  const env = { XDG_STATE_HOME: '/state' };
+
+  const main = stateDir(findProject(dir), { env });
+  assert.match(main, /^\/state\/aidrian\/projects\/notes-[0-9a-f]{8}$/);
+  assert.equal(stateDir(findProject(path.join(dir, 'wt/task')), { env }), main);
+  assert.equal(stateDir(projectAt(clone), { env }), main);
+  assert.equal(worktreesDir(findProject(dir), { env }), path.join(main, 'worktrees'));
+});
+
+test('without XDG_STATE_HOME, or with a relative one, the state folder is under ~/.local/state', (t) => {
+  const { dir } = repo(t);
+  for (const env of [{}, { XDG_STATE_HOME: 'relative/state' }]) {
+    assert.match(stateDir(findProject(dir), { env }), new RegExp(`^${homedir()}/\\.local/state/aidrian/projects/`));
+  }
+});
+
+test('without an origin, the state folder is named for the main checkout and differs per checkout', (t) => {
+  const first = repo(t);
+  const second = repo(t);
+  const env = { XDG_STATE_HOME: '/state' };
+  const one = stateDir(findProject(first.dir), { env });
+  assert.equal(path.dirname(one), '/state/aidrian/projects');
+  assert.match(path.basename(one), new RegExp(`^${path.basename(first.dir).toLowerCase().replace(/[^a-z0-9]+/g, '-')}-[0-9a-f]{8}$`));
+  assert.notEqual(stateDir(findProject(second.dir), { env }), one);
+});
+
+test('state.dir and worktrees.dir move the folders: ~ is home, and a relative path starts at the repository root', (t) => {
+  const { dir, git } = repo(t);
+  git('worktree', 'add', '-q', '-b', 'task', path.join(dir, 'wt/task'));
+  const inWorktree = findProject(path.join(dir, 'wt/task'));
+  const config = (state, worktrees) => ({ ...DEFAULTS, state: { dir: state }, worktrees: { dir: worktrees, bootstrap: null } });
+  assert.equal(stateDir(inWorktree, { config: config('.state', null) }), path.join(dir, '.state'));
+  assert.equal(worktreesDir(inWorktree, { config: config('.state', null) }), path.join(dir, '.state/worktrees'));
+  assert.equal(worktreesDir(inWorktree, { config: config(null, '../trees') }), path.join(path.dirname(dir), 'trees'));
+  assert.equal(stateDir(inWorktree, { config: config('~/state', null) }), path.join(homedir(), 'state'));
+  assert.equal(stateDir(inWorktree, { config: config('/abs/state', null) }), '/abs/state');
+});
+
+// A git repository with a committed project folder.
+function repo(t) {
+  const dir = tempDir(t);
+  const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' });
+  git('init', '-q', '-b', 'main');
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}\n');
+  writeFileSync(path.join(dir, '.gitignore'), 'wt/\n');
+  git('add', '.');
+  git('-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init');
+  return { dir, git };
+}
 
 function tempDir(t) {
   // realpath: on macOS the temp folder is behind a symlink.

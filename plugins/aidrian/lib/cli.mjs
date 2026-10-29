@@ -5,6 +5,7 @@
 const COMMANDS = {
   check: './check.mjs',
   init: './check.mjs',
+  state: './check.mjs',
 };
 
 const [command, ...args] = process.argv.slice(2);

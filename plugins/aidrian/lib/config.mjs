@@ -12,6 +12,7 @@ const MIGRATING = 'https://github.com/qgadrian/aidrian-harness/blob/main/docs/pr
 // The type of every key. A nested object is one group of keys; a project sets any subset of a group.
 const SCHEMA = {
   defaultBranch: 'text',
+  state: { dir: 'textOrNull' },
   worktrees: { dir: 'textOrNull', bootstrap: 'textOrNull' },
   mainCheckout: { guard: 'boolean', allowWrites: 'texts' },
   commits: { types: 'texts' },
@@ -30,9 +31,11 @@ const TYPES = {
   zeroOrMore: [(value) => Number.isInteger(value) && value >= 0, 'a whole number, 0 or more'],
 };
 
-// `worktrees.dir: null` is the project folder's worktrees/.
+// `state.dir: null` is the per-project folder under `$XDG_STATE_HOME`, and `worktrees.dir: null` its worktrees/
+// (lib/project.mjs).
 export const DEFAULTS = deepFreeze({
   defaultBranch: 'main',
+  state: { dir: null },
   worktrees: { dir: null, bootstrap: null },
   mainCheckout: { guard: true, allowWrites: [] },
   commits: { types: ['build', 'chore', 'ci', 'docs', 'feat', 'fix', 'perf', 'refactor', 'revert', 'style', 'test'] },

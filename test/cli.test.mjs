@@ -14,7 +14,8 @@ const run = (args, cwd = EXAMPLE) => spawnSync(CLI, args, { cwd, encoding: 'utf8
 test('check prints ok in the example consumer, from a subfolder, and with --project', () => {
   for (const [args, cwd] of [[['check']], [['check'], path.join(EXAMPLE, 'src')], [['check', '--project', EXAMPLE], ROOT]]) {
     const { status, stdout, stderr } = run(args, cwd);
-    assert.deepEqual([status, stdout, stderr], [0, 'ok: .aidrian (2 buckets, 8 docs)\n', ''], args.join(' '));
+    assert.deepEqual([status, stderr], [0, ''], args.join(' '));
+    assert.match(stdout, /^ok: \.aidrian \(2 buckets, 8 docs\)\nstate: \/\S+\n$/, args.join(' '));
   }
 });
 
@@ -29,7 +30,7 @@ test('check fails with every error, and names the folder it started from when th
 
   mkdirSync(path.join(dir, '.aidrian'));
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, extra: 1, pr: { maxReviewRounds: 'ten' } }));
-  writeFileSync(path.join(dir, '.gitignore'), '.aidrian/plans/\n.aidrian/handoffs/\n.aidrian/lessons/\n.aidrian/dispatch-log.jsonl\n.aidrian/worktrees/\n.aidrian.local.json\n');
+  writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n');
   const bad = run(['check'], dir);
   assert.equal(bad.status, 1);
   assert.equal(bad.stdout, '');
@@ -52,7 +53,7 @@ test('a missing or unknown command, an unknown option, or a stray argument print
     const { status, stdout, stderr } = run(args);
     assert.equal(status, 1, args.join(' '));
     assert.equal(stdout, '');
-    assert.match(stderr, /^usage: aidrian <command> \[args\]\n\n {2}aidrian check \[--project DIR\]\n.*\n {2}aidrian init \[--project DIR\]\n/);
+    assert.match(stderr, /^usage: aidrian <command> \[args\]\n\n {2}aidrian check \[--project DIR\]\n.*\n {2}aidrian init \[--project DIR\]\n.*\n {2}aidrian state \[--project DIR\]\n/);
     if (expected) assert.match(stderr, expected, args.join(' '));
   }
 });

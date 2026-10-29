@@ -1,4 +1,5 @@
-// `aidrian check` validates a project folder end to end; `aidrian init` sets one up. docs/project-folder.md describes both.
+// `aidrian check` validates a project folder end to end; `aidrian init` sets one up; `aidrian state` prints the
+// machine-local state folder. docs/project-folder.md describes all three.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -7,7 +8,7 @@ import { parseArgs } from 'node:util';
 import { loadConfig, VERSION } from './config.mjs';
 import { isIgnored } from './git.mjs';
 import { indexRows, loadKnowledge } from './knowledge.mjs';
-import { findProject, openProject } from './project.mjs';
+import { findProject, projectAt, repoRoot, stateDir, worktreesDir } from './project.mjs';
 
 const OPTIONS = { project: { type: 'string' } };
 
@@ -23,8 +24,8 @@ export const commands = {
         return 1;
       }
       const { config, buckets, errors } = loadKnowledge(project);
-      for (const entry of unignored(project, config)) {
-        errors.push(`${entry} is not git-ignored: add the line "${entry}" to .gitignore, or run aidrian init`);
+      for (const { line, gitignore } of unignored(project, config)) {
+        errors.push(`${line} is not git-ignored: add the line "${line}" to ${gitignore}, or run aidrian init`);
       }
       if (errors.length) {
         console.error(errors.join('\n'));
@@ -34,7 +35,7 @@ export const commands = {
         const own = buckets.filter((bucket) => bucket.source === (source.local ? source.label : null));
         return `${source.label} (${own.length} buckets, ${indexRows(own).length} docs)`;
       });
-      console.log(`ok: ${counts.join(', ')}`);
+      console.log(`ok: ${counts.join(', ')}\nstate: ${stateDir(project, { config })}`);
       return 0;
     },
   },
@@ -43,7 +44,7 @@ export const commands = {
     about: `create the project folder with a version ${VERSION} config.json, and add its local files to .gitignore`,
     run(args) {
       const start = path.resolve(parseArgs({ args, options: OPTIONS }).values.project ?? '.');
-      const project = findProject(start) ?? openProject(start);
+      const project = projectAt(start);
       if (project.errors.length) {
         console.error(project.errors.join('\n'));
         return 1;
@@ -54,12 +55,13 @@ export const commands = {
         writeFileSync(path.join(project.root, project.paths.config), `${JSON.stringify({ version: VERSION }, null, 2)}\n`);
         done.push(`wrote ${project.paths.config}`);
       }
-      const missing = unignored(project, loadConfig(project).config);
-      if (missing.length) {
-        const file = path.join(project.root, '.gitignore');
+      const missing = Map.groupBy(unignored(project, loadConfig(project).config), (entry) => entry.gitignore);
+      for (const [gitignore, entries] of missing) {
+        const lines = entries.map((entry) => entry.line);
+        const file = path.join(project.root, gitignore);
         const text = existsSync(file) ? readFileSync(file, 'utf8') : '';
-        writeFileSync(file, `${text}${text && !text.endsWith('\n') ? '\n' : ''}${missing.join('\n')}\n`);
-        done.push(`added to .gitignore: ${missing.join(', ')}`);
+        writeFileSync(file, `${text}${text && !text.endsWith('\n') ? '\n' : ''}${lines.join('\n')}\n`);
+        done.push(`added to ${gitignore}: ${lines.join(', ')}`);
       }
       if (!done.length) {
         console.log(`nothing to do: ${project.dir} is set up`);
@@ -69,24 +71,45 @@ export const commands = {
       return 0;
     },
   },
+  state: {
+    usage: '[--project DIR]',
+    about: 'print the machine-local state folder: plans, handoffs, lessons, and the dispatch log',
+    run(args) {
+      console.log(stateDir(projectAt(parseArgs({ args, options: OPTIONS }).values.project ?? '.')));
+      return 0;
+    },
+  },
 };
 
-// The local state the plugin writes, and the local sources file, as .gitignore lines. A worktrees folder outside the
-// project needs no line.
+// What git must ignore, as { line, gitignore }: the local sources file, and the state and worktrees folders when they are
+// inside the repository. A line goes in the project root's .gitignore, or the repository root's when it lies outside
+// the project; `gitignore` is that file's path from the project root.
 function localEntries(project, config) {
-  const { paths } = project;
-  const worktrees = path.posix.normalize(config.worktrees.dir ?? paths.worktrees).replace(/\/$/, '');
-  const entries = [`${paths.plans}/`, `${paths.handoffs}/`, `${paths.lessons}/`, paths.dispatchLog];
-  if (!path.posix.isAbsolute(worktrees) && !worktrees.startsWith('..')) entries.push(`${worktrees}/`);
-  return [...entries, paths.local];
+  const repo = repoRoot(project);
+  const state = stateDir(project, { config });
+  const worktrees = worktreesDir(project, { config });
+  const folders = [state, ...(within(state, worktrees) ? [] : [worktrees])].filter((dir) => within(repo, dir));
+  const entry = (file, suffix) => {
+    const home = within(project.root, file) ? project.root : repo;
+    const line = `${path.relative(home, file).split(path.sep).join('/')}${suffix}`;
+    // The probe keeps the trailing slash: git matches a folder pattern to a path it knows is a folder.
+    return { probe: `${file}${suffix}`, line, gitignore: path.relative(project.root, path.join(home, '.gitignore')).split(path.sep).join('/') };
+  };
+  return [entry(path.join(project.root, project.paths.local), ''), ...folders.map((dir) => entry(dir, '/'))];
 }
 
-// The entries git does not ignore. Outside a git repository, an entry counts as ignored when .gitignore has its line.
+// The entries git does not ignore. Outside a git repository, an entry counts as ignored when its .gitignore has its line.
 function unignored(project, config) {
-  const file = path.join(project.root, '.gitignore');
-  const lines = existsSync(file) ? readFileSync(file, 'utf8').split('\n').map((line) => line.trim()) : [];
-  return localEntries(project, config).filter((entry) => {
-    const ignored = isIgnored(project.root, entry);
-    return ignored === null ? !lines.includes(entry) : !ignored;
+  return localEntries(project, config).filter(({ probe, line, gitignore }) => {
+    const ignored = isIgnored(project.root, probe);
+    if (ignored !== null) return !ignored;
+    const text = path.join(project.root, gitignore);
+    return !(existsSync(text) ? readFileSync(text, 'utf8').split('\n').map((each) => each.trim()) : []).includes(line);
   });
+}
+
+// Whether `file` is `dir` or inside it.
+function within(dir, file) {
+  const rel = path.relative(dir, file);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }

@@ -11,7 +11,7 @@ and one project folder, `.aidrian/`, that indexes them and holds the plugin's se
 | --- | --- |
 | Agents | `planning-agent`, `initiative-agent`, `agent-issue-writer`, `explorer`, `github-archaeologist`, `integrator`, `doc-updater`, `design-source-explorer`, `harness-engineer` |
 | Skills | `knowledge`, `planning-agent`, `initiative-agent`, `agent-issue-writer`, `worktree-integrate`, `design-import`, `grill-me` |
-| Commands | `aidrian`: sets up and checks the project folder (`aidrian init`, `aidrian check`); `aidrian-knowledge`: routes, searches, and drafts a project's buckets |
+| Commands | `aidrian`: sets up and checks the project folder (`aidrian init`, `aidrian check`) and prints the state folder (`aidrian state`); `aidrian-knowledge`: routes, searches, and drafts a project's buckets |
 | Hooks | at session and subagent start, one line naming the `always` docs and how to find the rest |
 
 The `knowledge` skill is the shared rule set.
@@ -109,8 +109,9 @@ A project adds knowledge, never agents or skills.
    path/to/aidrian-harness/plugins/aidrian/bin/aidrian init     # anywhere else; needs Node 22 or later
    ```
 
-   It writes `.aidrian/config.json` and adds the plugin's local state to `.gitignore`.
-   [docs/project-folder.md](docs/project-folder.md) describes the folder, how to keep it elsewhere, and its version.
+   It writes `.aidrian/config.json` and adds `.aidrian.local.json` to `.gitignore`.
+   [docs/project-folder.md](docs/project-folder.md) describes the folder, how to keep it elsewhere, its version,
+   and the state folder outside the repository where the plugin keeps plans, handoffs, and lessons.
 
 2. Write the buckets: one index per bucket, `.aidrian/knowledge/<bucket-id>.json`, with a one-line summary per doc.
    For a docs folder that already exists, `aidrian-knowledge init <folder>` drafts it:

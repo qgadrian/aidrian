@@ -1,8 +1,9 @@
 # The project folder
 
 A project that uses the aidrian plugin keeps everything the plugin reads in one folder: `.aidrian/` at the project root.
-The plugin's commands, hooks, agents, and skills find the project's knowledge, settings, and local state there.
+The plugin's commands, hooks, agents, and skills find the project's knowledge and settings there.
 Nothing else in the project configures the plugin.
+What the plugin writes on one machine, such as plans and lessons, goes to a [state folder](#local-state) outside the repository.
 
 [`examples/consumer`](../examples/consumer) is a complete, checked example.
 
@@ -13,15 +14,10 @@ Nothing else in the project configures the plugin.
 .aidrian.local.json              adds knowledge sources on one machine (optional, git-ignored)
 .aidrian/
 ├── config.json                  the folder version and the project settings (committed)
-├── knowledge/<bucket-id>.json   one index per knowledge bucket (committed)
-├── plans/                       local plans (git-ignored)
-├── handoffs/                    session handoff briefs (git-ignored)
-├── lessons/                     the lesson inbox (git-ignored)
-├── dispatch-log.jsonl           the dispatch log (git-ignored)
-└── worktrees/                   task worktrees, unless config.json puts them elsewhere (git-ignored)
+└── knowledge/<bucket-id>.json   one index per knowledge bucket (committed)
 ```
 
-The committed files are JSON.
+The committed files are JSON, and the folder holds nothing else.
 The docs a bucket indexes stay where they are: each index names its doc folder in `dir`.
 
 - `config.json` needs `version`; every other key is optional. [config.md](config.md) lists the keys.
@@ -59,11 +55,12 @@ A release that changes the format raises the version and lists, under Migrating,
 ```console
 $ aidrian init
 wrote .aidrian/config.json
-added to .gitignore: .aidrian/plans/, .aidrian/handoffs/, .aidrian/lessons/, .aidrian/dispatch-log.jsonl, .aidrian/worktrees/, .aidrian.local.json
+added to .gitignore: .aidrian.local.json
 next: add a knowledge index with aidrian-knowledge init <folder of docs>, then run aidrian check
 ```
 
-It writes `config.json` with `version` alone, and adds each `.gitignore` line for an entry git does not ignore yet.
+It writes `config.json` with `version` alone, and adds each `.gitignore` line for an entry git does not ignore yet:
+`.aidrian.local.json`, and the [state folder](#local-state) or the worktrees folder when config.json puts one inside the repository.
 It never overwrites a file. Run again, it prints `nothing to do: .aidrian is set up`.
 
 `aidrian check` validates the whole folder. Run it locally and in CI. It prints `ok`, or one line per problem and exits 1:
@@ -72,15 +69,41 @@ It never overwrites a file. Run again, it prints `nothing to do: .aidrian is set
 - `config.json`: the version first, then every key and value.
 - Every knowledge index, as [knowledge.md](knowledge.md#checks) describes.
 - `.aidrian.local.json`, when present: every source, as [Local knowledge sources](#local-knowledge-sources) describes.
-- `.gitignore`: git ignores every git-ignored entry in the tree above. A `worktrees.dir` outside the project needs no line.
+- `.gitignore`: git ignores `.aidrian.local.json`, and the state and worktrees folders when they are inside the repository.
+
+On success it also prints the state folder:
 
 ```console
 $ aidrian check
 ok: .aidrian (2 buckets, 8 docs)
+state: /home/you/.local/state/aidrian/projects/notes-1a2b3c4d
 ```
 
 In a Claude Code session, `aidrian` is on the PATH while the plugin is enabled.
 Elsewhere, run it by its path, such as `path/to/aidrian-harness/plugins/aidrian/bin/aidrian check`. It needs Node 22 or later.
+
+## Local state
+
+The plugin writes plans, session handoff briefs, the lesson inbox, and the dispatch log on each machine.
+They live in one state folder per project, outside the repository, so git never sees them:
+
+```text
+$XDG_STATE_HOME/aidrian/projects/<project-id>/
+├── plans/                local plans
+├── handoffs/             session handoff briefs
+├── lessons/inbox.jsonl   the lesson inbox
+├── dispatch-log.jsonl    the dispatch log
+└── worktrees/            task worktrees, unless config.json puts them elsewhere
+```
+
+- `$XDG_STATE_HOME` defaults to `~/.local/state`.
+- `<project-id>` is the repository name and a short hash of its `origin` URL, such as `notes-1a2b3c4d`.
+  Every worktree and every clone of the repository shares it.
+  A repository with no `origin` uses its folder name and a hash of the main checkout's path.
+- `"state": { "dir": "<path>" }` in config.json moves the folder; [config.md](config.md) lists the key.
+  A relative path starts at the repository root, and `aidrian check` then requires git to ignore it.
+
+`aidrian state` prints the folder. Skills use it to find plans and handoff briefs.
 
 ## Local knowledge sources
 

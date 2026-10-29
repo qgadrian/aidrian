@@ -10,7 +10,7 @@ It shows the only things a project adds: its [project folder](../../docs/project
 | `docs/knowledge/**/*.md` | The project's rules, in the project's own words. |
 | `.claude/settings.json` | Offers the aidrian plugin to everyone who opens the project in Claude Code. |
 | `AGENTS.md`, `CLAUDE.md` | Point the main session at the knowledge buckets. |
-| `.gitignore` | Keeps local plans, worktrees, lessons, handoffs, and the dispatch log out of git. |
+| `.gitignore` | Keeps `.aidrian.local.json`, a developer's own knowledge sources, out of git. |
 
 Agents, skills, and the loading rules come from the plugin. Nothing here copies them.
 

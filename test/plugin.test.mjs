@@ -93,6 +93,7 @@ test('a skill names each of its references/ and steps/ files, and every such fil
 
 test('every tag the agents and skills ask for is in the knowledge skill tag list', () => {
   assert.ok(VOCABULARY.length >= 5, 'the knowledge skill lists its tags');
+  for (const tag of ['backend', 'security', 'review', 'support', 'marketing']) assert.ok(VOCABULARY.includes(tag), tag);
   const used = new Set();
   for (const file of markdownFiles(PLUGIN)) {
     const text = readFileSync(file, 'utf8');

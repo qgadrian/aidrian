@@ -78,6 +78,13 @@ Project knowledge wins over the plugin.
 The `knowledge` skill lists the defaults a project can change, such as where plans go and the shape of a machine handoff.
 To change one, say so in an `always` doc.
 
+## Project agents
+
+A project may keep its own agents beside the plugin's, such as a reviewer that knows its stack.
+To make the plugin's agents use them, write an agent registry: a doc tagged `orchestration` that names each project agent and the work it owns.
+The `knowledge` skill's [shared defaults](../plugins/aidrian/skills/knowledge/SKILL.md#shared-defaults) say how an agent chooses:
+the project's agent wins when it fits the task or has the same name as the plugin's.
+
 ## Commands
 
 `aidrian-knowledge` shows what an agent would read, and drafts indexes.

@@ -58,7 +58,7 @@ test('the command line rejects a tag neither the plugin nor the project defines,
   const { status, stdout, stderr } = spawnSync(CLI, ['route', 'testing', 'testng'], { cwd: EXAMPLE, encoding: 'utf8' });
   assert.equal(status, 1);
   assert.equal(stdout, '');
-  assert.match(stderr, /^unknown tag: testng\nknown tags: code_style, design_bundle, docs, e2e, .*\btesting\b/);
+  assert.match(stderr, /^unknown tag: testng\nknown tags: (?:.*, )?code_style, design_bundle, docs, e2e, .*\btesting\b/);
 });
 
 test('the command line fails on --project without a folder, an unknown option, and a stray argument', () => {

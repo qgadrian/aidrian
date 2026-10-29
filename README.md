@@ -124,7 +124,8 @@ In Claude Code there is nothing to do. In Codex, trust them in `/hooks` after yo
 
 ## Adopting in a project
 
-A project adds knowledge, never agents or skills.
+A project adds knowledge, and may keep its own agents: an agent of the project wins over the plugin's for the work it covers
+([docs/knowledge.md](docs/knowledge.md#project-agents)).
 [`examples/consumer`](examples/consumer) is a complete example; copy it as a start.
 
 1. Create the project folder at the repository root:

@@ -1,0 +1,41 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+import test from 'node:test';
+
+const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-bash.mjs');
+
+// Runs the hook with `input` on stdin and no override set.
+function bashHook(input, env = {}) {
+  const clean = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('AIDRIAN_ALLOW_')));
+  return spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env: { ...clean, ...env } });
+}
+
+const bash = (command) => JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: process.cwd() });
+
+test('a command a rule objects to exits 2 with that rule`s reason on stderr', () => {
+  const { status, stdout, stderr } = bashHook(bash('git commit --amend'));
+  assert.deepEqual([status, stdout], [2, '']);
+  assert.match(stderr, /^Blocked: `git commit --amend`/);
+});
+
+test('rules run in order and the first objection wins', () => {
+  const { status, stderr } = bashHook(bash('git commit --amend --no-verify'));
+  assert.equal(status, 2);
+  assert.match(stderr, /^Blocked: this skips a git hook\./, 'the hook-bypass rule runs before the amend rule');
+  assert.equal(bashHook(bash('git commit --amend --no-verify'), { AIDRIAN_ALLOW_GIT_AMEND: '1' }).status, 2);
+});
+
+test('an allowed command, another tool, and any unreadable stdin exit 0 silently', () => {
+  for (const input of [
+    bash('git commit -m "fix: x"'),
+    JSON.stringify({ tool_name: 'Edit', tool_input: { command: 'git commit --amend' } }),
+    JSON.stringify({ tool_name: 'Bash' }),
+    JSON.stringify({ tool_name: 'Bash', tool_input: { command: 42 } }),
+    '',
+    'not json',
+    '[]',
+  ]) {
+    assert.deepEqual(Object.values((({ status, stdout, stderr }) => ({ status, stdout, stderr }))(bashHook(input))), [0, '', ''], input);
+  }
+});

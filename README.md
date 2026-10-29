@@ -11,8 +11,8 @@ and one project folder, `.aidrian/`, that indexes them and holds the plugin's se
 | --- | --- |
 | Agents | `planning-agent`, `initiative-agent`, `agent-issue-writer`, `explorer`, `github-archaeologist`, `integrator`, `doc-updater`, `design-source-explorer`, `harness-engineer` |
 | Skills | `knowledge`, `planning-agent`, `initiative-agent`, `agent-issue-writer`, `worktree-integrate`, `design-import`, `grill-me` |
-| Commands | `aidrian`: sets up and checks the project folder (`aidrian init`, `aidrian check`) and prints the state folder (`aidrian state`); `aidrian-knowledge`: routes, searches, and drafts a project's buckets |
-| Hooks | at session and subagent start, one line naming the `always` docs and how to find the rest |
+| Commands | `aidrian`: sets up and checks the project folder (`aidrian init`, `aidrian check`), prints the state folder (`aidrian state`), and checks commit messages (`aidrian commit-msg`); `aidrian-knowledge`: routes, searches, and drafts a project's buckets |
+| Hooks | at session and subagent start, one line naming the `always` docs and how to find the rest; before each Bash command, git safety rules. [docs/hooks.md](docs/hooks.md) lists them |
 
 The `knowledge` skill is the shared rule set.
 Every agent preloads it: it says how to load the project's buckets, which project rules win, and the defaults a project can override.
@@ -39,6 +39,7 @@ scripts/build.mjs                   generates codex/agents
 examples/consumer/                  a small project that uses the plugin
 docs/project-folder.md              the project folder: structure, location, version, checks
 docs/config.md                      the project config file, .aidrian/config.json
+docs/hooks.md                       what each hook does, and its override
 docs/knowledge.md                   the knowledge-bucket format
 test/                               node --test suites
 ```

@@ -162,6 +162,12 @@ test('bashTargets finds the certain write targets, resolved against cwd, and not
   assert.deepEqual(at('cat <(git rm src/a.ts)'), ['src/a.ts']);
   assert.deepEqual(at("cat <<'EOF'\n$(rm src/a.ts)\nEOF"), [], 'a quoted heredoc runs nothing');
   assert.deepEqual(at('cd /tmp && x=$(rm a.ts)'), [], 'a relative target after cd, in a substitution too');
+  assert.deepEqual(at('(rm src/a.ts)'), ['src/a.ts'], 'inside a subshell');
+  assert.deepEqual(at('{ rm src/a.ts; }'), ['src/a.ts'], 'a brace group');
+  assert.deepEqual(at('if true; then rm src/a.ts; fi'), ['src/a.ts']);
+  assert.deepEqual(at('while true; do touch src/a.ts; done'), ['src/a.ts']);
+  assert.deepEqual(at('! rm src/a.ts'), ['src/a.ts']);
+  assert.deepEqual(at('rm "src/a (1).ts"'), ['src/a (1).ts'], 'a name keeps the `)` it opened');
 });
 
 test('a cd drops only the relative targets after it, and a cd in a substitution moves only that substitution', () => {

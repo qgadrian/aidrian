@@ -94,6 +94,15 @@ test('denies through rtk and in a later segment, including after a here-string',
   deny('read -r x <<<"$v"\ngit push --no-verify');
 });
 
+test('denies a bypass inside a subshell, a brace group, if, while, and past a `!`', () => {
+  deny('(git commit --no-verify)');
+  deny('(cd /tmp/x && git commit --no-verify -m "fix: thing")');
+  deny('{ git push --no-verify; }');
+  deny('if git diff --quiet; then git commit --no-verify -m x; fi');
+  deny('while true; do git push -n; git commit -n; done');
+  deny('! git commit --no-verify');
+});
+
 test('denies a bypass inside a substitution that runs, and not in a commit message that names one', () => {
   deny('out=$(git push --no-verify)');
   deny('echo "`git commit -n -m x`"');

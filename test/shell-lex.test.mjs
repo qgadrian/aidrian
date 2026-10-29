@@ -153,6 +153,23 @@ test('readInvocation peels the wrappers that return the wrapped command`s status
   assert.equal(programOf('exec rm package.json'), 'rm');
 });
 
+test('readInvocation reads the command inside a subshell, a brace group, if, and while, and past a `!`', () => {
+  const programs = (line) => lexCommand(line).map((segment) => readInvocation(segment).program);
+  assert.equal(programOf('(git commit --amend)'), 'git', 'a subshell');
+  assert.deepEqual(argsOf('(git commit --amend)'), ['commit', '--amend'], 'its `)` is no part of the last word');
+  assert.deepEqual(argsOf('( git commit --amend )'), ['commit', '--amend']);
+  assert.deepEqual(programs('(cd x && git commit --no-verify)'), ['cd', 'git']);
+  assert.deepEqual(argsOf('git commit -m "fix (x)"'), ['commit', '-m', 'fix (x)'], 'a word keeps the `)` it opened');
+  assert.deepEqual(programs('{ rm f; }'), ['rm', ''], 'a brace group');
+  assert.deepEqual(programs('if test -f x; then git commit -n; elif y; then z; else rm f; fi'), ['test', 'git', 'y', 'z', 'rm', '']);
+  assert.deepEqual(programs('while read -r f; do rm "$f"; done < list'), ['read', 'rm', '']);
+  assert.deepEqual(programs('until x; do y; done'), ['x', 'y', '']);
+  assert.equal(programOf('if ! grep -q x f; then y; fi'), 'grep', 'a `!` after a reserved word');
+  assert.equal(readInvocation(lexCommand('if ! grep -q x f; then y; fi')[0]).negated, true);
+  assert.equal(programOf('! (git commit --amend)'), 'git', 'a `!` before a subshell');
+  assert.equal(programOf('echo done'), 'echo', 'a reserved word after the command is an argument');
+});
+
 test('env -S carries a command line, and its later words are that command`s arguments', () => {
   assert.equal(programOf("env -S 'rm /repo/package.json'"), 'rm');
   assert.deepEqual(argsOf("env -S 'rm' package.json"), ['package.json']);

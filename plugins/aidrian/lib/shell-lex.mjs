@@ -349,6 +349,20 @@ const SPLIT_STRING_FLAGS = new Set(['-S', '--split-string']);
 const SPLIT_STRING_DEPTH_LIMIT = 4;
 const WRAPPER_PEEL_LIMIT = 8;
 const NO_OPTIONS = new Set();
+// Reserved words and braces that open or close a compound command: in `if x; then git commit -n; fi` or `{ rm f; }`,
+// the command is the word after them. `time` is peeled as a wrapper.
+const SHELL_WORDS = new Set(['{', '}', 'if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done', 'for', 'in', 'case', 'esac']);
+
+// `text` without the `)`s at its end that close no `(` of its own: `--amend)` is `--amend`, and `fix (x)` stays whole.
+function withoutUnmatchedClose(text) {
+  let unmatched = (text.match(/\)/gu)?.length ?? 0) - (text.match(/\(/gu)?.length ?? 0);
+  let end = text.length;
+  while (unmatched > 0 && text[end - 1] === ')') {
+    end -= 1;
+    unmatched -= 1;
+  }
+  return text.slice(0, end);
+}
 
 // Two directory changes compose: the inner one is relative to the outer one, unless it is absolute.
 function composeChdir(outer, inner) {
@@ -365,10 +379,10 @@ function splitStringInvocation(value, depth, rest = []) {
   return readInvocation([...carried, ...rest], depth + 1);
 }
 
-// Reads the program of a segment: { program, args, negated, chdir }. It skips leading `VAR=value` assignments, a `!`
-// (which runs the command and inverts its status: `negated`), and the wrappers above with their options, so
-// `sudo env FOO=1 command grep -c x f` reads as grep. `program` is the base name; `args` exclude redirections and their
-// targets; `chdir` is the directory a wrapper moves to, or null.
+// Reads the program of a segment: { program, args, negated, chdir }. It skips the shell words above, a subshell's
+// parentheses, a `!` (which runs the command and inverts its status: `negated`), leading `VAR=value` assignments, and
+// the wrappers above with their options, so `(sudo env FOO=1 command grep -c x f)` reads as grep. `program` is the base
+// name; `args` exclude redirections and their targets; `chdir` is the directory a wrapper moves to, or null.
 export function readInvocation(segment, depth = 0) {
   const targets = new Set();
   for (let i = 0; i < segment.length; i += 1) {
@@ -378,11 +392,21 @@ export function readInvocation(segment, depth = 0) {
   let index = 0;
   let negated = false;
   let chdir = null;
+  // The lexer leaves a subshell's parentheses glued to its words, as in `(git commit --amend)`. A word left empty goes.
+  const retext = (at, text) => {
+    if (text === usable[at].text) return;
+    if (text) usable[at] = { ...usable[at], text };
+    else usable.splice(at, 1);
+  };
   const peelAssignments = () => {
     while (index < usable.length && /^[A-Za-z_][A-Za-z0-9_]*=/u.test(usable[index].text)) index += 1;
   };
-  if (usable[index]?.text === '!') {
-    negated = true;
+  if (usable.length > 0) retext(usable.length - 1, withoutUnmatchedClose(usable.at(-1).text));
+  for (;;) {
+    if (index < usable.length) retext(index, usable[index].text.replace(/^\(+/u, ''));
+    const text = usable[index]?.text;
+    if (text === '!') negated = true;
+    else if (!SHELL_WORDS.has(text)) break;
     index += 1;
   }
   peelAssignments();

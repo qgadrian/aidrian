@@ -23,25 +23,26 @@ Before you start, follow the `knowledge` skill. Load your `orchestration` docs f
 - `--only F2,F5`: work on these findings only.
 - `--no-push`: commit, then print the push command instead of running it.
 
-## 1. Source
-
-Read the manifest `<state>/reviews/pr-<n>.json`, where `<state>` is the folder `aidrian state` prints.
-The `pr-review` skill's `references/manifest.md` defines its fields and statuses, and how to write it.
-
-- No manifest: stop, and say to run the `pr-review` skill first.
-- Commits after the manifest's `head_sha` that are not fix commits recorded in it mean the review is stale.
-  Ask the user: review again first (recommended), go on with the old findings, or stop.
-- A finding left `in_progress` by a run that stopped: look for its commit with `git log --grep "Addresses <id> " <head_sha>..HEAD`.
-  When one exists, record it as `fixed` with that commit. Otherwise ask the user whether to start it again.
-  Never revert or clean up a stopped run's work on your own.
-
-## 2. Preflight
+## 1. Preflight
 
 - Work in the pull request's worktree, on its branch, never on the default branch.
   `git status --porcelain` must be clean or hold only this pull request's work; ask about anything else.
-- `git fetch origin && git pull --ff-only`. When that fails, the branch was rewritten upstream: ask before resetting.
+- `git fetch origin && git pull --ff-only`, before you read the manifest. When that fails, the branch was rewritten upstream: ask before resetting.
 - On a pull request already marked ready for review (not a draft), stop after step 3:
   report the selected findings as follow-ups for a new pull request, and change nothing on this branch.
+
+## 2. Source
+
+In that worktree, after the sync, read the manifest `<state>/reviews/pr-<n>.json`, where `<state>` is the folder `aidrian state` prints.
+The `pr-review` skill's `references/manifest.md` defines its fields and statuses, and how to write it.
+
+- No manifest: stop, and say to run the `pr-review` skill first.
+- Check that the manifest's `head_sha` still covers the synced `HEAD`. It does not when `git merge-base --is-ancestor <head_sha> HEAD` fails,
+  or when `git log --format=%h <head_sha>..HEAD` lists a commit that no finding records in its `commit`: nobody reviewed that commit.
+  Then stop and ask the user: run the `pr-review` skill again first (recommended), or go on with the old findings.
+- A finding left `in_progress` by a run that stopped: look for its commit with `git log --grep "Addresses <id> " <head_sha>..HEAD`.
+  When one exists, record it as `fixed` with that commit. Otherwise ask the user whether to start it again.
+  Never revert or clean up a stopped run's work on your own.
 
 ## 3. Selection
 

@@ -51,6 +51,7 @@ For each modified or renamed file, compare the old version with the new one. Che
 the scope of error handling, side effects, default values, and the return shape, including null results and thrown errors.
 For each removed file, find every remaining caller of what it exported.
 For a new caller of a shared helper the change did not touch, read the helper against the new input: bugs hide at that seam.
+A failure there that the base branch does not have is introduced by this change: name the new caller in its summary.
 For a file that code or tests read at run time, such as a prompt, a locale file, or a config file, run the tests that read it.
 Treat these as high until shown otherwise: a wider catch on a main path, a removed guard, a new default in place of a skip or an error,
 and a removed export that something still uses.

@@ -8,7 +8,10 @@ Read this file when the first agent returns. Start merging once every agent of t
   Keep the axes of the agent whose area it is, and name both agents in `specialist`.
 - Two agents who disagree about the same behaviour at the same place make one finding with status `disputed`,
   both positions in `summary`. Put it to the user, even in an unattended run; never pick a side or average them.
-- A finding in code the pull request did not change gets status `pre_existing`: it is reported, and fixed in a later change.
+- Decide `pre_existing` by behaviour, never by location. A failure in code the pull request did not change is still introduced here
+  when the pull request's new caller or new input triggers it: it stays `open`, and its summary names that caller.
+  Set `pre_existing` only when the same failure happens at `base_sha`: it is reported, and fixed in a later change.
+  When the agent's words do not settle which, ask that agent once, and keep the finding `open` until it answers.
 - Only `security-engineer` may drop or downgrade a security finding.
 - On a re-review, a finding its agent confirms fixed becomes `resolved`, and one it finds still there goes back to `open`.
   A new finding that matches an open one by file and summary is that finding, not a new one.
@@ -49,6 +52,7 @@ Its first line is the marker `<!-- aidrian:pr-review -->`. Write the body to `<s
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | F3 | fix_now | high | routine | users | `src/cart.js:42` | <summary> | code-reviewer |
 
+**Rule violations (low):** <id, location, the rule it cites, and summary>, each.
 **Accepted residuals:** <id, location, and in one line why a fix is not worth it now>, each.
 **Disputed, needs a decision:** <id and both positions>, each.
 **Not introduced here:** <id and summary>, each.
@@ -58,10 +62,12 @@ Reviewed by <agents>. Regression check clean on <n> files. Not reviewed: <each l
 ```
 
 - The table lists `fix_now` findings whose status is `open` or `blocked`.
-  `drop_unless_cited` findings that cite no project rule, and `acceptable_as_is` findings, are counted in one line under it, not listed.
+- Open `drop_unless_cited` findings whose summary cites a written project rule go under **Rule violations (low)**. They do not block.
+  Those that cite no project rule, and `acceptable_as_is` findings, are counted in one line under the table, not listed.
 - Leave out each bold line that would be empty.
 - The verdict line: `changes needed, <a> to fix now` while the table has a row;
   `decision needed, <d> disputed` while a disputed one exists (both parts when both hold); otherwise `no blocking findings`.
+  End it with `, <k> rule violations (low)` while that list has entries, so it never reads as "no findings" then.
   From round 2, start it with "<r> resolved, <o> still open, <n> new."
 
 Find the comment of an earlier round, then update it or post a new one:

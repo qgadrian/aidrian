@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { appendFileSync, closeSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -66,18 +66,20 @@ test('list shows open lessons, --all shows resolved ones, and a damaged line is 
   assert.match(run(['list', '--all']).stdout, /^[0-9a-f]{8} {2}\d{4}-\d\d-\d\d {2}\[resolved: dropped\] {2}first\n {10}planner @ main\n {10}link: fixed already\n/);
 });
 
-test('resolve marks one open lesson, keeps every other line as it was, and reads a link from stdin', (t) => {
+test('resolve appends the resolution, keeps every earlier line as it was, and reads a link from stdin', (t) => {
   const { run, inbox, rows } = setup(t);
   const first = run(['add'], 'first').stdout.trim();
   const second = run(['add'], 'second').stdout.trim();
   appendFileSync(inbox(), 'not json\n');
-  const before = readFileSync(inbox(), 'utf8').split('\n');
+  const before = readFileSync(inbox(), 'utf8');
   const resolved = run(['resolve', second, '--outcome', 'rule', '--link', '-'], "the reason's $(here)\n");
   assert.deepEqual([resolved.status, resolved.stdout], [0, `${second} -> rule\n`]);
-  const after = readFileSync(inbox(), 'utf8').split('\n');
-  assert.equal(after[0], before[0], 'the other lesson is byte for byte the same');
-  assert.equal(after[2], 'not json', 'a line that is not a lesson stays');
-  assert.deepEqual([rows()[1].status, rows()[1].outcome, rows()[1].link], ['resolved', 'rule', "the reason's $(here)"]);
+  const after = readFileSync(inbox(), 'utf8');
+  assert.ok(after.startsWith(before), 'every earlier line is byte for byte the same: the file is only appended to');
+  const resolution = rows().at(-1);
+  assert.deepEqual({ ...resolution, resolvedAt: undefined }, { id: second, status: 'resolved', resolvedAt: undefined, outcome: 'rule', link: "the reason's $(here)" });
+  const listed = JSON.parse(run(['list', '--all', '--json']).stdout);
+  assert.deepEqual(listed.map((row) => [row.id, row.note, row.status, row.outcome ?? null]), [[first, 'first', 'open', null], [second, 'second', 'resolved', 'rule']]);
   assert.deepEqual([run(['resolve', second, '--outcome', 'rule']).status, run(['resolve', 'ffffffff', '--outcome', 'rule']).stderr], [1, 'no open lesson with id ffffffff\n']);
   assert.equal(run(['resolve', first, '--outcome', 'maybe']).stderr, 'resolve needs --outcome mechanism|rule|issue|duplicate|dropped\n');
 });
@@ -89,6 +91,19 @@ test('nudge prints one line only while lessons are open, and always exits 0', (t
   assert.match(run(['nudge']).stdout, /^Lesson inbox: 1 open lesson \(oldest \d{4}-\d\d-\d\d\)\. Run the lesson-triage skill/);
   run(['resolve', id, '--outcome', 'duplicate', '--link', 'abc']);
   assert.equal(run(['nudge']).stdout, '');
+});
+
+test('a lesson another session writes while a resolve runs is never lost', (t) => {
+  // The other session opened the inbox before the resolve and writes after it. A resolve that replaced the file would
+  // leave that write in the replaced copy, and the lesson would be gone.
+  const { run, inbox } = setup(t);
+  const target = run(['add'], 'to resolve').stdout.trim();
+  const other = openSync(inbox(), 'a');
+  assert.equal(run(['resolve', target, '--outcome', 'dropped', '--link', 'x']).status, 0);
+  writeSync(other, `${JSON.stringify({ id: 'feedf00d', at: new Date().toISOString(), note: 'from another session', status: 'open' })}\n`);
+  closeSync(other);
+  const listed = JSON.parse(run(['list', '--all', '--json']).stdout);
+  assert.deepEqual(listed.map((row) => [row.note, row.status]), [['to resolve', 'resolved'], ['from another session', 'open']]);
 });
 
 test('every worktree of a repository shares one inbox, and two processes appending at once both land', async (t) => {

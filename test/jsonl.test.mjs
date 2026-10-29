@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { appendFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
-import { appendRow, readRows, rewriteRows } from '../plugins/aidrian/lib/jsonl.mjs';
+import { appendRow, readRows } from '../plugins/aidrian/lib/jsonl.mjs';
 
 function tempFile(t) {
   const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-jsonl-'));
@@ -32,15 +32,6 @@ test('a line that holds no JSON object is skipped and counted; blank lines are i
   appendFileSync(file, '{"id":\n\n[1]\n"text"\n');
   appendRow(file, { id: 2 });
   assert.deepEqual(readRows(file), { rows: [{ id: 1 }, { id: 2 }], skipped: 3 });
-});
-
-test('rewrite changes and drops rows, keeps the others and every malformed line, and leaves no temp file', (t) => {
-  const file = tempFile(t);
-  for (const id of [1, 2, 3]) appendRow(file, { id, open: true });
-  appendFileSync(file, 'damaged\n');
-  rewriteRows(file, (row) => (row.id === 2 ? { ...row, open: false } : row.id === 3 ? null : row));
-  assert.equal(readFileSync(file, 'utf8'), '{"id":1,"open":true}\n{"id":2,"open":false}\ndamaged\n');
-  assert.deepEqual(readdirSync(path.dirname(file)), ['log.jsonl']);
 });
 
 test('appends from concurrent processes all land, one per line', async (t) => {

@@ -1,6 +1,7 @@
 // `aidrian lesson`: the lesson inbox, a JSON Lines queue in the state folder (lessons/inbox.jsonl), shared by every
 // worktree and clone of the repository. Capturing a lesson is one command, cheap enough to run the moment something
 // goes wrong; deciding what it becomes (a hook, a rule, an issue, nothing) is the lesson-triage skill's job, later.
+// The file is only ever appended to: a resolution is a row of its own, so no session's write can drop another's.
 
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -8,7 +9,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { runGit } from './git.mjs';
-import { appendRow, readRows, rewriteRows } from './jsonl.mjs';
+import { appendRow, readRows } from './jsonl.mjs';
 import { projectAt, stateDir } from './project.mjs';
 
 export const KINDS = ['harness', 'product', 'process'];
@@ -42,7 +43,7 @@ export const commands = {
         return 0;
       }
       if (action === 'list') {
-        const entries = readRows(file).rows.filter((row) => values.all || row.status === 'open');
+        const entries = lessons(file).filter((row) => values.all || row.status === 'open');
         if (values.json) console.log(JSON.stringify(entries));
         else console.log(entries.length ? entries.map(format).join('\n') : `no ${values.all ? '' : 'open '}lessons in ${file}`);
         return 0;
@@ -106,22 +107,27 @@ export function makeEntry({ note, evidence = [], kind = null, cwd = process.cwd(
   };
 }
 
-// Marks the open lesson `id` resolved and returns it; null when there is none. The file is rewritten atomically.
-// There is no lock: two resolves at the same moment can lose one, which a single person triaging never does.
+// Every lesson in capture order, each with its latest resolution applied. A row whose `id` an earlier row already used
+// updates that lesson; any other row is a new one.
+export function lessons(file) {
+  const byId = new Map();
+  for (const row of readRows(file).rows) byId.set(row.id, byId.has(row.id) ? { ...byId.get(row.id), ...row } : row);
+  return [...byId.values()];
+}
+
+// Resolves the open lesson `id` by appending its resolution, and returns the lesson as resolved; null when no lesson
+// with that id is open. Two resolves at once both land, and the later row wins.
 export function resolveEntry(file, { id, outcome, link = null, now = new Date() }) {
-  let resolved = null;
-  if (!readRows(file).rows.some((row) => row.id === id && row.status === 'open')) return null;
-  rewriteRows(file, (row) => {
-    if (row.id !== id || row.status !== 'open') return row;
-    resolved = { ...row, status: 'resolved', resolvedAt: now.toISOString(), outcome, link };
-    return resolved;
-  });
-  return resolved;
+  const lesson = lessons(file).find((row) => row.id === id && row.status === 'open');
+  if (!lesson) return null;
+  const resolution = { id, status: 'resolved', resolvedAt: now.toISOString(), outcome, link };
+  appendRow(file, resolution);
+  return { ...lesson, ...resolution };
 }
 
 // The SessionStart line, or '' when no lesson is open. `command` is how the agent runs the aidrian command.
 export function nudge(file, command = 'aidrian') {
-  const open = readRows(file).rows.filter((row) => row.status === 'open');
+  const open = lessons(file).filter((row) => row.status === 'open');
   if (!open.length) return '';
   const oldest = String(open[0].at ?? '').slice(0, 10);
   return `Lesson inbox: ${open.length} open lesson${open.length === 1 ? '' : 's'} (oldest ${oldest}). ` +

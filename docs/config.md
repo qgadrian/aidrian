@@ -158,6 +158,7 @@ budget: 2479 of 16384 always-doc bytes (engineering 2479, product 0)
 ```
 
 The key `docs.alwaysBudgetBytes` moved here as `alwaysBytes`; a `config.json` that still sets it gets an error naming the new key.
+[knowledge.md](knowledge.md#shaping-buckets) says how to shape buckets that stay within the budgets.
 
 ## Checking
 

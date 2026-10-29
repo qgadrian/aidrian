@@ -16,8 +16,14 @@ let project = process.cwd();
 const rest = [];
 while (args.length) {
   const arg = args.shift();
-  if (arg === '--project') project = args.shift() ?? '';
-  else rest.push(arg);
+  if (arg === '--project') {
+    project = args.shift();
+    if (!project) fail(`${USAGE}\n\n--project needs a folder.`);
+  } else if (arg.startsWith('-')) {
+    fail(`${USAGE}\n\nunknown option: ${arg}`);
+  } else {
+    rest.push(arg);
+  }
 }
 
 if (!['check', 'route', 'tags'].includes(command)) fail(USAGE);

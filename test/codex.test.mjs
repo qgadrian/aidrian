@@ -48,15 +48,24 @@ test('install-agents adds and updates its own roles, removes stale ones, and lea
   assert.match(run(), /are up to date \(9\)/);
 });
 
-test('install-agents fails on --target without a folder, and touches nothing', (t) => {
+test('install-agents fails on a bad argument, and touches nothing', (t) => {
   const cwd = mkdtempSync(path.join(tmpdir(), 'aidrian-codex-agents-'));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
   writeFileSync(path.join(cwd, `${PREFIX}retired.toml`), 'name = "old"\n');
 
-  for (const args of [['--target'], ['--target', '']]) {
-    const { status, stderr } = spawnSync(process.execPath, [INSTALL, ...args], { cwd, encoding: 'utf8' });
+  // CODEX_HOME is the temporary folder too, so a fallback to the default target would show up below.
+  const cases = [
+    [['--target'], /--target needs a folder/],
+    [['--target', ''], /--target needs a folder/],
+    [['--targte', cwd], /unknown argument: --targte/],
+    [['--target', cwd, '--force'], /unknown argument: --force/],
+  ];
+  for (const [args, expected] of cases) {
+    const env = { ...process.env, CODEX_HOME: cwd };
+    const { status, stderr } = spawnSync(process.execPath, [INSTALL, ...args], { cwd, env, encoding: 'utf8' });
     assert.equal(status, 1, args.join(' '));
-    assert.match(stderr, /--target needs a folder/);
+    assert.match(stderr, /^usage: node install-agents\.mjs/);
+    assert.match(stderr, expected);
   }
   assert.deepEqual(readdirSync(cwd), [`${PREFIX}retired.toml`]);
 });

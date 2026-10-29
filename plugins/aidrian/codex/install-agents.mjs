@@ -14,13 +14,11 @@ import path from 'node:path';
 
 const PREFIX = 'aidrian-';
 const source = path.join(import.meta.dirname, 'agents');
-const args = process.argv.slice(2);
-const targetFlag = args.indexOf('--target');
-const targetDir = targetFlag >= 0 ? args[targetFlag + 1] : undefined;
-if (targetFlag >= 0 && !targetDir) {
-  console.error('usage: node install-agents.mjs [--target DIR]\n--target needs a folder.');
-  process.exit(1);
-}
+// Any other argument fails: a mistyped flag must not fall back to the default folder and remove roles there.
+const [flag, targetDir, ...extra] = process.argv.slice(2);
+if (flag !== undefined && flag !== '--target') fail(`unknown argument: ${flag}`);
+if (flag && !targetDir) fail('--target needs a folder.');
+if (extra.length) fail(`unknown argument: ${extra[0]}`);
 const target = targetDir
   ? path.resolve(targetDir)
   : path.join(process.env.CODEX_HOME || path.join(homedir(), '.codex'), 'agents');
@@ -52,3 +50,8 @@ const summary = Object.entries(changes)
 console.log(summary.length
   ? `aidrian Codex agents in ${target}: ${summary.join('; ')}. They take effect in the next Codex session.`
   : `aidrian Codex agents in ${target} are up to date (${shipped.length}).`);
+
+function fail(problem) {
+  console.error(`usage: node install-agents.mjs [--target DIR]\n${problem}`);
+  process.exit(1);
+}

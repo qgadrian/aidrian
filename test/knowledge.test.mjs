@@ -36,6 +36,12 @@ test('routing returns "always" docs first, then tagged docs, in bucket order and
   assert.deepEqual(listTags(buckets).map(([tag]) => tag), ['code_style', 'docs', 'issue_tracker', 'orchestration', 'product_sensitive', 'testing']);
 });
 
+test('nested buckets pass when path.relative returns "\\" separators, as on Windows', (t) => {
+  const relative = path.relative;
+  t.mock.method(path, 'relative', (from, to) => relative(from, to).replaceAll('/', '\\'));
+  assert.deepEqual(loadKnowledge(EXAMPLE).errors, []);
+});
+
 test('the project root is found from a subfolder', () => {
   assert.equal(findProjectRoot(path.join(EXAMPLE, 'src')), EXAMPLE);
 });
@@ -53,6 +59,21 @@ test('the command line rejects a tag neither the plugin nor the project defines,
   assert.equal(status, 1);
   assert.equal(stdout, '');
   assert.match(stderr, /^unknown tag: testng\nknown tags: code_style, design_bundle, docs, e2e, .*\btesting\b/);
+});
+
+test('the command line fails on --project without a folder, and on an unknown option', () => {
+  const cases = [
+    [['check', '--project'], /--project needs a folder/],
+    [['check', '--project', ''], /--project needs a folder/],
+    [['check', '--projcet', EXAMPLE], /unknown option: --projcet/],
+  ];
+  for (const [args, expected] of cases) {
+    const { status, stdout, stderr } = spawnSync(CLI, args, { cwd: EXAMPLE, encoding: 'utf8' });
+    assert.equal(status, 1, args.join(' '));
+    assert.equal(stdout, '');
+    assert.match(stderr, /^usage: aidrian-knowledge/);
+    assert.match(stderr, expected);
+  }
 });
 
 // Each case writes a one-bucket project, changes one thing, and expects one error.

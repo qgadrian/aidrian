@@ -16,7 +16,8 @@ This skill is how you find and read them, and which shared defaults apply when a
 2. In each bucket, open `bucket.json`. Its doc paths are relative to the bucket folder.
 3. Read every doc in `always`, then the docs under each tag you were given:
    your agent's knowledge tags, plus any tag that your dispatcher or the task names.
-4. Read each doc once, in bucket order. A tag that no bucket defines loads nothing; that is not an error.
+4. Read each doc once, in bucket order. A tag from the Tags list below that no bucket defines loads nothing; that is not an error.
+   A tag that is neither on that list nor defined by a bucket is a typo, and `aidrian-knowledge route` fails on it.
 
 `aidrian-knowledge route <tag>...` prints the same list when that command is on your PATH.
 

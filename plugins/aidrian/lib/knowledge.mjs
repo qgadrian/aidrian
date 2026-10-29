@@ -141,7 +141,8 @@ function insidePath(root, base, rel) {
   const joined = path.posix.normalize(path.posix.join(base || '.', rel)).replace(/\/$/, '');
   if (joined === '.' || joined.startsWith('../') || joined === '..') return null;
   if (base && !joined.startsWith(`${base}/`)) return null;
-  if (path.relative(root, path.join(root, joined)) !== joined) return null;
+  // path.relative uses the platform separator, "\" on Windows; `rel` cannot hold one, so mapping it back is safe.
+  if (path.relative(root, path.join(root, joined)).replaceAll('\\', '/') !== joined) return null;
   return linksOutside(root, joined) ? null : joined;
 }
 

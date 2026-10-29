@@ -12,7 +12,8 @@ must name the worktree and the task branch.
    A change to a critical flow: `e2e-runner` on that flow, in the foreground and alone.
 3. No doc the branch makes stale is left without its update.
 4. No `scope_collision` is open.
-5. Every slice that called `security-engineer` has its `sign_off: approved`. A `concerns`, a dispute, or no verdict blocks the pull request.
+5. Every slice that called `security-engineer` has its review back, with no security finding open whose disposition is `fix_now`:
+   `security-engineer` confirmed each one fixed on the slice's next review. A disputed finding or a missing review blocks the pull request.
 6. A critical flow has the `product-manager` `sign_off: approved` from phase 0.
 7. **Acceptance criteria coverage.** Every acceptance criterion id maps to a committed slice.
    A gap turns `Fixes <key>` into `Refs <key>`, and the report names the gap.

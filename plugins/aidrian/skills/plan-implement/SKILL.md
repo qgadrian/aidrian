@@ -33,9 +33,10 @@ except its base branch and re-entry sections, which it cites.
 3. **Ready.** Stop and ask on `status: complete`, a likely wrong plan; on `blocked` or a load-bearing open question,
    which goes back to `planning-agent`; or on a status other than `ready` or `in-progress`, with a recommendation to review it first.
    An "implement anyway" from the Human goes in the report.
-4. **Gates.** A critical flow in the project's `product_sensitive` knowledge: a `product-manager` sign-off,
-   unless the plan records one. A security-sensitive slice: `security-engineer` on the approach, unless the plan records its sign-off.
-   `blocked` or `needs_evidence` stops the run.
+4. **Gates.** A critical flow in the project's `product_sensitive` knowledge: a `product-manager` `sign_off`,
+   unless the plan records one; `blocked` or `needs_evidence` stops the run.
+   A security-sensitive slice: `security-engineer` reviews the approach, unless the plan records that review;
+   a finding whose disposition is `fix_now` stops the run.
 5. **Re-entry**: as issue-implement's phase 0 re-entry section says, against the plan's slices.
 
 ## Substitutions

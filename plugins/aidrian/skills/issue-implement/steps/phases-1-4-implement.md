@@ -41,9 +41,10 @@ For each slice:
    The plan file is the record a resumed run trusts.
 2. **Scope gate.** A directive from a knowledge doc that contradicts the issue's non-goals or leaves its files to modify
    is a `scope_collision`: stop and ask, citing both.
-3. **Owner.** The issue's agent action plan, else the agent registry in the project's `orchestration` knowledge, else this plugin's:
-   `backend-developer` for server code and data, `designer` for presentation, `ux-specialist` for flow friction,
-   `security-engineer` for a trust boundary. No owner fits: stop and ask.
+3. **Owner.** An agent that can edit files: the issue's agent action plan, else the agent registry in the project's `orchestration` knowledge,
+   else this plugin's: `backend-developer` for server code and data, `designer` for presentation, `ux-specialist` for flow friction.
+   A trust-boundary slice goes to the owner of its surface, such as `backend-developer`; `security-engineer` cannot edit,
+   so it is the slice's required reviewer in step 6. No owner fits: stop and ask.
    When the slice may add a helper, run `helper-scout` first; its result is advisory.
 4. **Dispatch a fresh agent** with the brief from the authority contract, plus:
    - the closure gate: the commands the project's `testing` knowledge names for the changed files pass, and the docs it makes stale are updated;
@@ -58,7 +59,7 @@ For each slice:
      More is an overstep: stop, list the extra commits, and put each one through its skipped review and verification first.
 6. **Review, before the commit.** The slice's diff is `git -C <worktree> diff <slice base>`, the index and the working tree,
    plus the untracked files `git -C <worktree> ls-files --others --exclude-standard` lists.
-   `code-reviewer` reviews it, and in parallel `security-engineer` when the slice touches auth,
+   `code-reviewer` reviews it, and in parallel `security-engineer` when the slice crosses a trust boundary or touches auth,
    sessions, tokens, tenancy, payments, webhooks, uploads, redirects, untrusted content, or privileged access.
    `architect` only when the shape changed materially or `code-reviewer` asks for it.
 7. **Findings.** Take each through the `orchestration` skill § 4. Before a `fix_now` goes to the owner, check that
@@ -76,7 +77,7 @@ For each slice:
    Its handoff lists the exact `git commit` command and `not_bypassed`, or `hook_failed`, in `compliance`.
    Run the commit-count guard again: one commit. A failed commit sets the status back to `in_progress`.
 10. **Cycle cap.** At most two fix passes per slice, counting review findings, security verdicts, and test failures together.
-    A third round with an open critical or high finding, a security `concerns`, or a failing test: stop.
+    A third round with an open critical or high finding, an open security `fix_now`, or a failing test: stop.
 
 ## Phase 4: between slices
 

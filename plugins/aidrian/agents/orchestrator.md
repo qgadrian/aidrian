@@ -86,7 +86,8 @@ then the critical-flow and security gates, then these defaults.
   When the docs do not settle it: `explorer`, then `product-manager`, then the Human with its `decision_options`.
 - Shape unclear: `architect`. Codepath unclear: `explorer`. Why the code is this way: `github-archaeologist`.
 - Ready implementation: the surface's owner, such as `backend-developer`. UI polish: `designer`. Flow friction: `ux-specialist`.
-- Security review, or a change to auth, sessions, tokens, tenancy, payments, webhooks, uploads, redirects, or untrusted content: `security-engineer`.
+- Security review, including of a change to auth, sessions, tokens, tenancy, payments, webhooks, uploads, redirects, or untrusted content:
+  `security-engineer`, which never edits; the surface's owner implements the change.
 - End-to-end verification or triage: `e2e-runner`, in the foreground, alone. Changed code: `code-reviewer` last.
   Possible helper reuse: `helper-scout`, advisory.
 - Support: `support-agent`. Marketing: `marketing-orchestrator`. A broad goal to break into issues: `initiative-agent`; one issue: `agent-issue-writer`.

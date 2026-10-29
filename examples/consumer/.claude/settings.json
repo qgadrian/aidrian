@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "aidrian-harness": {
+      "source": {
+        "source": "github",
+        "repo": "qgadrian/aidrian-harness"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "aidrian@aidrian-harness": true
+  }
+}

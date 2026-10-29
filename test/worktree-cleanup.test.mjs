@@ -88,6 +88,19 @@ test('without gh nothing is automatic, and a worktree younger than --min-age is 
   assert.equal(plan({ minAgeSec: 0 }, { now: Date.now() }).auto[0].path, dirs.pr);
 });
 
+test('in a repository whose git folder is separate, the main checkout is skipped, though git lists the git folder', (t) => {
+  const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-clean-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const repo = path.join(base, 'repo');
+  const meta = path.join(base, 'meta.git');
+  execFileSync('git', ['init', '-q', '-b', 'main', '--separate-git-dir', meta, repo]);
+  execFileSync('git', ['-C', repo, ...IDENTITY, 'commit', '-q', '--allow-empty', '-m', 'init']);
+  execFileSync('git', ['-C', repo, 'worktree', 'add', '-q', '-b', 'feat/x', path.join(base, 'x')]);
+  const result = planCleanup({}, { cwd: repo, heads: () => new Map(), now: LATER });
+  assert.deepEqual(result.skip, [{ bucket: 'skip', path: meta, branch: 'main', reason: 'main checkout' }]);
+  assert.deepEqual(result.confirm.map((row) => row.path), [path.join(base, 'x')]);
+});
+
 test('a session inside a worktree never removes that worktree', (t) => {
   const { dirs, heads } = fixture(t);
   const result = planCleanup({}, { cwd: dirs.pr, heads, now: LATER });

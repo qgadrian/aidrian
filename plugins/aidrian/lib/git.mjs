@@ -14,10 +14,9 @@ function firstLine(args, cwd) {
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
-// The main checkout: the folder that holds the git common dir. Every worktree of the repository shares it.
+// The main checkout, which every worktree of the repository shares.
 export function mainRoot(cwd) {
-  const commonDir = firstLine(['rev-parse', '--path-format=absolute', '--git-common-dir'], cwd);
-  return commonDir && path.dirname(commonDir);
+  return checkoutRoots(cwd)?.main ?? null;
 }
 
 // The top folder of the checkout that `cwd` is in: the main checkout or one of its worktrees.
@@ -25,10 +24,16 @@ export function currentRoot(cwd) {
   return firstLine(['rev-parse', '--show-toplevel'], cwd);
 }
 
-// Both at once, in one git call: { main, current }, or null. They differ inside a worktree.
+// Both at once, in one git call: { main, current }, or null. They differ inside a linked worktree.
+// In the main checkout, its own git folder is the common one, so the main checkout is the current one, wherever
+// `git init --separate-git-dir` put that folder. A linked worktree has only the common folder's place to go by: the
+// main checkout holds it as `.git`. A separate git folder records no main checkout (`git worktree list` names the
+// folder itself), so from a linked worktree of such a repository `main` is that folder's parent.
 export function checkoutRoots(cwd) {
-  const lines = firstLine(['rev-parse', '--path-format=absolute', '--git-common-dir', '--show-toplevel'], cwd)?.split('\n');
-  return lines?.length === 2 ? { main: path.dirname(lines[0]), current: lines[1] } : null;
+  const lines = firstLine(['rev-parse', '--path-format=absolute', '--git-common-dir', '--git-dir', '--show-toplevel'], cwd)?.split('\n');
+  if (lines?.length !== 3) return null;
+  const [commonDir, gitDir, current] = lines;
+  return { main: gitDir === commonDir ? current : path.dirname(commonDir), current };
 }
 
 // Whether git ignores `file` (absolute, or relative to `root`).

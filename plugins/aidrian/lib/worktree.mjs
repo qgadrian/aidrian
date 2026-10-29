@@ -149,15 +149,17 @@ export function createWorktree({ branch, slug, base, fetch = false, plan = false
   return { status: 'created', ...report };
 }
 
-// `git worktree list --porcelain` as [{ path, head, branch, locked, prunable }]; the first entry is the main checkout.
+// `git worktree list --porcelain` as [{ path, main, head, branch, locked, prunable }]. The first entry is the main
+// checkout, which `main` marks: its path is not always the folder (a separate git folder is listed in its place).
 export function listWorktrees(main) {
   const listed = git(main, ['worktree', 'list', '--porcelain']);
   if (listed.status !== 0) throw blocked('inspect-worktrees', failure(listed));
-  return listed.stdout.split('\n\n').filter((block) => block.startsWith('worktree ')).map((block) => {
+  return listed.stdout.split('\n\n').filter((block) => block.startsWith('worktree ')).map((block, index) => {
     const lines = block.split('\n');
     const value = (key) => lines.find((line) => line === key || line.startsWith(`${key} `))?.slice(key.length + 1);
     return {
       path: value('worktree'),
+      main: index === 0,
       head: value('HEAD') ?? null,
       branch: value('branch')?.replace(/^refs\/heads\//, '') ?? null,
       locked: lines.some((line) => line === 'locked' || line.startsWith('locked ')),
@@ -205,7 +207,7 @@ export function planCleanup({ minAgeSec = DAY_SEC } = {}, { cwd = process.cwd(),
 function classify(worktree, ctx, merged, minAgeSec, now) {
   const { path: dir, branch, head } = worktree;
   const skip = (reason) => ({ bucket: 'skip', path: dir, branch, reason });
-  if (dir === ctx.main) return skip('main checkout');
+  if (worktree.main) return skip('main checkout');
   if (dir === ctx.current) return skip('current worktree');
   if (worktree.locked) return skip('locked');
   if (worktree.prunable) return skip('folder is gone; cleanup execute prunes it');

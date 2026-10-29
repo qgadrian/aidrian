@@ -39,6 +39,18 @@ function fixture(t, config = { version: 1 }, { origin = true } = {}) {
   return { base, repo, git, create, blocked };
 }
 
+test('in a repository whose git folder is separate, a plan finds the base branch and the folder from the main checkout', (t) => {
+  const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-wt-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const repo = path.join(base, 'repo');
+  execFileSync('git', ['init', '-q', '-b', 'main', '--separate-git-dir', path.join(base, 'meta.git'), repo]);
+  writeFileSync(path.join(repo, '.gitignore'), '.worktrees/\n');
+  execFileSync('git', ['-C', repo, 'add', '.']);
+  execFileSync('git', ['-C', repo, ...IDENTITY, 'commit', '-q', '-m', 'init']);
+  const plan = createWorktree({ branch: 'feat/x', plan: true }, { cwd: repo });
+  assert.deepEqual([plan.status, plan.worktree_path, plan.base], ['planned', path.join(repo, '.worktrees/x'), 'main']);
+});
+
 test('a plan names the folder after the last part of the branch, starts at origin/<default>, and touches nothing', (t) => {
   const { repo, git, create } = fixture(t);
   const plan = create({ branch: 'feat/share-links', plan: true });

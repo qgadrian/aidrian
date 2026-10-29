@@ -21,18 +21,18 @@ test('the example consumer config is valid, turns the main-checkout guard on, an
 });
 
 test('file values win; a group keeps the defaults for the keys the file leaves out', (t) => {
-  const pr = { maxReviewRounds: 3, requiredChecks: ['e2e'], conditionalChecks: ['db tests'] };
-  const { config, errors } = loadConfig(project(t, { version: 1, defaultBranch: 'trunk', pr }));
+  const github = { maxReviewRounds: 3, requiredChecks: ['e2e'], conditionalChecks: ['db tests'] };
+  const { config, errors } = loadConfig(project(t, { version: 1, defaultBranch: 'trunk', github }));
   assert.deepEqual(errors, []);
   assert.equal(config.defaultBranch, 'trunk');
-  assert.deepEqual(config.pr, { ...DEFAULTS.pr, ...pr });
+  assert.deepEqual(config.github, { ...DEFAULTS.github, ...github });
   assert.deepEqual(config.worktrees, DEFAULTS.worktrees);
 });
 
 test('the loaded config is frozen all the way down', (t) => {
   const { config } = loadConfig(project(t, { version: 1, mainCheckout: { allowWrites: ['notes/**'] } }));
   assert.throws(() => { config.defaultBranch = 'x'; }, TypeError);
-  assert.throws(() => { config.pr.reviewer = 'x'; }, TypeError);
+  assert.throws(() => { config.github.reviewer = 'x'; }, TypeError);
   assert.throws(() => config.mainCheckout.allowWrites.push('x'), TypeError);
   assert.throws(() => config.commits.types.push('x'), TypeError);
 });
@@ -40,13 +40,14 @@ test('the loaded config is frozen all the way down', (t) => {
 // Each case expects exactly one error, and the default in place of the bad value.
 const errorCases = [
   ['unknown top-level key', { version: 1, extra: 1 }, /: unknown key "extra"$/],
-  ['unknown key in a group', { version: 1, pr: { reviewers: 'x' } }, /: unknown key "pr\.reviewers"$/],
+  ['the old "pr" group, now "github"', { version: 1, pr: { reviewer: 'x' } }, /: "pr" is now "github": rename the key$/],
+  ['unknown key in a group', { version: 1, github: { reviewers: 'x' } }, /: unknown key "github\.reviewers"$/],
   ['inherited property name as a key', JSON.parse('{"version": 1, "__proto__": {}}'), /: unknown key "__proto__"$/],
   ['string instead of a list', { version: 1, commits: { types: 'feat' } }, /"commits\.types" must be a list of non-empty strings$/],
-  ['check names that are not a list', { version: 1, pr: { conditionalChecks: 'db tests' } }, /"pr\.conditionalChecks" must be a list of non-empty strings$/],
-  ['group that is not an object', { version: 1, pr: [] }, /"pr" must be an object$/],
+  ['check names that are not a list', { version: 1, github: { conditionalChecks: 'db tests' } }, /"github\.conditionalChecks" must be a list of non-empty strings$/],
+  ['group that is not an object', { version: 1, github: [] }, /"github" must be an object$/],
   ['negative number', { version: 1, docs: { wrapLimit: -1 } }, /"docs\.wrapLimit" must be a whole number, 0 or more$/],
-  ['zero where a positive number is needed', { version: 1, pr: { maxReviewRounds: 0 } }, /"pr\.maxReviewRounds" must be a whole number above 0$/],
+  ['zero where a positive number is needed', { version: 1, github: { maxReviewRounds: 0 } }, /"github\.maxReviewRounds" must be a whole number above 0$/],
   ['string for a boolean', { version: 1, mainCheckout: { guard: 'no' } }, /"mainCheckout\.guard" must be true or false$/],
   ['empty string', { version: 1, defaultBranch: ' ' }, /"defaultBranch" must be a non-empty string$/],
   ['handoff mode outside its list', { version: 1, session: { handoff: 'always' } }, /"session\.handoff" must be "off", "ask", or "auto"$/],
@@ -106,7 +107,7 @@ for (const [name, value, expected] of errorCases) {
     assert.match(errors[0], /^\.aidrian\/config\.json: /);
     assert.match(errors[0], expected);
     assert.equal(current, true);
-    for (const key of ['defaultBranch', 'pr', 'docs', 'commits', 'mainCheckout']) assert.deepEqual(config[key], DEFAULTS[key], key);
+    for (const key of ['defaultBranch', 'github', 'docs', 'commits', 'mainCheckout']) assert.deepEqual(config[key], DEFAULTS[key], key);
   });
 }
 

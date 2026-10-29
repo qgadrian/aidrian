@@ -1,5 +1,5 @@
 // Review rounds on the last N merged pull requests, for `aidrian report --prs N`: how many formal reviews the bot
-// (config.json `pr.reviewer`) left on each, and how many passed clean on the first look (its 👍 and no review).
+// (config.json `github.reviewer`) left on each, and how many passed clean on the first look (its 👍 and no review).
 // A pull request the bot never answered is left out. Read-only; needs gh.
 
 import { execFileSync } from 'node:child_process';

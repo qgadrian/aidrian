@@ -46,15 +46,15 @@ test('a short option reads as gh reads it: its value attached, or after a cluste
 test('a missing required section is denied, naming it and the config key', (t) => {
   const run = project(t, { version: 1 }, { 'short.md': '## Summary\nonly this\n' });
   const reason = run('gh pr create --title x --body-file short.md');
-  assert.match(reason, /^Blocked: the body has no `## Tests run` section\. config\.json `pr\.requiredSections` lists the sections every body has: Summary, Tests run\./);
+  assert.match(reason, /^Blocked: the body has no `## Tests run` section\. config\.json `github\.requiredSections` lists the sections every body has: Summary, Tests run\./);
   assert.match(reason, new RegExp(`set ${OVERRIDE}=1 in your own shell`));
   assert.match(run(heredoc('### Summary\n## Tests\n')), /no `## Summary`, `## Tests run` section/, 'only a `## ` heading with the exact name counts');
   assert.equal(run(heredoc('## summary\n##  Tests run  \n')), null, 'case and spacing do not matter');
 });
 
 test('the sections come from config.json, and an empty list checks none', (t) => {
-  assert.match(project(t, { version: 1, pr: { requiredSections: ['Why', 'Risk'] } })(heredoc(GOOD)), /no `## Why`, `## Risk` section/);
-  assert.equal(project(t, { version: 1, pr: { requiredSections: [] } })(heredoc('anything\n')), null);
+  assert.match(project(t, { version: 1, github: { requiredSections: ['Why', 'Risk'] } })(heredoc(GOOD)), /no `## Why`, `## Risk` section/);
+  assert.equal(project(t, { version: 1, github: { requiredSections: [] } })(heredoc('anything\n')), null);
 });
 
 test('the Claude Code footer and --fill are denied', (t) => {

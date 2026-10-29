@@ -217,7 +217,7 @@ export const commands = {
           return 1;
         }
         const { reviewRounds, formatRounds } = await import('./pr-review-rounds.mjs');
-        summary.reviews = reviewRounds(count, loadConfig(project).config.pr.reviewer);
+        summary.reviews = reviewRounds(count, loadConfig(project).config.github.reviewer);
         if (!values.json) console.log(`${formatReport(summary, { file, since, skipped })}\n${formatRounds(summary.reviews)}`);
       } else if (!values.json) {
         console.log(formatReport(summary, { file, since, skipped }));

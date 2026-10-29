@@ -1,5 +1,5 @@
 // `aidrian pr <await-review|checks|disposition>`: the pull request review loop's deterministic steps, each in its own
-// module. The config's `pr` group supplies the reviewer, the round limit, and the check policy.
+// module. The config's `github` group supplies the reviewer, the round limit, and the check policy.
 
 import { loadConfig } from './config.mjs';
 import { projectAt } from './project.mjs';

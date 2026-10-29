@@ -30,7 +30,7 @@ After you install the plugin in Codex, open a session, run `git commit --amend -
 | --- | --- |
 | Main-checkout rule | Off unless config.json sets `"mainCheckout": { "guard": true }` |
 | Markdown line length | `"docs": { "wrapLimit": 0 }` |
-| Pull request body sections | `"pr": { "requiredSections": [] }`; the footer and `--fill` checks stay |
+| Pull request body sections | `"github": { "requiredSections": [] }`; the footer and `--fill` checks stay |
 | Session-length reminder | `"session": { "handoff": "off" }` |
 | A Bash rule, once | Its override variable, set by a person: [Overrides](#overrides) |
 
@@ -49,7 +49,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Kill by name | `pkill`, `killall`, `pgrep --signal`, `kill` fed by `pgrep` or `ps`, and `kill -- -1`; `kill <pid>` stays allowed | `AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME=1` |
 | Command-line listing | `pgrep -fl`, `pgrep -a`, and `ps` without a format free of `args`, `command`, and `cmd` | `AIDRIAN_ALLOW_PROCESS_ARGS_LISTING=1` |
 | Counting grep in `&&` | `grep -c` whose exit status an `&&` chain reads, such as `grep -c x log && npm test` | `AIDRIAN_ALLOW_GREP_EXIT_CHAIN=1` |
-| Pull request body | `gh pr create` or `gh pr edit` with a body that lacks a config.json `pr.requiredSections` heading or carries the "Generated with [Claude Code]" footer, and `gh pr create --fill` | `AIDRIAN_ALLOW_PR_BODY=1` |
+| Pull request body | `gh pr create` or `gh pr edit` with a body that lacks a config.json `github.requiredSections` heading or carries the "Generated with [Claude Code]" footer, and `gh pr create --fill` | `AIDRIAN_ALLOW_PR_BODY=1` |
 | Main checkout, when turned on | A write to a tracked file in the main checkout: `>`, `>>`, `tee`, `sed -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`, `touch`, `mkdir`, and `rsync` (sources too under `--remove-source-files`) | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
 
 A rule reads the command the way the shell splits it.

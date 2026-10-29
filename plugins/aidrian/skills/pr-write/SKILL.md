@@ -35,7 +35,7 @@ The key format comes from the project's `issue_tracker` knowledge; the type is a
 
 ## Body
 
-Every section in config.json `pr.requiredSections` (default `Summary`, `Tests run`), as `## ` headings, in that order.
+Every section in config.json `github.requiredSections` (default `Summary`, `Tests run`), as `## ` headings, in that order.
 `aidrian check` validates the config; the Bash hook refuses a body that lacks a required section.
 Add an optional section only when it carries something: [references/body-template.md](references/body-template.md)
 lists the sections and what goes in each.

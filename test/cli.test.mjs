@@ -29,14 +29,15 @@ test('check fails with every error, and names the folder it started from when th
   assert.equal(none.stderr, `no project folder at or above ${dir}; run aidrian init\n`);
 
   mkdirSync(path.join(dir, '.aidrian'));
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, extra: 1, pr: { maxReviewRounds: 'ten' } }));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, extra: 1, pr: { reviewer: 'x' }, github: { maxReviewRounds: 'ten' } }));
   writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n.worktrees/\n');
   const bad = run(['check'], dir);
   assert.equal(bad.status, 1);
   assert.equal(bad.stdout, '');
   assert.equal(
     bad.stderr,
-    '.aidrian/config.json: unknown key "extra"\n.aidrian/config.json: "pr.maxReviewRounds" must be a whole number above 0\n',
+    '.aidrian/config.json: unknown key "extra"\n.aidrian/config.json: "pr" is now "github": rename the key\n' +
+      '.aidrian/config.json: "github.maxReviewRounds" must be a whole number above 0\n',
   );
 });
 

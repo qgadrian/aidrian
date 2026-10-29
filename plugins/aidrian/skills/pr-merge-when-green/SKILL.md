@@ -27,7 +27,9 @@ pending or skipped. This skill waits for all of them.
 
 ## Project setup
 
-`aidrian pr checks` takes its policy from the `pr` group in the project's `config.json`.
+`aidrian pr checks` takes its policy from the `github` group in the `config.json` of the checkout it runs in.
+So run this skill from a checkout of the pull request's repository: `aidrian pr checks -R` refuses any repository that is
+not a remote of the current checkout.
 Each entry is part of a check name and matches any check whose name contains it, so pick parts that match only the checks meant.
 
 - `requiredChecks`: put the end-to-end check family here (`["e2e"]`, say).
@@ -50,8 +52,8 @@ gh repo view --json nameWithOwner -q .nameWithOwner          # the current repos
 gh pr view <n> --repo <owner>/<repo> --json number,url,title,state,isDraft,mergeable,mergeStateStatus,labels,headRefName
 ```
 
-Pass `<owner>/<repo>` on every later call: without it, `aidrian pr checks <n>` reads pull request `<n>` of the current
-checkout's repository, which may be another one. Stop and report when:
+Pass `<owner>/<repo>` on every later call: without it, `gh` reads pull request `<n>` of the current checkout's repository,
+which may be another one. Stop and report when:
 
 - `state` is `MERGED` or `CLOSED`.
 - `isDraft` is true. Ask whether to mark it ready; never do it unasked.
@@ -60,33 +62,39 @@ checkout's repository, which may be another one. Stop and report when:
 
 ## 1. Wait for a verdict
 
-One shell call polls every 30 seconds for up to 10 minutes; give it an 11-minute timeout:
+One shell call polls every 30 seconds for up to 10 minutes; give it an 11-minute timeout.
+It reads the head commit before and after, so the verdict can be tied to one commit:
 
 ```bash
+head=$(gh pr view <n> --repo <owner>/<repo> --json headRefOid -q .headRefOid)
 end=$(( $(date +%s) + 600 ))
-until aidrian pr checks <n> -R <owner>/<repo>; code=$?; [ "$code" -ne 2 ] || [ "$(date +%s)" -ge "$end" ]; do sleep 30; done; echo "exit $code"
+until aidrian pr checks <n> -R <owner>/<repo>; code=$?; [ "$code" -ne 2 ] || [ "$(date +%s)" -ge "$end" ]; do sleep 30; done
+echo "exit $code head $head now $(gh pr view <n> --repo <owner>/<repo> --json headRefOid -q .headRefOid)"
 ```
 
 | Exit | Verdict | Next |
 | --- | --- | --- |
-| 0 | `ready` | step 2 |
+| 0 | `ready` | step 2 with `<sha>`, the `head` value, when `now` is the same; when it differs, run the call again |
 | 1 | `failing` | stop with the line it printed (step 4) |
 | 2 | `pending` | run the call again; at the cap, stop and name the checks still pending |
 | 3 | error | stop with the error |
 
 A required check that has not reported yet keeps the verdict pending, so a late end-to-end check cannot be missed.
+A `now` that differs from `head` means a commit arrived during the wait, and the verdict may belong to either commit.
 
 ## 2. Merge
 
 Read the hard rules again, then run this once:
 
 ```bash
-gh pr merge <n> --repo <owner>/<repo> --merge --delete-branch     # --squash or --rebase only when the user asked
+gh pr merge <n> --repo <owner>/<repo> --merge --delete-branch --match-head-commit <sha>   # --squash or --rebase only when asked
 ```
 
+`--match-head-commit` makes GitHub refuse the merge when the head is no longer `<sha>`, so a commit whose checks were not
+judged never merges.
 With `--dry-run`, print the command and stop.
-If the merge fails, for a race or a branch-protection mismatch, run step 1 once more.
-Retry the merge once if the verdict is still ready; otherwise stop and report.
+If the merge fails, for a new commit, a race, or a branch-protection mismatch, run step 1 once more.
+Retry the merge once, with the `<sha>` that run printed, if the verdict is still ready; otherwise stop and report.
 
 ## 3. Confirm
 

@@ -1,5 +1,5 @@
 // `aidrian pr checks`: one line and an exit code for a pull request's checks, so a watch loop costs one line per poll
-// instead of the whole check table. The policy comes from config.json `pr`:
+// instead of the whole check table. The policy comes from config.json `github`:
 //   - FAILURE, TIMED_OUT, ACTION_REQUIRED, STARTUP_FAILURE, or an unknown terminal state: failing.
 //   - CANCELLED: failing, unless the name contains an `ignoreCancelledChecks` entry (a routine cancel, such as a
 //     preview deploy skipped by an ignored build); those are listed as skipped.
@@ -8,9 +8,13 @@
 //     is an unexpected skip, listed under `unexpected_skips`, and failing.
 //   - `requiredChecks`: every check whose name contains an entry must be SUCCESS, and at least one must exist. Checks
 //     register over time, so a required entry with no check yet is pending, never ready.
-// Exit 0 ready, 1 failing, 2 pending, 3 error (gh missing, no pull request, unreadable output).
+// The policy is this checkout's, so `-R` may name only a repository that is a remote of this checkout: for a pull
+// request in another repository, run the command from that repository's checkout.
+// Exit 0 ready, 1 failing, 2 pending, 3 error (gh missing, no pull request, unreadable output, another repository).
 
 import { execFileSync } from 'node:child_process';
+
+import { runGit } from './git.mjs';
 
 const NON_TERMINAL = new Set(['IN_PROGRESS', 'QUEUED', 'PENDING', 'WAITING', 'REQUESTED', 'EXPECTED']);
 const HARD_FAIL = new Set(['FAILURE', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE']);
@@ -56,8 +60,23 @@ export function parseCliArgs(argv) {
   return { repo, asJson: rest.includes('--json'), prNumber: rest.find((arg) => /^#?\d+$/.test(arg))?.replace('#', '') ?? null, unknown };
 }
 
-// The CLI body. `gh` is the test seam: (args) → stdout.
-export function runChecks(argv, config, gh = (args) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })) {
+// `owner/repo`, lowercased, from `[HOST/]OWNER/REPO` or a remote URL: https, ssh, or `git@host:owner/repo.git`.
+export const repoKey = (value) => value.replace(/\/+$/, '').replace(/\.git$/, '').split(/[/:]/).slice(-2).join('/').toLowerCase();
+
+// The repositories the checkout at `cwd` has as remotes, as repoKey values. A fork's upstream counts: same project.
+export function checkoutRepos(cwd) {
+  const { status, stdout } = runGit(['remote', '-v'], cwd);
+  if (status !== 0) return [];
+  return [...new Set(stdout.split('\n').filter(Boolean).map((line) => repoKey(line.split(/\s+/)[1] ?? '')))];
+}
+
+// The CLI body. `gh` and `remotes` are the test seams: (args) → stdout, and () → checkoutRepos.
+export function runChecks(
+  argv,
+  config,
+  gh = (args) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
+  remotes = () => checkoutRepos(process.cwd()),
+) {
   const { prNumber, repo, asJson, unknown } = parseCliArgs(argv);
   const fail = (message) => {
     console.error(`error: ${message}`);
@@ -65,6 +84,10 @@ export function runChecks(argv, config, gh = (args) => execFileSync('gh', args, 
   };
   if (unknown) return fail(`unknown argument: ${unknown}`);
   if (repo && !prNumber) return fail('-R/--repo needs an explicit pull request number');
+  if (repo && !remotes().includes(repoKey(repo))) {
+    return fail(`${repo} is not a remote of this checkout, and the check policy comes from this checkout's config.json: ` +
+      `run aidrian pr checks from a checkout of ${repo}`);
+  }
   let rows;
   try {
     rows = JSON.parse(gh(['pr', 'checks', ...(prNumber ? [prNumber] : []), ...(repo ? ['--repo', repo] : []), '--json', 'name,state']));
@@ -77,7 +100,7 @@ export function runChecks(argv, config, gh = (args) => execFileSync('gh', args, 
     }
   }
   if (!Array.isArray(rows) || rows.length === 0) return fail('gh returned no checks for this pull request');
-  const result = computeVerdict(rows, config.pr);
+  const result = computeVerdict(rows, config.github);
   console.log(asJson ? JSON.stringify(result) : `${result.verdict}: ${result.reason}`);
   return EXIT_BY_VERDICT[result.verdict];
 }

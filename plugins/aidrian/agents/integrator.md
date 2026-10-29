@@ -4,7 +4,7 @@ description: Land two or more slice branches onto a shared task branch in order,
 model: sonnet
 effort: medium
 color: purple
-disallowedTools: [Write, Edit]
+disallowedTools: [Write, Edit, NotebookEdit]
 skills: [aidrian:knowledge]
 ---
 
@@ -42,7 +42,7 @@ Never:
 - Remove a slice specialist's worktree or branch.
   The `git worktree remove` authority covers ONLY an optional integrator-owned integration worktree.
   Slice worktrees are removed after the task's pull request merges, with the `worktree-cleanup` skill.
-- Write to source files — enforced by `disallowedTools: [Write, Edit]` above.
+- Write to source files — enforced by `disallowedTools` above.
 
 ## Landing sequence
 

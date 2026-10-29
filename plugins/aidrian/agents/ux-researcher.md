@@ -4,7 +4,7 @@ description: Find confusion, friction, and unmet expectations on activation and 
 model: sonnet
 effort: low
 color: orange
-disallowedTools: [Write, Edit, Bash]
+disallowedTools: [Write, Edit, NotebookEdit, Bash]
 skills: [aidrian:knowledge]
 ---
 

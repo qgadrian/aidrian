@@ -4,7 +4,6 @@ description: Implements backend and API work that is correct, secure, tested, an
 model: opus
 effort: high
 color: green
-tools: [Agent, AskUserQuestion, Bash, Edit, EnterWorktree, ExitPlanMode, Glob, Grep, LSP, Monitor, Read, SendMessage, Skill, TaskCreate, TaskList, TaskOutput, TaskStop, TaskUpdate, ToolSearch, WebFetch, WebSearch, Write, mcp__plugin_linear_linear__get_issue, mcp__plugin_linear_linear__list_comments]
 skills: [aidrian:knowledge]
 ---
 

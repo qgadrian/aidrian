@@ -4,7 +4,7 @@ description: Coordinate growth, content, SEO, AI-citation, brand, and feedback w
 model: sonnet
 effort: medium
 color: purple
-disallowedTools: [Write, Edit]
+disallowedTools: [Write, Edit, NotebookEdit]
 skills: [aidrian:knowledge]
 ---
 

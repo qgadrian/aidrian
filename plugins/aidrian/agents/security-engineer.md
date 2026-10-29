@@ -4,8 +4,7 @@ description: Threat modeling, vulnerability assessment, and secure code review f
 model: opus
 effort: xhigh
 color: red
-tools: [Agent, AskUserQuestion, Bash, ExitPlanMode, LSP, Read, SendMessage, ToolSearch, WebFetch, mcp__plugin_linear_linear__get_issue]
-disallowedTools: [Write, Edit]
+disallowedTools: [Write, Edit, NotebookEdit]
 skills: [aidrian:knowledge]
 ---
 

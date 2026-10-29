@@ -4,8 +4,7 @@ description: Read-only helper discovery. From a task or a diff, lists existing p
 model: sonnet
 effort: low
 color: blue
-tools: [AskUserQuestion, Bash, ExitPlanMode, Glob, Grep, LSP, Read, SendMessage, ToolSearch]
-disallowedTools: [Write, Edit]
+disallowedTools: [Write, Edit, NotebookEdit, Agent]
 skills: [aidrian:knowledge]
 ---
 

@@ -58,7 +58,7 @@ The tests also check that both manifests agree, that every agent preloads the `k
 that agents only ask for tags the `knowledge` skill lists, and that no project-specific path leaks into the plugin.
 Every agent and skill description must fit in 160 characters: both hosts put all of them into every session, used or not.
 When `claude` and `codex` are on your PATH, `test/hosts.test.mjs` also checks the real hosts:
-Claude Code validates the plugin and loads every agent and skill,
+Claude Code validates the plugin and loads every agent, skill, and hook event,
 and Codex installs it and shows every skill and agent in a project session. Neither check runs a model.
 `make` lists the same tasks.
 
@@ -96,8 +96,15 @@ Add `--target .codex/agents` to install the agents into one project instead.
 Codex roles inherit the session's model; only the reasoning effort carries over from each agent.
 Claude Code enforces each agent's tool limits; on Codex the read-only agents are told to stay read-only.
 
-The plugin's hooks are in `plugins/aidrian/hooks/hooks.json`. Claude Code runs them once the plugin is enabled.
-Codex asks you to trust them in `/hooks` after you install or update the plugin.
+## Hooks
+
+The hooks in `plugins/aidrian/hooks/hooks.json` run in every session where the plugin is enabled.
+In Claude Code there is nothing to do. In Codex, trust them in `/hooks` after you install and after every update.
+[docs/hooks.md](docs/hooks.md) lists each hook, the host it runs on, and how to turn it off.
+
+- A hook that cannot read its input lets the action run, so a hook never breaks a session.
+- The guard on the main checkout is off until a project turns it on.
+- A project that keeps its own copies of these checks runs both until it removes its own.
 
 ## Adopting in a project
 

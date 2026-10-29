@@ -6,16 +6,32 @@ Claude Code runs them once the plugin is enabled. Codex asks you to trust them i
 Every hook lets the action run when it cannot read its input, so a hook never breaks a session.
 A blocking hook exits 2 and tells the agent why on stderr.
 
-| Event | What runs | Blocks |
-| --- | --- | --- |
-| Session and subagent start | One line naming the `always` knowledge docs and the commands that find the rest; for the main session, a second line while the lesson inbox holds open lessons | no |
-| Before a Bash command | The Bash rules below, in this order, in one process | yes |
-| Before Edit, Write, NotebookEdit, or Codex's `apply_patch` | The main-checkout rule, when the project turns it on | yes |
-| After Edit or Write of a Markdown file | The line-length check: lines the write made longer than config.json `docs.wrapLimit` | feedback |
-| Before compaction | A checklist of what the summary must keep, unless instructions were typed after `/compact` | no |
-| After an Agent tool call (Claude Code) | A `dispatch` row in the [dispatch log](dispatch-log.md) | no |
-| When a subagent stops (Claude Code) | A `stop` row, then the delivery check: a `.md` or `.json` path its last message names must exist | once |
-| When a session ends | A `session` row with the session's tokens and estimated cost | no |
+| Event | What runs | Host | Blocks |
+| --- | --- | --- | --- |
+| Session and subagent start | One line naming the `always` knowledge docs and the commands that find the rest; for the main session, a second line while the lesson inbox holds open lessons | both | no |
+| Before a Bash command | The Bash rules below, in this order, in one process | both | yes |
+| Before Edit, Write, NotebookEdit, or Codex's `apply_patch` | The main-checkout rule, when the project turns it on | both | yes |
+| After Edit or Write of a Markdown file | The line-length check: lines the write made longer than config.json `docs.wrapLimit` | Claude Code | feedback |
+| Before compaction | A checklist of what the summary must keep, unless instructions were typed after `/compact` | both | no |
+| After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
+| When a subagent stops | A `stop` row, then the [delivery check](#delivery-check) | Claude Code | once |
+| When a session ends | A `session` row with the session's tokens and estimated cost | Claude Code | no |
+
+Codex has no Edit, Write, or Agent tool, so those rows never run there.
+Its subagent-stop and session-end payloads are not verified: the hooks run, write nothing they cannot read, and never send a Codex subagent back.
+After you install the plugin in Codex, open a session, run `git commit --amend --dry-run`, and check that the Bash hook blocks it.
+
+## Turning hooks off
+
+| Hook | Off with |
+| --- | --- |
+| Main-checkout rule | Off unless config.json sets `"mainCheckout": { "guard": true }` |
+| Markdown line length | `"docs": { "wrapLimit": 0 }` |
+| Pull request body sections | `"pr": { "requiredSections": [] }`; the footer and `--fill` checks stay |
+| A Bash rule, once | Its override variable, set by a person: [Overrides](#overrides) |
+
+The start line and the dispatch log have no switch; they act only inside a project folder.
+The compaction checklist steps aside whenever instructions are typed after `/compact`.
 
 ## Bash rules
 

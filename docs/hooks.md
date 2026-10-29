@@ -13,6 +13,9 @@ A blocking hook exits 2 and tells the agent why on stderr.
 | Before Edit, Write, NotebookEdit, or Codex's `apply_patch` | The main-checkout rule, when the project turns it on | yes |
 | After Edit or Write of a Markdown file | The line-length check: lines the write made longer than config.json `docs.wrapLimit` | feedback |
 | Before compaction | A checklist of what the summary must keep, unless instructions were typed after `/compact` | no |
+| After an Agent tool call (Claude Code) | A `dispatch` row in the [dispatch log](dispatch-log.md) | no |
+| When a subagent stops (Claude Code) | A `stop` row, then the delivery check: a `.md` or `.json` path its last message names must exist | once |
+| When a session ends | A `session` row with the session's tokens and estimated cost | no |
 
 ## Bash rules
 
@@ -52,6 +55,12 @@ After an Edit or Write of a `.md`, `.markdown`, or `.mdx` file in a project, the
 the write touched that are longer than `docs.wrapLimit`. The write already happened, so the agent fixes them with a follow-up edit.
 Frontmatter, fenced and indented code, table rows, and a line whose overflow is one unbreakable token such as a URL are never reported.
 `"docs": { "wrapLimit": 0 }` turns it off. Codex has no Edit or Write tool, so it never runs there.
+
+## Delivery check
+
+When a subagent's last message names a `.md` or `.json` path that exists nowhere, the stop hook sends it back once
+with the missing paths: it writes them, corrects its report, or says it removed them on purpose. Its second stop always ends.
+[dispatch-log.md](dispatch-log.md) describes the rows and `aidrian report`.
 
 ## Overrides
 

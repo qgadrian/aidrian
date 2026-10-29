@@ -12,6 +12,7 @@ const COMMANDS = {
   handoff: './handoff-brief.mjs',
   worktree: './worktree.mjs',
   pr: './pr.mjs',
+  report: './dispatch-log.mjs',
 };
 
 const [command, ...args] = process.argv.slice(2);

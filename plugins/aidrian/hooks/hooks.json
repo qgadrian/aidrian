@@ -54,6 +54,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PLUGIN_ROOT/scripts/hook-agent-post.mjs\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PreCompact": [
@@ -63,6 +73,28 @@
             "type": "command",
             "command": "node \"$CLAUDE_PLUGIN_ROOT/scripts/hook-compact.mjs\"",
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PLUGIN_ROOT/scripts/hook-subagent-stop.mjs\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PLUGIN_ROOT/scripts/hook-session-end.mjs\"",
+            "timeout": 15
           }
         ]
       }

@@ -11,8 +11,8 @@ and one project folder, `.aidrian/`, that indexes them and holds the plugin's se
 | --- | --- |
 | Agents | `planning-agent`, `initiative-agent`, `agent-issue-writer`, `explorer`, `github-archaeologist`, `integrator`, `doc-updater`, `design-source-explorer`, `harness-engineer` |
 | Skills | `knowledge`, `planning-agent`, `initiative-agent`, `agent-issue-writer`, `worktree-new`, `worktree-cleanup`, `worktree-integrate`, `pr-write`, `pr-review-loop`, `design-import`, `grill-me`, `lesson`, `lesson-triage`, `session-handoff`, `session-continue` |
-| Commands | `aidrian`: sets up and checks the project folder (`aidrian init`, `aidrian check`), prints the state folder (`aidrian state`), creates and cleans up task worktrees (`aidrian worktree`), waits for the review bot and reads check and finding verdicts (`aidrian pr`), checks commit messages (`aidrian commit-msg`), lints skills, agents, paths, and the knowledge budget (`aidrian lint`), keeps the lesson inbox (`aidrian lesson`), and checks handoff briefs (`aidrian handoff`); `aidrian-knowledge`: routes, searches, and drafts a project's buckets |
-| Hooks | at session and subagent start, one line naming the `always` docs and how to find the rest; before each Bash command, git, process, and pull request body rules; before each file write, an opt-in guard that keeps the main checkout clean; after a Markdown write, a line-length check; before compaction, a checklist of what to keep. [docs/hooks.md](docs/hooks.md) lists them |
+| Commands | `aidrian`: sets up and checks the project folder (`aidrian init`, `aidrian check`), prints the state folder (`aidrian state`), creates and cleans up task worktrees (`aidrian worktree`), waits for the review bot and reads check and finding verdicts (`aidrian pr`), checks commit messages (`aidrian commit-msg`), lints skills, agents, paths, and the knowledge budget (`aidrian lint`), keeps the lesson inbox (`aidrian lesson`), checks handoff briefs (`aidrian handoff`), and reports on the dispatch log (`aidrian report`); `aidrian-knowledge`: routes, searches, and drafts a project's buckets |
+| Hooks | at session and subagent start, one line naming the `always` docs and how to find the rest; before each Bash command, git, process, and pull request body rules; before each file write, an opt-in guard that keeps the main checkout clean; after a Markdown write, a line-length check; before compaction, a checklist of what to keep; after each dispatch, subagent stop, and session end, a dispatch log row. [docs/hooks.md](docs/hooks.md) lists them |
 
 The `knowledge` skill is the shared rule set.
 Every agent preloads it: it says how to load the project's buckets, which project rules win, and the defaults a project can override.
@@ -40,6 +40,7 @@ examples/consumer/                  a small project that uses the plugin
 docs/project-folder.md              the project folder: structure, location, version, checks
 docs/config.md                      the project config file, .aidrian/config.json
 docs/hooks.md                       what each hook does, and its override
+docs/dispatch-log.md                the dispatch log rows and aidrian report
 docs/knowledge.md                   the knowledge-bucket format
 test/                               node --test suites
 ```

@@ -12,7 +12,7 @@ and one project folder, `.aidrian/`, that indexes them and holds the plugin's se
 | Agents | `planning-agent`, `initiative-agent`, `agent-issue-writer`, `explorer`, `github-archaeologist`, `integrator`, `doc-updater`, `design-source-explorer`, `harness-engineer` |
 | Skills | `knowledge`, `planning-agent`, `initiative-agent`, `agent-issue-writer`, `worktree-integrate`, `design-import`, `grill-me` |
 | Commands | `aidrian`: sets up and checks the project folder (`aidrian init`, `aidrian check`), prints the state folder (`aidrian state`), and checks commit messages (`aidrian commit-msg`); `aidrian-knowledge`: routes, searches, and drafts a project's buckets |
-| Hooks | at session and subagent start, one line naming the `always` docs and how to find the rest; before each Bash command, git and process safety rules. [docs/hooks.md](docs/hooks.md) lists them |
+| Hooks | at session and subagent start, one line naming the `always` docs and how to find the rest; before each Bash command, git and process safety rules; before each file write, a guard that keeps the main checkout clean. [docs/hooks.md](docs/hooks.md) lists them |
 
 The `knowledge` skill is the shared rule set.
 Every agent preloads it: it says how to load the project's buckets, which project rules win, and the defaults a project can override.

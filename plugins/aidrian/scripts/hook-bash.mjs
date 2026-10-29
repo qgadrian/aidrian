@@ -6,9 +6,11 @@ import { deny, runHook } from '../lib/hook-io.mjs';
 import * as gitAmend from '../lib/rules/git-amend.mjs';
 import * as gitHookBypass from '../lib/rules/git-hook-bypass.mjs';
 import * as grepExitChain from '../lib/rules/grep-exit-chain.mjs';
+import * as mainCheckout from '../lib/rules/main-checkout.mjs';
 import * as processKill from '../lib/rules/process-kill.mjs';
 
-const RULES = [gitHookBypass, gitAmend, processKill, grepExitChain];
+// The main-checkout rule runs last: it is the only one that may start git.
+const RULES = [gitHookBypass, gitAmend, processKill, grepExitChain, mainCheckout];
 
 await runHook((input) => {
   const command = input.tool_input?.command;

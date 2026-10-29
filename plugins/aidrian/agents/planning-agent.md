@@ -1,6 +1,6 @@
 ---
 name: planning-agent
-description: Create or revise decision-complete local planning artifacts in the project plans folder for implementation, rollout, or later Linear publication.
+description: Write or revise a decision-complete local plan before implementation or Linear publishing.
 model: fable
 effort: high
 color: purple

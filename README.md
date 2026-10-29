@@ -47,6 +47,7 @@ npm run check    # what CI runs
 `npm run check` fails when the generated Codex agents are stale, when the example buckets are invalid, or when a test fails.
 The tests also check that both manifests agree, that every agent preloads the `knowledge` skill,
 that agents only ask for tags the `knowledge` skill lists, and that no project-specific path leaks into the plugin.
+Every agent and skill description must fit in 160 characters: both hosts put all of them into every session, used or not.
 When `claude` and `codex` are on your PATH, `test/hosts.test.mjs` also checks the real hosts:
 Claude Code validates the plugin and loads every agent and skill,
 and Codex installs it and shows every skill and agent in a project session. Neither check runs a model.

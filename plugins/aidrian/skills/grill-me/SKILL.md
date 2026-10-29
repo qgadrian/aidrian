@@ -1,6 +1,6 @@
 ---
 name: grill-me
-description: Interview the user through a plan or design one question at a time, resolving decision branches. Use when the user asks to be grilled or to stress-test a plan.
+description: Interview the user one question at a time to stress-test a plan or design. Use when asked to be grilled.
 ---
 
 Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.

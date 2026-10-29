@@ -13,6 +13,8 @@ const PLUGIN = path.join(ROOT, 'plugins/aidrian');
 const json = (rel) => JSON.parse(readFileSync(path.join(ROOT, rel), 'utf8'));
 
 const VOCABULARY = pluginTags();
+// Both hosts list every agent and skill description in every session, used or not. Say when to use it, nothing more.
+const MAX_DESCRIPTION = 160;
 
 test('both marketplaces publish the same plugin, and both plugin manifests agree', () => {
   const claudeMarket = json('.claude-plugin/marketplace.json');
@@ -34,6 +36,7 @@ test('every agent has the frontmatter Claude Code needs and preloads the knowled
   for (const { file, meta, body } of agents) {
     assert.equal(meta.name, file.replace(/\.md$/, ''), file);
     assert.ok(meta.description?.length > 20, `${file}: description`);
+    assert.ok(meta.description.length <= MAX_DESCRIPTION, `${file}: description over ${MAX_DESCRIPTION} characters`);
     assert.ok(['haiku', 'sonnet', 'opus', 'fable', 'inherit'].includes(meta.model), `${file}: model`);
     assert.ok(['low', 'medium', 'high', 'xhigh', 'max'].includes(meta.effort), `${file}: effort`);
     assert.deepEqual(meta.skills, ['aidrian:knowledge'], `${file}: skills`);
@@ -50,6 +53,7 @@ test('every skill has a name matching its folder and a description', () => {
     const meta = parse(/^---\n([\s\S]*?)\n---\n/.exec(text)[1]);
     assert.equal(meta.name, skill);
     assert.ok(meta.description?.length > 20, `${skill}: description`);
+    assert.ok(meta.description.length <= MAX_DESCRIPTION, `${skill}: description over ${MAX_DESCRIPTION} characters`);
   }
 });
 

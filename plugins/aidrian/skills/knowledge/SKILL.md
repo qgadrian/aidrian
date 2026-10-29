@@ -1,6 +1,6 @@
 ---
 name: knowledge
-description: Load the project's own rules and docs from its knowledge buckets (.aidrian/knowledge.json) before planning, editing, or reviewing. Every aidrian agent preloads it; the main session uses it at the start of a task.
+description: Load the project's rules from its knowledge buckets (.aidrian/knowledge.json) at the start of a task, before planning, editing, or reviewing.
 ---
 
 # Project knowledge

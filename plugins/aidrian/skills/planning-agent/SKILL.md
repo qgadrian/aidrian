@@ -1,6 +1,6 @@
 ---
 name: planning-agent
-description: Create or revise decision-complete local planning artifacts in the project plans folder (.aidrian/plans by default). Use when the user wants a durable local plan before implementation.
+description: Write or revise a decision-complete local plan file. Use when the user wants a durable plan before implementation.
 ---
 
 # Planning Agent

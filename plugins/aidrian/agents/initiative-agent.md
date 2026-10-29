@@ -1,6 +1,6 @@
 ---
 name: initiative-agent
-description: Plan a Linear-first initiative into ordered issue blueprints, dependency links, and publishing topology before the issue writer creates artifacts.
+description: Break a broad goal into a Linear initiative blueprint of ordered issues and dependencies, before any issue is created.
 model: sonnet
 effort: high
 color: purple

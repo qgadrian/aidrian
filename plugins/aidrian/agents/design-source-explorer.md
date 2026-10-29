@@ -1,6 +1,6 @@
 ---
 name: design-source-explorer
-description: Resolve, extract, and classify a Claude Design handoff bundle (folder or zip), then write a durable design import — DESIGN.md spec, screen inventory, and curated source — under docs/design-imports/<slug>/. Read-only against all repo source except its own docs/design-imports/<slug>/ output and the superseded banner on an import it replaces.
+description: Used by the design-import skill to classify a Claude Design bundle and write docs/design-imports/<slug>/.
 model: sonnet
 effort: medium
 color: yellow

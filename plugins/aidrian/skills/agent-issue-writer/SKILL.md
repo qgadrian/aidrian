@@ -1,6 +1,6 @@
 ---
 name: agent-issue-writer
-description: Draft or create Linear implementation issues and initiative artifacts for AI agents. Use when a Linear issue, parent issue, or Project item is needed.
+description: Draft or create Linear issues, parent issues, or Project items for AI agents to implement.
 ---
 
 # Agent Issue Writer

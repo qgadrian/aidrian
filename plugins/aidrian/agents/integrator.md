@@ -1,6 +1,6 @@
 ---
 name: integrator
-description: Land two or more cleanly-disjoint slice branches into a shared task branch through a scoped, single-writer serial sequence of rebases and fast-forward merges, routing the first conflict back to its owning specialist instead of resolving it.
+description: Land two or more slice branches onto a shared task branch in order, routing the first conflict to its owner.
 model: sonnet
 effort: medium
 color: purple

@@ -1,6 +1,6 @@
 ---
 name: initiative-agent
-description: Plan a Linear-first initiative before issues exist — Project, parent and ordered child issues, dependencies, merge sequence. Use to decompose a broad goal.
+description: Decompose a broad goal into a Linear Project with ordered parent and child issues and dependencies, before any issue exists.
 ---
 
 # Initiative Agent

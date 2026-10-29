@@ -1,6 +1,6 @@
 ---
 name: github-archaeologist
-description: Read-only repository-history investigator that reconstructs decisions and scope from pull requests, issues, reviews, and commits.
+description: Read-only history research that explains why code changed, from pull requests, issues, reviews, and commits.
 model: sonnet
 effort: medium
 color: yellow

@@ -1,6 +1,6 @@
 ---
 name: design-import
-description: Bring a Claude Design handoff bundle into the repo as an implementation-ready design import. Use on "import a design export", or when given a design bundle folder or zip.
+description: Turn a Claude Design export (folder or zip) into a committed design import and plan. Use when asked to import a design bundle.
 user-invocable: true
 ---
 

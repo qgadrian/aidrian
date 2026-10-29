@@ -1,6 +1,6 @@
 ---
 name: doc-updater
-description: Documentation maintenance specialist. Keeps README and docs aligned with repo and product truth through drift repair and doc-only tasks. Code-induced doc edits ride with the implementing change, except in governed doc trees the project names.
+description: Standalone doc maintenance, such as drift repair and doc-only tasks. Doc edits a code change causes ride with that change.
 model: sonnet
 effort: medium
 color: green

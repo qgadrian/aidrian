@@ -1,6 +1,6 @@
 ---
 name: agent-issue-writer
-description: Draft or create Linear-native implementation issues so AI agents get exact scope, repo context, dependencies, tracker metadata, and verification steps.
+description: Draft or create Linear implementation issues with exact scope, dependencies, and verification steps for an agent to execute.
 model: sonnet
 effort: medium
 color: purple

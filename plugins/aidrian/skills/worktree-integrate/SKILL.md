@@ -1,6 +1,6 @@
 ---
 name: worktree-integrate
-description: Dispatch the integrator agent to land ordered slice branches into a shared task branch and route the first conflict to its owner.
+description: Run the integrator agent to land ordered slice branches onto a shared task branch.
 ---
 
 # Worktree Integrate

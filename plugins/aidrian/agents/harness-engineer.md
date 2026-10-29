@@ -1,6 +1,6 @@
 ---
 name: harness-engineer
-description: "Harness engineering specialist — owns standalone and architectural work on the project's AI-instruction system: token and cost optimization, agent-performance protection, deterministic checks over prose rules, knowledge-bucket architecture and tags, knowledge-doc health, and model-specific prompt tuning from official vendor docs. Surfaces: the knowledge buckets, agent and skill files, AGENTS.md and CLAUDE.md, and the checks that guard them."
+description: Harness work on knowledge buckets and tags, agent and skill files, AGENTS.md and CLAUDE.md, token cost, prompt tuning, and the checks guarding them.
 model: opus
 effort: xhigh
 color: purple

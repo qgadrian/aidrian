@@ -1,6 +1,6 @@
 ---
 name: explorer
-description: "Read-heavy exploration agent that maps repository flows, source-of-truth modules, tests, and edge cases without making changes."
+description: Read-only codebase exploration that maps flows, source-of-truth modules, call graphs, tests, and edge cases.
 model: sonnet
 effort: medium
 color: yellow

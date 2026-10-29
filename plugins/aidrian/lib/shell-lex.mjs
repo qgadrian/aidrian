@@ -348,6 +348,7 @@ const WRAPPER_CHDIR_FLAGS = new Map([
 const SPLIT_STRING_FLAGS = new Set(['-S', '--split-string']);
 const SPLIT_STRING_DEPTH_LIMIT = 4;
 const WRAPPER_PEEL_LIMIT = 8;
+const NO_OPTIONS = new Set();
 
 // Two directory changes compose: the inner one is relative to the outer one, unless it is absolute.
 function composeChdir(outer, inner) {
@@ -406,24 +407,17 @@ export function readInvocation(segment, depth = 0) {
       if (token.text === '-' && wrapper !== 'env') break;
       if (!token.text.startsWith('-')) break;
       index += 1;
-      const chdirFlags = WRAPPER_CHDIR_FLAGS.get(wrapper);
-      const equals = token.text.indexOf('=');
-      const longName = equals === -1 ? token.text : token.text.slice(0, equals);
-      if (WRAPPER_VALUE_FLAGS.get(wrapper)?.has(token.text)) {
-        if (chdirFlags?.has(token.text)) chdir = composeChdir(chdir, usable[index]);
-        if (wrapper === 'env' && SPLIT_STRING_FLAGS.has(token.text)) {
-          const carried = splitStringInvocation(usable[index], depth, usable.slice(index + 1));
-          if (carried) return { ...carried, negated: negated || carried.negated, chdir: composeChdir(chdir, carried.chdir) };
-        }
+      const option = wrapperOption(token, WRAPPER_VALUE_FLAGS.get(wrapper) ?? NO_OPTIONS);
+      if (!option) continue;
+      let { value } = option;
+      if (value === null) {
+        value = usable[index];
         index += 1;
-      } else if (wrapper === 'env' && equals !== -1 && SPLIT_STRING_FLAGS.has(longName)) {
-        const value = { text: token.text.slice(equals + 1), dynamic: token.dynamic };
+      }
+      if (WRAPPER_CHDIR_FLAGS.get(wrapper)?.has(option.name)) chdir = composeChdir(chdir, value);
+      if (wrapper === 'env' && SPLIT_STRING_FLAGS.has(option.name)) {
         const carried = splitStringInvocation(value, depth, usable.slice(index));
         if (carried) return { ...carried, negated: negated || carried.negated, chdir: composeChdir(chdir, carried.chdir) };
-      } else if (equals !== -1 && chdirFlags?.has(longName)) {
-        chdir = composeChdir(chdir, { text: token.text.slice(equals + 1), dynamic: token.dynamic });
-      } else if (token.text.length > 2 && !token.text.startsWith('--') && chdirFlags?.has(token.text.slice(0, 2))) {
-        chdir = composeChdir(chdir, { text: token.text.slice(2), dynamic: token.dynamic });
       }
     }
     // timeout's duration comes before the command; take it by position, since strtod accepts too many spellings.
@@ -432,6 +426,21 @@ export function readInvocation(segment, depth = 0) {
   }
   const program = usable[index]?.text ?? '';
   return { program: program.split('/').pop() ?? '', args: usable.slice(index + 1), negated, chdir };
+}
+
+// The option of a wrapper's option word that takes a value, as { name, value }: the value is a token when the word
+// carries it (`--chdir=src`, `-Csrc`, `-iCsrc`), and null when it is the next word (`-C src`, `-iC src`). Null for a word
+// of switches only.
+function wrapperOption({ text, dynamic }, valueFlags) {
+  if (text.startsWith('--')) {
+    const equals = text.indexOf('=');
+    const name = equals === -1 ? text : text.slice(0, equals);
+    if (!valueFlags.has(name)) return null;
+    return { name, value: equals === -1 ? null : { text: text.slice(equals + 1), dynamic } };
+  }
+  const { value } = readShortOptions(text, valueFlags);
+  if (!value) return null;
+  return { name: value.option, value: value.attached === null ? null : { text: value.attached, dynamic } };
 }
 
 // Git global options that take the next token as their value.
@@ -458,6 +467,23 @@ export function readGit(segment) {
     return { subcommand: token.text, rest: args.slice(i + 1), globals };
   }
   return null;
+}
+
+// The options in one short-option word (`-abc`, never `--abc`), read as getopt reads it: -a, -b, -c, up to the first
+// option in `valueFlags`, which takes the rest of the word (`-uroot`) or, when none is left, the next word (`-nu root`),
+// or the first in `restFlags`, which takes only the rest of the word (GNU `sed -i.bak`). Returns { options, value }:
+// each option as `-x`, and the one that takes a value as { option, attached }, where `attached` is the rest of the word,
+// or null when the value is the next word.
+export function readShortOptions(text, valueFlags, restFlags = NO_OPTIONS) {
+  const options = [];
+  for (let i = 1; i < text.length; i += 1) {
+    const option = `-${text[i]}`;
+    const rest = text.slice(i + 1);
+    options.push(option);
+    if (restFlags.has(option)) return { options, value: { option, attached: rest } };
+    if (valueFlags.has(option)) return { options, value: { option, attached: rest === '' ? null : rest } };
+  }
+  return { options, value: null };
 }
 
 // Whether `text` is the long option `option`, or a prefix of it no shorter than `shortest`, with or without `=value`.

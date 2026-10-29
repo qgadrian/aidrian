@@ -2,9 +2,10 @@
 // or a prefix git takes for it (`--no-veri`), `-n` on commit (alone or in a bundle such as `-an`), a core.hooksPath
 // override (`-c`, `--config-env`, or GIT_CONFIG_PARAMETERS / GIT_CONFIG_KEY_<n> in its environment), or a
 // `HUSKY=0|false|` assignment; and a `git config` that writes or unsets core.hooksPath. Reading the setting stays allowed.
-// There is no override: a project that wants an exception changes its hooks, not this rule.
+// A command substitution that runs is judged as the command line is. There is no override: a project that wants an
+// exception changes its hooks, not this rule.
 
-import { isLongOption, lexCommand, readGit } from '../shell-lex.mjs';
+import { commandLines, isLongOption, lexCommand, readGit } from '../shell-lex.mjs';
 
 // The subcommands that run a hook. `-n` means --no-verify on commit only: it is --dry-run on push and --no-stat on merge.
 const HOOK_RUNNING = new Set(['commit', 'push', 'merge']);
@@ -22,7 +23,7 @@ export const REASON =
 
 // The deny reason for `command`, or null.
 export function check(command) {
-  for (const segment of lexCommand(command)) {
+  for (const segment of commandLines(command).flatMap((line) => lexCommand(line))) {
     const git = readGit(segment);
     if (git?.subcommand === 'config' && writesHooksPath(git.rest)) return REASON;
     if (!git || !HOOK_RUNNING.has(git.subcommand)) continue;

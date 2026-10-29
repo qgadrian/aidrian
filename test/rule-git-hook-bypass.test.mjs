@@ -94,6 +94,16 @@ test('denies through rtk and in a later segment, including after a here-string',
   deny('read -r x <<<"$v"\ngit push --no-verify');
 });
 
+test('denies a bypass inside a substitution that runs, and not in a commit message that names one', () => {
+  deny('out=$(git push --no-verify)');
+  deny('echo "`git commit -n -m x`"');
+  deny('x=$(git config core.hooksPath /dev/null)');
+  deny('cat <(HUSKY=0 git push)');
+  deny('x=$(cat <<EOF\nhi)\nEOF) && git push --no-verify');
+  allow("git commit -m \"$(cat <<'EOF'\nfix: two cases: a) the first\nnever `git push --no-verify`\nEOF\n)\"");
+  allow("x=$(cat <<'EOF'\na) note\ngit push --no-verify\nEOF\n)");
+});
+
 test('allows ordinary git work and fails open on what it cannot read', () => {
   allow('git commit -am "fix: something"');
   allow('git push -u origin my-branch');

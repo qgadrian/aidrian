@@ -4,8 +4,9 @@
 // Denied when `&&` follows the grep (it gates the rest), or precedes it with nothing after (its status is the line's).
 // Allowed when `||` follows it, a `;` or newline separates a later command, a pipe takes its status (unless
 // `set -o pipefail` is on: then the pipeline carries it), a `!` inverts it, or a trailing `&` backgrounds the list.
+// A command substitution that runs is a list of its own and is judged the same way.
 
-import { isLongOption, lexPipeline, readInvocation } from '../shell-lex.mjs';
+import { commandLines, isLongOption, lexPipeline, readInvocation } from '../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_GREP_EXIT_CHAIN';
 
@@ -25,6 +26,11 @@ const SHORT_VALUE_FLAGS = new Set(['e', 'f', 'm', 'A', 'B', 'C', 'd', 'D']);
 // The deny reason for `command`, or null.
 export function check(command, { env = process.env } = {}) {
   if (env[OVERRIDE] === '1') return null;
+  return commandLines(command).some(chainsCount) ? reason(command) : null;
+}
+
+// Whether one command line chains a counting grep's status into `&&`.
+function chainsCount(command) {
   const { segments, separators } = lexPipeline(command);
   // `set -o pipefail` applies to what follows. A toggle behind `&&`/`||` may never run, and one in a pipeline or in the
   // background runs in a child shell, so such a toggle may turn pipefail on but never off.
@@ -50,9 +56,9 @@ export function check(command, { env = process.env } = {}) {
     if (readInvocation(segments[first]).negated) continue;
     const gatesWhatFollows = separators[last] === '&&';
     const isGatedLastLink = separators[first - 1] === '&&' && last === segments.length - 1 && separators[last] !== '&';
-    if (gatesWhatFollows || isGatedLastLink) return reason(command);
+    if (gatesWhatFollows || isGatedLastLink) return true;
   }
-  return null;
+  return false;
 }
 
 // Whether grep's arguments ask for a count: `-c`, a bundle such as `-rc`, or `--count` and its prefixes.

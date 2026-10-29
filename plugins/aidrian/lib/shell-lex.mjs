@@ -8,19 +8,70 @@
 import path from 'node:path';
 
 const CONTINUATION = '\n';
+// Command substitutions nest no deeper than this in what commandLines returns; a deeper body goes unread.
+const SUBSTITUTION_DEPTH_LIMIT = 6;
 
-// Index of the `)` closing the `(` at `open`, or `limit` when none does before it. Quotes are not read here.
+const indexOrLimit = (index, limit) => (index === -1 || index >= limit ? limit : index);
+
+// Index of the `)` closing the `(` at `open`, or `limit` when none does before it. A `)` does not count inside quotes,
+// after a backslash, in a comment, or in a heredoc body, so the `a)` of a commit message in `$(cat <<'EOF' … EOF)` does
+// not end the substitution early and leave the rest of the message to read as commands.
 function closingParen(command, open, limit) {
   let depth = 0;
-  let j = open;
-  for (; j < limit; j += 1) {
-    if (command[j] === '(') depth += 1;
-    else if (command[j] === ')') {
-      depth -= 1;
-      if (depth === 0) break;
+  const heredocs = [];
+  for (let j = open; j < limit; j += 1) {
+    const ch = command[j];
+    if (ch === '\\') j += 1;
+    else if (ch === "'" || ch === '`') j = indexOrLimit(command.indexOf(ch, j + 1), limit);
+    else if (ch === '"') j = closingDoubleQuote(command, j, limit);
+    else if (ch === '#' && /[\s;&|(]/u.test(command[j - 1])) j = indexOrLimit(command.indexOf('\n', j), limit) - 1;
+    else if (ch === '\n' && heredocs.length > 0) j = heredocBodiesEnd(command, j, heredocs.splice(0), limit);
+    else if (ch === '<' && command[j + 1] === '<' && command[j + 2] === '<') j += 2; // a here-string; its word lexes as usual
+    else if (ch === '<' && command[j + 1] === '<') {
+      // The delimiter is the next word, read as the lexer reads it; its body starts after the next newline.
+      let k = j + 2;
+      if (command[k] === '-') k += 1;
+      while (command[k] === ' ' || command[k] === '\t') k += 1;
+      let delimiter = '';
+      for (; k < limit && !/[\s;|&<>()]/u.test(command[k]); k += 1) {
+        if (command[k] !== "'" && command[k] !== '"' && command[k] !== '\\') delimiter += command[k];
+      }
+      if (delimiter) heredocs.push(delimiter);
+      j = k - 1;
+    } else if (ch === '(') depth += 1;
+    else if (ch === ')' && (depth -= 1) === 0) return j;
+  }
+  return limit;
+}
+
+// Index of the `"` closing the one at `open`, or `limit`. A substitution inside it holds its own quotes.
+function closingDoubleQuote(command, open, limit) {
+  for (let k = open + 1; k < limit; k += 1) {
+    const ch = command[k];
+    if (ch === '\\') k += 1;
+    else if (ch === '"') return k;
+    else if (ch === '`') k = indexOrLimit(command.indexOf('`', k + 1), limit);
+    else if (ch === '$' && command[k + 1] === '(') k = closingParen(command, k + 1, limit);
+  }
+  return limit;
+}
+
+// Index of the newline that ends the last delimiter line of the heredoc bodies starting after `newline`, or `limit`
+// when one never ends. A delimiter followed by `)`, as in `EOF)`, ends its body there and leaves the `)` to be read.
+function heredocBodiesEnd(command, newline, delimiters, limit) {
+  let at = newline;
+  for (const delimiter of delimiters) {
+    for (;;) {
+      if (at + 1 >= limit) return limit;
+      const end = indexOrLimit(command.indexOf('\n', at + 1), limit);
+      const line = command.slice(at + 1, end).trim();
+      if (line.startsWith(`${delimiter})`)) return command.indexOf(`${delimiter})`, at + 1) + delimiter.length - 1;
+      at = end;
+      if (line === delimiter) break;
+      if (end >= limit) return limit;
     }
   }
-  return j;
+  return at;
 }
 
 // Pushes the body of every `$(…)` and `` `…` `` in command[from, to) onto `into`: text that expands but is not lexed,
@@ -249,6 +300,18 @@ export function lexSubstitutions(command) {
 // The segments alone.
 export function lexCommand(command) {
   return lexSegments(command).segments;
+}
+
+// The command line, then the body of every command substitution in it that would run, nested ones included: each a
+// command line of its own, for a rule to judge as it judges the outer one. `x=$(git commit --amend)` amends too.
+export function commandLines(command) {
+  const lines = [];
+  const visit = (line, depth) => {
+    lines.push(line);
+    if (depth < SUBSTITUTION_DEPTH_LIMIT) for (const body of lexSubstitutions(line)) visit(body, depth + 1);
+  };
+  visit(command, 0);
+  return lines;
 }
 
 // Programs that run the command after them and return its status, so the program that matters is the wrapped one.

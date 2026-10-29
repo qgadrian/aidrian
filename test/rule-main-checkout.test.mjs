@@ -129,6 +129,11 @@ test('bashTargets finds the certain write targets, resolved against cwd, and not
   assert.deepEqual(at('cd /tmp && echo hi > a.ts'), [], 'a relative target after cd');
   assert.deepEqual(at('cd /tmp && echo hi > /repo/a.ts'), ['a.ts'], 'an absolute one still counts');
   assert.deepEqual(at('env -C "$DIR" rm x'), []);
+  assert.deepEqual(at('echo "$(rm src/a.ts)"'), ['src/a.ts'], 'a substitution that runs');
+  assert.deepEqual(at('x=`touch src/a.ts` && y=$(echo $(mkdir src/new))'), ['src/a.ts', 'src/new']);
+  assert.deepEqual(at('cat <(git rm src/a.ts)'), ['src/a.ts']);
+  assert.deepEqual(at("cat <<'EOF'\n$(rm src/a.ts)\nEOF"), [], 'a quoted heredoc runs nothing');
+  assert.deepEqual(at('cd /tmp && x=$(rm a.ts)'), [], 'a relative target after cd, in a substitution too');
 });
 
 test('Bash commands are judged like tool writes', (t) => {

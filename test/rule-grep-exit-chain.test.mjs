@@ -261,6 +261,14 @@ test('the wrapper corrections reach this hook too', () => {
   assert.equal(decide('builtin grep -c NOMATCH f && npm test'), 'allow');
 });
 
+test('judges a substitution that runs as a list of its own', () => {
+  assert.equal(decide('echo "$(grep -c error build.log && npm test)"'), 'deny');
+  assert.equal(decide('x=`npm run lint && grep -c error build.log`'), 'deny');
+  assert.equal(decide('cat <(grep -c error build.log && npm test)'), 'deny');
+  assert.equal(decide('n=$(grep -c error build.log || true); echo "$n"'), 'allow');
+  assert.equal(decide("echo '$(grep -c error build.log && npm test)'"), 'allow');
+});
+
 test('fails open on what a lexer cannot resolve', () => {
   assert.equal(decide('grep $FLAGS error log && npm test'), 'allow', 'the flags are dynamic');
   assert.equal(decide(''), 'allow');

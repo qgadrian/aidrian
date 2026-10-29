@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { lexCommand, lexPipeline, lexSubstitutions, readGit, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
+import { commandLines, lexCommand, lexPipeline, lexSubstitutions, readGit, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
 
 const texts = (line) => lexCommand(line).map((segment) => segment.map((token) => token.text));
 const programOf = (line) => readInvocation(lexCommand(line)[0]).program;
@@ -73,6 +73,27 @@ test('lexSubstitutions returns the substitutions that run, and none that are onl
   assert.deepEqual(lexSubstitutions('cat <<<"$(a)"\necho $(b)'), ['a', 'b'], 'a here-string expands, and the lines after it run');
   assert.deepEqual(lexSubstitutions("cat <<<'$(a)'"), [], 'a single-quoted here-string word is text');
   assert.deepEqual(lexSubstitutions('diff <(a) >(b)'), ['a', 'b'], 'a process substitution runs its body');
+});
+
+test('a substitution ends at its own `)`, not at one in quotes, a comment, or a heredoc body', () => {
+  // A commit message with an unbalanced `)` and a code span: none of it reads as commands.
+  const message = "git commit -m \"$(cat <<'EOF'\nfix: a) the first\nnever `git push --no-verify`\nEOF\n)\"";
+  assert.deepEqual(lexSubstitutions(message), ["cat <<'EOF'\nfix: a) the first\nnever `git push --no-verify`\nEOF\n"]);
+  assert.deepEqual(texts("x=$(cat <<'EOF'\na) note\ngit push\nEOF\n) && b"), [['x=$'], ['b']]);
+  assert.deepEqual(lexSubstitutions('x=$(echo ")" \')\' \\) `echo )` "$(echo ")")") && b'), ['echo ")" \')\' \\) `echo )` "$(echo ")")"']);
+  assert.deepEqual(lexSubstitutions('x=$(a # b)\n) && c'), ['a # b)\n'], 'a `)` in a comment is the comment`s');
+  assert.deepEqual(texts('x=$(cat <<EOF\nhi)\nEOF) && b'), [['x=$'], ['b']], 'a delimiter followed by `)` ends the body there');
+  assert.deepEqual(texts('x=$((1 + (2))) && b'), [['x=$'], ['b']]);
+  assert.deepEqual(lexSubstitutions('x=$(cat <<<")"\necho hi\n) && b'), ['cat <<<")"\necho hi\n'], 'a here-string is no heredoc');
+  assert.deepEqual(lexSubstitutions("x=$(cat <<'EOF'\nnever closed"), ["cat <<'EOF'\nnever closed"]);
+});
+
+test('commandLines lists the line, then every substitution that runs, nested ones included', () => {
+  assert.deepEqual(commandLines('a $(b `c`) "$(d)" <(e)'), ['a $(b `c`) "$(d)" <(e)', 'b `c`', 'c', 'd', 'e']);
+  assert.deepEqual(commandLines("a '$(b)' # $(c)"), ["a '$(b)' # $(c)"]);
+  const deep = (depth) => (depth === 0 ? 'x' : `$(${deep(depth - 1)})`);
+  assert.equal(commandLines(deep(6)).at(-1), 'x', 'six levels are read');
+  assert.equal(commandLines(deep(7)).at(-1), '$(x)', 'and no more');
 });
 
 test('readInvocation peels the wrappers that return the wrapped command`s status', () => {

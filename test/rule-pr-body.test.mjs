@@ -53,6 +53,15 @@ test('the Claude Code footer and --fill are denied', (t) => {
   assert.match(run('git push -u origin HEAD && gh pr create --fill'), /--fill/, 'in a compound command');
 });
 
+test('a gh call inside a substitution that runs is judged as at the top level', (t) => {
+  const run = project(t, { version: 1 }, { 'short.md': '## Summary\nonly this\n', 'body.md': GOOD });
+  assert.match(run('url=$(gh pr create --title x --body-file short.md)'), /^Blocked: the body has no `## Tests run` section/);
+  assert.match(run('echo "`gh pr create --fill`"'), /--fill/);
+  assert.equal(run('url=$(gh pr create --title x --body-file body.md)'), null);
+  assert.equal(run(`url=$(${heredoc(GOOD)})`), null, 'the heredoc body is read from the substitution`s own line');
+  assert.equal(run("echo '$(gh pr create --fill)'"), null);
+});
+
 test('what the rule cannot read, gh pr edit without a body, other commands, and quoted text pass', (t) => {
   const run = project(t);
   for (const command of [

@@ -1,14 +1,15 @@
 // Bash rule: a pull request body written through `gh pr create` or `gh pr edit` has a `## ` heading for every section in
 // config.json `pr.requiredSections`, and no "Generated with [Claude Code]" footer. `gh pr create --fill` is refused:
 // gh then writes the body from the commit messages. `gh pr edit` without a body flag passes, and so does a body the
-// rule cannot read (a variable, stdin, a missing file): it denies only what it reads. Runs only inside a project.
+// rule cannot read (a variable, stdin, a missing file): it denies only what it reads. Runs only inside a project. A
+// command substitution that runs, as in `url=$(gh pr create …)`, is read as the command line is.
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { loadConfig } from '../config.mjs';
 import { findProject } from '../project.mjs';
-import { lexCommand, readInvocation } from '../shell-lex.mjs';
+import { commandLines, lexCommand, readInvocation } from '../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PR_BODY';
 
@@ -21,11 +22,13 @@ const BODY_HEREDOC = /(?:--body|-b)(?:=|\s+)"?\$\([^<]*<<-?\s*(['"]?)(\w+)\1\r?\
 // The deny reason for `command`, or null.
 export function check(command, { cwd = process.cwd(), env = process.env } = {}) {
   if (env[OVERRIDE] === '1') return null;
-  for (const segment of lexCommand(command)) {
-    const call = readPrCall(segment);
-    if (!call) continue;
-    const reason = judge(call, command, cwd);
-    if (reason) return reason;
+  for (const line of commandLines(command)) {
+    for (const segment of lexCommand(line)) {
+      const call = readPrCall(segment);
+      if (!call) continue;
+      const reason = judge(call, line, cwd);
+      if (reason) return reason;
+    }
   }
   return null;
 }

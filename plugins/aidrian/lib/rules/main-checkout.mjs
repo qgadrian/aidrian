@@ -1,7 +1,8 @@
 // Write rule: no writes to a tracked file in a project's main checkout; task work happens in a git worktree.
 // It covers Edit, Write, and NotebookEdit, Codex's apply_patch, and the Bash commands whose target is certain:
 // `>` and `>>`, tee, sed -i, the destination of cp, every path of mv, git mv, rm, git rm, unlink, touch, and mkdir, and
-// the local destination of rsync, with its sources too under --remove-source-files. A move removes its sources.
+// the local destination of rsync, with its sources too under --remove-source-files. A move removes its sources. A command
+// substitution that runs is read as the command line is.
 //
 // It is off until a project sets config.json `"mainCheckout": { "guard": true }`. A target is allowed when it is outside
 // every main checkout (in a worktree, or outside the repository), in a project without a project folder or with the
@@ -14,7 +15,7 @@ import path from 'node:path';
 import { loadConfig } from '../config.mjs';
 import { checkoutRoots, isIgnored } from '../git.mjs';
 import { findProject, worktreesDir } from '../project.mjs';
-import { isLongOption, lexCommand, readGit, readInvocation } from '../shell-lex.mjs';
+import { commandLines, isLongOption, lexCommand, readGit, readInvocation } from '../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_MAIN_WRITE';
 
@@ -71,7 +72,7 @@ export function checkTool(input, { env = process.env } = {}) {
 export function bashTargets(command, cwd) {
   const targets = [];
   let moved = false;
-  for (const segment of lexCommand(command)) {
+  for (const segment of commandLines(command).flatMap((line) => lexCommand(line))) {
     segment.forEach((token, i) => {
       const next = segment[i + 1];
       if ((token.operator === '>' || token.operator === '>>') && next && !next.fdDup && !next.operator) targets.push({ token: next, base: cwd });

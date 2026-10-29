@@ -323,6 +323,25 @@ test('reads a process substitution and the lines after a here-string', () => {
   allow('cat <<<"x"\nkill 1234');
 });
 
+test('denies a by-name kill inside a substitution that runs, and none in one that does not', () => {
+  deny('result=$(pkill -f node)');
+  deny('echo `killall node`');
+  deny('cat <(pkill -f node)');
+  deny('cat <<EOF\n$(pkill -f node)\nEOF');
+  deny('echo "$(pkill -f node)"');
+  deny('x=$(echo $(pkill -f node))');
+  deny("x=$(sh -c 'pkill -f node')");
+  // a listing anywhere on the line feeds a dynamic kill in a substitution
+  deny('x=$(kill $(pgrep -f node))');
+  deny('PIDS=$(pgrep -f node); echo $(kill $PIDS)');
+  allow('x=$(kill 1234)');
+  allow('x=$(pkill -P $$ node)');
+  allow("cat <<'EOF'\n$(pkill -f node)\nEOF");
+  allow("echo '$(pkill -f node)'");
+  allow('echo done # $(pkill -f node)');
+  allow("git commit -m \"$(cat <<'EOF'\nfix: a) the first\nnever `pkill -f node`\nEOF\n)\"");
+});
+
 test('allows unclassifiable dynamic invocations (fail-open)', () => {
   allow('$KILLER -f eslint');
   allow('rtk $CMD -f eslint');

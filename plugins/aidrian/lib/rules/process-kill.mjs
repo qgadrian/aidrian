@@ -371,10 +371,12 @@ function invocationDenied(invocation, listsByName, depth) {
 }
 
 // The kill rule. "Lists by name" is judged over the whole line: `PIDS=$(pgrep -f x); kill $PIDS` spreads the sweep.
+// A substitution that runs is judged too, inheriting it: `r=$(pkill -f x)` kills as `pkill -f x` does.
 function killsByName(command, depth = 0, outerListsByName = false) {
   if (depth > MAX_DEPTH) return false;
   const listsByName = outerListsByName || listsProcessesByName(command, depth);
-  return lexCommand(command).some((segment) => invocationDenied(readCommand(segment), listsByName, depth));
+  if (lexCommand(command).some((segment) => invocationDenied(readCommand(segment), listsByName, depth))) return true;
+  return lexSubstitutions(command).some((body) => killsByName(body, depth + 1, listsByName));
 }
 
 function invocationPrintsArguments(invocation, depth) {

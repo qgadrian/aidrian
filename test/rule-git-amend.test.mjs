@@ -47,6 +47,15 @@ test('allows ordinary commits, --amend in message text or after --, and other su
   allow('cat <<EOF > /tmp/notes\ngit commit --amend\nEOF');
 });
 
+test('denies amend inside a substitution that runs, and not in text a substitution only quotes', () => {
+  deny('sha=$(git commit --amend --no-edit)');
+  deny('echo `git commit --amend`');
+  deny('cat <(git commit --amend --no-edit)');
+  deny('cat <<EOF\n$(git commit --amend --no-edit)\nEOF');
+  allow("echo '$(git commit --amend)'");
+  allow("git commit -m \"$(cat <<'EOF'\nfix: a) the first\nnever `git commit --amend`\nEOF\n)\"");
+});
+
 test('fails open on dynamic invocations, and honors the human override', () => {
   allow('git commit $FLAGS');
   allow('git $SUBCOMMAND --amend');

@@ -112,7 +112,8 @@ In Claude Code the skill runs as `/aidrian:design-import`; on any host it takes:
    the fix back to that specialist before reporting success; never hand the
    user a plan that fails the committed contract.
 
-7. **Commit the design import.** Commit `docs/design-imports/<slug>/` (and the
+7. **Commit the design import.** Commit `docs/design-imports/<slug>/`, including
+   any `source/` files the explorer deleted on a re-import (and the
    superseded banner in an older import's `DESIGN.md`, when the explorer added
    one) as one commit through the project's normal git hooks. The dispatched
    agents only write files; this is the one commit the skill makes.

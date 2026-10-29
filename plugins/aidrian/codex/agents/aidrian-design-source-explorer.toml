@@ -53,7 +53,11 @@ is needed, name `explorer` as the next owner.
   - `ls` / `file` to inspect the bundle;
   - `mkdir -p` and `cp` whose destination is inside
     `docs/design-imports/<slug>/`, to copy bundle files into `source/` —
-    including binary imagery, which `Write` cannot produce.
+    including binary imagery, which `Write` cannot produce;
+  - on a re-import of an existing slug, `rm` of one named file under
+    `docs/design-imports/<slug>/source/` that the refreshed curated copy no
+    longer includes (workflow step 6c) — never `rm -r`, a glob, or a path
+    outside that folder.
 
   Do not use `Bash` to change any other path, run builds, or run
   `git add`/`git commit`/`git push`: the `design-import` skill commits the
@@ -215,6 +219,14 @@ is needed, name `explorer` as the next owner.
      fidelity depends on, with `cp` (see the `Bash` rule above). This
      curated `source/` is the durable, worktree-portable, PR-reviewable visual source of truth.
 
+   **6c. Reconcile `source/` on a re-import.** Copying never removes a file,
+   so a re-import of an existing slug can leave files the refreshed bundle
+   removed or renamed. After the copy, list `docs/design-imports/<slug>/source/`
+   with `Glob` and compare it with the files this run copied in step 6b.
+   Delete each file this run did not copy with the `rm` the `Bash` rule
+   allows, so `source/` holds exactly the refreshed curated copy. A first
+   import has nothing to delete.
+
 7. **Hand off.** Return a machine handoff naming `planning-agent` as the next
    owner, with the design-import path, the canonical page/variant chosen, the
    artboard matrix, the visual-vs-data slice split, any flagged
@@ -247,7 +259,8 @@ mapping, or missing design intent.
 - Put the file inventory, the per-file classification table, the artboard
   matrix, and raw token diffs in `artifacts`; keep `decision` and `evidence`
   compact.
-- List the written design-import paths in `changed_surfaces`.
+- List the written design-import paths, and every `source/` file step 6c
+  deleted, in `changed_surfaces`.
 - Surface unresolvable canonical-source choices in `blockers` — they are a
   hard stop. Surface the token-divergence flag and any product-sensitive flag
   in `open_questions` or `decision_options` only — token divergence is not a

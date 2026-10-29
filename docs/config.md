@@ -26,7 +26,8 @@ In a group such as `pr`, set only the keys you change; the others keep their def
     "ignoreCancelledChecks": []
   },
   "docs": { "wrapLimit": 155, "alwaysBudgetBytes": 40000 },
-  "skills": { "descriptionChars": 160, "listingBytes": 9216 }
+  "skills": { "descriptionChars": 160, "listingBytes": 9216 },
+  "session": { "handoff": "ask", "maxTokens": 150000, "maxCalls": 250, "maxHours": 4 }
 }
 ```
 
@@ -49,6 +50,10 @@ In a group such as `pr`, set only the keys you change; the others keep their def
 | `docs.alwaysBudgetBytes` | The most bytes all `always` knowledge docs may add up to (`aidrian lint budget`). |
 | `skills.descriptionChars` | The longest skill or agent description, in characters (`aidrian lint skills` and `agents`). |
 | `skills.listingBytes` | The most bytes all skill names and descriptions may add up to (`aidrian lint skills`). |
+| `session.handoff` | What the [session-length reminder](hooks.md#session-length) does once a limit is passed: `"ask"` asks whether to hand off, `"auto"` writes the handoff brief, `"off"` does nothing. |
+| `session.maxTokens` | The context, in tokens, of the main session's last model call that counts as long; `0` turns this limit off. |
+| `session.maxCalls` | The main session's model calls that count as long; `0` turns this limit off. |
+| `session.maxHours` | The hours worked that count as long, a pause of more than an hour counting as one; `0` turns this limit off. |
 
 A path in `state.dir` or `worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.

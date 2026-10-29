@@ -19,6 +19,7 @@ const SCHEMA = {
   pr: { requiredSections: 'texts', reviewer: 'text', maxReviewRounds: 'positive', requiredChecks: 'texts', ignoreCancelledChecks: 'texts' },
   docs: { wrapLimit: 'zeroOrMore', alwaysBudgetBytes: 'positive' },
   skills: { descriptionChars: 'positive', listingBytes: 'positive' },
+  session: { handoff: 'handoffMode', maxTokens: 'zeroOrMore', maxCalls: 'zeroOrMore', maxHours: 'zeroOrMore' },
 };
 
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
@@ -29,6 +30,7 @@ const TYPES = {
   boolean: [(value) => typeof value === 'boolean', 'true or false'],
   positive: [(value) => Number.isInteger(value) && value > 0, 'a whole number above 0'],
   zeroOrMore: [(value) => Number.isInteger(value) && value >= 0, 'a whole number, 0 or more'],
+  handoffMode: [(value) => ['off', 'ask', 'auto'].includes(value), '"off", "ask", or "auto"'],
 };
 
 // `state.dir: null` is the per-project folder under `$XDG_STATE_HOME` (lib/project.mjs). Task worktrees sit beside the
@@ -48,6 +50,7 @@ export const DEFAULTS = deepFreeze({
   },
   docs: { wrapLimit: 155, alwaysBudgetBytes: 40000 },
   skills: { descriptionChars: 160, listingBytes: 9216 },
+  session: { handoff: 'ask', maxTokens: 150000, maxCalls: 250, maxHours: 4 },
 });
 
 // Returns { config, errors, current }. `config` is frozen and always complete: the file's values over DEFAULTS, one

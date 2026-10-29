@@ -45,6 +45,7 @@ const errorCases = [
   ['zero where a positive number is needed', { version: 1, pr: { maxReviewRounds: 0 } }, /"pr\.maxReviewRounds" must be a whole number above 0$/],
   ['string for a boolean', { version: 1, mainCheckout: { guard: 'no' } }, /"mainCheckout\.guard" must be true or false$/],
   ['empty string', { version: 1, defaultBranch: ' ' }, /"defaultBranch" must be a non-empty string$/],
+  ['handoff mode outside its list', { version: 1, session: { handoff: 'always' } }, /"session\.handoff" must be "off", "ask", or "auto"$/],
 ];
 
 for (const [name, value, expected] of errorCases) {

@@ -77,6 +77,17 @@
         ]
       }
     ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PLUGIN_ROOT/scripts/hook-stop.mjs\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
     "SubagentStop": [
       {
         "hooks": [

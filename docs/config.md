@@ -40,7 +40,7 @@ In a group such as `pr`, set only the keys you change; the others keep their def
 | `mainCheckout.guard` | `true` blocks agent edits to tracked files in the main checkout, so task work happens in worktrees. Off by default. |
 | `mainCheckout.allowWrites` | Tracked paths agents may still edit in the main checkout, as globs with `*` and `**`. Ignored paths are always allowed. |
 | `commits.types` | The Conventional Commits types a commit subject may use. |
-| `pr.requiredSections` | The `## ` sections every pull request body must have. |
+| `pr.requiredSections` | The `## ` sections every pull request body must have; the Bash hook refuses a `gh pr create` or `gh pr edit` body without them. `[]` checks none. |
 | `pr.reviewer` | The login of the Codex review bot that `aidrian pr await-review` waits for. |
 | `pr.maxReviewRounds` | How many bot reviews a pull request may get before `aidrian pr await-review --request` stops asking. |
 | `pr.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. |

@@ -33,6 +33,11 @@ test('every rule is wired: process kill and listing, and the grep chain', () => 
   assert.equal(bashHook(bash('pkill -f eslint'), { AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME: '1' }).status, 0);
 });
 
+test('the pull request body rule is wired, inside a project folder', () => {
+  const inExample = (command) => JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: path.resolve(import.meta.dirname, '../examples/consumer') });
+  assert.match(bashHook(inExample(['gh', 'pr', 'create', '--fill'].join(' '))).stderr, /^Blocked: `--fill` writes the body/);
+});
+
 test('an allowed command, another tool, and any unreadable stdin exit 0 silently', () => {
   for (const input of [
     bash('git commit -m "fix: x"'),

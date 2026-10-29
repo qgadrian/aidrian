@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -46,4 +46,17 @@ test('install-agents adds and updates its own roles, removes stale ones, and lea
   assert.deepEqual(readdirSync(target).sort(), [...shipped, 'my-own-agent.toml'].sort());
   for (const file of shipped) assert.equal(readFileSync(path.join(target, file), 'utf8'), readFileSync(path.join(CODEX_AGENTS, file), 'utf8'));
   assert.match(run(), /are up to date \(9\)/);
+});
+
+test('install-agents fails on --target without a folder, and touches nothing', (t) => {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'aidrian-codex-agents-'));
+  t.after(() => rmSync(cwd, { recursive: true, force: true }));
+  writeFileSync(path.join(cwd, `${PREFIX}retired.toml`), 'name = "old"\n');
+
+  for (const args of [['--target'], ['--target', '']]) {
+    const { status, stderr } = spawnSync(process.execPath, [INSTALL, ...args], { cwd, encoding: 'utf8' });
+    assert.equal(status, 1, args.join(' '));
+    assert.match(stderr, /--target needs a folder/);
+  }
+  assert.deepEqual(readdirSync(cwd), [`${PREFIX}retired.toml`]);
 });

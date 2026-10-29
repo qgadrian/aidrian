@@ -5,15 +5,14 @@ import test from 'node:test';
 
 import { parse } from 'yaml';
 
+import { pluginTags } from '../plugins/aidrian/lib/knowledge.mjs';
 import { readAgents } from '../scripts/build.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const PLUGIN = path.join(ROOT, 'plugins/aidrian');
 const json = (rel) => JSON.parse(readFileSync(path.join(ROOT, rel), 'utf8'));
 
-// The tag list in the knowledge skill is the single source for tag names.
-const KNOWLEDGE_SKILL = readFileSync(path.join(PLUGIN, 'skills/knowledge/SKILL.md'), 'utf8');
-const VOCABULARY = [...KNOWLEDGE_SKILL.split('\n## Tags\n')[1].matchAll(/^- `([a-z][a-z0-9_]*)`: /gm)].map((match) => match[1]);
+const VOCABULARY = pluginTags();
 
 test('both marketplaces publish the same plugin, and both plugin manifests agree', () => {
   const claudeMarket = json('.claude-plugin/marketplace.json');

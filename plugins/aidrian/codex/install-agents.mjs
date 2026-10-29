@@ -16,8 +16,13 @@ const PREFIX = 'aidrian-';
 const source = path.join(import.meta.dirname, 'agents');
 const args = process.argv.slice(2);
 const targetFlag = args.indexOf('--target');
-const target = targetFlag >= 0
-  ? path.resolve(args[targetFlag + 1] ?? '')
+const targetDir = targetFlag >= 0 ? args[targetFlag + 1] : undefined;
+if (targetFlag >= 0 && !targetDir) {
+  console.error('usage: node install-agents.mjs [--target DIR]\n--target needs a folder.');
+  process.exit(1);
+}
+const target = targetDir
+  ? path.resolve(targetDir)
   : path.join(process.env.CODEX_HOME || path.join(homedir(), '.codex'), 'agents');
 
 const ours = (dir) => readdirSync(dir).filter((file) => file.startsWith(PREFIX) && file.endsWith('.toml'));

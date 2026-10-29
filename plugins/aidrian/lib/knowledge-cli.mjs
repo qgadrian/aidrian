@@ -1,6 +1,6 @@
 // Command line for knowledge.mjs. Run it through bin/aidrian-knowledge.
 
-import { MANIFEST, findProjectRoot, listTags, loadKnowledge, routeKnowledge } from './knowledge.mjs';
+import { MANIFEST, findProjectRoot, listTags, loadKnowledge, pluginTags, routeKnowledge } from './knowledge.mjs';
 
 const USAGE = `usage: aidrian-knowledge <command> [--project DIR] [tags...]
 
@@ -31,6 +31,10 @@ if (command === 'check') {
   const docs = routeKnowledge(buckets, listTags(buckets).map(([tag]) => tag));
   console.log(`ok: ${buckets.length} buckets, ${docs.length} docs`);
 } else if (command === 'route') {
+  // A tag the plugin asks for may be one the project does not define; it loads nothing. Any other tag is a typo.
+  const known = [...new Set([...pluginTags(), ...listTags(buckets).map(([tag]) => tag)])].sort();
+  const unknown = rest.filter((tag) => !known.includes(tag));
+  if (unknown.length) fail(`unknown tag: ${unknown.join(', ')}\nknown tags: ${known.join(', ')}`);
   for (const doc of routeKnowledge(buckets, rest)) console.log(doc);
 } else {
   for (const [tag, count] of listTags(buckets)) console.log(`${tag}\t${count}`);

@@ -80,5 +80,9 @@ aidrian-knowledge tags                 # every tag the project defines
 ```
 
 `check` fails when a file is missing or malformed, a path leaves its bucket, an id repeats, or a key is unknown.
+A symlink that leads outside the project fails too.
 It also fails when a `.md` file in a bucket is in no list, because no agent would ever read it.
 Run it in the project's CI so broken buckets never reach the agents.
+
+`route` fails on a tag that neither the plugin's agents nor the project's buckets use, so a typo never loads only the `always` docs.
+A plugin tag the project does not define is fine: it loads nothing beyond the `always` docs.

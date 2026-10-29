@@ -1,7 +1,7 @@
 // Reads and checks a project's knowledge buckets. The format is described in docs/knowledge.md.
 // No dependencies: this file runs from the installed plugin, which has no node_modules.
 
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 export const MANIFEST = '.aidrian/knowledge.json';
@@ -128,19 +128,43 @@ export function listTags(buckets) {
   return [...counts].sort(([a], [b]) => a.localeCompare(b));
 }
 
-// `base` and `rel` are POSIX-style paths relative to `root`; returns the joined relative path, or null if it escapes.
+// The tags the plugin's agents and skills ask for. The list in the knowledge skill is the single source for them.
+export function pluginTags() {
+  const skill = readFileSync(path.join(import.meta.dirname, '../skills/knowledge/SKILL.md'), 'utf8');
+  return [...(skill.split('\n## Tags\n')[1] ?? '').matchAll(/^- `([a-z][a-z0-9_]*)`: /gm)].map((match) => match[1]);
+}
+
+// `base` and `rel` are POSIX-style paths relative to `root`; returns the joined relative path, or null if it escapes,
+// either as text or through a symlink.
 function insidePath(root, base, rel) {
   if (typeof rel !== 'string' || rel === '' || path.isAbsolute(rel) || rel.includes('\\')) return null;
   const joined = path.posix.normalize(path.posix.join(base || '.', rel)).replace(/\/$/, '');
   if (joined === '.' || joined.startsWith('../') || joined === '..') return null;
   if (base && !joined.startsWith(`${base}/`)) return null;
-  return path.relative(root, path.join(root, joined)) === joined ? joined : null;
+  if (path.relative(root, path.join(root, joined)) !== joined) return null;
+  return linksOutside(root, joined) ? null : joined;
+}
+
+// True when `rel` exists but, with symlinks resolved, lies outside the project. A missing path is left to the caller.
+function linksOutside(root, rel) {
+  let real;
+  try {
+    real = realpathSync(path.join(root, rel));
+  } catch {
+    return false;
+  }
+  const realRoot = realpathSync(root);
+  return real !== realRoot && !real.startsWith(`${realRoot}${path.sep}`);
 }
 
 function readJson(root, rel, errors) {
   const file = path.join(root, rel);
   if (!isFile(file)) {
     errors.push(`${rel}: not found`);
+    return null;
+  }
+  if (linksOutside(root, rel)) {
+    errors.push(`${rel}: links outside the project`);
     return null;
   }
   try {

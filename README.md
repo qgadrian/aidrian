@@ -74,11 +74,12 @@ Agents appear as `aidrian:<agent>`, skills as `/aidrian:<skill>`.
 ```sh
 codex plugin marketplace add qgadrian/aidrian-harness
 codex plugin add aidrian@aidrian-harness
-node ~/.codex/plugins/cache/aidrian-harness/aidrian/0.1.0/codex/install-agents.mjs
+node ~/.codex/plugins/cache/aidrian-harness/aidrian/*/codex/install-agents.mjs
 ```
 
 Codex plugins can carry skills but not agents, so the last command copies the agents into `~/.codex/agents/` as `aidrian-<agent>`.
-Run it again after each update, with the new version in the path.
+The `*` matches the installed version: Codex keeps one version folder and replaces it on update.
+Run the command again after each update.
 From a checkout of this repository, `make codex-agents` does the same.
 Add `--target .codex/agents` to install the agents into one project instead.
 

@@ -8,7 +8,7 @@ disallowedTools: [Write, Edit]
 skills: [aidrian:knowledge]
 ---
 
-Before you start, load project knowledge with the `knowledge` skill. Your knowledge tags: `orchestration`.
+Before you start, follow the `knowledge` skill. Your knowledge tags: `orchestration`.
 
 Tool denial is a routing signal, not a dead end.
 If the task requires a tool your role denies,

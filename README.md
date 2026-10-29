@@ -10,7 +10,8 @@ Each project that installs it supplies only its own knowledge buckets: folders o
 | --- | --- |
 | Agents | `planning-agent`, `initiative-agent`, `agent-issue-writer`, `explorer`, `github-archaeologist`, `integrator`, `doc-updater`, `design-source-explorer`, `harness-engineer` |
 | Skills | `knowledge`, `planning-agent`, `initiative-agent`, `agent-issue-writer`, `worktree-integrate`, `design-import`, `grill-me` |
-| Commands | `aidrian`: project commands, such as `aidrian config check`; `aidrian-knowledge`: checks a project's buckets and prints what a tag loads |
+| Commands | `aidrian`: project commands, such as `aidrian config check`; `aidrian-knowledge`: checks, searches, and drafts a project's buckets |
+| Hooks | at session and subagent start, one line naming the `always` docs and how to find the rest |
 
 The `knowledge` skill is the shared rule set.
 Every agent preloads it: it says how to load the project's buckets, which project rules win, and the defaults a project can override.
@@ -28,6 +29,7 @@ plugins/aidrian/
 ├── bin/aidrian                     project commands; on the Bash PATH in Claude Code sessions
 ├── bin/aidrian-knowledge           the knowledge command; on the same PATH
 ├── hooks/hooks.json                the plugin's hooks, for both hosts
+├── scripts/hook-*.mjs              the programs those hooks run
 ├── lib/                            the code behind the commands and hooks
 └── codex/
     ├── agents/aidrian-*.toml       generated from agents/*.md; never edit
@@ -90,12 +92,16 @@ Add `--target .codex/agents` to install the agents into one project instead.
 Codex roles inherit the session's model; only the reasoning effort carries over from each agent.
 Claude Code enforces each agent's tool limits; on Codex the read-only agents are told to stay read-only.
 
+The plugin's hooks are in `plugins/aidrian/hooks/hooks.json`. Claude Code runs them once the plugin is enabled.
+Codex asks you to trust them in `/hooks` after you install or update the plugin.
+
 ## Adopting in a project
 
 A project adds knowledge, never agents or skills.
 [`examples/consumer`](examples/consumer) is a complete example; copy it as a start.
 
-1. Write the buckets. List them in `.aidrian/config.json`, and give each folder a `bucket.json`:
+1. Write the buckets. List them in `.aidrian/config.json`, and give each folder a `bucket.json` with a one-line summary per doc.
+   For a docs folder that already exists, `aidrian-knowledge init <folder>` drafts both files:
 
    ```json
    { "buckets": ["docs/knowledge/engineering", "docs/knowledge/product"] }
@@ -106,7 +112,10 @@ A project adds knowledge, never agents or skills.
      "id": "engineering",
      "description": "How this project is built, tested, and shipped.",
      "always": ["working-agreement.md"],
-     "tags": { "testing": ["testing.md"], "issue_tracker": ["issue-tracker.md"] }
+     "docs": {
+       "working-agreement.md": { "summary": "Rules every task follows.", "tags": [] },
+       "testing.md": { "summary": "How tests are written and run.", "tags": ["testing"] }
+     }
    }
    ```
 
@@ -157,5 +166,4 @@ A project adds knowledge, never agents or skills.
 ## Not included
 
 - OpenCode support.
-- Hooks: the plugin changes no session by itself and asks for no hook trust.
 - The optional cockpit pane. It lives on the `parked/cockpit` branch and is not reviewed.

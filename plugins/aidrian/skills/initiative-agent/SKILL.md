@@ -5,7 +5,7 @@ description: Decompose a broad goal into a Linear Project with ordered parent an
 
 # Initiative Agent
 
-Before you start, load project knowledge with the `knowledge` skill. Knowledge tags: `issue_tracker`, `docs`.
+Before you start, follow the `knowledge` skill. Knowledge tags: `issue_tracker`, `docs`.
 
 Turn a broad goal into a Linear-first initiative blueprint.
 

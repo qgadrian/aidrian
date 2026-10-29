@@ -11,20 +11,23 @@ This skill is how you find and read them, and which shared defaults apply when a
 
 ## Load before you work
 
-1. Open `.aidrian/config.json` at the repository root. Its `buckets` key lists the bucket folders, for example
-   `{ "buckets": ["docs/knowledge/engineering", "docs/knowledge/product"] }`.
-2. In each bucket, open `bucket.json`. Its doc paths are relative to the bucket folder.
-3. Read every doc in `always`, then the docs under each tag you were given:
-   your agent's knowledge tags, plus any tag that your dispatcher or the task names.
+1. Read the `always` docs now. A hook names them at the start of every session and subagent.
+2. When the task touches the area of one of your tags, run `aidrian-knowledge route <tag>` and read what it lists.
+   Your tags are your agent's knowledge tags, plus any tag your dispatcher or the task names.
    Add `product_sensitive` when the task touches what users see, money, data, or lifecycle rules.
-4. Read each doc once, in bucket order. A tag from the Tags list below that no bucket defines loads nothing; that is not an error.
-   A tag that is neither on that list nor defined by a bucket is a typo, and `aidrian-knowledge route` fails on it.
+3. For anything else, run `aidrian-knowledge search <words>`. It prints each matching doc with a one-line summary;
+   read the ones that fit the task.
+4. Read each doc once. Never read a whole bucket "to be safe".
 
-`aidrian-knowledge route <tag>...` prints the same list when that command is on your PATH.
+When `aidrian-knowledge` is not on your PATH, run it by the full path the start hook prints.
+Without the hook, open `.aidrian/config.json` at the repository root: `buckets` lists the bucket folders.
+Each folder's `bucket.json` has the `always` list, and `docs` maps every doc, relative to the folder, to its `summary` and `tags`.
+
+A tag from the Tags list below that no bucket defines loads nothing; that is not an error.
+A tag that is on neither that list nor a bucket is a typo, and `route` fails on it.
 
 If `.aidrian/config.json` does not exist, read the project's `AGENTS.md`, `CLAUDE.md`, and `README.md` instead,
 and report `knowledge: none` in your result.
-Never read every doc in a bucket "to be safe"; load what the tags select, then search for more only when the task needs it.
 
 ## Precedence
 

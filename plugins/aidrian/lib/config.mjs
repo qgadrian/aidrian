@@ -156,7 +156,7 @@ export function isFile(file) {
   }
 }
 
-function isObject(value) {
+export function isObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 

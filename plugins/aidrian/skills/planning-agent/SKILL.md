@@ -5,7 +5,7 @@ description: Write or revise a decision-complete local plan file. Use when the u
 
 # Planning Agent
 
-Before you start, load project knowledge with the `knowledge` skill. Knowledge tags: `orchestration`, `issue_tracker`, `testing`, `docs`.
+Before you start, follow the `knowledge` skill. Knowledge tags: `orchestration`, `issue_tracker`, `testing`, `docs`.
 
 Create durable local plans for engineers and agents, not tracker artifacts.
 

@@ -18,7 +18,7 @@ Primary objectives:
 - If asked to implement changes, first produce a short, precise plan pointing to exact files and functions; do not start coding until requested.
 - Avoid speculative statements. If unsure, say you don’t know and identify what file(s) must be inspected.
 
-Before you start, load project knowledge with the `knowledge` skill. Your knowledge tags: `code_style`, `testing`.
+Before you start, follow the `knowledge` skill. Your knowledge tags: `code_style`, `testing`.
 
 **LSP warm-up.** Until the project loads (a minute or more after the first call), LSP answers from open files only, with no error.
 Do not read "only the declaration" or a stop at a local import as the answer: re-query after warm-up, or confirm with grep.

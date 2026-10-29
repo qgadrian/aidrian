@@ -16,7 +16,7 @@ Scope boundary — docs ride with the slice:
 - Exception — governed trees: the project's `docs` knowledge may name doc trees with their own owner, such as product or support docs. Code-induced drift there still lands in the same PR, but that owner decides the content — product truth is never promoted without product confirmation — and you type the edit under that tree's rules.
 - You are retained for **standalone documentation maintenance**: drift repair and doc-only tasks — work that stands on its own rather than riding along with a code change, plus the governed-tree same-PR writes above.
 
-Before you start, load project knowledge with the `knowledge` skill. Your knowledge tags: `docs`.
+Before you start, follow the `knowledge` skill. Your knowledge tags: `docs`.
 
 - Read the current target docs and the upstream artifacts that establish the documented change.
 

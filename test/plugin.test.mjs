@@ -40,7 +40,7 @@ test('every agent has the frontmatter Claude Code needs and preloads the knowled
     assert.ok(['haiku', 'sonnet', 'opus', 'fable', 'inherit'].includes(meta.model), `${file}: model`);
     assert.ok(['low', 'medium', 'high', 'xhigh', 'max'].includes(meta.effort), `${file}: effort`);
     assert.deepEqual(meta.skills, ['aidrian:knowledge'], `${file}: skills`);
-    const loads = body.match(/^Before you start, load project knowledge with the `knowledge` skill\. (.*)$/gm) ?? [];
+    const loads = body.match(/^Before you start, follow the `knowledge` skill\. (.*)$/gm) ?? [];
     assert.equal(loads.length, 1, `${file}: one knowledge-loading line`);
   }
 });
@@ -82,7 +82,7 @@ test('a skill that names this plugin\'s agents says how each host names them, or
     const text = skill(name);
     const named = agents.filter((agent) => agent !== name && text.includes(`\`${agent}\``));
     if (!named.length) continue;
-    const loadsKnowledge = /^Before you start, load project knowledge with the `knowledge` skill\./m.test(text);
+    const loadsKnowledge = /^Before you start, follow the `knowledge` skill\./m.test(text);
     assert.ok(loadsKnowledge || text.includes(HOST_NAMES), `${name} names ${named.join(', ')}`);
   }
 });

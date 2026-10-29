@@ -1,6 +1,7 @@
 // Write rule: no writes to a tracked file in a project's main checkout; task work happens in a git worktree.
 // It covers Edit, Write, and NotebookEdit, Codex's apply_patch, and the Bash commands whose target is certain:
-// `>` and `>>`, tee, sed -i, the destination of cp and mv, rm, touch, and mkdir.
+// `>` and `>>`, tee, sed -i, the destination of cp, every path of mv, git mv, rm, git rm, unlink, touch, and mkdir, and
+// the local destination of rsync, with its sources too under --remove-source-files. A move removes its sources.
 //
 // It is off until a project sets config.json `"mainCheckout": { "guard": true }`. A target is allowed when it is outside
 // every main checkout (in a worktree, or outside the repository), in a project without a project folder or with the
@@ -13,7 +14,7 @@ import path from 'node:path';
 import { loadConfig } from '../config.mjs';
 import { checkoutRoots, isIgnored } from '../git.mjs';
 import { findProject, worktreesDir } from '../project.mjs';
-import { isLongOption, lexCommand, readInvocation } from '../shell-lex.mjs';
+import { isLongOption, lexCommand, readGit, readInvocation } from '../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_MAIN_WRITE';
 
@@ -24,12 +25,31 @@ const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
 const WRITERS = new Map([
   ['tee', new Set()],
   ['rm', new Set()],
+  ['unlink', new Set()],
   ['touch', new Set(['-t', '-r', '-d', '--reference', '--date'])],
   ['mkdir', new Set(['-m', '--mode'])],
   ['sed', new Set(['-e', '-f', '--expression', '--file', '-l', '--line-length'])],
-  ['cp', new Set(['-S', '--suffix'])],
-  ['mv', new Set(['-S', '--suffix'])],
+  ['cp', new Set(['-S', '--suffix', '-t', '--target-directory'])],
+  ['mv', new Set(['-S', '--suffix', '-t', '--target-directory'])],
+  // A value option whose name extends a switch (`--partial-dir`, `--backup-dir`) is left out, so the switch never
+  // swallows an operand. An unlisted option's value reads as one more path: blocked by mistake, never missed.
+  [
+    'rsync',
+    new Set([
+      '-e', '--rsh', '--rsync-path', '-f', '--filter', '--exclude', '--exclude-from', '--include', '--include-from',
+      '--files-from', '-T', '--temp-dir', '--compare-dest', '--copy-dest', '--link-dest', '--chmod', '--chown',
+      '--suffix', '--log-file', '--info', '--debug', '--timeout', '--bwlimit', '--max-size', '--min-size', '-B',
+      '--block-size', '-M', '--remote-option', '--out-format', '--password-file', '--port',
+    ]),
+  ],
 ]);
+// git subcommands whose every path is written: git mv removes its sources, git rm its paths.
+const GIT_WRITERS = new Map([
+  ['mv', new Set()],
+  ['rm', new Set(['--pathspec-from-file'])],
+]);
+// An rsync operand naming another host: `host:path`, `user@host:path`, `host::module`, or `rsync://host/module`.
+const REMOTE = /^[^/]*:/u;
 
 // Bash: the deny reason for `command`, or null. A command with no certain target never runs git.
 export function check(command, { cwd = process.cwd(), env = process.env } = {}) {
@@ -58,10 +78,10 @@ export function bashTargets(command, cwd) {
     });
     const { program, args, chdir } = readInvocation(segment);
     if (CHANGES_DIRECTORY.has(program)) moved = true;
-    if (!WRITERS.has(program)) continue;
     // A wrapper's directory change moves the command's own paths, never the shell's redirections above.
     const base = chdir === null ? cwd : chdir.dynamic ? null : path.resolve(cwd, chdir.text);
-    for (const token of written(program, args)) targets.push({ token, base });
+    if (WRITERS.has(program)) for (const token of written(program, args)) targets.push({ token, base });
+    else if (program === 'git') targets.push(...gitWritten(segment, base));
   }
   return targets
     .filter(({ token }) => !token.dynamic && token.text !== '')
@@ -69,9 +89,21 @@ export function bashTargets(command, cwd) {
     .map(({ token, base }) => (path.isAbsolute(token.text) ? token.text : path.resolve(base, token.text)));
 }
 
-// The operands a writer writes: all of them, the destination of cp and mv, and the files of sed -i, never its script.
-function written(program, args) {
-  const valueFlags = WRITERS.get(program);
+// git mv and git rm: every path they name, resolved from `git -C`, which moves them as a wrapper's directory change does.
+function gitWritten(segment, base) {
+  const call = readGit(segment);
+  if (!call || !GIT_WRITERS.has(call.subcommand)) return [];
+  let dir = base;
+  call.globals.forEach((token, i) => {
+    const value = call.globals[i + 1];
+    if (token.text === '-C' && value) dir = dir === null || value.dynamic ? null : path.resolve(dir, value.text);
+  });
+  return written('git', call.rest, GIT_WRITERS.get(call.subcommand)).map((token) => ({ token, base: dir }));
+}
+
+// The operands a writer writes: all of them, every path of mv, the destination of cp and rsync (and rsync's sources
+// under --remove-source-files), and the files of sed -i, never its script.
+function written(program, args, valueFlags = WRITERS.get(program)) {
   const flags = [];
   const operands = [];
   let ended = false;
@@ -85,13 +117,43 @@ function written(program, args) {
       operands.push(args[i]); // an empty operand is BSD sed's `-i ''` suffix
     }
   }
-  if (program === 'cp' || program === 'mv') return operands.length >= 2 ? operands.slice(-1) : [];
+  if (program === 'cp' || program === 'mv') {
+    const directory = targetDirectory(args);
+    if (program === 'mv') return directory ? [...operands, directory] : operands;
+    if (directory) return [directory];
+    return operands.length >= 2 ? operands.slice(-1) : [];
+  }
+  if (program === 'rsync') {
+    if (operands.length < 2) return [];
+    const removesSources = flags.some((flag) => isLongOption(flag, '--remove-source-files', '--remov') || isLongOption(flag, '--remove-sent-files', '--remov'));
+    return (removesSources ? operands : operands.slice(-1)).filter((token) => !REMOTE.test(token.text));
+  }
   if (program !== 'sed') return operands;
   // GNU sed takes a prefix of a long option: `--i` is `--in-place`, `--e` is `--expression`, `--fi` is `--file`.
   const inPlace = flags.some((flag) => isLongOption(flag, '--in-place', '--i') || (/^-[^-]*$/u.test(flag) && flag.includes('i')));
   if (!inPlace) return [];
   const scripted = flags.some((flag) => /^-[ef](=|$)/u.test(flag) || isLongOption(flag, '--expression', '--e') || isLongOption(flag, '--file', '--fi'));
   return scripted ? operands : operands.slice(1);
+}
+
+// The directory cp or mv writes into with GNU -t, in any spelling: `-t DIR`, `-tDIR`, `-ft DIR`, `--target-directory=DIR`,
+// or a prefix of it. Null without one.
+function targetDirectory(args) {
+  for (let i = 0; i < args.length; i += 1) {
+    const { text, dynamic } = args[i];
+    if (text === '--') return null;
+    if (text.startsWith('--')) {
+      if (!isLongOption(text, '--target-directory', '--t')) continue;
+      const equals = text.indexOf('=');
+      return equals === -1 ? args[i + 1] ?? null : { text: text.slice(equals + 1), dynamic };
+    }
+    if (!/^-./u.test(text)) continue;
+    // In a cluster, -S takes the rest as its suffix, and -t takes the rest, or the next word, as the directory.
+    for (let j = 1; j < text.length && text[j] !== 'S'; j += 1) {
+      if (text[j] === 't') return j + 1 < text.length ? { text: text.slice(j + 1), dynamic } : args[i + 1] ?? null;
+    }
+  }
+  return null;
 }
 
 function decide(targets, cwd, failSafe, verb) {

@@ -2,15 +2,16 @@
 // It covers Edit, Write, and NotebookEdit, Codex's apply_patch, and the Bash commands whose target is certain:
 // `>` and `>>`, tee, sed -i, the destination of cp and mv, rm, touch, and mkdir.
 //
-// A target is allowed when it is outside every main checkout, in a project without a project folder or with
-// config.json `mainCheckout.guard: false`, matched by `mainCheckout.allowWrites`, or git-ignored. When git cannot tell,
-// a tool write is denied to be safe and a Bash command runs: a command line is never as certain as a file path.
+// It is off until a project sets config.json `"mainCheckout": { "guard": true }`. A target is allowed when it is outside
+// every main checkout (in a worktree, or outside the repository), in a project without a project folder or with the
+// guard off, matched by `mainCheckout.allowWrites`, or git-ignored. When git cannot tell, a tool write is denied to be
+// safe and a Bash command runs: a command line is never as certain as a file path.
 
 import { existsSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { loadConfig } from '../config.mjs';
-import { isIgnored, mainRoot } from '../git.mjs';
+import { checkoutRoots, isIgnored } from '../git.mjs';
 import { findProject, worktreesDir } from '../project.mjs';
 import { lexCommand, readInvocation } from '../shell-lex.mjs';
 
@@ -99,8 +100,9 @@ function decide(targets, cwd, failSafe, verb) {
     if (!project) continue;
     const { config } = loadConfig(project);
     if (!config.mainCheckout.guard) continue;
-    const root = mainRoot(folder);
-    if (!root) continue;
+    const roots = checkoutRoots(folder);
+    if (!roots || canonical(roots.current) !== canonical(roots.main)) continue;
+    const root = roots.main;
     const rel = path.relative(canonical(root), file);
     if (rel.startsWith('..') || path.isAbsolute(rel)) continue;
     if (config.mainCheckout.allowWrites.some((glob) => globPattern(glob).test(rel.split(path.sep).join('/')))) continue;
@@ -120,7 +122,7 @@ function reason(lead, project, config) {
   return [
     lead,
     `Work in a git worktree instead, for example: git worktree add "${path.join(worktrees, '<branch>')}" -b <branch>`,
-    `A project that does not use worktrees sets "mainCheckout": { "guard": false } in ${path.join(project.root, project.paths.config)};`,
+    `This project turns the guard on with "mainCheckout": { "guard": true } in ${path.join(project.root, project.paths.config)};`,
     '"mainCheckout": { "allowWrites": [...] } lists paths that stay writable.',
     `To override for an explicit, user-confirmed reason, set ${OVERRIDE}=1 in your own shell before starting the session ` +
       "(agents must never set it on the user's behalf).",

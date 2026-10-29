@@ -53,9 +53,10 @@ test('check names the missing .gitignore line for the local sources file, and fo
   assert.equal(
     stderr,
     '.aidrian.local.json is not git-ignored: add the line ".aidrian.local.json" to .gitignore, or run aidrian init\n' +
-      '.state/ is not git-ignored: add the line ".state/" to .gitignore, or run aidrian init\n',
+      '.state/ is not git-ignored: add the line ".state/" to .gitignore, or run aidrian init\n' +
+      '.worktrees/ is not git-ignored: add the line ".worktrees/" to .gitignore, or run aidrian init\n',
   );
-  assert.match(run(['init'], dir).stdout, /^added to \.gitignore: \.aidrian\.local\.json, \.state\/\n/);
+  assert.match(run(['init'], dir).stdout, /^added to \.gitignore: \.aidrian\.local\.json, \.state\/, \.worktrees\/\n/);
   assert.equal(stateLine(run(['check'], dir).stdout), path.join(dir, '.state'));
 });
 
@@ -66,13 +67,13 @@ test('a nested project ignores a state folder outside it in the repository root 
   mkdirSync(path.join(dir, 'app/.aidrian'), { recursive: true });
   writeFileSync(path.join(dir, 'app/.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '.state' } }));
   const init = run(['init'], path.join(dir, 'app'));
-  assert.equal(init.stdout, 'added to .gitignore: .aidrian.local.json\nadded to ../.gitignore: .state/\n' +
+  assert.equal(init.stdout, 'added to .gitignore: .aidrian.local.json\nadded to ../.gitignore: .state/, .worktrees/\n' +
     'next: add a knowledge index with aidrian-knowledge init <folder of docs>, then run aidrian check\n');
-  assert.equal(readFileSync(path.join(dir, '.gitignore'), 'utf8'), '.state/\n');
+  assert.equal(readFileSync(path.join(dir, '.gitignore'), 'utf8'), '.state/\n.worktrees/\n');
   assert.equal(run(['check'], path.join(dir, 'app')).status, 0);
 });
 
-test('check follows worktrees.dir: another folder inside the project needs a line, one outside needs none', (t) => {
+test('check follows worktrees.dir: a folder inside the project needs a line, one outside the repository needs none', (t) => {
   const dir = exampleRepo(t);
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, worktrees: { dir: 'trees' } }));
   assert.equal(run(['check'], dir).stderr, 'trees/ is not git-ignored: add the line "trees/" to .gitignore, or run aidrian init\n');
@@ -108,7 +109,7 @@ test('a project whose .aidrian.json names another folder sets up and checks that
   writeFileSync(path.join(dir, '.aidrian.json'), JSON.stringify({ dir: 'harness' }));
   const init = run(['init'], dir);
   assert.equal(init.status, 0, init.stderr);
-  assert.match(init.stdout, /^wrote harness\/config\.json\nadded to \.gitignore: \.aidrian\.local\.json\n/);
+  assert.match(init.stdout, /^wrote harness\/config\.json\nadded to \.gitignore: \.aidrian\.local\.json, \.worktrees\/\n/);
   assert.equal(existsSync(path.join(dir, '.aidrian')), false);
   assert.deepEqual([ok(run(['check'], dir).stdout), run(['check'], dir).status], ['ok: harness (0 buckets, 0 docs)', 0]);
 
@@ -127,12 +128,12 @@ test('init sets up an empty repository, a second run changes nothing and says so
   assert.equal(first.status, 0, first.stderr);
   assert.equal(
     first.stdout,
-    'wrote .aidrian/config.json\nadded to .gitignore: .aidrian.local.json\n' +
+    'wrote .aidrian/config.json\nadded to .gitignore: .aidrian.local.json, .worktrees/\n' +
       'next: add a knowledge index with aidrian-knowledge init <folder of docs>, then run aidrian check\n',
   );
   assert.equal(readFileSync(path.join(dir, '.aidrian/config.json'), 'utf8'), '{\n  "version": 1\n}\n');
   assert.deepEqual(readdirSync(path.join(dir, '.aidrian/knowledge')), []);
-  assert.equal(readFileSync(path.join(dir, '.gitignore'), 'utf8'), 'node_modules/\n.aidrian.local.json\n');
+  assert.equal(readFileSync(path.join(dir, '.gitignore'), 'utf8'), 'node_modules/\n.aidrian.local.json\n.worktrees/\n');
 
   // Every file outside .git, with its content.
   const files = (folder) =>
@@ -155,7 +156,7 @@ test('init adds the missing lines to an existing project and keeps its config', 
   writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1, "defaultBranch": "trunk"}');
   const { status, stdout } = run(['init'], dir);
   assert.equal(status, 0);
-  assert.equal(stdout.split('\n')[0], 'added to .gitignore: .aidrian.local.json');
+  assert.equal(stdout.split('\n')[0], 'added to .gitignore: .aidrian.local.json, .worktrees/');
   assert.equal(readFileSync(path.join(dir, '.aidrian/config.json'), 'utf8'), '{"version": 1, "defaultBranch": "trunk"}');
 });
 

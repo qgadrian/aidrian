@@ -4,6 +4,7 @@ A project that uses the aidrian plugin keeps everything the plugin reads in one 
 The plugin's commands, hooks, agents, and skills find the project's knowledge and settings there.
 Nothing else in the project configures the plugin.
 What the plugin writes on one machine, such as plans and lessons, goes to a [state folder](#local-state) outside the repository.
+Task worktrees go in `.worktrees/` at the repository root, which git ignores.
 
 [`examples/consumer`](../examples/consumer) is a complete, checked example.
 
@@ -12,12 +13,13 @@ What the plugin writes on one machine, such as plans and lessons, goes to a [sta
 ```text
 .aidrian.json                    names another folder as the project folder (optional, committed)
 .aidrian.local.json              adds knowledge sources on one machine (optional, git-ignored)
+.worktrees/                      task worktrees, one folder per branch (git-ignored)
 .aidrian/
 ├── config.json                  the folder version and the project settings (committed)
 └── knowledge/<bucket-id>.json   one index per knowledge bucket (committed)
 ```
 
-The committed files are JSON, and the folder holds nothing else.
+The committed files are JSON, and the project folder holds nothing else.
 The docs a bucket indexes stay where they are: each index names its doc folder in `dir`.
 
 - `config.json` needs `version`; every other key is optional. [config.md](config.md) lists the keys.
@@ -55,12 +57,12 @@ A release that changes the format raises the version and lists, under Migrating,
 ```console
 $ aidrian init
 wrote .aidrian/config.json
-added to .gitignore: .aidrian.local.json
+added to .gitignore: .aidrian.local.json, .worktrees/
 next: add a knowledge index with aidrian-knowledge init <folder of docs>, then run aidrian check
 ```
 
 It writes `config.json` with `version` alone, and adds each `.gitignore` line for an entry git does not ignore yet:
-`.aidrian.local.json`, and the [state folder](#local-state) or the worktrees folder when config.json puts one inside the repository.
+`.aidrian.local.json`, the [worktrees folder](#task-worktrees), and the [state folder](#local-state) when config.json puts it in the repository.
 It never overwrites a file. Run again, it prints `nothing to do: .aidrian is set up`.
 
 `aidrian check` validates the whole folder. Run it locally and in CI. It prints `ok`, or one line per problem and exits 1:
@@ -69,7 +71,7 @@ It never overwrites a file. Run again, it prints `nothing to do: .aidrian is set
 - `config.json`: the version first, then every key and value.
 - Every knowledge index, as [knowledge.md](knowledge.md#checks) describes.
 - `.aidrian.local.json`, when present: every source, as [Local knowledge sources](#local-knowledge-sources) describes.
-- `.gitignore`: git ignores `.aidrian.local.json`, and the state and worktrees folders when they are inside the repository.
+- `.gitignore`: git ignores `.aidrian.local.json`, and the worktrees and state folders when they are inside the repository.
 
 On success it also prints the state folder:
 
@@ -102,8 +104,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── plans/                local plans
 ├── handoffs/             session handoff briefs
 ├── lessons/inbox.jsonl   the lesson inbox
-├── dispatch-log.jsonl    the dispatch log
-└── worktrees/            task worktrees, unless config.json puts them elsewhere
+└── dispatch-log.jsonl    the dispatch log
 ```
 
 - `$XDG_STATE_HOME` defaults to `~/.local/state`.
@@ -115,6 +116,16 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 
 `aidrian state` prints the folder. Skills use it to find plans and handoff briefs.
 `aidrian lesson` adds, lists, and resolves lessons in the inbox; `aidrian handoff` checks a handoff brief against the one it supersedes.
+
+## Task worktrees
+
+Each task gets its own git worktree, so the main checkout stays clean and on the default branch.
+They live in `.worktrees/` at the repository root: editors show them beside the code,
+and Claude Code edits them without asking, because they are inside the folder the session opened.
+`"worktrees": { "dir": "<path>" }` in config.json moves them; a relative path starts at the repository root,
+and `aidrian check` requires git to ignore the folder while it is inside the repository.
+
+To keep agents from editing the main checkout at all, turn on the main-checkout guard: [hooks.md](hooks.md#main-checkout).
 
 ## Local knowledge sources
 

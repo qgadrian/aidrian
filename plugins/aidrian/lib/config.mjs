@@ -13,7 +13,7 @@ const MIGRATING = 'https://github.com/qgadrian/aidrian-harness/blob/main/docs/pr
 const SCHEMA = {
   defaultBranch: 'text',
   state: { dir: 'textOrNull' },
-  worktrees: { dir: 'textOrNull', bootstrap: 'textOrNull' },
+  worktrees: { dir: 'text', bootstrap: 'textOrNull' },
   mainCheckout: { guard: 'boolean', allowWrites: 'texts' },
   commits: { types: 'texts' },
   pr: { requiredSections: 'texts', reviewer: 'text', maxReviewRounds: 'positive', requiredChecks: 'texts', ignoreCancelledChecks: 'texts' },
@@ -31,13 +31,13 @@ const TYPES = {
   zeroOrMore: [(value) => Number.isInteger(value) && value >= 0, 'a whole number, 0 or more'],
 };
 
-// `state.dir: null` is the per-project folder under `$XDG_STATE_HOME`, and `worktrees.dir: null` its worktrees/
-// (lib/project.mjs).
+// `state.dir: null` is the per-project folder under `$XDG_STATE_HOME` (lib/project.mjs). Task worktrees sit beside the
+// repository's files, where editors and agents expect them; the guard is off until a project opts in.
 export const DEFAULTS = deepFreeze({
   defaultBranch: 'main',
   state: { dir: null },
-  worktrees: { dir: null, bootstrap: null },
-  mainCheckout: { guard: true, allowWrites: [] },
+  worktrees: { dir: '.worktrees', bootstrap: null },
+  mainCheckout: { guard: false, allowWrites: [] },
   commits: { types: ['build', 'chore', 'ci', 'docs', 'feat', 'fix', 'perf', 'refactor', 'revert', 'style', 'test'] },
   pr: {
     requiredSections: ['Summary', 'Tests run'],

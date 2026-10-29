@@ -12,7 +12,7 @@ and one project folder, `.aidrian/`, that indexes them and holds the plugin's se
 | Agents | `planning-agent`, `initiative-agent`, `agent-issue-writer`, `explorer`, `github-archaeologist`, `integrator`, `doc-updater`, `design-source-explorer`, `harness-engineer` |
 | Skills | `knowledge`, `planning-agent`, `initiative-agent`, `agent-issue-writer`, `worktree-integrate`, `design-import`, `grill-me`, `lesson`, `lesson-triage`, `session-handoff`, `session-continue` |
 | Commands | `aidrian`: sets up and checks the project folder (`aidrian init`, `aidrian check`), prints the state folder (`aidrian state`), checks commit messages (`aidrian commit-msg`), lints skills, agents, paths, and the knowledge budget (`aidrian lint`), keeps the lesson inbox (`aidrian lesson`), and checks handoff briefs (`aidrian handoff`); `aidrian-knowledge`: routes, searches, and drafts a project's buckets |
-| Hooks | at session and subagent start, one line naming the `always` docs and how to find the rest; before each Bash command, git and process safety rules; before each file write, a guard that keeps the main checkout clean; after a Markdown write, a line-length check; before compaction, a checklist of what to keep. [docs/hooks.md](docs/hooks.md) lists them |
+| Hooks | at session and subagent start, one line naming the `always` docs and how to find the rest; before each Bash command, git and process safety rules; before each file write, an opt-in guard that keeps the main checkout clean; after a Markdown write, a line-length check; before compaction, a checklist of what to keep. [docs/hooks.md](docs/hooks.md) lists them |
 
 The `knowledge` skill is the shared rule set.
 Every agent preloads it: it says how to load the project's buckets, which project rules win, and the defaults a project can override.
@@ -110,7 +110,8 @@ A project adds knowledge, never agents or skills.
    path/to/aidrian-harness/plugins/aidrian/bin/aidrian init     # anywhere else; needs Node 22 or later
    ```
 
-   It writes `.aidrian/config.json` and adds `.aidrian.local.json` to `.gitignore`.
+   It writes `.aidrian/config.json` and adds `.aidrian.local.json` and `.worktrees/`, where task worktrees go, to `.gitignore`.
+   To keep agents out of the main checkout, add `"mainCheckout": { "guard": true }` to the config ([docs/hooks.md](docs/hooks.md#main-checkout)).
    [docs/project-folder.md](docs/project-folder.md) describes the folder, how to keep it elsewhere, its version,
    and the state folder outside the repository where the plugin keeps plans, handoffs, and lessons.
 

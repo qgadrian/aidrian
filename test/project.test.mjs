@@ -159,7 +159,7 @@ test('the state folder is under XDG_STATE_HOME, named for the origin, and shared
   assert.match(main, /^\/state\/aidrian\/projects\/notes-[0-9a-f]{8}$/);
   assert.equal(stateDir(findProject(path.join(dir, 'wt/task')), { env }), main);
   assert.equal(stateDir(projectAt(clone), { env }), main);
-  assert.equal(worktreesDir(findProject(dir), { env }), path.join(main, 'worktrees'));
+  assert.equal(worktreesDir(findProject(path.join(dir, 'wt/task'))), path.join(dir, '.worktrees'), 'beside the repository files');
 });
 
 test('without XDG_STATE_HOME, or with a relative one, the state folder is under ~/.local/state', (t) => {
@@ -183,12 +183,13 @@ test('state.dir and worktrees.dir move the folders: ~ is home, and a relative pa
   const { dir, git } = repo(t);
   git('worktree', 'add', '-q', '-b', 'task', path.join(dir, 'wt/task'));
   const inWorktree = findProject(path.join(dir, 'wt/task'));
-  const config = (state, worktrees) => ({ ...DEFAULTS, state: { dir: state }, worktrees: { dir: worktrees, bootstrap: null } });
-  assert.equal(stateDir(inWorktree, { config: config('.state', null) }), path.join(dir, '.state'));
-  assert.equal(worktreesDir(inWorktree, { config: config('.state', null) }), path.join(dir, '.state/worktrees'));
+  const config = (state, worktrees = '.worktrees') => ({ ...DEFAULTS, state: { dir: state }, worktrees: { dir: worktrees, bootstrap: null } });
+  assert.equal(stateDir(inWorktree, { config: config('.state') }), path.join(dir, '.state'));
+  assert.equal(worktreesDir(inWorktree, { config: config('.state') }), path.join(dir, '.worktrees'));
   assert.equal(worktreesDir(inWorktree, { config: config(null, '../trees') }), path.join(path.dirname(dir), 'trees'));
-  assert.equal(stateDir(inWorktree, { config: config('~/state', null) }), path.join(homedir(), 'state'));
-  assert.equal(stateDir(inWorktree, { config: config('/abs/state', null) }), '/abs/state');
+  assert.equal(worktreesDir(inWorktree, { config: config(null, '~/trees') }), path.join(homedir(), 'trees'));
+  assert.equal(stateDir(inWorktree, { config: config('~/state') }), path.join(homedir(), 'state'));
+  assert.equal(stateDir(inWorktree, { config: config('/abs/state') }), '/abs/state');
 });
 
 // A git repository with a committed project folder.

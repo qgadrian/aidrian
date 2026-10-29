@@ -100,7 +100,7 @@ status: "ready"                # one of: open-questions | ready | in-progress | 
 workspace_decision:
   mode: "worktree"             # one of: current_branch | new_branch | worktree
   branch_name: "feat/3737-…"   # task-scoped conventional branch name
-  worktree_path: "<state>/worktrees/3737"  # only when mode == worktree; absolute
+  worktree_path: "<repo>/.worktrees/3737"  # only when mode == worktree; absolute
   rationale: "main checkout dirty with unrelated changes"
 plan_kind: "implementation"    # one of: implementation | rollout | technical-design | revision
 related_plans: []              # other <state>/plans/* paths that depend on or supersede this one
@@ -125,7 +125,7 @@ status: "ready"                # one of: open-questions | ready | in-progress | 
 workspace_decision:
   mode: "worktree"             # one of: current_branch | new_branch | worktree
   branch_name: "<username>/abc-483-…"  # the issue's own gitBranchName field, verbatim
-  worktree_path: "<state>/worktrees/483-observability-lint-rule"  # only when mode == worktree; absolute
+  worktree_path: "<repo>/.worktrees/483-observability-lint-rule"  # only when mode == worktree; absolute
   rationale: "main checkout dirty with unrelated changes"
 plan_kind: "implementation"    # one of: implementation | rollout | technical-design | revision
 related_plans: []              # other <state>/plans/* paths that depend on or supersede this one
@@ -152,7 +152,7 @@ status: "ready"                      # one of: open-questions | ready | in-progr
 workspace_decision:
   mode: "worktree"                   # one of: current_branch | new_branch | worktree
   branch_name: "feat/dashboard-v3-…" # task-scoped conventional branch name
-  worktree_path: "<state>/worktrees/dashboard-v3"  # only when mode == worktree; absolute
+  worktree_path: "<repo>/.worktrees/dashboard-v3"  # only when mode == worktree; absolute
   rationale: "design-import implementation runs in a task-scoped worktree"
 plan_kind: "technical-design"        # fixed for design-import plans; re-runs keep this value (never flip to revision)
 related_plans: []                    # other plan paths that depend on or supersede this one

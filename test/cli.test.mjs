@@ -30,7 +30,7 @@ test('check fails with every error, and names the folder it started from when th
 
   mkdirSync(path.join(dir, '.aidrian'));
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, extra: 1, pr: { maxReviewRounds: 'ten' } }));
-  writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n');
+  writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n.worktrees/\n');
   const bad = run(['check'], dir);
   assert.equal(bad.status, 1);
   assert.equal(bad.stdout, '');

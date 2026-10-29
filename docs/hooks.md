@@ -10,7 +10,7 @@ A blocking hook exits 2 and tells the agent why on stderr.
 | --- | --- | --- |
 | Session and subagent start | One line naming the `always` knowledge docs and the commands that find the rest; for the main session, a second line while the lesson inbox holds open lessons | no |
 | Before a Bash command | The Bash rules below, in this order, in one process | yes |
-| Before Edit, Write, NotebookEdit, or Codex's `apply_patch` | The main-checkout rule | yes |
+| Before Edit, Write, NotebookEdit, or Codex's `apply_patch` | The main-checkout rule, when the project turns it on | yes |
 | After Edit or Write of a Markdown file | The line-length check: lines the write made longer than config.json `docs.wrapLimit` | feedback |
 | Before compaction | A checklist of what the summary must keep, unless instructions were typed after `/compact` | no |
 
@@ -23,7 +23,7 @@ A blocking hook exits 2 and tells the agent why on stderr.
 | Kill by name | `pkill`, `killall`, `pgrep --signal`, `kill` fed by `pgrep` or `ps`, and `kill -- -1`; `kill <pid>` stays allowed | `AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME=1` |
 | Command-line listing | `pgrep -fl`, `pgrep -a`, and `ps` without a format free of `args`, `command`, and `cmd` | `AIDRIAN_ALLOW_PROCESS_ARGS_LISTING=1` |
 | Counting grep in `&&` | `grep -c` whose exit status an `&&` chain reads, such as `grep -c x log && npm test` | `AIDRIAN_ALLOW_GREP_EXIT_CHAIN=1` |
-| Main checkout | A write to a tracked file in the main checkout: `>`, `>>`, `tee`, `sed -i`, `cp`, `mv`, `rm`, `touch`, `mkdir` | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
+| Main checkout, when turned on | A write to a tracked file in the main checkout: `>`, `>>`, `tee`, `sed -i`, `cp`, `mv`, `rm`, `touch`, `mkdir` | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
 
 A rule reads the command the way the shell splits it.
 It sees through `sudo`, `env`, `timeout`, `command`, `rtk`, and similar wrappers, and ignores text in quotes, comments, and heredocs.
@@ -32,10 +32,16 @@ A command reached only through a script or an interpreter such as `python -c` is
 
 ## Main checkout
 
-Task work happens in a git worktree, so the main checkout stays clean and on the default branch.
-The main-checkout rule blocks a write to a file git tracks, or would track, in the main checkout of a project that has a project folder.
+The main-checkout rule is off until a project turns it on in config.json:
+
+```json
+{ "version": 1, "mainCheckout": { "guard": true, "allowWrites": ["notes/**"] } }
+```
+
+Then task work has to happen in a git worktree, so the main checkout stays clean and on the default branch.
+The rule blocks a write to a file git tracks, or would track, in the main checkout.
 It allows a git-ignored path, a path in `mainCheckout.allowWrites`, and anything in a worktree or outside the repository.
-A project that does not use worktrees turns it off with `"mainCheckout": { "guard": false }`; [config.md](config.md) lists both keys.
+[config.md](config.md) lists both keys.
 When git cannot answer, an Edit or Write is blocked to be safe, and a Bash command runs.
 
 ## Markdown line length

@@ -25,6 +25,12 @@ export function currentRoot(cwd) {
   return firstLine(['rev-parse', '--show-toplevel'], cwd);
 }
 
+// Both at once, in one git call: { main, current }, or null. They differ inside a worktree.
+export function checkoutRoots(cwd) {
+  const lines = firstLine(['rev-parse', '--path-format=absolute', '--git-common-dir', '--show-toplevel'], cwd)?.split('\n');
+  return lines?.length === 2 ? { main: path.dirname(lines[0]), current: lines[1] } : null;
+}
+
 // Whether git ignores `file` (absolute, or relative to `root`).
 export function isIgnored(root, file) {
   const { status } = runGit(['check-ignore', '-q', '--', file], root);

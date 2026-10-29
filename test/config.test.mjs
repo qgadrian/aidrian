@@ -11,10 +11,11 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const EXAMPLE = path.join(ROOT, 'examples/consumer');
 const MIGRATING = 'see https://github.com/qgadrian/aidrian-harness/blob/main/docs/project-folder.md#migrating';
 
-test('the example consumer config is valid and gets every default', () => {
+test('the example consumer config is valid, turns the main-checkout guard on, and gets every other default', () => {
   const { config, errors, current } = loadConfig(findProject(EXAMPLE));
   assert.deepEqual([errors, current], [[], true]);
-  assert.deepEqual(config, DEFAULTS);
+  assert.deepEqual(config, { ...DEFAULTS, mainCheckout: { ...DEFAULTS.mainCheckout, guard: true } });
+  assert.equal(DEFAULTS.mainCheckout.guard, false, 'a project opts in; a fresh one is never blocked');
 });
 
 test('file values win; a group keeps the defaults for the keys the file leaves out', (t) => {
@@ -74,10 +75,14 @@ for (const [name, value, shown] of versionCases) {
   });
 }
 
-test('worktrees.dir and bootstrap default to null, and a string replaces each', (t) => {
-  assert.deepEqual(loadConfig(project(t, { version: 1, worktrees: { dir: null, bootstrap: null } })).errors, []);
+test('worktrees.dir defaults to .worktrees and bootstrap to null, and a string replaces each', (t) => {
+  assert.deepEqual(DEFAULTS.worktrees, { dir: '.worktrees', bootstrap: null });
+  assert.deepEqual(loadConfig(project(t, { version: 1, worktrees: { bootstrap: null } })).errors, []);
   const { config } = loadConfig(project(t, { version: 1, worktrees: { dir: '../wt', bootstrap: 'npm ci' } }));
   assert.deepEqual(config.worktrees, { dir: '../wt', bootstrap: 'npm ci' });
+  assert.deepEqual(loadConfig(project(t, { version: 1, worktrees: { dir: null } })).errors, [
+    '.aidrian/config.json: "worktrees.dir" must be a non-empty string',
+  ]);
 });
 
 test('a missing, malformed, or outside-linking file is one error, and the config is all defaults', (t) => {

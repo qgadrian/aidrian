@@ -9,7 +9,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { insidePath, isDirectory, isFile, loadConfig, readJson } from './config.mjs';
-import { mainRoot, runGit } from './git.mjs';
+import { checkoutRoots, mainRoot, runGit } from './git.mjs';
 
 const DEFAULT_DIR = '.aidrian';
 const OVERRIDE = '.aidrian.json';
@@ -83,12 +83,11 @@ function localSources(root, errors) {
 // The same folder in the main checkout, when `root` is inside a git worktree; null outside git. One git call: this runs
 // at the start of every session and subagent.
 function inMainCheckout(root) {
-  const { status, stdout } = runGit(['rev-parse', '--path-format=absolute', '--git-common-dir', '--show-toplevel'], root);
-  const [commonDir, current] = status === 0 ? stdout.trim().split('\n') : [];
-  return commonDir && current ? path.join(path.dirname(commonDir), path.relative(current, realpathSync(root))) : null;
+  const roots = checkoutRoots(root);
+  return roots ? path.join(roots.main, path.relative(roots.current, realpathSync(root))) : null;
 }
 
-// The machine-local state folder: plans, handoffs, the lesson inbox, the dispatch log, and by default task worktrees.
+// The machine-local state folder: plans, handoffs, the lesson inbox, and the dispatch log.
 // `$XDG_STATE_HOME/aidrian/projects/<project id>/`, with `~/.local/state` when that variable is unset or relative, so
 // git never sees it and every worktree and clone of a repository shares it. config.json `state.dir` moves it.
 export function stateDir(project, { config = loadConfig(project).config, env = process.env } = {}) {
@@ -97,9 +96,9 @@ export function stateDir(project, { config = loadConfig(project).config, env = p
   return path.join(base, 'aidrian', 'projects', projectId(project));
 }
 
-// Task worktrees: config.json `worktrees.dir`, or the state folder's worktrees/.
-export function worktreesDir(project, { config = loadConfig(project).config, env = process.env } = {}) {
-  return config.worktrees.dir ? localPath(project, config.worktrees.dir) : path.join(stateDir(project, { config, env }), 'worktrees');
+// Task worktrees: config.json `worktrees.dir`, `.worktrees` at the repository root by default.
+export function worktreesDir(project, { config = loadConfig(project).config } = {}) {
+  return localPath(project, config.worktrees.dir);
 }
 
 // The main checkout's top folder, which every worktree shares; the project root outside git.

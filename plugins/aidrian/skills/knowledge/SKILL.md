@@ -42,7 +42,7 @@ When a project doc contradicts a plugin instruction, follow the project and name
 
 A project overrides any of these in an `always` doc.
 
-- Local plans live in `<state>/plans/` and task worktrees in `<state>/worktrees/`, where `<state>` is the folder `aidrian state` prints.
+- Local plans live in `<state>/plans/`, where `<state>` is the folder `aidrian state` prints; task worktrees in `.worktrees/`.
 - When another agent reads your result, return one JSON object, the machine handoff, with these fields:
   - `status`: `done`, `blocked`, `needs_input`, or `no_op`.
   - `role`, and `decision`: what you concluded, in two sentences at most.

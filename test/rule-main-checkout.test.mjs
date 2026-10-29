@@ -10,9 +10,9 @@ import { bashTargets, check, checkTool } from '../plugins/aidrian/lib/rules/main
 const SCRIPTS = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts');
 const ENV = {};
 
-// A repository with a project folder, a tracked src/app.js, an ignored build/, a worktree inside it (wt/task, ignored)
-// and one beside it.
-function fixture(t, config = { version: 1 }) {
+// A repository whose project folder turns the guard on, with a tracked src/app.js, an ignored build/, a worktree inside
+// it (wt/task, ignored), one beside it, and one inside it that git does not ignore (open/task).
+function fixture(t, config = { version: 1, mainCheckout: { guard: true } }) {
   const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-guard-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const repo = path.join(base, 'repo');
@@ -27,6 +27,7 @@ function fixture(t, config = { version: 1 }) {
   git('-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init');
   git('worktree', 'add', '-q', '-b', 'task', path.join(repo, 'wt/task'));
   git('worktree', 'add', '-q', '-b', 'beside', path.join(base, 'beside'));
+  git('worktree', 'add', '-q', '-b', 'open', path.join(repo, 'open/task'));
   return { base, repo };
 }
 
@@ -36,8 +37,8 @@ test('a tracked or new file in the main checkout is denied, with the worktree co
   const { repo } = fixture(t);
   const reason = edit(path.join(repo, 'src/app.js'), repo);
   assert.match(reason, /^Blocked: this writes 'src\/app\.js', a tracked file in the main checkout \(/);
-  assert.match(reason, /git worktree add "\S+\/worktrees\/<branch>" -b <branch>/);
-  assert.match(reason, /"mainCheckout": \{ "guard": false \} in \S+\/\.aidrian\/config\.json/);
+  assert.match(reason, /git worktree add "\S+\/repo\/\.worktrees\/<branch>" -b <branch>/);
+  assert.match(reason, /"mainCheckout": \{ "guard": true \} in \S+\/\.aidrian\/config\.json/);
   assert.match(reason, /AIDRIAN_ALLOW_MAIN_WRITE=1/);
   assert.match(edit('src/new/file.js', repo, 'Write'), /'src\/new\/file\.js'/, 'a relative path resolves against cwd');
   assert.match(checkTool({ tool_name: 'NotebookEdit', tool_input: { notebook_path: path.join(repo, 'n.ipynb') }, cwd: repo }, { env: ENV }), /'n\.ipynb'/);
@@ -49,18 +50,21 @@ test('ignored paths, worktrees inside or beside the repository, and paths outsid
   assert.equal(edit(path.join(repo, 'wt/task/src/app.js'), repo), null);
   assert.equal(edit('src/app.js', path.join(repo, 'wt/task')), null, 'a session in the worktree');
   assert.equal(edit(path.join(base, 'beside/src/app.js'), repo), null);
+  assert.equal(edit(path.join(repo, 'open/task/src/app.js'), repo), null, 'a worktree git does not ignore');
   assert.equal(edit(path.join(tmpdir(), 'scratch.txt'), repo), null);
 });
 
-test('allowWrites globs, guard false, the override, and a repository without a project folder allow the write', (t) => {
-  const globs = fixture(t, { version: 1, mainCheckout: { allowWrites: ['notes/**', 'docs/*.md', '**/*.snap'] } }).repo;
+test('allowWrites globs, the guard off by default or by config, the override, and no project folder allow the write', (t) => {
+  const globs = fixture(t, { version: 1, mainCheckout: { guard: true, allowWrites: ['notes/**', 'docs/*.md', '**/*.snap'] } }).repo;
   assert.equal(edit(path.join(globs, 'notes/a/b.md'), globs), null);
   assert.equal(edit(path.join(globs, 'docs/x.md'), globs), null);
   assert.equal(edit(path.join(globs, 'src/__snapshots__/a.snap'), globs), null);
   assert.match(edit(path.join(globs, 'docs/sub/x.md'), globs), /'docs\/sub\/x\.md'/, '* stays in one segment');
 
-  const off = fixture(t, { version: 1, mainCheckout: { guard: false } }).repo;
-  assert.equal(edit(path.join(off, 'src/app.js'), off), null);
+  for (const config of [{ version: 1 }, { version: 1, mainCheckout: { guard: false } }]) {
+    const off = fixture(t, config).repo;
+    assert.equal(edit(path.join(off, 'src/app.js'), off), null, JSON.stringify(config));
+  }
 
   const { repo } = fixture(t);
   assert.equal(checkTool({ tool_name: 'Edit', tool_input: { file_path: path.join(repo, 'src/app.js') }, cwd: repo }, { env: { AIDRIAN_ALLOW_MAIN_WRITE: '1' } }), null);

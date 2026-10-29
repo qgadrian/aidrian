@@ -15,8 +15,8 @@ In a group such as `pr`, set only the keys you change; the others keep their def
   "version": 1,
   "defaultBranch": "main",
   "state": { "dir": null },
-  "worktrees": { "dir": null, "bootstrap": null },
-  "mainCheckout": { "guard": true, "allowWrites": [] },
+  "worktrees": { "dir": ".worktrees", "bootstrap": null },
+  "mainCheckout": { "guard": false, "allowWrites": [] },
   "commits": { "types": ["build", "chore", "ci", "docs", "feat", "fix", "perf", "refactor", "revert", "style", "test"] },
   "pr": {
     "requiredSections": ["Summary", "Tests run"],
@@ -35,9 +35,9 @@ In a group such as `pr`, set only the keys you change; the others keep their def
 | `version` | The format of the project folder. [project-folder.md](project-folder.md#versioning) gives the rule. |
 | `defaultBranch` | The branch that work merges into. |
 | `state.dir` | The machine-local [state folder](project-folder.md#local-state); `null` is the one under `$XDG_STATE_HOME`. |
-| `worktrees.dir` | The folder for task worktrees; `null` is the state folder's `worktrees/`. |
+| `worktrees.dir` | The folder for [task worktrees](project-folder.md#task-worktrees), `.worktrees` at the repository root by default. |
 | `worktrees.bootstrap` | One shell command to run inside each new worktree, such as `npm ci`; `null` runs nothing. |
-| `mainCheckout.guard` | `false` lets agents edit tracked files in the main checkout; turn it off in a project that does not use worktrees. |
+| `mainCheckout.guard` | `true` blocks agent edits to tracked files in the main checkout, so task work happens in worktrees. Off by default. |
 | `mainCheckout.allowWrites` | Tracked paths agents may still edit in the main checkout, as globs with `*` and `**`. Ignored paths are always allowed. |
 | `commits.types` | The Conventional Commits types a commit subject may use. |
 | `pr.requiredSections` | The `## ` sections every pull request body must have. |

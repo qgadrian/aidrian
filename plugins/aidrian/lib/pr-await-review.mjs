@@ -1,4 +1,4 @@
-// `aidrian pr await-review`: wait, deterministically, for the Codex review bot (config.json `pr.reviewer`) to finish
+// `aidrian pr await-review`: wait, deterministically, for the Codex review bot (config.json `github.reviewer`) to finish
 // with a pull request, then report what it left behind. The bot reviews once per "@codex review" comment, 5 to 25
 // minutes later; opening a pull request or marking it ready triggers nothing; a later push is not re-reviewed; and a
 // clean pass is a 👍 on the pull request instead of a review. A prose rule cannot hold that, so this command does:
@@ -13,7 +13,7 @@
 //      recording the head it asks about, unless a 👀 already acknowledges a trigger for this head.
 //   5. Poll until a signal covers the current head or the timeout ends. Head is re-read on every poll; with
 //      --request the bot is asked once per new head.
-//   6. With --request: at --max-rounds bot reviews (config.json `pr.maxReviewRounds`) post nothing and end with
+//   6. With --request: at --max-rounds bot reviews (config.json `github.maxReviewRounds`) post nothing and end with
 //      `round_limit`; a long run of rounds is a design problem more review will not fix. A raised limit is recorded
 //      in the request comment, and later runs keep the highest one.
 //
@@ -25,7 +25,7 @@ import { execFileSync } from 'node:child_process';
 
 import { DEFAULTS as CONFIG_DEFAULTS } from './config.mjs';
 
-export const DEFAULT_REVIEWER = CONFIG_DEFAULTS.pr.reviewer;
+export const DEFAULT_REVIEWER = CONFIG_DEFAULTS.github.reviewer;
 export const REQUEST_COMMENT = '@codex review';
 export const DEFAULTS = Object.freeze({ timeoutSec: 840, intervalSec: 60, maxRounds: 10 });
 
@@ -93,7 +93,7 @@ export const exitCodeFor = (status) => {
   return 0;
 };
 
-// `defaults` carries config.json `pr.reviewer` and `pr.maxReviewRounds`; flags win.
+// `defaults` carries config.json `github.reviewer` and `github.maxReviewRounds`; flags win.
 export const parseArgs = (argv, defaults = {}) => {
   const out = { pr: null, repo: null, request: false, ...DEFAULTS, reviewer: DEFAULT_REVIEWER, ...defaults };
   for (let i = 0; i < argv.length; i += 1) {
@@ -366,7 +366,7 @@ export const awaitReview = async (opts, { gh = defaultGh, sleep = (s) => new Pro
 // The CLI body: prints the result JSON and returns its exit code; a usage or gh error prints one line and returns 1.
 export async function runAwaitReview(args, config) {
   try {
-    const result = await awaitReview(parseArgs(args, { reviewer: config.pr.reviewer, maxRounds: config.pr.maxReviewRounds }));
+    const result = await awaitReview(parseArgs(args, { reviewer: config.github.reviewer, maxRounds: config.github.maxReviewRounds }));
     console.log(JSON.stringify(result, null, 2));
     return exitCodeFor(result.status);
   } catch (err) {

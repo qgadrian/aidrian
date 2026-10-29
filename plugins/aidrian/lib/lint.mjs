@@ -9,7 +9,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { isDirectory, isFile } from './config.mjs';
+import { commandConfig, isDirectory, isFile } from './config.mjs';
 import { runGit } from './git.mjs';
 import { loadKnowledge } from './knowledge.mjs';
 import { projectAt } from './project.mjs';
@@ -35,7 +35,8 @@ export const commands = {
         return 1;
       }
       const project = projectAt(path.resolve(values.project ?? '.'));
-      const { config, buckets } = loadKnowledge(project);
+      const config = commandConfig(project);
+      const { buckets } = loadKnowledge(project);
       const at = (rel) => path.join(project.root, rel);
       const runs = {
         skills: () => lintSkills(dirs.length ? dirs : [at('.claude/skills')], config.skills),

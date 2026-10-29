@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { DEFAULTS, linksOutside, loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { commandConfig, CONFIG_ERROR, DEFAULTS, linksOutside, loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -21,17 +21,18 @@ test('the example consumer config is valid, turns the main-checkout guard on, an
 });
 
 test('file values win; a group keeps the defaults for the keys the file leaves out', (t) => {
-  const { config, errors } = loadConfig(project(t, { version: 1, defaultBranch: 'trunk', pr: { maxReviewRounds: 3, requiredChecks: ['e2e'] } }));
+  const github = { maxReviewRounds: 3, requiredChecks: ['e2e'], conditionalChecks: ['db tests'] };
+  const { config, errors } = loadConfig(project(t, { version: 1, defaultBranch: 'trunk', github }));
   assert.deepEqual(errors, []);
   assert.equal(config.defaultBranch, 'trunk');
-  assert.deepEqual(config.pr, { ...DEFAULTS.pr, maxReviewRounds: 3, requiredChecks: ['e2e'] });
+  assert.deepEqual(config.github, { ...DEFAULTS.github, ...github });
   assert.deepEqual(config.worktrees, DEFAULTS.worktrees);
 });
 
 test('the loaded config is frozen all the way down', (t) => {
   const { config } = loadConfig(project(t, { version: 1, mainCheckout: { allowWrites: ['notes/**'] } }));
   assert.throws(() => { config.defaultBranch = 'x'; }, TypeError);
-  assert.throws(() => { config.pr.reviewer = 'x'; }, TypeError);
+  assert.throws(() => { config.github.reviewer = 'x'; }, TypeError);
   assert.throws(() => config.mainCheckout.allowWrites.push('x'), TypeError);
   assert.throws(() => config.commits.types.push('x'), TypeError);
 });
@@ -39,12 +40,14 @@ test('the loaded config is frozen all the way down', (t) => {
 // Each case expects exactly one error, and the default in place of the bad value.
 const errorCases = [
   ['unknown top-level key', { version: 1, extra: 1 }, /: unknown key "extra"$/],
-  ['unknown key in a group', { version: 1, pr: { reviewers: 'x' } }, /: unknown key "pr\.reviewers"$/],
+  ['the old "pr" group, now "github"', { version: 1, pr: { reviewer: 'x' } }, /: "pr" is now "github": rename the key$/],
+  ['unknown key in a group', { version: 1, github: { reviewers: 'x' } }, /: unknown key "github\.reviewers"$/],
   ['inherited property name as a key', JSON.parse('{"version": 1, "__proto__": {}}'), /: unknown key "__proto__"$/],
   ['string instead of a list', { version: 1, commits: { types: 'feat' } }, /"commits\.types" must be a list of non-empty strings$/],
-  ['group that is not an object', { version: 1, pr: [] }, /"pr" must be an object$/],
+  ['check names that are not a list', { version: 1, github: { conditionalChecks: 'db tests' } }, /"github\.conditionalChecks" must be a list of non-empty strings$/],
+  ['group that is not an object', { version: 1, github: [] }, /"github" must be an object$/],
   ['negative number', { version: 1, docs: { wrapLimit: -1 } }, /"docs\.wrapLimit" must be a whole number, 0 or more$/],
-  ['zero where a positive number is needed', { version: 1, pr: { maxReviewRounds: 0 } }, /"pr\.maxReviewRounds" must be a whole number above 0$/],
+  ['zero where a positive number is needed', { version: 1, github: { maxReviewRounds: 0 } }, /"github\.maxReviewRounds" must be a whole number above 0$/],
   ['string for a boolean', { version: 1, mainCheckout: { guard: 'no' } }, /"mainCheckout\.guard" must be true or false$/],
   ['empty string', { version: 1, defaultBranch: ' ' }, /"defaultBranch" must be a non-empty string$/],
   ['handoff mode outside its list', { version: 1, session: { handoff: 'always' } }, /"session\.handoff" must be "off", "ask", or "auto"$/],
@@ -104,7 +107,7 @@ for (const [name, value, expected] of errorCases) {
     assert.match(errors[0], /^\.aidrian\/config\.json: /);
     assert.match(errors[0], expected);
     assert.equal(current, true);
-    for (const key of ['defaultBranch', 'pr', 'docs', 'commits', 'mainCheckout']) assert.deepEqual(config[key], DEFAULTS[key], key);
+    for (const key of ['defaultBranch', 'github', 'docs', 'commits', 'mainCheckout']) assert.deepEqual(config[key], DEFAULTS[key], key);
   });
 }
 
@@ -189,6 +192,18 @@ test('a missing, malformed, or outside-linking file is one error, and the config
     assert.equal(current, false);
     assert.deepEqual(config, DEFAULTS);
   }
+});
+
+test('commandConfig throws every config error with the exit code it is given; no config.json yet is the defaults', (t) => {
+  const renamed = project(t, { version: 1, pr: { requiredChecks: ['e2e'] } });
+  assert.throws(() => commandConfig(renamed), { code: CONFIG_ERROR, exitCode: 1, message: '.aidrian/config.json: "pr" is now "github": rename the key' });
+  assert.throws(() => commandConfig(renamed, { exitCode: 3 }), { exitCode: 3 });
+  const other = project(t, { version: 2 });
+  assert.throws(() => commandConfig(other), { code: CONFIG_ERROR, message: /project folder version 2; this plugin reads version 1/ });
+  const missing = project(t, {});
+  rmSync(path.join(missing.root, '.aidrian/config.json'));
+  assert.equal(commandConfig(missing), DEFAULTS);
+  assert.deepEqual(commandConfig(project(t, { version: 1, github: { requiredChecks: ['e2e'] } })).github.requiredChecks, ['e2e']);
 });
 
 test('linksOutside judges a path that does not exist yet where a write would create it', (t) => {

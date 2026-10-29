@@ -11,7 +11,7 @@ import { accessSync, constants, copyFileSync, existsSync, mkdirSync, readdirSync
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { loadConfig } from './config.mjs';
+import { commandConfig } from './config.mjs';
 import { findWrapViolations, nextFenceState } from './markdown-wrap.mjs';
 import { projectAt } from './project.mjs';
 
@@ -43,7 +43,8 @@ export const commands = {
         console.log(taken ? `saved ${taken.source} to ${taken.snapshot}` : 'no brief to supersede; check compares nothing unless given --prior');
         return 0;
       }
-      const { exitCode, lines } = checkBrief(briefPath, prior, loadConfig(projectAt(process.cwd())).config.docs.wrapLimit);
+      // A config with errors exits 2, as an unreadable input does: it is not a finding.
+      const { exitCode, lines } = checkBrief(briefPath, prior, commandConfig(projectAt(process.cwd()), { exitCode: 2 }).docs.wrapLimit);
       (exitCode === 0 ? console.log : console.error)(lines.join('\n'));
       return exitCode;
     },

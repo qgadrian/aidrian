@@ -2,13 +2,17 @@
 
 `config.json` in the [project folder](project-folder.md) holds the folder version and the project's settings for the plugin.
 The plugin's commands, hooks, and skills read it.
+An `aidrian` command never acts on a `config.json` with an error, such as a renamed key.
+It prints the errors and exits with its error code instead, such as 3 for `aidrian pr checks`.
+The hooks keep working, with the default in place of each bad value.
+Without a `config.json`, the commands use the defaults.
 
 [`examples/consumer/.aidrian/config.json`](../examples/consumer/.aidrian/config.json) is a minimal, checked example.
 
 ## Keys
 
 Only `version` is required. Every other key is optional, and the values below are the defaults.
-In a group such as `pr`, set only the keys you change; the others keep their defaults.
+In a group such as `github`, set only the keys you change; the others keep their defaults.
 
 ```json
 {
@@ -18,12 +22,13 @@ In a group such as `pr`, set only the keys you change; the others keep their def
   "worktrees": { "dir": ".worktrees", "bootstrap": null },
   "mainCheckout": { "guard": false, "allowWrites": [] },
   "commits": { "types": ["build", "chore", "ci", "docs", "feat", "fix", "perf", "refactor", "revert", "style", "test"] },
-  "pr": {
+  "github": {
     "requiredSections": ["Summary", "Tests run"],
     "reviewer": "chatgpt-codex-connector[bot]",
     "maxReviewRounds": 10,
     "requiredChecks": [],
-    "ignoreCancelledChecks": []
+    "ignoreCancelledChecks": [],
+    "conditionalChecks": []
   },
   "docs": { "wrapLimit": 155, "alwaysBudgetBytes": 40000 },
   "skills": { "descriptionChars": 160, "listingBytes": 9216 },
@@ -43,11 +48,12 @@ In a group such as `pr`, set only the keys you change; the others keep their def
 | `mainCheckout.guard` | `true` blocks agent edits to tracked files in the main checkout, so task work happens in worktrees. Off by default. |
 | `mainCheckout.allowWrites` | Tracked paths agents may still edit in the main checkout, as globs with `*` and `**`. Ignored paths are always allowed. |
 | `commits.types` | The Conventional Commits types a commit subject may use. |
-| `pr.requiredSections` | The `## ` sections every pull request body must have; the Bash hook refuses a `gh pr create` or `gh pr edit` body without them. `[]` checks none. |
-| `pr.reviewer` | The login of the Codex review bot that `aidrian pr await-review` waits for. |
-| `pr.maxReviewRounds` | How many bot reviews a pull request may get before `aidrian pr await-review --request` stops asking. |
-| `pr.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. |
-| `pr.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
+| `github.requiredSections` | The `## ` sections every pull request body must have; the Bash hook refuses a `gh pr create` or `gh pr edit` body without them. `[]` checks none. |
+| `github.reviewer` | The login of the Codex review bot that `aidrian pr await-review` waits for. |
+| `github.maxReviewRounds` | How many bot reviews a pull request may get before `aidrian pr await-review --request` stops asking. |
+| `github.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. |
+| `github.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
+| `github.conditionalChecks` | Parts of check names whose `SKIPPED` or `NEUTRAL` result is routine, such as a job a path filter turns off. Once the list has an entry, `aidrian pr checks` fails on any other skip; `[]` lets every skip pass, named in the output. |
 | `docs.wrapLimit` | The longest line, in characters, allowed in a Markdown file an agent writes; `0` turns the check off. |
 | `docs.alwaysBudgetBytes` | The most bytes all `always` knowledge docs may add up to (`aidrian lint budget`). |
 | `skills.descriptionChars` | The longest skill or agent description, in characters (`aidrian lint skills` and `agents`). |

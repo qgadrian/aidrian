@@ -48,7 +48,7 @@ Every `.aidrian/` path in this document then starts with `tools/aidrian/` instea
 `version` in `config.json` is a whole number that names the format of the whole folder: the config keys and the index files.
 This plugin reads version 1 only.
 When `version` is missing, older, or newer, `aidrian check` fails with a link to [Migrating](#migrating),
-and the commands and hooks read nothing else from the folder.
+every other `aidrian` command that reads `config.json` stops with the same error, and the hooks read nothing else from the folder.
 
 A release that changes the format raises the version and lists, under Migrating, what a project changes.
 
@@ -100,13 +100,14 @@ Elsewhere, run it by its path, such as `path/to/aidrian-harness/plugins/aidrian/
 
 ## Local state
 
-The plugin writes plans, session handoff briefs, pull request body drafts, the lesson inbox, and the dispatch log on each machine.
-They live in one state folder per project, outside the repository, so git never sees them:
+The plugin writes plans, session handoff briefs, review state, pull request body drafts, the lesson inbox, and the dispatch log
+on each machine. They live in one state folder per project, outside the repository, so git never sees them:
 
 ```text
 $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── plans/                local plans
 ├── handoffs/             session handoff briefs
+├── reviews/              review manifests, and the agents the specialist-review skill keeps warm
 ├── lessons/inbox.jsonl   the lesson inbox
 ├── tmp/                  pull request bodies the pr-write skill drafts
 └── dispatch-log.jsonl    the dispatch log

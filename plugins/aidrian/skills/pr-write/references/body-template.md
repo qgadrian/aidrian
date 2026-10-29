@@ -1,6 +1,6 @@
 # Pull request body
 
-The required sections come first, in the order config.json `pr.requiredSections` lists them.
+The required sections come first, in the order config.json `github.requiredSections` lists them.
 The optional sections follow, in this order, only when they carry something.
 
 ```md

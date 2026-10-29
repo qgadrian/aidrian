@@ -2,6 +2,8 @@
 // Each command maps to the module in this folder that exports it in `commands`: { name: { usage, about, run(args) → exit
 // code } }. Only the module of the command that runs is imported.
 
+import { CONFIG_ERROR } from './config.mjs';
+
 const COMMANDS = {
   check: './check.mjs',
   init: './check.mjs',
@@ -22,9 +24,16 @@ const { commands } = await import(COMMANDS[command]);
 try {
   process.exitCode = await commands[command].run(args);
 } catch (error) {
-  // node:util parseArgs throws these for an unknown option or a missing value.
-  if (!error.code?.startsWith('ERR_PARSE_ARGS')) throw error;
-  await fail(error.message);
+  if (error.code === CONFIG_ERROR) {
+    // config.json has errors, so the command stopped before it acted (config.mjs commandConfig).
+    console.error(error.message);
+    process.exitCode = error.exitCode;
+  } else if (error.code?.startsWith('ERR_PARSE_ARGS')) {
+    // node:util parseArgs throws these for an unknown option or a missing value.
+    await fail(error.message);
+  } else {
+    throw error;
+  }
 }
 
 async function fail(problem) {

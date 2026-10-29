@@ -1029,7 +1029,7 @@ test('REQUEST_INSTRUCTIONS asks for every location of a repeated mistake in one 
   assert.match(REQUEST_INSTRUCTIONS, /every other location in that one finding/);
 });
 
-test('config.json pr.reviewer and pr.maxReviewRounds are the defaults, and flags still win', () => {
+test('config.json github.reviewer and github.maxReviewRounds are the defaults, and flags still win', () => {
   const fromConfig = parseArgs([], { reviewer: 'review-bot[bot]', maxRounds: 4 });
   assert.deepEqual([fromConfig.reviewer, fromConfig.maxRounds, fromConfig.timeoutSec], ['review-bot[bot]', 4, 840]);
   assert.deepEqual(parseArgs(['--reviewer', 'other[bot]', '--max-rounds', '6'], { reviewer: 'review-bot[bot]', maxRounds: 4 }).maxRounds, 6);

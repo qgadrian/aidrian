@@ -21,7 +21,7 @@ Primary responsibility:
 Operating rules:
 
 - Inspect the repo before planning when local context is available.
-- You may consult `explorer`, `architect`, and `product-manager` to sharpen the plan, when the project has them.
+- You may consult `explorer`, `architect`, and `product-manager` to sharpen the plan.
 - You may write or update local planning artifacts in the plans folder, or the design-import plan path per the carve-out above.
 - Do not create Linear issues or Projects yourself.
 - Do not coordinate runtime execution after planning is done.

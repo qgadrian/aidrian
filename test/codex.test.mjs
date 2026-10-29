@@ -138,7 +138,7 @@ test('install-agents adds and updates its own roles, removes stale ones, and lea
   const shipped = readdirSync(CODEX_AGENTS).sort();
   assert.deepEqual(readdirSync(target).sort(), [...shipped, 'my-own-agent.toml'].sort());
   for (const file of shipped) assert.equal(readFileSync(path.join(target, file), 'utf8'), readFileSync(path.join(CODEX_AGENTS, file), 'utf8'));
-  assert.match(run(), /are up to date \(9\)/);
+  assert.match(run(), new RegExp(`are up to date \\(${shipped.length}\\)`));
 });
 
 test('install-agents fails on a bad argument, and touches nothing', (t) => {

@@ -114,6 +114,7 @@ when a summary is empty, longer than 160 characters, or more than one line, and 
 `init` drafts the index for a folder of docs, so an existing docs tree becomes a bucket without editing the docs.
 The project folder must exist; `aidrian init` creates it.
 `init` writes no index when a symlink would take it outside the project.
+It never reads a doc that links outside the folder: it leaves that doc out and names it in a warning.
 
 ```console
 $ aidrian-knowledge init docs

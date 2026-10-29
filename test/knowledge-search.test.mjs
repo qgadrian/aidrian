@@ -126,6 +126,36 @@ test('init writes no index through a knowledge folder that links outside the pro
   assert.deepEqual(readdirSync(outside), []);
 });
 
+test('init never reads a doc that links outside the folder: it leaves the doc out and names it', (t) => {
+  const project = tempProject(t);
+  const outside = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-outside-')));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  writeFileSync(path.join(outside, 'secret.md'), '# Secret\n\nThe token is hunter2.\n');
+  symlinkSync(path.join(outside, 'secret.md'), path.join(project, 'docs/guides/secret.md'));
+  // Inside the project, but outside the folder: still not the bucket's to read.
+  symlinkSync('../../other/guides/more.md', path.join(project, 'docs/guides/more.md'));
+  symlinkSync('missing.md', path.join(project, 'docs/guides/broken.md'));
+  symlinkSync('deploys.md', path.join(project, 'docs/guides/deploys-link.md'));
+  const { status, stdout, stderr } = run(['init', 'docs/guides'], project);
+  assert.equal(status, 0);
+  assert.equal(stderr, [
+    'docs/guides/broken.md: links outside docs/guides; left out',
+    'docs/guides/more.md: links outside docs/guides; left out',
+    'docs/guides/secret.md: links outside docs/guides; left out',
+    '',
+  ].join('\n'));
+  assert.match(stdout, /^wrote \.aidrian\/knowledge\/guides\.json: 4 docs in docs\/guides,/);
+  const index = readFileSync(path.join(project, '.aidrian/knowledge/guides.json'), 'utf8');
+  assert.deepEqual(Object.keys(JSON.parse(index).docs), ['deploys-link.md', 'deploys.md', 'long.md', 'untitled.md'], 'a link inside the folder stays');
+  assert.doesNotMatch(index, /hunter2|Secret|More/);
+
+  mkdirSync(path.join(project, 'linked'));
+  symlinkSync(path.join(outside, 'secret.md'), path.join(project, 'linked/secret.md'));
+  const none = run(['init', 'linked'], project);
+  assert.deepEqual([none.status, none.stderr], [1, 'linked/secret.md: links outside linked; left out\nlinked: has no .md files\n']);
+  assert.deepEqual(readdirSync(path.join(project, '.aidrian/knowledge')), ['guides.json']);
+});
+
 test('init needs a project, and refuses a folder outside it, a missing folder, a folder with no docs, and a wrong argument count', (t) => {
   const project = tempProject(t);
   mkdirSync(path.join(project, 'empty'));

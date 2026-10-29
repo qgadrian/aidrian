@@ -9,21 +9,40 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { insidePath, isDirectory, isFile, loadConfig, readJson } from './config.mjs';
-import { checkoutRoots, mainRoot, runGit } from './git.mjs';
+import { checkoutRoots, currentRoot, mainRoot, runGit } from './git.mjs';
 
 const DEFAULT_DIR = '.aidrian';
 const OVERRIDE = '.aidrian.json';
 const LOCAL = '.aidrian.local.json';
 
 // The project at or above `start`: the nearest folder that has `.aidrian.json` or `.aidrian/config.json`. Null when none.
+// In a git checkout the search stops at its top folder, so a worktree whose branch has no project folder has no project,
+// even inside a main checkout that has one. Outside git it goes on to the file-system root.
 export function findProject(start) {
   let dir = path.resolve(start);
+  let probe = dir;
+  while (!isDirectory(probe) && path.dirname(probe) !== probe) probe = path.dirname(probe);
+  const top = currentRoot(probe);
   for (;;) {
+    if (top !== null && outside(dir, top)) return null;
     if (isFile(path.join(dir, OVERRIDE)) || isFile(path.join(dir, DEFAULT_DIR, 'config.json'))) return openProject(dir);
     const parent = path.dirname(dir);
     if (parent === dir) return null;
     dir = parent;
   }
+}
+
+// Whether `dir`, symlinks resolved, lies outside the folder `top`, which git reports with symlinks resolved. A folder
+// that does not exist holds no project and is never outside: the search goes on to its parent.
+function outside(dir, top) {
+  let real;
+  try {
+    real = realpathSync(dir);
+  } catch {
+    return false;
+  }
+  const rel = path.relative(top, real);
+  return rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
 }
 
 // The project at or above `start`, or one rooted at `start` that has no folder yet. For commands that work either way.

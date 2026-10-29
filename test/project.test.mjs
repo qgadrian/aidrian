@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -133,6 +133,37 @@ test('a git worktree has no copy of .aidrian.local.json, so its sources come fro
   assert.deepEqual(inWorktree.errors, []);
   assert.deepEqual(inWorktree.sources.slice(1), [{ label: path.relative(path.join(dir, 'app'), shared), base: shared, index: 'knowledge', local: true }]);
   assert.deepEqual(findProject(path.join(dir, 'app')).sources.slice(1), inWorktree.sources.slice(1));
+});
+
+test('the search stops at the top of the git checkout: a worktree whose branch has no project folder has none', (t) => {
+  const dir = tempDir(t);
+  const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' });
+  git('init', '-q', '-b', 'main');
+  writeFileSync(path.join(dir, '.gitignore'), '.worktrees/\n');
+  git('add', '.');
+  git('-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init');
+  // The branch predates the project folder, which the main checkout adds after it.
+  const old = path.join(dir, '.worktrees/old');
+  git('worktree', 'add', '-q', '-b', 'old', old);
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}\n');
+  mkdirSync(path.join(old, 'src'));
+
+  assert.equal(findProject(dir).root, dir);
+  assert.equal(findProject(old), null);
+  assert.equal(findProject(path.join(old, 'src')), null);
+  assert.equal(findProject(path.join(old, 'missing/sub')), null, 'from a folder that does not exist yet');
+  const link = path.join(tempDir(t), 'link');
+  symlinkSync(dir, link);
+  assert.equal(findProject(path.join(link, '.worktrees/old/src')), null, 'from a path spelled through a symlink');
+  assert.equal(findProject(link).root, link, 'which the project root keeps');
+  assert.equal(projectAt(old).root, old, 'a command there works with the defaults');
+
+  const hook = spawnSync(process.execPath, [path.join(ROOT, 'plugins/aidrian/scripts/hook-session-start.mjs')], {
+    input: JSON.stringify({ hook_event_name: 'SessionStart', cwd: path.join(old, 'src') }),
+    encoding: 'utf8',
+  });
+  assert.deepEqual([hook.status, hook.stdout, hook.stderr], [0, '', ''], 'the hooks stay silent there');
 });
 
 test('every spelling of one remote normalizes to host/owner/repo', () => {

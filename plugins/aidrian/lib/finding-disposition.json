@@ -1,0 +1,209 @@
+{
+  "$comment": "Lookup table for lib/finding-disposition.mjs (aidrian pr disposition): severity x likelihood x affects [x cost] [x phase] -> disposition. What real users and operators hit routinely outranks contrived exploits; a trivial fix is always worth taking, while a structural one must earn its place. First matching rule wins. Change the table, not a prompt.",
+  "severities": [
+    "critical",
+    "high",
+    "medium",
+    "low"
+  ],
+  "severitySynonyms": {
+    "blocker": "critical",
+    "major": "high",
+    "minor": "medium",
+    "nit": "low",
+    "informational": "low"
+  },
+  "likelihoods": [
+    "routine",
+    "plausible",
+    "contrived"
+  ],
+  "affects": [
+    "users",
+    "operators",
+    "revenue",
+    "internal"
+  ],
+  "definitions": {
+    "critical": "harm no one can undo later: a hole in auth, tenant isolation, or payment trust, or data or money lost for good. Only critical skips the likelihood check, so a rare loss a person can refund or fix by hand is high at most, never critical",
+    "high": "a real defect that breaks or corrupts a main flow for the people who hit it",
+    "medium": "a real defect that degrades a flow or forces a workaround",
+    "low": "polish or a nit; nobody is blocked",
+    "routine": "happens in normal use within a month, with no special setup",
+    "plausible": "needs one specific but realistic condition: a plan, a timing, a device, or modest attacker effort",
+    "contrived": "needs a coincidence of rare conditions, or attacker effort out of proportion to the gain",
+    "users": "the people the product serves: its main screens, messages, and emails",
+    "operators": "the people who run the product or their business on it: admin screens, settings, notifications, day-to-day operations",
+    "revenue": "money or entitlement: payments, payouts, charges, subscriptions, feature gates, plan limits, tenant data exposure",
+    "internal": "only developers, tooling, logs, or the harness see it",
+    "fix_now": "fix in this PR",
+    "accepted_residual": "real defect, consciously not fixed: written into the pull request body as an accepted residual with a code comment, no issue. On a path where a customer buys or signs up, the residual is allowed and made visible, never answered with a refusal",
+    "acceptable_as_is": "not a defect worth recording: no PR-body entry, no comment",
+    "drop_unless_cited": "surface only when it cites a written project rule or a documented anti-pattern; otherwise do not report it",
+    "needs_axis": "a human or user finding without likelihood and affects: classify it, never guess",
+    "trivial": "a few lines, local, no new state or migration; cheaper to fix than to discuss",
+    "bounded": "a contained change within the touched module, tests included",
+    "structural": "new persisted state, a migration, a cross-module contract change, or a redesign",
+    "early": "a person's finding, or a bot finding that arrived while the pull request had 1 to 4 bot reviews",
+    "late": "a bot finding that arrived once the pull request had 5 or more bot reviews, when fixes start adding new edge cases"
+  },
+  "rules": [
+    {
+      "when": {
+        "severity": [
+          "critical"
+        ]
+      },
+      "disposition": "fix_now"
+    },
+    {
+      "when": {
+        "severity": [
+          "low"
+        ]
+      },
+      "disposition": "drop_unless_cited"
+    },
+    {
+      "when": {
+        "cost": [
+          "trivial"
+        ]
+      },
+      "disposition": "fix_now"
+    },
+    {
+      "when": {
+        "likelihood": [
+          "routine"
+        ],
+        "affects": [
+          "users",
+          "operators",
+          "revenue"
+        ]
+      },
+      "disposition": "fix_now"
+    },
+    {
+      "when": {
+        "likelihood": [
+          "contrived"
+        ]
+      },
+      "disposition": "accepted_residual"
+    },
+    {
+      "when": {
+        "cost": [
+          "structural"
+        ],
+        "severity": [
+          "medium"
+        ]
+      },
+      "disposition": "accepted_residual"
+    },
+    {
+      "when": {
+        "severity": [
+          "high"
+        ],
+        "likelihood": [
+          "plausible"
+        ],
+        "affects": [
+          "users",
+          "operators",
+          "revenue"
+        ]
+      },
+      "disposition": "fix_now"
+    },
+    {
+      "when": {
+        "phase": [
+          "late"
+        ],
+        "severity": [
+          "medium"
+        ],
+        "likelihood": [
+          "plausible"
+        ],
+        "affects": [
+          "users",
+          "operators"
+        ]
+      },
+      "disposition": "accepted_residual"
+    },
+    {
+      "when": {
+        "severity": [
+          "medium"
+        ],
+        "likelihood": [
+          "plausible"
+        ],
+        "affects": [
+          "users",
+          "operators"
+        ]
+      },
+      "disposition": "fix_now"
+    },
+    {
+      "when": {
+        "affects": [
+          "internal"
+        ],
+        "severity": [
+          "medium"
+        ]
+      },
+      "disposition": "accepted_residual"
+    }
+  ],
+  "default": "fix_now",
+  "botSourceWithoutAxis": "acceptable_as_is",
+  "costs": [
+    "trivial",
+    "bounded",
+    "structural"
+  ],
+  "defaultCost": "bounded",
+  "examples": {
+    "routine": [
+      "a main screen breaks on a common phone size",
+      "a confirmation email is missing after a normal action",
+      "a toggle that should be off ships on"
+    ],
+    "plausible": [
+      "a race two people can hit by clicking at the same moment",
+      "a webhook retry that creates a duplicate under the provider's normal retry behaviour",
+      "a plan-limit check skipped on one of three entry points"
+    ],
+    "contrived": [
+      "an attacker must find an undocumented endpoint, craft a payload, and flip a database flag",
+      "two first-time setups of the same account within seconds, across an hour boundary",
+      "a provider 5xx cached under an idempotency key and a retry in the same hour"
+    ],
+    "trivial": [
+      "a null check, a missing await, ten local lines with an existing test to extend"
+    ],
+    "bounded": [
+      "a new branch in a route plus its unit and route tests"
+    ],
+    "structural": [
+      "a migration or new persisted state",
+      "a cross-module contract change",
+      "a redesign of a flow"
+    ]
+  },
+  "phases": [
+    "early",
+    "late"
+  ],
+  "lateRoundFrom": 5
+}

@@ -5,7 +5,7 @@ description: Decompose a broad goal into a Linear Project with ordered parent an
 
 # Initiative Agent
 
-Before you start, load project knowledge with the `knowledge` skill. Knowledge tags: `issue_tracker`, `docs`.
+Before you start, follow the `knowledge` skill. Knowledge tags: `issue_tracker`, `docs`.
 
 Turn a broad goal into a Linear-first initiative blueprint.
 
@@ -29,7 +29,7 @@ You own:
 
 You do not own:
 
-- authoring general local planning documents under `.aidrian/plans/**`
+- authoring general local planning documents under `<state>/plans/**`
 - creating Linear-native artifacts directly
 - implementation execution
 - runtime orchestration after an issue is picked up

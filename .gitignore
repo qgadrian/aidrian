@@ -1,4 +1,5 @@
 node_modules/
+.worktrees/
 .scratch/
 dist/
 .claude/runs/

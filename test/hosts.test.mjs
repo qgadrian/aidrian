@@ -15,6 +15,7 @@ const MARKETPLACE = JSON.parse(readFileSync(path.join(ROOT, '.claude-plugin/mark
 const VERSION = JSON.parse(readFileSync(path.join(PLUGIN, '.claude-plugin/plugin.json'), 'utf8')).version;
 const SKILLS = readdirSync(path.join(PLUGIN, 'skills')).sort();
 const AGENTS = readdirSync(path.join(PLUGIN, 'agents')).map((file) => file.replace(/\.md$/, '')).sort();
+const HOOK_EVENTS = Object.keys(JSON.parse(readFileSync(path.join(PLUGIN, 'hooks/hooks.json'), 'utf8')).hooks).sort();
 
 const skipUnless = (command) => {
   if (process.env.AIDRIAN_SKIP_HOSTS === '1') return 'AIDRIAN_SKIP_HOSTS=1';
@@ -22,14 +23,15 @@ const skipUnless = (command) => {
 };
 const run = (command, args, options = {}) => execFileSync(command, args, { encoding: 'utf8', timeout: 120_000, ...options });
 
-test('Claude Code validates the marketplace and plugin, and loads every agent and skill', { skip: skipUnless('claude') }, () => {
+test('Claude Code validates the marketplace and plugin, and loads every agent, skill, and hook event', { skip: skipUnless('claude') }, () => {
   assert.match(run('claude', ['plugin', 'validate', '--strict', ROOT]), /Validation passed/);
   assert.match(run('claude', ['plugin', 'validate', '--strict', PLUGIN]), /Validation passed/);
 
   const details = run('claude', ['--plugin-dir', PLUGIN, 'plugin', 'details', 'aidrian']);
-  const listed = (kind) => details.match(new RegExp(`^\\s*${kind} \\((\\d+)\\)\\s+(.*)$`, 'm'))?.[2].split(', ').sort();
+  const listed = (kind) => details.match(new RegExp(`^\\s*${kind} \\((\\d+)\\)\\s+(.*)$`, 'm'))?.[2].replace(/\s+\(.*\)$/, '').split(', ').sort();
   assert.deepEqual(listed('Skills'), SKILLS);
   assert.deepEqual(listed('Agents'), AGENTS);
+  assert.deepEqual(listed('Hooks'), HOOK_EVENTS, 'every event in hooks.json loads');
 });
 
 test('Codex installs the plugin, and a project session sees every skill, agent, and AGENTS.md', { skip: skipUnless('codex') }, (t) => {

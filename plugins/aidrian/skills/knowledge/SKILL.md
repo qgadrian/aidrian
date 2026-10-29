@@ -1,30 +1,34 @@
 ---
 name: knowledge
-description: Load the project's rules from its knowledge buckets (.aidrian/knowledge.json) at the start of a task, before planning, editing, or reviewing.
+description: Load the project's rules from its knowledge buckets (the .aidrian/ folder) at the start of a task, before planning, editing, or reviewing.
 ---
 
 # Project knowledge
 
 The aidrian plugin ships generic agents and skills.
-Each project brings its own rules as knowledge buckets: folders of Markdown docs with a `bucket.json` index.
+Each project brings its own rules as knowledge buckets: folders of Markdown docs, indexed in the project folder,
+`.aidrian/` at the repository root or the folder `.aidrian.json` names (`.aidrian/` below means that folder; `aidrian check` validates it).
 This skill is how you find and read them, and which shared defaults apply when a project says nothing.
 
 ## Load before you work
 
-1. Open `.aidrian/knowledge.json` at the repository root. It lists the bucket folders, for example
-   `{ "buckets": ["docs/knowledge/engineering", "docs/knowledge/product"] }`.
-2. In each bucket, open `bucket.json`. Its doc paths are relative to the bucket folder.
-3. Read every doc in `always`, then the docs under each tag you were given:
-   your agent's knowledge tags, plus any tag that your dispatcher or the task names.
+1. Read the `always` docs now. A hook names them at the start of every session and subagent.
+2. When the task touches the area of one of your tags, run `aidrian-knowledge route <tag>` and read what it lists.
+   Your tags are your agent's knowledge tags, plus any tag your dispatcher or the task names.
    Add `product_sensitive` when the task touches what users see, money, data, or lifecycle rules.
-4. Read each doc once, in bucket order. A tag from the Tags list below that no bucket defines loads nothing; that is not an error.
-   A tag that is neither on that list nor defined by a bucket is a typo, and `aidrian-knowledge route` fails on it.
+3. For anything else, run `aidrian-knowledge search <words>`. It prints each matching doc with a one-line summary;
+   read the ones that fit the task.
+4. Read each doc once. Never read a whole bucket "to be safe".
 
-`aidrian-knowledge route <tag>...` prints the same list when that command is on your PATH.
+When `aidrian-knowledge` is not on your PATH, run it by the full path the start hook prints.
+Without the hook, read `.aidrian/knowledge/*.json`: each index has its doc folder in `dir`, the `always` list,
+and `docs` mapping every doc, relative to `dir`, to its `summary` and `tags`.
 
-If `.aidrian/knowledge.json` does not exist, read the project's `AGENTS.md`, `CLAUDE.md`, and `README.md` instead,
+A tag from the Tags list below that no bucket defines loads nothing; that is not an error.
+A tag that is on neither that list nor a bucket is a typo, and `route` fails on it.
+
+If `.aidrian/config.json` does not exist, read the project's `AGENTS.md`, `CLAUDE.md`, and `README.md` instead,
 and report `knowledge: none` in your result.
-Never read every doc in a bucket "to be safe"; load what the tags select, then search for more only when the task needs it.
 
 ## Precedence
 
@@ -38,7 +42,7 @@ When a project doc contradicts a plugin instruction, follow the project and name
 
 A project overrides any of these in an `always` doc.
 
-- Local plans live in `.aidrian/plans/` and task worktrees in `.aidrian/worktrees/`. Both are git-ignored.
+- Local plans live in `<state>/plans/`, where `<state>` is the folder `aidrian state` prints. Create task worktrees with `aidrian worktree new`.
 - When another agent reads your result, return one JSON object, the machine handoff, with these fields:
   - `status`: `done`, `blocked`, `needs_input`, or `no_op`.
   - `role`, and `decision`: what you concluded, in two sentences at most.

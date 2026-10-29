@@ -1,0 +1,14 @@
+{
+  "dir": "docs/knowledge/product",
+  "description": "What Acme Notes promises its users, and the rules a change must keep.",
+  "docs": {
+    "product-rules.md": {
+      "summary": "Notes are private by default, deletion is soft for 30 days, and note content never goes into emails or notifications.",
+      "tags": ["product_sensitive"]
+    },
+    "sharing.md": {
+      "summary": "Sharing notes by link: read-only access, revoking at once, and the code that enforces these rules.",
+      "tags": ["product_sensitive"]
+    }
+  }
+}

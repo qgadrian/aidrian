@@ -1,0 +1,31 @@
+{
+  "dir": "docs/knowledge/engineering",
+  "description": "How Acme Notes is built, tested, tracked, and shipped.",
+  "always": ["working-agreement.md"],
+  "docs": {
+    "working-agreement.md": {
+      "summary": "Rules for every agent and session: read before changing, keep changes small, ship tests and docs with behavior, no secrets.",
+      "tags": []
+    },
+    "code-style.md": {
+      "summary": "JavaScript module style, naming, comments, and keeping dates in UTC.",
+      "tags": ["code_style"]
+    },
+    "testing.md": {
+      "summary": "Where unit tests live, how to run them with node --test, and what to mock.",
+      "tags": ["testing"]
+    },
+    "issue-tracker.md": {
+      "summary": "The Linear team, estimates, labels, and acceptance criteria for every issue.",
+      "tags": ["issue_tracker"]
+    },
+    "branches-and-reviews.md": {
+      "summary": "Branch names, one worktree per task, rebasing, and who reviews product-sensitive changes.",
+      "tags": ["orchestration"]
+    },
+    "docs-ownership.md": {
+      "summary": "Who owns each docs folder, and when docs change with the code.",
+      "tags": ["docs"]
+    }
+  }
+}

@@ -5,7 +5,7 @@ description: Draft or create Linear issues, parent issues, or Project items for 
 
 # Agent Issue Writer
 
-Before you start, load project knowledge with the `knowledge` skill. Knowledge tags: `issue_tracker`, `testing`, `e2e`, `product_sensitive`, `docs`.
+Before you start, follow the `knowledge` skill. Knowledge tags: `issue_tracker`, `testing`, `e2e`, `product_sensitive`, `docs`.
 
 Create Linear artifacts for coding agents, not summaries for humans.
 

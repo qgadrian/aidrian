@@ -5,19 +5,20 @@ description: Write or revise a decision-complete local plan file. Use when the u
 
 # Planning Agent
 
-Before you start, load project knowledge with the `knowledge` skill. Knowledge tags: `orchestration`, `issue_tracker`, `testing`, `docs`.
+Before you start, follow the `knowledge` skill. Knowledge tags: `orchestration`, `issue_tracker`, `testing`, `docs`.
 
 Create durable local plans for engineers and agents, not tracker artifacts.
 
-The result must be a decision-complete Markdown artifact under `.aidrian/plans/**`
+The result must be a decision-complete Markdown artifact under `<state>/plans/**`
 that another engineer or agent can implement from directly or later normalize
-into Linear issues without re-discovering intent.
+into Linear issues without re-discovering intent. `<state>` is the machine-local
+folder `aidrian state` prints.
 
 ## Responsibility Boundary
 
 You own:
 
-- local planning artifacts under `.aidrian/plans/**`
+- local planning artifacts under `<state>/plans/**`
 - technical design plans
 - phased implementation plans
 - rollout and validation plans
@@ -26,12 +27,12 @@ You own:
 **Design-import carve-out.** When dispatched by the `design-import` skill
 to author a design-import plan
 (`plan_kind: technical-design`), the plan is written to the committed path
-`docs/design-imports/<slug>/plan.md` instead of `.aidrian/plans/**`. This is
-the one place a planning artifact is authored outside `.aidrian/plans/**`:
-`.aidrian/plans/` is git-ignored, so a design import — whose `DESIGN.md`,
+`docs/design-imports/<slug>/plan.md` instead of `<state>/plans/**`. This is
+the one place a planning artifact is authored outside `<state>/plans/**`:
+`<state>/plans/` is machine-local, so a design import — whose `DESIGN.md`,
 `inventory.md`, and curated `source/` are already written to
 `docs/design-imports/<slug>/` — keeps its plan in the same committed,
-PR-reviewable directory. `.aidrian/plans/**` remains the default home for all
+PR-reviewable directory. `<state>/plans/**` remains the default home for all
 issue-driven plans.
 
 You do not own:
@@ -63,7 +64,7 @@ Rules:
    - a local plan that will later be published as Linear issues
 2. Inspect the repo and any existing local plan artifacts before planning.
 3. Run bounded planning delegation when repo truth or product truth is missing.
-4. Produce or update the `.aidrian/plans/**` artifact with:
+4. Produce or update the `<state>/plans/**` artifact with:
    - goal and current state
    - chosen implementation shape
    - sequencing or phase order when relevant
@@ -85,7 +86,7 @@ Return:
 
 ## Plan-File Schema
 
-Implementation-ready plans driven by a tracker issue (e.g., consumed by a project's issue-implementation skill) must use this schema. File path convention: `.aidrian/plans/<issue-id>-implementation.md`, where `<issue-id>` is the lowercased issue identifier (e.g., `3737-implementation.md`).
+Implementation-ready plans driven by a tracker issue (e.g., consumed by a project's issue-implementation skill) must use this schema. File path convention: `<state>/plans/<issue-id>-implementation.md`, where `<issue-id>` is the lowercased issue identifier (e.g., `3737-implementation.md`).
 
 ### Frontmatter
 
@@ -99,10 +100,10 @@ status: "ready"                # one of: open-questions | ready | in-progress | 
 workspace_decision:
   mode: "worktree"             # one of: current_branch | new_branch | worktree
   branch_name: "feat/3737-…"   # task-scoped conventional branch name
-  worktree_path: ".aidrian/worktrees/3737"  # only when mode == worktree; relative to repo root
+  worktree_path: "<repo>/.worktrees/3737"  # only when mode == worktree; absolute
   rationale: "main checkout dirty with unrelated changes"
 plan_kind: "implementation"    # one of: implementation | rollout | technical-design | revision
-related_plans: []              # other .aidrian/plans/* paths that depend on or supersede this one
+related_plans: []              # other <state>/plans/* paths that depend on or supersede this one
 ---
 ```
 
@@ -110,7 +111,7 @@ related_plans: []              # other .aidrian/plans/* paths that depend on or 
 
 Plans driven by a Linear issue use this shape for `issue_id` / `issue_ref` /
 `ticket_updated_at`. File path convention:
-`.aidrian/plans/<key>-<digits>-implementation.md` (lowercase) — see "Naming and
+`<state>/plans/<key>-<digits>-implementation.md` (lowercase) — see "Naming and
 lifecycle" below for how this coexists with the bare-numeric GitHub
 convention.
 
@@ -124,10 +125,10 @@ status: "ready"                # one of: open-questions | ready | in-progress | 
 workspace_decision:
   mode: "worktree"             # one of: current_branch | new_branch | worktree
   branch_name: "<username>/abc-483-…"  # the issue's own gitBranchName field, verbatim
-  worktree_path: ".aidrian/worktrees/483-observability-lint-rule"  # only when mode == worktree; relative to repo root
+  worktree_path: "<repo>/.worktrees/483-observability-lint-rule"  # only when mode == worktree; absolute
   rationale: "main checkout dirty with unrelated changes"
 plan_kind: "implementation"    # one of: implementation | rollout | technical-design | revision
-related_plans: []              # other .aidrian/plans/* paths that depend on or supersede this one
+related_plans: []              # other <state>/plans/* paths that depend on or supersede this one
 ---
 ```
 
@@ -151,7 +152,7 @@ status: "ready"                      # one of: open-questions | ready | in-progr
 workspace_decision:
   mode: "worktree"                   # one of: current_branch | new_branch | worktree
   branch_name: "feat/dashboard-v3-…" # task-scoped conventional branch name
-  worktree_path: ".aidrian/worktrees/dashboard-v3"  # only when mode == worktree; relative to repo root
+  worktree_path: "<repo>/.worktrees/dashboard-v3"  # only when mode == worktree; absolute
   rationale: "design-import implementation runs in a task-scoped worktree"
 plan_kind: "technical-design"        # fixed for design-import plans; re-runs keep this value (never flip to revision)
 related_plans: []                    # other plan paths that depend on or supersede this one
@@ -289,9 +290,9 @@ Tools that resume execution from a plan (e.g., `issue-implement`) treat the plan
 
 ### Naming and lifecycle
 
-- Issue-driven plans: `.aidrian/plans/<issue-id>-implementation.md`. Linear-issue-driven plans use the lowercase issue key (e.g., `abc-483-implementation.md`); GitHub-issue-driven plans use the bare number (e.g., `3737-implementation.md`).
-- Multi-issue or initiative-driven plans: `.aidrian/plans/<initiative-slug>-plan.md`.
-- Design-import plans (`plan_kind: technical-design`, authored by the `design-import` skill): `docs/design-imports/<slug>/plan.md`. This is the sole planning artifact authored outside `.aidrian/plans/**` — see the design-import carve-out under "Responsibility Boundary". Re-runs of `design-import` against the same slug keep `plan_kind: technical-design` (never flip to `revision`), bump `generated_at`, and append a `## Revision history` entry.
+- Issue-driven plans: `<state>/plans/<issue-id>-implementation.md`. Linear-issue-driven plans use the lowercase issue key (e.g., `abc-483-implementation.md`); GitHub-issue-driven plans use the bare number (e.g., `3737-implementation.md`).
+- Multi-issue or initiative-driven plans: `<state>/plans/<initiative-slug>-plan.md`.
+- Design-import plans (`plan_kind: technical-design`, authored by the `design-import` skill): `docs/design-imports/<slug>/plan.md`. This is the sole planning artifact authored outside `<state>/plans/**` — see the design-import carve-out under "Responsibility Boundary". Re-runs of `design-import` against the same slug keep `plan_kind: technical-design` (never flip to `revision`), bump `generated_at`, and append a `## Revision history` entry.
 - Revisions: keep the same file; bump `generated_at`; record what changed in a top-level `## Revision history` section if the change is material.
 - Completed plans (all slices `complete`, PR merged): set frontmatter `status: complete` but do not delete the file — it remains the durable record.
 

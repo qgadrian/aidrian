@@ -1,25 +1,35 @@
-// Command line for knowledge.mjs. Users run it through bin/aidrian-knowledge; `npm run check` runs it with node directly.
+// Command line for knowledge.mjs. Users run it through bin/aidrian-knowledge. `aidrian check` validates the same data.
 
-import { MANIFEST, findProjectRoot, listTags, loadKnowledge, pluginTags, routeKnowledge } from './knowledge.mjs';
+import path from 'node:path';
 
-const USAGE = `usage: aidrian-knowledge <command> [--project DIR] [tags...]
+import { indexRows, initBucket, listTags, loadKnowledge, pluginTags, routeKnowledge, searchKnowledge } from './knowledge.mjs';
+import { findProject } from './project.mjs';
 
-  check          validate ${MANIFEST} and every bucket it lists
-  route TAG...   print the docs to read for these tags, "always" docs first
-  tags           print each tag and how many docs it loads
+const USAGE = `usage: aidrian-knowledge <command> [--project DIR] [args]
 
-DIR defaults to the nearest folder at or above the current one that has ${MANIFEST}.`;
+  route TAG...     print the docs to read for these tags, "always" docs first
+  tags             print each tag and how many docs it loads
+  search WORD...   print the best 8 docs whose tags, path, or summary hold these words; --all prints every match
+  index            print every doc: path, tags, and summary, separated by tabs
+  init FOLDER      draft a knowledge index for FOLDER, a folder of docs, in the project folder
+
+The project is the nearest one at or above DIR, which defaults to the current folder.
+FOLDER is relative to the project root. \`aidrian check\` validates the project folder and every index.
+A doc from a local knowledge source prints its absolute path, and its source as the last column.`;
 
 const args = process.argv.slice(2);
 const command = args.shift();
-let project = process.cwd();
+let start = process.cwd();
+let all = false;
 const rest = [];
 while (args.length) {
   const arg = args.shift();
   if (arg === '--project') {
-    project = args.shift();
+    start = args.shift();
     // An option's value never starts with "-": `--project --bogus` is a missing folder, not a folder named --bogus.
-    if (!project || project.startsWith('-')) fail(`${USAGE}\n\n--project needs a folder.`);
+    if (!start || start.startsWith('-')) fail(`${USAGE}\n\n--project needs a folder.`);
+  } else if (arg === '--all' && command === 'search') {
+    all = true;
   } else if (arg.startsWith('-')) {
     fail(`${USAGE}\n\nunknown option: ${arg}`);
   } else {
@@ -27,25 +37,49 @@ while (args.length) {
   }
 }
 
-if (!['check', 'route', 'tags'].includes(command)) fail(USAGE);
-if (command !== 'route' && rest.length) fail(`${USAGE}\n\nunexpected argument: ${rest[0]}`);
-const root = findProjectRoot(project);
-if (!root) fail(`no ${MANIFEST} at or above ${project}`);
+if (!['route', 'tags', 'search', 'index', 'init'].includes(command)) fail(USAGE);
+if (['tags', 'index'].includes(command) && rest.length) fail(`${USAGE}\n\nunexpected argument: ${rest[0]}`);
+if (command === 'search' && !rest.length) fail(`${USAGE}\n\nsearch needs at least one word.`);
+if (command === 'init' && rest.length !== 1) fail(`${USAGE}\n\ninit needs one folder.`);
 
-const { buckets, errors } = loadKnowledge(root);
+const project = findProject(start);
+if (!project) fail(`no project folder at or above ${path.resolve(start)}; run aidrian init`);
+if (command === 'init') init(project, rest[0]);
+
+const { buckets, errors } = loadKnowledge(project);
 if (errors.length) fail(errors.join('\n'));
 
-if (command === 'check') {
-  const docs = routeKnowledge(buckets, listTags(buckets).map(([tag]) => tag));
-  console.log(`ok: ${buckets.length} buckets, ${docs.length} docs`);
-} else if (command === 'route') {
+// One output line: the doc path, `columns`, and the source when the doc comes from a local source.
+const sourceOf = new Map(indexRows(buckets).map((doc) => [doc.path, doc.source]));
+const line = (doc, ...columns) => [doc, ...columns, ...(sourceOf.get(doc) ? [sourceOf.get(doc)] : [])].join('\t');
+
+if (command === 'route') {
   // A tag the plugin asks for may be one the project does not define; it loads nothing. Any other tag is a typo.
   const known = [...new Set([...pluginTags(), ...listTags(buckets).map(([tag]) => tag)])].sort();
   const unknown = rest.filter((tag) => !known.includes(tag));
   if (unknown.length) fail(`unknown tag: ${unknown.join(', ')}\nknown tags: ${known.join(', ')}`);
-  for (const doc of routeKnowledge(buckets, rest)) console.log(doc);
-} else {
+  for (const doc of routeKnowledge(buckets, rest)) console.log(line(doc));
+} else if (command === 'tags') {
   for (const [tag, count] of listTags(buckets)) console.log(`${tag}\t${count}`);
+} else if (command === 'search') {
+  const hits = searchKnowledge(buckets, rest, all ? Infinity : 8);
+  if (!hits.length) fail('no match');
+  for (const doc of hits) console.log(line(doc.path, doc.summary));
+} else {
+  for (const doc of indexRows(buckets)) console.log(line(doc.path, doc.tags.join(','), doc.summary));
+}
+
+function init(project, folder) {
+  let result;
+  try {
+    result = initBucket(project, folder);
+  } catch (error) {
+    fail(error.message);
+  }
+  for (const warning of result.warnings) console.error(warning);
+  console.log(`wrote ${result.file}: ${result.docs} docs in ${result.dir}, each with a drafted summary and no tags`);
+  console.log('next: correct the summaries, add tags and "always" docs, then run aidrian check');
+  process.exit(0);
 }
 
 function fail(message) {

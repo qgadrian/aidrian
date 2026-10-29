@@ -133,8 +133,8 @@ design-import specifics:
   omits `issue_id` / `issue_ref` / `ticket_updated_at`; it records the
   bundle path, the chosen page/variant, and the slug.
 - **Plan home.** The plan is written to the committed path
-  `docs/design-imports/<slug>/plan.md` — **not** `.aidrian/plans/`, which is
-  git-ignored. The committed home keeps the spec, inventory, curated source,
+  `docs/design-imports/<slug>/plan.md` — **not** `<state>/plans/`, which is
+  machine-local. The committed home keeps the spec, inventory, curated source,
   and plan as one durable, PR-reviewable unit.
 - **Re-runs revise the existing plan; `plan_kind` stays `technical-design`.**
   Re-running this skill against an existing slug updates the plan in

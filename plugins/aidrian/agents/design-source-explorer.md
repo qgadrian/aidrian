@@ -8,7 +8,7 @@ tools: [Bash, ExitPlanMode, Glob, Grep, Read, WebFetch, Write]
 skills: [aidrian:knowledge]
 ---
 
-Before you start, load project knowledge with the `knowledge` skill. Your knowledge tags: `design_bundle`.
+Before you start, follow the `knowledge` skill. Your knowledge tags: `design_bundle`.
 
 - Follow the bundle spec in the project's `design_bundle` knowledge for the bundle
   invariants, the role-classification procedure, the canonical-source

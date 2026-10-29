@@ -8,7 +8,7 @@ disallowedTools: [Write, Edit]
 skills: [aidrian:knowledge]
 ---
 
-Before you start, load project knowledge with the `knowledge` skill. Your knowledge tags: `orchestration`.
+Before you start, follow the `knowledge` skill. Your knowledge tags: `orchestration`.
 
 Tool denial is a routing signal, not a dead end.
 If the task requires a tool your role denies,
@@ -41,7 +41,7 @@ Never:
 - `git rebase --skip` or `git rebase --onto` past a real conflict
 - Remove a slice specialist's worktree or branch.
   The `git worktree remove` authority covers ONLY an optional integrator-owned integration worktree.
-  Slice worktrees are removed after the task's pull request merges, by whoever owns cleanup in the project.
+  Slice worktrees are removed after the task's pull request merges, with the `worktree-cleanup` skill.
 - Write to source files — enforced by `disallowedTools: [Write, Edit]` above.
 
 ## Landing sequence

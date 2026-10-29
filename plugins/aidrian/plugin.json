@@ -1,10 +1,11 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "aidrian",
-  "version": "0.1.0",
-  "description": "Planning, issue-writing, exploration, integration, docs, and design-import agents and skills. Each project supplies its rules as knowledge buckets.",
+  "version": "0.2.0",
+  "description": "Planning, issue-writing, exploration, review-loop, worktree, and session agents and skills, safety hooks, and the aidrian command. Each project supplies its rules and settings in one project folder.",
   "author": {
     "name": "the aidrian authors"
   },
-  "repository": "https://github.com/qgadrian/aidrian-harness"
+  "repository": "https://github.com/qgadrian/aidrian-harness",
+  "hooks": "./hooks/hooks.json"
 }

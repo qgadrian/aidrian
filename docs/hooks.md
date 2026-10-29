@@ -37,7 +37,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 
 | Rule | Blocks | Override |
 | --- | --- | --- |
-| Git hook bypass | `--no-verify` on commit, push, or merge; `-n` on commit; `-c core.hooksPath=…`; `HUSKY=0` | none |
+| Git hook bypass | `--no-verify` on commit, push, or merge; `-n` on commit; core.hooksPath set in any letter case through `-c`, `--config-env`, or `GIT_CONFIG_PARAMETERS` / `GIT_CONFIG_KEY_<n>`; `HUSKY=0`; `git config` writing or unsetting core.hooksPath | none |
 | Git amend | `git commit --amend` | `AIDRIAN_ALLOW_GIT_AMEND=1` |
 | Kill by name | `pkill`, `killall`, `pgrep --signal`, `kill` fed by `pgrep` or `ps`, and `kill -- -1`; `kill <pid>` stays allowed | `AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME=1` |
 | Command-line listing | `pgrep -fl`, `pgrep -a`, and `ps` without a format free of `args`, `command`, and `cmd` | `AIDRIAN_ALLOW_PROCESS_ARGS_LISTING=1` |

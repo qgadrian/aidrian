@@ -142,6 +142,7 @@ test('readGit reads the subcommand past git`s global options, and gives up on a 
   const gitOf = (line) => readGit(lexCommand(line)[0]);
   assert.equal(gitOf('git -C /x -c a=b --no-pager commit -m x').subcommand, 'commit');
   assert.deepEqual(gitOf('git -c core.hooksPath=/dev/null push').globals.map((token) => token.text), ['-c', 'core.hooksPath=/dev/null']);
+  assert.equal(gitOf('git --config-env core.hooksPath=VAR commit').subcommand, 'commit', '--config-env takes the next token');
   assert.deepEqual(gitOf('rtk proxy git commit --amend').rest.map((token) => token.text), ['--amend']);
   assert.equal(gitOf('git $SUB --amend'), null);
   assert.equal(gitOf('echo git commit'), null);

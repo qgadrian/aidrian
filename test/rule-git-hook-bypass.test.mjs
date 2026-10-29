@@ -48,6 +48,44 @@ test('denies the core.hooksPath override in both spellings, and HUSKY turned off
   allow('HUSKY=1 git commit -m "fix: thing"');
 });
 
+test('denies a core.hooksPath override in any letter case, through -c, --config-env, or the environment', () => {
+  deny('git -c core.hookspath=/dev/null commit -m "fix: thing"');
+  deny('git -c CORE.HooksPath=/dev/null push');
+  deny('git -c "core.hooksPath=$EMPTY" commit -m "fix: thing"');
+  deny('git --config-env core.hooksPath=HOOKS commit -m "fix: thing"');
+  deny('git --config-env=Core.HooksPath=HOOKS push');
+  deny(`GIT_CONFIG_PARAMETERS="'core.hooksPath'='/dev/null'" git commit -m "fix: thing"`);
+  deny('env GIT_CONFIG_PARAMETERS="$P" git push');
+  deny('GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git push');
+  deny('env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=CORE.HOOKSPATH GIT_CONFIG_VALUE_0=/dev/null git merge origin/main');
+  allow('git -c user.name=x commit -m "fix: thing"');
+  allow('git --config-env user.email=EMAIL commit -m "fix: thing"');
+  allow('GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=x git commit -m "fix: thing"');
+  allow('GIT_CONFIG_PARAMETERS="$P" git status');
+});
+
+test('denies a git config that writes or unsets core.hooksPath, and allows reading it', () => {
+  deny('git config core.hooksPath /dev/null');
+  deny('git config --local core.hookspath ""');
+  deny('git config --global CORE.HOOKSPATH /tmp/empty');
+  deny('git config -f .git/config core.hooksPath /dev/null');
+  deny('git config set core.hooksPath /dev/null');
+  deny('git config unset core.hooksPath');
+  deny('git config --unset core.hooksPath');
+  deny('git config --unset-all core.hooksPath');
+  deny('git config --add core.hooksPath /dev/null');
+  deny('git config --rep core.hooksPath /dev/null');
+  deny('cd /tmp/x && rtk git -C repo config core.hooksPath /dev/null');
+  allow('git config core.hooksPath');
+  allow('git config --get core.hooksPath');
+  allow('git config --get core.hooksPath /dev/null');
+  allow('git config get core.hooksPath');
+  allow('git config --show-origin --get-regexp core.hookspath');
+  allow('git config user.email a@example.com');
+  allow('git config --file .gitconfig user.name x');
+  allow('git config --list');
+});
+
 test('denies through rtk and in a later segment, including after a here-string', () => {
   deny('rtk git commit --no-verify -m "fix: thing"');
   deny('rtk proxy git push --no-verify');

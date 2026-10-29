@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { DEFAULTS, linksOutside, loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { commandConfig, CONFIG_ERROR, DEFAULTS, linksOutside, loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -192,6 +192,18 @@ test('a missing, malformed, or outside-linking file is one error, and the config
     assert.equal(current, false);
     assert.deepEqual(config, DEFAULTS);
   }
+});
+
+test('commandConfig throws every config error with the exit code it is given; no config.json yet is the defaults', (t) => {
+  const renamed = project(t, { version: 1, pr: { requiredChecks: ['e2e'] } });
+  assert.throws(() => commandConfig(renamed), { code: CONFIG_ERROR, exitCode: 1, message: '.aidrian/config.json: "pr" is now "github": rename the key' });
+  assert.throws(() => commandConfig(renamed, { exitCode: 3 }), { exitCode: 3 });
+  const other = project(t, { version: 2 });
+  assert.throws(() => commandConfig(other), { code: CONFIG_ERROR, message: /project folder version 2; this plugin reads version 1/ });
+  const missing = project(t, {});
+  rmSync(path.join(missing.root, '.aidrian/config.json'));
+  assert.equal(commandConfig(missing), DEFAULTS);
+  assert.deepEqual(commandConfig(project(t, { version: 1, github: { requiredChecks: ['e2e'] } })).github.requiredChecks, ['e2e']);
 });
 
 test('linksOutside judges a path that does not exist yet where a write would create it', (t) => {

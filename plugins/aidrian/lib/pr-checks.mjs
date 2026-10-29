@@ -10,7 +10,8 @@
 //     register over time, so a required entry with no check yet is pending, never ready.
 // The policy is this checkout's, so `-R` may name only a repository that is a remote of this checkout: for a pull
 // request in another repository, run the command from that repository's checkout.
-// Exit 0 ready, 1 failing, 2 pending, 3 error (gh missing, no pull request, unreadable output, another repository).
+// Exit 0 ready, 1 failing, 2 pending, 3 error (gh missing, no pull request, unreadable output, another repository, or a
+// config.json with errors).
 
 import { execFileSync } from 'node:child_process';
 

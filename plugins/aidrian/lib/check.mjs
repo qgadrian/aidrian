@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { linksOutside, loadConfig, VERSION } from './config.mjs';
+import { commandConfig, linksOutside, VERSION } from './config.mjs';
 import { isIgnored } from './git.mjs';
 import { indexRows, loadKnowledge } from './knowledge.mjs';
 import { findProject, projectAt, repoRoot, stateDir, worktreesDir } from './project.mjs';
@@ -51,7 +51,7 @@ export const commands = {
       }
       const done = [];
       const setUp = existsSync(path.join(project.root, project.paths.config));
-      const missing = Map.groupBy(unignored(project, loadConfig(project).config), (entry) => entry.gitignore);
+      const missing = Map.groupBy(unignored(project, commandConfig(project)), (entry) => entry.gitignore);
       // Every write must land in its folder once symlinks are resolved: the project folder's files in the project, and
       // each .gitignore in its own folder. One that would not stops init before it writes anything.
       const writes = [
@@ -87,7 +87,8 @@ export const commands = {
     usage: '[--project DIR]',
     about: 'print the machine-local state folder: plans, handoffs, lessons, and the dispatch log',
     run(args) {
-      console.log(stateDir(projectAt(parseArgs({ args, options: OPTIONS }).values.project ?? '.')));
+      const project = projectAt(parseArgs({ args, options: OPTIONS }).values.project ?? '.');
+      console.log(stateDir(project, { config: commandConfig(project) }));
       return 0;
     },
   },

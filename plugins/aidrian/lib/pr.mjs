@@ -1,12 +1,14 @@
 // `aidrian pr <await-review|checks|disposition>`: the pull request review loop's deterministic steps, each in its own
 // module. The config's `github` group supplies the reviewer, the round limit, and the check policy.
 
-import { loadConfig } from './config.mjs';
+import { commandConfig } from './config.mjs';
 import { projectAt } from './project.mjs';
 
+// `checks` exits 3 on a config with errors: its 1 is the failing verdict. `disposition` reads no config.
+const config = (exitCode) => commandConfig(projectAt(process.cwd()), { exitCode });
 const ACTIONS = {
-  'await-review': async (args, config) => (await import('./pr-await-review.mjs')).runAwaitReview(args, config),
-  checks: async (args, config) => (await import('./pr-checks.mjs')).runChecks(args, config),
+  'await-review': async (args) => (await import('./pr-await-review.mjs')).runAwaitReview(args, config(1)),
+  checks: async (args) => (await import('./pr-checks.mjs')).runChecks(args, config(3)),
   disposition: async (args) => (await import('./finding-disposition.mjs')).runDisposition(args),
 };
 
@@ -20,7 +22,7 @@ export const commands = {
         console.error(`usage: aidrian pr ${commands.pr.usage}`);
         return 1;
       }
-      return ACTIONS[action](rest, loadConfig(projectAt(process.cwd())).config);
+      return ACTIONS[action](rest);
     },
   },
 };

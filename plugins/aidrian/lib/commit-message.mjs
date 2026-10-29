@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { loadConfig } from './config.mjs';
+import { commandConfig } from './config.mjs';
 import { projectAt } from './project.mjs';
 
 export const commands = {
@@ -18,7 +18,7 @@ export const commands = {
         console.error('give one of --file PATH or --message TEXT');
         return 1;
       }
-      const { types } = loadConfig(projectAt(path.resolve(values.project ?? '.'))).config.commits;
+      const { types } = commandConfig(projectAt(path.resolve(values.project ?? '.'))).commits;
       const problem = subjectProblem(commitSubject(values.message ?? readFileSync(values.file, 'utf8')), types);
       if (problem) console.error(problem);
       return problem ? 1 : 0;

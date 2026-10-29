@@ -90,6 +90,18 @@ export function loadConfig(project) {
   return { config: deepFreeze(config), errors, current: true };
 }
 
+// The `code` of the error commandConfig throws; cli.mjs prints its message and exits with its `exitCode`.
+export const CONFIG_ERROR = 'ERR_AIDRIAN_CONFIG';
+
+// The config an `aidrian` command acts on. When loadConfig reports errors, the command must not run on defaults the
+// project did not choose, so this throws: the message lists the errors, and `exitCode` is the command's error code.
+// A project with no config.json yet runs on DEFAULTS. Hooks call loadConfig instead: a broken config never stops a session.
+export function commandConfig(project, { exitCode = 1 } = {}) {
+  const { config, errors } = loadConfig(project);
+  if (!errors.length || !isFile(path.join(project.root, project.paths.config))) return config;
+  throw Object.assign(new Error(errors.join('\n')), { code: CONFIG_ERROR, exitCode });
+}
+
 // The error for a `version` other than VERSION, or null.
 export function versionProblem(file, version) {
   if (version === VERSION) return null;

@@ -2,6 +2,10 @@
 
 `config.json` in the [project folder](project-folder.md) holds the folder version and the project's settings for the plugin.
 The plugin's commands, hooks, and skills read it.
+An `aidrian` command never acts on a `config.json` with an error, such as a renamed key.
+It prints the errors and exits with its error code instead, such as 3 for `aidrian pr checks`.
+The hooks keep working, with the default in place of each bad value.
+Without a `config.json`, the commands use the defaults.
 
 [`examples/consumer/.aidrian/config.json`](../examples/consumer/.aidrian/config.json) is a minimal, checked example.
 

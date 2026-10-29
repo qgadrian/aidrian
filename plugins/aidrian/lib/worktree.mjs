@@ -9,7 +9,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
-import { loadConfig } from './config.mjs';
+import { CONFIG_ERROR, commandConfig } from './config.mjs';
 import { checkoutRoots, isIgnored } from './git.mjs';
 import { projectAt, worktreesDir } from './project.mjs';
 
@@ -77,11 +77,21 @@ function context(cwd) {
   const roots = checkoutRoots(cwd);
   if (!roots) throw blocked('preconditions', `${cwd} is not inside a git repository`);
   const project = projectAt(cwd);
-  const { config } = loadConfig(project);
+  const config = projectConfig(project);
   const hasOrigin = git(roots.main, ['remote', 'get-url', 'origin']).status === 0;
   const remoteDefault = `origin/${config.defaultBranch}`;
   const base = hasOrigin && git(roots.main, ['rev-parse', '--verify', '--quiet', `refs/remotes/${remoteDefault}`]).status === 0 ? remoteDefault : config.defaultBranch;
   return { ...roots, project, config, hasOrigin, base };
+}
+
+// The project's config. A config.json with errors blocks the run in the `config` phase, before any change.
+function projectConfig(project) {
+  try {
+    return commandConfig(project);
+  } catch (error) {
+    if (error.code !== CONFIG_ERROR) throw error;
+    throw blocked('config', error.message, 'Fix config.json; aidrian check lists every problem.');
+  }
 }
 
 // Plans or creates the worktree for `branch`. A new branch starts at `base` (origin/<defaultBranch>, or the local

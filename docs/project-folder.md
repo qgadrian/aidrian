@@ -48,7 +48,7 @@ Every `.aidrian/` path in this document then starts with `tools/aidrian/` instea
 `version` in `config.json` is a whole number that names the format of the whole folder: the config keys and the index files.
 This plugin reads version 1 only.
 When `version` is missing, older, or newer, `aidrian check` fails with a link to [Migrating](#migrating),
-and the commands and hooks read nothing else from the folder.
+every other `aidrian` command that reads `config.json` stops with the same error, and the hooks read nothing else from the folder.
 
 A release that changes the format raises the version and lists, under Migrating, what a project changes.
 

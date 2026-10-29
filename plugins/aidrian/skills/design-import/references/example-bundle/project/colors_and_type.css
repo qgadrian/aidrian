@@ -1,5 +1,5 @@
 /* Example Home — Colors & Type (fixture)
-   Mirrors the primary provider Design token shape: CSS custom properties,
+   Mirrors the Claude Design token shape: CSS custom properties,
    semantic roles as HSL triplets sized for Tailwind consumption. */
 
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');

@@ -1,16 +1,17 @@
 ---
 name: agent-issue-writer
 description: Draft or create Linear implementation issues and initiative artifacts for AI agents. Use when a Linear issue, parent issue, or Project item is needed.
-conditionalTags: [admin, api, api_v1, auth, backend_core, booking, database, docs, e2e, frontend, issue_tracker, jobs, notifications, payments, product_knowledge, testing]
 ---
 
 # Agent Issue Writer
+
+Before you start, load project knowledge with the `knowledge` skill. Knowledge tags: `issue_tracker`, `testing`, `e2e`, `product_sensitive`, `docs`.
 
 Create Linear artifacts for coding agents, not summaries for humans.
 
 The result must let an execution agent complete the task in one pass and verify it without making hidden scope, testing, or ownership decisions.
 
-Read `references/linear.md` before creating or updating Linear-native artifacts. See `docs/ai-rules/shared/issue-tracker.md` for the tracker abstraction (active tracker, transition rules, magic-word grammar, status taxonomy).
+Read `references/linear.md` before creating or updating Linear-native artifacts. The project's `issue_tracker` knowledge owns the tracker rules (active tracker, team, transition rules, magic-word grammar, status taxonomy).
 
 Read `references/examples.md` when you need a concrete example for a standalone issue, initiative issue tree, or blocked ticket.
 
@@ -28,7 +29,7 @@ You own Linear-ready artifacts:
 
 You do not own broad initiative decomposition when multiple issues must be invented from a vague brief. In that case, route or defer to `initiative-agent` first unless the user explicitly asked for a single issue only.
 
-If the user provides a local plan artifact under `.agent/plans/**`, treat it as source context only. If issue topology, dependency order, or PR grouping is still implicit, route to `initiative-agent` first instead of inventing those decisions locally.
+If the user provides a local plan artifact from the project's plans folder, treat it as source context only. If issue topology, dependency order, or PR grouping is still implicit, route to `initiative-agent` first instead of inventing those decisions locally.
 
 You may run bounded planning-time preflight delegation to sharpen one issue before publishing it.
 
@@ -57,8 +58,7 @@ Rules:
 - State what to change, what not to change, and how to prove completion.
 - If exact files, product truth, or type constraints cannot be discovered, return blocked mode instead of inventing requirements.
 - For product-sensitive issues, decide whether the implementation should also
-  update a scoped product topic doc linked from `docs/product/README.md`,
-  `docs/product/README.md` itself, or `docs/ai-rules/product.md`, and encode
+  update a product doc from the project's `product_sensitive` knowledge, and encode
   that in the issue scope or as an explicit follow-up.
 - If a Linear tool is available, create or update the issue or project there; otherwise return a draft payload only.
 - Do not edit repository files. Your responsibility is the tracker artifact only.
@@ -123,8 +123,7 @@ Replace each with a concrete path, command, mapping, invariant, owner, or blocke
    **Verify repository context against the working tree before sizing.** Every listed path under files to modify / reference / reuse must pass `git ls-files -- <path>` (tracked and existing), and each files-to-modify entry must be opened far enough to confirm it actually plays the role the issue assigns it — a pure dispatcher/barrel is not a render target; a type-only module is not a mutation site. Derive `size` only from verified context; an unverified assumption about a file's role invalidates the estimate. (Encoded after a 2026-07 run where an S-sized issue named a pure dispatcher as the render target and assumed a settings blob was directly readable — neither held, and "S" became hours plus a shared-helper contract change.)
 6. Identify whether the task is product-sensitive, migration-sensitive, or e2e-sensitive.
 7. For product-sensitive work, decide whether the issue must also update shared
-   product knowledge in a scoped topic doc linked from `docs/product/README.md`,
-   `docs/product/README.md` itself, or `docs/ai-rules/product.md`.
+   product knowledge in a doc from the project's `product_sensitive` knowledge.
 8. Draft the Markdown body using the canonical structure below.
 9. Populate native Linear fields and links when the tool supports them.
    `priority` **and** `estimate` are non-optional parameters of the creating `save_issue` call — never a follow-up call, never left to the caller.
@@ -313,7 +312,7 @@ Every file entry must be an exact path plus a short reason.
   - parent issue reference (`parentId`) or `none`
   - filed from work on another issue (deferral, follow-up, split): the Linear Project defaults to the source issue's
   - `parentId` is conditional — set it only for a true child of that parent, otherwise relate this issue to its source and leave the parent unset:
-    `docs/ai-rules/shared/issue-tracker.md` § Project and parent inheritance owns both rules, including when a deviation needs a reason
+    the project's `issue_tracker` knowledge owns both rules, including when a deviation needs a reason
   - dependency links if applicable
   - milestone if provided
   - assignee if provided
@@ -322,7 +321,7 @@ Every file entry must be an exact path plus a short reason.
 
 ### Issue Fields (Priority and Effort)
 
-Both fields are native Linear fields set directly on the same `save_issue` call that creates or updates the issue — there is no separate post-creation API call for either. Priority is the native `priority` integer. Effort is the native `estimate` number: team `TEAM` uses Linear's t-shirt estimation scale, so the issue's `## Size` maps straight onto it. See `references/linear.md` for the exact `save_issue` mechanics and both mapping tables.
+Both fields are native Linear fields set directly on the same `save_issue` call that creates or updates the issue — there is no separate post-creation API call for either. Priority is the native `priority` integer. Effort is the native `estimate` number: when the team uses Linear's t-shirt estimation scale, the issue's `## Size` maps straight onto it. See `references/linear.md` for the exact `save_issue` mechanics and both mapping tables.
 
 **Always set Priority (native `priority`) and Effort (native `estimate`) on every issue created, and always mirror Effort in the issue body.
 Neither field may be omitted from the issue body.**
@@ -417,22 +416,22 @@ The retired `priority:*` / `effort:*` label mirror is gone — Linear's native `
   "validation_owners": ["e2e-runner"],
   "required_authority_docs": {
     "execution": [
-      "docs/ai-rules/contract.md",
-      "docs/ai-rules/core/safety-kernel.md",
-      "docs/ai-rules/shared/code-style.md",
-      "docs/ai-rules/shared/testing.md"
+      "docs/knowledge/engineering/working-agreement.md",
+      "docs/knowledge/engineering/safety-rules.md",
+      "docs/knowledge/engineering/code-style.md",
+      "docs/knowledge/engineering/testing.md"
     ],
     "review": [
-      "docs/ai-rules/contract.md",
-      "docs/ai-rules/core/safety-kernel.md",
-      "docs/ai-rules/shared/code-style.md",
-      "docs/ai-rules/shared/testing.md"
+      "docs/knowledge/engineering/working-agreement.md",
+      "docs/knowledge/engineering/safety-rules.md",
+      "docs/knowledge/engineering/code-style.md",
+      "docs/knowledge/engineering/testing.md"
     ],
     "validation": [
-      "docs/ai-rules/contract.md",
-      "docs/ai-rules/core/safety-kernel.md",
-      "docs/ai-rules/shared/testing.md",
-      "docs/e2e-testing.md"
+      "docs/knowledge/engineering/working-agreement.md",
+      "docs/knowledge/engineering/safety-rules.md",
+      "docs/knowledge/engineering/testing.md",
+      "docs/knowledge/engineering/e2e.md"
     ]
   },
   "deliverables": ["implement the scoped booking reassignment fix"],
@@ -505,40 +504,37 @@ Rules:
 - Every action plan must include at least one review owner, one validation owner, and one approval gate owned by an agent outside the execution role.
 - `required_authority_docs` must name authoritative repo docs only. Code, tests, fixtures, and source modules belong in `Repository Context`.
 
-## Repo Defaults
+## Project Defaults
 
-When drafting issues for this repo:
+The project's `issue_tracker`, `testing`, `e2e`, and `product_sensitive` knowledge overrides every default below.
 
 - Always set Priority (native `save_issue(priority:)`) and Effort (native `save_issue(estimate:)`) on every created issue, and mirror Effort in the issue body (see Issue Fields section above). Defaults when not explicitly supplied:
   - Priority: infer from issue type (critical-flow/security → `High`; hotfix → `Urgent`; bug/feature → `Medium`; docs/chore/refactor → `Low`; unclear → `Medium`)
   - Effort: derive from Size t-shirt (`XS` → `Low` → `estimate: 1`; `S` → `Low` → `estimate: 2`; `M` → `Medium` → `estimate: 3`; `L` → `High` → `estimate: 5`)
-- Do not add `priority:*` or `effort:*` labels — that mirror is retired. `tracker_fields.labels` carries only domain/work-type labels.
-- Default verification should include:
-  - `npm run typecheck`
-  - `npm run lint`
-  - exact `npx jest --testPathPatterns=<affected files> --no-coverage` or exact `npx jest <path>`
-- If the change touches booking, auth, onboarding, payments, admin, or other user-facing lifecycle behavior and unit tests cannot prove correctness, require exact e2e coverage.
+- Do not add `priority:*` or `effort:*` labels. `tracker_fields.labels` carries only domain/work-type labels.
+- Default verification is the project's typecheck, lint, and the exact test command for the affected files, as its `testing` knowledge names them.
+- If the change touches sign-in, onboarding, payments, admin, or other user-facing lifecycle behavior and unit tests cannot prove correctness, require exact e2e coverage.
 - In initiative work, make the parent issue the canonical sequencing artifact and keep project artifacts as short tracking pointers.
 - Use repo conventions:
-  - colocated tests
-  - existing fixtures/builders from `src/tests/fixtures/`
-  - authoritative docs from `docs/ai-rules/*` and linked product docs
-- Default owner routing should be deterministic:
+  - colocated tests, when the project's `testing` knowledge uses them
+  - existing fixtures and builders that knowledge names
+  - authoritative docs from the project's knowledge buckets and linked product docs
+- Default owner routing should be deterministic, using the roles the project has:
   - always include `code-reviewer` in `review_owners`
-  - add `security-engineer` to `review_owners` for auth, authorization, sessions, tokens, org membership, tenant isolation, public booking trust boundaries, payments, billing, inbound webhooks, exports/imports, uploads/downloads, redirects, unsafe external content, or explicit security review tasks
+  - add `security-engineer` to `review_owners` for auth, authorization, sessions, tokens, org membership, tenant isolation, public trust boundaries, payments, billing, inbound webhooks, exports/imports, uploads/downloads, redirects, unsafe external content, or explicit security review tasks
   - add `backend-developer` to `review_owners` for backend runtime, API, jobs, auth, database, or data-integrity work
-  - add `frontend-developer` to `review_owners` for React, Next.js App Router, rendering, state, cache, or hydration work
+  - add `frontend-developer` to `review_owners` for UI rendering, state, cache, or hydration work
   - add `product-manager` to `review_owners` only for product-sensitive behavior changes
   - use `e2e-runner` in `validation_owners` whenever the issue requires affected-flow e2e proof
   - use `security-engineer` in `validation_owners` when the issue is primarily a security fix or hardening task and affected-flow e2e proof is not the main validation gate
   - otherwise use an independent technical reviewer in `validation_owners`; the execution owner alone must never satisfy the final validation gate
   - when both `security-engineer` and `code-reviewer` are in `review_owners`, put `security-engineer` first in `review_chain` and keep `code-reviewer` in the chain as the final general repo-consistency reviewer
-- Default authority-doc loading should be explicit in `required_authority_docs`:
-  - backend execution/review: `docs/ai-rules/contract.md`, `docs/ai-rules/core/safety-kernel.md`, `docs/ai-rules/shared/code-style.md`, `docs/ai-rules/shared/testing.md`
-  - frontend execution/review: `docs/ai-rules/contract.md`, `docs/ai-rules/core/safety-kernel.md`, `docs/ai-rules/shared/code-style.md`, `docs/ai-rules/shared/testing.md`
-  - security review/validation: use the same authoritative repo docs as backend review unless product-sensitive work also requires `docs/ai-rules/product.md` and the scoped product authority
-  - e2e validation: add `docs/e2e-testing.md`
-  - product-sensitive work: add `docs/ai-rules/product.md` and the exact scoped product authority doc
+- Default authority-doc loading should be explicit in `required_authority_docs`: list the knowledge docs each owner needs,
+  as `aidrian-knowledge route <tags>` prints them for that owner's tags.
+  - execution and review: the `always` docs plus `code_style` and `testing`
+  - security review/validation: the same docs as review, plus `product_sensitive` when the work is product-sensitive
+  - e2e validation: add `e2e`
+  - product-sensitive work: add `product_sensitive` and the exact scoped product doc
 
 ## Final Quality Gate
 

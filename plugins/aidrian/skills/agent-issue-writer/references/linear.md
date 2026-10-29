@@ -1,6 +1,7 @@
 # Linear Publishing Rules
 
-Use this reference when converting a concrete issue blueprint into Linear-native artifacts. See `docs/ai-rules/shared/issue-tracker.md` for the full tracker abstraction (active tracker, transition rules, priority mapping, magic-word grammar, status taxonomy) — this doc covers only the tool-call mechanics specific to publishing.
+Use this reference when converting a concrete issue blueprint into Linear-native artifacts. The project's `issue_tracker` knowledge owns the tracker rules (team, transition rules, priority mapping, magic-word grammar, status taxonomy) — this doc covers only the tool-call mechanics specific to publishing.
+Below, `<team>` is the team name or id from that knowledge, and `<KEY>` its issue key prefix.
 
 ## Native Hierarchy
 
@@ -14,9 +15,9 @@ Use this reference when converting a concrete issue blueprint into Linear-native
 
 ## Publishing Order
 
-1. Create the Linear Project first (`save_project`, `name` + `addTeams: ["project"]`) when the initiative needs one.
-2. Create the parent issue next (`save_issue`, `team: "project"`) when the initiative has child issues.
-3. Create execution issues after the parent issue exists, setting `parentId` to the parent issue's id or key (e.g. `TEAM-123`).
+1. Create the Linear Project first (`save_project`, `name` + `addTeams: ["<team>"]`) when the initiative needs one.
+2. Create the parent issue next (`save_issue`, `team: "<team>"`) when the initiative has child issues.
+3. Create execution issues after the parent issue exists, setting `parentId` to the parent issue's id or key (e.g. `<KEY>-123`).
 4. Set `blockedBy` / `blocks` on each child issue's `save_issue` call for dependency links.
 5. Set `project` on every execution issue's `save_issue` call to add it to the Linear Project.
 
@@ -59,13 +60,12 @@ Linear's native `priority` is an integer set directly on `save_issue(priority: <
 | Medium | 3 |
 | Low | 4 |
 
-(Full mapping rationale: `docs/ai-rules/shared/issue-tracker.md` § Priority and estimate.)
 
 Always set `priority` on every `save_issue` call that creates an issue.
 
 ## Effort (native Linear `estimate` field)
 
-Team `TEAM` uses Linear's **t-shirt estimation scale**, so effort has a native home: `save_issue`'s `estimate` parameter. Map the issue's `## Size` straight onto it:
+When the team uses Linear's **t-shirt estimation scale** (the `issue_tracker` knowledge says which scale), effort has a native home: `save_issue`'s `estimate` parameter. Map the issue's `## Size` straight onto it:
 
 | `## Size` | `issue_fields.effort` | `save_issue(estimate:)` | Renders in Linear as |
 |---|---|---|---|
@@ -84,14 +84,13 @@ work beyond `L` is a split, not a bigger t-shirt.
 `parent_issue` and `project_issue` artifacts carry no `## Size`, so they take an `estimate` only when an Effort is explicitly supplied.
 On update, omitting `estimate` leaves it unchanged; passing `null` clears it.
 
-(Verified live against team `TEAM` on 2026-08-04. Full rationale: `docs/ai-rules/shared/issue-tracker.md` § Priority and estimate.)
 
 ## Label Rules (domain/work-type only)
 
-The retired `priority:*` / `effort:*` label mirror is gone — Linear's native `priority` field is already filterable, so no filterable-copy workaround is needed. `tracker_fields.labels` now carries only domain/work-type labels (`bug`, `chore`, `feature`, etc.) and is optional.
+Do not add `priority:*` or `effort:*` labels — Linear's native fields are already filterable. `tracker_fields.labels` carries only domain/work-type labels (`bug`, `chore`, `feature`, etc.) and is optional.
 
-- Before creating a label, check `list_issue_labels(team: "project", name: "<label>")` for an existing match.
-- If no match exists, create it with `create_issue_label(name: "<label>", teamId: "configured-team-id")` (team `TEAM`'s id; see `docs/ai-rules/shared/issue-tracker.md`).
+- Before creating a label, check `list_issue_labels(team: "<team>", name: "<label>")` for an existing match.
+- If no match exists, create it with `create_issue_label(name: "<label>", teamId: "<team id>")`.
 - Pass label **names** (not ids) to `save_issue(labels: [...])`.
 - `save_issue`'s `labels` parameter **replaces the full label set** — it is not additive. When updating an existing issue, always pass the complete desired label list (existing labels to keep plus any new ones); omitting an existing label removes it.
 
@@ -105,7 +104,7 @@ Use `save_milestone(project: "<project name or id>", name: "<milestone name>")` 
 
 ## Team resolution
 
-`save_issue`'s `team` parameter is a scalar (team name or id, required when creating). Team `TEAM`'s confirmed name is `"project"` (lowercase) and id is `configured-team-id` (confirmed live via `get_team(query: "TEAM")`, which also resolves the `TEAM` key directly — but `save_issue`'s own parameter description documents only "name or id", so prefer `team: "project"` or the id over the bare `TEAM` key when creating an issue).
+`save_issue`'s `team` parameter is a scalar (team name or id, required when creating). Take both from the project's `issue_tracker` knowledge, or resolve them once with `get_team(query: "<KEY>")`. `save_issue` documents only "name or id", so pass the name or id, never the bare key, when creating an issue.
 
 `save_project` has no scalar `team` parameter — team membership is set via `addTeams` / `removeTeams` (add or remove team names/ids) or `setTeams` (replace the full team set), as used in Publishing Order step 1 above.
 

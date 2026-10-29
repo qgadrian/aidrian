@@ -1,7 +1,7 @@
 {
-  "name": "aidrian-private",
+  "name": "aidrian-harness",
   "interface": {
-    "displayName": "Aidrian Private Harness"
+    "displayName": "Aidrian harness"
   },
   "plugins": [
     {
@@ -9,10 +9,6 @@
       "source": {
         "source": "local",
         "path": "./plugins/aidrian"
-      },
-      "interface": {
-        "displayName": "Aidrian Private Harness",
-        "shortDescription": "Private shared harness skills and project-agent resources."
       },
       "policy": {
         "installation": "AVAILABLE",

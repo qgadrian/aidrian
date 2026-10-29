@@ -1,43 +1,37 @@
 ---
 name: design-import
-description: Bring a primary provider Design handoff bundle into the repo as an implementation-ready design import. Use on /design-import, "import a design export", or a bundle path.
-conditionalTags: [design_bundle]
+description: Bring a Claude Design handoff bundle into the repo as an implementation-ready design import. Use on /design-import, "import a design export", or a bundle path.
 user-invocable: true
 ---
 
 # design-import
 
-Ingest a primary provider Design (`claude.ai/design`) handoff bundle into the consuming project. The
+Ingest a Claude Design (`claude.ai/design`) handoff bundle into the project. The
 skill resolves the bundle, dispatches `design-source-explorer` to classify it
 and commit a durable design import under `docs/design-imports/<slug>/`, then
 dispatches `planning-agent` to produce a technical-design plan the
 implementation specialists can execute from.
 
-This is the repo's design-to-code entry point (introduced by
-`docs/adr/0012-claude-design-bundle-ingestion-pipeline.md`; sole pipeline
-since the Stitch pipeline was retired). It never writes production code,
+This is the project's design-to-code entry point. It never writes production code,
 never opens a PR, never closes anything, and never bypasses git hooks. It
-does not load `docs/ai-rules/**` rules into its own context — specialists
-Read those via the canonical bootstrap (`docs/ai-rules/contract.md` →
-`docs/ai-rules/bootstrap.md` → `docs/ai-rules/context-map.json`).
+does not load the project's `design_bundle` knowledge into its own context —
+the specialists it dispatches load it through the `knowledge` skill.
 
-Implementation runs separately: after the plan exists, the user runs
-`/plan-review` and then `/plan-implement docs/design-imports/<slug>/plan.md`,
-which executes the plan slice-by-slice via `designer` and
-`frontend-developer` through the orchestrator.
+Implementation runs separately: after the plan exists, the user reviews it
+and runs the project's plan-implementation flow, which executes the plan
+slice-by-slice through `designer` and `frontend-developer`.
 
 ## Design-source specs (per-tool)
 
-Generic implementation rules are tool-agnostic and live in
-`docs/ai-rules/shared/visual-ui-implementation.md`. Each design tool gets its
-own recognition spec:
+Generic implementation rules are tool-agnostic and live in the project's
+`design_bundle` knowledge, next to one recognition spec per design tool:
 
-- primary provider Design → `docs/ai-rules/shared/claude-design-bundle.md` (the only
-  supported tool today). The spec is invariant- and role-based because primary provider
+- Claude Design → the project's Claude Design bundle spec (the only
+  supported tool today). The spec is invariant- and role-based because Claude
   Design's export format drifts; its self-healing rule keeps ingestion
   working on unseen layouts while routing a spec update to `doc-updater`.
-- A future tool → add a sibling `docs/ai-rules/shared/<tool>-bundle.md` spec
-  plus a routing bullet in the shared agent-routing rules; this skill and the
+  Without a spec, `design-source-explorer` classifies from first principles and records the gap.
+- A future tool → add a sibling spec under the same tag; this skill and the
   generic rules do not change.
 
 ## Argument grammar
@@ -46,7 +40,7 @@ own recognition spec:
 /design-import <bundle-path> [--slug <slug>] [--variant <id>]
 ```
 
-- **`<bundle-path>`** (required) — a local folder or a local zip of a primary provider
+- **`<bundle-path>`** (required) — a local folder or a local zip of a Claude
   Design handoff bundle. If missing, ask once and proceed.
 - **`--slug <slug>`** (optional) — the design-import slug; defaults to a name
   derived from the bundle directory or zip filename (lowercased, non-`[a-z0-9]`
@@ -66,11 +60,11 @@ own recognition spec:
 1. **Accept arguments.** Resolve `<bundle-path>`, `<slug>`, and `<variant>`.
    Confirm the bundle path exists on disk. If it does not → **stop and ask**.
 
-2. **Dispatch `design-source-explorer`** (via `orchestrator`) with the bundle
+2. **Dispatch `design-source-explorer`** with the bundle
    path, the slug, and the chosen variant when one was supplied. The explorer
    recognizes the bundle by markers, resolves the canonical design source
    (page / surfaces), classifies every file per
-   `docs/ai-rules/shared/claude-design-bundle.md`, and — when unblocked —
+   the project's bundle spec, and — when unblocked —
    commits the design import to `docs/design-imports/<slug>/` (`DESIGN.md`,
    `inventory.md`, curated `source/`).
 
@@ -102,25 +96,24 @@ own recognition spec:
    an unresolvable-source stop, the explorer proceeds with the chosen
    page/variant and commits the design import.
 
-5. **Dispatch `planning-agent`** (via `orchestrator`) to author the generated
+5. **Dispatch `planning-agent`** to author the generated
    plan per the **Generated plan — slice requirements** section below. The
    plan is written to `docs/design-imports/<slug>/plan.md`.
 
-6. **Mechanical contract check.** Run `npm run lint:design-imports` after the
-   plan is written. A failure means `design-source-explorer` or
+6. **Mechanical contract check.** When the project has a design-import lint
+   (its `design_bundle` knowledge names it), run it after the plan is written. A failure means `design-source-explorer` or
    `planning-agent` produced a structurally non-conformant artifact — route
    the fix back to that specialist before reporting success; never hand the
    user a plan that fails the committed contract.
 
-7. **Recommend `/plan-review`, then stop.** Surface the final report; tell the
-   user to run `/plan-review docs/design-imports/<slug>/plan.md` before
-   implementation. Implementation is a separate run via `/plan-implement`;
-   this skill does not implement.
+7. **Recommend a plan review, then stop.** Surface the final report; tell the
+   user to review `docs/design-imports/<slug>/plan.md` before
+   implementation. Implementation is a separate run; this skill does not implement.
 
 ## Generated plan — slice requirements
 
 The skill instructs `planning-agent` to author a plan that conforms to the
-Plan-File Schema in `.agents/skills/planning-agent/SKILL.md` with these
+Plan-File Schema in the `planning-agent` skill with these
 design-import specifics:
 
 - **`plan_kind: technical-design`.** A design import has no GitHub issue, so
@@ -128,7 +121,7 @@ design-import specifics:
   omits `issue_id` / `issue_ref` / `ticket_updated_at`; it records the
   bundle path, the chosen page/variant, and the slug.
 - **Plan home.** The plan is written to the committed path
-  `docs/design-imports/<slug>/plan.md` — **not** `.agent/plans/`, which is
+  `docs/design-imports/<slug>/plan.md` — **not** `.aidrian/plans/`, which is
   git-ignored. The committed home keeps the spec, inventory, curated source,
   and plan as one durable, PR-reviewable unit.
 - **Re-runs revise the existing plan; `plan_kind` stays `technical-design`.**
@@ -141,16 +134,16 @@ design-import specifics:
 - **One slice per approved screen.** A separate slice covers shell / nav when
   it is in scope.
 - **Each slice `primary_owner` is `designer` or `frontend-developer`.**
-- **Each screen slice's `verification_path`** includes `npm run typecheck`,
-  `npm run lint`, `npx jest --testPathPatterns=<touched components>
-  --no-coverage`, **plus visual fit checks at the widths the bundle's
+- **Each screen slice's `verification_path`** includes the project's typecheck,
+  lint, and the exact tests for the touched components (its `testing` knowledge names them),
+  **plus visual fit checks at the widths the bundle's
   artboards declare** (fall back to 360 / 768 / 1280px only when the source
   declares no widths) **and screenshot-vs-artboard evidence for every
   artboard in the slice's coverage table** — produced with the
-  `design-verify` skill (`.agents/skills/design-verify/SKILL.md`) — with a
+  project's screenshot tool (for example a `design-verify` skill) — with a
   `designer` review of the resulting pairs.
-- **Each screen slice inherits the fidelity contract** of
-  `docs/ai-rules/shared/visual-ui-implementation.md`: the per-artboard
+- **Each screen slice inherits the fidelity contract** of the project's
+  visual-implementation rules: the per-artboard
   coverage table from `inventory.md`, the deviation ledger, and the
   `parity_status` / `fit_status` / `interpretation_status` handoff fields are
   required outputs of the slice — a slice handoff missing them is incomplete.
@@ -204,32 +197,28 @@ A single concise report. Skip a section if it has nothing to say.
 6. **Next steps** — every successful run ends with the remaining pipeline
    spelled out (each step is one user command; the work inside is
    agent-executed), so the user never has to remember it:
-   1. Run `/plan-review docs/design-imports/<slug>/plan.md` and approve or
+   1. Review `docs/design-imports/<slug>/plan.md` and approve or
       refine the plan — the human gate before any code.
-   2. Run `/plan-implement docs/design-imports/<slug>/plan.md` — it executes
+   2. Run the project's plan-implementation flow on that plan — it executes
       the plan slice-by-slice (`designer` owns visual slices,
-      `frontend-developer` owns the gated data-wiring slices), runs
-      `/design-verify <slug>` plus the `designer` deviation-ledger review as
-      each screen slice's closure gate, and is safe to re-invoke after an
-      interruption or context compaction (slice state lives in the plan
-      file).
-   3. When the run finishes, it invokes the `/pr-write` skill for the draft PR —
-      review and publish it.
+      `frontend-developer` owns the gated data-wiring slices), with screenshot
+      evidence plus the `designer` deviation-ledger review as each screen
+      slice's closure gate. Slice state lives in the plan file, so the run is
+      safe to resume after an interruption.
+   3. Open the draft PR the project's way, then review and publish it.
    When blocked, replace this checklist with the explicit question to
    resolve.
 
 ## Hard rules
 
 - **No production code, no PRs, no commits of source.** The skill never edits
-  `src/**` and never runs `git commit`/`git push` on production code. The only
+  application source and never runs `git commit`/`git push` on production code. The only
   commits are the design import under `docs/design-imports/<slug>/`, authored
   by `design-source-explorer` and `planning-agent` under the git-hook hard
   wall — never with `--no-verify` or any hook bypass.
-- **No bloat in skill context.** The skill does not Read `docs/ai-rules/**`
-  content into its own context. Specialists Read the bootstrap and `taskTags`
-  docs.
-- **`docs/ai-rules/**` is authoritative.** Per `docs/ai-rules/contract.md`
-  "Authority Order".
+- **No bloat in skill context.** The skill does not Read the project's
+  `design_bundle` knowledge into its own context. Specialists load it through the `knowledge` skill.
+- **Project knowledge is authoritative.** See the `knowledge` skill § Precedence.
 - **The bundle is a visual source only.** It is never a logic or product
   source. Data-wiring and behavior stay gated on `product-manager` +
   `architect`.
@@ -243,15 +232,10 @@ A single concise report. Skip a section if it has nothing to say.
 
 ## Cross-references
 
-- `docs/ai-rules/shared/claude-design-bundle.md` — bundle invariants,
-  role-classification procedure, and self-healing format-drift rule.
-- `docs/ai-rules/shared/visual-ui-implementation.md` — the tool-agnostic
+- The project's `design_bundle` knowledge — the bundle spec (invariants,
+  role-classification procedure, self-healing format-drift rule) and the
   fidelity contract implementation slices inherit.
-- `.agent/agents/design-source-explorer.md` — the bundle explorer agent.
-- `.agents/skills/planning-agent/SKILL.md` — the Plan-File Schema.
-- `.agents/skills/design-import/references/example-bundle-pages/` — committed
-  verification fixture for the current page-based layout.
-- `.agents/skills/design-import/references/example-bundle/` — committed
-  verification fixture for the legacy `project/` layout.
-- `docs/adr/0012-claude-design-bundle-ingestion-pipeline.md` — the decision
-  that introduced this pipeline.
+- The `design-source-explorer` agent — the bundle explorer.
+- The `planning-agent` skill — the Plan-File Schema.
+- `references/example-bundle-pages/` — verification fixture for the current page-based layout.
+- `references/example-bundle/` — verification fixture for the older `project/` layout.

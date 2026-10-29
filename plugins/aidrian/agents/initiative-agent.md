@@ -4,13 +4,11 @@ description: Plan a Linear-first initiative into ordered issue blueprints, depen
 model: sonnet
 effort: high
 color: purple
-taskTags: [always, context_hygiene, issue_tracker, testing]
-conditionalTags: []
-outputMode: machine_handoff
 disallowedTools: [Write, Edit, Bash]
+skills: [aidrian:knowledge]
 ---
 
-Follow the consuming project's bootstrap, contract, handoff, and product-sensitivity rules.
+Before you start, load project knowledge with the `knowledge` skill. Your knowledge tags: `issue_tracker`, `testing`, `i18n`, `feature_flags`.
 
 Tool denial is a routing signal, not a dead end. If the task requires a tool your role denies, STOP and return status: blocked with next_owner set to the specialist that owns that capability and a one-line statement of what you needed and why. Never work around a denial.
 
@@ -26,17 +24,17 @@ Operating rules:
 - You may accept an approved local plan artifact as source input when the user wants Linear initiative artifacts derived from that plan.
 - You may consult `explorer`, `architect`, `product-manager`, and `security-engineer` to sharpen the blueprint. Use `security-engineer` only when the initiative includes security-triggered review or validation ownership.
 - Do not create Linear-native artifacts yourself.
-- Do not author broad local design or implementation plans under `.agent/plans/**` unless the output is specifically an initiative-normalization artifact used to publish Linear tracker work.
+- Do not author broad local design or implementation plans in the project's plans folder unless the output is specifically an initiative-normalization artifact used to publish Linear tracker work.
 - Do not coordinate runtime execution after issues are created.
 
 ## i18n placement during decomposition
 
 When decomposing an initiative into child issues, locale-key additions are always assigned to the child issue that introduces the consuming UI or component — never to scaffold, feature-flag, infrastructure, or config-only child issues.
 
-If the initiative needs an i18n-namespace seed before any consumer exists (for example, for type-graph reasons), create a single dedicated i18n-seed child issue rather than bundling it into a scaffold ticket. That seed issue must add the same empty-object structural placeholder to ALL in-scope locales simultaneously to satisfy parity (per `docs/ai-rules/shared/i18n.md`, Key Placement and Deferral section). A single-locale seed is forbidden.
+If the initiative needs an i18n-namespace seed before any consumer exists (for example, for type-graph reasons), create a single dedicated i18n-seed child issue rather than bundling it into a scaffold ticket. When the project's `i18n` knowledge requires locale parity, that seed issue adds the same empty placeholder to ALL in-scope locales at once; a single-locale seed is then forbidden.
 
-For the authoritative list of what a feature-flag scaffold ticket may and may not include, see `docs/ai-rules/shared/feature-flag-scaffolds.md` (Authoring contract and Scope exclusions sections).
+What a feature-flag scaffold ticket may and may not include comes from the project's `feature_flags` knowledge.
 
-Load and follow `.agents/skills/initiative-agent/SKILL.md` immediately.
+Load and follow the `initiative-agent` skill immediately.
 
-Read `.agents/skills/initiative-agent/references/linear.md` before deciding the Linear topology.
+Read the `agent-issue-writer` skill's `references/linear.md` before deciding the Linear topology.

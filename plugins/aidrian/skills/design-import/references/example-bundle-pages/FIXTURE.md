@@ -1,9 +1,8 @@
-# Fixture — current page-based primary provider Design layout
+# Fixture — current page-based Claude Design layout
 
 Committed verification fixture for the `design-import` workflow, matching
-the **page-based canvas layout** observed in the
-`hospitality-booking-modal-revisited-6` export (see "Observed layouts" in
-`docs/ai-rules/shared/claude-design-bundle.md`). Intentionally minimal, not a
+the **page-based canvas layout** observed in real Claude Design exports
+(see "Observed layouts" in the project's bundle spec, when it has one). Intentionally minimal, not a
 real product export. A real bundle of this shape has no
 `README.md`/`FIXTURE.md` — recognition is invariant-based, so this note does
 not affect classification.

@@ -5,7 +5,7 @@
    the prototype's screens with placeholder data inside the
    design tool. The design-import workflow classifies this file
    as mock data → DISCARD. Its values must never be translated
-   into the consuming project production code — real data comes from the
+   into the project's production code — real data comes from the
    repo's own data layer.
    ════════════════════════════════════════════════════════════ */
 

@@ -142,7 +142,7 @@ One bounded booking-date logic fix with focused regression coverage.
 
 - labels: `bug`, `bookings`
 - Linear Project: `Service Hours Reliability`
-- parent issue: `TEAM-1234`
+- parent issue: `ABC-1234`
 - depends on: `none`
 - Priority: `Medium` (bug, inferred)
 - Effort: `Low` (Size S → Low)
@@ -189,7 +189,7 @@ Missing information:
 Recommended repo paths to inspect:
 - `src/app`
 - `src/lib/payments`
-- `docs/ai-rules/product.md`
+- `docs/knowledge/product/product-rules.md`
 
 Questions to unblock:
 - Which payment retry surface should this issue target?
@@ -207,21 +207,21 @@ Questions to unblock:
   "validation_owners": ["code-reviewer"],
   "required_authority_docs": {
     "execution": [
-      "docs/ai-rules/contract.md",
-      "docs/ai-rules/core/safety-kernel.md",
-      "docs/ai-rules/shared/code-style.md",
-      "docs/ai-rules/shared/testing.md"
+      "docs/knowledge/engineering/working-agreement.md",
+      "docs/knowledge/engineering/safety-rules.md",
+      "docs/knowledge/engineering/code-style.md",
+      "docs/knowledge/engineering/testing.md"
     ],
     "review": [
-      "docs/ai-rules/contract.md",
-      "docs/ai-rules/core/safety-kernel.md",
-      "docs/ai-rules/shared/code-style.md",
-      "docs/ai-rules/shared/testing.md"
+      "docs/knowledge/engineering/working-agreement.md",
+      "docs/knowledge/engineering/safety-rules.md",
+      "docs/knowledge/engineering/code-style.md",
+      "docs/knowledge/engineering/testing.md"
     ],
     "validation": [
-      "docs/ai-rules/contract.md",
-      "docs/ai-rules/core/safety-kernel.md",
-      "docs/ai-rules/shared/testing.md"
+      "docs/knowledge/engineering/working-agreement.md",
+      "docs/knowledge/engineering/safety-rules.md",
+      "docs/knowledge/engineering/testing.md"
     ]
   },
   "deliverables": [
@@ -296,21 +296,21 @@ Questions to unblock:
   "validation_owners": ["security-engineer"],
   "required_authority_docs": {
     "execution": [
-      "docs/ai-rules/contract.md",
-      "docs/ai-rules/core/safety-kernel.md",
-      "docs/ai-rules/shared/code-style.md",
-      "docs/ai-rules/shared/testing.md"
+      "docs/knowledge/engineering/working-agreement.md",
+      "docs/knowledge/engineering/safety-rules.md",
+      "docs/knowledge/engineering/code-style.md",
+      "docs/knowledge/engineering/testing.md"
     ],
     "review": [
-      "docs/ai-rules/contract.md",
-      "docs/ai-rules/core/safety-kernel.md",
-      "docs/ai-rules/shared/code-style.md",
-      "docs/ai-rules/shared/testing.md"
+      "docs/knowledge/engineering/working-agreement.md",
+      "docs/knowledge/engineering/safety-rules.md",
+      "docs/knowledge/engineering/code-style.md",
+      "docs/knowledge/engineering/testing.md"
     ],
     "validation": [
-      "docs/ai-rules/contract.md",
-      "docs/ai-rules/core/safety-kernel.md",
-      "docs/ai-rules/shared/testing.md"
+      "docs/knowledge/engineering/working-agreement.md",
+      "docs/knowledge/engineering/safety-rules.md",
+      "docs/knowledge/engineering/testing.md"
     ]
   },
   "deliverables": [

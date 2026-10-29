@@ -1,23 +1,9 @@
 {
   "name": "aidrian",
-  "displayName": "Aidrian Private Harness",
-  "version": "0.0.0",
-  "description": "Private shared harness agents and skills.",
+  "version": "0.1.0",
+  "description": "Planning, issue-writing, exploration, integration, docs, and design-import agents and skills. Each project supplies its rules as knowledge buckets.",
   "author": {
-    "name": "Acme"
+    "name": "the aidrian authors"
   },
-  "agents": [
-    "./agents/agent-issue-writer.md",
-    "./agents/design-source-explorer.md",
-    "./agents/doc-updater.md",
-    "./agents/explorer.md",
-    "./agents/github-archaeologist.md",
-    "./agents/harness-engineer.md",
-    "./agents/initiative-agent.md",
-    "./agents/integrator.md",
-    "./agents/planning-agent.md"
-  ],
-  "skills": [
-    "./skills/"
-  ]
+  "repository": "https://github.com/qgadrian/aidrian-harness"
 }

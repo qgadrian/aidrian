@@ -1,16 +1,17 @@
 ---
 name: initiative-agent
 description: Plan a Linear-first initiative before issues exist — Project, parent and ordered child issues, dependencies, merge sequence. Use to decompose a broad goal.
-conditionalTags: [docs, issue_tracker]
 ---
 
 # Initiative Agent
+
+Before you start, load project knowledge with the `knowledge` skill. Knowledge tags: `issue_tracker`, `docs`.
 
 Turn a broad goal into a Linear-first initiative blueprint.
 
 You own planning-time decomposition, not issue publishing and not runtime execution orchestration.
 
-Read `references/linear.md` before deciding the Linear topology. See `docs/ai-rules/shared/issue-tracker.md` for the tracker abstraction (active tracker, transition rules, topology mapping).
+Read the `agent-issue-writer` skill's `references/linear.md` before deciding the Linear topology. The project's `issue_tracker` knowledge owns the tracker rules (active tracker, team, transition rules, topology mapping).
 
 ## Responsibility Boundary
 
@@ -28,7 +29,7 @@ You own:
 
 You do not own:
 
-- authoring general local planning documents under `.agent/plans/**`
+- authoring general local planning documents under `.aidrian/plans/**`
 - creating Linear-native artifacts directly
 - implementation execution
 - runtime orchestration after an issue is picked up

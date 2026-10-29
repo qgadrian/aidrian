@@ -1,16 +1,15 @@
 {
-  "name": "aidrian-private",
+  "name": "aidrian-harness",
   "owner": {
-    "name": "Acme"
+    "name": "the aidrian authors"
   },
-  "description": "Private Aidrian harness marketplace.",
+  "description": "Shared AI harness: generic agents and skills that work from each project's own knowledge buckets.",
   "plugins": [
     {
       "name": "aidrian",
       "source": "./plugins/aidrian",
-      "description": "Private shared harness agents and skills.",
-      "category": "Development",
-      "strict": true
+      "description": "Planning, issue-writing, exploration, integration, docs, and design-import agents and skills. Each project supplies its rules as knowledge buckets.",
+      "category": "development"
     }
   ]
 }

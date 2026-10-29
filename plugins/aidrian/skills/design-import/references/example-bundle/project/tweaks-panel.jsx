@@ -5,7 +5,7 @@
    tool's scenario / theme tweak controls so the prototype can
    be explored interactively. The design-import workflow
    classifies this file as harness → DISCARD. It must never be
-   translated into the consuming project production code.
+   translated into the project's production code.
    ════════════════════════════════════════════════════════════ */
 
 const { useState } = React;

@@ -126,13 +126,17 @@ test('a duplicate bucket id fails, and a README in the bucket root needs no tag'
   assert.deepEqual(errors, ['kb2/bucket.json: id "kb" is used by another bucket']);
 });
 
-test('a doc that links outside the project fails, and a link that stays inside passes', (t) => {
+test('a doc that links outside its bucket fails, and a link that stays inside passes', (t) => {
   const project = validProject(t);
   symlinkSync(path.join(ROOT, 'README.md'), path.join(project, 'kb/outside.md'));
+  // Stays inside the project but leaves the bucket.
+  symlinkSync('../outside.md', path.join(project, 'kb/injected.md'));
   symlinkSync(path.join(project, 'kb/rules.md'), path.join(project, 'kb/sub/rules-link.md'));
-  bucket(project, { always: ['rules.md', 'outside.md'], tags: { testing: ['sub/testing.md', 'sub/rules-link.md'] } });
+  bucket(project, { always: ['rules.md', 'outside.md', 'injected.md'], tags: { testing: ['sub/testing.md', 'sub/rules-link.md'] } });
   assert.deepEqual(loadKnowledge(project).errors, [
     'kb/bucket.json: "always": "outside.md" must be a relative .md path inside the bucket',
+    'kb/bucket.json: "always": "injected.md" must be a relative .md path inside the bucket',
+    'kb/injected.md: no tag loads this doc; add it to "always" or a tag in kb/bucket.json, or delete it',
     'kb/outside.md: no tag loads this doc; add it to "always" or a tag in kb/bucket.json, or delete it',
   ]);
 });

@@ -29,7 +29,7 @@ to author a design-import plan
 `docs/design-imports/<slug>/plan.md` instead of `.aidrian/plans/**`. This is
 the one place a planning artifact is authored outside `.aidrian/plans/**`:
 `.aidrian/plans/` is git-ignored, so a design import — whose `DESIGN.md`,
-`inventory.md`, and curated `source/` are already committed under
+`inventory.md`, and curated `source/` are already written to
 `docs/design-imports/<slug>/` — keeps its plan in the same committed,
 PR-reviewable directory. `.aidrian/plans/**` remains the default home for all
 issue-driven plans.

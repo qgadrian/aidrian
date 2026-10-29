@@ -8,9 +8,9 @@ user-invocable: true
 
 Ingest a Claude Design (`claude.ai/design`) handoff bundle into the project. The
 skill resolves the bundle, dispatches `design-source-explorer` to classify it
-and commit a durable design import under `docs/design-imports/<slug>/`, then
+and write a durable design import under `docs/design-imports/<slug>/`,
 dispatches `planning-agent` to produce a technical-design plan the
-implementation specialists can execute from.
+implementation specialists can execute from, then commits the import.
 
 This is the project's design-to-code entry point. It never writes production code,
 never opens a PR, never closes anything, and never bypasses git hooks. It
@@ -68,7 +68,7 @@ Generic implementation rules are tool-agnostic and live in the project's
    recognizes the bundle by markers, resolves the canonical design source
    (page / surfaces), classifies every file per
    the project's bundle spec, and — when unblocked —
-   commits the design import to `docs/design-imports/<slug>/` (`DESIGN.md`,
+   writes the design import to `docs/design-imports/<slug>/` (`DESIGN.md`,
    `inventory.md`, curated `source/`).
 
 3. **Handle the explorer result.** `design-source-explorer` can return two
@@ -97,7 +97,7 @@ Generic implementation rules are tool-agnostic and live in the project's
 
 4. **Re-invocation with `--variant`.** When re-invoked with `--variant` after
    an unresolvable-source stop, the explorer proceeds with the chosen
-   page/variant and commits the design import.
+   page/variant and writes the design import.
 
 5. **Dispatch `planning-agent`** to author the generated
    plan per the **Generated plan — slice requirements** section below. The
@@ -109,7 +109,12 @@ Generic implementation rules are tool-agnostic and live in the project's
    the fix back to that specialist before reporting success; never hand the
    user a plan that fails the committed contract.
 
-7. **Recommend a plan review, then stop.** Surface the final report; tell the
+7. **Commit the design import.** Commit `docs/design-imports/<slug>/` (and the
+   superseded banner in an older import's `DESIGN.md`, when the explorer added
+   one) as one commit through the project's normal git hooks. The dispatched
+   agents only write files; this is the one commit the skill makes.
+
+8. **Recommend a plan review, then stop.** Surface the final report; tell the
    user to review `docs/design-imports/<slug>/plan.md` before
    implementation. Implementation is a separate run; this skill does not implement.
 
@@ -216,9 +221,10 @@ A single concise report. Skip a section if it has nothing to say.
 
 - **No production code, no PRs, no commits of source.** The skill never edits
   application source and never runs `git commit`/`git push` on production code. The only
-  commits are the design import under `docs/design-imports/<slug>/`, authored
-  by `design-source-explorer` and `planning-agent` under the git-hook hard
-  wall — never with `--no-verify` or any hook bypass.
+  commit is the design import under `docs/design-imports/<slug>/`, written by
+  `design-source-explorer` and `planning-agent` and committed by the skill in
+  workflow step 7 under the git-hook hard wall — never with `--no-verify` or
+  any hook bypass.
 - **No bloat in skill context.** The skill does not Read the project's
   `design_bundle` knowledge into its own context. Specialists load it through the `knowledge` skill.
 - **Project knowledge is authoritative.** See the `knowledge` skill § Precedence.

@@ -143,19 +143,20 @@ function insidePath(root, base, rel) {
   if (base && !joined.startsWith(`${base}/`)) return null;
   // path.relative uses the platform separator, "\" on Windows; `rel` cannot hold one, so mapping it back is safe.
   if (path.relative(root, path.join(root, joined)).replaceAll('\\', '/') !== joined) return null;
-  return linksOutside(root, joined) ? null : joined;
+  return linksOutside(root, joined, base) ? null : joined;
 }
 
-// True when `rel` exists but, with symlinks resolved, lies outside the project. A missing path is left to the caller.
-function linksOutside(root, rel) {
+// True when `rel` exists but, with symlinks resolved, lies outside the folder `within` (relative to `root`; the
+// project when empty). A missing path is left to the caller.
+function linksOutside(root, rel, within = '') {
   let real;
   try {
     real = realpathSync(path.join(root, rel));
   } catch {
     return false;
   }
-  const realRoot = realpathSync(root);
-  return real !== realRoot && !real.startsWith(`${realRoot}${path.sep}`);
+  const realWithin = realpathSync(path.join(root, within));
+  return real !== realWithin && !real.startsWith(`${realWithin}${path.sep}`);
 }
 
 function readJson(root, rel, errors) {

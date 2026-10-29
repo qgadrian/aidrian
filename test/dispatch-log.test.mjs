@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { claimedPaths, dispatchRow, formatReport, parseSince, sessionRow, summarize } from '../plugins/aidrian/lib/dispatch-log.mjs';
+import { claimedPaths, dispatchRow, formatDocs, formatReport, parseSince, sessionRow, summarize, summarizeDocs } from '../plugins/aidrian/lib/dispatch-log.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
@@ -22,16 +22,16 @@ function project(t) {
   spawnSync('git', ['init', '-q', dir]);
   for (const entry of ['.aidrian', 'docs', '.gitignore']) cpSync(path.join(ROOT, 'examples/consumer', entry), path.join(dir, entry), { recursive: true });
   const env = { ...process.env, XDG_STATE_HOME: path.join(base, 'state') };
+  const state = () => spawnSync(CLI, ['state'], { cwd: dir, env, encoding: 'utf8' }).stdout.trim();
   const log = () => {
-    const state = spawnSync(CLI, ['state'], { cwd: dir, env, encoding: 'utf8' }).stdout.trim();
     try {
-      return readFileSync(path.join(state, 'dispatch-log.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
+      return readFileSync(path.join(state(), 'dispatch-log.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
     } catch {
       return [];
     }
   };
   const hook = (script, input) => spawnSync(process.execPath, [path.join(SCRIPTS, script)], { input: JSON.stringify(input), encoding: 'utf8', env });
-  return { base, dir, env, log, hook };
+  return { base, dir, env, state, log, hook };
 }
 
 test('a dispatch row keeps names, counts, and a short description, and never the prompt', () => {
@@ -174,6 +174,68 @@ test('parseSince takes a span or a date; aidrian report prints the log, --json t
   assert.deepEqual(Object.keys(JSON.parse(report(['--json']).stdout)), ['file', 'since', 'skipped', 'agents', 'sessions', 'unjoined_stops']);
   assert.equal(report(['--since', 'soon']).status, 1);
   assert.equal(report(['--prs', '0']).status, 1);
+});
+
+// Reads of the example consumer's docs: three subagents, one sent back once, a main conversation, a row from before sizes
+// were logged, and an old row the default window leaves out.
+const DOC = (name) => `docs/knowledge/${name}.md`;
+const read = (name, bytes) => ({ path: DOC(name), bytes });
+const DOC_ROWS = [
+  { event: 'stop', ts: '2026-10-29T10:00:00Z', agent_id: 'a1', agent_type: 'Explore', docs_read: [read('engineering/working-agreement', 479)] },
+  { event: 'stop', ts: '2026-10-29T10:05:00Z', agent_id: 'a1', agent_type: 'Explore', docs_read: [read('engineering/working-agreement', 479), read('engineering/testing', 323)] },
+  { event: 'stop', ts: '2026-10-29T10:10:00Z', agent_id: 'a2', agent_type: 'planner', docs_read: [read('engineering/working-agreement', 479), read('engineering/branches-and-reviews', 401)] },
+  { event: 'stop', ts: '2026-10-29T10:20:00Z', agent_id: 'a3', agent_type: 'code-reviewer', docs_read: [read('engineering/working-agreement', 479), read('engineering/testing', 323), read('engineering/code-style', 314)] },
+  { event: 'stop', ts: '2026-10-29T10:25:00Z', agent_id: 'a4', agent_type: 'Explore', docs_read: [DOC('product/sharing')] },
+  { event: 'session', ts: '2026-10-29T11:00:00Z', session_id: 's1', docs_read: [read('engineering/working-agreement', 479), read('product/product-rules', 241)] },
+  { event: 'dispatch', ts: '2026-10-29T10:00:00Z', agent_id: 'a1', agent_type: 'Explore' },
+  { event: 'stop', ts: '2026-10-01T00:00:00Z', agent_id: 'old', agent_type: 'planner', docs_read: [read('engineering/issue-tracker', 308)] },
+];
+
+test('summarizeDocs: per doc reads, size, reads × size, and readers; most bytes first, unknown sizes last', () => {
+  const { docs, totals } = summarizeDocs(DOC_ROWS, { sinceMs: parseSince('7d', NOW) });
+  assert.deepEqual(docs.map((doc) => [doc.path, doc.reads, doc.bytes, doc.read_bytes, doc.readers]), [
+    [DOC('engineering/working-agreement'), 4, 479, 1916, ['Explore', 'code-reviewer', 'main', 'planner']],
+    [DOC('engineering/testing'), 2, 323, 646, ['Explore', 'code-reviewer']],
+    [DOC('engineering/branches-and-reviews'), 1, 401, 401, ['planner']],
+    [DOC('engineering/code-style'), 1, 314, 314, ['code-reviewer']],
+    [DOC('product/product-rules'), 1, 241, 241, ['main']],
+    [DOC('product/sharing'), 1, null, null, ['Explore']],
+  ]);
+  assert.deepEqual(totals, { docs: 6, reads: 10, read_bytes: 3518, readers: ['Explore', 'code-reviewer', 'main', 'planner'] });
+
+  const text = formatDocs({ docs, totals }, { file: '/s/dispatch-log.jsonl', since: '7d', skipped: 0 });
+  assert.equal(text, [
+    'Knowledge docs read, from /s/dispatch-log.jsonl, since 7d',
+    '10 reads of 6 docs, 3.4 KB in all, by 4 readers: Explore, code-reviewer, main, planner',
+    'Most bytes read (reads × size), top 6:',
+    `      4 ×    0.5 KB =    1.9 KB  ${DOC('engineering/working-agreement')}  (Explore, code-reviewer, main, planner)`,
+    `      2 ×    0.3 KB =    0.6 KB  ${DOC('engineering/testing')}  (Explore, code-reviewer)`,
+    `      1 ×    0.4 KB =    0.4 KB  ${DOC('engineering/branches-and-reviews')}  (planner)`,
+    `      1 ×    0.3 KB =    0.3 KB  ${DOC('engineering/code-style')}  (code-reviewer)`,
+    `      1 ×    0.2 KB =    0.2 KB  ${DOC('product/product-rules')}  (main)`,
+    `      1 ×         ? =         ?  ${DOC('product/sharing')}  (Explore)`,
+    'Read by the most readers:',
+    `  4 of 4  ${DOC('engineering/working-agreement')}`,
+    `  2 of 4  ${DOC('engineering/testing')}`,
+  ].join('\n'));
+  assert.match(formatDocs(summarizeDocs([]), { file: 'f', since: '7d', skipped: 1 }), /^Knowledge docs read, from f, since 7d \(1 unreadable rows skipped\)\nNo knowledge doc reads yet\.$/);
+});
+
+test('aidrian report docs prints the doc view, --json all of it; a stray word or --prs is an error', (t) => {
+  const { dir, env, state } = project(t);
+  const report = (args) => spawnSync(CLI, ['report', ...args], { cwd: dir, env, encoding: 'utf8' });
+  assert.match(report(['docs']).stdout, /^Knowledge docs read, from .*dispatch-log\.jsonl, since 7d\nNo knowledge doc reads yet\.\n$/);
+  mkdirSync(state(), { recursive: true });
+  const recent = DOC_ROWS.map((row) => ({ ...row, ts: new Date(Date.now() - 3_600_000).toISOString() }));
+  writeFileSync(path.join(state(), 'dispatch-log.jsonl'), `${recent.map((row) => JSON.stringify(row)).join('\n')}\nnot json\n`);
+  const text = report(['docs', '--since', '1d']);
+  assert.equal(text.status, 0, text.stderr);
+  assert.match(text.stdout, /since 1d \(1 unreadable rows skipped\)\n11 reads of 7 docs, .* by 4 readers/);
+  const json = JSON.parse(report(['docs', '--json']).stdout);
+  assert.deepEqual(Object.keys(json), ['file', 'since', 'skipped', 'docs', 'totals']);
+  assert.deepEqual(json.docs[0], { path: DOC('engineering/working-agreement'), reads: 4, bytes: 479, read_bytes: 1916, readers: ['Explore', 'code-reviewer', 'main', 'planner'] });
+  assert.deepEqual([report(['nope']).status, report(['nope']).stderr], [1, 'unknown report: nope; use aidrian report or aidrian report docs\n']);
+  assert.deepEqual([report(['docs', 'more']).status, report(['docs', '--prs', '1']).status], [1, 1]);
 });
 
 test('sessionRow without a transcript has no models and no docs read', () => {

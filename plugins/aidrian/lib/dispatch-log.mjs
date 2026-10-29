@@ -16,6 +16,9 @@ import { aggregateUsage, estimateCostUsd, filesRead, readText, subagentTranscrip
 
 const DESCRIPTION_CHARS = 80;
 const CLAIMED_PATHS = 20;
+// `aidrian report docs` lists the docs with the most bytes read, and the docs with the most readers.
+const TOP_DOCS = 10;
+const SHARED_DOCS = 5;
 // A path an agent's last message names: a .md or .json token with a `/`, not inside a URL or a template.
 const CLAIM = /(?<![\w.~/:@<>{}$*%#-])(~?[\w.-]*\/[\w.~/-]*\.(?:md|json))(?![\w/<>{}*-])/gu;
 // A line that presents a file as delivered: a delivery word that is not part of a path, or the 📄 file marker.
@@ -136,6 +139,9 @@ function knowledgeDocsRead(files, project) {
 const docsRead = (row) =>
   (Array.isArray(row.docs_read) ? row.docs_read : []).map((entry) => (typeof entry === 'string' ? { path: entry, bytes: null } : entry));
 
+// The rows that count once: a subagent's last `stop` row, since its agent may be sent back, and a session's last row.
+const latest = (rows, event, key) => [...new Map(rows.filter((row) => row.event === event).map((row) => [row[key] ?? Symbol(event), row])).values()];
+
 const median = (values) => {
   const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
   if (!sorted.length) return null;
@@ -147,8 +153,8 @@ const median = (values) => {
 export function summarize(rows, { sinceMs = 0 } = {}) {
   const fresh = rows.filter((row) => Date.parse(row.ts) >= sinceMs && ['dispatch', 'stop', 'session'].includes(row.event));
   const dispatches = fresh.filter((row) => row.event === 'dispatch');
-  const stops = [...new Map(fresh.filter((row) => row.event === 'stop').map((row) => [row.agent_id ?? Symbol('stop'), row])).values()];
-  const sessions = [...new Map(fresh.filter((row) => row.event === 'session').map((row) => [row.session_id ?? Symbol('session'), row])).values()];
+  const stops = latest(fresh, 'stop', 'agent_id');
+  const sessions = latest(fresh, 'session', 'session_id');
   const dispatched = new Set(dispatches.map((row) => row.agent_id).filter(Boolean));
   const types = [...new Set([...dispatches, ...stops].map((row) => row.agent_type))].sort();
   const agents = types.map((type) => {
@@ -194,6 +200,47 @@ export function formatReport(summary, { file, since, skipped }) {
   return lines.join('\n');
 }
 
+// Per knowledge doc read since `sinceMs`: `reads`, `bytes` (its size as last logged), `read_bytes` (reads × bytes), and
+// `readers`, the agent types that read it plus `main` for a main conversation. Most bytes read first. A stop row counts
+// for its subagent and a session row for its main conversation, so no read counts twice.
+export function summarizeDocs(rows, { sinceMs = 0 } = {}) {
+  const fresh = rows.filter((row) => Date.parse(row.ts) >= sinceMs);
+  const counted = new Set([...latest(fresh, 'stop', 'agent_id'), ...latest(fresh, 'session', 'session_id')]);
+  const byPath = new Map();
+  for (const row of fresh.filter((each) => counted.has(each))) {
+    const reader = row.event === 'session' ? 'main' : (row.agent_type ?? 'general-purpose');
+    for (const { path: doc, bytes } of docsRead(row)) {
+      const entry = byPath.get(doc) ?? { path: doc, reads: 0, bytes: null, readers: new Set() };
+      entry.reads += 1;
+      if (Number.isFinite(bytes)) entry.bytes = bytes;
+      entry.readers.add(reader);
+      byPath.set(doc, entry);
+    }
+  }
+  const docs = [...byPath.values()]
+    .map(({ path: doc, reads, bytes, readers }) => ({ path: doc, reads, bytes, read_bytes: bytes === null ? null : reads * bytes, readers: [...readers].sort() }))
+    .sort((a, b) => (b.read_bytes ?? -1) - (a.read_bytes ?? -1) || b.reads - a.reads || a.path.localeCompare(b.path));
+  const total = (key) => docs.reduce((sum, doc) => sum + (doc[key] ?? 0), 0);
+  return { docs, totals: { docs: docs.length, reads: total('reads'), read_bytes: total('read_bytes'), readers: [...new Set(docs.flatMap((doc) => doc.readers))].sort() } };
+}
+
+export function formatDocs({ docs, totals }, { file, since, skipped }) {
+  const lines = [`Knowledge docs read, from ${file}, since ${since}${skipped ? ` (${skipped} unreadable rows skipped)` : ''}`];
+  if (!docs.length) return [...lines, 'No knowledge doc reads yet.'].join('\n');
+  const kb = (bytes) => (bytes === null ? '?' : `${(bytes / 1024).toFixed(1)} KB`);
+  lines.push(
+    `${totals.reads} reads of ${totals.docs} docs, ${kb(totals.read_bytes)} in all, by ${totals.readers.length} readers: ${totals.readers.join(', ')}`,
+    `Most bytes read (reads × size), top ${Math.min(TOP_DOCS, docs.length)}:`,
+    ...docs.slice(0, TOP_DOCS).map((doc) =>
+      `  ${String(doc.reads).padStart(5)} × ${kb(doc.bytes).padStart(9)} = ${kb(doc.read_bytes).padStart(9)}  ${doc.path}  (${doc.readers.join(', ')})`),
+  );
+  const shared = docs.filter((doc) => doc.readers.length > 1).sort((a, b) => b.readers.length - a.readers.length || b.reads - a.reads).slice(0, SHARED_DOCS);
+  if (shared.length) {
+    lines.push('Read by the most readers:', ...shared.map((doc) => `  ${doc.readers.length} of ${totals.readers.length}  ${doc.path}`));
+  }
+  return lines.join('\n');
+}
+
 // `7d`, `24h`, `30m`, or a date (YYYY-MM-DD): the earliest time to report, in ms.
 export function parseSince(value, now = Date.now()) {
   const span = /^(\d+)([dhm])$/u.exec(value);
@@ -205,10 +252,23 @@ export function parseSince(value, now = Date.now()) {
 
 export const commands = {
   report: {
-    usage: '[--since 7d] [--prs N] [--json] [--project DIR]',
-    about: 'summarize the dispatch log per agent type, and with --prs the bot review rounds of the last N merged pull requests',
+    usage: '[docs] [--since 7d] [--prs N] [--json] [--project DIR]',
+    about: 'summarize the dispatch log per agent type, or with docs per knowledge doc read; --prs adds the bot review rounds of the last N merged pull requests',
     async run(args) {
-      const { values } = parseArgs({ args, options: { since: { type: 'string' }, prs: { type: 'string' }, json: { type: 'boolean' }, project: { type: 'string' } } });
+      const { values, positionals } = parseArgs({
+        args,
+        allowPositionals: true,
+        options: { since: { type: 'string' }, prs: { type: 'string' }, json: { type: 'boolean' }, project: { type: 'string' } },
+      });
+      const docsView = positionals[0] === 'docs';
+      if (positionals.length > (docsView ? 1 : 0)) {
+        console.error(`unknown report: ${positionals.join(' ')}; use aidrian report or aidrian report docs`);
+        return 1;
+      }
+      if (docsView && values.prs !== undefined) {
+        console.error('--prs belongs to aidrian report, not aidrian report docs');
+        return 1;
+      }
       const project = projectAt(path.resolve(values.project ?? '.'));
       const config = commandConfig(project);
       const since = values.since ?? '7d';
@@ -221,6 +281,11 @@ export const commands = {
       }
       const file = logPath(project, config);
       const { rows, skipped } = readRows(file);
+      if (docsView) {
+        const docs = summarizeDocs(rows, { sinceMs });
+        console.log(values.json ? JSON.stringify({ file, since, skipped, ...docs }) : formatDocs(docs, { file, since, skipped }));
+        return 0;
+      }
       const summary = summarize(rows, { sinceMs });
       if (values.prs !== undefined) {
         const count = Number(values.prs);

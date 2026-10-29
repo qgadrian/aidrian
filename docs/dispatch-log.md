@@ -70,6 +70,35 @@ Sessions: 5, $42.10 estimated, main conversation and subagents together
 `--prs N` adds the review rounds of the last N merged pull requests: how many formal reviews config.json `github.reviewer`
 left on each, the share that passed clean on the first look, and how many needed five or more. It needs `gh`.
 
+### Doc reads
+
+`aidrian report docs` shows which knowledge docs cost agents the most context: a doc read too often, or too large for how often it is read.
+
+```console
+$ aidrian report docs --since 30d
+Knowledge docs read, from /home/you/.local/state/aidrian/projects/notes-1a2b3c4d/dispatch-log.jsonl, since 30d
+89 reads of 6 docs, 1909.6 KB in all, by 4 readers: Explore, code-reviewer, main, planner
+Most bytes read (reads × size), top 6:
+     23 ×   53.4 KB = 1228.2 KB  docs/knowledge/engineering/booking-status.md  (Explore, code-reviewer)
+      3 ×   96.0 KB =  288.0 KB  docs/knowledge/plans/sharing-v2-plan.md  (planner)
+     32 ×    4.6 KB =  147.2 KB  docs/knowledge/engineering/working-agreement.md  (Explore, code-reviewer, main, planner)
+     14 ×    9.8 KB =  137.2 KB  docs/knowledge/engineering/testing.md  (code-reviewer)
+     14 ×    7.1 KB =   99.4 KB  docs/knowledge/engineering/code-style.md  (code-reviewer)
+      3 ×    3.2 KB =    9.6 KB  docs/knowledge/product/product-rules.md  (planner)
+Read by the most readers:
+  4 of 4  docs/knowledge/engineering/working-agreement.md
+  2 of 4  docs/knowledge/engineering/booking-status.md
+```
+
+- **reads × size**: how many times a doc was read, its size, and the two multiplied: the context it took. The ten largest are listed.
+- **readers**: the agent types that read the doc, and `main` for the main conversation.
+  A subagent counts once, even when it was sent back; a session counts its main conversation once.
+- **Read by the most readers**: up to five docs that more than one reader opened.
+  A doc that every reader opens costs as much as an `always` doc, so keep it as short as one.
+- `?` marks a doc whose reads were all logged before sizes were.
+
+`--since` works as above; `--json` prints every doc, not only the top ten, with the totals.
+
 ## Limits
 
 - **Claude Code only.** Codex has no Agent tool, and its stop and session payloads are not verified.
@@ -85,4 +114,6 @@ left on each, the share that passed clean on the first look, and how many needed
 - **`bytes` is the whole doc**, measured when the row is written, even when the agent read only part of it.
   It is the size of the copy the agent read, or of the project's copy once that one is gone, as with a removed worktree.
   Rows written before sizes were logged hold bare paths, of unknown size.
+- **No "read, not cited" count.** Agents follow a doc without naming it, and a handoff that lists `loaded_docs` names
+  every doc it read, so whether the last message names a doc says nothing about whether the doc was used.
 - **No lock.** Rows from concurrent processes never interleave, because each is one append; nothing ever rewrites the file.

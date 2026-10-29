@@ -11,14 +11,17 @@ A blocking hook exits 2 and tells the agent why on stderr.
 | Session and subagent start | One line naming the `always` knowledge docs and the commands that find the rest; for the main session, a second line while the lesson inbox holds open lessons | both | no |
 | Before a Bash command | The Bash rules below, in this order, in one process | both | yes |
 | Before Edit, Write, NotebookEdit, or Codex's `apply_patch` | The main-checkout rule, when the project turns it on | both | yes |
+| Before an Agent tool call | The project's [model and effort](config.md#models) for this plugin's agent, added to the call | Claude Code | no |
 | After Edit or Write of a Markdown file | The line-length check: lines the write made longer than config.json `docs.wrapLimit` | Claude Code | feedback |
 | Before compaction | A checklist of what the summary must keep, unless instructions were typed after `/compact` | both | no |
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
+| When the main session ends a turn | The [session-length reminder](#session-length), once a limit is passed | Claude Code | once |
 | When a subagent stops | A `stop` row, then the [delivery check](#delivery-check) | Claude Code | once |
 | When a session ends | A `session` row with the session's tokens and estimated cost | Claude Code | no |
 
 Codex has no Edit, Write, or Agent tool, so those rows never run there.
-Its subagent-stop and session-end payloads are not verified: the hooks run, write nothing they cannot read, and never send a Codex subagent back.
+Its stop, subagent-stop, and session-end payloads are not verified: the hooks run, write nothing they cannot read,
+and never send a Codex agent back.
 After you install the plugin in Codex, open a session, run `git commit --amend --dry-run`, and check that the Bash hook blocks it.
 
 ## Turning hooks off
@@ -28,9 +31,13 @@ After you install the plugin in Codex, open a session, run `git commit --amend -
 | Main-checkout rule | Off unless config.json sets `"mainCheckout": { "guard": true }` |
 | Markdown line length | `"docs": { "wrapLimit": 0 }` |
 | Pull request body sections | `"pr": { "requiredSections": [] }`; the footer and `--fill` checks stay |
+| Session-length reminder | `"session": { "handoff": "off" }` |
 | A Bash rule, once | Its override variable, set by a person: [Overrides](#overrides) |
 
 The start line and the dispatch log have no switch; they act only inside a project folder.
+The Agent hook changes only what config.json or `.aidrian.local.json` sets in `models.claude`.
+Another hook in the same project that rewrites Agent calls may override it, because each rewrite replaces the whole call.
+It never reaches a session started with `claude --agent`, which takes the `--model` and `--effort` flags instead.
 The compaction checklist steps aside whenever instructions are typed after `/compact`.
 
 ## Bash rules
@@ -84,6 +91,28 @@ A path counts as delivered only on a line that also has the 📄 marker or one o
 handoff, or output, in any case, outside a path.
 A path on any other line is a mention, such as "docs/old.md does not exist", and is never checked.
 [dispatch-log.md](dispatch-log.md) describes the rows and `aidrian report`.
+
+## Session length
+
+A long session pays for its whole context on every turn; a fresh session started from a handoff brief costs less.
+When the main session ends a turn, the Stop hook reads its transcript and measures three things:
+
+- tokens: the context the last model call read, input and cache together;
+- calls: the model calls the main session made, subagents not included;
+- hours: the time worked, where a pause of more than an hour counts as one hour, so a night away does not count.
+
+When one of them reaches its limit in config.json `session`, the hook acts once per session, as `session.handoff` says:
+
+| `handoff` | What happens |
+| --- | --- |
+| `ask` (default) | The agent ends the turn with one question: hand off now, or keep going? Hand off runs the `session-handoff` skill. |
+| `auto` | The agent writes the brief with the `session-handoff` skill, unless nothing is left to resume, and tells you its path. |
+| `off` | Nothing. |
+
+Either way it never comes back in that session, so a "keep going" is final.
+A marker in the system's temporary folder remembers this; a new session starts fresh.
+The defaults are 150,000 tokens, 250 calls, and 4 hours; a limit of `0` turns that one off. [config.md](config.md) lists the keys.
+It reads Claude Code transcripts only: a transcript with no Claude Code usage, or a payload without `stop_hook_active`, does nothing.
 
 ## Overrides
 

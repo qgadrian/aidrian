@@ -76,33 +76,15 @@ In Claude Code the skill runs as `/aidrian:design-import`; on any host it takes:
 3. **Handle the explorer result.** `design-source-explorer` can return two
    classes of outcome — a hard `needs_input` stop, or a recorded flag that the
    pipeline continues past.
-   - **Unresolvable canonical source (STOP).** If the bundle holds competing
-     pages, generations, or variants with no declared outcome (a bundle with
-     a clearly-consolidated outcome page is NOT this case — the explorer
-     proceeds with it), the explorer returns `needs_input`. Relay the listed
-     candidates to the user and **stop**. The user re-runs this skill with
-     `<bundle-path> --slug <slug> --variant <id>`. Never invent
-     a choice to push past this stop.
-   - **Malformed bundle / missing source (STOP).** If the bundle is malformed
-     (no entry page satisfying the spec's invariants) or the source cannot be
-     resolved, the explorer returns `needs_input`. Relay the explicit gap and
-     **stop**. Format drift alone is not malformed — the explorer proceeds
-     and records a `format_drift` note per the spec's self-healing rule;
-     surface that note in the final report.
-   - **Token divergence (PROCEED).** If the bundle tokens materially diverge
-     from the repo tokens, this does **not** stop the pipeline. The explorer
-     records a token-divergence flag in `DESIGN.md` (with `designer` +
-     `architect` + `product-manager` named as the decision owners). The skill
-     continues to step 5; `planning-agent` then emits a gated `S0`
-     design-system-token slice for that decision. Surface the flag in the
-     final report so the user knows `S0` exists and who must sign it off.
+   Read `references/explorer-outcomes.md` and act on the outcome it describes:
+   an unresolvable canonical source or a malformed bundle **stops**; token divergence **proceeds** with a flag.
 
 4. **Re-invocation with `--variant`.** When re-invoked with `--variant` after
    an unresolvable-source stop, the explorer proceeds with the chosen
    page/variant and writes the design import.
 
 5. **Dispatch `planning-agent`** to author the generated
-   plan per the **Generated plan — slice requirements** section below. The
+   plan per the slice requirements in `references/plan-requirements.md`; put them in the dispatch. The
    plan is written to `docs/design-imports/<slug>/plan.md`.
 
 6. **Mechanical contract check.** When the project has a design-import lint,
@@ -118,108 +100,9 @@ In Claude Code the skill runs as `/aidrian:design-import`; on any host it takes:
    one) as one commit through the project's normal git hooks. The dispatched
    agents only write files; this is the one commit the skill makes.
 
-8. **Recommend a plan review, then stop.** Surface the final report; tell the
+8. **Recommend a plan review, then stop.** Surface the final report, shaped as `references/final-report.md` says; tell the
    user to review `docs/design-imports/<slug>/plan.md` before
    implementation. Implementation is a separate run; this skill does not implement.
-
-## Generated plan — slice requirements
-
-The skill instructs `planning-agent` to author a plan that conforms to the
-Plan-File Schema in the `planning-agent` skill with these
-design-import specifics:
-
-- **`plan_kind: technical-design`.** A design import has no tracker issue, so
-  the issue-driven `plan_kind: implementation` does not apply. The frontmatter
-  omits `issue_id` / `issue_ref` / `ticket_updated_at`; it records the
-  bundle path, the chosen page/variant, and the slug.
-- **Plan home.** The plan is written to the committed path
-  `docs/design-imports/<slug>/plan.md` — **not** `<state>/plans/`, which is
-  machine-local. The committed home keeps the spec, inventory, curated source,
-  and plan as one durable, PR-reviewable unit.
-- **Re-runs revise the existing plan; `plan_kind` stays `technical-design`.**
-  Re-running this skill against an existing slug updates the plan in
-  place under `planning-agent`'s revision rules — it does **not** flip
-  `plan_kind` to `revision`. The frontmatter keeps `plan_kind:
-  technical-design`; `generated_at` is bumped; completed slices are preserved
-  byte-for-byte; new scope is appended as new slices; and the change is
-  recorded as a new entry in a top-level `## Revision history` section.
-- **One slice per approved screen.** A separate slice covers shell / nav when
-  it is in scope.
-- **Each slice `primary_owner` is `designer` or `frontend-developer`.**
-- **Each screen slice's `verification_path`** includes the project's typecheck,
-  lint, and the exact tests for the touched components (its `testing` knowledge names them),
-  **plus visual fit checks at the widths the bundle's
-  artboards declare** (fall back to 360 / 768 / 1280px only when the source
-  declares no widths) **and screenshot-vs-artboard evidence for every
-  artboard in the slice's coverage table** — produced with the
-  project's screenshot tool (for example a `design-verify` skill) — with a
-  `designer` review of the resulting pairs.
-- **Each screen slice inherits the fidelity contract** of the project's
-  visual-implementation rules: the per-artboard
-  coverage table from `inventory.md`, the deviation ledger, and the
-  `parity_status` / `fit_status` / `interpretation_status` handoff fields are
-  required outputs of the slice — a slice handoff missing them is incomplete.
-- **Visual slices and data-wiring slices are separated.** Visual / presentation
-  slices proceed by default. Data-wiring and behavior slices are ordered after
-  the visual shell and are marked `needs product-manager + architect
-  sign-off`.
-- **Token-divergence slice.** When `design-source-explorer` recorded a
-  token-divergence flag in `DESIGN.md` (see workflow step 3 — divergence is a
-  proceed-with-flag outcome, not a stop), `planning-agent` emits slice `S0` as
-  the design-system-token decision and change. `S0` is gated on `designer` +
-  `architect` + `product-manager` sign-off and is an `upstream_dependency` of
-  every screen slice — no screen slice may start until `S0` is signed off.
-  When `DESIGN.md` records no divergence, there is no `S0` and screen slices
-  start at `S1`.
-
-## Blocking rules
-
-- Presentation / visual work proceeds by default.
-- **Data-wiring, behavior, and design-system-token changes require explicit
-  `product-manager` + `architect` sign-off** before implementation. For token
-  changes the sign-off is enforced as the gated `S0` slice in the generated
-  plan; the ingestion pipeline itself is not stopped.
-- **An unresolvable canonical source** and **a missing or malformed bundle**
-  each return `needs_input` and stop the pipeline — never a guess.
-- **Token divergence does not stop the pipeline.** It is recorded as a flag in
-  `DESIGN.md` and becomes the gated `S0` plan slice. This is the one design
-  decision the workflow carries forward as a plan slice rather than a stop.
-- Opt-in invocation only. The skill runs when the user invokes it; it does not
-  auto-trigger implementation.
-
-## Output (final report contract)
-
-A single concise report. Skip a section if it has nothing to say.
-
-1. **Verdict** — `done — design import + plan ready` (use this even when the
-   plan carries a gated `S0` token-divergence slice — the divergence is a plan
-   slice, not a blocker) / `done — plan revised` / `needs input —
-   unresolvable canonical source` / `partial — blocked on <reason>`.
-2. **Design-import path** — `docs/design-imports/<slug>/` with the committed
-   files listed (`DESIGN.md`, `inventory.md`, `source/`, `plan.md`).
-3. **Canonical source chosen** — the page / generation / variant the import
-   was built from, and which pages were recorded as read-only rationale.
-   Include any supersession decision: which earlier import this one
-   supersedes (its `DESIGN.md` now carries the superseded banner), or the
-   additive cross-reference recorded instead.
-4. **Plan summary** — title, slice count, ordered slice IDs with one-line
-   goals, the visual-vs-data-wiring split, declared `status`.
-5. **Decisions surfaced** — flagged token-divergence or product-sensitive
-   decisions and their owning specialists.
-6. **Next steps** — every successful run ends with the remaining pipeline
-   spelled out (each step is one user command; the work inside is
-   agent-executed), so the user never has to remember it:
-   1. Review `docs/design-imports/<slug>/plan.md` and approve or
-      refine the plan — the human gate before any code.
-   2. Run the project's plan-implementation flow on that plan — it executes
-      the plan slice-by-slice (`designer` owns visual slices,
-      `frontend-developer` owns the gated data-wiring slices), with screenshot
-      evidence plus the `designer` deviation-ledger review as each screen
-      slice's closure gate. Slice state lives in the plan file, so the run is
-      safe to resume after an interruption.
-   3. Open the draft PR the project's way, then review and publish it.
-   When blocked, replace this checklist with the explicit question to
-   resolve.
 
 ## Hard rules
 
@@ -238,7 +121,7 @@ A single concise report. Skip a section if it has nothing to say.
 - **Never guess past a blocking stop.** Unresolvable-source and
   malformed-bundle stops are relayed verbatim; the user resolves them. Token
   divergence is not a stop — it is flagged into a gated `S0` plan slice and
-  the pipeline proceeds (see workflow step 3 and **Blocking rules**).
+  the pipeline proceeds (see workflow step 3 and `references/explorer-outcomes.md`).
 - **Stateless sub-agents.** Every dispatch includes the context that agent
   needs; never paste this skill or the parent conversation verbatim.
 - **Concise final report.** No restating the bundle contents.
@@ -249,4 +132,5 @@ A single concise report. Skip a section if it has nothing to say.
   role-classification procedure, self-healing format-drift rule) and the
   fidelity contract implementation slices inherit.
 - The `design-source-explorer` agent — the bundle explorer.
-- The `planning-agent` skill — the Plan-File Schema.
+- The `planning-agent` skill — the Plan-File Schema, in its `references/plan-file.md` and
+  `references/design-import-plan.md`.

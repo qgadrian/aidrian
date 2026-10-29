@@ -1,0 +1,335 @@
+# Issue body
+
+How to write the Markdown body of an issue, a parent issue, or a project issue, and the quality gate it must pass.
+The Agent Action Plan JSON and the owner defaults are in `references/action-plan.md`.
+
+## Anti-Vagueness Rules
+
+Do not use phrases such as:
+
+- relevant files
+- as needed
+- where appropriate
+- handle edge cases
+- update tests
+- use existing patterns
+- ensure it works
+- clean up related code
+- refactor if necessary
+- add the necessary labels
+- use the right agents
+- review as needed
+
+Replace each with a concrete path, command, mapping, invariant, owner, or blocked reason.
+
+## Linear Artifact Rules
+
+Use Linear-native primitives whenever possible:
+
+- Use a real issue (`save_issue`) for executable work.
+- Use a parent issue when an initiative groups multiple execution issues.
+- Use `parentId` for issue hierarchy — Linear's native sub-issue mechanism.
+- Use `blockedBy` / `blocks` for blocker links.
+- Use a Linear Project for multi-issue tracking and views.
+- Leave an issue in the `backlog` status only for incomplete backlog capture, never for an AI-ready executable task — every Linear issue created by this
+  skill is a first-class issue, there is no separate "draft issue" artifact type to avoid.
+- Use the parent issue as the canonical body for issue trees and `PR & Merge Plan`.
+- Treat merge into `main` as production deployment unless the plan explicitly targets a different integration branch or base PR first.
+
+Keep the Tracker Metadata mirror and the Agent Action Plan in the issue body even when native Linear fields exist.
+
+## Canonical Markdown Structure
+
+Use the exact section order for the relevant artifact type.
+
+### Executable Issue Or Child Issue
+
+```md
+## Context
+
+## Goal
+
+## Issue Type
+
+## Size
+
+## Scope
+
+## Tasks
+
+## Non-goals
+
+## Repository Context
+
+### Files to modify
+
+### Files to create
+
+### Files to reference
+
+### Files to reuse
+
+## Constraints
+
+## Dependencies & Sequencing
+
+## Acceptance Criteria
+
+## Verification
+
+## Tracker Metadata
+
+## Agent Action Plan
+```
+
+### Parent Issue
+
+```md
+## Context
+
+## Goal
+
+## Initiative Shape
+
+## Success Criteria
+
+## Issue Tree
+
+## PR & Merge Plan
+
+## Tracker Metadata
+
+## Agent Action Plan
+```
+
+### Project Issue
+
+```md
+## Context
+
+## Goal
+
+## Project Tracking
+
+## Parent Issue Pointer
+
+## Tracker Metadata
+
+## Agent Action Plan
+```
+
+## Section Rules
+
+### Context
+
+- Keep this short.
+- Explain why the task exists and any sequencing or dependency notes.
+- Include parent issue, branch, PR, or migration dependency only when it changes execution order.
+
+### Goal
+
+- Describe the required end state, not generic intent.
+- State the user-visible or system-visible outcome.
+
+### Issue Type
+
+- Use one value only: `feature`, `bug`, `refactor`, `test`, `docs`, `follow-up`, or `migration`.
+
+### Size
+
+- Always include `XS`, `S`, `M`, or `L`. There is deliberately no `XL`:
+  `L` is the ceiling that forces a split justification, so a size above it would sanction exactly what that rule prevents.
+  Work that feels larger than `L` is a split, not a bigger t-shirt.
+- Reserve `XS` for a genuinely trivial, single-site change (a one-line fix, a typo, a constant). Anything needing its own regression test is at least `S`.
+- Add one short rationale grounded in review scope, rollout complexity, or splitability.
+- For initiative children, `L` requires a red-alert `split_alert` note with why it remains unsplit and which split candidates were considered.
+
+### Scope
+
+- Use flat bullets.
+- Each bullet must describe a concrete required change.
+- Large tasks must be split into discrete bullets so the executor can map code changes directly.
+
+### Tasks
+
+- Use flat bullets.
+- Each bullet must describe an execution task the implementer will perform.
+- Keep tasks narrower than acceptance criteria; they describe work, not proof.
+
+### Non-goals
+
+- Explicitly list nearby work that must not be folded into the issue.
+- If the title could imply a broad cleanup, this section is mandatory.
+
+### Repository Context
+
+Every file entry must be an exact path plus a short reason.
+
+- `Files to modify`: existing paths that must change.
+- `Files to create`: exact new paths and purpose.
+- `Files to reference`: source-of-truth paths, tests, docs, fixtures, migrations, or examples to inspect first.
+- `Files to reuse`: existing helpers, components, builders, or utilities that should be reused instead of rewritten.
+
+### Constraints
+
+- Capture required formulas, mappings, enums, route names, invariants, product rules, copy constraints, query params, state transitions, and forbidden
+  approaches.
+- For product-sensitive tasks, include the exact authoritative doc paths the executor must read.
+
+### Dependencies & Sequencing
+
+- Always state blocker links and why they matter.
+- For initiative children, include:
+  - PR group key
+  - target branch
+  - merge prerequisites
+  - whether merge is production deployment
+  - deployment gates only when the merge carries medium/high production risk
+- Do not invent a separate deploy sequence for `main`-targeting PRs. Merge order is deployment order there.
+
+### Acceptance Criteria
+
+- Use checkboxes.
+- Every item must be objectively verifiable.
+- Mention exact exports, files, behaviors, and invariants when known.
+- Include no-regression expectations when relevant.
+
+### Verification
+
+- Always specify the minimum commands or exact manual checks required to close the issue.
+- Use exact commands, not categories.
+- If a category is not required, say `not_required`.
+- If manual QA is required, name the exact route or flow.
+
+### Tracker Metadata
+
+- Always include:
+  - one to three domain/work-type labels (`tracker_fields.labels` — optional; omit when none apply)
+  - Linear Project name or `none`
+  - parent issue reference (`parentId`) or `none`
+  - filed from work on another issue (deferral, follow-up, split): the Linear Project defaults to the source issue's
+  - `parentId` is conditional — set it only for a true child of that parent, otherwise relate this issue to its source and leave the parent unset:
+    the project's `issue_tracker` knowledge owns both rules, including when a deviation needs a reason
+  - dependency links if applicable
+  - milestone if provided
+  - assignee if provided
+  - Priority issue field (native `priority`, always set; see Issue Fields below)
+  - Effort issue field (native `estimate`, always set, and mirrored in this section's prose; see Issue Fields below)
+
+### Issue Fields (Priority and Effort)
+
+Both fields are native Linear fields set directly on the same `save_issue` call that creates or updates the issue — there is no separate post-creation API
+call for either. Priority is the native `priority` integer.
+Effort is the native `estimate` number: when the team uses Linear's t-shirt estimation scale, the issue's `## Size` maps straight onto it.
+See `references/linear.md` for the exact `save_issue` mechanics and both mapping tables.
+
+**Always set Priority (native `priority`) and Effort (native `estimate`) on every issue created, and always mirror Effort in the issue body.
+Neither field may be omitted from the issue body.**
+
+#### Priority inference rule
+
+When the user or initiative blueprint does not supply an explicit Priority, infer:
+
+- declared critical-flow or security-sensitive work → `High`
+- active production incident / hotfix explicitly stated → `Urgent`
+- normal bug or feature → `Medium`
+- docs, chore, or refactor → `Low`
+- unclear → `Medium` (fallback)
+
+An explicit user- or initiative-supplied Priority always overrides the inference.
+
+#### Effort derivation rule
+
+Derive Effort from the issue's `## Size` t-shirt estimate and set the native `estimate` in the same step.
+An explicitly supplied Effort overrides the derivation by changing the recorded `## Size` — never by setting an `estimate` that disagrees with the Size.
+The `check-linear-estimate.mjs` PreToolUse hook denies issue-creating `save_issue` calls that carry a `## Size` but no `estimate`,
+and equally one whose `estimate` disagrees with that Size.
+
+| `## Size` | `issue_fields.effort` | `save_issue(estimate:)` |
+|---|---|---|
+| XS | Low | 1 |
+| S | Low | 2 |
+| M | Medium | 3 |
+| L | High | 5 |
+
+`## Size` is the sole source of truth for `estimate`.
+Effort stays a three-value prose mirror (`Low` covers both `XS` and `S`), so it is deliberately coarser than Size — when an Effort is supplied with no
+Size, reverse-map `Low` → `2`; `XS` is reachable only by declaring Size `XS` explicitly.
+
+Never leave `estimate` unset on a created issue, and never let it disagree with the Effort prose in `Tracker Metadata`.
+
+#### Label rules (domain/work-type only)
+
+The retired `priority:*` / `effort:*` label mirror is gone — Linear's native `priority` field is already filterable, so no filterable-copy workaround is
+needed.
+Only add domain/work-type labels (`bug`, `chore`, `feature`, etc.) to `tracker_fields.labels`, following the create-if-missing procedure and the
+label-set-replacement warning in `references/linear.md`.
+
+### Initiative Shape
+
+- Parent issues must state whether the topology is `parent_issue_only` or `tracker_project_plus_parent_issue`.
+- State whether the parent issue is the canonical release-plan artifact.
+
+### Success Criteria
+
+- Parent issues must use checkboxes.
+- Each item must describe an initiative-level outcome, not a child issue task.
+
+### Issue Tree
+
+- List child issues in creation order with key, title, size, and one-line purpose.
+
+### PR & Merge Plan
+
+- Parent issues must render PR groups as Markdown tables plus short notes.
+- Each group must include:
+  - PR group key and title
+  - member issues
+  - size mix when useful
+  - target branch
+  - merge-after requirements
+  - risk
+  - migration count
+  - deployment gates when required
+- Explicitly state that merge into `main` is production deployment.
+
+### Project Tracking
+
+- Project issues are tracking-only artifacts.
+- Keep the content short and point back to the parent issue for the full issue tree and sequencing plan.
+
+### Parent Issue Pointer
+
+- State the canonical parent issue reference explicitly.
+- Do not duplicate the issue tree or PR group tables here.
+
+### Agent Action Plan
+
+- Always include one short summary plus a fenced `json` block.
+- Use compact mode only when one review owner and one validation owner are sufficient.
+- Use expanded mode when the issue requires multiple specialist reviews, explicit validation sequencing, or approval gates across more than one agent.
+
+## Final Quality Gate
+
+Do not finalize until all answers are `yes`:
+
+- Can the executor identify the exact files to touch?
+- Was every files-to-modify path verified to exist (`git ls-files`) and confirmed to play the role the issue claims for it?
+- Can the executor identify the exact files to read first?
+- Does the issue say what is explicitly out of scope?
+- Are the acceptance criteria observable and testable?
+- Are verification commands exact?
+- Does the issue include size, tasks, and sequencing details when applicable?
+- If this is a `parent_issue`, does it include initiative shape, success criteria, issue tree, and PR group sequencing?
+- If this is a `project_issue`, does it point to the canonical parent issue instead of duplicating the plan?
+- If the issue is `L`, does it include a red-alert split note and split candidates?
+- Does the `save_issue` call carry both native fields — `priority` (from the Priority mapping) and `estimate` (from the Size→Effort→estimate table:
+  XS→1, S→2, M→3, L→5) — with `estimate` matching the Effort recorded in `Tracker Metadata`?
+- Does the issue include tracker metadata and an `agent_action_plan` with `review_owners`, `validation_owners`,
+  `required_authority_docs`, and at least one `approval_gate`?
+- Has every vague phrase been removed?
+- Has the issue avoided listing unnecessary agents?
+- Would the review and validation gates still block closure if the executor skipped required docs, tests, or repo contracts?
+- Would two different agents produce materially similar work from this issue?
+
+If any answer is `no`, tighten the issue or return blocked mode.

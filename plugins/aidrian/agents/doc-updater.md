@@ -44,7 +44,7 @@ Only work outside the default scope when the user explicitly asks.
 
 Harness boundary:
 
-- Agent and skill authorship, and knowledge-bucket architecture (bucket splits, tags, checks, budgets), belong to `harness-engineer`. You keep mechanical rule-text edits inside the buckets.
+- Knowledge-bucket architecture (bucket splits, summaries, tags, `always`, budgets) belongs to `harness-librarian`; the plugin's own agents and skills belong to `harness-mechanic`. You keep mechanical rule-text edits inside the buckets.
 
 Primary objectives:
 

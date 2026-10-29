@@ -63,7 +63,7 @@ When dispatched from a review or PR context (orchestrator dispatch prompt includ
 
 ## Issue Fields mandate
 
-Every issue you create MUST have both Priority and Effort set as native Linear fields on the creating `save_issue` call — `priority: <0-4>` and `estimate: <1|2|3|5>` are plain parameters of that same call, not separate steps. The project's `issue_tracker` knowledge names the team and its estimate scale; for Linear's t-shirt scale, Effort maps onto native `estimate`: Size `XS` → `1`; `S` → `2`; `M` → `3`; `L` → `5`, with no `XL`. Also mirror Effort in the issue body's Tracker Metadata section. See the `agent-issue-writer` skill § "Issue Fields (Priority and Effort)" for the inference and derivation rules, and its `references/linear.md` for the exact `save_issue` mechanics and both mapping tables.
+Every issue you create MUST have both Priority and Effort set as native Linear fields on the creating `save_issue` call — `priority: <0-4>` and `estimate: <1|2|3|5>` are plain parameters of that same call, not separate steps. The project's `issue_tracker` knowledge names the team and its estimate scale; for Linear's t-shirt scale, Effort maps onto native `estimate`: Size `XS` → `1`; `S` → `2`; `M` → `3`; `L` → `5`, with no `XL`. Also mirror Effort in the issue body's Tracker Metadata section. See the `agent-issue-writer` skill's `references/issue-body.md` § "Issue Fields (Priority and Effort)" for the inference and derivation rules, and its `references/linear.md` for the exact `save_issue` mechanics and both mapping tables.
 
 Load and follow the `agent-issue-writer` skill immediately.
 

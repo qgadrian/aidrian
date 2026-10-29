@@ -9,10 +9,10 @@ and one project folder, `.aidrian/`, that indexes them and holds the plugin's se
 
 | Kind | Names |
 | --- | --- |
-| Agents | `planning-agent`, `initiative-agent`, `agent-issue-writer`, `explorer`, `github-archaeologist`, `integrator`, `doc-updater`, `design-source-explorer`, `harness-engineer` |
-| Skills | `knowledge`, `planning-agent`, `initiative-agent`, `agent-issue-writer`, `worktree-new`, `worktree-cleanup`, `worktree-integrate`, `pr-write`, `pr-review-loop`, `design-import`, `grill-me`, `lesson`, `lesson-triage`, `session-handoff`, `session-continue` |
+| Agents | `planning-agent`, `initiative-agent`, `agent-issue-writer`, `explorer`, `github-archaeologist`, `integrator`, `doc-updater`, `design-source-explorer`, `harness-librarian`, `harness-mechanic` |
+| Skills | `knowledge`, `knowledge-update`, `planning-agent`, `initiative-agent`, `agent-issue-writer`, `worktree-new`, `worktree-cleanup`, `worktree-integrate`, `pr-write`, `pr-review-loop`, `design-import`, `grill-me`, `lesson`, `lesson-triage`, `session-handoff`, `session-continue` |
 | Commands | `aidrian`: sets up and checks the project folder (`aidrian init`, `aidrian check`), prints the state folder (`aidrian state`), creates and cleans up task worktrees (`aidrian worktree`), waits for the review bot and reads check and finding verdicts (`aidrian pr`), checks commit messages (`aidrian commit-msg`), lints skills, agents, paths, and the knowledge budget (`aidrian lint`), keeps the lesson inbox (`aidrian lesson`), checks handoff briefs (`aidrian handoff`), and reports on the dispatch log (`aidrian report`); `aidrian-knowledge`: routes, searches, and drafts a project's buckets |
-| Hooks | at session and subagent start, one line naming the `always` docs and how to find the rest; before each Bash command, git, process, and pull request body rules; before each file write, an opt-in guard that keeps the main checkout clean; after a Markdown write, a line-length check; before compaction, a checklist of what to keep; after each dispatch, subagent stop, and session end, a dispatch log row. [docs/hooks.md](docs/hooks.md) lists them |
+| Hooks | at session and subagent start, one line naming the `always` docs and how to find the rest; before each Bash command, git, process, and pull request body rules; before each file write, an opt-in guard that keeps the main checkout clean; before each dispatch, the project's model and effort for that agent; after a Markdown write, a line-length check; before compaction, a checklist of what to keep; when a long session ends a turn, one offer to hand off; after each dispatch, subagent stop, and session end, a dispatch log row. [docs/hooks.md](docs/hooks.md) lists them |
 
 The `knowledge` skill is the shared rule set.
 Every agent preloads it: it says how to load the project's buckets, which project rules win, and the defaults a project can override.
@@ -26,6 +26,7 @@ plugins/aidrian/
 ├── .claude-plugin/plugin.json      Claude Code manifest
 ├── plugin.json                     Codex manifest (same name, version, description)
 ├── agents/*.md                     the agents; the only source to edit
+├── agent-addons/<name>.codex.md    optional text only Codex gets, after that agent's body
 ├── skills/*/SKILL.md               the skills; both hosts read them as they are
 ├── bin/aidrian                     project commands; on the Bash PATH in Claude Code sessions
 ├── bin/aidrian-knowledge           the knowledge command; on the same PATH
@@ -45,6 +46,18 @@ docs/knowledge.md                   the knowledge-bucket format
 test/                               node --test suites
 ```
 
+## Host add-ons
+
+An agent is written for every host.
+When Codex needs extra text for one agent, put it in `plugins/aidrian/agent-addons/<name>.codex.md`:
+`npm run build` adds it after the agent's body in the Codex role, and Claude Code never reads it.
+The folder sits beside `agents/` because Claude Code loads every `.md` file in `agents/` as an agent.
+
+There is no Claude add-on. Claude Code reads `agents/<name>.md` as it is, so nothing could add a `<name>.claude.md` to it;
+text only Claude needs stays in the agent until the build generates Claude agents too.
+`<name>.opencode.md` is kept for an OpenCode build, which does not exist.
+The build fails on either name, and on an add-on whose agent does not exist.
+
 ## Build and check
 
 ```sh
@@ -57,6 +70,8 @@ npm run check    # what CI runs
 The tests also check that both manifests agree, that every agent preloads the `knowledge` skill,
 that agents only ask for tags the `knowledge` skill lists, and that no project-specific path leaks into the plugin.
 Every agent and skill description must fit in 160 characters: both hosts put all of them into every session, used or not.
+Every `SKILL.md` must fit in 7,500 bytes, because Codex cuts it at 8,000 without a warning.
+A longer skill keeps its steps in `SKILL.md` and moves detail into `references/` files that `SKILL.md` names, with when to read each.
 When `claude` and `codex` are on your PATH, `test/hosts.test.mjs` also checks the real hosts:
 Claude Code validates the plugin and loads every agent, skill, and hook event,
 and Codex installs it and shows every skill and agent in a project session. Neither check runs a model.
@@ -94,6 +109,7 @@ From a checkout of this repository, `make codex-agents` does the same.
 Add `--target .codex/agents` to install the agents into one project instead.
 
 Codex roles inherit the session's model; only the reasoning effort carries over from each agent.
+A project can choose a model and effort per agent for both hosts: [docs/config.md](docs/config.md#models).
 Claude Code enforces each agent's tool limits; on Codex the read-only agents are told to stay read-only.
 
 ## Hooks

@@ -2,7 +2,7 @@
 // docs/config.md lists the keys; docs/project-folder.md gives the version rule.
 // No dependencies: this file runs from the installed plugin, which has no node_modules.
 
-import { lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 // The project folder format this plugin reads. A format change raises it and documents the migration.
@@ -19,6 +19,16 @@ const SCHEMA = {
   pr: { requiredSections: 'texts', reviewer: 'text', maxReviewRounds: 'positive', requiredChecks: 'texts', ignoreCancelledChecks: 'texts' },
   docs: { wrapLimit: 'zeroOrMore', alwaysBudgetBytes: 'positive' },
   skills: { descriptionChars: 'positive', listingBytes: 'positive' },
+  session: { handoff: 'handoffMode', maxTokens: 'zeroOrMore', maxCalls: 'zeroOrMore', maxHours: 'zeroOrMore' },
+  models: 'models',
+};
+
+// What `models` may set for one of this plugin's agents, per host; null takes any non-empty string.
+// Claude Code's Agent tool takes only these model aliases. Codex reads any model name and names these efforts.
+// docs/config.md#models cites both.
+const MODEL_CHOICES = {
+  claude: { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] },
+  codex: { model: null, effort: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'persistent'] },
 };
 
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
@@ -29,6 +39,7 @@ const TYPES = {
   boolean: [(value) => typeof value === 'boolean', 'true or false'],
   positive: [(value) => Number.isInteger(value) && value > 0, 'a whole number above 0'],
   zeroOrMore: [(value) => Number.isInteger(value) && value >= 0, 'a whole number, 0 or more'],
+  handoffMode: [(value) => ['off', 'ask', 'auto'].includes(value), '"off", "ask", or "auto"'],
 };
 
 // `state.dir: null` is the per-project folder under `$XDG_STATE_HOME` (lib/project.mjs). Task worktrees sit beside the
@@ -48,12 +59,15 @@ export const DEFAULTS = deepFreeze({
   },
   docs: { wrapLimit: 155, alwaysBudgetBytes: 40000 },
   skills: { descriptionChars: 160, listingBytes: 9216 },
+  session: { handoff: 'ask', maxTokens: 150000, maxCalls: 250, maxHours: 4 },
+  models: { claude: { agents: {} }, codex: { agents: {} } },
 });
 
 // Returns { config, errors, current }. `config` is frozen and always complete: the file's values over DEFAULTS, one
-// group at a time, with the default kept for any value that is missing or invalid. A hook can use it even when `errors`
-// is not empty. `current` is false when the file is missing, unreadable, or of another version: then nothing in the
-// folder can be trusted to have the shape this plugin reads.
+// group at a time, with the default kept for any value that is missing or invalid. The local file's `models`
+// (`project.localModels`) then goes over the file's. A hook can use it even when `errors` is not empty. `current` is false
+// when the file is missing, unreadable, or of another version: then nothing in the folder can be trusted to have the shape
+// this plugin reads.
 export function loadConfig(project) {
   const errors = [];
   const file = project.paths.config;
@@ -62,7 +76,9 @@ export function loadConfig(project) {
   const problem = versionProblem(file, raw.version);
   if (problem) return { config: DEFAULTS, errors: [problem], current: false };
   const { version, ...values } = raw;
-  return { config: deepFreeze(merge(SCHEMA, DEFAULTS, values, '', file, errors)), errors, current: true };
+  const config = merge(SCHEMA, DEFAULTS, values, '', file, errors);
+  if (project.localModels !== undefined) config.models = checkModels(project.localModels, project.paths.local, errors, config.models);
+  return { config: deepFreeze(config), errors, current: true };
 }
 
 // The error for a `version` other than VERSION, or null.
@@ -84,6 +100,8 @@ function merge(schema, defaults, values, prefix, file, errors) {
     if (typeof type === 'object') {
       if (isObject(value)) out[key] = merge(type, defaults[key], value, `${prefix}${key}.`, file, errors);
       else errors.push(`${file}: "${prefix}${key}" must be an object`);
+    } else if (type === 'models') {
+      out[key] = checkModels(value, file, errors, defaults[key]);
     } else if (TYPES[type][0](value)) {
       out[key] = value;
     } else {
@@ -92,6 +110,62 @@ function merge(schema, defaults, values, prefix, file, errors) {
   }
   return out;
 }
+
+// `models` from one file over `base`, per host, agent, and field: { claude: { agents }, codex: { agents } }.
+// A bad host, agent, or value is an error and is left out, so the rest still applies.
+function checkModels(value, file, errors, base) {
+  const out = Object.fromEntries(Object.keys(MODEL_CHOICES).map((host) => [host, { agents: { ...base[host].agents } }]));
+  if (!isObject(value)) {
+    errors.push(`${file}: "models" must be an object`);
+    return out;
+  }
+  for (const [host, groups] of Object.entries(value)) {
+    const at = `models.${host}`;
+    if (!Object.hasOwn(MODEL_CHOICES, host)) errors.push(`${file}: unknown key "${at}"`);
+    else if (!isObject(groups)) errors.push(`${file}: "${at}" must be an object`);
+    else {
+      for (const [key, agents] of Object.entries(groups)) {
+        if (key === 'skills') errors.push(`${file}: "${at}.skills" is not supported: neither host lets a project set a plugin skill's model or effort`);
+        else if (key !== 'agents') errors.push(`${file}: unknown key "${at}.${key}"`);
+        else if (!isObject(agents)) errors.push(`${file}: "${at}.agents" must be an object`);
+        else for (const [name, choice] of Object.entries(agents)) checkAgentChoice(host, name, choice, out[host].agents, file, errors);
+      }
+    }
+  }
+  return out;
+}
+
+function checkAgentChoice(host, name, choice, agents, file, errors) {
+  const at = `models.${host}.agents.${name}`;
+  if (!pluginAgents().includes(name)) {
+    errors.push(`${file}: unknown agent "${at}"; the plugin's agents are ${pluginAgents().join(', ')}`);
+    return;
+  }
+  if (!isObject(choice)) {
+    errors.push(`${file}: "${at}" must be an object with "model", "effort", or both`);
+    return;
+  }
+  const kept = {};
+  for (const [field, setting] of Object.entries(choice)) {
+    const allowed = Object.hasOwn(MODEL_CHOICES[host], field) ? MODEL_CHOICES[host][field] : undefined;
+    if (allowed === undefined) errors.push(`${file}: unknown key "${at}.${field}"`);
+    else if (allowed === null ? isText(setting) : allowed.includes(setting)) kept[field] = setting;
+    else errors.push(`${file}: "${at}.${field}" must be ${allowed === null ? 'a non-empty string' : oneOf(allowed)}`);
+  }
+  if (Object.keys(kept).length) agents[name] = { ...agents[name], ...kept };
+}
+
+// The plugin's agent names, from the agent files it ships beside this folder.
+let agentNames;
+function pluginAgents() {
+  agentNames ??= readdirSync(path.join(import.meta.dirname, '../agents'))
+    .filter((file) => file.endsWith('.md'))
+    .map((file) => file.slice(0, -'.md'.length))
+    .sort();
+  return agentNames;
+}
+
+const oneOf = (list) => `${list.slice(0, -1).map((each) => JSON.stringify(each)).join(', ')}, or ${JSON.stringify(list.at(-1))}`;
 
 // File helpers, shared with project.mjs and knowledge.mjs. Paths are relative to `root`.
 

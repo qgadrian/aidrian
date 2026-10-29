@@ -31,7 +31,8 @@ except its base branch and re-entry sections, which it cites.
 1. **Wrong skill.** Frontmatter with `issue_id` or `issue_ref`: stop and ask. It belongs to `issue-implement`, which runs the Linear guards.
 2. **Read the plan**: `plan_kind`, `status`, `workspace_decision`, slices, non-goals, acceptance criteria when it declares them, open questions.
 3. **Ready.** Stop and ask on `status: complete`, a likely wrong plan; on `blocked` or a load-bearing open question,
-   which goes back to `planning-agent`; or on a status other than `ready` or `in-progress`, with a recommendation to review it first.
+   which goes back to `planning-agent`; or on a status other than `ready` or `in-progress`,
+   with a recommendation to review it first with the `plan-review` skill.
    An "implement anyway" from the Human goes in the report.
 4. **Gates.** A critical flow in the project's `product_sensitive` knowledge: a `product-manager` sign-off,
    unless the plan records one. A security-sensitive slice: `security-engineer` on the approach, unless the plan records its sign-off.

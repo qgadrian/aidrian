@@ -17,8 +17,9 @@ never opens a PR, never closes anything, and never bypasses git hooks. It
 does not load the project's `design_bundle` knowledge into its own context —
 the specialists it dispatches load it through the `knowledge` skill.
 
-`design-source-explorer` and `planning-agent` are this plugin's agents: spawn them as `aidrian:<name>` in Claude Code and `aidrian-<name>` in Codex.
-`designer`, `frontend-developer`, `architect`, and `product-manager` are roles the project supplies.
+`design-source-explorer`, `planning-agent`, `designer`, `architect`, and `product-manager` are this plugin's agents:
+spawn them as `aidrian:<name>` in Claude Code and `aidrian-<name>` in Codex.
+`frontend-developer` is a role the project supplies.
 
 Implementation runs separately: after the plan exists, the user reviews it
 and runs the project's plan-implementation flow, which executes the plan

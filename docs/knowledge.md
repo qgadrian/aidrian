@@ -75,7 +75,7 @@ Use the tags that matter to your project; an agent whose tags you do not use sti
 ## Overriding plugin defaults
 
 Project knowledge wins over the plugin.
-The `knowledge` skill lists the defaults a project can change, such as where plans and worktrees go and the shape of a machine handoff.
+The `knowledge` skill lists the defaults a project can change, such as where plans go and the shape of a machine handoff.
 To change one, say so in an `always` doc.
 
 ## Commands

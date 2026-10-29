@@ -24,7 +24,7 @@ When several match, take the newest and say which one you picked.
    next steps, gotchas.
 2. **Enter the worktree** named in Current state.
    - Check it is listed in `git worktree list --porcelain`, then `cd` into it.
-   - If it is gone, stop, say so, and offer to create it again for the brief's branch. Never fall back to the main checkout.
+   - If it is gone, stop, say so, and offer to create it again for the brief's branch with the `worktree-new` skill. Never fall back to the main checkout.
    - A brief that names no worktree means the work happens where you are.
 3. **Read the state fresh.** The brief holds no snapshots on purpose:
 

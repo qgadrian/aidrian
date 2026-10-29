@@ -23,7 +23,9 @@
 
 import { execFileSync } from 'node:child_process';
 
-export const DEFAULT_REVIEWER = 'chatgpt-codex-connector[bot]';
+import { DEFAULTS as CONFIG_DEFAULTS } from './config.mjs';
+
+export const DEFAULT_REVIEWER = CONFIG_DEFAULTS.pr.reviewer;
 export const REQUEST_COMMENT = '@codex review';
 export const DEFAULTS = Object.freeze({ timeoutSec: 840, intervalSec: 60, maxRounds: 10 });
 

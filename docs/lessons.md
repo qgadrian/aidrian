@@ -32,7 +32,7 @@ A line that does not parse is skipped.
 | `tier` | `P1` blocks work or loses it, `P2` costs time or tokens, `P3` is polish. `P2` when not given. |
 | `kind` | `bug` (something in place misbehaves), `gap` (nothing covers the case), `improvement` (it works and could cost less), or `rule` (a judgment worth writing down). |
 | `target` | Who fixes it: `plugin` for this plugin's agents, skills, hooks, and commands; `project` for the project's knowledge, config, and code. |
-| `key` | Optional. Rows with the same key are one lesson. |
+| `key` | Optional. Rows with the same key are one lesson. [Automatic lessons](#automatic-lessons) always have one. |
 | `source` | `manual`, or `auto` for an automatic lesson. |
 | `session`, `agent`, `branch`, `worktree` | Where it was captured. `session` is Claude Code's session id, which the [dispatch log](dispatch-log.md) rows also carry. |
 | `seen`, `occurrences` | How many times it happened, and the later times with their notes. `--json` shows the last five. |
@@ -111,6 +111,25 @@ Lesson inbox needs triage: 1 P1 open; the oldest is 31 days old, over 14. Tell t
 ```
 
 A limit of `0` turns that reason off. [config.md](config.md) lists the keys.
+
+## Automatic lessons
+
+The plugin records three signals it already sees as lessons of its own, with `source: auto`.
+Each has a key, so it dedupes by itself: one lesson per signal, one occurrence per event,
+and an occurrence after its fix reopens it like any other.
+
+| Signal | Key | Tier, kind, target | Why it stays quiet |
+| --- | --- | --- | --- |
+| The [delivery check](hooks.md#delivery-check) sends a subagent back | `delivery-check:<agent type>` | P2, `bug`; `plugin` for an `aidrian:` agent, `project` for any other | It fires only when a file the agent said it wrote does not exist, once per stop. |
+| One Bash or write rule blocks one session 3 times | `hook-deny:<rule>` | P2, `gap`, `plugin` | One block is the rule doing its job; three in a session is an agent fighting it. |
+| `aidrian pr await-review --request` stops at the round limit, config.json `github.maxReviewRounds` | `review-rounds` | P2, `project` | It fires once per pull request at the limit. |
+
+A row holds names, counts, paths, and ids, never a prompt, a command, or tool output; the `session` id finds the rest.
+The block counts live in the system's temporary folder, one small file per session.
+
+Not recorded: the session-length reminder fires in most long sessions by design, and its numbers are already in the dispatch log.
+Another producer, such as a script that reads `aidrian report`, can add its own signal with `aidrian lesson add --key <key>`.
+`"lessons": { "auto": false }` in config.json turns all three off.
 
 ## Rows from the first version
 

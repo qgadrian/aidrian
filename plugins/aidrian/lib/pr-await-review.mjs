@@ -18,7 +18,8 @@
 //      in the request comment, and later runs keep the highest one.
 //
 // stdout: one JSON object. Exit 0 received | already_present, 2 timed_out (re-run once without --request when
-// `retry_recommended` is true), 3 blocked_quota, 4 round_limit, 1 error. Read-only except the --request comment.
+// `retry_recommended` is true), 3 blocked_quota, 4 round_limit, 1 error. Read-only except the --request comment and,
+// at round_limit, a lesson in the local lesson inbox (lib/lesson-signals.mjs).
 // The default timeout is 840 s: a foreground Claude Code Bash call stops at 900 s, gh calls included.
 
 import { execFileSync } from 'node:child_process';
@@ -364,9 +365,15 @@ export const awaitReview = async (opts, { gh = defaultGh, sleep = (s) => new Pro
 };
 
 // The CLI body: prints the result JSON and returns its exit code; a usage or gh error prints one line and returns 1.
-export async function runAwaitReview(args, config) {
+// At round_limit, `project` gets a lesson; `deps` replaces awaitReview's gh, clock, and sleep in tests.
+export async function runAwaitReview(args, config, project = null, deps = {}) {
   try {
-    const result = await awaitReview(parseArgs(args, { reviewer: config.github.reviewer, maxRounds: config.github.maxReviewRounds }));
+    const result = await awaitReview(parseArgs(args, { reviewer: config.github.reviewer, maxRounds: config.github.maxReviewRounds }), deps);
+    if (result.status === 'round_limit' && project) {
+      const { recordSignal, roundLimitSignal } = await import('./lesson-signals.mjs');
+      const where = { session: process.env.CLAUDE_CODE_SESSION_ID || null, agent: process.env.CLAUDE_CODE_AGENT || null };
+      recordSignal(project, roundLimitSignal({ repo: result.repo, pr: result.pr, maxRounds: result.max_rounds, ...where }), { config });
+    }
     console.log(JSON.stringify(result, null, 2));
     return exitCodeFor(result.status);
   } catch (err) {

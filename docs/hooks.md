@@ -32,6 +32,7 @@ After you install the plugin in Codex, open a session, run `git commit --amend -
 | Markdown line length | `"docs": { "wrapLimit": 0 }` |
 | Pull request body sections | `"github": { "requiredSections": [] }`; the footer and `--fill` checks stay |
 | Session-length reminder | `"session": { "handoff": "off" }` |
+| Automatic lessons from the stop and Bash hooks | `"lessons": { "auto": false }` |
 | A Bash rule, once | Its override variable, set by a person: [Overrides](#overrides) |
 
 The start lines and the dispatch log have no switch; they act only inside a project folder.
@@ -53,6 +54,8 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Main checkout, when turned on | A write to a tracked file in the main checkout: `>`, `>>`, `tee`, `sed -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`, `touch`, `mkdir`, and `rsync` (sources too under `--remove-source-files`) | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
 
 Each rule is a file in `plugins/aidrian/lib/rules/`; a rule that reads only `gh` commands, such as the pull request body rule, is in `rules/github/`.
+When one rule blocks the same session a third time, the block becomes an [automatic lesson](lessons.md#automatic-lessons):
+an agent that keeps trying was not shown the allowed way. The write hook counts its main-checkout blocks the same way.
 A rule reads the command the way the shell splits it.
 It sees through `sudo`, `env`, `timeout`, `command`, `rtk`, and similar wrappers, and ignores text in quotes, comments, and heredocs.
 A long option it blocks also matches the shorter prefixes the program accepts, such as `--no-veri` for `--no-verify`,
@@ -87,7 +90,8 @@ Frontmatter, fenced and indented code, table rows, and a line whose overflow is 
 
 When a subagent's last message presents a `.md` or `.json` path as delivered and that path exists nowhere, the stop hook
 sends it back once with the missing paths: it writes them, corrects its report, or says it removed them on purpose.
-Its second stop always ends.
+Its second stop always ends. Each send-back is also an occurrence of an [automatic lesson](lessons.md#automatic-lessons)
+for that agent type.
 A path counts as delivered only on a line that also has the 📄 marker or one of the words wrote, written, created, saved,
 handoff, or output, in any case, outside a path.
 A path on any other line is a mention, such as "docs/old.md does not exist", and is never checked.

@@ -7,7 +7,10 @@ import { projectAt } from './project.mjs';
 // `checks` exits 3 on a config with errors: its 1 is the failing verdict. `disposition` reads no config.
 const config = (exitCode) => commandConfig(projectAt(process.cwd()), { exitCode });
 const ACTIONS = {
-  'await-review': async (args) => (await import('./pr-await-review.mjs')).runAwaitReview(args, config(1)),
+  'await-review': async (args) => {
+    const project = projectAt(process.cwd());
+    return (await import('./pr-await-review.mjs')).runAwaitReview(args, commandConfig(project, { exitCode: 1 }), project);
+  },
   checks: async (args) => (await import('./pr-checks.mjs')).runChecks(args, config(3)),
   disposition: async (args) => (await import('./finding-disposition.mjs')).runDisposition(args),
 };

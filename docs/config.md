@@ -63,6 +63,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `session.maxTokens` | The context, in tokens, of the main session's last model call that counts as long; `0` turns this limit off. |
 | `session.maxCalls` | The main session's model calls that count as long; `0` turns this limit off. |
 | `session.maxHours` | The hours worked that count as long, a pause of more than an hour counting as one; `0` turns this limit off. |
+| `lessons.auto` | `false` turns off the [automatic lessons](lessons.md#automatic-lessons) the hooks and `aidrian pr await-review` record. |
 | `lessons.maxOpen` | The open [lessons](lessons.md) past which the session-start line asks for triage; `0` turns this limit off. |
 | `lessons.maxAgeDays` | The age, in days, of the oldest open lesson past which the session-start line asks for triage; `0` turns this limit off. |
 | `models` | The model and effort of the plugin's agents, per host, in place of the ones the plugin ships: [Models](#models). |

@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 
 import {
   parseArgs,
@@ -28,9 +30,13 @@ import {
   REQUEST_INSTRUCTIONS,
   codexRounds,
   recordedMaxRounds,
+  runAwaitReview,
   latestTriggerHead,
   reviewedCommit,
 } from '../plugins/aidrian/lib/pr-await-review.mjs';
+import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { inboxPath, lessons } from '../plugins/aidrian/lib/lesson-inbox.mjs';
+import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 
 const BOT = { login: DEFAULT_REVIEWER };
 const T = (m) => `2026-08-23T07:${String(m).padStart(2, '0')}:00Z`;
@@ -991,6 +997,27 @@ test('awaitReview: --max-rounds stops before the request that would start one ro
   const ok = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, maxRounds: 10, timeoutSec: 60, intervalSec: 60 }, { gh: covered, ...c4 });
   assert.equal(ok.status, 'already_present');
   assert.equal(covered.posts.length, 0);
+});
+
+test('runAwaitReview: the round limit becomes one lesson per pull request in the project\'s inbox', async (t) => {
+  const base = mkdtempSync(path.join(tmpdir(), 'aidrian-rounds-'));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  mkdirSync(path.join(base, '.aidrian'));
+  writeFileSync(path.join(base, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' } }));
+  // The project's own config keeps the inbox in `base/state`, away from the developer's state folder.
+  const project = projectAt(base);
+  const { config } = loadConfig(project);
+  assert.equal(inboxPath(project, config), path.join(base, 'state/lessons/inbox.jsonl'));
+  const rounds = Array.from({ length: 10 }, (_, i) => ({ id: i + 1, user: BOT, submitted_at: T(1), commit_id: 'aaa', state: 'COMMENTED' }));
+  const log = t.mock.method(console, 'log', () => {});
+  const run = (settings, proj) => runAwaitReview(['42', '--request'], settings, proj, { gh: fakeGh([{ reviews: rounds }], { head: 'bbb' }), ...clock() });
+  assert.equal(await run(config, project), 4);
+  assert.equal(await run(config, project), 4);
+  assert.equal(await run(config, null), 4, 'no project, no lesson');
+  assert.equal(await run({ ...config, lessons: { ...config.lessons, auto: false } }, project), 4);
+  assert.equal(JSON.parse(log.mock.calls[0].arguments[0]).status, 'round_limit', 'the result prints as before');
+  const [only, ...rest] = lessons(inboxPath(project, config));
+  assert.deepEqual([only.key, only.seen, only.target, only.evidence, rest.length], ['review-rounds', 2, 'project', ['https://github.com/acme/notes/pull/42'], 0]);
 });
 
 test('awaitReview: a push mid-wait past the limit ends with round_limit, not received', async () => {

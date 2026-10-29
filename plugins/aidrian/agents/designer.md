@@ -4,7 +4,6 @@ description: UI presentation specialist for visual consistency, layout, componen
 model: sonnet
 effort: medium
 color: pink
-tools: [Agent, AskUserQuestion, Bash, Edit, ExitPlanMode, Monitor, Read, SendMessage, Skill, TaskStop, ToolSearch, Write]
 skills: [aidrian:knowledge]
 ---
 

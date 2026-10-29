@@ -4,8 +4,7 @@ description: Read-only codebase exploration that maps flows, source-of-truth mod
 model: sonnet
 effort: medium
 color: yellow
-tools: [ExitPlanMode, Glob, Grep, LSP, Read, ToolSearch]
-disallowedTools: [Write, Edit, Bash]
+disallowedTools: [Write, Edit, NotebookEdit, Bash, Agent]
 skills: [aidrian:knowledge]
 ---
 

@@ -4,8 +4,7 @@ description: Read-only code review for correctness, anti-patterns, consistency, 
 model: opus
 effort: xhigh
 color: blue
-tools: [Agent, AskUserQuestion, Bash, ExitPlanMode, Glob, Grep, LSP, Monitor, Read, SendMessage, Skill, TaskStop, TaskUpdate, ToolSearch, WebFetch, WebSearch, mcp__plugin_linear_linear__get_issue]
-disallowedTools: [Write, Edit]
+disallowedTools: [Write, Edit, NotebookEdit]
 skills: [aidrian:knowledge]
 ---
 

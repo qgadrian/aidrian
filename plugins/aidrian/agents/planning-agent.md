@@ -4,7 +4,6 @@ description: Write or revise a decision-complete local plan before implementatio
 model: fable
 effort: high
 color: purple
-tools: [Agent, AskUserQuestion, Bash, Edit, ExitPlanMode, Read, SendMessage, Skill, TaskUpdate, ToolSearch, WebFetch, Write, mcp__plugin_linear_linear__get_issue]
 skills: [aidrian:knowledge]
 ---
 

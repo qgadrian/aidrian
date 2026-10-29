@@ -4,8 +4,7 @@ description: Read-only history research that explains why code changed, from pul
 model: sonnet
 effort: medium
 color: yellow
-tools: Bash, ExitPlanMode, Glob, Grep, Read, ToolSearch, mcp__github__pull_request_read, mcp__github__issue_read, mcp__github__search_issues, mcp__github__search_pull_requests, mcp__github__list_pull_requests, mcp__github__list_commits, mcp__github__get_commit, mcp__github__search_commits, mcp__github__list_branches, mcp__github__get_file_contents
-disallowedTools: [Write, Edit]
+disallowedTools: [Write, Edit, NotebookEdit, Agent]
 skills: [aidrian:knowledge]
 ---
 
@@ -30,7 +29,7 @@ Allowed investigation surfaces:
   - `gh api` GET requests only, such as `repos/{owner}/{repo}/pulls/<n>/comments` for inline review threads.
     Never pass `-X`/`--method` with another verb, or `-f`/`-F`/`--input`: those send a write.
 - GitHub MCP read tools, when the session has a GitHub MCP server.
-  The plugin does not ship one; the `mcp__github__*` tools in this agent's list are optional.
+  The plugin does not ship one, so they are optional.
 
 If `gh` is missing or not signed in and no GitHub MCP tools exist, answer from local `git` history alone,
 and name the missing PR and issue context in `blockers`.

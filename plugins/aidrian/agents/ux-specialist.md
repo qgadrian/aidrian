@@ -4,7 +4,6 @@ description: Diagnose and fix UX in the product's main flows, such as task succe
 model: sonnet
 effort: high
 color: green
-tools: [Agent, AskUserQuestion, Bash, Edit, ExitPlanMode, Read, SendMessage, Skill, ToolSearch, Write]
 skills: [aidrian:knowledge]
 ---
 

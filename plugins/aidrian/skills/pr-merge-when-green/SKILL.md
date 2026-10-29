@@ -84,7 +84,10 @@ A `now` that differs from `head` means a commit arrived during the wait, and the
 
 ## 2. Merge
 
-Read the hard rules again, then run this once:
+Read the hard rules again.
+A label such as `do-not-merge` can arrive during the wait without a new commit, so the head check of step 1 cannot see it.
+Right before each merge attempt, the retry too, run the step 0 `gh pr view` again and stop on any of its stop conditions.
+Then run this once:
 
 ```bash
 gh pr merge <n> --repo <owner>/<repo> --merge --delete-branch --match-head-commit <sha>   # --squash or --rebase only when asked
@@ -94,7 +97,8 @@ gh pr merge <n> --repo <owner>/<repo> --merge --delete-branch --match-head-commi
 judged never merges.
 With `--dry-run`, print the command and stop.
 If the merge fails, for a new commit, a race, or a branch-protection mismatch, run step 1 once more.
-Retry the merge once, with the `<sha>` that run printed, if the verdict is still ready; otherwise stop and report.
+Retry the merge once, with the `<sha>` that run printed, if the verdict is still ready and step 0 shows no stop condition;
+otherwise stop and report.
 
 ## 3. Confirm
 

@@ -7,9 +7,9 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { loadConfig } from '../config.mjs';
-import { findProject } from '../project.mjs';
-import { commandLines, lexCommand, readInvocation, readShortOptions } from '../shell-lex.mjs';
+import { loadConfig } from '../../config.mjs';
+import { findProject } from '../../project.mjs';
+import { commandLines, lexCommand, readInvocation, readShortOptions } from '../../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PR_BODY';
 

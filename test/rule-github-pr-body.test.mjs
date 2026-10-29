@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { check, OVERRIDE } from '../plugins/aidrian/lib/rules/pr-body.mjs';
+import { check, OVERRIDE } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
 
 const GOOD = '## Summary\nShare links expire.\n\n## Tests run\n- `npm test`: pass\n';
 

@@ -52,6 +52,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Pull request body | `gh pr create` or `gh pr edit` with a body that lacks a config.json `github.requiredSections` heading or carries the "Generated with [Claude Code]" footer, and `gh pr create --fill` | `AIDRIAN_ALLOW_PR_BODY=1` |
 | Main checkout, when turned on | A write to a tracked file in the main checkout: `>`, `>>`, `tee`, `sed -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`, `touch`, `mkdir`, and `rsync` (sources too under `--remove-source-files`) | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
 
+Each rule is a file in `plugins/aidrian/lib/rules/`; a rule that reads only `gh` commands, such as the pull request body rule, is in `rules/github/`.
 A rule reads the command the way the shell splits it.
 It sees through `sudo`, `env`, `timeout`, `command`, `rtk`, and similar wrappers, and ignores text in quotes, comments, and heredocs.
 A long option it blocks also matches the shorter prefixes the program accepts, such as `--no-veri` for `--no-verify`,

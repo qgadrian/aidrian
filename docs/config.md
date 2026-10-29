@@ -28,7 +28,8 @@ In a group such as `pr`, set only the keys you change; the others keep their def
   "docs": { "wrapLimit": 155, "alwaysBudgetBytes": 40000 },
   "skills": { "descriptionChars": 160, "listingBytes": 9216 },
   "session": { "handoff": "ask", "maxTokens": 150000, "maxCalls": 250, "maxHours": 4 },
-  "models": { "claude": { "agents": {} }, "codex": { "agents": {} } }
+  "models": { "claude": { "agents": {} }, "codex": { "agents": {} } },
+  "names": { "human": "the Human", "ai": null }
 }
 ```
 
@@ -56,6 +57,8 @@ In a group such as `pr`, set only the keys you change; the others keep their def
 | `session.maxCalls` | The main session's model calls that count as long; `0` turns this limit off. |
 | `session.maxHours` | The hours worked that count as long, a pause of more than an hour counting as one; `0` turns this limit off. |
 | `models` | The model and effort of the plugin's agents, per host, in place of the ones the plugin ships: [Models](#models). |
+| `names.human` | What agents call the person they work for: [Names](#names). |
+| `names.ai` | What agents call themselves; `null` is the host's name, Claude or Codex: [Names](#names). |
 
 A path in `state.dir` or `worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
@@ -107,6 +110,25 @@ node ~/.codex/plugins/cache/aidrian-harness/aidrian/*/codex/install-agents.mjs -
 Neither host lets a project change the model or effort of a plugin skill, so `models` has no `skills` key, and `aidrian check` refuses one.
 Claude Code reads a skill's `model` and `effort` only from its own `SKILL.md`, and Codex skills have neither.
 The plugin's skills set neither, so they run on the session's model and effort.
+
+## Names
+
+Agent output that says "you" or "me" leaves the reader unsure who is meant.
+The start hook gives every session and subagent one line with both names, and the `knowledge` skill tells agents to use them
+in replies, docs, handoffs, commits, and pull request bodies:
+
+```text
+Names: call the human "the Human" and yourself "Claude"; never "you"/"me".
+```
+
+A team sets its names in `config.json`, and one developer in the git-ignored `.aidrian.local.json` at the project root:
+
+```json
+{ "names": { "human": "the product owner", "ai": "the agent" } }
+```
+
+`.aidrian.local.json` wins over `config.json`, one name at a time.
+`aidrian check` names an unknown key and a name that is not a non-empty string.
 
 ## Checking
 

@@ -13,7 +13,7 @@ instead. File path convention: `docs/design-imports/<slug>/plan.md`.
 ---
 design_slug: "dashboard-v3"          # the design-import slug; matches docs/design-imports/<slug>/
 bundle_ref: "tmp/dashboard-v3"       # the resolved Claude Design bundle path (folder or zip) the import was built from
-variant: "v2-restaurant"             # the chosen generation/variant id, from the design-import --variant choice
+variant: "v2-compact"                # the chosen generation/variant id, from the design-import --variant choice
 generated_at: "2026-05-21T14:30:00Z" # ISO 8601 UTC, when the plan was authored
 status: "ready"                      # one of: open-questions | ready | in-progress | complete | blocked
 workspace_decision:
@@ -36,7 +36,7 @@ design-import context in their place.
 A design-import slice has no acceptance criteria; it covers a screen (or the
 shell/nav). Replace `acceptance_criteria_covered` with `screens_covered` — a
 list of screen IDs from the design import's `inventory.md` screen→route
-mapping (e.g. `["home-v2", "floor-v2"]`); a shell/nav slice may use a
+mapping (e.g. `["home-v2", "settings-v2"]`); a shell/nav slice may use a
 sentinel such as `["shell"]`. All other per-slice fields are unchanged.
 
 ```yaml

@@ -8,7 +8,7 @@ A blocking hook exits 2 and tells the agent why on stderr.
 
 | Event | What runs | Host | Blocks |
 | --- | --- | --- | --- |
-| Session and subagent start | One line naming the `always` knowledge docs and the commands that find the rest; for the main session, a second line while the lesson inbox holds open lessons | both | no |
+| Session and subagent start | One line naming the `always` knowledge docs and the commands that find the rest, one line with the [names](config.md#names) for the human and the AI, and, for the main session, a last line while the lesson inbox holds open lessons | both | no |
 | Before a Bash command | The Bash rules below, in this order, in one process | both | yes |
 | Before Edit, Write, NotebookEdit, or Codex's `apply_patch` | The main-checkout rule, when the project turns it on | both | yes |
 | Before an Agent tool call | The project's [model and effort](config.md#models) for this plugin's agent, added to the call | Claude Code | no |
@@ -34,7 +34,7 @@ After you install the plugin in Codex, open a session, run `git commit --amend -
 | Session-length reminder | `"session": { "handoff": "off" }` |
 | A Bash rule, once | Its override variable, set by a person: [Overrides](#overrides) |
 
-The start line and the dispatch log have no switch; they act only inside a project folder.
+The start lines and the dispatch log have no switch; they act only inside a project folder.
 The Agent hook changes only what config.json or `.aidrian.local.json` sets in `models.claude`.
 Another hook in the same project that rewrites Agent calls may override it, because each rewrite replaces the whole call.
 It never reaches a session started with `claude --agent`, which takes the `--model` and `--effort` flags instead.

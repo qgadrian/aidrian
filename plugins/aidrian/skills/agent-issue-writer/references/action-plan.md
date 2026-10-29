@@ -32,12 +32,12 @@ The JSON block every issue body ends with, and the defaults for owners, verifica
       "docs/knowledge/engineering/e2e.md"
     ]
   },
-  "deliverables": ["implement the scoped booking reassignment fix"],
+  "deliverables": ["implement the scoped order reassignment fix"],
   "verification_flow": [
-    "npx jest --testPathPatterns=updateBooking --no-coverage",
+    "npx jest --testPathPatterns=updateOrder --no-coverage",
     "npm run typecheck",
     "npm run lint",
-    "npm run test:e2e:all -- --grep \"booking reassignment\""
+    "npm run test:e2e:all -- --grep \"order reassignment\""
   ],
   "escalation_triggers": [
     "required authority docs conflict",

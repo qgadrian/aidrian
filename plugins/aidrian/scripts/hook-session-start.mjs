@@ -1,6 +1,7 @@
 // SessionStart and SubagentStart hook: one line that tells the agent which knowledge docs to read now and how to find
-// the rest, and, for the main session only, a second line when the lesson inbox holds open lessons. SessionStart adds
-// plain stdout to the context; SubagentStart (`--subagent`) needs it wrapped in JSON. Prints nothing outside a project.
+// the rest, one line with the names to call the human and the AI, and, for the main session only, a last line when the
+// lesson inbox holds open lessons. SessionStart adds plain stdout to the context; SubagentStart (`--subagent`) needs it
+// wrapped in JSON. Prints nothing outside a project.
 
 import path from 'node:path';
 
@@ -14,7 +15,7 @@ const BIN = path.resolve(import.meta.dirname, '../bin');
 await runHook((input) => {
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
-  const { buckets, errors } = loadKnowledge(project);
+  const { config, buckets, errors } = loadKnowledge(project);
   const always = buckets.flatMap((bucket) => bucket.always);
   const command = binCommand('aidrian-knowledge');
 
@@ -22,11 +23,14 @@ await runHook((input) => {
   if (always.length) line += ` Read now: ${always.join(', ')}.`;
   line += ` For more, run \`${command} route <tag>\` for your tags or \`${command} search <words>\` for a topic.`;
   if (errors.length) line += ` The project folder has ${errors.length} problems; run \`${binCommand('aidrian')} check\`.`;
+  // Claude Code sets CLAUDECODE=1 for its hooks; this hook runs only there and in Codex.
+  const ai = config.names.ai ?? (process.env.CLAUDECODE === '1' ? 'Claude' : 'Codex');
+  const names = `Names: call the human ${JSON.stringify(config.names.human)} and yourself ${JSON.stringify(ai)}; never "you"/"me".`;
 
   if (process.argv.includes('--subagent')) {
-    console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: line } }));
+    console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: `${line}\n${names}` } }));
   } else {
-    console.log(line);
+    console.log(`${line}\n${names}`);
     const lessons = nudge(inboxPath(project), binCommand('aidrian'));
     if (lessons) console.log(lessons);
   }

@@ -44,7 +44,7 @@ and costly agents. A change to an agent, skill, or hook states the number it sho
 - Fix the cause in the plugin, with a test that fails without the fix.
 - What a script can check becomes a test or a check, not a sentence.
 - Never weaken a test, check, or hook to make a change pass, and never edit a generated file by hand.
-- Keep the plugin free of any one project: projects supply knowledge in `.aidrian/`, never agents or skills.
+- Keep the plugin free of any one project: a project's knowledge lives in `.aidrian/` and its own agents stay in the project, never in the plugin.
 - Before you change an agent's model, effort, or prompt, read the vendor's current prompting guide for that model.
   An instruction written for an earlier model can hurt its successor, so removing one is as valid as adding one.
 - Change the docs in the same commit as the behavior they describe.

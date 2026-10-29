@@ -47,7 +47,7 @@ Pick one outcome per lesson, in this order of preference:
   A rule that no doc owns becomes an `issue` to write that doc, never a new doc from here.
 - A rule names no session specifics: no paths touched this session, no ticket keys, no one-off error text.
 - A lesson about this plugin itself, its hooks, skills, agents, or commands, is an issue on the plugin's repository,
-  `qgadrian/aidrian-harness`, unless the project can fix it in its own config.json.
+  the `repository` in the plugin's `plugin.json`, unless the project can fix it in its own config.json.
 - Never fan one lesson out into several outcomes; mention a second surface in the summary.
 
 ## 4. Route and resolve

@@ -12,6 +12,7 @@ const EXAMPLE = path.join(ROOT, 'examples/consumer');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
 const XDG = path.join(tmpdir(), 'aidrian-check-state');
 const STATE = new RegExp(`^${XDG}/aidrian/projects/[a-z0-9-]+-[0-9a-f]{8}$`);
+const REPOSITORY = JSON.parse(readFileSync(path.join(ROOT, 'plugins/aidrian/plugin.json'), 'utf8')).repository;
 
 const run = (args, cwd) => spawnSync(CLI, args, { cwd, encoding: 'utf8', env: { ...process.env, XDG_STATE_HOME: XDG } });
 const ok = (stdout) => stdout.split('\n')[0];
@@ -81,6 +82,15 @@ test('check follows worktrees.dir: a folder inside the project needs a line, one
   assert.equal(run(['check'], dir).status, 0);
 });
 
+test('check names a bad name in config.json and in .aidrian.local.json', (t) => {
+  const dir = exampleRepo(t);
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, names: { human: '' } }));
+  writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ names: { robot: 'the agent' } }));
+  const { status, stdout, stderr } = run(['check'], dir);
+  assert.deepEqual([status, stdout], [1, '']);
+  assert.equal(stderr, '.aidrian/config.json: "names.human" must be a non-empty string\n.aidrian.local.json: unknown key "names.robot"\n');
+});
+
 test('check fails on a version this plugin does not read, and reads no index then', (t) => {
   const dir = exampleRepo(t);
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 2 }));
@@ -90,7 +100,7 @@ test('check fails on a version this plugin does not read, and reads no index the
   assert.equal(
     stderr,
     '.aidrian/config.json: project folder version 2; this plugin reads version 1; ' +
-      'see https://github.com/qgadrian/aidrian-harness/blob/main/docs/project-folder.md#migrating\n',
+      `see ${REPOSITORY}/blob/main/docs/project-folder.md#migrating\n`,
   );
 });
 

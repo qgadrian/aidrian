@@ -6,14 +6,14 @@ The shape of the `initiative_contract` and its `issue_blueprints`, with the rule
 {
   "schema_version": "2.0",
   "tracker": "linear",
-  "initiative_title": "[bookings] Reassignment reliability rollout",
-  "initiative_goal": "Ship the booking reassignment fixes in reviewable units with explicit review and validation ownership.",
+  "initiative_title": "[orders] Reassignment reliability rollout",
+  "initiative_goal": "Ship the order reassignment fixes in reviewable units with explicit review and validation ownership.",
   "topology": "tracker_project_plus_parent_issue",
   "create_linear_project": true,
   "create_parent_issue": true,
   "parent_issue_is_canonical_release_plan": true,
   "success_criteria": [
-    "Booking reassignment fixes ship without violating monitoring, testing, or sequencing contracts."
+    "Order reassignment fixes ship without violating monitoring, testing, or sequencing contracts."
   ],
   "issue_order": ["reassignment-fix", "validation-hardening"],
   "dependencies": [
@@ -28,8 +28,8 @@ The shape of the `initiative_contract` and its `issue_blueprints`, with the rule
     "groups": [
       {
         "key": "reassignment-core",
-        "title": "Booking reassignment fix",
-        "summary": "Land the bounded booking mutation fix before the follow-up validation work.",
+        "title": "Order reassignment fix",
+        "summary": "Land the bounded order mutation fix before the follow-up validation work.",
         "issue_keys": ["reassignment-fix"],
         "target_branch": "main",
         "merge_after": [],
@@ -43,25 +43,25 @@ The shape of the `initiative_contract` and its `issue_blueprints`, with the rule
   "issue_blueprints": [
     {
       "key": "reassignment-fix",
-      "title": "[bookings] Reassign tables after dashboard date edit",
+      "title": "[orders] Reassign the warehouse after a dashboard date edit",
       "issue_type": "feature",
-      "goal": "Ensure dashboard booking date edits re-run auto-assignment when the booking has no tables for the new time window.",
+      "goal": "Ensure dashboard order date edits re-run auto-assignment when the order has no warehouse for the new delivery window.",
       "size": {
         "tshirt": "S",
-        "rationale": "One bounded booking mutation fix with focused regression coverage.",
+        "rationale": "One bounded order mutation fix with focused regression coverage.",
         "split_alert": null,
         "split_candidates": []
       },
       "scope": [
-        "Update the dashboard booking mutation to reuse the existing assignment helper after date edits.",
+        "Update the dashboard order mutation to reuse the existing assignment helper after date edits.",
         "Add focused regression coverage for the reassignment branch."
       ],
       "tasks": [
-        "Patch the existing booking mutation code path.",
+        "Patch the existing order mutation code path.",
         "Add or update colocated Jest coverage."
       ],
       "non_goals": [
-        "Do not change guest-facing booking flows."
+        "Do not change customer-facing checkout flows."
       ],
       "dependencies": [],
       "sequencing": {

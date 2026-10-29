@@ -69,7 +69,8 @@ Read the plan; never fix it yourself. Each check that fails is a gap.
 
 1. The file exists, with YAML frontmatter holding every field the schema requires.
    `ticket_updated_at` equals the snapshot's; `status` is `ready`, `open-questions`, or `blocked`.
-2. Every slice has `files_in_scope`, `verification_path`, and `closure_criteria`. Each `upstream_dependency` is null or a slice of the plan.
+2. Every slice has `files_in_scope`, `verification_path`, and `closure_criteria`; only the review-only `INTEGRATION-REVIEW`
+   leaves the first two empty. Each `upstream_dependency` is null or a slice of the plan.
 3. Every `primary_owner` is an agent that exists, as a project agent or this plugin's.
 4. A plan with two or more implementation slices ends with the `INTEGRATION-REVIEW` slice.
 5. Every acceptance criterion id from the issue is in some slice's `acceptance_criteria_covered`.

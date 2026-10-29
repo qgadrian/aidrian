@@ -47,7 +47,7 @@ except its base branch and re-entry sections, which it cites.
 | The issue guards of phase 0 | Phase 0 above; `upstream_dependency` order still holds |
 | The In Progress move, the estimate correction | None: this skill makes no tracker call at all |
 | Phase 2, the slice plan | Skipped: the plan is the slice plan. `planning-agent` runs only when it has no slices |
-| Slice state in the issue's plan file | The plan file. A committed plan's state change rides in the slice's own commit |
+| Slice state in the issue's plan file | The plan file. When git tracks it, its state goes in commits as phases 3 and 7 say |
 | `Refs` and `Fixes` lines | None |
 | The coverage gate of phase 5 | Declared criteria only; otherwise each slice's closure criteria |
 
@@ -63,5 +63,6 @@ The `design-import` skill's `references/plan-requirements.md` sets their rules; 
 ## Rules
 
 - The plan file is the only record of slice state. Never track progress in the conversation alone.
-- No tracker calls. The run's only pull request write is the `pr-write` step, and its body never names a local plan path.
+- No tracker calls. The run writes to the pull request only through the `pr-write` step and phase 7's integration review,
+  and never names a local plan path there.
 - Never fork the engine: cite issue-implement's steps in a brief; never paraphrase them.

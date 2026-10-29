@@ -35,13 +35,15 @@ evidence_anchor: path:lines at <sha>, or a command and its result, or why there 
 and regression_risk_if_marked when the verdict is met on a critical flow.
 ```
 
-For the `worktree` ref, the code line names the working tree's path instead of a commit.
+For the `worktree` ref, the code line reads `Code: the working tree at <path>. Read each file there, from disk.`,
+and each `at <sha>` reads `in the working tree`: uncommitted changes are what this mode verifies.
 
 ## When an agent returns
 
 - A `met` without an anchor goes back once for one. A second miss makes it `needs_evidence`.
-- Check every `met` before it can be ticked: the path exists at the ref (`git cat-file -e <sha>:<path>`),
-  and the cited lines show the claimed behaviour. A failed check makes it `needs_evidence`.
+- Check every `met` before it can be ticked: the path exists at the ref (`git cat-file -e <sha>:<path>`;
+  for `worktree`, `test -f <path>` in the working tree), and the cited lines, read the same way, show the claimed behaviour.
+  A failed check makes it `needs_evidence`.
 - Two agents with different verdicts on one criterion: it is disputed, and goes to the Human with both positions.
 - `needs_input` or `blocked` goes to the Human as it is.
 

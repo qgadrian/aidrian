@@ -5,7 +5,8 @@
 Check each gate in the task worktree: `git -C <worktree> rev-parse --show-toplevel` and `--abbrev-ref HEAD`
 must name the worktree and the task branch.
 
-1. Every slice in the plan is `complete`, with passing verification in its handoff.
+1. Every implementation slice in the plan is `complete`, with passing verification in its handoff.
+   `INTEGRATION-REVIEW` waits for phase 7.
 2. The full suite the project's `testing` knowledge names passed on the branch's last commit; the last `code-reviewer` pass shows it.
    A commit landed after that pass: dispatch `code-reviewer` once more on the delta.
    A change to a critical flow: `e2e-runner` on that flow, in the foreground and alone.
@@ -34,8 +35,15 @@ Run the `pr-write` skill with:
 - the residual risks, and the accepted residuals;
 - draft, unless the Human asked for a pull request ready for review.
 
-The `pr-write` skill owns the title, the body, and the publishing. This run ends at the draft;
-the review loop of the `orchestration` skill § 3 runs after it when the Human or the calling skill asks for it.
+The `pr-write` skill owns the title, the body, and the publishing.
+
+**Integration review.** A plan with an `INTEGRATION-REVIEW` slice runs it on the draft, by the `orchestration` skill § 3 step 3:
+the `pr-review` skill on the assembled branch, then the `pr-review-fix` skill for its `fix_now` findings, one commit per fix, pushed.
+The review itself commits nothing. Set the slice's `status: complete`, with the review's verdict in `notes`.
+When git tracks the plan, commit that one edit alone with a `docs` subject and push it: the only commit no slice owns.
+
+This run ends at the draft and its integration review;
+the rest of the review loop of the `orchestration` skill § 3 runs when the Human or the calling skill asks for it.
 
 **Estimate correction.** Only when phase 4 recorded a re-size, after the pull request opens, make two Linear writes:
 

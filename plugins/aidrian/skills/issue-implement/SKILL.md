@@ -63,7 +63,7 @@ Read each file once, at the point the table names, and follow it.
 | At the start | `references/hard-rules.md`: what stops the run, what does not, and the rules every step keeps |
 | At the start, after the rules | `steps/phase-0-resolve.md`: preflight, base branch, re-entry, and the issue guards |
 | Once every guard in phase 0 passed | `steps/phases-1-4-implement.md`: workspace, slice plan, the per-slice loop, reassessment |
-| Once every slice is committed | `steps/phases-5-8-close.md`: final gates, push, the pull request, the report |
+| Once every implementation slice is committed | `steps/phases-5-8-close.md`: final gates, push, the pull request, the integration review, the report |
 
 Never dispatch planning or implementation before `steps/phases-1-4-implement.md` is loaded,
 and never run the pull request step before `steps/phases-5-8-close.md` is.

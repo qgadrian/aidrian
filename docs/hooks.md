@@ -39,6 +39,7 @@ The main-checkout rule is off until a project turns it on in config.json:
 ```
 
 Then task work has to happen in a git worktree, so the main checkout stays clean and on the default branch.
+The deny reason names `aidrian worktree new <branch>`, which creates one.
 The rule blocks a write to a file git tracks, or would track, in the main checkout.
 It allows a git-ignored path, a path in `mainCheckout.allowWrites`, and anything in a worktree or outside the repository.
 [config.md](config.md) lists both keys.

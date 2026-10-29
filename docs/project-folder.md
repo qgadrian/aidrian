@@ -120,6 +120,8 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ## Task worktrees
 
 Each task gets its own git worktree, so the main checkout stays clean and on the default branch.
+`aidrian worktree new <branch>` creates one and runs config.json `worktrees.bootstrap` in it, such as `npm ci`;
+`aidrian worktree cleanup` removes the ones whose pull request merged. The `worktree-new` and `worktree-cleanup` skills drive both.
 They live in `.worktrees/` at the repository root: editors show them beside the code,
 and Claude Code edits them without asking, because they are inside the folder the session opened.
 `"worktrees": { "dir": "<path>" }` in config.json moves them; a relative path starts at the repository root,

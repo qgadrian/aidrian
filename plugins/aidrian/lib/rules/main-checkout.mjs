@@ -121,7 +121,7 @@ function reason(lead, project, config) {
   const worktrees = worktreesDir(project, { config });
   return [
     lead,
-    `Work in a git worktree instead, for example: git worktree add "${path.join(worktrees, '<branch>')}" -b <branch>`,
+    `Work in a git worktree instead: \`aidrian worktree new <branch>\` creates one in ${worktrees} (the worktree-new skill).`,
     `This project turns the guard on with "mainCheckout": { "guard": true } in ${path.join(project.root, project.paths.config)};`,
     '"mainCheckout": { "allowWrites": [...] } lists paths that stay writable.',
     `To override for an explicit, user-confirmed reason, set ${OVERRIDE}=1 in your own shell before starting the session ` +

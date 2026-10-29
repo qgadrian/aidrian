@@ -10,6 +10,7 @@ const COMMANDS = {
   lint: './lint.mjs',
   lesson: './lesson-inbox.mjs',
   handoff: './handoff-brief.mjs',
+  worktree: './worktree.mjs',
 };
 
 const [command, ...args] = process.argv.slice(2);

@@ -37,7 +37,7 @@ test('a tracked or new file in the main checkout is denied, with the worktree co
   const { repo } = fixture(t);
   const reason = edit(path.join(repo, 'src/app.js'), repo);
   assert.match(reason, /^Blocked: this writes 'src\/app\.js', a tracked file in the main checkout \(/);
-  assert.match(reason, /git worktree add "\S+\/repo\/\.worktrees\/<branch>" -b <branch>/);
+  assert.match(reason, /`aidrian worktree new <branch>` creates one in \S+\/repo\/\.worktrees /);
   assert.match(reason, /"mainCheckout": \{ "guard": true \} in \S+\/\.aidrian\/config\.json/);
   assert.match(reason, /AIDRIAN_ALLOW_MAIN_WRITE=1/);
   assert.match(edit('src/new/file.js', repo, 'Write'), /'src\/new\/file\.js'/, 'a relative path resolves against cwd');

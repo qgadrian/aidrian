@@ -10,8 +10,8 @@ and one project folder, `.aidrian/`, that indexes them and holds the plugin's se
 | Kind | Names |
 | --- | --- |
 | Agents | `planning-agent`, `initiative-agent`, `agent-issue-writer`, `explorer`, `github-archaeologist`, `integrator`, `doc-updater`, `design-source-explorer`, `harness-engineer` |
-| Skills | `knowledge`, `planning-agent`, `initiative-agent`, `agent-issue-writer`, `worktree-integrate`, `design-import`, `grill-me`, `lesson`, `lesson-triage`, `session-handoff`, `session-continue` |
-| Commands | `aidrian`: sets up and checks the project folder (`aidrian init`, `aidrian check`), prints the state folder (`aidrian state`), checks commit messages (`aidrian commit-msg`), lints skills, agents, paths, and the knowledge budget (`aidrian lint`), keeps the lesson inbox (`aidrian lesson`), and checks handoff briefs (`aidrian handoff`); `aidrian-knowledge`: routes, searches, and drafts a project's buckets |
+| Skills | `knowledge`, `planning-agent`, `initiative-agent`, `agent-issue-writer`, `worktree-new`, `worktree-cleanup`, `worktree-integrate`, `design-import`, `grill-me`, `lesson`, `lesson-triage`, `session-handoff`, `session-continue` |
+| Commands | `aidrian`: sets up and checks the project folder (`aidrian init`, `aidrian check`), prints the state folder (`aidrian state`), creates and cleans up task worktrees (`aidrian worktree`), checks commit messages (`aidrian commit-msg`), lints skills, agents, paths, and the knowledge budget (`aidrian lint`), keeps the lesson inbox (`aidrian lesson`), and checks handoff briefs (`aidrian handoff`); `aidrian-knowledge`: routes, searches, and drafts a project's buckets |
 | Hooks | at session and subagent start, one line naming the `always` docs and how to find the rest; before each Bash command, git and process safety rules; before each file write, an opt-in guard that keeps the main checkout clean; after a Markdown write, a line-length check; before compaction, a checklist of what to keep. [docs/hooks.md](docs/hooks.md) lists them |
 
 The `knowledge` skill is the shared rule set.

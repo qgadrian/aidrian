@@ -2,7 +2,7 @@
 // docs/config.md lists the keys; docs/project-folder.md gives the version rule.
 // No dependencies: this file runs from the installed plugin, which has no node_modules.
 
-import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 // The project folder format this plugin reads. A format change raises it and documents the migration.
@@ -116,17 +116,27 @@ export function readJson(root, rel, errors, scope = 'the project') {
   return null;
 }
 
-// True when `rel` exists but, with symlinks resolved, lies outside the folder `within` (relative to `root`; the
-// project when empty). A missing path is left to the caller.
+// True when `rel`, with symlinks resolved, lies outside the folder `within` (both relative to `root`; `within` is the
+// project when empty). A path that does not exist yet is judged where a write would create it: below its nearest
+// existing folder, with that folder's symlinks resolved. A broken symlink on the way counts as outside.
 export function linksOutside(root, rel, within = '') {
-  let real;
-  try {
-    real = realpathSync(path.join(root, rel));
-  } catch {
-    return false;
+  const real = resolvedPath(path.join(root, rel));
+  const realWithin = resolvedPath(path.join(root, within));
+  return real === null || realWithin === null || (real !== realWithin && !real.startsWith(`${realWithin}${path.sep}`));
+}
+
+// `file` with every symlink resolved: the real path of its nearest existing part, then the parts that do not exist yet.
+// Null when that part is a broken symlink, whose target a write would create.
+function resolvedPath(file) {
+  const tail = [];
+  for (let current = path.resolve(file); ; current = path.dirname(current)) {
+    try {
+      return path.join(realpathSync(current), ...tail);
+    } catch {
+      if (isEntry(current) || path.dirname(current) === current) return null;
+      tail.unshift(path.basename(current));
+    }
   }
-  const realWithin = realpathSync(path.join(root, within));
-  return real !== realWithin && !real.startsWith(`${realWithin}${path.sep}`);
 }
 
 // `base` and `rel` are POSIX-style paths relative to `root`; returns the joined relative path, or null if it escapes,
@@ -152,6 +162,16 @@ export function isFile(file) {
 export function isDirectory(dir) {
   try {
     return statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+// Whether `file` is there at all, a broken symlink included.
+function isEntry(file) {
+  try {
+    lstatSync(file);
+    return true;
   } catch {
     return false;
   }

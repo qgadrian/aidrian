@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -116,6 +116,53 @@ test('a project whose .aidrian.json names another folder sets up and checks that
   writeFileSync(path.join(dir, '.aidrian.json'), JSON.stringify({ dir: '../harness' }));
   const broken = run(['init'], dir);
   assert.deepEqual([broken.status, broken.stderr], [1, '.aidrian.json: "dir" must be a relative folder inside the project\n']);
+});
+
+test('init writes nothing through a symlink that leaves the project, and follows one that stays inside', (t) => {
+  const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-init-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const outside = path.join(base, 'outside');
+  mkdirSync(outside);
+  writeFileSync(path.join(outside, 'gitignore'), 'keep\n');
+  const repo = (name) => {
+    const dir = path.join(base, name);
+    execFileSync('git', ['init', '-q', dir]);
+    return dir;
+  };
+
+  // .aidrian.json names a folder that does not exist yet, below a link that leaves the project.
+  const named = repo('named');
+  symlinkSync(outside, path.join(named, 'link'));
+  writeFileSync(path.join(named, '.aidrian.json'), JSON.stringify({ dir: 'link/new' }));
+  const viaNamed = run(['init'], named);
+  assert.deepEqual([viaNamed.status, viaNamed.stderr], [1, '.aidrian.json: "dir" must be a relative folder inside the project\n']);
+
+  // The project folder is a link that leaves the project, or a broken one.
+  const linked = repo('linked');
+  symlinkSync(outside, path.join(linked, '.aidrian'));
+  const viaFolder = run(['init'], linked);
+  const refused = (rel, dir) => `${rel}: links outside ${dir}; init wrote nothing\n`;
+  assert.deepEqual([viaFolder.status, viaFolder.stderr], [1, refused('.aidrian/knowledge', linked) + refused('.aidrian/config.json', linked)]);
+  const broken = repo('broken');
+  symlinkSync(path.join(outside, 'gone'), path.join(broken, '.aidrian'));
+  assert.equal(run(['init'], broken).status, 1);
+
+  // The .gitignore is a link that leaves the repository: init stops before it writes the project folder.
+  const ignore = repo('ignore');
+  symlinkSync(path.join(outside, 'gitignore'), path.join(ignore, '.gitignore'));
+  const viaIgnore = run(['init'], ignore);
+  assert.deepEqual([viaIgnore.status, viaIgnore.stderr], [1, refused('.gitignore', ignore)]);
+  assert.equal(existsSync(path.join(ignore, '.aidrian')), false);
+
+  assert.deepEqual(readdirSync(outside), ['gitignore']);
+  assert.equal(readFileSync(path.join(outside, 'gitignore'), 'utf8'), 'keep\n');
+
+  const inside = repo('inside');
+  mkdirSync(path.join(inside, 'harness'));
+  symlinkSync(path.join(inside, 'harness'), path.join(inside, '.aidrian'));
+  const followed = run(['init'], inside);
+  assert.equal(followed.status, 0, followed.stderr);
+  assert.equal(readFileSync(path.join(inside, 'harness/config.json'), 'utf8'), '{\n  "version": 1\n}\n');
 });
 
 test('init sets up an empty repository, a second run changes nothing and says so, and check then passes', (t) => {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -113,6 +113,17 @@ test('init names the index after the folder, and never overwrites one', (t) => {
   ]);
   const again = run(['init', 'other/guides'], project);
   assert.deepEqual([again.status, again.stderr], [1, '.aidrian/knowledge/guides.json already exists; edit it instead\n']);
+});
+
+test('init writes no index through a knowledge folder that links outside the project', (t) => {
+  const project = tempProject(t);
+  const outside = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-outside-')));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  rmSync(path.join(project, '.aidrian/knowledge'), { recursive: true });
+  symlinkSync(outside, path.join(project, '.aidrian/knowledge'));
+  const { status, stderr } = run(['init', 'docs'], project);
+  assert.deepEqual([status, stderr], [1, '.aidrian/knowledge/docs.json: links outside the project; nothing was written\n']);
+  assert.deepEqual(readdirSync(outside), []);
 });
 
 test('init needs a project, and refuses a folder outside it, a missing folder, a folder with no docs, and a wrong argument count', (t) => {

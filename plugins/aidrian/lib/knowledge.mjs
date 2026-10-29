@@ -4,7 +4,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { insidePath, isDirectory, isFile, isObject, loadConfig, readJson, VERSION, versionProblem } from './config.mjs';
+import { insidePath, isDirectory, isFile, isObject, linksOutside, loadConfig, readJson, VERSION, versionProblem } from './config.mjs';
 
 const BUCKET_ID = /^[a-z0-9][a-z0-9-]*$/;
 const TAG = /^[a-z][a-z0-9_]*$/;
@@ -225,6 +225,7 @@ export function initBucket(project, folder) {
   if (!rel || !isDirectory(path.join(root, rel))) throw new Error(`${folder}: must be a folder inside the project`);
   const id = path.basename(rel).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'docs';
   const file = `${project.paths.knowledge}/${id}.json`;
+  if (linksOutside(root, file)) throw new Error(`${file}: links outside the project; nothing was written`);
   if (existsSync(path.join(root, file))) throw new Error(`${file} already exists; edit it instead`);
   const docs = {};
   for (const doc of markdownFiles(root, rel)) {

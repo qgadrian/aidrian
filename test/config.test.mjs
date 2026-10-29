@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { DEFAULTS, loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { DEFAULTS, linksOutside, loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -101,6 +101,26 @@ test('a missing, malformed, or outside-linking file is one error, and the config
     assert.equal(current, false);
     assert.deepEqual(config, DEFAULTS);
   }
+});
+
+test('linksOutside judges a path that does not exist yet where a write would create it', (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-config-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, 'real'));
+  symlinkSync(path.join(dir, 'real'), path.join(dir, 'in'));
+  symlinkSync(ROOT, path.join(dir, 'out'));
+  symlinkSync(path.join(ROOT, 'no-such-folder'), path.join(dir, 'broken'));
+  const cases = [
+    ['new/file', '', false],
+    ['in/new/file', '', false],
+    ['in/new/file', 'real', false],
+    ['out', '', true],
+    ['out/new/file', '', true],
+    ['real/other', 'in/new', true],
+    ['broken', '', true],
+    ['broken/new/file', '', true],
+  ];
+  for (const [rel, within, outside] of cases) assert.equal(linksOutside(dir, rel, within), outside, `${rel} within "${within}"`);
 });
 
 function project(t, config) {

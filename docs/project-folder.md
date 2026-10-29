@@ -64,6 +64,7 @@ next: add a knowledge index with aidrian-knowledge init <folder of docs>, then r
 It writes `config.json` with `version` alone, and adds each `.gitignore` line for an entry git does not ignore yet:
 `.aidrian.local.json`, the [worktrees folder](#task-worktrees), and the [state folder](#local-state) when config.json puts it in the repository.
 It never overwrites a file. Run again, it prints `nothing to do: .aidrian is set up`.
+It writes nothing at all when a symlink would take a write outside the project, or a `.gitignore` outside its own folder.
 
 `aidrian check` validates the whole folder. Run it locally and in CI. It prints `ok`, or one line per problem and exits 1:
 

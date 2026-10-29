@@ -46,6 +46,7 @@ const overrideCases = [
   ['dir outside the project', JSON.stringify({ dir: '../harness' }), /"dir" must be a relative folder inside the project$/],
   ['dir that is the project root', JSON.stringify({ dir: '.' }), /"dir" must be a relative folder inside the project$/],
   ['dir that links outside', JSON.stringify({ dir: 'linked' }), /"dir" must be a relative folder inside the project$/],
+  ['missing dir below a link outside', JSON.stringify({ dir: 'linked/new' }), /"dir" must be a relative folder inside the project$/],
 ];
 
 for (const [name, text, expected] of overrideCases) {

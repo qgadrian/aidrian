@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { loadConfig, VERSION } from './config.mjs';
+import { linksOutside, loadConfig, VERSION } from './config.mjs';
 import { isIgnored } from './git.mjs';
 import { indexRows, loadKnowledge } from './knowledge.mjs';
 import { findProject, projectAt, repoRoot, stateDir, worktreesDir } from './project.mjs';
@@ -50,12 +50,24 @@ export const commands = {
         return 1;
       }
       const done = [];
-      if (!existsSync(path.join(project.root, project.paths.config))) {
+      const setUp = existsSync(path.join(project.root, project.paths.config));
+      const missing = Map.groupBy(unignored(project, loadConfig(project).config), (entry) => entry.gitignore);
+      // Every write must land in its folder once symlinks are resolved: the project folder's files in the project, and
+      // each .gitignore in its own folder. One that would not stops init before it writes anything.
+      const writes = [
+        ...(setUp ? [] : [project.paths.knowledge, project.paths.config].map((rel) => ({ root: project.root, rel, shown: rel }))),
+        ...[...missing.keys()].map((gitignore) => ({ root: path.dirname(path.join(project.root, gitignore)), rel: '.gitignore', shown: gitignore })),
+      ];
+      const outside = writes.filter(({ root, rel }) => linksOutside(root, rel));
+      if (outside.length) {
+        console.error(outside.map(({ root, shown }) => `${shown}: links outside ${root}; init wrote nothing`).join('\n'));
+        return 1;
+      }
+      if (!setUp) {
         mkdirSync(path.join(project.root, project.paths.knowledge), { recursive: true });
         writeFileSync(path.join(project.root, project.paths.config), `${JSON.stringify({ version: VERSION }, null, 2)}\n`);
         done.push(`wrote ${project.paths.config}`);
       }
-      const missing = Map.groupBy(unignored(project, loadConfig(project).config), (entry) => entry.gitignore);
       for (const [gitignore, entries] of missing) {
         const lines = entries.map((entry) => entry.line);
         const file = path.join(project.root, gitignore);

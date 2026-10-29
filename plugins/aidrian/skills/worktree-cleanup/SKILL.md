@@ -33,10 +33,12 @@ A thin adapter for `aidrian worktree cleanup`. Never remove a worktree or a bran
    ```
 
 6. Report `removed`, `kept`, `refused`, and `failed`, with errors verbatim.
-   A `removed` row with `branch_error` lost its worktree but kept its branch, because git found unmerged commits on it.
+   A `removed` row with `branch_error` lost its worktree but kept its branch,
+   because git found unmerged commits on it or a commit landed on it during the run.
    List those branches so they do not pile up.
 
 Execute sorts the worktrees again before it removes anything, so a row that changed since the plan is judged as it is now.
+A row whose HEAD moves, or whose clean tree gains changes, while execute runs is refused, and its worktree and branch stay.
 A confirmed row with uncommitted changes is refused without `--force`.
 The main checkout, the current worktree, and locked worktrees are never touched.
 When `aidrian` is not on your PATH, run it from the folder that holds the `aidrian-knowledge` the start hook names.

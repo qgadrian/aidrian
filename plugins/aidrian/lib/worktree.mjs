@@ -225,8 +225,9 @@ function classify(worktree, ctx, merged, minAgeSec, now) {
   if (changes === null) reasons.push('git status failed');
   else if (changes > 0) reasons.push(`${changes} uncommitted change${changes === 1 ? '' : 's'}`);
   if (age === null) reasons.push('age unknown');
-  // -D only where every commit on the branch is in the merged pull request; otherwise -d, which git refuses for unmerged work.
-  const row = { path: dir, branch, reasons, dirty: changes !== 0, branch_delete: branch ? (exact ? '-D' : '-d') : null };
+  // `unless-moved` where every commit on the branch is in the merged pull request: the branch goes only while it still
+  // points at the inspected `head`. Otherwise `if-merged`: `git branch -d`, which git refuses for unmerged work.
+  const row = { path: dir, branch, head, reasons, dirty: changes !== 0, branch_delete: branch ? (exact ? 'unless-moved' : 'if-merged') : null };
   return { bucket: exact && changes === 0 && age !== null ? 'auto' : 'confirm', ...row };
 }
 
@@ -252,17 +253,21 @@ function patchMerged(main, head, base) {
 }
 
 // Sorts again, then removes every auto row and every confirm row whose path `decisions` marks "delete". A row with
-// uncommitted changes needs both that decision and `force`. Branches go with their worktree; `git worktree prune` ends it.
+// uncommitted changes needs both that decision and `force`. Another session may commit while this runs, so a row whose
+// HEAD moved, or whose clean tree gained changes, is refused with its branch kept. Branches go with their worktree;
+// `git worktree prune` ends it.
 export function executeCleanup({ minAgeSec = DAY_SEC, force = false, decisions = {} } = {}, { cwd = process.cwd(), heads = mergedHeads, now = Date.now() } = {}) {
   const plan = planCleanup({ minAgeSec }, { cwd, heads, now });
   const { main } = checkoutRoots(cwd);
   const out = { status: 'done', removed: [], kept: [], refused: [], failed: [] };
   const remove = (row, forced) => {
+    const changed = changedSinceInspected(row, forced);
+    if (changed) return out.refused.push({ path: row.path, reason: `changed after it was inspected: ${changed}; kept with its branch, run cleanup again` });
     const removed = git(main, ['worktree', 'remove', ...(forced ? ['--force'] : []), row.path]);
     if (removed.status !== 0) return out.failed.push({ path: row.path, error: failure(removed) });
     const entry = { path: row.path, branch: row.branch, branch_deleted: false };
     if (row.branch_delete) {
-      const deleted = git(main, ['branch', row.branch_delete, row.branch]);
+      const deleted = row.branch_delete === 'unless-moved' ? deleteBranchAt(main, row.branch, row.head) : git(main, ['branch', '-d', row.branch]);
       entry.branch_deleted = deleted.status === 0;
       if (!entry.branch_deleted) entry.branch_error = failure(deleted);
     }
@@ -276,4 +281,23 @@ export function executeCleanup({ minAgeSec = DAY_SEC, force = false, decisions =
   }
   git(main, ['worktree', 'prune']);
   return out;
+}
+
+// What changed in a row since classify read it, or null: its HEAD, or, unless the removal is forced, its clean tree.
+function changedSinceInspected(row, forced) {
+  const head = git(row.path, ['rev-parse', '--verify', '--quiet', 'HEAD']);
+  const current = head.status === 0 ? head.stdout.trim() : null;
+  if (!row.head || current !== row.head) return `HEAD moved from ${row.head ?? 'unknown'} to ${current ?? 'unknown'}`;
+  if (forced) return null;
+  const status = git(row.path, ['status', '--porcelain']);
+  if (status.status !== 0) return 'git status failed';
+  return status.stdout.trim() ? 'uncommitted changes appeared' : null;
+}
+
+// Deletes a branch only while it still points at `sha`, then its config section, as `git branch -D` does. A commit
+// that lands between the last check and this keeps the branch, and git names both commits in the error.
+function deleteBranchAt(main, branch, sha) {
+  const deleted = git(main, ['update-ref', '-d', `refs/heads/${branch}`, sha]);
+  if (deleted.status === 0) git(main, ['config', '--remove-section', `branch.${branch}`]);
+  return deleted;
 }

@@ -61,16 +61,18 @@ function fixture(t) {
 }
 
 test('only a merged pull request`s exact head, clean and old enough, is removed without asking', (t) => {
-  const { repo, dirs, plan, rowOf } = fixture(t);
+  const { repo, git, dirs, plan, rowOf } = fixture(t);
   const result = plan();
   assert.deepEqual([result.status, result.base, result.gh_available, result.min_age_sec], ['planned', 'origin/main', true, 86400]);
   assert.deepEqual(result.auto.map((row) => row.path), [dirs.pr]);
-  assert.deepEqual(rowOf(result, 'pr'), { bucket: 'auto', path: dirs.pr, branch: 'feat/pr', reasons: ['merged pull request'], dirty: false, branch_delete: '-D' });
+  assert.deepEqual(rowOf(result, 'pr'), {
+    bucket: 'auto', path: dirs.pr, branch: 'feat/pr', head: git(dirs.pr, 'rev-parse', 'HEAD'), reasons: ['merged pull request'], dirty: false, branch_delete: 'unless-moved',
+  });
   assert.deepEqual(rowOf(result, 'ff').reasons, ['already in origin/main; no merged pull request confirms it']);
   assert.deepEqual(rowOf(result, 'squash').reasons, ['its changes are in origin/main; no merged pull request confirms it']);
   assert.deepEqual(rowOf(result, 'open').reasons, ['not merged into origin/main']);
   assert.deepEqual(rowOf(result, 'dirty').reasons, ['merged pull request', '1 uncommitted change']);
-  assert.deepEqual([rowOf(result, 'ff').branch_delete, rowOf(result, 'dirty').bucket], ['-d', 'confirm']);
+  assert.deepEqual([rowOf(result, 'ff').branch_delete, rowOf(result, 'dirty').bucket], ['if-merged', 'confirm']);
   assert.deepEqual([rowOf(result, 'locked').reason, rowOf(result, repo).reason], ['locked', 'main checkout']);
 });
 
@@ -96,6 +98,7 @@ test('a session inside a worktree never removes that worktree', (t) => {
 test('execute removes auto rows and confirmed deletes, keeps the rest, and needs --force for uncommitted work', (t) => {
   const { repo, git, dirs, heads } = fixture(t);
   const decisions = { [dirs.ff]: 'delete', [dirs.open]: 'keep', [dirs.dirty]: 'delete', [dirs.squash]: 'delete' };
+  git(repo, 'config', 'branch.feat/pr.remote', 'origin');
   const result = executeCleanup({ decisions }, { cwd: repo, heads, now: LATER });
   assert.equal(result.status, 'done');
   assert.deepEqual(result.removed.map((row) => [path.basename(row.path), row.branch_deleted]), [['pr', true], ['ff', true], ['squash', false]]);
@@ -104,10 +107,55 @@ test('execute removes auto rows and confirmed deletes, keeps the rest, and needs
   assert.deepEqual(result.refused, [{ path: dirs.dirty, reason: 'uncommitted changes: needs --force as well as the delete decision' }]);
   assert.equal(existsSync(dirs.pr), false);
   assert.equal(git(repo, 'branch', '--list', 'feat/pr'), '');
+  assert.throws(() => git(repo, 'config', '--get', 'branch.feat/pr.remote'), 'its config goes with it, as with git branch -D');
 
   const forced = executeCleanup({ decisions, force: true }, { cwd: repo, heads, now: LATER });
   assert.deepEqual(forced.removed.map((row) => [path.basename(row.path), row.branch_deleted]), [['dirty', true]]);
   assert.equal(existsSync(dirs.dirty), false);
+});
+
+test('a commit or a change that lands after the rows were sorted keeps the worktree and its branch', (t) => {
+  const { repo, git, dirs, heads } = fixture(t);
+  const inspected = git(dirs.pr, 'rev-parse', 'HEAD');
+  // gh answers while each row is sorted, after its HEAD and status were read: another session commits in pr then.
+  const racing = () => ({
+    get(branch) {
+      if (branch === 'feat/pr') git(dirs.pr, 'commit', '-q', '--allow-empty', '-m', 'late');
+      if (branch === 'feat/ff') writeFileSync(path.join(dirs.ff, 'new.txt'), 'new\n');
+      return heads().get(branch);
+    },
+  });
+  const result = executeCleanup({ decisions: { [dirs.ff]: 'delete' } }, { cwd: repo, heads: racing, now: LATER });
+  const late = git(dirs.pr, 'rev-parse', 'HEAD');
+  assert.deepEqual(result.removed, []);
+  assert.deepEqual(result.refused, [
+    { path: dirs.pr, reason: `changed after it was inspected: HEAD moved from ${inspected} to ${late}; kept with its branch, run cleanup again` },
+    { path: dirs.ff, reason: 'changed after it was inspected: uncommitted changes appeared; kept with its branch, run cleanup again' },
+  ]);
+  assert.deepEqual([existsSync(dirs.pr), existsSync(dirs.ff), git(repo, 'rev-parse', 'feat/pr')], [true, true, late]);
+});
+
+test('a commit that lands as git removes the worktree keeps the branch: its delete expects the inspected commit', (t) => {
+  const { base, repo, git, dirs } = fixture(t);
+  const inspected = git(dirs.pr, 'rev-parse', 'HEAD');
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  const bin = path.join(base, 'bin');
+  mkdirSync(bin);
+  // gh reports pr merged at the inspected commit; git commits in pr just before it removes that worktree.
+  writeFileSync(path.join(bin, 'gh'), `#!/bin/sh\necho '${JSON.stringify([{ headRefName: 'feat/pr', headRefOid: inspected }])}'\n`, { mode: 0o755 });
+  writeFileSync(path.join(bin, 'git'), [
+    '#!/bin/sh',
+    `case "$*" in *"worktree remove ${dirs.pr}") "${realGit}" -C "${dirs.pr}" ${IDENTITY.join(' ')} commit -q --allow-empty -m late ;; esac`,
+    `exec "${realGit}" "$@"`,
+    '',
+  ].join('\n'), { mode: 0o755 });
+  const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+  const executed = spawnSync(CLI, ['worktree', 'cleanup', 'execute', '--min-age', '0'], { cwd: repo, input: '{}', encoding: 'utf8', env });
+  assert.equal(executed.status, 0, executed.stderr);
+  const row = JSON.parse(executed.stdout).removed.find((entry) => entry.path === dirs.pr);
+  assert.deepEqual([row.branch_deleted, existsSync(dirs.pr)], [false, false]);
+  assert.match(row.branch_error, new RegExp(inspected));
+  assert.equal(git(repo, 'log', '-1', '--format=%s', 'feat/pr'), 'late', 'the late commit is still on its branch');
 });
 
 test('parseDuration reads seconds and one unit; the command reads decisions on stdin and prints JSON', (t) => {

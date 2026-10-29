@@ -1,45 +1,59 @@
-// Reads and checks a project's knowledge buckets. The format is described in docs/knowledge.md.
-// No dependencies: this file runs from the installed plugin, which has no node_modules.
+// Reads and checks a project's knowledge buckets: one index file per bucket in the project folder's knowledge/.
+// The format is described in docs/knowledge.md. No dependencies: this file runs from the installed plugin.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { CONFIG, isFile, isObject, linksOutside, loadConfig, readJson } from './config.mjs';
+import { insidePath, isDirectory, isFile, isObject, loadConfig, readJson } from './config.mjs';
 
-const BUCKET_FILE = 'bucket.json';
 const BUCKET_ID = /^[a-z0-9][a-z0-9-]*$/;
 const TAG = /^[a-z][a-z0-9_]*$/;
 // Every summary is read in search results and in the index, so it stays one short line.
 const SUMMARY_MAX = 160;
 
-// Returns { buckets, errors }. Each bucket path and doc path is relative to the project root.
-export function loadKnowledge(root) {
-  const { config, errors } = loadConfig(root);
+// Returns { config, buckets, errors } for a project from lib/project.mjs. `errors` also holds the problems of the root
+// files and of config.json, so one call checks everything an agent reads. Doc paths are relative to the project root.
+export function loadKnowledge(project) {
+  const { config, errors: configErrors, current } = loadConfig(project);
+  const errors = [...project.errors, ...configErrors];
   const buckets = [];
-  const ids = new Set();
-  for (const dir of config.buckets) {
-    const bucketDir = insidePath(root, '', dir);
-    if (!bucketDir) {
-      errors.push(`${CONFIG}: bucket ${JSON.stringify(dir)} must be a relative folder inside the project`);
-      continue;
+  // A folder of another version may hold indexes of another shape; config.json already reports it.
+  if (!current) return { config, buckets, errors };
+  for (const source of project.sources) {
+    for (const name of indexFiles(source)) {
+      const bucket = loadBucket(source, name, errors);
+      if (bucket) buckets.push(bucket);
     }
-    const bucket = loadBucket(root, bucketDir, errors);
-    if (!bucket) continue;
-    if (ids.has(bucket.id)) errors.push(`${bucketDir}/${BUCKET_FILE}: id "${bucket.id}" is used by another bucket`);
-    ids.add(bucket.id);
-    buckets.push(bucket);
   }
-  return { buckets, errors };
+  return { config, buckets, errors };
 }
 
-function loadBucket(root, dir, errors) {
-  const file = `${dir}/${BUCKET_FILE}`;
+// The .json files in a source's knowledge folder, in file-name order: the bucket load order.
+function indexFiles(source) {
+  const dir = path.join(source.base, source.index);
+  if (!isDirectory(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => !entry.isDirectory() && entry.name.endsWith('.json'))
+    .map((entry) => entry.name)
+    .sort();
+}
+
+function loadBucket(source, name, errors) {
+  const root = source.base;
+  const file = `${source.index}/${name}`;
+  const id = name.slice(0, -'.json'.length);
+  if (!BUCKET_ID.test(id)) {
+    errors.push(`${file}: the file name is the bucket id: use lowercase letters, digits, and "-"`);
+    return null;
+  }
   const raw = readJson(root, file, errors);
   if (!raw) return null;
-  checkKeys(raw, ['id', 'description', 'always', 'docs'], file, errors);
+  checkKeys(raw, ['dir', 'description', 'always', 'docs'], file, errors);
 
-  if (typeof raw.id !== 'string' || !BUCKET_ID.test(raw.id)) {
-    errors.push(`${file}: "id" must be lowercase letters, digits and "-"`);
+  const dir = insidePath(root, '', raw.dir);
+  if (!dir || !isDirectory(path.join(root, dir))) {
+    errors.push(`${file}: "dir" must be a folder inside the project`);
+    return null;
   }
   if (typeof raw.description !== 'string' || raw.description.trim() === '') {
     errors.push(`${file}: "description" must say what the bucket covers`);
@@ -82,7 +96,7 @@ function loadBucket(root, dir, errors) {
       tags[tag].push(doc.path);
     }
   }
-  return { id: raw.id, dir, description: raw.description, always, docs, tags };
+  return { id, dir, description: raw.description, always, docs, tags };
 }
 
 // Returns the path relative to the project, or null after adding the reason to `errors`.
@@ -171,13 +185,16 @@ export function searchKnowledge(buckets, words, limit = 8) {
   return hits.sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
-// Drafts `dir`/bucket.json for a folder of docs that has none: every .md file, a summary drafted from its first heading
-// and first sentence, and no tags. Creates the project config, listing this bucket, when the project has none.
-// Returns { dir, docs, createdConfig }; throws when the folder is not usable or already has a bucket.json.
-export function initBucket(root, dir) {
-  const rel = insidePath(root, '', dir);
-  if (!rel || !isDirectory(path.join(root, rel))) throw new Error(`${dir}: must be a folder inside the project`);
-  if (existsSync(path.join(root, rel, BUCKET_FILE))) throw new Error(`${rel}/${BUCKET_FILE} already exists; edit it instead`);
+// Drafts a knowledge index for `folder`, a folder of docs: every .md file, a summary drafted from its first heading and
+// first sentence, and no tags. The bucket id is the folder name. Returns { file, dir, docs }; throws when the folder is
+// not usable or the index file exists.
+export function initBucket(project, folder) {
+  const { root } = project;
+  const rel = insidePath(root, '', folder);
+  if (!rel || !isDirectory(path.join(root, rel))) throw new Error(`${folder}: must be a folder inside the project`);
+  const id = path.basename(rel).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'docs';
+  const file = `${project.paths.knowledge}/${id}.json`;
+  if (existsSync(path.join(root, file))) throw new Error(`${file} already exists; edit it instead`);
   const docs = {};
   for (const doc of markdownFiles(root, rel)) {
     const summary = draftSummary(readFileSync(path.join(root, doc), 'utf8')) || path.basename(doc, '.md');
@@ -185,14 +202,9 @@ export function initBucket(root, dir) {
   }
   if (Object.keys(docs).length === 0) throw new Error(`${rel}: has no .md files`);
 
-  const id = path.basename(rel).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'docs';
-  writeJson(path.join(root, rel, BUCKET_FILE), { id, description: `Docs in ${rel}.`, always: [], docs });
-  const createdConfig = !existsSync(path.join(root, CONFIG));
-  if (createdConfig) {
-    mkdirSync(path.join(root, path.dirname(CONFIG)), { recursive: true });
-    writeJson(path.join(root, CONFIG), { buckets: [rel] });
-  }
-  return { dir: rel, docs: Object.keys(docs).length, createdConfig };
+  mkdirSync(path.join(root, project.paths.knowledge), { recursive: true });
+  writeJson(path.join(root, file), { dir: rel, description: `Docs in ${rel}.`, always: [], docs });
+  return { file, dir: rel, docs: Object.keys(docs).length };
 }
 
 // "Heading: first sentence.", one line, cut to SUMMARY_MAX. A draft for a person to correct.
@@ -226,18 +238,6 @@ export function pluginTags() {
   return [...(skill.split('\n## Tags\n')[1] ?? '').matchAll(/^- `([a-z][a-z0-9_]*)`: /gm)].map((match) => match[1]);
 }
 
-// `base` and `rel` are POSIX-style paths relative to `root`; returns the joined relative path, or null if it escapes,
-// either as text or through a symlink.
-function insidePath(root, base, rel) {
-  if (typeof rel !== 'string' || rel === '' || path.isAbsolute(rel) || rel.includes('\\')) return null;
-  const joined = path.posix.normalize(path.posix.join(base || '.', rel)).replace(/\/$/, '');
-  if (joined === '.' || joined.startsWith('../') || joined === '..') return null;
-  if (base && !joined.startsWith(`${base}/`)) return null;
-  // path.relative uses the platform separator, "\" on Windows; `rel` cannot hold one, so mapping it back is safe.
-  if (path.relative(root, path.join(root, joined)).replaceAll('\\', '/') !== joined) return null;
-  return linksOutside(root, joined, base) ? null : joined;
-}
-
 function checkKeys(object, allowed, where, errors) {
   for (const key of Object.keys(object)) {
     if (!allowed.includes(key)) errors.push(`${where}: unknown key "${key}"`);
@@ -255,12 +255,4 @@ function markdownFiles(root, dir) {
   };
   walk(dir);
   return out.sort();
-}
-
-function isDirectory(dir) {
-  try {
-    return statSync(dir).isDirectory();
-  } catch {
-    return false;
-  }
 }

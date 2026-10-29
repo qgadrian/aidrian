@@ -1,15 +1,18 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { listTags, loadKnowledge, routeKnowledge } from '../plugins/aidrian/lib/knowledge.mjs';
+import { listTags, loadKnowledge as loadKnowledgeOf, routeKnowledge } from '../plugins/aidrian/lib/knowledge.mjs';
+import { findProject } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXAMPLE = path.join(ROOT, 'examples/consumer');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian-knowledge');
+
+const loadKnowledge = (dir) => loadKnowledgeOf(findProject(dir));
 
 test('the example consumer passes the check', () => {
   const { buckets, errors } = loadKnowledge(EXAMPLE);
@@ -44,9 +47,8 @@ test('nested buckets pass when path.relative returns "\\" separators, as on Wind
   assert.deepEqual(loadKnowledge(EXAMPLE).errors, []);
 });
 
-test('the command line checks and routes', () => {
+test('the command line routes from a subfolder of the project', () => {
   const run = (...args) => execFileSync(CLI, args, { cwd: path.join(EXAMPLE, 'src'), encoding: 'utf8' });
-  assert.equal(run('check'), 'ok: 2 buckets, 8 docs\n');
   assert.equal(run('route', 'orchestration'), 'docs/knowledge/engineering/working-agreement.md\ndocs/knowledge/engineering/branches-and-reviews.md\n');
   // `e2e` is a plugin tag this project does not define: only the "always" docs.
   assert.equal(run('route', 'e2e'), 'docs/knowledge/engineering/working-agreement.md\n');
@@ -61,12 +63,13 @@ test('the command line rejects a tag neither the plugin nor the project defines,
 
 test('the command line fails on --project without a folder, an unknown option, and a stray argument', () => {
   const cases = [
-    [['check', '--project'], /--project needs a folder/],
-    [['check', '--project', ''], /--project needs a folder/],
-    [['check', '--project', '--bogus'], /--project needs a folder/],
-    [['check', '--projcet', EXAMPLE], /unknown option: --projcet/],
-    [['check', 'stray'], /unexpected argument: stray/],
+    [['tags', '--project'], /--project needs a folder/],
+    [['tags', '--project', ''], /--project needs a folder/],
+    [['tags', '--project', '--bogus'], /--project needs a folder/],
+    [['tags', '--projcet', EXAMPLE], /unknown option: --projcet/],
     [['tags', 'stray'], /unexpected argument: stray/],
+    [['index', 'stray'], /unexpected argument: stray/],
+    [['check'], /^usage: /],
   ];
   for (const [args, expected] of cases) {
     const { status, stdout, stderr } = spawnSync(CLI, args, { cwd: EXAMPLE, encoding: 'utf8' });
@@ -77,21 +80,34 @@ test('the command line fails on --project without a folder, an unknown option, a
   }
 });
 
+test('the command line names the folder to start from when there is no project', (t) => {
+  const outside = mkdtempSync(path.join(tmpdir(), 'aidrian-none-'));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  const { status, stderr } = spawnSync(CLI, ['tags', '--project', outside], { encoding: 'utf8' });
+  assert.deepEqual([status, stderr], [1, `no project folder at or above ${outside}; run aidrian init\n`]);
+});
+
 // Each case writes a one-bucket project, changes one thing, and expects one error.
+const INDEX = '.aidrian/knowledge/kb.json';
 const bucketCases = [
-  ['no config', (p) => rmSync(path.join(p, '.aidrian/config.json')), /\.aidrian\/config\.json: not found/],
-  ['empty bucket list', (p) => writeConfig(p, { buckets: [] }), /non-empty list/],
-  ['bucket outside the project', (p) => writeConfig(p, { buckets: ['../elsewhere'] }), /relative folder inside the project/],
-  ['unknown config key', (p) => writeConfig(p, { buckets: ['kb'], extra: true }), /unknown key "extra"/],
-  ['no bucket.json', (p) => rmSync(path.join(p, 'kb/bucket.json')), /kb\/bucket\.json: not found/],
-  ['invalid JSON', (p) => writeFileSync(path.join(p, 'kb/bucket.json'), '{'), /invalid JSON/],
-  ['bad id', (p) => bucket(p, { id: 'Bad Id' }), /"id" must be/],
+  // .aidrian.json marks the project root when the folder has no config.json.
+  ['no config', (p) => { writeFileSync(path.join(p, '.aidrian.json'), '{"dir": ".aidrian"}'); rmSync(path.join(p, '.aidrian/config.json')); }, /^\.aidrian\/config\.json: not found$/],
+  ['config of another version', (p) => writeConfig(p, { version: 2 }), /^\.aidrian\/config\.json: project folder version 2;/],
+  ['unknown config key', (p) => writeConfig(p, { version: 1, extra: true }), /unknown key "extra"/],
+  ['broken .aidrian.json', (p) => writeFileSync(path.join(p, '.aidrian.json'), '{'), /^\.aidrian\.json: invalid JSON/],
+  ['invalid JSON', (p) => writeFileSync(path.join(p, INDEX), '{'), /^\.aidrian\/knowledge\/kb\.json: invalid JSON/],
+  ['file name that is not an id', (p) => writeFileSync(path.join(p, '.aidrian/knowledge/Bad Id.json'), '{}'), /^\.aidrian\/knowledge\/Bad Id\.json: the file name is the bucket id/],
+  ['no dir', (p) => bucket(p, { dir: undefined }), /kb\.json: "dir" must be a folder inside the project$/],
+  ['dir outside the project', (p) => bucket(p, { dir: '../elsewhere' }), /kb\.json: "dir" must be a folder inside the project$/],
+  ['dir that does not exist', (p) => bucket(p, { dir: 'nope' }), /kb\.json: "dir" must be a folder inside the project$/],
+  ['dir that is a file', (p) => bucket(p, { dir: 'outside.md' }), /kb\.json: "dir" must be a folder inside the project$/],
   ['no description', (p) => bucket(p, { description: '' }), /"description" must/],
   ['unknown bucket key', (p) => bucket(p, { owner: 'x' }), /unknown key "owner"/],
+  ['old "id" key', (p) => bucket(p, { id: 'kb' }), /kb\.json: unknown key "id"$/],
   ['old "tags" map', (p) => bucket(p, { tags: { testing: ['sub/testing.md'] } }), /unknown key "tags"/],
   ['missing doc', (p) => bucket(p, docs({ 'nope.md': { summary: 'Nope.' } })), /kb\/nope\.md does not exist/],
   ['doc outside the bucket', (p) => bucket(p, docs({ '../outside.md': { summary: 'Out.' } })), /relative \.md path inside the bucket/],
-  ['not markdown', (p) => bucket(p, { always: ['rules.md', 'bucket.json'] }), /"always": "bucket\.json" must be a relative \.md path inside the bucket/],
+  ['not markdown', (p) => bucket(p, { always: ['rules.md', 'notes.txt'] }), /"always": "notes\.txt" must be a relative \.md path inside the bucket/],
   ['always doc listed twice', (p) => bucket(p, { always: ['rules.md', 'rules.md'] }), /"always": kb\/rules\.md is listed twice/],
   ['doc listed twice under two spellings', (p) => bucket(p, docs({ './rules.md': { summary: 'Again.' } })), /"docs": kb\/rules\.md is listed twice/],
   ['doc entry not an object', (p) => bucket(p, docs({ 'rules.md': 'The rules.' })), /"docs": kb\/rules\.md must be an object with "summary" and "tags"/],
@@ -105,11 +121,11 @@ const bucketCases = [
   ['bad tag name', (p) => bucket(p, docs({ 'rules.md': { summary: 'The rules.', tags: ['Not-Snake'] } })), /tag "Not-Snake" must be snake_case/],
   ['"always" as a tag', (p) => bucket(p, docs({ 'rules.md': { summary: 'The rules.', tags: ['always'] } })), /tag "always" must be snake_case and not "always"/],
   ['always doc with no entry in "docs"', (p) => { writeFileSync(path.join(p, 'kb/README.md'), '# About\n'); bucket(p, { always: ['rules.md', 'README.md'] }); }, /"always": kb\/README\.md has no entry in "docs"/],
-  ['doc with no entry', (p) => writeFileSync(path.join(p, 'kb/sub/orphan.md'), '# Orphan\n'), /^kb\/sub\/orphan\.md: has no entry in kb\/bucket\.json; add it to "docs" with a summary, or delete it$/],
+  ['doc with no entry', (p) => writeFileSync(path.join(p, 'kb/sub/orphan.md'), '# Orphan\n'), /^kb\/sub\/orphan\.md: has no entry in \.aidrian\/knowledge\/kb\.json; add it to "docs" with a summary, or delete it$/],
   // ROOT is this repository, outside the temporary project.
-  ['bucket folder links outside', (p) => { symlinkSync(ROOT, path.join(p, 'ext')); writeConfig(p, { buckets: ['kb', 'ext'] }); }, /bucket "ext" must be a relative folder inside the project/],
+  ['bucket folder links outside', (p) => { symlinkSync(ROOT, path.join(p, 'ext')); bucket(p, { dir: 'ext' }); }, /kb\.json: "dir" must be a folder inside the project$/],
   ['doc in a folder that links outside', (p) => { symlinkSync(ROOT, path.join(p, 'kb/ext')); bucket(p, { always: ['rules.md', 'ext/README.md'] }); }, /"ext\/README\.md" must be a relative \.md path inside the bucket/],
-  ['bucket.json links outside', (p) => { rmSync(path.join(p, 'kb/bucket.json')); symlinkSync(path.join(ROOT, 'package.json'), path.join(p, 'kb/bucket.json')); }, /kb\/bucket\.json: links outside the project/],
+  ['index file links outside', (p) => { rmSync(path.join(p, INDEX)); symlinkSync(path.join(ROOT, 'package.json'), path.join(p, INDEX)); }, /^\.aidrian\/knowledge\/kb\.json: links outside the project$/],
 ];
 
 for (const [name, change, expected] of bucketCases) {
@@ -127,11 +143,11 @@ test('a bucket without a "docs" map fails, and so does every doc it then leaves 
   for (const value of [undefined, [], {}]) {
     const project = validProject(t);
     bucket(project, { docs: value, always: [] });
-    const missing = Array.isArray(value) || value === undefined ? 'kb/bucket.json: "docs" must map each doc to its summary and tags' : 'kb/bucket.json: "docs" lists no docs';
+    const missing = Array.isArray(value) || value === undefined ? `${INDEX}: "docs" must map each doc to its summary and tags` : `${INDEX}: "docs" lists no docs`;
     assert.deepEqual(loadKnowledge(project).errors, [
       missing,
-      'kb/rules.md: has no entry in kb/bucket.json; add it to "docs" with a summary, or delete it',
-      'kb/sub/testing.md: has no entry in kb/bucket.json; add it to "docs" with a summary, or delete it',
+      `kb/rules.md: has no entry in ${INDEX}; add it to "docs" with a summary, or delete it`,
+      `kb/sub/testing.md: has no entry in ${INDEX}; add it to "docs" with a summary, or delete it`,
     ]);
   }
 });
@@ -146,15 +162,38 @@ test('a doc may have no tags, and its tags are read in "docs" order', (t) => {
   assert.deepEqual(routeKnowledge(buckets, ['testing']), ['kb/rules.md', 'kb/sub/testing.md', 'kb/sub/more.md']);
 });
 
-test('a duplicate bucket id fails, and a README in the bucket root needs no entry', (t) => {
+test('buckets load in file-name order, the file name is the id, and a README in the bucket root needs no entry', (t) => {
   const project = validProject(t);
   writeFileSync(path.join(project, 'kb/README.md'), '# About this bucket\n');
   mkdirSync(path.join(project, 'kb2'));
   writeFileSync(path.join(project, 'kb2/a.md'), '# A\n');
-  writeFileSync(path.join(project, 'kb2/bucket.json'), JSON.stringify({ id: 'kb', description: 'Copy.', always: ['a.md'], docs: { 'a.md': { summary: 'A.' } } }));
-  writeConfig(project, { buckets: ['kb', 'kb2'] });
-  const { errors } = loadKnowledge(project);
-  assert.deepEqual(errors, ['kb2/bucket.json: id "kb" is used by another bucket']);
+  const second = { dir: 'kb2', description: 'Second.', always: ['a.md'], docs: { 'a.md': { summary: 'A.' } } };
+  writeFileSync(path.join(project, '.aidrian/knowledge/00-first.json'), JSON.stringify(second));
+  // Neither a folder nor a file of another type is an index.
+  mkdirSync(path.join(project, '.aidrian/knowledge/drafts.json'));
+  writeFileSync(path.join(project, '.aidrian/knowledge/README.md'), '# Indexes\n');
+  const { buckets, errors } = loadKnowledge(project);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(buckets.map((each) => [each.id, each.dir]), [['00-first', 'kb2'], ['kb', 'kb']]);
+  assert.deepEqual(routeKnowledge(buckets, []), ['kb2/a.md', 'kb/rules.md']);
+});
+
+test('a project with no knowledge folder has no buckets and no errors', (t) => {
+  const project = validProject(t);
+  rmSync(path.join(project, '.aidrian/knowledge'), { recursive: true });
+  assert.deepEqual(loadKnowledge(project), { config: loadKnowledge(project).config, buckets: [], errors: [] });
+});
+
+test('the folder named by .aidrian.json holds config.json and the indexes', (t) => {
+  const project = validProject(t);
+  mkdirSync(path.join(project, 'tools'));
+  renameSync(path.join(project, '.aidrian'), path.join(project, 'tools/harness'));
+  writeFileSync(path.join(project, '.aidrian.json'), JSON.stringify({ dir: 'tools/harness' }));
+  const { buckets, errors } = loadKnowledge(path.join(project, 'kb'));
+  assert.deepEqual(errors, []);
+  assert.deepEqual(routeKnowledge(buckets, ['testing']), ['kb/rules.md', 'kb/sub/testing.md']);
+  writeFileSync(path.join(project, 'tools/harness/knowledge/kb.json'), '{');
+  assert.match(loadKnowledge(project).errors[0], /^tools\/harness\/knowledge\/kb\.json: invalid JSON/);
 });
 
 test('a doc that links outside its bucket fails, and a link that stays inside passes', (t) => {
@@ -165,22 +204,24 @@ test('a doc that links outside its bucket fails, and a link that stays inside pa
   symlinkSync(path.join(project, 'kb/rules.md'), path.join(project, 'kb/sub/rules-link.md'));
   bucket(project, docs({ 'outside.md': { summary: 'Out.' }, 'injected.md': { summary: 'In.' }, 'sub/rules-link.md': { summary: 'Link.' } }));
   assert.deepEqual(loadKnowledge(project).errors, [
-    'kb/bucket.json: "docs": "outside.md" must be a relative .md path inside the bucket',
-    'kb/bucket.json: "docs": "injected.md" must be a relative .md path inside the bucket',
-    'kb/injected.md: has no entry in kb/bucket.json; add it to "docs" with a summary, or delete it',
-    'kb/outside.md: has no entry in kb/bucket.json; add it to "docs" with a summary, or delete it',
+    `${INDEX}: "docs": "outside.md" must be a relative .md path inside the bucket`,
+    `${INDEX}: "docs": "injected.md" must be a relative .md path inside the bucket`,
+    `kb/injected.md: has no entry in ${INDEX}; add it to "docs" with a summary, or delete it`,
+    `kb/outside.md: has no entry in ${INDEX}; add it to "docs" with a summary, or delete it`,
   ]);
 });
 
 function validProject(t) {
   const project = mkdtempSync(path.join(tmpdir(), 'aidrian-knowledge-'));
   t.after(() => rmSync(project, { recursive: true, force: true }));
-  mkdirSync(path.join(project, '.aidrian'));
+  mkdirSync(path.join(project, '.aidrian/knowledge'), { recursive: true });
   mkdirSync(path.join(project, 'kb/sub'), { recursive: true });
   writeFileSync(path.join(project, 'outside.md'), '# Outside\n');
+  writeFileSync(path.join(project, 'notes.txt'), 'Notes.\n');
   writeFileSync(path.join(project, 'kb/rules.md'), '# Rules\n');
+  writeFileSync(path.join(project, 'kb/notes.txt'), 'Notes.\n');
   writeFileSync(path.join(project, 'kb/sub/testing.md'), '# Testing\n');
-  writeConfig(project, { buckets: ['kb'] });
+  writeConfig(project, { version: 1 });
   bucket(project, {});
   return project;
 }
@@ -197,6 +238,6 @@ function docs(changes) {
 }
 
 function bucket(project, overrides) {
-  const value = { id: 'kb', description: 'Test rules.', always: ['rules.md'], docs: BASE_DOCS, ...overrides };
-  writeFileSync(path.join(project, 'kb/bucket.json'), JSON.stringify(value));
+  const value = { dir: 'kb', description: 'Test rules.', always: ['rules.md'], docs: BASE_DOCS, ...overrides };
+  writeFileSync(path.join(project, INDEX), JSON.stringify(value));
 }

@@ -2,7 +2,8 @@
 
 A shared AI harness for Claude Code and Codex.
 It ships one plugin, `aidrian`, with generic agents and skills.
-Each project that installs it supplies only its own knowledge buckets: folders of Markdown rules with a small index.
+Each project that installs it supplies only its own knowledge buckets, folders of Markdown rules,
+and one project folder, `.aidrian/`, that indexes them and holds the plugin's settings.
 
 ## What is in the plugin
 
@@ -10,7 +11,7 @@ Each project that installs it supplies only its own knowledge buckets: folders o
 | --- | --- |
 | Agents | `planning-agent`, `initiative-agent`, `agent-issue-writer`, `explorer`, `github-archaeologist`, `integrator`, `doc-updater`, `design-source-explorer`, `harness-engineer` |
 | Skills | `knowledge`, `planning-agent`, `initiative-agent`, `agent-issue-writer`, `worktree-integrate`, `design-import`, `grill-me` |
-| Commands | `aidrian`: project commands, such as `aidrian config check`; `aidrian-knowledge`: checks, searches, and drafts a project's buckets |
+| Commands | `aidrian`: sets up and checks the project folder (`aidrian init`, `aidrian check`); `aidrian-knowledge`: routes, searches, and drafts a project's buckets |
 | Hooks | at session and subagent start, one line naming the `always` docs and how to find the rest |
 
 The `knowledge` skill is the shared rule set.
@@ -36,6 +37,7 @@ plugins/aidrian/
     └── install-agents.mjs          copies those roles into ~/.codex/agents
 scripts/build.mjs                   generates codex/agents
 examples/consumer/                  a small project that uses the plugin
+docs/project-folder.md              the project folder: structure, location, version, checks
 docs/config.md                      the project config file, .aidrian/config.json
 docs/knowledge.md                   the knowledge-bucket format
 test/                               node --test suites
@@ -49,7 +51,7 @@ npm run build    # after editing plugins/aidrian/agents/*.md
 npm run check    # what CI runs
 ```
 
-`npm run check` fails when the generated Codex agents are stale, when the example buckets are invalid, or when a test fails.
+`npm run check` fails when the generated Codex agents are stale, when the example's project folder is invalid, or when a test fails.
 The tests also check that both manifests agree, that every agent preloads the `knowledge` skill,
 that agents only ask for tags the `knowledge` skill lists, and that no project-specific path leaks into the plugin.
 Every agent and skill description must fit in 160 characters: both hosts put all of them into every session, used or not.
@@ -100,16 +102,22 @@ Codex asks you to trust them in `/hooks` after you install or update the plugin.
 A project adds knowledge, never agents or skills.
 [`examples/consumer`](examples/consumer) is a complete example; copy it as a start.
 
-1. Write the buckets. List them in `.aidrian/config.json`, and give each folder a `bucket.json` with a one-line summary per doc.
-   For a docs folder that already exists, `aidrian-knowledge init <folder>` drafts both files:
+1. Create the project folder at the repository root:
 
-   ```json
-   { "buckets": ["docs/knowledge/engineering", "docs/knowledge/product"] }
+   ```sh
+   aidrian init         # in a Claude Code session, where the plugin's commands are on PATH
+   path/to/aidrian-harness/plugins/aidrian/bin/aidrian init     # anywhere else; needs Node 22 or later
    ```
+
+   It writes `.aidrian/config.json` and adds the plugin's local state to `.gitignore`.
+   [docs/project-folder.md](docs/project-folder.md) describes the folder, how to keep it elsewhere, and its version.
+
+2. Write the buckets: one index per bucket, `.aidrian/knowledge/<bucket-id>.json`, with a one-line summary per doc.
+   For a docs folder that already exists, `aidrian-knowledge init <folder>` drafts it:
 
    ```json
    {
-     "id": "engineering",
+     "dir": "docs/knowledge/engineering",
      "description": "How this project is built, tested, and shipped.",
      "always": ["working-agreement.md"],
      "docs": {
@@ -120,16 +128,16 @@ A project adds knowledge, never agents or skills.
    ```
 
    Use the tags in the [`knowledge` skill](plugins/aidrian/skills/knowledge/SKILL.md#tags), so the agents find your docs.
-   [docs/knowledge.md](docs/knowledge.md) describes every bucket field, and [docs/config.md](docs/config.md) every config key.
+   [docs/knowledge.md](docs/knowledge.md) describes every index field, and [docs/config.md](docs/config.md) every config key.
 
-2. Point the main session at the buckets. Add to `AGENTS.md`, and put `@AGENTS.md` in `CLAUDE.md`:
+3. Point the main session at the buckets. Add to `AGENTS.md`, and put `@AGENTS.md` in `CLAUDE.md`:
 
    ```md
-   Project rules live in knowledge buckets, listed in `.aidrian/config.json`.
+   Project rules live in knowledge buckets, indexed in `.aidrian/knowledge/`.
    Load them with the `knowledge` skill before you plan, edit, or review.
    ```
 
-3. Offer the plugin to everyone who opens the project in Claude Code. Commit `.claude/settings.json`:
+4. Offer the plugin to everyone who opens the project in Claude Code. Commit `.claude/settings.json`:
 
    ```json
    {
@@ -142,26 +150,7 @@ A project adds knowledge, never agents or skills.
 
    Codex users install once per machine, as in [Codex](#codex).
 
-4. Keep the plugin's local state out of git. Add to `.gitignore`:
-
-   ```text
-   .aidrian/plans/
-   .aidrian/worktrees/
-   .aidrian/lessons/
-   .aidrian/handoffs/
-   .aidrian/dispatch-log.jsonl
-   ```
-
-   To use other folders, say so in an `always` doc; project knowledge overrides the plugin's defaults.
-
-5. Check the config and the buckets, locally and in CI:
-
-   ```sh
-   aidrian config check                # in a Claude Code session, where both commands are on PATH
-   aidrian-knowledge check
-   path/to/aidrian-harness/plugins/aidrian/bin/aidrian config check      # anywhere else; needs Node 22 or later
-   path/to/aidrian-harness/plugins/aidrian/bin/aidrian-knowledge check
-   ```
+5. Run `aidrian check`, then commit. Run it in CI too, so a broken folder never reaches the agents.
 
 ## Not included
 

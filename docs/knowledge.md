@@ -3,9 +3,9 @@
 A project that uses the aidrian plugin supplies one thing: its knowledge.
 The plugin supplies the agents, the skills, and the rule for loading that knowledge.
 
-A knowledge bucket is a folder of Markdown docs with a `bucket.json` index.
+A knowledge bucket is a folder of Markdown docs with an index file in the [project folder](project-folder.md),
+`.aidrian/knowledge/<bucket-id>.json`.
 The index gives every doc a one-line summary and its tags, so an agent can pick what to read without opening every doc.
-A project lists its buckets in `.aidrian/config.json`.
 
 Agents load knowledge in three steps:
 
@@ -19,35 +19,25 @@ Agents load knowledge in three steps:
 ## Layout
 
 ```text
-.aidrian/config.json             lists the buckets, in load order
+.aidrian/knowledge/
+├── engineering.json             the engineering bucket's index
+└── product.json
 docs/knowledge/engineering/
-├── bucket.json                  the bucket's index
 ├── README.md                    optional: what the bucket covers; it needs no index entry
 ├── working-agreement.md
 └── testing.md
 docs/knowledge/product/
-├── bucket.json
 └── product-rules.md
 ```
 
-Buckets can live anywhere inside the project. Use one bucket per owner, so each team edits its own folder.
+A bucket's docs can live in any folder inside the project; the index names it.
+Use one bucket per owner, so each team edits its own folder and its own index.
 
-## The bucket list
-
-```json
-{
-  "buckets": ["docs/knowledge/engineering", "docs/knowledge/product"]
-}
-```
-
-`buckets` in `.aidrian/config.json` is a non-empty list of folders, relative to the project root. Agents load buckets in this order.
-The file's other keys are in [config.md](config.md).
-
-## `bucket.json`
+## The index file
 
 ```json
 {
-  "id": "engineering",
+  "dir": "docs/knowledge/engineering",
   "description": "How Acme Notes is built, tested, tracked, and shipped.",
   "always": ["working-agreement.md"],
   "docs": {
@@ -63,7 +53,9 @@ The file's other keys are in [config.md](config.md).
 }
 ```
 
-- `id`: lowercase letters, digits, and `-`. Unique across the project's buckets.
+- The file name, without `.json`, is the bucket id: lowercase letters, digits, and `-`.
+  Buckets load in file-name order.
+- `dir`: the folder that holds the bucket's docs, relative to the project root.
 - `description`: one sentence on what the bucket covers.
 - `always`: docs every agent reads, for every task. Keep this list short; each doc costs context on every run.
   Every `always` doc also needs its entry in `docs`.
@@ -71,7 +63,7 @@ The file's other keys are in [config.md](config.md).
   - `summary`: one line, at most 160 characters, saying what the doc covers. Search matches it, so name the topics.
   - `tags`: the tags whose agents should read this doc. Optional; a doc with no tags is found by search.
 
-Doc paths are relative to the bucket folder and must stay inside it.
+Doc paths are relative to `dir` and must stay inside it.
 Adding a doc means adding one entry here; the doc itself needs no frontmatter.
 
 ## Tags
@@ -88,23 +80,16 @@ To change one, say so in an `always` doc.
 
 ## Commands
 
-`aidrian-knowledge` checks the buckets and shows what an agent would read.
+`aidrian-knowledge` shows what an agent would read, and drafts indexes.
 In Claude Code it is on the PATH while the plugin is enabled. Elsewhere, run it by its path; the start hook prints that path.
 
 ```sh
-aidrian-knowledge check                # validate .aidrian/config.json and every bucket
 aidrian-knowledge route testing        # the docs an agent with the testing tag reads
 aidrian-knowledge tags                 # every tag the project uses, with its doc count
 aidrian-knowledge search sharing rules # the best 8 matches, with their summaries; --all for every match
 aidrian-knowledge index                # every doc: path, tags, and summary, separated by tabs
-aidrian-knowledge init docs            # draft docs/bucket.json for a folder that has none
+aidrian-knowledge init docs            # draft .aidrian/knowledge/docs.json for the docs folder
 ```
-
-`check` fails when a file is missing or malformed, a path leaves its bucket, an id repeats, or a key is unknown.
-A symlink fails too when it leads a bucket outside the project, or a doc outside its bucket.
-`check` also fails when a `.md` file in a bucket has no entry in `docs`, because no agent would ever find it,
-when a summary is empty, longer than 160 characters, or more than one line, and when an `always` doc has no entry in `docs`.
-Run it in the project's CI so broken buckets never reach the agents.
 
 `route` fails on a tag that neither the plugin's agents nor the project's buckets use, so a typo never loads only the `always` docs.
 A plugin tag the project does not define is fine: it loads nothing beyond the `always` docs.
@@ -112,23 +97,34 @@ A plugin tag the project does not define is fine: it loads nothing beyond the `a
 `search` scores each word: 2 when it is part of a tag, 1 when it is part of the path, and 1 when it is part of the summary.
 It prints `path<TAB>summary`, best first, and exits 1 with `no match` when no doc scores.
 
+Every command but `init` fails and lists the problems when an index, `config.json`, or `.aidrian.json` is broken,
+so agents never read a broken index.
+
+## Checks
+
+`aidrian check` validates every index along with the rest of the [project folder](project-folder.md#setting-up-and-checking).
+For each index it fails when the file is malformed, its name is not a valid id, `dir` is not a folder inside the project,
+a path leaves its bucket, or a key is unknown.
+A symlink fails too when it leads an index or a bucket outside the project, or a doc outside its bucket.
+It also fails when a `.md` file in a bucket has no entry in `docs`, because no agent would ever find it,
+when a summary is empty, longer than 160 characters, or more than one line, and when an `always` doc has no entry in `docs`.
+
 ## Indexing a repository that has docs but no buckets
 
 `init` drafts the index for a folder of docs, so an existing docs tree becomes a bucket without editing the docs.
-Run it at the project root:
+The project folder must exist; `aidrian init` creates it.
 
 ```console
 $ aidrian-knowledge init docs
-wrote docs/bucket.json: 3 docs, each with a drafted summary and no tags
-wrote .aidrian/config.json: buckets ["docs"]
-next: correct the summaries, add tags and "always" docs, then run aidrian-knowledge check
+wrote .aidrian/knowledge/docs.json: 3 docs in docs, each with a drafted summary and no tags
+next: correct the summaries, add tags and "always" docs, then run aidrian check
 ```
 
-Each drafted summary is the doc's first heading and first sentence, cut to 160 characters:
+The bucket id is the folder's name. Each drafted summary is the doc's first heading and first sentence, cut to 160 characters:
 
 ```json
 {
-  "id": "docs",
+  "dir": "docs",
   "description": "Docs in docs.",
   "always": [],
   "docs": {
@@ -143,7 +139,6 @@ Then:
 
 1. Rewrite each summary so it names what the doc covers, not only how it starts.
 2. Add tags from the `knowledge` skill's list where they fit, and move the few docs every task needs into `always`.
-3. Write a real `description`, and run `aidrian-knowledge check`.
+3. Write a real `description`, and run `aidrian check`.
 
-`init` creates `.aidrian/config.json` only when the project has none. When it exists, `init` leaves it as it is
-and prints a reminder when `buckets` does not list the new folder. `init` never overwrites a `bucket.json`.
+`init` never overwrites an index. For a second folder with the same name, write its index by hand under another id.

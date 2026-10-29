@@ -11,25 +11,26 @@ const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
 
 const run = (args, cwd = EXAMPLE) => spawnSync(CLI, args, { cwd, encoding: 'utf8' });
 
-test('config check prints ok in the example consumer, from a subfolder, and with --project', () => {
-  for (const [args, cwd] of [[['config', 'check']], [['config', 'check'], path.join(EXAMPLE, 'src')], [['config', 'check', '--project', EXAMPLE], ROOT]]) {
+test('check prints ok in the example consumer, from a subfolder, and with --project', () => {
+  for (const [args, cwd] of [[['check']], [['check'], path.join(EXAMPLE, 'src')], [['check', '--project', EXAMPLE], ROOT]]) {
     const { status, stdout, stderr } = run(args, cwd);
-    assert.deepEqual([status, stdout, stderr], [0, 'ok\n', ''], args.join(' '));
+    assert.deepEqual([status, stdout, stderr], [0, 'ok: .aidrian (2 buckets, 8 docs)\n', ''], args.join(' '));
   }
 });
 
-test('config check fails with every error, and names the path when there is no config', (t) => {
+test('check fails with every error, and names the folder it started from when there is no project', (t) => {
   // realpath: on macOS the temp folder is behind a symlink, and the command prints the real path.
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-cli-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
 
-  const none = run(['config', 'check'], dir);
+  const none = run(['check'], dir);
   assert.equal(none.status, 1);
-  assert.equal(none.stderr, `no .aidrian/config.json at or above ${dir}\n`);
+  assert.equal(none.stderr, `no project folder at or above ${dir}; run aidrian init\n`);
 
   mkdirSync(path.join(dir, '.aidrian'));
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ buckets: ['kb'], extra: 1, pr: { maxReviewRounds: 'ten' } }));
-  const bad = run(['config', 'check'], dir);
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, extra: 1, pr: { maxReviewRounds: 'ten' } }));
+  writeFileSync(path.join(dir, '.gitignore'), '.aidrian/plans/\n.aidrian/handoffs/\n.aidrian/lessons/\n.aidrian/dispatch-log.jsonl\n.aidrian/worktrees/\n');
+  const bad = run(['check'], dir);
   assert.equal(bad.status, 1);
   assert.equal(bad.stdout, '');
   assert.equal(
@@ -38,21 +39,20 @@ test('config check fails with every error, and names the path when there is no c
   );
 });
 
-test('a missing or unknown group or command, an unknown option, or a stray argument prints the usage and exits 1', () => {
+test('a missing or unknown command, an unknown option, or a stray argument prints the usage and exits 1', () => {
   const cases = [
     [[], null],
-    [['nope'], /\n\nunknown group: nope\n$/],
-    [['config'], /\n\nunknown command: config\n$/],
-    [['config', 'nope'], /\n\nunknown command: config nope\n$/],
-    [['config', 'check', '--bogus'], /\n\nUnknown option '--bogus'/],
-    [['config', 'check', '--project'], /\n\nOption '--project <value>' argument missing/],
-    [['config', 'check', 'stray'], /\n\nUnexpected argument 'stray'/],
+    [['nope'], /\n\nunknown command: nope\n$/],
+    [['config', 'check'], /\n\nunknown command: config\n$/],
+    [['check', '--bogus'], /\n\nUnknown option '--bogus'/],
+    [['check', '--project'], /\n\nOption '--project <value>' argument missing/],
+    [['init', 'stray'], /\n\nUnexpected argument 'stray'/],
   ];
   for (const [args, expected] of cases) {
     const { status, stdout, stderr } = run(args);
     assert.equal(status, 1, args.join(' '));
     assert.equal(stdout, '');
-    assert.match(stderr, /^usage: aidrian <group> <command> \[args\]\n\n {2}aidrian config check \[--project DIR\]\n/);
+    assert.match(stderr, /^usage: aidrian <command> \[args\]\n\n {2}aidrian check \[--project DIR\]\n.*\n {2}aidrian init \[--project DIR\]\n/);
     if (expected) assert.match(stderr, expected, args.join(' '));
   }
 });

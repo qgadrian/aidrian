@@ -1,12 +1,13 @@
 ---
 name: knowledge
-description: Load the project's rules from its knowledge buckets (.aidrian/config.json) at the start of a task, before planning, editing, or reviewing.
+description: Load the project's rules from its knowledge buckets (the .aidrian/ folder) at the start of a task, before planning, editing, or reviewing.
 ---
 
 # Project knowledge
 
 The aidrian plugin ships generic agents and skills.
-Each project brings its own rules as knowledge buckets: folders of Markdown docs with a `bucket.json` index.
+Each project brings its own rules as knowledge buckets: folders of Markdown docs, indexed in the project folder,
+`.aidrian/` at the repository root or the folder `.aidrian.json` names (`.aidrian/` below means that folder; `aidrian check` validates it).
 This skill is how you find and read them, and which shared defaults apply when a project says nothing.
 
 ## Load before you work
@@ -20,8 +21,8 @@ This skill is how you find and read them, and which shared defaults apply when a
 4. Read each doc once. Never read a whole bucket "to be safe".
 
 When `aidrian-knowledge` is not on your PATH, run it by the full path the start hook prints.
-Without the hook, open `.aidrian/config.json` at the repository root: `buckets` lists the bucket folders.
-Each folder's `bucket.json` has the `always` list, and `docs` maps every doc, relative to the folder, to its `summary` and `tags`.
+Without the hook, read `.aidrian/knowledge/*.json`: each index has its doc folder in `dir`, the `always` list,
+and `docs` mapping every doc, relative to `dir`, to its `summary` and `tags`.
 
 A tag from the Tags list below that no bucket defines loads nothing; that is not an error.
 A tag that is on neither that list nor a bucket is a typo, and `route` fails on it.

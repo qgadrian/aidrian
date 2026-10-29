@@ -1,16 +1,16 @@
-// The `aidrian` command: `aidrian <group> <command> [args]`. Users run it through bin/aidrian.
-// Each group is a module in this folder that exports `commands`: { name: { usage, about, run(args) → exit code } }.
-// Only the module of the group that runs is imported.
+// The `aidrian` command: `aidrian <command> [args]`. Users run it through bin/aidrian.
+// Each command maps to the module in this folder that exports it in `commands`: { name: { usage, about, run(args) → exit
+// code } }. Only the module of the command that runs is imported.
 
-const GROUPS = {
-  config: './config.mjs',
+const COMMANDS = {
+  check: './check.mjs',
+  init: './check.mjs',
 };
 
-const [group, command, ...args] = process.argv.slice(2);
+const [command, ...args] = process.argv.slice(2);
 
-if (!Object.hasOwn(GROUPS, group ?? '')) await fail(group && `unknown group: ${group}`);
-const { commands } = await import(GROUPS[group]);
-if (!Object.hasOwn(commands, command ?? '')) await fail(`unknown command: ${group} ${command ?? ''}`.trimEnd());
+if (!Object.hasOwn(COMMANDS, command ?? '')) await fail(command && `unknown command: ${command}`);
+const { commands } = await import(COMMANDS[command]);
 try {
   process.exitCode = await commands[command].run(args);
 } catch (error) {
@@ -20,11 +20,10 @@ try {
 }
 
 async function fail(problem) {
-  const lines = ['usage: aidrian <group> <command> [args]', ''];
-  for (const [name, file] of Object.entries(GROUPS)) {
-    for (const [sub, { usage, about }] of Object.entries((await import(file)).commands)) {
-      lines.push(`  aidrian ${name} ${sub} ${usage}`.trimEnd(), `      ${about}`);
-    }
+  const lines = ['usage: aidrian <command> [args]', ''];
+  for (const [name, file] of Object.entries(COMMANDS)) {
+    const { usage, about } = (await import(file)).commands[name];
+    lines.push(`  aidrian ${name} ${usage}`.trimEnd(), `      ${about}`);
   }
   if (problem) lines.push('', problem);
   console.error(lines.join('\n'));

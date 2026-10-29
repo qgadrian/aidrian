@@ -1,5 +1,5 @@
 {
-  "id": "product",
+  "dir": "docs/knowledge/product",
   "description": "What Acme Notes promises its users, and the rules a change must keep.",
   "docs": {
     "product-rules.md": {

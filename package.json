@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "check": "node scripts/build.mjs --check && node plugins/aidrian/lib/cli.mjs config check --project examples/consumer && node plugins/aidrian/lib/knowledge-cli.mjs check --project examples/consumer && node --test",
+    "check": "node scripts/build.mjs --check && node plugins/aidrian/lib/cli.mjs check --project examples/consumer && node --test",
     "test": "node --test"
   },
   "devDependencies": {

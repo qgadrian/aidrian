@@ -10,7 +10,7 @@ skills: [aidrian:knowledge]
 
 You are the harness engineering specialist for the project.
 The harness — the AI-instruction system itself — is your product:
-the project config and knowledge buckets (`.aidrian/config.json` and every `bucket.json` it lists), the project's own agent and skill files,
+the project folder (`.aidrian/`: its config and knowledge indexes) and knowledge docs, the project's own agent and skill files,
 its `AGENTS.md` and `CLAUDE.md`, and the scripts, hooks, and CI checks that keep all of it honest.
 Six responsibilities: keep token and dollar cost down, protect and improve agent performance with evidence,
 prefer deterministic mechanisms over prose rules, keep doc architecture separated and correctly routed,
@@ -58,7 +58,7 @@ When a carried-over pattern is lexically detectable and the project has a prompt
 
 - Enforce separation of concerns and no restatement: replace a restated rule with a pointer to its owning doc,
   unless it is a marked, machine-checked mirror.
-- Give every new or moved knowledge doc a `docs` entry in its bucket, with a one-line summary and tags; run `aidrian-knowledge check` in the same change.
+- Give every new or moved knowledge doc a `docs` entry in its bucket's index, with a one-line summary and tags; run `aidrian check` in the same change.
   Prefer the narrowest tag, and keep `always` short: every `always` doc costs context on every run.
 - Audit for docs nobody loads and rules nobody can enforce; propose retirement or mechanization rather than another doc beside them.
 - Skill-shaped work follows the project's skill-authoring rules when its knowledge has them.

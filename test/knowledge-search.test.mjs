@@ -5,13 +5,17 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { loadKnowledge, searchKnowledge } from '../plugins/aidrian/lib/knowledge.mjs';
+import { loadKnowledge as loadKnowledgeOf, searchKnowledge } from '../plugins/aidrian/lib/knowledge.mjs';
+import { findProject } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXAMPLE = path.join(ROOT, 'examples/consumer');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian-knowledge');
 
+const AIDRIAN = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
+
 const run = (args, cwd = EXAMPLE) => spawnSync(CLI, args, { cwd, encoding: 'utf8' });
+const loadKnowledge = (dir) => loadKnowledgeOf(findProject(dir));
 const paths = (stdout) => stdout.trim().split('\n').map((line) => line.split('\t')[0]);
 
 test('search ranks tag hits above path and summary hits, and keeps bucket order on a tie', () => {
@@ -74,19 +78,17 @@ test('index prints every doc as path, comma-separated tags, and summary', () => 
   assert.deepEqual(rows[2].slice(0, 2), ['docs/knowledge/engineering/testing.md', 'testing']);
 });
 
-test('init drafts a bucket and a config for a project with neither, and the result passes check', (t) => {
+test('init drafts an index for a folder of docs in the project folder, and the result passes check', (t) => {
   const project = tempProject(t);
-  const { status, stdout } = run(['init', 'docs/'], project);
+  const { status, stdout } = run(['init', 'docs/'], path.join(project, 'docs/guides'));
   assert.equal(status, 0);
   assert.equal(
     stdout,
-    'wrote docs/bucket.json: 4 docs, each with a drafted summary and no tags\n' +
-      'wrote .aidrian/config.json: buckets ["docs"]\n' +
-      'next: correct the summaries, add tags and "always" docs, then run aidrian-knowledge check\n',
+    'wrote .aidrian/knowledge/docs.json: 4 docs in docs, each with a drafted summary and no tags\n' +
+      'next: correct the summaries, add tags and "always" docs, then run aidrian check\n',
   );
-  assert.deepEqual(JSON.parse(readFileSync(path.join(project, '.aidrian/config.json'), 'utf8')), { buckets: ['docs'] });
-  assert.deepEqual(JSON.parse(readFileSync(path.join(project, 'docs/bucket.json'), 'utf8')), {
-    id: 'docs',
+  assert.deepEqual(JSON.parse(readFileSync(path.join(project, '.aidrian/knowledge/docs.json'), 'utf8')), {
+    dir: 'docs',
     description: 'Docs in docs.',
     always: [],
     docs: {
@@ -97,23 +99,23 @@ test('init drafts a bucket and a config for a project with neither, and the resu
       'guides/untitled.md': { summary: 'untitled', tags: [] },
     },
   });
-  assert.equal(run(['check'], project).stdout, 'ok: 1 buckets, 4 docs\n');
+  const check = spawnSync(AIDRIAN, ['check'], { cwd: project, encoding: 'utf8' });
+  assert.deepEqual([check.status, check.stdout, check.stderr], [0, 'ok: .aidrian (1 buckets, 4 docs)\n', '']);
 });
 
-test('init keeps an existing config, says when it does not list the bucket, and never overwrites a bucket.json', (t) => {
+test('init names the index after the folder, and never overwrites one', (t) => {
   const project = tempProject(t);
-  mkdirSync(path.join(project, '.aidrian'));
-  writeFileSync(path.join(project, '.aidrian/config.json'), '{"buckets": ["other"]}\n');
-  const first = run(['init', 'docs'], path.join(project, 'docs/guides'));
-  assert.equal(first.status, 0);
-  assert.match(first.stdout, /\nadd "docs" to "buckets" in \.aidrian\/config\.json\n/);
-  assert.equal(readFileSync(path.join(project, '.aidrian/config.json'), 'utf8'), '{"buckets": ["other"]}\n');
-
-  const again = run(['init', 'docs'], project);
-  assert.deepEqual([again.status, again.stderr], [1, 'docs/bucket.json already exists; edit it instead\n']);
+  assert.equal(run(['init', 'docs/guides'], project).status, 0);
+  assert.deepEqual(Object.keys(JSON.parse(readFileSync(path.join(project, '.aidrian/knowledge/guides.json'), 'utf8')).docs), [
+    'deploys.md',
+    'long.md',
+    'untitled.md',
+  ]);
+  const again = run(['init', 'other/guides'], project);
+  assert.deepEqual([again.status, again.stderr], [1, '.aidrian/knowledge/guides.json already exists; edit it instead\n']);
 });
 
-test('init refuses a folder outside the project, a missing folder, a folder with no docs, and a wrong argument count', (t) => {
+test('init needs a project, and refuses a folder outside it, a missing folder, a folder with no docs, and a wrong argument count', (t) => {
   const project = tempProject(t);
   mkdirSync(path.join(project, 'empty'));
   const cases = [
@@ -128,16 +130,22 @@ test('init refuses a folder outside the project, a missing folder, a folder with
     assert.equal(status, 1, args.join(' '));
     assert.match(stderr, expected);
   }
+  rmSync(path.join(project, '.aidrian'), { recursive: true });
+  const none = run(['init', 'docs'], project);
+  assert.deepEqual([none.status, none.stderr], [1, `no project folder at or above ${project}; run aidrian init\n`]);
 });
 
-// A project with a docs folder and no aidrian files.
+// A project with a docs folder, an empty project folder, and the .gitignore lines `aidrian init` writes.
 function tempProject(t) {
   const project = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-init-')));
   t.after(() => rmSync(project, { recursive: true, force: true }));
+  assert.equal(spawnSync(AIDRIAN, ['init'], { cwd: project }).status, 0);
   mkdirSync(path.join(project, 'docs/guides'), { recursive: true });
+  mkdirSync(path.join(project, 'other/guides'), { recursive: true });
   writeFileSync(path.join(project, 'docs/README.md'), '---\ntitle: Start\n---\n# Getting started\n\nInstall the app with `npm ci`. Then run it.\n');
   writeFileSync(path.join(project, 'docs/guides/deploys.md'), '# Deploys\n\n```sh\nmake deploy\n```\n\n- Every deploy goes through CI. Never by hand.\n');
   writeFileSync(path.join(project, 'docs/guides/long.md'), 'word '.repeat(60));
   writeFileSync(path.join(project, 'docs/guides/untitled.md'), '\n');
+  writeFileSync(path.join(project, 'other/guides/more.md'), '# More\n');
   return project;
 }

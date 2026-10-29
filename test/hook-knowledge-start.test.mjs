@@ -49,12 +49,13 @@ test('outside a project, and for any stdin, the hook prints nothing and exits 0'
   }
 });
 
-test('a project with broken buckets still gets the line, plus how many problems check reports', (t) => {
+test('a project with a broken folder still gets the line, plus how many problems it has and the check to run', (t) => {
   const project = mkdtempSync(path.join(tmpdir(), 'aidrian-start-'));
   t.after(() => rmSync(project, { recursive: true, force: true }));
-  mkdirSync(path.join(project, '.aidrian'));
-  writeFileSync(path.join(project, '.aidrian/config.json'), JSON.stringify({ buckets: ['missing'], extra: 1 }));
+  mkdirSync(path.join(project, '.aidrian/knowledge'), { recursive: true });
+  writeFileSync(path.join(project, '.aidrian/config.json'), JSON.stringify({ version: 1, extra: 1 }));
+  writeFileSync(path.join(project, '.aidrian/knowledge/kb.json'), JSON.stringify({ dir: 'missing' }));
   const { status, stdout } = hook({ input: JSON.stringify({ cwd: project }) });
   assert.equal(status, 0);
-  assert.match(stdout, /^Project knowledge: 0 buckets, 0 docs\. For more, run .* `\S+ check` reports 2 problems\.\n$/);
+  assert.match(stdout, /^Project knowledge: 0 buckets, 0 docs\. For more, run .* for a topic\. The project folder has 2 problems; run `\S+\/aidrian check`\.\n$/);
 });

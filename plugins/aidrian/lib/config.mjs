@@ -1,17 +1,18 @@
-// Loads a project's .aidrian/config.json, the one file a project writes for this plugin. docs/config.md lists the keys.
+// Loads config.json from the project folder: the folder version and the project's settings for this plugin.
+// docs/config.md lists the keys; docs/project-folder.md gives the version rule.
 // No dependencies: this file runs from the installed plugin, which has no node_modules.
 
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { parseArgs } from 'node:util';
 
-export const CONFIG = '.aidrian/config.json';
+// The project folder format this plugin reads. A format change raises it and documents the migration.
+export const VERSION = 1;
+const MIGRATING = 'https://github.com/qgadrian/aidrian-harness/blob/main/docs/project-folder.md#migrating';
 
 // The type of every key. A nested object is one group of keys; a project sets any subset of a group.
 const SCHEMA = {
-  buckets: 'folders',
   defaultBranch: 'text',
-  worktrees: { dir: 'text', bootstrap: 'textOrNull' },
+  worktrees: { dir: 'textOrNull', bootstrap: 'textOrNull' },
   mainCheckout: { guard: 'boolean', allowWrites: 'texts' },
   commits: { types: 'texts' },
   pr: { requiredSections: 'texts', reviewer: 'text', maxReviewRounds: 'positive', requiredChecks: 'texts', ignoreCancelledChecks: 'texts' },
@@ -24,17 +25,15 @@ const TYPES = {
   text: [isText, 'a non-empty string'],
   textOrNull: [(value) => value === null || isText(value), 'a non-empty string or null'],
   texts: [(value) => Array.isArray(value) && value.every(isText), 'a list of non-empty strings'],
-  folders: [(value) => Array.isArray(value) && value.length > 0 && value.every(isText), 'a non-empty list of folders'],
   boolean: [(value) => typeof value === 'boolean', 'true or false'],
   positive: [(value) => Number.isInteger(value) && value > 0, 'a whole number above 0'],
   zeroOrMore: [(value) => Number.isInteger(value) && value >= 0, 'a whole number, 0 or more'],
 };
 
-// `buckets` has no default: a project must list its knowledge folders.
+// `worktrees.dir: null` is the project folder's worktrees/.
 export const DEFAULTS = deepFreeze({
-  buckets: [],
   defaultBranch: 'main',
-  worktrees: { dir: '.aidrian/worktrees', bootstrap: null },
+  worktrees: { dir: null, bootstrap: null },
   mainCheckout: { guard: true, allowWrites: [] },
   commits: { types: ['build', 'chore', 'ci', 'docs', 'feat', 'fix', 'perf', 'refactor', 'revert', 'style', 'test'] },
   pr: {
@@ -48,29 +47,31 @@ export const DEFAULTS = deepFreeze({
   skills: { descriptionChars: 160, listingBytes: 9216 },
 });
 
-// Walks up from `start` to the folder that holds .aidrian/config.json.
-export function findProjectRoot(start) {
-  let dir = path.resolve(start);
-  for (;;) {
-    if (existsSync(path.join(dir, CONFIG))) return dir;
-    const parent = path.dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
-}
-
-// Returns { config, errors }. `config` is frozen and always complete: the file's values over DEFAULTS, one group at a
-// time, with the default kept for any value that is missing or invalid. A hook can use it even when `errors` is not empty.
-export function loadConfig(root) {
+// Returns { config, errors, current }. `config` is frozen and always complete: the file's values over DEFAULTS, one
+// group at a time, with the default kept for any value that is missing or invalid. A hook can use it even when `errors`
+// is not empty. `current` is false when the file is missing, unreadable, or of another version: then nothing in the
+// folder can be trusted to have the shape this plugin reads.
+export function loadConfig(project) {
   const errors = [];
-  const file = readJson(root, CONFIG, errors) ?? {};
-  if (!errors.length && !Object.hasOwn(file, 'buckets')) errors.push(`${CONFIG}: "buckets" must be ${TYPES.folders[1]}`);
-  return { config: deepFreeze(merge(SCHEMA, DEFAULTS, file, '', errors)), errors };
+  const file = project.paths.config;
+  const raw = readJson(project.root, file, errors);
+  if (!raw) return { config: DEFAULTS, errors, current: false };
+  const problem = versionProblem(file, raw.version);
+  if (problem) return { config: DEFAULTS, errors: [problem], current: false };
+  const { version, ...values } = raw;
+  return { config: deepFreeze(merge(SCHEMA, DEFAULTS, values, '', file, errors)), errors, current: true };
 }
 
-function merge(schema, defaults, values, prefix, errors) {
+// The error for a `version` other than VERSION, or null.
+export function versionProblem(file, version) {
+  if (version === VERSION) return null;
+  const found = version === undefined ? 'missing' : JSON.stringify(version);
+  return `${file}: project folder version ${found}; this plugin reads version ${VERSION}; see ${MIGRATING}`;
+}
+
+function merge(schema, defaults, values, prefix, file, errors) {
   for (const key of Object.keys(values)) {
-    if (!Object.hasOwn(schema, key)) errors.push(`${CONFIG}: unknown key "${prefix}${key}"`);
+    if (!Object.hasOwn(schema, key)) errors.push(`${file}: unknown key "${prefix}${key}"`);
   }
   const out = {};
   for (const [key, type] of Object.entries(schema)) {
@@ -78,41 +79,18 @@ function merge(schema, defaults, values, prefix, errors) {
     out[key] = defaults[key];
     if (!Object.hasOwn(values, key)) continue;
     if (typeof type === 'object') {
-      if (isObject(value)) out[key] = merge(type, defaults[key], value, `${prefix}${key}.`, errors);
-      else errors.push(`${CONFIG}: "${prefix}${key}" must be an object`);
+      if (isObject(value)) out[key] = merge(type, defaults[key], value, `${prefix}${key}.`, file, errors);
+      else errors.push(`${file}: "${prefix}${key}" must be an object`);
     } else if (TYPES[type][0](value)) {
       out[key] = value;
     } else {
-      errors.push(`${CONFIG}: "${prefix}${key}" must be ${TYPES[type][1]}`);
+      errors.push(`${file}: "${prefix}${key}" must be ${TYPES[type][1]}`);
     }
   }
   return out;
 }
 
-export const commands = {
-  check: {
-    usage: '[--project DIR]',
-    about: `check ${CONFIG}; DIR defaults to the current folder or the nearest one above it with that file`,
-    run(args) {
-      const { values } = parseArgs({ args, options: { project: { type: 'string' } } });
-      const start = path.resolve(values.project ?? '.');
-      const root = findProjectRoot(start);
-      if (!root) {
-        console.error(`no ${CONFIG} at or above ${start}`);
-        return 1;
-      }
-      const { errors } = loadConfig(root);
-      if (errors.length) {
-        console.error(errors.join('\n'));
-        return 1;
-      }
-      console.log('ok');
-      return 0;
-    },
-  },
-};
-
-// File helpers, shared with knowledge.mjs. Paths are relative to `root`.
+// File helpers, shared with project.mjs and knowledge.mjs. Paths are relative to `root`.
 
 // The parsed JSON object at `rel`, or null with the reason added to `errors`.
 export function readJson(root, rel, errors) {
@@ -148,9 +126,29 @@ export function linksOutside(root, rel, within = '') {
   return real !== realWithin && !real.startsWith(`${realWithin}${path.sep}`);
 }
 
+// `base` and `rel` are POSIX-style paths relative to `root`; returns the joined relative path, or null if it escapes,
+// either as text or through a symlink.
+export function insidePath(root, base, rel) {
+  if (typeof rel !== 'string' || rel === '' || path.isAbsolute(rel) || rel.includes('\\')) return null;
+  const joined = path.posix.normalize(path.posix.join(base || '.', rel)).replace(/\/$/, '');
+  if (joined === '.' || joined.startsWith('../') || joined === '..') return null;
+  if (base && !joined.startsWith(`${base}/`)) return null;
+  // path.relative uses the platform separator, "\" on Windows; `rel` cannot hold one, so mapping it back is safe.
+  if (path.relative(root, path.join(root, joined)).replaceAll('\\', '/') !== joined) return null;
+  return linksOutside(root, joined, base) ? null : joined;
+}
+
 export function isFile(file) {
   try {
     return statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
+export function isDirectory(dir) {
+  try {
+    return statSync(dir).isDirectory();
   } catch {
     return false;
   }

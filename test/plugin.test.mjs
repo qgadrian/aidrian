@@ -106,6 +106,11 @@ test('plugin content holds no project-specific paths or leftover template marker
   assert.deepEqual(hits, []);
 });
 
+test('only lib/project.mjs names the project folder; other plugin code asks it for paths', () => {
+  const naming = allFiles(PLUGIN).filter((file) => file.endsWith('.mjs') && readFileSync(file, 'utf8').includes('.aidrian'));
+  assert.deepEqual(naming.map((file) => path.relative(PLUGIN, file)), ['lib/project.mjs']);
+});
+
 test('plugin text names no bare slash command', () => {
   // Claude Code runs this plugin's skills as /aidrian:<skill>, so a bare /<name> is not a command this plugin provides.
   // Name the skill instead (it works on every host), or write /aidrian:<skill>.
@@ -119,11 +124,13 @@ test('plugin text names no bare slash command', () => {
   assert.deepEqual(hits, []);
 });
 
-test('the example consumer supplies only knowledge and settings, and enables this plugin', () => {
+test('the example consumer supplies only its project folder, its docs, and settings, and enables this plugin', () => {
   const example = path.join(ROOT, 'examples/consumer');
   for (const own of ['.claude/agents', '.claude/skills', '.agents/skills', '.codex/agents', 'agents', 'skills']) {
     assert.equal(existsSync(path.join(example, own)), false, `${own} belongs in the plugin`);
   }
+  const outsideFolder = allFiles(example).filter((file) => file.endsWith('.json') && !file.includes(`${path.sep}.aidrian${path.sep}`));
+  assert.deepEqual(outsideFolder.map((file) => path.relative(example, file)).sort(), ['.claude/settings.json', 'package.json']);
   const marketplace = json('.claude-plugin/marketplace.json').name;
   const settings = json('examples/consumer/.claude/settings.json');
   assert.deepEqual(Object.keys(settings.extraKnownMarketplaces), [marketplace]);

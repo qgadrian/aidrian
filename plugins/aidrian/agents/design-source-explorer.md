@@ -1,6 +1,6 @@
 ---
 name: design-source-explorer
-description: Resolve, extract, and classify a Claude Design handoff bundle (folder or zip), then write a durable design import — DESIGN.md spec, screen inventory, and curated source — under docs/design-imports/<slug>/. Read-only against all repo source except its own docs/design-imports/<slug>/ output.
+description: Resolve, extract, and classify a Claude Design handoff bundle (folder or zip), then write a durable design import — DESIGN.md spec, screen inventory, and curated source — under docs/design-imports/<slug>/. Read-only against all repo source except its own docs/design-imports/<slug>/ output and the superseded banner on an import it replaces.
 model: sonnet
 effort: medium
 color: yellow
@@ -45,11 +45,18 @@ is needed, name `explorer` as the next owner.
 - You are read-only against all repo source. `Read`, `Glob`, and `Grep` may
   inspect the repo to reconcile tokens and identify reusable components, but
   you produce no edits there.
-- `Bash` is for source resolution only: `unzip` a zip bundle into a temp dir,
-  `ls` / `file` to inspect a bundle, `git clone` only when the user explicitly
-  supplies a git URL as the bundle source. Do not use `Bash` to mutate repo
-  source, run builds, or run `git add`/`git commit`/`git push`: the
-  `design-import` skill commits the design import you write.
+- `Bash` is for these commands only:
+  - extracting a zip bundle: create a fresh OS temp dir with `mktemp -d`,
+    `unzip` into the path it prints, and `rm -rf` that same path before you
+    return, on every outcome including a stop;
+  - `ls` / `file` to inspect the bundle;
+  - `mkdir -p` and `cp` whose destination is inside
+    `docs/design-imports/<slug>/`, to copy bundle files into `source/` —
+    including binary imagery, which `Write` cannot produce.
+
+  Do not use `Bash` to change any other path, run builds, or run
+  `git add`/`git commit`/`git push`: the `design-import` skill commits the
+  design import you write.
 - `WebFetch` is for reference lookups (e.g. an icon-set or token reference) —
   not for fetching the claude.ai/design online project, which is not
   machine-accessible.
@@ -60,9 +67,9 @@ is needed, name `explorer` as the next owner.
 
 ## Workflow
 
-1. **Resolve the source.** Accept a local folder or a local zip path (or a git
-   URL only if the user explicitly supplied one). For a zip, `unzip` it into a
-   temp dir under `tmp/` and operate on the extracted tree. Verify the bundle
+1. **Resolve the source.** Accept a local folder or a local zip path. For a
+   zip, extract it into a fresh OS temp dir (see the `Bash` rule above) and
+   operate on the extracted tree. Verify the bundle
    **invariants** from the bundle spec: one or
    more entry HTML pages (React 18 + Babel-standalone prototype, or a
    dc-runtime `<x-dc>` page) — filename, extension (`.html`/`.dc.html`), and
@@ -101,8 +108,8 @@ is needed, name `explorer` as the next owner.
    read-only rationale; a single page with a single design → proceed. Only
    when competing generations, directions, or variants carry no outcome
    signal do you **stop** and return `needs_input` listing every candidate.
-   Never guess. The user re-invokes `/design-import … --variant <id>`; only
-   then do you proceed. Device artboards of one surface
+   Never guess. The user re-runs the `design-import` skill with
+   `--variant <id>`; only then do you proceed. Device artboards of one surface
    (desktop/tablet/mobile) are never a variant choice.
 
 4. **Classify every file — and every export/section of mixed files** — by
@@ -162,6 +169,8 @@ is needed, name `explorer` as the next owner.
      name the question in `open_questions`, and let the user decide — never
      silently mark supersession you are not sure of.
    Report every supersession or cross-reference decision in the handoff.
+
+   **6b. Write the files.**
    - `DESIGN.md` — the design spec with these five section headings: Visual
      Theme & Atmosphere; Color Palette & Roles; Typography Rules; Component
      Stylings; Layout Principles. Plus: a **Design decisions** section
@@ -202,13 +211,15 @@ is needed, name `explorer` as the next owner.
      for reference, with its mock-data/fake-engine exports listed in the
      discard list). Tool/runtime harness files are excluded. Copy the
      specific `uploads/` / `screenshots/` reference imagery a screen's
-     fidelity depends on. This curated `source/` is the durable,
-     worktree-portable, PR-reviewable visual source of truth.
+     fidelity depends on, with `cp` (see the `Bash` rule above). This
+     curated `source/` is the durable, worktree-portable, PR-reviewable visual source of truth.
 
 7. **Hand off.** Return a machine handoff naming `planning-agent` as the next
    owner, with the design-import path, the canonical page/variant chosen, the
-   artboard matrix, the visual-vs-data slice split, and any flagged
-   design-system decision.
+   artboard matrix, the visual-vs-data slice split, any flagged
+   design-system decision, and the command of the project's design-import
+   lint when its `design_bundle` knowledge names one (the skill runs it but
+   does not load that knowledge).
 
 ## Blocking conditions
 
@@ -220,7 +231,7 @@ is needed, name `explorer` as the next owner.
 - The bundle implies a product-behavior or domain-semantics change that is
   not a presentation-only re-creation — flag for `product-manager`.
 - Writing the design import would require editing a path outside
-  `docs/design-imports/<slug>/`.
+  `docs/design-imports/<slug>/`, other than the superseded banner of step 6a.
 
 Token divergence is **not** a blocking condition — it is recorded as a flag in
 `DESIGN.md` and handed forward as the gated `S0` plan slice; the pipeline

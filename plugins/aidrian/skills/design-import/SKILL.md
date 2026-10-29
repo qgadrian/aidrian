@@ -1,6 +1,6 @@
 ---
 name: design-import
-description: Bring a Claude Design handoff bundle into the repo as an implementation-ready design import. Use on /design-import, "import a design export", or a bundle path.
+description: Bring a Claude Design handoff bundle into the repo as an implementation-ready design import. Use on "import a design export", or when given a design bundle folder or zip.
 user-invocable: true
 ---
 
@@ -39,8 +39,10 @@ Generic implementation rules are tool-agnostic and live in the project's
 
 ## Argument grammar
 
+In Claude Code the skill runs as `/aidrian:design-import`; on any host it takes:
+
 ```
-/design-import <bundle-path> [--slug <slug>] [--variant <id>]
+<bundle-path> [--slug <slug>] [--variant <id>]
 ```
 
 - **`<bundle-path>`** (required) — a local folder or a local zip of a Claude
@@ -78,8 +80,8 @@ Generic implementation rules are tool-agnostic and live in the project's
      pages, generations, or variants with no declared outcome (a bundle with
      a clearly-consolidated outcome page is NOT this case — the explorer
      proceeds with it), the explorer returns `needs_input`. Relay the listed
-     candidates to the user and **stop**. The user re-invokes
-     `/design-import <bundle-path> --slug <slug> --variant <id>`. Never invent
+     candidates to the user and **stop**. The user re-runs this skill with
+     `<bundle-path> --slug <slug> --variant <id>`. Never invent
      a choice to push past this stop.
    - **Malformed bundle / missing source (STOP).** If the bundle is malformed
      (no entry page satisfying the spec's invariants) or the source cannot be
@@ -103,8 +105,9 @@ Generic implementation rules are tool-agnostic and live in the project's
    plan per the **Generated plan — slice requirements** section below. The
    plan is written to `docs/design-imports/<slug>/plan.md`.
 
-6. **Mechanical contract check.** When the project has a design-import lint
-   (its `design_bundle` knowledge names it), run it after the plan is written. A failure means `design-source-explorer` or
+6. **Mechanical contract check.** When the project has a design-import lint,
+   `design-source-explorer`'s handoff names its command (from the
+   `design_bundle` knowledge); run it after the plan is written. A failure means `design-source-explorer` or
    `planning-agent` produced a structurally non-conformant artifact — route
    the fix back to that specialist before reporting success; never hand the
    user a plan that fails the committed contract.
@@ -124,7 +127,7 @@ The skill instructs `planning-agent` to author a plan that conforms to the
 Plan-File Schema in the `planning-agent` skill with these
 design-import specifics:
 
-- **`plan_kind: technical-design`.** A design import has no GitHub issue, so
+- **`plan_kind: technical-design`.** A design import has no tracker issue, so
   the issue-driven `plan_kind: implementation` does not apply. The frontmatter
   omits `issue_id` / `issue_ref` / `ticket_updated_at`; it records the
   bundle path, the chosen page/variant, and the slug.
@@ -133,7 +136,7 @@ design-import specifics:
   git-ignored. The committed home keeps the spec, inventory, curated source,
   and plan as one durable, PR-reviewable unit.
 - **Re-runs revise the existing plan; `plan_kind` stays `technical-design`.**
-  Re-invoking `/design-import` against an existing slug updates the plan in
+  Re-running this skill against an existing slug updates the plan in
   place under `planning-agent`'s revision rules — it does **not** flip
   `plan_kind` to `revision`. The frontmatter keeps `plan_kind:
   technical-design`; `generated_at` is bumped; completed slices are preserved
@@ -223,8 +226,8 @@ A single concise report. Skip a section if it has nothing to say.
   application source and never runs `git commit`/`git push` on production code. The only
   commit is the design import under `docs/design-imports/<slug>/`, written by
   `design-source-explorer` and `planning-agent` and committed by the skill in
-  workflow step 7 under the git-hook hard wall — never with `--no-verify` or
-  any hook bypass.
+  workflow step 7 with the project's git hooks running — never with
+  `--no-verify` or any hook bypass.
 - **No bloat in skill context.** The skill does not Read the project's
   `design_bundle` knowledge into its own context. Specialists load it through the `knowledge` skill.
 - **Project knowledge is authoritative.** See the `knowledge` skill § Precedence.

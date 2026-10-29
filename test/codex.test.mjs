@@ -35,8 +35,9 @@ test('Codex agents that cannot edit in Claude Code are told so', () => {
   assert.doesNotMatch(role('planning-agent'), /read-only|Do not create or edit files/);
 });
 
+const agent = (name, body) => ({ file: `${name}.md`, meta: { name, description: `${name} test agent`, model: 'sonnet', effort: 'low' }, body });
+
 test('Codex roles give Codex names only to this plugin\'s agents, never to a project\'s own roles', () => {
-  const agent = (name, body) => ({ file: `${name}.md`, meta: { name, description: `${name} test agent`, model: 'sonnet', effort: 'low' }, body });
   const rendered = renderCodexAgents([agent('lead', 'Ask `helper`, then `architect`. You are `lead`.'), agent('helper', 'Help.')]);
   const lead = parse(rendered.get(`${PREFIX}lead.toml`)).developer_instructions;
   assert.match(lead, /`helper` is `aidrian-helper`/);
@@ -49,6 +50,16 @@ test('Codex roles give Codex names only to this plugin\'s agents, never to a pro
     const preamble = role.slice(0, -(body.length + 1));
     for (const [, name] of preamble.matchAll(/`(aidrian-[a-z-]+)`/g)) assert.ok(shipped.has(name), `${meta.name}: ${name} is not a plugin agent`);
   }
+});
+
+test('Codex roles do not rename an agent that is named only as a skill', () => {
+  const leadInstructions = (body) => parse(renderCodexAgents([agent('lead', body), agent('helper', 'Help.')]).get(`${PREFIX}lead.toml`)).developer_instructions;
+  assert.doesNotMatch(leadInstructions('Read the `helper` skill\'s references, then load the skill `helper`.'), /aidrian-helper/);
+  assert.doesNotMatch(leadInstructions('Load and follow the `helper` skill.'), /aidrian-helper/);
+  assert.match(leadInstructions('Load the `helper` skill, then ask `helper` to check it.'), /`helper` is `aidrian-helper`/);
+
+  const initiative = parse(readFileSync(path.join(CODEX_AGENTS, `${PREFIX}initiative-agent.toml`), 'utf8')).developer_instructions;
+  assert.doesNotMatch(initiative, /aidrian-agent-issue-writer/, 'initiative-agent reads the agent-issue-writer skill; it spawns no such agent');
 });
 
 test('build fails on an unknown argument instead of regenerating the files', () => {

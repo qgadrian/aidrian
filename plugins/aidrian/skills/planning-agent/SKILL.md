@@ -179,7 +179,12 @@ design-import context in their place.
 
 ### Multi-slice integration review step
 
-Every plan that defines two or more slices MUST include a final `### Slice INTEGRATION-REVIEW` entry as the last implementation-side slice, after all implementation slices. This slice is owned by `code-reviewer` (or the relevant specialist), is non-negotiable for multi-slice plans, and must appear in `## Slices`. Its purpose is the holistic integration review required by the orchestrator's Phase 7a gate: after the `/pr-write` skill opens the PR as a draft and before closure/merge, re-examine stubs, default values, and fallback paths from earlier slices against behavioral rules, escalation triggers, and constraints introduced by later slices.
+Every plan that defines two or more slices MUST include a final `### Slice INTEGRATION-REVIEW` entry
+as the last implementation-side slice, after all implementation slices.
+This slice is owned by `code-reviewer` (or the relevant specialist), is non-negotiable for multi-slice plans, and must appear in `## Slices`.
+Its purpose is the holistic integration review: after the project's PR flow opens the PR as a draft and before closure/merge,
+re-examine stubs, default values, and fallback paths from earlier slices
+against behavioral rules, escalation triggers, and constraints introduced by later slices.
 
 Minimal schema for the integration-review slice:
 

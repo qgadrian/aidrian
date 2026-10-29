@@ -61,7 +61,7 @@ function codexPreamble(meta, body, pluginAgents) {
   const canShell = !denied.includes('Bash') && (!allowed || allowed.includes('Bash'));
   const lines = ['This role comes from the aidrian plugin and was written for Claude Code. On Codex:'];
   // Only this plugin's agents carry the prefix. A project's own roles, such as `architect`, keep their names.
-  const named = pluginAgents.filter((name) => name !== meta.name && body.includes(`\`${name}\``));
+  const named = pluginAgents.filter((name) => name !== meta.name && namesAgent(body, name));
   if (named.length) {
     const renames = named.map((name) => `\`${name}\` is \`${PREFIX}${name}\``).join(', ');
     lines.push(`- This plugin's agents named below have Codex names: ${renames}. Spawn them by those names; any other agent named below is the project's own.`);
@@ -73,6 +73,12 @@ function codexPreamble(meta, body, pluginAgents) {
   if (!canEdit && !canShell) lines.push('- You are read-only: do not create or edit files, and run only commands that change nothing.');
   else if (!canEdit) lines.push('- Do not create or edit files directly; change the repository only through the commands these instructions allow.');
   return lines.join('\n');
+}
+
+// Some agents share a name with a skill. "The `agent-issue-writer` skill" or "the skill `agent-issue-writer`" names
+// the skill, which keeps its name on Codex; any other backticked use of the name is the agent.
+function namesAgent(body, name) {
+  return new RegExp(`(?<!skill )\`${name}\`(?! skill\\b)`).test(body);
 }
 
 function toList(value) {

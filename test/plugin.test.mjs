@@ -101,6 +101,19 @@ test('plugin content holds no project-specific paths or leftover template marker
   assert.deepEqual(hits, []);
 });
 
+test('plugin text names no bare slash command', () => {
+  // Claude Code runs this plugin's skills as /aidrian:<skill>, so a bare /<name> is not a command this plugin provides.
+  // Name the skill instead (it works on every host), or write /aidrian:<skill>.
+  const hits = [];
+  for (const file of markdownFiles(PLUGIN)) {
+    const lines = readFileSync(file, 'utf8').split('\n');
+    lines.forEach((line, index) => {
+      if (/(^|[\s`"(])\/(?!aidrian:)[a-z][a-z0-9-]*(?=[\s`"),.;:]|$)/.test(line)) hits.push(`${path.relative(ROOT, file)}:${index + 1}`);
+    });
+  }
+  assert.deepEqual(hits, []);
+});
+
 test('the example consumer supplies only knowledge and settings, and enables this plugin', () => {
   const example = path.join(ROOT, 'examples/consumer');
   for (const own of ['.claude/agents', '.claude/skills', '.agents/skills', '.codex/agents', 'agents', 'skills']) {

@@ -99,11 +99,13 @@ Sweep the draft, or on the audit branch the existing skill, sentence by sentence
 - **Negation**: a prohibition that names what to avoid. Rewrite it as the target behavior.
 - **Premature completion**: a step that rushes. Sharpen its completion criterion before splitting the sequence.
 
+When the sweep changed any file, run Phase 5 on the result before Phase 7, generators included: the version that ships is the one that passed.
+
 **Done when** each surviving sentence passes the no-op and relevance tests. An audit of an old skill that deletes nothing is suspect.
 
 ## Phase 7: Ship
 
-Skip this phase when the sweep changed nothing: a report-only audit has nothing to commit.
+Skip this phase only for a report-only audit: an audit that changed no file in any phase of the run.
 
 1. Commit from the task worktree (`aidrian worktree new`), with the Phase 4 commands in the message:
 

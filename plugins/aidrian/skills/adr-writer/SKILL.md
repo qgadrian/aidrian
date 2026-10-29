@@ -46,12 +46,16 @@ When a named plan or pull request cannot be read, stop and report the path or nu
    - Consequences names what changes, what gets harder, and the follow-up work.
 
    Write the reasoning into the ADR: a plan file or local path it cites dangles once the plan is gone.
-5. **Supersede.** With `--supersedes <MMMM>`, set that ADR's Status to `Superseded by [NNNN](NNNN-<slug>.md).`
-   and change nothing else in it. The new ADR's Status says `Supersedes [MMMM](MMMM-<old-slug>.md).`
-6. **Update the index.** When the folder has one, such as a README that lists the ADRs, add the new row and mark the superseded one.
+5. **Supersede.** With `--supersedes <MMMM>`, the new ADR's status decides what changes:
+   - `Accepted`: the new ADR's Status says `Supersedes [MMMM](MMMM-<old-slug>.md).`
+     Set the old ADR's Status to `Superseded by [NNNN](NNNN-<slug>.md).` and change nothing else in it.
+   - `Proposed`: the new ADR's Status says `Supersedes [MMMM](MMMM-<old-slug>.md) (on acceptance).`
+     Leave the old ADR untouched and `Accepted`; it is marked superseded only when the new ADR is accepted.
+6. **Update the index.** When the folder has one, such as a README that lists the ADRs, add the new row.
+   Mark the old ADR superseded there only when step 5 changed it.
 7. **Check.** Run the project's ADR check when its knowledge names one, and fix the draft until it passes.
 
 ## Return
 
-- The new ADR's path, and the superseded ADR's path when there is one.
+- The new ADR's path; with `--supersedes`, the old ADR's path and whether step 5 marked it or left it for acceptance.
 - A commit subject for the caller, such as `docs(adr): record <the decision in a few words>`.

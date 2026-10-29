@@ -5,7 +5,8 @@
 
 ## Status
 
-<Proposed | Accepted>. <With --supersedes: Supersedes [MMMM](MMMM-<old-slug>.md).>
+<Proposed | Accepted>. <With --supersedes, when Accepted: Supersedes [MMMM](MMMM-<old-slug>.md).
+When Proposed: Supersedes [MMMM](MMMM-<old-slug>.md) (on acceptance).>
 
 ## Context
 

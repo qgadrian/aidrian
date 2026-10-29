@@ -138,18 +138,27 @@ export const postedTriggerInstant = (posted) =>
 // The pre-POST fallback boundary, floored to the second, as GitHub floors `created_at`.
 export const flooredInstant = (epochMs) => new Date(Math.floor(epochMs / 1000) * 1000).toISOString();
 
-// Latest trigger instant: the last "@codex review" comment, ours or a person's. The status card quotes the phrase in
-// its help text, so it is never a trigger. Opening a pull request or marking it ready triggers nothing.
-export const latestTrigger = ({ issueComments }) => {
-  const requests = issueComments
-    .filter((c) => typeof c.body === 'string' && !isReviewSummaryCard(c.body) && c.body.toLowerCase().includes(REQUEST_COMMENT))
-    .map((c) => c.created_at);
-  return latest(...requests);
+// The latest trigger: the last "@codex review" comment, ours or a person's. The status card quotes the phrase in its
+// help text, so it is never a trigger. Opening a pull request or marking it ready triggers nothing.
+const latestTriggerComment = ({ issueComments }) => {
+  const requests = issueComments.filter(
+    (c) => typeof c.body === 'string' && !isReviewSummaryCard(c.body) && c.body.toLowerCase().includes(REQUEST_COMMENT),
+  );
+  const at = latest(...requests.map((c) => c.created_at));
+  return requests.find((c) => c.created_at === at) ?? null;
 };
 
+// The latest trigger's instant, and the head it recorded (null for a hand-typed trigger).
+export const latestTrigger = (input) => latestTriggerComment(input)?.created_at ?? null;
+export const latestTriggerHead = (input) => triggerHeadSha(latestTriggerComment(input)?.body);
+
+// The bot names the commit it reviewed in its answer: `**Reviewed commit:** \`cdc936e80c\``, a short SHA.
+export const REVIEWED_COMMIT_PATTERN = /Reviewed commit:\**\s*`([0-9a-f]{7,40})`/i;
+export const reviewedCommit = (body) => (typeof body === 'string' ? body.match(REVIEWED_COMMIT_PATTERN)?.[1] ?? null : null);
+
 // Latest bot signal at or after `since`: a review (with commit), a 👍, or a bot comment, which is how the bot answers on
-// a draft. The usage-limit notice is classified `quota_exhausted` here and the status card dropped, so no caller can
-// mistake either for feedback.
+// a draft; a comment's `commit_id` is the short SHA its "Reviewed commit" line names, or null. The usage-limit notice is
+// classified `quota_exhausted` here and the status card dropped, so no caller can mistake either for feedback.
 export const latestBotSignal = ({ reviews, reviewComments, reactions, issueComments = [], reviewer, since }) => {
   const after = (iso) => Number.isFinite(ms(iso)) && (!since || ms(iso) >= ms(since));
   const review = reviews
@@ -173,7 +182,7 @@ export const latestBotSignal = ({ reviews, reviewComments, reactions, issueComme
   }
   if (newest.kind === 'comment') {
     const kind = isQuotaNotice(comment.body) ? 'quota_exhausted' : 'comment';
-    return { kind, at: comment.created_at, review_id: null, commit_id: null, state: null, line_comments: 0, comment_id: comment.id ?? null };
+    return { kind, at: comment.created_at, review_id: null, commit_id: reviewedCommit(comment.body), state: null, line_comments: 0, comment_id: comment.id ?? null };
   }
   return { kind: 'thumbs_up', at: reaction.created_at, review_id: null, commit_id: null, state: null, line_comments: 0 };
 };
@@ -206,24 +215,33 @@ export const acknowledgement = ({ reactions, issueComments = [], reviewer, since
 export const acknowledgedAt = (input) => acknowledgement(input)?.at ?? null;
 
 // Whether an instant that names no commit still covers the head: false only when the head's committer date is known
-// and later. The committer date is a loose proxy for what the bot saw; callers that can bind to a SHA do.
+// and later. The committer date is a loose proxy for what the bot saw: a commit made before the bot answered but pushed
+// after it reads as covered. It decides only when no SHA does.
 const coversHead = (at, headCommittedAt) => !(Number.isFinite(ms(headCommittedAt)) && ms(at) < ms(headCommittedAt));
 
+// Two spellings of one commit: equal, or one a prefix of the other, at least 7 hex long (the bot writes 10).
+const sameCommit = (a, b) => a === b || (Math.min(a.length, b.length) >= 7 && (a.startsWith(b) || b.startsWith(a)));
+
+// Whether `at`, bound to `sha` when one is known, covers the head: the SHA decides, else the committer-date proxy.
+const coversHeadCommit = (sha, at, headSha, headCommittedAt) => (sha && headSha ? sameCommit(sha, headSha) : coversHead(at, headCommittedAt));
+
 // A signal is stale when it no longer covers the head: a review of another commit, or a 👍, comment, or quota notice
-// older than the head commit. A stale quota notice re-requests on purpose, so a later push recovers after a top-up.
-export const isStale = (signal, headSha, headCommittedAt = null) => {
+// for another commit. Those three are bound to the commit a comment's "Reviewed commit" line names, else to
+// `triggerHead`, the head the trigger they answer recorded; only with neither does the committer date decide.
+// A stale quota notice re-requests on purpose, so a later push recovers after a top-up.
+export const isStale = (signal, headSha, headCommittedAt = null, triggerHead = null) => {
   if (!signal) return false;
   if (signal.kind === 'review') return Boolean(signal.commit_id) && signal.commit_id !== headSha;
-  if (signal.kind === 'thumbs_up' || signal.kind === 'comment' || signal.kind === 'quota_exhausted') return !coversHead(signal.at, headCommittedAt);
+  if (signal.kind === 'thumbs_up' || signal.kind === 'comment' || signal.kind === 'quota_exhausted') {
+    return !coversHeadCommit(signal.commit_id ?? triggerHead, signal.at, headSha, headCommittedAt);
+  }
   return false;
 };
 
-// Whether an acknowledgement answers the current head: exactly its recorded SHA, else the committer-date proxy.
-export const acknowledgedForHead = (ack, headSha, headCommittedAt) => {
-  if (!ack) return false;
-  if (ack.headSha && headSha) return ack.headSha === headSha;
-  return coversHead(ack.at, headCommittedAt);
-};
+// Whether an acknowledgement answers the current head: the SHA its trigger recorded, else `triggerHead` (a 👀 on the
+// pull request or the status card names none, and answers the latest trigger), else the committer-date proxy.
+export const acknowledgedForHead = (ack, headSha, headCommittedAt, triggerHead = null) =>
+  Boolean(ack) && coversHeadCommit(ack.headSha ?? triggerHead, ack.at, headSha, headCommittedAt);
 
 // Stdout ceiling for every gh read. Node's synchronous default is 1 MB, and the head-commit read embeds every changed
 // file's patch: an ordinary large pull request passed it. maxBuffer caps; it does not preallocate.
@@ -274,6 +292,7 @@ export const awaitReview = async (opts, { gh = defaultGh, sleep = (s) => new Pro
   let s = snapshot(gh, repo, n);
   let head = s.pr.head?.sha ?? null;
   let since = latestTrigger(s);
+  let sinceHead = latestTriggerHead(s);
   let signal = null;
   let requested = false;
   let requestedForHead = null;
@@ -284,10 +303,10 @@ export const awaitReview = async (opts, { gh = defaultGh, sleep = (s) => new Pro
   const evaluate = () => {
     head = s.pr.head?.sha ?? null;
     signal = latestBotSignal({ ...s, reviewer: opts.reviewer, since });
-    stale = isStale(signal, head, s.headCommittedAt);
+    stale = isStale(signal, head, s.headCommittedAt, sinceHead);
     const ack = acknowledgement({ reactions: s.reactions, issueComments: s.issueComments, reviewer: opts.reviewer, since });
     // 👀 on a trigger for this head: the bot is mid-review, and a second request only costs another run.
-    if (opts.request && !signal && acknowledgedForHead(ack, head, s.headCommittedAt)) return null;
+    if (opts.request && !signal && acknowledgedForHead(ack, head, s.headCommittedAt, sinceHead)) return null;
     if (opts.request && (!signal || stale) && requestedForHead !== head) {
       // Accepted residual: a push while a request is in flight at limit - 1 posts one more, so a pull request can end
       // at limit + 1 reviews; the bot exposes no per-trigger completion to reserve against.
@@ -298,6 +317,7 @@ export const awaitReview = async (opts, { gh = defaultGh, sleep = (s) => new Pro
       requested = true;
       requestedForHead = head;
       since = postedTriggerInstant(posted) ?? beforePost;
+      sinceHead = head;
       signal = null;
       stale = false;
     }
@@ -318,7 +338,7 @@ export const awaitReview = async (opts, { gh = defaultGh, sleep = (s) => new Pro
       acknowledged_at: ack?.at ?? null,
       // A timeout after the bot acknowledged this head ran past a budget that cannot grow: one re-run without --request
       // is worth its wait. A timeout with nothing acknowledged, or acknowledged for another head, is not.
-      ...(status === 'timed_out' ? { retry_recommended: acknowledgedForHead(ack, head, s.headCommittedAt) && !(Boolean(signal) && !stale) } : {}),
+      ...(status === 'timed_out' ? { retry_recommended: acknowledgedForHead(ack, head, s.headCommittedAt, sinceHead) && !(Boolean(signal) && !stale) } : {}),
       // The review round, for `aidrian pr disposition --round`.
       codex_rounds: codexRounds(s.reviews, opts.reviewer),
       ...(status === 'round_limit' ? { max_rounds: maxRounds } : {}),

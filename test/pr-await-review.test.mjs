@@ -28,6 +28,8 @@ import {
   REQUEST_INSTRUCTIONS,
   codexRounds,
   recordedMaxRounds,
+  latestTriggerHead,
+  reviewedCommit,
 } from '../plugins/aidrian/lib/pr-await-review.mjs';
 
 const BOT = { login: DEFAULT_REVIEWER };
@@ -514,6 +516,72 @@ test('awaitReview --request: a 👍 newer than the head commit does NOT re-reque
   assert.equal(gh.posts.length, 0);
   assert.equal(r.status, 'already_present');
   assert.equal(r.stale, false);
+});
+
+test('latestTriggerHead: the head the latest trigger recorded; a later hand-typed trigger names none', () => {
+  const bound = { body: requestCommentBody('bbb'), created_at: T(5) };
+  assert.equal(latestTriggerHead({ issueComments: [bound] }), 'bbb');
+  assert.equal(latestTriggerHead({ issueComments: [bound, { body: REQUEST_COMMENT, created_at: T(6) }] }), null);
+  assert.equal(latestTriggerHead({ issueComments: [{ body: REQUEST_COMMENT, created_at: T(4) }, bound] }), 'bbb');
+  assert.equal(latestTriggerHead({ issueComments: [] }), null);
+});
+
+test('isStale: a 👍, comment, or quota notice is bound to the head its trigger recorded, not to the committer date', () => {
+  // ccc was committed at T(3), before the bot answered at T(6), and pushed after: the committer date alone called it
+  // covered, though the trigger the answer belongs to asked about bbb.
+  for (const kind of ['thumbs_up', 'comment', 'quota_exhausted']) {
+    const signal = { kind, at: T(6), commit_id: null };
+    assert.equal(isStale(signal, 'ccc', T(3), 'bbb'), true, `${kind}: answers bbb, so ccc is not covered`);
+    assert.equal(isStale(signal, 'ccc', T(9), 'ccc'), false, `${kind}: the trigger named this head, whatever the dates say`);
+    assert.equal(isStale(signal, 'ccc', T(3)), false, `${kind}: with no SHA, the committer date still decides`);
+    assert.equal(isStale(signal, 'ccc', T(9)), true, `${kind}: with no SHA, the committer date still decides`);
+    assert.equal(isStale(signal, null, T(3), 'bbb'), false, `${kind}: an unreadable head keeps the date proxy`);
+  }
+});
+
+test('latestBotSignal / isStale: a comment\'s "Reviewed commit" line names its commit, and outranks the trigger\'s', () => {
+  const head = 'cdc936e80c1f2a3b4c5d6e7f8091a2b3c4d5e6f7';
+  const old = '0123456789abcdef0123456789abcdef01234567';
+  const body = (sha) => `Codex Review: Didn't find any major issues. :rocket:\n\n**Reviewed commit:** \`${sha.slice(0, 10)}\`\n`;
+  const base = { reviews: [], reviewComments: [], reactions: [], reviewer: DEFAULT_REVIEWER, since: T(5) };
+  const current = latestBotSignal({ ...base, issueComments: [{ id: 7, user: BOT, created_at: T(6), body: body(head) }] });
+  assert.equal(current.commit_id, head.slice(0, 10));
+  assert.equal(isStale(current, head, T(9), old), false, 'the line names the head: covered, though the trigger named another');
+  const older = latestBotSignal({ ...base, issueComments: [{ id: 8, user: BOT, created_at: T(6), body: body(old) }] });
+  assert.equal(isStale(older, head, T(3), head), true, 'the line names an older commit: stale, though the trigger named this head');
+  assert.equal(reviewedCommit('### Summary …'), null);
+  assert.equal(reviewedCommit(undefined), null);
+});
+
+test('acknowledgedForHead: a 👀 that names no head is bound to the head the latest trigger recorded', () => {
+  assert.equal(acknowledgedForHead({ at: T(6), headSha: null }, 'ccc', T(3), 'bbb'), false);
+  assert.equal(acknowledgedForHead({ at: T(6), headSha: null }, 'ccc', T(9), 'ccc'), true);
+  assert.equal(acknowledgedForHead({ at: T(6), headSha: 'ccc' }, 'ccc', T(9), 'bbb'), true, 'the 👀\'s own trigger outranks the latest one');
+});
+
+test('awaitReview: a 👍 answering head A does not cover head B, committed before the 👍 but pushed after', async () => {
+  const triggerForA = { user: { login: 'someone' }, body: requestCommentBody('bbb'), created_at: T(5), reactions: { eyes: 1 } };
+  const frames = [{ issueComments: [triggerForA], reactions: [{ user: BOT, content: '+1', created_at: T(6) }] }];
+  const waited = await awaitReview(
+    { pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 60, intervalSec: 60 },
+    { gh: fakeGh(frames, { head: 'ccc', headCommittedAt: T(3) }), ...clock() },
+  );
+  assert.equal(waited.status, 'timed_out', 'the 👍 answers bbb, so the wait for ccc does not end on it');
+  assert.equal(waited.stale, true);
+
+  const gh = fakeGh(frames, { head: 'ccc', headCommittedAt: T(3) });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 60, intervalSec: 60 }, { gh, ...clock() });
+  assert.equal(gh.posts.length, 1, 'ccc was never reviewed, so it gets its own @codex review');
+  assert.equal(triggerHeadSha(gh.posts[0].fields.body), 'ccc');
+  assert.equal(r.status, 'timed_out');
+});
+
+test('awaitReview --request: a 👍 answering a trigger for the current head ends the wait, though the head is newer', async () => {
+  const trigger = { user: { login: 'someone' }, body: requestCommentBody('ccc'), created_at: T(5), reactions: { eyes: 1 } };
+  const gh = fakeGh([{ issueComments: [trigger], reactions: [{ user: BOT, content: '+1', created_at: T(6) }] }], { head: 'ccc', headCommittedAt: T(9) });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 60, intervalSec: 60 }, { gh, ...clock() });
+  assert.equal(r.status, 'already_present');
+  assert.equal(gh.posts.length, 0);
 });
 
 test('awaitReview: a push that lands mid-wait moves the target — a review of the old head is stale, not received', async () => {

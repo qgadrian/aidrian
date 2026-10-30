@@ -17,7 +17,8 @@ and `product_sensitive` docs when a comment touches what users see, money, or da
 - Work in the pull request's worktree, on its branch, never the default branch.
   `git status --porcelain` must be clean or hold only this pull request's work; ask before anything else.
 - `git fetch origin`. When `git status -sb` says the branch has diverged from its remote, it was rewritten upstream:
-  ask before anything else. Each fixing agent starts with `git pull --ff-only`, so a branch that is only behind catches up.
+  ask before anything else. Whoever makes a fix starts with `git pull --ff-only`; until then the checkout can be behind,
+  so triage and search read the fetched head `@{u}`, never the working tree: `git show @{u}:<path>`, `git grep <pattern> @{u}`.
 - On a pull request that is already ready for review (not a draft), stop after the triage in step 3:
   report the rows that apply as follow-ups for a new pull request, and change nothing on this branch.
 
@@ -61,8 +62,8 @@ One row per item:
 - **Source**: `inline`, `review-summary`, `comment`, or `check`. A person's comment weighs more than a bot's;
   validate every bot comment before acting on it.
 - **Verdict**: `applies`, `partly applies`, `does not apply`, `already handled`, or `needs evidence`.
-  An inline comment whose code changed since it was posted (`git log <commit_id>..HEAD -- <path>`) is a candidate
-  for `already handled`: read the current code before you decide.
+  An inline comment whose code changed since it was posted (`git log <commit_id>..@{u} -- <path>`) is a candidate
+  for `already handled`: read the code at `@{u}` before you decide.
 - **Action** comes from the disposition table, never from severity alone:
 
   ```bash

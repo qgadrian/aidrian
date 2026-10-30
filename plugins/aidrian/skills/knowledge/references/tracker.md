@@ -13,9 +13,10 @@ Never search a tracker to guess a key.
 | The key, `<key>` | `ABC-123`; from a URL, the key in it | the number, `123`; add `--repo owner/repo` for another repository |
 | In a commit or body line | `Refs ABC-123`, `Fixes ABC-123` | `Refs #123`, `Fixes #123` |
 | In a path, such as a plan | the key in lowercase, `abc-123` | the number, `123` |
-| Read | `get_issue` with relations, then `list_comments` | `gh issue view <n> --json number,title,body,state,stateReason,labels,assignees,milestone,comments,url,updatedAt` |
+| Read | `get_issue` with relations, then `list_comments` | `gh issue view <n> --json number,title,body,state,stateReason,labels,assignees,milestone,comments,url,updatedAt,parent,subIssues,blockedBy,closedByPullRequestsReferences` |
 | Closed | `statusType` `completed`, `canceled`, or `duplicate` | `state` `CLOSED` |
-| Blocked by | `relations.blockedBy` | the issues the body's dependencies section names |
+| Blocked by | `relations.blockedBy` | `blockedBy.nodes`, each with its `state`, and the issues the body's dependencies section names |
+| Linked pull requests | the pull request links in `get_issue`'s `attachments` | `closedByPullRequestsReferences`, which has no state: read each with `gh pr view <url>` |
 | Assigned to the current user | the assignee is `get_user` for `me` | `assignees` holds `gh api user --jq .login` |
 | Branch | the issue's `gitBranchName`, as it is | the branch format the knowledge names |
 | Move to In Progress | `save_issue` with the started status | the label or project status the knowledge names; none named: skip |
@@ -23,7 +24,7 @@ Never search a tracker to guess a key.
 | Comment | `save_comment` | `gh issue comment <n> --body-file <file>` |
 | Estimate | `save_issue` with `estimate` | the label or project field the knowledge names; none: the size line in the body |
 | Create | `save_issue`, by the `agent-issue-writer` skill's `references/linear.md` | `gh issue create --title <title> --body-file <file>`, plus `--label` and `--milestone` |
-| Parent and children | `parentId` on each child | the parent's body lists each child as `- [ ] #<n>`; each child's body names its parent |
+| Parent and children | `parentId` on each child | read: `parent` and `subIssues.nodes`, each with its `state`, and the body lines this cell writes; write: the parent's body lists each child as `- [ ] #<n>`; each child's body names its parent |
 | A group of issues | a Linear Project | the milestone or GitHub project the knowledge names |
 
 Write a body from a file, never inline: the shell then cannot mangle Markdown, quotes, or backticks.

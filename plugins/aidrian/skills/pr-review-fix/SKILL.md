@@ -41,7 +41,7 @@ The `pr-review` skill's `references/manifest.md` defines its fields and statuses
 - Check that the manifest's `head_sha` still covers the remote head `@{u}`. It does not when `git merge-base --is-ancestor <head_sha> @{u}` fails,
   or when `git log --format=%h <head_sha>..@{u}` lists a commit that no finding records in its `commit`: nobody reviewed that commit.
   Then stop and ask the user: run the `pr-review` skill again first (recommended), or go on with the old findings.
-- A finding left `in_progress` by a run that stopped: look for its commit with `git log --grep "Addresses <id> " <head_sha>..HEAD`.
+- A finding left `in_progress` by a run that stopped: look for its commit with `git log --grep "Addresses <id> " HEAD @{u} --not <head_sha>`.
   When one exists, record it as `fixed` with that commit. Otherwise ask the user whether to start it again.
   Never revert or clean up a stopped run's work on your own.
 

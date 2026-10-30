@@ -29,13 +29,15 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | Field | Meaning |
 | --- | --- |
 | `ts`, `session_id`, `agent_id`, `agent_type` | Which subagent. `agent_id` joins it to its `dispatch` row. |
-| `tokens` | `input`, `output`, `cache_read`, and `cache_write` over the requests the subagent made, counted once per API request. `cache_write` is `cache_write_5m` plus `cache_write_1h`, the cache writes kept 5 minutes and 1 hour, which cost 1.25x and 2x the input price. |
+| `tokens` | `input`, `output`, `cache_read`, and `cache_write` over the subagent's API requests, each request counted once. |
 | `models`, `cost_usd` | The models it used, and the cost estimated from list prices (`lib/transcript.mjs`). |
 | `requests`, `tool_requests`, `tool_calls` | Its API requests, the requests that made a tool call, and its tool calls, as on a `session` row's sides. |
 | `docs_read` | The knowledge docs it opened with the Read tool, as `{ "path", "bytes" }`: the path the index gives, and the doc's size. `null` while `telemetry.docReads` is off. |
 | `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not, `chat` when it presents none. |
 | `paths` | Those paths, at most 20. |
 | `sent_back` | `true` when the hook sent the subagent back at this stop, `false` when it let it end. A row written before the field has none. |
+
+`cache_write` is `cache_write_5m` plus `cache_write_1h`: the cache writes kept 5 minutes and 1 hour, which cost 1.25x and 2x the input price.
 
 A forked subagent's transcript starts with a copy of its parent's requests, and those stay the parent's:
 their tokens and Read calls count on the main conversation's `session` row, or on the `stop` row of the subagent
@@ -52,12 +54,13 @@ A stop that ends with `delivered: missing`, such as that second one, has `sent_b
 | --- | --- |
 | `ts`, `session_id`, `agent`, `reason` | Which session, its `--agent` if any, and why it ended. |
 | `duration_min` | From the first to the last transcript entry. |
-| `effort`, `effort_varied` | The effort level Claude Code stamped on the main conversation's last request, `null` when none; `effort_varied` is `true` when its requests ran at more than one level. |
+| `effort`, `effort_varied` | The effort of the main conversation's last request, or `null`; `effort_varied` is `true` when its requests used several. |
 | `models`, `tokens_by_model`, `cost_usd`, `cost_by_model` | Tokens and estimated cost of the whole session, main conversation and subagents together, per model and in total. |
-| `main`, `subagents` | The same split two ways: `tokens`, `cost_usd`, `requests` (API requests), `tool_requests` (those that made a tool call), and `tool_calls`. A request found in both transcripts counts as the main conversation's. |
+| `main`, `subagents` | Each side's `tokens`, `cost_usd`, `requests`, `tool_requests` (requests that made a tool call), and `tool_calls`. |
 | `subagent_count` | How many subagent transcripts the session has. |
 | `docs_read` | The knowledge docs the main conversation opened, as on a `stop` row. Each subagent's reads are on its own `stop` row. |
 
+A request found in both the main and a subagent transcript counts as the main conversation's.
 A session whose transcript holds no API usage writes no row.
 A resumed session that ends again writes another row over its whole transcript; the report counts the last one.
 
@@ -72,7 +75,13 @@ per block, while config.json `telemetry.hookDenies` is on. The call is still blo
 | `rule` | The rule's name: `git-hook-bypass`, `git-amend`, `process-kill`, `grep-exit-chain`, `pr-body`, `main-checkout`, `agent-gates`, or `config-guard`. |
 | `tool` | The tool it blocked, such as `Bash`, `Edit`, or a tool an agent gate names. |
 | `agent_type` | The agent that made the call, named as a `dispatch` row names its dispatcher: `main` for the main session. |
-| `reason` | What the rule matched, at most 120 characters: the first sentence of its message, such as `this skips a git hook.`, or for a gate the gate itself, such as `agents.explorer.deny has "WebFetch"`. A parenthesized absolute path, such as the main checkout's folder, is left out. |
+| `reason` | What the rule matched, at most 120 characters, as the list below says. |
+
+The `reason` is:
+
+- for a gate, the gate itself, such as `agents.explorer.deny has "WebFetch"`;
+- for any other rule, the first sentence of its message, such as `this skips a git hook.`;
+- never a parenthesized absolute path, such as the main checkout's folder, which is left out.
 
 The row never holds the command. Its `reason` can name the file a write rule matched, as the message the agent reads does.
 
@@ -180,7 +189,7 @@ Partial: the log starts at 2026-10-27T09:12:44.000Z; older rows were rotated out
 | Doc reads are off | `doc_reads: false` | The same for `telemetry.docReads`. |
 | Hook denies are off | `hook_denies: false` | The same for `telemetry.hookDenies`; only the default and health views say it. |
 | Partial: rows written with doc reads off | `rows_without_doc_reads` | Agent and session rows in the window that hold `docs_read: null`. |
-| Partial: runs named a missing file before stop rows recorded send-backs | `runs_without_send_back` | Agent runs in the window with a `stop` row whose `delivered` is `missing` and that has no `sent_back`; only the default and health views say it. |
+| Partial: runs named a missing file before stop rows recorded send-backs | `runs_without_send_back` | Runs whose `stop` row has `delivered: missing` and no `sent_back`; default and health views only. |
 | Partial: the log starts at | `rotated_out_before` | Rotation dropped rows, and the window starts before the oldest row left. |
 
 The default view also says `Partial: N agent runs were logged before tool counts` when some `stop` rows have no tool counts:

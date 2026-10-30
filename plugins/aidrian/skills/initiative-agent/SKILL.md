@@ -78,7 +78,7 @@ Rules:
 - Create a parent issue whenever multiple execution issues belong to one initiative.
 - Use the parent issue as the canonical home for the issue tree and `PR & Merge Plan`.
 - Use the tracker's parent link for issue hierarchy, and its dependency links for blockers, as `references/tracker.md` maps them.
-- Treat merge into the default branch, config.json `defaultBranch`, as production deployment unless the project's knowledge says otherwise
+- Treat merge into the default branch, config.json `git.defaultBranch`, as production deployment unless the project's knowledge says otherwise
   or the plan explicitly targets a different integration branch or base PR first.
 
 ## Size Rules

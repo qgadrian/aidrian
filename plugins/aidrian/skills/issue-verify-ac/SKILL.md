@@ -66,7 +66,7 @@ Each criterion gets exactly one.
    - The issue links a pull request: `gh pr view <url> --json state,isDraft,headRefOid`.
      The first open, non-draft one makes the ref `pr`, at its `headRefOid`. Fetch it: `git fetch origin pull/<n>/head`.
    - The current branch is the issue's, with uncommitted source changes: ask whether to verify `worktree` or `head`.
-   - Else `head`: `git fetch origin <default>`, then `git rev-parse origin/<default>`, where `<default>` is config.json `defaultBranch`.
+   - Else `head`: `git fetch origin <default>`, then `git rev-parse origin/<default>`, where `<default>` is config.json `git.defaultBranch`.
 3. **Verify.** Read `steps/verify.md` and run it.
 4. **Delta**, per criterion:
    - unticked and `met`: tick it.

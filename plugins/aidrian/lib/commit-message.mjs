@@ -1,5 +1,5 @@
 // `aidrian commit-msg`: checks a commit subject against Conventional Commits, with the types from config.json
-// `commits.types`. A project calls it from its commit-msg git hook with the message file git passes.
+// `git.commits.types`. A project calls it from its commit-msg git hook with the message file git passes.
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -18,7 +18,7 @@ export const commands = {
         console.error('give one of --file PATH or --message TEXT');
         return 1;
       }
-      const { types } = commandConfig(projectAt(path.resolve(values.project ?? '.'))).commits;
+      const { types } = commandConfig(projectAt(path.resolve(values.project ?? '.'))).git.commits;
       const problem = subjectProblem(commitSubject(values.message ?? readFileSync(values.file, 'utf8')), types);
       if (problem) console.error(problem);
       return problem ? 1 : 0;

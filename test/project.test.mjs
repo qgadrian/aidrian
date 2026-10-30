@@ -309,7 +309,7 @@ test('state.dir and worktrees.dir move the folders: ~ is home, and a relative pa
   const { dir, git } = repo(t);
   git('worktree', 'add', '-q', '-b', 'task', path.join(dir, 'wt/task'));
   const inWorktree = findProject(path.join(dir, 'wt/task'));
-  const config = (state, worktrees = '.worktrees') => ({ ...DEFAULTS, state: { dir: state }, worktrees: { dir: worktrees, bootstrap: null } });
+  const config = (state, worktrees = '.worktrees') => ({ ...DEFAULTS, state: { dir: state }, git: { ...DEFAULTS.git, worktrees: { dir: worktrees, bootstrap: null } } });
   assert.equal(stateDir(inWorktree, { config: config('.state') }), path.join(dir, '.state'));
   assert.equal(worktreesDir(inWorktree, { config: config('.state') }), path.join(dir, '.worktrees'));
   assert.equal(worktreesDir(inWorktree, { config: config(null, '../trees') }), path.join(path.dirname(dir), 'trees'));

@@ -16,7 +16,7 @@ const ENV = {};
 
 // A repository whose project folder turns the guard on, with a tracked src/app.js, an ignored build/, a worktree inside
 // it (wt/task, ignored), one beside it, and one inside it that git does not ignore (open/task).
-function fixture(t, config = { version: 1, mainCheckout: { guard: true } }) {
+function fixture(t, config = { version: 1, git: { mainCheckout: { guard: true } } }) {
   const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-guard-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   const repo = path.join(base, 'repo');
@@ -42,7 +42,7 @@ test('a tracked or new file in the main checkout is denied, with the worktree co
   const reason = edit(path.join(repo, 'src/app.js'), repo);
   assert.match(reason, /^Blocked: this writes 'src\/app\.js', a tracked file in the main checkout \(/);
   assert.match(reason, /`aidrian worktree new <branch>` creates one in \S+\/repo\/\.worktrees /);
-  assert.match(reason, /"mainCheckout": \{ "guard": true \} in \S+\/\.aidrian\/config\.json/);
+  assert.match(reason, /"git": \{ "mainCheckout": \{ "guard": true \} \} in \S+\/\.aidrian\/config\.json/);
   assert.match(reason, /AIDRIAN_ALLOW_MAIN_WRITE=1/);
   assert.match(edit('src/new/file.js', repo, 'Write'), /'src\/new\/file\.js'/, 'a relative path resolves against cwd');
   assert.match(checkTool({ tool_name: 'NotebookEdit', tool_input: { notebook_path: path.join(repo, 'n.ipynb') }, cwd: repo }, { env: ENV }), /'n\.ipynb'/);
@@ -64,7 +64,7 @@ test('in a repository whose git folder is separate, the main checkout is still g
   const repo = path.join(base, 'repo');
   execFileSync('git', ['init', '-q', '-b', 'main', '--separate-git-dir', path.join(base, 'meta.git'), repo]);
   mkdirSync(path.join(repo, '.aidrian'));
-  writeFileSync(path.join(repo, '.aidrian/config.json'), JSON.stringify({ version: 1, mainCheckout: { guard: true } }));
+  writeFileSync(path.join(repo, '.aidrian/config.json'), JSON.stringify({ version: 1, git: { mainCheckout: { guard: true } } }));
   writeFileSync(path.join(repo, 'app.js'), 'export {};\n');
   execFileSync('git', ['-C', repo, 'add', '.']);
   const identity = ['-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false'];
@@ -74,13 +74,13 @@ test('in a repository whose git folder is separate, the main checkout is still g
 });
 
 test('allowWrites globs, the guard off by default or by config, the override, and no project folder allow the write', (t) => {
-  const globs = fixture(t, { version: 1, mainCheckout: { guard: true, allowWrites: ['notes/**', 'docs/*.md', '**/*.snap'] } }).repo;
+  const globs = fixture(t, { version: 1, git: { mainCheckout: { guard: true, allowWrites: ['notes/**', 'docs/*.md', '**/*.snap'] } } }).repo;
   assert.equal(edit(path.join(globs, 'notes/a/b.md'), globs), null);
   assert.equal(edit(path.join(globs, 'docs/x.md'), globs), null);
   assert.equal(edit(path.join(globs, 'src/__snapshots__/a.snap'), globs), null);
   assert.match(edit(path.join(globs, 'docs/sub/x.md'), globs), /'docs\/sub\/x\.md'/, '* stays in one segment');
 
-  for (const config of [{ version: 1 }, { version: 1, mainCheckout: { guard: false } }]) {
+  for (const config of [{ version: 1 }, { version: 1, git: { mainCheckout: { guard: false } } }]) {
     const off = fixture(t, config).repo;
     assert.equal(edit(path.join(off, 'src/app.js'), off), null, JSON.stringify(config));
   }

@@ -17,15 +17,17 @@ In a group such as `github`, set only the keys you change; the others keep their
 ```json
 {
   "version": 1,
-  "defaultBranch": "main",
-  "state": { "dir": null },
-  "worktrees": {
-    "dir": ".worktrees",
-    "bootstrap": null,
-    "disposable": ["node_modules", "dist", "build", ".next", ".cache", "coverage", ".turbo"]
+  "git": {
+    "defaultBranch": "main",
+    "worktrees": {
+      "dir": ".worktrees",
+      "bootstrap": null,
+      "disposable": ["node_modules", "dist", "build", ".next", ".cache", "coverage", ".turbo"]
+    },
+    "mainCheckout": { "guard": false, "allowWrites": [] },
+    "commits": { "types": ["build", "chore", "ci", "docs", "feat", "fix", "perf", "refactor", "revert", "style", "test"] }
   },
-  "mainCheckout": { "guard": false, "allowWrites": [] },
-  "commits": { "types": ["build", "chore", "ci", "docs", "feat", "fix", "perf", "refactor", "revert", "style", "test"] },
+  "state": { "dir": null },
   "github": {
     "requiredSections": ["Summary", "Tests run"],
     "reviewer": "chatgpt-codex-connector[bot]",
@@ -64,14 +66,14 @@ In a group such as `github`, set only the keys you change; the others keep their
 | Key | Meaning |
 | --- | --- |
 | `version` | The format of the project folder. [project-folder.md](project-folder.md#versioning) gives the rule. |
-| `defaultBranch` | The branch that work merges into. |
+| `git.defaultBranch` | The branch that work merges into. |
+| `git.worktrees.dir` | The folder for [task worktrees](project-folder.md#task-worktrees), `.worktrees` at the repository root by default. |
+| `git.worktrees.bootstrap` | One shell command to run inside each new worktree, such as `npm ci`; `null` runs nothing. |
+| `git.worktrees.disposable` | Folder names, at any depth, whose git-ignored files a cleanup removes without asking. `[]` asks for any ignored file. |
+| `git.mainCheckout.guard` | `true` blocks agent edits to tracked files in the main checkout, so task work happens in worktrees. Off by default. |
+| `git.mainCheckout.allowWrites` | Tracked paths agents may still edit in the main checkout, as globs with `*` and `**`. Ignored paths are always allowed. |
+| `git.commits.types` | The Conventional Commits types a commit subject may use. |
 | `state.dir` | The machine-local [state folder](project-folder.md#local-state); `null` is the one under `$XDG_STATE_HOME`. |
-| `worktrees.dir` | The folder for [task worktrees](project-folder.md#task-worktrees), `.worktrees` at the repository root by default. |
-| `worktrees.bootstrap` | One shell command to run inside each new worktree, such as `npm ci`; `null` runs nothing. |
-| `worktrees.disposable` | Folder names, at any depth, whose git-ignored files a cleanup removes without asking. `[]` asks for any ignored file. |
-| `mainCheckout.guard` | `true` blocks agent edits to tracked files in the main checkout, so task work happens in worktrees. Off by default. |
-| `mainCheckout.allowWrites` | Tracked paths agents may still edit in the main checkout, as globs with `*` and `**`. Ignored paths are always allowed. |
-| `commits.types` | The Conventional Commits types a commit subject may use. |
 | `github.requiredSections` | The `## ` sections every pull request body must have ([Bash rules](hooks.md#bash-rules)); `[]` checks none. |
 | `github.reviewer` | The login of the Codex review bot that `aidrian pr await-review` waits for. `null` or `"none"`: no bot ([below](#no-review-bot)). |
 | `github.maxReviewRounds` | The review rounds a pull request may get, 3 by default: the review loop and `aidrian pr await-review --request` stop there. |
@@ -100,7 +102,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `telemetry.health` | The thresholds of `aidrian report health`: [Health thresholds](#health-thresholds). |
 | `agents` | The tools each agent may use in this project; `{}` gates none: [Agents](#agents). |
 
-A path in `state.dir` or `worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
+A path in `state.dir` or `git.worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
 
 Once `github.conditionalChecks` has an entry, `aidrian pr checks` fails on any other skip; `[]` lets every skip pass, named in the output.

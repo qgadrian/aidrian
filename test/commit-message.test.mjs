@@ -9,7 +9,7 @@ import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import { commitSubject, subjectProblem } from '../plugins/aidrian/lib/commit-message.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
-const TYPES = DEFAULTS.commits.types;
+const TYPES = DEFAULTS.git.commits.types;
 
 test('the subject is the first line that is neither blank nor a git comment', () => {
   assert.equal(commitSubject('\n\n# Please enter the message.\nfeat(api): add export\n\n# On branch main\n'), 'feat(api): add export');
@@ -44,7 +44,7 @@ test('aidrian commit-msg reads the types from config.json and the message from a
   const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-commit-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(path.join(dir, '.aidrian'));
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, commits: { types: ['feat', 'wip'] } }));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, git: { commits: { types: ['feat', 'wip'] } } }));
   writeFileSync(path.join(dir, 'MSG'), '# comment\nwip: half done\n');
   const run = (args) => spawnSync(CLI, ['commit-msg', ...args], { cwd: dir, encoding: 'utf8' });
 

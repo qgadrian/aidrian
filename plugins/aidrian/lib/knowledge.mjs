@@ -225,21 +225,26 @@ export function checkBudgets(root, buckets, { alwaysBytes, taggedDocBytes }) {
   return { problems, warnings, summary, always: { bytes: total, budget: alwaysBytes, buckets: Object.fromEntries(perBucket) } };
 }
 
-// The docs that match `words`, best first. Each word scores 2 when it is part of a tag, 1 when it is part of the path,
-// and 1 when it is part of the summary; ties keep bucket order.
+// The docs that match `words`, best first. A doc that matches more of the distinct words ranks first, wherever each one
+// matches, so a doc whose summary names every word beats one that names a single word in both path and summary. Among
+// docs that match as many words, each word scores 2 when it is part of a tag, 1 when it is part of the path, and 1 when
+// it is part of the summary; ties keep bucket order. Each hit carries `score` and `matched`, its count of distinct words.
 export function searchKnowledge(buckets, words, limit = 8) {
   const terms = words.flatMap((word) => word.toLowerCase().split(/\s+/)).filter(Boolean);
   const hits = [];
   for (const doc of indexRows(buckets)) {
     let score = 0;
+    const found = new Set();
     for (const term of terms) {
-      if (doc.tags.some((tag) => tag.includes(term))) score += 2;
-      if (doc.path.toLowerCase().includes(term)) score += 1;
-      if (doc.summary.toLowerCase().includes(term)) score += 1;
+      const tag = doc.tags.some((each) => each.includes(term));
+      const inPath = doc.path.toLowerCase().includes(term);
+      const inSummary = doc.summary.toLowerCase().includes(term);
+      score += (tag ? 2 : 0) + (inPath ? 1 : 0) + (inSummary ? 1 : 0);
+      if (tag || inPath || inSummary) found.add(term);
     }
-    if (score > 0) hits.push({ ...doc, score });
+    if (score > 0) hits.push({ ...doc, score, matched: found.size });
   }
-  return hits.sort((a, b) => b.score - a.score).slice(0, limit);
+  return hits.sort((a, b) => b.matched - a.matched || b.score - a.score).slice(0, limit);
 }
 
 // Drafts a knowledge index for `folder`, a folder of docs: every .md file, a summary drafted from its first heading and

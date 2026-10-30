@@ -23,7 +23,7 @@ Below, `<team>` is the team name or id from that knowledge, and `<KEY>` its issu
 
 ## Merge And Deployment Semantics
 
-- Treat merge into the default branch, config.json `defaultBranch`, as production deployment unless the project's knowledge says otherwise.
+- Treat merge into the default branch, config.json `git.defaultBranch`, as production deployment unless the project's knowledge says otherwise.
 - For issues that target the default branch, record merge order instead of inventing a separate deploy order.
 - If a PR targets a base PR or another branch first, preserve that target in the issue body
   so intermediate merges are not mistaken for production release.

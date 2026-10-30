@@ -14,13 +14,18 @@ export const VERSION = 1;
 // The `github.reviewer` that turns the review bot off, as null does.
 export const NO_REVIEWER = 'none';
 
-// The type of every key. A nested object is one group of keys; a project sets any subset of a group.
-const SCHEMA = {
+// The keys of the `git` group: the repository's branches, worktrees, checkout, and commits.
+const GIT_SCHEMA = {
   defaultBranch: 'text',
-  state: { dir: 'textOrNull' },
   worktrees: { dir: 'text', bootstrap: 'textOrNull', disposable: 'folderNames' },
   mainCheckout: { guard: 'boolean', allowWrites: 'texts' },
   commits: { types: 'texts' },
+};
+
+// The type of every key. A nested object is one group of keys; a project sets any subset of a group.
+const SCHEMA = {
+  git: GIT_SCHEMA,
+  state: { dir: 'textOrNull' },
   github: { requiredSections: 'texts', reviewer: 'textOrNull', maxReviewRounds: 'positive', requiredChecks: 'texts', ignoreCancelledChecks: 'texts', conditionalChecks: 'texts' },
   docs: { wrapLimit: 'zeroOrMore' },
   knowledge: { budgets: { alwaysBytes: 'positive', taggedDocBytes: 'positive' } },
@@ -84,16 +89,18 @@ const TYPES = {
 
 // `state.dir: null` is the per-project folder under `$XDG_STATE_HOME` (lib/project.mjs). Task worktrees sit beside the
 // repository's files, where editors and agents expect them; the guard is off until a project opts in.
-// `worktrees.disposable` names the folders of installed packages, build output, and caches, which a worktree cleanup
+// `git.worktrees.disposable` names the folders of installed packages, build output, and caches, which a worktree cleanup
 // may delete without asking (lib/worktree.mjs).
 // `names.ai: null` is the host's own name, which only the running hook knows. `github.reviewer: null`, or "none", which
 // loadConfig reads as null, runs no review bot: `aidrian pr await-review` then waits for nothing.
 export const DEFAULTS = deepFreeze({
-  defaultBranch: 'main',
+  git: {
+    defaultBranch: 'main',
+    worktrees: { dir: '.worktrees', bootstrap: null, disposable: ['node_modules', 'dist', 'build', '.next', '.cache', 'coverage', '.turbo'] },
+    mainCheckout: { guard: false, allowWrites: [] },
+    commits: { types: ['build', 'chore', 'ci', 'docs', 'feat', 'fix', 'perf', 'refactor', 'revert', 'style', 'test'] },
+  },
   state: { dir: null },
-  worktrees: { dir: '.worktrees', bootstrap: null, disposable: ['node_modules', 'dist', 'build', '.next', '.cache', 'coverage', '.turbo'] },
-  mainCheckout: { guard: false, allowWrites: [] },
-  commits: { types: ['build', 'chore', 'ci', 'docs', 'feat', 'fix', 'perf', 'refactor', 'revert', 'style', 'test'] },
   github: {
     requiredSections: ['Summary', 'Tests run'],
     reviewer: 'chatgpt-codex-connector[bot]',

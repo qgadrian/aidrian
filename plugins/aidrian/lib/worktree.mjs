@@ -1,7 +1,7 @@
 // `aidrian worktree new|cleanup`: the task worktree lifecycle, for the worktree-new and worktree-cleanup skills.
-// `new` creates a worktree for a branch in the project's worktrees folder and runs config.json `worktrees.bootstrap`
+// `new` creates a worktree for a branch in the project's worktrees folder and runs config.json `git.worktrees.bootstrap`
 // there. `cleanup` sorts the other worktrees into auto (a merged pull request's exact head, clean with no ignored files
-// outside the `worktrees.disposable` folders, old enough), confirm (everything else, with the reasons), and skip, and
+// outside the `git.worktrees.disposable` folders, old enough), confirm (everything else, with the reasons), and skip, and
 // removes auto rows plus the ones a person confirmed. Its plan only reads: it writes nothing to the repository.
 // Both print one JSON object; a problem is {"status":"blocked","phase","reason","next_step"} with exit 1.
 
@@ -86,8 +86,8 @@ function context(cwd) {
   const project = projectAt(cwd);
   const config = projectConfig(project);
   const hasOrigin = git(roots.main, ['remote', 'get-url', 'origin']).status === 0;
-  const remoteDefault = `origin/${config.defaultBranch}`;
-  const base = hasOrigin && git(roots.main, ['rev-parse', '--verify', '--quiet', `refs/remotes/${remoteDefault}`]).status === 0 ? remoteDefault : config.defaultBranch;
+  const remoteDefault = `origin/${config.git.defaultBranch}`;
+  const base = hasOrigin && git(roots.main, ['rev-parse', '--verify', '--quiet', `refs/remotes/${remoteDefault}`]).status === 0 ? remoteDefault : config.git.defaultBranch;
   return { ...roots, project, config, hasOrigin, base };
 }
 
@@ -120,7 +120,7 @@ export function createWorktree({ branch, slug, base, fetch = false, plan = false
   const folder = worktreesDir(ctx.project, { config: ctx.config });
   const rel = path.relative(ctx.main, folder);
   if (!rel.startsWith('..') && !path.isAbsolute(rel) && isIgnored(ctx.main, `${folder}/`) === false) {
-    throw blocked('preconditions', `${folder} is inside the repository but not git-ignored`, `Add "${rel.split(path.sep).join('/')}/" to .gitignore (aidrian init does), or set worktrees.dir.`);
+    throw blocked('preconditions', `${folder} is inside the repository but not git-ignored`, `Add "${rel.split(path.sep).join('/')}/" to .gitignore (aidrian init does), or set git.worktrees.dir.`);
   }
   const dir = path.join(folder, name);
   if (existsSync(dir)) throw blocked('validate-path', `the worktree folder already exists: ${dir}`, 'Use it, or pass another --slug.');
@@ -145,7 +145,7 @@ export function createWorktree({ branch, slug, base, fetch = false, plan = false
     }
   }
 
-  const report = { worktree_path: dir, branch, branch_mode: mode, base: baseRef, base_sha: resolved.stdout.trim(), bootstrap: ctx.config.worktrees.bootstrap };
+  const report = { worktree_path: dir, branch, branch_mode: mode, base: baseRef, base_sha: resolved.stdout.trim(), bootstrap: ctx.config.git.worktrees.bootstrap };
   if (plan) return { status: 'planned', ...report };
   if (mode !== 'new' && !reuseExisting) {
     throw blocked('confirm-reuse', `the branch already exists (${mode}): ${branch}`, 'Run again with --reuse-existing once the reuse is approved.');
@@ -156,11 +156,11 @@ export function createWorktree({ branch, slug, base, fetch = false, plan = false
   }
   const added = git(ctx.main, addArgs);
   if (added.status !== 0) throw blocked('create', failure(added), 'Fix the git error and run again; nothing was removed.');
-  if (ctx.config.worktrees.bootstrap) {
-    const setup = run('sh', ['-c', ctx.config.worktrees.bootstrap], { cwd: dir });
+  if (ctx.config.git.worktrees.bootstrap) {
+    const setup = run('sh', ['-c', ctx.config.git.worktrees.bootstrap], { cwd: dir });
     if (setup.status !== 0) {
       const tail = `${setup.stdout}${setup.stderr}`.trim().split('\n').slice(-OUTPUT_TAIL_LINES).join('\n');
-      throw blocked('bootstrap', `the worktree ${dir} was created, but its bootstrap failed:\n${tail}`, `cd ${JSON.stringify(dir)} && ${ctx.config.worktrees.bootstrap}`);
+      throw blocked('bootstrap', `the worktree ${dir} was created, but its bootstrap failed:\n${tail}`, `cd ${JSON.stringify(dir)} && ${ctx.config.git.worktrees.bootstrap}`);
     }
   }
   return { status: 'created', ...report };
@@ -206,7 +206,7 @@ export function mergedHeads(main) {
 }
 
 // Sorts every worktree. Auto needs proof that nothing is lost: HEAD is exactly a merged pull request's head, the tree is
-// clean and holds no git-ignored file, such as a `.env`, outside the folders config.json `worktrees.disposable` names,
+// clean and holds no git-ignored file, such as a `.env`, outside the folders config.json `git.worktrees.disposable` names,
 // such as `node_modules/`, and the worktree is old enough. A merge seen only by git (HEAD already on the base, or the
 // same change squashed into it) is also true of a branch created a minute ago with no commits, so it only frames the
 // confirm question.
@@ -214,7 +214,7 @@ export function planCleanup({ minAgeSec = DAY_SEC } = {}, { cwd = process.cwd(),
   const ctx = context(cwd);
   const merged = heads(ctx.main);
   const out = {
-    status: 'planned', base: ctx.base, gh_available: merged !== null, min_age_sec: minAgeSec, disposable: ctx.config.worktrees.disposable,
+    status: 'planned', base: ctx.base, gh_available: merged !== null, min_age_sec: minAgeSec, disposable: ctx.config.git.worktrees.disposable,
     auto: [], confirm: [], skip: [],
   };
   for (const worktree of listWorktrees(ctx.main)) {
@@ -234,7 +234,7 @@ function classify(worktree, ctx, merged, minAgeSec, now) {
   const age = ageSec(dir, now);
   if (age !== null && age < minAgeSec) return skip(`too new: ${Math.floor(age / 3600)}h old, under --min-age`);
 
-  const { changes, ignored, disposable } = treeState(dir, ctx.config.worktrees.disposable);
+  const { changes, ignored, disposable } = treeState(dir, ctx.config.git.worktrees.disposable);
   const oids = (branch && merged?.get(branch)) ?? [];
   const exact = oids.includes(head);
   const reasons = [];
@@ -265,7 +265,7 @@ function classify(worktree, ctx, merged, minAgeSec, now) {
 
 // A worktree's files as git status sees them: { changes, ignored, disposable }. `changes` counts tracked and untracked
 // changes, null when git status fails. The git-ignored files and folders, which `git worktree remove` deletes too, split
-// in two: `disposable` lists those inside a folder named in `folders` (config.json `worktrees.disposable`), at any
+// in two: `disposable` lists those inside a folder named in `folders` (config.json `git.worktrees.disposable`), at any
 // depth, as `packages/a/node_modules/` is; `ignored` lists the rest. `--ignored=matching` lists what an ignore pattern
 // matches, so a folder that holds only ignored files is not listed whole, as `packages/` would be.
 function treeState(dir, folders) {

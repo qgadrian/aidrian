@@ -100,11 +100,32 @@ test('a nested project ignores a state folder outside it in the repository root 
   assert.equal(run(['check'], path.join(dir, 'app')).status, 0);
 });
 
+test('init in a linked worktree writes only inside that worktree, never the main checkout .gitignore', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-check-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const main = path.join(dir, 'main');
+  const git = (...args) => execFileSync('git', ['-C', main, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args]);
+  execFileSync('git', ['init', '-q', '-b', 'main', main]);
+  writeFileSync(path.join(main, '.gitignore'), 'node_modules/\n');
+  git('add', '.gitignore');
+  git('commit', '-q', '-m', 'init');
+  const tree = path.join(dir, 'tree');
+  git('worktree', 'add', '-q', '-b', 'task', tree);
+  const init = run(['init'], tree);
+  assert.equal(init.status, 0, init.stderr);
+  assert.equal(readFileSync(path.join(main, '.gitignore'), 'utf8'), 'node_modules/\n', 'the main checkout .gitignore is untouched');
+  assert.equal(existsSync(path.join(main, '.aidrian')), false, 'no project folder in the main checkout');
+  assert.ok(existsSync(path.join(tree, '.aidrian/config.json')));
+  assert.equal(readFileSync(path.join(tree, '.gitignore'), 'utf8'), 'node_modules/\n.aidrian.local.json\n');
+  assert.doesNotMatch(init.stdout, /\.\.\/main|\.worktrees/);
+  assert.equal(run(['check'], tree).status, 0);
+});
+
 test('check follows worktrees.dir: a folder inside the project needs a line, one outside the repository needs none', (t) => {
   const dir = exampleRepo(t);
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, worktrees: { dir: 'trees' } }));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, git: { worktrees: { dir: 'trees' } } }));
   assert.equal(run(['check'], dir).stderr, 'trees/ is not git-ignored: add the line "trees/" to .gitignore, or run aidrian init\n');
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, worktrees: { dir: '../trees' } }));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, git: { worktrees: { dir: '../trees' } } }));
   assert.equal(run(['check'], dir).status, 0);
 });
 
@@ -249,11 +270,11 @@ test('init adds the missing lines to an existing project and keeps its config', 
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   execFileSync('git', ['init', '-q', dir]);
   mkdirSync(path.join(dir, '.aidrian'));
-  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1, "defaultBranch": "trunk"}');
+  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1, "git": {"defaultBranch": "trunk"}}');
   const { status, stdout } = run(['init'], dir);
   assert.equal(status, 0);
   assert.equal(stdout.split('\n')[0], 'added to .gitignore: .aidrian.local.json, .worktrees/');
-  assert.equal(readFileSync(path.join(dir, '.aidrian/config.json'), 'utf8'), '{"version": 1, "defaultBranch": "trunk"}');
+  assert.equal(readFileSync(path.join(dir, '.aidrian/config.json'), 'utf8'), '{"version": 1, "git": {"defaultBranch": "trunk"}}');
 });
 
 // The tree in docs/project-folder.md is the folder contract: every committed entry exists in the example consumer, every

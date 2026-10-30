@@ -53,7 +53,7 @@ test('in a worktree made before the project folder was committed, both commands 
   const tree = path.join(dir, '.worktrees/old');
   git('worktree', 'add', '-q', '-b', 'old', tree);
   mkdirSync(path.join(dir, '.aidrian'));
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, defaultBranch: 'trunk' }));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, git: { defaultBranch: 'trunk' } }));
   mkdirSync(path.join(tree, 'src'));
 
   const expected = (from) => `no project folder at or above ${from}: this worktree was created before .aidrian/ was committed and pushed; recreate it or merge trunk\n`;

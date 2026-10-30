@@ -68,7 +68,7 @@ test('a plan names the folder after the last part of the branch, starts at origi
 });
 
 test('create adds the branch with no upstream and runs the bootstrap inside the new worktree', (t) => {
-  const { repo, git, create } = fixture(t, { version: 1, worktrees: { bootstrap: 'pwd > booted.txt' } });
+  const { repo, git, create } = fixture(t, { version: 1, git: { worktrees: { bootstrap: 'pwd > booted.txt' } } });
   const result = create({ branch: 'feat/x' });
   const dir = path.join(repo, '.worktrees/x');
   assert.deepEqual([result.status, result.worktree_path, result.branch_mode, result.bootstrap], ['created', dir, 'new', 'pwd > booted.txt']);
@@ -115,7 +115,7 @@ test('a worktrees folder inside the repository that git does not ignore blocks c
 });
 
 test('a failing bootstrap keeps the worktree and reports the end of its output and the command to rerun', (t) => {
-  const { repo, blocked } = fixture(t, { version: 1, worktrees: { bootstrap: 'for i in $(seq 1 30); do echo line $i; done; echo broke >&2; exit 3' } });
+  const { repo, blocked } = fixture(t, { version: 1, git: { worktrees: { bootstrap: 'for i in $(seq 1 30); do echo line $i; done; echo broke >&2; exit 3' } } });
   const result = blocked({ branch: 'feat/x' });
   const dir = path.join(repo, '.worktrees/x');
   assert.equal(result.phase, 'bootstrap');
@@ -127,7 +127,7 @@ test('a failing bootstrap keeps the worktree and reports the end of its output a
 });
 
 test('without an origin the base is the local default branch, and worktrees.dir moves the folder', (t) => {
-  const { base, repo, create } = fixture(t, { version: 1, defaultBranch: 'main', worktrees: { dir: '../trees' } }, { origin: false });
+  const { base, repo, create } = fixture(t, { version: 1, git: { defaultBranch: 'main', worktrees: { dir: '../trees' } } }, { origin: false });
   const result = create({ branch: 'feat/x' });
   assert.deepEqual([result.base, result.worktree_path], ['main', path.join(base, 'trees/x')]);
   assert.equal(existsSync(path.join(repo, '.worktrees')), false);

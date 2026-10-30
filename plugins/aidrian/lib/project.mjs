@@ -69,7 +69,7 @@ export function noProjectMessage(start) {
   if (roots && roots.main !== roots.current) {
     const main = findProject(path.join(roots.main, path.relative(roots.current, realPath(start))));
     if (main) {
-      const branch = loadConfig(main).config.defaultBranch;
+      const branch = loadConfig(main).config.git.defaultBranch;
       return `${where}: this worktree was created before ${main.dir}/ was committed and pushed; recreate it or merge ${branch}`;
     }
   }
@@ -199,9 +199,9 @@ export function stateRoot(env = process.env) {
   return path.join(base, 'aidrian');
 }
 
-// Task worktrees: config.json `worktrees.dir`, `.worktrees` at the repository root by default.
+// Task worktrees: config.json `git.worktrees.dir`, `.worktrees` at the repository root by default.
 export function worktreesDir(project, { config = loadConfig(project).config } = {}) {
-  return localPath(project, config.worktrees.dir);
+  return localPath(project, config.git.worktrees.dir);
 }
 
 // The main checkout's top folder, which every worktree shares; the project root outside git.

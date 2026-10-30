@@ -13,7 +13,7 @@ Every command is read-only.
 ## 2. Branch
 
 `branch` is the output of `git rev-parse --abbrev-ref HEAD`.
-`defaultBranch` comes from `.aidrian/config.json`, `main` when unset.
+`git.defaultBranch` comes from `.aidrian/config.json`, `main` when unset.
 On the default branch there is nothing to compare: return `blocked`, reason `on_default_branch`.
 
 ## 3. Base

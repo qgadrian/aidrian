@@ -22,6 +22,7 @@ const SCHEMA = {
   session: { handoff: 'handoffMode', maxTokens: 'zeroOrMore', maxCalls: 'zeroOrMore', maxHours: 'zeroOrMore' },
   models: 'models',
   names: { human: 'text', ai: 'textOrNull' },
+  telemetry: { enabled: 'boolean', doc_reads: 'boolean', hook_denies: 'boolean', max_mb: 'positive' },
 };
 
 // Keys a format change renamed or moved, old name to new; a key inside a group is named with its group, "group.key".
@@ -70,12 +71,13 @@ export const DEFAULTS = deepFreeze({
   session: { handoff: 'ask', maxTokens: 150000, maxCalls: 250, maxHours: 4 },
   models: { claude: { agents: {} }, codex: { agents: {} } },
   names: { human: 'the Human', ai: null },
+  telemetry: { enabled: true, doc_reads: true, hook_denies: true, max_mb: 20 },
 });
 
 // Returns { config, errors, current }. `config` is frozen and always complete: the file's values over DEFAULTS, one
-// group at a time, with the default kept for any value that is missing or invalid. The local file's `models` and
-// `names` (`project.localModels`, `project.localNames`) then go over the file's. A hook can use it even when `errors` is
-// not empty. `current` is false when the file is missing, unreadable, or of another version: then nothing in the folder
+// group at a time, with the default kept for any value that is missing or invalid. The local file's `models`, `names`,
+// and `telemetry` (`project.localModels`, `project.localNames`, `project.localTelemetry`) then go over the file's. A hook
+// can use it even when `errors` is not empty. `current` is false when the file is missing, unreadable, or of another version: then nothing in the folder
 // can be trusted to have the shape this plugin reads.
 export function loadConfig(project) {
   const errors = [];
@@ -87,8 +89,8 @@ export function loadConfig(project) {
   const { version, ...values } = raw;
   const config = merge(SCHEMA, DEFAULTS, values, '', file, errors);
   if (project.localModels !== undefined) config.models = checkModels(project.localModels, project.paths.local, errors, config.models);
-  if (project.localNames !== undefined) {
-    config.names = merge({ names: SCHEMA.names }, config, { names: project.localNames }, '', project.paths.local, errors).names;
+  for (const [key, local] of [['names', project.localNames], ['telemetry', project.localTelemetry]]) {
+    if (local !== undefined) config[key] = merge({ [key]: SCHEMA[key] }, config, { [key]: local }, '', project.paths.local, errors)[key];
   }
   return { config: deepFreeze(config), errors, current: true };
 }

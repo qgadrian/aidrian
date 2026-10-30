@@ -1,15 +1,16 @@
 // The dispatch log: `dispatch-log.jsonl` in the state folder, one row per subagent dispatch, per subagent stop, and per
-// session end, appended by three Claude Code hooks; `aidrian report` reads it. A row holds names, counts, durations,
-// costs, and file paths; never a prompt, a command, or tool output. docs/dispatch-log.md describes every field.
+// session end, appended by three Claude Code hooks unless config.json `telemetry` turns them off; `aidrian report` reads
+// it. A row holds names, counts, durations, costs, and file paths; never a prompt, a command, or tool output.
+// docs/dispatch-log.md describes every field.
 
-import { existsSync } from 'node:fs';
+import { closeSync, existsSync, openSync, renameSync, rmSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { commandConfig, fileBytes } from './config.mjs';
 import { checkoutRoots } from './git.mjs';
-import { readRows } from './jsonl.mjs';
+import { appendRow, readRows } from './jsonl.mjs';
 import { loadKnowledge } from './knowledge.mjs';
 import { projectAt, stateDir } from './project.mjs';
 import { aggregateUsage, estimateCostUsd, filesRead, readText, subagentTranscripts, sumTokens } from './transcript.mjs';
@@ -26,6 +27,57 @@ const DELIVERY_LINE = /(?<![\w./-])(?:wrote|written|created|saved|handoffs?|outp
 
 // `config` is the project's config when the caller has it; stateDir reads it otherwise.
 export const logPath = (project, config) => path.join(stateDir(project, { config }), 'dispatch-log.jsonl');
+// The log's previous part, which rotation keeps beside it.
+const rotatedPath = (file) => file.replace(/\.jsonl$/u, '.1.jsonl');
+// A lock older than this was left by a process that died while rotating.
+const STALE_LOCK_MS = 60_000;
+
+// Appends `row`, unless `config.telemetry.enabled` is false. A log of `telemetry.max_mb` or more rotates first.
+export function appendEvent(project, config, row) {
+  if (!config.telemetry.enabled) return;
+  const file = logPath(project, config);
+  rotate(file, config.telemetry.max_mb * 1024 * 1024);
+  appendRow(file, row);
+}
+
+// Moves a log of `maxBytes` or more to `dispatch-log.1.jsonl`, replacing the one there, and starts the new log with a
+// `rotate` row whose `dropped` says whether older rows were lost. One process rotates at a time: it holds a lock file it
+// created exclusively. A process that cannot create the lock appends to whichever log is there.
+function rotate(file, maxBytes) {
+  if ((fileBytes(file) ?? 0) < maxBytes) return;
+  const lock = `${file}.lock`;
+  let fd;
+  try {
+    fd = openSync(lock, 'wx');
+  } catch {
+    try {
+      if (Date.now() - statSync(lock).mtimeMs > STALE_LOCK_MS) rmSync(lock, { force: true });
+    } catch {
+      // The lock went away: the process that held it is done.
+    }
+    return;
+  }
+  try {
+    // Another process may have rotated between the size check and the lock.
+    if ((fileBytes(file) ?? 0) < maxBytes) return;
+    const rotated = rotatedPath(file);
+    const dropped = existsSync(rotated);
+    renameSync(file, rotated);
+    appendRow(file, { event: 'rotate', ts: stamp(Date.now()), session_id: null, dropped });
+  } finally {
+    closeSync(fd);
+    rmSync(lock, { force: true });
+  }
+}
+
+// Every row of the log, its rotated part first: { file, rotated, rows, skipped }. `rotated` is null when there is none.
+export function readLog(project, config) {
+  const file = logPath(project, config);
+  const rotated = rotatedPath(file);
+  const older = readRows(rotated);
+  const newer = readRows(file);
+  return { file, rotated: existsSync(rotated) ? rotated : null, rows: [...older.rows, ...newer.rows], skipped: older.skipped + newer.skipped };
+}
 
 const stamp = (now) => new Date(now).toISOString();
 const text = (value, limit = Infinity) => (typeof value === 'string' && value !== '' ? value.slice(0, limit) : null);
@@ -51,15 +103,21 @@ export function dispatchRow(input, { env = process.env, now = Date.now() } = {})
   };
 }
 
-// SubagentStop: the subagent's tokens, cost, the knowledge docs it read with their sizes, and whether the paths its last message presents
-// as delivered exist. Returns { row, missing }; the hook sends the agent back once when `missing` is not empty.
-export function stopRow(input, project, { now = Date.now() } = {}) {
-  const transcript = typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
-  const usage = transcript ? aggregateUsage(transcript).perModel : {};
+// The paths a subagent's last message presents as delivered, and those of them that exist nowhere: { claims, missing }.
+// The stop hook sends the agent back once when `missing` is not empty, whether or not telemetry is on.
+export function checkDelivery(input, project) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : project.root;
   const claims = claimedPaths(input.last_assistant_message);
-  const missing = missingPaths(claims, cwd);
-  const row = {
+  return { claims, missing: missingPaths(claims, cwd) };
+}
+
+// SubagentStop: the subagent's tokens, cost, the knowledge docs it read with their sizes, and its delivery check.
+// `docReads: false` (config.json `telemetry.doc_reads`) records `docs_read: null`.
+export function stopRow(input, project, { now = Date.now(), docReads = true, delivery = checkDelivery(input, project) } = {}) {
+  const transcript = typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
+  const usage = transcript ? aggregateUsage(transcript).perModel : {};
+  const { claims, missing } = delivery;
+  return {
     event: 'stop',
     ts: stamp(now),
     session_id: text(input.session_id),
@@ -68,16 +126,15 @@ export function stopRow(input, project, { now = Date.now() } = {}) {
     tokens: sumTokens(usage),
     models: Object.keys(usage),
     cost_usd: estimateCostUsd(usage).total,
-    docs_read: transcript ? knowledgeDocsRead(filesRead(transcript), project) : [],
+    docs_read: !docReads ? null : transcript ? knowledgeDocsRead(filesRead(transcript), project) : [],
     delivered: missing.length ? 'missing' : claims.length ? 'file' : 'chat',
     paths: claims,
   };
-  return { row, missing };
 }
 
 // SessionEnd: the whole session's tokens and estimated cost, main conversation and subagents together, and the knowledge
-// docs the main conversation read; each subagent's own reads are on its `stop` row.
-export function sessionRow(input, project, { env = process.env, now = Date.now() } = {}) {
+// docs the main conversation read; each subagent's own reads are on its `stop` row. `docReads` works as in stopRow.
+export function sessionRow(input, project, { env = process.env, now = Date.now(), docReads = true } = {}) {
   const main = typeof input.transcript_path === 'string' ? input.transcript_path : null;
   const subagents = main ? subagentTranscripts(main, input.session_id) : [];
   const mainText = main && readText(main);
@@ -99,7 +156,7 @@ export function sessionRow(input, project, { env = process.env, now = Date.now()
     tokens_by_model: tokensByModel,
     cost_usd: estimateCostUsd(perModel).total,
     subagent_count: subagents.length,
-    docs_read: mainText ? knowledgeDocsRead(filesRead(mainText), project) : [],
+    docs_read: !docReads ? null : mainText ? knowledgeDocsRead(filesRead(mainText), project) : [],
   };
 }
 
@@ -279,8 +336,7 @@ export const commands = {
         console.error(error.message);
         return 1;
       }
-      const file = logPath(project, config);
-      const { rows, skipped } = readRows(file);
+      const { file, rows, skipped } = readLog(project, config);
       if (docsView) {
         const docs = summarizeDocs(rows, { sinceMs });
         console.log(values.json ? JSON.stringify({ file, since, skipped, ...docs }) : formatDocs(docs, { file, since, skipped }));

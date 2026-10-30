@@ -35,7 +35,8 @@ In a group such as `github`, set only the keys you change; the others keep their
   "skills": { "descriptionChars": 160, "listingBytes": 9216 },
   "session": { "handoff": "ask", "maxTokens": 150000, "maxCalls": 250, "maxHours": 4 },
   "models": { "claude": { "agents": {} }, "codex": { "agents": {} } },
-  "names": { "human": "the Human", "ai": null }
+  "names": { "human": "the Human", "ai": null },
+  "telemetry": { "enabled": true, "doc_reads": true, "hook_denies": true, "max_mb": 20 }
 }
 ```
 
@@ -67,6 +68,10 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `models` | The model and effort of the plugin's agents, per host, in place of the ones the plugin ships: [Models](#models). |
 | `names.human` | What agents call the person they work for: [Names](#names). |
 | `names.ai` | What agents call themselves; `null` is the host's name, Claude or Codex: [Names](#names). |
+| `telemetry.enabled` | `false` stops the hooks from writing the [dispatch log](dispatch-log.md): [Telemetry](#telemetry). |
+| `telemetry.doc_reads` | `false` leaves out which knowledge docs each agent read. |
+| `telemetry.hook_denies` | Checked, so a project can set it; no hook reads it in this version. |
+| `telemetry.max_mb` | The size, in megabytes, at which the dispatch log moves to its rotated part. |
 
 A path in `state.dir` or `worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
@@ -137,6 +142,24 @@ A team sets its names in `config.json`, and one developer in the git-ignored `.a
 
 `.aidrian.local.json` wins over `config.json`, one name at a time.
 `aidrian check` names an unknown key and a name that is not a non-empty string.
+
+## Telemetry
+
+The hooks record what agents cost and read in the [dispatch log](dispatch-log.md), on this machine only; nothing goes over the network.
+A team sets `telemetry` in `config.json`, and one developer in the git-ignored `.aidrian.local.json` at the project root:
+
+```json
+{ "telemetry": { "enabled": false } }
+```
+
+`.aidrian.local.json` wins over `config.json`, one key at a time.
+
+- `enabled: false`: the hooks write no rows.
+  The [delivery check](hooks.md#delivery-check) still sends a subagent back for a file it named and did not write.
+- `doc_reads: false`: `stop` and `session` rows keep tokens and cost, and hold `docs_read: null` instead of the docs read.
+- `max_mb`: once the log reaches this size, the next row moves it to `dispatch-log.1.jsonl`, replacing the file there.
+  The two files hold about twice `max_mb` at most, and `aidrian report` reads both.
+- `hook_denies`: `aidrian check` checks its value; no hook reads it in this version.
 
 ## Knowledge budgets
 

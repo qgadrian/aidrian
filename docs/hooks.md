@@ -32,9 +32,11 @@ After you install the plugin in Codex, open a session, run `git commit --amend -
 | Markdown line length | `"docs": { "wrapLimit": 0 }` |
 | Pull request body sections | `"github": { "requiredSections": [] }`; the footer and `--fill` checks stay |
 | Session-length reminder | `"session": { "handoff": "off" }` |
+| Dispatch log rows | `"telemetry": { "enabled": false }`, in config.json or `.aidrian.local.json`; the delivery check still runs |
 | A Bash rule, once | Its override variable, set by a person: [Overrides](#overrides) |
 
-The start lines and the dispatch log have no switch; they act only inside a project folder.
+The start lines have no switch; they act only inside a project folder.
+[config.md](config.md#telemetry) lists the other `telemetry` keys.
 The Agent hook changes only what config.json or `.aidrian.local.json` sets in `models.claude`.
 Another hook in the same project that rewrites Agent calls may override it, because each rewrite replaces the whole call.
 It never reaches a session started with `claude --agent`, which takes the `--model` and `--effort` flags instead.

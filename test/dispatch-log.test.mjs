@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -126,6 +126,66 @@ test('the delivery check sends a subagent back once for a path it named that doe
   const inline = JSON.stringify({ status: 'done', role: 'explorer', evidence: [{ file: 'docs/absent.md', shows: 'no such doc' }] }, null, 2);
   assert.equal(stop(inline, false).status, 0, 'a handoff returned in the last message, as a read-only agent returns it, claims no file');
   assert.deepEqual(log().map((row) => row.delivered), ['missing', 'missing', 'missing', 'file', 'chat', 'chat']);
+});
+
+// Sets config.json `telemetry` in a project from project().
+const setTelemetry = (dir, telemetry) => writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, telemetry }));
+
+test('telemetry.enabled false: the hooks write no rows, and the delivery check still sends a subagent back', (t) => {
+  const { base, dir, log, hook } = project(t);
+  setTelemetry(dir, { enabled: false });
+  const transcript = path.join(base, 's1.jsonl');
+  writeFileSync(transcript, usageLine('m1', 'claude-opus-5-5', { input_tokens: 10, output_tokens: 1 }));
+  assert.equal(hook('hook-agent-post.mjs', { session_id: 's1', cwd: dir, tool_name: 'Agent', tool_input: {}, tool_response: { agentId: 'a1' } }).status, 0);
+  const sent = hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'a1', last_assistant_message: 'Wrote out/handoff.json.', stop_hook_active: false });
+  assert.deepEqual([sent.status, sent.stderr.startsWith('Your report names `out/handoff.json`')], [2, true]);
+  assert.equal(hook('hook-session-end.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript }).status, 0);
+  assert.deepEqual(log(), []);
+});
+
+test('telemetry.doc_reads false: stop and session rows record docs_read null, and the rest as before', (t) => {
+  const { base, dir, log, hook } = project(t);
+  setTelemetry(dir, { doc_reads: false });
+  const transcript = path.join(base, 's1.jsonl');
+  const doc = path.join(dir, 'docs/knowledge/engineering/testing.md');
+  writeFileSync(transcript, JSON.stringify({ type: 'assistant', message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 10, output_tokens: 1 }, content: [{ type: 'tool_use', name: 'Read', input: { file_path: doc } }] } }));
+  hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'a1', agent_type: 'Explore', agent_transcript_path: transcript, last_assistant_message: 'Done.', stop_hook_active: false });
+  hook('hook-session-end.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript });
+  const rows = log();
+  assert.deepEqual(rows.map((row) => [row.event, row.docs_read, row.tokens?.input ?? row.tokens_by_model['claude-opus-5-5'].input]), [['stop', null, 10], ['session', null, 10]]);
+});
+
+test('a log of telemetry.max_mb rotates into dispatch-log.1.jsonl, a rotate row says whether rows were lost, and reports read both', (t) => {
+  const { dir, env, state, log, hook } = project(t);
+  setTelemetry(dir, { max_mb: 1 });
+  const file = path.join(state(), 'dispatch-log.jsonl');
+  const rotated = path.join(state(), 'dispatch-log.1.jsonl');
+  const ts = new Date(Date.now() - 60_000).toISOString();
+  const big = (id) => `${JSON.stringify({ event: 'dispatch', ts, session_id: 's', agent_id: id, agent_type: 'Explore', description: 'x'.repeat(1024 * 1024) })}\n`;
+  const dispatch = (id) => hook('hook-agent-post.mjs', { session_id: 's', cwd: dir, tool_name: 'Agent', tool_input: { subagent_type: 'Explore' }, tool_response: { agentId: id } });
+  mkdirSync(state(), { recursive: true });
+  writeFileSync(file, big('old'));
+  dispatch('a1');
+  assert.equal(readFileSync(rotated, 'utf8'), big('old'));
+  assert.deepEqual(log().map((row) => [row.event, row.dropped ?? row.agent_id]), [['rotate', false], ['dispatch', 'a1']]);
+  dispatch('a2');
+  assert.equal(log().length, 3, 'under the limit: no rotation');
+  writeFileSync(file, big('older'), { flag: 'a' });
+  dispatch('a3');
+  assert.deepEqual(log().map((row) => [row.event, row.dropped ?? row.agent_id]), [['rotate', true], ['dispatch', 'a3']]);
+  assert.equal(statSync(`${file}.lock`, { throwIfNoEntry: false }), undefined, 'the lock is gone');
+  const json = JSON.parse(spawnSync(CLI, ['report', '--json'], { cwd: dir, env, encoding: 'utf8' }).stdout);
+  assert.deepEqual(json.agents.map((agent) => [agent.agent_type, agent.dispatches]), [['Explore', 4]], 'a1, a2, and older from the rotated part; a3 from the log');
+
+  // Another process holds the lock: append without rotating. A lock older than a minute is cleared for the next row.
+  writeFileSync(file, big('busy'));
+  writeFileSync(`${file}.lock`, '');
+  dispatch('a4');
+  assert.deepEqual(log().map((row) => row.agent_id), ['busy', 'a4']);
+  utimesSync(`${file}.lock`, new Date(Date.now() - 120_000), new Date(Date.now() - 120_000));
+  dispatch('a5');
+  dispatch('a6');
+  assert.deepEqual(log().map((row) => row.event === 'rotate' || row.agent_id), [true, 'a6']);
 });
 
 test('every dispatch-log hook exits 0 silently on a payload it cannot read', () => {

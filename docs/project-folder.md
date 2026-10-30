@@ -12,7 +12,7 @@ Task worktrees go in `.worktrees/` at the repository root, which git ignores.
 
 ```text
 .aidrian.json                    names another folder as the project folder (optional, committed)
-.aidrian.local.json              adds knowledge sources, model choices, and names on one machine (optional, git-ignored)
+.aidrian.local.json              adds knowledge sources, model choices, names, and telemetry settings on one machine (optional, git-ignored)
 .worktrees/                      task worktrees, one folder per branch (git-ignored)
 .aidrian/
 ├── config.json                  the folder version and the project settings (committed)
@@ -112,7 +112,8 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── reviews/              review manifests, and the agents the specialist-review skill keeps warm
 ├── lessons/inbox.jsonl   the lesson inbox
 ├── tmp/                  pull request bodies the pr-write skill drafts
-└── dispatch-log.jsonl    the dispatch log
+├── dispatch-log.jsonl    the dispatch log
+└── dispatch-log.1.jsonl  its rotated part, once the log reaches config.json telemetry.max_mb
 ```
 
 - `$XDG_STATE_HOME` defaults to `~/.local/state`.
@@ -154,7 +155,7 @@ without committing it. List the folders in `.aidrian.local.json` at the project 
 
 `aidrian init` adds the file to `.gitignore`, so it stays on one machine. In a git worktree, the plugin reads it from the main checkout.
 The same file can hold one developer's model and effort choices for the plugin's agents, [config.md](config.md#models),
-and the [names](config.md#names) agents use for that developer and for themselves.
+the [names](config.md#names) agents use for that developer and for themselves, and the [telemetry](config.md#telemetry) settings.
 
 - A leading `~` is the home folder. Any other relative path starts at the folder that holds `.aidrian.local.json`.
 - Each source is a folder with the project folder's knowledge layout: `knowledge/<bucket-id>.json`, and optionally a `config.json`

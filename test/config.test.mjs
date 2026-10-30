@@ -100,6 +100,9 @@ const errorCases = [
   ['an empty human name', { version: 1, names: { human: ' ' } }, /"names\.human" must be a non-empty string$/],
   ['an AI name that is not text', { version: 1, names: { ai: 3 } }, /"names\.ai" must be a non-empty string or null$/],
   ['an unknown key in names', { version: 1, names: { user: 'x' } }, /: unknown key "names\.user"$/],
+  ['a telemetry switch that is not true or false', { version: 1, telemetry: { enabled: 'no' } }, /"telemetry\.enabled" must be true or false$/],
+  ['zero for telemetry.max_mb', { version: 1, telemetry: { max_mb: 0 } }, /"telemetry\.max_mb" must be a whole number above 0$/],
+  ['a telemetry key in another spelling', { version: 1, telemetry: { docReads: false } }, /: unknown key "telemetry\.docReads"$/],
 ];
 
 for (const [name, value, expected] of errorCases) {
@@ -166,6 +169,19 @@ test('names: "the Human" and the host\'s name by default; .aidrian.local.json wi
   assert.deepEqual(loadConfig(findProject(team.root)).errors, ['.aidrian.local.json: "names" must be an object']);
   writeFileSync(local, JSON.stringify({ names: { ai: null } }));
   assert.deepEqual(loadConfig(findProject(team.root)).config.names, { human: 'the team lead', ai: null });
+});
+
+test('telemetry: on, with doc reads, hook denies, and 20 MB by default; .aidrian.local.json wins one key at a time', (t) => {
+  assert.deepEqual(DEFAULTS.telemetry, { enabled: true, doc_reads: true, hook_denies: true, max_mb: 20 });
+  const team = project(t, { version: 1, telemetry: { doc_reads: false, max_mb: 5 } });
+  assert.deepEqual(loadConfig(team).config.telemetry, { enabled: true, doc_reads: false, hook_denies: true, max_mb: 5 });
+  const local = path.join(team.root, '.aidrian.local.json');
+  writeFileSync(local, JSON.stringify({ telemetry: { enabled: false, max_mb: 0 } }));
+  const { config, errors } = loadConfig(findProject(team.root));
+  assert.deepEqual(errors, ['.aidrian.local.json: "telemetry.max_mb" must be a whole number above 0']);
+  assert.deepEqual(config.telemetry, { enabled: false, doc_reads: false, hook_denies: true, max_mb: 5 });
+  writeFileSync(local, JSON.stringify({ telemetry: true }));
+  assert.deepEqual(loadConfig(findProject(team.root)).errors, ['.aidrian.local.json: "telemetry" must be an object']);
 });
 
 test('worktrees.dir defaults to .worktrees and bootstrap to null, and a string replaces each', (t) => {

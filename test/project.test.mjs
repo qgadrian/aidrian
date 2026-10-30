@@ -111,6 +111,17 @@ test('.aidrian.local.json may hold names alone; the project passes them on as wr
   assert.equal(findProject(path.join(ROOT, 'examples/consumer')).localNames, undefined);
 });
 
+test('.aidrian.local.json may hold telemetry alone; the project passes it on as written, for config.mjs to check', (t) => {
+  const dir = tempDir(t);
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}');
+  const telemetry = { enabled: false, extra: 1 };
+  writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ telemetry }));
+  const project = findProject(dir);
+  assert.deepEqual([project.errors, project.sources.length, project.localTelemetry], [[], 1, telemetry]);
+  assert.equal(findProject(path.join(ROOT, 'examples/consumer')).localTelemetry, undefined);
+});
+
 // Each case expects one error; a source that is not a folder is left out, the others stay.
 const localCases = [
   ['invalid JSON', '{', /^\.aidrian\.local\.json: invalid JSON/, 0],

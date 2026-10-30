@@ -1,7 +1,8 @@
 // Finds a project and its project folder: `.aidrian/` at the project root, or the folder the committed root file
 // `.aidrian.json` names. This is the only file that knows those names; every other file asks it for paths.
 // docs/project-folder.md describes the folder, the git-ignored `.aidrian.local.json` that adds local knowledge sources,
-// personal model choices, and personal names, and the machine-local state folder outside the repository.
+// personal model choices, personal names, and personal telemetry settings, and the machine-local state folder outside
+// the repository.
 
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
@@ -51,10 +52,10 @@ export function projectAt(start) {
 }
 
 // The project rooted at `root`, whether or not its folder exists yet:
-// { root, dir, paths, sources, localModels, localNames, errors }.
+// { root, dir, paths, sources, localModels, localNames, localTelemetry, errors }.
 // `dir` and every path are POSIX-style and relative to `root`. `sources` lists where knowledge indexes are read from:
-// the project folder first, then each local source. `localModels` and `localNames` are the `models` and `names` values
-// of `.aidrian.local.json`, as written; config.mjs checks them. `errors` lists the problems in the root files; a broken
+// the project folder first, then each local source. `localModels`, `localNames`, and `localTelemetry` are the `models`,
+// `names`, and `telemetry` values of `.aidrian.local.json`, as written; config.mjs checks them. `errors` lists the problems in the root files; a broken
 // `.aidrian.json` leaves the default folder in place, and a broken local source is left out.
 export function openProject(root) {
   const errors = [];
@@ -62,7 +63,7 @@ export function openProject(root) {
   const paths = { config: `${dir}/config.json`, knowledge: `${dir}/knowledge`, local: LOCAL };
   const local = readLocal(root, errors);
   const sources = [{ label: dir, base: root, index: paths.knowledge, local: false }, ...local.sources];
-  return { root, dir, paths, sources, localModels: local.models, localNames: local.names, errors };
+  return { root, dir, paths, sources, localModels: local.models, localNames: local.names, localTelemetry: local.telemetry, errors };
 }
 
 function folderDir(root, errors) {
@@ -78,20 +79,20 @@ function folderDir(root, errors) {
   return DEFAULT_DIR;
 }
 
-// `.aidrian.local.json`: { sources, models, names }. A git worktree has no copy of that git-ignored file, so it is read
+// `.aidrian.local.json`: { sources, models, names, telemetry }. A git worktree has no copy of that git-ignored file, so it is read
 // from the main checkout then. Each source is a folder with its own knowledge/ and, optionally, a config.json with
 // `version`.
 function readLocal(root, errors) {
-  const none = { sources: [], models: undefined, names: undefined };
+  const none = { sources: [], models: undefined, names: undefined, telemetry: undefined };
   let holder = root;
   if (!isFile(path.join(holder, LOCAL))) holder = inMainCheckout(root);
   if (!holder || !isFile(path.join(holder, LOCAL))) return none;
   const raw = readJson(holder, LOCAL, errors);
   if (!raw) return none;
   for (const key of Object.keys(raw)) {
-    if (!['sources', 'models', 'names'].includes(key)) errors.push(`${LOCAL}: unknown key "${key}"`);
+    if (!['sources', 'models', 'names', 'telemetry'].includes(key)) errors.push(`${LOCAL}: unknown key "${key}"`);
   }
-  return { sources: localSources(holder, raw, errors), models: raw.models, names: raw.names };
+  return { sources: localSources(holder, raw, errors), models: raw.models, names: raw.names, telemetry: raw.telemetry };
 }
 
 function localSources(holder, raw, errors) {

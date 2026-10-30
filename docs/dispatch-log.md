@@ -5,7 +5,8 @@ and whether it delivered the files it said it wrote. `aidrian report` reads it.
 
 It is `dispatch-log.jsonl` in the [state folder](project-folder.md#local-state): one JSON object per line,
 on this machine only, shared by every worktree of the repository.
-Three Claude Code hooks append to it, and only inside a project folder.
+Three Claude Code hooks append to it, only inside a project folder, and only while config.json `telemetry.enabled` is on:
+[config.md](config.md#telemetry) has the switches.
 A row holds names, counts, durations, costs, and file paths. It never holds a prompt, a command, or tool output.
 
 ## Rows
@@ -28,7 +29,7 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | `ts`, `session_id`, `agent_id`, `agent_type` | Which subagent. `agent_id` joins it to its `dispatch` row. |
 | `tokens` | `input`, `output`, `cache_read`, and `cache_write` over the subagent's transcript, counted once per API request. |
 | `models`, `cost_usd` | The models it used, and the cost estimated from list prices (`lib/transcript.mjs`). |
-| `docs_read` | The knowledge docs it opened with the Read tool, as `{ "path", "bytes" }`: the path the index gives, and the doc's size. |
+| `docs_read` | The knowledge docs it opened with the Read tool, as `{ "path", "bytes" }`: the path the index gives, and the doc's size. `null` while `telemetry.doc_reads` is off. |
 | `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not, `chat` when it presents none. |
 | `paths` | Those paths, at most 20. |
 
@@ -47,6 +48,16 @@ Its second stop always ends, and writes a second `stop` row; the report counts t
 | `docs_read` | The knowledge docs the main conversation opened, as on a `stop` row. Each subagent's reads are on its own `stop` row. |
 
 A session whose transcript holds no API usage writes no row.
+
+### `rotate`: when the log rotates
+
+Once the log reaches config.json `telemetry.max_mb`, the next hook moves it to `dispatch-log.1.jsonl`, replacing the file there,
+and starts a new log with this row. `aidrian report` reads `dispatch-log.1.jsonl` first, then the log.
+
+| Field | Meaning |
+| --- | --- |
+| `ts`, `session_id` | When; `session_id` is `null`. |
+| `dropped` | `true` when an older `dispatch-log.1.jsonl` was replaced, so rows before the oldest one left are gone. |
 
 ## The report
 
@@ -114,6 +125,9 @@ Read by the most readers:
 - **`bytes` is the whole doc**, measured when the row is written, even when the agent read only part of it.
   It is the size of the copy the agent read, or of the project's copy once that one is gone, as with a removed worktree.
   Rows written before sizes were logged hold bare paths, of unknown size.
+- **Doc reads come from transcripts.** The stop and session hooks take the paths from the agent's transcript when it ends;
+  no hook runs on each Read. A doc an agent opens several times counts once for that agent.
 - **No "read, not cited" count.** Agents follow a doc without naming it, and a handoff that lists `loaded_docs` names
   every doc it read, so whether the last message names a doc says nothing about whether the doc was used.
-- **No lock.** Rows from concurrent processes never interleave, because each is one append; nothing ever rewrites the file.
+- **One lock, for rotation only.** Rows from concurrent processes never interleave, because each is one append.
+  Only rotation renames the log, one process at a time, while it holds `dispatch-log.jsonl.lock`; nothing rewrites a row.

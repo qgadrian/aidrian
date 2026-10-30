@@ -34,7 +34,8 @@ In a group such as `github`, set only the keys you change; the others keep their
   "skills": { "descriptionChars": 160, "listingBytes": 9216 },
   "session": { "handoff": "ask", "maxTokens": 150000, "maxCalls": 250, "maxHours": 4 },
   "models": { "claude": { "agents": {} }, "codex": { "agents": {} } },
-  "names": { "human": "the Human", "ai": null }
+  "names": { "human": "the Human", "ai": null },
+  "agents": {}
 }
 ```
 
@@ -65,6 +66,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `models` | The model and effort of the plugin's agents, per host, in place of the ones the plugin ships: [Models](#models). |
 | `names.human` | What agents call the person they work for: [Names](#names). |
 | `names.ai` | What agents call themselves; `null` is the host's name, Claude or Codex: [Names](#names). |
+| `agents` | The tools each agent may use in this project; `{}` gates none: [Agents](#agents). |
 
 A path in `state.dir` or `worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
@@ -135,6 +137,58 @@ A team sets its names in `config.json`, and one developer in the git-ignored `.a
 
 `.aidrian.local.json` wins over `config.json`, one name at a time.
 `aidrian check` names an unknown key and a name that is not a non-empty string.
+
+## Agents
+
+`agents` limits the tools each agent may use in this project, and those of the main session.
+A team sets it in `config.json`, and one developer in the git-ignored `.aidrian.local.json` at the project root:
+
+```json
+{
+  "agents": {
+    "*": { "deny": ["mcp__slack__*"] },
+    "main": { "deny": ["Bash(git push)"] },
+    "explorer": { "allow": ["Read", "Grep", "Glob", "Bash(git log)", "Bash(git show)"] }
+  }
+}
+```
+
+Each key names who its entry applies to:
+
+| Key | Applies to |
+| --- | --- |
+| `*` | Every agent and the main session. |
+| `main` | The main session, also one started with `claude --agent <name>`. |
+| A short name, such as `explorer` | Every agent of that name: this plugin's `aidrian:explorer`, another plugin's `explorer`, and a project agent named `explorer`. |
+| A full name, such as `aidrian:explorer` | That plugin's agent only. |
+
+Every entry that applies is checked, and a tool call runs only when each one lets it.
+A session started with `claude --agent aidrian:explorer` is both `main` and `explorer`.
+
+An entry has `deny`, `allow`, or both, each a list of tool patterns:
+
+| Pattern | Matches |
+| --- | --- |
+| A tool name, such as `Read` or `WebFetch` | That tool. |
+| A name ending in `*`, such as `mcp__github__*` | Every tool whose name starts with the text before the `*`; `*` alone matches every tool. |
+| `Bash(<command prefix>)`, such as `Bash(git push)` | A Bash call that runs a command whose words start with the prefix. |
+
+- `deny` wins: a call that matches a `deny` pattern is blocked, whatever `allow` says.
+- With `allow` set, a call that matches none of its patterns is blocked; `"allow": []` blocks every tool.
+- A Bash call passes an `allow` list through its `Bash(...)` patterns only when every command in it starts with an allowed prefix.
+  `cd app && npm test` needs both `Bash(cd)` and `Bash(npm test)`.
+- A command line is read as the [Bash rules](hooks.md#bash-rules) read it: each step of `&&`, `;`, and `|`, and each command substitution.
+  It also reads past wrappers such as `sudo` and `env`, and past git's own options, so `Bash(git push)` also blocks `git -C app push`.
+- The first word matches the program by its file name, so `Bash(git push)` also matches `/usr/bin/git push`.
+- A command run inside `sh -c`, `eval`, a script, or an interpreter is out of sight; an `allow` list blocks it unless it allows the outer command.
+
+`.aidrian.local.json` wins over `config.json` one list at a time.
+Its `deny` for an agent replaces the team's `deny` for that agent, and its `allow` replaces the team's `allow`.
+A developer can lift a team's `allow` list on one machine with `"allow": ["*"]`.
+`aidrian check` names an unknown key, a key that is not an agent name, and a pattern it cannot read, such as `Bash(git *)`.
+A bad pattern is left out and the rest of its list still applies, so a bad `allow` pattern makes the list stricter.
+`aidrian check` cannot know every agent's name, so a name that matches no agent is not an error: its entry never applies.
+[hooks.md](hooks.md#agent-gates) describes the hook that enforces the gates, and what each host supports.
 
 ## Checking
 

@@ -98,6 +98,16 @@ const errorCases = [
   ['an empty human name', { version: 1, names: { human: ' ' } }, /"names\.human" must be a non-empty string$/],
   ['an AI name that is not text', { version: 1, names: { ai: 3 } }, /"names\.ai" must be a non-empty string or null$/],
   ['an unknown key in names', { version: 1, names: { user: 'x' } }, /: unknown key "names\.user"$/],
+  ['agents that is not an object', { version: 1, agents: ['explorer'] }, /"agents" must be an object$/],
+  ['an agent name with a space', { version: 1, agents: { 'code reviewer': { deny: ['Bash'] } } }, /"agents\.code reviewer": an agent name is/],
+  ['agent gates that are not an object', { version: 1, agents: { explorer: ['Bash'] } }, /"agents\.explorer" must be an object with "deny", "allow", or both$/],
+  ['an unknown key in agent gates', { version: 1, agents: { explorer: { block: ['Bash'] } } }, /: unknown key "agents\.explorer\.block"$/],
+  ['a deny that is not a list', { version: 1, agents: { explorer: { deny: 'Bash' } } }, /"agents\.explorer\.deny" must be a list of tool patterns$/],
+  ['a "*" inside a pattern', { version: 1, agents: { '*': { deny: ['mcp__*__send'] } } }, /"agents\.\*\.deny" has "mcp__\*__send": a "\*" can only end a pattern/],
+  ['a glob in a Bash prefix', { version: 1, agents: { main: { deny: ['Bash(git push *)'] } } }, /has "Bash\(git push \*\)": Bash\(\.\.\.\) takes a command prefix without "\*"/],
+  ['an operator in a Bash prefix', { version: 1, agents: { main: { allow: ['Bash(npm test && rm)'] } } }, /Bash\(\.\.\.\) takes plain words/],
+  ['an empty Bash prefix', { version: 1, agents: { main: { deny: ['Bash( )'] } } }, /Bash\(\) needs a command prefix/],
+  ['a path pattern', { version: 1, agents: { main: { deny: ['Read(./secrets/**)'] } } }, /a pattern is a tool name such as Read/],
 ];
 
 for (const [name, value, expected] of errorCases) {
@@ -164,6 +174,25 @@ test('names: "the Human" and the host\'s name by default; .aidrian.local.json wi
   assert.deepEqual(loadConfig(findProject(team.root)).errors, ['.aidrian.local.json: "names" must be an object']);
   writeFileSync(local, JSON.stringify({ names: { ai: null } }));
   assert.deepEqual(loadConfig(findProject(team.root)).config.names, { human: 'the team lead', ai: null });
+});
+
+test('agents: no gates by default; .aidrian.local.json wins over config.json one list at a time, and a bad pattern is left out', (t) => {
+  assert.deepEqual(DEFAULTS.agents, {});
+  const agents = { '*': { deny: ['mcp__slack__*'] }, main: { deny: ['Bash(git push)'] }, explorer: { allow: ['Read', 'Grep'], deny: ['Bash'] } };
+  const team = project(t, { version: 1, agents });
+  assert.deepEqual(loadConfig(team), { config: { ...DEFAULTS, agents }, errors: [], current: true });
+  writeFileSync(
+    path.join(team.root, '.aidrian.local.json'),
+    JSON.stringify({ agents: { explorer: { allow: ['Read', 'Glo*b', 'Bash(git log)'] }, 'aidrian:architect': { deny: ['Edit'] } } }),
+  );
+  const { config, errors } = loadConfig(findProject(team.root));
+  assert.deepEqual(errors, ['.aidrian.local.json: "agents.explorer.allow" has "Glo*b": a "*" can only end a pattern, as in mcp__github__*']);
+  assert.deepEqual(config.agents, {
+    ...agents,
+    explorer: { allow: ['Read', 'Bash(git log)'], deny: ['Bash'] },
+    'aidrian:architect': { deny: ['Edit'] },
+  });
+  assert.throws(() => { config.agents.explorer.deny.push('Read'); }, TypeError);
 });
 
 test('worktrees.dir defaults to .worktrees and bootstrap to null, and a string replaces each', (t) => {

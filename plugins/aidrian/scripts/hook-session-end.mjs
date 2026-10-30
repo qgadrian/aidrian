@@ -5,7 +5,8 @@
 // (lesson-signals.mjs noteDenial), wherever the session ran.
 
 import { loadConfig } from '../lib/config.mjs';
-import { appendEvent, sessionRow } from '../lib/dispatch-log.mjs';
+import { appendEvent } from '../lib/dispatch-log.mjs';
+import { sessionRow } from '../lib/dispatch-rows.mjs';
 import { runHook } from '../lib/hook-io.mjs';
 import { forgetDenials } from '../lib/lesson-signals.mjs';
 import { findProject } from '../lib/project.mjs';

@@ -418,7 +418,7 @@ function update({ values, ids, file }) {
 async function stats({ values, ids, file }) {
   if (ids.length) return fail(`unexpected argument: ${ids[0]}`);
   const since = values.since ?? '30d';
-  const { parseSince } = await import('./dispatch-log.mjs');
+  const { parseSince } = await import('./report.mjs');
   let sinceMs;
   try {
     sinceMs = parseSince(since);

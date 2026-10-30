@@ -5,9 +5,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import {
-  claimedPaths, coverage, coverageLines, dispatchRow, formatDocs, formatReport, parseSince, sessionRow, summarize, summarizeDocs,
-} from '../plugins/aidrian/lib/dispatch-log.mjs';
+import { coverage, coverageLines } from '../plugins/aidrian/lib/dispatch-log.mjs';
+import { claimedPaths, dispatchRow, sessionRow } from '../plugins/aidrian/lib/dispatch-rows.mjs';
+import { formatReport, summarize } from '../plugins/aidrian/lib/report-agents.mjs';
+import { formatDocs, summarizeDocs } from '../plugins/aidrian/lib/report-docs.mjs';
+import { parseSince } from '../plugins/aidrian/lib/report.mjs';
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 

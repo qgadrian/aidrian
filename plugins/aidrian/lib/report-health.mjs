@@ -5,7 +5,8 @@
 // Every verdict compares unrounded numbers; only what the view prints is rounded. docs/dispatch-log.md#health describes
 // the view.
 
-import { summarize, summarizeDenies, summarizeDocs } from './dispatch-log.mjs';
+import { summarize, summarizeDenies } from './report-agents.mjs';
+import { summarizeDocs } from './report-docs.mjs';
 import { latestRows } from './jsonl.mjs';
 import { lessonStats } from './lesson-inbox.mjs';
 import { deliverySignal, denialSignal, roundLimitSignal } from './lesson-signals.mjs';

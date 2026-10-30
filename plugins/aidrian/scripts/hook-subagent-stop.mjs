@@ -6,7 +6,8 @@
 // `telemetry.enabled: false` drops the row, never the check or the lesson.
 
 import { loadConfig } from '../lib/config.mjs';
-import { appendEvent, checkDelivery, sendsBack, stopAgent, stopRow } from '../lib/dispatch-log.mjs';
+import { appendEvent } from '../lib/dispatch-log.mjs';
+import { checkDelivery, sendsBack, stopAgent, stopRow } from '../lib/dispatch-rows.mjs';
 import { deny, runHook } from '../lib/hook-io.mjs';
 import { deliverySignal, recordSignal } from '../lib/lesson-signals.mjs';
 import { findProject } from '../lib/project.mjs';

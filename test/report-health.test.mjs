@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
-import { parseSince } from '../plugins/aidrian/lib/dispatch-log.mjs';
+import { parseSince } from '../plugins/aidrian/lib/report.mjs';
 import { fold } from '../plugins/aidrian/lib/lesson-inbox.mjs';
 import { FIXES, formatHealth, summarizeHealth } from '../plugins/aidrian/lib/report-health.mjs';
 

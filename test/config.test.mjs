@@ -36,6 +36,18 @@ test('lessons: signals on, and the nudge escalates past 20 open or 14 days unles
   assert.deepEqual([errors, config.lessons], [[], { auto: true, maxOpen: 0, maxAgeDays: 14 }]);
 });
 
+test('github.reviewer: null or "none" turns the review bot off, as null; an empty name is an error', (t) => {
+  assert.equal(DEFAULTS.github.reviewer, 'chatgpt-codex-connector[bot]');
+  for (const reviewer of [null, 'none']) {
+    const { config, errors } = loadConfig(project(t, { version: 1, github: { reviewer, maxReviewRounds: 2 } }));
+    assert.deepEqual([errors, config.github.reviewer, config.github.maxReviewRounds], [[], null, 2], String(reviewer));
+    assert.ok(Object.isFrozen(config.github));
+  }
+  assert.deepEqual(loadConfig(project(t, { version: 1, github: { reviewer: '' } })).errors, [
+    '.aidrian/config.json: "github.reviewer" must be a non-empty string or null',
+  ]);
+});
+
 test('the loaded config is frozen all the way down', (t) => {
   const { config } = loadConfig(project(t, { version: 1, mainCheckout: { allowWrites: ['notes/**'] } }));
   assert.throws(() => { config.defaultBranch = 'x'; }, TypeError);
@@ -244,14 +256,20 @@ test('agents: no gates by default; .aidrian.local.json wins over config.json one
   assert.throws(() => { config.agents.explorer.deny.push('Read'); }, TypeError);
 });
 
-test('worktrees.dir defaults to .worktrees and bootstrap to null, and a string replaces each', (t) => {
-  assert.deepEqual(DEFAULTS.worktrees, { dir: '.worktrees', bootstrap: null });
+test('worktrees.dir defaults to .worktrees, bootstrap to null, and disposable to package and build folders; a value replaces each', (t) => {
+  const disposable = ['node_modules', 'dist', 'build', '.next', '.cache', 'coverage', '.turbo'];
+  assert.deepEqual(DEFAULTS.worktrees, { dir: '.worktrees', bootstrap: null, disposable });
   assert.deepEqual(loadConfig(project(t, { version: 1, worktrees: { bootstrap: null } })).errors, []);
-  const { config } = loadConfig(project(t, { version: 1, worktrees: { dir: '../wt', bootstrap: 'npm ci' } }));
-  assert.deepEqual(config.worktrees, { dir: '../wt', bootstrap: 'npm ci' });
+  const { config } = loadConfig(project(t, { version: 1, worktrees: { dir: '../wt', bootstrap: 'npm ci', disposable: [] } }));
+  assert.deepEqual(config.worktrees, { dir: '../wt', bootstrap: 'npm ci', disposable: [] });
   assert.deepEqual(loadConfig(project(t, { version: 1, worktrees: { dir: null } })).errors, [
     '.aidrian/config.json: "worktrees.dir" must be a non-empty string',
   ]);
+  for (const bad of [['packages/web/dist'], ['..'], 'node_modules', [' ']]) {
+    const loaded = loadConfig(project(t, { version: 1, worktrees: { disposable: bad } }));
+    assert.deepEqual(loaded.errors, ['.aidrian/config.json: "worktrees.disposable" must be a list of folder names with no "/", such as "node_modules"'], JSON.stringify(bad));
+    assert.deepEqual(loaded.config.worktrees.disposable, disposable);
+  }
 });
 
 test('a missing, malformed, or outside-linking file is one error, and the config is all defaults', (t) => {

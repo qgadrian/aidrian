@@ -95,10 +95,10 @@ test('every skill has a name matching its folder and a description', () => {
   }
 });
 
-test('the README tables list every shipped agent and skill once, and nothing else', () => {
-  const readme = readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+test('the agent and skill tables list every shipped agent and skill once, and nothing else', () => {
+  const doc = readFileSync(path.join(ROOT, 'docs/agents-and-skills.md'), 'utf8');
   const rows = (heading) => {
-    const section = readme.split(`\n### ${heading}\n`)[1].split('\n#')[0];
+    const section = doc.split(`\n## ${heading}\n`)[1].split('\n#')[0];
     return [...section.matchAll(/^\| `([a-z0-9-]+)` \|/gm)].map((match) => match[1]).sort();
   };
   assert.deepEqual(rows('Agents'), readAgents().map((agent) => agent.meta.name).sort());
@@ -163,6 +163,23 @@ test('every tag the agents and skills ask for is in the knowledge skill tag list
   // `always` is the bucket list every agent loads, not a tag.
   const unknown = [...used].filter((tag) => tag !== 'always' && !VOCABULARY.includes(tag));
   assert.deepEqual(unknown, [], 'add the tag to the knowledge skill, or use an existing one');
+});
+
+test('an agent and the skill of the same name ask for the same knowledge tags', () => {
+  // The sentence up to its period, without a "plus ..." clause: that clause adds a tag for one kind of task only.
+  const tags = (file) => {
+    const sentence = /[Kk]nowledge tags: ([^.]*)/.exec(readFileSync(file, 'utf8'))?.[1].split(/\bplus\b/)[0] ?? '';
+    return [...sentence.matchAll(/`([a-z][a-z0-9_]*)`/g)].map(([, tag]) => tag).sort();
+  };
+  const pairs = readdirSync(path.join(PLUGIN, 'agents-src'))
+    .map((file) => path.basename(file, '.md'))
+    .filter((name) => existsSync(path.join(PLUGIN, 'skills', name, 'SKILL.md')));
+  assert.ok(pairs.length >= 3, 'agent and skill pairs are found');
+  for (const name of pairs) {
+    const agent = tags(path.join(PLUGIN, 'agents-src', `${name}.md`));
+    assert.ok(agent.length, `${name}: the agent lists its knowledge tags`);
+    assert.deepEqual(tags(path.join(PLUGIN, 'skills', name, 'SKILL.md')), agent, `${name}: the skill and the agent list the same tags`);
+  }
 });
 
 test('a skill that names this plugin\'s agents says how each host names them, or loads the knowledge skill, which does', () => {

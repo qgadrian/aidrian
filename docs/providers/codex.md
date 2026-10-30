@@ -85,18 +85,12 @@ node "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/aidrian-harness/aidrian/*/codex
 
 ## Agent gates
 
-The [agent gates](../hooks.md#agent-gates) learn who is calling from the hook input.
-Codex's [hook documentation](https://developers.openai.com/codex/hooks) lists no agent fields for a tool call.
-The input schema built into Codex 0.165.0 has `agent_type` and `agent_id` as optional fields.
-No live Codex session has been checked for them. So in Codex:
+In Codex, only `*` and `main` [agent gates](../hooks.md#agent-gates) are sure to hold.
 
-- `*` gates hold.
-- `main` gates hold for the main session, and for any subagent call that arrives without `agent_id`.
-- A named agent's gates apply only to a call that carries its `agent_type`.
-  Codex names this plugin's roles `aidrian-<agent>`, which the gates read as `<agent>`.
-- The guard on the config files applies only to a call that carries `agent_id`.
-
-So Codex holds an agent to its gates only as far as its hook input names the agent.
+- A named agent's gates hold only when Codex sends the call's `agent_type`, which no live session has confirmed yet.
+- Codex names this plugin's roles `aidrian-<agent>`; the gates read that as `<agent>`.
+- A call without `agent_id` counts as the main session's: `main` gates apply,
+  and neither the config guard nor the [session's gates](../hooks.md#the-sessions-gates) does.
 
 ## Limits
 

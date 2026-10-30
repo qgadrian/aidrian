@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -66,8 +66,8 @@ test('only a merged pull request`s exact head, clean and old enough, is removed 
   assert.deepEqual([result.status, result.base, result.gh_available, result.min_age_sec], ['planned', 'origin/main', true, 86400]);
   assert.deepEqual(result.auto.map((row) => row.path), [dirs.pr]);
   assert.deepEqual(rowOf(result, 'pr'), {
-    bucket: 'auto', path: dirs.pr, branch: 'feat/pr', head: git(dirs.pr, 'rev-parse', 'HEAD'), reasons: ['merged pull request'], dirty: false, ignored: [], unreachable: 0,
-    branch_delete: 'unless-moved',
+    bucket: 'auto', path: dirs.pr, branch: 'feat/pr', head: git(dirs.pr, 'rev-parse', 'HEAD'), reasons: ['merged pull request'], dirty: false, ignored: [],
+    disposable: [], unreachable: 0, branch_delete: 'unless-moved',
   });
   assert.deepEqual(rowOf(result, 'ff').reasons, ['already in origin/main; no merged pull request confirms it']);
   assert.deepEqual(rowOf(result, 'squash').reasons, ['its changes are in origin/main; no merged pull request confirms it']);
@@ -84,11 +84,36 @@ test('a git-ignored file, such as a .env, moves a merged worktree to confirm and
   mkdirSync(path.join(dirs.pr, 'node_modules'));
   writeFileSync(path.join(dirs.pr, 'node_modules/x.js'), '');
   const row = rowOf(plan(), 'pr');
-  assert.deepEqual([row.bucket, row.dirty, row.ignored], ['confirm', false, ['.env', 'node_modules/']]);
-  assert.deepEqual(row.reasons, ['merged pull request', '2 git-ignored files, removed with it: .env, node_modules/']);
+  assert.deepEqual([row.bucket, row.dirty, row.ignored, row.disposable], ['confirm', false, ['.env'], ['node_modules/']]);
+  assert.deepEqual(row.reasons, ['merged pull request', '1 git-ignored file, removed with it: .env']);
   const result = executeCleanup({}, { cwd: repo, heads, now: LATER });
   assert.deepEqual([result.removed, result.kept.includes(dirs.pr)], [[], true]);
   assert.equal(existsSync(path.join(dirs.pr, '.env')), true);
+});
+
+test('ignored files only in worktrees.disposable folders, at any depth, leave a merged worktree automatic', (t) => {
+  const { repo, git, dirs, plan, rowOf, heads } = fixture(t);
+  writeFileSync(path.join(repo, '.git/info/exclude'), 'node_modules/\n.next/\nbuild\n');
+  for (const folder of ['node_modules/a', 'packages/web/node_modules', 'packages/web/.next/cache']) {
+    mkdirSync(path.join(dirs.pr, folder), { recursive: true });
+    writeFileSync(path.join(dirs.pr, folder, 'x.js'), '');
+  }
+  const result = plan();
+  assert.equal(result.disposable.includes('node_modules'), true);
+  const row = rowOf(result, 'pr');
+  assert.deepEqual([row.bucket, row.ignored, row.disposable], ['auto', [], ['node_modules/', 'packages/web/.next/', 'packages/web/node_modules/']]);
+  // A file named like a disposable folder is not one, and the list a project sets replaces the default.
+  writeFileSync(path.join(dirs.pr, 'build'), '');
+  assert.deepEqual(rowOf(plan(), 'pr').ignored, ['build']);
+  rmSync(path.join(dirs.pr, 'build'));
+  writeFileSync(path.join(repo, '.aidrian/config.json'), JSON.stringify({ version: 1, worktrees: { disposable: ['.next'] } }));
+  assert.deepEqual(rowOf(plan(), 'pr').ignored, ['node_modules/', 'packages/web/node_modules/']);
+  writeFileSync(path.join(repo, '.aidrian/config.json'), '{"version": 1}');
+
+  const done = executeCleanup({}, { cwd: repo, heads, now: LATER });
+  assert.deepEqual(done.removed, [{ path: dirs.pr, branch: 'feat/pr', branch_deleted: true }]);
+  assert.equal(existsSync(dirs.pr), false);
+  assert.equal(git(repo, 'branch', '--list', 'feat/pr'), '');
 });
 
 test('a detached HEAD with commits on no branch is never removed without the delete decision and --force', (t) => {
@@ -221,6 +246,17 @@ test('a commit that lands as git removes the worktree keeps the branch: its dele
   assert.deepEqual([row.branch_deleted, existsSync(dirs.pr)], [false, false]);
   assert.match(row.branch_error, new RegExp(inspected));
   assert.equal(git(repo, 'log', '-1', '--format=%s', 'feat/pr'), 'late', 'the late commit is still on its branch');
+});
+
+test('a decision matches its row with symlinks resolved, and one that names no worktree is reported', (t) => {
+  const { base, repo, dirs, heads } = fixture(t);
+  const link = path.join(base, 'link');
+  symlinkSync(repo, link);
+  const decisions = { [path.join(link, '.worktrees/open')]: 'delete', [path.join(base, 'gone')]: 'delete', [dirs.pr]: 'keep' };
+  const result = executeCleanup({ decisions }, { cwd: repo, heads, now: LATER });
+  assert.ok(result.removed.some((row) => row.path === dirs.open), JSON.stringify(result));
+  assert.equal(existsSync(dirs.open), false);
+  assert.deepEqual(result.unmatched, [path.join(base, 'gone')]);
 });
 
 test('parseDuration reads seconds and one unit; the command reads decisions on stdin and prints JSON', (t) => {

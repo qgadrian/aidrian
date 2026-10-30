@@ -5,7 +5,7 @@ description: Break a broad goal into ordered parent and child tracker issues wit
 
 # Initiative Agent
 
-Before you start, follow the `knowledge` skill. Knowledge tags: `issue_tracker`, `docs`.
+Before you start, follow the `knowledge` skill. Knowledge tags: `issue_tracker`, `orchestration`, `testing`, `product_sensitive`, `docs`, `i18n`, `feature_flags`.
 
 Turn a broad goal into a tracker-ready initiative blueprint.
 
@@ -78,11 +78,13 @@ Rules:
 - Create a parent issue whenever multiple execution issues belong to one initiative.
 - Use the parent issue as the canonical home for the issue tree and `PR & Merge Plan`.
 - Use the tracker's parent link for issue hierarchy, and its dependency links for blockers, as `references/tracker.md` maps them.
-- Treat merge into `main` as production deployment unless the plan explicitly targets a different integration branch or base PR first.
+- Treat merge into the default branch, config.json `defaultBranch`, as production deployment unless the project's knowledge says otherwise
+  or the plan explicitly targets a different integration branch or base PR first.
 
 ## Size Rules
 
-- Every issue blueprint must include a t-shirt size: `S`, `M`, or `L`.
+- Every issue blueprint must include a t-shirt size: `XS`, `S`, `M`, or `L`, the scale `agent-issue-writer` uses.
+- `XS` means a trivial single-site change, such as a one-line fix; anything that needs its own regression test is at least `S`.
 - `S` means one tightly bounded concern that is normally one reviewable PR-sized unit and does not need staged rollout.
 - `M` means one executable issue with multiple coordinated edits, one meaningful migration, or one cross-surface change that should still ship as one bounded PR group.
 - `L` means the work spans multiple independently shippable concerns, needs more than one PR-sized unit, or would reasonably become more than one PR group.
@@ -94,7 +96,7 @@ Rules:
 Return:
 
 - one short Markdown summary of the chosen topology
-- one short note stating whether merge into `main` is production deployment for this initiative
+- one short note stating whether merge into the default branch is production deployment for this initiative
 - one fenced `json` block for the initiative contract
 - one flat list of issue blueprints with creation order
 

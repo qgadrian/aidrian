@@ -34,10 +34,10 @@ The JSON block every issue body ends with, and the defaults for owners, verifica
   },
   "deliverables": ["implement the scoped order reassignment fix"],
   "verification_flow": [
-    "npx jest --testPathPatterns=updateOrder --no-coverage",
-    "npm run typecheck",
-    "npm run lint",
-    "npm run test:e2e:all -- --grep \"order reassignment\""
+    "<the test command the testing knowledge names, narrowed to the order reassignment tests>",
+    "<its type check>",
+    "<its lint>",
+    "<its e2e command, narrowed to the order reassignment flow>"
   ],
   "escalation_triggers": [
     "required authority docs conflict",
@@ -47,7 +47,7 @@ The JSON block every issue body ends with, and the defaults for owners, verifica
   "agent_responsibilities": [
     {
       "agent": "code-reviewer",
-      "responsibility": "Perform final TypeScript and repo-pattern review."
+      "responsibility": "Perform final type and repo-pattern review."
     },
     {
       "agent": "e2e-runner",
@@ -106,13 +106,12 @@ Rules:
 
 The project's `issue_tracker`, `testing`, `e2e`, and `product_sensitive` knowledge overrides every default below.
 
-- Always set Priority (native `save_issue(priority:)`) and Effort (native `save_issue(estimate:)`) on every created issue, and mirror Effort in the issue
-  body (see Issue Fields in `references/issue-body.md`). Defaults when not explicitly supplied:
+- Always set Priority and Effort on every created issue, where the tracker keeps them, and mirror Effort in the issue body
+  (Issue Fields in `references/issue-body.md`). Defaults when not explicitly supplied:
   - Priority: infer from issue type (critical-flow/security → `High`; hotfix → `Urgent`; bug/feature → `Medium`; docs/chore/refactor → `Low`; unclear →
     `Medium`)
-  - Effort: derive from Size t-shirt (`XS` → `Low` → `estimate: 1`; `S` → `Low` → `estimate: 2`; `M` → `Medium` → `estimate: 3`;
-    `L` → `High` → `estimate: 5`)
-- Do not add `priority:*` or `effort:*` labels. `tracker_fields.labels` carries only domain/work-type labels.
+  - Effort: derive from Size t-shirt (`XS` and `S` → `Low`; `M` → `Medium`; `L` → `High`)
+- `tracker_fields.labels` carries domain/work-type labels, plus on GitHub the priority and effort labels the `issue_tracker` knowledge names.
 - Default verification is the project's typecheck, lint, and the exact test command for the affected files, as its `testing` knowledge names them.
 - If the change touches sign-in, onboarding, payments, admin, or other user-facing lifecycle behavior and unit tests cannot prove correctness, require
   exact e2e coverage.

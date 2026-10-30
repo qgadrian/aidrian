@@ -7,6 +7,7 @@
 
 import { summarize, summarizeDenies } from './report-agents.mjs';
 import { summarizeDocs } from './report-docs.mjs';
+import { NO_BOT } from './report-reviews.mjs';
 import { latestRows } from './jsonl.mjs';
 import { lessonStats } from './lesson-inbox.mjs';
 import { deliverySignal, denialSignal, roundLimitSignal } from './lesson-signals.mjs';
@@ -368,7 +369,7 @@ export function formatHealth({ thresholds, problems, signals }, { file, since, s
   });
   lines.push(`${head('Agents', agents)}${agents.agents.length ? '' : '; no dispatches'} ` +
     `(thresholds: ${thresholds.health.redispatchPercent}% re-dispatched, ${thresholds.health.sentBackPercent}% sent back)`.trimEnd(), ...agentLines);
-  if (reviews.status === UNAVAILABLE) lines.push(`${head('Reviews', reviews)}; ${reviews.error === NOT_READ ? NOT_READ : GH_UNAVAILABLE}`);
+  if (reviews.status === UNAVAILABLE) lines.push(`${head('Reviews', reviews)}; ${[NOT_READ, NO_BOT].includes(reviews.error) ? reviews.error : GH_UNAVAILABLE}`);
   else {
     const rounds = reviews.rounds.status === NOT_ENOUGH ? `rounds not enough data (${n(reviews.rounds.n, minSample)} reviewed)`
       : `${hundredths(reviews.rounds.avg)} rounds a pull request (n=${reviews.rounds.n} reviewed, threshold ${thresholds.health.reviewRounds})`;

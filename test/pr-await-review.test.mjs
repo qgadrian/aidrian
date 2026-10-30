@@ -955,6 +955,20 @@ function roundsProject(t) {
   return { project, config, log, run, all: () => lessons(inboxPath(project, config)) };
 }
 
+test('with no review bot, await-review ends at once as no_reviewer, exit 0, and runs no gh', async (t) => {
+  const { config, log, project } = roundsProject(t);
+  const gh = { api: () => assert.fail('no gh call'), currentPr: () => assert.fail('no gh call'), repo: () => assert.fail('no gh call') };
+  const sleep = () => assert.fail('no wait');
+  const off = { ...config, github: { ...config.github, reviewer: null } };
+  assert.equal(await runAwaitReview(['42', '--request'], off, project, { gh, sleep }), 0);
+  assert.equal(await runAwaitReview(['--request', '--reviewer', 'none'], config, project, { gh, sleep }), 0);
+  assert.deepEqual(log.mock.calls.map((call) => JSON.parse(call.arguments[0])), [
+    { status: 'no_reviewer', pr: 42, repo: null, reviewer: null, requested: false, signal: null, waited_sec: 0 },
+    { status: 'no_reviewer', pr: null, repo: null, reviewer: null, requested: false, signal: null, waited_sec: 0 },
+  ]);
+  assert.equal(exitCodeFor('no_reviewer'), 0);
+});
+
 test('runAwaitReview: the round limit becomes one lesson per pull request in the project\'s inbox', async (t) => {
   const { config, log, run, all } = roundsProject(t);
   assert.equal(await run(), 4);
@@ -1036,7 +1050,13 @@ test('config.json github.reviewer and github.maxReviewRounds are the defaults, a
 test('aidrian pr prints its usage for an unknown action, and await-review reports a bad flag on one line', () => {
   const cli = new URL('../plugins/aidrian/bin/aidrian', import.meta.url).pathname;
   const unknown = spawnSync(cli, ['pr', 'merge'], { encoding: 'utf8' });
-  assert.deepEqual([unknown.status, unknown.stderr.split('\n')[0]], [1, 'usage: aidrian pr await-review [PR] [--request] [--max-rounds N] | checks [PR] [--json] | disposition --severity S [--likelihood L --affects A] [--cost C] [--source bot [--round N]] [--vocab]']);
+  assert.deepEqual([unknown.status, unknown.stderr], [1, [
+    'usage: aidrian pr await-review [PR] [--request] [--max-rounds N]',
+    '       aidrian pr checks [PR] [--json]',
+    '       aidrian pr disposition --severity S [--likelihood L --affects A] [--cost C]',
+    '               [--source bot [--round N]] [--vocab]',
+    '',
+  ].join('\n')]);
   const bad = spawnSync(cli, ['pr', 'await-review', '--bogus'], { encoding: 'utf8' });
   assert.deepEqual([bad.status, bad.stderr], [1, 'aidrian pr await-review: unknown argument: --bogus\n']);
 });

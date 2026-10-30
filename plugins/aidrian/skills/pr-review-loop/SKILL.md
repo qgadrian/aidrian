@@ -31,10 +31,12 @@ aidrian pr await-review <n> --request     # waits up to 14 minutes; give the she
 | Exit | Status | Next |
 | --- | --- | --- |
 | 0 | `received` or `already_present` | collect it with the rest |
+| 0 | `no_reviewer` | the project has no review bot, and nothing was posted: record `bot review: none` |
 | 2 | `timed_out` | with `retry_recommended: true`, run it once more without `--request`; otherwise record `bot review: not received` |
 | 3 | `blocked_quota` | record `bot review: blocked_quota` and go on with the other comments |
 | 4 | `round_limit` | the review-round cap, config.json `github.maxReviewRounds`: stop and ask the Human to raise `--max-rounds`, redesign, or stop |
 
+`no_reviewer` means config.json `github.reviewer` is `null` or `"none"`; review then rests on the `pr-review` skill and people's comments.
 A `thumbs_up` signal with no other comments and green checks means nothing to address: report it in one line.
 
 ## 2. Collect every review surface
@@ -59,17 +61,19 @@ One row per item:
 | # | Source | Severity | Location | Summary | Verdict | Evidence | Action |
 ```
 
-- **Source**: `inline`, `review-summary`, `comment`, or `check`. A person's comment weighs more than a bot's;
-  validate every bot comment before acting on it.
+- **Source**: `inline`, `review-summary`, `comment`, or `check`, and its author: the bot, config.json `github.reviewer`, or a person.
+  A person's comment weighs more than a bot's; validate every bot comment before acting on it.
 - **Verdict**: `applies`, `partly applies`, `does not apply`, `already handled`, or `needs evidence`.
   An inline comment whose code changed since it was posted (`git log <commit_id>..@{u} -- <path>`) is a candidate
   for `already handled`: read the code at `@{u}` before you decide.
 - **Action** comes from the disposition table, never from severity alone:
 
   ```bash
-  aidrian pr disposition --severity <s> --likelihood <l> --affects <a> [--cost <c>] --source bot --round <codex_rounds>
+  aidrian pr disposition --severity <s> --likelihood <l> --affects <a> [--cost <c>] [--source bot --round <codex_rounds>]
   ```
 
+  Add `--source bot --round <codex_rounds>` for the bot's comments only; a person's comment omits both.
+  `needs_axis` means a person's comment lacks likelihood or affects: set them from the comment and the code, or ask its author.
   `--vocab` defines every word. `fix_now` is fixed in this pull request. `accepted_residual` goes in the body's
   Accepted residuals section with a code comment. `acceptable_as_is` and `drop_unless_cited` get a reply with the reason.
 - When a comment contradicts a project knowledge doc, the doc wins: reply with the citation and leave the thread open.

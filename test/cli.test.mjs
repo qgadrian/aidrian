@@ -42,6 +42,29 @@ test('check fails with every error, and names the folder it started from when th
   );
 });
 
+test('in a worktree made before the project folder was committed, both commands say so instead of asking for init', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-cli-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => spawnSync('git', ['-C', dir, '-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' });
+  git('init', '-q', '-b', 'trunk');
+  writeFileSync(path.join(dir, '.gitignore'), '.worktrees/\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'init');
+  const tree = path.join(dir, '.worktrees/old');
+  git('worktree', 'add', '-q', '-b', 'old', tree);
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, defaultBranch: 'trunk' }));
+  mkdirSync(path.join(tree, 'src'));
+
+  const expected = (from) => `no project folder at or above ${from}: this worktree was created before .aidrian/ was committed and pushed; recreate it or merge trunk\n`;
+  for (const from of [tree, path.join(tree, 'src')]) {
+    assert.deepEqual([run(['check'], from).status, run(['check'], from).stderr], [1, expected(from)], from);
+  }
+  const knowledge = spawnSync(path.join(ROOT, 'plugins/aidrian/bin/aidrian-knowledge'), ['tags'], { cwd: tree, encoding: 'utf8' });
+  assert.deepEqual([knowledge.status, knowledge.stderr], [1, expected(tree)]);
+  assert.doesNotMatch(run(['check'], dir).stderr, /no project folder/, 'the main checkout has the project');
+});
+
 test('--help, -h, and help print the usage on stdout and exit 0, for both commands', () => {
   for (const flag of ['--help', '-h', 'help']) {
     const { status, stdout, stderr } = run([flag]);
@@ -52,6 +75,22 @@ test('--help, -h, and help print the usage on stdout and exit 0, for both comman
     assert.deepEqual([knowledge.status, knowledge.stderr], [0, ''], flag);
     assert.match(knowledge.stdout, /^usage: aidrian-knowledge <command> \[--project DIR\] \[args\]\n/, flag);
   }
+});
+
+test('the usage fits 100 columns, with one line for each form of a command and its wrapped parts indented under it', () => {
+  const { stdout } = run(['--help']);
+  const lines = stdout.trimEnd().split('\n');
+  assert.deepEqual(lines.filter((line) => line.length > 100), []);
+  assert.deepEqual(lines.filter((line) => line.startsWith('  aidrian lesson ')).map((line) => line.split(' ')[4]), ['add', 'list', 'resolve', 'update', 'stats', 'nudge']);
+  assert.deepEqual(lines.filter((line) => line.startsWith('  aidrian worktree ')).map((line) => line.split(' ')[4]), ['new', 'cleanup']);
+  assert.ok(lines.includes('  aidrian commit-msg (--file PATH | --message TEXT) [--project DIR]'), 'a choice in parentheses is one form');
+  const lesson = lines.findIndex((line) => line.startsWith('  aidrian lesson add '));
+  assert.match(lines[lesson + 1], /^ {10}\[/, 'a wrapped usage line sits deeper than the description');
+  const misuse = spawnSync(CLI, ['worktree', 'bogus'], { cwd: EXAMPLE, encoding: 'utf8' });
+  assert.deepEqual(misuse.stderr.split('\n').slice(0, 2), [
+    'usage: aidrian worktree new BRANCH [--base REF] [--slug NAME] [--fetch] [--plan] [--reuse-existing]',
+    '       aidrian worktree cleanup [plan|execute] [--min-age 24h] [--force]',
+  ]);
 });
 
 test('a missing or unknown command, an unknown option, or a stray argument prints the usage and exits 1', () => {
@@ -67,7 +106,7 @@ test('a missing or unknown command, an unknown option, or a stray argument print
     const { status, stdout, stderr } = run(args);
     assert.equal(status, 1, args.join(' '));
     assert.equal(stdout, '');
-    assert.match(stderr, /^usage: aidrian <command> \[args\]\n\n {2}aidrian check \[--project DIR\]\n.*\n {2}aidrian init \[--project DIR\]\n.*\n {2}aidrian state \[--project DIR\]\n/);
+    assert.match(stderr, /^usage: aidrian <command> \[args\]\n\n {2}aidrian check \[--project DIR\]\n(?: {6}.*\n)+ {2}aidrian init \[--project DIR\]\n(?: {6}.*\n)+ {2}aidrian state \[--project DIR\]\n/);
     if (expected) assert.match(stderr, expected, args.join(' '));
   }
 });

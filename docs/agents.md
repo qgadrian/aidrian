@@ -43,10 +43,11 @@ An optional `"*"` entry holds defaults for every agent:
 }
 ```
 
-| Provider | Fields an entry may set |
-| --- | --- |
-| `claude` | `model`, `effort`, `color`, `tools`, `disallowedTools`, `maxTurns`, `autoCompactWindow`, `memory`, `background`, `omitClaudeMd`, `isolation`, `experimental` |
-| `codex` | `model`, `model_reasoning_effort`, `model_reasoning_summary`, `model_verbosity`, `features`, `skills` |
+The fields an entry may set, per provider:
+
+- `claude`: `model`, `effort`, `color`, `tools`, `disallowedTools`, `maxTurns`, `autoCompactWindow`, `memory`, `background`,
+  `omitClaudeMd`, `isolation`, `experimental`.
+- `codex`: `model`, `model_reasoning_effort`, `model_reasoning_summary`, `model_verbosity`, `features`, `skills`.
 
 Each value passes through to the generated agent as it is.
 The build fails on an entry for an agent that has no source, and on any other field.

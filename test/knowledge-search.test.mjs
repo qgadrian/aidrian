@@ -181,7 +181,8 @@ test('init needs a project, and refuses a folder outside it, a missing folder, a
   mkdirSync(path.join(project, 'empty'));
   const cases = [
     [['init', '../elsewhere'], /^\.\.\/elsewhere: must be a folder inside the project\n$/],
-    [['init', 'nope'], /^nope: must be a folder inside the project\n$/],
+    [['init', 'nope'], /^nope: no such folder in the project; create it and add your docs \(mkdir nope\), or pass the folder that holds them\n$/],
+    [['init', 'docs/README.md'], /^docs\/README\.md: must be a folder inside the project\n$/],
     [['init', 'empty'], /^empty: has no \.md files\n$/],
     [['init'], /init needs one folder/],
     [['init', 'docs', 'more'], /init needs one folder/],

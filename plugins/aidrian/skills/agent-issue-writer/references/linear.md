@@ -23,9 +23,9 @@ Below, `<team>` is the team name or id from that knowledge, and `<KEY>` its issu
 
 ## Merge And Deployment Semantics
 
-- Treat merge into `main` as production deployment.
-- For `main`-targeting issues, record merge order instead of inventing a separate deploy order.
-- If a PR targets a base PR or non-`main` branch first, preserve that target in the issue body
+- Treat merge into the default branch, config.json `defaultBranch`, as production deployment unless the project's knowledge says otherwise.
+- For issues that target the default branch, record merge order instead of inventing a separate deploy order.
+- If a PR targets a base PR or another branch first, preserve that target in the issue body
   so intermediate merges are not mistaken for production release.
 
 ## Tracker Metadata Expectations
@@ -51,7 +51,8 @@ If a native field cannot be populated in the current runtime, keep it in the Mar
 
 ## Priority (native Linear field)
 
-Linear's native `priority` is an integer set directly on `save_issue(priority: <0-4>)` — there is no separate post-creation step and no org-level GraphQL mutation. Map `issue_fields.priority` 1:1:
+Linear's native `priority` is an integer set directly on `save_issue(priority:)`, from the table below: there is no separate post-creation step
+and no org-level GraphQL mutation. This table is the one priority scale; map `issue_fields.priority` 1:1:
 
 | `issue_fields.priority` | native `priority` |
 |---|---|

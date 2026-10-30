@@ -18,14 +18,22 @@ Never search a tracker to guess a key.
 | Blocked by | `relations.blockedBy` | `blockedBy.nodes`, each with its `state`, and the issues the body's dependencies section names |
 | Linked pull requests | the pull request links in `get_issue`'s `attachments` | `closedByPullRequestsReferences`, which has no state: read each with `gh pr view <url>` |
 | Assigned to the current user | the assignee is `get_user` for `me` | `assignees` holds `gh api user --jq .login` |
-| Branch | the issue's `gitBranchName`, as it is | the branch format the knowledge names |
+| Branch | the issue's `gitBranchName`, as it is | the branch format the knowledge names, else the `knowledge` skill's default |
 | Move to In Progress | `save_issue` with the started status | the label or project status the knowledge names; none named: skip |
-| Edit the body: tick a box, patch a size | `save_issue` with `description` | `gh issue edit <n> --body-file <file>` |
-| Comment | `save_comment` | `gh issue comment <n> --body-file <file>` |
+| Edit the body: tick a box, patch a size | `save_issue` with `description` | `gh issue edit <n> --body-file -` |
+| Comment | `save_comment` | `gh issue comment <n> --body-file -` |
 | Estimate | `save_issue` with `estimate` | the label or project field the knowledge names; none: the size line in the body |
-| Create | `save_issue`, by the `agent-issue-writer` skill's `references/linear.md` | `gh issue create --title <title> --body-file <file>`, plus `--label` and `--milestone` |
+| Create | `save_issue`, by the `agent-issue-writer` skill's `references/linear.md` | `gh issue create --title <title> --body-file -`, plus `--label` and `--milestone` |
 | Parent and children | `parentId` on each child | read: `parent` and `subIssues.nodes`, each with its `state`, and the body lines this cell writes; write: the parent's body lists each child as `- [ ] #<n>`; each child's body names its parent |
 | A group of issues | a Linear Project | the milestone or GitHub project the knowledge names |
 
-Write a body from a file, never inline: the shell then cannot mangle Markdown, quotes, or backticks.
+Pass a body on stdin, never inline: `--body-file -` reads it from a quoted heredoc, so the shell cannot mangle Markdown,
+quotes, or backticks, and an agent without a file tool needs no file.
+
+```bash
+gh issue create --title "<title>" --body-file - <<'EOF'
+<body>
+EOF
+```
+
 Read the issue once per run and keep that snapshot; read it again only when the Human asks.

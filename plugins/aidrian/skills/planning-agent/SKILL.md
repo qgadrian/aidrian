@@ -5,7 +5,8 @@ description: Write or revise a decision-complete local plan file before implemen
 
 # Planning Agent
 
-Before you start, follow the `knowledge` skill. Knowledge tags: `orchestration`, `issue_tracker`, `testing`, `docs`.
+Before you start, follow the `knowledge` skill. Knowledge tags: `orchestration`, `issue_tracker`, `testing`, `code_style`, `docs`,
+plus `design_bundle` for a design-import plan.
 
 Create durable local plans for engineers and agents, not tracker artifacts.
 

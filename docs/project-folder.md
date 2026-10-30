@@ -32,6 +32,7 @@ The project root is the nearest folder, at or above the current one, that has `.
 In a git checkout the search stops at the checkout's top folder.
 In a git worktree that is the worktree itself, so a branch reads its own committed knowledge.
 A worktree whose branch has no project folder has no project, even inside a main checkout that has one: the hooks stay silent there.
+`aidrian check` there says the worktree was created before the project folder was committed and pushed.
 
 To keep the folder somewhere else, commit `.aidrian.json` at the project root:
 
@@ -97,7 +98,7 @@ Where no shell runs it, use `node <plugin folder>/lib/cli.mjs`, and `node <plugi
 - `skills`: each `.claude/skills/<name>/SKILL.md` has a one-line YAML `description` within `skills.descriptionChars`,
   and all skill names and descriptions together fit in `skills.listingBytes`. Both hosts list them in every session.
   A `SKILL.md` of 8,000 bytes or more fails, because Codex cuts it there; one above 7,500 bytes passes with a warning.
-- `agents`: each `.claude/agents/*.md` has `name` equal to its file name, such a `description`, and a known `model` and `effort`.
+- `agents`: each `.claude/agents/*.md` has `name` equal to its file name, a `description`, and a known `model` and `effort`.
 - `paths`: no tracked file holds a personal home folder such as `/Users/<name>/`; `--staged` checks the staged files only, as the index holds them.
 - `budget`: the [knowledge budgets](config.md#knowledge-budgets) that `aidrian check` also holds. It prints the `always` bytes per bucket.
 

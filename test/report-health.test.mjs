@@ -9,6 +9,7 @@ import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import { parseSince } from '../plugins/aidrian/lib/report.mjs';
 import { fold } from '../plugins/aidrian/lib/lesson-inbox.mjs';
 import { FIXES, formatHealth, summarizeHealth } from '../plugins/aidrian/lib/report-health.mjs';
+import { reviewRounds } from '../plugins/aidrian/lib/report-reviews.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
@@ -140,6 +141,9 @@ test('summarizeHealth: every signal says not enough data, or unavailable, with n
     cost: 'not_enough_data', lessons: 'ok',
   });
   assert.equal(health.signals.reviews.error, 'gh: not found');
+  assert.match(formatHealth(health, { file: 'log', since: '30d' }), /Reviews: unavailable; gh could not read the pull requests/);
+  const noBot = summarizeHealth({ rows: [], sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: reviewRounds(20, null), config: configWith() });
+  assert.match(formatHealth(noBot, { file: 'log', since: '30d' }), /Reviews: unavailable; no review bot is set \(github\.reviewer is null\)/);
 });
 
 test('summarizeHealth: a sample under minSample in each windowed signal hides a problem the same rows show at a lower minimum', () => {

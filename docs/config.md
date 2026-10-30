@@ -19,7 +19,11 @@ In a group such as `github`, set only the keys you change; the others keep their
   "version": 1,
   "defaultBranch": "main",
   "state": { "dir": null },
-  "worktrees": { "dir": ".worktrees", "bootstrap": null },
+  "worktrees": {
+    "dir": ".worktrees",
+    "bootstrap": null,
+    "disposable": ["node_modules", "dist", "build", ".next", ".cache", "coverage", ".turbo"]
+  },
   "mainCheckout": { "guard": false, "allowWrites": [] },
   "commits": { "types": ["build", "chore", "ci", "docs", "feat", "fix", "perf", "refactor", "revert", "style", "test"] },
   "github": {
@@ -64,11 +68,12 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `state.dir` | The machine-local [state folder](project-folder.md#local-state); `null` is the one under `$XDG_STATE_HOME`. |
 | `worktrees.dir` | The folder for [task worktrees](project-folder.md#task-worktrees), `.worktrees` at the repository root by default. |
 | `worktrees.bootstrap` | One shell command to run inside each new worktree, such as `npm ci`; `null` runs nothing. |
+| `worktrees.disposable` | Folder names, at any depth, whose git-ignored files a cleanup removes without asking. `[]` asks for any ignored file. |
 | `mainCheckout.guard` | `true` blocks agent edits to tracked files in the main checkout, so task work happens in worktrees. Off by default. |
 | `mainCheckout.allowWrites` | Tracked paths agents may still edit in the main checkout, as globs with `*` and `**`. Ignored paths are always allowed. |
 | `commits.types` | The Conventional Commits types a commit subject may use. |
 | `github.requiredSections` | The `## ` sections every pull request body must have ([Bash rules](hooks.md#bash-rules)); `[]` checks none. |
-| `github.reviewer` | The login of the Codex review bot that `aidrian pr await-review` waits for. |
+| `github.reviewer` | The login of the Codex review bot that `aidrian pr await-review` waits for. `null` or `"none"`: no bot ([below](#no-review-bot)). |
 | `github.maxReviewRounds` | The review rounds a pull request may get, 3 by default: the review loop and `aidrian pr await-review --request` stop there. |
 | `github.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. |
 | `github.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
@@ -99,6 +104,15 @@ A path in `state.dir` or `worktrees.dir` may start with `~`, the home folder, or
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
 
 Once `github.conditionalChecks` has an entry, `aidrian pr checks` fails on any other skip; `[]` lets every skip pass, named in the output.
+
+### No review bot
+
+A project without the Codex review bot sets `"github": { "reviewer": null }`, or `"none"`.
+
+- `aidrian pr await-review` then ends at once with exit 0 and `"status": "no_reviewer"`.
+  It runs no `gh`, posts no review request, and waits for nothing. `--reviewer none` does the same for one run.
+- `aidrian report reviews` and the Reviews line of `aidrian report health` say that no review bot is set.
+- The `orchestration` and `autopilot` skills then run the `pr-review` skill in every review round.
 
 ## Models
 
@@ -201,11 +215,13 @@ Every session and subagent reads the `always` docs, and `aidrian-knowledge route
 - Each doc with at least one tag: a warning above `taggedDocBytes`, 24 KB by default.
   Split such a doc into a short rule card and a reference, or drop its tags so that only search finds it.
 
-The warnings print on stderr, and the check still passes. `aidrian check` prints the `always` total on its last line:
+The warnings print on stderr, and the check still passes. `aidrian check` prints the `always` total on its last line;
+the warning below is one line, wrapped here:
 
 ```console
 $ aidrian check
-warning: docs/knowledge/engineering/sync-protocol.md: 41230 bytes, over knowledge.budgets.taggedDocBytes (24576); every route to backend reads it whole: split it into a short rule card and a reference, or drop its tags so only search finds it
+warning: docs/knowledge/engineering/sync-protocol.md: 41230 bytes, over knowledge.budgets.taggedDocBytes (24576); every route to
+  backend reads it whole: split it into a short rule card and a reference, or drop its tags so only search finds it
 ok: .aidrian (2 buckets, 8 docs)
 state: /home/you/.local/state/aidrian/projects/notes-1a2b3c4d
 budget: 2479 of 16384 always-doc bytes (engineering 2479, product 0)

@@ -59,12 +59,13 @@ and which features belong to which product mode. Never propose UX logic that bre
 
 Findings first, ordered by severity: critical, high, medium, low. Each finding gives:
 
-- verdict: `fix now`, `acceptable as-is`, `needs more evidence`, or `blocked_by_product`, the same four `designer` uses
+- the axes and verdict words `designer` uses: `severity`, `likelihood`, `affects`, and `cost` for `aidrian pr disposition`,
+  or `needs_evidence` or `blocked_by_product` when no verdict fits yet
 - the user impact, and the evidence: the screen or flow, and the file path when known
 - a concrete fix, its owner (`designer`, `frontend-developer`, or `product-manager`), and acceptance criteria
 
 Keep recommendations implementable in the current architecture; no speculative redesigns.
-When a recommendation depends on unresolved product behavior or runtime constraints, use `blocked_by_product` or `needs more evidence`
+When a recommendation depends on unresolved product behavior or runtime constraints, use `blocked_by_product` or `needs_evidence`
 and route it to its owner instead of forcing a UX conclusion.
 
 ## Implementation mode

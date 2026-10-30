@@ -49,6 +49,12 @@ When a project doc contradicts a plugin instruction, follow the project and name
 A project overrides any of these in an `always` doc.
 
 - Local plans live in `<state>/plans/`, where `<state>` is the folder `aidrian state` prints. Create task worktrees with `aidrian worktree new`.
+- No `testing` docs: a step that runs the test commands that knowledge names takes them from `package.json` scripts,
+  the `Makefile`, or the CI workflow, and says which. None found: say so in `risks`; a check that never ran never passed.
+- No branch format in the `issue_tracker` knowledge: `<type>/<key>-<slug>`, or `<type>/<slug>` with no issue,
+  where `<type>` is a Conventional Commits type, such as `fix/123-login-redirect`.
+- A tool your role denies is a routing signal: when the task needs one, stop and return `status: blocked`,
+  with `next_owner` the agent that has the tool and one line on what you needed and why. Never work around a denial.
 - When another agent reads your result, return one JSON object, the machine handoff, with these fields:
   - `status`: `done`, `blocked`, `needs_input`, or `no_op`.
   - `role`, and `decision`: what you concluded, in two sentences at most.

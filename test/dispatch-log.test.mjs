@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { pathToFileURL } from 'node:url';
 
 import { coverage, coverageLines } from '../plugins/aidrian/lib/dispatch-log.mjs';
 import { claimedPaths, dispatchRow, sessionRow } from '../plugins/aidrian/lib/dispatch-rows.mjs';
@@ -197,6 +198,37 @@ test('a log of telemetry.maxMb rotates into dispatch-log.1.jsonl, a rotate row s
   dispatch('a5');
   dispatch('a6');
   assert.deepEqual(log().map((row) => row.event === 'rotate' || row.agent_id), [true, 'a6']);
+});
+
+test('processes that append to a full log at once rotate it once and lose no row', async (t) => {
+  const { dir, env, state } = project(t);
+  const file = path.join(state(), 'dispatch-log.jsonl');
+  const rotated = path.join(state(), 'dispatch-log.1.jsonl');
+  mkdirSync(state(), { recursive: true });
+  writeFileSync(file, `${JSON.stringify({ event: 'dispatch', ts: new Date().toISOString(), session_id: 's', agent_id: 'old', description: 'x'.repeat(1024 * 1024) })}\n`);
+  const lib = (name) => JSON.stringify(pathToFileURL(path.join(ROOT, 'plugins/aidrian/lib', name)).href);
+  const writer = (name) => {
+    const code = `import { appendEvent } from ${lib('dispatch-log.mjs')};
+import { DEFAULTS } from ${lib('config.mjs')};
+import { findProject } from ${lib('project.mjs')};
+const project = findProject(${JSON.stringify(dir)});
+const config = { ...DEFAULTS, telemetry: { ...DEFAULTS.telemetry, maxMb: 1 } };
+for (let i = 0; i < 50; i++) appendEvent(project, config, { event: 'dispatch', ts: new Date().toISOString(), session_id: 's', agent_id: '${name}-' + i });`;
+    return new Promise((resolve, reject) => {
+      spawn(process.execPath, ['--input-type=module', '-e', code], { env, stdio: 'inherit' })
+        .on('error', reject)
+        .on('exit', (status) => (status === 0 ? resolve() : reject(new Error(`writer exited ${status}`))));
+    });
+  };
+  const names = ['a', 'b', 'c', 'd'];
+  await Promise.all(names.map(writer));
+  const rows = (at) => readFileSync(at, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+  const all = [...rows(rotated), ...rows(file)];
+  assert.equal(all.filter((row) => row.event === 'rotate').length, 1, 'one process rotated');
+  assert.equal(all.find((row) => row.event === 'rotate').dropped, false);
+  assert.deepEqual(all.filter((row) => row.agent_id === 'old').length, 1);
+  for (const name of names) assert.equal(all.filter((row) => row.agent_id?.startsWith(`${name}-`)).length, 50, name);
+  assert.equal(statSync(`${file}.lock`, { throwIfNoEntry: false }), undefined, 'the lock is gone');
 });
 
 test('every dispatch-log hook exits 0 silently on a payload it cannot read', () => {

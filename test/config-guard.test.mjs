@@ -101,6 +101,24 @@ test('a subagent may still read those files and write anything else, and the mai
       "node -e \"require('fs').writeFileSync('tsconfig.json', '{}')\"",
       "python3 -c \"open('.aidrian/knowledge/notes.md', 'w').write('x')\"",
       'python3 -m json.tool .aidrian/config.json',
+      // An interpreter whose code only reads the config, in one of the few shapes the guard knows.
+      "python3 -c \"import json; print(json.load(open('.aidrian/config.json')))\"",
+      "python3 -c \"print(open('.aidrian/config.json').read())\"",
+      "python3 -c \"import json; print(json.dumps(json.load(open('.aidrian.local.json', 'r'))['agents'], indent=2))\"",
+      "node -e \"console.log(require('./.aidrian/config.json'))\"",
+      "node -p \"JSON.parse(require('fs').readFileSync('.aidrian/config.json', 'utf8')).agents\"",
+      "node -e \"console.log(require('node:fs').readFileSync('.aidrian.json', 'utf8'))\"",
+      "node -e \"const { readFileSync } = require('fs'); console.log(JSON.stringify(JSON.parse(readFileSync('.aidrian/config.json')), null, 2))\"",
+      "python3 - <<'EOF'\nimport json\nprint(json.load(open('.aidrian/config.json'))['agents'])\nEOF",
+      // A heredoc counts for its own command only, so a read after it is a read.
+      "python3 - <<'EOF'\nprint(1)\nEOF\ncat .aidrian/config.json",
+      "python3 - <<'EOF'\nopen('notes.md', 'w').write('x')\nEOF\ncat .aidrian/config.json",
+      "python3 <<< \"print(open('.aidrian/config.json').read())\"",
+      // The same reads with the code in the option's word, and node's `-pe`, whose code is the next word.
+      "python3 -c\"print(open('.aidrian/config.json').read())\"",
+      "python3 -Bc\"import json; print(json.load(open('.aidrian/config.json')))\"",
+      "node -pe \"require('./.aidrian/config.json').agents\"",
+      "node --print=\"require('./.aidrian/config.json').agents\"",
     ].map((command) => ['Bash', { command }]),
   ];
   for (const [tool, toolInput] of allowed) assert.equal(verdict(dir, subagent(dir, tool, toolInput)), null, `${tool} ${JSON.stringify(toolInput)}`);
@@ -126,12 +144,84 @@ test('a write to an unknown folder, or code an interpreter runs, is judged by th
     ['ruby -e "File.write(\'.aidrian/config.json\', \'{}\')"', '.aidrian/config.json'],
     ["python3 - <<'EOF'\nopen('.aidrian/config.json', 'w').write('{')\nEOF", '.aidrian/config.json'],
     ["bash -c 'python3 -c \"open(\\\".aidrian/config.json\\\", \\\"w\\\")\"'", '.aidrian/config.json'],
+    // Code that writes, deletes, moves, or runs a program, from any place an interpreter reads code.
+    ["python3 - <<'EOF'\nimport os\nos.remove('.aidrian/config.json')\nEOF", '.aidrian/config.json'],
+    ["cat x | python3 - <<'EOF'\nimport json\nEOF\npython3 <<< \"import os; os.rename('.aidrian.json', 'x')\"", '.aidrian.json'],
+    ["echo \"open('.aidrian/config.json', 'w')\" | python3", '.aidrian/config.json'],
+    ['node -e "require(\'fs\').unlinkSync(\'.aidrian/config.json\')"', '.aidrian/config.json'],
+    ['node -e "require(\'child_process\').execSync(\'rm .aidrian.local.json\')"', '.aidrian.local.json'],
+    ['python3 -c "import pathlib; pathlib.Path(\'.aidrian/config.json\').write_text(\'{}\')"', '.aidrian/config.json'],
+    ['python3 -c "import shutil; shutil.move(\'.aidrian/config.json\', \'/tmp/x\')"', '.aidrian/config.json'],
+    ["perl -pi.bak -e 's/deny/allow/' .aidrian/config.json", '.aidrian/config.json'],
+    ['perl -e "open(my \\$f, \'>\', \'.aidrian/config.json\')"', '.aidrian/config.json'],
+    ['ruby -i -pe "sub(/deny/, \'allow\')" .aidrian/config.json', '.aidrian/config.json'],
+    // Code in the same word as its option, alone or after others in a cluster.
+    ["python3 -c\"open('.aidrian/config.json','w').write('{}')\"", '.aidrian/config.json'],
+    ["python3 -Bc\"import os; os.remove('.aidrian.local.json')\"", '.aidrian.local.json'],
+    ["node -e\"require('fs').unlinkSync('.aidrian/config.json')\"", '.aidrian/config.json'],
+    ["node -p\"require('fs').rmSync('.aidrian.json')\"", '.aidrian.json'],
+    ["perl -e'unlink \".aidrian/config.json\"'", '.aidrian/config.json'],
+    ["perl -lE'unlink \".aidrian.json\"'", '.aidrian.json'],
+    ["ruby -e\"File.delete('.aidrian/config.json')\"", '.aidrian/config.json'],
+    ["ruby -we\"File.delete('.aidrian.local.json')\"", '.aidrian.local.json'],
   ]) {
     assert.match(reasonOf(command) ?? '', new RegExp(`^aidrian: Bash is blocked .* it may change ${file.replaceAll('.', '\\.')}, which sets`), command);
+  }
+  // Code that names a file and is not one of the few reads, whatever it calls: a rename or replace the guard has no
+  // name for, a read beside a change, a read whose function the code first redefines, ruby and perl, and a write mode.
+  for (const [command, file] of [
+    ['python3 -c "from pathlib import Path; Path(\'.aidrian/config.json\').replace(\'old.json\')"', '.aidrian/config.json'],
+    ['python3 -c "import os; os.rename(\'.aidrian/config.json\', \'old.json\')"', '.aidrian/config.json'],
+    ['python3 -c "import os; os.unlink(\'.aidrian.local.json\')"', '.aidrian.local.json'],
+    ['node -e "require(\'fs\').renameSync(\'.aidrian/config.json\', \'old.json\')"', '.aidrian/config.json'],
+    ["python3 -c \"import json, os; print(json.load(open('.aidrian/config.json'))); os.replace('.aidrian/config.json', 'x')\"", '.aidrian/config.json'],
+    ["python3 -c \"open = lambda p: __import__('os').remove(p); open('.aidrian/config.json').read()\"", '.aidrian/config.json'],
+    ["node -e \"const fs = { readFileSync: require('fs').unlinkSync }; fs.readFileSync('.aidrian/config.json')\"", '.aidrian/config.json'],
+    ["python3 -c \"open('.aidrian/config.json', 'w').read()\"", '.aidrian/config.json'],
+    ["node -e \"require('fs').readFileSync('.aidrian/config.json', { flag: 'w' })\"", '.aidrian/config.json'],
+    ["python3 -c \"print(open('.aidrian/config.json').read())\" .aidrian.json", '.aidrian.json'],
+    ["ruby -e \"puts File.read('.aidrian/config.json')\"", '.aidrian/config.json'],
+    ["ruby -e \"open('|rm .aidrian/config.json').read\"", '.aidrian/config.json'],
+    ["perl -ne 'print' .aidrian/config.json", '.aidrian/config.json'],
+  ]) {
+    const reason = reasonOf(command) ?? '';
+    assert.match(reason, new RegExp(`^aidrian: Bash is blocked .* it may change ${file.replaceAll('.', '\\.')}, which sets`), command);
+    assert.match(reason, /only the main session may change it; to read it, use Read, cat, or jq\. This is a project rule/, command);
   }
   // A `cd` may fail, so the folder before it still counts, and there the target is certain.
   for (const command of ['cd .aidrian && echo {} > config.json', 'cd - && rm -rf .aidrian']) {
     assert.match(reasonOf(command), / it changes \.aidrian\/config\.json,/, command);
+  }
+});
+
+test('the session`s gate snapshot, the file that marks the session gated, and their folder are guarded as the config is', (t) => {
+  const { dir } = project(t);
+  const sessions = path.join(process.env.XDG_STATE_HOME, 'aidrian/sessions');
+  const snapshot = path.join(sessions, 's-1.json');
+  const marker = path.join(sessions, 's-1.gated');
+  const found = findProject(dir);
+  const reasonOf = (command) => configWriteDenial(subagent(dir, 'Bash', { command }), found, loadConfig(found).config, { also: [snapshot, marker] })?.reason ?? null;
+  for (const command of [
+    `python3 -c "from pathlib import Path; Path('${snapshot}').replace('/tmp/old.json')"`,
+    `python3 -c "import os; os.rename('${snapshot}', '/tmp/old.json')"`,
+    `python3 -c "import shutil; shutil.move('${snapshot}', '/tmp/old.json')"`,
+    `node -e "require('fs').renameSync('${snapshot}', '/tmp/old.json')"`,
+    `node -e "require('fs').unlinkSync('${marker}')"`,
+    `python3 -c "import os; os.unlink('${marker}')"`,
+    `python3 -c "import shutil, os; shutil.rmtree(os.path.expanduser('~/.local/state/aidrian/sessions'))"`,
+    `python3 -c "import glob, os; [os.remove(f) for f in glob.glob('${sessions}/*')]"`,
+  ]) {
+    assert.match(reasonOf(command) ?? '', /^aidrian: Bash is blocked .* it may change \/.*\/aidrian\/sessions\/s-1\.(?:json|gated), which sets/, command);
+  }
+  for (const command of [
+    `python3 -c "import json; print(json.load(open('${snapshot}')))"`,
+    `python3 -c "print(open('${snapshot}').read())"`,
+    `node -e "console.log(require('${snapshot}'))"`,
+    `node -p "require('fs').readFileSync('${snapshot}', 'utf8')"`,
+    `node -p "JSON.parse(require('fs').readFileSync('${snapshot}')).gates"`,
+    `cat ${snapshot}`,
+  ]) {
+    assert.equal(reasonOf(command), null, command);
   }
 });
 

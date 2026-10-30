@@ -103,6 +103,8 @@ function lexSegments(command) {
   const separators = [];
   const substitutions = [];
   const ends = [];
+  // Each heredoc body as { segment, body }: the index of the segment whose `<<` opened it, and its text.
+  const heredocs = [];
   let tokens = [];
   let current = null;
   const pendingHeredocs = [];
@@ -134,7 +136,7 @@ function lexSegments(command) {
 
     if (ch === '\n' && pendingHeredocs.length > 0) {
       // Skip the body lines up to the delimiter line, then lex on.
-      const { delimiter, expands } = pendingHeredocs.shift();
+      const { delimiter, expands, segment } = pendingHeredocs.shift();
       const rest = command.slice(i + 1);
       let consumed = 0;
       let body = 0;
@@ -148,6 +150,7 @@ function lexSegments(command) {
         body = consumed;
       }
       const bodyEnd = Math.min(i + 1 + body, command.length);
+      heredocs.push({ segment, body: command.slice(i + 1, bodyEnd) });
       if (expands) collectSubstitutions(command, i + 1, bodyEnd, bodyEnd, substitutions);
       i += closed ? consumed : rest.length;
       endSegment();
@@ -264,7 +267,7 @@ function lexSegments(command) {
           else quoted = true;
           j += 1;
         }
-        pendingHeredocs.push({ delimiter, expands: !quoted });
+        pendingHeredocs.push({ delimiter, expands: !quoted, segment: segments.length });
         i = j - 1;
         continue;
       }
@@ -285,7 +288,7 @@ function lexSegments(command) {
   }
 
   endSegment();
-  return { segments, separators, substitutions, ends };
+  return { segments, separators, substitutions, ends, heredocs };
 }
 
 // The segments and the operator that ended each one.
@@ -303,6 +306,17 @@ export function lexSubstitutions(command) {
 // The segments alone.
 export function lexCommand(command) {
   return lexSegments(command).segments;
+}
+
+// The segments, and what each one reads on its input from the command line itself: `inputs[i]` lists the body of every
+// heredoc, then the word of every here-string, that segment i redirects to its input.
+export function lexInputs(command) {
+  const { segments, heredocs } = lexSegments(command);
+  const inputs = segments.map((segment, i) => [
+    ...heredocs.filter((each) => each.segment === i).map((each) => each.body),
+    ...segment.flatMap((token, at) => (token.operator && token.text === '<<<' && segment[at + 1] ? [segment[at + 1].text] : [])),
+  ]);
+  return { segments, inputs };
 }
 
 // The segments in the order they run, as { segment, substitutions }: the body of every command substitution that runs

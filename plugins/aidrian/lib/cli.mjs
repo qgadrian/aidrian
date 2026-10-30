@@ -3,6 +3,7 @@
 // code } }. Only the module of the command that runs is imported.
 
 import { CONFIG_ERROR } from './config.mjs';
+import { usageLines, wrap } from './usage.mjs';
 
 const COMMANDS = {
   check: './check.mjs',
@@ -40,12 +41,12 @@ try {
   }
 }
 
-// Every command with its arguments and what it does.
+// Every command with its arguments, one line for each form, and what it does.
 async function usage() {
   const lines = ['usage: aidrian <command> [args]', ''];
   for (const [name, file] of Object.entries(COMMANDS)) {
     const { usage: args, about } = (await import(file)).commands[name];
-    lines.push(`  aidrian ${name} ${args}`.trimEnd(), `      ${about}`);
+    lines.push(...usageLines(name, args, '  '), ...wrap(`      ${about}`, '      '));
   }
   return lines.join('\n');
 }

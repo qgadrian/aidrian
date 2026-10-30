@@ -60,6 +60,22 @@ function outside(dir, top) {
   return !isWithin(top, real);
 }
 
+// What a command prints when no project is at or above `start`. In a linked git worktree whose main checkout has a
+// project folder at the same place, the worktree was made before that folder reached its base branch, so `aidrian init`
+// would be the wrong advice: the worktree needs remaking, or the default branch merged in.
+export function noProjectMessage(start) {
+  const where = `no project folder at or above ${start}`;
+  const roots = checkoutRoots(start);
+  if (roots && roots.main !== roots.current) {
+    const main = findProject(path.join(roots.main, path.relative(roots.current, realPath(start))));
+    if (main) {
+      const branch = loadConfig(main).config.defaultBranch;
+      return `${where}: this worktree was created before ${main.dir}/ was committed and pushed; recreate it or merge ${branch}`;
+    }
+  }
+  return `${where}; run aidrian init`;
+}
+
 // The project at or above `start`, or one rooted at `start` that has no folder yet. For commands that work either way.
 export function projectAt(start) {
   return findProject(start) ?? openProject(path.resolve(start));
@@ -173,8 +189,14 @@ function inMainCheckout(root, roots = checkoutRoots(root)) {
 // git never sees it and every worktree and clone of a repository shares it. config.json `state.dir` moves it.
 export function stateDir(project, { config = loadConfig(project).config, env = process.env } = {}) {
   if (config.state.dir) return localPath(project, config.state.dir);
+  return path.join(stateRoot(env), 'projects', projectId(project));
+}
+
+// `$XDG_STATE_HOME/aidrian`, with `~/.local/state` when that variable is unset or relative: the folder that holds every
+// project's state folder, and what no config.json can move (lib/gate-snapshot.mjs keeps its files there).
+export function stateRoot(env = process.env) {
   const base = path.isAbsolute(env.XDG_STATE_HOME ?? '') ? env.XDG_STATE_HOME : path.join(homedir(), '.local/state');
-  return path.join(base, 'aidrian', 'projects', projectId(project));
+  return path.join(base, 'aidrian');
 }
 
 // Task worktrees: config.json `worktrees.dir`, `.worktrees` at the repository root by default.

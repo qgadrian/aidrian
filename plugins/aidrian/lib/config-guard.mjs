@@ -4,7 +4,9 @@
 // It reads the targets the way the main-checkout rule does: Edit, Write, NotebookEdit, and apply_patch by the path they
 // name, and a Bash command by the paths it writes. Unlike that rule it follows each `cd` and reads `sh -c` strings, and
 // when the shell's folder is unknown it judges a relative target by its name alone. An interpreter run with code on its
-// command line or its input, such as `python3 -c`, counts as a write to each of the files that code names.
+// command line or its input, such as `python3 -c` or a heredoc, counts as a write to each of the files its words name,
+// unless its code is one of the few that only read (READS). The guard keeps a gate from changing for the next session;
+// within a session, the gates a subagent started with hold anyway (lib/gate-snapshot.mjs).
 
 import path from 'node:path';
 
@@ -12,34 +14,53 @@ import { projectRuleReason } from './agent-gates.mjs';
 import { isWithin } from './fs.mjs';
 import { configFiles } from './project.mjs';
 import { bashWrites, canonical, toolTargets } from './rules/main-checkout.mjs';
-import { commandLines, inlineShellCommand, lexCommand, readInvocation, SUBSTITUTION_DEPTH_LIMIT } from './shell-lex.mjs';
+import { commandLines, inlineShellCommand, lexInputs, readInvocation, readShortOptions, SUBSTITUTION_DEPTH_LIMIT } from './shell-lex.mjs';
 
 const WRITE_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'apply_patch']);
-// Interpreters, and the options that hand them code on the command line: a short one also matches inside a cluster.
+// A quoted text with no quote, backslash, `$`, or backtick in it, such as a path.
+const TEXT = String.raw`(?:'[^'"\\$\x60\n]*'|"[^'"\\$\x60\n]*")`;
+const FS = String.raw`(?:'(?:node:)?fs'|"(?:node:)?fs")`;
+// Code that names a file only to read it: every statement is an import or a read, printed or not, followed by keys
+// only, as in `print(json.load(open(p))['agents'])` or `console.log(require(p).agents)`. Anything else, such as a call
+// that renames, replaces, or deletes the file, is not one, whatever its name.
+const PYTHON_READ = String.raw`(?:json\.load\(\s*OPEN\s*\)|OPEN\.read\(\s*\))(?:\s*\[\s*(?:${TEXT}|\d+)\s*\])*`
+  .replaceAll('OPEN', String.raw`open\(\s*${TEXT}(?:\s*,\s*(?:'[rbt]+'|"[rbt]+"))?\s*\)`);
+const NODE_FILE = String.raw`(?:(?:require\(\s*${FS}\s*\)|fs)\s*\.\s*)?readFileSync\(\s*${TEXT}(?:\s*,\s*${TEXT})?\s*\)`;
+const NODE_READ = String.raw`(?:require\(\s*${TEXT}\s*\)|JSON\.parse\(\s*${NODE_FILE}\s*\)|${NODE_FILE})(?:\s*\.\s*[A-Za-z_$][\w$]*|\s*\[\s*(?:${TEXT}|\d+)\s*\])*`;
+const READS = {
+  python: new RegExp(String.raw`^(?:import\s+json|print\(\s*(?:json\.dumps\(\s*${PYTHON_READ}(?:\s*,\s*indent\s*=\s*\d+)?\s*\)|${PYTHON_READ})\s*\)|${PYTHON_READ})$`, 'u'),
+  node: new RegExp(String.raw`^(?:(?:const|let|var)\s+(?:fs|\{\s*readFileSync\s*\})\s*=\s*require\(\s*${FS}\s*\)|console\.log\(\s*(?:JSON\.stringify\(\s*${NODE_READ}(?:\s*,\s*(?:null|\d+))*\s*\)|${NODE_READ})\s*\)|${NODE_READ})$`, 'u'),
+};
+// Interpreters, the options that hand them code on the command line, a short one also inside a cluster, and the code
+// of theirs that only reads; perl and ruby have none, as ruby's `open('|rm x')` runs a command. node takes `-pe` as one
+// option, so its code is the next word, not `e`.
 const INTERPRETERS = [
-  [/^python[\d.]*$/u, ['-c']],
-  [/^(?:node|nodejs|bun)$/u, ['-e', '-p', '--eval', '--print']],
-  [/^perl[\d.]*$/u, ['-e', '-E']],
-  [/^ruby[\d.]*$/u, ['-e']],
+  [/^python[\d.]*$/u, ['-c'], READS.python],
+  [/^(?:node|nodejs|bun)$/u, ['-e', '-p', '-pe', '--eval', '--print'], READS.node],
+  [/^perl[\d.]*$/u, ['-e', '-E'], null],
+  [/^ruby[\d.]*$/u, ['-e'], null],
 ];
 
 // Why the subagent call in `input`, a PreToolUse payload, may not run because it changes one of `project`'s config files,
 // or null: { match, reason }. `match` names the file, as in `changes <project folder>/config.json`; `reason` tells the agent.
 // It changes one when it writes the file, or a folder that holds it, such as the project folder an `rm -rf` names, unless
 // that folder also holds one of the project's checkouts, such as the project root or its worktree, as `cp notes.md .` does.
-export function configWriteDenial(input, project, { names: { human } }) {
+// `also` lists more files to guard the same way, as absolute paths: the session's gate snapshot and the file that marks
+// the session gated (lib/gate-snapshot.mjs). Code an interpreter runs also may not name the folder that holds them.
+export function configWriteDenial(input, project, { names: { human } }, { also = [] } = {}) {
   if (typeof input.agent_id !== 'string' || input.agent_id === '') return null;
   const { files: targets, names } = writeTargets(input);
   if (targets.length === 0 && names.length === 0) return null;
   const roots = project.checkouts.map((dir) => canonical(dir));
-  const files = configFiles(project).map((file) => canonical(file));
+  const guarded = also.map((file) => canonical(file));
+  const files = [...configFiles(project).map((file) => canonical(file)), ...guarded];
   const shown = (file) => (isWithin(roots[0], file) ? path.relative(roots[0], file) : file);
   for (const target of targets.map((each) => canonical(each))) {
     const holdsRoot = roots.some((root) => isWithin(target, root));
     const file = files.find((each) => each === target || (!holdsRoot && isWithin(target, each)));
     if (file) return blocked(input, shown(file), 'changes', human);
   }
-  const named = namedFile(names, files, project);
+  const named = namedFile(names, files, project, guarded);
   return named ? blocked(input, shown(named), 'may change', human) : null;
 }
 
@@ -57,48 +78,80 @@ function writeTargets(input) {
   };
 }
 
-// The config file one of `names` names, or null: by its file name, or, for config.json, by the project folder's name.
+// The guarded file one of `names` names, or null: by its file name, for config.json by the project folder's name, and
+// for a file `also` lists by its folder's last two parts, such as `aidrian/sessions`, with or without a path below it.
 // A name counts only as a whole path part, so `tsconfig.json` is not `config.json`, and `<project folder>/knowledge`
 // names a folder inside the project folder, not the folder itself.
-function namedFile(names, files, project) {
+function namedFile(names, files, project, also) {
   const folder = path.posix.basename(project.dir);
   const config = canonical(path.join(project.root, project.paths.config));
+  const lastTwo = (dir) => `${path.basename(path.dirname(dir))}/${path.basename(dir)}`;
   const patterns = [
     ...files.map((file) => [file, wholePart(path.basename(file), '(?![\\w.-])')]),
     [config, wholePart(folder, '(?![\\w.-]|/[^\\s\'"/])')],
+    ...also.map((file) => [file, wholePart(lastTwo(path.dirname(file)), '(?![\\w.-])')]),
   ];
   return patterns.find(([, pattern]) => names.some((name) => pattern.test(name)))?.[0] ?? null;
 }
 
 const wholePart = (name, after) => new RegExp(`(?<![\\w.-])${name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}${after}`, 'u');
 
-// The text of every interpreter the command runs with code from its command line, as its words joined, and the whole
-// command for one that reads its code from its input, as a heredoc gives it: the lexer keeps no heredoc body.
+// The texts to judge by the files they name, of every interpreter the command runs with code from its command line or
+// its input: its code, unless that code only reads (READS), and the rest of its words, which may name a file the code
+// changes, as `sys.argv[1]` does. Its code is the rest of the word that gives it, as in `-c<code>` or `--eval=<code>`,
+// or the word after, or the heredocs and here-strings fed to it, or, when none is, the whole command line, which a pipe
+// may feed it from.
 function interpretedCode(command) {
   const found = [];
-  const read = (line, depth) => {
-    for (const segment of commandLines(line).flatMap(lexCommand)) {
-      const invocation = readInvocation(segment);
-      const inner = depth < SUBSTITUTION_DEPTH_LIMIT ? inlineShellCommand(invocation) : null;
-      if (inner !== null) read(inner, depth + 1);
-      const options = INTERPRETERS.find(([program]) => program.test(invocation.program))?.[1];
-      if (!options) continue;
-      const words = invocation.args.map((token) => token.text);
-      if (words.some((word) => options.some((option) => givesCode(word, option)))) found.push(words.join(' '));
-      else if ((words.find((word) => !word.startsWith('-') || word === '-') ?? '-') === '-') found.push(command);
+  const read = (text, depth) => {
+    for (const line of commandLines(text)) {
+      const { segments, inputs } = lexInputs(line);
+      for (const [i, segment] of segments.entries()) {
+        const invocation = readInvocation(segment);
+        const inner = depth < SUBSTITUTION_DEPTH_LIMIT ? inlineShellCommand(invocation) : null;
+        if (inner !== null) read(inner, depth + 1);
+        const [, options, reads] = INTERPRETERS.find(([program]) => program.test(invocation.program)) ?? [];
+        if (!options) continue;
+        const words = invocation.args.map((token) => token.text);
+        const at = words.findIndex((word) => givenCode(word, options) !== undefined);
+        let code;
+        let rest = words;
+        if (at >= 0) {
+          const attached = givenCode(words[at], options);
+          code = attached ?? words[at + 1] ?? '';
+          rest = words.filter((_, j) => j !== at && (attached !== null || j !== at + 1));
+        } else if ((words.find((word) => !word.startsWith('-') || word === '-') ?? '-') === '-') {
+          code = inputs[i].length ? inputs[i].join('\n') : line;
+        } else continue;
+        if (rest.length) found.push(rest.join(' '));
+        if (!(reads && onlyReads(code, reads))) found.push(code);
+      }
     }
   };
   read(command, 0);
   return found;
 }
 
-// Whether the word is the option, or, for a short one, a cluster of short options that holds it, as `-Bc` holds `-c`.
-function givesCode(word, option) {
-  if (option.startsWith('--')) return word === option || word.startsWith(`${option}=`);
-  return /^-[A-Za-z]+/u.test(word) && !word.startsWith('--') && word.slice(1).includes(option.slice(1));
+// Whether every statement of `code`, split at `;` and line ends, is one `reads` matches.
+function onlyReads(code, reads) {
+  const statements = code.split(/[;\n]/u).map((each) => each.trim()).filter(Boolean);
+  return statements.length > 0 && statements.every((each) => reads.test(each));
+}
+
+// The code the word gives when it is one of `options`, or, for a short one, a cluster of short options that holds it, as
+// `-Bc` holds `-c`: the rest of the word, as in `--eval=<code>`, `-c<code>`, or `-Bc<code>`, or null when the code is the
+// next word. Undefined when the word gives none.
+function givenCode(word, options) {
+  if (options.includes(word)) return null;
+  const long = options.find((option) => option.startsWith('--') && word.startsWith(`${option}=`));
+  if (long) return word.slice(long.length + 1);
+  if (!/^-[^-]/u.test(word)) return undefined;
+  const { value } = readShortOptions(word, new Set(options.filter((option) => /^-\w$/u.test(option))));
+  return value ? value.attached : undefined;
 }
 
 function blocked(input, file, verb, human) {
-  const why = `it ${verb} ${file}, which sets this project's agent gates, and while gates are set only the main session may change it`;
+  let why = `it ${verb} ${file}, which sets this project's agent gates, and while gates are set only the main session may change it`;
+  if (verb === 'may change') why += '; to read it, use Read, cat, or jq';
   return { match: `${verb} ${file}`, reason: projectRuleReason(input, why, human) };
 }

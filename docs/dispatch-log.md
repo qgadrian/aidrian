@@ -2,7 +2,7 @@
 
 The dispatch log records which agents a session dispatched, what each cost, which knowledge docs it read,
 whether it delivered the files it said it wrote, what each session cost, and which of the plugin's rules blocked a tool call.
-`aidrian report` reads it.
+`aidrian report` reads it, and `aidrian report health` judges what it read against thresholds.
 
 It is `dispatch-log.jsonl` in the [state folder](project-folder.md#local-state): one JSON object per line,
 on this machine only, shared by every worktree of the repository.
@@ -187,7 +187,7 @@ and blocks from before this plugin logged `hook_deny` rows are not in the log ei
 ### Reviews
 
 `aidrian report reviews` reads the last 20 merged pull requests through `gh`, not the log, and shows how the review bot,
-config.json `github.reviewer`, did on them.
+config.json `github.reviewer`, did on them. `gh` runs in the project's folder, so `--project` reads that project's repository.
 
 ```console
 $ aidrian report reviews --prs 4
@@ -253,6 +253,61 @@ Indexed docs never read since 30d, 2:
   The list is left out when no row in the window recorded doc reads.
 
 `--since` works as above; `--json` prints every doc, not only the top ten, with the totals, `always`, and every unread doc in `never_read`.
+
+### Health
+
+`aidrian report health` puts the views above on one page and judges each signal against a threshold,
+so that the `harness-health` skill can say what to fix first.
+Its window is the last 30 days unless `--since` sets another, because each signal needs a sample.
+
+```console
+$ aidrian report health
+Harness health, from /home/you/.local/state/aidrian/projects/notes-1a2b3c4d/dispatch-log.jsonl, since 30d
+Problems, worst first: 5
+  1. 1 P1 lesson open: each blocked or lost work. Fix: lesson-triage.
+  2. aidrian:explorer: 25% of 8 dispatches repeated a task already dispatched in the same session, over 20%. Fix: agent-prompt.
+  3. The git-amend rule blocked 6 calls in 10 sessions, 5 or more: by main 6; most often: `git commit --amend` rewrites the branch tip. Fix: deny-rule.
+  4. docs/knowledge/engineering/code-style.md takes 54% of the 206.6 KB of knowledge docs read, over 50%: 16 reads of 6.9 KB. Fix: split-doc.
+  5. 5 tagged docs never read in 26 rows with doc reads: docs/knowledge/engineering/issue-tracker.md, docs/knowledge/engineering/branches-and-reviews.md, docs/knowledge/engineering/docs-ownership.md, and 2 more. Fix: split-doc.
+Signals; n is the sample, and a signal under 5 (telemetry.health.minSample) is not judged:
+  Knowledge budget: ok; always docs 479 of 16384 bytes, 0 of 8 indexed docs tagged and over 24576 bytes
+  Doc reads: problem (n=26 rows); most bytes read: docs/knowledge/engineering/code-style.md 54%, docs/knowledge/engineering/testing.md 46% of 206.6 KB (over 50% is a problem); 6 indexed docs never read, 5 of them tagged
+  Agents: problem (thresholds: 20% re-dispatched, 10% sent back)
+    aidrian:code-reviewer: 0% re-dispatched (n=6), 0% sent back (n=6)
+    aidrian:explorer: 25% re-dispatched (n=8), 0% sent back (n=8)
+    aidrian:planning-agent: re-dispatched not enough data (n=2, needs 5), sent back not enough data (n=2, needs 5)
+  Reviews: not enough data; rounds not enough data (n=0, needs 5 reviewed); late findings not enough data (n=0, needs 5 checked)
+  Hook denies: problem (n=10 sessions); 6 blocks: git-amend 6 (5 or more by one rule is a hot spot)
+  Session cost: ok (n=5 sessions a half); 10 sessions, $22.50; $2.50 a session in the newer half against $2.00, up 25% (threshold 50%)
+  Lessons: problem; 2 open, 1 P1, the oldest 6 days; 0 fixes in the window, 0 recurred
+```
+
+Each signal names its sample and is judged by config.json [`telemetry.health`](config.md#health-thresholds), the knowledge budgets, and the lesson limits:
+
+| Signal | Sample | A problem when | Fix |
+| --- | --- | --- | --- |
+| Knowledge budget | the indexed docs | the `always` docs pass `knowledge.budgets.alwaysBytes`, or a tagged doc passes `taggedDocBytes` | `split-doc` |
+| Doc reads | the agent and session rows that recorded doc reads | the doc with the most bytes read takes over `topDocPercent` of them, of two docs read or more; or a tagged doc nobody read | `split-doc` |
+| Agents | per agent type, its dispatches, and its runs | over `redispatchPercent` of its dispatches repeat a task; over `sentBackPercent` of its runs were sent back by the delivery check | `agent-prompt` |
+| Reviews | the reviewed pull requests merged in the window, and the late findings checked | over `reviewRounds` rounds a pull request on average; over `lateFindingPercent` of late findings on a line already reviewed | `round-cap` |
+| Hook denies | the sessions with a row in the window | one rule blocked `denyHotSpot` calls or more | `deny-rule` |
+| Session cost | the sessions in each half of the window's sessions, in the order they ended | the newer half costs over `costRisePercent` more a session than the older half | `cost` |
+| Lessons | the open lessons | a P1 is open, a fix resolved in the window recurred, or the inbox passes `lessons.maxOpen` or `lessons.maxAgeDays` | `lesson-triage` |
+
+- **not enough data**: the sample is under `telemetry.health.minSample`. Such a signal is never a problem, whatever its rate:
+  3 of 4 is not a trend. The knowledge budget and the lessons are sizes and counts, not rates, so no minimum applies;
+  the budget says not enough data only when nothing is indexed.
+- **unavailable**: the reviews when `gh` cannot answer, and the hook denies while `telemetry.hookDenies` is off.
+- **Problems** are ranked by kind: a P1 lesson; the knowledge budget; an agent re-dispatched, then sent back;
+  review rounds, then late findings; a hook-deny hot spot; a fix that recurred; rising cost; the doc with the most bytes read;
+  tagged docs nobody read; the lesson backlog. Within a kind, the one furthest over its threshold comes first.
+- **Fix** names a row of the `harness-health` skill's fix table, which says what to do and who does it. A test holds the two lists equal.
+
+`--prs N` reads at most N pull requests merged in the window, 20 by default, through `gh` as the reviews view does.
+`--json` prints `problems`, each with `kind`, `fix`, `subject` (the agent, doc, or rule, or `null`), `value`, `threshold`,
+`sample` (`n` and what it counts), `summary`, and `lesson` (the `tier`, `kind`, `target`, and `key` for `aidrian lesson add`,
+or `null` when the problem is a lesson already); `signals`, every signal with its `status` (`ok`, `problem`, `not_enough_data`,
+or `unavailable`) and its numbers; `thresholds`; and `coverage`, as the other views print it.
 
 ## Limits
 

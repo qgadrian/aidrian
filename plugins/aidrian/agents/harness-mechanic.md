@@ -37,12 +37,13 @@ Before you start, follow the `knowledge` skill. Your knowledge tags: `harness_en
 
 ## Find what to improve
 
-Start from what a project that uses the plugin captured about it: `aidrian lesson list --target plugin --project <dir>`,
+Start with the `harness-health` skill on a project that uses the plugin, or its command `aidrian report health --project <dir>`:
+it ranks the problems worst first, each with its number, sample, and fix. A signal that says "not enough data" is not a problem yet.
+Then read what that project captured about the plugin: `aidrian lesson list --target plugin --project <dir>`,
 worst first, and `aidrian lesson list <id> --project <dir>` for one lesson in full. A reopened lesson is a fix that did not hold.
-Then run `aidrian report --since 30d --project <dir>`; add `--prs 20` for review rounds,
-and run `aidrian report sessions` for what sessions cost, main conversation against subagents.
-Look for agent types that are re-dispatched often, reports that named files that do not exist, docs nobody reads,
-and costly agents. A change to an agent, skill, or hook states the number it should move and how to read it again after.
+For the detail behind a problem, run each of these with `--project <dir>`: `aidrian report --since 30d` per agent type,
+`aidrian report reviews --prs 20` for review rounds, and `aidrian report sessions` for what sessions cost, main conversation against subagents.
+A change to an agent, skill, or hook states the number it should move and how to read it again after.
 
 When the fix for a lesson lands, resolve it in that project's inbox, with that number:
 

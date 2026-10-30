@@ -9,7 +9,7 @@ and one project folder, `.aidrian/`, that indexes them and holds the plugin's se
 
 | Kind | Names |
 | --- | --- |
-| Commands | `aidrian`: sets up and checks the project folder (`aidrian init`, `aidrian check`), prints the state folder (`aidrian state`), creates and cleans up task worktrees (`aidrian worktree`), waits for the review bot and reads check and finding verdicts (`aidrian pr`), checks commit messages (`aidrian commit-msg`), lints skills, agents, paths, and the knowledge budget (`aidrian lint`), keeps the lesson inbox (`aidrian lesson`), checks handoff briefs (`aidrian handoff`), and reports on the dispatch log and the blocks its rules made, the knowledge docs agents read, what sessions cost, and the review bot's rounds and findings (`aidrian report`, `aidrian report docs`, `aidrian report sessions`, `aidrian report reviews`); `aidrian-knowledge`: routes, searches, and drafts a project's buckets |
+| Commands | `aidrian`: sets up and checks the project folder (`aidrian init`, `aidrian check`), prints the state folder (`aidrian state`), creates and cleans up task worktrees (`aidrian worktree`), waits for the review bot and reads check and finding verdicts (`aidrian pr`), checks commit messages (`aidrian commit-msg`), lints skills, agents, paths, and the knowledge budget (`aidrian lint`), keeps the lesson inbox (`aidrian lesson`), checks handoff briefs (`aidrian handoff`), and reports on the dispatch log and the blocks its rules made, the knowledge docs agents read, what sessions cost, and the review bot's rounds and findings, and every one of those signals against its threshold (`aidrian report`, `aidrian report docs`, `aidrian report sessions`, `aidrian report reviews`, `aidrian report health`); `aidrian-knowledge`: routes, searches, and drafts a project's buckets |
 | Hooks | at session and subagent start, one line naming the `always` docs and how to find the rest; before each Bash command, git, process, and pull request body rules; before each file write, an opt-in guard that keeps the main checkout clean; before each dispatch, the project's model and effort for that agent; after a Markdown write, a line-length check; before compaction, a checklist of what to keep; when a long session ends a turn, one offer to hand off; after each dispatch, subagent stop, session end, and block by one of its rules, a dispatch log row. [docs/hooks.md](docs/hooks.md) lists them |
 
 ### Agents
@@ -84,6 +84,7 @@ Claude Code runs each skill as `/aidrian:<skill>`; in Codex, ask for it by name.
 | `session-continue` | Resumes work in a fresh session from a handoff brief. |
 | `lesson` | Captures a session lesson into the local inbox without leaving the task. |
 | `lesson-triage` | Drains the lesson inbox: dedupes each lesson and routes it to a mechanism, a rule, an issue, or nothing. |
+| `harness-health` | Reads `aidrian report health`, explains the top three problems with their numbers and samples, and names each one's fix. Read-only. |
 | `skill-writer` | Creates, updates, audits, or retires a skill so it triggers predictably and stays lean. |
 
 For work that spans several agents, start Claude Code with `claude --agent aidrian:orchestrator`, the coordination entry:

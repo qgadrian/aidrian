@@ -470,11 +470,14 @@ export function summarizeDocs(rows, { sinceMs = 0, indexed } = {}) {
   return indexed ? { ...summary, never_read: indexed.filter((doc) => !byPath.has(doc.path)) } : summary;
 }
 
-// The project's indexed docs in index order, as { path, bytes }, and its `always` docs against their budget.
+// The project's indexed docs in index order, as { path, bytes }, its `always` docs against their budget, and `tags`, each
+// indexed doc's tags by path.
 export function knowledgeOf(project, config) {
   const { buckets } = loadKnowledge(project);
-  const indexed = indexRows(buckets).map((doc) => ({ path: doc.path, bytes: fileBytes(path.resolve(project.root, doc.path)) }));
-  return { indexed, always: checkBudgets(project.root, buckets, config.knowledge.budgets).always };
+  const rows = indexRows(buckets);
+  const indexed = rows.map((doc) => ({ path: doc.path, bytes: fileBytes(path.resolve(project.root, doc.path)) }));
+  const tags = Object.fromEntries(rows.map((doc) => [doc.path, doc.tags]));
+  return { indexed, always: checkBudgets(project.root, buckets, config.knowledge.budgets).always, tags };
 }
 
 export function formatDocs({ docs, totals, never_read: neverRead }, { file, since, skipped, notes = [], always }) {
@@ -517,15 +520,18 @@ export function parseSince(value, now = Date.now()) {
 }
 
 // The views of `aidrian report`; the first is the default.
-const VIEWS = ['agents', 'docs', 'sessions', 'reviews'];
-// `aidrian report reviews` reads this many merged pull requests unless --prs says otherwise.
+const VIEWS = ['agents', 'docs', 'sessions', 'reviews', 'health'];
+// The views that read the review bot's pull requests, and so take --prs.
+const PR_VIEWS = ['agents', 'reviews', 'health'];
+// `aidrian report reviews` and `health` read this many merged pull requests unless --prs says otherwise.
 const DEFAULT_PRS = 20;
 
 export const commands = {
   report: {
-    usage: '[agents|docs|sessions|reviews] [--since 7d] [--prs N] [--json] [--project DIR]',
+    usage: '[agents|docs|sessions|reviews|health] [--since 7d] [--prs N] [--json] [--project DIR]',
     about: 'summarize the dispatch log per agent type with hook denies, per knowledge doc read (docs), or per session ' +
-      '(sessions), or the bot reviews of the last N merged pull requests (reviews); --prs N on the default view adds reviews',
+      '(sessions), the bot reviews of the last N merged pull requests (reviews), or every signal against its threshold ' +
+      '(health, since 30d by default); --prs N on the default view adds reviews',
     async run(args) {
       const { values, positionals } = parseArgs({
         args,
@@ -537,8 +543,8 @@ export const commands = {
         console.error(`unknown report: ${positionals.join(' ')}; use aidrian report, or aidrian report ${VIEWS.slice(1).join(', ')}`);
         return 1;
       }
-      if (view !== 'agents' && view !== 'reviews' && values.prs !== undefined) {
-        console.error(`--prs belongs to aidrian report and aidrian report reviews, not aidrian report ${view}`);
+      if (!PR_VIEWS.includes(view) && values.prs !== undefined) {
+        console.error(`--prs belongs to aidrian report, aidrian report reviews, and aidrian report health, not aidrian report ${view}`);
         return 1;
       }
       const prs = Number(values.prs ?? DEFAULT_PRS);
@@ -548,7 +554,8 @@ export const commands = {
       }
       const project = projectAt(path.resolve(values.project ?? '.'));
       const config = commandConfig(project);
-      const since = values.since ?? '7d';
+      // Health judges each signal on a sample, so it reads a month by default.
+      const since = values.since ?? (view === 'health' ? '30d' : '7d');
       let sinceMs;
       try {
         sinceMs = parseSince(since);
@@ -558,14 +565,31 @@ export const commands = {
       }
       if (view === 'reviews') {
         // The log plays no part: the pull requests are the last N merged, or those merged since --since when it is given.
-        const { formatReviews, reviewRounds } = await import('./report-reviews.mjs');
-        const reviews = reviewRounds(prs, config.github.reviewer, undefined, { sinceMs: values.since === undefined ? null : sinceMs });
+        const { formatReviews, ghAt, reviewRounds } = await import('./report-reviews.mjs');
+        const reviews = reviewRounds(prs, config.github.reviewer, ghAt(project.root), { sinceMs: values.since === undefined ? null : sinceMs });
         const label = values.since ?? null;
         console.log(values.json ? JSON.stringify({ since: label, prs, ...reviews }) : formatReviews(reviews, { since: label }));
         return 0;
       }
       const { file, rotated, rows, skipped } = readLog(project, config);
       const cover = coverage(rows, config, { sinceMs });
+      if (view === 'health') {
+        // Every other view's numbers, each against its threshold; the reviews are those merged in the same window.
+        const { formatHealth, summarizeHealth } = await import('./report-health.mjs');
+        const { ghAt, reviewRounds } = await import('./report-reviews.mjs');
+        const { inboxPath, lessons } = await import('./lesson-inbox.mjs');
+        const health = summarizeHealth({
+          rows,
+          sinceMs,
+          knowledge: knowledgeOf(project, config),
+          reviews: reviewRounds(prs, config.github.reviewer, ghAt(project.root), { sinceMs }),
+          lessons: lessons(inboxPath(project, config)),
+          config,
+        });
+        const notes = coverageLines(cover, { hookDenies: true });
+        console.log(values.json ? JSON.stringify({ file, rotated, since, skipped, coverage: cover, ...health }) : formatHealth(health, { file, since, skipped, notes }));
+        return 0;
+      }
       if (view === 'sessions') {
         const sessions = summarizeSessions(rows, { sinceMs });
         const notes = coverageLines(cover, { docReads: false });
@@ -583,8 +607,8 @@ export const commands = {
       const text = () => formatReport(summary, { file, since, skipped, notes: coverageLines(cover, { hookDenies: true }) });
       if (values.prs !== undefined) {
         // The alias the reviews view grew from: the default view, then the reviews of the last N merged pull requests.
-        const { formatReviews, reviewRounds } = await import('./report-reviews.mjs');
-        summary.reviews = reviewRounds(prs, config.github.reviewer);
+        const { formatReviews, ghAt, reviewRounds } = await import('./report-reviews.mjs');
+        summary.reviews = reviewRounds(prs, config.github.reviewer, ghAt(project.root));
         if (!values.json) console.log(`${text()}\n${formatReviews(summary.reviews)}`);
       } else if (!values.json) {
         console.log(text());

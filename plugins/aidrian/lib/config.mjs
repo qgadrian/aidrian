@@ -25,7 +25,22 @@ const SCHEMA = {
   lessons: { auto: 'boolean', maxOpen: 'zeroOrMore', maxAgeDays: 'zeroOrMore' },
   models: 'models',
   names: { human: 'text', ai: 'textOrNull' },
-  telemetry: { enabled: 'boolean', docReads: 'boolean', hookDenies: 'boolean', maxMb: 'positive' },
+  telemetry: {
+    enabled: 'boolean',
+    docReads: 'boolean',
+    hookDenies: 'boolean',
+    maxMb: 'positive',
+    health: {
+      minSample: 'positive',
+      redispatchPercent: 'percent',
+      sentBackPercent: 'percent',
+      topDocPercent: 'percent',
+      reviewRounds: 'positive',
+      lateFindingPercent: 'percent',
+      denyHotSpot: 'positive',
+      costRisePercent: 'positive',
+    },
+  },
   agents: 'agents',
 };
 
@@ -54,6 +69,7 @@ const TYPES = {
   texts: [(value) => Array.isArray(value) && value.every(isText), 'a list of non-empty strings'],
   boolean: [(value) => typeof value === 'boolean', 'true or false'],
   positive: [(value) => Number.isInteger(value) && value > 0, 'a whole number above 0'],
+  percent: [(value) => Number.isInteger(value) && value > 0 && value <= 100, 'a whole number from 1 to 100'],
   zeroOrMore: [(value) => Number.isInteger(value) && value >= 0, 'a whole number, 0 or more'],
   handoffMode: [(value) => ['off', 'ask', 'auto'].includes(value), '"off", "ask", or "auto"'],
 };
@@ -82,7 +98,23 @@ export const DEFAULTS = deepFreeze({
   lessons: { auto: true, maxOpen: 20, maxAgeDays: 14 },
   models: { claude: { agents: {} }, codex: { agents: {} } },
   names: { human: 'the Human', ai: null },
-  telemetry: { enabled: true, docReads: true, hookDenies: true, maxMb: 20 },
+  telemetry: {
+    enabled: true,
+    docReads: true,
+    hookDenies: true,
+    maxMb: 20,
+    // The thresholds of `aidrian report health` (report-health.mjs). A signal with fewer than minSample samples is not judged.
+    health: {
+      minSample: 5,
+      redispatchPercent: 20,
+      sentBackPercent: 10,
+      topDocPercent: 50,
+      reviewRounds: 3,
+      lateFindingPercent: 50,
+      denyHotSpot: 5,
+      costRisePercent: 50,
+    },
+  },
   agents: {},
 });
 

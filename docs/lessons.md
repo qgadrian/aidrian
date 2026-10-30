@@ -132,6 +132,9 @@ The block counts live in the system's temporary folder, one small file per sessi
 
 Not recorded: the session-length reminder fires in most long sessions by design, and its numbers are already in the dispatch log.
 Another producer, such as a script that reads `aidrian report`, can add its own signal with `aidrian lesson add --key <key>`.
+The `harness-health` skill does that for the problems of [`aidrian report health`](dispatch-log.md#health) that the Human accepts:
+a sent-back agent, a blocking rule, and review rounds take the keys above, so each is the same lesson seen again,
+and the other problems take `health:<kind>`, followed by `:<agent or doc>` when the problem has one.
 `"lessons": { "auto": false }` in config.json turns all three off.
 
 ## Rows from the first version

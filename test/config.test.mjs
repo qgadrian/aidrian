@@ -113,6 +113,11 @@ const errorCases = [
   ['the old "telemetry.doc_reads", now "telemetry.docReads"', { version: 1, telemetry: { doc_reads: false } }, /: "telemetry\.doc_reads" is now "telemetry\.docReads": rename the key$/],
   ['the old "telemetry.hook_denies", now "telemetry.hookDenies"', { version: 1, telemetry: { hook_denies: false } }, /: "telemetry\.hook_denies" is now "telemetry\.hookDenies": rename the key$/],
   ['the old "telemetry.max_mb", now "telemetry.maxMb"', { version: 1, telemetry: { max_mb: 5 } }, /: "telemetry\.max_mb" is now "telemetry\.maxMb": rename the key$/],
+  ['telemetry.health that is not an object', { version: 1, telemetry: { health: 5 } }, /"telemetry\.health" must be an object$/],
+  ['a health percent above 100', { version: 1, telemetry: { health: { redispatchPercent: 120 } } }, /"telemetry\.health\.redispatchPercent" must be a whole number from 1 to 100$/],
+  ['a health percent of 0', { version: 1, telemetry: { health: { topDocPercent: 0 } } }, /"telemetry\.health\.topDocPercent" must be a whole number from 1 to 100$/],
+  ['a minimum sample of 0', { version: 1, telemetry: { health: { minSample: 0 } } }, /"telemetry\.health\.minSample" must be a whole number above 0$/],
+  ['an unknown health threshold', { version: 1, telemetry: { health: { maxCost: 3 } } }, /: unknown key "telemetry\.health\.maxCost"$/],
   ['agents that is not an object', { version: 1, agents: ['explorer'] }, /"agents" must be an object$/],
   ['an agent name with a space', { version: 1, agents: { 'code reviewer': { deny: ['Bash'] } } }, /"agents\.code reviewer": an agent name is/],
   ['agent gates that are not an object', { version: 1, agents: { explorer: ['Bash'] } }, /"agents\.explorer" must be an object with "deny", "allow", or both$/],
@@ -192,18 +197,31 @@ test('names: "the Human" and the host\'s name by default; .aidrian.local.json wi
 });
 
 test('telemetry: on, with doc reads, hook denies, and 20 MB by default; .aidrian.local.json wins one key at a time', (t) => {
-  assert.deepEqual(DEFAULTS.telemetry, { enabled: true, docReads: true, hookDenies: true, maxMb: 20 });
+  const { health } = DEFAULTS.telemetry;
+  assert.deepEqual(DEFAULTS.telemetry, { enabled: true, docReads: true, hookDenies: true, maxMb: 20, health });
   const team = project(t, { version: 1, telemetry: { docReads: false, maxMb: 5 } });
-  assert.deepEqual(loadConfig(team).config.telemetry, { enabled: true, docReads: false, hookDenies: true, maxMb: 5 });
+  assert.deepEqual(loadConfig(team).config.telemetry, { enabled: true, docReads: false, hookDenies: true, maxMb: 5, health });
   const local = path.join(team.root, '.aidrian.local.json');
   writeFileSync(local, JSON.stringify({ telemetry: { enabled: false, maxMb: 0 } }));
   const { config, errors } = loadConfig(findProject(team.root));
   assert.deepEqual(errors, ['.aidrian.local.json: "telemetry.maxMb" must be a whole number above 0']);
-  assert.deepEqual(config.telemetry, { enabled: false, docReads: false, hookDenies: true, maxMb: 5 });
+  assert.deepEqual(config.telemetry, { enabled: false, docReads: false, hookDenies: true, maxMb: 5, health });
   writeFileSync(local, JSON.stringify({ telemetry: true }));
   assert.deepEqual(loadConfig(findProject(team.root)).errors, ['.aidrian.local.json: "telemetry" must be an object']);
   writeFileSync(local, JSON.stringify({ telemetry: { doc_reads: true } }));
   assert.deepEqual(loadConfig(findProject(team.root)).errors, ['.aidrian.local.json: "telemetry.doc_reads" is now "telemetry.docReads": rename the key']);
+});
+
+test('telemetry.health: report health thresholds by default; config.json and .aidrian.local.json each set any of them', (t) => {
+  assert.deepEqual(DEFAULTS.telemetry.health, {
+    minSample: 5, redispatchPercent: 20, sentBackPercent: 10, topDocPercent: 50, reviewRounds: 3, lateFindingPercent: 50, denyHotSpot: 5, costRisePercent: 50,
+  });
+  const team = project(t, { version: 1, telemetry: { health: { minSample: 10, costRisePercent: 150 } } });
+  assert.deepEqual(loadConfig(team).config.telemetry.health, { ...DEFAULTS.telemetry.health, minSample: 10, costRisePercent: 150 });
+  writeFileSync(path.join(team.root, '.aidrian.local.json'), JSON.stringify({ telemetry: { health: { minSample: 3 } } }));
+  const { config, errors } = loadConfig(findProject(team.root));
+  assert.deepEqual(errors, []);
+  assert.deepEqual(config.telemetry.health, { ...DEFAULTS.telemetry.health, minSample: 3, costRisePercent: 150 });
 });
 
 test('agents: no gates by default; .aidrian.local.json wins over config.json one list at a time, and a bad pattern is left out', (t) => {

@@ -5,6 +5,8 @@
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
+import { agentNameProblem, patternProblem } from './agent-gates.mjs';
+
 // The project folder format this plugin reads. A format change raises it and documents the migration.
 export const VERSION = 1;
 
@@ -22,6 +24,7 @@ const SCHEMA = {
   lessons: { auto: 'boolean', maxOpen: 'zeroOrMore', maxAgeDays: 'zeroOrMore' },
   models: 'models',
   names: { human: 'text', ai: 'textOrNull' },
+  agents: 'agents',
 };
 
 // Groups a format change renamed, old name to new. A config that still uses the old name gets an error naming the new one.
@@ -69,11 +72,12 @@ export const DEFAULTS = deepFreeze({
   lessons: { auto: true, maxOpen: 20, maxAgeDays: 14 },
   models: { claude: { agents: {} }, codex: { agents: {} } },
   names: { human: 'the Human', ai: null },
+  agents: {},
 });
 
 // Returns { config, errors, current }. `config` is frozen and always complete: the file's values over DEFAULTS, one
-// group at a time, with the default kept for any value that is missing or invalid. The local file's `models` and
-// `names` (`project.localModels`, `project.localNames`) then go over the file's. A hook can use it even when `errors` is
+// group at a time, with the default kept for any value that is missing or invalid. The local file's `models`, `names`,
+// and `agents` (`project.localModels`, `project.localNames`, `project.localAgents`) then go over the file's. A hook can use it even when `errors` is
 // not empty. `current` is false when the file is missing, unreadable, or of another version: then nothing in the folder
 // can be trusted to have the shape this plugin reads.
 export function loadConfig(project) {
@@ -89,6 +93,7 @@ export function loadConfig(project) {
   if (project.localNames !== undefined) {
     config.names = merge({ names: SCHEMA.names }, config, { names: project.localNames }, '', project.paths.local, errors).names;
   }
+  if (project.localAgents !== undefined) config.agents = checkAgents(project.localAgents, project.paths.local, errors, config.agents);
   return { config: deepFreeze(config), errors, current: true };
 }
 
@@ -132,6 +137,8 @@ function merge(schema, defaults, values, prefix, file, errors) {
       else errors.push(`${file}: "${prefix}${key}" must be an object`);
     } else if (type === 'models') {
       out[key] = checkModels(value, file, errors, defaults[key]);
+    } else if (type === 'agents') {
+      out[key] = checkAgents(value, file, errors, defaults[key]);
     } else if (TYPES[type][0](value)) {
       out[key] = value;
     } else {
@@ -183,6 +190,39 @@ function checkAgentChoice(host, name, choice, agents, file, errors) {
     else errors.push(`${file}: "${at}.${field}" must be ${allowed === null ? 'a non-empty string' : oneOf(allowed)}`);
   }
   if (Object.keys(kept).length) agents[name] = { ...agents[name], ...kept };
+}
+
+// `agents` from one file over `base`, per agent and list: { <name>: { deny, allow } }, each a list of tool patterns.
+// A file's `deny` or `allow` for an agent replaces the one below it. A bad name, key, or pattern is an error and is left
+// out, so the rest still applies; a pattern left out of `allow` only makes the list stricter.
+function checkAgents(value, file, errors, base) {
+  const out = { ...base };
+  if (!isObject(value)) {
+    errors.push(`${file}: "agents" must be an object`);
+    return out;
+  }
+  for (const [name, gates] of Object.entries(value)) {
+    const at = `agents.${name}`;
+    const problem = agentNameProblem(name);
+    if (problem) errors.push(`${file}: "${at}": ${problem}`);
+    else if (!isObject(gates)) errors.push(`${file}: "${at}" must be an object with "deny", "allow", or both`);
+    else {
+      const kept = {};
+      for (const [list, patterns] of Object.entries(gates)) {
+        if (list !== 'deny' && list !== 'allow') errors.push(`${file}: unknown key "${at}.${list}"`);
+        else if (!Array.isArray(patterns)) errors.push(`${file}: "${at}.${list}" must be a list of tool patterns`);
+        else kept[list] = patterns.filter((pattern) => !patternError(pattern, `${at}.${list}`, file, errors));
+      }
+      if (Object.keys(kept).length) out[name] = { ...out[name], ...kept };
+    }
+  }
+  return out;
+}
+
+function patternError(pattern, at, file, errors) {
+  const problem = patternProblem(pattern);
+  if (problem) errors.push(`${file}: "${at}" has ${JSON.stringify(pattern)}: ${problem}`);
+  return problem;
 }
 
 // The plugin's agent names, from the agent files it ships beside this folder.

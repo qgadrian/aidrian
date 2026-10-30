@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -111,6 +111,17 @@ test('.aidrian.local.json may hold names alone; the project passes them on as wr
   assert.equal(findProject(path.join(ROOT, 'examples/consumer')).localNames, undefined);
 });
 
+test('.aidrian.local.json may hold agent gates alone; the project passes them on as written, for config.mjs to check', (t) => {
+  const dir = tempDir(t);
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}');
+  const agents = { main: { deny: ['Bash(git push)'] }, explorer: 'not checked here' };
+  writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ agents }));
+  const project = findProject(dir);
+  assert.deepEqual([project.errors, project.sources.length, project.localAgents], [[], 1, agents]);
+  assert.equal(findProject(path.join(ROOT, 'examples/consumer')).localAgents, undefined);
+});
+
 // Each case expects one error; a source that is not a folder is left out, the others stay.
 const localCases = [
   ['invalid JSON', '{', /^\.aidrian\.local\.json: invalid JSON/, 0],
@@ -186,6 +197,32 @@ test('the search stops at the top of the git checkout: a worktree whose branch h
     encoding: 'utf8',
   });
   assert.deepEqual([hook.status, hook.stdout, hook.stderr], [0, '', ''], 'the hooks stay silent there');
+});
+
+test('finding the project runs no git without a project folder above, and git once in a worktree that has one', (t) => {
+  const dir = tempDir(t);
+  const bin = tempDir(t);
+  const log = path.join(bin, 'calls');
+  const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  writeFileSync(path.join(bin, 'git'), `#!/bin/sh\necho x >> "${log}"\nexec "${real}" "$@"\n`, { mode: 0o755 });
+  const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' });
+  git('init', '-q', '-b', 'main');
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}\n');
+  writeFileSync(path.join(dir, '.gitignore'), 'wt/\n');
+  git('add', '.');
+  git('-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init');
+  git('worktree', 'add', '-q', '-b', 'task', path.join(dir, 'wt/task'));
+  const calls = (start) => {
+    writeFileSync(log, '');
+    const script = `import { findProject } from ${JSON.stringify(path.join(ROOT, 'plugins/aidrian/lib/project.mjs'))};
+      process.stdout.write(String(findProject(${JSON.stringify(start)})?.root ?? null));`;
+    const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+    const root = execFileSync(process.execPath, ['--input-type=module', '-e', script], { env, encoding: 'utf8' });
+    return [root, readFileSync(log, 'utf8').split('\n').filter(Boolean).length];
+  };
+  assert.deepEqual(calls(tempDir(t)), ['null', 0]);
+  assert.deepEqual(calls(path.join(dir, 'wt/task')), [path.join(dir, 'wt/task'), 1]);
 });
 
 test('every spelling of one remote normalizes to host/owner/repo', () => {

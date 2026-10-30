@@ -37,7 +37,22 @@ In a group such as `github`, set only the keys you change; the others keep their
   "lessons": { "auto": true, "maxOpen": 20, "maxAgeDays": 14 },
   "models": { "claude": { "agents": {} }, "codex": { "agents": {} } },
   "names": { "human": "the Human", "ai": null },
-  "telemetry": { "enabled": true, "docReads": true, "hookDenies": true, "maxMb": 20 },
+  "telemetry": {
+    "enabled": true,
+    "docReads": true,
+    "hookDenies": true,
+    "maxMb": 20,
+    "health": {
+      "minSample": 5,
+      "redispatchPercent": 20,
+      "sentBackPercent": 10,
+      "topDocPercent": 50,
+      "reviewRounds": 3,
+      "lateFindingPercent": 50,
+      "denyHotSpot": 5,
+      "costRisePercent": 50
+    }
+  },
   "agents": {}
 }
 ```
@@ -77,6 +92,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `telemetry.docReads` | `false` leaves out which knowledge docs each agent read. |
 | `telemetry.hookDenies` | `false` leaves out the `hook_deny` row each block by one of the plugin's rules writes; the rules still block. |
 | `telemetry.maxMb` | The size, in megabytes, at which the dispatch log moves to its rotated part. |
+| `telemetry.health` | The thresholds of `aidrian report health`: [Health thresholds](#health-thresholds). |
 | `agents` | The tools each agent may use in this project; `{}` gates none: [Agents](#agents). |
 
 A path in `state.dir` or `worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
@@ -172,6 +188,25 @@ The last three keys were `doc_reads`, `max_mb`, and `hook_denies`; a file that s
 
 `aidrian report` says when telemetry is off, and when the rows it read miss part of the window:
 [dispatch-log.md](dispatch-log.md#when-the-report-is-incomplete).
+
+### Health thresholds
+
+[`aidrian report health`](dispatch-log.md#health) judges each signal against `telemetry.health`.
+Set only the keys you change; a team sets them in `config.json`, and one developer in `.aidrian.local.json`, as above.
+
+| Key | A problem when |
+| --- | --- |
+| `minSample` | Not a threshold: a signal with a smaller sample says "not enough data" and is never a problem. |
+| `redispatchPercent` | More than this share of an agent type's dispatches repeat a task already dispatched in the same session. |
+| `sentBackPercent` | More than this share of an agent type's runs were sent back by the [delivery check](hooks.md#delivery-check), over the runs whose `stop` rows record it. |
+| `topDocPercent` | One knowledge doc takes more than this share of all the bytes of knowledge docs read. |
+| `reviewRounds` | The review bot takes more than this many rounds a pull request on average; 3 is the `autopilot` skill's cap. |
+| `lateFindingPercent` | More than this share of the late findings checked sat on a line the bot had already reviewed. |
+| `denyHotSpot` | One of the plugin's rules blocks this many calls or more in the window. |
+| `costRisePercent` | A session in the newer half of the window's sessions costs more than this percent above one in the older half, on average. |
+
+The four `Percent` keys take a whole number from 1 to 100; the others, a whole number above 0.
+The knowledge budget uses [`knowledge.budgets`](#knowledge-budgets), and the lesson backlog `lessons.maxOpen` and `lessons.maxAgeDays`.
 
 ## Knowledge budgets
 

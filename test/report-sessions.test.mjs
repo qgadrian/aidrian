@@ -103,6 +103,6 @@ test('aidrian report sessions prints the view, --json all of it, and refuses --p
     'file', 'rotated', 'since', 'skipped', 'coverage', 'count', 'ended_more_than_once', 'without_split', 'cost_usd', 'main', 'subagents',
     'by_day', 'by_model', 'by_effort', 'top',
   ]);
-  assert.deepEqual([report(['--prs', '3']).status, report(['--prs', '3']).stderr], [1, '--prs belongs to aidrian report and aidrian report reviews, not aidrian report sessions\n']);
+  assert.deepEqual([report(['--prs', '3']).status, report(['--prs', '3']).stderr], [1, '--prs belongs to aidrian report, aidrian report reviews, and aidrian report health, not aidrian report sessions\n']);
   assert.equal(spawnSync(CLI, ['report', 'agents', '--json'], { cwd: dir, env, encoding: 'utf8' }).status, 0, 'agents names the default view');
 });

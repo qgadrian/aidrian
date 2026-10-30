@@ -31,8 +31,10 @@ To add a topic, refresh docs over a time window, or fold in one resource, load a
 
 ## Rules
 
-- **Evidence over taste.** State what each change rests on. `aidrian report docs --since 30d` shows the `always` total,
-  each doc's reads, size, and readers, and the indexed docs nobody read; for one of those, propose narrower tags or retiring it.
+- **Evidence over taste.** State what each change rests on. Start from the knowledge budget and doc-read signals
+  of `aidrian report health`, or the `harness-health` skill: each with its sample, and "not enough data" below the minimum.
+  `aidrian report docs --since 30d` has the detail: the `always` total, each doc's reads, size, and readers, and the indexed docs
+  nobody read; for one of those, propose narrower tags or retiring it.
 - **One home per rule.** When two docs state the same rule, keep it where it belongs and replace the copy with a link.
 - **A check beats a sentence.** Before you add a rule to a doc, say why `aidrian check`, `aidrian lint`, a hook,
   or the project's CI cannot hold it.

@@ -7,7 +7,10 @@
 
 import { execFileSync } from 'node:child_process';
 
-const ghJson = (args) => JSON.parse(execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
+// gh, run in `cwd`: the project's root, so that `--project` reads that project's repository, not the one the shell is in.
+export const ghAt = (cwd) => (args) =>
+  JSON.parse(execFileSync('gh', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
+const ghJson = ghAt(undefined);
 
 // gh's GraphQL fields name a bot without the `[bot]` suffix its REST fields carry.
 const sameLogin = (login, reviewer) => typeof login === 'string' && login.replace(/\[bot\]$/u, '') === reviewer.replace(/\[bot\]$/u, '');

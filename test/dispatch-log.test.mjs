@@ -234,7 +234,7 @@ test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, del
   ];
   const summary = summarize(rows, { sinceMs: parseSince('7d', NOW) });
   assert.deepEqual(summary.agents[0], {
-    agent_type: 'Explore', dispatches: 3, redispatch_rate: 0.33, median_duration_ms: 2000, median_tokens: 2000, cost_usd: 0.75,
+    agent_type: 'Explore', dispatches: 3, redispatched: 1, redispatch_rate: 0.33, median_duration_ms: 2000, median_tokens: 2000, cost_usd: 0.75,
     delivered: { file: 1, chat: 1, missing: 0 }, top_docs: [['a.md', 2], ['b.md', 1]],
     runs: 2, cost_per_run_usd: 0.38, sent_back: 1, sent_back_rate: 1, runs_without_send_back: 1, avg_docs_read: 1.5, avg_doc_bytes: 3072,
     requests: 10, tool_requests: 4, tool_calls: 6, tool_calls_per_request: 1.5, runs_without_tool_counts: 1,
@@ -365,7 +365,7 @@ test('aidrian report docs prints the doc view, --json all of it; a stray word or
   assert.deepEqual(Object.keys(json), ['file', 'rotated', 'since', 'skipped', 'coverage', 'always', 'docs', 'totals', 'never_read']);
   assert.deepEqual(json.always, { bytes: 479, budget: 16384, buckets: { engineering: 479, product: 0 } });
   assert.deepEqual(json.docs[0], { path: DOC('engineering/working-agreement'), reads: 4, bytes: 479, read_bytes: 1916, readers: ['Explore', 'code-reviewer', 'main', 'planner'] });
-  assert.deepEqual([report(['nope']).status, report(['nope']).stderr], [1, 'unknown report: nope; use aidrian report, or aidrian report docs, sessions, reviews\n']);
+  assert.deepEqual([report(['nope']).status, report(['nope']).stderr], [1, 'unknown report: nope; use aidrian report, or aidrian report docs, sessions, reviews, health\n']);
   assert.deepEqual([report(['docs', 'more']).status, report(['docs', '--prs', '1']).status], [1, 1]);
 });
 

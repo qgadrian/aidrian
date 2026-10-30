@@ -63,7 +63,7 @@ export function configWriteDenial(input, project, { names: { human } }, { also =
   }
   // A glob reaches a file by the path it is spelled with, which a symlink may place in another folder than its target.
   const spelled = [...configFiles(project), ...also].map((file, i) => [path.resolve(file), files[i]]);
-  const named = namedFile(names, files, project, guarded) ?? globbedFile(globs, spelled, targets.length + names.length + globs.length > 1);
+  const named = namedFile(names, files, project, guarded) ?? globbedFile(globs, spelled, targets.length + names.length + globs.length > 1, typeof input.cwd === 'string' ? input.cwd : process.cwd());
   return named ? blocked(input, shown(named), 'may change', human) : null;
 }
 
@@ -105,15 +105,17 @@ function namedFile(names, files, project, also) {
 // `files` pairs each guarded file's spelled path with its canonical one; either may match, and the canonical is returned.
 // `others` says the call has another write, a glob or not. It may create a link, in the glob's folder or above it, that
 // the glob then follows after the disk was read; so the folder is trusted only for the call's one write.
-function globbedFile(globs, files, others = true) {
+function globbedFile(globs, files, others = true, cwd = null) {
   const regex = (glob) =>
     new RegExp(`^${glob.split(/([*?])/u).map((part) => ({ '*': '.*', '?': '.' })[part] ?? part.replace(/[.+^${}()|[\]\\]/gu, '\\$&')).join('')}$`, 'u');
   return files.find((pair) => pair.some((file) => globs.some(({ text, dirs = [], unsure = true }) => {
     const parts = text.replace(/\/+$/u, '').split('/');
     const pattern = regex(parts.pop());
     const head = parts.join('/') || (text.startsWith('/') ? '/' : '.');
-    // A `..` after a symlink climbs out of the link's target, which `path.resolve` would collapse away: fail closed.
-    if (unsure || /[*?[]/u.test(head) || parts.includes('..')) return pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file)));
+    // The folder is trusted only as a plain path from where the call started: no `cd` before it, which may follow links
+    // (`cd -P`), and no part the shell expands or resolves differently, such as braces, `~`, or a `..` after a symlink.
+    const plain = /^[\w./-]*$/u.test(head) && !parts.includes('..') && dirs.length === 1 && dirs[0] === cwd;
+    if (unsure || !plain) return pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file)));
     const folders = path.isAbsolute(head) ? [head] : dirs.map((dir) => path.resolve(dir, head));
     if (others) return pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file)));
     return folders.some((folder) =>

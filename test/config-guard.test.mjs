@@ -298,6 +298,10 @@ test('a glob reaches a config file that is a symlink to another folder, by the p
   for (const command of ["echo '{}' > hard/alias", "echo '{}' > hard/*"]) {
     assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /config\.json/, command);
   }
+  // A `cd` before the glob, which `-P` resolves through links, and a folder the shell expands, as braces do, fail closed.
+  for (const command of ["cd -P out/link/.. && echo '{}' > config*.json", "printf x | tee .{aidrian,unused}/*.json"]) {
+    assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /may change/, command);
+  }
   // Past a symlink, `..` climbs out of the link's target, not back to the folder the path names.
   assert.match(verdict(dir, subagent(dir, 'Bash', { command: "echo '{}' > out/link/../*.json" })) ?? '', /\.aidrian/);
   // A link the same call creates before the glob runs, in its folder or above it, is not on disk yet: with any other
@@ -334,7 +338,7 @@ test('ln, truncate, install, dd, git checkout --, git restore, and a glob that m
     assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /\.aidrian/, command);
   }
   // A glob in a known folder that holds no guarded file changes none: routine clean-ups run.
-  for (const command of ['rm src/*.js', 'ln -s /tmp/x src/link', 'rm -rf dist/*', 'cp a.txt out/*', 'cd build && rm -rf build/*']) {
+  for (const command of ['rm src/*.js', 'ln -s /tmp/x src/link', 'rm -rf dist/*', 'cp a.txt out/*']) {
     assert.equal(verdict(dir, subagent(dir, 'Bash', { command })), null, command);
   }
 });

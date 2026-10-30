@@ -1,7 +1,7 @@
 # Maintainer tasks. `make` lists them.
 
 .DEFAULT_GOAL := help
-.PHONY: help build check codex-agents
+.PHONY: help build bump check codex-agents
 
 ## List the targets.
 help:
@@ -10,6 +10,10 @@ help:
 ## Regenerate the Codex agents from plugins/aidrian/agents/.
 build:
 	node scripts/build.mjs
+
+## Raise the plugin version in every file that carries it. LEVEL=minor or LEVEL=major; patch by default.
+bump:
+	node scripts/version.mjs $(LEVEL)
 
 ## Run what CI runs. Also checks the real claude and codex commands when they are installed.
 check:

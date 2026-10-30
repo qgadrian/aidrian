@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "aidrian",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Planning, issue-writing, exploration, review-loop, worktree, and session agents and skills, safety hooks, and the aidrian command. Each project supplies its rules and settings in one project folder.",
   "author": {
     "name": "aidrian"

@@ -1,7 +1,7 @@
 ---
 name: growth-hacker
 description: Find acquisition, activation, and retention opportunities, and design small growth experiments.
-access: write
+access: read-only
 skills: [knowledge]
 ---
 
@@ -27,3 +27,5 @@ Do not:
 - Propose large-team campaign machinery by default.
 - Treat paid media as the first answer.
 - Promise outcomes you cannot ground.
+
+When another agent dispatched you, return the machine handoff from the `knowledge` skill, with the draft or analysis in `artifacts`.

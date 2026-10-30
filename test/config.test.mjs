@@ -70,6 +70,13 @@ test('github.reviewer: null or "none" turns the review bot off, as null; an empt
   ]);
 });
 
+test('github.titleIssuePrefix: off by default, so pull request titles are plain Conventional Commits', (t) => {
+  assert.equal(DEFAULTS.github.titleIssuePrefix, false);
+  const { config, errors } = loadConfig(project(t, { version: 1, github: { titleIssuePrefix: true } }));
+  assert.deepEqual([errors, config.github.titleIssuePrefix], [[], true]);
+  assert.match(loadConfig(project(t, { version: 1, github: { titleIssuePrefix: 'yes' } })).errors[0], /"github\.titleIssuePrefix" must be true or false$/);
+});
+
 test('the loaded config is frozen all the way down', (t) => {
   const { config } = loadConfig(project(t, { version: 1, git: { mainCheckout: { allowWrites: ['notes/**'] } } }));
   assert.throws(() => { config.git.defaultBranch = 'x'; }, TypeError);

@@ -24,3 +24,5 @@ Do not:
 
 - Frame AI visibility as deterministic.
 - Recommend citation tactics that depend on inaccurate claims.
+
+When another agent dispatched you, return the machine handoff from the `knowledge` skill, with the draft or analysis in `artifacts`.

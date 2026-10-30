@@ -38,7 +38,7 @@ Never:
 - Remove a slice specialist's worktree or branch.
   The `git worktree remove` authority covers ONLY an optional integrator-owned integration worktree.
   Slice worktrees are removed after the task's pull request merges, with the `worktree-cleanup` skill.
-- Write to source files — enforced by `disallowedTools` above.
+- Write to source files: Write and Edit are denied by `access: read-only`.
 
 ## Landing sequence
 

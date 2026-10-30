@@ -12,6 +12,7 @@ It never redoes what the skills it runs already do.
 
 Before you start, follow the `knowledge` skill. Load your `product_sensitive` docs for the flows the project declares critical.
 Load the `orchestration` skill too: it owns the worktree, the pull request, and review findings.
+Its `references/review-rules.md` defines a review round, when the bot is out, the fix-pass cap, and the disposition actions.
 
 ## Inputs
 
@@ -76,14 +77,14 @@ Read `references/phases.md` at the start, and follow it.
 
 ## Bounds
 
-- **Review rounds**: the `orchestration` skill § 3 stop rule, at most config.json `github.maxReviewRounds`,
-  unless the Human set another number at launch.
+- **Review rounds**: the `orchestration` skill § 3 stop rule, the one rule this run stops by, at most config.json
+  `github.maxReviewRounds` rounds as the review rules count them, unless the Human set another number at launch.
 - **No rare edge cases.** End the loop early once a review of the current head leaves every open finding `accepted_residual`,
-  `acceptable_as_is`, or `drop_unless_cited` by `aidrian pr disposition`, and close their threads with the reason.
+  `acceptable_as_is`, or `drop_unless_cited` by `aidrian pr disposition`. Reply with the reason; resolve only the bot's threads.
   A round that pushed a fix has not reached that point: the next round reviews the new head.
 - **The bot is asked at most once per round** through `aidrian pr await-review`, and never once it is out,
-  as the `orchestration` skill § 3 defines it. Its state is recorded every round.
-- **One informed retry.** An agent blocked twice on the same work, or a check still failing after one informed fix, is parked.
+  as the review rules define it. Its state is recorded every round.
+- **Fix passes**: the review rules' cap of 2 per finding or failing check; then it is parked. An agent blocked twice is parked too.
 
 ## Stop
 
@@ -112,4 +113,4 @@ by the names the start hook gives, never "you" or "I". In this order:
 4. **Left open**: findings closed as rare edge cases, each with its reason, findings still open at the cap,
    and fixes the last round pushed that no review has seen.
 5. **Next**: when a brief was written, its path and the resume line the `session-handoff` skill prints;
-   otherwise the next action, such as a review by the Human or the `pr-merge-when-green` skill.
+   otherwise the next action: ask the Human to review. Never suggest a merge beyond that.

@@ -36,8 +36,7 @@ Note each in the report under decided alone.
 
 ## Every step
 
-- **The tracker stays read-only.** The exceptions are the In Progress move in phase 1 and the two estimate writes in phase 7.
-  No other field, comment, label, attachment, assignment, or state change, ever. Never close the issue.
+- **The tracker stays read-only**, except the writes § Tracker writes lists. Never close the issue.
 - **No merge.** The run ends at a draft. Only the Human starts a merge, with the `pr-merge-when-green` skill.
 - **No hook bypass**: no `--no-verify`, `HUSKY=0`, or empty `core.hooksPath`. A failing hook is fixed at its cause, or the run stops.
 - **No invention.** Never make up an acceptance criterion id, a path, a function, a label, or issue context.
@@ -48,3 +47,15 @@ Note each in the report under decided alone.
   A shell that drifted back to the main checkout gives a clean, meaningless result.
 - **Check each claim.** After a dispatch, confirm with git that the claimed files changed. Never report a result no handoff or command shows.
 - **Keep internal data out of web searches**: no issue text, code, or tool output.
+
+## Tracker writes
+
+This session makes every one; no dispatched agent writes to the tracker. No other field, comment, label,
+attachment, assignment, or state change, ever.
+
+1. **In Progress.** Phase 1 moves the issue to In Progress, only when work has not started.
+2. **Estimate correction.** Only when phase 4 recorded a re-size, after the pull request opens, phase 7 makes two writes:
+   one comment with the new size and its reason, and one write of the estimate and the sizes in the description.
+3. **Follow-up issues.** Work found outside the issue, in phase 4 or later, becomes a new issue through `agent-issue-writer`,
+   rather than widened scope or a follow-up handed to the Human.
+4. **A silent issue.** In phase 0, `agent-issue-writer` fills in an issue with no acceptance criteria, only on the Human's yes.

@@ -26,3 +26,5 @@ Do not:
 
 - Turn a draft into a speculative product narrative.
 - Produce bulk content calendars by default.
+
+When another agent dispatched you, return the machine handoff from the `knowledge` skill, with the draft or analysis in `artifacts`.

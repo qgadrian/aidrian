@@ -15,6 +15,7 @@ Each agent gets its own files and what it needs to read them. Never paste the wh
 
 ```text
 Review pull request #<n>, "<title>", as <agent>.
+Review mode: edit nothing, return findings.
 Follow the `knowledge` skill first, and load only the docs this review needs.
 
 Base: <base_sha>
@@ -30,12 +31,14 @@ and its change with `git diff <base_sha> <head_sha> -- <path>`.
 <the weighing paragraph below>
 
 Return the machine handoff from the `knowledge` skill, with `findings`: one object per finding with
-severity, likelihood, affects, cost, file, line, summary, and next_step. Use [] when you found nothing.
+severity, likelihood, affects, cost, file, line, violated_rule, summary, and next_step. Use [] when you found nothing.
 For each modified, renamed, or removed file with no finding, add one `evidence` item:
 "regression_check: clean, <path> compared at <base_sha, 7> and <head_sha, 7>".
 ```
 
 Add to it when it applies:
+
+- `backend-developer`, `frontend-developer`, `designer`, and `ux-specialist` keep the "Review mode" line: they edit nothing here.
 
 - An agent without a shell, such as `product-manager`, cannot run `git`: paste the diff of its files into the brief instead.
 - `product-manager` under the critical-flow gate: ask for `critical_flow`, one entry per flow, each with its `sign_off`.

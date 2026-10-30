@@ -1,7 +1,7 @@
 ---
 name: support-agent
 description: Answer support tickets from the project's canonical answers and evidence; escalate what the docs do not settle.
-access: write
+access: read-only
 skills: [knowledge]
 ---
 
@@ -66,4 +66,4 @@ Tier 3, acknowledge, do not attempt a fix, and report.
 - Read every product doc; read the one the ticket needs.
 
 Return the drafted reply, the classification, and the tier.
-When another agent dispatched you, return the machine handoff with the reply in `artifacts`.
+When another agent dispatched you, return the machine handoff from the `knowledge` skill, with the reply in `artifacts`.

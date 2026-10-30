@@ -245,7 +245,9 @@ function lexSegments(command) {
       if (current && !/^\d+$/u.test(current.text)) endToken();
       else current = null;
       let operator = ch;
-      if (command[i + 1] === ch) {
+      // `>|` writes as `>` does, past noclobber.
+      if (ch === '>' && command[i + 1] === '|') i += 1;
+      else if (command[i + 1] === ch) {
         operator += ch;
         i += 1;
       }
@@ -273,11 +275,15 @@ function lexSegments(command) {
       }
       tokens.push({ text: operator, dynamic: false, operator: operator === '<' ? '<' : operator });
       if (command[i + 1] === '&') {
-        // `2>&1`: a descriptor, never a path.
-        let j = i + 1;
-        while (j < command.length && !/[\s;|]/u.test(command[j])) j += 1;
-        tokens.push({ text: command.slice(i + 1, j), dynamic: false, fdDup: true });
-        i = j - 1;
+        // `2>&1` and `>&-` name a descriptor, never a path; `>&file` and `>& file` write the file, as `&>` does.
+        let j = i + 2;
+        while (command[j] === ' ' || command[j] === '\t') j += 1;
+        let end = j;
+        while (end < command.length && !/[\s;|&<>()]/u.test(command[end])) end += 1;
+        if (operator === '<' || /^(?:\d+-?|-)$/u.test(command.slice(j, end))) {
+          tokens.push({ text: `&${command.slice(j, end)}`, dynamic: false, fdDup: true });
+          i = end - 1;
+        } else i = j - 1;
       }
       continue;
     }
@@ -343,9 +349,12 @@ export function commandLines(command) {
 
 // Programs that run the command after them and return its status, so the program that matters is the wrapped one.
 // `builtin` is not one: it runs shell builtins only. `rtk` and `rtk proxy` run the command through a token-saving proxy.
-const WRAPPERS = new Set(['sudo', 'command', 'env', 'nice', 'nohup', 'stdbuf', 'timeout', 'exec', 'time', 'rtk']);
+const WRAPPERS = new Set(['sudo', 'doas', 'command', 'env', 'nice', 'nohup', 'stdbuf', 'timeout', 'exec', 'time', 'rtk', 'setsid', 'flock', 'caffeinate', 'coproc']);
 // Wrapper options that take the next token as their value, per wrapper (`-i` takes one for stdbuf, not for env).
 const WRAPPER_VALUE_FLAGS = new Map([
+  ['doas', new Set(['-u', '-a', '-C'])],
+  ['flock', new Set(['-w', '--wait', '--timeout', '-E', '--conflict-exit-code'])],
+  ['caffeinate', new Set(['-t', '-w'])],
   ['sudo', new Set(['-u', '--user', '-g', '--group', '-p', '--prompt', '-C', '--close-from', '-T', '--command-timeout', '-R', '--chroot', '-r', '--role', '-t', '--type', '-D', '--chdir', '-h', '--host'])],
   ['exec', new Set(['-a'])],
   ['env', new Set(['-u', '--unset', '-C', '--chdir', '-S', '--split-string'])],
@@ -366,6 +375,8 @@ const NO_OPTIONS = new Set();
 // Reserved words and braces that open or close a compound command: in `if x; then git commit -n; fi` or `{ rm f; }`,
 // the command is the word after them. `time` is peeled as a wrapper.
 const SHELL_WORDS = new Set(['{', '}', 'if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done', 'for', 'in', 'case', 'esac']);
+// A function head glued to its parentheses, as in `f()` or `f(){`; the body after it runs when the function is called.
+const FUNCTION_HEAD = /^[^\s()]+\(\)\{?$/u;
 
 // `text` without the `)`s at its end that close no `(` of its own: `--amend)` is `--amend`, and `fix (x)` stays whole.
 function withoutUnmatchedClose(text) {
@@ -420,7 +431,12 @@ export function readInvocation(segment, depth = 0) {
     if (index < usable.length) retext(index, usable[index].text.replace(/^\(+/u, ''));
     const text = usable[index]?.text;
     if (text === '!') negated = true;
-    else if (!SHELL_WORDS.has(text)) break;
+    // `function f`, and `case x in`: the word after the keyword is a name or a subject, never the command.
+    else if (text === 'function' || text === 'case') index += 1;
+    // A function head, or a case arm's pattern such as `x)`, before the command it guards.
+    else if (FUNCTION_HEAD.test(text) || (text?.endsWith(')') && index + 1 < usable.length)) {
+      // The command itself follows.
+    } else if (!SHELL_WORDS.has(text)) break;
     index += 1;
   }
   peelAssignments();
@@ -433,6 +449,13 @@ export function readInvocation(segment, depth = 0) {
     index += 1;
     if (wrapper === 'rtk') {
       if (usable[index]?.text === 'proxy') index += 1;
+      continue;
+    }
+    if (wrapper === 'coproc') {
+      // `coproc NAME { … }`: the name goes, and so does the brace or parenthesis that opens the command.
+      if (usable[index + 1]?.text === '{' || usable[index + 1]?.text.startsWith('(')) index += 1;
+      if (usable[index]?.text === '{') index += 1;
+      if (index < usable.length) retext(index, usable[index].text.replace(/^\(+/u, ''));
       continue;
     }
     while (index < usable.length) {
@@ -460,6 +483,14 @@ export function readInvocation(segment, depth = 0) {
     }
     // timeout's duration comes before the command; take it by position, since strtod accepts too many spellings.
     if (wrapper === 'timeout' && index < usable.length) index += 1;
+    if (wrapper === 'flock' && index < usable.length) {
+      // The lock file comes first; `flock FILE -c CMD` runs CMD as `sh -c` would.
+      index += 1;
+      if (['-c', '--command'].includes(usable[index]?.text)) {
+        usable.splice(index, 1, { text: 'sh', dynamic: false }, { text: '-c', dynamic: false });
+        break;
+      }
+    }
     peelAssignments();
   }
   const program = usable[index]?.text ?? '';
@@ -502,6 +533,20 @@ export function inlineShellCommand({ program, args }) {
     else break;
   }
   return args[i]?.text ?? null;
+}
+
+// Whether readInvocation's { program, args } is a shell that reads its commands from its input: one given no `-c` and
+// no script, as in `bash <<'EOF'` or `sh -s <<< "cmd"`, so a heredoc or here-string fed to it holds command lines.
+export function readsShellInput(invocation) {
+  if (!SHELLS.has(invocation.program) || inlineShellCommand(invocation) !== null) return false;
+  const { args } = invocation;
+  for (let i = 0; i < args.length; i += 1) {
+    const { text } = args[i];
+    if (text === '-s' || text === '--' || text === '-') return true;
+    if (SHELL_VALUE_OPTIONS.has(text)) i += 1;
+    else if (!/^[-+]\S/u.test(text)) return false;
+  }
+  return true;
 }
 
 // Git global options that take the next token as their value.

@@ -8,13 +8,14 @@
 // that keeps a subagent to reading, as an unreadable snapshot does. The main session always reads the current config.
 // A file that sets the configuration but is there and cannot be read leaves the gates unknown, so a subagent may then
 // only read (agent-gates.mjs unreadableConfigDenial); the main session keeps every tool, to fix it. So does a snapshot
-// that is there and cannot be read.
-// Anything else this hook cannot read lets the call run.
+// that is there and cannot be read, and an `agents` entry whose allow or deny is no list.
+// Anything else this hook cannot read lets the call run, except a subagent's call in a session that started with gates:
+// an error there keeps the subagent to reading, as an unreadable snapshot does.
 
 import path from 'node:path';
 
-import { gateDenial, unreadableConfigDenial } from '../lib/agent-gates.mjs';
-import { DEFAULTS, loadConfig } from '../lib/config.mjs';
+import { gateDenial, readOnlyDenial, unreadableConfigDenial } from '../lib/agent-gates.mjs';
+import { DEFAULTS, loadConfig, malformedGates } from '../lib/config.mjs';
 import { isFile } from '../lib/fs.mjs';
 import { configWriteDenial } from '../lib/config-guard.mjs';
 import { readGateSnapshot } from '../lib/gate-snapshot.mjs';
@@ -22,6 +23,17 @@ import { block, runHook } from '../lib/hook-io.mjs';
 import { findProject, openProject } from '../lib/project.mjs';
 
 await runHook(async (input) => {
+  try {
+    await gate(input);
+  } catch (error) {
+    if (readGateSnapshot(input) === null) return;
+    const why = `the agent gate hook failed (${error?.message ?? error}), so the gates this session started with are unknown for this call, and a subagent may only read files`;
+    const denial = readOnlyDenial(input, 'the agent gate hook failed', why, DEFAULTS, 'that the agent gate hook failed on this call');
+    if (denial) await block(input, 'agent-gates', denial.reason, { match: denial.match });
+  }
+});
+
+async function gate(input) {
   const snapshot = typeof input.agent_id === 'string' && input.agent_id !== '' ? readGateSnapshot(input) : null;
   // With its config.json gone, the folder is no project any more; the snapshot still names the one the session started in.
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd()) ?? (snapshot?.root ? openProject(snapshot.root) : null);
@@ -32,7 +44,8 @@ await runHook(async (input) => {
   }
   if (!project) return;
   const { config, errors, current } = loadConfig(project);
-  const broken = unreadable(project, current, errors);
+  // An `agents` list of the wrong shape is dropped, which lifts its gate; read it as a file that cannot be read.
+  const broken = unreadable(project, current, errors) ?? (current ? malformedGates(errors) : null);
   const failed = broken && unreadableConfigDenial(input, broken.file, broken.problem, config);
   if (failed) await block(input, 'agent-gates', failed.reason, { match: failed.match, project, config });
   const started = (snapshot?.gates ?? []).filter((agents) => Object.keys(agents).length > 0);
@@ -42,7 +55,7 @@ await runHook(async (input) => {
   const guarded = snapshot?.gates ? [snapshot.file, snapshot.marker] : [];
   const [rule, denial] = gate ? ['agent-gates', gate] : ['config-guard', configWriteDenial(input, project, config, { also: guarded })];
   if (denial) await block(input, rule, denial.reason, { match: denial.match, project, config });
-});
+}
 
 // The first file that sets the configuration and is there but could not be read, as { file, problem }, or null.
 // `problem` is the error loadConfig or the project lookup gave for it, without the file name it starts with.

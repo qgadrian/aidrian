@@ -218,3 +218,34 @@ test('readGit reads the subcommand past git`s global options, and gives up on a 
   assert.equal(gitOf('git $SUB --amend'), null);
   assert.equal(gitOf('echo git commit'), null);
 });
+
+test('readInvocation reads the body of a function definition and the arm of a case, not their heads', () => {
+  for (const line of ['f() { git push; }; f', 'f(){ git push; }', 'function f { git push; }', 'function f() { git push; }', 'f() (git push)']) {
+    assert.ok(lexCommand(line).some((segment) => readInvocation(segment).program === 'git'), line);
+  }
+  for (const line of ['case x in x) git push;; esac', 'case x in (x) git push;; esac', 'case $a in x) echo; ;; y) git push;; esac']) {
+    assert.ok(lexCommand(line).some((segment) => readInvocation(segment).program === 'git'), line);
+  }
+  assert.equal(programOf('(ls)'), 'ls)', 'a lone word stays the program');
+});
+
+test('>| writes the next word; >&word duplicates a descriptor only for digits or -, and otherwise writes the file', () => {
+  const targets = (line) => lexCommand(line)[0].flatMap((token, i, segment) => (token.operator && segment[i + 1] && !segment[i + 1].fdDup ? [segment[i + 1].text] : []));
+  assert.deepEqual(targets('echo x >| out'), ['out']);
+  assert.deepEqual(targets('echo x >|out'), ['out']);
+  assert.deepEqual(targets('echo x >&out'), ['out']);
+  assert.deepEqual(targets('echo x >& out'), ['out']);
+  assert.deepEqual(targets('echo x 2>&1 >&2 3>&- 4>&5-'), []);
+  assert.deepEqual(argsOf('echo x >&out y'), ['x', 'y']);
+});
+
+test('readInvocation peels setsid, doas, flock, caffeinate, and coproc', () => {
+  assert.equal(programOf('setsid -f git push'), 'git');
+  assert.equal(programOf('doas -u root git push'), 'git');
+  assert.equal(programOf('flock -w 5 /tmp/lock git push'), 'git');
+  assert.equal(programOf('caffeinate -t 60 git push'), 'git');
+  assert.equal(programOf('coproc git push'), 'git');
+  assert.equal(programOf('coproc NAME { git push; }'), 'git');
+  const shell = readInvocation(lexCommand("flock /tmp/lock -c 'git push'")[0]);
+  assert.deepEqual([shell.program, ...shell.args.map((token) => token.text)], ['sh', '-c', 'git push'], 'flock -c runs a shell string');
+});

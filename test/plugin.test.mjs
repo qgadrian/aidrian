@@ -232,7 +232,7 @@ test('no tracked file names a source project, its tracker keys, a person, or a t
   const { repository } = json('plugins/aidrian/plugin.json');
   const slug = new URL(repository).pathname.replace(/^\/|\.git$/g, '');
   const owner = slug.split('/')[0];
-  const installFiles = ['README.md', 'examples/consumer/.claude/settings.json', 'plugins/aidrian/.claude-plugin/plugin.json', 'plugins/aidrian/plugin.json'];
+  const installFiles = ['README.md', 'NOTICE', 'examples/consumer/.claude/settings.json', 'plugins/aidrian/.claude-plugin/plugin.json', 'plugins/aidrian/plugin.json'];
   const banned = [/t[a]blesit/i, /T[B]L-\d+/, /\ba[d]ri[aá]n\b/i, /q[u]intas/i];
   const hits = [];
   for (const file of execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' }).split('\0').filter(Boolean)) {

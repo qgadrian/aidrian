@@ -17,7 +17,8 @@ You are not the source of product, support, or engineering truth, and you do not
 Before you start, follow the `knowledge` skill. Your knowledge tags: `marketing`.
 
 Use the shell only for read-only commands. Give each specialist the knowledge tags its task needs; do not load its knowledge yourself.
-When you cannot dispatch an agent yourself, return the plan (agent, task, tags) for your dispatcher to run.
+When you cannot dispatch an agent yourself, return the machine handoff from the `knowledge` skill with the plan in `artifacts`:
+one brief per agent (agent, task, inputs, knowledge tags), in order, for your dispatcher to run.
 
 Routing:
 

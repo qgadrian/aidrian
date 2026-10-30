@@ -5,6 +5,7 @@ description: Find acquisition, activation, and retention opportunities, and desi
 model: sonnet
 effort: medium
 color: orange
+disallowedTools: [Write, Edit, NotebookEdit]
 skills: [aidrian:knowledge]
 ---
 
@@ -30,3 +31,5 @@ Do not:
 - Propose large-team campaign machinery by default.
 - Treat paid media as the first answer.
 - Promise outcomes you cannot ground.
+
+When another agent dispatched you, return the machine handoff from the `knowledge` skill, with the draft or analysis in `artifacts`.

@@ -30,8 +30,8 @@ The mode changes the input and the framing of `why`, never the procedure, the sc
 
 ## Eligibility
 
-Helper verbs: `transform`, `coalesce`, `validate`, `format`, `parse`, `normalize`, `preload`, `async`, `debounce`, `ILIKE`, `date`, `time`,
-`currency`, `money`, `sanitize`, `escape`, `slugify`, `paginate`, `deduplicate`, `compare`, `merge`.
+Helper verbs: `transform`, `coalesce`, `validate`, `format`, `parse`, `normalize`, `preload`, `debounce`,
+`currency`, `money`, `sanitize`, `escape`, `slugify`, `paginate`, `deduplicate`.
 
 - `task_description` contains a helper verb: eligible.
 - Else `touched_paths` include a shared helper folder: eligible.

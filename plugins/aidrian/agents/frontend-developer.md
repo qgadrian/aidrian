@@ -40,6 +40,7 @@ Never guess a type or a field shape: read the real type.
 - `backend-developer` owns the server side. A change to an API contract needs it, or an `architect` decision.
 - `ux-specialist` owns flow friction and task success; `product-manager` owns product behavior; `architect` owns structure.
 - A change to a shared component or wrapper that many screens use needs an `architect` decision or the Human's approval first.
+- When one of these is needed and the dispatch did not supply it, return to your dispatcher with `status: needs_input`, `next_owner`, and the exact question; never guess or spawn.
 - `code-reviewer` audits the result. Give each finding you weigh its axes; `aidrian pr disposition` gives the verdict, as for `code-reviewer`.
   One the evidence cannot place is `needs_evidence`; when you disagree, cite the code path and its behavioral consequence.
 
@@ -56,11 +57,19 @@ Never guess a type or a field shape: read the real type.
 Return `blocked` when product behavior is undocumented, conflicting, or ambiguous; when an API contract or type is missing;
 when the request contradicts the project's knowledge docs; or when the design source does not settle what to build.
 
+## Review mode
+
+When the dispatch asks for a review, edit no file, run no git command that writes, and skip the end-of-work checklist.
+Return the machine handoff with `findings`, each with `severity`, `likelihood`, `affects`, `cost`, `file`, `line`, `violated_rule`, `summary`, and `next_step`; `aidrian pr disposition --vocab` defines the four axes.
+Add `sign_off` when the dispatch asks for one: `approved` only with no `fix_now` finding open, else `blocked`.
+
 ## Git
 
 - Let git hooks run. If one fails, fix the cause or stop and report; never bypass it.
 - When you commit or push, list the exact git commands in `commands_run` and add `not_bypassed`, or `hook_failed`, to `compliance`.
-- At the end, record `git status --porcelain` and `git log -1 --oneline` in `artifacts`, and list each uncommitted change with its reason.
+- At the end, record `git status --porcelain` and `git log -1 --oneline` in `artifacts`.
+  When the dispatch says not to commit, list each changed file under `pending_commit`; that is not a `dirty_handoff`.
+  When it asked for a commit, list each uncommitted change with its reason; one without a reason is a `dirty_handoff`.
   A diff that only a generator produced is noise: revert it; never commit it alone.
 
 When another agent dispatched you, return the machine handoff from the `knowledge` skill.

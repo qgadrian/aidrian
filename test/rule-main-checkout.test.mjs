@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
 
-import { bashTargets, check, checkTool } from '../plugins/aidrian/lib/rules/main-checkout.mjs';
+import { bashTargets, bashWrites, check, checkTool } from '../plugins/aidrian/lib/rules/main-checkout.mjs';
 
 // The hooks this file runs record their blocks in the state folder; keep those rows out of the real one.
 process.env.XDG_STATE_HOME = mkdtempSync(path.join(tmpdir(), 'aidrian-state-'));
@@ -230,4 +230,23 @@ test('the write hook denies through stdin, and exits 0 silently for anything it 
     const { status, stdout, stderr } = run(input);
     assert.deepEqual([status, stdout, stderr], [0, '', ''], input);
   }
+});
+
+test('bashTargets finds the targets of ln, truncate, install, and dd; with restores, those of git checkout -- and git restore', () => {
+  const at = (command) => bashTargets(command, '/repo').map((file) => path.relative('/repo', file));
+  assert.deepEqual(at('ln -sf /tmp/x src/a.ts'), ['src/a.ts']);
+  assert.deepEqual(at('ln -s -t src /tmp/x /tmp/y'), ['src']);
+  assert.deepEqual(at('truncate -s 0 src/a.ts src/b.ts'), ['src/a.ts', 'src/b.ts']);
+  assert.deepEqual(at('install -m 644 /tmp/x src/a.ts'), ['src/a.ts']);
+  assert.deepEqual(at('install -d src/new'), ['src/new']);
+  assert.deepEqual(at('dd if=/dev/zero of=src/a.ts bs=1 count=1'), ['src/a.ts']);
+  // git checkout -- and git restore put a path back: the main-checkout rule lets them discard changes; the config guard asks.
+  assert.deepEqual(at('git restore --source=HEAD~1 src/a.ts'), []);
+  const restored = (command) => bashWrites(command, '/repo', { restores: true }).flatMap(({ files }) => files).map((file) => path.relative('/repo', file));
+  assert.deepEqual(restored('git checkout main -- src/a.ts src/b.ts'), ['src/a.ts', 'src/b.ts']);
+  assert.deepEqual(restored('git checkout main'), [], 'a branch switch names no path');
+  assert.deepEqual(restored('git restore --source=HEAD~1 src/a.ts'), ['src/a.ts']);
+  assert.deepEqual(restored('git restore -s main src/a.ts'), ['src/a.ts']);
+  assert.deepEqual(restored('git restore --staged src/a.ts'), [], 'only the index changes');
+  assert.deepEqual(restored('git restore --staged --worktree src/a.ts'), ['src/a.ts']);
 });

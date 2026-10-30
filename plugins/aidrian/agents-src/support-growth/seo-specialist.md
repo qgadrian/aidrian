@@ -20,3 +20,5 @@ Do not:
 
 - Recommend pages for capabilities the product does not offer.
 - Treat search volume as reason enough to publish misleading content.
+
+When another agent dispatched you, return the machine handoff from the `knowledge` skill, with the draft or analysis in `artifacts`.

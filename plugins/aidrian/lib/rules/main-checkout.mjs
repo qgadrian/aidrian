@@ -1,7 +1,7 @@
 // Write rule: no writes to a tracked file in a project's main checkout; task work happens in a git worktree.
 // It covers Edit, Write, and NotebookEdit, Codex's apply_patch, and the Bash commands whose target is certain:
-// `>` and `>>`, tee, sed -i, the destination of cp, every path of mv, git mv, rm, git rm, unlink, touch, and mkdir, and
-// the local destination of rsync, with its sources too under --remove-source-files. A move removes its sources. A command
+// `>` and `>>`, tee, sed -i, the destination of cp, ln, and install, every path of mv, git mv, rm, git rm, unlink, touch,
+// mkdir, and truncate, dd's of=, and the local destination of rsync, with its sources too under --remove-source-files. A move removes its sources. A command
 // substitution that runs is read as the command line is.
 //
 // It is off until a project sets config.json `"git": { "mainCheckout": { "guard": true } }`. A target is allowed when it is outside
@@ -34,6 +34,10 @@ const WRITERS = new Map([
   ['sed', new Set(['-e', '-f', '--expression', '--file', '--line-length'])],
   ['cp', new Set(['-S', '--suffix', '-t', '--target-directory'])],
   ['mv', new Set(['-S', '--suffix', '-t', '--target-directory'])],
+  ['ln', new Set(['-S', '--suffix', '-t', '--target-directory'])],
+  ['install', new Set(['-S', '--suffix', '-t', '--target-directory', '-m', '--mode', '-o', '--owner', '-g', '--group'])],
+  ['truncate', new Set(['-s', '--size', '-r', '--reference', '-o'])],
+  ['dd', new Set()],
   // A value option whose name extends a switch (`--partial-dir`, `--backup-dir`) is left out, so the switch never
   // swallows an operand. An unlisted option's value reads as one more path: blocked by mistake, never missed.
   [
@@ -54,6 +58,14 @@ const GIT_WRITERS = new Map([
   ['mv', new Set()],
   ['rm', new Set(['--pathspec-from-file'])],
 ]);
+// git subcommands that put back a path's content, which bashWrites counts only when asked (`restores`): the main-checkout
+// rule lets them discard changes, while the config guard must see a gate file restored to an older version.
+const GIT_RESTORERS = new Map([
+  ['checkout', new Set(['-b', '-B', '--orphan', '--conflict', '--pathspec-from-file'])],
+  ['restore', new Set(['-s', '--source', '--conflict', '--pathspec-from-file'])],
+]);
+// The cp-like writers: they write their last operand, or the -t directory.
+const COPIERS = new Set(['cp', 'ln', 'install']);
 // An rsync operand naming another host: `host:path`, `user@host:path`, `host::module`, or `rsync://host/module`.
 const REMOTE = /^[^/]*:/u;
 
@@ -88,11 +100,13 @@ export function bashTargets(command, cwd) {
 const FOLDERS_LIMIT = 16;
 
 // Every target a Bash command writes, as { text, files, unsure }: `text` as the command names it, `files` the absolute
-// paths it can be, and `unsure` when the shell may be in a folder no path names, as after `cd "$dir"`.
+// paths it can be, and `unsure` when the shell may be in a folder no path names, as after `cd "$dir"`. `globs` keeps a
+// target with a glob, which bashTargets drops, as { text, files: [], unsure: true, glob: true }; `restores` counts git
+// checkout -- and git restore as writes.
 // By default a `cd` makes the shell's folder unknown, as bashTargets reads it. `followCd` follows each `cd` to a named
 // folder, and, since a `cd` that fails leaves the shell where it was, keeps the folders before it as well. `shells` also
 // reads the command line of each `sh -c` or `bash -c`, which, like a substitution, starts where its command runs.
-export function bashWrites(command, cwd, { followCd = false, shells = false } = {}) {
+export function bashWrites(command, cwd, { followCd = false, shells = false, restores = false, globs = false } = {}) {
   const targets = [];
   const visit = (line, place, depth) => {
     for (const { segment, substitutions } of lexSteps(line)) {
@@ -106,7 +120,7 @@ export function bashWrites(command, cwd, { followCd = false, shells = false } = 
       // A wrapper's directory change moves the command's own paths, never the shell's redirections above.
       const own = chdir === null ? place : moved(place, chdir);
       if (WRITERS.has(program)) for (const token of written(program, args)) targets.push({ token, place: own });
-      else if (program === 'git') targets.push(...gitWritten(segment, own));
+      else if (program === 'git') targets.push(...gitWritten(segment, own, restores));
       const inner = shells && depth < SUBSTITUTION_DEPTH_LIMIT ? inlineShellCommand(invocation) : null;
       if (inner !== null) visit(inner, own, depth + 1);
       if (CHANGES_DIRECTORY.has(program)) place = followCd ? moved(place, program === 'popd' ? null : operand(args), true) : UNKNOWN;
@@ -114,8 +128,9 @@ export function bashWrites(command, cwd, { followCd = false, shells = false } = 
   };
   visit(command, { dirs: [cwd], unsure: false }, 0);
   return targets
-    .filter(({ token }) => !token.dynamic && token.text !== '')
-    .map(({ token: { text }, place }) => {
+    .filter(({ token }) => (!token.dynamic || (globs && !/[$`]/u.test(token.text))) && token.text !== '')
+    .map(({ token: { text, dynamic }, place }) => {
+      if (dynamic) return { text, files: [], unsure: true, glob: true };
       if (path.isAbsolute(text)) return { text, files: [text], unsure: false };
       return { text, files: place.dirs.map((dir) => path.resolve(dir, text)), unsure: place.unsure };
     });
@@ -144,16 +159,23 @@ function operand(args) {
   return to && (to.dynamic || !/^(?:-|[+-]\d+)$/u.test(to.text)) ? to : null;
 }
 
-// git mv and git rm: every path they name, resolved from `git -C`, which moves them as a wrapper's directory change does.
-function gitWritten(segment, place) {
+// git mv and git rm, and with `restores` git checkout and git restore: every path they name, resolved from `git -C`, which moves them as a wrapper's directory change does.
+function gitWritten(segment, place, restores) {
   const call = readGit(segment);
-  if (!call || !GIT_WRITERS.has(call.subcommand)) return [];
+  const writers = restores ? new Map([...GIT_WRITERS, ...GIT_RESTORERS]) : GIT_WRITERS;
+  if (!call || !writers.has(call.subcommand)) return [];
   let at = place;
   call.globals.forEach((token, i) => {
     const value = call.globals[i + 1];
     if (token.text === '-C' && value) at = moved(at, value);
   });
-  return written('git', call.rest, GIT_WRITERS.get(call.subcommand)).map((token) => ({ token, place: at }));
+  let { rest } = call;
+  // git checkout writes paths only after `--`; before it a word may be a branch. git restore --staged alone writes the index.
+  const dashes = rest.findIndex((token) => token.text === '--');
+  if (call.subcommand === 'checkout') rest = dashes === -1 ? [] : rest.slice(dashes);
+  const has = (letter, long, shortest) => rest.some(({ text }) => isLongOption(text, long, shortest) || (/^-[A-Za-z]+$/u.test(text) && text.includes(letter)));
+  if (call.subcommand === 'restore' && has('S', '--staged', '--st') && !has('W', '--worktree', '--w')) return [];
+  return written('git', rest, writers.get(call.subcommand)).map((token) => ({ token, place: at }));
 }
 
 // The operands a writer writes: all of them, every path of mv, the destination of cp and rsync (and rsync's sources
@@ -176,7 +198,9 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
       operands.push(args[i]); // an empty operand is BSD sed's `-i ''` suffix
     }
   }
-  if (program === 'cp' || program === 'mv') {
+  if (program === 'dd') return operands.filter(({ text }) => text.startsWith('of=')).map((token) => ({ ...token, text: token.text.slice(3) }));
+  if (program === 'install' && flags.some((flag) => flag === '-d' || isLongOption(flag, '--directory', '--d'))) return operands;
+  if (COPIERS.has(program) || program === 'mv') {
     const directory = targetDirectory(args);
     if (program === 'mv') return directory ? [...operands, directory] : operands;
     if (directory) return [directory];

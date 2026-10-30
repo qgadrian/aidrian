@@ -5,17 +5,6 @@ The install commands are in the [README](../../README.md#codex).
 
 ## Install
 
-Codex clones a short name, such as the one Claude Code uses, over HTTPS.
-That is why the README passes the SSH URL.
-When git already has HTTPS credentials for GitHub, for example after `gh auth setup-git`, the short name works too.
-
-Two errors mean that the clone failed:
-
-- `fatal: could not read Username for 'https://github.com': terminal prompts disabled`:
-  git had no HTTPS credentials. Use the SSH URL.
-- ``plugin `aidrian` was not found in marketplace `aidrian-harness` ``: the marketplace step before it failed.
-  `codex plugin marketplace list` then shows no `aidrian-harness`. Add the marketplace again with the SSH URL.
-
 Codex plugins carry skills but not agents.
 So `install-agents.mjs` copies the agents in, as `aidrian-<agent>`:
 
@@ -23,6 +12,21 @@ So `install-agents.mjs` copies the agents in, as `aidrian-<agent>`:
 - with `--target .codex/agents`, into one project instead.
 
 After you install, open Codex and trust the plugin's hooks in `/hooks`.
+
+### Private fork or mirror
+
+Codex clones a short name, such as `owner/aidrian-harness`, over HTTPS.
+For a private repository, that fails when git has no HTTPS credentials for it:
+
+- `fatal: could not read Username for 'https://github.com': terminal prompts disabled`: git had no HTTPS credentials.
+- ``plugin `aidrian` was not found in marketplace `aidrian-harness` ``: the marketplace step before it failed.
+  `codex plugin marketplace list` then shows no `aidrian-harness`.
+
+Run `gh auth setup-git` to give git HTTPS credentials, or add the marketplace by its SSH URL:
+
+```sh
+codex plugin marketplace add git@github.com:<owner>/aidrian-harness.git
+```
 
 ## Update
 

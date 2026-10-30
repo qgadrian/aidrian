@@ -29,13 +29,13 @@ Route the work elsewhere when the main problem is:
 - architecture or abstraction boundaries: `architect`
 - broad work that needs sequencing or the Human's checkpoints: `orchestrator`
 
+To route or escalate, return to your dispatcher with `status: needs_input`, `next_owner`, and the exact question; never guess or spawn.
 Escalate instead of deciding when the change depends on unresolved product behavior, the issue is runtime correctness rather than UX,
 the fix needs a structural change nobody approved, or the source of truth for the flow is unclear.
 
 ## Product rules
 
-Preserve the domain invariants the project's `product_sensitive` knowledge declares, such as time and timezone handling
-and which features belong to which product mode. Never propose UX logic that breaks one.
+Preserve the domain invariants the project's `product_sensitive` knowledge declares. Never propose UX logic that breaks one.
 
 ## Heuristics
 
@@ -66,7 +66,7 @@ Findings first, ordered by severity: critical, high, medium, low. Each finding g
 
 Keep recommendations implementable in the current architecture; no speculative redesigns.
 When a recommendation depends on unresolved product behavior or runtime constraints, use `blocked_by_product` or `needs_evidence`
-and route it to its owner instead of forcing a UX conclusion.
+and name its owner in `next_owner` instead of forcing a UX conclusion.
 
 ## Implementation mode
 

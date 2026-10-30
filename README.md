@@ -3,35 +3,62 @@
 One plugin, `aidrian`, gives Claude Code and Codex a team of agents, skills, and safety hooks.
 A project adds only its own rules, as Markdown docs, and a small `.aidrian/` folder that indexes them.
 
-## Install
+## Concepts
 
-You need Node 22 or later, and git access to `github.com/qgadrian/aidrian-harness`, which is private.
+- **The Human**: what agents call the person running the session. [`names`](docs/config.md#names) changes it.
+- **Knowledge bucket**: a folder of Markdown docs with one team's rules, and its index in `.aidrian/knowledge/`.
+- **Project folder**: `.aidrian/` at the repository root. It holds `config.json` and the bucket indexes.
+- **State folder**: one folder per project outside the repository, for plans, handoff briefs, lessons, and the dispatch log.
+- **Tag**: a word, such as `testing`, that marks a doc in a bucket index. An agent reads the docs with the tags its task needs.
+- **`always` doc**: a doc in a bucket that every agent reads, whatever the tags.
+- **Orchestrator**: the agent that splits a task into parts and dispatches each one to the right agent.
+- **Autopilot**: the skill that runs one task from issue to pull request without the Human.
+- **Review bot**: the GitHub app that reviews each pull request. The agents wait for it, then fix what it finds.
+- **Task worktree**: a git worktree in `.worktrees/`, one per task, so the main checkout stays clean.
+- **Dispatch**: one agent handing a task to another. The dispatch log records each one.
+- **Slice**: one part of a larger task, built on its own branch.
+
+## Prerequisites
+
+- Node 22 or later, and git.
+- Claude Code, Codex CLI, or both.
+- The GitHub CLI, signed in with `gh auth login`. The `aidrian pr`, `aidrian report`, and `aidrian worktree` commands,
+  and the `pr-*` skills, call `gh`.
+- Optional: a review bot. The default is `chatgpt-codex-connector[bot]`, the Codex GitHub connector, which reviews pull requests.
+  Without one, see [No review bot](docs/config.md#no-review-bot).
+- Optional: an issue tracker. The [tracker reference](plugins/aidrian/skills/knowledge/references/tracker.md) says how agents use it.
+
+## Install
 
 ### Claude Code
 
+Run these in a terminal:
+
 ```sh
-claude plugin marketplace add qgadrian/aidrian-harness
+claude plugin marketplace add qgadrian/aidrian
 claude plugin install aidrian@aidrian-harness
 ```
 
 ### Codex
 
-Use the SSH URL. Codex clones a short name over HTTPS, which fails when git has no HTTPS credentials.
+Run these in a terminal:
 
 ```sh
-codex plugin marketplace add git@github.com:qgadrian/aidrian-harness.git
+codex plugin marketplace add qgadrian/aidrian
 codex plugin add aidrian@aidrian-harness
 node "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/aidrian-harness/aidrian/*/codex/install-agents.mjs
 ```
 
-The last command installs the agents. Then open Codex and trust the plugin's hooks in `/hooks`.
+The last command installs the agents. Its `*` assumes one version folder, which is what Codex keeps.
+Then open Codex and trust the plugin's hooks in `/hooks`.
+Installing from a private fork or mirror: [Codex](docs/providers/codex.md#private-fork-or-mirror).
 
 ### In CI
 
-CI needs no plugin. Give the job Node 22 or later and read access to this repository, such as a deploy key:
+CI needs no plugin. Give the job Node 22 or later, and pin a tag or commit instead of the default branch:
 
 ```sh
-git clone --depth 1 git@github.com:qgadrian/aidrian-harness.git /tmp/aidrian-harness
+git clone --depth 1 --branch <tag> https://github.com/qgadrian/aidrian.git /tmp/aidrian-harness
 /tmp/aidrian-harness/plugins/aidrian/bin/aidrian check
 /tmp/aidrian-harness/plugins/aidrian/bin/aidrian lint
 ```
@@ -40,8 +67,8 @@ Updates, install errors, and installing from a checkout: [Claude Code](docs/prov
 
 ## Quick start
 
-Run these at the root of the project's repository.
-`aidrian` is on the PATH inside a Claude Code session. In a terminal, put it there first; for Claude Code:
+Run the commands below in a terminal, at the root of the project's repository. Step 3 then opens a session.
+Inside a Claude Code session, `aidrian` is already on the PATH. In a terminal, put it there first; for Claude Code:
 
 ```sh
 plugin=$(claude plugin list --json |
@@ -49,6 +76,7 @@ plugin=$(claude plugin list --json |
 export PATH="$plugin/bin:$PATH"
 ```
 
+If that fails, run the commands from the plugin folder instead: [Running aidrian](docs/providers/claude-code.md#running-aidrian).
 For Codex, see [Running aidrian](docs/providers/codex.md#running-aidrian).
 
 1. Set up the project folder and index the existing docs:
@@ -72,16 +100,6 @@ For Codex, see [Running aidrian](docs/providers/codex.md#running-aidrian).
    In Codex, ask the session for the `aidrian-orchestrator` agent by name.
 
 [Adopting in a project](docs/adopting.md) finishes the setup: tags, `always` docs, `AGENTS.md`, and the team's install.
-
-## Concepts
-
-- **Knowledge bucket**: a folder of Markdown docs with one team's rules, and its index in `.aidrian/knowledge/`.
-- **Project folder**: `.aidrian/` at the repository root. It holds `config.json` and the bucket indexes.
-- **State folder**: one folder per project outside the repository, for plans, handoff briefs, lessons, and the dispatch log.
-- **Task worktree**: a git worktree in `.worktrees/`, one per task, so the main checkout stays clean.
-- **Dispatch**: one agent handing a task to another. The dispatch log records each one.
-- **Slice**: one part of a larger task, built on its own branch.
-- **The Human**: what agents call the person running the session. [`names`](docs/config.md#names) changes it.
 
 ## What is in the plugin
 
@@ -134,6 +152,8 @@ Codex names an agent `aidrian-<agent>`; ask for a skill by name.
 | [Claude Code](docs/providers/claude-code.md) | Update the plugin and see how Claude Code runs it. |
 | [Codex](docs/providers/codex.md) | Update the plugin and see how Codex runs it. |
 | [Agents and skills](docs/agents-and-skills.md) | Find the agent or skill for a job. |
+| [Agents](docs/agents.md) | See how the agent sources are written and built. |
+| [Architecture](docs/architecture.md) | See how the plugin's parts fit together. |
 | [Project folder](docs/project-folder.md) | Know the `.aidrian/` folder, the state folder, and task worktrees. |
 | [Config](docs/config.md) | Change a setting in `config.json`. |
 | [Knowledge buckets](docs/knowledge.md) | Write and index the project's rules. |

@@ -52,6 +52,7 @@ and true to the project's product rules and conventions.
 - `product-manager` is the source for product compliance and missing product decisions.
 - Consult `security-engineer` when security architecture, exploitability, or a trust boundary is a primary design concern.
 - Use `explorer` when the current code paths, invariants, or historical behavior are not obvious.
+- When you need another agent or the Human and cannot reach them, return to your dispatcher with `status: needs_input`, `next_owner`, and the exact question; never guess or spawn.
 - Hand the implementation contract to the agent that implements the surface, such as `backend-developer`.
 - Never guess missing product behavior or types.
 - When `orchestrator` runs the task and expects checkpoints, surface each critical architectural branch for the Human to confirm.

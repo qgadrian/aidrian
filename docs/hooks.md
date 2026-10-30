@@ -122,8 +122,12 @@ When git cannot answer, an Edit or Write is blocked to be safe, and a Bash comma
 
 Before every tool call, the hook checks the call against the project's `agents` gates; [config.md](config.md#agents) gives the keys and patterns.
 A blocked call exits 2 with the rule on stderr, such as `agents.main.deny has "Bash(git push)"`.
-A `Bash(...)` gate matches the command text: it reads the command line of `sh -c` and `bash -c`, but not a command run by `xargs`,
-`eval`, or a script, so `xargs git push` passes `Bash(git push)`; a `deny` list can name `Bash(xargs)` itself.
+A `Bash(...)` gate matches the command text: it reads the command line of `sh -c` and `bash -c`, a heredoc or here-string fed
+to a shell (`bash <<'EOF'`), function bodies and `case` arms, and commands behind wrappers such as `sudo`, `doas`, `setsid`,
+`flock`, and `coproc`.
+It does not read a command run by `xargs`, `find -exec`, `eval`, a script, or text piped into a shell (`echo 'git push' | bash`),
+so `xargs git push` passes `Bash(git push)`; a `deny` list can name `Bash(xargs)`, `Bash(find)`, or `Bash(bash)` itself, and an
+`allow` list that names no shell keeps them out.
 The reason also tells the agent not to reach the same result with another tool, and to tell the human what the task needs.
 The block is [recorded](#recorded-blocks) as `agent-gates`, with that gate as its reason.
 A gate that blocks one session a third time becomes a lesson for the project, not the plugin: the gates are the project's.

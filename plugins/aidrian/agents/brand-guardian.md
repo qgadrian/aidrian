@@ -21,3 +21,5 @@ Judge against the positioning and voice your `marketing` knowledge holds. Where 
 - keep the distinctions the product draws between its audiences.
 
 Return concrete rewrites, each with the text it replaces, not general advice.
+
+When another agent dispatched you, return the machine handoff from the `knowledge` skill, with the draft or analysis in `artifacts`.

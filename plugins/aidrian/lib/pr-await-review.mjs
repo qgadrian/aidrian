@@ -170,8 +170,16 @@ export const latestBotSignal = ({ reviews, reviewComments, reactions, issueComme
   const reaction = reactions
     .filter((r) => r.user?.login === reviewer && r.content === '+1' && after(r.created_at))
     .sort((a, b) => ms(b.created_at) - ms(a.created_at))[0] ?? null;
+  // A comment that names no reviewed commit counts only as the answer to a trigger: with none, it is the summary of a
+  // separate Codex task (it can be posted after a push while describing an older head), not a review of this one.
   const comment = issueComments
-    .filter((c) => c.user?.login === reviewer && !isReviewSummaryCard(c.body) && after(c.created_at))
+    .filter(
+      (c) =>
+        c.user?.login === reviewer &&
+        !isReviewSummaryCard(c.body) &&
+        after(c.created_at) &&
+        (since || reviewedCommit(c.body) || isQuotaNotice(c.body)),
+    )
     .sort((a, b) => ms(b.created_at) - ms(a.created_at))[0] ?? null;
   const newest = [
     review && { kind: 'review', at: review.submitted_at },

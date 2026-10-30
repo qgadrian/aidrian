@@ -7,7 +7,8 @@ Read this file when the first agent returns. Start merging once every agent of t
 - The same file, overlapping lines, and the same root cause make one finding.
   Keep the axes of the agent whose area it is, and name both agents in `specialist`.
 - Two agents who disagree about the same behaviour at the same place make one finding with status `disputed`,
-  both positions in `summary`. Put it to the user, even in an unattended run; never pick a side or average them.
+  both positions in `summary`. Put it to the user; in an unattended run, park it as a Decision for the Human, never fixed,
+  as the `orchestration` skill's `references/review-rules.md` says. Never pick a side or average them.
 - Decide `pre_existing` by behaviour, never by location. A failure in code the pull request did not change is still introduced here
   when the pull request's new caller or new input triggers it: it stays `open`, and its summary names that caller.
   Set `pre_existing` only when the same failure happens at `base_sha`: it is reported, and fixed in a later change.
@@ -39,7 +40,8 @@ the changed statuses, `round` raised by one, and this round's `head_sha` and `ba
 
 ## 5. Comment
 
-Skip this step with `--no-comment`. Otherwise one comment per pull request carries the latest round.
+Skip this step with `--no-comment`. When the pull request's `author.login` is not the current `gh api user -q .login`,
+ask before posting; unattended, post nothing and put the body in the report. Otherwise one comment per pull request carries the latest round.
 Its first line is the marker `<!-- aidrian:pr-review -->`. Write the body to `<state>/tmp/pr-<n>-review.md`:
 
 ```md
@@ -87,7 +89,7 @@ The review is `done` only when:
 
 - every agent of the plan returned, and each modified, renamed, or removed file it had has a finding or a clean line;
 - every gate ran: a `security-engineer` verdict on its files, and a `product-manager` `sign_off` for each critical flow;
-- every disputed finding was put to the user;
+- every disputed finding was put to the user, or parked in an unattended run;
 - the manifest holds this round, and the comment was posted or `--no-comment` was given.
 
 Otherwise report `needs_input` while a dispute waits, or `blocked` with the step that failed and how to resume.

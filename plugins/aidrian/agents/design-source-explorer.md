@@ -76,8 +76,7 @@ is needed, name `explorer` as the next owner.
    zip, extract it into a fresh OS temp dir (see the `Bash` rule above) and
    operate on the extracted tree. Verify the bundle
    **invariants** from the bundle spec: one or
-   more entry HTML pages (React 18 + Babel-standalone prototype, or a
-   dc-runtime `<x-dc>` page) — filename, extension (`.html`/`.dc.html`), and
+   more entry HTML pages, in a runtime the spec names — filename, extension (`.html`/`.dc.html`), and
    location (root or a project subdir) all vary. Match against the spec's
    observed layouts to speed classification, but never require one: a bundle
    that satisfies the invariants without matching any observed layout is
@@ -125,9 +124,9 @@ is needed, name `explorer` as the next owner.
      parts of `shared.jsx` — classify by export role), and the design-tokens
      CSS (filename varies; identify by `:root { --… }` content; may be
      absent).
-   - Discard: tool/runtime harness (`design-canvas.jsx`, `tweaks-panel.jsx`,
-     `ios-frame.jsx`, generated `support.js` dc-runtime), mock data, and fake
-     domain engines (availability, warnings, search).
+   - Discard: tool/runtime harness (e.g. a prototype's own canvas, device-frame,
+     and tweak-panel helpers, or a generated runtime file), mock data, and
+     stand-in logic that fakes the product's behavior.
    - Read: entry HTML pages and `README.md` when present.
    - Reference: `uploads/`, `assets/`, `screenshots/`, `.thumbnail` imagery.
    Every bundle file must land in exactly one role; mixed-file exports must
@@ -158,8 +157,7 @@ is needed, name `explorer` as the next owner.
    `docs/design-imports/<slug>/` itself: re-running on an existing slug
    rewrites that import, it never supersedes itself. When the
    new import covers the **same product surface** as an existing,
-   non-superseded import (same target route/component — e.g. a new settings
-   modal export replacing an earlier settings modal import), this import
+   non-superseded import (same target route or component), this import
    supersedes it:
    - The new `DESIGN.md` header records
      `Supersedes: docs/design-imports/<old-slug>/`.
@@ -167,7 +165,7 @@ is needed, name `explorer` as the next owner.
      permitted out-of-slug edit): `> **Superseded by
      docs/design-imports/<new-slug>/** — do not implement from this import.`
    - When the new import is **additive** (it extends the surface without
-     replacing the earlier screens — e.g. it only adds a calendar popover),
+     replacing the earlier screens — e.g. it only adds one new screen),
      record a plain cross-reference instead of supersession and say why.
    - Ambiguous same-surface-or-additive cases: record the cross-reference,
      name the question in `open_questions`, and let the user decide — never
@@ -187,8 +185,7 @@ is needed, name `explorer` as the next owner.
      format-drift rule fired, add a **Format drift** note describing what was
      new versus the spec's observed layouts, naming `doc-updater` as the
      spec-update owner.
-   - `inventory.md` — each approved screen → its intended project route
-     (e.g. `src/app/dashboard/...`); the existing design-system
+   - `inventory.md` — each approved screen → its intended project route; the existing design-system
      components and tokens to reuse; a **split of visual slices
      vs data-wiring/behavior slices**; a **per-artboard coverage table**
      (every artboard → `to-implement | deferred | not-applicable (reason)`)

@@ -277,3 +277,23 @@ test('the hook blocks a subagent that changes the gates with exit 2, and lets it
     assert.deepEqual([status, stdout, stderr], [0, '', ''], `${cwd}: ${JSON.stringify(input)}`);
   }
 });
+
+test('ln, truncate, install, dd, git checkout --, git restore, and a glob that may name a guarded file change it', (t) => {
+  const { dir } = project(t);
+  for (const command of [
+    'ln -sf /tmp/x.json .aidrian/config.json',
+    'truncate -s 0 .aidrian/config.json',
+    'install -m 644 /tmp/x.json .aidrian.local.json',
+    'dd if=/tmp/x.json of=.aidrian/config.json',
+    'git checkout HEAD~1 -- .aidrian/config.json',
+    'git restore --source=HEAD~1 .aidrian/config.json',
+    'rm .aidrian/*.json',
+    'echo {} > .aidrian/conf?g.json',
+    'rm -rf .aid*',
+  ]) {
+    assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /\.aidrian/, command);
+  }
+  for (const command of ['rm src/*.js', 'ln -s /tmp/x src/link']) {
+    assert.equal(verdict(dir, subagent(dir, 'Bash', { command })), null, command);
+  }
+});

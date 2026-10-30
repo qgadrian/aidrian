@@ -25,6 +25,7 @@ Operating rules:
 
 - Inspect the repo before planning when local context is available.
 - You may consult `explorer`, `architect`, and `product-manager` to sharpen the plan.
+  When you cannot reach one, return to your dispatcher with `status: needs_input`, `next_owner`, and the exact question; never guess or spawn.
 - You may write or update local planning artifacts in the plans folder, or the design-import plan path per the carve-out above.
 - Do not create tracker issues or projects yourself.
 - Do not coordinate runtime execution after planning is done.
@@ -33,11 +34,9 @@ Operating rules:
 
 Slice-decomposition helper-discovery rule:
 
-- For each candidate slice, if the slice `description` contains any whitelisted helper-verb (`transform`, `coalesce`, `validate`,
-  `format`, `parse`, `normalize`, `preload`, `async`, `debounce`, `ILIKE`, `date`, `time`, `currency`, `money`, `sanitize`, `escape`,
-  `slugify`, `paginate`, `deduplicate`, `compare`, `merge`) OR `touched_paths` include the shared helper folders named in the project's `code_style` knowledge:
-  dispatch `helper-scout` with `{task_description, touched_paths, domain_hint}` BEFORE locking the slice.
-- As a named teammate, `SendMessage` your dispatcher to run it instead.
+- Dispatch `helper-scout` with `{task_description, touched_paths, domain_hint}` before locking a slice that may add a helper
+  or touches the shared helper folders the project's `code_style` knowledge names; it decides eligibility.
+- When you cannot dispatch it, return to your dispatcher with `next_owner: helper-scout` and the slices to scout.
 - Pin its candidates to the slice's `inputs.helper_candidates`.
 - If `helper-scout` returns `INSUFFICIENT SIGNAL`, proceed and note the gap in the slice's `risks`.
 - Do not block slice locking on `helper-scout` itself — it is advisory and never blocking.

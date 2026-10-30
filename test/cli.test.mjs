@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -171,4 +171,18 @@ test('every command that reads config.json stops on its errors before it acts; o
     next_step: 'Fix config.json; aidrian check lists every problem.',
   });
   assert.equal(run(['pr', 'disposition', '--severity', 'critical'], dir, env).status, 0, 'disposition reads no config');
+});
+
+test('bin/aidrian and bin/aidrian-knowledge run through a symlink, and a chain of them, from another folder', (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-bin-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  for (const name of ['aidrian', 'aidrian-knowledge']) {
+    mkdirSync(path.join(dir, 'a'), { recursive: true });
+    symlinkSync(path.join(ROOT, 'plugins/aidrian/bin', name), path.join(dir, 'a', name));
+    symlinkSync(path.join('a', name), path.join(dir, name));
+    for (const link of [path.join(dir, 'a', name), path.join(dir, name)]) {
+      const { status, stderr } = spawnSync(link, ['--help'], { cwd: EXAMPLE, encoding: 'utf8' });
+      assert.equal(status, 0, `${link}: ${stderr}`);
+    }
+  }
 });

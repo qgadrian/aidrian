@@ -292,6 +292,12 @@ test('a glob reaches a config file that is a symlink to another folder, by the p
   symlinkSync('../.aidrian/config.json', path.join(dir, 'dist/config.json'));
   assert.match(verdict(dir, subagent(dir, 'Bash', { command: "echo '{}' > dist/*.json" })) ?? '', /config\.json/);
   assert.equal(verdict(dir, subagent(dir, 'Bash', { command: 'rm dist/*.js' })), null);
+  // A link the same call creates before the glob runs is not on disk yet: a write into the glob's folder fails closed.
+  mkdirSync(path.join(dir, 'out'));
+  for (const command of ["ln -s ../.aidrian/config.json out/alias && echo '{}' > out/*", 'cp x out/ && rm -rf out/*']) {
+    assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /\.aidrian/, command);
+  }
+  assert.equal(verdict(dir, subagent(dir, 'Bash', { command: 'touch src/a.js && rm -rf out/*.js' })), null);
 });
 
 test('ln, truncate, install, dd, git checkout --, git restore, and a glob that may name a guarded file change it', (t) => {

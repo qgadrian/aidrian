@@ -125,7 +125,6 @@ acceptance_criteria_covered:
   - "AC1"
   - "AC2"
 status: "pending"                # one of: pending | in_progress | complete | blocked
-commit_sha: null                 # set to the short SHA when status flips to complete
 notes: ""                        # free-form notes added during execution; safe to overwrite on re-entry
 ```
 
@@ -149,7 +148,8 @@ Tools that resume execution from a plan (e.g., `issue-implement`) treat the plan
 
 - Re-read the plan at the start of each slice iteration.
 - Update `slice.status` to `in_progress` before dispatch.
-- Update `slice.status` to `complete` and record `commit_sha` after the slice's commit lands.
+- Update `slice.status` to `complete` just before the slice's commit; a plan file git tracks goes in that commit.
+  Record no commit SHA: `git log` finds the commit by its `planned_commit_subject`.
 - If the plan's `ticket_updated_at` is older than the issue's live `updatedAt`, treat the plan as stale and ask the user whether to regenerate before
   resuming.
 - Never silently rewrite slice content; revisions belong in a new plan or an explicit revision pass.

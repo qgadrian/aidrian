@@ -161,6 +161,9 @@ A team sets `telemetry` in `config.json`, and one developer in the git-ignored `
   The two files hold about twice `max_mb` at most, and `aidrian report` reads both.
 - `hook_denies`: `aidrian check` checks its value; no hook reads it in this version.
 
+`aidrian report` says when telemetry is off, and when the rows it read miss part of the window:
+[dispatch-log.md](dispatch-log.md#when-the-report-is-incomplete).
+
 ## Knowledge budgets
 
 Every session and subagent reads the `always` docs, and `aidrian-knowledge route <tag>` lists each doc of the tag to read whole.

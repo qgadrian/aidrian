@@ -77,7 +77,28 @@ Sessions: 5, $42.10 estimated, main conversation and subagents together
 - **docs read**: the five knowledge docs that agent type opened most.
 
 `--since` takes `30m`, `24h`, `7d`, or a date such as `2026-10-01`; the default is `7d`.
-`--json` prints the same summary as one JSON object.
+`--json` prints the same summary as one JSON object, with `rotated`, the path of the rotated part or `null`, and `coverage`.
+
+### When the report is incomplete
+
+Every view says so under its first line, and `--json` carries the same facts in `coverage`:
+
+```console
+$ aidrian report docs
+Knowledge docs read, from /home/you/.local/state/aidrian/projects/notes-1a2b3c4d/dispatch-log.jsonl, since 7d
+Doc reads are off (telemetry.doc_reads is false): new rows do not record them.
+Partial: 4 agent and session rows in the window were written with doc reads off.
+Partial: the log starts at 2026-10-27T09:12:44.000Z; older rows were rotated out at telemetry.max_mb.
+```
+
+| Line | `coverage` field | When |
+| --- | --- | --- |
+| Telemetry is off | `enabled: false` | config.json or `.aidrian.local.json` sets `telemetry.enabled` to `false` now. |
+| Doc reads are off | `doc_reads: false` | The same for `telemetry.doc_reads`. |
+| Partial: rows written with doc reads off | `rows_without_doc_reads` | Agent and session rows in the window that hold `docs_read: null`. |
+| Partial: the log starts at | `rotated_out_before` | Rotation dropped rows, and the window starts before the oldest row left. |
+
+A time when telemetry was off leaves no rows at all, so no report can tell that it happened.
 `--prs N` adds the review rounds of the last N merged pull requests: how many formal reviews config.json `github.reviewer`
 left on each, the share that passed clean on the first look, and how many needed five or more. It needs `gh`.
 

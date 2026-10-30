@@ -5,7 +5,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { claimedPaths, dispatchRow, formatDocs, formatReport, parseSince, sessionRow, summarize, summarizeDocs } from '../plugins/aidrian/lib/dispatch-log.mjs';
+import {
+  claimedPaths, coverage, coverageLines, dispatchRow, formatDocs, formatReport, parseSince, sessionRow, summarize, summarizeDocs,
+} from '../plugins/aidrian/lib/dispatch-log.mjs';
+import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
@@ -233,7 +236,7 @@ test('parseSince takes a span or a date; aidrian report prints the log, --json t
   const { dir, env } = project(t);
   const report = (args) => spawnSync(CLI, ['report', ...args], { cwd: dir, env, encoding: 'utf8' });
   assert.match(report([]).stdout, /^Dispatch log .*dispatch-log\.jsonl, since 7d\nNo rows yet\.\n$/);
-  assert.deepEqual(Object.keys(JSON.parse(report(['--json']).stdout)), ['file', 'since', 'skipped', 'agents', 'sessions', 'unjoined_stops']);
+  assert.deepEqual(Object.keys(JSON.parse(report(['--json']).stdout)), ['file', 'rotated', 'since', 'skipped', 'coverage', 'agents', 'sessions', 'unjoined_stops']);
   assert.equal(report(['--since', 'soon']).status, 1);
   assert.equal(report(['--prs', '0']).status, 1);
 });
@@ -294,10 +297,44 @@ test('aidrian report docs prints the doc view, --json all of it; a stray word or
   assert.equal(text.status, 0, text.stderr);
   assert.match(text.stdout, /since 1d \(1 unreadable rows skipped\)\n11 reads of 7 docs, .* by 4 readers/);
   const json = JSON.parse(report(['docs', '--json']).stdout);
-  assert.deepEqual(Object.keys(json), ['file', 'since', 'skipped', 'docs', 'totals']);
+  assert.deepEqual(Object.keys(json), ['file', 'rotated', 'since', 'skipped', 'coverage', 'docs', 'totals']);
   assert.deepEqual(json.docs[0], { path: DOC('engineering/working-agreement'), reads: 4, bytes: 479, read_bytes: 1916, readers: ['Explore', 'code-reviewer', 'main', 'planner'] });
   assert.deepEqual([report(['nope']).status, report(['nope']).stderr], [1, 'unknown report: nope; use aidrian report or aidrian report docs\n']);
   assert.deepEqual([report(['docs', 'more']).status, report(['docs', '--prs', '1']).status], [1, 1]);
+});
+
+test('coverage: telemetry off, doc reads off, rows written without doc reads, and rows rotated out before the window', () => {
+  const sinceMs = parseSince('7d', NOW);
+  const day = (n) => new Date(NOW - n * 86_400_000).toISOString();
+  const rows = [
+    { event: 'rotate', ts: day(3), dropped: true },
+    { event: 'stop', ts: day(3), agent_id: 'a1', docs_read: null },
+    { event: 'stop', ts: day(2), agent_id: 'a1', docs_read: [] },
+    { event: 'stop', ts: day(2), agent_id: 'a2', docs_read: null },
+    { event: 'session', ts: day(1), session_id: 's', docs_read: null },
+    { event: 'session', ts: day(9), session_id: 'old', docs_read: null },
+  ];
+  const off = { telemetry: { ...DEFAULTS.telemetry, enabled: false } };
+  const cover = coverage(rows, off, { sinceMs });
+  assert.deepEqual(cover, { enabled: false, doc_reads: true, rows_without_doc_reads: 2, rotated_out_before: null }, 'a1 counts its last row; the old row is out of the window, and older than it');
+  assert.equal(coverage(rows.slice(0, 5), DEFAULTS, { sinceMs }).rotated_out_before, day(3));
+  assert.equal(coverage(rows.slice(1, 5), DEFAULTS, { sinceMs }).rotated_out_before, null, 'no rotate row that dropped rows: nothing is lost');
+  assert.deepEqual(coverageLines(coverage(rows.slice(0, 5), { telemetry: { ...DEFAULTS.telemetry, doc_reads: false } }, { sinceMs })), [
+    'Doc reads are off (telemetry.doc_reads is false): new rows do not record them.',
+    'Partial: 2 agent and session rows in the window were written with doc reads off.',
+    `Partial: the log starts at ${day(3)}; older rows were rotated out at telemetry.max_mb.`,
+  ]);
+  assert.deepEqual(coverageLines(cover, { docReads: false }), ['Telemetry is off (telemetry.enabled is false): the hooks write no rows, so this shows only older ones.']);
+  assert.deepEqual(coverageLines(coverage([], DEFAULTS)), []);
+});
+
+test('aidrian report and report docs say when telemetry is off, and --json carries the coverage', (t) => {
+  const { dir, env } = project(t);
+  setTelemetry(dir, { enabled: false });
+  const report = (args) => spawnSync(CLI, ['report', ...args], { cwd: dir, env, encoding: 'utf8' });
+  assert.match(report([]).stdout, /^Dispatch log .*, since 7d\nTelemetry is off \(telemetry\.enabled is false\): .*\nNo rows yet\.\n$/);
+  assert.match(report(['docs']).stdout, /^Knowledge docs read, .*\nTelemetry is off .*\nNo knowledge doc reads yet\.\n$/);
+  assert.deepEqual(JSON.parse(report(['--json']).stdout).coverage, { enabled: false, doc_reads: true, rows_without_doc_reads: 0, rotated_out_before: null });
 });
 
 test('sessionRow without a transcript has no models and no docs read', () => {

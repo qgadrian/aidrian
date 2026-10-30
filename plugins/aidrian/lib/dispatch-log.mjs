@@ -238,8 +238,40 @@ export function summarize(rows, { sinceMs = 0 } = {}) {
   };
 }
 
-export function formatReport(summary, { file, since, skipped }) {
-  const lines = [`Dispatch log ${file}, since ${since}${skipped ? ` (${skipped} unreadable rows skipped)` : ''}`];
+// What a report over `rows` cannot see: { enabled, doc_reads, rows_without_doc_reads, rotated_out_before }.
+// `enabled` and `doc_reads` are the switches now. `rows_without_doc_reads` counts the stop and session rows since
+// `sinceMs` written while doc reads were off. `rotated_out_before` is the oldest row's time when rotation dropped older
+// rows and the window starts before it; else null. A time telemetry was off leaves no rows, so no report can see it.
+export function coverage(rows, config, { sinceMs = 0 } = {}) {
+  const fresh = rows.filter((row) => Date.parse(row.ts) >= sinceMs);
+  const counted = [...latest(fresh, 'stop', 'agent_id'), ...latest(fresh, 'session', 'session_id')];
+  const oldest = rows.reduce((min, row) => Math.min(min, Date.parse(row.ts) || Infinity), Infinity);
+  const lost = rows.some((row) => row.event === 'rotate' && row.dropped === true);
+  return {
+    enabled: config.telemetry.enabled,
+    doc_reads: config.telemetry.doc_reads,
+    rows_without_doc_reads: counted.filter((row) => row.docs_read === null).length,
+    rotated_out_before: lost && oldest > sinceMs && oldest !== Infinity ? new Date(oldest).toISOString() : null,
+  };
+}
+
+// The lines that tell a reader the report is incomplete, and why. `docReads: false` leaves out the doc-read lines, for a
+// view that shows no doc reads.
+export function coverageLines(cover, { docReads = true } = {}) {
+  const lines = [];
+  if (!cover.enabled) lines.push('Telemetry is off (telemetry.enabled is false): the hooks write no rows, so this shows only older ones.');
+  else if (docReads && !cover.doc_reads) lines.push('Doc reads are off (telemetry.doc_reads is false): new rows do not record them.');
+  if (docReads && cover.rows_without_doc_reads) {
+    lines.push(`Partial: ${cover.rows_without_doc_reads} agent and session rows in the window were written with doc reads off.`);
+  }
+  if (cover.rotated_out_before) {
+    lines.push(`Partial: the log starts at ${cover.rotated_out_before}; older rows were rotated out at telemetry.max_mb.`);
+  }
+  return lines;
+}
+
+export function formatReport(summary, { file, since, skipped, notes = [] }) {
+  const lines = [`Dispatch log ${file}, since ${since}${skipped ? ` (${skipped} unreadable rows skipped)` : ''}`, ...notes];
   if (!summary.agents.length && !summary.sessions.count) return [...lines, 'No rows yet.'].join('\n');
   const seconds = (msValue) => (msValue === null ? '-' : `${Math.round(msValue / 1000)}s`);
   const thousands = (value) => (value === null ? '-' : `${Math.round(value / 1000)}k`);
@@ -281,8 +313,8 @@ export function summarizeDocs(rows, { sinceMs = 0 } = {}) {
   return { docs, totals: { docs: docs.length, reads: total('reads'), read_bytes: total('read_bytes'), readers: [...new Set(docs.flatMap((doc) => doc.readers))].sort() } };
 }
 
-export function formatDocs({ docs, totals }, { file, since, skipped }) {
-  const lines = [`Knowledge docs read, from ${file}, since ${since}${skipped ? ` (${skipped} unreadable rows skipped)` : ''}`];
+export function formatDocs({ docs, totals }, { file, since, skipped, notes = [] }) {
+  const lines = [`Knowledge docs read, from ${file}, since ${since}${skipped ? ` (${skipped} unreadable rows skipped)` : ''}`, ...notes];
   if (!docs.length) return [...lines, 'No knowledge doc reads yet.'].join('\n');
   const kb = (bytes) => (bytes === null ? '?' : `${(bytes / 1024).toFixed(1)} KB`);
   lines.push(
@@ -336,10 +368,12 @@ export const commands = {
         console.error(error.message);
         return 1;
       }
-      const { file, rows, skipped } = readLog(project, config);
+      const { file, rotated, rows, skipped } = readLog(project, config);
+      const cover = coverage(rows, config, { sinceMs });
+      const notes = coverageLines(cover);
       if (docsView) {
         const docs = summarizeDocs(rows, { sinceMs });
-        console.log(values.json ? JSON.stringify({ file, since, skipped, ...docs }) : formatDocs(docs, { file, since, skipped }));
+        console.log(values.json ? JSON.stringify({ file, rotated, since, skipped, coverage: cover, ...docs }) : formatDocs(docs, { file, since, skipped, notes }));
         return 0;
       }
       const summary = summarize(rows, { sinceMs });
@@ -351,11 +385,11 @@ export const commands = {
         }
         const { reviewRounds, formatRounds } = await import('./pr-review-rounds.mjs');
         summary.reviews = reviewRounds(count, config.github.reviewer);
-        if (!values.json) console.log(`${formatReport(summary, { file, since, skipped })}\n${formatRounds(summary.reviews)}`);
+        if (!values.json) console.log(`${formatReport(summary, { file, since, skipped, notes })}\n${formatRounds(summary.reviews)}`);
       } else if (!values.json) {
-        console.log(formatReport(summary, { file, since, skipped }));
+        console.log(formatReport(summary, { file, since, skipped, notes }));
       }
-      if (values.json) console.log(JSON.stringify({ file, since, skipped, ...summary }));
+      if (values.json) console.log(JSON.stringify({ file, rotated, since, skipped, coverage: cover, ...summary }));
       return 0;
     },
   },

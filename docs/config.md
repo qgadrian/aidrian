@@ -68,7 +68,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `state.dir` | The machine-local [state folder](project-folder.md#local-state); `null` is the one under `$XDG_STATE_HOME`. |
 | `worktrees.dir` | The folder for [task worktrees](project-folder.md#task-worktrees), `.worktrees` at the repository root by default. |
 | `worktrees.bootstrap` | One shell command to run inside each new worktree, such as `npm ci`; `null` runs nothing. |
-| `worktrees.disposable` | Folder names whose git-ignored files a cleanup removes without asking. `[]` asks for any ignored file. |
+| `worktrees.disposable` | Folder names, at any depth, whose git-ignored files a cleanup removes without asking. `[]` asks for any ignored file. |
 | `mainCheckout.guard` | `true` blocks agent edits to tracked files in the main checkout, so task work happens in worktrees. Off by default. |
 | `mainCheckout.allowWrites` | Tracked paths agents may still edit in the main checkout, as globs with `*` and `**`. Ignored paths are always allowed. |
 | `commits.types` | The Conventional Commits types a commit subject may use. |
@@ -112,6 +112,7 @@ A project without the Codex review bot sets `"github": { "reviewer": null }`, or
 - `aidrian pr await-review` then ends at once with exit 0 and `"status": "no_reviewer"`.
   It runs no `gh`, posts no review request, and waits for nothing. `--reviewer none` does the same for one run.
 - `aidrian report reviews` and the Reviews line of `aidrian report health` say that no review bot is set.
+- The `orchestration` and `autopilot` skills then run the `pr-review` skill in every review round.
 
 ## Models
 

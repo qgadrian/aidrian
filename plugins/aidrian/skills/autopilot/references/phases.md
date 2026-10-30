@@ -45,11 +45,11 @@ Up to config.json `github.maxReviewRounds` rounds, or the number the Human set a
 
 1. **Bot review.** Run the `pr-review-loop` skill on the pull request with `--await-codex`; once the bot is out, without it.
    Record the state its step 1 reports from `aidrian pr await-review`.
-   With config.json `github.reviewer` set to `null`, the project has no bot: record `no_reviewer`, and the `pr-review` skill runs every round.
 
    | Exit | State | In this run |
    | --- | --- | --- |
    | 0 | `received` or `already_present` | the loop triages it with the other comments |
+   | 0 | `no_reviewer` | no bot: config.json `github.reviewer` is `null` or `"none"`. Ask no more; the `pr-review` skill runs every round |
    | 2 | `timed_out` | after the loop's single retry, record `timed_out`; the `pr-review` skill runs this round |
    | 3 | `blocked_quota` | ask the bot no more in this run; the `pr-review` skill runs this round and each later one |
    | 4 | `round_limit` | the same. The loop's question about raising `--max-rounds` is the Human's: record it, never raise it |

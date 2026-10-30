@@ -44,8 +44,8 @@ Editing never happens in the main checkout, the parent folder of `git rev-parse 
    In a round the bot is out, first run the `pr-review` skill on the current head, unless step 3 just did; its findings go through `pr-review-fix`.
    In these skills, route each fix to its owner by § 4, even where a skill says the session fixes it itself.
    The fixing agent commits and pushes; you run the `git ls-remote` check and post the replies.
-5. **The bot is out** for the whole task when config.json `github.reviewer` is `null`, a project with no review bot,
-   or once `aidrian pr await-review` reports `blocked_quota` or `round_limit`; for one round when it reports `timed_out` after its retry.
+5. **The bot is out** for the whole task once `aidrian pr await-review` reports `no_reviewer` (exit 0; config.json `github.reviewer`
+   is `null` or `"none"`), `blocked_quota`, or `round_limit`; for one round when it reports `timed_out` after its retry.
    Without the bot, review rests on the `pr-review` skill and the Human's comments, which `pr-review-loop` answers.
 6. **The stop rule.** A round is one review of the current head: the bot's, or the `pr-review` skill's when the bot is out.
    Stop when a round's review of the current head yields no `fix_now`, or after config.json `github.maxReviewRounds` rounds

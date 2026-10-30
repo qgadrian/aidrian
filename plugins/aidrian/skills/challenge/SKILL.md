@@ -55,6 +55,7 @@ Capture it before the session ends:
   A plan with an open question is not decision-complete, so when its frontmatter says `status: ready`, set it to `status: open-questions`
   and say so in the reply. The Decision-complete definition in the `planning-agent` skill's `references/plan-file.md` owns that rule.
   The summary in the reply carries the rest.
-- Otherwise: write the summary into a handoff brief with the `session-handoff` skill, so a fresh session can act on it.
+- Otherwise: the summary in the reply carries it. When the `session-handoff` skill's When section allows a brief,
+  write the summary into one, so a fresh session can act on it.
 
 Leave each follow-up to the user, or to the agent that ran this skill: they decide when to act on it.

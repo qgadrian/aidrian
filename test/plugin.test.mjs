@@ -87,6 +87,16 @@ test('every skill has a name matching its folder and a description', () => {
   }
 });
 
+test('the README tables list every shipped agent and skill once, and nothing else', () => {
+  const readme = readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+  const rows = (heading) => {
+    const section = readme.split(`\n### ${heading}\n`)[1].split('\n#')[0];
+    return [...section.matchAll(/^\| `([a-z0-9-]+)` \|/gm)].map((match) => match[1]).sort();
+  };
+  assert.deepEqual(rows('Agents'), readAgents().map((agent) => agent.meta.name).sort());
+  assert.deepEqual(rows('Skills'), readdirSync(path.join(PLUGIN, 'skills')).sort());
+});
+
 // Codex cuts a SKILL.md at 8,000 bytes: MAX_SKILL_PROMPT_BYTES in codex-rs/ext/skills/src/render.rs.
 // Keep a margin. A longer skill keeps its steps in SKILL.md and moves detail into references/ or steps/ files,
 // each named in SKILL.md with when to read it.

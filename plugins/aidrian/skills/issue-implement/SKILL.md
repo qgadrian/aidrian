@@ -37,7 +37,7 @@ Work anchored to a plan with no issue belongs to the `plan-implement` skill, whi
 ## Authority contract
 
 - **Coordination only.** Every edit, review, and test run goes to an agent, even a one-line fix.
-  Pick each owner by the `knowledge` skill's rule: a project agent that fits wins; this plugin's agents are the fallback.
+  Pick each owner by the `knowledge` skill's rule: a project agent that fits the task, or shares a name, wins; this plugin's agents are the fallback.
 - **One fresh agent per slice.** Never continue an earlier slice's agent to start the next slice.
   A warm agent that has seen the plan runs ahead: it implements and commits later slices and skips their reviews.
   Within one slice, its own agent may be continued for fixes and the commit.

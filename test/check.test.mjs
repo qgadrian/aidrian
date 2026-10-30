@@ -54,7 +54,7 @@ test('check warns past the knowledge budgets, and fails when the always docs pas
     `warning: always docs: ${always} bytes, over knowledge.budgets.alwaysBytes (${always - 1}); every session and subagent reads them: ` +
       'keep one or two short docs, and move the rest behind tags or to search',
     `warning: docs/knowledge/engineering/branches-and-reviews.md: ${largest} bytes, over knowledge.budgets.taggedDocBytes (${largest - 1}); ` +
-      'every route to orchestration reads it whole: split it into a short rule card and a reference, or drop its tags so only search finds it',
+      'every route to orchestration, review reads it whole: split it into a short rule card and a reference, or drop its tags so only search finds it',
     '',
   ]);
   const failed = check({ alwaysBytes: Math.floor((always - 1) / 2) });

@@ -1036,7 +1036,7 @@ test('config.json github.reviewer and github.maxReviewRounds are the defaults, a
 test('aidrian pr prints its usage for an unknown action, and await-review reports a bad flag on one line', () => {
   const cli = new URL('../plugins/aidrian/bin/aidrian', import.meta.url).pathname;
   const unknown = spawnSync(cli, ['pr', 'merge'], { encoding: 'utf8' });
-  assert.deepEqual([unknown.status, unknown.stderr.split('\n')[0]], [1, 'usage: aidrian pr await-review [PR] [--request] [--max-rounds N] | checks [PR] [--json] | disposition --severity S [--likelihood L --affects A] [--vocab]']);
+  assert.deepEqual([unknown.status, unknown.stderr.split('\n')[0]], [1, 'usage: aidrian pr await-review [PR] [--request] [--max-rounds N] | checks [PR] [--json] | disposition --severity S [--likelihood L --affects A] [--cost C] [--source bot [--round N]] [--vocab]']);
   const bad = spawnSync(cli, ['pr', 'await-review', '--bogus'], { encoding: 'utf8' });
   assert.deepEqual([bad.status, bad.stderr], [1, 'aidrian pr await-review: unknown argument: --bogus\n']);
 });

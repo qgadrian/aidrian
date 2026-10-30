@@ -412,6 +412,8 @@ test('an agents entry whose allow or deny is no list leaves the gates unknown, s
     ['.aidrian/config.json', { explorer: { allow: 'Read' } }],
     ['.aidrian/config.json', { '*': { deny: 'Bash(git push)' } }],
     ['.aidrian/config.json', { explorer: 'Read' }],
+    ['.aidrian/config.json', { explorer: { Deny: ['Bash(git push)'] } }],
+    ['.aidrian/config.json', { 'explorer!': { deny: ['Bash(git push)'] } }],
     ['.aidrian/config.json', { explorer: { deny: ['Bash(git push)', 'Bash(git *)'] } }],
     ['.aidrian.local.json', { explorer: { allow: 'Read' } }],
   ]) {
@@ -423,7 +425,7 @@ test('an agents entry whose allow or deny is no list leaves the gates unknown, s
     if (local) writeFileSync(path.join(dir, file), JSON.stringify({ agents }));
     const blocked = run(dir, agentCall('aidrian:explorer', 'Bash', bash('git push')));
     assert.equal(blocked.status, 2, JSON.stringify(agents));
-    assert.match(blocked.stderr, new RegExp(`${file.replaceAll('.', '\\.')} cannot be read \\(.*"agents.*(?:must be|deny" has)`));
+    assert.match(blocked.stderr, new RegExp(`${file.replaceAll('.', '\\.')} cannot be read \\(.*agents`));
     assert.equal(run(dir, agentCall('aidrian:explorer', 'Read', { file_path: 'x' })).status, 0);
     assert.equal(run(dir, mainCall('Bash', bash('git push'))).status, 0);
   }

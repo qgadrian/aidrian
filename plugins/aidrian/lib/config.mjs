@@ -19,7 +19,7 @@ const GIT_SCHEMA = {
   defaultBranch: 'text',
   worktrees: { dir: 'text', bootstrap: 'textOrNull', disposable: 'folderNames' },
   mainCheckout: { guard: 'boolean', allowWrites: 'texts' },
-  commits: { types: 'texts' },
+  commits: { types: 'someTexts' },
 };
 
 // The type of every key. A nested object is one group of keys; a project sets any subset of a group.
@@ -76,6 +76,7 @@ const TYPES = {
   text: [isText, 'a non-empty string'],
   textOrNull: [(value) => value === null || isText(value), 'a non-empty string or null'],
   texts: [(value) => Array.isArray(value) && value.every(isText), 'a list of non-empty strings'],
+  someTexts: [(value) => Array.isArray(value) && value.length > 0 && value.every(isText), 'a non-empty list of non-empty strings'],
   folderNames: [
     (value) => Array.isArray(value) && value.every((name) => isText(name) && !/[/\\]/u.test(name) && name !== '.' && name !== '..'),
     'a list of folder names with no "/", such as "node_modules"',
@@ -137,28 +138,30 @@ export const DEFAULTS = deepFreeze({
   agents: {},
 });
 
-// Returns { config, errors, current }. `config` is frozen and always complete: the file's values over DEFAULTS, one
+// Returns { config, errors, gateErrors, current }. `config` is frozen and always complete: the file's values over DEFAULTS, one
 // group at a time, with the default kept for any value that is missing or invalid. The local file's `models`, `names`,
 // `telemetry`, and `agents` (`project.localModels`, `project.localNames`, `project.localTelemetry`, `project.localAgents`) then
 // go over the file's. A hook can use it even when `errors` is not empty. `current` is false when the file is missing,
 // unreadable, or of another version: then nothing in the folder
-// can be trusted to have the shape this plugin reads.
+// can be trusted to have the shape this plugin reads. `gateErrors` holds the errors of `errors` that dropped a gate,
+// as { file, problem }: see checkAgents.
 export function loadConfig(project) {
   const errors = [];
+  const gateErrors = [];
   const file = project.paths.config;
   const raw = readJson(project.root, file, errors);
-  if (!raw) return { config: DEFAULTS, errors, current: false };
+  if (!raw) return { config: DEFAULTS, errors, gateErrors, current: false };
   const problem = versionProblem(file, raw.version);
-  if (problem) return { config: DEFAULTS, errors: [problem], current: false };
+  if (problem) return { config: DEFAULTS, errors: [problem], gateErrors, current: false };
   const { version, ...values } = raw;
-  const config = merge(SCHEMA, DEFAULTS, values, '', file, errors);
+  const config = merge(SCHEMA, DEFAULTS, values, '', file, errors, gateErrors);
   if (config.github.reviewer === NO_REVIEWER) config.github = { ...config.github, reviewer: null };
   if (project.localModels !== undefined) config.models = checkModels(project.localModels, project.paths.local, errors, config.models);
   for (const [key, local] of [['names', project.localNames], ['telemetry', project.localTelemetry]]) {
     if (local !== undefined) config[key] = merge({ [key]: SCHEMA[key] }, config, { [key]: local }, '', project.paths.local, errors)[key];
   }
-  if (project.localAgents !== undefined) config.agents = checkAgents(project.localAgents, project.paths.local, errors, config.agents);
-  return { config: deepFreeze(config), errors, current: true };
+  if (project.localAgents !== undefined) config.agents = checkAgents(project.localAgents, project.paths.local, errors, config.agents, gateErrors);
+  return { config: deepFreeze(config), errors, gateErrors, current: true };
 }
 
 // The `code` of the error commandConfig throws; cli.mjs prints its message and exits with its `exitCode`.
@@ -186,7 +189,7 @@ function migratingUrl() {
   return `${repository}/blob/main/docs/project-folder.md#migrating`;
 }
 
-function merge(schema, defaults, values, prefix, file, errors) {
+function merge(schema, defaults, values, prefix, file, errors, gateErrors = []) {
   for (const key of Object.keys(values)) {
     const name = `${prefix}${key}`;
     if (Object.hasOwn(RENAMED, name)) errors.push(`${file}: "${name}" is now "${RENAMED[name]}": rename the key`);
@@ -198,12 +201,12 @@ function merge(schema, defaults, values, prefix, file, errors) {
     out[key] = defaults[key];
     if (!Object.hasOwn(values, key)) continue;
     if (typeof type === 'object') {
-      if (isObject(value)) out[key] = merge(type, defaults[key], value, `${prefix}${key}.`, file, errors);
+      if (isObject(value)) out[key] = merge(type, defaults[key], value, `${prefix}${key}.`, file, errors, gateErrors);
       else errors.push(`${file}: "${prefix}${key}" must be an object`);
     } else if (type === 'models') {
       out[key] = checkModels(value, file, errors, defaults[key]);
     } else if (type === 'agents') {
-      out[key] = checkAgents(value, file, errors, defaults[key]);
+      out[key] = checkAgents(value, file, errors, defaults[key], gateErrors);
     } else if (TYPES[type][0](value)) {
       out[key] = value;
     } else {
@@ -259,24 +262,38 @@ function checkAgentChoice(host, name, choice, agents, file, errors) {
 
 // `agents` from one file over `base`, per agent and list: { <name>: { deny, allow } }, each a list of tool patterns.
 // A file's `deny` or `allow` for an agent replaces the one below it. A bad name, key, or pattern is an error and is left
-// out, so the rest still applies; a pattern left out of `allow` only makes the list stricter.
-function checkAgents(value, file, errors, base) {
+// out, so the rest still applies; a pattern left out of `allow` only makes the list stricter. Every other error drops
+// a gate (`"allow": "Read"` would allow every tool, `"Deny"` lifts the deny list), so it also goes to `gateErrors`.
+function checkAgents(value, file, errors, base, gateErrors = []) {
   const out = { ...base };
+  const lost = (problem) => {
+    errors.push(`${file}: ${problem}`);
+    gateErrors.push({ file, problem });
+  };
   if (!isObject(value)) {
-    errors.push(`${file}: "agents" must be an object`);
+    lost('"agents" must be an object');
     return out;
   }
   for (const [name, gates] of Object.entries(value)) {
     const at = `agents.${name}`;
     const problem = agentNameProblem(name);
-    if (problem) errors.push(`${file}: "${at}": ${problem}`);
-    else if (!isObject(gates)) errors.push(`${file}: "${at}" must be an object with "deny", "allow", or both`);
+    if (problem) lost(`"${at}": ${problem}`);
+    else if (!isObject(gates)) lost(`"${at}" must be an object with "deny", "allow", or both`);
     else {
       const kept = {};
       for (const [list, patterns] of Object.entries(gates)) {
-        if (list !== 'deny' && list !== 'allow') errors.push(`${file}: unknown key "${at}.${list}"`);
-        else if (!Array.isArray(patterns)) errors.push(`${file}: "${at}.${list}" must be a list of tool patterns`);
-        else kept[list] = patterns.filter((pattern) => !patternError(pattern, `${at}.${list}`, file, errors));
+        if (list !== 'deny' && list !== 'allow') lost(`unknown key "${at}.${list}"`);
+        else if (!Array.isArray(patterns)) lost(`"${at}.${list}" must be a list of tool patterns`);
+        else {
+          kept[list] = patterns.filter((pattern) => {
+            const bad = patternProblem(pattern);
+            if (!bad) return true;
+            const message = `"${at}.${list}" has ${JSON.stringify(pattern)}: ${bad}`;
+            if (list === 'deny') lost(message);
+            else errors.push(`${file}: ${message}`);
+            return false;
+          });
+        }
       }
       if (Object.keys(kept).length) out[name] = { ...out[name], ...kept };
     }
@@ -284,21 +301,10 @@ function checkAgents(value, file, errors, base) {
   return out;
 }
 
-// The first error in `errors`, from loadConfig, that dropped a whole gate list, as { file, problem }, or null: `agents`,
-// an entry, or its `allow` or `deny` of the wrong shape, or a `deny` pattern dropped as invalid. Without them the gate is gone (`"allow": "Read"` would allow
-// every tool), so the gate hook treats the file as one it cannot read.
-export function malformedGates(errors) {
-  for (const error of errors) {
-    const match = /^(.*?): ("agents[^"]*" must be .*|"agents\.[^"]*\.deny" has .*)$/u.exec(error);
-    if (match) return { file: match[1], problem: match[2] };
-  }
-  return null;
-}
-
-function patternError(pattern, at, file, errors) {
-  const problem = patternProblem(pattern);
-  if (problem) errors.push(`${file}: "${at}" has ${JSON.stringify(pattern)}: ${problem}`);
-  return problem;
+// The first of loadConfig's `gateErrors`, as { file, problem }, or null. Without that gate the hook treats the file
+// as one it cannot read.
+export function malformedGates(gateErrors) {
+  return gateErrors[0] ?? null;
 }
 
 // The plugin's agent names, from the agent files it ships beside this folder.

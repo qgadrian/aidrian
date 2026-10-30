@@ -110,7 +110,7 @@ function globbedFile(globs, files, others = true, command = '') {
   // `..`. A `cd`, a wrapper (`env -C`), a variable, braces, quotes, or a second command may each move or hide what the
   // glob reaches, and every such shape is judged by name instead: failing closed.
   const simple =
-    !others && SIMPLE_COMMAND.test(command) && !command.split(/[\s/]+/u).includes('..');
+    !others && SIMPLE_COMMAND.test(command) && !command.split(/[ \t/]+/u).includes('..');
   const regex = (glob) =>
     new RegExp(`^${glob.split(/([*?])/u).map((part) => ({ '*': '.*', '?': '.' })[part] ?? part.replace(/[.+^${}()|[\]\\]/gu, '\\$&')).join('')}$`, 'u');
   return files.find((pair) => pair.some((file) => globs.some(({ text, dirs = [], unsure = true }) => {
@@ -136,7 +136,8 @@ function sameFile(a, b) {
   }
 }
 
-const SIMPLE_COMMAND = /^\s*(?:rm|cp|mv|touch|truncate|tee|echo|printf|cat|mkdir)(?:\s+[\w./*?=>-]+)*\s*$/u;
+// Spaces and tabs only: a newline separates commands, as `;` does.
+const SIMPLE_COMMAND = /^[ \t]*(?:rm|cp|mv|touch|truncate|tee|echo|printf|cat|mkdir)(?:[ \t]+[\w./*?=>-]+)*[ \t]*$/u;
 
 // A folder's entry names, or none when it cannot be read.
 function entries(folder) {

@@ -304,6 +304,7 @@ test('a glob reaches a config file that is a symlink to another folder, by the p
     'printf x | tee .{aidrian,unused}/*.json',
     `target=out/alias; ln -s ../.aidrian/config.json "$target" && echo '{}' > out/*`,
     "printf x | env -C out/link/.. bash -c 'tee config*.json'",
+    'echo\n./prepare\ncat payload.json > out/*',
   ]) {
     assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /may change/, command);
   }

@@ -107,6 +107,7 @@ test('a body identical to another open pull request is refused; the edited one i
   assert.match(run(create(BODY)), /^Blocked: the body is identical to open pull request #7's/);
   assert.equal(run(`gh pr edit 7 --body '${BODY}'`), null, 'republishing its own body');
   assert.match(run(`gh pr edit https://github.com/a/b/pull/8 --body '${BODY}'`), /#7's/);
+  assert.equal(lookups.at(-1), 'a/b', 'the URL names the repository to look in');
   assert.equal(run(`gh pr edit my-branch --body '${BODY}'`), null, 'a branch selector cannot be told from itself');
   run(`gh pr create -R acme/notes -t "[NOISSUE] feat: x" -b '${BODY}'`);
   assert.equal(lookups.at(-1), 'acme/notes');

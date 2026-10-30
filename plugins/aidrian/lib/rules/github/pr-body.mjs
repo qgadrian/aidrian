@@ -189,9 +189,11 @@ function judgeDuplicate(body, call, contract, listOpenPrs) {
     self = /^\d+$/u.test(text) ? Number(text) : Number(/\/pull\/(\d+)(?:[/?#]|$)/u.exec(text)?.[1] ?? Number.NaN);
     if (Number.isNaN(self)) return null;
   }
+  // Without -R, a pull request URL names the repository the edit goes to.
+  const urlRepo = /github\.com\/([^/]+\/[^/]+)\/pull\//u.exec(call.target?.dynamic ? '' : call.target?.text ?? '')?.[1] ?? null;
   let open;
   try {
-    open = listOpenPrs(call.repo?.text ?? null);
+    open = listOpenPrs(call.repo?.text ?? urlRepo);
   } catch {
     return null;
   }

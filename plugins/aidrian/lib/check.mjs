@@ -7,9 +7,9 @@ import { parseArgs } from 'node:util';
 
 import { commandConfig, VERSION } from './config.mjs';
 import { isWithin, linksOutside } from './fs.mjs';
-import { isIgnored } from './git.mjs';
+import { checkoutRoots, isIgnored } from './git.mjs';
 import { checkBudgets, indexRows, loadKnowledge } from './knowledge.mjs';
-import { findProject, noProjectMessage, projectAt, repoRoot, stateDir, worktreesDir } from './project.mjs';
+import { findProject, noProjectMessage, projectAt, stateDir, worktreesDir } from './project.mjs';
 
 const OPTIONS = { project: { type: 'string' } };
 
@@ -100,10 +100,12 @@ export const commands = {
 };
 
 // What git must ignore, as { line, gitignore }: the local sources file, and the state and worktrees folders when they are
-// inside the repository. A line goes in the project root's .gitignore, or the repository root's when it lies outside
-// the project; `gitignore` is that file's path from the project root.
+// inside the checkout the project is in. A line goes in the project root's .gitignore, or the checkout root's when it
+// lies outside the project; `gitignore` is that file's path from the project root.
+// In a linked worktree the checkout is that worktree, not the main checkout: a folder that resolves into the main
+// checkout, such as the default `.worktrees`, is the main checkout's to ignore, and init never writes there.
 function localEntries(project, config) {
-  const repo = repoRoot(project);
+  const repo = checkoutRoots(project.root)?.current ?? project.root;
   const state = stateDir(project, { config });
   const worktrees = worktreesDir(project, { config });
   const folders = [state, ...(isWithin(state, worktrees) ? [] : [worktrees])].filter((dir) => isWithin(repo, dir));

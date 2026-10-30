@@ -143,8 +143,7 @@ is needed, name `explorer` as the next owner.
    slice for the decision. Do not silently map or fork tokens — record the
    divergence explicitly so the `S0` slice has the evidence. A purely
    cosmetic, exactly-equivalent token set is not a divergence and needs no
-   flag. (Unresolvable canonical source and malformed bundle are the only
-   hard stops; see steps 3 and 1.)
+   flag.
 
 6. **Write the design import** to `docs/design-imports/<slug>/` (once the
    canonical source is resolved — a recorded token-divergence flag does not
@@ -242,11 +241,7 @@ is needed, name `explorer` as the next owner.
 - Writing the design import would require editing a path outside
   `docs/design-imports/<slug>/`, other than the superseded banner of step 6a.
 
-Token divergence is **not** a blocking condition — it is recorded as a flag in
-`DESIGN.md` and handed forward as the gated `S0` plan slice; the pipeline
-proceeds.
-
-In every blocking case, return `needs_input` or `blocked` with the explicit
+Token divergence is not a blocking condition (step 5). In every blocking case, return `needs_input` or `blocked` with the explicit
 question and the owning authority. Never invent a variant choice, a token
 mapping, or missing design intent.
 
@@ -257,10 +252,8 @@ mapping, or missing design intent.
   compact.
 - List the written design-import paths, and every `source/` file step 6c
   deleted, in `changed_surfaces`.
-- Surface unresolvable canonical-source choices in `blockers` — they are a
-  hard stop. Surface the token-divergence flag and any product-sensitive flag
-  in `open_questions` or `decision_options` only — token divergence is not a
-  blocking condition (see "Blocking conditions" above); it is flagged and the
-  pipeline proceeds.
+- Surface unresolvable canonical-source choices in `blockers`, and the
+  token-divergence flag and any product-sensitive flag in `open_questions`
+  or `decision_options` only.
 
 Load and follow the bundle spec from the project's `design_bundle` knowledge immediately.

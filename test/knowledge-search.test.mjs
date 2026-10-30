@@ -35,6 +35,38 @@ test('search ranks tag hits above path and summary hits, and keeps bucket order 
   ]);
 });
 
+test('search ranks a doc that matches every word above docs that match one word in more places', () => {
+  const doc = (path, summary, tags = []) => ({ path, summary, tags });
+  // Bucket order puts the one-word docs first; each scores 2 (path + summary), the all-words doc scores 2 too.
+  const buckets = [
+    { id: 'a', docs: [
+      doc('docs/keys/api-keys.md', 'Rotating API keys.'),
+      doc('docs/keys/ssh-keys.md', 'Where SSH keys live.'),
+      doc('docs/translation/glossary.md', 'The translation glossary.'),
+      doc('docs/keys/signing-keys.md', 'Signing keys for releases.'),
+      doc('docs/keys/license-keys.md', 'License keys for customers.'),
+    ] },
+    { id: 'b', docs: [doc('docs/shared/i18n.md', 'Adding translation keys and namespaces.')] },
+  ];
+  const hits = searchKnowledge(buckets, ['translation keys']);
+  assert.equal(hits[0].path, 'docs/shared/i18n.md');
+  assert.deepEqual([hits[0].matched, hits[0].score], [2, 2]);
+  // Below it, docs matching one word keep the weighted score, then bucket order.
+  assert.deepEqual(hits.slice(1).map((hit) => [hit.path, hit.matched, hit.score]), [
+    ['docs/keys/api-keys.md', 1, 2],
+    ['docs/keys/ssh-keys.md', 1, 2],
+    ['docs/translation/glossary.md', 1, 2],
+    ['docs/keys/signing-keys.md', 1, 2],
+    ['docs/keys/license-keys.md', 1, 2],
+  ]);
+  // A repeated word counts once toward the distinct words matched, and a tag hit still outweighs path and summary.
+  const tagged = [{ id: 'c', docs: [doc('docs/x.md', 'About keys.'), doc('docs/y.md', 'Other.', ['keys'])] }];
+  assert.deepEqual(searchKnowledge(tagged, ['keys', 'keys']).map((hit) => [hit.path, hit.matched, hit.score]), [
+    ['docs/y.md', 1, 4],
+    ['docs/x.md', 1, 2],
+  ]);
+});
+
 test('search prints path and summary for the best 8, --all prints every hit, and no hit exits 1', () => {
   const top = run(['search', 'docs']);
   assert.equal(top.status, 0);

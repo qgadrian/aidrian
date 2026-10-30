@@ -36,6 +36,18 @@ test('lessons: signals on, and the nudge escalates past 20 open or 14 days unles
   assert.deepEqual([errors, config.lessons], [[], { auto: true, maxOpen: 0, maxAgeDays: 14 }]);
 });
 
+test('github.reviewer: null or "none" turns the review bot off, as null; an empty name is an error', (t) => {
+  assert.equal(DEFAULTS.github.reviewer, 'chatgpt-codex-connector[bot]');
+  for (const reviewer of [null, 'none']) {
+    const { config, errors } = loadConfig(project(t, { version: 1, github: { reviewer, maxReviewRounds: 2 } }));
+    assert.deepEqual([errors, config.github.reviewer, config.github.maxReviewRounds], [[], null, 2], String(reviewer));
+    assert.ok(Object.isFrozen(config.github));
+  }
+  assert.deepEqual(loadConfig(project(t, { version: 1, github: { reviewer: '' } })).errors, [
+    '.aidrian/config.json: "github.reviewer" must be a non-empty string or null',
+  ]);
+});
+
 test('the loaded config is frozen all the way down', (t) => {
   const { config } = loadConfig(project(t, { version: 1, mainCheckout: { allowWrites: ['notes/**'] } }));
   assert.throws(() => { config.defaultBranch = 'x'; }, TypeError);

@@ -33,6 +33,9 @@ const REVIEWS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
 const COMPARE_FILES = 300;
 // The view lists this many pull requests, most rounds first.
 const TOP_PRS = 5;
+// The error of reviewRounds() for a project that runs no review bot (config.json `github.reviewer` null or "none").
+export const NO_BOT = 'no review bot is set (github.reviewer is null)';
+
 // Why a late finding was not checked, in the order the view names them.
 const UNCHECKED = { file_level: 'file-level', deleted_line: 'on a deleted line', rebased: 'after a rebase', missing_commit: 'commit gone', too_large: 'diff too large' };
 
@@ -41,6 +44,7 @@ const UNCHECKED = { file_level: 'file-level', deleted_line: 'on a deleted line',
 // pull request's findings per round, and is null when gh could not read them. `sinceMs`, when set, keeps the pull
 // requests merged since then; `truncated` says the limit cut that list short.
 export function reviewRounds(limit, reviewer, gh = ghAt(undefined), { sinceMs = null } = {}) {
+  if (reviewer === null) return { reviewer, error: NO_BOT };
   try {
     const search = sinceMs === null ? [] : ['--search', `merged:>=${new Date(sinceMs).toISOString().slice(0, 19)}+00:00`];
     const prs = gh(['pr', 'list', '--state', 'merged', '--limit', String(limit), ...search, '--json', 'number,reviews']);
@@ -190,6 +194,7 @@ export function addedLines(patch) {
 
 // The review rounds line, which `aidrian report --prs N` printed alone before findings were read.
 export function formatRounds(result) {
+  if (result.error === NO_BOT) return `Review rounds: ${NO_BOT}`;
   if (result.error) return `Review rounds: gh could not answer (${result.error})`;
   if (!result.reviewed) return `Review rounds: ${result.reviewer} answered none of the last ${result.merged} merged pull requests`;
   const share = Math.round((result.clean_first_pass / result.reviewed) * 100);

@@ -17,12 +17,14 @@
 //      `round_limit`; a long run of rounds is a design problem more review will not fix. A raised limit is recorded
 //      in the request comment, and later runs keep the highest one.
 //
-// stdout: one JSON object. Exit 0 received | already_present, 2 timed_out (re-run once without --request when
-// `retry_recommended` is true), 3 blocked_quota, 4 round_limit, 1 error. Read-only except the --request comment and,
-// at round_limit, a lesson in the local lesson inbox (lib/lesson-signals.mjs).
+// stdout: one JSON object. Exit 0 received | already_present | no_reviewer, 2 timed_out (re-run once without --request
+// when `retry_recommended` is true), 3 blocked_quota, 4 round_limit, 1 error. Read-only except the --request comment and,
+// at round_limit, a lesson in the local lesson inbox (lib/lesson-signals.mjs). With no review bot (config.json
+// `github.reviewer` null or "none", or `--reviewer none`) it ends at once as `no_reviewer`: it runs no gh, posts nothing,
+// and waits for nothing.
 // The default timeout is 840 s: a foreground Claude Code Bash call stops at 900 s, gh calls included.
 
-import { DEFAULTS as CONFIG_DEFAULTS } from './config.mjs';
+import { DEFAULTS as CONFIG_DEFAULTS, NO_REVIEWER } from './config.mjs';
 import { runGh } from './gh.mjs';
 
 export const DEFAULT_REVIEWER = CONFIG_DEFAULTS.github.reviewer;
@@ -123,6 +125,7 @@ export const parseArgs = (argv, defaults = {}) => {
     out.pr = m[2];
   }
   if (typeof out.pr === 'string') out.pr = out.pr.replace(/^#/, '');
+  if (out.reviewer === NO_REVIEWER) out.reviewer = null;
   return out;
 };
 
@@ -270,6 +273,9 @@ const snapshot = (gh, repo, n) => {
 
 // The whole wait. `gh` (api, currentPr, repo), `sleep`, and `now` are the only side-effect seams.
 export const awaitReview = async (opts, { gh = defaultGh, sleep = (s) => new Promise((r) => setTimeout(r, s * 1000)), now = () => Date.now() } = {}) => {
+  if (opts.reviewer === null) {
+    return { status: 'no_reviewer', pr: opts.pr === null ? null : Number(opts.pr), repo: opts.repo, reviewer: null, requested: false, signal: null, waited_sec: 0 };
+  }
   const repo = opts.repo ?? gh.repo();
   const n = opts.pr ?? String(gh.currentPr().number);
   const started = now();

@@ -49,10 +49,10 @@ export function gateDenial(input, { agents, names: { human } }, paths) {
   const entries = Object.entries(agents).filter(([name]) => caller.has(name));
   for (const [name, { deny = [] }] of entries) {
     const hit = deny.find((pattern) => denies(pattern, tool, input.tool_input));
-    if (hit) return blocked(input, tool, `agents.${name}.deny has "${hit}"`, { human, paths });
+    if (hit) return blocked(input, `agents.${name}.deny has "${hit}"`, { human, paths });
   }
   for (const [name, { allow }] of entries) {
-    if (allow && !allows(allow, tool, input.tool_input)) return blocked(input, tool, `agents.${name}.allow does not list it`, { human, paths });
+    if (allow && !allows(allow, tool, input.tool_input)) return blocked(input, `agents.${name}.allow does not list it`, { human, paths });
   }
   return null;
 }
@@ -79,19 +79,22 @@ const READ_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS', 'NotebookRead']);
 // keeps only the tools that read; the main session, which has no `agent_id`, keeps every tool to fix the file.
 export function unreadableConfigDenial(input, file, problem, { names: { human } }) {
   if (typeof input.agent_id !== 'string' || input.agent_id === '' || READ_TOOLS.has(input.tool_name)) return null;
-  const tool = typeof input.tool_name === 'string' && input.tool_name !== '' ? input.tool_name : 'this tool';
-  const who = typeof input.agent_type === 'string' && input.agent_type !== '' ? `the agent "${input.agent_type}"` : 'a subagent';
-  const reason = `aidrian: ${tool} is blocked for ${who} in this project: ${file} cannot be read (${problem}),`
-    + " so this project's agent gates are unknown, and until it is fixed a subagent may only read files."
-    + ` This is a project rule: do not reach the same result with another tool; tell ${human} that ${file} needs fixing (aidrian check names the problem).`;
-  return { match: `${file} cannot be read`, reason };
+  const why = `${file} cannot be read (${problem}), so this project's agent gates are unknown, and until it is fixed a subagent may only read files`;
+  return { match: `${file} cannot be read`, reason: projectRuleReason(input, why, human, `that ${file} needs fixing (aidrian check names the problem)`) };
 }
 
-function blocked(input, tool, rule, { human, paths }) {
-  const who = typeof input.agent_type === 'string' && input.agent_type !== '' ? `the agent "${input.agent_type}"` : 'the main session';
-  const reason = `aidrian: ${tool} is blocked for ${who} in this project: ${rule} (${paths.config}, or ${paths.local}, which wins).`
-    + ` This is a project rule: do not reach the same result with another tool; tell ${human} what the task needs.`;
-  return { match: rule, reason };
+// The reason a project rule gives the agent when it blocks the call in `input`: the tool, who called it, `why`, and that
+// it should ask `human` for `ask` rather than work around the rule. The gates and the config guard block with it.
+export function projectRuleReason(input, why, human, ask = 'what the task needs') {
+  const tool = typeof input.tool_name === 'string' && input.tool_name !== '' ? input.tool_name : 'this tool';
+  let who = typeof input.agent_id === 'string' && input.agent_id !== '' ? 'a subagent' : 'the main session';
+  if (typeof input.agent_type === 'string' && input.agent_type !== '') who = `the agent "${input.agent_type}"`;
+  return `aidrian: ${tool} is blocked for ${who} in this project: ${why}.`
+    + ` This is a project rule: do not reach the same result with another tool; tell ${human} ${ask}.`;
+}
+
+function blocked(input, rule, { human, paths }) {
+  return { match: rule, reason: projectRuleReason(input, `${rule} (${paths.config}, or ${paths.local}, which wins)`, human) };
 }
 
 // A deny pattern matches the tool by name; Bash(<prefix>) matches a Bash call where any command starts with the prefix.

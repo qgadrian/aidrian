@@ -32,7 +32,13 @@ export function readJson(root, rel, errors, scope = 'the project') {
 export function linksOutside(root, rel, within = '') {
   const real = resolvedPath(path.join(root, rel));
   const realWithin = resolvedPath(path.join(root, within));
-  return real === null || realWithin === null || (real !== realWithin && !real.startsWith(`${realWithin}${path.sep}`));
+  return real === null || realWithin === null || !isWithin(realWithin, real);
+}
+
+// Whether `file` is the folder `dir` or lies below it, by the paths as given: neither is resolved through symlinks.
+export function isWithin(dir, file) {
+  const rel = path.relative(dir, file);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
 }
 
 // `file` with every symlink resolved: the real path of its nearest existing part, then the parts that do not exist yet.

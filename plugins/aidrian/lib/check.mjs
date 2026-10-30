@@ -6,7 +6,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { commandConfig, VERSION } from './config.mjs';
-import { linksOutside } from './fs.mjs';
+import { isWithin, linksOutside } from './fs.mjs';
 import { isIgnored } from './git.mjs';
 import { checkBudgets, indexRows, loadKnowledge } from './knowledge.mjs';
 import { findProject, projectAt, repoRoot, stateDir, worktreesDir } from './project.mjs';
@@ -106,9 +106,9 @@ function localEntries(project, config) {
   const repo = repoRoot(project);
   const state = stateDir(project, { config });
   const worktrees = worktreesDir(project, { config });
-  const folders = [state, ...(within(state, worktrees) ? [] : [worktrees])].filter((dir) => within(repo, dir));
+  const folders = [state, ...(isWithin(state, worktrees) ? [] : [worktrees])].filter((dir) => isWithin(repo, dir));
   const entry = (file, suffix) => {
-    const home = within(project.root, file) ? project.root : repo;
+    const home = isWithin(project.root, file) ? project.root : repo;
     const line = `${path.relative(home, file).split(path.sep).join('/')}${suffix}`;
     // The probe keeps the trailing slash: git matches a folder pattern to a path it knows is a folder.
     return { probe: `${file}${suffix}`, line, gitignore: path.relative(project.root, path.join(home, '.gitignore')).split(path.sep).join('/') };
@@ -124,10 +124,4 @@ function unignored(project, config) {
     const text = path.join(project.root, gitignore);
     return !(existsSync(text) ? readFileSync(text, 'utf8').split('\n').map((each) => each.trim()) : []).includes(line);
   });
-}
-
-// Whether `file` is `dir` or inside it.
-function within(dir, file) {
-  const rel = path.relative(dir, file);
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }

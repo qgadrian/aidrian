@@ -8,6 +8,8 @@
 
 import path from 'node:path';
 
+import { projectRuleReason } from './agent-gates.mjs';
+import { isWithin } from './fs.mjs';
 import { configFiles } from './project.mjs';
 import { bashWrites, canonical, toolTargets } from './rules/main-checkout.mjs';
 import { commandLines, inlineShellCommand, lexCommand, readInvocation, SUBSTITUTION_DEPTH_LIMIT } from './shell-lex.mjs';
@@ -31,10 +33,10 @@ export function configWriteDenial(input, project, { names: { human } }) {
   if (targets.length === 0 && names.length === 0) return null;
   const roots = project.checkouts.map((dir) => canonical(dir));
   const files = configFiles(project).map((file) => canonical(file));
-  const shown = (file) => (inside(roots[0], file) ? path.relative(roots[0], file) : file);
+  const shown = (file) => (isWithin(roots[0], file) ? path.relative(roots[0], file) : file);
   for (const target of targets.map((each) => canonical(each))) {
-    const holdsRoot = roots.some((root) => root === target || inside(target, root));
-    const file = files.find((each) => each === target || (!holdsRoot && inside(target, each)));
+    const holdsRoot = roots.some((root) => isWithin(target, root));
+    const file = files.find((each) => each === target || (!holdsRoot && isWithin(target, each)));
     if (file) return blocked(input, shown(file), 'changes', human);
   }
   const named = namedFile(names, files, project);
@@ -96,16 +98,7 @@ function givesCode(word, option) {
   return /^-[A-Za-z]+/u.test(word) && !word.startsWith('--') && word.slice(1).includes(option.slice(1));
 }
 
-// Whether `file` lies below the folder `dir`.
-function inside(dir, file) {
-  const rel = path.relative(dir, file);
-  return rel !== '' && rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel);
-}
-
 function blocked(input, file, verb, human) {
-  const who = typeof input.agent_type === 'string' && input.agent_type !== '' ? `the agent "${input.agent_type}"` : 'a subagent';
-  const reason = `aidrian: ${input.tool_name} is blocked for ${who} in this project: it ${verb} ${file}, which sets this project's agent gates,`
-    + ' and while gates are set only the main session may change it.'
-    + ` This is a project rule: do not reach the same result with another tool; tell ${human} what the task needs.`;
-  return { match: `${verb} ${file}`, reason };
+  const why = `it ${verb} ${file}, which sets this project's agent gates, and while gates are set only the main session may change it`;
+  return { match: `${verb} ${file}`, reason: projectRuleReason(input, why, human) };
 }

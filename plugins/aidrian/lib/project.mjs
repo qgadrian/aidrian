@@ -173,8 +173,14 @@ function inMainCheckout(root, roots = checkoutRoots(root)) {
 // git never sees it and every worktree and clone of a repository shares it. config.json `state.dir` moves it.
 export function stateDir(project, { config = loadConfig(project).config, env = process.env } = {}) {
   if (config.state.dir) return localPath(project, config.state.dir);
+  return path.join(stateRoot(env), 'projects', projectId(project));
+}
+
+// `$XDG_STATE_HOME/aidrian`, with `~/.local/state` when that variable is unset or relative: the folder that holds every
+// project's state folder, and what no config.json can move (lib/gate-snapshot.mjs keeps its files there).
+export function stateRoot(env = process.env) {
   const base = path.isAbsolute(env.XDG_STATE_HOME ?? '') ? env.XDG_STATE_HOME : path.join(homedir(), '.local/state');
-  return path.join(base, 'aidrian', 'projects', projectId(project));
+  return path.join(base, 'aidrian');
 }
 
 // Task worktrees: config.json `worktrees.dir`, `.worktrees` at the repository root by default.

@@ -142,12 +142,26 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - A call without `agent_id` is the main session's, which may still change them.
 - A block is [recorded](#recorded-blocks) as `config-guard`, with the file it changes as its reason.
 - A write the rule cannot see, such as one by a script, `xargs`, or `eval`, or a file name the code builds, still runs.
+  It changes the file, but lifts no gate before the session ends: see the session's gates below.
   Like the gates, the guard is for agents that cooperate, not a sandbox.
 
 When config.json, `.aidrian.json`, or `.aidrian.local.json` is there but cannot be read, such as invalid JSON or another `version`,
 the hook cannot know the gates, so it fails closed for subagents.
 A subagent may then use only Read, Grep, Glob, LS, and NotebookRead; the reason names the file and the problem.
 The main session keeps every tool, so it can fix the file. The block is [recorded](#recorded-blocks) as `agent-gates`.
+
+### The session's gates
+
+At session start, the hook saves the gates in force, from config.json and `.aidrian.local.json` together, for that session.
+A subagent's call must pass those gates as well as the current ones, so a change during the session can add a gate, never lift one.
+Deleting, replacing, or moving config.json, `git stash`, and `git clean` lift no gate for a subagent until the session ends.
+
+- The main session always reads the current config alone.
+- To drop a gate, change the config and start a new session. A compaction keeps the session, and adds the gates then in force.
+- The file is `$XDG_STATE_HOME/aidrian/sessions/<session id>.json`. The guard protects it as it protects the config files,
+  and the end of the session deletes it.
+- A snapshot that is there but cannot be read keeps subagents to reading, as a broken config does, until a new session starts.
+- Without a snapshot, such as when the plugin was installed during the session, only the current config counts.
 
 Each host tells the hook who is calling in its own way.
 

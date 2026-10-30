@@ -27,12 +27,13 @@ const INTERPRETERS = [
 // or null: { match, reason }. `match` names the file, as in `changes <project folder>/config.json`; `reason` tells the agent.
 // It changes one when it writes the file, or a folder that holds it, such as the project folder an `rm -rf` names, unless
 // that folder also holds one of the project's checkouts, such as the project root or its worktree, as `cp notes.md .` does.
-export function configWriteDenial(input, project, { names: { human } }) {
+// `also` lists more files to guard the same way, as absolute paths: the session's gate snapshot (lib/gate-snapshot.mjs).
+export function configWriteDenial(input, project, { names: { human } }, { also = [] } = {}) {
   if (typeof input.agent_id !== 'string' || input.agent_id === '') return null;
   const { files: targets, names } = writeTargets(input);
   if (targets.length === 0 && names.length === 0) return null;
   const roots = project.checkouts.map((dir) => canonical(dir));
-  const files = configFiles(project).map((file) => canonical(file));
+  const files = [...configFiles(project), ...also].map((file) => canonical(file));
   const shown = (file) => (isWithin(roots[0], file) ? path.relative(roots[0], file) : file);
   for (const target of targets.map((each) => canonical(each))) {
     const holdsRoot = roots.some((root) => isWithin(target, root));

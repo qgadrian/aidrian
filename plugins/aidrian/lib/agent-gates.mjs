@@ -39,20 +39,22 @@ export function patternProblem(pattern) {
 
 // The gate in config `agents` that the tool call in `input`, a PreToolUse payload, breaks, or null when it breaks none:
 // { match, reason }. `match` names the gate, such as `agents.main.deny has "Bash(git push)"`, and `reason` tells the
-// agent; `paths` is the project's paths (lib/project.mjs), which the reason names.
+// agent; `paths` is the project's paths (lib/project.mjs), which the reason names. `started` marks gates from the
+// session's snapshot (lib/gate-snapshot.mjs), which the reason says a change to those files cannot lift.
 // Every entry that names the caller applies: `*`, `main` for the main session, and the agent's name, full or short.
 // A deny that matches wins; then each entry with an `allow` list must match the call.
-export function gateDenial(input, { agents, names: { human } }, paths) {
+export function gateDenial(input, { agents, names: { human } }, paths, { started = false } = {}) {
   const tool = input.tool_name;
   if (typeof tool !== 'string' || tool === '') return null;
   const caller = callerNames(input);
   const entries = Object.entries(agents).filter(([name]) => caller.has(name));
+  const where = { human, paths, started };
   for (const [name, { deny = [] }] of entries) {
     const hit = deny.find((pattern) => denies(pattern, tool, input.tool_input));
-    if (hit) return blocked(input, `agents.${name}.deny has "${hit}"`, { human, paths });
+    if (hit) return blocked(input, `agents.${name}.deny has "${hit}"`, where);
   }
   for (const [name, { allow }] of entries) {
-    if (allow && !allows(allow, tool, input.tool_input)) return blocked(input, `agents.${name}.allow does not list it`, { human, paths });
+    if (allow && !allows(allow, tool, input.tool_input)) return blocked(input, `agents.${name}.allow does not list it`, where);
   }
   return null;
 }
@@ -77,10 +79,11 @@ const READ_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS', 'NotebookRead']);
 // Why the subagent call in `input` may not run while `file`, which sets the project's configuration, is there but
 // cannot be read (`problem` says why), or null: { match, reason }. The gates it sets are unknown then, so a subagent
 // keeps only the tools that read; the main session, which has no `agent_id`, keeps every tool to fix the file.
-export function unreadableConfigDenial(input, file, problem, { names: { human } }) {
+// `fix` is what the human is asked for; by default, to fix the file.
+export function unreadableConfigDenial(input, file, problem, { names: { human } }, fix = `that ${file} needs fixing (aidrian check names the problem)`) {
   if (typeof input.agent_id !== 'string' || input.agent_id === '' || READ_TOOLS.has(input.tool_name)) return null;
   const why = `${file} cannot be read (${problem}), so this project's agent gates are unknown, and until it is fixed a subagent may only read files`;
-  return { match: `${file} cannot be read`, reason: projectRuleReason(input, why, human, `that ${file} needs fixing (aidrian check names the problem)`) };
+  return { match: `${file} cannot be read`, reason: projectRuleReason(input, why, human, fix) };
 }
 
 // The reason a project rule gives the agent when it blocks the call in `input`: the tool, who called it, `why`, and that
@@ -93,8 +96,11 @@ export function projectRuleReason(input, why, human, ask = 'what the task needs'
     + ` This is a project rule: do not reach the same result with another tool; tell ${human} ${ask}.`;
 }
 
-function blocked(input, rule, { human, paths }) {
-  return { match: rule, reason: projectRuleReason(input, `${rule} (${paths.config}, or ${paths.local}, which wins)`, human) };
+function blocked(input, rule, { human, paths, started }) {
+  const source = started
+    ? `${rule}, as the project set it when this session started (a change to ${paths.config} or ${paths.local} during the session cannot lift it)`
+    : `${rule} (${paths.config}, or ${paths.local}, which wins)`;
+  return { match: rule, reason: projectRuleReason(input, source, human) };
 }
 
 // A deny pattern matches the tool by name; Bash(<prefix>) matches a Bash call where any command starts with the prefix.

@@ -144,7 +144,8 @@ npm run check    # what CI runs
 
 `npm run check` fails when the generated Codex agents are stale, when the example's project folder is invalid, or when a test fails.
 The tests also check that both manifests agree, that every agent preloads the `knowledge` skill,
-that agents only ask for tags the `knowledge` skill lists, and that no project-specific path leaks into the plugin.
+that agents only ask for tags the `knowledge` skill lists, that the agent and skill tables above list every one shipped,
+and that no project-specific path leaks into the plugin.
 No tracked file may name a person; the owner's GitHub name appears only in the install steps and the manifests' repository URLs.
 Every agent and skill description must fit in 160 characters: both hosts put all of them into every session, used or not.
 Every `SKILL.md` must fit in 7,500 bytes, because Codex cuts it at 8,000.

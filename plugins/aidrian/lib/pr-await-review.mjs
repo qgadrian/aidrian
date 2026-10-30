@@ -27,7 +27,7 @@ import { runGh } from './gh.mjs';
 
 export const DEFAULT_REVIEWER = CONFIG_DEFAULTS.github.reviewer;
 export const REQUEST_COMMENT = '@codex review';
-export const DEFAULTS = Object.freeze({ timeoutSec: 840, intervalSec: 60, maxRounds: 10 });
+export const DEFAULTS = Object.freeze({ timeoutSec: 840, intervalSec: 60, maxRounds: CONFIG_DEFAULTS.github.maxReviewRounds });
 
 // What the request asks for after the trigger phrase. A bare "@codex review" returned about two findings per review,
 // and most later-round findings were copies of a mistake an earlier round had named, so this asks for the whole

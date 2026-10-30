@@ -45,7 +45,7 @@ test('parseArgs: defaults, URL form, #n form, and strict flag parsing', () => {
   assert.equal(d.timeoutSec, 840);
   assert.equal(d.intervalSec, 60);
   assert.equal(d.request, false);
-  assert.equal(d.maxRounds, 10);
+  assert.equal(d.maxRounds, 3, 'the config.json github.maxReviewRounds default');
   assert.equal(parseArgs(['--max-rounds', '15']).maxRounds, 15);
   assert.throws(() => parseArgs(['--max-rounds', '0']), /max-rounds/);
   assert.throws(() => parseArgs(['--max-rounds', '2.5']), /max-rounds/);
@@ -914,10 +914,11 @@ test('awaitReview: --max-rounds stops before the request that would start one ro
   assert.equal(exitCodeFor(r.status), 4);
 
   // The default applies when the caller passes no limit.
-  const byDefault = fakeGh([{ reviews: rounds(10) }], { head: 'bbb' });
+  const byDefault = fakeGh([{ reviews: rounds(3) }], { head: 'bbb' });
   const c2 = clock();
   const d = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { gh: byDefault, ...c2 });
   assert.equal(d.status, 'round_limit');
+  assert.equal(d.max_rounds, 3);
 
   // Human raised the limit: the request goes out.
   const raised = fakeGh([{ reviews: rounds(10) }], { head: 'bbb' });
@@ -937,7 +938,7 @@ test('awaitReview: --max-rounds stops before the request that would start one ro
 });
 
 // A project whose own config keeps the inbox in `base/state`, away from the developer's state folder, and a run of
-// `await-review --request` on a pull request with `reviews` bot reviews, at the default limit of 10.
+// `await-review --request` on a pull request with `reviews` bot reviews, at the default limit of 3.
 function roundsProject(t) {
   const base = mkdtempSync(path.join(tmpdir(), 'aidrian-rounds-'));
   t.after(() => rmSync(base, { recursive: true, force: true }));
@@ -947,7 +948,7 @@ function roundsProject(t) {
   const { config } = loadConfig(project);
   assert.equal(inboxPath(project, config), path.join(base, 'state/lessons/inbox.jsonl'));
   const log = t.mock.method(console, 'log', () => {});
-  const run = ({ reviews = 10, args = [], settings = config, proj = project } = {}) => {
+  const run = ({ reviews = 3, args = [], settings = config, proj = project } = {}) => {
     const rounds = Array.from({ length: reviews }, (_, i) => ({ id: i + 1, user: BOT, submitted_at: T(1), commit_id: 'aaa', state: 'COMMENTED' }));
     return runAwaitReview(['42', '--request', ...args], settings, proj, { gh: fakeGh([{ reviews: rounds }], { head: 'bbb' }), ...clock() });
   };
@@ -978,7 +979,7 @@ test('runAwaitReview: a re-run at the same round count is the same event and nev
   await run();
   assert.deepEqual([all()[0].status, all()[0].seen, all()[0].resolutions[0].recurred], ['resolved', 1, 0], 'the same pull request at the same count again is no new event');
   later();
-  await run({ reviews: 11 });
+  await run({ reviews: 4 });
   later();
   await run({ args: ['--repo', 'acme/other'] });
   await run({ args: ['--repo', 'acme/other'] });
@@ -1006,7 +1007,7 @@ test('awaitReview: a push mid-wait past the limit ends with round_limit, not rec
 test('a raised limit is recorded in the request and kept by later runs', async () => {
   const rounds = (n) => Array.from({ length: n }, (_, i) => ({ id: i + 1, user: BOT, submitted_at: T(1), commit_id: 'aaa', state: 'COMMENTED' }));
   assert.ok(requestCommentBody('bbb', 15).includes('<!-- pr-await-review: max-rounds=15 -->'));
-  assert.ok(!requestCommentBody('bbb', 10).includes('max-rounds'), 'the default is never recorded');
+  assert.ok(!requestCommentBody('bbb', 3).includes('max-rounds'), 'the default is never recorded');
   const raised = { user: { login: 'someone' }, created_at: T(1), body: requestCommentBody('aaa', 15) };
   const quoted = { user: { login: 'someone' }, created_at: T(1), body: 'see `<!-- pr-await-review: max-rounds=99 -->`' };
   assert.equal(recordedMaxRounds([raised, quoted]), 15, 'a marker outside a request raises nothing');

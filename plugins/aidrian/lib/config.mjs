@@ -87,7 +87,7 @@ export const DEFAULTS = deepFreeze({
   github: {
     requiredSections: ['Summary', 'Tests run'],
     reviewer: 'chatgpt-codex-connector[bot]',
-    maxReviewRounds: 10,
+    maxReviewRounds: 3,
     requiredChecks: [],
     ignoreCancelledChecks: [],
     conditionalChecks: [],

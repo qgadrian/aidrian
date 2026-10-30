@@ -25,7 +25,7 @@ In a group such as `github`, set only the keys you change; the others keep their
   "github": {
     "requiredSections": ["Summary", "Tests run"],
     "reviewer": "chatgpt-codex-connector[bot]",
-    "maxReviewRounds": 10,
+    "maxReviewRounds": 3,
     "requiredChecks": [],
     "ignoreCancelledChecks": [],
     "conditionalChecks": []
@@ -69,7 +69,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `commits.types` | The Conventional Commits types a commit subject may use. |
 | `github.requiredSections` | The `## ` sections every pull request body must have ([Bash rules](hooks.md#bash-rules)); `[]` checks none. |
 | `github.reviewer` | The login of the Codex review bot that `aidrian pr await-review` waits for. |
-| `github.maxReviewRounds` | How many bot reviews a pull request may get before `aidrian pr await-review --request` stops asking. |
+| `github.maxReviewRounds` | The review rounds a pull request may get: the review loop stops there, and `aidrian pr await-review --request` stops asking. |
 | `github.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. |
 | `github.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
 | `github.conditionalChecks` | Parts of check names whose `SKIPPED` or `NEUTRAL` result is routine, such as a job a path filter turns off. |

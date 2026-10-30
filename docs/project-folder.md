@@ -166,7 +166,7 @@ the [names](config.md#names) agents use for that developer and for themselves, a
   Two sources that define the same bucket id fail, and the error names both index files.
 
 `aidrian check`, the `aidrian-knowledge` commands, and the start hook cover every source.
-`aidrian check` prints a count per source, such as `ok: .aidrian (2 buckets, 8 docs), ~/kb/personal (1 buckets, 1 docs)`.
+`aidrian check` prints a count per source, such as `ok: .aidrian (2 buckets, 8 docs), ~/kb/personal (1 bucket, 1 doc)`.
 A doc from a local source prints with its absolute path, and `route`, `search`, and `index` add its source as the last column:
 
 ```console

@@ -115,6 +115,7 @@ aidrian-knowledge init docs            # draft .aidrian/knowledge/docs.json for 
 
 `route` fails on a tag that neither the plugin's agents nor the project's buckets use, so a typo never loads only the `always` docs.
 A plugin tag the project does not define is fine: it loads nothing beyond the `always` docs.
+Then `route`, like `tags` with no tag in use, says so on stderr and still exits 0.
 
 `search` scores each word: 2 when it is part of a tag, 1 when it is part of the path, and 1 when it is part of the summary.
 It prints `path<TAB>summary`, best first, and exits 1 with `no match` when no doc scores.

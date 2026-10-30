@@ -78,6 +78,26 @@ test('index prints every doc as path, comma-separated tags, and summary', () => 
   assert.deepEqual(rows[2].slice(0, 2), ['docs/knowledge/engineering/testing.md', 'testing']);
 });
 
+test('init and check count one doc and one bucket in the singular', (t) => {
+  const project = tempProject(t);
+  const { stdout } = run(['init', 'other/guides'], project);
+  assert.match(stdout, /^wrote \.aidrian\/knowledge\/guides\.json: 1 doc in other\/guides, each with/);
+  const check = spawnSync(AIDRIAN, ['check'], { cwd: project, encoding: 'utf8' });
+  assert.equal(check.stdout.split('\n')[0], 'ok: .aidrian (1 bucket, 1 doc)');
+});
+
+test('route and tags say so on stderr when no doc carries a tag yet, and still exit 0', (t) => {
+  const project = tempProject(t);
+  const empty = [run(['route', 'testing'], project), run(['tags'], project)];
+  assert.deepEqual(empty.map(({ status, stdout, stderr }) => [status, stdout, stderr]), [
+    [0, '', 'no docs tagged testing, and no "always" docs\n'],
+    [0, '', 'no tags in use yet: add tags to the docs in the knowledge indexes\n'],
+  ]);
+  const always = run(['route', 'e2e']);
+  assert.deepEqual([always.status, always.stdout, always.stderr], [0, 'docs/knowledge/engineering/working-agreement.md\n', 'no docs tagged e2e; printed only the "always" docs\n']);
+  assert.equal(run(['route', 'testing']).stderr, '', 'a tag some doc carries prints no note');
+});
+
 test('init drafts an index for a folder of docs in the project folder, and the result passes check', (t) => {
   const project = tempProject(t);
   const { status, stdout } = run(['init', 'docs/'], path.join(project, 'docs/guides'));
@@ -100,7 +120,7 @@ test('init drafts an index for a folder of docs in the project folder, and the r
     },
   });
   const check = spawnSync(AIDRIAN, ['check'], { cwd: project, encoding: 'utf8' });
-  assert.deepEqual([check.status, check.stdout.split('\n')[0], check.stderr], [0, 'ok: .aidrian (1 buckets, 4 docs)', '']);
+  assert.deepEqual([check.status, check.stdout.split('\n')[0], check.stderr], [0, 'ok: .aidrian (1 bucket, 4 docs)', '']);
 });
 
 test('init names the index after the folder, and never overwrites one', (t) => {
@@ -193,7 +213,7 @@ test('a doc from a local source prints its absolute path and, last, its source; 
   assert.equal(run(['search', 'deploy'], project).stdout, `docs/guides/deploys.md\tDeploys: Every deploy goes through CI.\n${habits}\tHow I check a deploy.\t${source}\n`);
   assert.equal(run(['index'], project).stdout.trim().split('\n').at(-1), `${habits}\ttesting\tHow I check a deploy.\t${source}`);
   const check = spawnSync(AIDRIAN, ['check'], { cwd: project, encoding: 'utf8' });
-  assert.deepEqual([check.status, check.stdout.split('\n')[0]], [0, `ok: .aidrian (1 buckets, 4 docs), ${source} (1 buckets, 1 docs)`]);
+  assert.deepEqual([check.status, check.stdout.split('\n')[0]], [0, `ok: .aidrian (1 bucket, 4 docs), ${source} (1 bucket, 1 doc)`]);
 
   renameSync(path.join(source, 'knowledge/personal.json'), path.join(source, 'knowledge/docs.json'));
   const clash = spawnSync(AIDRIAN, ['check'], { cwd: project, encoding: 'utf8' });

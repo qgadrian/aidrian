@@ -36,7 +36,8 @@ export const commands = {
       }
       const counts = project.sources.map((source) => {
         const own = buckets.filter((bucket) => bucket.source === (source.local ? source.label : null));
-        return `${source.label} (${own.length} buckets, ${indexRows(own).length} docs)`;
+        const docs = indexRows(own).length;
+        return `${source.label} (${own.length} bucket${own.length === 1 ? '' : 's'}, ${docs} doc${docs === 1 ? '' : 's'})`;
       });
       console.log(`ok: ${counts.join(', ')}\nstate: ${stateDir(project, { config })}\nbudget: ${budgets.summary}`);
       return 0;

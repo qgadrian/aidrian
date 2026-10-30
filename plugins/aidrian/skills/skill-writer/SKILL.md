@@ -127,7 +127,7 @@ Skip this phase only for a report-only audit: an audit that changed no file in a
 In one commit, never a follow-up:
 
 1. Delete the skill's folder and any generated copy.
-2. `grep -rn '<old-name>'` across skills, agent sources (`agents-src/` in this plugin), docs, and the project folder.
+2. `grep -rn '<old-name>'` across skills, agent sources (`agents-src/<group>/` in this plugin), docs, and the project folder.
    Point every live reference at the skill that now owns the work, or remove it.
 3. Run Phase 5.
 

@@ -7,7 +7,7 @@ This page is for changing the plugin itself. To use the plugin in a project, sta
 
 ```sh
 npm ci
-npm run build    # after editing plugins/aidrian/agents-src/, providers/, or agent-addons/
+npm run build    # after editing plugins/aidrian/agents-src/<group>/, providers/, or agent-addons/
 npm run check    # what CI runs
 ```
 
@@ -25,6 +25,7 @@ npm run check    # what CI runs
 - Both manifests agree.
 - Every agent preloads the `knowledge` skill, and asks only for tags that skill lists.
 - [Agents and skills](agents-and-skills.md) lists every agent and skill shipped, once.
+  Its agent tables match the [group folders](agents.md#groups) of the agent sources.
 - No project-specific path leaks into the plugin.
 - No tracked file names a person.
   The owner's GitHub name appears only where a user installs: the README, the example's settings, and the manifests.

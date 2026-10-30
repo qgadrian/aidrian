@@ -35,7 +35,8 @@ Before you start, follow the `knowledge` skill. Your knowledge tags: `harness_en
 
 ## Find what to improve
 
-Run `aidrian report --since 30d --project <dir>` on a project that uses the plugin; add `--prs 20` for review rounds.
+Run `aidrian report --since 30d --project <dir>` on a project that uses the plugin; add `--prs 20` for review rounds,
+and run `aidrian report sessions` for what sessions cost, main conversation against subagents.
 Look for agent types that are re-dispatched often, reports that named files that do not exist, docs nobody reads,
 and costly agents. A change to an agent, skill, or hook states the number it should move and how to read it again after.
 

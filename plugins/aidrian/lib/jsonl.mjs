@@ -9,6 +9,11 @@ export function appendRow(file, row) {
   appendFileSync(file, `${JSON.stringify(row)}\n`);
 }
 
+// The rows of `event` with the last one per `key` value, in first-seen order; a row without the key is kept as it is.
+// For a row its writer may repeat, such as a stop row after its agent was sent back, or a session that ended twice.
+export const latestRows = (rows, event, key) =>
+  [...new Map(rows.filter((row) => row.event === event).map((row) => [row[key] ?? Symbol(event), row])).values()];
+
 // Returns { rows, skipped }: every line that holds a JSON object, and how many lines did not. A missing file has none.
 export function readRows(file) {
   const rows = [];

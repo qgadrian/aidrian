@@ -10,10 +10,11 @@ import { parseArgs } from 'node:util';
 
 import { commandConfig, fileBytes } from './config.mjs';
 import { checkoutRoots } from './git.mjs';
-import { appendRow, readRows } from './jsonl.mjs';
+import { appendRow, latestRows as latest, readRows } from './jsonl.mjs';
 import { checkBudgets, indexRows, loadKnowledge } from './knowledge.mjs';
 import { projectAt, stateDir } from './project.mjs';
-import { aggregateUsage, estimateCostUsd, filesRead, readText, subagentTranscripts, sumTokens } from './transcript.mjs';
+import { formatSessions, summarizeSessions } from './report-sessions.mjs';
+import { aggregateUsage, estimateCostUsd, filesRead, partOf, readText, subagentTranscripts, sumTokens } from './transcript.mjs';
 
 const DESCRIPTION_CHARS = 80;
 const CLAIMED_PATHS = 20;
@@ -134,19 +135,27 @@ export function stopRow(input, project, { now = Date.now(), docReads = true, del
   };
 }
 
-// SessionEnd: the whole session's tokens and estimated cost, main conversation and subagents together, and the knowledge
-// docs the main conversation read; each subagent's own reads are on its `stop` row. `docReads` works as in stopRow.
+// SessionEnd: the whole session's tokens and estimated cost, main conversation and subagents together and each apart,
+// the effort of the main conversation, and the knowledge docs it read; each subagent's own reads are on its `stop` row.
+// `docReads` works as in stopRow.
 export function sessionRow(input, project, { env = process.env, now = Date.now(), docReads = true } = {}) {
   const main = typeof input.transcript_path === 'string' ? input.transcript_path : null;
   const subagents = main ? subagentTranscripts(main, input.session_id) : [];
   const mainText = main && readText(main);
-  let acc;
-  for (const content of [mainText, ...subagents.map(readText)]) {
+  let acc = mainText ? aggregateUsage(mainText) : undefined;
+  // A request that a subagent transcript repeats stays the main conversation's.
+  const mainKeys = new Set(acc?.requests.keys());
+  const effort = acc?.effort ?? null;
+  const effortVaried = (acc?.efforts.size ?? 0) > 1;
+  for (const content of subagents.map(readText)) {
     if (content) acc = aggregateUsage(content, acc);
   }
   const perModel = acc?.perModel ?? {};
   const minutes = acc?.firstTs && acc.lastTs ? Math.round((Date.parse(acc.lastTs) - Date.parse(acc.firstTs)) / 6000) / 10 : null;
   const tokensByModel = Object.fromEntries(Object.entries(perModel).map(([model, usage]) => [model, sumTokens({ [model]: usage })]));
+  const cost = estimateCostUsd(perModel);
+  const side = ({ perModel: usage, requests, tool_requests: toolRequests, tool_calls: toolCalls }) =>
+    ({ tokens: sumTokens(usage), cost_usd: estimateCostUsd(usage).total, requests, tool_requests: toolRequests, tool_calls: toolCalls });
   return {
     event: 'session',
     ts: stamp(now),
@@ -154,9 +163,14 @@ export function sessionRow(input, project, { env = process.env, now = Date.now()
     agent: text(env.CLAUDE_CODE_AGENT),
     reason: text(input.reason),
     duration_min: minutes,
+    effort,
+    effort_varied: effortVaried,
     models: Object.keys(perModel),
     tokens_by_model: tokensByModel,
-    cost_usd: estimateCostUsd(perModel).total,
+    cost_usd: cost.total,
+    cost_by_model: cost.byModel,
+    main: side(partOf(acc, (key) => mainKeys.has(key))),
+    subagents: side(partOf(acc, (key) => !mainKeys.has(key))),
     subagent_count: subagents.length,
     docs_read: !docReads ? null : mainText ? knowledgeDocsRead(filesRead(mainText), project) : [],
   };
@@ -197,9 +211,6 @@ function knowledgeDocsRead(files, project) {
 // A row's `docs_read` as { path, bytes }. A row written before sizes were logged holds bare paths, of unknown size.
 const docsRead = (row) =>
   (Array.isArray(row.docs_read) ? row.docs_read : []).map((entry) => (typeof entry === 'string' ? { path: entry, bytes: null } : entry));
-
-// The rows that count once: a subagent's last `stop` row, since its agent may be sent back, and a session's last row.
-const latest = (rows, event, key) => [...new Map(rows.filter((row) => row.event === event).map((row) => [row[key] ?? Symbol(event), row])).values()];
 
 const median = (values) => {
   const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
@@ -366,23 +377,27 @@ export function parseSince(value, now = Date.now()) {
   return date;
 }
 
+// The views of `aidrian report`; the first is the default.
+const VIEWS = ['agents', 'docs', 'sessions'];
+
 export const commands = {
   report: {
-    usage: '[docs] [--since 7d] [--prs N] [--json] [--project DIR]',
-    about: 'summarize the dispatch log per agent type, or with docs per knowledge doc read; --prs adds the bot review rounds of the last N merged pull requests',
+    usage: '[agents|docs|sessions] [--since 7d] [--prs N] [--json] [--project DIR]',
+    about: 'summarize the dispatch log per agent type, per knowledge doc read (docs), or per session (sessions); ' +
+      '--prs adds the bot review rounds of the last N merged pull requests',
     async run(args) {
       const { values, positionals } = parseArgs({
         args,
         allowPositionals: true,
         options: { since: { type: 'string' }, prs: { type: 'string' }, json: { type: 'boolean' }, project: { type: 'string' } },
       });
-      const docsView = positionals[0] === 'docs';
-      if (positionals.length > (docsView ? 1 : 0)) {
-        console.error(`unknown report: ${positionals.join(' ')}; use aidrian report or aidrian report docs`);
+      const view = positionals[0] ?? VIEWS[0];
+      if (positionals.length > 1 || !VIEWS.includes(view)) {
+        console.error(`unknown report: ${positionals.join(' ')}; use aidrian report, aidrian report docs, or aidrian report sessions`);
         return 1;
       }
-      if (docsView && values.prs !== undefined) {
-        console.error('--prs belongs to aidrian report, not aidrian report docs');
+      if (view !== 'agents' && values.prs !== undefined) {
+        console.error(`--prs belongs to aidrian report, not aidrian report ${view}`);
         return 1;
       }
       const project = projectAt(path.resolve(values.project ?? '.'));
@@ -397,8 +412,14 @@ export const commands = {
       }
       const { file, rotated, rows, skipped } = readLog(project, config);
       const cover = coverage(rows, config, { sinceMs });
+      if (view === 'sessions') {
+        const sessions = summarizeSessions(rows, { sinceMs });
+        const notes = coverageLines(cover, { docReads: false });
+        console.log(values.json ? JSON.stringify({ file, rotated, since, skipped, coverage: cover, ...sessions }) : formatSessions(sessions, { file, since, skipped, notes }));
+        return 0;
+      }
       const notes = coverageLines(cover);
-      if (docsView) {
+      if (view === 'docs') {
         const { indexed, always } = knowledgeOf(project, config);
         const docs = summarizeDocs(rows, { sinceMs, indexed });
         console.log(values.json ? JSON.stringify({ file, rotated, since, skipped, coverage: cover, always, ...docs }) : formatDocs(docs, { file, since, skipped, notes, always }));

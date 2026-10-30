@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { aggregateUsage, estimateCostUsd, filesRead, priceFor, subagentTranscripts, sumTokens } from '../plugins/aidrian/lib/transcript.mjs';
+import { aggregateUsage, estimateCostUsd, filesRead, partOf, priceFor, subagentTranscripts, sumTokens } from '../plugins/aidrian/lib/transcript.mjs';
 
 // One transcript line: an assistant message with usage, as Claude Code writes it.
 const usageLine = (id, model, usage, { ts = '2026-10-29T10:00:00Z', content = [] } = {}) =>
@@ -24,7 +24,25 @@ test('usage counts once per request: the lines of one message id repeat its usag
   assert.deepEqual(perModel['claude-sonnet-5-5'], { calls: 1, input: 5, output: 2, cacheRead: 0, cacheWrite5m: 3, cacheWrite1h: 4 });
   assert.equal(perModel['<synthetic>'], undefined);
   assert.deepEqual([firstTs, lastTs], ['2026-10-29T10:00:00Z', '2026-10-29T10:05:00Z']);
-  assert.deepEqual(sumTokens(perModel), { input: 15, output: 9, cache_read: 100, cache_write: 7 });
+  assert.deepEqual(sumTokens(perModel), { input: 15, output: 9, cache_read: 100, cache_write: 7, cache_write_5m: 3, cache_write_1h: 4 });
+});
+
+test('effort is the last request`s stamped level; tool calls count once per tool id, per request', () => {
+  const tool = (id) => ({ type: 'tool_use', id, name: 'Read', input: {} });
+  const line = (id, effort, content) => JSON.stringify({ type: 'assistant', effort, message: { id, model: 'claude-opus-5-5', usage: { input_tokens: 1 }, content } });
+  const text = [
+    line('m1', 'high', [tool('t1')]),
+    line('m1', 'high', [tool('t2')]),
+    line('m1', 'high', [tool('t2')]),
+    line('m2', 'medium', [{ type: 'text', text: 'SECRET' }]),
+    line('m3', 'medium', [tool('t3')]),
+  ].join('\n');
+  const acc = aggregateUsage(text);
+  assert.deepEqual([acc.effort, [...acc.efforts]], ['medium', ['high', 'medium']]);
+  assert.deepEqual(partOf(acc), { perModel: acc.perModel, requests: 3, tool_requests: 2, tool_calls: 3 });
+  assert.deepEqual(partOf(acc, (key) => key === 'm1'), { perModel: { 'claude-opus-5-5': { calls: 1, input: 1, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 } }, requests: 1, tool_requests: 1, tool_calls: 2 });
+  assert.equal(aggregateUsage(line('m4', undefined, []), acc).effort, null, 'a last request with no level: null, not an older level');
+  assert.doesNotMatch(JSON.stringify(partOf(acc)), /SECRET/);
 });
 
 test('a request found in two transcripts folded into one result counts once', () => {
@@ -41,7 +59,7 @@ test('cost follows the price map: cache reads and writes at their multipliers, u
     'gpt-x': { calls: 1, input: 5, output: 5, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 },
   };
   // 4 input + 20 output + 4 * 0.05 cache read + 4 * 1.25 + 4 * 2 cache writes.
-  assert.deepEqual(estimateCostUsd(perModel), { total: 37.2, unknownModels: ['gpt-x'] });
+  assert.deepEqual(estimateCostUsd(perModel), { total: 37.2, unknownModels: ['gpt-x'], byModel: { 'claude-opus-5-5': 37.2 } });
 });
 
 test('filesRead lists each Read file_path once; subagentTranscripts finds a session`s subagent files', (t) => {

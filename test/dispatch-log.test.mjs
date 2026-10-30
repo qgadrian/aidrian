@@ -9,6 +9,7 @@ import {
   claimedPaths, coverage, coverageLines, dispatchRow, formatDocs, formatReport, parseSince, sessionRow, summarize, summarizeDocs,
 } from '../plugins/aidrian/lib/dispatch-log.mjs';
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
+import { findProject } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
@@ -100,7 +101,7 @@ test('the hooks write dispatch, stop, and session rows inside a project, and not
 
   const rows = log();
   assert.deepEqual(rows.map((row) => row.event), ['dispatch', 'stop', 'session']);
-  assert.deepEqual(rows[1].tokens, { input: 10 + 10, output: 10, cache_read: 0, cache_write: 0 });
+  assert.deepEqual(rows[1].tokens, { input: 10 + 10, output: 10, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0 });
   const testing = 'docs/knowledge/engineering/testing.md';
   assert.deepEqual([rows[1].docs_read, rows[1].delivered, rows[1].models], [[{ path: testing, bytes: bytes(testing) }], 'chat', ['claude-sonnet-5-5']]);
   assert.deepEqual([rows[2].duration_min, rows[2].subagent_count, rows[2].models], [30, 1, ['claude-opus-5-5', 'claude-sonnet-5-5']]);
@@ -317,7 +318,7 @@ test('aidrian report docs prints the doc view, --json all of it; a stray word or
   assert.deepEqual(Object.keys(json), ['file', 'rotated', 'since', 'skipped', 'coverage', 'always', 'docs', 'totals', 'never_read']);
   assert.deepEqual(json.always, { bytes: 479, budget: 16384, buckets: { engineering: 479, product: 0 } });
   assert.deepEqual(json.docs[0], { path: DOC('engineering/working-agreement'), reads: 4, bytes: 479, read_bytes: 1916, readers: ['Explore', 'code-reviewer', 'main', 'planner'] });
-  assert.deepEqual([report(['nope']).status, report(['nope']).stderr], [1, 'unknown report: nope; use aidrian report or aidrian report docs\n']);
+  assert.deepEqual([report(['nope']).status, report(['nope']).stderr], [1, 'unknown report: nope; use aidrian report, aidrian report docs, or aidrian report sessions\n']);
   assert.deepEqual([report(['docs', 'more']).status, report(['docs', '--prs', '1']).status], [1, 1]);
 });
 
@@ -353,6 +354,37 @@ test('aidrian report and report docs say when telemetry is off, and --json carri
   assert.match(report([]).stdout, /^Dispatch log .*, since 7d\nTelemetry is off \(telemetry\.enabled is false\): .*\nNo rows yet\.\n$/);
   assert.match(report(['docs']).stdout, /^Knowledge docs read, .*\nTelemetry is off .*\nAlways docs: .*\nNo knowledge doc reads yet\.\n$/);
   assert.deepEqual(JSON.parse(report(['--json']).stdout).coverage, { enabled: false, doc_reads: true, rows_without_doc_reads: 0, rotated_out_before: null });
+});
+
+test('sessionRow splits main and subagents, with effort, cost per model, cache writes, and tool calls', (t) => {
+  const { base, dir } = project(t);
+  const line = (id, model, usage, { effort = 'high', tools = 0 } = {}) => JSON.stringify({
+    type: 'assistant', effort, timestamp: '2026-10-29T10:00:00Z',
+    message: { id, model, usage, content: Array.from({ length: tools }, (_, i) => ({ type: 'tool_use', id: `${id}-t${i}`, name: 'Bash', input: {} })) },
+  });
+  const main = path.join(base, 's1.jsonl');
+  writeFileSync(main, [
+    line('m1', 'claude-opus-5-5', { input_tokens: 1_000_000, cache_creation: { ephemeral_1h_input_tokens: 1_000_000 } }, { tools: 3 }),
+    line('m2', 'claude-opus-5-5', { output_tokens: 1000 }, { effort: 'medium' }),
+  ].join('\n'));
+  mkdirSync(path.join(base, 's1/subagents'), { recursive: true });
+  writeFileSync(path.join(base, 's1/subagents/agent-a.jsonl'), [
+    line('m2', 'claude-opus-5-5', { output_tokens: 1000 }, { effort: 'low' }),
+    line('a1', 'claude-sonnet-5-5', { input_tokens: 1_000_000, cache_creation: { ephemeral_5m_input_tokens: 1_000_000 } }, { effort: 'low', tools: 1 }),
+  ].join('\n'));
+  const row = sessionRow({ session_id: 's1', transcript_path: main }, findProject(dir), { env: {}, now: NOW });
+  assert.deepEqual([row.effort, row.effort_varied], ['medium', true], 'the main conversation`s levels only');
+  // Opus: 4 input + 8 for 1-hour writes + 0.02 output. Sonnet: 2 input + 2.5 for 5-minute writes.
+  assert.deepEqual(row.cost_by_model, { 'claude-opus-5-5': 12.02, 'claude-sonnet-5-5': 4.5 });
+  assert.deepEqual(row.main, {
+    tokens: { input: 1_000_000, output: 1000, cache_read: 0, cache_write: 1_000_000, cache_write_5m: 0, cache_write_1h: 1_000_000 },
+    cost_usd: 12.02, requests: 2, tool_requests: 1, tool_calls: 3,
+  }, 'm2, repeated in the subagent transcript, stays the main conversation`s');
+  assert.deepEqual(row.subagents, {
+    tokens: { input: 1_000_000, output: 0, cache_read: 0, cache_write: 1_000_000, cache_write_5m: 1_000_000, cache_write_1h: 0 },
+    cost_usd: 4.5, requests: 1, tool_requests: 1, tool_calls: 1,
+  });
+  assert.equal(row.cost_usd, 16.52);
 });
 
 test('sessionRow without a transcript has no models and no docs read', () => {

@@ -1,7 +1,7 @@
 # The dispatch log
 
 The dispatch log records which agents a session dispatched, what each cost, which knowledge docs it read,
-and whether it delivered the files it said it wrote. `aidrian report` reads it.
+whether it delivered the files it said it wrote, and what each session cost. `aidrian report` reads it.
 
 It is `dispatch-log.jsonl` in the [state folder](project-folder.md#local-state): one JSON object per line,
 on this machine only, shared by every worktree of the repository.
@@ -27,7 +27,7 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | Field | Meaning |
 | --- | --- |
 | `ts`, `session_id`, `agent_id`, `agent_type` | Which subagent. `agent_id` joins it to its `dispatch` row. |
-| `tokens` | `input`, `output`, `cache_read`, and `cache_write` over the subagent's transcript, counted once per API request. |
+| `tokens` | `input`, `output`, `cache_read`, and `cache_write` over the subagent's transcript, counted once per API request. `cache_write` is `cache_write_5m` plus `cache_write_1h`, the cache writes kept 5 minutes and 1 hour, which cost 1.25x and 2x the input price. |
 | `models`, `cost_usd` | The models it used, and the cost estimated from list prices (`lib/transcript.mjs`). |
 | `docs_read` | The knowledge docs it opened with the Read tool, as `{ "path", "bytes" }`: the path the index gives, and the doc's size. `null` while `telemetry.doc_reads` is off. |
 | `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not, `chat` when it presents none. |
@@ -43,11 +43,14 @@ Its second stop always ends, and writes a second `stop` row; the report counts t
 | --- | --- |
 | `ts`, `session_id`, `agent`, `reason` | Which session, its `--agent` if any, and why it ended. |
 | `duration_min` | From the first to the last transcript entry. |
-| `models`, `tokens_by_model`, `cost_usd` | Tokens per model and the estimated cost of the whole session: main conversation and subagents together. |
+| `effort`, `effort_varied` | The effort level Claude Code stamped on the main conversation's last request, `null` when none; `effort_varied` is `true` when its requests ran at more than one level. |
+| `models`, `tokens_by_model`, `cost_usd`, `cost_by_model` | Tokens and estimated cost of the whole session, main conversation and subagents together, per model and in total. |
+| `main`, `subagents` | The same split two ways: `tokens`, `cost_usd`, `requests` (API requests), `tool_requests` (those that made a tool call), and `tool_calls`. A request found in both transcripts counts as the main conversation's. |
 | `subagent_count` | How many subagent transcripts the session has. |
 | `docs_read` | The knowledge docs the main conversation opened, as on a `stop` row. Each subagent's reads are on its own `stop` row. |
 
 A session whose transcript holds no API usage writes no row.
+A resumed session that ends again writes another row over its whole transcript; the report counts the last one.
 
 ### `rotate`: when the log rotates
 
@@ -78,6 +81,42 @@ Sessions: 5, $42.10 estimated, main conversation and subagents together
 
 `--since` takes `30m`, `24h`, `7d`, or a date such as `2026-10-01`; the default is `7d`.
 `--json` prints the same summary as one JSON object, with `rotated`, the path of the rotated part or `null`, and `coverage`.
+
+### Sessions
+
+`aidrian report sessions` shows what sessions cost, and where: the main conversation or its subagents, which models, which effort.
+
+```console
+$ aidrian report sessions --since 7d
+Sessions, from /home/you/.local/state/aidrian/projects/notes-1a2b3c4d/dispatch-log.jsonl, since 7d
+3 sessions, $10.50 estimated; 1 ended more than once, counted at the last end
+Main conversation: $8.00 (80%), 2.0M tokens, 1.20 tool calls per request that made one
+Subagents: $2.00 (20%), 1.1M tokens, 1.50 tool calls per request that made one
+Cache writes: 500k tokens; 1-hour 400k (80%) at 2x the input price, 5-minute 100k at 1.25x
+Per day:
+  2026-10-28  1 session         $8.00
+  2026-10-29  2 sessions        $2.50
+Per model:
+  claude-opus-5-5        $8.50  2.4M tokens
+  claude-sonnet-5-5      $1.50  700k tokens
+Per effort (the main conversation at its last request):
+  high    1 session         $8.00
+  medium  1 session         $2.00
+  -       1 session         $0.50
+Most costly sessions, top 3:
+      $8.00  2026-10-28 18:30  0b6f3c2e-41d7-4a8e-9c1f-6d2b7e5a9f10  orchestrator, high, 95 min; main $6.00, subagents $2.00
+      $2.00  2026-10-29 10:00  5d1a9e07-8c3b-4f62-a1d4-2e9b6c0f7a35  medium, 20 min; main $2.00, subagents $0.00
+      $0.50  2026-10-29 11:00  9c44e1b8-2f6a-4d09-b7e3-5a8c1d3e6f27
+```
+
+- **ended more than once**: a resumed session writes a row at each end; only its last row counts.
+- **tool calls per request that made one**: 1.00 means every turn made one tool call at a time;
+  a higher number means the agent batched independent calls into one turn, which saves a round trip each.
+- **Cache writes**: a 1-hour write costs 2x the input price, a 5-minute write 1.25x. A large 1-hour share explains a cost that tokens alone do not.
+- **Per effort**: `-` is a session whose main conversation recorded no level, such as one logged before the field existed.
+- A session logged before the main and subagent split counts in the total, per day, and per effort; a `Partial:` line says how many.
+
+`--since` works as above; `--json` prints the same summary. `--prs` belongs to the default view.
 
 ### When the report is incomplete
 

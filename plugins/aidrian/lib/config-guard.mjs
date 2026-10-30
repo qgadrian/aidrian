@@ -136,8 +136,9 @@ function sameFile(a, b) {
   }
 }
 
-// Spaces and tabs only: a newline separates commands, as `;` does.
-const SIMPLE_COMMAND = /^[ \t]*(?:rm|cp|mv|touch|truncate|tee|echo|printf|cat|mkdir)(?:[ \t]+[\w./*?=>-]+)*[ \t]*$/u;
+// Spaces and tabs only: a newline separates commands, as `;` does. No `cp` or `mv`: they write into a directory the glob
+// matches, below the entry this check resolves. `rm` removes a link, never its target.
+const SIMPLE_COMMAND = /^[ \t]*(?:rm|touch|truncate|tee|echo|printf|cat|mkdir)(?:[ \t]+[\w./*?=>-]+)*[ \t]*$/u;
 
 // A folder's entry names, or none when it cannot be read.
 function entries(folder) {

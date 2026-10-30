@@ -305,6 +305,8 @@ test('a glob reaches a config file that is a symlink to another folder, by the p
     `target=out/alias; ln -s ../.aidrian/config.json "$target" && echo '{}' > out/*`,
     "printf x | env -C out/link/.. bash -c 'tee config*.json'",
     'echo\n./prepare\ncat payload.json > out/*',
+    'cp payload/config.json out/*',
+    'cp -t out/* payload/config.json',
   ]) {
     assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /may change/, command);
   }
@@ -344,7 +346,7 @@ test('ln, truncate, install, dd, git checkout --, git restore, and a glob that m
     assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /\.aidrian/, command);
   }
   // A glob in a known folder that holds no guarded file changes none: routine clean-ups run.
-  for (const command of ['rm src/*.js', 'ln -s /tmp/x src/link', 'rm -rf dist/*', 'cp a.txt out/*']) {
+  for (const command of ['rm src/*.js', 'ln -s /tmp/x src/link', 'rm -rf dist/*', 'cp a.txt out/*.js']) {
     assert.equal(verdict(dir, subagent(dir, 'Bash', { command })), null, command);
   }
 });

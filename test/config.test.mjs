@@ -29,6 +29,12 @@ test('file values win; a group keeps the defaults for the keys the file leaves o
   assert.deepEqual(config.worktrees, DEFAULTS.worktrees);
 });
 
+test('lessons: signals on, and the nudge escalates past 20 open or 14 days unless a project sets other limits', (t) => {
+  assert.deepEqual(DEFAULTS.lessons, { auto: true, maxOpen: 20, maxAgeDays: 14 });
+  const { config, errors } = loadConfig(project(t, { version: 1, lessons: { maxOpen: 0 } }));
+  assert.deepEqual([errors, config.lessons], [[], { auto: true, maxOpen: 0, maxAgeDays: 14 }]);
+});
+
 test('the loaded config is frozen all the way down', (t) => {
   const { config } = loadConfig(project(t, { version: 1, mainCheckout: { allowWrites: ['notes/**'] } }));
   assert.throws(() => { config.defaultBranch = 'x'; }, TypeError);
@@ -51,6 +57,8 @@ const errorCases = [
   ['string for a boolean', { version: 1, mainCheckout: { guard: 'no' } }, /"mainCheckout\.guard" must be true or false$/],
   ['empty string', { version: 1, defaultBranch: ' ' }, /"defaultBranch" must be a non-empty string$/],
   ['handoff mode outside its list', { version: 1, session: { handoff: 'always' } }, /"session\.handoff" must be "off", "ask", or "auto"$/],
+  ['lesson signals switch that is not a boolean', { version: 1, lessons: { auto: 'off' } }, /"lessons\.auto" must be true or false$/],
+  ['a negative lesson age limit', { version: 1, lessons: { maxAgeDays: -1 } }, /"lessons\.maxAgeDays" must be a whole number, 0 or more$/],
   ['models that is not an object', { version: 1, models: [] }, /"models" must be an object$/],
   ['models for a host other than claude and codex', { version: 1, models: { gemini: {} } }, /: unknown key "models\.gemini"$/],
   ['models agents that is not an object', { version: 1, models: { codex: { agents: [] } } }, /"models\.codex\.agents" must be an object$/],

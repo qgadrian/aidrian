@@ -34,6 +34,15 @@ test('a line that holds no JSON object is skipped and counted; blank lines are i
   assert.deepEqual(readRows(file), { rows: [{ id: 1 }, { id: 2 }], skipped: 3 });
 });
 
+test('a row appended after a write cut short starts its own line, so it still reads back', (t) => {
+  const file = tempFile(t);
+  appendRow(file, { id: 1 });
+  appendFileSync(file, '{"id":2,"no');
+  appendRow(file, { id: 3 });
+  assert.equal(readFileSync(file, 'utf8'), '{"id":1}\n{"id":2,"no\n{"id":3}\n');
+  assert.deepEqual(readRows(file), { rows: [{ id: 1 }, { id: 3 }], skipped: 1 });
+});
+
 test('appends from concurrent processes all land, one per line', async (t) => {
   const file = tempFile(t);
   const jsonl = pathToFileURL(path.resolve(import.meta.dirname, '../plugins/aidrian/lib/jsonl.mjs')).href;

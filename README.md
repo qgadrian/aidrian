@@ -119,6 +119,7 @@ docs/project-folder.md              the project folder: structure, location, ver
 docs/config.md                      the project config file, .aidrian/config.json
 docs/hooks.md                       what each hook does, and its override
 docs/dispatch-log.md                the dispatch log rows and aidrian report
+docs/lessons.md                     the lesson inbox: capture, triage, and fixes that held
 docs/knowledge.md                   the knowledge-bucket format
 test/                               node --test suites
 ```

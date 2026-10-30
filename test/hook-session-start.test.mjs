@@ -82,7 +82,7 @@ test('a project with a broken folder still gets the line, plus how many problems
   assert.equal(stdout.split('\n').slice(1).join('\n'), `${NAMES('Codex')}\n`);
 });
 
-test('the main session also hears about open lessons, with the command to list them; a subagent does not', (t) => {
+test('the main session also hears about open lessons, escalated with the command to list them once a P1 is open; a subagent does not', (t) => {
   const xdg = mkdtempSync(path.join(tmpdir(), 'aidrian-start-state-'));
   t.after(() => rmSync(xdg, { recursive: true, force: true }));
   const env = { ...process.env, XDG_STATE_HOME: xdg, PATH: WITHOUT_BIN };
@@ -94,7 +94,12 @@ test('the main session also hears about open lessons, with the command to list t
   const [knowledge, names, lessons, rest] = hook({ input, XDG_STATE_HOME: xdg }).stdout.split('\n');
   assert.equal(knowledge, LINE(path.join(BIN, 'aidrian-knowledge')));
   assert.equal(names, NAMES('Codex'));
-  assert.match(lessons, /^Lesson inbox: 2 open lessons \(oldest \d{4}-\d\d-\d\d\)\. Run the lesson-triage skill in a session opened for it; `\S+\/bin\/aidrian lesson list` shows them\.$/);
+  assert.equal(lessons, 'Lesson inbox: 2 open (P2 2), the oldest from today. The lesson-triage skill drains it in a session opened for it.');
   assert.equal(rest, '');
   assert.doesNotMatch(hook({ input, args: ['--subagent'], XDG_STATE_HOME: xdg }).stdout, /Lesson inbox/);
+
+  const urgent = spawnSync(path.join(BIN, 'aidrian'), ['lesson', 'add', '--tier', 'P1'], { cwd: EXAMPLE, input: 'lost a commit', encoding: 'utf8', env });
+  assert.equal(urgent.status, 0);
+  const escalated = hook({ input, XDG_STATE_HOME: xdg }).stdout.split('\n')[2];
+  assert.match(escalated, /^Lesson inbox needs triage: 1 P1 open\. Tell the Human once, then go on with the task: .* `\S+\/bin\/aidrian lesson list` shows the order\.$/);
 });

@@ -42,5 +42,14 @@ To add a topic, refresh docs over a time window, or fold in one resource, load a
 - **Boundaries.** A doc that a code change made stale is fixed in that change, by whoever made it.
   `doc-updater` keeps standalone doc fixes; you own bucket structure, summaries, tags, `always`, and budgets.
 
+## Lessons
+
+The project's knowledge lessons are yours: `aidrian lesson list --target project`, and `aidrian lesson list <id>` for one in full.
+A rule agents missed or got wrong becomes an edit to the doc that owns the topic, or a better summary or tag when they never found it.
+A defect in the project's code or config is not yours; leave it open for the `lesson-triage` skill to route.
+When your change lands, resolve the lesson with what should change:
+`aidrian lesson resolve <id> --outcome rule --link <commit or pull request> --expect '<what should move, and the command>'`,
+or `mechanism` when the fix is a check.
+
 When another agent dispatched you, return the machine handoff, with every command you ran and the numbers before and after.
 """

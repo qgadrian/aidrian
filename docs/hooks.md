@@ -4,6 +4,7 @@ The plugin's hooks are in [`plugins/aidrian/hooks/hooks.json`](../plugins/aidria
 Claude Code runs them once the plugin is enabled. Codex asks you to trust them in `/hooks` after you install or update the plugin.
 
 Every hook lets the action run when it cannot read its input, so a hook never breaks a session.
+A git call a hook makes is stopped after 2 seconds and counts as git not answering; the hook's later git calls then do not wait.
 A blocking hook exits 2 and tells the agent why on stderr.
 The Bash rules, the main-checkout rule, the agent gates, and the config guard also record each block: see [Recorded blocks](#recorded-blocks).
 
@@ -104,6 +105,8 @@ When git cannot answer, an Edit or Write is blocked to be safe, and a Bash comma
 
 Before every tool call, the hook checks the call against the project's `agents` gates; [config.md](config.md#agents) gives the keys and patterns.
 A blocked call exits 2 with the rule on stderr, such as `agents.main.deny has "Bash(git push)"`.
+A `Bash(...)` gate matches the command text: it reads the command line of `sh -c` and `bash -c`, but not a command run by `xargs`,
+`eval`, or a script, so `xargs git push` passes `Bash(git push)`; a `deny` list can name `Bash(xargs)` itself.
 The reason also tells the agent not to reach the same result with another tool, and to tell the human what the task needs.
 The block is [recorded](#recorded-blocks) as `agent-gates`, with that gate as its reason.
 A gate that blocks one session a third time becomes a lesson for the project, not the plugin: the gates are the project's.
@@ -113,12 +116,21 @@ While any gate is set, the hook also blocks a subagent that changes a file that 
 config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout's when the project is a git worktree.
 
 - It reads writes as the [main-checkout rule](#main-checkout) does: Edit, Write, NotebookEdit, and `apply_patch` by the path they name,
-  and a Bash command by the paths it certainly writes, such as `>`, `sed -i`, `cp`, `mv`, and `rm`.
+  and a Bash command by the paths it writes, such as `>`, `sed -i`, `cp`, `mv`, and `rm`.
+- Unlike that rule, it follows each `cd`, and reads the command line of `sh -c` and `bash -c`.
+  After a `cd` to a folder it cannot name, such as `cd "$dir"`, a relative path counts when its name is one of the files or the project folder.
+- An interpreter given code on its command line or its input, such as `python3 -c`, `node -e`, `perl -e`, `ruby -e`, or a heredoc,
+  counts as a write to each of the files that code names.
 - A write to a folder that holds one of the files, such as `rm -rf .aidrian`, counts; one to the project root, such as `cp notes.md .`, does not.
 - A call without `agent_id` is the main session's, which may still change them.
 - A block is [recorded](#recorded-blocks) as `config-guard`, with the file it changes as its reason.
-- A write the rule cannot see, such as a relative path after `cd` or a command inside `sh -c`, still runs.
+- A write the rule cannot see, such as one by a script, `xargs`, or `eval`, or a file name the code builds, still runs.
   Like the gates, the guard is for agents that cooperate, not a sandbox.
+
+When config.json, `.aidrian.json`, or `.aidrian.local.json` is there but cannot be read, such as invalid JSON or another `version`,
+the hook cannot know the gates, so it fails closed for subagents.
+A subagent may then use only Read, Grep, Glob, LS, and NotebookRead; the reason names the file and the problem.
+The main session keeps every tool, so it can fix the file. The block is [recorded](#recorded-blocks) as `agent-gates`.
 
 Each host tells the hook who is calling in its own way.
 

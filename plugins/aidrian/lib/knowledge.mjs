@@ -4,7 +4,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { fileBytes, insidePath, isDirectory, isFile, isObject, linksOutside, loadConfig, readJson, VERSION, versionProblem } from './config.mjs';
+import { loadConfig, VERSION, versionProblem } from './config.mjs';
+import { fileBytes, insidePath, isDirectory, isFile, isObject, linksOutside, readJson } from './fs.mjs';
 
 const BUCKET_ID = /^[a-z0-9][a-z0-9-]*$/;
 const TAG = /^[a-z][a-z0-9_]*$/;

@@ -273,13 +273,16 @@ An entry has `deny`, `allow`, or both, each a list of tool patterns:
 - A command line is read as the [Bash rules](hooks.md#bash-rules) read it: each step of `&&`, `;`, and `|`, and each command substitution.
   It also reads past wrappers such as `sudo` and `env`, and past git's own options, so `Bash(git push)` also blocks `git -C app push`.
 - The first word matches the program by its file name, so `Bash(git push)` also matches `/usr/bin/git push`.
-- A command run inside `sh -c`, `eval`, a script, or an interpreter is out of sight; an `allow` list blocks it unless it allows the outer command.
+- The command line of `sh -c` or `bash -c` is read too, so `Bash(git push)` blocks `bash -c 'git push'`; an `allow` list must also allow the shell.
+- A gate matches the command text, so a command run by `xargs`, `eval`, a script, or an interpreter is out of sight;
+  an `allow` list blocks it unless it allows the outer command, and a `deny` list can name the outer command, such as `Bash(xargs)`.
 
 `.aidrian.local.json` wins over `config.json` one list at a time.
 Its `deny` for an agent replaces the team's `deny` for that agent, and its `allow` replaces the team's `allow`.
 A developer can lift a team's `allow` list on one machine with `"allow": ["*"]`.
 An agent cannot: while `agents` sets any gate, no subagent may change config.json, `.aidrian.json`, or `.aidrian.local.json`,
 also the main checkout's when the project is a git worktree. The main session still can.
+While one of those files is there but cannot be read, the gates are unknown, so every subagent may only read files until it is fixed.
 `aidrian check` names an unknown key, a key that is not an agent name, and a pattern it cannot read, such as `Bash(git *)`.
 A bad pattern is left out and the rest of its list still applies, so a bad `allow` pattern makes the list stricter.
 `aidrian check` cannot know every agent's name, so a name that matches no agent is not an error: its entry never applies.

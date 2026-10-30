@@ -128,7 +128,8 @@ and an occurrence after its fix reopens it like any other.
 | `aidrian pr await-review --request` stops at the round limit, config.json `github.maxReviewRounds` | `review-rounds` | P2, `project` | It fires once per pull request and round count: a re-run at the same count adds nothing. |
 
 A row holds names, counts, paths, and ids, never a prompt, a command, or tool output; the `session` id finds the rest.
-The block counts live in the system's temporary folder, one small file per session.
+The block counts live in the system's temporary folder, one small file per session and rule, which grows a byte per block,
+so subagents that block at the same time all count; the session-end hook deletes them.
 
 Not recorded: the session-length reminder fires in most long sessions by design, and its numbers are already in the dispatch log.
 Another producer, such as a script that reads `aidrian report`, can add its own signal with `aidrian lesson add --key <key>`.

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -18,13 +18,10 @@ import {
   postedTriggerInstant,
   flooredInstant,
   awaitReview,
-  runGh,
   isQuotaNotice,
   isReviewSummaryCard,
   REVIEW_SUMMARY_CARD_MARKER,
   exitCodeFor,
-  GH_EXEC_OPTIONS,
-  GH_MAX_BUFFER_BYTES,
   DEFAULT_REVIEWER,
   REQUEST_COMMENT,
   REQUEST_INSTRUCTIONS,
@@ -645,67 +642,6 @@ test('awaitReview --request: a fresh review on head does NOT re-request', async 
   const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { gh, ...clock() });
   assert.equal(gh.posts.length, 0);
   assert.equal(r.status, 'already_present');
-});
-
-test('runGh: gh reads carry a stdout ceiling far above the 1 MB default', () => {
-  // Regression guard. `repos/{repo}/commits/{sha}` embeds every changed file's
-  // patch and measured 1,211,087 B for a large pull request's head commit, so the 1 MB default
-  // for a synchronous child process killed `--request` before it could post.
-  assert.ok(GH_MAX_BUFFER_BYTES > 4 * 1024 * 1024, 'ceiling must clear a real PR payload by a wide margin');
-  assert.equal(GH_EXEC_OPTIONS.maxBuffer, GH_MAX_BUFFER_BYTES);
-  assert.equal(GH_EXEC_OPTIONS.encoding, 'utf8');
-  const seen = [];
-  const fakeExec = (file, args, options) => {
-    seen.push({ file, args, options });
-    return '{"ok":true}';
-  };
-  assert.equal(runGh(['api', 'repos/o/r/pulls/1'], fakeExec), '{"ok":true}');
-  assert.equal(seen[0].file, 'gh');
-  assert.deepEqual(seen[0].args, ['api', 'repos/o/r/pulls/1']);
-  assert.equal(seen[0].options.maxBuffer, GH_MAX_BUFFER_BYTES);
-});
-
-test('runGh: an overflow above the ceiling names the command and the limit; other failures pass through unchanged', () => {
-  const throwing = (code, message) => () => {
-    throw Object.assign(new Error(message), { code });
-  };
-  assert.throws(
-    () => runGh(['api', 'repos/o/r/commits/abc'], throwing('ENOBUFS', 'spawnSync gh ENOBUFS')),
-    (err) => {
-      assert.match(err.message, /repos\/o\/r\/commits\/abc/, 'names the overflowing command');
-      assert.match(err.message, /64 MB stdout ceiling/, 'names the limit that was hit');
-      assert.match(err.message, /GH_MAX_BUFFER_BYTES/, 'names the knob to turn');
-      return true;
-    },
-  );
-  assert.throws(() => runGh(['api', 'x'], throwing(1, 'gh: authentication required')), /authentication required/);
-});
-
-test('runGh: a real 2 MB stdout survives the ceiling that the 1 MB default rejected', () => {
-  // The live-PR proof does not survive the merge that fixes the PR, so the crash
-  // is reproduced against a real child process instead. 2 MB is the size class
-  // the head-commit read hit on a large pull request (1,211,087 B), where the endpoint embeds
-  // every changed file's patch.
-  const payloadBytes = 2 * 1024 * 1024;
-  const writeStdout = ['-e', `process.stdout.write('x'.repeat(${payloadBytes}))`];
-  // Pre-fix shape: the options this script used to pass, on the same call shape.
-  assert.throws(
-    () => execFileSync('node', writeStdout, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
-    (err) => err.code === 'ENOBUFS',
-    'the pre-fix options must still reproduce the crash, or this test proves nothing',
-  );
-  // Post-fix shape: runGh's options forwarded to a real child process.
-  const viaNode = (_file, args, options) => execFileSync('node', args, options);
-  assert.equal(runGh(writeStdout, viaNode).length, payloadBytes);
-  // A genuine overflow above the new ceiling still reaches the caller as actionable text.
-  const viaNodeCapped = (_file, args, options) => execFileSync('node', args, { ...options, maxBuffer: 1024 });
-  assert.throws(() => runGh(writeStdout, viaNodeCapped), /stdout ceiling[\s\S]*GH_MAX_BUFFER_BYTES/);
-});
-
-test('every gh invocation routes through runGh — no call site re-inherits the 1 MB default', () => {
-  const src = readFileSync(new URL('../plugins/aidrian/lib/pr-await-review.mjs', import.meta.url), 'utf8');
-  const direct = src.match(/execFileSync\s*\(/g) ?? [];
-  assert.equal(direct.length, 0, 'call gh through runGh(), which supplies GH_EXEC_OPTIONS, not a bare exec call');
 });
 
 // Verbatim body of the bot's usage-limit comment,

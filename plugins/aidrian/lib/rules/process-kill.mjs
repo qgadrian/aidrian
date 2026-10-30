@@ -11,7 +11,7 @@
 // Both look through wrappers, `case` arms, subshells, `sh -c`, `eval`, `env -S`, xargs, and the substitutions that run.
 // A lexer cannot see into a script or an interpreter (`python -c`), so this guards against accidents, not intent.
 
-import { isLongOption, lexCommand, lexSubstitutions } from '../shell-lex.mjs';
+import { inlineShellCommand, isLongOption, lexCommand, lexSubstitutions } from '../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME';
 export const LISTING_OVERRIDE = 'AIDRIAN_ALLOW_PROCESS_ARGS_LISTING';
@@ -187,7 +187,6 @@ function commandLooksUp(args) {
   }
   return false;
 }
-const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
 
 // Program and operands of a segment, with `sudo` left in place for unwrapPrefixes to read with its own grammar.
 function readCommand(segment) {
@@ -272,26 +271,6 @@ function unwrapPrefixes({ program, args }) {
     program = real.text.split('/').pop() ?? '';
     args = args.slice(start + 1);
   }
-}
-
-// The command line a `sh -c "<string>"` runs: the first operand after `-c` and any shell options, or null.
-const SHELL_VALUE_OPTIONS = new Set(['-o', '+o', '-O', '+O']);
-function inlineShellCommand({ program, args }) {
-  if (!SHELLS.has(program)) return null;
-  const at = args.findIndex((token) => !token.dynamic && /^-[a-zA-Z]*c[a-zA-Z]*$/u.test(token.text));
-  if (at === -1) return null;
-  let i = at + 1;
-  while (args[i] && !args[i].dynamic) {
-    const { text } = args[i];
-    if (text === '--') {
-      i += 1;
-      break;
-    }
-    if (SHELL_VALUE_OPTIONS.has(text)) i += 2;
-    else if (/^[-+]\S/u.test(text)) i += 1;
-    else break;
-  }
-  return args[i]?.text ?? null;
 }
 
 // The invocation `xargs` runs, or null. Options whose value is optional are absent: bare, the next token is the command.

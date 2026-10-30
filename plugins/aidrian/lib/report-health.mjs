@@ -5,7 +5,8 @@
 // Every verdict compares unrounded numbers; only what the view prints is rounded. docs/dispatch-log.md#health describes
 // the view.
 
-import { summarize, summarizeDenies, summarizeDocs } from './dispatch-log.mjs';
+import { summarize, summarizeDenies } from './report-agents.mjs';
+import { summarizeDocs } from './report-docs.mjs';
 import { latestRows } from './jsonl.mjs';
 import { lessonStats } from './lesson-inbox.mjs';
 import { deliverySignal, denialSignal, roundLimitSignal } from './lesson-signals.mjs';
@@ -218,8 +219,14 @@ function agentsSignal(rows, sinceMs, { minSample, redispatchPercent, sentBackPer
 
 // The review bot's rounds per reviewed pull request, and its late findings that sat on a line it had already reviewed.
 // The average comes from each pull request's rounds, since reviewRounds() rounds its own; the view prints it to the hundredth.
+// Why reviews were not read when the caller passed none; any other error is gh's own.
+const NOT_READ = 'not read';
+// What the text view says for a gh error, which is most often a project with no GitHub remote or a gh that is missing
+// or signed out; --json keeps gh's own message.
+const GH_UNAVAILABLE = 'gh could not read the pull requests: no GitHub remote, or gh is missing or not signed in (--json has its error)';
+
 function reviewsSignal(reviews, { minSample, reviewRounds, lateFindingPercent }, add) {
-  if (!reviews || reviews.error) return { status: UNAVAILABLE, error: reviews?.error ?? 'not read' };
+  if (!reviews || reviews.error) return { status: UNAVAILABLE, error: reviews?.error ?? NOT_READ };
   const avg = reviews.rounds.length ? sumOf(reviews.rounds, (pr) => pr.rounds) / reviews.rounds.length : null;
   const rounds = { n: reviews.rounds.length, avg, five_or_more: reviews.five_or_more, merged: reviews.merged, truncated: reviews.truncated };
   rounds.status = rounds.n < minSample ? NOT_ENOUGH : avg > reviewRounds ? PROBLEM : OK;
@@ -361,7 +368,7 @@ export function formatHealth({ thresholds, problems, signals }, { file, since, s
   });
   lines.push(`${head('Agents', agents)}${agents.agents.length ? '' : '; no dispatches'} ` +
     `(thresholds: ${thresholds.health.redispatchPercent}% re-dispatched, ${thresholds.health.sentBackPercent}% sent back)`.trimEnd(), ...agentLines);
-  if (reviews.status === UNAVAILABLE) lines.push(`${head('Reviews', reviews)}; ${reviews.error}`);
+  if (reviews.status === UNAVAILABLE) lines.push(`${head('Reviews', reviews)}; ${reviews.error === NOT_READ ? NOT_READ : GH_UNAVAILABLE}`);
   else {
     const rounds = reviews.rounds.status === NOT_ENOUGH ? `rounds not enough data (${n(reviews.rounds.n, minSample)} reviewed)`
       : `${hundredths(reviews.rounds.avg)} rounds a pull request (n=${reviews.rounds.n} reviewed, threshold ${thresholds.health.reviewRounds})`;

@@ -19,6 +19,10 @@ A doc from a local knowledge source prints its absolute path, and its source as 
 
 const args = process.argv.slice(2);
 const command = args.shift();
+if (['--help', '-h', 'help'].includes(command)) {
+  console.log(USAGE);
+  process.exit(0);
+}
 let start = process.cwd();
 let all = false;
 const rest = [];
@@ -58,9 +62,16 @@ if (command === 'route') {
   const known = [...new Set([...pluginTags(), ...listTags(buckets).map(([tag]) => tag)])].sort();
   const unknown = rest.filter((tag) => !known.includes(tag));
   if (unknown.length) fail(`unknown tag: ${unknown.join(', ')}\nknown tags: ${known.join(', ')}`);
-  for (const doc of routeKnowledge(buckets, rest)) console.log(line(doc));
+  const docs = routeKnowledge(buckets, rest);
+  for (const doc of docs) console.log(line(doc));
+  // A tag no doc carries yet still routes: to the "always" docs alone. Say so on stderr, which a script reading the
+  // paths does not read.
+  const tagged = buckets.some((bucket) => rest.some((tag) => Object.hasOwn(bucket.tags, tag) && bucket.tags[tag].length > 0));
+  if (!tagged) console.error(`no docs tagged ${rest.join(', ')}${docs.length ? '; printed only the "always" docs' : ', and no "always" docs'}`);
 } else if (command === 'tags') {
-  for (const [tag, count] of listTags(buckets)) console.log(`${tag}\t${count}`);
+  const tags = listTags(buckets);
+  for (const [tag, count] of tags) console.log(`${tag}\t${count}`);
+  if (!tags.length) console.error('no tags in use yet: add tags to the docs in the knowledge indexes');
 } else if (command === 'search') {
   const hits = searchKnowledge(buckets, rest, all ? Infinity : 8);
   if (!hits.length) fail('no match');
@@ -77,7 +88,7 @@ function init(project, folder) {
     fail(error.message);
   }
   for (const warning of result.warnings) console.error(warning);
-  console.log(`wrote ${result.file}: ${result.docs} docs in ${result.dir}, each with a drafted summary and no tags`);
+  console.log(`wrote ${result.file}: ${result.docs} doc${result.docs === 1 ? '' : 's'} in ${result.dir}, each with a drafted summary and no tags`);
   console.log('next: correct the summaries, add tags and "always" docs, then run aidrian check');
   process.exit(0);
 }

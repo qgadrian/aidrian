@@ -2,7 +2,7 @@
 // config.mjs checks the patterns with patternProblem; scripts/hook-agent-gates.mjs asks gateDenial before every tool
 // call. docs/config.md#agents gives the rules.
 
-import { commandLines, lexCommand, readGit, readInvocation } from './shell-lex.mjs';
+import { commandLines, inlineShellCommand, lexCommand, readGit, readInvocation, SUBSTITUTION_DEPTH_LIMIT } from './shell-lex.mjs';
 
 // The entry that applies to every agent, and the one for the main session, which has no `agent_id`.
 const ALL = '*';
@@ -49,10 +49,10 @@ export function gateDenial(input, { agents, names: { human } }, paths) {
   const entries = Object.entries(agents).filter(([name]) => caller.has(name));
   for (const [name, { deny = [] }] of entries) {
     const hit = deny.find((pattern) => denies(pattern, tool, input.tool_input));
-    if (hit) return blocked(input, tool, `agents.${name}.deny has "${hit}"`, { human, paths });
+    if (hit) return blocked(input, `agents.${name}.deny has "${hit}"`, { human, paths });
   }
   for (const [name, { allow }] of entries) {
-    if (allow && !allows(allow, tool, input.tool_input)) return blocked(input, tool, `agents.${name}.allow does not list it`, { human, paths });
+    if (allow && !allows(allow, tool, input.tool_input)) return blocked(input, `agents.${name}.allow does not list it`, { human, paths });
   }
   return null;
 }
@@ -71,11 +71,30 @@ function callerNames(input) {
   return names;
 }
 
-function blocked(input, tool, rule, { human, paths }) {
-  const who = typeof input.agent_type === 'string' && input.agent_type !== '' ? `the agent "${input.agent_type}"` : 'the main session';
-  const reason = `aidrian: ${tool} is blocked for ${who} in this project: ${rule} (${paths.config}, or ${paths.local}, which wins).`
-    + ` This is a project rule: do not reach the same result with another tool; tell ${human} what the task needs.`;
-  return { match: rule, reason };
+// Tools that only read files, which a subagent keeps while the gates are unknown.
+const READ_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS', 'NotebookRead']);
+
+// Why the subagent call in `input` may not run while `file`, which sets the project's configuration, is there but
+// cannot be read (`problem` says why), or null: { match, reason }. The gates it sets are unknown then, so a subagent
+// keeps only the tools that read; the main session, which has no `agent_id`, keeps every tool to fix the file.
+export function unreadableConfigDenial(input, file, problem, { names: { human } }) {
+  if (typeof input.agent_id !== 'string' || input.agent_id === '' || READ_TOOLS.has(input.tool_name)) return null;
+  const why = `${file} cannot be read (${problem}), so this project's agent gates are unknown, and until it is fixed a subagent may only read files`;
+  return { match: `${file} cannot be read`, reason: projectRuleReason(input, why, human, `that ${file} needs fixing (aidrian check names the problem)`) };
+}
+
+// The reason a project rule gives the agent when it blocks the call in `input`: the tool, who called it, `why`, and that
+// it should ask `human` for `ask` rather than work around the rule. The gates and the config guard block with it.
+export function projectRuleReason(input, why, human, ask = 'what the task needs') {
+  const tool = typeof input.tool_name === 'string' && input.tool_name !== '' ? input.tool_name : 'this tool';
+  let who = typeof input.agent_id === 'string' && input.agent_id !== '' ? 'a subagent' : 'the main session';
+  if (typeof input.agent_type === 'string' && input.agent_type !== '') who = `the agent "${input.agent_type}"`;
+  return `aidrian: ${tool} is blocked for ${who} in this project: ${why}.`
+    + ` This is a project rule: do not reach the same result with another tool; tell ${human} ${ask}.`;
+}
+
+function blocked(input, rule, { human, paths }) {
+  return { match: rule, reason: projectRuleReason(input, `${rule} (${paths.config}, or ${paths.local}, which wins)`, human) };
 }
 
 // A deny pattern matches the tool by name; Bash(<prefix>) matches a Bash call where any command starts with the prefix.
@@ -104,13 +123,24 @@ function bashPrefix(pattern) {
   return BASH.exec(pattern)?.[1].trim().split(/\s+/u) ?? null;
 }
 
-// Every command the Bash call runs, each as its words: the commands of each `&&`, `;`, and `|` step and of each command
-// substitution, read past wrappers such as `sudo` and `env`, and past git's global options, so `git -C x push` is
-// `git push`. A command run inside `sh -c`, `eval`, or a script is not read.
+// Every command the Bash call runs, each as its words: the commands of each `&&`, `;`, and `|` step, of each command
+// substitution, and of each `sh -c` or `bash -c` string, read past wrappers such as `sudo` and `env`, and past git's
+// global options, so `git -C x push` is `git push`. The shell itself stays a command too, so an `allow` list must still
+// name it. A command run by `eval`, `xargs`, or a script is not read.
 function commands(toolInput) {
   const command = toolInput?.command;
   if (typeof command !== 'string') return [];
-  return commandLines(command).flatMap((line) => lexCommand(line).map(words).filter((each) => each.length > 0));
+  const found = [];
+  const read = (line, depth) => {
+    for (const segment of commandLines(line).flatMap(lexCommand)) {
+      const inner = depth < SUBSTITUTION_DEPTH_LIMIT ? inlineShellCommand(readInvocation(segment)) : null;
+      if (inner !== null) read(inner, depth + 1);
+      const each = words(segment);
+      if (each.length > 0) found.push(each);
+    }
+  };
+  read(command, 0);
+  return found;
 }
 
 function words(segment) {

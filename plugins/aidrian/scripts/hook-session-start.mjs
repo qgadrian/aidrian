@@ -19,7 +19,8 @@ await runHook((input) => {
   const always = buckets.flatMap((bucket) => bucket.always);
   const command = binCommand('aidrian-knowledge');
 
-  let line = `Project knowledge: ${buckets.length} buckets, ${indexRows(buckets).length} docs.`;
+  const docs = indexRows(buckets).length;
+  let line = `Project knowledge: ${buckets.length} bucket${buckets.length === 1 ? '' : 's'}, ${docs} doc${docs === 1 ? '' : 's'}.`;
   if (always.length) line += ` Read now: ${always.join(', ')}.`;
   line += ` For more, run \`${command} route <tag>\` for your tags or \`${command} search <words>\` for a topic.`;
   if (errors.length) line += ` The project folder has ${errors.length} problems; run \`${binCommand('aidrian')} check\`.`;

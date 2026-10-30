@@ -287,6 +287,11 @@ test('a glob reaches a config file that is a symlink to another folder, by the p
     assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /config\.json/, command);
   }
   assert.equal(verdict(dir, subagent(dir, 'Bash', { command: 'rm src/*' })), null);
+  // An ordinary folder may hold a link to the config, which a glob there reaches.
+  mkdirSync(path.join(dir, 'dist'));
+  symlinkSync('../.aidrian/config.json', path.join(dir, 'dist/config.json'));
+  assert.match(verdict(dir, subagent(dir, 'Bash', { command: "echo '{}' > dist/*.json" })) ?? '', /config\.json/);
+  assert.equal(verdict(dir, subagent(dir, 'Bash', { command: 'rm dist/*.js' })), null);
 });
 
 test('ln, truncate, install, dd, git checkout --, git restore, and a glob that may name a guarded file change it', (t) => {

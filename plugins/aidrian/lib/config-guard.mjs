@@ -8,6 +8,7 @@
 // unless its code is one of the few that only read (READS). The guard keeps a gate from changing for the next session;
 // within a session, the gates a subagent started with hold anyway (lib/gate-snapshot.mjs).
 
+import { readdirSync } from 'node:fs';
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
@@ -112,8 +113,19 @@ function globbedFile(globs, files) {
     if (unsure || /[*?[]/u.test(head)) return pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file)));
     const folders = path.isAbsolute(head) ? [head] : dirs.map((dir) => path.resolve(dir, head));
     return folders.some((folder) =>
-      [folder, canonical(folder)].some((dir) => isWithin(dir, file) && pattern.test(path.relative(dir, file).split(path.sep)[0])));
+      [folder, canonical(folder)].some((dir) => isWithin(dir, file) && pattern.test(path.relative(dir, file).split(path.sep)[0])) ||
+      // An entry the glob matches may be a symlink to the file from any folder, which a write follows.
+      entries(folder).some((name) => pattern.test(name) && isWithin(canonical(path.join(folder, name)), pair[1])));
   })))?.[1] ?? null;
+}
+
+// A folder's entry names, or none when it cannot be read.
+function entries(folder) {
+  try {
+    return readdirSync(folder);
+  } catch {
+    return [];
+  }
 }
 
 const wholePart = (name, after) => new RegExp(`(?<![\\w.-])${name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}${after}`, 'u');

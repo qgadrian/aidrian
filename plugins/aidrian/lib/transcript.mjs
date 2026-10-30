@@ -55,6 +55,9 @@ function addRequest(perModel, model, usage) {
   }
 }
 
+// The key a request's lines share: its message id, else its request id. A line with neither is a request of its own.
+const requestKey = (entry) => [entry.message?.id, entry.requestId].find((each) => typeof each === 'string' && each !== '') ?? Symbol('unkeyed');
+
 // Usage per model over transcript text, counted once per API request: Claude Code writes one line per content block,
 // each repeating its request's usage, so a per-line sum bills a request several times. Lines group by `message.id`
 // (else `requestId`), and the request's last line wins. Pass the previous result as `acc` to fold in more transcripts;
@@ -70,9 +73,9 @@ export function aggregateUsage(text, acc = { firstTs: null, lastTs: null, reques
       if (!acc.firstTs || entry.timestamp < acc.firstTs) acc.firstTs = entry.timestamp;
       if (!acc.lastTs || entry.timestamp > acc.lastTs) acc.lastTs = entry.timestamp;
     }
-    const { usage, model, id, content } = entry.message ?? {};
+    const { usage, model, content } = entry.message ?? {};
     if (!usage || !model || model === '<synthetic>') continue;
-    const key = [id, entry.requestId].find((each) => typeof each === 'string' && each !== '') ?? Symbol('unkeyed');
+    const key = requestKey(entry);
     acc.requests.set(key, { model, usage });
     acc.effort = typeof entry.effort === 'string' && entry.effort !== '' ? entry.effort : null;
     if (acc.effort) acc.efforts.add(acc.effort);
@@ -146,12 +149,14 @@ export function subagentTranscripts(transcriptPath, sessionId) {
   }
 }
 
-// Every `file_path` the transcript's Read tool calls name, in order, once each.
-export function filesRead(text) {
+// Every `file_path` the transcript's Read tool calls name, in order, once each. `keep` takes a request by key, as in
+// partOf; the Read calls of a request it refuses are left out.
+export function filesRead(text, keep = () => true) {
   const read = new Set();
   for (const line of text.split('\n')) {
-    const content = parseLine(line)?.message?.content;
-    if (!Array.isArray(content)) continue;
+    const entry = parseLine(line);
+    const content = entry?.message?.content;
+    if (!Array.isArray(content) || !keep(requestKey(entry))) continue;
     for (const block of content) {
       if (block?.type === 'tool_use' && block.name === 'Read' && typeof block.input?.file_path === 'string') read.add(block.input.file_path);
     }

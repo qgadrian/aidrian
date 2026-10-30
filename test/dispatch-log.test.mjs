@@ -387,6 +387,38 @@ test('sessionRow splits main and subagents, with effort, cost per model, cache w
   assert.equal(row.cost_usd, 16.52);
 });
 
+test('a request a forked subagent`s transcript repeats from its parent counts once, on the parent`s row: its Read and its tokens', (t) => {
+  const { base, dir, log, hook } = project(t);
+  const main = path.join(base, 's1.jsonl');
+  const subagents = path.join(base, 's1/subagents');
+  mkdirSync(subagents, { recursive: true });
+  const read = (id, doc) => JSON.stringify({ type: 'assistant', message: { id, model: 'claude-sonnet-5-5', usage: { input_tokens: 10, output_tokens: 5 }, content: [{ type: 'tool_use', name: 'Read', input: { file_path: path.join(dir, doc) } }] } });
+  const [rules, testing, sharing] = ['docs/knowledge/product/product-rules.md', 'docs/knowledge/engineering/testing.md', 'docs/knowledge/product/sharing.md'];
+  // a1 is forked from the main conversation, and a2 from a1, which a2's .meta.json names as its parent.
+  writeFileSync(main, read('m1', rules));
+  writeFileSync(path.join(subagents, 'agent-a1.jsonl'), [read('m1', rules), read('a1-1', testing)].join('\n'));
+  writeFileSync(path.join(subagents, 'agent-a2.jsonl'), [read('m1', rules), read('a1-1', testing), read('a2-1', sharing)].join('\n'));
+  writeFileSync(path.join(subagents, 'agent-a2.meta.json'), JSON.stringify({ agentType: 'Explore', parentAgentId: 'a1' }));
+  for (const id of ['a2', 'a1']) {
+    const stop = { session_id: 's1', cwd: dir, transcript_path: main, agent_id: id, agent_type: 'Explore', last_assistant_message: 'Done.', stop_hook_active: false };
+    assert.equal(hook('hook-subagent-stop.mjs', { ...stop, agent_transcript_path: path.join(subagents, `agent-${id}.jsonl`) }).status, 0);
+  }
+  assert.equal(hook('hook-session-end.mjs', { session_id: 's1', cwd: dir, transcript_path: main }).status, 0);
+
+  const rows = log();
+  const one = { input: 10, output: 5, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0 };
+  assert.deepEqual(rows.map((row) => [row.agent_id ?? 'main', row.docs_read.map((doc) => doc.path), row.tokens ?? row.main.tokens]), [
+    ['a2', [sharing], one],
+    ['a1', [testing], one],
+    ['main', [rules], one],
+  ], 'each row holds only the requests it made');
+  assert.deepEqual(rows[2].subagents.tokens, { ...one, input: 20, output: 10 }, 'the session`s subagent side is the sum of the stop rows');
+  const bytes = (doc) => statSync(path.join(dir, doc)).size;
+  const { docs, totals } = summarizeDocs(rows);
+  assert.deepEqual(docs.find((doc) => doc.path === rules), { path: rules, reads: 1, bytes: bytes(rules), read_bytes: bytes(rules), readers: ['main'] });
+  assert.deepEqual([totals.reads, totals.read_bytes], [3, bytes(rules) + bytes(testing) + bytes(sharing)]);
+});
+
 test('sessionRow without a transcript has no models and no docs read', () => {
   const row = sessionRow({ session_id: 's' }, null, { env: {}, now: NOW });
   assert.deepEqual([row.models, row.docs_read], [[], []]);

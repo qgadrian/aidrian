@@ -27,11 +27,15 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | Field | Meaning |
 | --- | --- |
 | `ts`, `session_id`, `agent_id`, `agent_type` | Which subagent. `agent_id` joins it to its `dispatch` row. |
-| `tokens` | `input`, `output`, `cache_read`, and `cache_write` over the subagent's transcript, counted once per API request. `cache_write` is `cache_write_5m` plus `cache_write_1h`, the cache writes kept 5 minutes and 1 hour, which cost 1.25x and 2x the input price. |
+| `tokens` | `input`, `output`, `cache_read`, and `cache_write` over the requests the subagent made, counted once per API request. `cache_write` is `cache_write_5m` plus `cache_write_1h`, the cache writes kept 5 minutes and 1 hour, which cost 1.25x and 2x the input price. |
 | `models`, `cost_usd` | The models it used, and the cost estimated from list prices (`lib/transcript.mjs`). |
 | `docs_read` | The knowledge docs it opened with the Read tool, as `{ "path", "bytes" }`: the path the index gives, and the doc's size. `null` while `telemetry.docReads` is off. |
 | `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not, `chat` when it presents none. |
 | `paths` | Those paths, at most 20. |
+
+A forked subagent's transcript starts with a copy of its parent's requests, and those stay the parent's:
+their tokens and Read calls count on the main conversation's `session` row, or on the `stop` row of the subagent
+that the `.meta.json` beside the transcript names as `parentAgentId`. Each request counts once.
 
 When `delivered` is `missing`, the hook sends the subagent back once:
 it is told which paths do not exist, and either writes them, corrects its report, or says it removed them on purpose.

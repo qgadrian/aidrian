@@ -66,6 +66,7 @@ test('filesRead lists each Read file_path once; subagentTranscripts finds a sess
   const read = (file) => usageLine(file, 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', name: 'Read', input: { file_path: file } }] });
   const other = usageLine('x', 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'cat /a.md' } }] });
   assert.deepEqual(filesRead([read('/r/a.md'), other, read('/r/b.md'), read('/r/a.md')].join('\n')), ['/r/a.md', '/r/b.md']);
+  assert.deepEqual(filesRead([read('/r/a.md'), read('/r/b.md')].join('\n'), (key) => key !== '/r/a.md'), ['/r/b.md'], 'only the requests `keep` takes');
 
   const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-transcript-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

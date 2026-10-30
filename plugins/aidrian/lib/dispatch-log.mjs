@@ -119,11 +119,12 @@ export function stopAgent(input) {
   return { session_id: text(input.session_id), agent_id: text(input.agent_id), agent_type: text(input.agent_type) ?? 'general-purpose' };
 }
 
-// SubagentStop: the subagent's tokens, cost, the knowledge docs it read with their sizes, and its delivery check.
-// `docReads: false` (config.json `telemetry.docReads`) records `docs_read: null`.
+// SubagentStop: the subagent's tokens, cost, the knowledge docs it read with their sizes, and its delivery check, over
+// the requests it made itself (ownRequests). `docReads: false` (config.json `telemetry.docReads`) records `docs_read: null`.
 export function stopRow(input, project, { now = Date.now(), docReads = true, delivery = checkDelivery(input, project) } = {}) {
   const transcript = typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
-  const usage = transcript ? aggregateUsage(transcript).perModel : {};
+  const own = transcript ? ownRequests(input) : undefined;
+  const usage = transcript ? partOf(aggregateUsage(transcript), own).perModel : {};
   const { claims, missing } = delivery;
   return {
     event: 'stop',
@@ -132,10 +133,32 @@ export function stopRow(input, project, { now = Date.now(), docReads = true, del
     tokens: sumTokens(usage),
     models: Object.keys(usage),
     cost_usd: estimateCostUsd(usage).total,
-    docs_read: !docReads ? null : transcript ? knowledgeDocsRead(filesRead(transcript), project) : [],
+    docs_read: !docReads ? null : transcript ? knowledgeDocsRead(filesRead(transcript, own), project) : [],
     delivered: missing.length ? 'missing' : claims.length ? 'file' : 'chat',
     paths: claims,
   };
+}
+
+// A forked subagent's transcript starts with a copy of its parent's, and a copied request stays the parent's: its tokens
+// and Read calls count on the parent's row, as a session row counts them for its main conversation. Returns `keep` for
+// partOf and filesRead: it refuses a request that the main conversation's transcript holds, or the transcript of the
+// subagent that spawned this one, which the `.meta.json` beside this one's transcript names as `parentAgentId`.
+function ownRequests(input) {
+  const agent = input.agent_transcript_path;
+  const parents = [input.transcript_path];
+  let parent;
+  try {
+    parent = JSON.parse(readText(agent.replace(/\.jsonl$/u, '.meta.json')) ?? 'null')?.parentAgentId;
+  } catch {
+    // No readable .meta.json: the main conversation is the only parent.
+  }
+  if (typeof parent === 'string' && /^[\w-]+$/u.test(parent)) parents.push(path.join(path.dirname(agent), `agent-${parent}.jsonl`));
+  const inherited = new Set();
+  for (const file of parents) {
+    const content = typeof file === 'string' && file !== agent ? readText(file) : null;
+    if (content) for (const key of aggregateUsage(content).requests.keys()) inherited.add(key);
+  }
+  return (key) => !inherited.has(key);
 }
 
 // SessionEnd: the whole session's tokens and estimated cost, main conversation and subagents together and each apart,

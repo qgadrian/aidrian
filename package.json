@@ -1,6 +1,6 @@
 {
   "name": "aidrian-harness",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "private": true,
   "description": "Shared AI harness for Claude Code and Codex: agents, skills, hooks, the aidrian command, and a project-folder contract",
   "engines": {

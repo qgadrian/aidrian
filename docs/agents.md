@@ -6,7 +6,7 @@ A project keeps its own agents in its own folders, such as `.claude/agents/`, an
 
 | Path | What it holds | Edit it |
 | --- | --- | --- |
-| `plugins/aidrian/agents-src/<name>.md` | The agent: neutral frontmatter and the body every host gets | yes |
+| `plugins/aidrian/agents-src/<group>/<name>.md` | The agent: neutral frontmatter and the body every host gets | yes |
 | `plugins/aidrian/providers/<provider>.json` | What one host decides per agent, such as model, effort, and tools | yes |
 | `plugins/aidrian/agent-addons/<name>.<provider>.md` | Optional text only one host gets, after the body | yes |
 | `plugins/aidrian/agents/<name>.md` | The Claude Code agent | no, generated |
@@ -14,6 +14,20 @@ A project keeps its own agents in its own folders, such as `.claude/agents/`, an
 
 After an edit, run `npm run build`, and commit the sources and the generated files together.
 `npm run check` fails while a generated file is missing, stale, extra, or edited by hand.
+
+## Groups
+
+Each agent source sits in one group folder, such as `agents-src/build/`.
+The folders are `GROUPS` in `scripts/build.mjs`, and each has one agents table in [Agents and skills](agents-and-skills.md), in the same order.
+A test fails when a table and its folder list different agents.
+
+- A group only sorts the sources. An agent's name stays its file name, unique across all groups.
+- The generated agents stay in flat folders.
+  Claude Code makes a subfolder of a plugin's `agents/` part of the agent's name, so `agents/build/x.md` would load as `aidrian:build:x`.
+- `providers/<provider>.json` and `agent-addons/` name an agent without its group.
+
+To add a group, add its folder to `GROUPS` and its table to [Agents and skills](agents-and-skills.md).
+The build fails on a source outside a group folder, on a folder not in `GROUPS`, and on one name in two groups.
 
 ## Neutral fields
 

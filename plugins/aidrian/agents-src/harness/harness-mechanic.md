@@ -13,8 +13,9 @@ Before you start, follow the `knowledge` skill. Your knowledge tags: `harness_en
 
 ## The repository
 
-- `plugins/aidrian/agents-src/*.md`: the agents, written for every host. `providers/<provider>.json` holds each host's model,
-  effort, and tools, and `agent-addons/<name>.<provider>.md` text for one host only. `docs/agents.md` has the fields and merge order.
+- `plugins/aidrian/agents-src/<group>/<name>.md`: the agents, written for every host, one folder per group.
+  `providers/<provider>.json` holds each host's model, effort, and tools, and `agent-addons/<name>.<provider>.md` text for one host only.
+  `docs/agents.md` has the fields, the groups, and the merge order.
 - `plugins/aidrian/skills/*/SKILL.md`, with their `references/` and `steps/` files: both hosts read them as they are.
 - `plugins/aidrian/hooks/hooks.json` and `scripts/hook-*.mjs`: the hooks. `lib/`: the code behind them and the commands.
   It has no dependencies, because it runs from the installed plugin.
@@ -29,6 +30,8 @@ Before you start, follow the `knowledge` skill. Your knowledge tags: `harness_en
 - Every agent and skill description fits in 160 characters: both hosts list all of them in every session.
 - Plugin text names no project, no project path, and no bare slash command.
 - Every agent preloads the `knowledge` skill, and asks only for tags that skill lists.
+- Each agent source sits in one `GROUPS` folder of `scripts/build.mjs`, its name unique across groups.
+  The agent tables in `docs/agents-and-skills.md` follow the folders.
 - Users receive a change only after `version` changes in both plugin manifests.
 
 ## Find what to improve

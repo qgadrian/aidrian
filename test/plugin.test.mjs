@@ -7,7 +7,7 @@ import test from 'node:test';
 import { parse } from 'yaml';
 
 import { pluginTags } from '../plugins/aidrian/lib/knowledge.mjs';
-import { CLAUDE_AGENTS, readAgents } from '../scripts/build.mjs';
+import { CLAUDE_AGENTS, GROUPS, readAgents } from '../scripts/build.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const PLUGIN = path.join(ROOT, 'plugins/aidrian');
@@ -105,6 +105,19 @@ test('the agent and skill tables list every shipped agent and skill once, and no
   assert.deepEqual(rows('Skills'), readdirSync(path.join(PLUGIN, 'skills')).sort());
 });
 
+test('the agent tables are the agents-src/ group folders: one table per group, in GROUPS order, with that folder\'s agents', () => {
+  const doc = readFileSync(path.join(ROOT, 'docs/agents-and-skills.md'), 'utf8');
+  const section = doc.split('\n## Agents\n')[1].split('\n## ')[0];
+  const tables = [...section.matchAll(/^\| ([^|`]+?) \| What it does \|\n\| --- \| --- \|\n((?:\|.*\n?)*)/gm)]
+    .map(([, heading, rows]) => [heading, [...rows.matchAll(/^\| `([a-z0-9-]+)` \|/gm)].map((match) => match[1]).sort()]);
+  const agents = readAgents();
+  const groups = Object.entries(GROUPS).map(([group, heading]) => [
+    heading,
+    agents.filter((agent) => agent.group === group).map((agent) => agent.meta.name).sort(),
+  ]);
+  assert.deepEqual(tables, groups);
+});
+
 // Codex cuts a SKILL.md at 8,000 bytes: MAX_SKILL_PROMPT_BYTES in codex-rs/ext/skills/src/render.rs.
 // Keep a margin. A longer skill keeps its steps in SKILL.md and moves detail into references/ or steps/ files,
 // each named in SKILL.md with when to read it.
@@ -171,12 +184,10 @@ test('an agent and the skill of the same name ask for the same knowledge tags', 
     const sentence = /[Kk]nowledge tags: ([^.]*)/.exec(readFileSync(file, 'utf8'))?.[1].split(/\bplus\b/)[0] ?? '';
     return [...sentence.matchAll(/`([a-z][a-z0-9_]*)`/g)].map(([, tag]) => tag).sort();
   };
-  const pairs = readdirSync(path.join(PLUGIN, 'agents-src'))
-    .map((file) => path.basename(file, '.md'))
-    .filter((name) => existsSync(path.join(PLUGIN, 'skills', name, 'SKILL.md')));
+  const pairs = readAgents().filter(({ meta }) => existsSync(path.join(PLUGIN, 'skills', meta.name, 'SKILL.md')));
   assert.ok(pairs.length >= 3, 'agent and skill pairs are found');
-  for (const name of pairs) {
-    const agent = tags(path.join(PLUGIN, 'agents-src', `${name}.md`));
+  for (const { file, meta: { name } } of pairs) {
+    const agent = tags(path.join(PLUGIN, 'agents-src', file));
     assert.ok(agent.length, `${name}: the agent lists its knowledge tags`);
     assert.deepEqual(tags(path.join(PLUGIN, 'skills', name, 'SKILL.md')), agent, `${name}: the skill and the agent list the same tags`);
   }

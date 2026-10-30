@@ -9,10 +9,13 @@ and one project folder, `.aidrian/`, that indexes them and holds the plugin's se
 
 | Kind | Names |
 | --- | --- |
-| Agents | `planning-agent`, `initiative-agent`, `agent-issue-writer`, `explorer`, `github-archaeologist`, `integrator`, `doc-updater`, `design-source-explorer`, `harness-librarian`, `harness-mechanic` |
-| Skills | `knowledge`, `knowledge-update`, `planning-agent`, `initiative-agent`, `agent-issue-writer`, `worktree-new`, `worktree-cleanup`, `worktree-integrate`, `pr-write`, `pr-review`, `pr-review-fix`, `pr-review-loop`, `specialist-review`, `design-import`, `challenge`, `lesson`, `lesson-triage`, `session-handoff`, `session-continue` |
+| Agents | `orchestrator`, `planning-agent`, `initiative-agent`, `agent-issue-writer`, `explorer`, `github-archaeologist`, `integrator`, `doc-updater`, `design-source-explorer`, `harness-librarian`, `harness-mechanic` |
+| Skills | `knowledge`, `knowledge-update`, `orchestration`, `planning-agent`, `initiative-agent`, `agent-issue-writer`, `worktree-new`, `worktree-cleanup`, `worktree-integrate`, `pr-write`, `pr-review`, `pr-review-fix`, `pr-review-loop`, `specialist-review`, `design-import`, `challenge`, `lesson`, `lesson-triage`, `session-handoff`, `session-continue` |
 | Commands | `aidrian`: sets up and checks the project folder (`aidrian init`, `aidrian check`), prints the state folder (`aidrian state`), creates and cleans up task worktrees (`aidrian worktree`), waits for the review bot and reads check and finding verdicts (`aidrian pr`), checks commit messages (`aidrian commit-msg`), lints skills, agents, paths, and the knowledge budget (`aidrian lint`), keeps the lesson inbox (`aidrian lesson`), checks handoff briefs (`aidrian handoff`), and reports on the dispatch log and the knowledge docs agents read (`aidrian report`, `aidrian report docs`); `aidrian-knowledge`: routes, searches, and drafts a project's buckets |
 | Hooks | at session and subagent start, one line naming the `always` docs and how to find the rest; before each Bash command, git, process, and pull request body rules; before each file write, an opt-in guard that keeps the main checkout clean; before each dispatch, the project's model and effort for that agent; after a Markdown write, a line-length check; before compaction, a checklist of what to keep; when a long session ends a turn, one offer to hand off; after each dispatch, subagent stop, and session end, a dispatch log row. [docs/hooks.md](docs/hooks.md) lists them |
+
+For work that spans several agents, start Claude Code with `claude --agent aidrian:orchestrator`, the coordination entry:
+the orchestrator classifies the work, routes each part to an agent, and keeps the Human in the loop.
 
 The `knowledge` skill is the shared rule set.
 Every agent preloads it: it says how to load the project's buckets, which project rules win, and the defaults a project can override.

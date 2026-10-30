@@ -1,0 +1,71 @@
+# Phase 0: resolve the issue
+
+Read-only on Linear. A failed guard below is a **stop and ask** unless it says otherwise.
+Linear tool names are the connector's, such as `get_issue`; use the host's Linear tools with the same intent.
+
+## 1. Preflight
+
+- The main checkout is the parent folder of `git rev-parse --path-format=absolute --git-common-dir`.
+- `<state>` is the folder `aidrian state` prints. A plan for this issue may exist at
+  `<state>/plans/<key>-implementation.md`, the key in lowercase, in the `planning-agent` skill's `references/plan-file.md` schema.
+  Use it for phase 2 unless it is stale: `generated_at` older than 7 days, the issue's `updatedAt` newer than its `ticket_updated_at`,
+  or a `files_in_scope` path missing that no slice creates. Stale: ask whether to plan again or go on with it.
+
+## 2. Resolve the reference
+
+- A key in the project's format: fetch it directly.
+- A Linear issue URL: take the key from the URL.
+- Anything else, such as `#123` or `owner/repo#123`: ask for the key. Never search Linear to guess it.
+  A key the Human offers may be confirmed by its attachments' link back to the old reference.
+
+## 3. Fetch
+
+`get_issue` with its relations returns the title, description, labels, `status` and `statusType`, assignee, `attachments`,
+`relations`, `parentId`, `gitBranchName`, and `updatedAt` in one call. `list_comments` adds the comments.
+Keep one snapshot for the run; fetch again only when the Human asks.
+
+## 4. Base branch
+
+First match wins: `--base`; the target branch the issue declares under its dependencies and sequencing; config.json `defaultBranch`.
+Only a successful read that finds no declaration falls back to the default: a failed read is unknown.
+
+A base other than the default must already exist: `git fetch origin`, then `git rev-parse --verify origin/<base>`.
+Missing: stop and ask, quoting the commands that create it from the default branch. Never create it, and never fall back:
+a pull request against the wrong base ships a partial change.
+Record the base and its source for the report.
+
+## 5. Re-entry
+
+When the issue's `gitBranchName` branch exists with commits ahead of `origin/<base>`:
+
+- `git log --oneline origin/<base>..<branch>` and `git diff --stat origin/<base>...<branch>`.
+- Mark each plan slice whose commit subject appears there `complete`.
+- `gh pr list --head <branch> --state open --json number,url`. An open pull request: stop and ask whether to update it or start over.
+- Otherwise resume at the first incomplete slice. Do not plan again or rewind.
+
+## 6. Parse the description
+
+Read the sections of the issue format the project's `issue_tracker` knowledge defines, such as goal, scope, non-goals,
+files to modify, create, reference, and reuse, constraints, dependencies and sequencing, acceptance criteria with ids
+such as `AC1`, verification, and the agent action plan with its owners, reviewers, and validators.
+
+Every agent the action plan names must exist, as a project agent or this plugin's.
+A missing one: ask whether to substitute by the routing rule.
+
+## 7. Precedence
+
+On a conflict: the Human's explicit scope in this session, then project knowledge, then the issue's agent action plan,
+non-goals, and files to modify, then the critical-flow, product, and security gates, then this skill's defaults.
+
+## 8. Guards
+
+- **Terminal**: `statusType` is `completed`, `canceled`, or `duplicate`.
+- **Assignee**: assigned to someone other than the current user (`get_user` for `me`). Never change the assignee.
+- **Blocked**: an issue in `relations.blockedBy` is not terminal. Note `relations.blocks` and `parentId` in the report.
+- **Merge dependencies**: the dependencies section lists one that has not merged.
+- **Silent issue**: no acceptance criteria, no meaningful description, and no files to modify. Offer `agent-issue-writer` to fill it in.
+- **Critical flow**: run `aidrian-knowledge route product_sensitive` and read what it lists.
+  When the issue touches a flow those docs declare critical: `product-manager` first, then a `planning-agent` plan.
+  Implement only after its `sign_off: approved`; `code-reviewer` signs off after the implementation.
+
+Apart from the In Progress move in phase 1, nothing before phase 7 writes to Linear or opens anything on GitHub.

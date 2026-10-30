@@ -101,13 +101,14 @@ Elsewhere, run it by its path, such as `path/to/aidrian-harness/plugins/aidrian/
 
 ## Local state
 
-The plugin writes plans, session handoff briefs, review state, pull request body drafts, the lesson inbox, and the dispatch log
-on each machine. They live in one state folder per project, outside the repository, so git never sees them:
+The plugin writes plans, session handoff briefs, agents' machine handoffs, review state, pull request body drafts, the lesson inbox,
+and the dispatch log on each machine. They live in one state folder per project, outside the repository, so git never sees them:
 
 ```text
 $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── plans/                local plans
-├── handoffs/             session handoff briefs
+├── handoffs/             session handoff briefs, which the session-continue skill reads
+├── dispatch/             machine handoffs that background agents write for the orchestrator
 ├── reviews/              review manifests, and the agents the specialist-review skill keeps warm
 ├── lessons/inbox.jsonl   the lesson inbox
 ├── tmp/                  pull request bodies the pr-write skill drafts
@@ -123,7 +124,8 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 - `"state": { "dir": "<path>" }` in config.json moves the folder; [config.md](config.md) lists the key.
   A relative path starts at the repository root, and `aidrian check` then requires git to ignore it.
 
-`aidrian state` prints the folder. Skills use it to find plans and handoff briefs, and to draft pull request bodies.
+`aidrian state` prints the folder. Skills use it to find plans and handoff briefs, and to draft pull request bodies;
+the orchestrator uses it to name each background agent's handoff file.
 `aidrian lesson` adds, lists, and resolves lessons in the inbox; `aidrian handoff` checks a handoff brief against the one it supersedes.
 `aidrian report` summarizes the [dispatch log](dispatch-log.md).
 

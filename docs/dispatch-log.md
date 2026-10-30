@@ -178,9 +178,9 @@ Partial: the log starts at 2026-10-27T09:12:44.000Z; older rows were rotated out
 | --- | --- | --- |
 | Telemetry is off | `enabled: false` | config.json or `.aidrian.local.json` sets `telemetry.enabled` to `false` now. |
 | Doc reads are off | `doc_reads: false` | The same for `telemetry.docReads`. |
-| Hook denies are off | `hook_denies: false` | The same for `telemetry.hookDenies`; only the default view says it. |
+| Hook denies are off | `hook_denies: false` | The same for `telemetry.hookDenies`; only the default and health views say it. |
 | Partial: rows written with doc reads off | `rows_without_doc_reads` | Agent and session rows in the window that hold `docs_read: null`. |
-| Partial: runs named a missing file before stop rows recorded send-backs | `runs_without_send_back` | Agent runs in the window with a `stop` row whose `delivered` is `missing` and that has no `sent_back`; only the default view says it. |
+| Partial: runs named a missing file before stop rows recorded send-backs | `runs_without_send_back` | Agent runs in the window with a `stop` row whose `delivered` is `missing` and that has no `sent_back`; only the default and health views say it. |
 | Partial: the log starts at | `rotated_out_before` | Rotation dropped rows, and the window starts before the oldest row left. |
 
 The default view also says `Partial: N agent runs were logged before tool counts` when some `stop` rows have no tool counts:
@@ -292,7 +292,7 @@ Each signal names its sample and is judged by config.json [`telemetry.health`](c
 | --- | --- | --- | --- |
 | Knowledge budget | the indexed docs | the `always` docs pass `knowledge.budgets.alwaysBytes`, or a tagged doc passes `taggedDocBytes` | `split-doc` |
 | Doc reads | the agent and session rows that recorded doc reads | the doc with the most bytes read takes over `topDocPercent` of them, of two docs read or more; or a tagged doc nobody read | `split-doc` |
-| Agents | per agent type, its dispatches, and its runs | over `redispatchPercent` of its dispatches repeat a task; over `sentBackPercent` of its runs were sent back by the delivery check | `agent-prompt` |
+| Agents | per agent type, its dispatches, and its runs with a known send-back | over `redispatchPercent` of its dispatches repeat a task; over `sentBackPercent` of those runs were sent back by the delivery check | `agent-prompt` |
 | Reviews | the reviewed pull requests merged in the window, and the late findings checked | over `reviewRounds` rounds a pull request on average; over `lateFindingPercent` of late findings on a line already reviewed | `round-cap` |
 | Hook denies | the sessions with a row in the window | one rule blocked `denyHotSpot` calls or more | `deny-rule` |
 | Session cost | the sessions in each half of the window's sessions, in the order they ended | the newer half costs over `costRisePercent` more a session than the older half | `cost` |
@@ -301,6 +301,8 @@ Each signal names its sample and is judged by config.json [`telemetry.health`](c
 - **not enough data**: the sample is under `telemetry.health.minSample`. Such a signal is never a problem, whatever its rate:
   3 of 4 is not a trend. The knowledge budget and the lessons are sizes and counts, not rates, so no minimum applies;
   the budget says not enough data only when nothing is indexed.
+- **unknown**: a run that named a missing file before `stop` rows recorded `sent_back`. The share sent back and its sample leave it out,
+  the agent's line counts it as `N unknown`, and a `Partial:` line under the title counts them all.
 - **unavailable**: the reviews when `gh` cannot answer, and the hook denies while `telemetry.hookDenies` is off.
 - **Problems** are ranked by kind: a P1 lesson; the knowledge budget; an agent re-dispatched, then sent back;
   review rounds, then late findings; a hook-deny hot spot; a fix that recurred; rising cost; the doc with the most bytes read;

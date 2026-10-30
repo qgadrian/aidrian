@@ -20,15 +20,17 @@ const at = (hoursAgo) => new Date(NOW - hoursAgo * 3_600_000).toISOString();
 // config.json's defaults, with `health` over telemetry.health.
 const configWith = (health = {}) => ({ ...DEFAULTS, telemetry: { ...DEFAULTS.telemetry, health: { ...DEFAULTS.telemetry.health, ...health } } });
 
-// One subagent run: its dispatch row and its stop row, and a first stop row marked `missing` when the delivery check sent it back.
+// One subagent run: its dispatch row and its stop row, and a first stop row marked `missing` and `sent_back` when the
+// delivery check sent it back. `legacy` writes the stop rows as they were before they recorded `sent_back`.
 let runs = 0;
-function run(agentType, session, description, { sentBack = false, docs = [] } = {}) {
+function run(agentType, session, description, { sentBack = false, legacy = false, docs = [] } = {}) {
   const id = `agent-${(runs += 1)}`;
   const stop = { event: 'stop', ts: at(48), session_id: session, agent_id: id, agent_type: agentType, docs_read: docs, cost_usd: 0.1 };
+  const mark = (row, sent) => (legacy ? row : { ...row, sent_back: sent });
   return [
     { event: 'dispatch', ts: at(48), session_id: session, agent_id: id, agent_type: agentType, description },
-    ...(sentBack ? [{ ...stop, delivered: 'missing' }] : []),
-    { ...stop, delivered: 'file' },
+    ...(sentBack ? [mark({ ...stop, delivered: 'missing' }, true)] : []),
+    mark({ ...stop, delivered: 'file' }, false),
   ];
 }
 const A = { path: 'docs/a.md', bytes: 30000 };
@@ -116,9 +118,9 @@ test('summarizeHealth: each signal carries its sample, and a part under minSampl
     budget: 'problem', docs: 'problem', agents: 'problem', reviews: 'problem', denies: 'problem', cost: 'problem', lessons: 'problem',
   });
   assert.deepEqual(signals.agents.agents.map((agent) => [agent.agent_type, agent.redispatch, agent.sent_back]), [
-    ['Explore', { n: 3, percent: 0, status: 'not_enough_data' }, { n: 3, percent: 0, status: 'not_enough_data' }],
-    ['aidrian:explorer', { n: 10, percent: 40, status: 'problem' }, { n: 10, percent: 20, status: 'problem' }],
-    ['code-reviewer', { n: 6, percent: 0, status: 'ok' }, { n: 6, percent: 0, status: 'ok' }],
+    ['Explore', { n: 3, percent: 0, status: 'not_enough_data' }, { n: 3, percent: 0, status: 'not_enough_data', unknown: 0 }],
+    ['aidrian:explorer', { n: 10, percent: 40, status: 'problem' }, { n: 10, percent: 20, status: 'problem', unknown: 0 }],
+    ['code-reviewer', { n: 6, percent: 0, status: 'ok' }, { n: 6, percent: 0, status: 'ok', unknown: 0 }],
   ]);
   assert.deepEqual(signals.reviews.late, { n: 2, on_seen_line: 2, percent: 100, status: 'not_enough_data' }, '100% of 2 is not judged');
   assert.deepEqual(signals.denies.rules.map((rule) => [rule.rule, rule.count]), [['git-amend', 6], ['process-kill', 1]], 'pr-body is older than the window');
@@ -150,6 +152,30 @@ test('summarizeHealth: a sample under minSample in each windowed signal hides a 
   // Docs under the minimum: no top-doc and no never-read problem.
   const docs = summarizeHealth({ rows: SESSION_ROWS.slice(0, 3), sinceMs: SINCE, now: NOW, knowledge: KNOWLEDGE, reviews: REVIEWS, config: configWith() });
   assert.deepEqual([docs.signals.docs.status, docs.signals.docs.sample.n], ['not_enough_data', 2]);
+});
+
+test('summarizeHealth: a run that named a missing file before stop rows recorded sent_back is unknown, out of the sample and the rate', () => {
+  // planner: 3 runs none sent back, and 2 written before `sent_back` that named a missing file. Counting `delivered: missing`
+  // would make it 2 of 5 runs, 40%.
+  const rows = [
+    ...['p1', 'p2', 'p3'].flatMap((task) => run('planner', 's8', task)),
+    ...['p4', 'p5'].flatMap((task) => run('planner', 's8', task, { sentBack: true, legacy: true })),
+  ];
+  const health = (more = []) =>
+    summarizeHealth({ rows: [...rows, ...more], sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: { error: 'gh: not found' }, config: configWith() });
+  const few = health();
+  assert.deepEqual(few.signals.agents.agents.map((agent) => [agent.agent_type, agent.sent_back]), [
+    ['planner', { n: 3, percent: 0, status: 'not_enough_data', unknown: 2 }],
+  ], '3 known runs are under minSample 5');
+  assert.deepEqual(few.problems, []);
+  assert.match(formatHealth(few, { file: 'f', since: '30d', skipped: 0 }), /\n {4}planner: .*, sent back not enough data \(n=3, needs 5, 2 unknown\)\n/);
+  // Two more runs with sent_back reach the minimum: 1 of 5 known runs sent back, 20%, over 10%.
+  const enough = health([...run('planner', 's8', 'p6', { sentBack: true }), ...run('planner', 's8', 'p7')]);
+  assert.deepEqual(enough.signals.agents.agents[0].sent_back, { n: 5, percent: 20, status: 'problem', unknown: 2 });
+  const [problem] = enough.problems.filter((item) => item.kind === 'sent-back');
+  assert.deepEqual([problem.value, problem.sample], [20, { n: 5, of: 'runs with a known send-back' }]);
+  assert.equal(problem.summary, 'planner: the delivery check sent back 1 of 5 runs (20%), over 10%; each named a file it had not written.');
+  assert.match(formatHealth(enough, { file: 'f', since: '30d', skipped: 0 }), /\n {4}planner: .*, 20% sent back \(n=5, 2 unknown\)\n/);
 });
 
 test('summarizeHealth: telemetry.health thresholds move the verdicts; hook denies off leave that signal unavailable', () => {
@@ -238,14 +264,17 @@ test('aidrian report health prints the page since 30d, --json all of it, takes -
   assert.match(empty.stdout, /\n {2}Reviews: not enough data; rounds not enough data \(n=0, needs 5 reviewed\)/);
   const state = spawnSync(CLI, ['state'], { cwd: dir, env, encoding: 'utf8' }).stdout.trim();
   mkdirSync(state, { recursive: true });
-  // The fixture rows, moved into the last day so that they fall in any window.
-  const recent = [...RUN_ROWS, ...SESSION_ROWS, ...DENY_ROWS].map((row) => ({ ...row, ts: new Date(Date.now() - (NOW - Date.parse(row.ts)) / 20).toISOString() }));
+  // The fixture rows and a run written before stop rows recorded `sent_back`, moved into the last day so that they fall in any window.
+  const legacy = run('planner', 's8', 'p1', { sentBack: true, legacy: true });
+  const recent = [...RUN_ROWS, ...SESSION_ROWS, ...DENY_ROWS, ...legacy].map((row) => ({ ...row, ts: new Date(Date.now() - (NOW - Date.parse(row.ts)) / 20).toISOString() }));
   writeFileSync(path.join(state, 'dispatch-log.jsonl'), `${recent.map((row) => JSON.stringify(row)).join('\n')}\n`);
   const text = report(['--prs', '5']);
   assert.equal(text.status, 0, text.stderr);
+  assert.match(text.stdout, /\nPartial: 1 agent runs named a missing file before stop rows recorded send-backs; the share sent back leaves them out\.\n/);
   assert.match(text.stdout, /\n {2}1\. aidrian:explorer: 40% of 10 dispatches repeated a task/);
   const json = JSON.parse(report(['--json', '--since', '7d']).stdout);
   assert.deepEqual(Object.keys(json), ['file', 'rotated', 'since', 'skipped', 'coverage', 'thresholds', 'problems', 'signals']);
+  assert.equal(json.coverage.runs_without_send_back, 1);
   assert.equal(json.since, '7d');
   assert.deepEqual(Object.keys(json.signals), ['budget', 'docs', 'agents', 'reviews', 'denies', 'cost', 'lessons']);
   assert.equal(json.signals.reviews.rounds.n, 0);

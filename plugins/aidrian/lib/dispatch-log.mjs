@@ -617,7 +617,7 @@ export const commands = {
           lessons: lessons(inboxPath(project, config)),
           config,
         });
-        const notes = coverageLines(cover, { hookDenies: true });
+        const notes = coverageLines(cover, { hookDenies: true, sendBacks: true });
         console.log(values.json ? JSON.stringify({ file, rotated, since, skipped, coverage: cover, ...health }) : formatHealth(health, { file, since, skipped, notes }));
         return 0;
       }

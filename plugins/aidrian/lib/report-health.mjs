@@ -127,7 +127,8 @@ function docsSignal(rows, sinceMs, { indexed, tags }, { minSample, topDocPercent
 }
 
 // Per agent type: the share of dispatches that repeat a task, over its dispatches, and the share of runs the delivery
-// check sent back, over its runs.
+// check sent back, over its runs whose stop rows say so. A run that named a missing file before stop rows recorded
+// `sent_back` is unknown: it leaves the sample as it leaves the rate, and counts in `unknown`.
 function agentsSignal(rows, sinceMs, { minSample, redispatchPercent, sentBackPercent }, add) {
   const judge = (n, rate, threshold) => {
     const percent = rate === null ? null : rate * 100;
@@ -136,7 +137,8 @@ function agentsSignal(rows, sinceMs, { minSample, redispatchPercent, sentBackPer
   };
   const agents = summarize(rows, { sinceMs }).agents.map((agent) => {
     const redispatch = judge(agent.dispatches, agent.redispatch_rate, redispatchPercent);
-    const sentBack = judge(agent.runs, agent.sent_back_rate, sentBackPercent);
+    const unknown = agent.runs_without_send_back;
+    const sentBack = { ...judge(agent.runs - unknown, agent.sent_back_rate, sentBackPercent), unknown };
     const sentBackLesson = labels(deliverySignal({ agentType: agent.agent_type, missing: [] }));
     if (redispatch.status === PROBLEM) {
       add('redispatch', {
@@ -148,7 +150,7 @@ function agentsSignal(rows, sinceMs, { minSample, redispatchPercent, sentBackPer
     }
     if (sentBack.status === PROBLEM) {
       add('sent-back', {
-        subject: agent.agent_type, value: sentBack.percent, threshold: sentBackPercent, sample: { n: sentBack.n, of: 'runs' },
+        subject: agent.agent_type, value: sentBack.percent, threshold: sentBackPercent, sample: { n: sentBack.n, of: 'runs with a known send-back' },
         summary: `${agent.agent_type}: the delivery check sent back ${agent.sent_back} of ${sentBack.n} runs (${sentBack.percent}%), over ${sentBackPercent}%; ` +
           'each named a file it had not written.',
         lesson: sentBackLesson,
@@ -290,7 +292,10 @@ export function formatHealth({ thresholds, problems, signals }, { file, since, s
     `${topDocs ? `most bytes read: ${topDocs} of ${kb(docs.read_bytes)} (over ${thresholds.health.topDocPercent}% is a problem); ` : ''}` +
     `${docs.never_read} indexed docs never read, ${docs.never_read_tagged.length} of them tagged`);
   const agentLines = agents.agents.map((agent) => {
-    const part = (label, judged) => (judged.status === NOT_ENOUGH ? `${label} not enough data (${n(judged.n, minSample)})` : `${judged.percent}% ${label} (n=${judged.n})`);
+    const part = (label, judged) => {
+      const sample = `${n(judged.n, minSample)}${judged.unknown ? `, ${judged.unknown} unknown` : ''}`;
+      return judged.status === NOT_ENOUGH ? `${label} not enough data (${sample})` : `${judged.percent}% ${label} (${sample})`;
+    };
     return `    ${agent.agent_type}: ${part('re-dispatched', agent.redispatch)}, ${part('sent back', agent.sent_back)}`;
   });
   lines.push(`${head('Agents', agents)}${agents.agents.length ? '' : '; no dispatches'} ` +

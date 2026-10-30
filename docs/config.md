@@ -198,7 +198,7 @@ Set only the keys you change; a team sets them in `config.json`, and one develop
 | --- | --- |
 | `minSample` | Not a threshold: a signal with a smaller sample says "not enough data" and is never a problem. |
 | `redispatchPercent` | More than this share of an agent type's dispatches repeat a task already dispatched in the same session. |
-| `sentBackPercent` | More than this share of an agent type's runs were sent back by the [delivery check](hooks.md#delivery-check). |
+| `sentBackPercent` | More than this share of an agent type's runs were sent back by the [delivery check](hooks.md#delivery-check), over the runs whose `stop` rows record it. |
 | `topDocPercent` | One knowledge doc takes more than this share of all the bytes of knowledge docs read. |
 | `reviewRounds` | The review bot takes more than this many rounds a pull request on average; 3 is the `autopilot` skill's cap. |
 | `lateFindingPercent` | More than this share of the late findings checked sat on a line the bot had already reviewed. |

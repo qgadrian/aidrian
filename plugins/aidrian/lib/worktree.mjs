@@ -14,6 +14,7 @@ import { CONFIG_ERROR, commandConfig } from './config.mjs';
 import { ghJson } from './gh.mjs';
 import { checkoutRoots, isIgnored } from './git.mjs';
 import { projectAt, worktreesDir } from './project.mjs';
+import { usageLines } from './usage.mjs';
 
 const SLUG = /^[A-Za-z0-9_+][A-Za-z0-9._+-]*$/;
 const DAY_SEC = 24 * 60 * 60;
@@ -56,7 +57,7 @@ export const commands = {
         console.log(JSON.stringify({ status: 'blocked', phase: error.phase ?? 'arguments', reason: error.message, ...(error.nextStep ? { next_step: error.nextStep } : {}) }));
         return 1;
       }
-      console.error(`usage: aidrian worktree ${commands.worktree.usage}`);
+      console.error(usageLines('worktree', commands.worktree.usage, 'usage: ').join('\n'));
       return 1;
     },
   },

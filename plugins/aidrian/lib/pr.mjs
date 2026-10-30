@@ -3,6 +3,7 @@
 
 import { commandConfig } from './config.mjs';
 import { projectAt } from './project.mjs';
+import { usageLines } from './usage.mjs';
 
 // `checks` exits 3 on a config with errors: its 1 is the failing verdict. `disposition` reads no config.
 const config = (exitCode) => commandConfig(projectAt(process.cwd()), { exitCode });
@@ -22,7 +23,7 @@ export const commands = {
     async run(args) {
       const [action, ...rest] = args;
       if (!Object.hasOwn(ACTIONS, action ?? '')) {
-        console.error(`usage: aidrian pr ${commands.pr.usage}`);
+        console.error(usageLines('pr', commands.pr.usage, 'usage: ').join('\n'));
         return 1;
       }
       return ACTIONS[action](rest);

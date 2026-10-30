@@ -60,6 +60,22 @@ function outside(dir, top) {
   return !isWithin(top, real);
 }
 
+// What a command prints when no project is at or above `start`. In a linked git worktree whose main checkout has a
+// project folder at the same place, the worktree was made before that folder reached its base branch, so `aidrian init`
+// would be the wrong advice: the worktree needs remaking, or the default branch merged in.
+export function noProjectMessage(start) {
+  const where = `no project folder at or above ${start}`;
+  const roots = checkoutRoots(start);
+  if (roots && roots.main !== roots.current) {
+    const main = findProject(path.join(roots.main, path.relative(roots.current, realPath(start))));
+    if (main) {
+      const branch = loadConfig(main).config.defaultBranch;
+      return `${where}: this worktree was created before ${main.dir}/ was committed and pushed; recreate it or merge ${branch}`;
+    }
+  }
+  return `${where}; run aidrian init`;
+}
+
 // The project at or above `start`, or one rooted at `start` that has no folder yet. For commands that work either way.
 export function projectAt(start) {
   return findProject(start) ?? openProject(path.resolve(start));

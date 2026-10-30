@@ -249,6 +249,9 @@ export function searchKnowledge(buckets, words, limit = 8) {
 export function initBucket(project, folder) {
   const { root } = project;
   const rel = insidePath(root, '', folder);
+  if (rel && !existsSync(path.join(root, rel))) {
+    throw new Error(`${folder}: no such folder in the project; create it and add your docs (mkdir ${rel}), or pass the folder that holds them`);
+  }
   if (!rel || !isDirectory(path.join(root, rel))) throw new Error(`${folder}: must be a folder inside the project`);
   const id = path.basename(rel).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'docs';
   const file = `${project.paths.knowledge}/${id}.json`;

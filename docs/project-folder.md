@@ -32,6 +32,7 @@ The project root is the nearest folder, at or above the current one, that has `.
 In a git checkout the search stops at the checkout's top folder.
 In a git worktree that is the worktree itself, so a branch reads its own committed knowledge.
 A worktree whose branch has no project folder has no project, even inside a main checkout that has one: the hooks stay silent there.
+`aidrian check` there says the worktree was created before the project folder was committed and pushed.
 
 To keep the folder somewhere else, commit `.aidrian.json` at the project root:
 

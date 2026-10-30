@@ -14,6 +14,7 @@ import { parseArgs } from 'node:util';
 import { commandConfig } from './config.mjs';
 import { findWrapViolations, nextFenceState } from './markdown-wrap.mjs';
 import { projectAt } from './project.mjs';
+import { usageLines } from './usage.mjs';
 
 const CARRIED_SECTION = /^(decisions|gotchas)\b/i;
 const BRIEF_NAME = /^(\d{4}-\d{2}-\d{2})-(.+)\.md$/;
@@ -29,7 +30,7 @@ export const commands = {
     run(args) {
       const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { prior: { type: 'string' } } });
       const [action, brief, ...extra] = positionals;
-      if (!['check', 'snapshot'].includes(action) || !brief || extra.length) return problem(`usage: aidrian handoff ${commands.handoff.usage}`);
+      if (!['check', 'snapshot'].includes(action) || !brief || extra.length) return problem(usageLines('handoff', commands.handoff.usage, 'usage: ').join('\n'));
       const briefPath = path.resolve(brief);
       const prior = values.prior && path.resolve(values.prior);
       const priorProblem = prior && unreadable(prior);

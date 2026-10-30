@@ -137,7 +137,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - Unlike that rule, it follows each `cd`, and reads the command line of `sh -c` and `bash -c`.
   After a `cd` to a folder it cannot name, such as `cd "$dir"`, a relative path counts when its name is one of the files or the project folder.
 - An interpreter given code on its command line or its input, such as `python3 -c`, `node -e`, `perl -e`, `ruby -e`, or a heredoc,
-  counts as a write to each of the files that code names.
+  counts as a write to each of the files that code names when the code can change a file.
+  That is code that writes, deletes, moves, copies, or links a file, opens one for writing, runs a program, or builds code to run,
+  and `perl -i` or `ruby -i`. Code that only reads, such as `json.load(open(...))` or `require(...)`, runs.
 - A write to a folder that holds one of the files, such as `rm -rf .aidrian`, counts; one to the project root, such as `cp notes.md .`, does not.
 - A call without `agent_id` is the main session's, which may still change them.
 - A block is [recorded](#recorded-blocks) as `config-guard`, with the file it changes as its reason.

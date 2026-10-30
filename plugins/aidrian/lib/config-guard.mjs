@@ -11,10 +11,11 @@ import { bashTargets, canonical, toolTargets } from './rules/main-checkout.mjs';
 
 const WRITE_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'apply_patch']);
 
-// The reason the subagent call in `input`, a PreToolUse payload, changes one of `project`'s config files, or null.
+// Why the subagent call in `input`, a PreToolUse payload, may not run because it changes one of `project`'s config files,
+// or null: { match, reason }. `match` names the file, as in `changes <project folder>/config.json`; `reason` tells the agent.
 // It changes one when it writes the file, or a folder that holds it, such as the project folder an `rm -rf` names, unless
 // that folder also holds one of the project's checkouts, such as the project root or its worktree, as `cp notes.md .` does.
-export function configWriteReason(input, project, { names: { human } }) {
+export function configWriteDenial(input, project, { names: { human } }) {
   if (typeof input.agent_id !== 'string' || input.agent_id === '') return null;
   const targets = writeTargets(input);
   if (targets.length === 0) return null;
@@ -44,7 +45,8 @@ function inside(dir, file) {
 
 function blocked(input, file, human) {
   const who = typeof input.agent_type === 'string' && input.agent_type !== '' ? `the agent "${input.agent_type}"` : 'a subagent';
-  return `aidrian: ${input.tool_name} is blocked for ${who} in this project: it changes ${file}, which sets this project's agent gates,`
+  const reason = `aidrian: ${input.tool_name} is blocked for ${who} in this project: it changes ${file}, which sets this project's agent gates,`
     + ' and while gates are set only the main session may change it.'
     + ` This is a project rule: do not reach the same result with another tool; tell ${human} what the task needs.`;
+  return { match: `changes ${file}`, reason };
 }

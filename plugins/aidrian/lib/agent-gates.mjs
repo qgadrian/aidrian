@@ -1,5 +1,5 @@
 // Per-agent tool gates: which tools each agent may use in a project, from `agents` in config.json and the local file.
-// config.mjs checks the patterns with patternProblem; scripts/hook-agent-gates.mjs asks gateReason before every tool
+// config.mjs checks the patterns with patternProblem; scripts/hook-agent-gates.mjs asks gateDenial before every tool
 // call. docs/config.md#agents gives the rules.
 
 import { commandLines, lexCommand, readGit, readInvocation } from './shell-lex.mjs';
@@ -37,11 +37,12 @@ export function patternProblem(pattern) {
   return /\*./u.test(pattern) ? 'a "*" can only end a pattern, as in mcp__github__*' : null;
 }
 
-// The reason the tool call in `input`, a PreToolUse payload, breaks a gate in config `agents`, or null when it breaks none.
-// `paths` is the project's paths (lib/project.mjs), which the reason names.
+// The gate in config `agents` that the tool call in `input`, a PreToolUse payload, breaks, or null when it breaks none:
+// { match, reason }. `match` names the gate, such as `agents.main.deny has "Bash(git push)"`, and `reason` tells the
+// agent; `paths` is the project's paths (lib/project.mjs), which the reason names.
 // Every entry that names the caller applies: `*`, `main` for the main session, and the agent's name, full or short.
 // A deny that matches wins; then each entry with an `allow` list must match the call.
-export function gateReason(input, { agents, names: { human } }, paths) {
+export function gateDenial(input, { agents, names: { human } }, paths) {
   const tool = input.tool_name;
   if (typeof tool !== 'string' || tool === '') return null;
   const caller = callerNames(input);
@@ -72,8 +73,9 @@ function callerNames(input) {
 
 function blocked(input, tool, rule, { human, paths }) {
   const who = typeof input.agent_type === 'string' && input.agent_type !== '' ? `the agent "${input.agent_type}"` : 'the main session';
-  return `aidrian: ${tool} is blocked for ${who} in this project: ${rule} (${paths.config}, or ${paths.local}, which wins).`
+  const reason = `aidrian: ${tool} is blocked for ${who} in this project: ${rule} (${paths.config}, or ${paths.local}, which wins).`
     + ` This is a project rule: do not reach the same result with another tool; tell ${human} what the task needs.`;
+  return { match: rule, reason };
 }
 
 // A deny pattern matches the tool by name; Bash(<prefix>) matches a Bash call where any command starts with the prefix.

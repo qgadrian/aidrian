@@ -3,9 +3,13 @@ import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 
-import { gateReason } from '../plugins/aidrian/lib/agent-gates.mjs';
+import { gateDenial } from '../plugins/aidrian/lib/agent-gates.mjs';
+
+// The hooks this file runs record their blocks in the state folder; keep those rows out of the real one.
+process.env.XDG_STATE_HOME = mkdtempSync(path.join(tmpdir(), 'aidrian-state-'));
+after(() => rmSync(process.env.XDG_STATE_HOME, { recursive: true, force: true }));
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs');
 const names = { human: 'the Human', ai: null };
@@ -16,7 +20,7 @@ const paths = { config: '.aidrian/config.json', knowledge: '.aidrian/knowledge',
 const mainCall = (tool, toolInput = {}) => ({ tool_name: tool, tool_input: toolInput });
 const agentCall = (type, tool, toolInput = {}) => ({ tool_name: tool, tool_input: toolInput, agent_type: type, agent_id: 'a5f0c1' });
 const bash = (command) => ({ command });
-const verdict = (agents, input) => gateReason(input, { agents, names }, paths);
+const verdict = (agents, input) => gateDenial(input, { agents, names }, paths)?.reason ?? null;
 
 test('deny blocks the tools it names and names the rule; any other tool runs', () => {
   const agents = { explorer: { deny: ['Bash', 'WebFetch'] } };

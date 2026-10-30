@@ -5,6 +5,7 @@ Claude Code runs them once the plugin is enabled. Codex asks you to trust them i
 
 Every hook lets the action run when it cannot read its input, so a hook never breaks a session.
 A blocking hook exits 2 and tells the agent why on stderr.
+The Bash rules, the main-checkout rule, the agent gates, and the config guard also record each block: see [Recorded blocks](#recorded-blocks).
 
 | Event | What runs | Host | Blocks |
 | --- | --- | --- | --- |
@@ -35,7 +36,8 @@ After you install the plugin in Codex, open a session, run `git commit --amend -
 | Pull request body sections | `"github": { "requiredSections": [] }`; the footer and `--fill` checks stay |
 | Session-length reminder | `"session": { "handoff": "off" }` |
 | Dispatch log rows | `"telemetry": { "enabled": false }`, in config.json or `.aidrian.local.json`; the delivery check still runs |
-| Automatic lessons from the stop and Bash hooks | `"lessons": { "auto": false }` |
+| `hook_deny` rows alone | `"telemetry": { "hookDenies": false }`; the rules still block |
+| Automatic lessons from the stop hook and the blocking rules | `"lessons": { "auto": false }` |
 | A Bash rule, once | Its override variable, set by a person: [Overrides](#overrides) |
 
 The start lines have no switch; they act only inside a project folder.
@@ -58,8 +60,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Main checkout, when turned on | A write to a tracked file in the main checkout: `>`, `>>`, `tee`, `sed -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`, `touch`, `mkdir`, and `rsync` (sources too under `--remove-source-files`) | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
 
 Each rule is a file in `plugins/aidrian/lib/rules/`; a rule that reads only `gh` commands, such as the pull request body rule, is in `rules/github/`.
-When one rule blocks the same session a third time, the block becomes an [automatic lesson](lessons.md#automatic-lessons):
-an agent that keeps trying was not shown the allowed way. The write hook counts its main-checkout blocks the same way.
+Each block is recorded: [Recorded blocks](#recorded-blocks).
 A rule reads the command the way the shell splits it.
 It sees through `sudo`, `env`, `timeout`, `command`, `rtk`, and similar wrappers, and ignores text in quotes, comments, and heredocs.
 A long option it blocks also matches the shorter prefixes the program accepts, such as `--no-veri` for `--no-verify`,
@@ -67,6 +68,22 @@ A long option it blocks also matches the shorter prefixes the program accepts, s
 Every rule also reads the command substitutions that run: `$(…)`, backticks, `<(…)`, and those in a heredoc that expands.
 The process rules also read `sh -c`, `eval`, and `xargs`.
 A command reached only through a script or an interpreter such as `python -c` is out of their sight.
+
+## Recorded blocks
+
+Every block by a Bash rule, the main-checkout rule, an [agent gate](#agent-gates), or the config guard is recorded twice,
+in `plugins/aidrian/lib/hook-deny.mjs`, before the hook exits 2:
+
+- A `hook_deny` row in the [dispatch log](dispatch-log.md#hook_deny-when-one-of-the-plugins-rules-blocks-a-tool-call):
+  the rule, the tool, the agent, and what the rule matched, never the command.
+  `"telemetry": { "hookDenies": false }` turns the row off. `aidrian report` lists the rows by rule and agent.
+- A count toward an [automatic lesson](lessons.md#automatic-lessons): when one rule blocks the same session a third time,
+  an agent that keeps trying was not shown the allowed way. The count does not depend on telemetry.
+
+The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `process-kill` (both the kill and the listing rule),
+`grep-exit-chain`, `pr-body`, `main-checkout`, `agent-gates`, and `config-guard`.
+The hooks load the recorder only when they block, so a call they let run costs no more than before.
+When the recorder fails, the call is still blocked.
 
 ## Main checkout
 
@@ -88,6 +105,8 @@ When git cannot answer, an Edit or Write is blocked to be safe, and a Bash comma
 Before every tool call, the hook checks the call against the project's `agents` gates; [config.md](config.md#agents) gives the keys and patterns.
 A blocked call exits 2 with the rule on stderr, such as `agents.main.deny has "Bash(git push)"`.
 The reason also tells the agent not to reach the same result with another tool, and to tell the human what the task needs.
+The block is [recorded](#recorded-blocks) as `agent-gates`, with that gate as its reason.
+A gate that blocks one session a third time becomes a lesson for the project, not the plugin: the gates are the project's.
 The hook runs for every tool, so a project without gates still pays for one process that finds the project, reads its config, and exits.
 
 While any gate is set, the hook also blocks a subagent that changes a file that sets the gates, so an agent cannot lift its own:
@@ -97,6 +116,7 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
   and a Bash command by the paths it certainly writes, such as `>`, `sed -i`, `cp`, `mv`, and `rm`.
 - A write to a folder that holds one of the files, such as `rm -rf .aidrian`, counts; one to the project root, such as `cp notes.md .`, does not.
 - A call without `agent_id` is the main session's, which may still change them.
+- A block is [recorded](#recorded-blocks) as `config-guard`, with the file it changes as its reason.
 - A write the rule cannot see, such as a relative path after `cd` or a command inside `sh -c`, still runs.
   Like the gates, the guard is for agents that cooperate, not a sandbox.
 

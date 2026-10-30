@@ -104,6 +104,7 @@ test('the hooks write dispatch, stop, and session rows inside a project, and not
   assert.deepEqual(rows[1].tokens, { input: 10 + 10, output: 10, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0 });
   const testing = 'docs/knowledge/engineering/testing.md';
   assert.deepEqual([rows[1].docs_read, rows[1].delivered, rows[1].models], [[{ path: testing, bytes: bytes(testing) }], 'chat', ['claude-sonnet-5-5']]);
+  assert.deepEqual([rows[1].requests, rows[1].tool_requests, rows[1].tool_calls], [2, 2, 2], 'two requests, each with one Read');
   assert.deepEqual([rows[2].duration_min, rows[2].subagent_count, rows[2].models], [30, 1, ['claude-opus-5-5', 'claude-sonnet-5-5']]);
   const [rules, sharing] = ['docs/knowledge/product/product-rules.md', 'docs/knowledge/product/sharing.md'];
   assert.deepEqual(rows[2].docs_read, [{ path: rules, bytes: bytes(rules) }, { path: sharing, bytes: bytes(sharing) }], 'main reads only, sized from the project copy once the read one is gone');
@@ -201,33 +202,71 @@ test('every dispatch-log hook exits 0 silently on a payload it cannot read', () 
   }
 });
 
-test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, delivery, top docs; then sessions', () => {
-  // a1's rows predate sizes in docs_read: bare paths count the same.
+test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, delivery, runs, docs, tool calls; then sessions and hook denies', () => {
+  // a1's rows predate sizes in docs_read and tool counts: bare paths count the same, and its run leaves the averages they feed.
   const ts = '2026-10-29T11:00:00Z';
+  const deny = (session, rule, agent, reason) => ({ event: 'hook_deny', ts, session_id: session, rule, tool: 'Bash', agent_type: agent, reason });
   const rows = [
     { event: 'dispatch', ts, session_id: 's', agent_id: 'a1', agent_type: 'Explore', description: 'Find tests', duration_ms: 1000 },
     { event: 'dispatch', ts, session_id: 's', agent_id: 'a2', agent_type: 'Explore', description: 'Find tests', duration_ms: 3000 },
     { event: 'dispatch', ts, session_id: 's', agent_id: 'a3', agent_type: 'Explore', description: 'Map hooks', duration_ms: 2000 },
     { event: 'stop', ts, agent_id: 'a1', agent_type: 'Explore', tokens: { input: 1000, output: 0, cache_read: 0, cache_write: 0 }, cost_usd: 0.5, delivered: 'missing', docs_read: ['a.md'] },
     { event: 'stop', ts, agent_id: 'a1', agent_type: 'Explore', tokens: { input: 1000, output: 0, cache_read: 0, cache_write: 0 }, cost_usd: 0.5, delivered: 'file', docs_read: ['a.md'] },
-    { event: 'stop', ts, agent_id: 'a2', agent_type: 'Explore', tokens: { input: 3000, output: 0, cache_read: 0, cache_write: 0 }, cost_usd: 0.25, delivered: 'chat', docs_read: [{ path: 'a.md', bytes: 10 }, { path: 'b.md', bytes: 20 }] },
-    { event: 'stop', ts, agent_id: 'zz', agent_type: 'planner', tokens: { input: 1, output: 1, cache_read: 0, cache_write: 0 }, cost_usd: 0, delivered: 'chat', docs_read: [] },
+    {
+      event: 'stop', ts, agent_id: 'a2', agent_type: 'Explore', tokens: { input: 3000, output: 0, cache_read: 0, cache_write: 0 }, cost_usd: 0.25, delivered: 'chat',
+      docs_read: [{ path: 'a.md', bytes: 1024 }, { path: 'b.md', bytes: 2048 }], requests: 10, tool_requests: 4, tool_calls: 6,
+    },
+    { event: 'stop', ts, agent_id: 'zz', agent_type: 'planner', tokens: { input: 1, output: 1, cache_read: 0, cache_write: 0 }, cost_usd: 0, delivered: 'chat', docs_read: null, requests: 1, tool_requests: 0, tool_calls: 0 },
     { event: 'session', ts, session_id: 's', cost_usd: 4.5 },
     { event: 'session', ts: '2026-10-01T00:00:00Z', session_id: 'old', cost_usd: 100 },
+    ...Array.from({ length: 3 }, () => deny('s', 'git-amend', 'main', '`git commit --amend` rewrites the branch tip')),
+    deny('s2', 'git-amend', 'aidrian:explorer', '`git commit --amend` rewrites the branch tip'),
+    deny('s2', 'agent-gates', 'aidrian:explorer', 'agents.explorer.deny has "Bash"'),
+    deny('s2', 'agent-gates', 'aidrian:explorer', 'agents.explorer.allow does not list it'),
+    { ...deny('old', 'process-kill', 'main', 'x'), ts: '2026-10-01T00:00:00Z' },
     { event: 'unknown', ts },
   ];
   const summary = summarize(rows, { sinceMs: parseSince('7d', NOW) });
   assert.deepEqual(summary.agents[0], {
     agent_type: 'Explore', dispatches: 3, redispatch_rate: 0.33, median_duration_ms: 2000, median_tokens: 2000, cost_usd: 0.75,
     delivered: { file: 1, chat: 1, missing: 0 }, top_docs: [['a.md', 2], ['b.md', 1]],
+    runs: 2, cost_per_run_usd: 0.38, sent_back: 1, sent_back_rate: 0.5, avg_docs_read: 1.5, avg_doc_bytes: 3072,
+    requests: 10, tool_requests: 4, tool_calls: 6, tool_calls_per_request: 1.5, runs_without_tool_counts: 1,
   });
-  assert.equal(summary.agents[1].dispatches, 0);
-  assert.deepEqual([summary.sessions, summary.unjoined_stops], [{ count: 1, cost_usd: 4.5 }, 1]);
+  assert.deepEqual([summary.agents[1].dispatches, summary.agents[1].runs, summary.agents[1].avg_docs_read, summary.agents[1].tool_calls_per_request], [0, 1, null, null]);
+  assert.deepEqual([summary.sessions, summary.unjoined_stops, summary.runs_without_tool_counts], [{ count: 1, cost_usd: 4.5 }, 1, 1]);
+  assert.deepEqual(summary.hook_denies, {
+    count: 6,
+    sessions: 2,
+    by_rule: [
+      { rule: 'git-amend', count: 4, agents: [['main', 3], ['aidrian:explorer', 1]], repeated_sessions: 1, reasons: [['`git commit --amend` rewrites the branch tip', 4]] },
+      {
+        rule: 'agent-gates', count: 2, agents: [['aidrian:explorer', 2]], repeated_sessions: 0,
+        reasons: [['agents.explorer.allow does not list it', 1], ['agents.explorer.deny has "Bash"', 1]],
+      },
+    ],
+  }, 'the old row is out of the window');
   const text = formatReport(summary, { file: '/s/dispatch-log.jsonl', since: '7d', skipped: 2 });
-  assert.match(text, /^Dispatch log \/s\/dispatch-log\.jsonl, since 7d \(2 unreadable rows skipped\)\n/);
-  assert.match(text, /Explore: 3 dispatches, 33% re-dispatched, median 2s and 2k tokens, \$0\.75, delivered 1 file \/ 1 chat \/ 0 missing\n {2}docs read: a\.md \(2\), b\.md \(1\)/);
-  assert.match(text, /Sessions: 1, \$4\.50 estimated/);
-  assert.match(text, /1 stop rows have no dispatch row/);
+  assert.equal(text, [
+    'Dispatch log /s/dispatch-log.jsonl, since 7d (2 unreadable rows skipped)',
+    'Partial: 1 agent runs were logged before tool counts; tool calls per request leave them out.',
+    'Explore: 3 dispatches, 33% re-dispatched, median 2s and 2k tokens, $0.75, delivered 1 file / 1 chat / 0 missing',
+    '  2 runs, $0.38 a run, 50% sent back by the delivery check, 1.50 tool calls per request that made one',
+    '  docs read: 1.5 docs and 3.0 KB a run; a.md (2), b.md (1)',
+    'planner: 0 dispatches, - re-dispatched, median - and 0k tokens, $0.00, delivered 0 file / 1 chat / 0 missing',
+    '  1 runs, $0.00 a run, 0% sent back by the delivery check, - tool calls per request that made one',
+    'Sessions: 1, $4.50 estimated, main conversation and subagents together',
+    '1 stop rows have no dispatch row (a background dispatch, or a host change)',
+    'Hook denies: 6 in 2 sessions',
+    '  git-amend: 4, by main 3, aidrian:explorer 1; 1 session blocked 3 times or more, an automatic lesson',
+    '    most often: `git commit --amend` rewrites the branch tip',
+    '  agent-gates: 2, by aidrian:explorer 2',
+    '    most often: agents.explorer.allow does not list it',
+  ].join('\n'));
+  assert.match(formatReport(summarize([]), { file: 'f', since: '7d', skipped: 0 }), /\nNo rows yet\.$/);
+  const onlyDenies = formatReport(summarize([deny('s', 'pr-body', 'main', 'the body has no `## Summary` section.')]), { file: 'f', since: '7d', skipped: 0 });
+  assert.match(onlyDenies, /\nSessions: 0, .*\nHook denies: 1 in 1 session\n {2}pr-body: 1, by main 1\n/, 'denies alone are rows');
+  assert.match(formatReport(summarize([rows[0]]), { file: 'f', since: '7d', skipped: 0 }), /\nHook denies: none$/);
 });
 
 test('parseSince takes a span or a date; aidrian report prints the log, --json the summary', (t) => {
@@ -237,9 +276,11 @@ test('parseSince takes a span or a date; aidrian report prints the log, --json t
   const { dir, env } = project(t);
   const report = (args) => spawnSync(CLI, ['report', ...args], { cwd: dir, env, encoding: 'utf8' });
   assert.match(report([]).stdout, /^Dispatch log .*dispatch-log\.jsonl, since 7d\nNo rows yet\.\n$/);
-  assert.deepEqual(Object.keys(JSON.parse(report(['--json']).stdout)), ['file', 'rotated', 'since', 'skipped', 'coverage', 'agents', 'sessions', 'unjoined_stops']);
+  assert.deepEqual(Object.keys(JSON.parse(report(['--json']).stdout)), [
+    'file', 'rotated', 'since', 'skipped', 'coverage', 'agents', 'sessions', 'unjoined_stops', 'runs_without_tool_counts', 'hook_denies',
+  ]);
   assert.equal(report(['--since', 'soon']).status, 1);
-  assert.equal(report(['--prs', '0']).status, 1);
+  assert.deepEqual([report(['--prs', '0']).status, report(['reviews', '--prs', 'x']).stderr], [1, '--prs takes a whole number above 0\n']);
 });
 
 // Reads of the example consumer's docs: three subagents, one sent back once, a main conversation, a row from before sizes
@@ -318,7 +359,7 @@ test('aidrian report docs prints the doc view, --json all of it; a stray word or
   assert.deepEqual(Object.keys(json), ['file', 'rotated', 'since', 'skipped', 'coverage', 'always', 'docs', 'totals', 'never_read']);
   assert.deepEqual(json.always, { bytes: 479, budget: 16384, buckets: { engineering: 479, product: 0 } });
   assert.deepEqual(json.docs[0], { path: DOC('engineering/working-agreement'), reads: 4, bytes: 479, read_bytes: 1916, readers: ['Explore', 'code-reviewer', 'main', 'planner'] });
-  assert.deepEqual([report(['nope']).status, report(['nope']).stderr], [1, 'unknown report: nope; use aidrian report, aidrian report docs, or aidrian report sessions\n']);
+  assert.deepEqual([report(['nope']).status, report(['nope']).stderr], [1, 'unknown report: nope; use aidrian report, or aidrian report docs, sessions, reviews\n']);
   assert.deepEqual([report(['docs', 'more']).status, report(['docs', '--prs', '1']).status], [1, 1]);
 });
 
@@ -335,7 +376,7 @@ test('coverage: telemetry off, doc reads off, rows written without doc reads, an
   ];
   const off = { telemetry: { ...DEFAULTS.telemetry, enabled: false } };
   const cover = coverage(rows, off, { sinceMs });
-  assert.deepEqual(cover, { enabled: false, doc_reads: true, rows_without_doc_reads: 2, rotated_out_before: null }, 'a1 counts its last row; the old row is out of the window, and older than it');
+  assert.deepEqual(cover, { enabled: false, doc_reads: true, hook_denies: true, rows_without_doc_reads: 2, rotated_out_before: null }, 'a1 counts its last row; the old row is out of the window, and older than it');
   assert.equal(coverage(rows.slice(0, 5), DEFAULTS, { sinceMs }).rotated_out_before, day(3));
   assert.equal(coverage(rows.slice(1, 5), DEFAULTS, { sinceMs }).rotated_out_before, null, 'no rotate row that dropped rows: nothing is lost');
   assert.deepEqual(coverageLines(coverage(rows.slice(0, 5), { telemetry: { ...DEFAULTS.telemetry, docReads: false } }, { sinceMs })), [
@@ -343,8 +384,12 @@ test('coverage: telemetry off, doc reads off, rows written without doc reads, an
     'Partial: 2 agent and session rows in the window were written with doc reads off.',
     `Partial: the log starts at ${day(3)}; older rows were rotated out at telemetry.maxMb.`,
   ]);
-  assert.deepEqual(coverageLines(cover, { docReads: false }), ['Telemetry is off (telemetry.enabled is false): the hooks write no rows, so this shows only older ones.']);
+  assert.deepEqual(coverageLines(cover, { docReads: false, hookDenies: true }), ['Telemetry is off (telemetry.enabled is false): the hooks write no rows, so this shows only older ones.']);
   assert.deepEqual(coverageLines(coverage([], DEFAULTS)), []);
+  const noDenies = coverage([], { telemetry: { ...DEFAULTS.telemetry, hookDenies: false } });
+  assert.deepEqual([coverageLines(noDenies), coverageLines(noDenies, { hookDenies: true })], [
+    [], ['Hook denies are off (telemetry.hookDenies is false): the hooks still block, and log no hook_deny rows.'],
+  ], 'only the view that shows hook denies says they are off');
 });
 
 test('aidrian report and report docs say when telemetry is off, and --json carries the coverage', (t) => {
@@ -353,7 +398,7 @@ test('aidrian report and report docs say when telemetry is off, and --json carri
   const report = (args) => spawnSync(CLI, ['report', ...args], { cwd: dir, env, encoding: 'utf8' });
   assert.match(report([]).stdout, /^Dispatch log .*, since 7d\nTelemetry is off \(telemetry\.enabled is false\): .*\nNo rows yet\.\n$/);
   assert.match(report(['docs']).stdout, /^Knowledge docs read, .*\nTelemetry is off .*\nAlways docs: .*\nNo knowledge doc reads yet\.\n$/);
-  assert.deepEqual(JSON.parse(report(['--json']).stdout).coverage, { enabled: false, doc_reads: true, rows_without_doc_reads: 0, rotated_out_before: null });
+  assert.deepEqual(JSON.parse(report(['--json']).stdout).coverage, { enabled: false, doc_reads: true, hook_denies: true, rows_without_doc_reads: 0, rotated_out_before: null });
 });
 
 test('sessionRow splits main and subagents, with effort, cost per model, cache writes, and tool calls', (t) => {

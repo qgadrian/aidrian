@@ -45,13 +45,16 @@ export function deliverySignal({ agentType, agentId = null, session = null, miss
   };
 }
 
-// A Bash or write rule blocked one session REPEATED_DENIALS times.
+// The rule whose patterns the project writes, config.json `agents`: a block that keeps recurring is the project's to fix.
+const PROJECT_RULES = new Set(['agent-gates']);
+
+// One of the plugin's blocking rules (lib/hook-deny.mjs) blocked one session REPEATED_DENIALS times.
 export function denialSignal({ rule, session = null, agent = null }) {
   return {
     key: `hook-deny:${rule}`,
     tier: 'P2',
     kind: 'gap',
-    target: 'plugin',
+    target: PROJECT_RULES.has(rule) ? 'project' : 'plugin',
     title: `The ${rule} rule blocked one session ${REPEATED_DENIALS} times`,
     note:
       `Agents tried ${REPEATED_DENIALS} times in one session what the ${rule} rule blocks. ` +

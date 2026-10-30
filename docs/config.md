@@ -75,7 +75,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `names.ai` | What agents call themselves; `null` is the host's name, Claude or Codex: [Names](#names). |
 | `telemetry.enabled` | `false` stops the hooks from writing the [dispatch log](dispatch-log.md): [Telemetry](#telemetry). |
 | `telemetry.docReads` | `false` leaves out which knowledge docs each agent read. |
-| `telemetry.hookDenies` | Checked, so a project can set it; no hook reads it in this version. |
+| `telemetry.hookDenies` | `false` leaves out the `hook_deny` row each block by one of the plugin's rules writes; the rules still block. |
 | `telemetry.maxMb` | The size, in megabytes, at which the dispatch log moves to its rotated part. |
 | `agents` | The tools each agent may use in this project; `{}` gates none: [Agents](#agents). |
 
@@ -165,7 +165,8 @@ A team sets `telemetry` in `config.json`, and one developer in the git-ignored `
 - `docReads: false`: `stop` and `session` rows keep tokens and cost, and hold `docs_read: null` instead of the docs read.
 - `maxMb`: once the log reaches this size, the next row moves it to `dispatch-log.1.jsonl`, replacing the file there.
   The two files hold about twice `maxMb` at most, and `aidrian report` reads both.
-- `hookDenies`: `aidrian check` checks its value; no hook reads it in this version.
+- `hookDenies: false`: the Bash rules, the main-checkout rule, the agent gates, and the config guard still block,
+  and write no `hook_deny` row ([hooks.md](hooks.md#recorded-blocks)). A rule that keeps blocking one session still becomes a lesson.
 
 The last three keys were `doc_reads`, `max_mb`, and `hook_denies`; a file that still sets one gets an error naming the new key.
 

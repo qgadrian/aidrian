@@ -124,7 +124,7 @@ and an occurrence after its fix reopens it like any other.
 | Signal | Key | Tier, kind, target | Why it stays quiet |
 | --- | --- | --- | --- |
 | The [delivery check](hooks.md#delivery-check) sends a subagent back | `delivery-check:<agent type>` | P2, `bug`; `plugin` for an `aidrian:` agent, `project` for any other | It fires only when a file the agent said it wrote does not exist, once per stop. |
-| One Bash or write rule blocks one session 3 times | `hook-deny:<rule>` | P2, `gap`, `plugin` | One block is the rule doing its job; three in a session is an agent fighting it. |
+| One of the plugin's [blocking rules](hooks.md#recorded-blocks) blocks one session 3 times | `hook-deny:<rule>` | P2, `gap`; `project` for `agent-gates`, whose gates the project writes, `plugin` for any other | One block is the rule doing its job; three in a session is an agent fighting it. |
 | `aidrian pr await-review --request` stops at the round limit, config.json `github.maxReviewRounds` | `review-rounds` | P2, `project` | It fires once per pull request and round count: a re-run at the same count adds nothing. |
 
 A row holds names, counts, paths, and ids, never a prompt, a command, or tool output; the `session` id finds the rest.

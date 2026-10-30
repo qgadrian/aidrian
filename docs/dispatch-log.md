@@ -1,11 +1,13 @@
 # The dispatch log
 
 The dispatch log records which agents a session dispatched, what each cost, which knowledge docs it read,
-whether it delivered the files it said it wrote, and what each session cost. `aidrian report` reads it.
+whether it delivered the files it said it wrote, what each session cost, and which of the plugin's rules blocked a tool call.
+`aidrian report` reads it.
 
 It is `dispatch-log.jsonl` in the [state folder](project-folder.md#local-state): one JSON object per line,
 on this machine only, shared by every worktree of the repository.
-Three Claude Code hooks append to it, only inside a project folder, and only while config.json `telemetry.enabled` is on:
+Three Claude Code hooks append the dispatch, stop, and session rows, and the plugin's blocking hooks append a `hook_deny` row,
+only inside a project folder, and only while config.json `telemetry.enabled` is on:
 [config.md](config.md#telemetry) has the switches.
 A row holds names, counts, durations, costs, and file paths. It never holds a prompt, a command, or tool output.
 
@@ -29,6 +31,7 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | `ts`, `session_id`, `agent_id`, `agent_type` | Which subagent. `agent_id` joins it to its `dispatch` row. |
 | `tokens` | `input`, `output`, `cache_read`, and `cache_write` over the requests the subagent made, counted once per API request. `cache_write` is `cache_write_5m` plus `cache_write_1h`, the cache writes kept 5 minutes and 1 hour, which cost 1.25x and 2x the input price. |
 | `models`, `cost_usd` | The models it used, and the cost estimated from list prices (`lib/transcript.mjs`). |
+| `requests`, `tool_requests`, `tool_calls` | Its API requests, the requests that made a tool call, and its tool calls, as on a `session` row's sides. |
 | `docs_read` | The knowledge docs it opened with the Read tool, as `{ "path", "bytes" }`: the path the index gives, and the doc's size. `null` while `telemetry.docReads` is off. |
 | `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not, `chat` when it presents none. |
 | `paths` | Those paths, at most 20. |
@@ -56,6 +59,21 @@ Its second stop always ends, and writes a second `stop` row; the report counts t
 A session whose transcript holds no API usage writes no row.
 A resumed session that ends again writes another row over its whole transcript; the report counts the last one.
 
+### `hook_deny`: when one of the plugin's rules blocks a tool call
+
+The Bash rules, the main-checkout rule for writes, the [agent gates](hooks.md#agent-gates), and the config guard write one row
+per block, while config.json `telemetry.hookDenies` is on. The call is still blocked when it is off.
+
+| Field | Meaning |
+| --- | --- |
+| `ts`, `session_id` | When, and in which session. |
+| `rule` | The rule's name: `git-hook-bypass`, `git-amend`, `process-kill`, `grep-exit-chain`, `pr-body`, `main-checkout`, `agent-gates`, or `config-guard`. |
+| `tool` | The tool it blocked, such as `Bash`, `Edit`, or a tool an agent gate names. |
+| `agent_type` | The agent that made the call, named as a `dispatch` row names its dispatcher: `main` for the main session. |
+| `reason` | What the rule matched, at most 120 characters: the first sentence of its message, such as `this skips a git hook.`, or for a gate the gate itself, such as `agents.explorer.deny has "WebFetch"`. A parenthesized absolute path, such as the main checkout's folder, is left out. |
+
+The row never holds the command. Its `reason` can name the file a write rule matched, as the message the agent reads does.
+
 ### `rotate`: when the log rotates
 
 Once the log reaches config.json `telemetry.maxMb`, the next hook moves it to `dispatch-log.1.jsonl`, replacing the file there,
@@ -71,20 +89,39 @@ and starts a new log with this row. `aidrian report` reads `dispatch-log.1.jsonl
 ```console
 $ aidrian report --since 7d
 Dispatch log /home/you/.local/state/aidrian/projects/notes-1a2b3c4d/dispatch-log.jsonl, since 7d
-Explore: 12 dispatches, 8% re-dispatched, median 95s and 85k tokens, $3.10, delivered 2 file / 10 chat / 0 missing
-  docs read: docs/knowledge/engineering/testing.md (4), docs/knowledge/engineering/code-style.md (2)
-Sessions: 5, $42.10 estimated, main conversation and subagents together
+Explore: 12 dispatches, 8% re-dispatched, median 88s and 85k tokens, $3.08, delivered 2 file / 9 chat / 0 missing
+  11 runs, $0.28 a run, 9% sent back by the delivery check, 1.40 tool calls per request that made one
+  docs read: 1.5 docs and 13.0 KB a run; docs/knowledge/engineering/testing.md (11), docs/knowledge/engineering/code-style.md (5)
+Sessions: 2, $42.10 estimated, main conversation and subagents together
+Hook denies: 6 in 2 sessions
+  git-amend: 4, by main 3, Explore 1; 1 session blocked 3 times or more, an automatic lesson
+    most often: `git commit --amend` rewrites the branch tip, and another agent working on this branch may already have built on it.
+  agent-gates: 1, by aidrian:explorer 1
+    most often: agents.explorer.deny has "WebFetch"
+  main-checkout: 1, by main 1
+    most often: this writes 'src/app.js', a tracked file in the main checkout.
 ```
+
+`aidrian report agents` is the same view.
 
 - **re-dispatched**: the share of dispatches that repeat a task already dispatched in the same session,
   `1 - distinct (session, description) / dispatches`. A high rate means agents are sent back to redo work.
 - **median time and tokens**: per dispatch, from the `dispatch` and `stop` rows.
 - **cost**: the sum of the agent type's `stop` rows. The session total already includes it; do not add them.
 - **delivered**: how the agents' reports turned out: files that exist, chat only, or a named file that did not exist.
-- **docs read**: the five knowledge docs that agent type opened most.
+- **runs**: the subagents of that type that stopped, and the cost of each on average.
+- **sent back by the delivery check**: the share of runs with any `stop` row whose `delivered` is `missing`.
+  `delivered` counts each run's last row, so a run that wrote the file on its second try shows there as `file`.
+- **tool calls per request that made one**: as in [Sessions](#sessions), over the runs' own requests.
+- **docs read**: how many knowledge docs a run opened, and their bytes, on average, then the five that agent type opened most.
+  The averages leave out runs logged with doc reads off, and the bytes, runs logged before sizes.
+- **Hook denies**: the `hook_deny` rows, per rule, most blocks first: the agents it blocked, the sessions it blocked
+  3 times or more, which is when a block becomes an [automatic lesson](lessons.md#automatic-lessons),
+  and the `reason` it logged most often. A rule an agent keeps hitting needs clearer words in that agent's instructions or in the rule's message.
 
 `--since` takes `30m`, `24h`, `7d`, or a date such as `2026-10-01`; the default is `7d`.
-`--json` prints the same summary as one JSON object, with `rotated`, the path of the rotated part or `null`, and `coverage`.
+`--json` prints the same summary as one JSON object, with `rotated`, the path of the rotated part or `null`, `coverage`,
+and `hook_denies` with every rule's agents and up to three reasons.
 
 ### Sessions
 
@@ -120,7 +157,7 @@ Most costly sessions, top 3:
 - **Per effort**: `-` is a session whose main conversation recorded no level, such as one logged before the field existed.
 - A session logged before the main and subagent split counts in the total, per day, and per effort; a `Partial:` line says how many.
 
-`--since` works as above; `--json` prints the same summary. `--prs` belongs to the default view.
+`--since` works as above; `--json` prints the same summary. `--prs` belongs to the default view and to `reviews`.
 
 ### When the report is incomplete
 
@@ -138,12 +175,45 @@ Partial: the log starts at 2026-10-27T09:12:44.000Z; older rows were rotated out
 | --- | --- | --- |
 | Telemetry is off | `enabled: false` | config.json or `.aidrian.local.json` sets `telemetry.enabled` to `false` now. |
 | Doc reads are off | `doc_reads: false` | The same for `telemetry.docReads`. |
+| Hook denies are off | `hook_denies: false` | The same for `telemetry.hookDenies`; only the default view says it. |
 | Partial: rows written with doc reads off | `rows_without_doc_reads` | Agent and session rows in the window that hold `docs_read: null`. |
 | Partial: the log starts at | `rotated_out_before` | Rotation dropped rows, and the window starts before the oldest row left. |
 
-A time when telemetry was off leaves no rows at all, so no report can tell that it happened.
-`--prs N` adds the review rounds of the last N merged pull requests: how many formal reviews config.json `github.reviewer`
-left on each, the share that passed clean on the first look, and how many needed five or more. It needs `gh`.
+The default view also says `Partial: N agent runs were logged before tool counts` when some `stop` rows have no tool counts:
+its tool calls per request leave those runs out.
+A time when telemetry was off leaves no rows at all, so no report can tell that it happened,
+and blocks from before this plugin logged `hook_deny` rows are not in the log either.
+
+### Reviews
+
+`aidrian report reviews` reads the last 20 merged pull requests through `gh`, not the log, and shows how the review bot,
+config.json `github.reviewer`, did on them.
+
+```console
+$ aidrian report reviews --prs 4
+Review rounds by chatgpt-codex-connector[bot] on 3 of the last 4 merged pull requests: 33% clean on the first pass, 2.7 rounds on average, 1 needed 5 or more
+Partial: 1 pull request had more than 100 reviews or comments in one review; the counts stop at 100.
+Findings: 10 in 8 rounds, 1.3 a round; round 1 2, round 2 4, round 3 1, round 4+ 3
+Late findings, from round 2 on: 8 (80%); 3 of 4 checked sat on a line already there at the first review (75%); not checked: 1 file-level, 1 on a deleted line, 1 after a rebase, 1 commit gone
+Most rounds: #4 6, #1 2
+```
+
+- **Review rounds**: a round is one formal review by the bot. A pull request it answered with only its 👍 passed clean,
+  in 0 rounds; one it never answered is left out.
+- **Findings**: the top-level comments in the bot's reviews, per round. Replies are not findings.
+- **Late findings**: the findings from round 2 on, and how many sat on a line that was already there when the bot first reviewed:
+  it could have found them then. GitHub's compare of the first review's commit with the finding's commit decides:
+  a line it does not add since was there. A finding is not checked when it is on the whole file or on a deleted line,
+  when the branch was rebased or force-pushed between the two reviews, when gh cannot read the compare, or when the compare is too large.
+- **Most rounds**: up to five pull requests, most rounds first.
+
+`--prs N` sets how many merged pull requests to read. `--since` keeps those merged since then, at most N, and says so when N cut the list short;
+without `--since` the view takes the last N, whatever their age. `--json` prints `rounds`, every pull request with its findings per round,
+`null` where gh could not read them, and the totals. It needs `gh`, and makes one call per answered pull request and one per later commit
+with a late finding.
+
+`aidrian report --since 7d --prs N` keeps the form the view grew from: the default view, then the reviews of the last N merged pull requests.
+Its `--since` applies to the log only, and its `--json` holds the reviews under `reviews`.
 
 ### Doc reads
 
@@ -186,9 +256,11 @@ Indexed docs never read since 30d, 2:
 
 ## Limits
 
-- **Claude Code only.** Codex has no Agent tool, and its stop and session payloads are not verified.
+- **Claude Code only**, except `hook_deny` rows. Codex has no Agent tool, and its stop and session payloads are not verified.
   The hooks let any payload they cannot read pass: a transcript with no Claude Code usage writes no `session` row,
   and a stop payload without `stop_hook_active` is never sent back.
+  The Bash rules and the agent gates also run in Codex, so its blocks write `hook_deny` rows there too.
+- **Only the plugin's own blocks.** A block by Claude Code's permissions, or by another plugin's or the project's hook, writes no row.
 - **Costs are estimates** from list prices, read on the date in `lib/transcript.mjs`. A model missing from the price
   map counts as zero.
 - **A background dispatch** writes its `dispatch` row at launch, without time or tool counts; its `stop` row has the rest.

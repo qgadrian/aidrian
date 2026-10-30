@@ -47,6 +47,7 @@ test('each signal names its key, tier, and target; a plugin agent is the plugin\
   assert.equal(deliverySignal({ agentType: 'Explore', missing: ['a.md', 'b.json'] }).target, 'project');
   assert.match(deliverySignal({ agentType: 'Explore', missing: ['a.md', 'b.json'] }).note, /a\.md, b\.json as written, and they did not exist/);
   assert.deepEqual([denialSignal({ rule: 'git-amend', session: 's1' }).key, denialSignal({ rule: 'git-amend' }).target], ['hook-deny:git-amend', 'plugin']);
+  assert.deepEqual([denialSignal({ rule: 'agent-gates' }).target, denialSignal({ rule: 'config-guard' }).target], ['project', 'plugin'], 'the project writes the gates');
   const rounds = roundLimitSignal({ repo: 'acme/notes', pr: 42, maxRounds: 10, rounds: 11 });
   assert.deepEqual([rounds.key, rounds.once, rounds.target, rounds.evidence], ['review-rounds', 'acme/notes#42@11', 'project', ['https://github.com/acme/notes/pull/42']]);
   assert.match(rounds.note, /^Pull request #42 in acme\/notes reached 10 bot review rounds\./);

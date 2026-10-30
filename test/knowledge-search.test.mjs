@@ -152,7 +152,12 @@ test('init drafts an index for a folder of docs in the project folder, and the r
     },
   });
   const check = spawnSync(AIDRIAN, ['check'], { cwd: project, encoding: 'utf8' });
-  assert.deepEqual([check.status, check.stdout.split('\n')[0], check.stderr], [0, 'ok: .aidrian (1 bucket, 4 docs)', '']);
+  // The draft passes, and check names what is left to write: the description and the tags.
+  assert.deepEqual([check.status, check.stdout.split('\n')[0], check.stderr], [0, 'ok: .aidrian (1 bucket, 4 docs)', [
+    'warning: .aidrian/knowledge/docs.json: "description" is still the placeholder "Docs in docs."; say what the bucket covers',
+    'note: 4 of 4 docs have no tags; no agent routes to them',
+    '',
+  ].join('\n')]);
 });
 
 test('init names the index after the folder, and never overwrites one', (t) => {
@@ -250,7 +255,8 @@ test('a doc from a local source prints its absolute path and, last, its source; 
 
   renameSync(path.join(source, 'knowledge/personal.json'), path.join(source, 'knowledge/docs.json'));
   const clash = spawnSync(AIDRIAN, ['check'], { cwd: project, encoding: 'utf8' });
-  assert.deepEqual([clash.status, clash.stderr], [1, `${source}/knowledge/docs.json: bucket "docs" is already defined by .aidrian/knowledge/docs.json\n`]);
+  assert.equal(clash.status, 1);
+  assert.match(clash.stderr, new RegExp(`\n${source}/knowledge/docs\\.json: bucket "docs" is already defined by \\.aidrian/knowledge/docs\\.json\n$`));
   assert.equal(run(['route', 'testing'], project).status, 1);
 });
 

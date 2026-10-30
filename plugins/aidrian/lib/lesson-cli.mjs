@@ -129,6 +129,7 @@ function resolve({ values, ids, file }) {
   const [id] = ids;
   if (!OUTCOMES.includes(values.outcome)) return fail(`resolve needs --outcome ${OUTCOMES.join('|')}`);
   const link = values.link === '-' ? readFileSync(0, 'utf8').trim() : values.link?.trim();
+  if (values.link === '-' && !link) return fail('--link - read nothing from stdin; pipe the link in or pass --link <ref>');
   if (!link) return fail('resolve needs --link: the commit, pull request, issue, lesson id, or reason it ends in');
   const { lessons: all, find } = fold(readRows(file).rows);
   const lesson = all.find((each) => each.id === id && each.status === 'open');

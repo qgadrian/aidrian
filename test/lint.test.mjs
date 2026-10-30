@@ -148,7 +148,7 @@ test('frontmatter reads top-level keys only', () => {
   assert.equal(frontmatter('# no frontmatter'), null);
 });
 
-test('paths: a personal home folder in a tracked or staged file fails; CI and placeholder homes pass', (t) => {
+test('paths: a personal home folder in a tracked, untracked, or staged file fails; ignored files and CI and placeholder homes pass', (t) => {
   const dir = tempDir(t);
   const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' });
   git('init', '-q');
@@ -156,9 +156,13 @@ test('paths: a personal home folder in a tracked or staged file fails; CI and pl
   writeFileSync(path.join(dir, 'ok.md'), '/home/runner/work/x\n/home/you/kb\n/Users/example/x\n/home/\n');
   writeFileSync(path.join(dir, 'untracked.md'), `${HOME}x\n`);
   writeFileSync(path.join(dir, 'logo.png'), `${HOME}x\n`);
-  git('add', 'a.md', 'ok.md', 'logo.png');
-  assert.deepEqual(lintPaths(dir).problems, [`a.md:2: a personal home folder: see ${HOME}project/notes.md`]);
-  assert.equal(lintPaths(dir).summary, 'no personal paths in 2 tracked files');
+  writeFileSync(path.join(dir, 'ignored.md'), `${HOME}x\n`);
+  writeFileSync(path.join(dir, '.gitignore'), 'ignored.md\n');
+  git('add', 'a.md', 'ok.md', 'logo.png', '.gitignore');
+  assert.deepEqual(lintPaths(dir).problems, [`a.md:2: a personal home folder: see ${HOME}project/notes.md`, `untracked.md:1: a personal home folder: ${HOME}x`]);
+  assert.equal(lintPaths(dir).summary, 'no personal paths in 3 tracked and 1 untracked files');
+  git('add', 'untracked.md');
+  git('rm', '-q', '--cached', 'untracked.md');
   git('-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init');
   assert.deepEqual(lintPaths(dir, true).problems, [], 'nothing staged');
   git('add', 'untracked.md');
@@ -185,7 +189,7 @@ test('aidrian lint runs every lint on a project and prints the always-doc budget
   const run = (args, cwd = ROOT) => spawnSync(CLI, ['lint', ...args], { cwd, encoding: 'utf8' });
   const all = run(['--project', 'examples/consumer']);
   assert.equal(all.status, 0, all.stderr);
-  assert.match(all.stdout, /^skills: 0 skills, 0 of 9216 listing bytes\nagents: 0 agents\npaths: no personal paths in \d+ tracked files\n/);
+  assert.match(all.stdout, /^skills: 0 skills, 0 of 9216 listing bytes\nagents: 0 agents\npaths: no personal paths in \d+ tracked and \d+ untracked files\n/);
   assert.match(all.stdout, /\nbudget: \d+ of 16384 always-doc bytes \(engineering \d+, product 0\)\n$/);
 
   const dir = tempDir(t);

@@ -57,8 +57,11 @@ test('conditionalChecks: once it has an entry, only a listed check may skip; any
 });
 
 test('parseCliArgs reads a number, #number, -R, and --json, and reports anything else', () => {
-  assert.deepEqual(parseCliArgs(['#12', '-R', 'acme/notes', '--json']), { repo: 'acme/notes', asJson: true, prNumber: '12', unknown: undefined });
+  assert.deepEqual(parseCliArgs(['#12', '-R', 'acme/notes', '--json']), { repo: 'acme/notes', asJson: true, prNumber: '12', unknown: undefined, usage: null });
   assert.equal(parseCliArgs(['--watch']).unknown, '--watch');
+  for (const args of [['12', '-R'], ['12', '-R', '--json'], ['12', '--repo', '-x'], ['12', '--repo=']]) {
+    assert.match(parseCliArgs(args).usage ?? '', /needs owner\/repo/, args.join(' '));
+  }
 });
 
 test('runChecks exits by verdict, reads JSON from a gh that exits non-zero, and exits 3 on errors', (t) => {

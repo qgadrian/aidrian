@@ -270,6 +270,16 @@ test('parseDuration reads seconds and one unit; the command reads decisions on s
   const executed = run(['execute', '--min-age', '0'], JSON.stringify({ [dirs.open]: 'delete' }));
   assert.equal(executed.status, 0, executed.stderr);
   assert.ok(JSON.parse(executed.stdout).removed.some((row) => row.path === dirs.open));
+  for (const [input, reason] of [
+    ['', /execute reads its decisions as JSON on stdin/],
+    ['delete', /decisions must be a JSON object/],
+    ['["x"]', /decisions must be a JSON object/],
+    [JSON.stringify({ [dirs.pr]: 'yes' }), /"yes" is not a decision: use "delete" or "keep"/],
+  ]) {
+    const refused = run(['execute', '--min-age', '0'], input);
+    assert.equal(refused.status, 1, input);
+    assert.match(JSON.parse(refused.stdout).reason, reason, input);
+  }
   const bad = run(['--min-age', 'soon']);
   assert.deepEqual([bad.status, JSON.parse(bad.stdout).phase], [1, 'arguments']);
 });

@@ -129,6 +129,7 @@ test('resolve appends the resolution, needs a link, reads it from stdin, and rec
   appendFileSync(inbox(), 'not json\n');
   const before = readFileSync(inbox(), 'utf8');
   assert.equal(run(['resolve', second, '--outcome', 'rule']).stderr, 'resolve needs --link: the commit, pull request, issue, lesson id, or reason it ends in\n');
+  assert.equal(run(['resolve', second, '--outcome', 'rule', '--link', '-'], ' \n').stderr, '--link - read nothing from stdin; pipe the link in or pass --link <ref>\n');
   const resolved = run(['resolve', second, '--outcome', 'rule', '--link', '-', '--expect', 'report: planner re-dispatched under 10%'], "the reason's $(here)\n");
   assert.deepEqual([resolved.status, resolved.stdout], [0, `${second} -> rule\n`]);
   assert.ok(readFileSync(inbox(), 'utf8').startsWith(before), 'every earlier line is byte for byte the same: the file is only appended to');

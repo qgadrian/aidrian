@@ -101,8 +101,17 @@ test('aidrian report sessions prints the view, --json all of it, and refuses --p
   const json = JSON.parse(report(['--json']).stdout);
   assert.deepEqual(Object.keys(json), [
     'file', 'rotated', 'since', 'skipped', 'coverage', 'count', 'ended_more_than_once', 'without_split', 'cost_usd', 'main', 'subagents',
-    'by_day', 'by_model', 'by_effort', 'top',
+    'by_day', 'unknown_models', 'by_model', 'by_effort', 'top',
   ]);
   assert.deepEqual([report(['--prs', '3']).status, report(['--prs', '3']).stderr], [1, '--prs belongs to aidrian report, aidrian report reviews, and aidrian report health, not aidrian report sessions\n']);
   assert.equal(spawnSync(CLI, ['report', 'agents', '--json'], { cwd: dir, env, encoding: 'utf8' }).status, 0, 'agents names the default view');
+});
+
+test('a model the price map does not know is listed as unpriced, not silently $0', () => {
+  const row = { event: 'session', ts: '2026-10-29T10:00:00Z', session_id: 'u1', cost_usd: 1, models: ['claude-opus-5-5', 'gpt-x'],
+    tokens_by_model: {}, cost_by_model: { 'claude-opus-5-5': 1 }, main: { tokens: {}, cost_usd: 1 }, subagents: { tokens: {}, cost_usd: 0 } };
+  const summary = summarizeSessions([row]);
+  assert.deepEqual(summary.unknown_models, ['gpt-x']);
+  assert.match(formatSessions(summary, { file: 'f', since: '7d', skipped: 0 }), /\nUnpriced models, counted as \$0: gpt-x\n/);
+  assert.deepEqual(summarizeSessions(SESSION_ROWS).unknown_models, []);
 });

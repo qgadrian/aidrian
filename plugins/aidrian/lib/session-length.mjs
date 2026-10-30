@@ -22,7 +22,7 @@ export function sessionLength(text) {
     }
     if (Number.isNaN(time)) continue;
     if (previous !== null && time > previous) worked += Math.min(time - previous, HOUR_MS);
-    previous = time;
+    previous = Math.max(previous ?? time, time);
   }
   return { tokens, calls: requests.size, hours: worked / HOUR_MS };
 }

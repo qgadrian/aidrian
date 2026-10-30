@@ -143,6 +143,10 @@ the orchestrator uses it to name each background agent's handoff file.
 Each task gets its own git worktree, so the main checkout stays clean and on the default branch.
 `aidrian worktree new <branch>` creates one and runs config.json `git.worktrees.bootstrap` in it, such as `npm ci`;
 `aidrian worktree cleanup` removes the ones whose pull request merged. The `worktree-new` and `worktree-cleanup` skills drive both.
+Both commands print JSON for those skills to read, not for a person.
+`aidrian worktree cleanup` alone prints the plan; `aidrian worktree cleanup execute` reads the decisions for its `confirm` rows on stdin,
+as `{"<worktree path>": "delete", "<other path>": "keep"}`, or `{}` for none.
+Empty stdin, other JSON, or a value other than `"delete"` or `"keep"` stops it with nothing removed.
 They live in `.worktrees/` at the repository root: editors show them beside the code,
 and Claude Code edits them without asking, because they are inside the folder the session opened.
 `"git": { "worktrees": { "dir": "<path>" } }` in config.json moves them; a relative path starts at the repository root,

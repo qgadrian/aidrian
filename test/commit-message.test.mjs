@@ -31,7 +31,7 @@ test('Conventional Commits subjects pass, and Merge and Revert subjects always d
 });
 
 test('other subjects fail with the accepted forms and the types', () => {
-  for (const subject of ['Add export', 'feat add export', 'feat(scope) add export', 'feat:', 'misc: add export', 'fixup! feat: x']) {
+  for (const subject of ['Add export', 'feat add export', 'feat(scope) add export', 'feat:', 'misc: add export', 'fixup! wip']) {
     const problem = subjectProblem(subject, TYPES);
     assert.match(problem, new RegExp(`^Invalid commit subject: ${subject.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), subject);
     assert.match(problem, /Types: build, chore, ci, docs, feat, fix, perf, refactor, revert, style, test\./);
@@ -54,4 +54,13 @@ test('aidrian commit-msg reads the types from config.json and the message from a
   assert.match(bad.stderr, /^Invalid commit subject: fix: x\n[\s\S]*Types: feat, wip\./);
   assert.equal(spawnSync(CLI, ['commit-msg', '--message', 'fix: x'], { cwd: tmpdir(), encoding: 'utf8' }).status, 0, 'defaults outside a project');
   assert.deepEqual([run([]).status, run([]).stderr], [1, 'give one of --file PATH or --message TEXT\n']);
+});
+
+test('git autosquash prefixes check the subject after them, and a scope may hold capitals and commas', () => {
+  for (const subject of ['fixup! feat: x', 'squash! fix(api): y', 'amend! fix: y', 'fixup! fixup! feat: x', 'feat(API): x', 'fix(ui,api): x']) {
+    assert.equal(subjectProblem(subject, TYPES), null, subject);
+  }
+  for (const subject of ['fixup! wip', 'squash! ', 'feat(ui api): x', 'feat(): x', 'fixup!feat: x']) {
+    assert.match(subjectProblem(subject, TYPES) ?? '', /^Invalid commit subject/, subject);
+  }
 });

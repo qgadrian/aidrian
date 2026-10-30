@@ -105,6 +105,7 @@ the project's agent wins when it fits the task or has the same name as the plugi
 `aidrian-knowledge` shows what an agent would read, and drafts indexes.
 In Claude Code it is on the PATH while the plugin is enabled. Elsewhere, run it by its path; the start hook prints that path.
 Where each host installed it: [Claude Code](providers/claude-code.md#running-aidrian), [Codex](providers/codex.md#running-aidrian).
+The examples below match the docs of [`examples/consumer`](../examples/consumer).
 
 ```sh
 aidrian-knowledge route testing        # the docs an agent with the testing tag reads
@@ -129,9 +130,12 @@ so agents never read a broken index.
 ## Checks
 
 `aidrian check` validates every index along with the rest of the [project folder](project-folder.md#setting-up-and-checking).
-For each index it fails when the file is malformed, its name is not a valid id, `dir` is not a folder inside the project,
+For each index it fails when the file is malformed, its name is not a valid id, `dir` does not exist or is not a folder inside the project,
 a path leaves its bucket, or a key is unknown.
 A symlink fails too when it leads an index or a bucket outside the project, or a doc outside its bucket.
+It warns, and still passes, on a tag outside the [tags](../plugins/aidrian/skills/knowledge/SKILL.md#tags) the plugin's agents ask for,
+with the closest one when the tag looks like a typo, and on a `description` still `Docs in <dir>.` from `init`.
+A note counts the docs with no tags that are not `always`: no agent routes to them.
 It also fails when a `.md` file in a bucket has no entry in `docs`, because no agent would ever find it,
 when a summary is empty, longer than 160 characters, or more than one line, and when an `always` doc has no entry in `docs`.
 It warns when the `always` docs or a tagged doc pass the [knowledge budgets](config.md#knowledge-budgets),

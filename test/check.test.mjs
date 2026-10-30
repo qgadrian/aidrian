@@ -164,6 +164,33 @@ test('check fails on a version this plugin does not read, and reads no index the
   );
 });
 
+test('check warns on a tag outside the vocabulary, untagged docs, and a placeholder description, and still passes', (t) => {
+  const dir = exampleRepo(t);
+  const file = path.join(dir, '.aidrian/knowledge/product.json');
+  const index = JSON.parse(readFileSync(file, 'utf8'));
+  index.description = 'Docs in docs/knowledge/product.';
+  index.docs['product-rules.md'].tags = ['prodcut_sensitive', 'billing'];
+  index.docs['sharing.md'].tags = [];
+  writeFileSync(file, JSON.stringify(index));
+  const { status, stderr } = run(['check'], dir);
+  assert.equal(status, 0);
+  assert.deepEqual(stderr.split('\n'), [
+    'warning: .aidrian/knowledge/product.json: "description" is still the placeholder "Docs in docs/knowledge/product."; say what the bucket covers',
+    'warning: docs/knowledge/product/product-rules.md: tag "prodcut_sensitive" is not one the plugin asks for; did you mean "product_sensitive"?',
+    'warning: docs/knowledge/product/product-rules.md: tag "billing" is not one the plugin asks for; only a skill or dispatch of your own routes to it',
+    'note: 1 of 8 docs have no tags; no agent routes to them',
+    '',
+  ]);
+});
+
+test('check fails on an index whose dir does not exist, apart from one outside the project', (t) => {
+  const dir = exampleRepo(t);
+  const file = path.join(dir, '.aidrian/knowledge/product.json');
+  writeFileSync(file, readFileSync(file, 'utf8').replace('"dir": "docs/knowledge/product"', '"dir": "docs/gone"'));
+  const { status, stderr } = run(['check'], dir);
+  assert.deepEqual([status, stderr], [1, `.aidrian/knowledge/product.json: "dir": "docs/gone" does not exist (relative to ${dir})\n`]);
+});
+
 test('check fails on an index whose dir is not a folder inside the project', (t) => {
   const dir = exampleRepo(t);
   const file = path.join(dir, '.aidrian/knowledge/product.json');

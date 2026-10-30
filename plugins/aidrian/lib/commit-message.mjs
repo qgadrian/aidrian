@@ -32,12 +32,13 @@ export function commitSubject(message) {
 }
 
 // Why `subject` is not a valid subject for these types, with the accepted forms; null when it is valid.
-// `Merge …` and `Revert …` subjects, which git writes itself, always pass.
+// `Merge …` and `Revert …` subjects, which git writes itself, always pass. A `fixup! `, `squash! `, or `amend! ` subject,
+// from `git commit --fixup`, is checked after the prefix: autosquash folds it into the commit it names.
 export function subjectProblem(subject, types) {
   if (subject?.startsWith('Merge ') || subject?.startsWith('Revert ')) return null;
   const alternatives = types.map((type) => type.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-  const pattern = new RegExp(`^(?:${alternatives})(?:\\([a-z0-9./_-]+\\))?!?: .+`);
-  if (subject && pattern.test(subject)) return null;
+  const pattern = new RegExp(`^(?:${alternatives})(?:\\([^()\\s]+\\))?!?: .+`);
+  if (subject && pattern.test(subject.replace(/^(?:(?:fixup|squash|amend)! )+/, ''))) return null;
   return [
     subject ? `Invalid commit subject: ${subject}` : 'The commit message is empty or only comments.',
     '',

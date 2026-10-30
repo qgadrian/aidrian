@@ -50,14 +50,21 @@ export function computeVerdict(rows, { requiredChecks = [], ignoreCancelledCheck
 // [PR] [-R owner/repo] [--json]. `-R` needs an explicit number: a branch lookup in another repository is ambiguous.
 export function parseCliArgs(argv) {
   let repo = null;
+  let usage = null;
   const rest = [];
   for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === '-R' || argv[i] === '--repo') repo = argv[++i] ?? null;
-    else if (argv[i].startsWith('--repo=')) repo = argv[i].slice('--repo='.length);
-    else rest.push(argv[i]);
+    const inline = argv[i].startsWith('--repo=');
+    if (!inline && argv[i] !== '-R' && argv[i] !== '--repo') {
+      rest.push(argv[i]);
+      continue;
+    }
+    const flag = inline ? '--repo' : argv[i];
+    repo = inline ? argv[i].slice('--repo='.length) : argv[++i] ?? null;
+    // A missing value, or the next flag taken for one, is a usage error, not this checkout's repository.
+    if (!repo || repo.startsWith('-')) usage ??= `${flag} needs owner/repo`;
   }
   const unknown = rest.find((arg) => arg !== '--json' && !/^#?\d+$/.test(arg));
-  return { repo, asJson: rest.includes('--json'), prNumber: rest.find((arg) => /^#?\d+$/.test(arg))?.replace('#', '') ?? null, unknown };
+  return { repo, asJson: rest.includes('--json'), prNumber: rest.find((arg) => /^#?\d+$/.test(arg))?.replace('#', '') ?? null, unknown, usage };
 }
 
 // `owner/repo`, lowercased, from `[HOST/]OWNER/REPO` or a remote URL: https, ssh, or `git@host:owner/repo.git`.
@@ -77,11 +84,12 @@ export function runChecks(
   gh = (args) => runGh(args),
   remotes = () => checkoutRepos(process.cwd()),
 ) {
-  const { prNumber, repo, asJson, unknown } = parseCliArgs(argv);
+  const { prNumber, repo, asJson, unknown, usage } = parseCliArgs(argv);
   const fail = (message) => {
     console.error(`error: ${message}`);
     return 3;
   };
+  if (usage) return fail(usage);
   if (unknown) return fail(`unknown argument: ${unknown}`);
   if (repo && !prNumber) return fail('-R/--repo needs an explicit pull request number');
   if (repo && !remotes().includes(repoKey(repo))) {

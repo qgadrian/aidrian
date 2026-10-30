@@ -26,6 +26,8 @@ test('a session is the context of its last request, its requests counted once, a
   ].join('\n');
   assert.deepEqual(sessionLength(text), { tokens: 6430, calls: 3, hours: 1.5 });
   assert.deepEqual(sessionLength(''), { tokens: 0, calls: 0, hours: 0 });
+  // A line dated earlier than the one before it, as a resumed or merged transcript has, counts no stretch twice.
+  assert.equal(sessionLength([line(0), line(30), line(10), line(30)].join('\n')).hours, 0.5);
 });
 
 test('each limit trips on its own, 0 turns a limit off, and a transcript with no requests trips nothing', () => {

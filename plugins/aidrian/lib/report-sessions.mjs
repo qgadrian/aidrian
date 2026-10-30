@@ -65,6 +65,9 @@ export function summarizeSessions(rows, { sinceMs = 0 } = {}) {
     main: finish(main),
     subagents: finish(subagents),
     by_day: group((row) => row.ts.slice(0, 10)).map(({ key, ...rest }) => ({ day: key, ...rest })).sort((a, b) => a.day.localeCompare(b.day)),
+    // A model the price map does not know costs $0 in every figure; a row with cost per model shows which.
+    unknown_models: [...new Set(sessions.flatMap((row) =>
+      row.cost_by_model ? (row.models ?? []).filter((model) => !Object.hasOwn(row.cost_by_model, model)) : []))].sort(),
     by_model: [...models.values()].map((entry) => ({ ...entry, cost_usd: round(entry.cost_usd) })).sort((a, b) => b.cost_usd - a.cost_usd || b.tokens - a.tokens),
     by_effort: group((row) => row.effort ?? null).map(({ key, ...rest }) => ({ effort: key, ...rest })).sort((a, b) => b.cost_usd - a.cost_usd),
     top: [...sessions].sort((a, b) => (b.cost_usd ?? 0) - (a.cost_usd ?? 0)).slice(0, TOP_SESSIONS).map((row) => ({
@@ -100,6 +103,7 @@ export function formatSessions(summary, { file, since, skipped, notes = [] }) {
   const hour = main.tokens.cache_write_1h + subagents.tokens.cache_write_1h;
   lines.push(
     `${plural(summary.count, 'session')}, ${money(summary.cost_usd)} estimated${twice}`,
+    ...(summary.unknown_models?.length ? [`Unpriced models, counted as $0: ${summary.unknown_models.join(', ')}`] : []),
     `Main conversation: ${money(main.cost_usd)}${share(main.cost_usd, sides)}, ${tokenCount(allTokens(main.tokens))} tokens, ` +
       `${perToolRequest(main)} tool calls per request that made one`,
     `Subagents: ${money(subagents.cost_usd)}${share(subagents.cost_usd, sides)}, ${tokenCount(allTokens(subagents.tokens))} tokens, ` +

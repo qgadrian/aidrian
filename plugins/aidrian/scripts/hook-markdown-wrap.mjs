@@ -15,7 +15,7 @@ const MARKDOWN = /\.(md|markdown|mdx)$/i;
 const MAX_REPORTED = 10;
 
 await runHook((input) => {
-  const { file_path: file, content, new_string: newString } = input.tool_input ?? {};
+  const { file_path: file, content, new_string: newString, replace_all: replaceAll } = input.tool_input ?? {};
   const introduced = input.tool_name === 'Write' ? content : input.tool_name === 'Edit' ? newString : undefined;
   if (typeof file !== 'string' || !MARKDOWN.test(file) || typeof introduced !== 'string' || introduced === '') return;
   const absolute = path.resolve(typeof input.cwd === 'string' ? input.cwd : process.cwd(), file);
@@ -23,7 +23,7 @@ await runHook((input) => {
   const limit = project ? loadConfig(project).config.docs.wrapLimit : 0;
   if (limit === 0) return;
   const text = readFileSync(absolute, 'utf8');
-  const touched = input.tool_name === 'Write' ? null : affectedLines(text, introduced);
+  const touched = input.tool_name === 'Write' ? null : affectedLines(text, introduced, replaceAll === true);
   // An edit whose text is gone from the file cannot be mapped to lines; say nothing rather than name the wrong ones.
   if (input.tool_name === 'Edit' && touched === null) return;
   const violations = findWrapViolations(text, limit).filter((hit) => touched === null || touched.has(hit.line));

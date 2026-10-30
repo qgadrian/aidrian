@@ -24,7 +24,7 @@ function fakeGh(prs, { reactions = {}, details = {}, compares = {} } = {}) {
       if (!compares[compare[1]]) throw new Error('gh: HTTP 404: No common ancestor');
       return compares[compare[1]];
     }
-    return reactions[/issues\/(\d+)\/reactions/.exec(args[1])[1]] ?? [];
+    return reactions[/issues\/(\d+)\/reactions/.exec(args.find((arg) => arg.includes('/reactions')))[1]] ?? [];
   };
   return { gh, calls };
 }

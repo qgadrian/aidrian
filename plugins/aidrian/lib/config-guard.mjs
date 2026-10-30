@@ -112,7 +112,8 @@ function globbedFile(globs, files, others = true) {
     const parts = text.replace(/\/+$/u, '').split('/');
     const pattern = regex(parts.pop());
     const head = parts.join('/') || (text.startsWith('/') ? '/' : '.');
-    if (unsure || /[*?[]/u.test(head)) return pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file)));
+    // A `..` after a symlink climbs out of the link's target, which `path.resolve` would collapse away: fail closed.
+    if (unsure || /[*?[]/u.test(head) || parts.includes('..')) return pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file)));
     const folders = path.isAbsolute(head) ? [head] : dirs.map((dir) => path.resolve(dir, head));
     if (others) return pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file)));
     return folders.some((folder) =>

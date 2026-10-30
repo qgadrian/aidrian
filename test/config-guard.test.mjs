@@ -298,6 +298,8 @@ test('a glob reaches a config file that is a symlink to another folder, by the p
   for (const command of ["echo '{}' > hard/alias", "echo '{}' > hard/*"]) {
     assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /config\.json/, command);
   }
+  // Past a symlink, `..` climbs out of the link's target, not back to the folder the path names.
+  assert.match(verdict(dir, subagent(dir, 'Bash', { command: "echo '{}' > out/link/../*.json" })) ?? '', /\.aidrian/);
   // A link the same call creates before the glob runs, in its folder or above it, is not on disk yet: with any other
   // write in the call, a glob that may name a guarded file fails closed.
   mkdirSync(path.join(dir, 'out'));

@@ -100,8 +100,10 @@ Every agent preloads it: it says how to load the project's buckets, which projec
 plugins/aidrian/
 ├── .claude-plugin/plugin.json      Claude Code manifest
 ├── plugin.json                     Codex manifest (same name, version, description)
-├── agents/*.md                     the agents; the only source to edit
-├── agent-addons/<name>.codex.md    optional text only Codex gets, after that agent's body
+├── agents-src/*.md                 the agents, for every host; the source to edit
+├── providers/<provider>.json       each host's model, effort, and tools per agent
+├── agent-addons/*.<provider>.md    optional text only that host gets, after the agent's body
+├── agents/*.md                     generated Claude Code agents; never edit
 ├── skills/*/SKILL.md               the skills; both hosts read them as they are
 ├── bin/aidrian                     project commands; on the Bash PATH in Claude Code sessions
 ├── bin/aidrian-knowledge           the knowledge command; on the same PATH
@@ -110,11 +112,12 @@ plugins/aidrian/
 ├── lib/                            the code behind the commands and hooks
 │   └── rules/                      the rules the Bash and write hooks run; rules/github/ holds those that read only gh
 └── codex/
-    ├── agents/aidrian-*.toml       generated from agents/*.md; never edit
+    ├── agents/aidrian-*.toml       generated Codex roles; never edit
     └── install-agents.mjs          copies those roles into ~/.codex/agents
-scripts/build.mjs                   generates codex/agents
+scripts/build.mjs                   generates agents/ and codex/agents from agents-src/ and providers/
 scripts/version.mjs                 raises the plugin version (npm run bump) and checks it
 examples/consumer/                  a small project that uses the plugin
+docs/agents.md                      the agent sources, the provider files, and how they merge
 docs/project-folder.md              the project folder: structure, location, version, checks
 docs/config.md                      the project config file, .aidrian/config.json
 docs/hooks.md                       what each hook does, and its override
@@ -124,27 +127,25 @@ docs/knowledge.md                   the knowledge-bucket format
 test/                               node --test suites
 ```
 
-## Host add-ons
+## Agent sources
 
-An agent is written for every host.
-When Codex needs extra text for one agent, put it in `plugins/aidrian/agent-addons/<name>.codex.md`:
-`npm run build` adds it after the agent's body in the Codex role, and Claude Code never reads it.
-The folder sits beside `agents/` because Claude Code loads every `.md` file in `agents/` as an agent.
-
-There is no Claude add-on. Claude Code reads `agents/<name>.md` as it is, so nothing could add a `<name>.claude.md` to it;
-text only Claude needs stays in the agent until the build generates Claude agents too.
-`<name>.opencode.md` is kept for an OpenCode build, which does not exist.
-The build fails on either name, and on an add-on whose agent does not exist.
+An agent is written once, for every host, in `plugins/aidrian/agents-src/<name>.md`:
+neutral frontmatter (`name`, `description`, `access`, `skills`) and the body.
+Each host's model, effort, and tools for it are in `plugins/aidrian/providers/claude.json` and `codex.json`.
+`npm run build` generates the Claude Code agents in `agents/` and the Codex roles in `codex/agents/`.
+When one host needs extra text for one agent, put it in `plugins/aidrian/agent-addons/<name>.<provider>.md`:
+the build adds it after the body in that host's agent only.
+[docs/agents.md](docs/agents.md) lists the fields, the merge order, and how to add a host.
 
 ## Build and check
 
 ```sh
 npm ci
-npm run build    # after editing plugins/aidrian/agents/*.md
+npm run build    # after editing plugins/aidrian/agents-src/, providers/, or agent-addons/
 npm run check    # what CI runs
 ```
 
-`npm run check` fails when the generated Codex agents are stale, when the example's project folder is invalid, when a test fails,
+`npm run check` fails when a generated agent is stale or edited by hand, when the example's project folder is invalid, when a test fails,
 or when the plugin changed without a version bump ([Contributing](#contributing)).
 The tests also check that both manifests agree, that every agent preloads the `knowledge` skill,
 that agents only ask for tags the `knowledge` skill lists, that the agent and skill tables above list every one shipped,

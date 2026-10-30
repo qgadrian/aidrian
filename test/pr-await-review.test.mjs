@@ -123,6 +123,25 @@ test('latestBotSignal: a bot-authored issue comment is a completed signal (draft
   assert.equal(isStale({ kind: 'comment', at: T(8) }, 'bbb', T(7)), false);
 });
 
+test('latestBotSignal: with no trigger, a Codex task summary is not a review of the head', () => {
+  // Observed on a real PR: no "@codex review" existed, and the bot posted the summary of a separate task after the
+  // push, linking blobs at the old head. It was read as covering the head, and the real review was never requested.
+  const base = { reviews: [], reviewComments: [], reactions: [], reviewer: DEFAULT_REVIEWER, since: null };
+  const taskSummary = {
+    id: 80,
+    user: BOT,
+    created_at: T(6),
+    body: '### Summary\n- Fixed the thing\n\nCommitted the changes as `73bd9e7e`.\n\n[View task →](https://chatgpt.com/codex/tasks/x)',
+  };
+  assert.equal(latestBotSignal({ ...base, issueComments: [taskSummary] }), null);
+  // A comment that names the commit it reviewed still counts without a trigger.
+  const reviewed = { ...taskSummary, id: 81, body: '**Reviewed commit:** `bbbbbbbbbb`\n\nNo issues.' };
+  assert.equal(latestBotSignal({ ...base, issueComments: [reviewed] }).commit_id, 'bbbbbbbbbb');
+  // So does the quota notice, which the caller must see to stop waiting.
+  const quota = { ...taskSummary, id: 82, body: 'You have reached your Codex usage limits.' };
+  assert.equal(latestBotSignal({ ...base, issueComments: [quota] }).kind, 'quota_exhausted');
+});
+
 test('latestBotSignal: a thumbs-up with no review is a completed review with nothing to address', () => {
   const s = latestBotSignal({ reviews: [], reviewComments: [], reactions: [{ user: BOT, content: '+1', created_at: T(6) }], reviewer: DEFAULT_REVIEWER, since: T(5) });
   assert.equal(s.kind, 'thumbs_up');
@@ -1052,7 +1071,7 @@ test('aidrian pr prints its usage for an unknown action, and await-review report
   const unknown = spawnSync(cli, ['pr', 'merge'], { encoding: 'utf8' });
   assert.deepEqual([unknown.status, unknown.stderr], [1, [
     'usage: aidrian pr await-review [PR] [--request] [--max-rounds N]',
-    '       aidrian pr checks [PR] [--json]',
+    '       aidrian pr checks [PR] [-R OWNER/REPO] [--json]',
     '       aidrian pr disposition --severity S [--likelihood L --affects A] [--cost C]',
     '               [--source bot [--round N]] [--vocab]',
     '',

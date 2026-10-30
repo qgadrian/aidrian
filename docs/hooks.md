@@ -110,6 +110,18 @@ Each host tells the hook who is calling in its own way.
   - So in Codex, `*` gates hold, and `main` gates hold for the main session and for any subagent call that arrives without `agent_id`.
   - A named agent's gates apply only to a call that carries its `agent_type`.
     Codex names this plugin's roles `aidrian-<agent>`, which the gates read as `<agent>`.
+  - The guard on the config files applies only to a call that carries `agent_id`.
+
+So the two hosts enforce different things per agent:
+
+- Claude Code holds each agent to its gates tool by tool, pattern by pattern, as above.
+- Codex holds an agent to those patterns only as far as its hook input names the agent.
+- Codex cannot make one agent read-only either.
+  Codex 0.165.0 reads a role's `sandbox_mode` and drops it: a spawned agent keeps the sandbox of the session that spawned it
+  ([`apply_role_to_config`](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/core/src/agent/role.rs)).
+  So `install-agents.mjs` writes no sandbox into a role.
+- The read-only Codex enforces is coarse: the session's own sandbox, `codex --sandbox read-only`, binds every agent in that session.
+  A role whose Claude Code agent cannot edit files says so in its instructions, and nothing on Codex enforces that.
 
 ## Markdown line length
 

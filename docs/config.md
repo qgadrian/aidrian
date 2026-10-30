@@ -19,7 +19,11 @@ In a group such as `github`, set only the keys you change; the others keep their
   "version": 1,
   "defaultBranch": "main",
   "state": { "dir": null },
-  "worktrees": { "dir": ".worktrees", "bootstrap": null },
+  "worktrees": {
+    "dir": ".worktrees",
+    "bootstrap": null,
+    "disposable": ["node_modules", "dist", "build", ".next", ".cache", "coverage", ".turbo"]
+  },
   "mainCheckout": { "guard": false, "allowWrites": [] },
   "commits": { "types": ["build", "chore", "ci", "docs", "feat", "fix", "perf", "refactor", "revert", "style", "test"] },
   "github": {
@@ -64,6 +68,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `state.dir` | The machine-local [state folder](project-folder.md#local-state); `null` is the one under `$XDG_STATE_HOME`. |
 | `worktrees.dir` | The folder for [task worktrees](project-folder.md#task-worktrees), `.worktrees` at the repository root by default. |
 | `worktrees.bootstrap` | One shell command to run inside each new worktree, such as `npm ci`; `null` runs nothing. |
+| `worktrees.disposable` | Folder names whose git-ignored files a cleanup removes without asking. `[]` asks for any ignored file. |
 | `mainCheckout.guard` | `true` blocks agent edits to tracked files in the main checkout, so task work happens in worktrees. Off by default. |
 | `mainCheckout.allowWrites` | Tracked paths agents may still edit in the main checkout, as globs with `*` and `**`. Ignored paths are always allowed. |
 | `commits.types` | The Conventional Commits types a commit subject may use. |

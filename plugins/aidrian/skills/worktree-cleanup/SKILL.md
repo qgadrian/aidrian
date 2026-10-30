@@ -16,7 +16,8 @@ A thin adapter for `aidrian worktree cleanup`. Never remove a worktree or a bran
    Add `--min-age` only when the user asked to reach worktrees younger than the default `24h`.
    It takes seconds (`3600`) or one unit (`30m`, `2h`, `1d`); `0` turns the age check off.
 2. Report the plan:
-   - `auto`: removed without asking. Only a worktree whose HEAD is a merged pull request's head, with a clean tree and no git-ignored files, gets here.
+   - `auto`: removed without asking. Only a worktree whose HEAD is a merged pull request's head, with a clean tree and no git-ignored files
+     outside the `worktrees.disposable` folders, such as `node_modules/`, gets here.
    - `confirm`: each row's `path` and `reasons`.
    - `skip`: how many, and why when it is not the main checkout or the current worktree.
    - With `gh_available: false`, say that nothing is automatic this run: only GitHub can prove a pull request merged.

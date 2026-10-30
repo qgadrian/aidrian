@@ -1,8 +1,8 @@
 // `aidrian worktree new|cleanup`: the task worktree lifecycle, for the worktree-new and worktree-cleanup skills.
 // `new` creates a worktree for a branch in the project's worktrees folder and runs config.json `worktrees.bootstrap`
-// there. `cleanup` sorts the other worktrees into auto (a merged pull request's exact head, clean with no ignored files,
-// old enough), confirm (everything else, with the reasons), and skip, and removes auto rows plus the ones a person
-// confirmed. Its plan only reads: it writes nothing to the repository.
+// there. `cleanup` sorts the other worktrees into auto (a merged pull request's exact head, clean with no ignored files
+// outside the `worktrees.disposable` folders, old enough), confirm (everything else, with the reasons), and skip, and
+// removes auto rows plus the ones a person confirmed. Its plan only reads: it writes nothing to the repository.
 // Both print one JSON object; a problem is {"status":"blocked","phase","reason","next_step"} with exit 1.
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -205,13 +205,17 @@ export function mergedHeads(main) {
 }
 
 // Sorts every worktree. Auto needs proof that nothing is lost: HEAD is exactly a merged pull request's head, the tree is
-// clean and holds no git-ignored file, such as a `.env`, and the worktree is old enough. A merge seen only by git (HEAD
-// already on the base, or the same change squashed into it) is also true of a branch created a minute ago with no
-// commits, so it only frames the confirm question.
+// clean and holds no git-ignored file, such as a `.env`, outside the folders config.json `worktrees.disposable` names,
+// such as `node_modules/`, and the worktree is old enough. A merge seen only by git (HEAD already on the base, or the
+// same change squashed into it) is also true of a branch created a minute ago with no commits, so it only frames the
+// confirm question.
 export function planCleanup({ minAgeSec = DAY_SEC } = {}, { cwd = process.cwd(), heads = mergedHeads, now = Date.now() } = {}) {
   const ctx = context(cwd);
   const merged = heads(ctx.main);
-  const out = { status: 'planned', base: ctx.base, gh_available: merged !== null, min_age_sec: minAgeSec, auto: [], confirm: [], skip: [] };
+  const out = {
+    status: 'planned', base: ctx.base, gh_available: merged !== null, min_age_sec: minAgeSec, disposable: ctx.config.worktrees.disposable,
+    auto: [], confirm: [], skip: [],
+  };
   for (const worktree of listWorktrees(ctx.main)) {
     const row = classify(worktree, ctx, merged, minAgeSec, now);
     out[row.bucket].push(row);
@@ -229,7 +233,7 @@ function classify(worktree, ctx, merged, minAgeSec, now) {
   const age = ageSec(dir, now);
   if (age !== null && age < minAgeSec) return skip(`too new: ${Math.floor(age / 3600)}h old, under --min-age`);
 
-  const { changes, ignored } = treeState(dir);
+  const { changes, ignored, disposable } = treeState(dir, ctx.config.worktrees.disposable);
   const oids = (branch && merged?.get(branch)) ?? [];
   const exact = oids.includes(head);
   const reasons = [];
@@ -252,20 +256,25 @@ function classify(worktree, ctx, merged, minAgeSec, now) {
   // `unless-moved` where every commit on the branch is in the merged pull request: the branch goes only while it still
   // points at the inspected `head`. Otherwise `if-merged`: `git branch -d`, which git refuses for unmerged work.
   const row = {
-    path: dir, branch, head, reasons, dirty: changes !== 0, ignored, unreachable,
+    path: dir, branch, head, reasons, dirty: changes !== 0, ignored, disposable, unreachable,
     branch_delete: branch ? (exact ? 'unless-moved' : 'if-merged') : null,
   };
   return { bucket: exact && changes === 0 && !ignored.length && age !== null ? 'auto' : 'confirm', ...row };
 }
 
-// A worktree's files as git status sees them: { changes, ignored }. `changes` counts tracked and untracked changes, null
-// when git status fails; `ignored` lists the git-ignored files and folders, which `git worktree remove` deletes too.
-function treeState(dir) {
-  const status = git(dir, ['status', '--porcelain', '--ignored']);
-  if (status.status !== 0) return { changes: null, ignored: [] };
+// A worktree's files as git status sees them: { changes, ignored, disposable }. `changes` counts tracked and untracked
+// changes, null when git status fails. The git-ignored files and folders, which `git worktree remove` deletes too, split
+// in two: `disposable` lists those inside a folder named in `folders` (config.json `worktrees.disposable`), at any
+// depth, as `packages/a/node_modules/` is; `ignored` lists the rest. `--ignored=matching` lists what an ignore pattern
+// matches, so a folder that holds only ignored files is not listed whole, as `packages/` would be.
+function treeState(dir, folders) {
+  const status = git(dir, ['status', '--porcelain', '--ignored=matching']);
+  if (status.status !== 0) return { changes: null, ignored: [], disposable: [] };
   const lines = status.stdout.split('\n').filter(Boolean);
-  const ignored = lines.filter((line) => line.startsWith('!! ')).map((line) => line.slice(3));
-  return { changes: lines.length - ignored.length, ignored };
+  const all = lines.filter((line) => line.startsWith('!! ')).map((line) => line.slice(3));
+  // A folder is every part of the path but the last, and the last too when git lists a folder (`node_modules/`).
+  const inDisposable = (entry) => entry.split('/').slice(0, -1).some((part) => folders.includes(part));
+  return { changes: lines.length - all.length, ignored: all.filter((entry) => !inDisposable(entry)), disposable: all.filter(inDisposable) };
 }
 
 // How many commits reachable from `head` no local branch, remote branch, or tag holds; null when git cannot say.
@@ -317,7 +326,7 @@ export function executeCleanup({ minAgeSec = DAY_SEC, force = false, decisions =
   const { main } = checkoutRoots(cwd);
   const out = { status: 'done', removed: [], kept: [], refused: [], failed: [] };
   const remove = (row, forced) => {
-    const changed = changedSinceInspected(row, forced);
+    const changed = changedSinceInspected(row, forced, plan.disposable);
     if (changed) return out.refused.push({ path: row.path, reason: `changed after it was inspected: ${changed}; kept with its branch, run cleanup again` });
     const removed = git(main, ['worktree', 'remove', ...(forced ? ['--force'] : []), row.path]);
     if (removed.status !== 0) return out.failed.push({ path: row.path, error: failure(removed) });
@@ -341,13 +350,13 @@ export function executeCleanup({ minAgeSec = DAY_SEC, force = false, decisions =
 }
 
 // What changed in a row since classify read it, or null: its HEAD, or, unless the removal is forced, its clean tree and
-// its list of ignored files.
-function changedSinceInspected(row, forced) {
+// its list of ignored files outside the `disposable` folders.
+function changedSinceInspected(row, forced, disposable) {
   const head = git(row.path, ['rev-parse', '--verify', '--quiet', 'HEAD']);
   const current = head.status === 0 ? head.stdout.trim() : null;
   if (!row.head || current !== row.head) return `HEAD moved from ${row.head ?? 'unknown'} to ${current ?? 'unknown'}`;
   if (forced) return null;
-  const { changes, ignored } = treeState(row.path);
+  const { changes, ignored } = treeState(row.path, disposable);
   if (changes === null) return 'git status failed';
   if (changes > 0) return 'uncommitted changes appeared';
   const added = ignored.filter((file) => !row.ignored.includes(file));

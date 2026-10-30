@@ -24,7 +24,11 @@ function fakeGh(prs, { reactions = {}, details = {}, compares = {} } = {}) {
       if (!compares[compare[1]]) throw new Error('gh: HTTP 404: No common ancestor');
       return compares[compare[1]];
     }
-    return reactions[/issues\/(\d+)\/reactions/.exec(args.find((arg) => arg.includes('/reactions')))[1]] ?? [];
+    // gh prints one JSON array per page: one page of 1 reaction each here, which only --slurp wraps into one document.
+    const pages = (reactions[/issues\/(\d+)\/reactions/.exec(args.find((arg) => arg.includes('/reactions')))[1]] ?? []).map((r) => [r]);
+    if (args.includes('--slurp')) return pages;
+    if (pages.length > 1) throw new Error('Unexpected non-whitespace character after JSON');
+    return pages.flat();
   };
   return { gh, calls };
 }
@@ -71,7 +75,7 @@ const COMPARES = {
 
 test('the rounds are what --prs printed: the bot`s formal reviews; a bot 👍 with no review is a clean first pass; unanswered pull requests are left out', () => {
   const { gh, calls } = fakeGh(PRS, {
-    reactions: { 2: [{ content: '+1', user: { login: BOT } }], 3: [{ content: '+1', user: { login: 'someone' } }] },
+    reactions: { 2: [{ content: '+1', user: { login: 'someone' } }, { content: '+1', user: { login: BOT } }], 3: [{ content: '+1', user: { login: 'someone' } }] },
     details: DETAILS,
     compares: COMPARES,
   });

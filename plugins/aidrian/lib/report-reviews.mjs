@@ -53,7 +53,7 @@ export function reviewRounds(limit, reviewer, gh = ghAt(undefined), { sinceMs = 
     for (const pr of prs) {
       const count = (pr.reviews ?? []).filter((review) => sameLogin(review.author?.login, reviewer)).length;
       if (count > 0) rounds.push({ number: pr.number, rounds: count });
-      else if (gh(['api', '--paginate', `repos/${repo}/issues/${pr.number}/reactions?content=%2B1`]).some((r) => r.content === '+1' && sameLogin(r.user?.login, reviewer))) {
+      else if (gh(['api', '--paginate', '--slurp', `repos/${repo}/issues/${pr.number}/reactions?content=%2B1`]).flat().some((r) => r.content === '+1' && sameLogin(r.user?.login, reviewer))) {
         rounds.push({ number: pr.number, rounds: 0 });
       }
     }

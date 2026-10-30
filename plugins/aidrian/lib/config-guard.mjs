@@ -49,8 +49,8 @@ const INTERPRETERS = [
 // the session gated (lib/gate-snapshot.mjs). Code an interpreter runs also may not name the folder that holds them.
 export function configWriteDenial(input, project, { names: { human } }, { also = [] } = {}) {
   if (typeof input.agent_id !== 'string' || input.agent_id === '') return null;
-  const { files: targets, names } = writeTargets(input);
-  if (targets.length === 0 && names.length === 0) return null;
+  const { files: targets, names, globs } = writeTargets(input);
+  if (targets.length === 0 && names.length === 0 && globs.length === 0) return null;
   const roots = project.checkouts.map((dir) => canonical(dir));
   const guarded = also.map((file) => canonical(file));
   const files = [...configFiles(project).map((file) => canonical(file)), ...guarded];
@@ -60,7 +60,7 @@ export function configWriteDenial(input, project, { names: { human } }, { also =
     const file = files.find((each) => each === target || (!holdsRoot && isWithin(target, each)));
     if (file) return blocked(input, shown(file), 'changes', human);
   }
-  const named = namedFile(names, files, project, guarded);
+  const named = namedFile(names, files, project, guarded) ?? globbedFile(globs, files);
   return named ? blocked(input, shown(named), 'may change', human) : null;
 }
 
@@ -68,13 +68,14 @@ export function configWriteDenial(input, project, { names: { human } }, { also =
 // no path gives: a relative target written after a `cd` to an unknown folder, and code an interpreter runs.
 function writeTargets(input) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
-  if (WRITE_TOOLS.has(input.tool_name)) return { files: toolTargets(input).map((target) => path.resolve(cwd, target)), names: [] };
+  if (WRITE_TOOLS.has(input.tool_name)) return { files: toolTargets(input).map((target) => path.resolve(cwd, target)), names: [], globs: [] };
   const command = input.tool_input?.command;
-  if (input.tool_name !== 'Bash' || typeof command !== 'string') return { files: [], names: [] };
-  const writes = bashWrites(command, cwd, { followCd: true, shells: true });
+  if (input.tool_name !== 'Bash' || typeof command !== 'string') return { files: [], names: [], globs: [] };
+  const writes = bashWrites(command, cwd, { followCd: true, shells: true, restores: true, globs: true });
   return {
     files: writes.flatMap((write) => write.files),
-    names: [...writes.filter((write) => write.unsure && !path.isAbsolute(write.text)).map((write) => write.text), ...interpretedCode(command)],
+    names: [...writes.filter((write) => write.unsure && !write.glob && !path.isAbsolute(write.text)).map((write) => write.text), ...interpretedCode(command)],
+    globs: writes.filter((write) => write.glob).map((write) => write.text),
   };
 }
 
@@ -92,6 +93,16 @@ function namedFile(names, files, project, also) {
     ...also.map((file) => [file, wholePart(lastTwo(path.dirname(file)), '(?![\\w.-])')]),
   ];
   return patterns.find(([, pattern]) => names.some((name) => pattern.test(name)))?.[0] ?? null;
+}
+
+// The guarded file a glob target may match, or null: its last part, as `*.json` or `.aid*`, against the file's name or
+// its folder's, which a recursive delete removes with it. Where the glob's folder is cannot matter: failing closed.
+function globbedFile(globs, files) {
+  const patterns = globs.map((glob) => {
+    const last = glob.replace(/\/+$/u, '').split('/').pop();
+    return new RegExp(`^${last.split(/([*?])/u).map((part) => ({ '*': '.*', '?': '.' })[part] ?? part.replace(/[.+^${}()|[\]\\]/gu, '\\$&')).join('')}$`, 'u');
+  });
+  return files.find((file) => patterns.some((pattern) => pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file))))) ?? null;
 }
 
 const wholePart = (name, after) => new RegExp(`(?<![\\w.-])${name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}${after}`, 'u');

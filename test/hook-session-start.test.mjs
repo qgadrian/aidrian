@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+
+import { snapshotPath } from '../plugins/aidrian/lib/gate-snapshot.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXAMPLE = path.join(ROOT, 'examples/consumer');
@@ -102,4 +104,19 @@ test('the main session also hears about open lessons, escalated with the command
   assert.equal(urgent.status, 0);
   const escalated = hook({ input, XDG_STATE_HOME: xdg }).stdout.split('\n')[2];
   assert.match(escalated, /^Lesson inbox needs triage: 1 P1 open\. Tell the Human once, then go on with the task: .* `\S+\/bin\/aidrian lesson list` shows the order\.$/);
+});
+
+test('the gate snapshot is saved before the knowledge loads, so a knowledge folder that throws still leaves the gates held', (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-start-'));
+  const knowledge = path.join(dir, '.aidrian/knowledge');
+  t.after(() => {
+    chmodSync(knowledge, 0o755);
+    rmSync(dir, { recursive: true, force: true });
+  });
+  mkdirSync(knowledge, { recursive: true });
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, agents: { explorer: { deny: ['WebFetch'] } } }));
+  chmodSync(knowledge, 0o000);
+  const session = 'start-snapshot-1';
+  hook({ input: JSON.stringify({ hook_event_name: 'SessionStart', cwd: dir, session_id: session }) });
+  assert.ok(existsSync(snapshotPath(session, { env: { XDG_STATE_HOME: XDG } })));
 });

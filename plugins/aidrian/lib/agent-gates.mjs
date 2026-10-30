@@ -2,7 +2,7 @@
 // config.mjs checks the patterns with patternProblem; scripts/hook-agent-gates.mjs asks gateDenial before every tool
 // call. docs/config.md#agents gives the rules.
 
-import { commandLines, inlineShellCommand, lexCommand, readGit, readInvocation, SUBSTITUTION_DEPTH_LIMIT } from './shell-lex.mjs';
+import { commandLines, inlineShellCommand, lexInputs, readGit, readInvocation, readsShellInput, SUBSTITUTION_DEPTH_LIMIT } from './shell-lex.mjs';
 
 // The entry that applies to every agent, and the one for the main session, which has no `agent_id`.
 const ALL = '*';
@@ -80,10 +80,16 @@ const READ_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS', 'NotebookRead']);
 // cannot be read (`problem` says why), or null: { match, reason }. The gates it sets are unknown then, so a subagent
 // keeps only the tools that read; the main session, which has no `agent_id`, keeps every tool to fix the file.
 // `fix` is what the human is asked for; by default, to fix the file.
-export function unreadableConfigDenial(input, file, problem, { names: { human } }, fix = `that ${file} needs fixing (aidrian check names the problem)`) {
-  if (typeof input.agent_id !== 'string' || input.agent_id === '' || READ_TOOLS.has(input.tool_name)) return null;
+export function unreadableConfigDenial(input, file, problem, settings, fix = `that ${file} needs fixing (aidrian check names the problem)`) {
   const why = `${file} cannot be read (${problem}), so this project's agent gates are unknown, and until it is fixed a subagent may only read files`;
-  return { match: `${file} cannot be read`, reason: projectRuleReason(input, why, human, fix) };
+  return readOnlyDenial(input, `${file} cannot be read`, why, settings, fix);
+}
+
+// The denial { match, reason } that keeps the subagent call in `input` to the tools that read, or null for a read or a
+// call of the main session. `why` says why the gates are unknown; `fix` is what the human is asked for.
+export function readOnlyDenial(input, match, why, { names: { human } }, fix) {
+  if (typeof input.agent_id !== 'string' || input.agent_id === '' || READ_TOOLS.has(input.tool_name)) return null;
+  return { match, reason: projectRuleReason(input, why, human, fix) };
 }
 
 // The reason a project rule gives the agent when it blocks the call in `input`: the tool, who called it, `why`, and that
@@ -130,19 +136,26 @@ function bashPrefix(pattern) {
 }
 
 // Every command the Bash call runs, each as its words: the commands of each `&&`, `;`, and `|` step, of each command
-// substitution, and of each `sh -c` or `bash -c` string, read past wrappers such as `sudo` and `env`, and past git's
-// global options, so `git -C x push` is `git push`. The shell itself stays a command too, so an `allow` list must still
-// name it. A command run by `eval`, `xargs`, or a script is not read.
+// substitution, of each `sh -c` or `bash -c` string, and of each heredoc or here-string a shell reads its commands from,
+// read past wrappers such as `sudo` and `env`, and past git's global options, so `git -C x push` is `git push`. The
+// shell itself stays a command too, so an `allow` list must still name it. A command run by `eval`, `xargs`, a pipe into
+// a shell, or a script is not read.
 function commands(toolInput) {
   const command = toolInput?.command;
   if (typeof command !== 'string') return [];
   const found = [];
   const read = (line, depth) => {
-    for (const segment of commandLines(line).flatMap(lexCommand)) {
-      const inner = depth < SUBSTITUTION_DEPTH_LIMIT ? inlineShellCommand(readInvocation(segment)) : null;
-      if (inner !== null) read(inner, depth + 1);
-      const each = words(segment);
-      if (each.length > 0) found.push(each);
+    for (const { segments, inputs } of commandLines(line).map(lexInputs)) {
+      for (const [i, segment] of segments.entries()) {
+        const invocation = readInvocation(segment);
+        if (depth < SUBSTITUTION_DEPTH_LIMIT) {
+          const inner = inlineShellCommand(invocation);
+          if (inner !== null) read(inner, depth + 1);
+          else if (readsShellInput(invocation)) for (const body of inputs[i]) read(body, depth + 1);
+        }
+        const each = words(segment);
+        if (each.length > 0) found.push(each);
+      }
     }
   };
   read(command, 0);

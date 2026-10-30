@@ -1,3 +1,12 @@
 #!/bin/sh
 # On PATH in Claude Code sessions while the plugin is enabled. Elsewhere, run it by its path.
-exec node "$(dirname -- "$0")/../lib/knowledge-cli.mjs" "$@"
+# Follow symlinks to the real file, so ../lib is the plugin's; no readlink -f, which macOS lacked before 12.3.
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink -- "$self")
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname -- "$self")/$link ;;
+  esac
+done
+exec node "$(dirname -- "$self")/../lib/knowledge-cli.mjs" "$@"

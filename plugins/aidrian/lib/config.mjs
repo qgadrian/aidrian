@@ -26,7 +26,7 @@ const GIT_SCHEMA = {
 const SCHEMA = {
   git: GIT_SCHEMA,
   state: { dir: 'textOrNull' },
-  github: { requiredSections: 'texts', reviewer: 'textOrNull', maxReviewRounds: 'positive', requiredChecks: 'texts', ignoreCancelledChecks: 'texts', conditionalChecks: 'texts' },
+  github: { requiredSections: 'texts', reviewer: 'textOrNull', maxReviewRounds: 'positive', requiredChecks: 'texts', ignoreCancelledChecks: 'texts', conditionalChecks: 'texts', titleIssuePrefix: 'boolean' },
   docs: { wrapLimit: 'zeroOrMore' },
   knowledge: { budgets: { alwaysBytes: 'positive', taggedDocBytes: 'positive' } },
   skills: { descriptionChars: 'positive', listingBytes: 'positive' },
@@ -108,6 +108,7 @@ export const DEFAULTS = deepFreeze({
     requiredChecks: [],
     ignoreCancelledChecks: [],
     conditionalChecks: [],
+    titleIssuePrefix: false,
   },
   docs: { wrapLimit: 155 },
   knowledge: { budgets: { alwaysBytes: 16384, taggedDocBytes: 24576 } },
@@ -281,6 +282,17 @@ function checkAgents(value, file, errors, base) {
     }
   }
   return out;
+}
+
+// The first error in `errors`, from loadConfig, that dropped a whole gate list, as { file, problem }, or null: `agents`,
+// an entry, or its `allow` or `deny` of the wrong shape, or a `deny` pattern dropped as invalid. Without them the gate is gone (`"allow": "Read"` would allow
+// every tool), so the gate hook treats the file as one it cannot read.
+export function malformedGates(errors) {
+  for (const error of errors) {
+    const match = /^(.*?): ("agents[^"]*" must be .*|"agents\.[^"]*\.deny" has .*)$/u.exec(error);
+    if (match) return { file: match[1], problem: match[2] };
+  }
+  return null;
 }
 
 function patternError(pattern, at, file, errors) {

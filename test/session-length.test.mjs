@@ -100,3 +100,15 @@ test('nothing happens when off, within limits, on the stop it caused, on another
   assert.deepEqual(stop(), quiet, 'a transcript with no Claude Code usage');
   assert.deepEqual(readdirSync(temp), []);
 });
+
+test('SessionEnd deletes the reminder marker the Stop hook wrote for the session', (t) => {
+  const temp = mkdtempSync(path.join(tmpdir(), 'aidrian-end-'));
+  t.after(() => rmSync(temp, { recursive: true, force: true }));
+  const session = 'end-marker-1';
+  writeFileSync(path.join(temp, `aidrian-session-length-${session}`), 'remind\n');
+  writeFileSync(path.join(temp, 'aidrian-session-length-other'), 'remind\n');
+  const end = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-session-end.mjs');
+  const env = { ...process.env, TMPDIR: temp, XDG_STATE_HOME: temp };
+  spawnSync(process.execPath, [end], { input: JSON.stringify({ session_id: session, cwd: temp }), cwd: temp, env, encoding: 'utf8' });
+  assert.deepEqual(readdirSync(temp).filter((name) => name.startsWith('aidrian-session-length-')), ['aidrian-session-length-other']);
+});

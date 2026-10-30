@@ -6,6 +6,7 @@ import path from 'node:path';
 import test, { after } from 'node:test';
 
 import { gateDenial } from '../plugins/aidrian/lib/agent-gates.mjs';
+import { saveGateSnapshot } from '../plugins/aidrian/lib/gate-snapshot.mjs';
 
 // The hooks this file runs record their blocks in the state folder; keep those rows out of the real one.
 process.env.XDG_STATE_HOME = mkdtempSync(path.join(tmpdir(), 'aidrian-state-'));
@@ -381,4 +382,66 @@ test('a subagent cannot move the config or the snapshot with interpreter code, a
   ]) {
     assert.deepEqual([repo.gate(agentCall('aidrian:explorer', 'Bash', bash(command))).status], [0], command);
   }
+});
+
+test('Bash(prefix) reads the commands a shell reads from a heredoc or here-string, and past setsid, doas, flock, caffeinate, and coproc', () => {
+  const agents = { main: { deny: ['Bash(git push)'] } };
+  for (const command of [
+    "bash <<'EOF'\ngit push\nEOF",
+    'sh <<< "git push"',
+    'zsh -s <<EOF\ncd app && git push\nEOF',
+    'setsid git push',
+    'doas -u me git push',
+    'flock /tmp/lock git push',
+    "flock /tmp/lock -c 'git push'",
+    'caffeinate -i git push',
+    'coproc git push',
+    'f() { git push; }; f',
+    'case x in x) git push;; esac',
+  ]) {
+    assert.match(verdict(agents, mainCall('Bash', bash(command))) ?? '', /agents\.main\.deny has "Bash\(git push\)"/, command);
+  }
+  for (const command of ["cat <<'EOF'\ngit push\nEOF", "bash script.sh <<'EOF'\ngit push\nEOF"]) {
+    assert.equal(verdict(agents, mainCall('Bash', bash(command))), null, command);
+  }
+});
+
+test('an agents entry whose allow or deny is no list leaves the gates unknown, so a subagent may only read', (t) => {
+  const run = (cwd, input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ ...input, cwd }), cwd, encoding: 'utf8' });
+  for (const [file, agents] of [
+    ['.aidrian/config.json', { explorer: { allow: 'Read' } }],
+    ['.aidrian/config.json', { '*': { deny: 'Bash(git push)' } }],
+    ['.aidrian/config.json', { explorer: 'Read' }],
+    ['.aidrian/config.json', { explorer: { deny: ['Bash(git push)', 'Bash(git *)'] } }],
+    ['.aidrian.local.json', { explorer: { allow: 'Read' } }],
+  ]) {
+    const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-gates-')));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    mkdirSync(path.join(dir, '.aidrian'));
+    const local = file === '.aidrian.local.json';
+    writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, ...(local ? {} : { agents }) }));
+    if (local) writeFileSync(path.join(dir, file), JSON.stringify({ agents }));
+    const blocked = run(dir, agentCall('aidrian:explorer', 'Bash', bash('git push')));
+    assert.equal(blocked.status, 2, JSON.stringify(agents));
+    assert.match(blocked.stderr, new RegExp(`${file.replaceAll('.', '\\.')} cannot be read \\(.*"agents.*(?:must be|deny" has)`));
+    assert.equal(run(dir, agentCall('aidrian:explorer', 'Read', { file_path: 'x' })).status, 0);
+    assert.equal(run(dir, mainCall('Bash', bash('git push'))).status, 0);
+  }
+});
+
+test('in a session that started with gates, a subagent call the hook fails on may only read; elsewhere it runs', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-gates-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, agents: { explorer: { deny: ['WebFetch'] } } }));
+  const run = (input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ cwd: dir, ...input }), cwd: dir, encoding: 'utf8' });
+  // A patch whose text cannot be made a string throws inside the config guard.
+  const broken = (session) => ({ ...agentCall('aidrian:explorer', 'apply_patch', { command: { toString: 1 } }), session_id: session });
+  assert.equal(run(broken('ungated-session')).status, 0, 'no snapshot: the call runs, as any hook error lets it');
+  const session = 'gated-session-1';
+  saveGateSnapshot(session, dir, { explorer: { deny: ['WebFetch'] } });
+  const blocked = run(broken(session));
+  assert.equal(blocked.status, 2);
+  assert.match(blocked.stderr, /the agent gate hook failed .*a subagent may only read files/);
+  assert.equal(run({ ...mainCall('apply_patch', { command: { toString: 1 } }), session_id: session }).status, 0, 'the main session keeps every tool');
 });

@@ -7,6 +7,7 @@
 
 import path from 'node:path';
 
+import { loadConfig } from '../lib/config.mjs';
 import { saveGateSnapshot } from '../lib/gate-snapshot.mjs';
 import { runHook } from '../lib/hook-io.mjs';
 import { indexRows, loadKnowledge } from '../lib/knowledge.mjs';
@@ -18,6 +19,9 @@ const BIN = path.resolve(import.meta.dirname, '../bin');
 await runHook((input) => {
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
+  const subagent = process.argv.includes('--subagent');
+  // The gates first: an error loading the knowledge below must not leave the session without its snapshot.
+  if (!subagent) saveGateSnapshot(input.session_id, project.root, loadConfig(project).config.agents);
   const { config, buckets, errors } = loadKnowledge(project);
   const always = buckets.flatMap((bucket) => bucket.always);
   const command = binCommand('aidrian-knowledge');
@@ -31,10 +35,9 @@ await runHook((input) => {
   const ai = config.names.ai ?? (process.env.CLAUDECODE === '1' ? 'Claude' : 'Codex');
   const names = `Names: call the human ${JSON.stringify(config.names.human)} and yourself ${JSON.stringify(ai)}; never "you"/"me".`;
 
-  if (process.argv.includes('--subagent')) {
+  if (subagent) {
     console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: `${line}\n${names}` } }));
   } else {
-    saveGateSnapshot(input.session_id, project.root, config.agents);
     console.log(`${line}\n${names}`);
     const lessons = nudge(inboxPath(project, config), { command: binCommand('aidrian'), config });
     if (lessons) console.log(lessons);

@@ -211,6 +211,7 @@ function gatedRepo(t, files, { commit = true, ignore = '.aidrian.local.json\n' }
     end: () => hook(END, { hook_event_name: 'SessionEnd' }),
     gate: (input) => hook(HOOK, input),
     snapshot: path.join(process.env.XDG_STATE_HOME, 'aidrian/sessions', `${session}.json`),
+    marker: path.join(process.env.XDG_STATE_HOME, 'aidrian/sessions', `${session}.gated`),
   };
 }
 
@@ -289,14 +290,14 @@ test('a gate added during the session holds at once, a later SessionStart adds t
   assert.match(repo.gate(publish).stderr, /agents\.explorer\.deny has "Bash\(npm publish\)", as the project set it when this session started/);
 
   assert.equal(repo.end().status, 0);
-  assert.equal(existsSync(repo.snapshot), false);
+  assert.deepEqual([existsSync(repo.snapshot), existsSync(repo.marker)], [false, false]);
   assert.deepEqual([repo.gate(push).status, repo.gate(publish).status], [0, 0]);
 });
 
 test('a project without gates saves no snapshot, and a snapshot outside the project still holds its subagents', (t) => {
   const open = gatedRepo(t, { '.aidrian/config.json': { version: 1 } });
   assert.equal(open.start().status, 0);
-  assert.equal(existsSync(open.snapshot), false);
+  assert.deepEqual([existsSync(open.snapshot), existsSync(open.marker)], [false, false]);
 
   const repo = gatedRepo(t, { '.aidrian/config.json': PUSH_GATE });
   assert.equal(repo.start().status, 0);
@@ -328,4 +329,56 @@ test('a snapshot that is not one keeps subagents to reading, and the guard keeps
   assert.match(readFileSync(repo.snapshot, 'utf8'), /Bash\(git push"/, 'a SessionStart never replaces a snapshot it cannot read');
   rmSync(path.join(repo.dir, '.aidrian'), { recursive: true });
   assert.equal(repo.gate(agentCall('aidrian:explorer', 'Bash', bash('ls'))).status, 2, 'with the project folder gone too');
+});
+
+test('a snapshot that goes missing in a session that started with gates keeps subagents to reading until a new session', (t) => {
+  const repo = gatedRepo(t, { '.aidrian/config.json': PUSH_GATE });
+  const config = path.join(repo.dir, '.aidrian/config.json');
+  assert.equal(repo.start().status, 0);
+  assert.equal(existsSync(repo.marker), true);
+  // A move the guard cannot see, such as one by a script, and a config without the gate.
+  renameSync(repo.snapshot, path.join(repo.dir, 'old.json'));
+  writeFileSync(config, '{"version": 1}');
+  for (const command of ['git push origin task', 'git status']) {
+    const { status, stderr } = repo.gate(agentCall('aidrian:explorer', 'Bash', bash(command)));
+    assert.equal(status, 2, command);
+    assert.match(stderr, /\.json cannot be read \(it is gone, though this session started with gates\), so this project's agent gates are unknown/);
+    assert.match(stderr, /tell the Human to start a new session, which takes the gates from the config again\.\n$/);
+  }
+  for (const input of [agentCall('aidrian:explorer', 'Read', { file_path: 'x' }), mainCall('Bash', bash('git push'))]) {
+    assert.deepEqual([repo.gate(input).status, repo.gate(input).stderr], [0, ''], input.tool_name);
+  }
+
+  // A compaction does not save the gates then in force over the lost ones.
+  writeFileSync(config, JSON.stringify({ version: 1, agents: { explorer: { deny: ['WebFetch'] } } }));
+  assert.equal(repo.start().status, 0);
+  assert.equal(existsSync(repo.snapshot), false);
+  assert.equal(repo.gate(push).status, 2);
+
+  assert.equal(repo.end().status, 0);
+  assert.equal(existsSync(repo.marker), false);
+  assert.equal(repo.gate(push).status, 0, 'a new session takes the gates from the config again');
+});
+
+test('a subagent cannot move the config or the snapshot with interpreter code, and may read them with it', (t) => {
+  const repo = gatedRepo(t, { '.aidrian/config.json': PUSH_GATE });
+  assert.equal(repo.start().status, 0);
+  const shown = realpathSync(repo.snapshot).replaceAll('.', '\\.');
+  for (const [command, file] of [
+    ['python3 -c "from pathlib import Path; Path(\'.aidrian/config.json\').replace(\'old.json\')"', '\\.aidrian/config\\.json'],
+    [`python3 -c "from pathlib import Path; Path('${repo.snapshot}').replace('old.json')"`, shown],
+    [`python3 -c "import os; os.rename('${repo.snapshot}', 'old.json')"`, shown],
+    [`node -e "require('fs').renameSync('${repo.snapshot}', 'old.json')"`, shown],
+    [`node -e "require('fs').unlinkSync('${repo.marker}')"`, realpathSync(repo.marker).replaceAll('.', '\\.')],
+  ]) {
+    const { status, stderr } = repo.gate(agentCall('aidrian:explorer', 'Bash', bash(command)));
+    assert.equal(status, 2, command);
+    assert.match(stderr, new RegExp(`^aidrian: Bash is blocked .* it may change ${file}, which sets this project's agent gates`), command);
+  }
+  for (const command of [
+    `python3 -c "import json; print(json.load(open('${repo.snapshot}'))['gates'])"`,
+    "node -p \"require('fs').readFileSync('.aidrian/config.json', 'utf8')\"",
+  ]) {
+    assert.deepEqual([repo.gate(agentCall('aidrian:explorer', 'Bash', bash(command))).status], [0], command);
+  }
 });

@@ -6,6 +6,8 @@
 // compaction, adds the gates then in force. SessionEnd deletes the file.
 // It lives in the state root, `$XDG_STATE_HOME/aidrian/sessions/<session id>.json`, not in the project's state folder:
 // config.json `state.dir` moves that folder, and config.json is the file a subagent might change.
+// Beside it, an empty `<session id>.gated` marks a session that started with gates, so a snapshot that goes missing
+// during it reads as one that cannot be read, which keeps subagents to reading, not as one never saved.
 
 import { lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -35,8 +37,9 @@ export function saveGateSnapshot(sessionId, root, agents, { env = process.env, n
     const found = readSnapshotFile(file);
     if (found?.problem) return null;
     const gates = found?.gates ?? [];
-    if (gates.some((each) => isDeepStrictEqual(each, agents))) return file;
     mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(markerPath(file), '');
+    if (gates.some((each) => isDeepStrictEqual(each, agents))) return file;
     pruneStale(path.dirname(file), now);
     const temporary = `${file}.${process.pid}.tmp`;
     writeFileSync(temporary, `${JSON.stringify({ root: found?.root ?? root, gates: [...gates, agents] })}\n`);
@@ -47,8 +50,9 @@ export function saveGateSnapshot(sessionId, root, agents, { env = process.env, n
   }
 }
 
-// The snapshot of the hook payload's session: { file, root, gates }, where `gates` lists `agents` objects, each enforced;
-// { file, problem } when the file is there but is not a snapshot this module wrote; null when there is none.
+// The snapshot of the hook payload's session: { file, marker, root, gates }, where `gates` lists `agents` objects, each
+// enforced and `marker` is the file that marks the session gated; { file, problem } when the file is there but is not a
+// snapshot this module wrote, or is gone though the marker says the session started with gates; null when there is none.
 export function readGateSnapshot(input, { env = process.env } = {}) {
   const file = snapshotPath(input?.session_id, { env });
   return file ? readSnapshotFile(file) : null;
@@ -58,12 +62,17 @@ export function readGateSnapshot(input, { env = process.env } = {}) {
 export function forgetGateSnapshot(sessionId, { env = process.env } = {}) {
   const file = snapshotPath(sessionId, { env });
   if (!file) return;
-  try {
-    unlinkSync(file);
-  } catch {
-    // Nothing to delete, or the stale-file sweep removes it later.
+  // The marker first: a snapshot left without it still holds, while a marker left alone would keep subagents to reading.
+  for (const each of [markerPath(file), file]) {
+    try {
+      unlinkSync(each);
+    } catch {
+      // Nothing to delete, or the stale-file sweep removes it later.
+    }
   }
 }
+
+const markerPath = (file) => file.replace(/\.json$/u, '.gated');
 
 function readSnapshotFile(file) {
   let text;
@@ -71,12 +80,13 @@ function readSnapshotFile(file) {
     if (lstatSync(file).isSymbolicLink()) return { file, problem: 'it is a symlink' };
     text = readFileSync(file, 'utf8');
   } catch (error) {
-    return error.code === 'ENOENT' ? null : { file, problem: error.code ?? 'unreadable' };
+    if (error.code !== 'ENOENT') return { file, problem: error.code ?? 'unreadable' };
+    return exists(markerPath(file)) ? { file, problem: 'it is gone, though this session started with gates' } : null;
   }
   try {
     const value = JSON.parse(text);
     if (isObject(value) && typeof value.root === 'string' && path.isAbsolute(value.root) && Array.isArray(value.gates) && value.gates.every(isGateSet)) {
-      return { file, root: value.root, gates: value.gates };
+      return { file, marker: markerPath(file), root: value.root, gates: value.gates };
     }
   } catch {
     // Not JSON: the same answer as the wrong shape.
@@ -89,6 +99,16 @@ function isGateSet(value) {
   return isObject(value) && Object.entries(value).every(([name, lists]) => agentNameProblem(name) === null && isObject(lists)
     && Object.entries(lists).every(([list, patterns]) => ['deny', 'allow'].includes(list) && Array.isArray(patterns)
       && patterns.every((pattern) => patternProblem(pattern) === null)));
+}
+
+// Whether `file` is there, a broken symlink included; a marker that cannot be checked counts as there.
+function exists(file) {
+  try {
+    lstatSync(file);
+    return true;
+  } catch (error) {
+    return error.code !== 'ENOENT';
+  }
 }
 
 function pruneStale(dir, now) {

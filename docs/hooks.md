@@ -137,9 +137,10 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - Unlike that rule, it follows each `cd`, and reads the command line of `sh -c` and `bash -c`.
   After a `cd` to a folder it cannot name, such as `cd "$dir"`, a relative path counts when its name is one of the files or the project folder.
 - An interpreter given code on its command line or its input, such as `python3 -c`, `node -e`, `perl -e`, `ruby -e`, or a heredoc,
-  counts as a write to each of the files that code names when the code can change a file.
-  That is code that writes, deletes, moves, copies, or links a file, opens one for writing, runs a program, or builds code to run,
-  and `perl -i` or `ruby -i`. Code that only reads, such as `json.load(open(...))` or `require(...)`, runs.
+  counts as a write to each of the files its code or its other words name, whatever the code calls.
+  Only code that is nothing but reads runs: in Python `json.load(open(p))` and `open(p).read()`,
+  in Node `require(p)`, `readFileSync(p)`, and `JSON.parse(readFileSync(p))`, each printed or not, with `p` a quoted path.
+  perl and ruby have none. Read, `cat`, and `jq` still read the files, as the block says.
 - A write to a folder that holds one of the files, such as `rm -rf .aidrian`, counts; one to the project root, such as `cp notes.md .`, does not.
 - A call without `agent_id` is the main session's, which may still change them.
 - A block is [recorded](#recorded-blocks) as `config-guard`, with the file it changes as its reason.
@@ -160,10 +161,12 @@ Deleting, replacing, or moving config.json, `git stash`, and `git clean` lift no
 
 - The main session always reads the current config alone.
 - To drop a gate, change the config and start a new session. A compaction keeps the session, and adds the gates then in force.
-- The file is `$XDG_STATE_HOME/aidrian/sessions/<session id>.json`. The guard protects it as it protects the config files,
-  and the end of the session deletes it.
+- The file is `$XDG_STATE_HOME/aidrian/sessions/<session id>.json`, with `<session id>.gated` beside it to mark that the session
+  started with gates. The guard protects both as it protects the config files, and interpreter code may not name their folder.
+  The end of the session deletes both.
 - A snapshot that is there but cannot be read keeps subagents to reading, as a broken config does, until a new session starts.
-- Without a snapshot, such as when the plugin was installed during the session, only the current config counts.
+  So does one that is gone while the marker is there, however it went.
+- Without a snapshot or a marker, such as when the plugin was installed during the session, only the current config counts.
 
 Each host tells the hook who is calling in its own way.
 

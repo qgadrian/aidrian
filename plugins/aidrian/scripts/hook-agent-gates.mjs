@@ -4,7 +4,8 @@
 // exits 2 with the rule's name on stderr, and the block is recorded as the Bash hook records its blocks (lib/hook-deny.mjs).
 // A subagent's call also meets the gates its session started with (lib/gate-snapshot.mjs), so a config.json deleted,
 // replaced, or moved away during the session lifts none of them; without a snapshot, as when the hooks were installed
-// during the session, only the current config counts. The main session always reads the current config alone.
+// during the session, only the current config counts, unless the session started with gates and the snapshot is gone:
+// that keeps a subagent to reading, as an unreadable snapshot does. The main session always reads the current config.
 // A file that sets the configuration but is there and cannot be read leaves the gates unknown, so a subagent may then
 // only read (agent-gates.mjs unreadableConfigDenial); the main session keeps every tool, to fix it. So does a snapshot
 // that is there and cannot be read.
@@ -38,7 +39,7 @@ await runHook(async (input) => {
   if (Object.keys(config.agents).length === 0 && started.length === 0) return;
   const gate = gateDenial(input, config, project.paths)
     ?? started.map((agents) => gateDenial(input, { ...config, agents }, project.paths, { started: true })).find(Boolean);
-  const guarded = snapshot?.gates ? [snapshot.file] : [];
+  const guarded = snapshot?.gates ? [snapshot.file, snapshot.marker] : [];
   const [rule, denial] = gate ? ['agent-gates', gate] : ['config-guard', configWriteDenial(input, project, config, { also: guarded })];
   if (denial) await block(input, rule, denial.reason, { match: denial.match, project, config });
 });

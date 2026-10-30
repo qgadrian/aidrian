@@ -23,7 +23,7 @@ except its base branch and re-entry sections, which it cites.
 - The plan path: absolute or from the repository root. Without one, look in `<state>/plans/*.md` and the current checkout's
   `docs/design-imports/*/plan.md`: first a plan whose `workspace_decision.branch_name` is the current branch,
   then the newest plan whose `status` is not `complete`. No candidate, or several: list them, newest first, and ask.
-- `--base`: the branch the pull request targets. Default: config.json `defaultBranch`.
+- `--base`: the branch the pull request targets. Default: config.json `git.defaultBranch`.
   A base other than the default must exist, as the issue-implement phase 0 base-branch section says.
 
 ## Phase 0: resolve the plan

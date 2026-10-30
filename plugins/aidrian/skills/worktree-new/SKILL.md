@@ -26,12 +26,12 @@ A thin adapter for `aidrian worktree new`. The command owns the git and setup st
    - `reuse-local` or `reuse-remote`: the branch already exists. Ask Reuse, Choose another name, or Cancel.
    - Skip the question only when the caller already approved this exact plan.
 3. Create: the same command without `--plan`. Add `--reuse-existing` only after a reuse was approved.
-   The project's bootstrap command (config.json `worktrees.bootstrap`) runs inside the new worktree and can take minutes,
+   The project's bootstrap command (config.json `git.worktrees.bootstrap`) runs inside the new worktree and can take minutes,
    so give the shell call a 10-minute timeout.
 4. On `"status": "created"`, report `worktree_path`, `branch`, and `branch_mode`, and run every later command inside `worktree_path`.
 5. On `"status": "blocked"`, relay `phase`, `reason`, and `next_step` as they are.
    After a failed fetch, offer the same run without `--fetch`. Never delete what a failed run left: a failed bootstrap keeps the worktree.
 
-Worktrees go in `.worktrees/` at the repository root unless config.json `worktrees.dir` moves them.
+Worktrees go in `.worktrees/` at the repository root unless config.json `git.worktrees.dir` moves them.
 The command never commits, pushes, opens a pull request, or moves uncommitted changes.
 When `aidrian` is not on your PATH, run it from the folder that holds the `aidrian-knowledge` the start hook names.

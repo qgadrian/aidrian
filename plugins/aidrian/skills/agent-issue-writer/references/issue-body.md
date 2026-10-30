@@ -35,7 +35,7 @@ the GitHub column of the `knowledge` skill's `references/tracker.md`.
 - Leave an issue in the backlog status only for incomplete backlog capture, never for an AI-ready executable task — every issue created by this
   skill is a first-class issue, there is no separate "draft issue" artifact type to avoid.
 - Use the parent issue as the canonical body for issue trees and `PR & Merge Plan`.
-- Treat merge into the default branch, config.json `defaultBranch`, as production deployment unless the project's knowledge says otherwise
+- Treat merge into the default branch, config.json `git.defaultBranch`, as production deployment unless the project's knowledge says otherwise
   or the plan explicitly targets a different integration branch or base PR first.
 
 Keep the Tracker Metadata mirror and the Agent Action Plan in the issue body even when native fields exist.

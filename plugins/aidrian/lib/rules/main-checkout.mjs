@@ -4,9 +4,9 @@
 // the local destination of rsync, with its sources too under --remove-source-files. A move removes its sources. A command
 // substitution that runs is read as the command line is.
 //
-// It is off until a project sets config.json `"mainCheckout": { "guard": true }`. A target is allowed when it is outside
+// It is off until a project sets config.json `"git": { "mainCheckout": { "guard": true } }`. A target is allowed when it is outside
 // every main checkout (in a worktree, or outside the repository), in a project without a project folder or with the
-// guard off, matched by `mainCheckout.allowWrites`, or git-ignored. When git cannot tell, a tool write is denied to be
+// guard off, matched by `git.mainCheckout.allowWrites`, or git-ignored. When git cannot tell, a tool write is denied to be
 // safe and a Bash command runs: a command line is never as certain as a file path.
 
 import { existsSync, realpathSync } from 'node:fs';
@@ -221,13 +221,13 @@ function decide(targets, cwd, failSafe, verb) {
     const project = findProject(folder);
     if (!project) continue;
     const { config } = loadConfig(project);
-    if (!config.mainCheckout.guard) continue;
+    if (!config.git.mainCheckout.guard) continue;
     const roots = checkoutRoots(folder);
     if (!roots || canonical(roots.current) !== canonical(roots.main)) continue;
     const root = roots.main;
     const rel = path.relative(canonical(root), file);
     if (rel.startsWith('..') || path.isAbsolute(rel)) continue;
-    if (config.mainCheckout.allowWrites.some((glob) => globPattern(glob).test(rel.split(path.sep).join('/')))) continue;
+    if (config.git.mainCheckout.allowWrites.some((glob) => globPattern(glob).test(rel.split(path.sep).join('/')))) continue;
     const ignored = isIgnored(root, rel || '.');
     if (ignored === true || (ignored === null && !failSafe)) continue;
     const lead =
@@ -244,8 +244,8 @@ function reason(lead, project, config) {
   return [
     lead,
     `Work in a git worktree instead: \`aidrian worktree new <branch>\` creates one in ${worktrees} (the worktree-new skill).`,
-    `This project turns the guard on with "mainCheckout": { "guard": true } in ${path.join(project.root, project.paths.config)};`,
-    '"mainCheckout": { "allowWrites": [...] } lists paths that stay writable.',
+    `This project turns the guard on with "git": { "mainCheckout": { "guard": true } } in ${path.join(project.root, project.paths.config)};`,
+    '"git": { "mainCheckout": { "allowWrites": [...] } } lists paths that stay writable.',
     `To override for an explicit, user-confirmed reason, set ${OVERRIDE}=1 in your own shell before starting the session ` +
       "(agents must never set it on the user's behalf).",
   ].join('\n');

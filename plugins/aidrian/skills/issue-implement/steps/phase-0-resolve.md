@@ -25,7 +25,7 @@ branch name on Linear, comments, and `updatedAt`. Keep one snapshot for the run;
 
 ## 4. Base branch
 
-First match wins: `--base`; the target branch the issue declares under its dependencies and sequencing; config.json `defaultBranch`.
+First match wins: `--base`; the target branch the issue declares under its dependencies and sequencing; config.json `git.defaultBranch`.
 Only a successful read that finds no declaration falls back to the default: a failed read is unknown.
 
 A base other than the default must already exist: `git fetch origin`, then `git rev-parse --verify origin/<base>`.

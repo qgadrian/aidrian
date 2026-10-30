@@ -66,6 +66,8 @@ next: add a knowledge index with aidrian-knowledge init <folder of docs>, then r
 
 It writes `config.json` with `version` alone, and adds each `.gitignore` line for an entry git does not ignore yet:
 `.aidrian.local.json`, the [worktrees folder](#task-worktrees), and the [state folder](#local-state) when config.json puts it in the repository.
+Init writes only inside the checkout it runs in.
+In a linked worktree, a folder that resolves into the main checkout, such as the default `.worktrees`, is left to the main checkout's own `.gitignore`.
 It never overwrites a file. Run again, it prints `nothing to do: .aidrian is set up`.
 It writes nothing at all when a symlink would take a write outside the project, or a `.gitignore` outside its own folder.
 
@@ -139,11 +141,11 @@ the orchestrator uses it to name each background agent's handoff file.
 ## Task worktrees
 
 Each task gets its own git worktree, so the main checkout stays clean and on the default branch.
-`aidrian worktree new <branch>` creates one and runs config.json `worktrees.bootstrap` in it, such as `npm ci`;
+`aidrian worktree new <branch>` creates one and runs config.json `git.worktrees.bootstrap` in it, such as `npm ci`;
 `aidrian worktree cleanup` removes the ones whose pull request merged. The `worktree-new` and `worktree-cleanup` skills drive both.
 They live in `.worktrees/` at the repository root: editors show them beside the code,
 and Claude Code edits them without asking, because they are inside the folder the session opened.
-`"worktrees": { "dir": "<path>" }` in config.json moves them; a relative path starts at the repository root,
+`"git": { "worktrees": { "dir": "<path>" } }` in config.json moves them; a relative path starts at the repository root,
 and `aidrian check` requires git to ignore the folder while it is inside the repository.
 
 - The folder takes the last part of the branch name: `feat/login` goes to `.worktrees/login`.

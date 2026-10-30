@@ -9,7 +9,7 @@ import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import { commitSubject, subjectProblem } from '../plugins/aidrian/lib/commit-message.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
-const TYPES = DEFAULTS.commits.types;
+const TYPES = DEFAULTS.git.commits.types;
 
 test('the subject is the first line that is neither blank nor a git comment', () => {
   assert.equal(commitSubject('\n\n# Please enter the message.\nfeat(api): add export\n\n# On branch main\n'), 'feat(api): add export');

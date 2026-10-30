@@ -25,7 +25,7 @@ This skill adds what an issue needs on top of it.
 - `<issue>`: an issue key in the project's tracker format, such as `ABC-123` or `#123`, or the issue's URL. Missing: ask once.
   The step files call that key `<key>`; the `knowledge` skill's `references/tracker.md` says how each tracker writes it.
   `<ref>` is the key as a commit or body line writes it, by that file: `ABC-123` on Linear, `#123` on GitHub.
-- `--base`: the branch the pull request targets. Default: the target branch the issue declares, else config.json `defaultBranch`.
+- `--base`: the branch the pull request targets. Default: the target branch the issue declares, else config.json `git.defaultBranch`.
 
 One issue per run. When the Human names two, ask which comes first, and report the other as related, not in scope.
 Work anchored to a plan with no issue belongs to the `plan-implement` skill, which reuses this skill's steps.

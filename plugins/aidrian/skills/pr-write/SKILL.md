@@ -20,7 +20,7 @@ git log --oneline origin/<base>..HEAD
 git diff --stat origin/<base>...HEAD
 ```
 
-- `<base>` is the branch the pull request targets: the one the caller names, else config.json `defaultBranch`.
+- `<base>` is the branch the pull request targets: the one the caller names, else config.json `git.defaultBranch`.
   Always the `origin/` ref, because a local branch can be days behind.
 - Read a large diff by its stat, then open only the files that matter. Never dump the whole diff.
 - When a pull request already exists, `gh pr view <n> --json number,title,body,commits,baseRefName` must agree with the
@@ -31,7 +31,7 @@ git diff --stat origin/<base>...HEAD
 
 `[<issue key>] <type>(<scope>): <subject>`, or `[NOISSUE] <type>: <subject>` when no issue exists.
 The key format comes from the project's `issue_tracker` knowledge; the type is a Conventional Commits type from config.json
-`commits.types`. The subject names the real scope of the branch.
+`git.commits.types`. The subject names the real scope of the branch.
 
 ## Body
 

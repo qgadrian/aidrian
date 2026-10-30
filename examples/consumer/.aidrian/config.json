@@ -1,4 +1,4 @@
 {
   "version": 1,
-  "mainCheckout": { "guard": true }
+  "git": { "mainCheckout": { "guard": true } }
 }

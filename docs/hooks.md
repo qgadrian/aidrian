@@ -38,7 +38,7 @@ At the start of every session and subagent, the hook prints:
 | Hook | Off with |
 | --- | --- |
 | Agent gates | Off unless config.json or `.aidrian.local.json` sets `agents` |
-| Main-checkout rule | Off unless config.json sets `"mainCheckout": { "guard": true }` |
+| Main-checkout rule | Off unless config.json sets `"git": { "mainCheckout": { "guard": true } }` |
 | Markdown line length | `"docs": { "wrapLimit": 0 }` |
 | Pull request body sections | `"github": { "requiredSections": [] }`; the footer and `--fill` checks stay |
 | Session-length reminder | `"session": { "handoff": "off" }` |
@@ -108,13 +108,13 @@ When the recorder fails, the call is still blocked.
 The main-checkout rule is off until a project turns it on in config.json:
 
 ```json
-{ "version": 1, "mainCheckout": { "guard": true, "allowWrites": ["notes/**"] } }
+{ "version": 1, "git": { "mainCheckout": { "guard": true, "allowWrites": ["notes/**"] } } }
 ```
 
 Then task work has to happen in a git worktree, so the main checkout stays clean and on the default branch.
 The deny reason names `aidrian worktree new <branch>`, which creates one.
 The rule blocks a write to a file git tracks, or would track, in the main checkout.
-It allows a git-ignored path, a path in `mainCheckout.allowWrites`, and anything in a worktree or outside the repository.
+It allows a git-ignored path, a path in `git.mainCheckout.allowWrites`, and anything in a worktree or outside the repository.
 [config.md](config.md) lists both keys.
 When git cannot answer, an Edit or Write is blocked to be safe, and a Bash command runs.
 
@@ -222,7 +222,7 @@ Agents must never set one.
 
 ## Commit messages
 
-`aidrian commit-msg --file <path>` checks a commit subject against Conventional Commits and the types in config.json `commits.types`.
+`aidrian commit-msg --file <path>` checks a commit subject against Conventional Commits and the types in config.json `git.commits.types`.
 A project runs it from its own `commit-msg` git hook, where git passes the message file:
 
 ```sh

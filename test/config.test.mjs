@@ -17,17 +17,48 @@ const MIGRATING = `see ${REPOSITORY}/blob/main/docs/project-folder.md#migrating`
 test('the example consumer config is valid, turns the main-checkout guard on, and gets every other default', () => {
   const { config, errors, current } = loadConfig(findProject(EXAMPLE));
   assert.deepEqual([errors, current], [[], true]);
-  assert.deepEqual(config, { ...DEFAULTS, mainCheckout: { ...DEFAULTS.mainCheckout, guard: true } });
-  assert.equal(DEFAULTS.mainCheckout.guard, false, 'a project opts in; a fresh one is never blocked');
+  assert.deepEqual(config, { ...DEFAULTS, git: { ...DEFAULTS.git, mainCheckout: { ...DEFAULTS.git.mainCheckout, guard: true } } });
+  assert.equal(DEFAULTS.git.mainCheckout.guard, false, 'a project opts in; a fresh one is never blocked');
 });
 
 test('file values win; a group keeps the defaults for the keys the file leaves out', (t) => {
   const github = { maxReviewRounds: 3, requiredChecks: ['e2e'], conditionalChecks: ['db tests'] };
   const { config, errors } = loadConfig(project(t, { version: 1, defaultBranch: 'trunk', github }));
   assert.deepEqual(errors, []);
-  assert.equal(config.defaultBranch, 'trunk');
+  assert.equal(config.git.defaultBranch, 'trunk');
   assert.deepEqual(config.github, { ...DEFAULTS.github, ...github });
-  assert.deepEqual(config.worktrees, DEFAULTS.worktrees);
+  assert.deepEqual(config.git.worktrees, DEFAULTS.git.worktrees);
+});
+
+test('git groups the git keys; the deprecated top-level keys still load, and git.* wins key by key', (t) => {
+  assert.deepEqual(Object.keys(DEFAULTS.git), ['defaultBranch', 'worktrees', 'mainCheckout', 'commits']);
+  for (const key of Object.keys(DEFAULTS.git)) assert.equal(Object.hasOwn(DEFAULTS, key), false, `no top-level ${key}`);
+  const nested = loadConfig(project(t, { version: 1, git: { defaultBranch: 'trunk', worktrees: { dir: '../wt' }, mainCheckout: { guard: true }, commits: { types: ['feat'] } } }));
+  assert.deepEqual(nested.errors, []);
+  assert.deepEqual(nested.config.git, {
+    defaultBranch: 'trunk',
+    worktrees: { ...DEFAULTS.git.worktrees, dir: '../wt' },
+    mainCheckout: { guard: true, allowWrites: [] },
+    commits: { types: ['feat'] },
+  });
+  const legacy = { defaultBranch: 'old', worktrees: { dir: 'old-wt', bootstrap: 'make setup' }, mainCheckout: { guard: true }, commits: { types: ['wip'] } };
+  assert.deepEqual(loadConfig(project(t, { version: 1, ...legacy })).config.git, {
+    defaultBranch: 'old',
+    worktrees: { ...DEFAULTS.git.worktrees, dir: 'old-wt', bootstrap: 'make setup' },
+    mainCheckout: { guard: true, allowWrites: [] },
+    commits: { types: ['wip'] },
+  });
+  const both = loadConfig(project(t, { version: 1, ...legacy, git: { defaultBranch: 'trunk', worktrees: { dir: '../wt' } } }));
+  assert.deepEqual(both.errors, []);
+  assert.equal(both.config.git.defaultBranch, 'trunk');
+  assert.deepEqual(both.config.git.worktrees, { ...DEFAULTS.git.worktrees, dir: '../wt', bootstrap: 'make setup' }, 'a key git.* leaves out keeps its top-level value');
+  assert.deepEqual(both.config.git.commits, { types: ['wip'] });
+  assert.equal(Object.hasOwn(both.config, 'defaultBranch'), false, 'the loaded config has only git.*');
+  assert.deepEqual(loadConfig(project(t, { version: 1, git: { defaultBranch: ' ', remote: 'origin' } })).errors, [
+    '.aidrian/config.json: unknown key "git.remote"',
+    '.aidrian/config.json: "git.defaultBranch" must be a non-empty string',
+  ]);
+  assert.deepEqual(loadConfig(project(t, { version: 1, git: 'main' })).errors, ['.aidrian/config.json: "git" must be an object']);
 });
 
 test('lessons: signals on, and the nudge escalates past 20 open or 14 days unless a project sets other limits', (t) => {
@@ -50,10 +81,10 @@ test('github.reviewer: null or "none" turns the review bot off, as null; an empt
 
 test('the loaded config is frozen all the way down', (t) => {
   const { config } = loadConfig(project(t, { version: 1, mainCheckout: { allowWrites: ['notes/**'] } }));
-  assert.throws(() => { config.defaultBranch = 'x'; }, TypeError);
+  assert.throws(() => { config.git.defaultBranch = 'x'; }, TypeError);
   assert.throws(() => { config.github.reviewer = 'x'; }, TypeError);
-  assert.throws(() => config.mainCheckout.allowWrites.push('x'), TypeError);
-  assert.throws(() => config.commits.types.push('x'), TypeError);
+  assert.throws(() => config.git.mainCheckout.allowWrites.push('x'), TypeError);
+  assert.throws(() => config.git.commits.types.push('x'), TypeError);
 });
 
 // Each case expects exactly one error, and the default in place of the bad value.
@@ -150,7 +181,7 @@ for (const [name, value, expected] of errorCases) {
     assert.match(errors[0], /^\.aidrian\/config\.json: /);
     assert.match(errors[0], expected);
     assert.equal(current, true);
-    for (const key of ['defaultBranch', 'github', 'docs', 'commits', 'mainCheckout']) assert.deepEqual(config[key], DEFAULTS[key], key);
+    for (const key of ['git', 'github', 'docs']) assert.deepEqual(config[key], DEFAULTS[key], key);
   });
 }
 
@@ -258,17 +289,17 @@ test('agents: no gates by default; .aidrian.local.json wins over config.json one
 
 test('worktrees.dir defaults to .worktrees, bootstrap to null, and disposable to package and build folders; a value replaces each', (t) => {
   const disposable = ['node_modules', 'dist', 'build', '.next', '.cache', 'coverage', '.turbo'];
-  assert.deepEqual(DEFAULTS.worktrees, { dir: '.worktrees', bootstrap: null, disposable });
+  assert.deepEqual(DEFAULTS.git.worktrees, { dir: '.worktrees', bootstrap: null, disposable });
   assert.deepEqual(loadConfig(project(t, { version: 1, worktrees: { bootstrap: null } })).errors, []);
   const { config } = loadConfig(project(t, { version: 1, worktrees: { dir: '../wt', bootstrap: 'npm ci', disposable: [] } }));
-  assert.deepEqual(config.worktrees, { dir: '../wt', bootstrap: 'npm ci', disposable: [] });
+  assert.deepEqual(config.git.worktrees, { dir: '../wt', bootstrap: 'npm ci', disposable: [] });
   assert.deepEqual(loadConfig(project(t, { version: 1, worktrees: { dir: null } })).errors, [
     '.aidrian/config.json: "worktrees.dir" must be a non-empty string',
   ]);
   for (const bad of [['packages/web/dist'], ['..'], 'node_modules', [' ']]) {
     const loaded = loadConfig(project(t, { version: 1, worktrees: { disposable: bad } }));
     assert.deepEqual(loaded.errors, ['.aidrian/config.json: "worktrees.disposable" must be a list of folder names with no "/", such as "node_modules"'], JSON.stringify(bad));
-    assert.deepEqual(loaded.config.worktrees.disposable, disposable);
+    assert.deepEqual(loaded.config.git.worktrees.disposable, disposable);
   }
 });
 

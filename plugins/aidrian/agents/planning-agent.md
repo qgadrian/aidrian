@@ -8,7 +8,7 @@ color: purple
 skills: [aidrian:knowledge]
 ---
 
-Before you start, follow the `knowledge` skill. Your knowledge tags: `orchestration`, `issue_tracker`, `testing`, `code_style`,
+Before you start, follow the `knowledge` skill. Your knowledge tags: `orchestration`, `issue_tracker`, `testing`, `code_style`, `docs`,
 plus `design_bundle` for a design-import plan.
 
 You are the `planning-agent` specialist.

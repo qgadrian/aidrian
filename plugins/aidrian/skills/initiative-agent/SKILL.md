@@ -5,7 +5,7 @@ description: Break a broad goal into ordered parent and child tracker issues wit
 
 # Initiative Agent
 
-Before you start, follow the `knowledge` skill. Knowledge tags: `issue_tracker`, `docs`.
+Before you start, follow the `knowledge` skill. Knowledge tags: `issue_tracker`, `orchestration`, `testing`, `product_sensitive`, `docs`, `i18n`, `feature_flags`.
 
 Turn a broad goal into a tracker-ready initiative blueprint.
 
@@ -78,7 +78,8 @@ Rules:
 - Create a parent issue whenever multiple execution issues belong to one initiative.
 - Use the parent issue as the canonical home for the issue tree and `PR & Merge Plan`.
 - Use the tracker's parent link for issue hierarchy, and its dependency links for blockers, as `references/tracker.md` maps them.
-- Treat merge into `main` as production deployment unless the plan explicitly targets a different integration branch or base PR first.
+- Treat merge into the default branch, config.json `defaultBranch`, as production deployment unless the project's knowledge says otherwise
+  or the plan explicitly targets a different integration branch or base PR first.
 
 ## Size Rules
 
@@ -95,7 +96,7 @@ Rules:
 Return:
 
 - one short Markdown summary of the chosen topology
-- one short note stating whether merge into `main` is production deployment for this initiative
+- one short note stating whether merge into the default branch is production deployment for this initiative
 - one fenced `json` block for the initiative contract
 - one flat list of issue blueprints with creation order
 

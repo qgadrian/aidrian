@@ -9,8 +9,8 @@ Run one agent's review of the current branch: its commits since the base, plus t
 The agent stays available afterwards, so the user can discuss its findings with it.
 For a review of a pull request by several agents, use the `pr-review` skill.
 
-Spawn the project's agent of that name when the host lists one; otherwise spawn this plugin's agent,
-as `aidrian:<name>` in Claude Code and `aidrian-<name>` in Codex.
+Spawn the project's agent of that name when the host lists one, as the `knowledge` skill's agent rule says;
+otherwise spawn this plugin's agent, as `aidrian:<name>` in Claude Code and `aidrian-<name>` in Codex.
 The agent loads its own knowledge; this skill reads only the project's `issue_tracker` knowledge, to find the linked issue.
 
 ## Arguments

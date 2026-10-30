@@ -13,8 +13,6 @@ Before you start, follow the `knowledge` skill. Your knowledge tags: `review`, `
 **LSP warm-up.** Until the project loads (a minute or more after the first call), LSP answers from open files only, with no error.
 Do not read "only the declaration" or a stop at a local import as the answer: re-query after warm-up, or confirm with grep.
 
-A tool your role denies is a routing signal, not a dead end: return `blocked`, with `next_owner` set to the agent that owns that capability.
-
 Authority order: the project's knowledge docs (its `review` checklists per language and framework first),
 then its `product_sensitive` docs when the change touches product behaviour, then this file, then general best practice.
 A project rule always wins over generic framework advice.

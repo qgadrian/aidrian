@@ -1,6 +1,8 @@
 # Agent Issue Writer Examples
 
-Use these as formatting references. Keep the structure, specificity, and contract discipline; the examples use Linear.
+Use these as formatting references. Keep the structure, specificity, and contract discipline.
+The examples use Linear, `main` as the default branch, and one Node project's paths and commands;
+take yours from the project's knowledge.
 
 ## Standalone Issue Example
 

@@ -34,10 +34,10 @@ The JSON block every issue body ends with, and the defaults for owners, verifica
   },
   "deliverables": ["implement the scoped order reassignment fix"],
   "verification_flow": [
-    "npx jest --testPathPatterns=updateOrder --no-coverage",
-    "npm run typecheck",
-    "npm run lint",
-    "npm run test:e2e:all -- --grep \"order reassignment\""
+    "<the test command the testing knowledge names, narrowed to the order reassignment tests>",
+    "<its type check>",
+    "<its lint>",
+    "<its e2e command, narrowed to the order reassignment flow>"
   ],
   "escalation_triggers": [
     "required authority docs conflict",
@@ -47,7 +47,7 @@ The JSON block every issue body ends with, and the defaults for owners, verifica
   "agent_responsibilities": [
     {
       "agent": "code-reviewer",
-      "responsibility": "Perform final TypeScript and repo-pattern review."
+      "responsibility": "Perform final type and repo-pattern review."
     },
     {
       "agent": "e2e-runner",

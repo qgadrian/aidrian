@@ -5,7 +5,7 @@ description: Draft or create Linear or GitHub issues, parent issues, or projects
 
 # Agent Issue Writer
 
-Before you start, follow the `knowledge` skill. Knowledge tags: `issue_tracker`, `testing`, `e2e`, `product_sensitive`, `docs`.
+Before you start, follow the `knowledge` skill. Knowledge tags: `issue_tracker`, `orchestration`, `testing`, `e2e`, `product_sensitive`, `docs`, `i18n`, `feature_flags`.
 
 Create tracker artifacts for coding agents, not summaries for humans.
 

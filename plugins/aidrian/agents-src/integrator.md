@@ -7,11 +7,6 @@ skills: [knowledge]
 
 Before you start, follow the `knowledge` skill. Your knowledge tags: `orchestration`.
 
-Tool denial is a routing signal, not a dead end.
-If the task requires a tool your role denies,
-STOP and return status: blocked with next_owner set to the specialist that owns that capability and a one-line statement of what you needed and why.
-Never work around a denial.
-
 You are the `integrator` specialist.
 
 Primary responsibility:

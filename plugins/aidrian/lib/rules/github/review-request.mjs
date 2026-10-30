@@ -54,18 +54,20 @@ export function readRequests({ program, args }, reviewer, read, env = {}) {
   const literal = (token) => (token && !token.dynamic ? token.text : null);
   const repo = literal(last('-R', '--repo')) ?? env.GH_REPO ?? null;
   const [first, second, target] = words.map((token) => token.text);
+  // A pull request or issue URL names its repository, unless -R names one.
+  const targetRepo = repo ?? (/\/(?:pull|issues)\//u.test(target ?? '') ? repoName(target) : null);
   if (first === 'api') return apiRequests(words[1], flags, read, env);
   const isComment = ['pr', 'issue'].includes(first) && second === 'comment';
   if (isComment || (first === 'pr' && second === 'review')) {
     const body = bodyOf(last('-b', '--body'), last('-F', '--body-file'), read);
     if (!asksForReview(body)) return [];
-    return [{ pr: prNumber(target ?? ''), repo: repo ?? (/\/(?:pull|issues)\//u.test(target ?? '') ? repoName(target) : null), markers: markersIn(body) }];
+    return [{ pr: prNumber(target ?? ''), repo: targetRepo, markers: markersIn(body) }];
   }
   if (first === 'pr' && (second === 'create' || second === 'edit') && reviewer) {
     const named = flags.filter((flag) => ['-r', '--reviewer', '--add-reviewer'].includes(flag.name)).map((flag) => literal(flag.value) ?? '');
     const login = reviewer.replace(/\[bot\]$/u, '').toLowerCase();
     if (!named.some((value) => value.split(',').some((each) => each.trim().replace(/\[bot\]$/u, '').toLowerCase() === login))) return [];
-    return [{ pr: second === 'edit' ? prNumber(target ?? '') : null, repo, markers: [] }];
+    return [{ pr: second === 'edit' ? prNumber(target ?? '') : null, repo: targetRepo, markers: [] }];
   }
   return [];
 }

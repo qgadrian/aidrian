@@ -142,6 +142,6 @@ test('addedLines reads each write tool', (t) => {
   assert.deepEqual(edit({ old_string: 'a', new_string: 'b\nc', replace_all: true }), [{ number: 2, text: 'two b' }, { number: 3, text: 'c' }, { number: 4, text: 'three b' }, { number: 5, text: 'c' }]);
   assert.deepEqual(edit({ edits: [{ old_string: 'one', new_string: 'uno' }, { old_string: 'uno', new_string: 'one' }] }), [], 'edits apply in order, and the end result counts');
   assert.deepEqual(edit({ edits: [{ old_string: 'one', new_string: 'uno' }, { old_string: 'two', new_string: 'dos' }] }), [{ number: 1, text: 'uno' }, { number: 2, text: 'dos a' }]);
-  const patch = '*** Begin Patch\n*** Add File: n.md\n+one\n*** Delete File: gone.md\n*** Update File: u.md\n+two\n*** End Patch';
-  assert.deepEqual(addedLines({ tool_name: 'apply_patch', tool_input: { command: patch } }, '/').map(({ file, lines }) => [file, lines.map((l) => l.text)]), [['n.md', ['one']], ['u.md', ['two']]]);
+  const patch = '*** Begin Patch\n*** Add File: n.md\n+one\n*** Delete File: gone.md\n*** Update File: u.md\n*** Move to: moved.md\n@@\n+two\n*** End Patch';
+  assert.deepEqual(addedLines({ tool_name: 'apply_patch', tool_input: { command: patch } }, '/').map(({ file, lines }) => [file, lines.map((l) => l.text)]), [['n.md', ['one']], ['moved.md', ['two']]]);
 });

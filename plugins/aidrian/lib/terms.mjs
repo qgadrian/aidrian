@@ -183,7 +183,9 @@ export function addedLines(input, cwd) {
     const files = [];
     for (const line of String(tool.command ?? tool.input ?? '').split(/\r?\n/u)) {
       const header = /^\*\*\* (?:Add|Update) File: (.+)$/u.exec(line);
+      const move = /^\*\*\* Move to: (.+)$/u.exec(line);
       if (header) files.push({ file: header[1].trim(), lines: [] });
+      else if (move && files.at(-1)?.file) files.at(-1).file = move[1].trim();
       else if (/^\*\*\* /u.test(line)) files.push({ file: null, lines: [] });
       else if (line.startsWith('+') && files.at(-1)?.file) files.at(-1).lines.push({ number: files.at(-1).lines.length + 1, text: line.slice(1) });
     }

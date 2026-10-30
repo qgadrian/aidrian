@@ -78,6 +78,7 @@ test('what is not a request to this repository passes; a request without a numbe
     'gh api -X GET repos/acme/notes/issues/5/comments -f body="@codex review"',
     'gh pr comment 5 -R other/repo -b "@codex review"',
     'gh issue comment https://github.com/other/repo/issues/5 -b "@codex review"',
+    'gh pr edit https://github.com/other/repo/pull/5 --add-reviewer chatgpt-codex-connector',
     'gh pr comment 5 --body-file - ',
     'echo "gh pr comment 5 -b @codex review"',
     'gh pr edit 5 --add-reviewer someone',

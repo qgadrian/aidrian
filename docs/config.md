@@ -84,7 +84,7 @@ The other local state has fixed places in the state folder; [project-folder.md](
 
 ## Models
 
-Each agent file in the plugin sets the model and effort the agent ships with.
+Each agent file in the plugin sets the model and effort the agent ships with, from the plugin's [provider files](agents.md#provider-files).
 A team can choose others in `config.json`, and one developer in the git-ignored `.aidrian.local.json` at the project root:
 
 ```json

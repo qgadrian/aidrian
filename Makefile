@@ -7,7 +7,7 @@
 help:
 	@awk '/^## / { doc = substr($$0, 4); next } /^[a-z-]+:/ && doc { sub(/:.*/, ""); printf "  make %-13s %s\n", $$0, doc } { doc = "" }' $(MAKEFILE_LIST)
 
-## Regenerate the Codex agents from plugins/aidrian/agents/.
+## Regenerate the Claude Code and Codex agents from plugins/aidrian/agents-src/ and providers/.
 build:
 	node scripts/build.mjs
 

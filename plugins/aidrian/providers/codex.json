@@ -1,0 +1,19 @@
+{
+  "*": { "model_reasoning_effort": "medium" },
+  "ai-citation-strategist": { "model_reasoning_effort": "low" },
+  "architect": { "model_reasoning_effort": "high" },
+  "backend-developer": { "model_reasoning_effort": "high" },
+  "brand-guardian": { "model_reasoning_effort": "low" },
+  "code-reviewer": { "model_reasoning_effort": "xhigh" },
+  "e2e-runner": { "model_reasoning_effort": "high" },
+  "harness-librarian": { "model_reasoning_effort": "high" },
+  "harness-mechanic": { "model_reasoning_effort": "high" },
+  "helper-scout": { "model_reasoning_effort": "low" },
+  "initiative-agent": { "model_reasoning_effort": "high" },
+  "planning-agent": { "model_reasoning_effort": "high" },
+  "product-manager": { "model_reasoning_effort": "high" },
+  "security-engineer": { "model_reasoning_effort": "xhigh" },
+  "support-agent": { "model_reasoning_effort": "high" },
+  "ux-researcher": { "model_reasoning_effort": "low" },
+  "ux-specialist": { "model_reasoning_effort": "high" }
+}

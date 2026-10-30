@@ -16,14 +16,27 @@ export function agentCall(toolInput, models) {
   return added.length ? { ...toolInput, ...Object.fromEntries(added) } : null;
 }
 
-// A generated Codex role with the project's model and effort for its agent. scripts/build.mjs writes the lines this edits.
+// A generated Codex role with the project's model and effort for its agent. scripts/build.mjs writes the lines this edits:
+// the second comment line, which says where the model comes from, and the keys above `developer_instructions`.
+// A key the role already has is replaced; a missing one goes in, `model` before `model_reasoning_effort`.
 export function codexRole(text, { model, effort } = {}) {
-  let role = text;
-  if (effort !== undefined) role = role.replace(/^model_reasoning_effort = .*$/m, `model_reasoning_effort = ${JSON.stringify(effort)}`);
+  // Edit only the keys above the instructions, so a line in the instructions that looks like a key stays as it is.
+  const at = text.search(/^developer_instructions = /m);
+  if (at < 0 || (model === undefined && effort === undefined)) return text;
+  let head = text.slice(0, at);
+  if (effort !== undefined) head = setKey(head, 'model_reasoning_effort', effort);
   if (model !== undefined) {
-    role = role
-      .replace(/^model_reasoning_effort = /m, `model = ${JSON.stringify(model)}\nmodel_reasoning_effort = `)
-      .replace(/; this role inherits the Codex session's model\.$/m, "; the project's aidrian config sets this role's model.");
+    head = setKey(head, 'model', model, 'model_reasoning_effort')
+      .replace(/^# .*\bmodel\.$/m, "# The project's aidrian config sets this role's model.");
   }
-  return role;
+  return head + text.slice(at);
+}
+
+// `key = value` in a role's head: in place of the key's line, else before `before`'s line, else at the end.
+function setKey(head, key, value, before) {
+  const line = `${key} = ${JSON.stringify(value)}\n`;
+  const own = new RegExp(`^${key} = .*\n`, 'm');
+  if (own.test(head)) return head.replace(own, line);
+  const next = before === undefined ? -1 : head.search(new RegExp(`^${before} = `, 'm'));
+  return next < 0 ? head + line : head.slice(0, next) + line + head.slice(next);
 }

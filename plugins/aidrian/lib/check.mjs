@@ -5,7 +5,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { commandConfig, linksOutside, VERSION } from './config.mjs';
+import { commandConfig, VERSION } from './config.mjs';
+import { linksOutside } from './fs.mjs';
 import { isIgnored } from './git.mjs';
 import { checkBudgets, indexRows, loadKnowledge } from './knowledge.mjs';
 import { findProject, projectAt, repoRoot, stateDir, worktreesDir } from './project.mjs';

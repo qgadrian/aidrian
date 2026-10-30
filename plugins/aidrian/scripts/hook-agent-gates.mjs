@@ -9,7 +9,8 @@
 import path from 'node:path';
 
 import { gateDenial, unreadableConfigDenial } from '../lib/agent-gates.mjs';
-import { isFile, loadConfig } from '../lib/config.mjs';
+import { loadConfig } from '../lib/config.mjs';
+import { isFile } from '../lib/fs.mjs';
 import { configWriteDenial } from '../lib/config-guard.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
 import { findProject } from '../lib/project.mjs';

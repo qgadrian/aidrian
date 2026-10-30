@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { commandConfig, CONFIG_ERROR, DEFAULTS, linksOutside, loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { commandConfig, CONFIG_ERROR, DEFAULTS, loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { linksOutside } from '../plugins/aidrian/lib/fs.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');

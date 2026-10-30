@@ -9,7 +9,8 @@ import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { insidePath, isDirectory, isFile, loadConfig, readJson } from './config.mjs';
+import { loadConfig } from './config.mjs';
+import { insidePath, isDirectory, isFile, readJson } from './fs.mjs';
 import { checkoutRoots, mainRoot, runGit } from './git.mjs';
 
 const DEFAULT_DIR = '.aidrian';

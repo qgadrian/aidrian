@@ -8,7 +8,8 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { commandConfig, fileBytes } from './config.mjs';
+import { commandConfig } from './config.mjs';
+import { fileBytes } from './fs.mjs';
 import { checkoutRoots } from './git.mjs';
 import { appendRow, latestRows as latest, readRows } from './jsonl.mjs';
 import { checkBudgets, indexRows, loadKnowledge } from './knowledge.mjs';

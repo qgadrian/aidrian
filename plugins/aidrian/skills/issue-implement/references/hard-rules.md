@@ -32,7 +32,7 @@ Note each in the report under decided alone.
 - Creating the task worktree, or using an existing clean one at the branch tip.
 - Reusing a fresh plan instead of planning again.
 - Retrying a flaky end-to-end test once.
-- Demoting a finding that fails self-verification.
+- Demoting a finding that fails self-verification, except a security `fix_now`: only `security-engineer` closes one.
 
 ## Every step
 

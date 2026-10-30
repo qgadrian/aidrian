@@ -66,6 +66,8 @@ For each slice:
    the cited file or symbol exists as cited, that the preferred pattern appears in two other places or in a knowledge doc,
    and that the fix stays inside the acceptance criteria. A finding that fails a check moves to residual risks,
    with `false_positive_on_reverification` and the reason.
+   A security `fix_now` never moves on a failed check: only `security-engineer` closes it, as phase 5 gate 5 says.
+   Send it the failed check; a finding it confirms goes to the owner.
    Send every verified `fix_now` of the round in one pass, never one dispatch per finding.
    The next review reads the slice's diff again, as step 6 defines it, never a commit range: the fixes are not committed yet.
 8. **Verification.** The owner's handoff lists each command from its closure gate in `commands_run`, with its result.

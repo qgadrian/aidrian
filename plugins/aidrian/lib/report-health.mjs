@@ -2,7 +2,8 @@
 // rounds, hook denies, session cost, and the lesson inbox), each with its sample size and its threshold, mostly from
 // config.json `telemetry.health`; then the problems, worst first, each naming the row of the harness-health skill's fix
 // table that answers it. A signal with fewer than `minSample` samples says "not enough data" and is never a problem.
-// docs/dispatch-log.md#health describes the view.
+// Every verdict compares unrounded numbers; only what the view prints is rounded. docs/dispatch-log.md#health describes
+// the view.
 
 import { summarize, summarizeDenies, summarizeDocs } from './dispatch-log.mjs';
 import { latestRows } from './jsonl.mjs';
@@ -34,6 +35,11 @@ const NAMED_DOCS = 3;
 // A problem the plugin already records as an automatic lesson (lesson-signals.mjs) takes that lesson's key and labels,
 // so a lesson captured from this report is the same lesson seen again, not a second one.
 const labels = ({ tier, kind, target, key }) => ({ tier, kind, target, key });
+// The signal that finds each kind of problem a lesson can hold.
+const SIGNAL_OF = {
+  'always-budget': 'budget', 'tagged-doc': 'budget', redispatch: 'agents', 'sent-back': 'agents', 'review-rounds': 'reviews',
+  'late-findings': 'reviews', 'deny-hot-spot': 'denies', 'cost-rise': 'cost', 'top-doc': 'docs', 'never-read': 'docs',
+};
 
 const OK = 'ok';
 const PROBLEM = 'problem';
@@ -44,10 +50,27 @@ const percentOf = (part, whole) => (whole ? (part / whole) * 100 : null);
 const sumOf = (list, valueOf) => list.reduce((total, item) => total + (valueOf(item) ?? 0), 0);
 // A signal made of parts is a problem when one part is, ok when one part was judged, and not enough data otherwise.
 const overall = (statuses) => (statuses.includes(PROBLEM) ? PROBLEM : statuses.includes(OK) ? OK : NOT_ENOUGH);
+// A percent as the view prints it: whole, or to a tenth when a whole number would not show that it is over its threshold.
+const shown = (percent, threshold) => {
+  const whole = Math.round(percent);
+  return percent > threshold && whole <= threshold ? Math.round(percent * 10) / 10 : whole;
+};
 
 // { thresholds, problems, signals }. `knowledge` is knowledgeOf's { indexed, always, tags }; `reviews` is reviewRounds'
 // result, or its { error }; `lessons` is the folded inbox.
-export function summarizeHealth({ rows, sinceMs = 0, now = Date.now(), knowledge, reviews, lessons = [], config }) {
+export function summarizeHealth(input) {
+  const { config } = input;
+  const { problems, signals } = judge(input);
+  sinceResolution(problems, input);
+  const order = Object.keys(FIXES);
+  const ratio = (item) => (item.threshold > 0 ? item.value / item.threshold : item.value);
+  problems.sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || ratio(b) - ratio(a) || String(a.subject).localeCompare(String(b.subject)));
+  const { maxOpen, maxAgeDays } = config.lessons;
+  return { thresholds: { health: config.telemetry.health, budgets: config.knowledge.budgets, lessons: { maxOpen, maxAgeDays } }, problems, signals };
+}
+
+// Every signal over the rows since `sinceMs`, and the problems they found, unranked.
+function judge({ rows, sinceMs = 0, now = Date.now(), knowledge, reviews, lessons = [], config }) {
   const limits = config.telemetry.health;
   const problems = [];
   const add = (kind, fields) => problems.push({ kind, fix: FIXES[kind], subject: null, lesson: null, ...fields });
@@ -60,11 +83,42 @@ export function summarizeHealth({ rows, sinceMs = 0, now = Date.now(), knowledge
     cost: costSignal(rows, sinceMs, limits, add),
     lessons: lessonsSignal(lessons, sinceMs, now, config.lessons, add),
   };
-  const order = Object.keys(FIXES);
-  const ratio = (item) => (item.threshold > 0 ? item.value / item.threshold : item.value);
-  problems.sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind) || ratio(b) - ratio(a) || String(a.subject).localeCompare(String(b.subject)));
-  const { maxOpen, maxAgeDays } = config.lessons;
-  return { thresholds: { health: limits, budgets: config.knowledge.budgets, lessons: { maxOpen, maxAgeDays } }, problems, signals };
+  return { problems, signals };
+}
+
+// Sets each problem's `resolved` and `since_resolution`, both null unless a resolved lesson holds its lesson key.
+// `resolved` is that lesson's { id, at, outcome }. `since_resolution` is { n, status }: the same problem judged on the
+// rows dated after the resolution alone, so that capturing it reopens the fix only on evidence the fix could have
+// changed, never on the failures that led to it. A resolution before the window predates every row, so the problem
+// stands as judged; the reviews cannot be split by time, so after a resolution inside the window they are `unavailable`.
+function sinceResolution(problems, input) {
+  const lessons = input.lessons ?? [];
+  const byId = new Map(lessons.map((lesson) => [lesson.id, lesson]));
+  const later = new Map();
+  for (const problem of problems) {
+    // The first lesson with the key holds it, or the lesson it was merged into.
+    let holder = problem.lesson && lessons.find((lesson) => lesson.key === problem.lesson.key);
+    for (let hops = 0; holder?.mergedInto && hops < 100; hops += 1) holder = byId.get(holder.mergedInto);
+    const last = holder?.status === 'resolved' ? holder.resolutions.at(-1) : null;
+    problem.resolved = last ? { id: holder.id, at: last.at, outcome: last.outcome } : null;
+    problem.since_resolution = last ? judgedAfter(problem, Date.parse(last.at), input, later) : null;
+  }
+}
+
+function judgedAfter({ kind, subject, sample }, resolvedMs, input, later) {
+  if (!Number.isFinite(resolvedMs)) return { n: null, status: UNAVAILABLE };
+  if (resolvedMs < (input.sinceMs ?? 0)) return { n: sample.n, status: PROBLEM };
+  // Strictly after, as an occurrence must be to count against a fix.
+  if (!later.has(resolvedMs)) later.set(resolvedMs, judge({ ...input, sinceMs: resolvedMs + 1, reviews: null, lessons: [] }));
+  const { problems, signals } = later.get(resolvedMs);
+  const again = problems.find((item) => item.kind === kind && item.subject === subject);
+  if (again) return { n: again.sample.n, status: PROBLEM };
+  // Not found again: not enough data or unavailable as the signal says, else judged and within its threshold.
+  const signal = signals[SIGNAL_OF[kind]];
+  const agent = signal.agents?.find((item) => item.agent_type === subject);
+  const part = signal.agents ? (agent?.[kind === 'redispatch' ? 'redispatch' : 'sent_back'] ?? { n: 0, status: NOT_ENOUGH })
+    : { n: signal.sample?.n ?? null, status: signal.status };
+  return { n: part.n, status: part.status === NOT_ENOUGH || part.status === UNAVAILABLE ? part.status : OK };
 }
 
 // The `always` docs against knowledge.budgets.alwaysBytes and each tagged doc against taggedDocBytes, as on disk now.
@@ -98,7 +152,7 @@ function docsSignal(rows, sinceMs, { indexed, tags }, { minSample, topDocPercent
   const sample = { n: totals.rows, of: 'agent and session rows that recorded doc reads' };
   const top = docs.slice(0, TOP_DOCS).map((doc) => {
     const share = doc.read_bytes === null ? null : percentOf(doc.read_bytes, totals.read_bytes);
-    return { path: doc.path, reads: doc.reads, bytes: doc.bytes, read_bytes: doc.read_bytes, percent: share === null ? null : Math.round(share) };
+    return { path: doc.path, reads: doc.reads, bytes: doc.bytes, read_bytes: doc.read_bytes, percent: share === null ? null : shown(share, topDocPercent) };
   });
   const unread = neverRead.filter((doc) => tags[doc.path]?.length).map((doc) => doc.path);
   const base = { sample, read_bytes: totals.read_bytes, top, never_read: neverRead.length, never_read_tagged: unread };
@@ -109,8 +163,8 @@ function docsSignal(rows, sinceMs, { indexed, tags }, { minSample, topDocPercent
   const heavy = docs.length > 1 && share !== null && share > topDocPercent;
   if (heavy) {
     add('top-doc', {
-      subject: first.path, value: Math.round(share), threshold: topDocPercent, sample,
-      summary: `${first.path} takes ${Math.round(share)}% of the ${kb(totals.read_bytes)} of knowledge docs read, over ${topDocPercent}%: ` +
+      subject: first.path, value: shown(share, topDocPercent), threshold: topDocPercent, sample,
+      summary: `${first.path} takes ${shown(share, topDocPercent)}% of the ${kb(totals.read_bytes)} of knowledge docs read, over ${topDocPercent}%: ` +
         `${first.reads} reads of ${kb(first.bytes)}.`,
       lesson: { tier: 'P2', kind: 'improvement', target: 'project', key: `health:top-doc:${first.path}` },
     });
@@ -128,17 +182,18 @@ function docsSignal(rows, sinceMs, { indexed, tags }, { minSample, topDocPercent
 
 // Per agent type: the share of dispatches that repeat a task, over its dispatches, and the share of runs the delivery
 // check sent back, over its runs whose stop rows say so. A run that named a missing file before stop rows recorded
-// `sent_back` is unknown: it leaves the sample as it leaves the rate, and counts in `unknown`.
+// `sent_back` is unknown: it leaves the sample as it leaves the rate, and counts in `unknown`. The shares come from the
+// counts, since summarize() rounds its rates.
 function agentsSignal(rows, sinceMs, { minSample, redispatchPercent, sentBackPercent }, add) {
-  const judge = (n, rate, threshold) => {
-    const percent = rate === null ? null : rate * 100;
+  const rate = (n, count, threshold) => {
+    const percent = percentOf(count, n);
     const status = n < minSample || percent === null ? NOT_ENOUGH : percent > threshold ? PROBLEM : OK;
-    return { n, percent: percent === null ? null : Math.round(percent), status };
+    return { n, percent: percent === null ? null : shown(percent, threshold), status };
   };
   const agents = summarize(rows, { sinceMs }).agents.map((agent) => {
-    const redispatch = judge(agent.dispatches, agent.redispatch_rate, redispatchPercent);
+    const redispatch = rate(agent.dispatches, agent.redispatched, redispatchPercent);
     const unknown = agent.runs_without_send_back;
-    const sentBack = { ...judge(agent.runs - unknown, agent.sent_back_rate, sentBackPercent), unknown };
+    const sentBack = { ...rate(agent.runs - unknown, agent.sent_back, sentBackPercent), unknown };
     const sentBackLesson = labels(deliverySignal({ agentType: agent.agent_type, missing: [] }));
     if (redispatch.status === PROBLEM) {
       add('redispatch', {
@@ -162,17 +217,19 @@ function agentsSignal(rows, sinceMs, { minSample, redispatchPercent, sentBackPer
 }
 
 // The review bot's rounds per reviewed pull request, and its late findings that sat on a line it had already reviewed.
+// The average comes from each pull request's rounds, since reviewRounds() rounds its own; the view prints it to the hundredth.
 function reviewsSignal(reviews, { minSample, reviewRounds, lateFindingPercent }, add) {
   if (!reviews || reviews.error) return { status: UNAVAILABLE, error: reviews?.error ?? 'not read' };
-  const rounds = { n: reviews.reviewed, avg: reviews.avg_rounds, five_or_more: reviews.five_or_more, merged: reviews.merged, truncated: reviews.truncated };
-  rounds.status = rounds.n < minSample ? NOT_ENOUGH : rounds.avg > reviewRounds ? PROBLEM : OK;
+  const avg = reviews.rounds.length ? sumOf(reviews.rounds, (pr) => pr.rounds) / reviews.rounds.length : null;
+  const rounds = { n: reviews.rounds.length, avg, five_or_more: reviews.five_or_more, merged: reviews.merged, truncated: reviews.truncated };
+  rounds.status = rounds.n < minSample ? NOT_ENOUGH : avg > reviewRounds ? PROBLEM : OK;
   const share = percentOf(reviews.late_on_seen_line ?? 0, reviews.late_checked ?? 0);
-  const late = { n: reviews.late_checked ?? 0, on_seen_line: reviews.late_on_seen_line ?? 0, percent: share === null ? null : Math.round(share) };
+  const late = { n: reviews.late_checked ?? 0, on_seen_line: reviews.late_on_seen_line ?? 0, percent: share === null ? null : shown(share, lateFindingPercent) };
   late.status = late.n < minSample || share === null ? NOT_ENOUGH : share > lateFindingPercent ? PROBLEM : OK;
   if (rounds.status === PROBLEM) {
     add('review-rounds', {
-      value: rounds.avg, threshold: reviewRounds, sample: { n: rounds.n, of: 'reviewed pull requests' },
-      summary: `The review bot took ${rounds.avg} rounds a pull request on ${rounds.n} reviewed, over ${reviewRounds}; ` +
+      value: hundredths(avg), threshold: reviewRounds, sample: { n: rounds.n, of: 'reviewed pull requests' },
+      summary: `The review bot took ${hundredths(avg)} rounds a pull request on ${rounds.n} reviewed, over ${reviewRounds}; ` +
         `${rounds.five_or_more} needed 5 or more.`,
       lesson: labels(roundLimitSignal({ pr: null, maxRounds: reviewRounds, rounds: null })),
     });
@@ -210,13 +267,14 @@ function deniesSignal(rows, sinceMs, { minSample, denyHotSpot }, recorded, add) 
   return { status: hot.length ? PROBLEM : OK, ...base };
 }
 
-// The cost a session of the newer half of the window's sessions against the older half, in the order they ended.
+// The cost a session of the newer half of the window's sessions against the older half, in the order they ended. The
+// averages are compared unrounded: rounded to the cent, $0.014 against $0.016 reads as a 100% rise, and $0.004 as nothing.
 function costSignal(rows, sinceMs, { minSample, costRisePercent }, add) {
   const summary = summarizeSessions(rows, { sinceMs });
   const ended = latestRows(rows.filter((row) => row.event === 'session' && Date.parse(row.ts) >= sinceMs), 'session', 'session_id')
     .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
   const half = Math.floor(ended.length / 2);
-  const average = (list) => (list.length ? Math.round((sumOf(list, (row) => row.cost_usd) / list.length) * 100) / 100 : null);
+  const average = (list) => (list.length ? sumOf(list, (row) => row.cost_usd) / list.length : null);
   const older = average(ended.slice(0, half));
   const newer = average(ended.slice(half));
   const top = summary.top[0] ?? null;
@@ -226,8 +284,9 @@ function costSignal(rows, sinceMs, { minSample, costRisePercent }, add) {
     change_percent: null, top: top && { session_id: top.session_id, ts: top.ts, cost_usd: top.cost_usd },
   };
   if (half < minSample || !older) return { status: NOT_ENOUGH, ...base };
-  base.change_percent = Math.round(percentOf(newer - older, older));
-  if (base.change_percent <= costRisePercent) return { status: OK, ...base };
+  const change = percentOf(newer - older, older);
+  base.change_percent = shown(change, costRisePercent);
+  if (change <= costRisePercent) return { status: OK, ...base };
   add('cost-rise', {
     value: base.change_percent, threshold: costRisePercent, sample: base.sample,
     summary: `The newer ${plural(base.newer.n, 'session')} cost ${money(newer)} a session against ${money(older)} for the older ${half}, ` +
@@ -268,7 +327,9 @@ function lessonsSignal(lessons, sinceMs, now, { maxOpen, maxAgeDays }, add) {
 }
 
 const kb = (bytes) => (bytes === null ? '?' : `${(bytes / 1024).toFixed(1)} KB`);
-const money = (usd) => `$${usd.toFixed(2)}`;
+// To the cent, or to two significant digits under ten cents, so that a cheap session never reads as $0.00.
+const money = (usd) => `$${usd > 0 && usd < 0.1 ? Number(usd.toPrecision(2)) : usd.toFixed(2)}`;
+const hundredths = (value) => Math.round(value * 100) / 100;
 const plural = (count, word, words = `${word}s`) => `${count} ${count === 1 ? word : words}`;
 const LABELS = { [OK]: 'ok', [PROBLEM]: 'problem', [NOT_ENOUGH]: 'not enough data', [UNAVAILABLE]: 'unavailable' };
 // "n=3 of 5": a sample below the minimum names both.
@@ -303,7 +364,7 @@ export function formatHealth({ thresholds, problems, signals }, { file, since, s
   if (reviews.status === UNAVAILABLE) lines.push(`${head('Reviews', reviews)}; ${reviews.error}`);
   else {
     const rounds = reviews.rounds.status === NOT_ENOUGH ? `rounds not enough data (${n(reviews.rounds.n, minSample)} reviewed)`
-      : `${reviews.rounds.avg} rounds a pull request (n=${reviews.rounds.n} reviewed, threshold ${thresholds.health.reviewRounds})`;
+      : `${hundredths(reviews.rounds.avg)} rounds a pull request (n=${reviews.rounds.n} reviewed, threshold ${thresholds.health.reviewRounds})`;
     const late = reviews.late.status === NOT_ENOUGH ? `late findings not enough data (${n(reviews.late.n, minSample)} checked)`
       : `${reviews.late.percent}% of late findings on a line already reviewed (n=${reviews.late.n}, threshold ${thresholds.health.lateFindingPercent}%)`;
     lines.push(`${head('Reviews', reviews)}; ${rounds}; ${late}${reviews.rounds.truncated ? `; only the last ${reviews.rounds.merged} merged, the --prs limit` : ''}`);

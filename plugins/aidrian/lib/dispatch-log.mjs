@@ -293,7 +293,7 @@ function sendBackStates(stops) {
 // one subagent that stopped. The share sent back leaves out the runs whose send-back is unknown (sendBackStates), which
 // `runs_without_send_back` counts; the averages of docs read, the runs logged with doc reads off; those of bytes read,
 // also the runs whose docs were logged before sizes; tool calls per request, the runs logged before tool counts, which
-// `runs_without_tool_counts` counts.
+// `runs_without_tool_counts` counts. The rates are rounded for the view; `redispatched` and `sent_back` count exactly.
 export function summarize(rows, { sinceMs = 0 } = {}) {
   const fresh = rows.filter((row) => Date.parse(row.ts) >= sinceMs && ['dispatch', 'stop', 'session'].includes(row.event));
   const dispatches = fresh.filter((row) => row.event === 'dispatch');
@@ -319,6 +319,7 @@ export function summarize(rows, { sinceMs = 0 } = {}) {
     return {
       agent_type: type,
       dispatches: sent.length,
+      redispatched: sent.length - tasks.size,
       redispatch_rate: sent.length ? round(1 - tasks.size / sent.length) : null,
       median_duration_ms: median(sent.map((row) => row.duration_ms)),
       median_tokens: median(done.map((row) => (row.tokens ? row.tokens.input + row.tokens.output + row.tokens.cache_read + row.tokens.cache_write : NaN))),

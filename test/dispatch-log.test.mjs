@@ -234,7 +234,7 @@ test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, del
   ];
   const summary = summarize(rows, { sinceMs: parseSince('7d', NOW) });
   assert.deepEqual(summary.agents[0], {
-    agent_type: 'Explore', dispatches: 3, redispatch_rate: 0.33, median_duration_ms: 2000, median_tokens: 2000, cost_usd: 0.75,
+    agent_type: 'Explore', dispatches: 3, redispatched: 1, redispatch_rate: 0.33, median_duration_ms: 2000, median_tokens: 2000, cost_usd: 0.75,
     delivered: { file: 1, chat: 1, missing: 0 }, top_docs: [['a.md', 2], ['b.md', 1]],
     runs: 2, cost_per_run_usd: 0.38, sent_back: 1, sent_back_rate: 1, runs_without_send_back: 1, avg_docs_read: 1.5, avg_doc_bytes: 3072,
     requests: 10, tool_requests: 4, tool_calls: 6, tool_calls_per_request: 1.5, runs_without_tool_counts: 1,

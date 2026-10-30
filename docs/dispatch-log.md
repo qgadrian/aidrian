@@ -311,9 +311,16 @@ Each signal names its sample and is judged by config.json [`telemetry.health`](c
 
 `--prs N` reads at most N pull requests merged in the window, 20 by default, through `gh` as the reviews view does.
 `--json` prints `problems`, each with `kind`, `fix`, `subject` (the agent, doc, or rule, or `null`), `value`, `threshold`,
-`sample` (`n` and what it counts), `summary`, and `lesson` (the `tier`, `kind`, `target`, and `key` for `aidrian lesson add`,
-or `null` when the problem is a lesson already); `signals`, every signal with its `status` (`ok`, `problem`, `not_enough_data`,
-or `unavailable`) and its numbers; `thresholds`; and `coverage`, as the other views print it.
+`sample` (`n` and what it counts), `summary`, `lesson` (the `tier`, `kind`, `target`, and `key` for `aidrian lesson add`,
+or `null` when the problem is a lesson already), `resolved`, and `since_resolution`; `signals`, every signal with its `status`
+(`ok`, `problem`, `not_enough_data`, or `unavailable`) and its numbers; `thresholds`; and `coverage`, as the other views print it.
+When a resolved lesson holds the problem's `lesson.key`, `resolved` names it (`id`, `at`, `outcome`) and `since_resolution`
+judges the same problem on the rows dated after that resolution alone, as `n` and `status`: the window can hold the failures
+that led to the fix, which say nothing about whether it held. A resolution before the window leaves the problem as judged,
+and the reviews cannot be split by time, so after a resolution inside the window they are `unavailable`. Both are `null`
+when no resolved lesson holds the key.
+Every verdict compares unrounded numbers; the page rounds only what it prints, to a tenth of a percent where a whole one
+would read as the threshold, and a cost under ten cents to two significant digits.
 
 ## Limits
 

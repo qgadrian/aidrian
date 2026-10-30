@@ -67,7 +67,8 @@ const KNOWLEDGE = {
 const EMPTY_KNOWLEDGE = { indexed: [], always: { bytes: 0, budget: 16384, buckets: {} }, tags: {} };
 // Six reviewed pull requests at 3.5 rounds each on average; 2 late findings checked, under the minimum sample.
 const REVIEWS = {
-  reviewer: 'chatgpt-codex-connector[bot]', merged: 8, reviewed: 6, clean_first_pass: 1, avg_rounds: 3.5, five_or_more: 2, rounds: [],
+  reviewer: 'chatgpt-codex-connector[bot]', merged: 8, reviewed: 6, clean_first_pass: 1, avg_rounds: 3.5, five_or_more: 2,
+  rounds: [5, 5, 4, 4, 3, 0].map((count, i) => ({ number: i + 1, rounds: count })),
   findings: 20, findings_rounds: 18, by_round: {}, late_findings: 9, late_checked: 2, late_on_seen_line: 2, late_unchecked: {}, capped: 0, unread: 0,
   truncated: false,
 };
@@ -107,6 +108,7 @@ test('summarizeHealth ranks the problems worst first, each with its value, thres
   assert.deepEqual(byKind['deny-hot-spot'].lesson, { tier: 'P2', kind: 'gap', target: 'plugin', key: 'hook-deny:git-amend' });
   assert.deepEqual(byKind['review-rounds'].lesson, { tier: 'P2', kind: null, target: 'project', key: 'review-rounds' });
   assert.equal(byKind['p1-lesson'].lesson, null, 'a lesson problem is a lesson already');
+  assert.deepEqual([byKind.redispatch.resolved, byKind.redispatch.since_resolution], [null, null], 'no resolved lesson holds its key');
   assert.equal(byKind['never-read'].summary, '1 tagged doc never read in 31 rows with doc reads: docs/c.md.');
   assert.equal(byKind['cost-rise'].summary,
     'The newer 6 sessions cost $2.17 a session against $1.00 for the older 6, up 117%, over 50%; the most costly was s12 at $3.00.');
@@ -126,7 +128,7 @@ test('summarizeHealth: each signal carries its sample, and a part under minSampl
   assert.deepEqual(signals.denies.rules.map((rule) => [rule.rule, rule.count]), [['git-amend', 6], ['process-kill', 1]], 'pr-body is older than the window');
   assert.deepEqual(signals.docs.top.map((doc) => [doc.path, doc.percent]), [['docs/a.md', 92], ['docs/b.md', 8]]);
   assert.deepEqual([signals.docs.never_read, signals.docs.never_read_tagged], [2, ['docs/c.md']]);
-  assert.deepEqual([signals.cost.older, signals.cost.newer, signals.cost.change_percent], [{ n: 6, avg_usd: 1 }, { n: 6, avg_usd: 2.17 }, 117]);
+  assert.deepEqual([signals.cost.older, signals.cost.newer, signals.cost.change_percent], [{ n: 6, avg_usd: 1 }, { n: 6, avg_usd: 13 / 6 }, 117]);
   assert.deepEqual([signals.lessons.p1, signals.lessons.oldest_days, signals.lessons.recurred], [1, 20, ['aaaa0003']]);
 });
 
@@ -176,6 +178,84 @@ test('summarizeHealth: a run that named a missing file before stop rows recorded
   assert.deepEqual([problem.value, problem.sample], [20, { n: 5, of: 'runs with a known send-back' }]);
   assert.equal(problem.summary, 'planner: the delivery check sent back 1 of 5 runs (20%), over 10%; each named a file it had not written.');
   assert.match(formatHealth(enough, { file: 'f', since: '30d', skipped: 0 }), /\n {4}planner: .*, 20% sent back \(n=5, 2 unknown\)\n/);
+});
+
+test('summarizeHealth compares the session cost unrounded: $0.014 against $0.016 is up 14%, and $0.004 a session is judged', () => {
+  const cost = (costs) => summarizeHealth({
+    rows: costs.map((usd, i) => ({ event: 'session', ts: at(200 - i * 10), session_id: `c${i + 1}`, cost_usd: usd, docs_read: [] })),
+    sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: { error: 'gh: not found' }, config: configWith(),
+  });
+  // Rounded to the cent first, this read as $0.01 against $0.02: up 100%, over 50%.
+  const small = cost([...Array(5).fill(0.014), ...Array(5).fill(0.016)]);
+  assert.deepEqual([small.signals.cost.status, small.signals.cost.change_percent, small.problems], ['ok', 14, []]);
+  assert.match(formatHealth(small, { file: 'f', since: '30d', skipped: 0 }),
+    /\n {2}Session cost: ok \(n=5 sessions a half\); 10 sessions, \$0\.15; \$0\.016 a session in the newer half against \$0\.014, up 14% \(threshold 50%\)\n/);
+  // Rounded to the cent first, the older half cost $0.00 a session, which read as not enough data.
+  const tiny = cost([...Array(5).fill(0.004), 0.01, 0.01, 0.01, 0.01, 0.012]);
+  assert.deepEqual([tiny.signals.cost.status, tiny.signals.cost.older.avg_usd], ['problem', 0.004]);
+  assert.deepEqual(tiny.problems.map((item) => [item.kind, item.value, item.summary]), [['cost-rise', 160,
+    'The newer 5 sessions cost $0.01 a session against $0.004 for the older 5, up 160%, over 50%; the most costly was c10 at $0.012.']]);
+});
+
+test('summarizeHealth judges rates and averages unrounded, and prints a tenth where a whole number would read as the threshold', () => {
+  // planner: 2 of 6 dispatches repeat a task and 2 of 6 runs were sent back, 33.3% each; rounded first, each read as 33%, not over 33%.
+  const rows = [['t1', true], ['t1', true], ['t2', false], ['t2', false], ['t3', false], ['t4', false]]
+    .flatMap(([task, sentBack]) => run('planner', 's8', task, { sentBack }));
+  // 24 pull requests at 3 rounds and one at 4: 3.04 rounds, which reviewRounds() prints as 3.
+  const reviews = { ...REVIEWS, reviewed: 25, avg_rounds: 3, five_or_more: 0, rounds: Array.from({ length: 25 }, (_, i) => ({ number: i + 1, rounds: i ? 3 : 4 })) };
+  const health = summarizeHealth({
+    rows, sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews, config: configWith({ redispatchPercent: 33, sentBackPercent: 33 }),
+  });
+  assert.deepEqual(health.problems.map((item) => [item.kind, item.value, item.threshold]), [['redispatch', 33.3, 33], ['sent-back', 33.3, 33], ['review-rounds', 3.04, 3]]);
+  assert.equal(health.problems[1].summary, 'planner: the delivery check sent back 2 of 6 runs (33.3%), over 33%; each named a file it had not written.');
+  assert.equal(health.problems[2].summary, 'The review bot took 3.04 rounds a pull request on 25 reviewed, over 3; 0 needed 5 or more.');
+});
+
+test('summarizeHealth judges a problem whose lesson was resolved again on the rows dated after the resolution alone', () => {
+  const block = (session, hoursAgo) => ({ event: 'hook_deny', ts: at(hoursAgo), session_id: session, rule: 'git-amend', agent_type: 'main', reason: 'x' });
+  // Ten days ago, before the fix: git-amend blocked 6 calls in 6 sessions, and the delivery check sent back 2 of 5 explorer runs.
+  const older = [
+    ...['o1', 'o2', 'o3', 'o4', 'o5', 'o6'].map((session) => block(session, 24 * 10)),
+    ...['x1', 'x2', 'x3', 'x4', 'x5'].flatMap((task, i) => run('aidrian:explorer', 'o1', task, { sentBack: i < 2 })).map((row) => ({ ...row, ts: at(24 * 10) })),
+  ];
+  // Two days ago, after the fix: `sessions` sessions, the first `blocks` of them with one git-amend block each.
+  const newer = (sessions, blocks) => Array.from({ length: sessions }, (_, i) => [
+    { event: 'session', ts: at(48), session_id: `n${i}`, cost_usd: 1, docs_read: [] },
+    ...(i < blocks ? [block(`n${i}`, 48)] : []),
+  ]).flat();
+  // A lesson for each of the three problems, resolved `hoursAgo`; `more` adds rows to the inbox.
+  const keys = ['hook-deny:git-amend', 'delivery-check:aidrian:explorer', 'review-rounds'];
+  const inbox = (hoursAgo, more = []) => fold([
+    ...keys.flatMap((key, i) => [
+      { event: 'add', id: `bbbb000${i}`, at: at(24 * 20), tier: 'P2', note: `Seen as ${key}`, key },
+      { event: 'resolve', id: `bbbb000${i}`, at: at(hoursAgo), outcome: 'mechanism', link: 'abc1234' },
+    ]),
+    ...more,
+  ]).lessons;
+  const health = (rows, lessons) =>
+    summarizeHealth({ rows: [...older, ...rows], sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: REVIEWS, lessons, config: configWith() });
+  const verdicts = ({ problems }) => Object.fromEntries(problems.filter((item) => item.lesson).map((item) => [item.kind, item.since_resolution]));
+  // Resolved five days ago. Two sessions since are under minSample; the explorer has not run since; the reviews cannot be
+  // split by time. Each is a problem over the whole window, and none is evidence the fix failed.
+  const recheck = health(newer(2, 2), inbox(24 * 5));
+  assert.deepEqual(recheck.problems.find((item) => item.kind === 'deny-hot-spot').resolved, { id: 'bbbb0000', at: at(24 * 5), outcome: 'mechanism' });
+  assert.deepEqual(verdicts(recheck), {
+    'sent-back': { n: 0, status: 'not_enough_data' },
+    'review-rounds': { n: null, status: 'unavailable' },
+    'deny-hot-spot': { n: 2, status: 'not_enough_data' },
+  });
+  // Five sessions since: one block is within the threshold, five are the problem again.
+  assert.deepEqual(verdicts(health(newer(5, 1), inbox(24 * 5)))['deny-hot-spot'], { n: 5, status: 'ok' });
+  assert.deepEqual(verdicts(health(newer(5, 5), inbox(24 * 5)))['deny-hot-spot'], { n: 5, status: 'problem' });
+  // Resolved before the window: every row came after the fix, so each problem stands as judged.
+  assert.deepEqual(verdicts(health(newer(2, 2), inbox(24 * 40))), {
+    'sent-back': { n: 5, status: 'problem' },
+    'review-rounds': { n: 6, status: 'problem' },
+    'deny-hot-spot': { n: 8, status: 'problem' },
+  });
+  // A lesson seen again after its fix is open, which the skill skips: it reports no resolution.
+  const reopened = health(newer(2, 2), inbox(24 * 5, [{ event: 'seen', id: 'bbbb0000', at: at(24), note: 'blocked again' }]));
+  assert.deepEqual(reopened.problems.find((item) => item.kind === 'deny-hot-spot').resolved, null);
 });
 
 test('summarizeHealth: telemetry.health thresholds move the verdicts; hook denies off leave that signal unavailable', () => {

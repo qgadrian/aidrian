@@ -135,6 +135,8 @@ Another producer, such as a script that reads `aidrian report`, can add its own 
 The `harness-health` skill does that for the problems of [`aidrian report health`](dispatch-log.md#health) that the Human accepts:
 a sent-back agent, a blocking rule, and review rounds take the keys above, so each is the same lesson seen again,
 and the other problems take `health:<kind>`, followed by `:<agent or doc>` when the problem has one.
+A problem whose key belongs to a resolved lesson is captured only when the rows dated after that resolution show it again,
+so the failures that led to a fix never reopen it.
 `"lessons": { "auto": false }` in config.json turns all three off.
 
 ## Rows from the first version

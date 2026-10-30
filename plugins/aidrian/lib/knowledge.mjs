@@ -201,7 +201,8 @@ export function indexRows(buckets) {
 
 // The knowledge budgets, config.json `knowledge.budgets`. Every session and subagent reads the `always` docs, so their
 // total warns above `alwaysBytes` and fails above twice that. A route to a tag reads each of its docs whole, so a tagged
-// doc above `taggedDocBytes` warns. Returns { problems, warnings, summary }.
+// doc above `taggedDocBytes` warns. Returns { problems, warnings, summary, always }; `always` is
+// { bytes, budget, buckets: { <id>: bytes } }, for aidrian report docs.
 export function checkBudgets(root, buckets, { alwaysBytes, taggedDocBytes }) {
   const size = (doc) => fileBytes(path.resolve(root, doc)) ?? 0;
   const perBucket = buckets.map((bucket) => [bucket.id, bucket.always.reduce((sum, doc) => sum + size(doc), 0)]);
@@ -220,7 +221,7 @@ export function checkBudgets(root, buckets, { alwaysBytes, taggedDocBytes }) {
       );
     }
   }
-  return { problems, warnings, summary };
+  return { problems, warnings, summary, always: { bytes: total, budget: alwaysBytes, buckets: Object.fromEntries(perBucket) } };
 }
 
 // The docs that match `words`, best first. Each word scores 2 when it is part of a tag, 1 when it is part of the path,

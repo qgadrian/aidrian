@@ -266,11 +266,17 @@ test('summarizeDocs: per doc reads, size, reads × size, and readers; most bytes
     [DOC('product/product-rules'), 1, 241, 241, ['main']],
     [DOC('product/sharing'), 1, null, null, ['Explore']],
   ]);
-  assert.deepEqual(totals, { docs: 6, reads: 10, read_bytes: 3518, readers: ['Explore', 'code-reviewer', 'main', 'planner'] });
+  assert.deepEqual(totals, { docs: 6, reads: 10, read_bytes: 3518, readers: ['Explore', 'code-reviewer', 'main', 'planner'], rows: 5 });
 
-  const text = formatDocs({ docs, totals }, { file: '/s/dispatch-log.jsonl', since: '7d', skipped: 0 });
+  const indexed = ['engineering/working-agreement', 'engineering/issue-tracker', 'product/sharing', 'product/notes'].map((name, i) => read(name, 100 * (i + 1)));
+  const withIndex = summarizeDocs(DOC_ROWS, { sinceMs: parseSince('7d', NOW), indexed });
+  assert.deepEqual(withIndex.never_read, [read('engineering/issue-tracker', 200), read('product/notes', 400)], 'in index order; the old row is out of the window');
+  const always = { bytes: 479, budget: 16384, buckets: { engineering: 479, product: 0 } };
+  const text = formatDocs(withIndex, { file: '/s/dispatch-log.jsonl', since: '7d', skipped: 0, notes: ['Partial: a note.'], always });
   assert.equal(text, [
     'Knowledge docs read, from /s/dispatch-log.jsonl, since 7d',
+    'Partial: a note.',
+    'Always docs: 479 of 16384 bytes, read by every session and subagent (engineering 479, product 0)',
     '10 reads of 6 docs, 3.4 KB in all, by 4 readers: Explore, code-reviewer, main, planner',
     'Most bytes read (reads × size), top 6:',
     `      4 ×    0.5 KB =    1.9 KB  ${DOC('engineering/working-agreement')}  (Explore, code-reviewer, main, planner)`,
@@ -282,22 +288,34 @@ test('summarizeDocs: per doc reads, size, reads × size, and readers; most bytes
     'Read by the most readers:',
     `  4 of 4  ${DOC('engineering/working-agreement')}`,
     `  2 of 4  ${DOC('engineering/testing')}`,
+    'Indexed docs never read since 7d, 2:',
+    `     0.2 KB  ${DOC('engineering/issue-tracker')}`,
+    `     0.4 KB  ${DOC('product/notes')}`,
   ].join('\n'));
   assert.match(formatDocs(summarizeDocs([]), { file: 'f', since: '7d', skipped: 1 }), /^Knowledge docs read, from f, since 7d \(1 unreadable rows skipped\)\nNo knowledge doc reads yet\.$/);
+  const over = formatDocs(summarizeDocs([], { indexed }), { file: 'f', since: '7d', skipped: 0, always: { bytes: 20000, budget: 16384, buckets: {} } });
+  assert.equal(over, 'Knowledge docs read, from f, since 7d\nAlways docs: 20000 of 16384 bytes, over knowledge.budgets.alwaysBytes, read by every session and subagent\nNo knowledge doc reads yet.', 'no rows: no doc is called unread');
+  const many = Array.from({ length: 23 }, (_, i) => read(`n${i}`, 10));
+  const none = formatDocs(summarizeDocs([{ event: 'stop', ts: '2026-10-29T10:00:00Z', agent_id: 'a', docs_read: [] }], { indexed: many }), { file: 'f', since: '7d', skipped: 0 });
+  assert.match(none, /^Knowledge docs read, from f, since 7d\n1 agent and session rows recorded doc reads, and none read a knowledge doc\.\nIndexed docs never read since 7d, 23:\n/);
+  assert.match(none, /n19\.md\n {2}and 3 more; --json lists them all$/);
 });
 
 test('aidrian report docs prints the doc view, --json all of it; a stray word or --prs is an error', (t) => {
   const { dir, env, state } = project(t);
   const report = (args) => spawnSync(CLI, ['report', ...args], { cwd: dir, env, encoding: 'utf8' });
-  assert.match(report(['docs']).stdout, /^Knowledge docs read, from .*dispatch-log\.jsonl, since 7d\nNo knowledge doc reads yet\.\n$/);
+  const always = 'Always docs: 479 of 16384 bytes, read by every session and subagent (engineering 479, product 0)';
+  assert.equal(report(['docs']).stdout.split('\n').slice(1).join('\n'), `${always}\nNo knowledge doc reads yet.\n`);
   mkdirSync(state(), { recursive: true });
   const recent = DOC_ROWS.map((row) => ({ ...row, ts: new Date(Date.now() - 3_600_000).toISOString() }));
   writeFileSync(path.join(state(), 'dispatch-log.jsonl'), `${recent.map((row) => JSON.stringify(row)).join('\n')}\nnot json\n`);
   const text = report(['docs', '--since', '1d']);
   assert.equal(text.status, 0, text.stderr);
-  assert.match(text.stdout, /since 1d \(1 unreadable rows skipped\)\n11 reads of 7 docs, .* by 4 readers/);
+  assert.match(text.stdout, /since 1d \(1 unreadable rows skipped\)\nAlways docs: 479 of 16384 bytes, .*\n11 reads of 7 docs, .* by 4 readers/);
+  assert.match(text.stdout, /\nIndexed docs never read since 1d, 1:\n {5}0\.\d KB {2}docs\/knowledge\/engineering\/docs-ownership\.md\n$/);
   const json = JSON.parse(report(['docs', '--json']).stdout);
-  assert.deepEqual(Object.keys(json), ['file', 'rotated', 'since', 'skipped', 'coverage', 'docs', 'totals']);
+  assert.deepEqual(Object.keys(json), ['file', 'rotated', 'since', 'skipped', 'coverage', 'always', 'docs', 'totals', 'never_read']);
+  assert.deepEqual(json.always, { bytes: 479, budget: 16384, buckets: { engineering: 479, product: 0 } });
   assert.deepEqual(json.docs[0], { path: DOC('engineering/working-agreement'), reads: 4, bytes: 479, read_bytes: 1916, readers: ['Explore', 'code-reviewer', 'main', 'planner'] });
   assert.deepEqual([report(['nope']).status, report(['nope']).stderr], [1, 'unknown report: nope; use aidrian report or aidrian report docs\n']);
   assert.deepEqual([report(['docs', 'more']).status, report(['docs', '--prs', '1']).status], [1, 1]);
@@ -333,7 +351,7 @@ test('aidrian report and report docs say when telemetry is off, and --json carri
   setTelemetry(dir, { enabled: false });
   const report = (args) => spawnSync(CLI, ['report', ...args], { cwd: dir, env, encoding: 'utf8' });
   assert.match(report([]).stdout, /^Dispatch log .*, since 7d\nTelemetry is off \(telemetry\.enabled is false\): .*\nNo rows yet\.\n$/);
-  assert.match(report(['docs']).stdout, /^Knowledge docs read, .*\nTelemetry is off .*\nNo knowledge doc reads yet\.\n$/);
+  assert.match(report(['docs']).stdout, /^Knowledge docs read, .*\nTelemetry is off .*\nAlways docs: .*\nNo knowledge doc reads yet\.\n$/);
   assert.deepEqual(JSON.parse(report(['--json']).stdout).coverage, { enabled: false, doc_reads: true, rows_without_doc_reads: 0, rotated_out_before: null });
 });
 

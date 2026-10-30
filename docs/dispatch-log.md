@@ -104,11 +104,13 @@ left on each, the share that passed clean on the first look, and how many needed
 
 ### Doc reads
 
-`aidrian report docs` shows which knowledge docs cost agents the most context: a doc read too often, or too large for how often it is read.
+`aidrian report docs` answers three questions about the knowledge docs in one view:
+what the `always` docs cost every agent, which docs cost agents the most context, and which indexed docs nobody reads.
 
 ```console
 $ aidrian report docs --since 30d
 Knowledge docs read, from /home/you/.local/state/aidrian/projects/notes-1a2b3c4d/dispatch-log.jsonl, since 30d
+Always docs: 4710 of 16384 bytes, read by every session and subagent (engineering 4710, product 0)
 89 reads of 6 docs, 1909.6 KB in all, by 4 readers: Explore, code-reviewer, main, planner
 Most bytes read (reads × size), top 6:
      23 ×   53.4 KB = 1228.2 KB  docs/knowledge/engineering/booking-status.md  (Explore, code-reviewer)
@@ -120,16 +122,24 @@ Most bytes read (reads × size), top 6:
 Read by the most readers:
   4 of 4  docs/knowledge/engineering/working-agreement.md
   2 of 4  docs/knowledge/engineering/booking-status.md
+Indexed docs never read since 30d, 2:
+     12.3 KB  docs/knowledge/engineering/issue-tracker.md
+      2.0 KB  docs/knowledge/product/sharing.md
 ```
 
+- **Always docs**: the bytes of every bucket's `always` docs against config.json `knowledge.budgets.alwaysBytes`,
+  the same numbers [`aidrian check`](config.md#knowledge-budgets) prints. It is the size on disk now, not from the log.
 - **reads × size**: how many times a doc was read, its size, and the two multiplied: the context it took. The ten largest are listed.
 - **readers**: the agent types that read the doc, and `main` for the main conversation.
   A subagent counts once, even when it was sent back; a session counts its main conversation once.
 - **Read by the most readers**: up to five docs that more than one reader opened.
   A doc that every reader opens costs as much as an `always` doc, so keep it as short as one.
 - `?` marks a doc whose reads were all logged before sizes were.
+- **Indexed docs never read**: the docs the knowledge index lists that no agent or main conversation read in the window,
+  in index order, at most 20. A tagged doc here is routed to and never opened; drop it from the index or fix its tags.
+  The list is left out when no row in the window recorded doc reads.
 
-`--since` works as above; `--json` prints every doc, not only the top ten, with the totals.
+`--since` works as above; `--json` prints every doc, not only the top ten, with the totals, `always`, and every unread doc in `never_read`.
 
 ## Limits
 

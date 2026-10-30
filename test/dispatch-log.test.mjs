@@ -130,7 +130,11 @@ test('the delivery check sends a subagent back once for a path it named that doe
   assert.equal(stop('out/gone.json does not exist, so I skipped it.', false).status, 0, 'a mention is not a claim');
   const inline = JSON.stringify({ status: 'done', role: 'explorer', evidence: [{ file: 'docs/absent.md', shows: 'no such doc' }] }, null, 2);
   assert.equal(stop(inline, false).status, 0, 'a handoff returned in the last message, as a read-only agent returns it, claims no file');
-  assert.deepEqual(log().map((row) => row.delivered), ['missing', 'missing', 'missing', 'file', 'chat', 'chat']);
+  assert.deepEqual(log().map((row) => [row.agent_id, row.delivered, row.sent_back]), [
+    ['a2', 'missing', true], ['a2', 'missing', false], ['a3', 'missing', false], ['a2', 'file', false], ['a2', 'chat', false], ['a2', 'chat', false],
+  ]);
+  const agents = summarize(log()).agents.map((agent) => [agent.agent_type, agent.runs, agent.sent_back, agent.sent_back_rate, agent.runs_without_send_back]);
+  assert.deepEqual(agents, [['general-purpose', 1, 0, 0, 0], ['planner', 1, 1, 1, 0]], 'a3 named a missing file and was never sent back; a2 was, once');
 });
 
 // Sets config.json `telemetry` in a project from project().
@@ -203,7 +207,8 @@ test('every dispatch-log hook exits 0 silently on a payload it cannot read', () 
 });
 
 test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, delivery, runs, docs, tool calls; then sessions and hook denies', () => {
-  // a1's rows predate sizes in docs_read and tool counts: bare paths count the same, and its run leaves the averages they feed.
+  // a1's rows predate sizes in docs_read, tool counts, and sent_back: bare paths count the same, and its run leaves the
+  // averages and the share sent back they feed; its `missing` row leaves its send-back unknown. a2 was sent back once.
   const ts = '2026-10-29T11:00:00Z';
   const deny = (session, rule, agent, reason) => ({ event: 'hook_deny', ts, session_id: session, rule, tool: 'Bash', agent_type: agent, reason });
   const rows = [
@@ -212,8 +217,9 @@ test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, del
     { event: 'dispatch', ts, session_id: 's', agent_id: 'a3', agent_type: 'Explore', description: 'Map hooks', duration_ms: 2000 },
     { event: 'stop', ts, agent_id: 'a1', agent_type: 'Explore', tokens: { input: 1000, output: 0, cache_read: 0, cache_write: 0 }, cost_usd: 0.5, delivered: 'missing', docs_read: ['a.md'] },
     { event: 'stop', ts, agent_id: 'a1', agent_type: 'Explore', tokens: { input: 1000, output: 0, cache_read: 0, cache_write: 0 }, cost_usd: 0.5, delivered: 'file', docs_read: ['a.md'] },
+    { event: 'stop', ts, agent_id: 'a2', agent_type: 'Explore', delivered: 'missing', sent_back: true },
     {
-      event: 'stop', ts, agent_id: 'a2', agent_type: 'Explore', tokens: { input: 3000, output: 0, cache_read: 0, cache_write: 0 }, cost_usd: 0.25, delivered: 'chat',
+      event: 'stop', ts, agent_id: 'a2', agent_type: 'Explore', tokens: { input: 3000, output: 0, cache_read: 0, cache_write: 0 }, cost_usd: 0.25, delivered: 'chat', sent_back: false,
       docs_read: [{ path: 'a.md', bytes: 1024 }, { path: 'b.md', bytes: 2048 }], requests: 10, tool_requests: 4, tool_calls: 6,
     },
     { event: 'stop', ts, agent_id: 'zz', agent_type: 'planner', tokens: { input: 1, output: 1, cache_read: 0, cache_write: 0 }, cost_usd: 0, delivered: 'chat', docs_read: null, requests: 1, tool_requests: 0, tool_calls: 0 },
@@ -230,7 +236,7 @@ test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, del
   assert.deepEqual(summary.agents[0], {
     agent_type: 'Explore', dispatches: 3, redispatch_rate: 0.33, median_duration_ms: 2000, median_tokens: 2000, cost_usd: 0.75,
     delivered: { file: 1, chat: 1, missing: 0 }, top_docs: [['a.md', 2], ['b.md', 1]],
-    runs: 2, cost_per_run_usd: 0.38, sent_back: 1, sent_back_rate: 0.5, avg_docs_read: 1.5, avg_doc_bytes: 3072,
+    runs: 2, cost_per_run_usd: 0.38, sent_back: 1, sent_back_rate: 1, runs_without_send_back: 1, avg_docs_read: 1.5, avg_doc_bytes: 3072,
     requests: 10, tool_requests: 4, tool_calls: 6, tool_calls_per_request: 1.5, runs_without_tool_counts: 1,
   });
   assert.deepEqual([summary.agents[1].dispatches, summary.agents[1].runs, summary.agents[1].avg_docs_read, summary.agents[1].tool_calls_per_request], [0, 1, null, null]);
@@ -251,7 +257,7 @@ test('summarize: per agent type dispatches, re-dispatch rate, medians, cost, del
     'Dispatch log /s/dispatch-log.jsonl, since 7d (2 unreadable rows skipped)',
     'Partial: 1 agent runs were logged before tool counts; tool calls per request leave them out.',
     'Explore: 3 dispatches, 33% re-dispatched, median 2s and 2k tokens, $0.75, delivered 1 file / 1 chat / 0 missing',
-    '  2 runs, $0.38 a run, 50% sent back by the delivery check, 1.50 tool calls per request that made one',
+    '  2 runs, $0.38 a run, 100% sent back by the delivery check, 1.50 tool calls per request that made one',
     '  docs read: 1.5 docs and 3.0 KB a run; a.md (2), b.md (1)',
     'planner: 0 dispatches, - re-dispatched, median - and 0k tokens, $0.00, delivered 0 file / 1 chat / 0 missing',
     '  1 runs, $0.00 a run, 0% sent back by the delivery check, - tool calls per request that made one',
@@ -363,20 +369,25 @@ test('aidrian report docs prints the doc view, --json all of it; a stray word or
   assert.deepEqual([report(['docs', 'more']).status, report(['docs', '--prs', '1']).status], [1, 1]);
 });
 
-test('coverage: telemetry off, doc reads off, rows written without doc reads, and rows rotated out before the window', () => {
+test('coverage: telemetry off, doc reads off, rows written without doc reads or send-backs, and rows rotated out before the window', () => {
   const sinceMs = parseSince('7d', NOW);
   const day = (n) => new Date(NOW - n * 86_400_000).toISOString();
   const rows = [
     { event: 'rotate', ts: day(3), dropped: true },
     { event: 'stop', ts: day(3), agent_id: 'a1', docs_read: null },
     { event: 'stop', ts: day(2), agent_id: 'a1', docs_read: [] },
-    { event: 'stop', ts: day(2), agent_id: 'a2', docs_read: null },
+    { event: 'stop', ts: day(2), agent_id: 'a2', docs_read: null, delivered: 'missing' },
     { event: 'session', ts: day(1), session_id: 's', docs_read: null },
     { event: 'session', ts: day(9), session_id: 'old', docs_read: null },
+    { event: 'stop', ts: day(2), agent_id: 'a3', docs_read: [], delivered: 'missing', sent_back: false },
   ];
   const off = { telemetry: { ...DEFAULTS.telemetry, enabled: false } };
   const cover = coverage(rows, off, { sinceMs });
-  assert.deepEqual(cover, { enabled: false, doc_reads: true, hook_denies: true, rows_without_doc_reads: 2, rotated_out_before: null }, 'a1 counts its last row; the old row is out of the window, and older than it');
+  assert.deepEqual(
+    cover,
+    { enabled: false, doc_reads: true, hook_denies: true, rows_without_doc_reads: 2, runs_without_send_back: 1, rotated_out_before: null },
+    'a1 counts its last row; a2 named a missing file before sent_back, a3 after; the old row is out of the window, and older than it',
+  );
   assert.equal(coverage(rows.slice(0, 5), DEFAULTS, { sinceMs }).rotated_out_before, day(3));
   assert.equal(coverage(rows.slice(1, 5), DEFAULTS, { sinceMs }).rotated_out_before, null, 'no rotate row that dropped rows: nothing is lost');
   assert.deepEqual(coverageLines(coverage(rows.slice(0, 5), { telemetry: { ...DEFAULTS.telemetry, docReads: false } }, { sinceMs })), [
@@ -385,6 +396,10 @@ test('coverage: telemetry off, doc reads off, rows written without doc reads, an
     `Partial: the log starts at ${day(3)}; older rows were rotated out at telemetry.maxMb.`,
   ]);
   assert.deepEqual(coverageLines(cover, { docReads: false, hookDenies: true }), ['Telemetry is off (telemetry.enabled is false): the hooks write no rows, so this shows only older ones.']);
+  assert.deepEqual(coverageLines(cover, { docReads: false, sendBacks: true }), [
+    'Telemetry is off (telemetry.enabled is false): the hooks write no rows, so this shows only older ones.',
+    'Partial: 1 agent runs named a missing file before stop rows recorded send-backs; the share sent back leaves them out.',
+  ], 'only the view that shows send-backs says some are unknown');
   assert.deepEqual(coverageLines(coverage([], DEFAULTS)), []);
   const noDenies = coverage([], { telemetry: { ...DEFAULTS.telemetry, hookDenies: false } });
   assert.deepEqual([coverageLines(noDenies), coverageLines(noDenies, { hookDenies: true })], [
@@ -398,7 +413,9 @@ test('aidrian report and report docs say when telemetry is off, and --json carri
   const report = (args) => spawnSync(CLI, ['report', ...args], { cwd: dir, env, encoding: 'utf8' });
   assert.match(report([]).stdout, /^Dispatch log .*, since 7d\nTelemetry is off \(telemetry\.enabled is false\): .*\nNo rows yet\.\n$/);
   assert.match(report(['docs']).stdout, /^Knowledge docs read, .*\nTelemetry is off .*\nAlways docs: .*\nNo knowledge doc reads yet\.\n$/);
-  assert.deepEqual(JSON.parse(report(['--json']).stdout).coverage, { enabled: false, doc_reads: true, hook_denies: true, rows_without_doc_reads: 0, rotated_out_before: null });
+  assert.deepEqual(JSON.parse(report(['--json']).stdout).coverage, {
+    enabled: false, doc_reads: true, hook_denies: true, rows_without_doc_reads: 0, runs_without_send_back: 0, rotated_out_before: null,
+  });
 });
 
 test('sessionRow splits main and subagents, with effort, cost per model, cache writes, and tool calls', (t) => {

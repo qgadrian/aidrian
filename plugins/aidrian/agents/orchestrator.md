@@ -44,7 +44,7 @@ code is the implementing agent's.
 - Foreground: you wait for the agent's return. Background, the Agent tool's `run_in_background`: you keep routing, and it reports when it ends.
   Only read-only exploration and light review run in the background.
 - Require a machine handoff. A background agent allowed `Write` writes it to an absolute path you give,
-  `<state>/dispatch/<branch>-<slice>-<agent>.json` (`aidrian state` prints `<state>`), then sends a short summary.
+  `<state>/dispatch/<branch>-<slice>-<agent>.json` (`aidrian state` prints `<state>`; each `/` in the branch becomes `-`), then sends a short summary.
   One denied `Write`, such as `explorer`, returns it as its final message.
 - Dispatch disjoint slices together, each writer in its own worktree; never report done while an agent has not returned.
 - Before a slice that adds a script, check, or schema field, search its likely home; one that exists makes the slice a `no_op`.

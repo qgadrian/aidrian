@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -246,6 +246,17 @@ test('a commit that lands as git removes the worktree keeps the branch: its dele
   assert.deepEqual([row.branch_deleted, existsSync(dirs.pr)], [false, false]);
   assert.match(row.branch_error, new RegExp(inspected));
   assert.equal(git(repo, 'log', '-1', '--format=%s', 'feat/pr'), 'late', 'the late commit is still on its branch');
+});
+
+test('a decision matches its row with symlinks resolved, and one that names no worktree is reported', (t) => {
+  const { base, repo, dirs, heads } = fixture(t);
+  const link = path.join(base, 'link');
+  symlinkSync(repo, link);
+  const decisions = { [path.join(link, '.worktrees/open')]: 'delete', [path.join(base, 'gone')]: 'delete', [dirs.pr]: 'keep' };
+  const result = executeCleanup({ decisions }, { cwd: repo, heads, now: LATER });
+  assert.ok(result.removed.some((row) => row.path === dirs.open), JSON.stringify(result));
+  assert.equal(existsSync(dirs.open), false);
+  assert.deepEqual(result.unmatched, [path.join(base, 'gone')]);
 });
 
 test('parseDuration reads seconds and one unit; the command reads decisions on stdin and prints JSON', (t) => {

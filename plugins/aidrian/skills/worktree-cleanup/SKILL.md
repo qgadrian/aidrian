@@ -33,7 +33,7 @@ A thin adapter for `aidrian worktree cleanup`. Never remove a worktree or a bran
    JSON
    ```
 
-6. Report `removed`, `kept`, `refused`, and `failed`, with errors verbatim.
+6. Report `removed`, `kept`, `refused`, and `failed`, with errors verbatim, and any `unmatched` decision: its path named no worktree.
    A `removed` row with `branch_error` lost its worktree but kept its branch,
    because git found unmerged commits on it or a commit landed on it during the run.
    List those branches so they do not pile up.

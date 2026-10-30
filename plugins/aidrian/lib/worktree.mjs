@@ -5,7 +5,7 @@
 // removes auto rows plus the ones a person confirmed. Its plan only reads: it writes nothing to the repository.
 // Both print one JSON object; a problem is {"status":"blocked","phase","reason","next_step"} with exit 1.
 
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
@@ -317,14 +317,19 @@ function patchIds(main, args) {
   return ids.status === 0 ? ids.stdout.split('\n').filter(Boolean).map((line) => line.split(' ')[0]) : [];
 }
 
-// Sorts again, then removes every auto row and every confirm row whose path `decisions` marks "delete". A row with
-// uncommitted changes, or a detached HEAD with commits on no branch, needs both that decision and `force`. Another
-// session may commit while this runs, so a row whose HEAD moved, or whose tree gained changes or ignored files, is
-// refused with its branch kept. Branches go with their worktree; `git worktree prune` ends it.
+// Sorts again, then removes every auto row and every confirm row whose path `decisions` marks "delete". A decision's
+// path and a row's match with symlinks resolved, so `/tmp/x` names the row git lists as `/private/tmp/x`; a decision
+// that names no row is reported in `unmatched`. A row with uncommitted changes, or a detached HEAD with commits on no
+// branch, needs both that decision and `force`. Another session may commit while this runs, so a row whose HEAD moved,
+// or whose tree gained changes or ignored files, is refused with its branch kept. Branches go with their worktree;
+// `git worktree prune` ends it.
 export function executeCleanup({ minAgeSec = DAY_SEC, force = false, decisions = {} } = {}, { cwd = process.cwd(), heads = mergedHeads, now = Date.now() } = {}) {
   const plan = planCleanup({ minAgeSec }, { cwd, heads, now });
   const { main } = checkoutRoots(cwd);
-  const out = { status: 'done', removed: [], kept: [], refused: [], failed: [] };
+  const decided = new Map(Object.entries(decisions).map(([key, decision]) => [realPath(key), { key, decision }]));
+  const rows = [...plan.auto, ...plan.confirm, ...plan.skip].map((row) => realPath(row.path));
+  const unmatched = [...decided].filter(([real]) => !rows.includes(real)).map(([, { key }]) => key);
+  const out = { status: 'done', removed: [], kept: [], refused: [], failed: [], unmatched };
   const remove = (row, forced) => {
     const changed = changedSinceInspected(row, forced, plan.disposable);
     if (changed) return out.refused.push({ path: row.path, reason: `changed after it was inspected: ${changed}; kept with its branch, run cleanup again` });
@@ -340,7 +345,7 @@ export function executeCleanup({ minAgeSec = DAY_SEC, force = false, decisions =
   };
   for (const row of plan.auto) remove(row, false);
   for (const row of plan.confirm) {
-    if (decisions[row.path] !== 'delete') out.kept.push(row.path);
+    if (decided.get(realPath(row.path))?.decision !== 'delete') out.kept.push(row.path);
     else if (row.dirty && !force) out.refused.push({ path: row.path, reason: 'uncommitted changes: needs --force as well as the delete decision' });
     else if (row.unreachable !== 0 && !force) out.refused.push({ path: row.path, reason: 'commits on no branch: needs --force as well as the delete decision' });
     else remove(row, row.dirty);
@@ -361,6 +366,15 @@ function changedSinceInspected(row, forced, disposable) {
   if (changes > 0) return 'uncommitted changes appeared';
   const added = ignored.filter((file) => !row.ignored.includes(file));
   return added.length ? `git-ignored files appeared: ${added.slice(0, IGNORED_SHOWN).join(', ')}` : null;
+}
+
+// `file` with its symlinks resolved, or as given when it does not exist.
+function realPath(file) {
+  try {
+    return realpathSync(file);
+  } catch {
+    return path.resolve(file);
+  }
 }
 
 // Deletes a branch only while it still points at `sha`, then its config section, as `git branch -D` does. A commit

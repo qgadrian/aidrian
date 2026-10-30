@@ -4,7 +4,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { GH_EXEC_OPTIONS, GH_MAX_BUFFER_BYTES, ghJson, runGh } from '../plugins/aidrian/lib/gh.mjs';
+import { GH_EXEC_OPTIONS, GH_MAX_BUFFER_BYTES, GH_TIMEOUT_MS, ghJson, runGh } from '../plugins/aidrian/lib/gh.mjs';
 
 test('runGh: gh reads carry a stdout ceiling far above the 1 MB default', () => {
   // Regression guard. `repos/{repo}/commits/{sha}` embeds every changed file's
@@ -38,6 +38,17 @@ test('runGh: an overflow above the ceiling names the command and the limit; othe
     },
   );
   assert.throws(() => runGh(['api', 'x'], { exec: throwing(1, 'gh: authentication required') }), /authentication required/);
+});
+
+test('runGh: every gh call has a timeout, and a call it stops names the command and the wait', () => {
+  assert.equal(GH_EXEC_OPTIONS.timeout, GH_TIMEOUT_MS);
+  assert.ok(GH_TIMEOUT_MS >= 30_000, 'a slow network still answers');
+  // A real child process that outlives a short timeout, to prove the error execFileSync gives is the one runGh reads.
+  const slow = (file, args, options) => execFileSync(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], { ...options, timeout: 200 });
+  assert.throws(() => runGh(['pr', 'list', '--state', 'merged'], { exec: slow }), (err) => {
+    assert.equal(err.message, `gh pr list --state merged did not finish in ${GH_TIMEOUT_MS / 1000} s and was stopped. Check the network and \`gh auth status\`.`);
+    return true;
+  });
 });
 
 test('runGh runs gh in the folder it is given, and ghJson parses what it prints', () => {

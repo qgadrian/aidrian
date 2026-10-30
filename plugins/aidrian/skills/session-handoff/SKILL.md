@@ -1,6 +1,6 @@
 ---
 name: session-handoff
-description: Write a handoff brief so a fresh session can resume this work. Use at a phase boundary with work left, an unfinished unattended run, or a usage-limit warning.
+description: Write a handoff brief so a fresh session can resume this work. Use when the Human asks, or when config.json session.handoff allows one.
 ---
 
 # session-handoff
@@ -10,8 +10,14 @@ without losing context: the brief carries the context instead of the transcript.
 
 ## When
 
-- A phase boundary (plan to implement, implement to review, review to merge) with work left, or a long transcript.
-- Always: an unattended run that ends with its task unfinished, or a visible usage-limit warning.
+Write a brief only when the Human allowed it: the Human asks for one, a run's `--handoff` flag or launch words ask for it,
+or config.json `session.handoff` is `"auto"`. The points where `"auto"` writes one: a phase boundary with work left
+(plan to implement, implement to review, review to merge), the session-length reminder, a visible usage-limit warning,
+or an unattended run that ends with its task unfinished.
+
+- `"ask"`, the default: at those points, ask the Human and write on a yes. An unattended run cannot ask: it writes none,
+  and its report carries what a resume needs.
+- `"off"`: write none unless the Human asks.
 - Never when the task is done and the user is here: with nothing to resume, a brief only costs tokens.
 
 ## Steps

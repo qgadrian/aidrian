@@ -108,10 +108,10 @@ and the dispatch log on each machine. They live in one state folder per project,
 $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── plans/                local plans
 ├── handoffs/             session handoff briefs, which the session-continue skill reads
-├── dispatch/             machine handoffs that background agents write for the orchestrator
+├── dispatch/             machine handoffs that dispatched agents write for the orchestrator and the skills it runs
 ├── reviews/              review manifests, and the agents the specialist-review skill keeps warm
 ├── lessons/inbox.jsonl   the lesson inbox
-├── tmp/                  pull request bodies the pr-write skill drafts
+├── tmp/                  pull request bodies and review comments that skills draft
 └── dispatch-log.jsonl    the dispatch log
 ```
 

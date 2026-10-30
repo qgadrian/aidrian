@@ -20,14 +20,14 @@ A single concise report. Skip a section if it has nothing to say.
 6. **Next steps** — every successful run ends with the remaining pipeline
    spelled out (each step is one user command; the work inside is
    agent-executed), so the user never has to remember it:
-   1. Review `docs/design-imports/<slug>/plan.md` and approve or
-      refine the plan — the human gate before any code.
-   2. Run the project's plan-implementation flow on that plan — it executes
+   1. Review `docs/design-imports/<slug>/plan.md` with the `plan-review`
+      skill, and approve or refine the plan — the human gate before any code.
+   2. Run the `plan-implement` skill on that plan — it executes
       the plan slice-by-slice (`designer` owns visual slices,
       `frontend-developer` owns the gated data-wiring slices), with screenshot
       evidence plus the `designer` deviation-ledger review as each screen
       slice's closure gate. Slice state lives in the plan file, so the run is
       safe to resume after an interruption.
-   3. Open the draft PR the project's way, then review and publish it.
+   3. Review the draft PR that `plan-implement` opens through the `pr-write` skill.
    When blocked, replace this checklist with the explicit question to
    resolve.

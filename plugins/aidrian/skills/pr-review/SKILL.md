@@ -63,8 +63,9 @@ Count the files and the changed lines that remain:
 
 - 10 files or fewer and 400 lines or fewer, without `--full`: `code-reviewer` alone.
 - Larger, or with `--full`: `code-reviewer`, plus the owner the project's `orchestration` registry gives each changed path.
-  Without a registry, choose from this plugin's agents by what the files do: `backend-developer` for server code and data,
-  `designer` for presentation, `ux-specialist` for user flows, and `architect` when the change spans several modules.
+  Without a registry, choose by what the files do, by the `knowledge` skill's rule. This plugin's fallbacks:
+  `backend-developer` for server code and data, `designer` for presentation, `ux-specialist` for user flows,
+  and `architect` when the change spans several modules.
 - One owner per area. At most four agents review at the same time.
 
 Print the plan with the reason for each agent before the first dispatch.

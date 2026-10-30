@@ -35,7 +35,7 @@ Editing never happens in the main checkout, the parent folder of `git rev-parse 
 3. With more than one slice, run the `pr-review` skill on the assembled branch: it rechecks earlier slices' stubs and
    defaults against the later slices. Its findings go through the `pr-review-fix` skill and § 4.
 4. After each push, run the `pr-review-loop` skill with `--await-codex`.
-   Route each fix to its owner by § 4, even where the skill says to make the fix yourself.
+   In both skills, route each fix to its owner by § 4, even where a skill says the session fixes it itself.
 5. Stop the loop when a round yields no `fix_now`.
 
 ## 4. Review findings
@@ -44,5 +44,6 @@ Editing never happens in the main checkout, the parent folder of `git rev-parse 
   A finding without them goes back to its reviewer.
 - `fix_now` goes to its owner, highest likelihood × impact first.
   The owner fixes every copy of the pattern, not only the flagged line.
+  A fix no registry entry or skill default owns goes to `doc-updater` when it is docs only; otherwise ask the Human for its owner.
 - `accepted_residual` goes in the pull request body, through the `pr-write` skill.
 - Chase no rare edge case.

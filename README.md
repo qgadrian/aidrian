@@ -9,10 +9,82 @@ and one project folder, `.aidrian/`, that indexes them and holds the plugin's se
 
 | Kind | Names |
 | --- | --- |
-| Agents | `orchestrator`, `planning-agent`, `initiative-agent`, `agent-issue-writer`, `explorer`, `github-archaeologist`, `integrator`, `doc-updater`, `design-source-explorer`, `harness-librarian`, `harness-mechanic` |
-| Skills | `knowledge`, `knowledge-update`, `orchestration`, `planning-agent`, `initiative-agent`, `agent-issue-writer`, `worktree-new`, `worktree-cleanup`, `worktree-integrate`, `pr-write`, `pr-review`, `pr-review-fix`, `pr-review-loop`, `specialist-review`, `design-import`, `challenge`, `lesson`, `lesson-triage`, `session-handoff`, `session-continue` |
 | Commands | `aidrian`: sets up and checks the project folder (`aidrian init`, `aidrian check`), prints the state folder (`aidrian state`), creates and cleans up task worktrees (`aidrian worktree`), waits for the review bot and reads check and finding verdicts (`aidrian pr`), checks commit messages (`aidrian commit-msg`), lints skills, agents, paths, and the knowledge budget (`aidrian lint`), keeps the lesson inbox (`aidrian lesson`), checks handoff briefs (`aidrian handoff`), and reports on the dispatch log (`aidrian report`); `aidrian-knowledge`: routes, searches, and drafts a project's buckets |
 | Hooks | at session and subagent start, one line naming the `always` docs and how to find the rest; before each Bash command, git, process, and pull request body rules; before each file write, an opt-in guard that keeps the main checkout clean; before each dispatch, the project's model and effort for that agent; after a Markdown write, a line-length check; before compaction, a checklist of what to keep; when a long session ends a turn, one offer to hand off; after each dispatch, subagent stop, and session end, a dispatch log row. [docs/hooks.md](docs/hooks.md) lists them |
+
+### Agents
+
+Claude Code names each agent `aidrian:<agent>`, and Codex `aidrian-<agent>`.
+A project's own agent wins over the plugin's for the work it covers ([docs/knowledge.md](docs/knowledge.md#project-agents)).
+
+| Agent | What it does |
+| --- | --- |
+| `orchestrator` | The coordination entry: classifies work that spans agents, routes each part, and keeps the Human in the loop. Never edits. |
+| `planning-agent` | Writes or revises a decision-complete local plan before implementation or Linear publishing. |
+| `initiative-agent` | Breaks a broad goal into a Linear initiative blueprint of ordered issues and dependencies. Read-only. |
+| `agent-issue-writer` | Drafts or creates Linear issues with exact scope, dependencies, and verification steps. |
+| `integrator` | Lands ordered slice branches onto a shared task branch and routes the first conflict to its owner. |
+| `architect` | Designs a change before it is built: boundaries, interfaces, trade-offs, and a contract for the builders. Read-only. |
+| `product-manager` | Checks a request, plan, or change against the project's product rules and names missing decisions. Read-only. |
+| `backend-developer` | Implements backend and API work, following the project's backend rules and reusing its helpers. |
+| `designer` | Implements UI presentation: visual consistency, layout, component reuse, and responsive polish. |
+| `ux-specialist` | Diagnoses and fixes UX in the product's main flows: task success, friction, recovery states, and accessibility. |
+| `design-source-explorer` | Classifies a Claude Design bundle and writes its design import, for the `design-import` skill. |
+| `e2e-runner` | Runs and triages end-to-end tests, classifies each failure, and reports reproducible evidence. |
+| `doc-updater` | Maintains docs on their own, such as drift repair; doc edits a code change causes ride with that change. |
+| `code-reviewer` | Reviews code for correctness, trust boundaries, consistency, and test gaps against the project's rules. Read-only. |
+| `security-engineer` | Threat modeling and secure code review for work that touches a trust boundary, each finding with a fix. Read-only. |
+| `helper-scout` | Lists existing project helpers a task could reuse, or a diff reinvented. Advisory and read-only. |
+| `explorer` | Maps flows, source-of-truth modules, call graphs, tests, and edge cases. Read-only. |
+| `github-archaeologist` | Explains why code changed, from pull requests, issues, reviews, and commits. Read-only. |
+| `support-agent` | Answers support tickets from the project's canonical answers and confirmed evidence, and escalates the rest. |
+| `marketing-orchestrator` | Coordinates the marketing agents below into one answer. Read-only. |
+| `growth-hacker` | Finds acquisition, activation, and retention opportunities, and designs small growth experiments. |
+| `content-creator` | Drafts channel-aware posts, landing copy, and launch copy grounded in documented product behavior. |
+| `seo-specialist` | Finds high-intent search opportunities and recommends content and site-structure improvements. Read-only. |
+| `ai-citation-strategist` | Improves how AI answer engines find and cite the product. Read-only. |
+| `brand-guardian` | Keeps messaging and positioning clear, consistent, and distinctive. Read-only. |
+| `feedback-synthesizer` | Turns support tickets, reviews, and product signals into ranked, evidence-backed themes. |
+| `ux-researcher` | Finds confusion and friction on activation and marketing surfaces from evidence and user questions. Read-only. |
+| `harness-librarian` | Sets up and keeps a project's `.aidrian/` folder and knowledge indexes, and writes knowledge docs from evidence. |
+| `harness-mechanic` | Maintains this repository: its agents, skills, hooks, scripts, tests, and docs. |
+
+### Skills
+
+Claude Code runs each skill as `/aidrian:<skill>`; in Codex, ask for it by name.
+
+| Skill | What it does |
+| --- | --- |
+| `knowledge` | Loads the project's rules from its knowledge buckets. Every agent preloads it. |
+| `knowledge-update` | Adds or refreshes knowledge docs from the code, docs, pull requests, and history. |
+| `orchestration` | The orchestrator's editing steps: worktrees, parallel slices, the pull request, and review findings. |
+| `planning-agent` | Writes or revises a decision-complete local plan file. |
+| `plan-review` | Has `planning-agent` critique a local plan and propose a diff; the Human approves it before it is applied. |
+| `issue-plan` | Plans one Linear issue before implementation, through `planning-agent`. Read-only on Linear. |
+| `initiative-agent` | Decomposes a broad goal into a Linear Project with ordered issues and dependencies. |
+| `agent-issue-writer` | Drafts or creates Linear issues, parent issues, or Project items for agents to implement. |
+| `challenge` | Tests a plan or design against the project's docs and code, one question at a time. |
+| `adr-writer` | Writes an architecture decision record with the next free number, or supersedes an earlier one. |
+| `issue-implement` | Implements one Linear issue end to end, to a draft pull request. Linear stays read-only. |
+| `plan-implement` | Implements a reviewed local plan with no Linear issue, through the `issue-implement` steps. |
+| `autopilot` | Runs one task unattended to a draft pull request and a bounded review loop, then reports. Never merges. |
+| `issue-verify-ac` | Checks a Linear issue's acceptance criteria against the code, and ticks the met ones after asking. |
+| `design-import` | Turns a Claude Design export into a committed design import and plan. |
+| `worktree-new` | Creates a task worktree with `aidrian worktree new` and runs the project's bootstrap there. |
+| `worktree-integrate` | Runs `integrator` to land ordered slice branches onto a shared task branch. |
+| `worktree-cleanup` | Removes task worktrees whose work has merged, asking before each one it cannot prove done. |
+| `pr-write` | Drafts, creates, or updates a pull request title and body from the real diff and real test evidence. |
+| `pr-review` | Reviews a pull request with the right agents, records each finding in a JSON manifest, and posts one comment. |
+| `pr-review-fix` | Fixes the findings a `pr-review` round recorded, routing each to its owner. |
+| `pr-review-loop` | Takes every review comment on a pull request to a verified fix or a reply with evidence. |
+| `pr-merge-when-green` | Waits until every check is final and passes the project's check policy, then merges once. |
+| `pr-screenshot` | Attaches local screenshots or files to a pull request as evidence. |
+| `specialist-review` | One agent's focused review of the current branch's changes, kept warm for follow-up questions. |
+| `session-handoff` | Writes a brief so a fresh session can resume the work, when the Human or `session.handoff` allows one. |
+| `session-continue` | Resumes work in a fresh session from a handoff brief. |
+| `lesson` | Captures a session lesson into the local inbox without leaving the task. |
+| `lesson-triage` | Drains the lesson inbox: dedupes each lesson and routes it to a mechanism, a rule, an issue, or nothing. |
+| `skill-writer` | Creates, updates, audits, or retires a skill so it triggers predictably and stays lean. |
 
 For work that spans several agents, start Claude Code with `claude --agent aidrian:orchestrator`, the coordination entry:
 the orchestrator classifies the work, routes each part to an agent, and keeps the Human in the loop.
@@ -75,7 +147,8 @@ npm run check    # what CI runs
 `npm run check` fails when the generated Codex agents are stale, when the example's project folder is invalid, when a test fails,
 or when the plugin changed without a version bump ([Contributing](#contributing)).
 The tests also check that both manifests agree, that every agent preloads the `knowledge` skill,
-that agents only ask for tags the `knowledge` skill lists, and that no project-specific path leaks into the plugin.
+that agents only ask for tags the `knowledge` skill lists, that the agent and skill tables above list every one shipped,
+and that no project-specific path leaks into the plugin.
 No tracked file may name a person; the owner's GitHub name appears only in the install steps and the manifests' repository URLs.
 Every agent and skill description must fit in 160 characters: both hosts put all of them into every session, used or not.
 Every `SKILL.md` must fit in 7,500 bytes, because Codex cuts it at 8,000.

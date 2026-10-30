@@ -1,7 +1,9 @@
 # Plan-File Schema
 
-Implementation-ready plans driven by a tracker issue (e.g., consumed by a project's issue-implementation skill) must use this schema. File path convention:
+Implementation-ready plans must use this schema. The `issue-implement` skill consumes a plan driven by a tracker issue;
+the `plan-implement` skill consumes a local plan with no issue. File path convention for an issue-driven plan:
 `<state>/plans/<issue-id>-implementation.md`, where `<issue-id>` is the lowercased issue identifier (e.g., `3737-implementation.md`).
+Other plans: § Naming and lifecycle.
 
 A design-import plan (`plan_kind: technical-design`) changes the frontmatter and the per-slice coverage field:
 read `references/design-import-plan.md` too.
@@ -73,8 +75,8 @@ canonical issue-ref resolution procedure this variant follows.
 Every plan that defines two or more slices MUST include a final `### Slice INTEGRATION-REVIEW` entry
 as the last implementation-side slice, after all implementation slices.
 This slice is owned by `code-reviewer` (or the relevant specialist), is non-negotiable for multi-slice plans, and must appear in `## Slices`.
-Its purpose is the holistic integration review: after the project's PR flow opens the PR as a draft and before closure/merge,
-re-examine stubs, default values, and fallback paths from earlier slices
+Its purpose is the holistic integration review: after the `issue-implement` or `plan-implement` skill opens the PR as a draft
+and before closure/merge, re-examine stubs, default values, and fallback paths from earlier slices
 against behavioral rules, escalation triggers, and constraints introduced by later slices.
 
 Minimal schema for the integration-review slice:
@@ -160,6 +162,8 @@ Tools that resume execution from a plan (e.g., `issue-implement`) treat the plan
   Linear-issue-driven plans use the lowercase issue key (e.g., `abc-483-implementation.md`);
   GitHub-issue-driven plans use the bare number (e.g., `3737-implementation.md`).
 - Multi-issue or initiative-driven plans: `<state>/plans/<initiative-slug>-plan.md`.
+- Local plans with no issue (run by the `plan-implement` skill): `<state>/plans/<slug>-plan.md`, without `issue_id`, `issue_ref`,
+  or `ticket_updated_at`.
 - Design-import plans (`plan_kind: technical-design`, authored by the `design-import` skill): `docs/design-imports/<slug>/plan.md`.
   This is the sole planning artifact authored outside `<state>/plans/**` — see the design-import carve-out under "Responsibility Boundary" in the skill.
   Re-runs of `design-import` against the same slug keep `plan_kind: technical-design` (never flip to `revision`), bump `generated_at`, and append a

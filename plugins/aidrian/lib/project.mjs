@@ -9,7 +9,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { insidePath, isDirectory, isFile, loadConfig, readJson } from './config.mjs';
-import { checkoutRoots, currentRoot, mainRoot, runGit } from './git.mjs';
+import { checkoutRoots, mainRoot, runGit } from './git.mjs';
 
 const DEFAULT_DIR = '.aidrian';
 const OVERRIDE = '.aidrian.json';
@@ -18,14 +18,28 @@ const LOCAL = '.aidrian.local.json';
 // The project at or above `start`: the nearest folder that has `.aidrian.json` or `.aidrian/config.json`. Null when none.
 // In a git checkout the search stops at its top folder, so a worktree whose branch has no project folder has no project,
 // even inside a main checkout that has one. Outside git it goes on to the file-system root.
+// Every hook starts here, some on every tool call: with no project folder above `start` it runs no git, and with one it
+// runs git once, for the checkout's top folder and its main checkout together.
 export function findProject(start) {
-  let dir = path.resolve(start);
-  let probe = dir;
+  const from = path.resolve(start);
+  const found = nearestFolder(from);
+  if (found === null) return null;
+  let probe = from;
   while (!isDirectory(probe) && path.dirname(probe) !== probe) probe = path.dirname(probe);
-  const top = currentRoot(probe);
+  const roots = checkoutRoots(probe);
+  if (roots !== null) {
+    for (let dir = from; ; dir = path.dirname(dir)) {
+      if (outside(dir, roots.current)) return null;
+      if (dir === found) break;
+    }
+  }
+  return openProject(found, roots);
+}
+
+// The nearest folder at or above `dir` that has `.aidrian.json` or `.aidrian/config.json`, or null.
+function nearestFolder(dir) {
   for (;;) {
-    if (top !== null && outside(dir, top)) return null;
-    if (isFile(path.join(dir, OVERRIDE)) || isFile(path.join(dir, DEFAULT_DIR, 'config.json'))) return openProject(dir);
+    if (isFile(path.join(dir, OVERRIDE)) || isFile(path.join(dir, DEFAULT_DIR, 'config.json'))) return dir;
     const parent = path.dirname(dir);
     if (parent === dir) return null;
     dir = parent;
@@ -56,11 +70,12 @@ export function projectAt(start) {
 // the project folder first, then each local source. `localModels` and `localNames` are the `models` and `names` values
 // of `.aidrian.local.json`, as written; config.mjs checks them. `errors` lists the problems in the root files; a broken
 // `.aidrian.json` leaves the default folder in place, and a broken local source is left out.
-export function openProject(root) {
+// `roots` is git's checkoutRoots for a folder in the same checkout, when the caller already asked; null outside git.
+export function openProject(root, roots) {
   const errors = [];
   const dir = folderDir(root, errors);
   const paths = { config: `${dir}/config.json`, knowledge: `${dir}/knowledge`, local: LOCAL };
-  const local = readLocal(root, errors);
+  const local = readLocal(root, errors, roots);
   const sources = [{ label: dir, base: root, index: paths.knowledge, local: false }, ...local.sources];
   return { root, dir, paths, sources, localModels: local.models, localNames: local.names, errors };
 }
@@ -81,10 +96,10 @@ function folderDir(root, errors) {
 // `.aidrian.local.json`: { sources, models, names }. A git worktree has no copy of that git-ignored file, so it is read
 // from the main checkout then. Each source is a folder with its own knowledge/ and, optionally, a config.json with
 // `version`.
-function readLocal(root, errors) {
+function readLocal(root, errors, roots) {
   const none = { sources: [], models: undefined, names: undefined };
   let holder = root;
-  if (!isFile(path.join(holder, LOCAL))) holder = inMainCheckout(root);
+  if (!isFile(path.join(holder, LOCAL))) holder = inMainCheckout(root, roots);
   if (!holder || !isFile(path.join(holder, LOCAL))) return none;
   const raw = readJson(holder, LOCAL, errors);
   if (!raw) return none;
@@ -109,10 +124,9 @@ function localSources(holder, raw, errors) {
   return sources;
 }
 
-// The same folder in the main checkout, when `root` is inside a git worktree; null outside git. One git call: this runs
-// at the start of every session and subagent.
-function inMainCheckout(root) {
-  const roots = checkoutRoots(root);
+// The same folder in the main checkout, when `root` is inside a git worktree; null outside git. At most one git call,
+// none when the caller passes the `roots` it already has: this runs on every hook that reads the project.
+function inMainCheckout(root, roots = checkoutRoots(root)) {
   return roots ? path.join(roots.main, path.relative(roots.current, realpathSync(root))) : null;
 }
 

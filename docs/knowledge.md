@@ -72,6 +72,21 @@ Each plugin agent states its knowledge tags, and the plugin's skills name the ta
 The full list, with what each tag should cover, is in the [`knowledge` skill](../plugins/aidrian/skills/knowledge/SKILL.md#tags).
 Use the tags that matter to your project; an agent whose tags you do not use still gets your `always` docs and can search.
 
+## Shaping buckets
+
+Every doc an agent reads costs context on that run, and again on every run that reads it.
+Shape the buckets so agents read little by default and find the rest when they need it:
+
+- Keep `always` to one or two short docs, such as names, safety rules, and the shape of a result.
+- Give each doc a one-line summary that says when an agent needs it, so `search` finds it without a tag.
+- Point tags at small rule cards, about 10 KB or less: a route reads each doc of the tag whole.
+  Split a longer doc into a tagged rule card and an untagged reference.
+- Leave plans and long references without tags, so only `search` finds them.
+
+`aidrian check` warns when the `always` docs or a tagged doc pass the [knowledge budgets](config.md#knowledge-budgets).
+To find a leak, run `aidrian report docs --since 30d`, described in [the dispatch log](dispatch-log.md#doc-reads).
+The docs at the top of its list cost the most context, and a doc that every reader opens costs as much as an `always` doc.
+
 ## Overriding plugin defaults
 
 Project knowledge wins over the plugin.
@@ -115,6 +130,8 @@ a path leaves its bucket, or a key is unknown.
 A symlink fails too when it leads an index or a bucket outside the project, or a doc outside its bucket.
 It also fails when a `.md` file in a bucket has no entry in `docs`, because no agent would ever find it,
 when a summary is empty, longer than 160 characters, or more than one line, and when an `always` doc has no entry in `docs`.
+It warns when the `always` docs or a tagged doc pass the [knowledge budgets](config.md#knowledge-budgets),
+and fails when the `always` docs pass twice theirs.
 
 ## Indexing a repository that has docs but no buckets
 

@@ -1,7 +1,8 @@
 // Finds a project and its project folder: `.aidrian/` at the project root, or the folder the committed root file
 // `.aidrian.json` names. This is the only file that knows those names; every other file asks it for paths.
 // docs/project-folder.md describes the folder, the git-ignored `.aidrian.local.json` that adds local knowledge sources,
-// personal model choices, and personal names, and the machine-local state folder outside the repository.
+// personal model choices, personal names, and personal telemetry settings, and the machine-local state folder outside
+// the repository.
 
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
@@ -65,11 +66,11 @@ export function projectAt(start) {
 }
 
 // The project rooted at `root`, whether or not its folder exists yet:
-// { root, dir, paths, sources, checkouts, localModels, localNames, localAgents, errors }.
+// { root, dir, paths, sources, checkouts, localModels, localNames, localTelemetry, localAgents, errors }.
 // `dir` and every path are POSIX-style and relative to `root`. `sources` lists where knowledge indexes are read from:
 // the project folder first, then each local source. `checkouts` is `root`, then, when it is in a git worktree, the same
-// folder in the main checkout. `localModels`, `localNames`, and `localAgents` are the `models`,
-// `names`, and `agents` values of `.aidrian.local.json`, as written; config.mjs checks them. `errors` lists the problems in the root files; a broken
+// folder in the main checkout. `localModels`, `localNames`, `localTelemetry`, and `localAgents` are the `models`,
+// `names`, `telemetry`, and `agents` values of `.aidrian.local.json`, as written; config.mjs checks them. `errors` lists the problems in the root files; a broken
 // `.aidrian.json` leaves the default folder in place, and a broken local source is left out.
 // `roots` is git's checkoutRoots for a folder in the same checkout, when the caller already asked; null outside git.
 export function openProject(root, roots) {
@@ -79,7 +80,18 @@ export function openProject(root, roots) {
   const checkouts = checkoutsOf(root, roots);
   const local = readLocal(checkouts, errors);
   const sources = [{ label: dir, base: root, index: paths.knowledge, local: false }, ...local.sources];
-  return { root, dir, paths, sources, checkouts, localModels: local.models, localNames: local.names, localAgents: local.agents, errors };
+  return {
+    root,
+    dir,
+    paths,
+    sources,
+    checkouts,
+    localModels: local.models,
+    localNames: local.names,
+    localTelemetry: local.telemetry,
+    localAgents: local.agents,
+    errors,
+  };
 }
 
 // Every file that sets the project's configuration, as an absolute path, whether or not it exists yet, in each of its
@@ -109,19 +121,19 @@ function checkoutsOf(root, roots) {
   return main && main !== realpathSync(root) ? [root, main] : [root];
 }
 
-// `.aidrian.local.json`: { sources, models, names, agents }. A git worktree has no copy of that git-ignored file, so it is read
+// `.aidrian.local.json`: { sources, models, names, telemetry, agents }. A git worktree has no copy of that git-ignored file, so it is read
 // from the main checkout then: from the first of `checkouts` that has it. Each source is a folder with its own knowledge/
 // and, optionally, a config.json with `version`.
 function readLocal(checkouts, errors) {
-  const none = { sources: [], models: undefined, names: undefined, agents: undefined };
+  const none = { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined };
   const holder = checkouts.find((dir) => isFile(path.join(dir, LOCAL)));
   if (!holder) return none;
   const raw = readJson(holder, LOCAL, errors);
   if (!raw) return none;
   for (const key of Object.keys(raw)) {
-    if (!['sources', 'models', 'names', 'agents'].includes(key)) errors.push(`${LOCAL}: unknown key "${key}"`);
+    if (!['sources', 'models', 'names', 'telemetry', 'agents'].includes(key)) errors.push(`${LOCAL}: unknown key "${key}"`);
   }
-  return { sources: localSources(holder, raw, errors), models: raw.models, names: raw.names, agents: raw.agents };
+  return { sources: localSources(holder, raw, errors), models: raw.models, names: raw.names, telemetry: raw.telemetry, agents: raw.agents };
 }
 
 function localSources(holder, raw, errors) {

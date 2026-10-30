@@ -5,7 +5,7 @@
 //           under SKILL_CUT_BYTES, with a warning above SKILL_WARN_BYTES
 //   agents  every <dir>/*.md: `name` equals the file name, a `description` like a skill's, and a known model and effort
 //   paths   tracked files hold no personal home folder such as /Users/<name>/; --staged reads what the index holds
-//   budget  the `always` knowledge docs, read at every session start, fit in docs.alwaysBudgetBytes
+//   budget  the knowledge budgets that `aidrian check` also runs: the `always` docs and each tagged doc (knowledge.mjs)
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -13,7 +13,7 @@ import { parseArgs } from 'node:util';
 
 import { commandConfig, isDirectory, isFile } from './config.mjs';
 import { runGit } from './git.mjs';
-import { loadKnowledge } from './knowledge.mjs';
+import { checkBudgets, loadKnowledge } from './knowledge.mjs';
 import { projectAt } from './project.mjs';
 
 const KINDS = ['skills', 'agents', 'paths', 'budget'];
@@ -32,7 +32,7 @@ const STAGED_MAX_BYTES = 64 * 1024 * 1024;
 export const commands = {
   lint: {
     usage: '[skills|agents|paths|budget] [DIR...] [--staged] [--project DIR]',
-    about: 'lint skills, agents, personal paths, and the always-doc budget; DIR replaces .claude/skills or .claude/agents',
+    about: 'lint skills, agents, personal paths, and the knowledge budgets; DIR replaces .claude/skills or .claude/agents',
     run(args) {
       const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { project: { type: 'string' }, staged: { type: 'boolean' } } });
       const [kind, ...dirs] = positionals;
@@ -48,7 +48,7 @@ export const commands = {
         skills: () => lintSkills(dirs.length ? dirs : [at('.claude/skills')], config.skills),
         agents: () => lintAgents(dirs.length ? dirs : [at('.claude/agents')], config.skills),
         paths: () => lintPaths(project.root, values.staged),
-        budget: () => lintBudget(project.root, buckets, config.docs.alwaysBudgetBytes),
+        budget: () => checkBudgets(project.root, buckets, config.knowledge.budgets),
       };
       const results = (kind ? [kind] : KINDS).map((name) => [name, runs[name]()]);
       for (const [name, { problems, warnings = [], summary }] of results) {
@@ -137,14 +137,6 @@ function workingText(root, file) {
 function stagedText(root, file) {
   const { status, stdout } = runGit(['show', `:${file}`], root, { maxBuffer: STAGED_MAX_BYTES });
   return status === 0 ? stdout : null;
-}
-
-export function lintBudget(root, buckets, limit) {
-  const size = (doc) => (isFile(path.resolve(root, doc)) ? statSync(path.resolve(root, doc)).size : 0);
-  const sizes = buckets.map((bucket) => [bucket.id, bucket.always.reduce((sum, doc) => sum + size(doc), 0)]);
-  const total = sizes.reduce((sum, [, bytes]) => sum + bytes, 0);
-  const summary = `${total} of ${limit} always-doc bytes${sizes.length ? ` (${sizes.map(([id, bytes]) => `${id} ${bytes}`).join(', ')})` : ''}`;
-  return { problems: total > limit ? [`${summary}; the limit is docs.alwaysBudgetBytes`] : [], summary };
 }
 
 // The checked description of an agent or skill, or null after adding the problem.

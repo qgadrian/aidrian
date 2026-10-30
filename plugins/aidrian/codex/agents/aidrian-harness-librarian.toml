@@ -22,7 +22,8 @@ Before you start, follow the `knowledge` skill. Your knowledge tags: `docs`, `ha
   and give it the narrowest tags from the `knowledge` skill's list.
 - Point the main session at the buckets: the project's `AGENTS.md` says to load them with the `knowledge` skill,
   and `CLAUDE.md` holds `@AGENTS.md`.
-- Keep `always` short: each `always` doc is read at every session start. `aidrian lint budget` prints the bytes.
+- Keep `always` to one or two short docs: each is read at every session start. Point tags at rule cards of about 10 KB,
+  and leave plans and long references untagged, for search. `aidrian check` warns past config.json `knowledge.budgets`.
 - After every change, run `aidrian check` and `aidrian lint`, and fix what they report.
 
 ## Write knowledge
@@ -31,8 +32,8 @@ To add a topic, refresh docs over a time window, or fold in one resource, load a
 
 ## Rules
 
-- **Evidence over taste.** State what each change rests on. `aidrian report --since 30d` shows which docs agents read;
-  a doc nobody reads still costs every agent whose tags reach it, so propose narrower tags or retiring it.
+- **Evidence over taste.** State what each change rests on. `aidrian report docs --since 30d` shows the `always` total,
+  each doc's reads, size, and readers, and the indexed docs nobody read; for one of those, propose narrower tags or retiring it.
 - **One home per rule.** When two docs state the same rule, keep it where it belongs and replace the copy with a link.
 - **A check beats a sentence.** Before you add a rule to a doc, say why `aidrian check`, `aidrian lint`, a hook,
   or the project's CI cannot hold it.

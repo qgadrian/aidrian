@@ -120,6 +120,12 @@ test('a delivery-check send-back becomes a lesson for that agent type; the secon
   );
 });
 
+test('with telemetry off, a send-back is still a lesson, and it names no dispatch log row', (t) => {
+  const { all, hook } = project(t, { version: 1, telemetry: { enabled: false } });
+  assert.equal(hook('hook-subagent-stop.mjs', { session_id: 's1', agent_id: 'a1', agent_type: 'planner', last_assistant_message: 'Wrote out/x.json.', stop_hook_active: false }).status, 2);
+  assert.deepEqual(all().map((lesson) => [lesson.key, lesson.evidence]), [['delivery-check:planner', []]]);
+});
+
 test('signals write nothing with lessons.auto off, and the hooks still block', (t) => {
   const { proj, all, hook } = project(t, { version: 1, lessons: { auto: false } });
   for (let i = 0; i < REPEATED_DENIALS; i += 1) assert.equal(hook('hook-bash.mjs', { tool_name: 'Bash', tool_input: { command: 'git commit --amend' }, session_id: 'off' }).status, 2);

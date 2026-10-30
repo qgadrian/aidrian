@@ -1,5 +1,5 @@
-// `aidrian check` validates a project folder end to end; `aidrian init` sets one up; `aidrian state` prints the
-// machine-local state folder. docs/project-folder.md describes all three.
+// `aidrian check` validates a project folder end to end, knowledge budgets included; `aidrian init` sets one up;
+// `aidrian state` prints the machine-local state folder. docs/project-folder.md describes all three.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -7,7 +7,7 @@ import { parseArgs } from 'node:util';
 
 import { commandConfig, linksOutside, VERSION } from './config.mjs';
 import { isIgnored } from './git.mjs';
-import { indexRows, loadKnowledge } from './knowledge.mjs';
+import { checkBudgets, indexRows, loadKnowledge } from './knowledge.mjs';
 import { findProject, projectAt, repoRoot, stateDir, worktreesDir } from './project.mjs';
 
 const OPTIONS = { project: { type: 'string' } };
@@ -15,7 +15,7 @@ const OPTIONS = { project: { type: 'string' } };
 export const commands = {
   check: {
     usage: '[--project DIR]',
-    about: 'validate the project folder: its root files, config.json, every knowledge index, and the .gitignore lines',
+    about: 'validate the project folder: its root files, config.json, every knowledge index and its budgets, and the .gitignore lines',
     run(args) {
       const start = path.resolve(parseArgs({ args, options: OPTIONS }).values.project ?? '.');
       const project = findProject(start);
@@ -24,9 +24,12 @@ export const commands = {
         return 1;
       }
       const { config, buckets, errors } = loadKnowledge(project);
+      const budgets = checkBudgets(project.root, buckets, config.knowledge.budgets);
+      errors.push(...budgets.problems);
       for (const { line, gitignore } of unignored(project, config)) {
         errors.push(`${line} is not git-ignored: add the line "${line}" to ${gitignore}, or run aidrian init`);
       }
+      if (budgets.warnings.length) console.error(budgets.warnings.map((warning) => `warning: ${warning}`).join('\n'));
       if (errors.length) {
         console.error(errors.join('\n'));
         return 1;
@@ -35,7 +38,7 @@ export const commands = {
         const own = buckets.filter((bucket) => bucket.source === (source.local ? source.label : null));
         return `${source.label} (${own.length} buckets, ${indexRows(own).length} docs)`;
       });
-      console.log(`ok: ${counts.join(', ')}\nstate: ${stateDir(project, { config })}`);
+      console.log(`ok: ${counts.join(', ')}\nstate: ${stateDir(project, { config })}\nbudget: ${budgets.summary}`);
       return 0;
     },
   },

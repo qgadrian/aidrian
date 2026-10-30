@@ -1,5 +1,6 @@
-// Reads Claude Code transcripts (JSON Lines) for the dispatch log: token use per model, an estimated cost, the subagent
-// transcripts of a session, and which files an agent read. Counts and paths only; no message text leaves this file.
+// Reads Claude Code transcripts (JSON Lines) for the dispatch log: token use per model, an estimated cost, the effort
+// and tool calls of each request, the subagent transcripts of a session, and which files an agent read. Counts, names,
+// and paths only; no message text leaves this file.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -54,11 +55,17 @@ function addRequest(perModel, model, usage) {
   }
 }
 
+// The key a request's lines share: its message id, else its request id. A line with neither is a request of its own.
+const requestKey = (entry) => [entry.message?.id, entry.requestId].find((each) => typeof each === 'string' && each !== '') ?? Symbol('unkeyed');
+
 // Usage per model over transcript text, counted once per API request: Claude Code writes one line per content block,
 // each repeating its request's usage, so a per-line sum bills a request several times. Lines group by `message.id`
 // (else `requestId`), and the request's last line wins. Pass the previous result as `acc` to fold in more transcripts;
-// a request found in two of them still counts once. Returns { perModel, firstTs, lastTs, requests }.
-export function aggregateUsage(text, acc = { firstTs: null, lastTs: null, requests: new Map() }) {
+// a request found in two of them still counts once.
+// Returns { perModel, firstTs, lastTs, requests, tools, effort, efforts }: `tools` maps a request to the ids of its
+// tool calls; `effort` is the level the host stamped on the last request, null when it stamped none, and `efforts`
+// every level seen.
+export function aggregateUsage(text, acc = { firstTs: null, lastTs: null, requests: new Map(), tools: new Map(), effort: null, efforts: new Set() }) {
   for (const line of text.split('\n')) {
     const entry = parseLine(line);
     if (!entry) continue;
@@ -66,20 +73,41 @@ export function aggregateUsage(text, acc = { firstTs: null, lastTs: null, reques
       if (!acc.firstTs || entry.timestamp < acc.firstTs) acc.firstTs = entry.timestamp;
       if (!acc.lastTs || entry.timestamp > acc.lastTs) acc.lastTs = entry.timestamp;
     }
-    const { usage, model, id } = entry.message ?? {};
+    const { usage, model, content } = entry.message ?? {};
     if (!usage || !model || model === '<synthetic>') continue;
-    const key = [id, entry.requestId].find((each) => typeof each === 'string' && each !== '') ?? Symbol('unkeyed');
+    const key = requestKey(entry);
     acc.requests.set(key, { model, usage });
+    acc.effort = typeof entry.effort === 'string' && entry.effort !== '' ? entry.effort : null;
+    if (acc.effort) acc.efforts.add(acc.effort);
+    for (const block of Array.isArray(content) ? content : []) {
+      if (block?.type !== 'tool_use') continue;
+      if (!acc.tools.has(key)) acc.tools.set(key, new Set());
+      acc.tools.get(key).add(block.id ?? Symbol('tool'));
+    }
   }
-  const perModel = {};
-  for (const { model, usage } of acc.requests.values()) addRequest(perModel, model, usage);
-  return { ...acc, perModel };
+  return { ...acc, perModel: partOf(acc).perModel };
 }
 
-// Estimated USD per model and in total; a model the price map does not know is listed and costs nothing here.
+// The usage per model and the request and tool-call counts of the requests in `acc` that `keep` takes by key:
+// { perModel, requests, tool_requests, tool_calls }. `tool_requests` counts the requests that made a tool call.
+export function partOf(acc, keep = () => true) {
+  const out = { perModel: {}, requests: 0, tool_requests: 0, tool_calls: 0 };
+  for (const [key, { model, usage }] of acc?.requests ?? []) {
+    if (!keep(key)) continue;
+    addRequest(out.perModel, model, usage);
+    out.requests += 1;
+    const calls = acc.tools.get(key)?.size ?? 0;
+    out.tool_requests += calls ? 1 : 0;
+    out.tool_calls += calls;
+  }
+  return out;
+}
+
+// Estimated USD in total and per model; a model the price map does not know is listed and costs nothing here.
 export function estimateCostUsd(perModel) {
   let total = 0;
   const unknownModels = [];
+  const byModel = {};
   for (const [model, u] of Object.entries(perModel)) {
     const price = priceFor(model);
     if (!price) {
@@ -87,20 +115,25 @@ export function estimateCostUsd(perModel) {
       continue;
     }
     const inputRate = price.input / 1_000_000;
-    total += u.input * inputRate + u.cacheRead * inputRate * (price.cacheRead ?? CACHE_READ_MULT) +
+    const cost = u.input * inputRate + u.cacheRead * inputRate * (price.cacheRead ?? CACHE_READ_MULT) +
       u.cacheWrite5m * inputRate * CACHE_WRITE_5M_MULT + u.cacheWrite1h * inputRate * CACHE_WRITE_1H_MULT + (u.output * price.output) / 1_000_000;
+    byModel[model] = Math.round(cost * 10000) / 10000;
+    total += cost;
   }
-  return { total: Math.round(total * 10000) / 10000, unknownModels };
+  return { total: Math.round(total * 10000) / 10000, unknownModels, byModel };
 }
 
-// One token total over every model: { input, output, cache_read, cache_write }.
+// One token total over every model: { input, output, cache_read, cache_write, cache_write_5m, cache_write_1h }.
+// `cache_write` is the sum of the two cache writes, which cost 1.25x and 2x the input price.
 export function sumTokens(perModel) {
-  const total = { input: 0, output: 0, cache_read: 0, cache_write: 0 };
+  const total = { input: 0, output: 0, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0 };
   for (const u of Object.values(perModel)) {
     total.input += u.input;
     total.output += u.output;
     total.cache_read += u.cacheRead;
     total.cache_write += u.cacheWrite5m + u.cacheWrite1h;
+    total.cache_write_5m += u.cacheWrite5m;
+    total.cache_write_1h += u.cacheWrite1h;
   }
   return total;
 }
@@ -116,12 +149,14 @@ export function subagentTranscripts(transcriptPath, sessionId) {
   }
 }
 
-// Every `file_path` the transcript's Read tool calls name, in order, once each.
-export function filesRead(text) {
+// Every `file_path` the transcript's Read tool calls name, in order, once each. `keep` takes a request by key, as in
+// partOf; the Read calls of a request it refuses are left out.
+export function filesRead(text, keep = () => true) {
   const read = new Set();
   for (const line of text.split('\n')) {
-    const content = parseLine(line)?.message?.content;
-    if (!Array.isArray(content)) continue;
+    const entry = parseLine(line);
+    const content = entry?.message?.content;
+    if (!Array.isArray(content) || !keep(requestKey(entry))) continue;
     for (const block of content) {
       if (block?.type === 'tool_use' && block.name === 'Read' && typeof block.input?.file_path === 'string') read.add(block.input.file_path);
     }

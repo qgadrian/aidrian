@@ -186,16 +186,22 @@ test('aidrian lint runs every lint on a project and prints the always-doc budget
   const all = run(['--project', 'examples/consumer']);
   assert.equal(all.status, 0, all.stderr);
   assert.match(all.stdout, /^skills: 0 skills, 0 of 9216 listing bytes\nagents: 0 agents\npaths: no personal paths in \d+ tracked files\n/);
-  assert.match(all.stdout, /\nbudget: \d+ of 40000 always-doc bytes \(engineering \d+, product 0\)\n$/);
+  assert.match(all.stdout, /\nbudget: \d+ of 16384 always-doc bytes \(engineering \d+, product 0\)\n$/);
 
   const dir = tempDir(t);
   execFileSync('git', ['init', '-q', dir]);
   mkdirSync(path.join(dir, '.aidrian/knowledge'), { recursive: true });
   mkdirSync(path.join(dir, 'kb'));
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, docs: { alwaysBudgetBytes: 10 } }));
+  const budget = (alwaysBytes) => {
+    writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, knowledge: { budgets: { alwaysBytes } } }));
+    return run(['budget'], dir);
+  };
   writeFileSync(path.join(dir, 'kb/rules.md'), '# Rules\n\nAlways read this.\n');
   writeFileSync(path.join(dir, '.aidrian/knowledge/kb.json'), JSON.stringify({ dir: 'kb', description: 'Rules.', always: ['rules.md'], docs: { 'rules.md': { summary: 'The rules.' } } }));
-  const over = run(['budget'], dir);
-  assert.deepEqual([over.status, over.stderr], [1, 'budget: 27 of 10 always-doc bytes (kb 27); the limit is docs.alwaysBudgetBytes\n']);
+  const advice = 'every session and subagent reads them: keep one or two short docs, and move the rest behind tags or to search\n';
+  const near = budget(20);
+  assert.deepEqual([near.status, near.stdout, near.stderr], [0, 'budget: 27 of 20 always-doc bytes (kb 27)\n', `budget: warning: always docs: 27 bytes, over knowledge.budgets.alwaysBytes (20); ${advice}`]);
+  const over = budget(13);
+  assert.deepEqual([over.status, over.stderr], [1, `budget: always docs: 27 bytes, over twice knowledge.budgets.alwaysBytes (13); ${advice}`]);
   assert.deepEqual([run(['nope']).status, run(['nope']).stderr], [1, 'unknown lint: nope; use one of skills, agents, paths, budget\n']);
 });

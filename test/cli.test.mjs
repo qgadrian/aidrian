@@ -15,7 +15,7 @@ test('check prints ok in the example consumer, from a subfolder, and with --proj
   for (const [args, cwd] of [[['check']], [['check'], path.join(EXAMPLE, 'src')], [['check', '--project', EXAMPLE], ROOT]]) {
     const { status, stdout, stderr } = run(args, cwd);
     assert.deepEqual([status, stderr], [0, ''], args.join(' '));
-    assert.match(stdout, /^ok: \.aidrian \(2 buckets, 8 docs\)\nstate: \/\S+\n$/, args.join(' '));
+    assert.match(stdout, /^ok: \.aidrian \(2 buckets, 8 docs\)\nstate: \/\S+\nbudget: \d+ of 16384 always-doc bytes \(engineering \d+, product 0\)\n$/, args.join(' '));
   }
 });
 
@@ -29,7 +29,7 @@ test('check fails with every error, and names the folder it started from when th
   assert.equal(none.stderr, `no project folder at or above ${dir}; run aidrian init\n`);
 
   mkdirSync(path.join(dir, '.aidrian'));
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, extra: 1, pr: { reviewer: 'x' }, github: { maxReviewRounds: 'ten' } }));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, extra: 1, pr: { reviewer: 'x' }, github: { maxReviewRounds: 'ten' }, telemetry: { max_mb: 5 } }));
   writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n.worktrees/\n');
   const bad = run(['check'], dir);
   assert.equal(bad.status, 1);
@@ -37,7 +37,8 @@ test('check fails with every error, and names the folder it started from when th
   assert.equal(
     bad.stderr,
     '.aidrian/config.json: unknown key "extra"\n.aidrian/config.json: "pr" is now "github": rename the key\n' +
-      '.aidrian/config.json: "github.maxReviewRounds" must be a whole number above 0\n',
+      '.aidrian/config.json: "github.maxReviewRounds" must be a whole number above 0\n' +
+      '.aidrian/config.json: "telemetry.max_mb" is now "telemetry.maxMb": rename the key\n',
   );
 });
 

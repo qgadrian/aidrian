@@ -135,7 +135,7 @@ In Codex, the agents are roles outside the plugin, so `install-agents.mjs` write
 It does that only when it installs into a folder inside the project, because the user folder `~/.codex/agents` serves every project:
 
 ```sh
-node ~/.codex/plugins/cache/aidrian-harness/aidrian/*/codex/install-agents.mjs --target .codex/agents
+node "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/aidrian-harness/aidrian/*/codex/install-agents.mjs --target .codex/agents
 ```
 
 - Run it again after each change to `models.codex`; the next Codex session reads the new roles.

@@ -104,6 +104,7 @@ the project's agent wins when it fits the task or has the same name as the plugi
 
 `aidrian-knowledge` shows what an agent would read, and drafts indexes.
 In Claude Code it is on the PATH while the plugin is enabled. Elsewhere, run it by its path; the start hook prints that path.
+The README's [Outside a session, and in CI](../README.md#outside-a-session-and-in-ci) says where the host installed it.
 
 ```sh
 aidrian-knowledge route testing        # the docs an agent with the testing tag reads

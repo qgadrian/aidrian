@@ -201,3 +201,6 @@ A project runs it from its own `commit-msg` git hook, where git passes the messa
 ```sh
 node path/to/aidrian-harness/plugins/aidrian/lib/cli.mjs commit-msg --file "$1"
 ```
+
+`path/to/aidrian-harness/plugins/aidrian` stands for the plugin folder: `plugins/aidrian` in a clone of the plugin's repository,
+or the folder the host installed ([README](../README.md#outside-a-session-and-in-ci)).

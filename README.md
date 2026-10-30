@@ -1,16 +1,88 @@
 # aidrian harness
 
 A shared AI harness for Claude Code and Codex.
-It ships one plugin, `aidrian`, with generic agents and skills.
-Each project that installs it supplies only its own knowledge buckets, folders of Markdown rules,
-and one project folder, `.aidrian/`, that indexes them and holds the plugin's settings.
+It ships one plugin, `aidrian`, with generic agents, skills, hooks, and two commands.
+A project that installs it adds only its own rules, as Markdown docs, and one small folder, `.aidrian/`, that indexes them.
+[Concepts](#concepts) defines the words this file uses.
+
+## Quick start
+
+You need Node 22 or later, and git access to `github.com/qgadrian/aidrian-harness`, which is private.
+
+1. Install the plugin. In Claude Code:
+
+   ```sh
+   claude plugin marketplace add qgadrian/aidrian-harness
+   claude plugin install aidrian@aidrian-harness
+   ```
+
+   In Codex, pass the SSH URL, because Codex clones over HTTPS ([Codex](#codex) has the details):
+
+   ```sh
+   codex plugin marketplace add git@github.com:qgadrian/aidrian-harness.git
+   codex plugin add aidrian@aidrian-harness
+   node "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/aidrian-harness/aidrian/*/codex/install-agents.mjs
+   ```
+
+   Then open Codex and trust the plugin's hooks in `/hooks`.
+
+2. Set up the project at the root of its repository.
+   `aidrian` is on the PATH inside a Claude Code session.
+   In a terminal, put it there first: [Outside a session, and in CI](#outside-a-session-and-in-ci).
+
+   ```sh
+   aidrian init                  # creates .aidrian/config.json
+   aidrian-knowledge init docs   # indexes an existing docs folder as a knowledge bucket
+   aidrian check                 # prints ok, or one line per problem
+   ```
+
+3. Commit `.aidrian/`, and push it to the default branch.
+   A new task worktree starts from `origin/<default branch>`, so one made before the push has no project folder.
+
+4. Start a session with the orchestrator, the agent that splits work and hands each part to the right agent:
+
+   ```sh
+   claude --agent aidrian:orchestrator
+   ```
+
+[Adopting in a project](#adopting-in-a-project) finishes the setup: tags, `always` docs, `AGENTS.md`, and CI.
+
+## Concepts
+
+- **Knowledge bucket**: a folder of Markdown docs with one team's rules, plus its index, `.aidrian/knowledge/<bucket-id>.json`.
+  The index gives each doc a one-line summary and tags, so an agent reads only the docs its work needs.
+- **Project folder**: `.aidrian/` at the repository root. It holds `config.json` and the bucket indexes.
+- **State folder**: one folder per project outside the repository, for plans, handoff briefs, lessons, and the dispatch log.
+- **Task worktree**: a git worktree in `.worktrees/`, one per task, so the main checkout stays clean.
+- **Dispatch**: one agent handing a task to another. The **dispatch log** records each dispatch, its cost, and the docs it read.
+- **Slice**: one part of a larger task, built on its own branch. The `integrator` agent lands the slices in order.
+- **The Human**: what agents call the person running the session. [`names`](docs/config.md#names) in config.json changes it.
 
 ## What is in the plugin
 
-| Kind | Names |
+Two commands, the agents and skills below, and the [hooks](#hooks).
+
+### Commands
+
+Run either command with no arguments to print every subcommand and its options.
+
+| Command | What it does |
 | --- | --- |
-| Commands | `aidrian`: sets up and checks the project folder (`aidrian init`, `aidrian check`), prints the state folder (`aidrian state`), creates and cleans up task worktrees (`aidrian worktree`), waits for the review bot and reads check and finding verdicts (`aidrian pr`), checks commit messages (`aidrian commit-msg`), lints skills, agents, paths, and the knowledge budget (`aidrian lint`), keeps the lesson inbox (`aidrian lesson`), checks handoff briefs (`aidrian handoff`), and reports on the dispatch log and the blocks its rules made, the knowledge docs agents read, what sessions cost, and the review bot's rounds and findings, and every one of those signals against its threshold (`aidrian report`, `aidrian report docs`, `aidrian report sessions`, `aidrian report reviews`, `aidrian report health`); `aidrian-knowledge`: routes, searches, and drafts a project's buckets |
-| Hooks | at session and subagent start, one line naming the `always` docs and how to find the rest; before each Bash command, git, process, and pull request body rules; before each file write, an opt-in guard that keeps the main checkout clean; before each dispatch, the project's model and effort for that agent; after a Markdown write, a line-length check; before compaction, a checklist of what to keep; when a long session ends a turn, one offer to hand off; after each dispatch, subagent stop, session end, and block by one of its rules, a dispatch log row. [docs/hooks.md](docs/hooks.md) lists them |
+| `aidrian init` | Creates the project folder and adds its local files to `.gitignore`. |
+| `aidrian check` | Checks the project folder and every bucket index. Run it in CI too. |
+| `aidrian lint` | Checks the project's skills and agents, personal paths in tracked files, and the knowledge budget. |
+| `aidrian state` | Prints the state folder. |
+| `aidrian worktree` | `new` creates a task worktree; `cleanup` removes the ones whose work has merged. |
+| `aidrian pr` | Waits for the review bot, gives a one-line check verdict, or decides what to do with one review finding. |
+| `aidrian commit-msg` | Checks a commit message against Conventional Commits. |
+| `aidrian lesson` | Adds, lists, resolves, and counts lessons in the lesson inbox ([docs/lessons.md](docs/lessons.md)). |
+| `aidrian handoff` | Checks a handoff brief against the one it replaces. |
+| `aidrian report` | Summarizes the dispatch log per agent, with the calls the plugin's rules blocked ([docs/dispatch-log.md](docs/dispatch-log.md)). |
+| `aidrian report docs` | Lists the knowledge docs agents read, and the ones nobody read. |
+| `aidrian report sessions` | Shows what each session cost. |
+| `aidrian report reviews` | Shows the review bot's rounds and findings on recent pull requests. |
+| `aidrian report health` | Judges each of those signals against its threshold. |
+| `aidrian-knowledge` | Routes, searches, lists, and drafts the bucket indexes ([docs/knowledge.md](docs/knowledge.md#commands)). |
 
 ### Agents
 
@@ -93,95 +165,10 @@ the orchestrator classifies the work, routes each part to an agent, and keeps th
 The `knowledge` skill is the shared rule set.
 Every agent preloads it: it says how to load the project's buckets, which project rules win, and the defaults a project can override.
 
-## Layout
-
-```text
-.claude-plugin/marketplace.json     Claude Code marketplace "aidrian-harness"
-.agents/plugins/marketplace.json    Codex marketplace "aidrian-harness"
-plugins/aidrian/
-├── .claude-plugin/plugin.json      Claude Code manifest
-├── plugin.json                     Codex manifest (same name, version, description)
-├── agents-src/*.md                 the agents, for every host; the source to edit
-├── providers/<provider>.json       each host's model, effort, and tools per agent
-├── agent-addons/*.<provider>.md    optional text only that host gets, after the agent's body
-├── agents/*.md                     generated Claude Code agents; never edit
-├── skills/*/SKILL.md               the skills; both hosts read them as they are
-├── bin/aidrian                     project commands; on the Bash PATH in Claude Code sessions
-├── bin/aidrian-knowledge           the knowledge command; on the same PATH
-├── hooks/hooks.json                the plugin's hooks, for both hosts
-├── scripts/hook-*.mjs              the programs those hooks run
-├── lib/                            the code behind the commands and hooks
-│   └── rules/                      the rules the Bash and write hooks run; rules/github/ holds those that read only gh
-└── codex/
-    ├── agents/aidrian-*.toml       generated Codex roles; never edit
-    └── install-agents.mjs          copies those roles into ~/.codex/agents
-scripts/build.mjs                   generates agents/ and codex/agents from agents-src/ and providers/
-scripts/version.mjs                 raises the plugin version (npm run bump) and checks it
-examples/consumer/                  a small project that uses the plugin
-docs/agents.md                      the agent sources, the provider files, and how they merge
-docs/project-folder.md              the project folder: structure, location, version, checks
-docs/config.md                      the project config file, .aidrian/config.json
-docs/hooks.md                       what each hook does, and its override
-docs/dispatch-log.md                the dispatch log rows and aidrian report
-docs/lessons.md                     the lesson inbox: capture, triage, and fixes that held
-docs/knowledge.md                   the knowledge-bucket format
-test/                               node --test suites
-```
-
-## Agent sources
-
-An agent is written once, for every host, in `plugins/aidrian/agents-src/<name>.md`:
-neutral frontmatter (`name`, `description`, `access`, `skills`) and the body.
-Each host's model, effort, and tools for it are in `plugins/aidrian/providers/claude.json` and `codex.json`.
-`npm run build` generates the Claude Code agents in `agents/` and the Codex roles in `codex/agents/`.
-When one host needs extra text for one agent, put it in `plugins/aidrian/agent-addons/<name>.<provider>.md`:
-the build adds it after the body in that host's agent only.
-[docs/agents.md](docs/agents.md) lists the fields, the merge order, and how to add a host.
-
-## Build and check
-
-```sh
-npm ci
-npm run build    # after editing plugins/aidrian/agents-src/, providers/, or agent-addons/
-npm run check    # what CI runs
-```
-
-`npm run check` fails when a generated agent is stale or edited by hand, when the example's project folder is invalid, when a test fails,
-or when the plugin changed without a version bump ([Contributing](#contributing)).
-The tests also check that both manifests agree, that every agent preloads the `knowledge` skill,
-that agents only ask for tags the `knowledge` skill lists, that the agent and skill tables above list every one shipped,
-and that no project-specific path leaks into the plugin.
-No tracked file may name a person; the owner's GitHub name appears only in the install steps and the manifests' repository URLs.
-Every agent and skill description must fit in 160 characters: both hosts put all of them into every session, used or not.
-Every `SKILL.md` must fit in 7,500 bytes, because Codex cuts it at 8,000.
-A longer skill keeps its steps in `SKILL.md` and moves detail into `references/` files that `SKILL.md` names, with when to read each.
-When `claude` and `codex` are on your PATH, `test/hosts.test.mjs` also checks the real hosts:
-Claude Code validates the plugin and loads every agent, skill, and hook event,
-and Codex installs it and shows every skill and agent in a project session. Neither check runs a model.
-`make` lists the same tasks.
-
-## Contributing
-
-Users receive a change only after the version changes.
-A branch that changes anything under `plugins/aidrian/` raises the version before it merges:
-
-```sh
-npm run bump           # 0.3.0 -> 0.3.1, for a fix
-npm run bump minor     # 0.3.0 -> 0.4.0, for a new feature
-npm run bump major     # 0.3.0 -> 1.0.0, for a change a project must adapt to
-```
-
-`npm run bump` writes the new version to every file that carries it: both plugin manifests, `package.json`, and `package-lock.json`.
-`npm run check` fails when those files disagree, and when the branch changes `plugins/aidrian/` without a version above `origin/main`'s.
-Changes only to docs, tests, examples, or `scripts/` need no bump: they live outside the plugin.
-Without `origin/main`, or on `main` itself, the comparison with main is skipped.
-
-Two open branches that both bump the version conflict on the version lines.
-To resolve the conflict, take main's version in every conflicted file, then run `npm run bump` again with the same level.
-
 ## Install
 
-The repository is private, so git on your machine needs access to `github.com/qgadrian/aidrian-harness`.
+The repository is private: git on your machine needs read access to `github.com/qgadrian/aidrian-harness`.
+The plugin's hooks and commands need Node 22 or later.
 
 ### Claude Code
 
@@ -190,36 +177,93 @@ claude plugin marketplace add qgadrian/aidrian-harness
 claude plugin install aidrian@aidrian-harness
 ```
 
+Claude Code clones the short name over SSH.
 Inside a session, the same steps are `/plugin marketplace add qgadrian/aidrian-harness` and `/plugin install aidrian@aidrian-harness`.
 Agents appear as `aidrian:<agent>`, skills as `/aidrian:<skill>`.
+To update, run `claude plugin marketplace update aidrian-harness`, then `claude plugin update aidrian@aidrian-harness`.
 
 ### Codex
 
+Codex clones over HTTPS, so pass the SSH URL:
+
 ```sh
-codex plugin marketplace add qgadrian/aidrian-harness
+codex plugin marketplace add git@github.com:qgadrian/aidrian-harness.git
 codex plugin add aidrian@aidrian-harness
-node ~/.codex/plugins/cache/aidrian-harness/aidrian/*/codex/install-agents.mjs
+node "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/aidrian-harness/aidrian/*/codex/install-agents.mjs
 ```
 
-Codex plugins can carry skills but not agents, so the last command copies the agents into `~/.codex/agents/` as `aidrian-<agent>`.
+When git already has HTTPS credentials for GitHub, for example after `gh auth setup-git`,
+the short name works too: `codex plugin marketplace add qgadrian/aidrian-harness`.
+
+Two errors mean that the clone failed:
+
+- `fatal: could not read Username for 'https://github.com': terminal prompts disabled`:
+  Codex tried HTTPS, and git had no credentials. Use the SSH URL.
+- ``plugin `aidrian` was not found in marketplace `aidrian-harness` ``: the marketplace step before it failed.
+  `codex plugin marketplace list` then shows no `aidrian-harness`. Add the marketplace again with the SSH URL.
+
+Codex plugins can carry skills but not agents, so the last command copies the agents into `$CODEX_HOME/agents`,
+`~/.codex/agents` by default, as `aidrian-<agent>`.
 The `*` matches the installed version: Codex keeps one version folder and replaces it on update.
-Run the command again after each update.
-From a checkout of this repository, `make codex-agents` does the same.
-Add `--target .codex/agents` to install the agents into one project instead.
+To update, run `codex plugin marketplace upgrade aidrian-harness`, then `codex plugin add aidrian@aidrian-harness`,
+then the agents command again.
+Add `--target .codex/agents` to the agents command to install the agents into one project instead.
 
 Codex roles inherit the session's model; only the reasoning effort carries over from each agent.
 A project can choose a model and effort per agent for both hosts: [docs/config.md](docs/config.md#models).
 Claude Code enforces each agent's tool limits; on Codex the read-only agents are told to stay read-only.
 
-## Hooks
+### From a local checkout
 
-The hooks in `plugins/aidrian/hooks/hooks.json` run in every session where the plugin is enabled.
-In Claude Code there is nothing to do. In Codex, trust them in `/hooks` after you install and after every update.
-[docs/hooks.md](docs/hooks.md) lists each hook, the host it runs on, and how to turn it off.
+To try a branch before it merges, add a checkout of this repository as the marketplace, then install as above:
 
-- A hook that cannot read its input lets the action run, so a hook never breaks a session.
-- The guard on the main checkout is off until a project turns it on.
-- A project that keeps its own copies of these checks runs both until it removes its own.
+```sh
+claude plugin marketplace add /path/to/aidrian-harness
+codex plugin marketplace add /path/to/aidrian-harness
+```
+
+To pick up a change:
+
+- Claude Code caches the plugin by version, so a change arrives only after `npm run bump`.
+  Then run `claude plugin marketplace update aidrian-harness` and `claude plugin update aidrian@aidrian-harness`.
+- Codex copies the checkout again on each `codex plugin add aidrian@aidrian-harness`, with or without a bump.
+  From the checkout, `make codex-agents` installs the Codex agents.
+
+### Outside a session, and in CI
+
+`aidrian` and `aidrian-knowledge` are on the PATH only inside a Claude Code session.
+In a terminal, a git hook, or a Codex session, run them from the plugin folder the host installed:
+
+| Host | Plugin folder |
+| --- | --- |
+| Claude Code | `~/.claude/plugins/cache/aidrian-harness/aidrian/<version>`, under `$CLAUDE_CONFIG_DIR` instead of `~/.claude` when it is set |
+| Codex | `$CODEX_HOME/plugins/cache/aidrian-harness/aidrian/<version>`, with `CODEX_HOME` at `~/.codex` by default |
+
+Claude Code keeps the old version folder after an update, so ask it for the current one.
+This puts both commands on the PATH of the current shell:
+
+```sh
+plugin=$(claude plugin list --json |
+  node -p 'JSON.parse(require("fs").readFileSync(0)).find((p) => p.id === "aidrian@aidrian-harness").installPath')
+export PATH="$plugin/bin:$PATH"
+```
+
+Codex keeps one version folder, so a `*` finds it:
+
+```sh
+export PATH="$(echo "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/aidrian-harness/aidrian/*/bin):$PATH"
+```
+
+`bin/aidrian` is a shell script, so run it directly, not with `node`.
+Where no shell runs it, use `node <plugin folder>/lib/cli.mjs`, and `node <plugin folder>/lib/knowledge-cli.mjs` for `aidrian-knowledge`.
+
+CI installs no plugin. Give the job Node 22 or later and read access to this repository, such as a deploy key, then run:
+
+```sh
+git clone --depth 1 git@github.com:qgadrian/aidrian-harness.git /tmp/aidrian-harness
+/tmp/aidrian-harness/plugins/aidrian/bin/aidrian check
+/tmp/aidrian-harness/plugins/aidrian/bin/aidrian lint
+```
 
 ## Adopting in a project
 
@@ -227,12 +271,8 @@ A project adds knowledge, and may keep its own agents: an agent of the project w
 ([docs/knowledge.md](docs/knowledge.md#project-agents)).
 [`examples/consumer`](examples/consumer) is a complete example; copy it as a start.
 
-1. Create the project folder at the repository root:
-
-   ```sh
-   aidrian init         # in a Claude Code session, where the plugin's commands are on PATH
-   path/to/aidrian-harness/plugins/aidrian/bin/aidrian init     # anywhere else; needs Node 22 or later
-   ```
+1. Create the project folder at the repository root with `aidrian init`
+   ([outside a Claude Code session](#outside-a-session-and-in-ci), run it by its path).
 
    It writes `.aidrian/config.json` and adds `.aidrian.local.json` and `.worktrees/`, where task worktrees go, to `.gitignore`.
    To keep agents out of the main checkout, add `"mainCheckout": { "guard": true }` to the config ([docs/hooks.md](docs/hooks.md#main-checkout)).
@@ -277,9 +317,39 @@ A project adds knowledge, and may keep its own agents: an agent of the project w
 
    Codex users install once per machine, as in [Codex](#codex).
 
-5. Run `aidrian check` and `aidrian lint`, then commit. Run both in CI too, so a broken folder never reaches the agents.
+5. Run `aidrian check` and `aidrian lint`, then commit and push, before anyone creates a task worktree.
+   A worktree made earlier has no project folder, and the hooks stay silent there
+   ([Task worktrees](docs/project-folder.md#task-worktrees)).
+   Run both commands in CI too, as in [Outside a session, and in CI](#outside-a-session-and-in-ci),
+   so a broken folder never reaches the agents.
+
+## Hooks
+
+The hooks in `plugins/aidrian/hooks/hooks.json` run in every session where the plugin is enabled.
+In Claude Code there is nothing to do. In Codex, trust them in `/hooks` after you install and after every update.
+[docs/hooks.md](docs/hooks.md) lists each hook, the host it runs on, and how to turn it off.
+
+| When | What the plugin does |
+| --- | --- |
+| A session or subagent starts | Prints one line naming the `always` docs and how to find the rest. |
+| Before each Bash command | Applies the git, process, and pull request body rules. |
+| Before each file write | An opt-in guard keeps the main checkout clean. |
+| Before each dispatch | Applies the project's model and effort for that agent. |
+| After a Markdown write | Checks the line length. |
+| Before compaction | Adds a checklist of what to keep. |
+| A long session ends a turn | Offers once to hand off to a fresh session. |
+| After each dispatch, subagent stop, session end, or block by one of its rules | Writes a dispatch log row. |
+
+- A hook that cannot read its input lets the action run, so a hook never breaks a session.
+- The guard on the main checkout is off until a project turns it on.
+- A project that keeps its own copies of these checks runs both until it removes its own.
 
 ## Not included
 
 - OpenCode support.
 - The optional cockpit pane. It lives on the `parked/cockpit` branch and is not reviewed.
+
+## Contributing
+
+[docs/contributing.md](docs/contributing.md) covers the repository layout, the agent sources, the build and check,
+and the version bump every plugin change needs.

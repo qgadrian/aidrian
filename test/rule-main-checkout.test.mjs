@@ -3,9 +3,13 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 
 import { bashTargets, check, checkTool } from '../plugins/aidrian/lib/rules/main-checkout.mjs';
+
+// The hooks this file runs record their blocks in the state folder; keep those rows out of the real one.
+process.env.XDG_STATE_HOME = mkdtempSync(path.join(tmpdir(), 'aidrian-state-'));
+after(() => rmSync(process.env.XDG_STATE_HOME, { recursive: true, force: true }));
 
 const SCRIPTS = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts');
 const ENV = {};

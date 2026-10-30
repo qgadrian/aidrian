@@ -3,11 +3,15 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, { after } from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
-import { configWriteReason } from '../plugins/aidrian/lib/config-guard.mjs';
+import { configWriteDenial } from '../plugins/aidrian/lib/config-guard.mjs';
 import { configFiles, findProject } from '../plugins/aidrian/lib/project.mjs';
+
+// The hooks this file runs record their blocks in the state folder; keep those rows out of the real one.
+process.env.XDG_STATE_HOME = mkdtempSync(path.join(tmpdir(), 'aidrian-state-'));
+after(() => rmSync(process.env.XDG_STATE_HOME, { recursive: true, force: true }));
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-agent-gates.mjs');
 const GATED = { version: 1, agents: { explorer: { deny: ['WebFetch'] } }, names: { human: 'the product owner' } };
@@ -28,7 +32,7 @@ function project(t, config = GATED) {
 const subagent = (cwd, tool, toolInput) => ({ tool_name: tool, tool_input: toolInput, agent_type: 'aidrian:explorer', agent_id: 'a5f0c1', cwd });
 const verdict = (cwd, input) => {
   const found = findProject(cwd);
-  return configWriteReason(input, found, loadConfig(found).config);
+  return configWriteDenial(input, found, loadConfig(found).config)?.reason ?? null;
 };
 
 test('a subagent may not change a file that sets the gates, with any write tool or a Bash command that writes it', (t) => {

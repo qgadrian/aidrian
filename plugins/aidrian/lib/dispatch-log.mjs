@@ -1,7 +1,7 @@
-// The dispatch log: `dispatch-log.jsonl` in the state folder, one row per subagent dispatch, per subagent stop, and per
-// session end, appended by three Claude Code hooks unless config.json `telemetry` turns them off; `aidrian report` reads
-// it. A row holds names, counts, durations, costs, and file paths; never a prompt, a command, or tool output.
-// docs/dispatch-log.md describes every field.
+// The dispatch log: `dispatch-log.jsonl` in the state folder, one row per subagent dispatch, per subagent stop, per
+// session end, and per block by one of the plugin's own hooks, appended unless config.json `telemetry` turns them off;
+// `aidrian report` reads it. A row holds names, counts, durations, costs, and file paths; never a prompt, a command, or
+// tool output. docs/dispatch-log.md describes every field.
 
 import { closeSync, existsSync, openSync, renameSync, rmSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -12,11 +12,14 @@ import { commandConfig, fileBytes } from './config.mjs';
 import { checkoutRoots } from './git.mjs';
 import { appendRow, latestRows as latest, readRows } from './jsonl.mjs';
 import { checkBudgets, indexRows, loadKnowledge } from './knowledge.mjs';
+import { REPEATED_DENIALS } from './lesson-signals.mjs';
 import { projectAt, stateDir } from './project.mjs';
 import { formatSessions, summarizeSessions } from './report-sessions.mjs';
 import { aggregateUsage, estimateCostUsd, filesRead, partOf, readText, subagentTranscripts, sumTokens } from './transcript.mjs';
 
 const DESCRIPTION_CHARS = 80;
+// A hook_deny row's `reason`: the start of what the rule matched.
+const REASON_CHARS = 120;
 const CLAIMED_PATHS = 20;
 // `aidrian report docs` lists the docs with the most bytes read, and the docs with the most readers.
 const TOP_DOCS = 10;
@@ -107,24 +110,44 @@ export function dispatchRow(input, { env = process.env, now = Date.now() } = {})
 }
 
 // The paths a subagent's last message presents as delivered, and those of them that exist nowhere: { claims, missing }.
-// The stop hook sends the agent back once when `missing` is not empty, whether or not telemetry is on.
 export function checkDelivery(input, project) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : project.root;
   const claims = claimedPaths(input.last_assistant_message);
   return { claims, missing: missingPaths(claims, cwd) };
 }
 
+// Whether the stop hook sends the subagent back, whether or not telemetry is on: a path is `missing`, and the host marks
+// this stop as a first one with `stop_hook_active: false`. The stop that a send-back caused, and a payload without the
+// field, always end.
+export const sendsBack = (input, delivery) => delivery.missing.length > 0 && input.stop_hook_active === false;
+
 // Which subagent stopped, as its `stop` row names it: { session_id, agent_id, agent_type }.
 export function stopAgent(input) {
   return { session_id: text(input.session_id), agent_id: text(input.agent_id), agent_type: text(input.agent_type) ?? 'general-purpose' };
 }
 
-// SubagentStop: the subagent's tokens, cost, the knowledge docs it read with their sizes, and its delivery check, over
-// the requests it made itself (ownRequests). `docReads: false` (config.json `telemetry.docReads`) records `docs_read: null`.
+// A block by one of the plugin's own hooks (lib/hook-deny.mjs): which rule, on which tool, for which agent, and `match`,
+// the rule's own words for what it matched, cut to REASON_CHARS. The agent is named as on a `dispatch` row's dispatcher.
+export function denyRow(input, rule, match, { env = process.env, now = Date.now() } = {}) {
+  return {
+    event: 'hook_deny',
+    ts: stamp(now),
+    session_id: text(input.session_id),
+    rule,
+    tool: text(input.tool_name),
+    agent_type: text(input.agent_type) ?? text(env.CLAUDE_CODE_AGENT) ?? 'main',
+    reason: text(match, REASON_CHARS),
+  };
+}
+
+// SubagentStop: the subagent's tokens, cost, API requests and tool calls, the knowledge docs it read with their sizes, and
+// its delivery check with whether it sent the subagent back, over the requests it made itself (ownRequests).
+// `docReads: false` (config.json `telemetry.docReads`) records `docs_read: null`.
 export function stopRow(input, project, { now = Date.now(), docReads = true, delivery = checkDelivery(input, project) } = {}) {
   const transcript = typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
   const own = transcript ? ownRequests(input) : undefined;
-  const usage = transcript ? partOf(aggregateUsage(transcript), own).perModel : {};
+  const part = transcript ? partOf(aggregateUsage(transcript), own) : { perModel: {}, requests: 0, tool_requests: 0, tool_calls: 0 };
+  const usage = part.perModel;
   const { claims, missing } = delivery;
   return {
     event: 'stop',
@@ -133,9 +156,13 @@ export function stopRow(input, project, { now = Date.now(), docReads = true, del
     tokens: sumTokens(usage),
     models: Object.keys(usage),
     cost_usd: estimateCostUsd(usage).total,
+    requests: part.requests,
+    tool_requests: part.tool_requests,
+    tool_calls: part.tool_calls,
     docs_read: !docReads ? null : transcript ? knowledgeDocsRead(filesRead(transcript, own), project) : [],
     delivered: missing.length ? 'missing' : claims.length ? 'file' : 'chat',
     paths: claims,
+    sent_back: sendsBack(input, delivery),
   };
 }
 
@@ -245,13 +272,35 @@ const median = (values) => {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 };
 
-// Aggregates rows newer than `sinceMs`. A stop row repeats when its agent was sent back; the last one counts.
+const round = (value, places = 2) => Math.round(value * 10 ** places) / 10 ** places;
+const sum = (rows, valueOf) => rows.reduce((total, row) => total + (valueOf(row) ?? 0), 0);
+
+// Whether each run among `stops` was sent back by the delivery check: true, false, or null for unknown, keyed by
+// agent_id. A stop row without an agent_id is a run of its own, so it is its own key here as in latestRows. A row says
+// so in `sent_back`; a row from before that field is unknown when its `delivered` is `missing`, and was never sent back
+// otherwise. A run is sent back when any of its rows was, else unknown when any is.
+function sendBackStates(stops) {
+  const runs = new Map();
+  for (const row of stops) {
+    const key = row.agent_id ?? row;
+    const states = [runs.get(key), typeof row.sent_back === 'boolean' ? row.sent_back : row.delivered === 'missing' ? null : false];
+    runs.set(key, states.includes(true) ? true : states.includes(null) ? null : false);
+  }
+  return runs;
+}
+
+// Aggregates rows newer than `sinceMs`. A stop row repeats when its agent was sent back; the last one counts. A run is
+// one subagent that stopped. The share sent back leaves out the runs whose send-back is unknown (sendBackStates), which
+// `runs_without_send_back` counts; the averages of docs read, the runs logged with doc reads off; those of bytes read,
+// also the runs whose docs were logged before sizes; tool calls per request, the runs logged before tool counts, which
+// `runs_without_tool_counts` counts.
 export function summarize(rows, { sinceMs = 0 } = {}) {
   const fresh = rows.filter((row) => Date.parse(row.ts) >= sinceMs && ['dispatch', 'stop', 'session'].includes(row.event));
   const dispatches = fresh.filter((row) => row.event === 'dispatch');
   const stops = latest(fresh, 'stop', 'agent_id');
   const sessions = latest(fresh, 'session', 'session_id');
   const dispatched = new Set(dispatches.map((row) => row.agent_id).filter(Boolean));
+  const sentBack = sendBackStates(fresh.filter((row) => row.event === 'stop'));
   const types = [...new Set([...dispatches, ...stops].map((row) => row.agent_type))].sort();
   const agents = types.map((type) => {
     const sent = dispatches.filter((row) => row.agent_type === type);
@@ -259,49 +308,115 @@ export function summarize(rows, { sinceMs = 0 } = {}) {
     const tasks = new Set(sent.map((row) => `${row.session_id} ${row.description}`));
     const docs = new Map();
     for (const { path: doc } of done.flatMap(docsRead)) docs.set(doc, (docs.get(doc) ?? 0) + 1);
+    const withDocs = done.filter((row) => Array.isArray(row.docs_read));
+    const sized = withDocs.filter((row) => docsRead(row).every((doc) => Number.isFinite(doc.bytes)));
+    const counted = done.filter((row) => Number.isFinite(row.tool_calls) && Number.isFinite(row.tool_requests));
+    const cost = sum(done, (row) => row.cost_usd);
+    const toolRequests = sum(counted, (row) => row.tool_requests);
+    const toolCalls = sum(counted, (row) => row.tool_calls);
+    const known = done.filter((row) => sentBack.get(row.agent_id ?? row) !== null);
+    const failed = known.filter((row) => sentBack.get(row.agent_id ?? row)).length;
     return {
       agent_type: type,
       dispatches: sent.length,
-      redispatch_rate: sent.length ? Math.round((1 - tasks.size / sent.length) * 100) / 100 : null,
+      redispatch_rate: sent.length ? round(1 - tasks.size / sent.length) : null,
       median_duration_ms: median(sent.map((row) => row.duration_ms)),
       median_tokens: median(done.map((row) => (row.tokens ? row.tokens.input + row.tokens.output + row.tokens.cache_read + row.tokens.cache_write : NaN))),
-      cost_usd: Math.round(done.reduce((sum, row) => sum + (row.cost_usd ?? 0), 0) * 100) / 100,
+      cost_usd: round(cost),
       delivered: Object.fromEntries(['file', 'chat', 'missing'].map((kind) => [kind, done.filter((row) => row.delivered === kind).length])),
       top_docs: [...docs].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 5),
+      runs: done.length,
+      cost_per_run_usd: done.length ? round(cost / done.length) : null,
+      sent_back: failed,
+      sent_back_rate: known.length ? round(failed / known.length) : null,
+      runs_without_send_back: done.length - known.length,
+      avg_docs_read: withDocs.length ? round(sum(withDocs, (row) => row.docs_read.length) / withDocs.length, 1) : null,
+      avg_doc_bytes: sized.length ? Math.round(sum(sized, (row) => sum(docsRead(row), (doc) => doc.bytes)) / sized.length) : null,
+      requests: sum(counted, (row) => row.requests),
+      tool_requests: toolRequests,
+      tool_calls: toolCalls,
+      tool_calls_per_request: toolRequests ? round(toolCalls / toolRequests) : null,
+      runs_without_tool_counts: done.length - counted.length,
     };
   });
   return {
     agents,
-    sessions: { count: sessions.length, cost_usd: Math.round(sessions.reduce((sum, row) => sum + (row.cost_usd ?? 0), 0) * 100) / 100 },
+    sessions: { count: sessions.length, cost_usd: round(sum(sessions, (row) => row.cost_usd)) },
     unjoined_stops: stops.filter((row) => row.agent_id && !dispatched.has(row.agent_id)).length,
+    runs_without_tool_counts: sum(agents, (agent) => agent.runs_without_tool_counts),
+    hook_denies: summarizeDenies(rows, { sinceMs }),
   };
 }
 
-// What a report over `rows` cannot see: { enabled, doc_reads, rows_without_doc_reads, rotated_out_before }.
-// `enabled` and `doc_reads` are the switches now. `rows_without_doc_reads` counts the stop and session rows since
-// `sinceMs` written while doc reads were off. `rotated_out_before` is the oldest row's time when rotation dropped older
-// rows and the window starts before it; else null. A time telemetry was off leaves no rows, so no report can see it.
+// The `hook_deny` rows since `sinceMs`: { count, sessions, by_rule }, the rules with the most blocks first. Per rule:
+// `count`, `agents` and `reasons` as [name, count] pairs, most first, at most three reasons, and `repeated_sessions`,
+// the sessions it blocked REPEATED_DENIALS times or more, which is when a block becomes an automatic lesson.
+export function summarizeDenies(rows, { sinceMs = 0 } = {}) {
+  const denies = rows.filter((row) => row.event === 'hook_deny' && Date.parse(row.ts) >= sinceMs);
+  const add = (map, key) => map.set(key, (map.get(key) ?? 0) + 1);
+  const ranked = (map) => [...map].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])));
+  const rules = new Map();
+  for (const row of denies) {
+    const rule = typeof row.rule === 'string' ? row.rule : 'unknown';
+    const entry = rules.get(rule) ?? { agents: new Map(), sessions: new Map(), reasons: new Map() };
+    add(entry.agents, row.agent_type ?? 'main');
+    if (row.session_id) add(entry.sessions, row.session_id);
+    if (row.reason) add(entry.reasons, row.reason);
+    rules.set(rule, entry);
+  }
+  const byRule = [...rules].map(([rule, entry]) => ({
+    rule,
+    count: sum([...entry.agents.values()], (count) => count),
+    agents: ranked(entry.agents),
+    repeated_sessions: [...entry.sessions.values()].filter((count) => count >= REPEATED_DENIALS).length,
+    reasons: ranked(entry.reasons).slice(0, 3),
+  }));
+  return {
+    count: denies.length,
+    sessions: new Set(denies.map((row) => row.session_id).filter(Boolean)).size,
+    by_rule: byRule.sort((a, b) => b.count - a.count || a.rule.localeCompare(b.rule)),
+  };
+}
+
+// What a report over `rows` cannot see: { enabled, doc_reads, hook_denies, rows_without_doc_reads, runs_without_send_back,
+// rotated_out_before }. `enabled`, `doc_reads`, and `hook_denies` are the switches now. `rows_without_doc_reads` counts
+// the stop and session rows since `sinceMs` written while doc reads were off; `runs_without_send_back`, the runs since
+// then whose send-back is unknown (sendBackStates). `rotated_out_before` is the oldest row's time when rotation dropped
+// older rows and the window starts before it; else null. A time telemetry was off leaves no rows, so no report can see it.
 export function coverage(rows, config, { sinceMs = 0 } = {}) {
   const fresh = rows.filter((row) => Date.parse(row.ts) >= sinceMs);
   const counted = [...latest(fresh, 'stop', 'agent_id'), ...latest(fresh, 'session', 'session_id')];
+  const sendBacks = sendBackStates(fresh.filter((row) => row.event === 'stop'));
   const oldest = rows.reduce((min, row) => Math.min(min, Date.parse(row.ts) || Infinity), Infinity);
   const lost = rows.some((row) => row.event === 'rotate' && row.dropped === true);
   return {
     enabled: config.telemetry.enabled,
     doc_reads: config.telemetry.docReads,
+    hook_denies: config.telemetry.hookDenies,
     rows_without_doc_reads: counted.filter((row) => row.docs_read === null).length,
+    runs_without_send_back: [...sendBacks.values()].filter((state) => state === null).length,
     rotated_out_before: lost && oldest > sinceMs && oldest !== Infinity ? new Date(oldest).toISOString() : null,
   };
 }
 
 // The lines that tell a reader the report is incomplete, and why. `docReads: false` leaves out the doc-read lines, for a
-// view that shows no doc reads.
-export function coverageLines(cover, { docReads = true } = {}) {
+// view that shows no doc reads; `hookDenies: true` adds the hook-deny line, and `sendBacks: true` the send-back line, for
+// the view that shows them.
+export function coverageLines(cover, { docReads = true, hookDenies = false, sendBacks = false } = {}) {
   const lines = [];
   if (!cover.enabled) lines.push('Telemetry is off (telemetry.enabled is false): the hooks write no rows, so this shows only older ones.');
-  else if (docReads && !cover.doc_reads) lines.push('Doc reads are off (telemetry.docReads is false): new rows do not record them.');
+  else {
+    if (docReads && !cover.doc_reads) lines.push('Doc reads are off (telemetry.docReads is false): new rows do not record them.');
+    if (hookDenies && !cover.hook_denies) lines.push('Hook denies are off (telemetry.hookDenies is false): the hooks still block, and log no hook_deny rows.');
+  }
   if (docReads && cover.rows_without_doc_reads) {
     lines.push(`Partial: ${cover.rows_without_doc_reads} agent and session rows in the window were written with doc reads off.`);
+  }
+  if (sendBacks && cover.runs_without_send_back) {
+    lines.push(
+      `Partial: ${cover.runs_without_send_back} agent runs named a missing file before stop rows recorded send-backs; ` +
+        'the share sent back leaves them out.',
+    );
   }
   if (cover.rotated_out_before) {
     lines.push(`Partial: the log starts at ${cover.rotated_out_before}; older rows were rotated out at telemetry.maxMb.`);
@@ -311,21 +426,50 @@ export function coverageLines(cover, { docReads = true } = {}) {
 
 export function formatReport(summary, { file, since, skipped, notes = [] }) {
   const lines = [`Dispatch log ${file}, since ${since}${skipped ? ` (${skipped} unreadable rows skipped)` : ''}`, ...notes];
-  if (!summary.agents.length && !summary.sessions.count) return [...lines, 'No rows yet.'].join('\n');
+  const denies = summary.hook_denies ?? { count: 0, sessions: 0, by_rule: [] };
+  if (!summary.agents.length && !summary.sessions.count && !denies.count) return [...lines, 'No rows yet.'].join('\n');
+  if (summary.runs_without_tool_counts) {
+    lines.push(`Partial: ${summary.runs_without_tool_counts} agent runs were logged before tool counts; tool calls per request leave them out.`);
+  }
   const seconds = (msValue) => (msValue === null ? '-' : `${Math.round(msValue / 1000)}s`);
   const thousands = (value) => (value === null ? '-' : `${Math.round(value / 1000)}k`);
+  const percent = (rate) => (rate === null ? '-' : `${Math.round(rate * 100)}%`);
   for (const agent of summary.agents) {
     const { file: written, chat, missing } = agent.delivered;
     lines.push(
-      `${agent.agent_type}: ${agent.dispatches} dispatches, ${agent.redispatch_rate === null ? '-' : `${Math.round(agent.redispatch_rate * 100)}%`} re-dispatched, ` +
+      `${agent.agent_type}: ${agent.dispatches} dispatches, ${percent(agent.redispatch_rate)} re-dispatched, ` +
         `median ${seconds(agent.median_duration_ms)} and ${thousands(agent.median_tokens)} tokens, $${agent.cost_usd.toFixed(2)}, ` +
         `delivered ${written} file / ${chat} chat / ${missing} missing`,
     );
-    if (agent.top_docs.length) lines.push(`  docs read: ${agent.top_docs.map(([doc, count]) => `${doc} (${count})`).join(', ')}`);
+    if (agent.runs) {
+      lines.push(
+        `  ${agent.runs} runs, $${agent.cost_per_run_usd.toFixed(2)} a run, ${percent(agent.sent_back_rate)} sent back by the delivery check, ` +
+          `${agent.tool_calls_per_request === null ? '-' : agent.tool_calls_per_request.toFixed(2)} tool calls per request that made one`,
+      );
+    }
+    if (agent.avg_docs_read !== null) {
+      const bytes = agent.avg_doc_bytes === null ? '' : ` and ${(agent.avg_doc_bytes / 1024).toFixed(1)} KB`;
+      const top = agent.top_docs.map(([doc, count]) => `${doc} (${count})`).join(', ');
+      lines.push(`  docs read: ${agent.avg_docs_read.toFixed(1)} docs${bytes} a run${top ? `; ${top}` : ''}`);
+    }
   }
   lines.push(`Sessions: ${summary.sessions.count}, $${summary.sessions.cost_usd.toFixed(2)} estimated, main conversation and subagents together`);
   if (summary.unjoined_stops) lines.push(`${summary.unjoined_stops} stop rows have no dispatch row (a background dispatch, or a host change)`);
+  lines.push(...formatDenies(denies));
   return lines.join('\n');
+}
+
+// The hook-deny lines of the default view: per rule, its blocks, the agents it blocked, and what it matched most often.
+function formatDenies(denies) {
+  if (!denies.count) return ['Hook denies: none'];
+  const sessions = `${denies.sessions} session${denies.sessions === 1 ? '' : 's'}`;
+  return [`Hook denies: ${denies.count} in ${sessions}`, ...denies.by_rule.flatMap((rule) => {
+    const repeated = rule.repeated_sessions
+      ? `; ${rule.repeated_sessions} session${rule.repeated_sessions === 1 ? '' : 's'} blocked ${REPEATED_DENIALS} times or more, an automatic lesson`
+      : '';
+    const line = `  ${rule.rule}: ${rule.count}, by ${rule.agents.map(([agent, count]) => `${agent} ${count}`).join(', ')}${repeated}`;
+    return rule.reasons.length ? [line, `    most often: ${rule.reasons[0][0]}`] : [line];
+  })];
 }
 
 // Per knowledge doc read since `sinceMs`: `reads`, `bytes` (its size as last logged), `read_bytes` (reads × bytes), and
@@ -404,13 +548,15 @@ export function parseSince(value, now = Date.now()) {
 }
 
 // The views of `aidrian report`; the first is the default.
-const VIEWS = ['agents', 'docs', 'sessions'];
+const VIEWS = ['agents', 'docs', 'sessions', 'reviews'];
+// `aidrian report reviews` reads this many merged pull requests unless --prs says otherwise.
+const DEFAULT_PRS = 20;
 
 export const commands = {
   report: {
-    usage: '[agents|docs|sessions] [--since 7d] [--prs N] [--json] [--project DIR]',
-    about: 'summarize the dispatch log per agent type, per knowledge doc read (docs), or per session (sessions); ' +
-      '--prs adds the bot review rounds of the last N merged pull requests',
+    usage: '[agents|docs|sessions|reviews] [--since 7d] [--prs N] [--json] [--project DIR]',
+    about: 'summarize the dispatch log per agent type with hook denies, per knowledge doc read (docs), or per session ' +
+      '(sessions), or the bot reviews of the last N merged pull requests (reviews); --prs N on the default view adds reviews',
     async run(args) {
       const { values, positionals } = parseArgs({
         args,
@@ -419,11 +565,16 @@ export const commands = {
       });
       const view = positionals[0] ?? VIEWS[0];
       if (positionals.length > 1 || !VIEWS.includes(view)) {
-        console.error(`unknown report: ${positionals.join(' ')}; use aidrian report, aidrian report docs, or aidrian report sessions`);
+        console.error(`unknown report: ${positionals.join(' ')}; use aidrian report, or aidrian report ${VIEWS.slice(1).join(', ')}`);
         return 1;
       }
-      if (view !== 'agents' && values.prs !== undefined) {
-        console.error(`--prs belongs to aidrian report, not aidrian report ${view}`);
+      if (view !== 'agents' && view !== 'reviews' && values.prs !== undefined) {
+        console.error(`--prs belongs to aidrian report and aidrian report reviews, not aidrian report ${view}`);
+        return 1;
+      }
+      const prs = Number(values.prs ?? DEFAULT_PRS);
+      if (!Number.isInteger(prs) || prs < 1) {
+        console.error('--prs takes a whole number above 0');
         return 1;
       }
       const project = projectAt(path.resolve(values.project ?? '.'));
@@ -436,6 +587,14 @@ export const commands = {
         console.error(error.message);
         return 1;
       }
+      if (view === 'reviews') {
+        // The log plays no part: the pull requests are the last N merged, or those merged since --since when it is given.
+        const { formatReviews, reviewRounds } = await import('./report-reviews.mjs');
+        const reviews = reviewRounds(prs, config.github.reviewer, undefined, { sinceMs: values.since === undefined ? null : sinceMs });
+        const label = values.since ?? null;
+        console.log(values.json ? JSON.stringify({ since: label, prs, ...reviews }) : formatReviews(reviews, { since: label }));
+        return 0;
+      }
       const { file, rotated, rows, skipped } = readLog(project, config);
       const cover = coverage(rows, config, { sinceMs });
       if (view === 'sessions') {
@@ -444,25 +603,22 @@ export const commands = {
         console.log(values.json ? JSON.stringify({ file, rotated, since, skipped, coverage: cover, ...sessions }) : formatSessions(sessions, { file, since, skipped, notes }));
         return 0;
       }
-      const notes = coverageLines(cover);
       if (view === 'docs') {
         const { indexed, always } = knowledgeOf(project, config);
         const docs = summarizeDocs(rows, { sinceMs, indexed });
+        const notes = coverageLines(cover);
         console.log(values.json ? JSON.stringify({ file, rotated, since, skipped, coverage: cover, always, ...docs }) : formatDocs(docs, { file, since, skipped, notes, always }));
         return 0;
       }
       const summary = summarize(rows, { sinceMs });
+      const text = () => formatReport(summary, { file, since, skipped, notes: coverageLines(cover, { hookDenies: true, sendBacks: true }) });
       if (values.prs !== undefined) {
-        const count = Number(values.prs);
-        if (!Number.isInteger(count) || count < 1) {
-          console.error('--prs takes a whole number above 0');
-          return 1;
-        }
-        const { reviewRounds, formatRounds } = await import('./pr-review-rounds.mjs');
-        summary.reviews = reviewRounds(count, config.github.reviewer);
-        if (!values.json) console.log(`${formatReport(summary, { file, since, skipped, notes })}\n${formatRounds(summary.reviews)}`);
+        // The alias the reviews view grew from: the default view, then the reviews of the last N merged pull requests.
+        const { formatReviews, reviewRounds } = await import('./report-reviews.mjs');
+        summary.reviews = reviewRounds(prs, config.github.reviewer);
+        if (!values.json) console.log(`${text()}\n${formatReviews(summary.reviews)}`);
       } else if (!values.json) {
-        console.log(formatReport(summary, { file, since, skipped, notes }));
+        console.log(text());
       }
       if (values.json) console.log(JSON.stringify({ file, rotated, since, skipped, coverage: cover, ...summary }));
       return 0;

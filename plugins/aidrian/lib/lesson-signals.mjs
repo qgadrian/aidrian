@@ -4,7 +4,7 @@
 // construction, and none ever changes what the hook or command that saw it does. config.json `lessons.auto: false`
 // turns all of them off. Rows hold names, counts, paths, and ids; never a prompt, a command, or tool output.
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, openSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -82,27 +82,44 @@ export function roundLimitSignal({ repo, pr, maxRounds, rounds, session = null, 
   };
 }
 
-// Counts one block by `rule` for the hook payload's session, in a file in the temporary folder, and records the signal
-// on the block that reaches REPEATED_DENIALS, once per session and rule. Never throws.
+// A session id or rule name that may name a file.
+const FILE_NAME_PART = /^[\w-]+$/;
+// The temporary files of one session's block counts: `<prefix><session>.<rule>`, and `.recorded` after one that fired.
+const DENIALS_PREFIX = 'aidrian-denials-';
+
+// Counts one block by `rule` for the hook payload's session, and records the signal once the count reaches
+// REPEATED_DENIALS, once per session and rule. Parallel subagents share their parent's session and may block at once,
+// so the count is the size of a file in the temporary folder that each block appends one byte to, and the block that
+// creates the `.recorded` marker first is the one that records. Never throws.
 export function noteDenial(input, rule, { dir = tmpdir(), env = process.env, now = new Date() } = {}) {
   try {
     const session = input.session_id;
-    if (typeof session !== 'string' || !/^[\w-]+$/.test(session)) return null;
-    const file = path.join(dir, `aidrian-denials-${session}.json`);
-    let counts = {};
+    if (typeof session !== 'string' || !FILE_NAME_PART.test(session) || !FILE_NAME_PART.test(rule)) return null;
+    const file = path.join(dir, `${DENIALS_PREFIX}${session}.${rule}`);
+    appendFileSync(file, '.');
+    if (statSync(file).size < REPEATED_DENIALS) return null;
     try {
-      counts = JSON.parse(readFileSync(file, 'utf8'));
+      closeSync(openSync(`${file}.recorded`, 'wx'));
     } catch {
-      // The session's first block.
+      return null; // Another block already recorded it.
     }
-    counts[rule] = (Number.isInteger(counts[rule]) ? counts[rule] : 0) + 1;
-    writeFileSync(file, JSON.stringify(counts));
-    if (counts[rule] !== REPEATED_DENIALS) return null;
     const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
     if (!project) return null;
     const agent = typeof input.agent_type === 'string' && input.agent_type ? input.agent_type : env.CLAUDE_CODE_AGENT || null;
     return recordSignal(project, denialSignal({ rule, session, agent }), { now });
   } catch {
     return null;
+  }
+}
+
+// Deletes the block counts of `session`, when it ends. Never throws.
+export function forgetDenials(session, { dir = tmpdir() } = {}) {
+  if (typeof session !== 'string' || !FILE_NAME_PART.test(session)) return;
+  try {
+    for (const name of readdirSync(dir)) {
+      if (name.startsWith(`${DENIALS_PREFIX}${session}.`)) unlinkSync(path.join(dir, name));
+    }
+  } catch {
+    // The temporary folder clears them in time.
   }
 }

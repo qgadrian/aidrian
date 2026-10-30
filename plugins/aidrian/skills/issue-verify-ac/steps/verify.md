@@ -35,13 +35,16 @@ evidence_anchor: path:lines at <sha>, or a command and its result, or why there 
 and regression_risk_if_marked when the verdict is met on a critical flow.
 ```
 
-For the `worktree` ref, the code line names the working tree's path instead of a commit.
+For the `worktree` ref, the code line reads `Code: the working tree at <path>. Read each file there, from disk.`,
+and each `at <sha>` reads `in the working tree`: uncommitted changes are what this mode verifies.
 
 ## When an agent returns
 
 - A `met` without an anchor goes back once for one. A second miss makes it `needs_evidence`.
-- Check every `met` before it can be ticked: the path exists at the ref (`git cat-file -e <sha>:<path>`),
-  and the cited lines show the claimed behaviour. A failed check makes it `needs_evidence`.
+- Check every `met` before it can be ticked, by the kind of anchor. A failed check makes it `needs_evidence`.
+  - `path:lines`: the path exists at the ref (`git cat-file -e <sha>:<path>`; for `worktree`, `test -f <path>` in the working tree),
+    and the cited lines, read the same way, show the claimed behaviour.
+  - A command: the anchor gives the exact command and its passing result. A command without a result, or with a failing one, is no anchor.
 - Two agents with different verdicts on one criterion: it is disputed, and goes to the Human with both positions.
 - `needs_input` or `blocked` goes to the Human as it is.
 
@@ -49,7 +52,9 @@ For the `worktree` ref, the code line names the working tree's path instead of a
 
 Open with one short paragraph on what is missing. Then one entry per criterion that is not `met`:
 
-1. **Owner**: the issue's agent action plan when it fits the surface, else the owner by surface above.
+1. **Owner**: an agent that can edit files: the issue's agent action plan when it fits the surface,
+   else the owner rule in the `issue-implement` skill's `steps/phases-1-4-implement.md`, phase 3 step 3.
+   A verifier that cannot edit, such as `security-engineer` or `code-reviewer`, reviews the change instead of owning it.
 2. **Files**: the issue's files to modify or create when the criterion maps to one, else the file the evidence names.
 3. **Slice**: one sentence on the change.
 4. **Size**: `S`, `M`, or `L`, as the project's `issue_tracker` knowledge sizes issues.

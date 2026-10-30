@@ -58,6 +58,7 @@ for (const [name, text, expected] of overrideCases) {
     assert.equal(project.dir, '.aidrian');
     assert.equal(project.errors.length, 1, project.errors.join('\n'));
     assert.match(project.errors[0], expected);
+    assert.deepEqual(project.unreadable, ['.aidrian.json'], 'its folder is not in force');
   });
 }
 
@@ -65,7 +66,7 @@ test('.aidrian.json fails on an unknown key, and still uses its dir', (t) => {
   const dir = tempDir(t);
   writeFileSync(path.join(dir, '.aidrian.json'), JSON.stringify({ dir: 'harness', sources: [] }));
   const project = findProject(dir);
-  assert.deepEqual([project.dir, project.errors], ['harness', ['.aidrian.json: unknown key "sources"']]);
+  assert.deepEqual([project.dir, project.errors, project.unreadable], ['harness', ['.aidrian.json: unknown key "sources"'], []]);
 });
 
 test('.aidrian.local.json adds sources after the project folder: ~ is the home folder, other paths start at the project', (t) => {
@@ -155,6 +156,7 @@ for (const [name, text, expected, kept] of localCases) {
     assert.equal(project.errors.length, 1, project.errors.join('\n'));
     assert.match(project.errors[0], expected);
     assert.equal(project.sources.length, 1 + kept);
+    assert.deepEqual(project.unreadable, name === 'invalid JSON' ? ['.aidrian.local.json'] : [], 'only a file that cannot be read is not in force');
   });
 }
 

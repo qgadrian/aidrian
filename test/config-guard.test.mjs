@@ -57,6 +57,14 @@ test('a subagent may not change a file that sets the gates, with any write tool 
       'git mv .aidrian/config.json old.json',
       `cd src && echo x > ${dir}/.aidrian.local.json`,
       `echo "$(echo x > ${spelled}/.aidrian.json)"`,
+      // A `cd` to a named folder is followed, and one that fails leaves the shell where it was.
+      'cd .aidrian && echo {} > config.json',
+      'cd src; cd ../.aidrian && rm config.json',
+      'cd /nonexistent; echo {} > .aidrian/config.json',
+      'pushd .aidrian && sed -i "" s/deny/allow/ config.json',
+      // The command line of `sh -c` is read as this one is.
+      "bash -c 'echo {} > .aidrian/config.json'",
+      `sh -c "cd ${dir}/.aidrian && rm config.json"`,
     ].map((command) => ['Bash', { command }]),
   ];
   for (const [tool, toolInput] of blocked) {
@@ -86,8 +94,13 @@ test('a subagent may still read those files and write anything else, and the mai
       'cp notes.md .aidrian/knowledge/',
       'cp notes.md .',
       `cp notes.md ${dir}`,
-      // A relative path after `cd` is not certain, so the main-checkout rule's reading leaves it out too.
-      'cd .aidrian && echo x > config.json',
+      'cd src && echo x > notes.md',
+      'cd "$TMPDIR" && echo x > notes.md',
+      "bash -c 'echo x > notes.md'",
+      'python3 -c "print(1)"',
+      "node -e \"require('fs').writeFileSync('tsconfig.json', '{}')\"",
+      "python3 -c \"open('.aidrian/knowledge/notes.md', 'w').write('x')\"",
+      'python3 -m json.tool .aidrian/config.json',
     ].map((command) => ['Bash', { command }]),
   ];
   for (const [tool, toolInput] of allowed) assert.equal(verdict(dir, subagent(dir, tool, toolInput)), null, `${tool} ${JSON.stringify(toolInput)}`);
@@ -95,6 +108,31 @@ test('a subagent may still read those files and write anything else, and the mai
   const main = { tool_name: 'Edit', tool_input: { file_path: '.aidrian/config.json' }, cwd: dir };
   assert.equal(verdict(dir, main), null, 'the main session');
   assert.equal(verdict(dir, { ...main, agent_type: 'aidrian:explorer' }), null, 'a session started with --agent is the main session');
+});
+
+test('a write to an unknown folder, or code an interpreter runs, is judged by the names it holds', (t) => {
+  const { dir } = project(t);
+  const reasonOf = (command) => verdict(dir, subagent(dir, 'Bash', { command }));
+  for (const [command, file] of [
+    ['cd "$DIR" && echo {} > config.json', '.aidrian/config.json'],
+    ['cd && echo x > ../.aidrian.local.json', '.aidrian.local.json'],
+    ['python3 -c "open(\'.aidrian/config.json\', \'w\').write(\'{\')"', '.aidrian/config.json'],
+    ['python3 -Bc "import os; os.chdir(\'.aidrian\'); open(\'config.json\', \'w\')"', '.aidrian/config.json'],
+    ['python3 -c "import shutil; shutil.rmtree(\'.aidrian/\')"', '.aidrian/config.json'],
+    ['python3 -c "import sys; open(sys.argv[1], \'w\')" .aidrian.json', '.aidrian.json'],
+    ['node -e "require(\'fs\').writeFileSync(\'.aidrian.local.json\', \'{}\')"', '.aidrian.local.json'],
+    ['node --eval="require(\'fs\').rmSync(\'.aidrian/config.json\')"', '.aidrian/config.json'],
+    ['perl -i -pe "s/deny/allow/" .aidrian/config.json', '.aidrian/config.json'],
+    ['ruby -e "File.write(\'.aidrian/config.json\', \'{}\')"', '.aidrian/config.json'],
+    ["python3 - <<'EOF'\nopen('.aidrian/config.json', 'w').write('{')\nEOF", '.aidrian/config.json'],
+    ["bash -c 'python3 -c \"open(\\\".aidrian/config.json\\\", \\\"w\\\")\"'", '.aidrian/config.json'],
+  ]) {
+    assert.match(reasonOf(command) ?? '', new RegExp(`^aidrian: Bash is blocked .* it may change ${file.replaceAll('.', '\\.')}, which sets`), command);
+  }
+  // A `cd` may fail, so the folder before it still counts, and there the target is certain.
+  for (const command of ['cd .aidrian && echo {} > config.json', 'cd - && rm -rf .aidrian']) {
+    assert.match(reasonOf(command), / it changes \.aidrian\/config\.json,/, command);
+  }
 });
 
 test('a project folder that .aidrian.json moves is guarded where it is, and so is the default one it falls back to', (t) => {

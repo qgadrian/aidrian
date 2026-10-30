@@ -110,12 +110,16 @@ export function dispatchRow(input, { env = process.env, now = Date.now() } = {})
 }
 
 // The paths a subagent's last message presents as delivered, and those of them that exist nowhere: { claims, missing }.
-// The stop hook sends the agent back once when `missing` is not empty, whether or not telemetry is on.
 export function checkDelivery(input, project) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : project.root;
   const claims = claimedPaths(input.last_assistant_message);
   return { claims, missing: missingPaths(claims, cwd) };
 }
+
+// Whether the stop hook sends the subagent back, whether or not telemetry is on: a path is `missing`, and the host marks
+// this stop as a first one with `stop_hook_active: false`. The stop that a send-back caused, and a payload without the
+// field, always end.
+export const sendsBack = (input, delivery) => delivery.missing.length > 0 && input.stop_hook_active === false;
 
 // Which subagent stopped, as its `stop` row names it: { session_id, agent_id, agent_type }.
 export function stopAgent(input) {
@@ -137,8 +141,8 @@ export function denyRow(input, rule, match, { env = process.env, now = Date.now(
 }
 
 // SubagentStop: the subagent's tokens, cost, API requests and tool calls, the knowledge docs it read with their sizes, and
-// its delivery check, over the requests it made itself (ownRequests). `docReads: false` (config.json `telemetry.docReads`)
-// records `docs_read: null`.
+// its delivery check with whether it sent the subagent back, over the requests it made itself (ownRequests).
+// `docReads: false` (config.json `telemetry.docReads`) records `docs_read: null`.
 export function stopRow(input, project, { now = Date.now(), docReads = true, delivery = checkDelivery(input, project) } = {}) {
   const transcript = typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
   const own = transcript ? ownRequests(input) : undefined;
@@ -158,6 +162,7 @@ export function stopRow(input, project, { now = Date.now(), docReads = true, del
     docs_read: !docReads ? null : transcript ? knowledgeDocsRead(filesRead(transcript, own), project) : [],
     delivered: missing.length ? 'missing' : claims.length ? 'file' : 'chat',
     paths: claims,
+    sent_back: sendsBack(input, delivery),
   };
 }
 
@@ -270,18 +275,32 @@ const median = (values) => {
 const round = (value, places = 2) => Math.round(value * 10 ** places) / 10 ** places;
 const sum = (rows, valueOf) => rows.reduce((total, row) => total + (valueOf(row) ?? 0), 0);
 
-// Aggregates rows newer than `sinceMs`. A stop row repeats when its agent was sent back; the last one counts, and any
-// `missing` row of the agent counts it as sent back. A run is one subagent that stopped. The averages of docs read leave
-// out the runs logged with doc reads off; those of bytes read, also the runs whose docs were logged before sizes; tool
-// calls per request, the runs logged before tool counts, which `runs_without_tool_counts` counts.
+// Whether each run among `stops` was sent back by the delivery check: true, false, or null for unknown, keyed by
+// agent_id. A stop row without an agent_id is a run of its own, so it is its own key here as in latestRows. A row says
+// so in `sent_back`; a row from before that field is unknown when its `delivered` is `missing`, and was never sent back
+// otherwise. A run is sent back when any of its rows was, else unknown when any is.
+function sendBackStates(stops) {
+  const runs = new Map();
+  for (const row of stops) {
+    const key = row.agent_id ?? row;
+    const states = [runs.get(key), typeof row.sent_back === 'boolean' ? row.sent_back : row.delivered === 'missing' ? null : false];
+    runs.set(key, states.includes(true) ? true : states.includes(null) ? null : false);
+  }
+  return runs;
+}
+
+// Aggregates rows newer than `sinceMs`. A stop row repeats when its agent was sent back; the last one counts. A run is
+// one subagent that stopped. The share sent back leaves out the runs whose send-back is unknown (sendBackStates), which
+// `runs_without_send_back` counts; the averages of docs read, the runs logged with doc reads off; those of bytes read,
+// also the runs whose docs were logged before sizes; tool calls per request, the runs logged before tool counts, which
+// `runs_without_tool_counts` counts.
 export function summarize(rows, { sinceMs = 0 } = {}) {
   const fresh = rows.filter((row) => Date.parse(row.ts) >= sinceMs && ['dispatch', 'stop', 'session'].includes(row.event));
   const dispatches = fresh.filter((row) => row.event === 'dispatch');
   const stops = latest(fresh, 'stop', 'agent_id');
   const sessions = latest(fresh, 'session', 'session_id');
   const dispatched = new Set(dispatches.map((row) => row.agent_id).filter(Boolean));
-  // A stop row without an agent_id is a run of its own, so it is its own key here as in latestRows.
-  const sentBack = new Set(fresh.filter((row) => row.event === 'stop' && row.delivered === 'missing').map((row) => row.agent_id ?? row));
+  const sentBack = sendBackStates(fresh.filter((row) => row.event === 'stop'));
   const types = [...new Set([...dispatches, ...stops].map((row) => row.agent_type))].sort();
   const agents = types.map((type) => {
     const sent = dispatches.filter((row) => row.agent_type === type);
@@ -295,7 +314,8 @@ export function summarize(rows, { sinceMs = 0 } = {}) {
     const cost = sum(done, (row) => row.cost_usd);
     const toolRequests = sum(counted, (row) => row.tool_requests);
     const toolCalls = sum(counted, (row) => row.tool_calls);
-    const failed = done.filter((row) => sentBack.has(row.agent_id ?? row)).length;
+    const known = done.filter((row) => sentBack.get(row.agent_id ?? row) !== null);
+    const failed = known.filter((row) => sentBack.get(row.agent_id ?? row)).length;
     return {
       agent_type: type,
       dispatches: sent.length,
@@ -308,7 +328,8 @@ export function summarize(rows, { sinceMs = 0 } = {}) {
       runs: done.length,
       cost_per_run_usd: done.length ? round(cost / done.length) : null,
       sent_back: failed,
-      sent_back_rate: done.length ? round(failed / done.length) : null,
+      sent_back_rate: known.length ? round(failed / known.length) : null,
+      runs_without_send_back: done.length - known.length,
       avg_docs_read: withDocs.length ? round(sum(withDocs, (row) => row.docs_read.length) / withDocs.length, 1) : null,
       avg_doc_bytes: sized.length ? Math.round(sum(sized, (row) => sum(docsRead(row), (doc) => doc.bytes)) / sized.length) : null,
       requests: sum(counted, (row) => row.requests),
@@ -357,13 +378,15 @@ export function summarizeDenies(rows, { sinceMs = 0 } = {}) {
   };
 }
 
-// What a report over `rows` cannot see: { enabled, doc_reads, hook_denies, rows_without_doc_reads, rotated_out_before }.
-// `enabled`, `doc_reads`, and `hook_denies` are the switches now. `rows_without_doc_reads` counts the stop and session rows since
-// `sinceMs` written while doc reads were off. `rotated_out_before` is the oldest row's time when rotation dropped older
-// rows and the window starts before it; else null. A time telemetry was off leaves no rows, so no report can see it.
+// What a report over `rows` cannot see: { enabled, doc_reads, hook_denies, rows_without_doc_reads, runs_without_send_back,
+// rotated_out_before }. `enabled`, `doc_reads`, and `hook_denies` are the switches now. `rows_without_doc_reads` counts
+// the stop and session rows since `sinceMs` written while doc reads were off; `runs_without_send_back`, the runs since
+// then whose send-back is unknown (sendBackStates). `rotated_out_before` is the oldest row's time when rotation dropped
+// older rows and the window starts before it; else null. A time telemetry was off leaves no rows, so no report can see it.
 export function coverage(rows, config, { sinceMs = 0 } = {}) {
   const fresh = rows.filter((row) => Date.parse(row.ts) >= sinceMs);
   const counted = [...latest(fresh, 'stop', 'agent_id'), ...latest(fresh, 'session', 'session_id')];
+  const sendBacks = sendBackStates(fresh.filter((row) => row.event === 'stop'));
   const oldest = rows.reduce((min, row) => Math.min(min, Date.parse(row.ts) || Infinity), Infinity);
   const lost = rows.some((row) => row.event === 'rotate' && row.dropped === true);
   return {
@@ -371,13 +394,15 @@ export function coverage(rows, config, { sinceMs = 0 } = {}) {
     doc_reads: config.telemetry.docReads,
     hook_denies: config.telemetry.hookDenies,
     rows_without_doc_reads: counted.filter((row) => row.docs_read === null).length,
+    runs_without_send_back: [...sendBacks.values()].filter((state) => state === null).length,
     rotated_out_before: lost && oldest > sinceMs && oldest !== Infinity ? new Date(oldest).toISOString() : null,
   };
 }
 
 // The lines that tell a reader the report is incomplete, and why. `docReads: false` leaves out the doc-read lines, for a
-// view that shows no doc reads; `hookDenies: true` adds the hook-deny line, for the view that shows them.
-export function coverageLines(cover, { docReads = true, hookDenies = false } = {}) {
+// view that shows no doc reads; `hookDenies: true` adds the hook-deny line, and `sendBacks: true` the send-back line, for
+// the view that shows them.
+export function coverageLines(cover, { docReads = true, hookDenies = false, sendBacks = false } = {}) {
   const lines = [];
   if (!cover.enabled) lines.push('Telemetry is off (telemetry.enabled is false): the hooks write no rows, so this shows only older ones.');
   else {
@@ -386,6 +411,12 @@ export function coverageLines(cover, { docReads = true, hookDenies = false } = {
   }
   if (docReads && cover.rows_without_doc_reads) {
     lines.push(`Partial: ${cover.rows_without_doc_reads} agent and session rows in the window were written with doc reads off.`);
+  }
+  if (sendBacks && cover.runs_without_send_back) {
+    lines.push(
+      `Partial: ${cover.runs_without_send_back} agent runs named a missing file before stop rows recorded send-backs; ` +
+        'the share sent back leaves them out.',
+    );
   }
   if (cover.rotated_out_before) {
     lines.push(`Partial: the log starts at ${cover.rotated_out_before}; older rows were rotated out at telemetry.maxMb.`);
@@ -580,7 +611,7 @@ export const commands = {
         return 0;
       }
       const summary = summarize(rows, { sinceMs });
-      const text = () => formatReport(summary, { file, since, skipped, notes: coverageLines(cover, { hookDenies: true }) });
+      const text = () => formatReport(summary, { file, since, skipped, notes: coverageLines(cover, { hookDenies: true, sendBacks: true }) });
       if (values.prs !== undefined) {
         // The alias the reviews view grew from: the default view, then the reviews of the last N merged pull requests.
         const { formatReviews, reviewRounds } = await import('./report-reviews.mjs');

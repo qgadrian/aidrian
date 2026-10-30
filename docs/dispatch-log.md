@@ -35,14 +35,16 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | `docs_read` | The knowledge docs it opened with the Read tool, as `{ "path", "bytes" }`: the path the index gives, and the doc's size. `null` while `telemetry.docReads` is off. |
 | `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not, `chat` when it presents none. |
 | `paths` | Those paths, at most 20. |
+| `sent_back` | `true` when the hook sent the subagent back at this stop, `false` when it let it end. A row written before the field has none. |
 
 A forked subagent's transcript starts with a copy of its parent's requests, and those stay the parent's:
 their tokens and Read calls count on the main conversation's `session` row, or on the `stop` row of the subagent
 that the `.meta.json` beside the transcript names as `parentAgentId`. Each request counts once.
 
-When `delivered` is `missing`, the hook sends the subagent back once:
-it is told which paths do not exist, and either writes them, corrects its report, or says it removed them on purpose.
-Its second stop always ends, and writes a second `stop` row; the report counts the last one.
+When `delivered` is `missing` and Claude Code marks the stop as a first one (`stop_hook_active: false`), the hook sends
+the subagent back once: it is told which paths do not exist, and either writes them, corrects its report, or says it
+removed them on purpose. Its second stop always ends, and writes a second `stop` row; the report counts the last one.
+A stop that ends with `delivered: missing`, such as that second one, has `sent_back: false`.
 
 ### `session`: when a session ends
 
@@ -110,7 +112,8 @@ Hook denies: 6 in 2 sessions
 - **cost**: the sum of the agent type's `stop` rows. The session total already includes it; do not add them.
 - **delivered**: how the agents' reports turned out: files that exist, chat only, or a named file that did not exist.
 - **runs**: the subagents of that type that stopped, and the cost of each on average.
-- **sent back by the delivery check**: the share of runs with any `stop` row whose `delivered` is `missing`.
+- **sent back by the delivery check**: the share of runs with any `stop` row whose `sent_back` is `true`.
+  A run that named a missing file before rows recorded `sent_back` is unknown: the share leaves it out, and a `Partial:` line counts it.
   `delivered` counts each run's last row, so a run that wrote the file on its second try shows there as `file`.
 - **tool calls per request that made one**: as in [Sessions](#sessions), over the runs' own requests.
 - **docs read**: how many knowledge docs a run opened, and their bytes, on average, then the five that agent type opened most.
@@ -177,6 +180,7 @@ Partial: the log starts at 2026-10-27T09:12:44.000Z; older rows were rotated out
 | Doc reads are off | `doc_reads: false` | The same for `telemetry.docReads`. |
 | Hook denies are off | `hook_denies: false` | The same for `telemetry.hookDenies`; only the default view says it. |
 | Partial: rows written with doc reads off | `rows_without_doc_reads` | Agent and session rows in the window that hold `docs_read: null`. |
+| Partial: runs named a missing file before stop rows recorded send-backs | `runs_without_send_back` | Agent runs in the window with a `stop` row whose `delivered` is `missing` and that has no `sent_back`; only the default view says it. |
 | Partial: the log starts at | `rotated_out_before` | Rotation dropped rows, and the window starts before the oldest row left. |
 
 The default view also says `Partial: N agent runs were logged before tool counts` when some `stop` rows have no tool counts:

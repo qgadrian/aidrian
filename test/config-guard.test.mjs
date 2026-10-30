@@ -114,6 +114,11 @@ test('a subagent may still read those files and write anything else, and the mai
       "python3 - <<'EOF'\nprint(1)\nEOF\ncat .aidrian/config.json",
       "python3 - <<'EOF'\nopen('notes.md', 'w').write('x')\nEOF\ncat .aidrian/config.json",
       "python3 <<< \"print(open('.aidrian/config.json').read())\"",
+      // The same reads with the code in the option's word, and node's `-pe`, whose code is the next word.
+      "python3 -c\"print(open('.aidrian/config.json').read())\"",
+      "python3 -Bc\"import json; print(json.load(open('.aidrian/config.json')))\"",
+      "node -pe \"require('./.aidrian/config.json').agents\"",
+      "node --print=\"require('./.aidrian/config.json').agents\"",
     ].map((command) => ['Bash', { command }]),
   ];
   for (const [tool, toolInput] of allowed) assert.equal(verdict(dir, subagent(dir, tool, toolInput)), null, `${tool} ${JSON.stringify(toolInput)}`);
@@ -150,6 +155,15 @@ test('a write to an unknown folder, or code an interpreter runs, is judged by th
     ["perl -pi.bak -e 's/deny/allow/' .aidrian/config.json", '.aidrian/config.json'],
     ['perl -e "open(my \\$f, \'>\', \'.aidrian/config.json\')"', '.aidrian/config.json'],
     ['ruby -i -pe "sub(/deny/, \'allow\')" .aidrian/config.json', '.aidrian/config.json'],
+    // Code in the same word as its option, alone or after others in a cluster.
+    ["python3 -c\"open('.aidrian/config.json','w').write('{}')\"", '.aidrian/config.json'],
+    ["python3 -Bc\"import os; os.remove('.aidrian.local.json')\"", '.aidrian.local.json'],
+    ["node -e\"require('fs').unlinkSync('.aidrian/config.json')\"", '.aidrian/config.json'],
+    ["node -p\"require('fs').rmSync('.aidrian.json')\"", '.aidrian.json'],
+    ["perl -e'unlink \".aidrian/config.json\"'", '.aidrian/config.json'],
+    ["perl -lE'unlink \".aidrian.json\"'", '.aidrian.json'],
+    ["ruby -e\"File.delete('.aidrian/config.json')\"", '.aidrian/config.json'],
+    ["ruby -we\"File.delete('.aidrian.local.json')\"", '.aidrian.local.json'],
   ]) {
     assert.match(reasonOf(command) ?? '', new RegExp(`^aidrian: Bash is blocked .* it may change ${file.replaceAll('.', '\\.')}, which sets`), command);
   }

@@ -14,7 +14,7 @@ import { projectRuleReason } from './agent-gates.mjs';
 import { isWithin } from './fs.mjs';
 import { configFiles } from './project.mjs';
 import { bashWrites, canonical, toolTargets } from './rules/main-checkout.mjs';
-import { commandLines, inlineShellCommand, lexInputs, readInvocation, SUBSTITUTION_DEPTH_LIMIT } from './shell-lex.mjs';
+import { commandLines, inlineShellCommand, lexInputs, readInvocation, readShortOptions, SUBSTITUTION_DEPTH_LIMIT } from './shell-lex.mjs';
 
 const WRITE_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'apply_patch']);
 // A quoted text with no quote, backslash, `$`, or backtick in it, such as a path.
@@ -32,10 +32,11 @@ const READS = {
   node: new RegExp(String.raw`^(?:(?:const|let|var)\s+(?:fs|\{\s*readFileSync\s*\})\s*=\s*require\(\s*${FS}\s*\)|console\.log\(\s*(?:JSON\.stringify\(\s*${NODE_READ}(?:\s*,\s*(?:null|\d+))*\s*\)|${NODE_READ})\s*\)|${NODE_READ})$`, 'u'),
 };
 // Interpreters, the options that hand them code on the command line, a short one also inside a cluster, and the code
-// of theirs that only reads; perl and ruby have none, as ruby's `open('|rm x')` runs a command.
+// of theirs that only reads; perl and ruby have none, as ruby's `open('|rm x')` runs a command. node takes `-pe` as one
+// option, so its code is the next word, not `e`.
 const INTERPRETERS = [
   [/^python[\d.]*$/u, ['-c'], READS.python],
-  [/^(?:node|nodejs|bun)$/u, ['-e', '-p', '--eval', '--print'], READS.node],
+  [/^(?:node|nodejs|bun)$/u, ['-e', '-p', '-pe', '--eval', '--print'], READS.node],
   [/^perl[\d.]*$/u, ['-e', '-E'], null],
   [/^ruby[\d.]*$/u, ['-e'], null],
 ];
@@ -97,8 +98,9 @@ const wholePart = (name, after) => new RegExp(`(?<![\\w.-])${name.replace(/[.*+?
 
 // The texts to judge by the files they name, of every interpreter the command runs with code from its command line or
 // its input: its code, unless that code only reads (READS), and the rest of its words, which may name a file the code
-// changes, as `sys.argv[1]` does. Its code is the word after the option that gives it, or the heredocs and here-strings
-// fed to it, or, when none is, the whole command line, which a pipe may feed it from.
+// changes, as `sys.argv[1]` does. Its code is the rest of the word that gives it, as in `-c<code>` or `--eval=<code>`,
+// or the word after, or the heredocs and here-strings fed to it, or, when none is, the whole command line, which a pipe
+// may feed it from.
 function interpretedCode(command) {
   const found = [];
   const read = (text, depth) => {
@@ -111,13 +113,13 @@ function interpretedCode(command) {
         const [, options, reads] = INTERPRETERS.find(([program]) => program.test(invocation.program)) ?? [];
         if (!options) continue;
         const words = invocation.args.map((token) => token.text);
-        const at = words.findIndex((word) => options.some((option) => givesCode(word, option)));
+        const at = words.findIndex((word) => givenCode(word, options) !== undefined);
         let code;
         let rest = words;
         if (at >= 0) {
-          const attached = words[at].startsWith('--') && words[at].includes('=');
-          code = attached ? words[at].slice(words[at].indexOf('=') + 1) : (words[at + 1] ?? '');
-          rest = words.filter((_, j) => j !== at && (attached || j !== at + 1));
+          const attached = givenCode(words[at], options);
+          code = attached ?? words[at + 1] ?? '';
+          rest = words.filter((_, j) => j !== at && (attached !== null || j !== at + 1));
         } else if ((words.find((word) => !word.startsWith('-') || word === '-') ?? '-') === '-') {
           code = inputs[i].length ? inputs[i].join('\n') : line;
         } else continue;
@@ -136,10 +138,16 @@ function onlyReads(code, reads) {
   return statements.length > 0 && statements.every((each) => reads.test(each));
 }
 
-// Whether the word is the option, or, for a short one, a cluster of short options that holds it, as `-Bc` holds `-c`.
-function givesCode(word, option) {
-  if (option.startsWith('--')) return word === option || word.startsWith(`${option}=`);
-  return /^-[A-Za-z]+/u.test(word) && !word.startsWith('--') && word.slice(1).includes(option.slice(1));
+// The code the word gives when it is one of `options`, or, for a short one, a cluster of short options that holds it, as
+// `-Bc` holds `-c`: the rest of the word, as in `--eval=<code>`, `-c<code>`, or `-Bc<code>`, or null when the code is the
+// next word. Undefined when the word gives none.
+function givenCode(word, options) {
+  if (options.includes(word)) return null;
+  const long = options.find((option) => option.startsWith('--') && word.startsWith(`${option}=`));
+  if (long) return word.slice(long.length + 1);
+  if (!/^-[^-]/u.test(word)) return undefined;
+  const { value } = readShortOptions(word, new Set(options.filter((option) => /^-\w$/u.test(option))));
+  return value ? value.attached : undefined;
 }
 
 function blocked(input, file, verb, human) {

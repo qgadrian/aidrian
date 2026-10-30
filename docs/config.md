@@ -185,6 +185,8 @@ An entry has `deny`, `allow`, or both, each a list of tool patterns:
 `.aidrian.local.json` wins over `config.json` one list at a time.
 Its `deny` for an agent replaces the team's `deny` for that agent, and its `allow` replaces the team's `allow`.
 A developer can lift a team's `allow` list on one machine with `"allow": ["*"]`.
+An agent cannot: while `agents` sets any gate, no subagent may change config.json, `.aidrian.json`, or `.aidrian.local.json`,
+also the main checkout's when the project is a git worktree. The main session still can.
 `aidrian check` names an unknown key, a key that is not an agent name, and a pattern it cannot read, such as `Bash(git *)`.
 A bad pattern is left out and the rest of its list still applies, so a bad `allow` pattern makes the list stricter.
 `aidrian check` cannot know every agent's name, so a name that matches no agent is not an error: its entry never applies.

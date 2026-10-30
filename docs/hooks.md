@@ -85,6 +85,16 @@ A blocked call exits 2 with the rule on stderr, such as `agents.main.deny has "B
 The reason also tells the agent not to reach the same result with another tool, and to tell the human what the task needs.
 The hook runs for every tool, so a project without gates still pays for one process that finds the project, reads its config, and exits.
 
+While any gate is set, the hook also blocks a subagent that changes a file that sets the gates, so an agent cannot lift its own:
+config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout's when the project is a git worktree.
+
+- It reads writes as the [main-checkout rule](#main-checkout) does: Edit, Write, NotebookEdit, and `apply_patch` by the path they name,
+  and a Bash command by the paths it certainly writes, such as `>`, `sed -i`, `cp`, `mv`, and `rm`.
+- A write to a folder that holds one of the files, such as `rm -rf .aidrian`, counts; one to the project root, such as `cp notes.md .`, does not.
+- A call without `agent_id` is the main session's, which may still change them.
+- A write the rule cannot see, such as a relative path after `cd` or a command inside `sh -c`, still runs.
+  Like the gates, the guard is for agents that cooperate, not a sandbox.
+
 Each host tells the hook who is calling in its own way.
 
 - Claude Code, checked on version 2.1.314 with a hook that logged each call:

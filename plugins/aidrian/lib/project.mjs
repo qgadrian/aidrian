@@ -65,9 +65,10 @@ export function projectAt(start) {
 }
 
 // The project rooted at `root`, whether or not its folder exists yet:
-// { root, dir, paths, sources, localModels, localNames, localAgents, errors }.
+// { root, dir, paths, sources, checkouts, localModels, localNames, localAgents, errors }.
 // `dir` and every path are POSIX-style and relative to `root`. `sources` lists where knowledge indexes are read from:
-// the project folder first, then each local source. `localModels`, `localNames`, and `localAgents` are the `models`,
+// the project folder first, then each local source. `checkouts` is `root`, then, when it is in a git worktree, the same
+// folder in the main checkout. `localModels`, `localNames`, and `localAgents` are the `models`,
 // `names`, and `agents` values of `.aidrian.local.json`, as written; config.mjs checks them. `errors` lists the problems in the root files; a broken
 // `.aidrian.json` leaves the default folder in place, and a broken local source is left out.
 // `roots` is git's checkoutRoots for a folder in the same checkout, when the caller already asked; null outside git.
@@ -75,9 +76,18 @@ export function openProject(root, roots) {
   const errors = [];
   const dir = folderDir(root, errors);
   const paths = { config: `${dir}/config.json`, knowledge: `${dir}/knowledge`, local: LOCAL };
-  const local = readLocal(root, errors, roots);
+  const checkouts = checkoutsOf(root, roots);
+  const local = readLocal(checkouts, errors);
   const sources = [{ label: dir, base: root, index: paths.knowledge, local: false }, ...local.sources];
-  return { root, dir, paths, sources, localModels: local.models, localNames: local.names, localAgents: local.agents, errors };
+  return { root, dir, paths, sources, checkouts, localModels: local.models, localNames: local.names, localAgents: local.agents, errors };
+}
+
+// Every file that sets the project's configuration, as an absolute path, whether or not it exists yet, in each of its
+// checkouts: `.aidrian.json`, config.json in the project folder and in the default one, which a missing `.aidrian.json`
+// falls back to, and `.aidrian.local.json`.
+export function configFiles(project) {
+  const names = [OVERRIDE, project.paths.config, `${DEFAULT_DIR}/config.json`, LOCAL];
+  return [...new Set(project.checkouts.flatMap((base) => names.map((name) => path.join(base, name))))];
 }
 
 function folderDir(root, errors) {
@@ -93,14 +103,19 @@ function folderDir(root, errors) {
   return DEFAULT_DIR;
 }
 
+// `root`, then, when it is in a git worktree, the same folder in the main checkout.
+function checkoutsOf(root, roots) {
+  const main = inMainCheckout(root, roots);
+  return main && main !== realpathSync(root) ? [root, main] : [root];
+}
+
 // `.aidrian.local.json`: { sources, models, names, agents }. A git worktree has no copy of that git-ignored file, so it is read
-// from the main checkout then. Each source is a folder with its own knowledge/ and, optionally, a config.json with
-// `version`.
-function readLocal(root, errors, roots) {
+// from the main checkout then: from the first of `checkouts` that has it. Each source is a folder with its own knowledge/
+// and, optionally, a config.json with `version`.
+function readLocal(checkouts, errors) {
   const none = { sources: [], models: undefined, names: undefined, agents: undefined };
-  let holder = root;
-  if (!isFile(path.join(holder, LOCAL))) holder = inMainCheckout(root, roots);
-  if (!holder || !isFile(path.join(holder, LOCAL))) return none;
+  const holder = checkouts.find((dir) => isFile(path.join(dir, LOCAL)));
+  if (!holder) return none;
   const raw = readJson(holder, LOCAL, errors);
   if (!raw) return none;
   for (const key of Object.keys(raw)) {

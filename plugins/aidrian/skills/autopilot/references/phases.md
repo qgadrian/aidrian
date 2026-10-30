@@ -51,6 +51,7 @@ Up to three rounds, or the number the Human set at launch. Each round:
 
 2. **Specialist review.** Run the `pr-review` skill when `--full-review` is set, when this round's bot state is not
    `received` or `already_present`, or in round 1 when the branch has more than one slice, as the `orchestration` skill § 3 says.
+   Skip that round-1 run when the engine's integration review already ran `pr-review` on the current head.
    Its findings go through the `pr-review-fix` skill.
 3. **Findings.** Every finding from either skill goes through the `orchestration` skill § 4: `aidrian pr disposition` gives
    its verdict, and each `fix_now` goes to its owner, highest likelihood × impact first.

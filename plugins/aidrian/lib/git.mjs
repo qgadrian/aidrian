@@ -4,9 +4,20 @@
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
+// How long one git call may take. Hooks run git on every tool call, inside the host's hook timeout; a git that hangs, on
+// a stalled file system or an fsmonitor, is stopped and counts as git not answering. Once one call is stopped, the later
+// ones in the same process do not wait again, so a hook pays the timeout once. `options.timeout` overrides it, and 0
+// waits as long as git takes.
+export const GIT_TIMEOUT_MS = 2000;
+let stalled = null;
+
 // The raw spawn result: { status, stdout, stderr, error }. Some git commands use exit 1 as an answer, not a failure.
+// A git stopped by the timeout, and every later call that does not set its own timeout, has `status` null.
 export function runGit(args, cwd, options = {}) {
-  return spawnSync('git', args, { cwd, encoding: 'utf8', ...options });
+  if (stalled && options.timeout === undefined) return stalled;
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', timeout: GIT_TIMEOUT_MS, ...options });
+  if (result.error?.code === 'ETIMEDOUT' && options.timeout === undefined) stalled = { status: null, stdout: '', stderr: '', error: result.error };
+  return result;
 }
 
 function firstLine(args, cwd) {

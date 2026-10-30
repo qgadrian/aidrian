@@ -4,6 +4,7 @@ The plugin's hooks are in [`plugins/aidrian/hooks/hooks.json`](../plugins/aidria
 Claude Code runs them once the plugin is enabled. Codex asks you to trust them in `/hooks` after you install or update the plugin.
 
 Every hook lets the action run when it cannot read its input, so a hook never breaks a session.
+A git call a hook makes is stopped after 2 seconds and counts as git not answering; the hook's later git calls then do not wait.
 A blocking hook exits 2 and tells the agent why on stderr.
 The Bash rules, the main-checkout rule, the agent gates, and the config guard also record each block: see [Recorded blocks](#recorded-blocks).
 

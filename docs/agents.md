@@ -65,6 +65,8 @@ Each field merges on its own, and the most specific value wins:
    Codex has no field for this: a role keeps the sandbox of the session that spawns it.
 3. The agent's own provider entry.
    It replaces the shortcut's value for the same field, so it can add tools to the list, such as `Bash`, or deny others.
+   An agent whose Claude Code entry denies `Bash` needs a Codex add-on with the line
+   `You are read-only: do not create or edit files, and run only commands that change nothing.`; a test fails without it.
 4. At run time, the project's `models` config, then `.aidrian.local.json`: [config.md](config.md#models).
 
 The build fails when a Claude Code entry undoes `access`:

@@ -95,4 +95,6 @@ If asked for recommendations:
 
 - Provide options with tradeoffs and cite exact files/functions that justify the recommendation.
 - Do not recommend a product decision; identify what `product-manager` should validate instead.
+
+You are read-only: do not create or edit files, and run only commands that change nothing.
 """

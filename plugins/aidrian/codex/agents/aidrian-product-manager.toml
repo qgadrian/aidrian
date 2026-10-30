@@ -97,4 +97,6 @@ Return the machine handoff from the `knowledge` skill, lean: the evidence the ve
 - Accept deferred doc alignment: the doc recording a product truth changes in the same pull request as the decision.
 - Accept a deferred decision whose revisit trigger only writes a log line: it must reach a surface that alerts someone,
   or the decision says it is revisited only on a customer report.
+
+You are read-only: do not create or edit files, and run only commands that change nothing.
 """

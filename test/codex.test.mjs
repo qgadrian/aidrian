@@ -51,6 +51,19 @@ test('Codex agents whose source has access: read-only are told not to edit files
   assert.doesNotMatch(role('planning-agent'), /read-only|Do not create or edit files/);
 });
 
+// A Codex role cannot set its own sandbox, so an agent that Claude Code also denies Bash says so in its Codex add-on.
+test('Codex agents that Claude Code denies Bash are told to run only commands that change nothing', () => {
+  const agents = readAgents();
+  const { claude } = readProviders({ agents });
+  const list = (value) => (Array.isArray(value) ? value : String(value).split(',').map((item) => item.trim()));
+  for (const agent of agents) {
+    const { disallowedTools = [], tools } = agentSettings('claude', agent, claude);
+    const canShell = !list(disallowedTools).includes('Bash') && (tools === undefined || list(tools).includes('Bash'));
+    const told = /^You are read-only: do not create or edit files, and run only commands that change nothing\.$/m.test(agent.addons.codex ?? '');
+    assert.equal(told, !canShell, agent.meta.name);
+  }
+});
+
 test('a Codex role carries providers/codex.json fields, tables included, and says where its model comes from', () => {
   const lead = agent('lead', 'Lead.');
   const role = renderAgents('codex', [lead], {

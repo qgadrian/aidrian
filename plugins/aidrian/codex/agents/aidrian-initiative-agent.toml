@@ -41,4 +41,6 @@ What a feature-flag scaffold ticket may and may not include comes from the proje
 Load and follow the `initiative-agent` skill immediately.
 
 Read the `agent-issue-writer` skill's `references/linear.md` before deciding the Linear topology.
+
+You are read-only: do not create or edit files, and run only commands that change nothing.
 """

@@ -47,7 +47,9 @@ test('the loaded config is frozen all the way down', (t) => {
 const errorCases = [
   ['unknown top-level key', { version: 1, extra: 1 }, /: unknown key "extra"$/],
   ['the old "pr" group, now "github"', { version: 1, pr: { reviewer: 'x' } }, /: "pr" is now "github": rename the key$/],
+  ['the old "docs.alwaysBudgetBytes", now in "knowledge.budgets"', { version: 1, docs: { alwaysBudgetBytes: 1 } }, /: "docs\.alwaysBudgetBytes" is now "knowledge\.budgets\.alwaysBytes": rename the key$/],
   ['unknown key in a group', { version: 1, github: { reviewers: 'x' } }, /: unknown key "github\.reviewers"$/],
+  ['zero for a knowledge budget', { version: 1, knowledge: { budgets: { taggedDocBytes: 0 } } }, /"knowledge\.budgets\.taggedDocBytes" must be a whole number above 0$/],
   ['inherited property name as a key', JSON.parse('{"version": 1, "__proto__": {}}'), /: unknown key "__proto__"$/],
   ['string instead of a list', { version: 1, commits: { types: 'feat' } }, /"commits\.types" must be a list of non-empty strings$/],
   ['check names that are not a list', { version: 1, github: { conditionalChecks: 'db tests' } }, /"github\.conditionalChecks" must be a list of non-empty strings$/],
@@ -106,6 +108,11 @@ const errorCases = [
   ['an empty human name', { version: 1, names: { human: ' ' } }, /"names\.human" must be a non-empty string$/],
   ['an AI name that is not text', { version: 1, names: { ai: 3 } }, /"names\.ai" must be a non-empty string or null$/],
   ['an unknown key in names', { version: 1, names: { user: 'x' } }, /: unknown key "names\.user"$/],
+  ['a telemetry switch that is not true or false', { version: 1, telemetry: { enabled: 'no' } }, /"telemetry\.enabled" must be true or false$/],
+  ['zero for telemetry.maxMb', { version: 1, telemetry: { maxMb: 0 } }, /"telemetry\.maxMb" must be a whole number above 0$/],
+  ['the old "telemetry.doc_reads", now "telemetry.docReads"', { version: 1, telemetry: { doc_reads: false } }, /: "telemetry\.doc_reads" is now "telemetry\.docReads": rename the key$/],
+  ['the old "telemetry.hook_denies", now "telemetry.hookDenies"', { version: 1, telemetry: { hook_denies: false } }, /: "telemetry\.hook_denies" is now "telemetry\.hookDenies": rename the key$/],
+  ['the old "telemetry.max_mb", now "telemetry.maxMb"', { version: 1, telemetry: { max_mb: 5 } }, /: "telemetry\.max_mb" is now "telemetry\.maxMb": rename the key$/],
   ['agents that is not an object', { version: 1, agents: ['explorer'] }, /"agents" must be an object$/],
   ['an agent name with a space', { version: 1, agents: { 'code reviewer': { deny: ['Bash'] } } }, /"agents\.code reviewer": an agent name is/],
   ['agent gates that are not an object', { version: 1, agents: { explorer: ['Bash'] } }, /"agents\.explorer" must be an object with "deny", "allow", or both$/],
@@ -182,6 +189,21 @@ test('names: "the Human" and the host\'s name by default; .aidrian.local.json wi
   assert.deepEqual(loadConfig(findProject(team.root)).errors, ['.aidrian.local.json: "names" must be an object']);
   writeFileSync(local, JSON.stringify({ names: { ai: null } }));
   assert.deepEqual(loadConfig(findProject(team.root)).config.names, { human: 'the team lead', ai: null });
+});
+
+test('telemetry: on, with doc reads, hook denies, and 20 MB by default; .aidrian.local.json wins one key at a time', (t) => {
+  assert.deepEqual(DEFAULTS.telemetry, { enabled: true, docReads: true, hookDenies: true, maxMb: 20 });
+  const team = project(t, { version: 1, telemetry: { docReads: false, maxMb: 5 } });
+  assert.deepEqual(loadConfig(team).config.telemetry, { enabled: true, docReads: false, hookDenies: true, maxMb: 5 });
+  const local = path.join(team.root, '.aidrian.local.json');
+  writeFileSync(local, JSON.stringify({ telemetry: { enabled: false, maxMb: 0 } }));
+  const { config, errors } = loadConfig(findProject(team.root));
+  assert.deepEqual(errors, ['.aidrian.local.json: "telemetry.maxMb" must be a whole number above 0']);
+  assert.deepEqual(config.telemetry, { enabled: false, docReads: false, hookDenies: true, maxMb: 5 });
+  writeFileSync(local, JSON.stringify({ telemetry: true }));
+  assert.deepEqual(loadConfig(findProject(team.root)).errors, ['.aidrian.local.json: "telemetry" must be an object']);
+  writeFileSync(local, JSON.stringify({ telemetry: { doc_reads: true } }));
+  assert.deepEqual(loadConfig(findProject(team.root)).errors, ['.aidrian.local.json: "telemetry.doc_reads" is now "telemetry.docReads": rename the key']);
 });
 
 test('agents: no gates by default; .aidrian.local.json wins over config.json one list at a time, and a bad pattern is left out', (t) => {

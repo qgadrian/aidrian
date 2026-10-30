@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -33,7 +33,33 @@ test('check passes on a copy of the example consumer in its own repository', (t)
   const { status, stdout, stderr } = run(['check'], path.join(dir, 'docs'));
   assert.deepEqual([status, ok(stdout), stderr], [0, 'ok: .aidrian (2 buckets, 8 docs)', '']);
   assert.match(stateLine(stdout), STATE);
-  assert.equal(stdout.split('\n').length, 3);
+  assert.match(stdout.split('\n')[2], /^budget: \d+ of 16384 always-doc bytes \(engineering \d+, product 0\)$/);
+  assert.equal(stdout.split('\n').length, 4);
+});
+
+test('check warns past the knowledge budgets, and fails when the always docs pass twice theirs', (t) => {
+  const dir = exampleRepo(t);
+  const bytes = (doc) => statSync(path.join(dir, 'docs/knowledge', doc)).size;
+  const always = bytes('engineering/working-agreement.md');
+  // branches-and-reviews.md is the largest tagged doc of the example, so it is the only one over this limit.
+  const largest = bytes('engineering/branches-and-reviews.md');
+  const check = (budgets) => {
+    writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, knowledge: { budgets } }));
+    return run(['check'], dir);
+  };
+  const warned = check({ alwaysBytes: always - 1, taggedDocBytes: largest - 1 });
+  assert.equal(warned.status, 0);
+  assert.match(warned.stdout, new RegExp(`\nbudget: ${always} of ${always - 1} always-doc bytes \\(engineering ${always}, product 0\\)\n$`));
+  assert.deepEqual(warned.stderr.split('\n'), [
+    `warning: always docs: ${always} bytes, over knowledge.budgets.alwaysBytes (${always - 1}); every session and subagent reads them: ` +
+      'keep one or two short docs, and move the rest behind tags or to search',
+    `warning: docs/knowledge/engineering/branches-and-reviews.md: ${largest} bytes, over knowledge.budgets.taggedDocBytes (${largest - 1}); ` +
+      'every route to orchestration, review reads it whole: split it into a short rule card and a reference, or drop its tags so only search finds it',
+    '',
+  ]);
+  const failed = check({ alwaysBytes: Math.floor((always - 1) / 2) });
+  assert.deepEqual([failed.status, failed.stdout], [1, '']);
+  assert.match(failed.stderr, new RegExp(`^always docs: ${always} bytes, over twice knowledge\\.budgets\\.alwaysBytes \\(${Math.floor((always - 1) / 2)}\\); `));
 });
 
 test('state prints the state folder, with or without a project folder', (t) => {

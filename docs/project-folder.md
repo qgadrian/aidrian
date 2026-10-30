@@ -12,7 +12,7 @@ Task worktrees go in `.worktrees/` at the repository root, which git ignores.
 
 ```text
 .aidrian.json                    names another folder as the project folder (optional, committed)
-.aidrian.local.json              adds knowledge sources, model choices, names, and agent gates on one machine (optional, git-ignored)
+.aidrian.local.json              adds knowledge sources, model choices, names, telemetry settings, and agent gates on one machine (optional, git-ignored)
 .worktrees/                      task worktrees, one folder per branch (git-ignored)
 .aidrian/
 ├── config.json                  the folder version and the project settings (committed)
@@ -95,7 +95,7 @@ Elsewhere, run it by its path, such as `path/to/aidrian-harness/plugins/aidrian/
   A `SKILL.md` of 8,000 bytes or more fails, because Codex cuts it there; one above 7,500 bytes passes with a warning.
 - `agents`: each `.claude/agents/*.md` has `name` equal to its file name, such a `description`, and a known `model` and `effort`.
 - `paths`: no tracked file holds a personal home folder such as `/Users/<name>/`; `--staged` checks the staged files only, as the index holds them.
-- `budget`: the `always` knowledge docs, read at every session start, fit in `docs.alwaysBudgetBytes`. It prints the bytes per bucket.
+- `budget`: the [knowledge budgets](config.md#knowledge-budgets) that `aidrian check` also holds. It prints the `always` bytes per bucket.
 
 `aidrian lint skills <folder>` and `aidrian lint agents <folder>` check other folders.
 
@@ -112,7 +112,8 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── reviews/              review manifests, and the agents the specialist-review skill keeps warm
 ├── lessons/inbox.jsonl   the lesson inbox
 ├── tmp/                  pull request bodies and review comments that skills draft
-└── dispatch-log.jsonl    the dispatch log
+├── dispatch-log.jsonl    the dispatch log
+└── dispatch-log.1.jsonl  its rotated part, once the log reaches config.json telemetry.maxMb
 ```
 
 - `$XDG_STATE_HOME` defaults to `~/.local/state`.
@@ -154,7 +155,7 @@ without committing it. List the folders in `.aidrian.local.json` at the project 
 
 `aidrian init` adds the file to `.gitignore`, so it stays on one machine. In a git worktree, the plugin reads it from the main checkout.
 The same file can hold one developer's model and effort choices for the plugin's agents, [config.md](config.md#models),
-and the [names](config.md#names) agents use for that developer and for themselves.
+the [names](config.md#names) agents use for that developer and for themselves, and the [telemetry](config.md#telemetry) settings.
 
 - A leading `~` is the home folder. Any other relative path starts at the folder that holds `.aidrian.local.json`.
 - Each source is a folder with the project folder's knowledge layout: `knowledge/<bucket-id>.json`, and optionally a `config.json`

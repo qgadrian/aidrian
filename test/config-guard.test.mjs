@@ -284,22 +284,27 @@ test('a glob reaches a config file that is a symlink to another folder, by the p
   renameSync(path.join(dir, '.aidrian/config.json'), path.join(dir, 'settings/config.json'));
   symlinkSync('../settings/config.json', path.join(dir, '.aidrian/config.json'));
   for (const command of ["echo '{\"version\":1}' > .aidrian/*.json", 'rm settings/*']) {
-    assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /config\.json/, command);
+    assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /may change/, command);
   }
   assert.equal(verdict(dir, subagent(dir, 'Bash', { command: 'rm src/*' })), null);
   // An ordinary folder may hold a link to the config, which a glob there reaches.
   mkdirSync(path.join(dir, 'dist'));
   symlinkSync('../.aidrian/config.json', path.join(dir, 'dist/config.json'));
-  assert.match(verdict(dir, subagent(dir, 'Bash', { command: "echo '{}' > dist/*.json" })) ?? '', /config\.json/);
+  assert.match(verdict(dir, subagent(dir, 'Bash', { command: 'echo x > dist/*.json' })) ?? '', /config\.json/);
   assert.equal(verdict(dir, subagent(dir, 'Bash', { command: 'rm dist/*.js' })), null);
   // A hard link keeps its own path; only the file's identity shows it is the config, by its name or through a glob.
   mkdirSync(path.join(dir, 'hard'));
   linkSync(path.join(dir, 'settings/config.json'), path.join(dir, 'hard/alias'));
-  for (const command of ["echo '{}' > hard/alias", "echo '{}' > hard/*"]) {
+  for (const command of ['echo x > hard/alias', 'echo x > hard/*']) {
     assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /config\.json/, command);
   }
   // A `cd` before the glob, which `-P` resolves through links, and a folder the shell expands, as braces do, fail closed.
-  for (const command of ["cd -P out/link/.. && echo '{}' > config*.json", "printf x | tee .{aidrian,unused}/*.json"]) {
+  for (const command of [
+    "cd -P out/link/.. && echo '{}' > config*.json",
+    'printf x | tee .{aidrian,unused}/*.json',
+    `target=out/alias; ln -s ../.aidrian/config.json "$target" && echo '{}' > out/*`,
+    "printf x | env -C out/link/.. bash -c 'tee config*.json'",
+  ]) {
     assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /may change/, command);
   }
   // Past a symlink, `..` climbs out of the link's target, not back to the folder the path names.

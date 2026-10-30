@@ -63,7 +63,7 @@ export function configWriteDenial(input, project, { names: { human } }, { also =
   }
   // A glob reaches a file by the path it is spelled with, which a symlink may place in another folder than its target.
   const spelled = [...configFiles(project), ...also].map((file, i) => [path.resolve(file), files[i]]);
-  const named = namedFile(names, files, project, guarded) ?? globbedFile(globs, spelled, targets.length + names.length + globs.length > 1, typeof input.cwd === 'string' ? input.cwd : process.cwd());
+  const named = namedFile(names, files, project, guarded) ?? globbedFile(globs, spelled, targets.length + names.length + globs.length > 1, input.tool_input?.command ?? '');
   return named ? blocked(input, shown(named), 'may change', human) : null;
 }
 
@@ -103,21 +103,22 @@ function namedFile(names, files, project, also) {
 // folder is known, only files inside it count, so `rm -rf dist/*` changes nothing guarded; when a glob or an unknown `cd`
 // leaves the folder unknown, any file's name or folder counts: failing closed.
 // `files` pairs each guarded file's spelled path with its canonical one; either may match, and the canonical is returned.
-// `others` says the call has another write, a glob or not. It may create a link, in the glob's folder or above it, that
-// the glob then follows after the disk was read; so the folder is trusted only for the call's one write.
-function globbedFile(globs, files, others = true, cwd = null) {
+// `others` says the call has another write, a glob or not, which may create a link, in the glob's folder or above it,
+// that the glob then follows after the disk was read; `command` is the call's whole command line.
+function globbedFile(globs, files, others = true, command = '') {
+  // The glob's folder is trusted only in one simple command the lexer reads exactly: a plain file tool, plain words, no
+  // `..`. A `cd`, a wrapper (`env -C`), a variable, braces, quotes, or a second command may each move or hide what the
+  // glob reaches, and every such shape is judged by name instead: failing closed.
+  const simple =
+    !others && SIMPLE_COMMAND.test(command) && !command.split(/[\s/]+/u).includes('..');
   const regex = (glob) =>
     new RegExp(`^${glob.split(/([*?])/u).map((part) => ({ '*': '.*', '?': '.' })[part] ?? part.replace(/[.+^${}()|[\]\\]/gu, '\\$&')).join('')}$`, 'u');
   return files.find((pair) => pair.some((file) => globs.some(({ text, dirs = [], unsure = true }) => {
     const parts = text.replace(/\/+$/u, '').split('/');
     const pattern = regex(parts.pop());
     const head = parts.join('/') || (text.startsWith('/') ? '/' : '.');
-    // The folder is trusted only as a plain path from where the call started: no `cd` before it, which may follow links
-    // (`cd -P`), and no part the shell expands or resolves differently, such as braces, `~`, or a `..` after a symlink.
-    const plain = /^[\w./-]*$/u.test(head) && !parts.includes('..') && dirs.length === 1 && dirs[0] === cwd;
-    if (unsure || !plain) return pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file)));
+    if (unsure || !simple || /[*?[]/u.test(head)) return pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file)));
     const folders = path.isAbsolute(head) ? [head] : dirs.map((dir) => path.resolve(dir, head));
-    if (others) return pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file)));
     return folders.some((folder) =>
       [folder, canonical(folder)].some((dir) => isWithin(dir, file) && pattern.test(path.relative(dir, file).split(path.sep)[0])) ||
       // An entry the glob matches may be a symlink to the file from any folder, which a write follows.
@@ -134,6 +135,8 @@ function sameFile(a, b) {
     return false;
   }
 }
+
+const SIMPLE_COMMAND = /^\s*(?:rm|cp|mv|touch|truncate|tee|echo|printf|cat|mkdir)(?:\s+[\w./*?=>-]+)*\s*$/u;
 
 // A folder's entry names, or none when it cannot be read.
 function entries(folder) {

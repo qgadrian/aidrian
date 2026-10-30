@@ -41,6 +41,7 @@ plugins/aidrian/
     ├── agents/aidrian-*.toml       generated from agents/*.md; never edit
     └── install-agents.mjs          copies those roles into ~/.codex/agents
 scripts/build.mjs                   generates codex/agents
+scripts/version.mjs                 raises the plugin version (npm run bump) and checks it
 examples/consumer/                  a small project that uses the plugin
 docs/project-folder.md              the project folder: structure, location, version, checks
 docs/config.md                      the project config file, .aidrian/config.json
@@ -70,7 +71,8 @@ npm run build    # after editing plugins/aidrian/agents/*.md
 npm run check    # what CI runs
 ```
 
-`npm run check` fails when the generated Codex agents are stale, when the example's project folder is invalid, or when a test fails.
+`npm run check` fails when the generated Codex agents are stale, when the example's project folder is invalid, when a test fails,
+or when the plugin changed without a version bump ([Contributing](#contributing)).
 The tests also check that both manifests agree, that every agent preloads the `knowledge` skill,
 that agents only ask for tags the `knowledge` skill lists, and that no project-specific path leaks into the plugin.
 No tracked file may name a person; the owner's GitHub name appears only in the install steps and the manifests' repository URLs.
@@ -82,8 +84,24 @@ Claude Code validates the plugin and loads every agent, skill, and hook event,
 and Codex installs it and shows every skill and agent in a project session. Neither check runs a model.
 `make` lists the same tasks.
 
+## Contributing
+
 Users receive a change only after the version changes.
-Bump `version` in both `plugins/aidrian/.claude-plugin/plugin.json` and `plugins/aidrian/plugin.json`; a test fails if they differ.
+A branch that changes anything under `plugins/aidrian/` raises the version before it merges:
+
+```sh
+npm run bump           # 0.3.0 -> 0.3.1, for a fix
+npm run bump minor     # 0.3.0 -> 0.4.0, for a new feature
+npm run bump major     # 0.3.0 -> 1.0.0, for a change a project must adapt to
+```
+
+`npm run bump` writes the new version to every file that carries it: both plugin manifests, `package.json`, and `package-lock.json`.
+`npm run check` fails when those files disagree, and when the branch changes `plugins/aidrian/` without a version above `origin/main`'s.
+Changes only to docs, tests, examples, or `scripts/` need no bump: they live outside the plugin.
+Without `origin/main`, or on `main` itself, the comparison with main is skipped.
+
+Two open branches that both bump the version conflict on the version lines.
+To resolve the conflict, take main's version in every conflicted file, then run `npm run bump` again with the same level.
 
 ## Install
 

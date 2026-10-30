@@ -67,6 +67,13 @@ test('Bash(prefix) in deny matches any command in the line, read past wrappers, 
   for (const command of ['git pushx', 'git status', 'echo git push', "echo 'git push'", 'git log --grep push', 'npm run publish']) {
     assert.equal(verdict(agents, mainCall('Bash', bash(command))), null, command);
   }
+  // The command line of `sh -c` and `bash -c` is read as this one is; `xargs` and `eval` are not read.
+  for (const command of ["bash -c 'git push'", 'sh -c "cd app && git push origin"', "bash -lc 'npm publish'", 'sh -c "bash -c \'git push\'"']) {
+    assert.match(verdict(agents, mainCall('Bash', bash(command))), /agents\.main\.deny has "Bash\(/, command);
+  }
+  for (const command of ["bash -c 'git status'", 'echo push | xargs git', "sh script.sh 'git push'"]) {
+    assert.equal(verdict(agents, mainCall('Bash', bash(command))), null, command);
+  }
   assert.equal(verdict(agents, mainCall('Read', { file_path: 'git push' })), null, 'Bash(...) never matches another tool');
 });
 
@@ -75,7 +82,7 @@ test('Bash(prefix) in allow lets a call run only when every command in it starts
   for (const command of ['npm test', 'npm test -- --watch=false', 'git status && git log -3', 'git -C app status']) {
     assert.equal(verdict(agents, agentCall('tester', 'Bash', bash(command))), null, command);
   }
-  for (const command of ['npm test && rm -rf build', 'npm install', 'echo $(git status)', '$TOOL status', 'sh -c "npm test"', 'cd app && npm test']) {
+  for (const command of ['npm test && rm -rf build', 'npm install', 'echo $(git status)', '$TOOL status', 'sh -c "npm test"', 'cd app && npm test', "bash -c 'npm install'"]) {
     assert.match(verdict(agents, agentCall('tester', 'Bash', bash(command))), /agents\.tester\.allow does not list it/, command);
   }
   assert.notEqual(verdict(agents, agentCall('tester', 'Bash', {})), null, 'a call with no command is not on the list');
@@ -129,4 +136,46 @@ test('the hook blocks with exit 2 and the rule on stderr, and exits 0 silently w
     const { status, stdout, stderr } = run(cwd, input);
     assert.deepEqual([status, stdout, stderr], [0, '', ''], `${cwd}: ${input.tool_input.command}`);
   }
+});
+
+test('while a file that sets the configuration cannot be read, a subagent may only read; the main session keeps every tool', (t) => {
+  const project = (files) => {
+    const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-gates-')));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    mkdirSync(path.join(dir, '.aidrian'));
+    for (const [file, text] of Object.entries(files)) writeFileSync(path.join(dir, file), text);
+    return dir;
+  };
+  const run = (cwd, input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ ...input, cwd }), cwd, encoding: 'utf8' });
+  const gates = JSON.stringify({ version: 1, agents: { explorer: { deny: ['Bash(git push)'] } } });
+  const cases = [
+    [{ '.aidrian/config.json': '{' }, '.aidrian/config.json', /invalid JSON/],
+    [{ '.aidrian/config.json': JSON.stringify({ version: 2, agents: {} }) }, '.aidrian/config.json', /project folder version 2; this plugin reads version 1/],
+    [{ '.aidrian/config.json': '[]' }, '.aidrian/config.json', /must be a JSON object/],
+    [{ '.aidrian/config.json': gates, '.aidrian.local.json': '{' }, '.aidrian.local.json', /invalid JSON/],
+    [{ '.aidrian/config.json': gates, '.aidrian.json': '{"dir": "../elsewhere"}' }, '.aidrian.json', /"dir" must be a relative folder inside the project/],
+    // No gates were ever set here, but a broken file cannot say so.
+    [{ '.aidrian/config.json': '{"version": 1,' }, '.aidrian/config.json', /invalid JSON/],
+  ];
+  for (const [files, file, problem] of cases) {
+    const dir = project(files);
+    const blocked = run(dir, agentCall('aidrian:explorer', 'Bash', bash('git push')));
+    assert.deepEqual([blocked.status, blocked.stdout], [2, ''], file);
+    const head = `aidrian: Bash is blocked for the agent "aidrian:explorer" in this project: ${file} cannot be read (`;
+    assert.ok(blocked.stderr.startsWith(head), blocked.stderr);
+    assert.match(blocked.stderr, problem);
+    assert.match(blocked.stderr, /so this project's agent gates are unknown, and until it is fixed a subagent may only read files\./);
+    assert.match(blocked.stderr, new RegExp(`tell the Human that ${file.replaceAll('.', '\\.')} needs fixing \\(aidrian check names the problem\\)\\.\n$`));
+    for (const input of [
+      agentCall('aidrian:explorer', 'Read', { file_path: file }),
+      agentCall('aidrian:explorer', 'Grep', { pattern: 'x' }),
+      mainCall('Bash', bash('git push')),
+      mainCall('Edit', { file_path: file }),
+    ]) {
+      const { status, stderr } = run(dir, input);
+      assert.deepEqual([status, stderr], [0, ''], `${file}: ${input.tool_name}`);
+    }
+  }
+  const blockedEdit = run(project({ '.aidrian/config.json': '{' }), agentCall('aidrian:explorer', 'Edit', { file_path: '.aidrian/config.json' }));
+  assert.equal(blockedEdit.status, 2, 'a subagent cannot repair the file either');
 });

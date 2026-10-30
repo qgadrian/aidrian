@@ -1,6 +1,6 @@
 ---
 name: worktree-cleanup
-description: Remove task worktrees whose work has merged with `aidrian worktree cleanup`, asking before each one it cannot prove done. Supports --force and --dry-run.
+description: Remove task worktrees whose work merged, asking before any it cannot prove done. Supports --force, --dry-run.
 ---
 
 # worktree-cleanup
@@ -16,7 +16,7 @@ A thin adapter for `aidrian worktree cleanup`. Never remove a worktree or a bran
    Add `--min-age` only when the user asked to reach worktrees younger than the default `24h`.
    It takes seconds (`3600`) or one unit (`30m`, `2h`, `1d`); `0` turns the age check off.
 2. Report the plan:
-   - `auto`: removed without asking. Only a worktree whose HEAD is a merged pull request's head, with a clean tree, gets here.
+   - `auto`: removed without asking. Only a worktree whose HEAD is a merged pull request's head, with a clean tree and no git-ignored files, gets here.
    - `confirm`: each row's `path` and `reasons`.
    - `skip`: how many, and why when it is not the main checkout or the current worktree.
    - With `gh_available: false`, say that nothing is automatic this run: only GitHub can prove a pull request merged.
@@ -38,7 +38,7 @@ A thin adapter for `aidrian worktree cleanup`. Never remove a worktree or a bran
    List those branches so they do not pile up.
 
 Execute sorts the worktrees again before it removes anything, so a row that changed since the plan is judged as it is now.
-A row whose HEAD moves, or whose clean tree gains changes, while execute runs is refused, and its worktree and branch stay.
-A confirmed row with uncommitted changes is refused without `--force`.
+A row whose HEAD moves, or whose clean tree gains changes or ignored files, while execute runs is refused, and its worktree and branch stay.
+A confirmed row with uncommitted changes, or a detached HEAD with commits on no branch, is refused without `--force`.
 The main checkout, the current worktree, and locked worktrees are never touched.
 When `aidrian` is not on your PATH, run it from the folder that holds the `aidrian-knowledge` the start hook names.

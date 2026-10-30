@@ -1,6 +1,6 @@
 ---
 name: plan-review
-description: Review a local plan before implementation. planning-agent critiques it and proposes a diff; the Human approves before it is applied.
+description: Review a local plan before implementation. planning-agent proposes a diff; the Human approves it.
 ---
 
 # plan-review
@@ -10,8 +10,8 @@ This session coordinates: it finds the plan, runs the gates, has `planning-agent
 and has `planning-agent` apply the diff only after the Human approves it.
 It never critiques or rewrites the plan itself, and never commits it.
 
-Before you start, follow the `knowledge` skill. Load your `orchestration` docs for the agent registry,
-`product_sensitive` docs for the flows the project declares critical, and `security` docs for the surfaces that need a security pass.
+Before you start, follow the `knowledge` skill. Load your `product_sensitive` docs for the flows the project declares critical,
+and `security` docs for the surfaces that need a security pass.
 
 ## Inputs
 
@@ -45,8 +45,9 @@ or the `issue-plan` skill for an issue. Never build a plan from the conversation
 - Read the plan. With YAML frontmatter it is a schema plan of its `plan_kind`; without `plan_kind`, review it as `implementation`
   and add a finding. Without frontmatter it is a free-form plan: it gets the generic lens, never a penalty for the missing schema.
 - `status: complete`: ask whether to review it again.
-- An issue-anchored plan whose `ticket_updated_at` is older than the issue's `updatedAt` is stale. Ask: revise it with the
-  `issue-plan` skill (`--mode revise`), review it as it is, or stop. On a critical flow, offer only revise or stop.
+- An issue-anchored plan whose `ticket_updated_at` is older than the issue's `updatedAt` is stale. Ask: the Human revises it
+  by running the `issue-plan` skill with `--mode revise`, which only the Human starts; review it as it is; or stop.
+  On a critical flow, offer only revise or stop.
 - Record the plan's hash, `git hash-object <plan>`, for step 5.
 
 ## 3. Gates

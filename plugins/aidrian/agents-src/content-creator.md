@@ -1,6 +1,6 @@
 ---
 name: content-creator
-description: Draft channel-aware posts, landing copy, and launch copy with a clear angle, grounded in documented product behavior.
+description: Draft channel-aware posts, landing copy, and launch copy grounded in documented product behavior.
 access: write
 skills: [knowledge]
 ---

@@ -5,12 +5,10 @@
 // line already reviewed when that line was there at the bot's first review. Read-only; needs gh.
 // docs/dispatch-log.md#reviews describes the view.
 
-import { execFileSync } from 'node:child_process';
+import { ghJson } from './gh.mjs';
 
 // gh, run in `cwd`: the project's root, so that `--project` reads that project's repository, not the one the shell is in.
-export const ghAt = (cwd) => (args) =>
-  JSON.parse(execFileSync('gh', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024 }));
-const ghJson = ghAt(undefined);
+export const ghAt = (cwd) => (args) => ghJson(args, { cwd });
 
 // gh's GraphQL fields name a bot without the `[bot]` suffix its REST fields carry.
 const sameLogin = (login, reviewer) => typeof login === 'string' && login.replace(/\[bot\]$/u, '') === reviewer.replace(/\[bot\]$/u, '');
@@ -42,7 +40,7 @@ const UNCHECKED = { file_level: 'file-level', deleted_line: 'on a deleted line',
 // or { reviewer, error } when gh cannot answer. The first seven fields are the review rounds alone; `findings` lists a
 // pull request's findings per round, and is null when gh could not read them. `sinceMs`, when set, keeps the pull
 // requests merged since then; `truncated` says the limit cut that list short.
-export function reviewRounds(limit, reviewer, gh = ghJson, { sinceMs = null } = {}) {
+export function reviewRounds(limit, reviewer, gh = ghAt(undefined), { sinceMs = null } = {}) {
   try {
     const search = sinceMs === null ? [] : ['--search', `merged:>=${new Date(sinceMs).toISOString().slice(0, 19)}+00:00`];
     const prs = gh(['pr', 'list', '--state', 'merged', '--limit', String(limit), ...search, '--json', 'number,reviews']);

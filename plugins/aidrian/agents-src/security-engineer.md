@@ -1,6 +1,6 @@
 ---
 name: security-engineer
-description: Threat modeling, vulnerability assessment, and secure code review for work that touches a trust boundary, each finding with a concrete fix.
+description: Threat modeling and secure code review for work that touches a trust boundary, each finding with a fix.
 access: read-only
 skills: [knowledge]
 ---

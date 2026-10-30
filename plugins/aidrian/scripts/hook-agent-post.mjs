@@ -3,7 +3,8 @@
 // nothing logged.
 
 import { loadConfig } from '../lib/config.mjs';
-import { appendEvent, dispatchRow } from '../lib/dispatch-log.mjs';
+import { appendEvent } from '../lib/dispatch-log.mjs';
+import { dispatchRow } from '../lib/dispatch-rows.mjs';
 import { runHook } from '../lib/hook-io.mjs';
 import { findProject } from '../lib/project.mjs';
 

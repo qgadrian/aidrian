@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { denyRow } from '../plugins/aidrian/lib/dispatch-log.mjs';
+import { denyRow } from '../plugins/aidrian/lib/dispatch-rows.mjs';
 import { firstSentence } from '../plugins/aidrian/lib/hook-deny.mjs';
 import { inboxPath, lessons } from '../plugins/aidrian/lib/lesson-inbox.mjs';
 import { REPEATED_DENIALS } from '../plugins/aidrian/lib/lesson-signals.mjs';

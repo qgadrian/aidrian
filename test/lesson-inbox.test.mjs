@@ -6,7 +6,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
-import { fold, formatStats, lessonStats, nudge, parseCapture, similarLessons, triageOrder } from '../plugins/aidrian/lib/lesson-inbox.mjs';
+import { formatStats } from '../plugins/aidrian/lib/lesson-cli.mjs';
+import { fold, lessonStats, nudge, parseCapture, similarLessons, triageOrder } from '../plugins/aidrian/lib/lesson-inbox.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const DAY = 86_400_000;

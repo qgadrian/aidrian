@@ -29,7 +29,7 @@ design-import specifics:
   artboards declare** (fall back to 360 / 768 / 1280px only when the source
   declares no widths) **and screenshot-vs-artboard evidence for every
   artboard in the slice's coverage table** — produced with the
-  project's screenshot tool (for example a `design-verify` skill) — with a
+  screenshot tool the project's `testing` or `design_bundle` knowledge names — with a
   `designer` review of the resulting pairs.
 - **Each screen slice inherits the fidelity contract** of the project's
   visual-implementation rules: the per-artboard

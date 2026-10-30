@@ -1,6 +1,6 @@
 ---
 name: specialist-review
-description: One agent's focused review of the current branch's diff and uncommitted changes, kept warm for follow-up questions. Not a pull request review.
+description: One agent's focused review of the current branch's changes, kept warm for follow-up. Not a pull request review.
 ---
 
 # specialist-review

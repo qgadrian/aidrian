@@ -1,6 +1,6 @@
 ---
 name: pr-screenshot
-description: Attach local screenshots, images, or files to a GitHub pull request as evidence through the gh-image extension, then verify each shows exactly once.
+description: Attach screenshots, images, or files to a GitHub pull request as evidence, through the gh-image extension.
 ---
 
 # pr-screenshot

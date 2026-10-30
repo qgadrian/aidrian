@@ -2,15 +2,16 @@
 
 ## Phase 1: workspace
 
-1. The branch is the issue's `gitBranchName`, as it is. Without one, use the branch format the project's `issue_tracker` knowledge names.
+1. The branch is the issue's branch by `references/tracker.md` in the `knowledge` skill: on Linear its `gitBranchName`, as it is;
+   otherwise, or without one, the branch format the project's `issue_tracker` knowledge names.
 2. Follow the `orchestration` skill § 1 with that branch and `--base origin/<base>`.
    - An existing worktree for the branch: `git -C <path> status --porcelain` and `git -C <path> log -1 --oneline`.
      Clean and at the branch tip: use it. Dirty with unrelated changes, or diverged: stop and ask.
    - The `worktree-new` skill asks before it reuses an existing branch. A new name the Human picks becomes the target branch.
    - A blocked result: relay its reason and next step, and stop.
-3. **Move the issue to In Progress.** This session does it, never an agent, and only when `statusType` is `backlog` or `unstarted`.
-   Already `started`: skip it, so a resumed run never writes twice and a status never moves back.
-   Use the status name the project's `issue_tracker` knowledge gives. When Linear rejects it, find the team's `started` state
+3. **Move the issue to In Progress**, the tracker's step for it. This session does it, never an agent, and only when work has not started.
+   Already started: skip it, so a resumed run never writes twice and a status never moves back.
+   Use the status the project's `issue_tracker` knowledge gives. When Linear rejects the name, find the team's `started` state
    with `list_issue_statuses` and try once more. A failure goes in the report; it never blocks the run.
 
 ## Phase 2: slice plan
@@ -41,8 +42,9 @@ For each slice:
    The plan file is the record a resumed run trusts.
 2. **Scope gate.** A directive from a knowledge doc that contradicts the issue's non-goals or leaves its files to modify
    is a `scope_collision`: stop and ask, citing both.
-3. **Owner.** An agent that can edit files: the issue's agent action plan, else the agent registry in the project's `orchestration` knowledge,
-   else this plugin's: `backend-developer` for server code and data, `designer` for presentation, `ux-specialist` for flow friction.
+3. **Owner.** An agent that can edit files: the issue's agent action plan, else the `knowledge` skill's agent rule, whose fallbacks here are
+   this plugin's: `backend-developer` for server code and data, `frontend-developer` for client code and UI state,
+   `designer` for presentation, `ux-specialist` for flow friction.
    A trust-boundary slice goes to the owner of its surface, such as `backend-developer`; `security-engineer` cannot edit,
    so it is the slice's required reviewer in step 6. No owner fits: stop and ask.
    When the slice may add a helper, run `helper-scout` first; its result is advisory.
@@ -75,8 +77,9 @@ For each slice:
    in the foreground and alone, on that flow.
 9. **Commit.** Once the review is clean, set the slice's `status: complete` in the plan.
    Then the slice's own agent makes exactly one Conventional Commits commit
-   with the planned subject and a `Refs <key>` body line. The closing keyword goes in the pull request body, not in a commit.
-   Its handoff lists the exact `git commit` command and `not_bypassed`, or `hook_failed`, in `compliance`.
+   with the planned subject and a `Refs <key>` body line, and pushes it, the first push with `-u`.
+   The closing keyword goes in the pull request body, not in a commit.
+   Its handoff lists the exact `git commit` and `git push` commands and `not_bypassed`, or `hook_failed`, in `compliance`.
    Run the commit-count guard again: one commit. A failed commit sets the status back to `in_progress`.
 10. **Cycle cap.** At most two fix passes per slice, counting review findings, security verdicts, and test failures together.
     A third round with an open critical or high finding, an open security `fix_now`, or a failing test: stop.

@@ -1,6 +1,6 @@
 ---
 name: worktree-new
-description: Create a task worktree for a branch with `aidrian worktree new`, run the project's bootstrap, and work there. Use when a task needs its own worktree.
+description: Create a task worktree with `aidrian worktree new` and run the project's bootstrap. Use when a task needs one.
 ---
 
 # worktree-new

@@ -1,7 +1,8 @@
 // `aidrian worktree new|cleanup`: the task worktree lifecycle, for the worktree-new and worktree-cleanup skills.
 // `new` creates a worktree for a branch in the project's worktrees folder and runs config.json `worktrees.bootstrap`
-// there. `cleanup` sorts the other worktrees into auto (a merged pull request's exact head, clean, old enough),
-// confirm (everything else, with the reasons), and skip, and removes auto rows plus the ones a person confirmed.
+// there. `cleanup` sorts the other worktrees into auto (a merged pull request's exact head, clean with no ignored files,
+// old enough), confirm (everything else, with the reasons), and skip, and removes auto rows plus the ones a person
+// confirmed. Its plan only reads: it writes nothing to the repository.
 // Both print one JSON object; a problem is {"status":"blocked","phase","reason","next_step"} with exit 1.
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -10,6 +11,7 @@ import { spawnSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { CONFIG_ERROR, commandConfig } from './config.mjs';
+import { ghJson } from './gh.mjs';
 import { checkoutRoots, isIgnored } from './git.mjs';
 import { projectAt, worktreesDir } from './project.mjs';
 
@@ -18,6 +20,10 @@ const DAY_SEC = 24 * 60 * 60;
 // A failed bootstrap reports the end of its output: the error is there, and the whole log would flood the context.
 const OUTPUT_TAIL_LINES = 20;
 const GH_PR_LIMIT = 400;
+// A confirm reason names at most this many ignored files; the row's `ignored` lists them all.
+const IGNORED_SHOWN = 10;
+// The squash check reads base's commits that touch the branch's files, named on the command line up to this many.
+const PATHS_LIMIT = 500;
 
 const OPTIONS = {
   base: { type: 'string' },
@@ -187,11 +193,9 @@ export function parseDuration(text) {
 
 // Head commits of merged pull requests, by branch name, or null when gh cannot answer (absent, offline, no GitHub).
 export function mergedHeads(main) {
-  const listed = run('gh', ['pr', 'list', '--state', 'merged', '--limit', String(GH_PR_LIMIT), '--json', 'headRefName,headRefOid'], { cwd: main });
-  if (listed.status !== 0) return null;
   try {
     const heads = new Map();
-    for (const { headRefName, headRefOid } of JSON.parse(listed.stdout)) {
+    for (const { headRefName, headRefOid } of ghJson(['pr', 'list', '--state', 'merged', '--limit', String(GH_PR_LIMIT), '--json', 'headRefName,headRefOid'], { cwd: main })) {
       if (headRefName && headRefOid) heads.set(headRefName, [...(heads.get(headRefName) ?? []), headRefOid]);
     }
     return heads;
@@ -201,8 +205,9 @@ export function mergedHeads(main) {
 }
 
 // Sorts every worktree. Auto needs proof that nothing is lost: HEAD is exactly a merged pull request's head, the tree is
-// clean, and the worktree is old enough. A merge seen only by git (HEAD already on the base, or the same change squashed
-// into it) is also true of a branch created a minute ago with no commits, so it only frames the confirm question.
+// clean and holds no git-ignored file, such as a `.env`, and the worktree is old enough. A merge seen only by git (HEAD
+// already on the base, or the same change squashed into it) is also true of a branch created a minute ago with no
+// commits, so it only frames the confirm question.
 export function planCleanup({ minAgeSec = DAY_SEC } = {}, { cwd = process.cwd(), heads = mergedHeads, now = Date.now() } = {}) {
   const ctx = context(cwd);
   const merged = heads(ctx.main);
@@ -224,8 +229,7 @@ function classify(worktree, ctx, merged, minAgeSec, now) {
   const age = ageSec(dir, now);
   if (age !== null && age < minAgeSec) return skip(`too new: ${Math.floor(age / 3600)}h old, under --min-age`);
 
-  const status = git(dir, ['status', '--porcelain']);
-  const changes = status.status === 0 ? status.stdout.split('\n').filter(Boolean).length : null;
+  const { changes, ignored } = treeState(dir);
   const oids = (branch && merged?.get(branch)) ?? [];
   const exact = oids.includes(head);
   const reasons = [];
@@ -236,11 +240,38 @@ function classify(worktree, ctx, merged, minAgeSec, now) {
   else reasons.push(`not merged into ${ctx.base}`);
   if (changes === null) reasons.push('git status failed');
   else if (changes > 0) reasons.push(`${changes} uncommitted change${changes === 1 ? '' : 's'}`);
+  if (ignored.length) {
+    const more = ignored.length > IGNORED_SHOWN ? `, and ${ignored.length - IGNORED_SHOWN} more` : '';
+    reasons.push(`${ignored.length} git-ignored file${ignored.length === 1 ? '' : 's'}, removed with it: ${ignored.slice(0, IGNORED_SHOWN).join(', ')}${more}`);
+  }
+  // A detached HEAD's commits that no branch, remote branch, or tag holds go with its worktree: null when git cannot say.
+  const unreachable = branch === null && head ? onNoBranch(ctx.main, head) : 0;
+  if (unreachable === null) reasons.push('detached HEAD: git could not tell whether a branch holds its commits');
+  else if (unreachable > 0) reasons.push(`detached HEAD: ${unreachable} commit${unreachable === 1 ? '' : 's'} on no branch, lost when it is removed`);
   if (age === null) reasons.push('age unknown');
   // `unless-moved` where every commit on the branch is in the merged pull request: the branch goes only while it still
   // points at the inspected `head`. Otherwise `if-merged`: `git branch -d`, which git refuses for unmerged work.
-  const row = { path: dir, branch, head, reasons, dirty: changes !== 0, branch_delete: branch ? (exact ? 'unless-moved' : 'if-merged') : null };
-  return { bucket: exact && changes === 0 && age !== null ? 'auto' : 'confirm', ...row };
+  const row = {
+    path: dir, branch, head, reasons, dirty: changes !== 0, ignored, unreachable,
+    branch_delete: branch ? (exact ? 'unless-moved' : 'if-merged') : null,
+  };
+  return { bucket: exact && changes === 0 && !ignored.length && age !== null ? 'auto' : 'confirm', ...row };
+}
+
+// A worktree's files as git status sees them: { changes, ignored }. `changes` counts tracked and untracked changes, null
+// when git status fails; `ignored` lists the git-ignored files and folders, which `git worktree remove` deletes too.
+function treeState(dir) {
+  const status = git(dir, ['status', '--porcelain', '--ignored']);
+  if (status.status !== 0) return { changes: null, ignored: [] };
+  const lines = status.stdout.split('\n').filter(Boolean);
+  const ignored = lines.filter((line) => line.startsWith('!! ')).map((line) => line.slice(3));
+  return { changes: lines.length - ignored.length, ignored };
+}
+
+// How many commits reachable from `head` no local branch, remote branch, or tag holds; null when git cannot say.
+function onNoBranch(main, head) {
+  const counted = git(main, ['rev-list', '--count', head, '--not', '--branches', '--remotes', '--tags']);
+  return counted.status === 0 ? Number(counted.stdout.trim()) : null;
 }
 
 // Seconds since the worktree was created: the birth (else change) time of its `.git` file. Null when unreadable.
@@ -253,21 +284,34 @@ function ageSec(dir, now) {
   }
 }
 
-// A squash merge: one commit holding the branch's whole change since its merge base already has an equal patch in base.
+// A squash merge: the branch's whole change since its merge base has the same patch id as one of base's commits since
+// then, as `git cherry` would judge a commit of it. It only reads: the patch ids come from diff and log output.
 function patchMerged(main, head, base) {
   const mergeBase = git(main, ['merge-base', head, base]);
-  const tree = git(main, ['rev-parse', `${head}^{tree}`]);
-  if (mergeBase.status !== 0 || tree.status !== 0) return false;
-  const squashed = git(main, ['commit-tree', tree.stdout.trim(), '-p', mergeBase.stdout.trim(), '-m', 'squash']);
-  if (squashed.status !== 0) return false;
-  const cherry = git(main, ['cherry', base, squashed.stdout.trim()]);
-  return cherry.status === 0 && cherry.stdout.split('\n').some((line) => line.startsWith('-'));
+  if (mergeBase.status !== 0) return false;
+  const from = mergeBase.stdout.trim();
+  const diff = ['--no-color', '--no-ext-diff', '--no-textconv'];
+  const [own] = patchIds(main, ['diff', ...diff, from, head]);
+  const names = git(main, ['diff', '--name-only', '-z', from, head]);
+  if (!own || names.status !== 0) return false;
+  // Only a commit that touches the same files can hold the same patch; --full-diff still shows the whole commit.
+  const files = names.stdout.split('\0').filter(Boolean);
+  const only = files.length <= PATHS_LIMIT ? ['--full-diff', '--', ...files] : [];
+  return patchIds(main, ['--literal-pathspecs', 'log', '-p', '--no-merges', ...diff, `${from}..${base}`, ...only]).includes(own);
+}
+
+// The patch id of each patch the git command prints, in order; none when it fails.
+function patchIds(main, args) {
+  const patches = git(main, args);
+  if (patches.status !== 0 || !patches.stdout) return [];
+  const ids = run('git', ['-C', main, 'patch-id', '--stable'], { input: patches.stdout });
+  return ids.status === 0 ? ids.stdout.split('\n').filter(Boolean).map((line) => line.split(' ')[0]) : [];
 }
 
 // Sorts again, then removes every auto row and every confirm row whose path `decisions` marks "delete". A row with
-// uncommitted changes needs both that decision and `force`. Another session may commit while this runs, so a row whose
-// HEAD moved, or whose clean tree gained changes, is refused with its branch kept. Branches go with their worktree;
-// `git worktree prune` ends it.
+// uncommitted changes, or a detached HEAD with commits on no branch, needs both that decision and `force`. Another
+// session may commit while this runs, so a row whose HEAD moved, or whose tree gained changes or ignored files, is
+// refused with its branch kept. Branches go with their worktree; `git worktree prune` ends it.
 export function executeCleanup({ minAgeSec = DAY_SEC, force = false, decisions = {} } = {}, { cwd = process.cwd(), heads = mergedHeads, now = Date.now() } = {}) {
   const plan = planCleanup({ minAgeSec }, { cwd, heads, now });
   const { main } = checkoutRoots(cwd);
@@ -289,21 +333,25 @@ export function executeCleanup({ minAgeSec = DAY_SEC, force = false, decisions =
   for (const row of plan.confirm) {
     if (decisions[row.path] !== 'delete') out.kept.push(row.path);
     else if (row.dirty && !force) out.refused.push({ path: row.path, reason: 'uncommitted changes: needs --force as well as the delete decision' });
+    else if (row.unreachable !== 0 && !force) out.refused.push({ path: row.path, reason: 'commits on no branch: needs --force as well as the delete decision' });
     else remove(row, row.dirty);
   }
   git(main, ['worktree', 'prune']);
   return out;
 }
 
-// What changed in a row since classify read it, or null: its HEAD, or, unless the removal is forced, its clean tree.
+// What changed in a row since classify read it, or null: its HEAD, or, unless the removal is forced, its clean tree and
+// its list of ignored files.
 function changedSinceInspected(row, forced) {
   const head = git(row.path, ['rev-parse', '--verify', '--quiet', 'HEAD']);
   const current = head.status === 0 ? head.stdout.trim() : null;
   if (!row.head || current !== row.head) return `HEAD moved from ${row.head ?? 'unknown'} to ${current ?? 'unknown'}`;
   if (forced) return null;
-  const status = git(row.path, ['status', '--porcelain']);
-  if (status.status !== 0) return 'git status failed';
-  return status.stdout.trim() ? 'uncommitted changes appeared' : null;
+  const { changes, ignored } = treeState(row.path);
+  if (changes === null) return 'git status failed';
+  if (changes > 0) return 'uncommitted changes appeared';
+  const added = ignored.filter((file) => !row.ignored.includes(file));
+  return added.length ? `git-ignored files appeared: ${added.slice(0, IGNORED_SHOWN).join(', ')}` : null;
 }
 
 // Deletes a branch only while it still points at `sha`, then its config section, as `git branch -D` does. A commit

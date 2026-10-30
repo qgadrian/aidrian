@@ -42,6 +42,18 @@ test('check fails with every error, and names the folder it started from when th
   );
 });
 
+test('--help, -h, and help print the usage on stdout and exit 0, for both commands', () => {
+  for (const flag of ['--help', '-h', 'help']) {
+    const { status, stdout, stderr } = run([flag]);
+    assert.deepEqual([status, stderr], [0, ''], flag);
+    assert.match(stdout, /^usage: aidrian <command> \[args\]\n\n {2}aidrian check \[--project DIR\]\n/, flag);
+    assert.doesNotMatch(stdout, /unknown command/);
+    const knowledge = spawnSync(path.join(ROOT, 'plugins/aidrian/bin/aidrian-knowledge'), [flag], { cwd: EXAMPLE, encoding: 'utf8' });
+    assert.deepEqual([knowledge.status, knowledge.stderr], [0, ''], flag);
+    assert.match(knowledge.stdout, /^usage: aidrian-knowledge <command> \[--project DIR\] \[args\]\n/, flag);
+  }
+});
+
 test('a missing or unknown command, an unknown option, or a stray argument prints the usage and exits 1', () => {
   const cases = [
     [[], null],

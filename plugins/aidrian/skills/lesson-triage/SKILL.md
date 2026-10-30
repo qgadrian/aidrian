@@ -1,6 +1,6 @@
 ---
 name: lesson-triage
-description: Drain the lesson inbox in a session opened for it. Worst first, route each lesson to a fix, an issue, a merge, or a rejection, and re-check past fixes.
+description: Drain the lesson inbox worst first, routing each lesson to a fix, an issue, a merge, or a rejection.
 disable-model-invocation: true
 ---
 

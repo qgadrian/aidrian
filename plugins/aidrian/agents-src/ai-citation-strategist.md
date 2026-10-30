@@ -1,6 +1,6 @@
 ---
 name: ai-citation-strategist
-description: Improve how AI answer engines find and cite the product, through trustworthy, structured, citable content.
+description: Improve how AI answer engines find and cite the product, with trustworthy, citable content.
 access: read-only
 skills: [knowledge]
 ---

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { parseSince } from '../plugins/aidrian/lib/dispatch-log.mjs';
+import { parseSince } from '../plugins/aidrian/lib/report.mjs';
 import { formatSessions, summarizeSessions } from '../plugins/aidrian/lib/report-sessions.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');

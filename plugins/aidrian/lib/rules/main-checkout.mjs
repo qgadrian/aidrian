@@ -15,7 +15,7 @@ import path from 'node:path';
 import { loadConfig } from '../config.mjs';
 import { checkoutRoots, isIgnored } from '../git.mjs';
 import { findProject, worktreesDir } from '../project.mjs';
-import { isLongOption, lexSteps, readGit, readInvocation, readShortOptions, SUBSTITUTION_DEPTH_LIMIT } from '../shell-lex.mjs';
+import { inlineShellCommand, isLongOption, lexSteps, readGit, readInvocation, readShortOptions, SUBSTITUTION_DEPTH_LIMIT } from '../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_MAIN_WRITE';
 
@@ -81,47 +81,79 @@ export function toolTargets(input) {
 // relative target after a `cd` is dropped, and one before it stays. A command substitution runs in a shell of its own,
 // which starts where its command runs; a `cd` inside it moves nothing outside it.
 export function bashTargets(command, cwd) {
-  const targets = [];
-  // `base` is the shell's folder, or null once a `cd` may have moved it.
-  const visit = (line, base, depth) => {
-    for (const { segment, substitutions } of lexSteps(line)) {
-      if (depth < SUBSTITUTION_DEPTH_LIMIT) for (const body of substitutions) visit(body, base, depth + 1);
-      segment.forEach((token, i) => {
-        const next = segment[i + 1];
-        if ((token.operator === '>' || token.operator === '>>') && next && !next.fdDup && !next.operator) targets.push({ token: next, base });
-      });
-      const { program, args, chdir } = readInvocation(segment);
-      // A wrapper's directory change moves the command's own paths, never the shell's redirections above.
-      const own = chdir === null ? base : folderAfter(base, chdir);
-      if (WRITERS.has(program)) for (const token of written(program, args)) targets.push({ token, base: own });
-      else if (program === 'git') targets.push(...gitWritten(segment, own));
-      if (CHANGES_DIRECTORY.has(program)) base = null;
-    }
-  };
-  visit(command, cwd, 0);
-  return targets
-    .filter(({ token }) => !token.dynamic && token.text !== '')
-    .filter(({ token, base }) => path.isAbsolute(token.text) || base !== null)
-    .map(({ token, base }) => (path.isAbsolute(token.text) ? token.text : path.resolve(base, token.text)));
+  return bashWrites(command, cwd).flatMap(({ files }) => files);
 }
 
-// The folder a directory change to `to` reaches from `base`, or null when it is not certain: an absolute folder is.
-function folderAfter(base, to) {
-  if (to.dynamic) return null;
-  if (path.isAbsolute(to.text)) return to.text;
-  return base === null ? null : path.resolve(base, to.text);
+// Most folders bashWrites follows the shell through; past it, the shell's folder counts as unknown.
+const FOLDERS_LIMIT = 16;
+
+// Every target a Bash command writes, as { text, files, unsure }: `text` as the command names it, `files` the absolute
+// paths it can be, and `unsure` when the shell may be in a folder no path names, as after `cd "$dir"`.
+// By default a `cd` makes the shell's folder unknown, as bashTargets reads it. `followCd` follows each `cd` to a named
+// folder, and, since a `cd` that fails leaves the shell where it was, keeps the folders before it as well. `shells` also
+// reads the command line of each `sh -c` or `bash -c`, which, like a substitution, starts where its command runs.
+export function bashWrites(command, cwd, { followCd = false, shells = false } = {}) {
+  const targets = [];
+  const visit = (line, place, depth) => {
+    for (const { segment, substitutions } of lexSteps(line)) {
+      if (depth < SUBSTITUTION_DEPTH_LIMIT) for (const body of substitutions) visit(body, place, depth + 1);
+      segment.forEach((token, i) => {
+        const next = segment[i + 1];
+        if ((token.operator === '>' || token.operator === '>>') && next && !next.fdDup && !next.operator) targets.push({ token: next, place });
+      });
+      const invocation = readInvocation(segment);
+      const { program, args, chdir } = invocation;
+      // A wrapper's directory change moves the command's own paths, never the shell's redirections above.
+      const own = chdir === null ? place : moved(place, chdir);
+      if (WRITERS.has(program)) for (const token of written(program, args)) targets.push({ token, place: own });
+      else if (program === 'git') targets.push(...gitWritten(segment, own));
+      const inner = shells && depth < SUBSTITUTION_DEPTH_LIMIT ? inlineShellCommand(invocation) : null;
+      if (inner !== null) visit(inner, own, depth + 1);
+      if (CHANGES_DIRECTORY.has(program)) place = followCd ? moved(place, program === 'popd' ? null : operand(args), true) : UNKNOWN;
+    }
+  };
+  visit(command, { dirs: [cwd], unsure: false }, 0);
+  return targets
+    .filter(({ token }) => !token.dynamic && token.text !== '')
+    .map(({ token: { text }, place }) => {
+      if (path.isAbsolute(text)) return { text, files: [text], unsure: false };
+      return { text, files: place.dirs.map((dir) => path.resolve(dir, text)), unsure: place.unsure };
+    });
+}
+
+// The shell's folder once a `cd` may have moved it anywhere: no folder is certain.
+const UNKNOWN = Object.freeze({ dirs: [], unsure: true });
+
+// Where the shell can be after a directory change to the token `to` from `place`: { dirs, unsure }. A missing or
+// dynamic `to` reaches an unknown folder. `mayFail` keeps the folders before the change too.
+function moved(place, to, mayFail = false) {
+  const kept = mayFail ? place.dirs : [];
+  let reached;
+  if (!to || to.dynamic) reached = UNKNOWN;
+  else if (path.isAbsolute(to.text)) reached = { dirs: [to.text], unsure: false };
+  else reached = { dirs: place.dirs.map((dir) => path.resolve(dir, to.text)), unsure: place.unsure };
+  const dirs = [...new Set([...kept, ...reached.dirs])];
+  const unsure = reached.unsure || (mayFail && place.unsure) || dirs.length > FOLDERS_LIMIT;
+  return { dirs: dirs.slice(0, FOLDERS_LIMIT), unsure };
+}
+
+// The folder a `cd` or `pushd` names: its first word that is not an option. Null when no word names one: none, which is
+// the home folder, `-`, the previous folder, or `+1`, a place on the directory stack.
+function operand(args) {
+  const to = args.find((token) => token.dynamic || !/^-[LPe@]+$/u.test(token.text));
+  return to && (to.dynamic || !/^(?:-|[+-]\d+)$/u.test(to.text)) ? to : null;
 }
 
 // git mv and git rm: every path they name, resolved from `git -C`, which moves them as a wrapper's directory change does.
-function gitWritten(segment, base) {
+function gitWritten(segment, place) {
   const call = readGit(segment);
   if (!call || !GIT_WRITERS.has(call.subcommand)) return [];
-  let dir = base;
+  let at = place;
   call.globals.forEach((token, i) => {
     const value = call.globals[i + 1];
-    if (token.text === '-C' && value) dir = folderAfter(dir, value);
+    if (token.text === '-C' && value) at = moved(at, value);
   });
-  return written('git', call.rest, GIT_WRITERS.get(call.subcommand)).map((token) => ({ token, base: dir }));
+  return written('git', call.rest, GIT_WRITERS.get(call.subcommand)).map((token) => ({ token, place: at }));
 }
 
 // The operands a writer writes: all of them, every path of mv, the destination of cp and rsync (and rsync's sources

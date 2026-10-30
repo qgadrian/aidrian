@@ -1,6 +1,6 @@
 ---
 name: explorer
-description: Read-only codebase exploration that maps flows, source-of-truth modules, call graphs, tests, and edge cases.
+description: Read-only codebase exploration of flows, source-of-truth modules, call graphs, tests, and edge cases.
 access: read-only
 skills: [knowledge]
 ---

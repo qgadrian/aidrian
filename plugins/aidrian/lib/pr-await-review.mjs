@@ -22,13 +22,12 @@
 // at round_limit, a lesson in the local lesson inbox (lib/lesson-signals.mjs).
 // The default timeout is 840 s: a foreground Claude Code Bash call stops at 900 s, gh calls included.
 
-import { execFileSync } from 'node:child_process';
-
 import { DEFAULTS as CONFIG_DEFAULTS } from './config.mjs';
+import { runGh } from './gh.mjs';
 
 export const DEFAULT_REVIEWER = CONFIG_DEFAULTS.github.reviewer;
 export const REQUEST_COMMENT = '@codex review';
-export const DEFAULTS = Object.freeze({ timeoutSec: 840, intervalSec: 60, maxRounds: 10 });
+export const DEFAULTS = Object.freeze({ timeoutSec: 840, intervalSec: 60, maxRounds: CONFIG_DEFAULTS.github.maxReviewRounds });
 
 // What the request asks for after the trigger phrase. A bare "@codex review" returned about two findings per review,
 // and most later-round findings were copies of a mistake an earlier round had named, so this asks for the whole
@@ -243,22 +242,6 @@ export const isStale = (signal, headSha, headCommittedAt = null, triggerHead = n
 // pull request or the status card names none, and answers the latest trigger), else the committer-date proxy.
 export const acknowledgedForHead = (ack, headSha, headCommittedAt, triggerHead = null) =>
   Boolean(ack) && coversHeadCommit(ack.headSha ?? triggerHead, ack.at, headSha, headCommittedAt);
-
-// Stdout ceiling for every gh read. Node's synchronous default is 1 MB, and the head-commit read embeds every changed
-// file's patch: an ordinary large pull request passed it. maxBuffer caps; it does not preallocate.
-export const GH_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
-export const GH_EXEC_OPTIONS = Object.freeze({ encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: GH_MAX_BUFFER_BYTES });
-
-// The single gh seam, so no call site inherits the 1 MB default. An overflow names the command and the limit.
-export const runGh = (args, exec = execFileSync) => {
-  try {
-    return exec('gh', args, GH_EXEC_OPTIONS);
-  } catch (err) {
-    if (err?.code !== 'ENOBUFS') throw err;
-    const mb = Math.round(GH_MAX_BUFFER_BYTES / 1024 / 1024);
-    throw new Error(`gh ${args.join(' ')} wrote more than the ${mb} MB stdout ceiling. Raise GH_MAX_BUFFER_BYTES in lib/pr-await-review.mjs, or narrow the request.`);
-  }
-};
 
 const defaultGh = {
   api: (p, { paginate = false, method, fields } = {}) => {

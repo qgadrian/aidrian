@@ -10,15 +10,19 @@ const COMMANDS = {
   state: './check.mjs',
   'commit-msg': './commit-message.mjs',
   lint: './lint.mjs',
-  lesson: './lesson-inbox.mjs',
+  lesson: './lesson-cli.mjs',
   handoff: './handoff-brief.mjs',
   worktree: './worktree.mjs',
   pr: './pr.mjs',
-  report: './dispatch-log.mjs',
+  report: './report.mjs',
 };
 
 const [command, ...args] = process.argv.slice(2);
 
+if (['--help', '-h', 'help'].includes(command)) {
+  console.log(await usage());
+  process.exit(0);
+}
 if (!Object.hasOwn(COMMANDS, command ?? '')) await fail(command && `unknown command: ${command}`);
 const { commands } = await import(COMMANDS[command]);
 try {
@@ -36,13 +40,17 @@ try {
   }
 }
 
-async function fail(problem) {
+// Every command with its arguments and what it does.
+async function usage() {
   const lines = ['usage: aidrian <command> [args]', ''];
   for (const [name, file] of Object.entries(COMMANDS)) {
-    const { usage, about } = (await import(file)).commands[name];
-    lines.push(`  aidrian ${name} ${usage}`.trimEnd(), `      ${about}`);
+    const { usage: args, about } = (await import(file)).commands[name];
+    lines.push(`  aidrian ${name} ${args}`.trimEnd(), `      ${about}`);
   }
-  if (problem) lines.push('', problem);
-  console.error(lines.join('\n'));
+  return lines.join('\n');
+}
+
+async function fail(problem) {
+  console.error(problem ? `${await usage()}\n\n${problem}` : await usage());
   process.exit(1);
 }

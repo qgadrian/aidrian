@@ -1,6 +1,6 @@
 ---
 name: helper-scout
-description: Read-only helper discovery. From a task or a diff, lists existing project helpers that could be reused or were reinvented. Advisory, never blocking.
+description: Read-only, advisory helper discovery. Lists existing project helpers a task could reuse, or a diff reinvented.
 access: read-only
 skills: [knowledge]
 ---

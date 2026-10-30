@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
-import { parseSince } from '../plugins/aidrian/lib/dispatch-log.mjs';
+import { parseSince } from '../plugins/aidrian/lib/report.mjs';
 import { fold } from '../plugins/aidrian/lib/lesson-inbox.mjs';
 import { FIXES, formatHealth, summarizeHealth } from '../plugins/aidrian/lib/report-health.mjs';
 
@@ -310,11 +310,21 @@ test('formatHealth with no data says so on every signal', () => {
     '  Knowledge budget: not enough data; always docs 0 of 16384 bytes, 0 of 0 indexed docs tagged and over 24576 bytes',
     '  Doc reads: not enough data (n=0, needs 5 rows); 0 indexed docs never read, 0 of them tagged',
     '  Agents: not enough data; no dispatches (thresholds: 20% re-dispatched, 10% sent back)',
-    '  Reviews: unavailable; gh: not found',
+    '  Reviews: unavailable; gh could not read the pull requests: no GitHub remote, or gh is missing or not signed in (--json has its error)',
     '  Hook denies: not enough data (n=0, needs 5 sessions); 0 blocks (5 or more by one rule is a hot spot)',
     '  Session cost: not enough data (n=0, needs 5 sessions a half); 0 sessions, $0.00',
     '  Lessons: ok; 0 open, 0 P1; 0 fixes in the window, 0 recurred',
   ].join('\n'));
+});
+
+test('formatHealth says reviews were not read when none were asked for, and the JSON keeps gh`s own error', () => {
+  const unread = summarizeHealth({ rows: [], sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: null, config: configWith() });
+  assert.match(formatHealth(unread, { file: 'f', since: '30d', skipped: 0 }), /\n {2}Reviews: unavailable; not read\n/);
+  const failed = summarizeHealth({ rows: [], sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, config: configWith(), reviews: {
+    reviewer: 'bot', error: 'Command failed: gh pr list --state merged --limit 20 --json number,reviews',
+  } });
+  assert.equal(failed.signals.reviews.error, 'Command failed: gh pr list --state merged --limit 20 --json number,reviews');
+  assert.doesNotMatch(formatHealth(failed, { file: 'f', since: '30d', skipped: 0 }), /Command failed/);
 });
 
 test('every fix the report names is a row of the harness-health skill`s fix table, and the table has no other', () => {

@@ -1,6 +1,6 @@
 # Agent Issue Writer Examples
 
-Use these as formatting references. Keep the structure, specificity, Linear focus, and contract discipline.
+Use these as formatting references. Keep the structure, specificity, and contract discipline; the examples use Linear.
 
 ## Standalone Issue Example
 
@@ -386,7 +386,7 @@ Questions to unblock:
   "initiative_title": "[delivery-days] Default day reliability",
   "initiative_goal": "Ship the delivery-days default-day fix with explicit multi-agent review and validation ownership.",
   "topology": "parent_issue_only",
-  "create_linear_project": false,
+  "create_tracker_project": false,
   "create_parent_issue": true,
   "parent_issue_is_canonical_release_plan": true,
   "success_criteria": [

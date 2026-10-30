@@ -1,6 +1,6 @@
 ---
 name: architect
-description: Design a change before it is built, with its boundaries, interfaces, trade-offs, and a decision-complete contract for the agents that build it.
+description: Design a change before it is built, with boundaries, interfaces, trade-offs, and a contract for builders.
 access: read-only
 skills: [knowledge]
 ---

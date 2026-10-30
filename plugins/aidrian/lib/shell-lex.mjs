@@ -467,6 +467,29 @@ function wrapperOption({ text, dynamic }, valueFlags) {
   return { name: value.option, value: value.attached === null ? null : { text: value.attached, dynamic } };
 }
 
+const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh']);
+const SHELL_VALUE_OPTIONS = new Set(['-o', '+o', '-O', '+O']);
+
+// The command line a `sh -c "<string>"` runs, from readInvocation's { program, args }: the first operand after `-c` and
+// any shell options, or null when the program is not a shell given `-c`.
+export function inlineShellCommand({ program, args }) {
+  if (!SHELLS.has(program)) return null;
+  const at = args.findIndex((token) => !token.dynamic && /^-[a-zA-Z]*c[a-zA-Z]*$/u.test(token.text));
+  if (at === -1) return null;
+  let i = at + 1;
+  while (args[i] && !args[i].dynamic) {
+    const { text } = args[i];
+    if (text === '--') {
+      i += 1;
+      break;
+    }
+    if (SHELL_VALUE_OPTIONS.has(text)) i += 2;
+    else if (/^[-+]\S/u.test(text)) i += 1;
+    else break;
+  }
+  return args[i]?.text ?? null;
+}
+
 // Git global options that take the next token as their value.
 const GIT_VALUE_GLOBALS = new Set(['-C', '-c', '--config-env', '--git-dir', '--work-tree', '--namespace', '--exec-path']);
 

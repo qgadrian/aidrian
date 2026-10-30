@@ -77,16 +77,20 @@ It writes nothing at all when a symlink would take a write outside the project, 
   `models`, as [config.md](config.md#models) describes, and `names`, as [config.md](config.md#names) describes.
 - `.gitignore`: git ignores `.aidrian.local.json`, and the worktrees and state folders when they are inside the repository.
 
-On success it also prints the state folder:
+On success it also prints the state folder, and the size of the `always` docs against their [budget](config.md#knowledge-budgets):
 
 ```console
 $ aidrian check
 ok: .aidrian (2 buckets, 8 docs)
 state: /home/you/.local/state/aidrian/projects/notes-1a2b3c4d
+budget: 2479 of 16384 always-doc bytes (engineering 2479, product 0)
 ```
 
-In a Claude Code session, `aidrian` is on the PATH while the plugin is enabled.
-Elsewhere, run it by its path, such as `path/to/aidrian-harness/plugins/aidrian/bin/aidrian check`. It needs Node 22 or later.
+In a Claude Code session, `aidrian` is on the PATH while the plugin is enabled. It needs Node 22 or later.
+Elsewhere, run it from the plugin folder the host installed: [Claude Code](providers/claude-code.md#running-aidrian),
+[Codex](providers/codex.md#running-aidrian). In CI, run it from a clone: the README's [In CI](../README.md#in-ci).
+`bin/aidrian` is a shell script, so run it directly, not with `node`.
+Where no shell runs it, use `node <plugin folder>/lib/cli.mjs`, and `node <plugin folder>/lib/knowledge-cli.mjs` for `aidrian-knowledge`.
 
 `aidrian lint` keeps the project's AI instructions cheap and portable, with the limits in config.json. Run it beside `aidrian check`:
 
@@ -127,7 +131,8 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 
 `aidrian state` prints the folder. Skills use it to find plans and handoff briefs, and to draft pull request bodies;
 the orchestrator uses it to name each background agent's handoff file.
-`aidrian lesson` adds, lists, resolves, and counts lessons in the inbox ([lessons.md](lessons.md)); `aidrian handoff` checks a handoff brief against the one it supersedes.
+`aidrian lesson` adds, lists, resolves, and counts lessons in the inbox ([lessons.md](lessons.md)).
+`aidrian handoff` checks a handoff brief against the one it supersedes.
 `aidrian report` summarizes the [dispatch log](dispatch-log.md).
 
 ## Task worktrees
@@ -139,6 +144,13 @@ They live in `.worktrees/` at the repository root: editors show them beside the 
 and Claude Code edits them without asking, because they are inside the folder the session opened.
 `"worktrees": { "dir": "<path>" }` in config.json moves them; a relative path starts at the repository root,
 and `aidrian check` requires git to ignore the folder while it is inside the repository.
+
+- The folder takes the last part of the branch name: `feat/login` goes to `.worktrees/login`.
+  `--slug <name>` picks another name. When the folder already exists, the command stops and creates nothing.
+- A new branch starts at `origin/<default branch>`, or at the local default branch when there is no `origin`; `--base` picks another.
+  So `.aidrian/` must be on that branch first: committed, and pushed when there is an `origin`.
+  A worktree made earlier has no project folder ([Location](#location)); push, then create a new worktree.
+- The command prints its result as one line of JSON, with `status` and `worktree_path`, for the skills that run it.
 
 To keep agents from editing the main checkout at all, turn on the main-checkout guard: [hooks.md](hooks.md#main-checkout).
 
@@ -166,7 +178,7 @@ the [names](config.md#names) agents use for that developer and for themselves, a
   Two sources that define the same bucket id fail, and the error names both index files.
 
 `aidrian check`, the `aidrian-knowledge` commands, and the start hook cover every source.
-`aidrian check` prints a count per source, such as `ok: .aidrian (2 buckets, 8 docs), ~/kb/personal (1 buckets, 1 docs)`.
+`aidrian check` prints a count per source, such as `ok: .aidrian (2 buckets, 8 docs), ~/kb/personal (1 bucket, 1 doc)`.
 A doc from a local source prints with its absolute path, and `route`, `search`, and `index` add its source as the last column:
 
 ```console

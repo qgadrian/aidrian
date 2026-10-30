@@ -9,7 +9,8 @@ import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { insidePath, isDirectory, isFile, loadConfig, readJson } from './config.mjs';
+import { loadConfig } from './config.mjs';
+import { insidePath, isDirectory, isFile, isWithin, readJson } from './fs.mjs';
 import { checkoutRoots, mainRoot, runGit } from './git.mjs';
 
 const DEFAULT_DIR = '.aidrian';
@@ -56,8 +57,7 @@ function outside(dir, top) {
   } catch {
     return false;
   }
-  const rel = path.relative(top, real);
-  return rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
+  return !isWithin(top, real);
 }
 
 // The project at or above `start`, or one rooted at `start` that has no folder yet. For commands that work either way.
@@ -66,19 +66,22 @@ export function projectAt(start) {
 }
 
 // The project rooted at `root`, whether or not its folder exists yet:
-// { root, dir, paths, sources, checkouts, localModels, localNames, localTelemetry, localAgents, errors }.
+// { root, dir, paths, sources, checkouts, localModels, localNames, localTelemetry, localAgents, errors, unreadable }.
 // `dir` and every path are POSIX-style and relative to `root`. `sources` lists where knowledge indexes are read from:
 // the project folder first, then each local source. `checkouts` is `root`, then, when it is in a git worktree, the same
 // folder in the main checkout. `localModels`, `localNames`, `localTelemetry`, and `localAgents` are the `models`,
 // `names`, `telemetry`, and `agents` values of `.aidrian.local.json`, as written; config.mjs checks them. `errors` lists the problems in the root files; a broken
 // `.aidrian.json` leaves the default folder in place, and a broken local source is left out.
+// `unreadable` names each of `.aidrian.json` and `.aidrian.local.json` that is there but whose settings are not in force,
+// because it could not be read or names no usable folder: from `root`, or absolute when it is in the main checkout.
 // `roots` is git's checkoutRoots for a folder in the same checkout, when the caller already asked; null outside git.
 export function openProject(root, roots) {
   const errors = [];
-  const dir = folderDir(root, errors);
+  const unreadable = [];
+  const dir = folderDir(root, errors, unreadable);
   const paths = { config: `${dir}/config.json`, knowledge: `${dir}/knowledge`, local: LOCAL };
   const checkouts = checkoutsOf(root, roots);
-  const local = readLocal(checkouts, errors);
+  const local = readLocal(checkouts, errors, unreadable);
   const sources = [{ label: dir, base: root, index: paths.knowledge, local: false }, ...local.sources];
   return {
     root,
@@ -91,6 +94,7 @@ export function openProject(root, roots) {
     localTelemetry: local.telemetry,
     localAgents: local.agents,
     errors,
+    unreadable,
   };
 }
 
@@ -102,16 +106,20 @@ export function configFiles(project) {
   return [...new Set(project.checkouts.flatMap((base) => names.map((name) => path.join(base, name))))];
 }
 
-function folderDir(root, errors) {
+function folderDir(root, errors, unreadable) {
   if (!isFile(path.join(root, OVERRIDE))) return DEFAULT_DIR;
   const raw = readJson(root, OVERRIDE, errors);
-  if (!raw) return DEFAULT_DIR;
+  if (!raw) {
+    unreadable.push(OVERRIDE);
+    return DEFAULT_DIR;
+  }
   for (const key of Object.keys(raw)) {
     if (key !== 'dir') errors.push(`${OVERRIDE}: unknown key "${key}"`);
   }
   const dir = insidePath(root, '', raw.dir);
   if (dir) return dir;
   errors.push(`${OVERRIDE}: "dir" must be a relative folder inside the project`);
+  unreadable.push(OVERRIDE);
   return DEFAULT_DIR;
 }
 
@@ -124,12 +132,15 @@ function checkoutsOf(root, roots) {
 // `.aidrian.local.json`: { sources, models, names, telemetry, agents }. A git worktree has no copy of that git-ignored file, so it is read
 // from the main checkout then: from the first of `checkouts` that has it. Each source is a folder with its own knowledge/
 // and, optionally, a config.json with `version`.
-function readLocal(checkouts, errors) {
+function readLocal(checkouts, errors, unreadable) {
   const none = { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined };
   const holder = checkouts.find((dir) => isFile(path.join(dir, LOCAL)));
   if (!holder) return none;
   const raw = readJson(holder, LOCAL, errors);
-  if (!raw) return none;
+  if (!raw) {
+    unreadable.push(holder === checkouts[0] ? LOCAL : path.join(holder, LOCAL));
+    return none;
+  }
   for (const key of Object.keys(raw)) {
     if (!['sources', 'models', 'names', 'telemetry', 'agents'].includes(key)) errors.push(`${LOCAL}: unknown key "${key}"`);
   }

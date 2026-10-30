@@ -66,7 +66,8 @@ test('only a merged pull request`s exact head, clean and old enough, is removed 
   assert.deepEqual([result.status, result.base, result.gh_available, result.min_age_sec], ['planned', 'origin/main', true, 86400]);
   assert.deepEqual(result.auto.map((row) => row.path), [dirs.pr]);
   assert.deepEqual(rowOf(result, 'pr'), {
-    bucket: 'auto', path: dirs.pr, branch: 'feat/pr', head: git(dirs.pr, 'rev-parse', 'HEAD'), reasons: ['merged pull request'], dirty: false, branch_delete: 'unless-moved',
+    bucket: 'auto', path: dirs.pr, branch: 'feat/pr', head: git(dirs.pr, 'rev-parse', 'HEAD'), reasons: ['merged pull request'], dirty: false, ignored: [], unreachable: 0,
+    branch_delete: 'unless-moved',
   });
   assert.deepEqual(rowOf(result, 'ff').reasons, ['already in origin/main; no merged pull request confirms it']);
   assert.deepEqual(rowOf(result, 'squash').reasons, ['its changes are in origin/main; no merged pull request confirms it']);
@@ -74,6 +75,54 @@ test('only a merged pull request`s exact head, clean and old enough, is removed 
   assert.deepEqual(rowOf(result, 'dirty').reasons, ['merged pull request', '1 uncommitted change']);
   assert.deepEqual([rowOf(result, 'ff').branch_delete, rowOf(result, 'dirty').bucket], ['if-merged', 'confirm']);
   assert.deepEqual([rowOf(result, 'locked').reason, rowOf(result, repo).reason], ['locked', 'main checkout']);
+});
+
+test('a git-ignored file, such as a .env, moves a merged worktree to confirm and is listed; execute keeps it', (t) => {
+  const { repo, dirs, plan, rowOf, heads } = fixture(t);
+  writeFileSync(path.join(repo, '.git/info/exclude'), '.env\nnode_modules/\n');
+  writeFileSync(path.join(dirs.pr, '.env'), 'SECRET=1\n');
+  mkdirSync(path.join(dirs.pr, 'node_modules'));
+  writeFileSync(path.join(dirs.pr, 'node_modules/x.js'), '');
+  const row = rowOf(plan(), 'pr');
+  assert.deepEqual([row.bucket, row.dirty, row.ignored], ['confirm', false, ['.env', 'node_modules/']]);
+  assert.deepEqual(row.reasons, ['merged pull request', '2 git-ignored files, removed with it: .env, node_modules/']);
+  const result = executeCleanup({}, { cwd: repo, heads, now: LATER });
+  assert.deepEqual([result.removed, result.kept.includes(dirs.pr)], [[], true]);
+  assert.equal(existsSync(path.join(dirs.pr, '.env')), true);
+});
+
+test('a detached HEAD with commits on no branch is never removed without the delete decision and --force', (t) => {
+  const { repo, git, dirs, plan, rowOf, heads } = fixture(t);
+  const detached = path.join(repo, '.worktrees', 'detached');
+  git(repo, 'worktree', 'add', '-q', '--detach', detached, 'feat/pr');
+  git(detached, 'commit', '-q', '--allow-empty', '-m', 'only here');
+  dirs.detached = detached;
+  // gh reports the detached commit as a merged pull request's head: it still is not automatic, having no branch.
+  const merged = new Map([...heads(), ['feat/pr', [...heads().get('feat/pr'), git(detached, 'rev-parse', 'HEAD')]]]);
+  const row = rowOf(plan({}, { heads: () => merged }), 'detached');
+  assert.deepEqual([row.bucket, row.branch, row.unreachable, row.branch_delete], ['confirm', null, 1, null]);
+  assert.deepEqual(row.reasons, ['not merged into origin/main', 'detached HEAD: 1 commit on no branch, lost when it is removed']);
+  const onBase = path.join(repo, '.worktrees', 'on-base');
+  git(repo, 'worktree', 'add', '-q', '--detach', onBase, 'main');
+  dirs.onBase = onBase;
+  assert.equal(rowOf(plan(), 'onBase').unreachable, 0, 'a detached HEAD that a branch holds loses nothing');
+
+  const decisions = { [detached]: 'delete' };
+  const refused = executeCleanup({ decisions }, { cwd: repo, heads, now: LATER });
+  assert.deepEqual(refused.refused, [{ path: detached, reason: 'commits on no branch: needs --force as well as the delete decision' }]);
+  assert.equal(existsSync(detached), true);
+  const forced = executeCleanup({ decisions, force: true }, { cwd: repo, heads, now: LATER });
+  assert.deepEqual(forced.removed.filter((entry) => entry.path === detached), [{ path: detached, branch: null, branch_deleted: false }]);
+});
+
+test('cleanup plan writes no object to the repository, and still finds a squash merge', (t) => {
+  const { repo, git, plan, rowOf } = fixture(t);
+  const objects = () => git(repo, 'count-objects', '-v').split('\n').filter((line) => /^(count|in-pack):/.test(line));
+  const before = objects();
+  const result = plan();
+  assert.deepEqual(objects(), before);
+  assert.deepEqual(rowOf(result, 'squash').reasons, ['its changes are in origin/main; no merged pull request confirms it']);
+  assert.deepEqual(rowOf(result, 'open').reasons, ['not merged into origin/main']);
 });
 
 test('without gh nothing is automatic, and a worktree younger than --min-age is skipped', (t) => {
@@ -135,15 +184,18 @@ test('a commit or a change that lands after the rows were sorted keeps the workt
     get(branch) {
       if (branch === 'feat/pr') git(dirs.pr, 'commit', '-q', '--allow-empty', '-m', 'late');
       if (branch === 'feat/ff') writeFileSync(path.join(dirs.ff, 'new.txt'), 'new\n');
+      if (branch === 'feat/squash') writeFileSync(path.join(dirs.squash, '.env'), 'SECRET=1\n');
       return heads().get(branch);
     },
   });
-  const result = executeCleanup({ decisions: { [dirs.ff]: 'delete' } }, { cwd: repo, heads: racing, now: LATER });
+  writeFileSync(path.join(repo, '.git/info/exclude'), '.env\n');
+  const result = executeCleanup({ decisions: { [dirs.ff]: 'delete', [dirs.squash]: 'delete' } }, { cwd: repo, heads: racing, now: LATER });
   const late = git(dirs.pr, 'rev-parse', 'HEAD');
   assert.deepEqual(result.removed, []);
   assert.deepEqual(result.refused, [
     { path: dirs.pr, reason: `changed after it was inspected: HEAD moved from ${inspected} to ${late}; kept with its branch, run cleanup again` },
     { path: dirs.ff, reason: 'changed after it was inspected: uncommitted changes appeared; kept with its branch, run cleanup again' },
+    { path: dirs.squash, reason: 'changed after it was inspected: git-ignored files appeared: .env; kept with its branch, run cleanup again' },
   ]);
   assert.deepEqual([existsSync(dirs.pr), existsSync(dirs.ff), git(repo, 'rev-parse', 'feat/pr')], [true, true, late]);
 });

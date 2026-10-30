@@ -17,7 +17,7 @@ const ACTIONS = {
 
 export const commands = {
   pr: {
-    usage: 'await-review [PR] [--request] [--max-rounds N] | checks [PR] [--json] | disposition --severity S [--likelihood L --affects A] [--vocab]',
+    usage: 'await-review [PR] [--request] [--max-rounds N] | checks [PR] [--json] | disposition --severity S [--likelihood L --affects A] [--cost C] [--source bot [--round N]] [--vocab]',
     about: 'wait for the review bot, give a one-line check verdict, or decide what to do with one review finding',
     async run(args) {
       const [action, ...rest] = args;

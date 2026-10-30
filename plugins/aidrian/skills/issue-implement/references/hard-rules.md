@@ -17,12 +17,12 @@ Report the blocker as **stop**, or **stop and ask** when the Human can settle it
 - The current branch belongs to another issue, or holds uncommitted changes unrelated to this one.
 - The local and remote target branch have diverged: neither is a fast-forward of the other.
 - A hook fails for a reason outside the slice.
-- Repository, Linear, GitHub, or agent access is missing, or a load-bearing linked document cannot be read.
+- Repository, tracker, GitHub, or agent access is missing, or a load-bearing linked document cannot be read.
 - Two agents dispute a finding. Escalate with both positions and the missing evidence.
 - Files outside the slice are dirty after a dispatch, or the commit-count guard trips.
 - `git push` is rejected for any reason.
 - An open pull request for the branch exists and the Human has not chosen between updating it and starting over.
-- Linear or GitHub fails three calls in a row with a rate limit or a server error.
+- The tracker or GitHub fails three calls in a row with a rate limit or a server error.
 
 ## Decide and move on
 
@@ -36,9 +36,9 @@ Note each in the report under decided alone.
 
 ## Every step
 
-- **Linear stays read-only.** The exceptions are the In Progress move in phase 1 and the two estimate writes in phase 7.
+- **The tracker stays read-only.** The exceptions are the In Progress move in phase 1 and the two estimate writes in phase 7.
   No other field, comment, label, attachment, assignment, or state change, ever. Never close the issue.
-- **No merge.** The run ends at a draft. A merge happens only when the Human asks for it, through the `pr-merge-when-green` skill.
+- **No merge.** The run ends at a draft. Only the Human starts a merge, with the `pr-merge-when-green` skill.
 - **No hook bypass**: no `--no-verify`, `HUSKY=0`, or empty `core.hooksPath`. A failing hook is fixed at its cause, or the run stops.
 - **No invention.** Never make up an acceptance criterion id, a path, a function, a label, or issue context.
 - **No silent product or architecture call.** Stop and ask once, with every open question together.

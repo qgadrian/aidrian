@@ -6,7 +6,8 @@
 // call the hooks let run never pays for it.
 
 import { loadConfig } from './config.mjs';
-import { appendEvent, denyRow } from './dispatch-log.mjs';
+import { appendEvent } from './dispatch-log.mjs';
+import { denyRow } from './dispatch-rows.mjs';
 import { noteDenial } from './lesson-signals.mjs';
 import { findProject } from './project.mjs';
 

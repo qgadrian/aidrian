@@ -1,6 +1,6 @@
 ---
 name: autopilot
-description: Run one task unattended to a draft pull request and a bounded review loop, then report. Never merges. Takes a Linear issue, a plan, or a task.
+description: Run one issue, plan, or task unattended to a reviewed draft pull request, then report. Never merges.
 disable-model-invocation: true
 ---
 
@@ -10,8 +10,7 @@ Take one task from implementation to a reviewed draft pull request while the Hum
 This skill runs other skills and adds two things: what to do with a decision nobody is there to make, and a bound on the review loop.
 It never redoes what the skills it runs already do.
 
-Before you start, follow the `knowledge` skill. Load your `orchestration` docs for the agent registry,
-and `product_sensitive` docs for the flows the project declares critical.
+Before you start, follow the `knowledge` skill. Load your `product_sensitive` docs for the flows the project declares critical.
 Load the `orchestration` skill too: it owns the worktree, the pull request, and review findings.
 
 ## Inputs
@@ -20,7 +19,7 @@ Load the `orchestration` skill too: it owns the worktree, the pull request, and 
 <task> [--base <branch>] [--full-review] [--handoff]
 ```
 
-- `<task>`: a Linear issue key or URL, a plan path, or a one-line task description.
+- `<task>`: an issue key or URL, a plan path, or a one-line task description.
   Missing or unclear: ask now, while the Human is here. Never guess the task.
 - `--base`: the branch the pull request targets. Default: the one the implementing skill picks.
 - `--full-review`: run the `pr-review` skill in every review round, not only when `references/phases.md` § 3 calls for it.
@@ -76,7 +75,8 @@ Read `references/phases.md` at the start, and follow it.
 
 ## Bounds
 
-- **Three review rounds** at most, unless the Human set another number at launch.
+- **Review rounds**: the `orchestration` skill § 3 stop rule, at most config.json `github.maxReviewRounds`,
+  unless the Human set another number at launch.
 - **No rare edge cases.** End the loop early once a review of the current head leaves every open finding `accepted_residual`,
   `acceptable_as_is`, or `drop_unless_cited` by `aidrian pr disposition`, and close their threads with the reason.
   A round that pushed a fix has not reached that point: the next round reviews the new head.
@@ -86,7 +86,7 @@ Read `references/phases.md` at the start, and follow it.
 
 ## Stop
 
-Stop, park the rest, and report when: a parked decision blocks all remaining work; repository, GitHub, Linear,
+Stop, park the rest, and report when: a parked decision blocks all remaining work; repository, GitHub, tracker,
 or agent access is missing; the main checkout holds unrelated changes and no task worktree exists;
 the task collides with its stated non-goals; or a push is rejected.
 Write the brief first when checkpoints are allowed.

@@ -11,7 +11,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { commandConfig, isDirectory, isFile } from './config.mjs';
+import { commandConfig } from './config.mjs';
+import { isDirectory, isFile } from './fs.mjs';
 import { runGit } from './git.mjs';
 import { checkBudgets, loadKnowledge } from './knowledge.mjs';
 import { projectAt } from './project.mjs';
@@ -111,7 +112,8 @@ export function lintAgents(dirs, { descriptionChars }) {
 
 export function lintPaths(root, staged = false) {
   const args = staged ? ['diff', '--cached', '--name-only', '--diff-filter=ACMR', '-z'] : ['ls-files', '-z'];
-  const { status, stdout } = runGit(args, root);
+  // A command, not a hook: listing a large repository's files may take longer than a hook's git call may.
+  const { status, stdout } = runGit(args, root, { timeout: 0 });
   if (status !== 0) return { problems: [`git ${args[0]} failed in ${root}`], summary: '' };
   const files = stdout.split('\0').filter((file) => file && !BINARY.test(file));
   const problems = [];
@@ -135,7 +137,7 @@ function workingText(root, file) {
 
 // The file as the index holds it, which is what a commit takes: a later unstaged edit or deletion does not change it.
 function stagedText(root, file) {
-  const { status, stdout } = runGit(['show', `:${file}`], root, { maxBuffer: STAGED_MAX_BYTES });
+  const { status, stdout } = runGit(['show', `:${file}`], root, { maxBuffer: STAGED_MAX_BYTES, timeout: 0 });
   return status === 0 ? stdout : null;
 }
 

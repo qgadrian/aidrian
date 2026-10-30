@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -18,13 +18,10 @@ import {
   postedTriggerInstant,
   flooredInstant,
   awaitReview,
-  runGh,
   isQuotaNotice,
   isReviewSummaryCard,
   REVIEW_SUMMARY_CARD_MARKER,
   exitCodeFor,
-  GH_EXEC_OPTIONS,
-  GH_MAX_BUFFER_BYTES,
   DEFAULT_REVIEWER,
   REQUEST_COMMENT,
   REQUEST_INSTRUCTIONS,
@@ -48,7 +45,7 @@ test('parseArgs: defaults, URL form, #n form, and strict flag parsing', () => {
   assert.equal(d.timeoutSec, 840);
   assert.equal(d.intervalSec, 60);
   assert.equal(d.request, false);
-  assert.equal(d.maxRounds, 10);
+  assert.equal(d.maxRounds, 3, 'the config.json github.maxReviewRounds default');
   assert.equal(parseArgs(['--max-rounds', '15']).maxRounds, 15);
   assert.throws(() => parseArgs(['--max-rounds', '0']), /max-rounds/);
   assert.throws(() => parseArgs(['--max-rounds', '2.5']), /max-rounds/);
@@ -647,67 +644,6 @@ test('awaitReview --request: a fresh review on head does NOT re-request', async 
   assert.equal(r.status, 'already_present');
 });
 
-test('runGh: gh reads carry a stdout ceiling far above the 1 MB default', () => {
-  // Regression guard. `repos/{repo}/commits/{sha}` embeds every changed file's
-  // patch and measured 1,211,087 B for a large pull request's head commit, so the 1 MB default
-  // for a synchronous child process killed `--request` before it could post.
-  assert.ok(GH_MAX_BUFFER_BYTES > 4 * 1024 * 1024, 'ceiling must clear a real PR payload by a wide margin');
-  assert.equal(GH_EXEC_OPTIONS.maxBuffer, GH_MAX_BUFFER_BYTES);
-  assert.equal(GH_EXEC_OPTIONS.encoding, 'utf8');
-  const seen = [];
-  const fakeExec = (file, args, options) => {
-    seen.push({ file, args, options });
-    return '{"ok":true}';
-  };
-  assert.equal(runGh(['api', 'repos/o/r/pulls/1'], fakeExec), '{"ok":true}');
-  assert.equal(seen[0].file, 'gh');
-  assert.deepEqual(seen[0].args, ['api', 'repos/o/r/pulls/1']);
-  assert.equal(seen[0].options.maxBuffer, GH_MAX_BUFFER_BYTES);
-});
-
-test('runGh: an overflow above the ceiling names the command and the limit; other failures pass through unchanged', () => {
-  const throwing = (code, message) => () => {
-    throw Object.assign(new Error(message), { code });
-  };
-  assert.throws(
-    () => runGh(['api', 'repos/o/r/commits/abc'], throwing('ENOBUFS', 'spawnSync gh ENOBUFS')),
-    (err) => {
-      assert.match(err.message, /repos\/o\/r\/commits\/abc/, 'names the overflowing command');
-      assert.match(err.message, /64 MB stdout ceiling/, 'names the limit that was hit');
-      assert.match(err.message, /GH_MAX_BUFFER_BYTES/, 'names the knob to turn');
-      return true;
-    },
-  );
-  assert.throws(() => runGh(['api', 'x'], throwing(1, 'gh: authentication required')), /authentication required/);
-});
-
-test('runGh: a real 2 MB stdout survives the ceiling that the 1 MB default rejected', () => {
-  // The live-PR proof does not survive the merge that fixes the PR, so the crash
-  // is reproduced against a real child process instead. 2 MB is the size class
-  // the head-commit read hit on a large pull request (1,211,087 B), where the endpoint embeds
-  // every changed file's patch.
-  const payloadBytes = 2 * 1024 * 1024;
-  const writeStdout = ['-e', `process.stdout.write('x'.repeat(${payloadBytes}))`];
-  // Pre-fix shape: the options this script used to pass, on the same call shape.
-  assert.throws(
-    () => execFileSync('node', writeStdout, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }),
-    (err) => err.code === 'ENOBUFS',
-    'the pre-fix options must still reproduce the crash, or this test proves nothing',
-  );
-  // Post-fix shape: runGh's options forwarded to a real child process.
-  const viaNode = (_file, args, options) => execFileSync('node', args, options);
-  assert.equal(runGh(writeStdout, viaNode).length, payloadBytes);
-  // A genuine overflow above the new ceiling still reaches the caller as actionable text.
-  const viaNodeCapped = (_file, args, options) => execFileSync('node', args, { ...options, maxBuffer: 1024 });
-  assert.throws(() => runGh(writeStdout, viaNodeCapped), /stdout ceiling[\s\S]*GH_MAX_BUFFER_BYTES/);
-});
-
-test('every gh invocation routes through runGh — no call site re-inherits the 1 MB default', () => {
-  const src = readFileSync(new URL('../plugins/aidrian/lib/pr-await-review.mjs', import.meta.url), 'utf8');
-  const direct = src.match(/execFileSync\s*\(/g) ?? [];
-  assert.equal(direct.length, 0, 'call gh through runGh(), which supplies GH_EXEC_OPTIONS, not a bare exec call');
-});
-
 // Verbatim body of the bot's usage-limit comment,
 // posted six seconds after the `@codex review` trigger.
 const QUOTA_BODY =
@@ -978,10 +914,11 @@ test('awaitReview: --max-rounds stops before the request that would start one ro
   assert.equal(exitCodeFor(r.status), 4);
 
   // The default applies when the caller passes no limit.
-  const byDefault = fakeGh([{ reviews: rounds(10) }], { head: 'bbb' });
+  const byDefault = fakeGh([{ reviews: rounds(3) }], { head: 'bbb' });
   const c2 = clock();
   const d = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { gh: byDefault, ...c2 });
   assert.equal(d.status, 'round_limit');
+  assert.equal(d.max_rounds, 3);
 
   // Human raised the limit: the request goes out.
   const raised = fakeGh([{ reviews: rounds(10) }], { head: 'bbb' });
@@ -1001,7 +938,7 @@ test('awaitReview: --max-rounds stops before the request that would start one ro
 });
 
 // A project whose own config keeps the inbox in `base/state`, away from the developer's state folder, and a run of
-// `await-review --request` on a pull request with `reviews` bot reviews, at the default limit of 10.
+// `await-review --request` on a pull request with `reviews` bot reviews, at the default limit of 3.
 function roundsProject(t) {
   const base = mkdtempSync(path.join(tmpdir(), 'aidrian-rounds-'));
   t.after(() => rmSync(base, { recursive: true, force: true }));
@@ -1011,7 +948,7 @@ function roundsProject(t) {
   const { config } = loadConfig(project);
   assert.equal(inboxPath(project, config), path.join(base, 'state/lessons/inbox.jsonl'));
   const log = t.mock.method(console, 'log', () => {});
-  const run = ({ reviews = 10, args = [], settings = config, proj = project } = {}) => {
+  const run = ({ reviews = 3, args = [], settings = config, proj = project } = {}) => {
     const rounds = Array.from({ length: reviews }, (_, i) => ({ id: i + 1, user: BOT, submitted_at: T(1), commit_id: 'aaa', state: 'COMMENTED' }));
     return runAwaitReview(['42', '--request', ...args], settings, proj, { gh: fakeGh([{ reviews: rounds }], { head: 'bbb' }), ...clock() });
   };
@@ -1042,7 +979,7 @@ test('runAwaitReview: a re-run at the same round count is the same event and nev
   await run();
   assert.deepEqual([all()[0].status, all()[0].seen, all()[0].resolutions[0].recurred], ['resolved', 1, 0], 'the same pull request at the same count again is no new event');
   later();
-  await run({ reviews: 11 });
+  await run({ reviews: 4 });
   later();
   await run({ args: ['--repo', 'acme/other'] });
   await run({ args: ['--repo', 'acme/other'] });
@@ -1070,7 +1007,7 @@ test('awaitReview: a push mid-wait past the limit ends with round_limit, not rec
 test('a raised limit is recorded in the request and kept by later runs', async () => {
   const rounds = (n) => Array.from({ length: n }, (_, i) => ({ id: i + 1, user: BOT, submitted_at: T(1), commit_id: 'aaa', state: 'COMMENTED' }));
   assert.ok(requestCommentBody('bbb', 15).includes('<!-- pr-await-review: max-rounds=15 -->'));
-  assert.ok(!requestCommentBody('bbb', 10).includes('max-rounds'), 'the default is never recorded');
+  assert.ok(!requestCommentBody('bbb', 3).includes('max-rounds'), 'the default is never recorded');
   const raised = { user: { login: 'someone' }, created_at: T(1), body: requestCommentBody('aaa', 15) };
   const quoted = { user: { login: 'someone' }, created_at: T(1), body: 'see `<!-- pr-await-review: max-rounds=99 -->`' };
   assert.equal(recordedMaxRounds([raised, quoted]), 15, 'a marker outside a request raises nothing');
@@ -1099,7 +1036,7 @@ test('config.json github.reviewer and github.maxReviewRounds are the defaults, a
 test('aidrian pr prints its usage for an unknown action, and await-review reports a bad flag on one line', () => {
   const cli = new URL('../plugins/aidrian/bin/aidrian', import.meta.url).pathname;
   const unknown = spawnSync(cli, ['pr', 'merge'], { encoding: 'utf8' });
-  assert.deepEqual([unknown.status, unknown.stderr.split('\n')[0]], [1, 'usage: aidrian pr await-review [PR] [--request] [--max-rounds N] | checks [PR] [--json] | disposition --severity S [--likelihood L --affects A] [--vocab]']);
+  assert.deepEqual([unknown.status, unknown.stderr.split('\n')[0]], [1, 'usage: aidrian pr await-review [PR] [--request] [--max-rounds N] | checks [PR] [--json] | disposition --severity S [--likelihood L --affects A] [--cost C] [--source bot [--round N]] [--vocab]']);
   const bad = spawnSync(cli, ['pr', 'await-review', '--bogus'], { encoding: 'utf8' });
   assert.deepEqual([bad.status, bad.stderr], [1, 'aidrian pr await-review: unknown argument: --bogus\n']);
 });

@@ -11,14 +11,17 @@ import { isFile, isObject, readJson } from './fs.mjs';
 // The project folder format this plugin reads. A format change raises it and documents the migration.
 export const VERSION = 1;
 
+// The `github.reviewer` that turns the review bot off, as null does.
+export const NO_REVIEWER = 'none';
+
 // The type of every key. A nested object is one group of keys; a project sets any subset of a group.
 const SCHEMA = {
   defaultBranch: 'text',
   state: { dir: 'textOrNull' },
-  worktrees: { dir: 'text', bootstrap: 'textOrNull' },
+  worktrees: { dir: 'text', bootstrap: 'textOrNull', disposable: 'folderNames' },
   mainCheckout: { guard: 'boolean', allowWrites: 'texts' },
   commits: { types: 'texts' },
-  github: { requiredSections: 'texts', reviewer: 'text', maxReviewRounds: 'positive', requiredChecks: 'texts', ignoreCancelledChecks: 'texts', conditionalChecks: 'texts' },
+  github: { requiredSections: 'texts', reviewer: 'textOrNull', maxReviewRounds: 'positive', requiredChecks: 'texts', ignoreCancelledChecks: 'texts', conditionalChecks: 'texts' },
   docs: { wrapLimit: 'zeroOrMore' },
   knowledge: { budgets: { alwaysBytes: 'positive', taggedDocBytes: 'positive' } },
   skills: { descriptionChars: 'positive', listingBytes: 'positive' },
@@ -68,6 +71,10 @@ const TYPES = {
   text: [isText, 'a non-empty string'],
   textOrNull: [(value) => value === null || isText(value), 'a non-empty string or null'],
   texts: [(value) => Array.isArray(value) && value.every(isText), 'a list of non-empty strings'],
+  folderNames: [
+    (value) => Array.isArray(value) && value.every((name) => isText(name) && !/[/\\]/u.test(name) && name !== '.' && name !== '..'),
+    'a list of folder names with no "/", such as "node_modules"',
+  ],
   boolean: [(value) => typeof value === 'boolean', 'true or false'],
   positive: [(value) => Number.isInteger(value) && value > 0, 'a whole number above 0'],
   percent: [(value) => Number.isInteger(value) && value > 0 && value <= 100, 'a whole number from 1 to 100'],
@@ -77,11 +84,14 @@ const TYPES = {
 
 // `state.dir: null` is the per-project folder under `$XDG_STATE_HOME` (lib/project.mjs). Task worktrees sit beside the
 // repository's files, where editors and agents expect them; the guard is off until a project opts in.
-// `names.ai: null` is the host's own name, which only the running hook knows.
+// `worktrees.disposable` names the folders of installed packages, build output, and caches, which a worktree cleanup
+// may delete without asking (lib/worktree.mjs).
+// `names.ai: null` is the host's own name, which only the running hook knows. `github.reviewer: null`, or "none", which
+// loadConfig reads as null, runs no review bot: `aidrian pr await-review` then waits for nothing.
 export const DEFAULTS = deepFreeze({
   defaultBranch: 'main',
   state: { dir: null },
-  worktrees: { dir: '.worktrees', bootstrap: null },
+  worktrees: { dir: '.worktrees', bootstrap: null, disposable: ['node_modules', 'dist', 'build', '.next', '.cache', 'coverage', '.turbo'] },
   mainCheckout: { guard: false, allowWrites: [] },
   commits: { types: ['build', 'chore', 'ci', 'docs', 'feat', 'fix', 'perf', 'refactor', 'revert', 'style', 'test'] },
   github: {
@@ -134,6 +144,7 @@ export function loadConfig(project) {
   if (problem) return { config: DEFAULTS, errors: [problem], current: false };
   const { version, ...values } = raw;
   const config = merge(SCHEMA, DEFAULTS, values, '', file, errors);
+  if (config.github.reviewer === NO_REVIEWER) config.github = { ...config.github, reviewer: null };
   if (project.localModels !== undefined) config.models = checkModels(project.localModels, project.paths.local, errors, config.models);
   for (const [key, local] of [['names', project.localNames], ['telemetry', project.localTelemetry]]) {
     if (local !== undefined) config[key] = merge({ [key]: SCHEMA[key] }, config, { [key]: local }, '', project.paths.local, errors)[key];

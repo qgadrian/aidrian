@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { commandLines, lexCommand, lexPipeline, lexSteps, lexSubstitutions, readGit, readInvocation, readShortOptions } from '../plugins/aidrian/lib/shell-lex.mjs';
+import { commandLines, lexCommand, lexInputs, lexPipeline, lexSteps, lexSubstitutions, readGit, readInvocation, readShortOptions } from '../plugins/aidrian/lib/shell-lex.mjs';
 
 const texts = (line) => lexCommand(line).map((segment) => segment.map((token) => token.text));
 const programOf = (line) => readInvocation(lexCommand(line)[0]).program;
@@ -60,6 +60,12 @@ test('a heredoc body is data; the lines after it are commands', () => {
   assert.deepEqual(texts("cat <<< 'x'\ngit push"), [['cat', '<<<', 'x'], ['git', 'push']]);
   assert.deepEqual(texts('cat <<<x\ncat <<EOF\nrm -rf /\nEOF\necho done'), [['cat', '<<<', 'x'], ['cat'], ['echo', 'done']]);
   assert.deepEqual(argsOf('grep -c a <<<"$v"'), ['-c', 'a'], 'a here-string word is not an argument');
+});
+
+test('lexInputs gives each segment the heredoc bodies and here-strings it reads, the body to the segment that opened it', () => {
+  const { segments, inputs } = lexInputs("python3 - <<'EOF' | tee out\nprint(1)\nEOF\ncat <<A <<<\"word\"\nbody a\nA\nls");
+  assert.deepEqual(segments.map((segment) => segment[0].text), ['python3', 'tee', 'cat', 'ls']);
+  assert.deepEqual(inputs, [['print(1)\n'], [], ['body a\n', 'word'], []]);
 });
 
 test('lexSubstitutions returns the substitutions that run, and none that are only text', () => {

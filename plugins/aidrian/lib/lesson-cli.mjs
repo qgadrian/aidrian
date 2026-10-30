@@ -12,6 +12,7 @@ import {
   TARGETS, TIERS, triageOrder,
 } from './lesson-inbox.mjs';
 import { projectAt } from './project.mjs';
+import { usageLines } from './usage.mjs';
 
 const SHOWN_OCCURRENCES = 5;
 
@@ -46,7 +47,7 @@ export const commands = {
     async run(args) {
       const { values, positionals } = parseArgs({ args, allowPositionals: true, options: OPTIONS });
       const [action, ...ids] = positionals;
-      if (!Object.hasOwn(ACTIONS, action ?? '')) return fail(`usage: aidrian lesson ${commands.lesson.usage}`);
+      if (!Object.hasOwn(ACTIONS, action ?? '')) return fail(usageLines('lesson', commands.lesson.usage, 'usage: ').join('\n'));
       const project = projectAt(path.resolve(values.project ?? '.'));
       const config = commandConfig(project);
       return ACTIONS[action]({ values, ids, file: inboxPath(project, config), config });

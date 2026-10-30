@@ -101,6 +101,18 @@ test('a subagent may still read those files and write anything else, and the mai
       "node -e \"require('fs').writeFileSync('tsconfig.json', '{}')\"",
       "python3 -c \"open('.aidrian/knowledge/notes.md', 'w').write('x')\"",
       'python3 -m json.tool .aidrian/config.json',
+      // An interpreter whose code only reads the config.
+      "python3 -c \"import json; print(json.load(open('.aidrian/config.json')))\"",
+      "node -e \"console.log(require('./.aidrian/config.json'))\"",
+      "node -p \"JSON.parse(require('fs').readFileSync('.aidrian/config.json', 'utf8')).agents\"",
+      "ruby -e \"puts File.read('.aidrian/config.json')\"",
+      "perl -ne 'print' .aidrian/config.json",
+      "perl -Mstrict -ne 'print' .aidrian/config.json",
+      "python3 - <<'EOF'\nimport json\nprint(json.load(open('.aidrian/config.json'))['agents'])\nEOF",
+      // A heredoc counts for its own command only, so a read after it is a read.
+      "python3 - <<'EOF'\nprint(1)\nEOF\ncat .aidrian/config.json",
+      "python3 - <<'EOF'\nopen('notes.md', 'w').write('x')\nEOF\ncat .aidrian/config.json",
+      "python3 <<< \"print(open('.aidrian/config.json').read())\"",
     ].map((command) => ['Bash', { command }]),
   ];
   for (const [tool, toolInput] of allowed) assert.equal(verdict(dir, subagent(dir, tool, toolInput)), null, `${tool} ${JSON.stringify(toolInput)}`);
@@ -126,6 +138,17 @@ test('a write to an unknown folder, or code an interpreter runs, is judged by th
     ['ruby -e "File.write(\'.aidrian/config.json\', \'{}\')"', '.aidrian/config.json'],
     ["python3 - <<'EOF'\nopen('.aidrian/config.json', 'w').write('{')\nEOF", '.aidrian/config.json'],
     ["bash -c 'python3 -c \"open(\\\".aidrian/config.json\\\", \\\"w\\\")\"'", '.aidrian/config.json'],
+    // Code that writes, deletes, moves, or runs a program, from any place an interpreter reads code.
+    ["python3 - <<'EOF'\nimport os\nos.remove('.aidrian/config.json')\nEOF", '.aidrian/config.json'],
+    ["cat x | python3 - <<'EOF'\nimport json\nEOF\npython3 <<< \"import os; os.rename('.aidrian.json', 'x')\"", '.aidrian.json'],
+    ["echo \"open('.aidrian/config.json', 'w')\" | python3", '.aidrian/config.json'],
+    ['node -e "require(\'fs\').unlinkSync(\'.aidrian/config.json\')"', '.aidrian/config.json'],
+    ['node -e "require(\'child_process\').execSync(\'rm .aidrian.local.json\')"', '.aidrian.local.json'],
+    ['python3 -c "import pathlib; pathlib.Path(\'.aidrian/config.json\').write_text(\'{}\')"', '.aidrian/config.json'],
+    ['python3 -c "import shutil; shutil.move(\'.aidrian/config.json\', \'/tmp/x\')"', '.aidrian/config.json'],
+    ["perl -pi.bak -e 's/deny/allow/' .aidrian/config.json", '.aidrian/config.json'],
+    ['perl -e "open(my \\$f, \'>\', \'.aidrian/config.json\')"', '.aidrian/config.json'],
+    ['ruby -i -pe "sub(/deny/, \'allow\')" .aidrian/config.json', '.aidrian/config.json'],
   ]) {
     assert.match(reasonOf(command) ?? '', new RegExp(`^aidrian: Bash is blocked .* it may change ${file.replaceAll('.', '\\.')}, which sets`), command);
   }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { addedLines, formatReviews, formatRounds, reviewRounds } from '../plugins/aidrian/lib/report-reviews.mjs';
+import { addedLines, formatReviews, formatRounds, NO_BOT, reviewRounds } from '../plugins/aidrian/lib/report-reviews.mjs';
 
 const BOT = 'chatgpt-codex-connector[bot]';
 const LOGIN = 'chatgpt-codex-connector';
@@ -124,6 +124,12 @@ test('--since keeps the pull requests merged since then, and says when --prs cut
   assert.match(formatReviews(result, { since: '7d' }), /\nPartial: 2 pull requests merged since 7d is the --prs limit; raise it for the rest\.\nFindings: 0 in 0 rounds/);
   assert.equal(reviewRounds(3, BOT, fakeGh([{ number: 5, reviews: [] }]).gh, { sinceMs: 0 }).truncated, false);
   assert.equal(reviewRounds(1, BOT, fakeGh([{ number: 5, reviews: [] }]).gh).truncated, false, 'without --since, the last N is the whole ask');
+});
+
+test('with no review bot set, the reviews view says so and runs no gh', () => {
+  const result = reviewRounds(20, null, () => assert.fail('no gh call'));
+  assert.deepEqual(result, { reviewer: null, error: NO_BOT });
+  assert.equal(formatReviews(result), 'Review rounds: no review bot is set (github.reviewer is null)');
 });
 
 test('addedLines reads the new-side numbers of the added lines, across hunks', () => {

@@ -94,7 +94,7 @@ No live Codex session has been checked for them. So in Codex:
 - `main` gates hold for the main session, and for any subagent call that arrives without `agent_id`.
 - A named agent's gates apply only to a call that carries its `agent_type`.
   Codex names this plugin's roles `aidrian-<agent>`, which the gates read as `<agent>`.
-- The guard on the config files applies only to a call that carries `agent_id`.
+- The guard on the config files, and the [session's gates](../hooks.md#the-sessions-gates), apply only to a call that carries `agent_id`.
 
 So Codex holds an agent to its gates only as far as its hook input names the agent.
 

@@ -9,7 +9,7 @@ import { commandConfig, VERSION } from './config.mjs';
 import { isWithin, linksOutside } from './fs.mjs';
 import { isIgnored } from './git.mjs';
 import { checkBudgets, indexRows, loadKnowledge } from './knowledge.mjs';
-import { findProject, projectAt, repoRoot, stateDir, worktreesDir } from './project.mjs';
+import { findProject, noProjectMessage, projectAt, repoRoot, stateDir, worktreesDir } from './project.mjs';
 
 const OPTIONS = { project: { type: 'string' } };
 
@@ -21,7 +21,7 @@ export const commands = {
       const start = path.resolve(parseArgs({ args, options: OPTIONS }).values.project ?? '.');
       const project = findProject(start);
       if (!project) {
-        console.error(`no project folder at or above ${start}; run aidrian init`);
+        console.error(noProjectMessage(start));
         return 1;
       }
       const { config, buckets, errors } = loadKnowledge(project);

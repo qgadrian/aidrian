@@ -3,7 +3,7 @@
 import path from 'node:path';
 
 import { indexRows, initBucket, listTags, loadKnowledge, pluginTags, routeKnowledge, searchKnowledge } from './knowledge.mjs';
-import { findProject } from './project.mjs';
+import { findProject, noProjectMessage } from './project.mjs';
 
 const USAGE = `usage: aidrian-knowledge <command> [--project DIR] [args]
 
@@ -47,7 +47,7 @@ if (command === 'search' && !rest.length) fail(`${USAGE}\n\nsearch needs at leas
 if (command === 'init' && rest.length !== 1) fail(`${USAGE}\n\ninit needs one folder.`);
 
 const project = findProject(start);
-if (!project) fail(`no project folder at or above ${path.resolve(start)}; run aidrian init`);
+if (!project) fail(noProjectMessage(path.resolve(start)));
 if (command === 'init') init(project, rest[0]);
 
 const { buckets, errors } = loadKnowledge(project);

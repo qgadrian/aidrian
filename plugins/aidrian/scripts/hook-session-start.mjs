@@ -2,9 +2,12 @@
 // the rest, one line with the names to call the human and the AI, and, for the main session only, a last line when the
 // lesson inbox holds open lessons, which escalates when the inbox needs triage. SessionStart adds plain stdout to the context; SubagentStart (`--subagent`) needs it
 // wrapped in JSON. Prints nothing outside a project.
+// At SessionStart it also saves the project's agent gates for the session (lib/gate-snapshot.mjs), which the gate hook
+// holds every subagent to until the session ends.
 
 import path from 'node:path';
 
+import { saveGateSnapshot } from '../lib/gate-snapshot.mjs';
 import { runHook } from '../lib/hook-io.mjs';
 import { indexRows, loadKnowledge } from '../lib/knowledge.mjs';
 import { inboxPath, nudge } from '../lib/lesson-inbox.mjs';
@@ -31,6 +34,7 @@ await runHook((input) => {
   if (process.argv.includes('--subagent')) {
     console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: `${line}\n${names}` } }));
   } else {
+    saveGateSnapshot(input.session_id, project.root, config.agents);
     console.log(`${line}\n${names}`);
     const lessons = nudge(inboxPath(project, config), { command: binCommand('aidrian'), config });
     if (lessons) console.log(lessons);

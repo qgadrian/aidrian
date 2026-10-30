@@ -24,7 +24,7 @@ npm run check    # what CI runs
 
 - Both manifests agree.
 - Every agent preloads the `knowledge` skill, and asks only for tags that skill lists.
-- The README's agent and skill tables list every agent and skill shipped, once.
+- [Agents and skills](agents-and-skills.md) lists every agent and skill shipped, once.
 - No project-specific path leaks into the plugin.
 - No tracked file names a person.
   The owner's GitHub name appears only where a user installs: the README, the example's settings, and the manifests.

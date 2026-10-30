@@ -18,9 +18,9 @@ generated_at: "2026-05-21T14:30:00Z" # ISO 8601 UTC, when the plan was authored
 status: "ready"                      # one of: open-questions | ready | in-progress | complete | blocked
 workspace_decision:
   mode: "worktree"                   # one of: current_branch | new_branch | worktree
-  branch_name: "feat/dashboard-v3-…" # task-scoped conventional branch name
-  worktree_path: "<repo>/.worktrees/dashboard-v3"  # only when mode == worktree; absolute
-  rationale: "design-import implementation runs in a task-scoped worktree"
+  branch_name: "feat/design-dashboard-v3" # feat/design-<slug>: the branch the design-import skill committed the import on
+  worktree_path: "<repo>/.worktrees/design-dashboard-v3"  # only when mode == worktree; absolute, as aidrian worktree new printed it
+  rationale: "the import and its implementation share one task worktree"
 plan_kind: "technical-design"        # fixed for design-import plans; re-runs keep this value (never flip to revision)
 related_plans: []                    # other plan paths that depend on or supersede this one
 ---

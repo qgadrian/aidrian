@@ -44,7 +44,8 @@ Record the pull request's number, link, and head commit.
 Up to config.json `github.maxReviewRounds` rounds, or the number the Human set at launch. Each round:
 
 1. **Bot review.** Run the `pr-review-loop` skill on the pull request with `--await-codex`; once the bot is out, without it.
-   Record the state its step 1 reports from `aidrian pr await-review`:
+   Record the state its step 1 reports from `aidrian pr await-review`.
+   With config.json `github.reviewer` set to `null`, the project has no bot: record `no_reviewer`, and the `pr-review` skill runs every round.
 
    | Exit | State | In this run |
    | --- | --- | --- |
@@ -53,8 +54,8 @@ Up to config.json `github.maxReviewRounds` rounds, or the number the Human set a
    | 3 | `blocked_quota` | ask the bot no more in this run; the `pr-review` skill runs this round and each later one |
    | 4 | `round_limit` | the same. The loop's question about raising `--max-rounds` is the Human's: record it, never raise it |
 
-2. **Specialist review.** Run the `pr-review` skill when `--full-review` is set, when this round's bot state is not
-   `received` or `already_present`, or in round 1 when the branch has more than one slice, as the `orchestration` skill § 3 says.
+2. **Specialist review.** Run the `pr-review` skill when `--full-review` is set, when the bot is out this round, as the
+   `orchestration` skill § 3 defines it, or in round 1 when the branch has more than one slice, as that section says.
    Skip that round-1 run when the engine's integration review already ran `pr-review` on the current head.
    Its findings go through the `pr-review-fix` skill.
 3. **Findings.** Every finding from either skill goes through the `orchestration` skill § 4: `aidrian pr disposition` gives

@@ -214,18 +214,18 @@ Every file entry must be an exact path plus a short reason.
   - dependency links if applicable
   - milestone if provided
   - assignee if provided
-  - Priority issue field (native `priority`, always set; see Issue Fields below)
-  - Effort issue field (native `estimate`, always set, and mirrored in this section's prose; see Issue Fields below)
+  - Priority (always set; see Issue Fields below)
+  - Effort (always set, and mirrored in this section's prose; see Issue Fields below)
 
 ### Issue Fields (Priority and Effort)
 
-On Linear, both fields are native fields set directly on the same `save_issue` call that creates or updates the issue — there is no separate post-creation API
-call for either. Priority is the native `priority` integer. On GitHub Issues, set them as the labels or project fields
-the `issue_tracker` knowledge names; with none, they live in Tracker Metadata alone.
-Effort is the native `estimate` number: when the team uses Linear's t-shirt estimation scale, the issue's `## Size` maps straight onto it.
-See `references/linear.md` for the exact `save_issue` mechanics and both mapping tables.
+Set both in the tracker's own fields when you create the issue:
 
-**Always set Priority (native `priority`) and Effort (native `estimate`) on every issue created, and always mirror Effort in the issue body.
+- Linear: the native `priority` and `estimate` on the same `save_issue` call that creates or updates the issue, never a follow-up call.
+  `references/linear.md` holds the call and both mapping tables.
+- GitHub Issues: the labels or project fields the `issue_tracker` knowledge names; with none, Tracker Metadata alone holds them.
+
+**Always set Priority and Effort on every issue created, and always mirror Effort in the issue body.
 Neither field may be omitted from the issue body.**
 
 #### Priority inference rule
@@ -242,29 +242,28 @@ An explicit user- or initiative-supplied Priority always overrides the inference
 
 #### Effort derivation rule
 
-Derive Effort from the issue's `## Size` t-shirt estimate and set the native `estimate` in the same step.
-An explicitly supplied Effort overrides the derivation by changing the recorded `## Size` — never by setting an `estimate` that disagrees with the Size.
-Never create an issue that carries a `## Size` but no `estimate`, or an `estimate` that disagrees with that Size.
+Derive Effort from the issue's `## Size` t-shirt estimate, and set the tracker's effort field from it in the same step.
+An explicitly supplied Effort overrides the derivation by changing the recorded `## Size`, never by setting a tracker value that disagrees with the Size.
 
-| `## Size` | `issue_fields.effort` | `save_issue(estimate:)` |
-|---|---|---|
-| XS | Low | 1 |
-| S | Low | 2 |
-| M | Medium | 3 |
-| L | High | 5 |
+| `## Size` | `issue_fields.effort` |
+|---|---|
+| XS | Low |
+| S | Low |
+| M | Medium |
+| L | High |
 
-`## Size` is the sole source of truth for `estimate`.
-Effort stays a three-value prose mirror (`Low` covers both `XS` and `S`), so it is deliberately coarser than Size — when an Effort is supplied with no
-Size, reverse-map `Low` → `2`; `XS` is reachable only by declaring Size `XS` explicitly.
+`## Size` is the sole source of truth for the tracker's effort field: on Linear, `estimate` by `references/linear.md`.
+Effort stays a three-value prose mirror (`Low` covers both `XS` and `S`), so it is deliberately coarser than Size.
+When only an Effort is supplied, `Low` means Size `S`; `XS` is reachable only by declaring Size `XS` explicitly.
 
-Never leave `estimate` unset on a created issue, and never let it disagree with the Effort prose in `Tracker Metadata`.
+Never leave the effort field unset on a created issue when the tracker has one, and never let it disagree with the Effort prose in `Tracker Metadata`.
 
 #### Label rules (domain/work-type only)
 
-The retired `priority:*` / `effort:*` label mirror is gone — Linear's native `priority` field is already filterable, so no filterable-copy workaround is
-needed.
-Only add domain/work-type labels (`bug`, `chore`, `feature`, etc.) to `tracker_fields.labels`, following the create-if-missing procedure and the
-label-set-replacement warning in `references/linear.md`.
+On Linear, add no `priority:*` or `effort:*` labels: the native fields are already filterable.
+On GitHub Issues, priority and effort labels are only the ones the `issue_tracker` knowledge names.
+Otherwise add only domain/work-type labels (`bug`, `chore`, `feature`, etc.) to `tracker_fields.labels`; on Linear, follow the create-if-missing
+procedure and the label-set-replacement warning in `references/linear.md`.
 
 ### Initiative Shape
 
@@ -324,8 +323,8 @@ Do not finalize until all answers are `yes`:
 - If this is a `parent_issue`, does it include initiative shape, success criteria, issue tree, and PR group sequencing?
 - If this is a `project_issue`, does it point to the canonical parent issue instead of duplicating the plan?
 - If the issue is `L`, does it include a red-alert split note and split candidates?
-- Does the `save_issue` call carry both native fields — `priority` (from the Priority mapping) and `estimate` (from the Size→Effort→estimate table:
-  XS→1, S→2, M→3, L→5) — with `estimate` matching the Effort recorded in `Tracker Metadata`?
+- Are Priority and Effort set where the tracker keeps them, as § Issue Fields says (on Linear, `priority` and `estimate` on the creating
+  `save_issue` call), with the effort value matching the Size and the Effort recorded in `Tracker Metadata`?
 - Does the issue include tracker metadata and an `agent_action_plan` with `review_owners`, `validation_owners`,
   `required_authority_docs`, and at least one `approval_gate`?
 - Has every vague phrase been removed?

@@ -29,7 +29,7 @@ and `security` docs for the surfaces that need a security pass.
 ## 1. Find the plan
 
 Plans live in `<state>/plans/`, where `<state>` is the folder `aidrian state` prints.
-A design import keeps its plan at `docs/design-imports/<slug>/plan.md` in the main checkout.
+A design import keeps its plan at `docs/design-imports/<slug>/plan.md` in its worktree, on branch `feat/design-<slug>`.
 Skip backups, editor and temporary files, and `.json` files. Without a path, take the first of these that finds a plan:
 
 1. The issue: the argument, else the key in the current branch name, in the format the project's `issue_tracker` knowledge gives.

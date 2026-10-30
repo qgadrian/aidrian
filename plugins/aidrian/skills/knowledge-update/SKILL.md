@@ -34,6 +34,7 @@ A topic that already has a real doc is never `generate`. Ask only when two modes
    two or three load-bearing findings per source, with links; for a new doc, its bucket, summary, and tags;
    and every contradiction between sources, for the user to settle.
    Offer three choices: write as shown, change something, or cancel. Write nothing before the user approves.
+   Dispatched by another agent, you cannot wait: return the proposal as `needs_input`, and write once the approval comes back.
 5. **Write** each approved doc:
    - Rules and behavior in plain prose. No line numbers, commit hashes, or branch names: they go stale.
    - A `## Sources` section with the evidence links. On an update, keep every link already there and add the new ones.
@@ -42,10 +43,12 @@ A topic that already has a real doc is never `generate`. Ask only when two modes
      Add a doc to `always` only when the user asks: every `always` doc costs context in every session.
 6. **Check.** Run `aidrian check`, and `aidrian lint budget` when `always` changed. Fix what they report.
    Never raise a limit to make a check pass.
-7. **Report:** the docs written, with their modes; the docs skipped, with why; key evidence per source, with links;
+7. **Commit.** The agent that wrote the docs commits them: one Conventional Commits commit in the task worktree,
+   never the main checkout, then a push, the first one with `-u`.
+   A session the Human runs directly asks before it commits.
+8. **Report:** the docs written, with their modes; the docs skipped, with why; key evidence per source, with links;
    each contradiction and how the user settled it; the sources that were skipped or down; the `aidrian check` line;
-   the extra items the mode's file lists; and a Conventional Commits message for the change.
-   Do not commit: the user does.
+   the extra items the mode's file lists; and the commit, or why there is none.
 
 ## Rules
 

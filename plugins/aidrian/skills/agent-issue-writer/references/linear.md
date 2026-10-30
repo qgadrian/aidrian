@@ -51,7 +51,8 @@ If a native field cannot be populated in the current runtime, keep it in the Mar
 
 ## Priority (native Linear field)
 
-Linear's native `priority` is an integer set directly on `save_issue(priority: <0-4>)` — there is no separate post-creation step and no org-level GraphQL mutation. Map `issue_fields.priority` 1:1:
+Linear's native `priority` is an integer set directly on `save_issue(priority:)`, from the table below: there is no separate post-creation step
+and no org-level GraphQL mutation. This table is the one priority scale; map `issue_fields.priority` 1:1:
 
 | `issue_fields.priority` | native `priority` |
 |---|---|

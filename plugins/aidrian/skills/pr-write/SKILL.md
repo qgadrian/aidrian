@@ -42,8 +42,9 @@ lists the sections and what goes in each.
 
 - **Evidence is what ran.** List the exact commands you or an agent ran in this branch, and what each proved.
   If evidence is missing, say so; never invent a test, a screenshot, or a result.
-- **Close issues in plain text.** One line per issue the branch fully implements, such as `Fixes ABC-12`,
-  never inside backticks, a link, or a quote, where trackers ignore it. Use `Refs ABC-12` for partial work.
+- **Close issues in plain text.** One line per issue the branch fully implements, such as `Fixes ABC-12` on Linear
+  or `Fixes #12` on GitHub, as the `knowledge` skill's `references/tracker.md` writes the key in a body line,
+  never inside backticks, a link, or a quote, where trackers ignore it. Use `Refs ABC-12` or `Refs #12` for partial work.
 - **The reader is a reviewer.** No plan paths, handoff files, agent names, worktree paths, or local paths, visible or
   in HTML comments. No commit-by-commit history or file counts: GitHub shows those.
 - **No generated-by footer**, and no `--fill`: gh would write the body from commit messages.

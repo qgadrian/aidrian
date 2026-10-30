@@ -42,8 +42,8 @@ Never guess a type or a field shape: read the real type.
 - `backend-developer` owns the server side. A change to an API contract needs it, or an `architect` decision.
 - `ux-specialist` owns flow friction and task success; `product-manager` owns product behavior; `architect` owns structure.
 - A change to a shared component or wrapper that many screens use needs an `architect` decision or the Human's approval first.
-- `code-reviewer` audits the result. Give each finding a verdict: `fix now`, `acceptable as-is`, `accepted residual`,
-  or `needs more evidence`; when you disagree, cite the code path and its behavioral consequence.
+- `code-reviewer` audits the result. Give each finding you weigh its axes; `aidrian pr disposition` gives the verdict, as for `code-reviewer`.
+  One the evidence cannot place is `needs_evidence`; when you disagree, cite the code path and its behavioral consequence.
 
 ## Tests and docs
 

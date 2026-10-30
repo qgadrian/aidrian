@@ -169,6 +169,8 @@ Each host tells the hook who is calling in its own way.
 
 - Claude Code: [Agent gates](providers/claude-code.md#agent-gates).
 - Codex: [Agent gates](providers/codex.md#agent-gates).
+  Codex's [hook documentation](https://developers.openai.com/codex/hooks) lists no agent fields for a tool call,
+  but the input schema built into Codex 0.165.0 has `agent_type` and `agent_id` as optional fields.
 
 ## Markdown line length
 

@@ -89,10 +89,9 @@ Rules:
 - Each `issue_blueprint` may include optional `priority` and `effort` fields. When present, `agent-issue-writer` uses them directly.
   When absent, `agent-issue-writer` applies its default Priority inference rule and Size→Effort derivation rule to fill the gap. Valid values:
   `priority` = `Urgent | High | Medium | Low`; `effort` = `High | Medium | Low`.
-- Blueprints do not set `priority:*` / `effort:*` labels — that mirror is retired.
-  `agent-issue-writer` sets both Priority (native `priority`) and Effort (native `estimate`, via the Size→estimate table:
-  `XS`→1, `S`→2, `M`→3, `L`→5; no `XL`) as native fields on Linear, or as its `references/issue-body.md` says on GitHub,
-  and mirrors Effort in the issue body; neither is expressed as a `priority:*` or `effort:*` label.
+- Blueprints set no priority or effort labels.
+  `agent-issue-writer` sets Priority and Effort where the tracker keeps them, as its `references/issue-body.md` § Issue Fields says,
+  and mirrors Effort in the issue body.
 - `parent_issue_is_canonical_release_plan` must be `true` whenever the topology includes a parent issue.
 - `issue_blueprints` must be ordered for creation and execution.
 - Every `issue_blueprint` must include `size`, `tasks`, and `sequencing`.

@@ -95,10 +95,10 @@ test('every skill has a name matching its folder and a description', () => {
   }
 });
 
-test('the README tables list every shipped agent and skill once, and nothing else', () => {
-  const readme = readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+test('the agent and skill tables list every shipped agent and skill once, and nothing else', () => {
+  const doc = readFileSync(path.join(ROOT, 'docs/agents-and-skills.md'), 'utf8');
   const rows = (heading) => {
-    const section = readme.split(`\n### ${heading}\n`)[1].split('\n#')[0];
+    const section = doc.split(`\n## ${heading}\n`)[1].split('\n#')[0];
     return [...section.matchAll(/^\| `([a-z0-9-]+)` \|/gm)].map((match) => match[1]).sort();
   };
   assert.deepEqual(rows('Agents'), readAgents().map((agent) => agent.meta.name).sort());

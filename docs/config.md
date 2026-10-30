@@ -214,11 +214,13 @@ Every session and subagent reads the `always` docs, and `aidrian-knowledge route
 - Each doc with at least one tag: a warning above `taggedDocBytes`, 24 KB by default.
   Split such a doc into a short rule card and a reference, or drop its tags so that only search finds it.
 
-The warnings print on stderr, and the check still passes. `aidrian check` prints the `always` total on its last line:
+The warnings print on stderr, and the check still passes. `aidrian check` prints the `always` total on its last line;
+the warning below is one line, wrapped here:
 
 ```console
 $ aidrian check
-warning: docs/knowledge/engineering/sync-protocol.md: 41230 bytes, over knowledge.budgets.taggedDocBytes (24576); every route to backend reads it whole: split it into a short rule card and a reference, or drop its tags so only search finds it
+warning: docs/knowledge/engineering/sync-protocol.md: 41230 bytes, over knowledge.budgets.taggedDocBytes (24576); every route to
+  backend reads it whole: split it into a short rule card and a reference, or drop its tags so only search finds it
 ok: .aidrian (2 buckets, 8 docs)
 state: /home/you/.local/state/aidrian/projects/notes-1a2b3c4d
 budget: 2479 of 16384 always-doc bytes (engineering 2479, product 0)

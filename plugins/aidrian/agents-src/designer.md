@@ -51,12 +51,11 @@ needs a shared abstraction or structural change nobody approved, or the source o
 
 Findings first. Each finding gives:
 
-- severity
-- verdict: `fix now`, `acceptable as-is`, `needs more evidence`, or `blocked_by_product`.
-  `ux-specialist` uses the same four, so a gate reads either review the same way.
+- the axes `severity`, `likelihood`, `affects`, and `cost`, which `aidrian pr disposition` turns into the verdict:
+  `fix_now`, `accepted_residual`, `acceptable_as_is`, or `drop_unless_cited`
+- instead, when no verdict fits yet: `needs_evidence`, naming the missing evidence, or `blocked_by_product`, naming the product decision
+  and routing it to `product-manager`. `ux-specialist` uses the same words, so a gate reads either review the same way.
 - the UI and user impact, the evidence, a concrete fix direction, and acceptance criteria
-
-`needs more evidence` names the missing evidence. `blocked_by_product` names the product decision and routes it to `product-manager`.
 
 ## Implementation mode
 

@@ -16,7 +16,7 @@ must name the worktree and the task branch.
    `security-engineer` confirmed each one fixed on the slice's next review. A disputed finding or a missing review blocks the pull request.
 6. A critical flow has the `product-manager` `sign_off: approved` from phase 0.
 7. **Acceptance criteria coverage.** Every acceptance criterion id maps to a committed slice.
-   A gap turns `Fixes <key>` into `Refs <key>`, and the report names the gap.
+   A gap turns `Fixes <ref>` into `Refs <ref>`, and the report names the gap.
 
 A gate that fails: fix and check again, or stop. Never skip to the pull request.
 
@@ -31,7 +31,8 @@ A rejected push stops the run.
 Run the `pr-write` skill with:
 
 - the branch, and the base from phase 0, passed explicitly so the pull request never targets the wrong branch;
-- the closing line in the project's `issue_tracker` format: `Fixes <key>` when the branch covers the whole issue, else `Refs <key>`;
+- the closing line in the project's `issue_tracker` format: `Fixes <ref>` when the branch covers the whole issue, else `Refs <ref>`,
+  such as `Fixes #123` on GitHub, where a bare `Fixes 123` links nothing;
 - the slices and their commit subjects, the verification commands with their outcomes, and the acceptance criteria covered;
 - the residual risks, and the accepted residuals;
 - draft, unless the Human asked for a pull request ready for review.
@@ -41,10 +42,11 @@ The `pr-write` skill owns the title, the body, and the publishing.
 **Integration review.** A plan with an `INTEGRATION-REVIEW` slice runs it on the draft, by the `orchestration` skill § 3 step 3:
 the `pr-review` skill on the assembled branch, then the `pr-review-fix` skill for its `fix_now` findings, one commit per fix, pushed.
 The review itself commits nothing. Set the slice's `status: complete`, with the review's verdict in `notes`.
-When git tracks the plan, `doc-updater` commits that one edit alone with a `docs` subject and pushes it: the only commit no slice owns.
+When git tracks the plan, `planning-agent` makes that edit under the `orchestrator`, and `doc-updater` commits it alone
+with a `docs` subject and pushes it: the only commit no slice owns.
 
-This run ends at the draft and its integration review;
-the rest of the review loop of the `orchestration` skill § 3 runs when the Human or the calling skill asks for it.
+This run ends at the draft and its integration review. Under the `orchestrator`, it goes on with the `orchestration` skill § 3 step 4;
+otherwise the rest of that review loop runs when the Human or the calling skill asks for it.
 
 **Estimate correction.** Only when phase 4 recorded a re-size, after the pull request opens, make two tracker writes,
 with the tools the `knowledge` skill's `references/tracker.md` maps:

@@ -3,13 +3,15 @@
 //   node scripts/build.mjs           write plugins/aidrian/agents/*.md (Claude Code) and plugins/aidrian/codex/agents/*.toml
 //   node scripts/build.mjs --check   exit 1 if a generated file is missing, stale (a hand edit included), or extra
 //
-// plugins/aidrian/agents-src/<name>.md holds an agent once: the neutral fields in NEUTRAL, and the body every host gets.
+// plugins/aidrian/agents-src/<group>/<name>.md holds an agent once: the neutral fields in NEUTRAL, and the body every host
+// gets. The group folders are GROUPS. They only sort the sources: names stay unique across groups, and the output is flat.
 // plugins/aidrian/providers/<provider>.json holds what one host decides per agent, such as model, effort, and tools,
 // with an optional "*" entry of defaults. Each field merges on its own, most specific last: the "*" defaults, then the
 // `access` shortcut, then the agent's own entry, which can extend or replace what the shortcut set. A project's `models`
 // config applies after all of these, at run time (docs/config.md#models). docs/agents.md describes the layout.
 //
-// Claude Code loads plugins/aidrian/agents/*.md from the plugin. Codex cannot load agents from a plugin, so each agent
+// Claude Code loads plugins/aidrian/agents/*.md from the plugin. A subfolder there would become part of the agent's name,
+// agents/build/x.md as aidrian:build:x, so the build writes none. Codex cannot load agents from a plugin, so each agent
 // becomes a standalone TOML role that plugins/aidrian/codex/install-agents.mjs copies into ~/.codex/agents/.
 // Text only one host needs goes in plugins/aidrian/agent-addons/<name>.<provider>.md, after the body in that host's agent.
 // Adding a host takes a providers/<name>.json and an entry in GENERATORS.
@@ -35,6 +37,17 @@ const rel = (file) => path.relative(ROOT, file);
 
 // The fields an agent source may set. Whatever one host decides belongs in that host's providers/<name>.json.
 export const NEUTRAL = ['name', 'description', 'access', 'skills'];
+
+// The agents-src/ folders, in the order docs/agents-and-skills.md lists them, each with its table heading there.
+export const GROUPS = {
+  coordination: 'Coordination',
+  planning: 'Planning',
+  build: 'Build',
+  review: 'Review and quality',
+  'product-design': 'Product and design',
+  'support-growth': 'Support and growth',
+  harness: 'Harness',
+};
 const ACCESS = ['read-only', 'write'];
 const FILE_TOOLS = ['Write', 'Edit', 'NotebookEdit'];
 
@@ -52,16 +65,15 @@ export function providerNames(value) {
   ]);
 }
 
-// Each agent source with its add-ons: { file, meta, body, addons: { <provider>: text } }.
+// Each agent source with its add-ons: { file, group, meta, body, addons: { <provider>: text } }, where file is the path
+// under agents-src/, such as build/doc-updater.md.
 export function readAgents({ sourcesDir = SOURCES, addonsDir = ADDONS, skillsDir = SKILLS } = {}) {
-  const agents = readdirSync(sourcesDir)
-    .filter((file) => file.endsWith('.md'))
-    .sort()
+  const agents = sourceFiles(sourcesDir)
     .map((file) => {
       const text = readFileSync(path.join(sourcesDir, file), 'utf8');
       const match = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(text);
       if (!match) throw new Error(`agents-src/${file}: missing frontmatter`);
-      const agent = { file, meta: parseYaml(match[1]) ?? {}, body: match[2].trim(), addons: {} };
+      const agent = { file, group: path.dirname(file), meta: parseYaml(match[1]) ?? {}, body: match[2].trim(), addons: {} };
       checkSource(agent, skillsDir);
       return agent;
     });
@@ -77,12 +89,34 @@ export function readAgents({ sourcesDir = SOURCES, addonsDir = ADDONS, skillsDir
   return agents;
 }
 
+// The sources as <group>/<name>.md, sorted by name, which is the order the Codex preamble names other agents in.
+function sourceFiles(sourcesDir) {
+  const groups = Object.keys(GROUPS);
+  for (const entry of readdirSync(sourcesDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() && entry.name.endsWith('.md')) throw new Error(`agents-src/${entry.name}: move it into a group folder (${groups.join(', ')})`);
+    if (entry.isDirectory() && !groups.includes(entry.name)) {
+      throw new Error(`agents-src/${entry.name}/ is not a group (${groups.join(', ')}); add it to GROUPS in scripts/build.mjs and to docs/agents-and-skills.md`);
+    }
+  }
+  const byName = new Map();
+  for (const group of groups.filter((name) => existsSync(path.join(sourcesDir, name)))) {
+    for (const entry of readdirSync(path.join(sourcesDir, group), { withFileTypes: true })) {
+      const file = `${group}/${entry.name}`;
+      if (entry.isDirectory()) throw new Error(`agents-src/${file}/: a group holds agent files, not folders`);
+      if (!entry.name.endsWith('.md')) continue;
+      if (byName.has(entry.name)) throw new Error(`agents-src/${byName.get(entry.name)} and agents-src/${file}: an agent name is unique across groups`);
+      byName.set(entry.name, file);
+    }
+  }
+  return [...byName.keys()].sort().map((name) => byName.get(name));
+}
+
 function checkSource({ file, meta }, skillsDir) {
   const where = `agents-src/${file}`;
   for (const key of Object.keys(meta)) {
     if (!NEUTRAL.includes(key)) throw new Error(`${where}: "${key}" is not a neutral field (${NEUTRAL.join(', ')}); a host setting goes in providers/<provider>.json`);
   }
-  if (meta.name !== file.replace(/\.md$/, '')) throw new Error(`${where}: name must be "${file.replace(/\.md$/, '')}", the file name`);
+  if (meta.name !== path.basename(file, '.md')) throw new Error(`${where}: name must be "${path.basename(file, '.md')}", the file name`);
   if (typeof meta.description !== 'string' || !meta.description.trim()) throw new Error(`${where}: no description`);
   if (!ACCESS.includes(meta.access)) throw new Error(`${where}: access must be ${ACCESS.join(' or ')}`);
   if (meta.skills !== undefined && !(Array.isArray(meta.skills) && meta.skills.every((skill) => typeof skill === 'string'))) {
@@ -253,17 +287,19 @@ const GENERATORS = {
 
 export const PROVIDER_NAMES = Object.keys(GENERATORS);
 
-// What differs between one provider's folder and the files it should have.
-export function compareGenerated(provider, expected = renderAgents(provider)) {
-  const { dir, fileName } = GENERATORS[provider];
-  const ext = path.extname(fileName('x'));
-  const actual = existsSync(dir) ? readdirSync(dir).filter((file) => file.endsWith(ext)) : [];
+// What differs between one provider's folder and the files it should have. Any subfolder is extra: Claude Code would load
+// an agent in one under another name.
+export function compareGenerated(provider, expected = renderAgents(provider), dir = GENERATORS[provider].dir) {
+  const ext = path.extname(GENERATORS[provider].fileName('x'));
+  const entries = existsSync(dir) ? readdirSync(dir, { withFileTypes: true }) : [];
+  const actual = entries.filter((entry) => entry.isFile() && entry.name.endsWith(ext)).map((entry) => entry.name);
   const problems = [];
   for (const [file, text] of expected) {
     if (!actual.includes(file)) problems.push(`missing ${rel(path.join(dir, file))}`);
     else if (readFileSync(path.join(dir, file), 'utf8') !== text) problems.push(`stale ${rel(path.join(dir, file))}`);
   }
   for (const file of actual) if (!expected.has(file)) problems.push(`extra ${rel(path.join(dir, file))}`);
+  for (const entry of entries) if (entry.isDirectory()) problems.push(`extra ${rel(path.join(dir, entry.name))}/`);
   return problems;
 }
 

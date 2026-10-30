@@ -16,6 +16,7 @@ Task worktrees go in `.worktrees/` at the repository root, which git ignores.
 .worktrees/                      task worktrees, one folder per branch (git-ignored)
 .aidrian/
 ├── config.json                  the folder version and the project settings (committed)
+├── terms.json                   the banned terms, when config.json terms.file names it here (optional, committed)
 └── knowledge/<bucket-id>.json   one index per knowledge bucket (committed)
 ```
 
@@ -25,6 +26,7 @@ The docs a bucket indexes stay where they are: each index names its doc folder i
 - `config.json` needs `version`; every other key is optional. [config.md](config.md) lists the keys.
 - `knowledge/<bucket-id>.json`: the file name is the bucket id. [knowledge.md](knowledge.md) describes the file.
   Buckets load in file-name order, so `10-engineering.json` comes before `20-product.json`.
+- `terms.json`: the [terms file](config.md#terms); config.json `terms.file` may name another place.
 
 ## Location
 

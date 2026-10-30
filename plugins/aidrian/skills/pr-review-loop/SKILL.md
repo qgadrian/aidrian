@@ -31,6 +31,15 @@ aidrian pr await-review <n> --request     # waits up to 14 minutes; give the she
 | 2 | `timed_out` | with `retry_recommended: true`, run it once more without `--request`; otherwise record `bot review: not received` |
 | 3 | `blocked_quota` | record `bot review: blocked_quota` and go on with the other comments |
 | 4 | `round_limit` | the review-round cap, config.json `github.maxReviewRounds`: stop and ask the Human to raise `--max-rounds`, redesign, or stop |
+| 5 | `review_required` | the [review gate](#review-gate): nothing was posted; run the review it names, then this step again |
+
+### Review gate
+
+With config.json `github.reviewGate.enabled`, the bot is asked only once a review of the whole diff is on record.
+Dispatch one read-only reviewer that did not write the change, such as the `code-reviewer` agent, with the diff and
+config.json `github.reviewGate.checklist` when set. Fix what it finds, then record it once per pull request:
+`aidrian pr attest <n> --head <sha> --reviewer <agent> --findings <n> --fixed <n>`.
+`--request` then carries the marker by itself; never post a second request by hand.
 
 A `thumbs_up` signal with no other comments and green checks means nothing to address: report it in one line.
 

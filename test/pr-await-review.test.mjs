@@ -1071,6 +1071,8 @@ test('aidrian pr prints its usage for an unknown action, and await-review report
   const unknown = spawnSync(cli, ['pr', 'merge'], { encoding: 'utf8' });
   assert.deepEqual([unknown.status, unknown.stderr], [1, [
     'usage: aidrian pr await-review [PR] [--request] [--max-rounds N]',
+    '       aidrian pr attest PR --head SHA --reviewer WHO --findings N --fixed N [--note T]',
+    '       aidrian pr attest PR --check',
     '       aidrian pr checks [PR] [-R OWNER/REPO] [--json]',
     '       aidrian pr disposition --severity S [--likelihood L --affects A] [--cost C]',
     '               [--source bot [--round N]] [--vocab]',

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "share-link",
+      "paths": ["src/**", "docs/**"],
+      "message": "A share link is the product's one word for a public URL to a note.",
+      "terms": { "public link": "share link", "public links": "share links", "permalink": "share link", "permalinks": "share links" }
+    },
+    { "id": "email", "paths": ["**/*.md"], "severity": "warn", "terms": { "e-mail": "email" } }
+  ]
+}

@@ -66,11 +66,15 @@ export function check(command, { cwd = process.cwd(), env = process.env } = {}) 
 // Edit, Write, NotebookEdit, and apply_patch: the deny reason for the hook payload, or null.
 export function checkTool(input, { env = process.env } = {}) {
   if (env[OVERRIDE] === '1') return null;
-  const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
+  return decide(toolTargets(input), typeof input.cwd === 'string' ? input.cwd : process.cwd(), true, 'this writes');
+}
+
+// Every path an Edit, Write, NotebookEdit, or apply_patch payload writes, as it names them: relative to its cwd or absolute.
+export function toolTargets(input) {
   const toolInput = input.tool_input ?? {};
   let targets = [toolInput.file_path ?? toolInput.notebook_path];
   if (input.tool_name === 'apply_patch') targets = [...String(toolInput.command ?? '').matchAll(PATCH_TARGET)].map((match) => match[1].trim());
-  return decide(targets.filter((target) => typeof target === 'string' && target !== ''), cwd, true, 'this writes');
+  return targets.filter((target) => typeof target === 'string' && target !== '');
 }
 
 // Every path a Bash command writes with certainty, resolved against `cwd`. Commands are read in the order they run: a
@@ -228,7 +232,7 @@ function globPattern(glob) {
 }
 
 // The path with symlinks resolved, for the part of it that exists; git reports the main checkout that way.
-function canonical(file) {
+export function canonical(file) {
   const tail = [];
   let current = file;
   for (;;) {

@@ -36,7 +36,8 @@ In a group such as `github`, set only the keys you change; the others keep their
   "session": { "handoff": "ask", "maxTokens": 150000, "maxCalls": 250, "maxHours": 4 },
   "models": { "claude": { "agents": {} }, "codex": { "agents": {} } },
   "names": { "human": "the Human", "ai": null },
-  "telemetry": { "enabled": true, "docReads": true, "hookDenies": true, "maxMb": 20 }
+  "telemetry": { "enabled": true, "docReads": true, "hookDenies": true, "maxMb": 20 },
+  "agents": {}
 }
 ```
 
@@ -72,6 +73,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `telemetry.docReads` | `false` leaves out which knowledge docs each agent read. |
 | `telemetry.hookDenies` | Checked, so a project can set it; no hook reads it in this version. |
 | `telemetry.maxMb` | The size, in megabytes, at which the dispatch log moves to its rotated part. |
+| `agents` | The tools each agent may use in this project; `{}` gates none: [Agents](#agents). |
 
 A path in `state.dir` or `worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
@@ -188,6 +190,60 @@ budget: 2479 of 16384 always-doc bytes (engineering 2479, product 0)
 The key `docs.alwaysBudgetBytes` moved here as `alwaysBytes`; a `config.json` that still sets it gets an error naming the new key.
 [knowledge.md](knowledge.md#shaping-buckets) says how to shape buckets that stay within the budgets.
 [`aidrian report docs`](dispatch-log.md#doc-reads) prints the same `always` total beside the docs agents read and the ones nobody read.
+
+## Agents
+
+`agents` limits the tools each agent may use in this project, and those of the main session.
+A team sets it in `config.json`, and one developer in the git-ignored `.aidrian.local.json` at the project root:
+
+```json
+{
+  "agents": {
+    "*": { "deny": ["mcp__slack__*"] },
+    "main": { "deny": ["Bash(git push)"] },
+    "explorer": { "allow": ["Read", "Grep", "Glob", "Bash(git log)", "Bash(git show)"] }
+  }
+}
+```
+
+Each key names who its entry applies to:
+
+| Key | Applies to |
+| --- | --- |
+| `*` | Every agent and the main session. |
+| `main` | The main session, also one started with `claude --agent <name>`. |
+| A short name, such as `explorer` | Every agent of that name: this plugin's `aidrian:explorer`, another plugin's `explorer`, and a project agent named `explorer`. |
+| A full name, such as `aidrian:explorer` | That plugin's agent only. |
+
+Every entry that applies is checked, and a tool call runs only when each one lets it.
+A session started with `claude --agent aidrian:explorer` is both `main` and `explorer`.
+
+An entry has `deny`, `allow`, or both, each a list of tool patterns:
+
+| Pattern | Matches |
+| --- | --- |
+| A tool name, such as `Read` or `WebFetch` | That tool. |
+| A name ending in `*`, such as `mcp__github__*` | Every tool whose name starts with the text before the `*`; `*` alone matches every tool. |
+| `Bash(<command prefix>)`, such as `Bash(git push)` | A Bash call that runs a command whose words start with the prefix. |
+
+- `deny` wins: a call that matches a `deny` pattern is blocked, whatever `allow` says.
+- With `allow` set, a call that matches none of its patterns is blocked; `"allow": []` blocks every tool.
+- A Bash call passes an `allow` list through its `Bash(...)` patterns only when every command in it starts with an allowed prefix.
+  `cd app && npm test` needs both `Bash(cd)` and `Bash(npm test)`.
+- A command line is read as the [Bash rules](hooks.md#bash-rules) read it: each step of `&&`, `;`, and `|`, and each command substitution.
+  It also reads past wrappers such as `sudo` and `env`, and past git's own options, so `Bash(git push)` also blocks `git -C app push`.
+- The first word matches the program by its file name, so `Bash(git push)` also matches `/usr/bin/git push`.
+- A command run inside `sh -c`, `eval`, a script, or an interpreter is out of sight; an `allow` list blocks it unless it allows the outer command.
+
+`.aidrian.local.json` wins over `config.json` one list at a time.
+Its `deny` for an agent replaces the team's `deny` for that agent, and its `allow` replaces the team's `allow`.
+A developer can lift a team's `allow` list on one machine with `"allow": ["*"]`.
+An agent cannot: while `agents` sets any gate, no subagent may change config.json, `.aidrian.json`, or `.aidrian.local.json`,
+also the main checkout's when the project is a git worktree. The main session still can.
+`aidrian check` names an unknown key, a key that is not an agent name, and a pattern it cannot read, such as `Bash(git *)`.
+A bad pattern is left out and the rest of its list still applies, so a bad `allow` pattern makes the list stricter.
+`aidrian check` cannot know every agent's name, so a name that matches no agent is not an error: its entry never applies.
+[hooks.md](hooks.md#agent-gates) describes the hook that enforces the gates, and what each host supports.
 
 ## Checking
 

@@ -117,6 +117,19 @@ test('check names a bad name in config.json and in .aidrian.local.json', (t) => 
   assert.equal(stderr, '.aidrian/config.json: "names.human" must be a non-empty string\n.aidrian.local.json: unknown key "names.robot"\n');
 });
 
+test('check names a bad agent gate in config.json and in .aidrian.local.json', (t) => {
+  const dir = exampleRepo(t);
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, agents: { explorer: { deny: ['Bash(git *)'] } } }));
+  writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ agents: { main: { only: ['Read'] } } }));
+  const { status, stdout, stderr } = run(['check'], dir);
+  assert.deepEqual([status, stdout], [1, '']);
+  assert.equal(
+    stderr,
+    '.aidrian/config.json: "agents.explorer.deny" has "Bash(git *)": Bash(...) takes a command prefix without "*", such as Bash(git push)\n'
+      + '.aidrian.local.json: unknown key "agents.main.only"\n',
+  );
+});
+
 test('check fails on a version this plugin does not read, and reads no index then', (t) => {
   const dir = exampleRepo(t);
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 2 }));

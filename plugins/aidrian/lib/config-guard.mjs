@@ -63,7 +63,7 @@ export function configWriteDenial(input, project, { names: { human } }, { also =
   }
   // A glob reaches a file by the path it is spelled with, which a symlink may place in another folder than its target.
   const spelled = [...configFiles(project), ...also].map((file, i) => [path.resolve(file), files[i]]);
-  const named = namedFile(names, files, project, guarded) ?? globbedFile(globs, spelled, targets);
+  const named = namedFile(names, files, project, guarded) ?? globbedFile(globs, spelled, targets.length + names.length + globs.length > 1);
   return named ? blocked(input, shown(named), 'may change', human) : null;
 }
 
@@ -103,9 +103,9 @@ function namedFile(names, files, project, also) {
 // folder is known, only files inside it count, so `rm -rf dist/*` changes nothing guarded; when a glob or an unknown `cd`
 // leaves the folder unknown, any file's name or folder counts: failing closed.
 // `files` pairs each guarded file's spelled path with its canonical one; either may match, and the canonical is returned.
-// `written` lists the call's other write targets. Any of them may create a link, in the glob's folder or above it, that
-// the glob then follows after the disk was read; so with any other write, the glob falls back to failing closed.
-function globbedFile(globs, files, written = []) {
+// `others` says the call has another write, a glob or not. It may create a link, in the glob's folder or above it, that
+// the glob then follows after the disk was read; so the folder is trusted only for the call's one write.
+function globbedFile(globs, files, others = true) {
   const regex = (glob) =>
     new RegExp(`^${glob.split(/([*?])/u).map((part) => ({ '*': '.*', '?': '.' })[part] ?? part.replace(/[.+^${}()|[\]\\]/gu, '\\$&')).join('')}$`, 'u');
   return files.find((pair) => pair.some((file) => globs.some(({ text, dirs = [], unsure = true }) => {
@@ -114,7 +114,7 @@ function globbedFile(globs, files, written = []) {
     const head = parts.join('/') || (text.startsWith('/') ? '/' : '.');
     if (unsure || /[*?[]/u.test(head)) return pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file)));
     const folders = path.isAbsolute(head) ? [head] : dirs.map((dir) => path.resolve(dir, head));
-    if (written.length > 0) return pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file)));
+    if (others) return pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file)));
     return folders.some((folder) =>
       [folder, canonical(folder)].some((dir) => isWithin(dir, file) && pattern.test(path.relative(dir, file).split(path.sep)[0])) ||
       // An entry the glob matches may be a symlink to the file from any folder, which a write follows.

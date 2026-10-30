@@ -32,8 +32,8 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | `tokens` | `input`, `output`, `cache_read`, and `cache_write` over the subagent's API requests, each request counted once. |
 | `models`, `cost_usd` | The models it used, and the cost estimated from list prices (`lib/transcript.mjs`). |
 | `requests`, `tool_requests`, `tool_calls` | Its API requests, the requests that made a tool call, and its tool calls, as on a `session` row's sides. |
-| `docs_read` | The knowledge docs it opened with the Read tool, as `{ "path", "bytes" }`: the path the index gives, and the doc's size. `null` while `telemetry.docReads` is off. |
-| `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not, `chat` when it presents none. |
+| `docs_read` | The knowledge docs it opened with the Read tool, as `{ "path", "bytes" }`: index path and size. `null` while `telemetry.docReads` is off. |
+| `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not, `chat` for none. |
 | `paths` | Those paths, at most 20. |
 | `sent_back` | `true` when the hook sent the subagent back at this stop, `false` when it let it end. A row written before the field has none. |
 
@@ -55,7 +55,7 @@ A stop that ends with `delivered: missing`, such as that second one, has `sent_b
 | `ts`, `session_id`, `agent`, `reason` | Which session, its `--agent` if any, and why it ended. |
 | `duration_min` | From the first to the last transcript entry. |
 | `effort`, `effort_varied` | The effort of the main conversation's last request, or `null`; `effort_varied` is `true` when its requests used several. |
-| `models`, `tokens_by_model`, `cost_usd`, `cost_by_model` | Tokens and estimated cost of the whole session, main conversation and subagents together, per model and in total. |
+| `models`, `tokens_by_model`, `cost_usd`, `cost_by_model` | Tokens and estimated cost of the whole session, subagents included, per model and in total. |
 | `main`, `subagents` | Each side's `tokens`, `cost_usd`, `requests`, `tool_requests` (requests that made a tool call), and `tool_calls`. |
 | `subagent_count` | How many subagent transcripts the session has. |
 | `docs_read` | The knowledge docs the main conversation opened, as on a `stop` row. Each subagent's reads are on its own `stop` row. |
@@ -72,7 +72,7 @@ per block, while config.json `telemetry.hookDenies` is on. The call is still blo
 | Field | Meaning |
 | --- | --- |
 | `ts`, `session_id` | When, and in which session. |
-| `rule` | The rule's name: `git-hook-bypass`, `git-amend`, `process-kill`, `grep-exit-chain`, `pr-body`, `main-checkout`, `agent-gates`, or `config-guard`. |
+| `rule` | Its name: `git-hook-bypass`, `git-amend`, `process-kill`, `grep-exit-chain`, `pr-body`, `main-checkout`, `agent-gates`, or `config-guard`. |
 | `tool` | The tool it blocked, such as `Bash`, `Edit`, or a tool an agent gate names. |
 | `agent_type` | The agent that made the call, named as a `dispatch` row names its dispatcher: `main` for the main session. |
 | `reason` | What the rule matched, at most 120 characters, as the list below says. |
@@ -189,7 +189,7 @@ Partial: the log starts at 2026-10-27T09:12:44.000Z; older rows were rotated out
 | Doc reads are off | `doc_reads: false` | The same for `telemetry.docReads`. |
 | Hook denies are off | `hook_denies: false` | The same for `telemetry.hookDenies`; only the default and health views say it. |
 | Partial: rows written with doc reads off | `rows_without_doc_reads` | Agent and session rows in the window that hold `docs_read: null`. |
-| Partial: runs named a missing file before stop rows recorded send-backs | `runs_without_send_back` | Runs whose `stop` row has `delivered: missing` and no `sent_back`; default and health views only. |
+| Partial: runs named a missing file | `runs_without_send_back` | `stop` rows with `delivered: missing`, no `sent_back`; default and health views only. |
 | Partial: the log starts at | `rotated_out_before` | Rotation dropped rows, and the window starts before the oldest row left. |
 
 The default view also says `Partial: N agent runs were logged before tool counts` when some `stop` rows have no tool counts:
@@ -297,15 +297,21 @@ Signals; n is the sample, and a signal under 5 (telemetry.health.minSample) is n
 
 Each signal names its sample and is judged by config.json [`telemetry.health`](config.md#health-thresholds), the knowledge budgets, and the lesson limits:
 
-| Signal | Sample | A problem when | Fix |
-| --- | --- | --- | --- |
-| Knowledge budget | the indexed docs | the `always` docs pass `knowledge.budgets.alwaysBytes`, or a tagged doc passes `taggedDocBytes` | `split-doc` |
-| Doc reads | the agent and session rows that recorded doc reads | the doc with the most bytes read takes over `topDocPercent` of them, of two docs read or more; or a tagged doc nobody read | `split-doc` |
-| Agents | per agent type, its dispatches, and its runs with a known send-back | over `redispatchPercent` of its dispatches repeat a task; over `sentBackPercent` of those runs were sent back by the delivery check | `agent-prompt` |
-| Reviews | the reviewed pull requests merged in the window, and the late findings checked | over `reviewRounds` rounds a pull request on average; over `lateFindingPercent` of late findings on a line already reviewed | `round-cap` |
-| Hook denies | the sessions with a row in the window | one rule blocked `denyHotSpot` calls or more | `deny-rule` |
-| Session cost | the sessions in each half of the window's sessions, in the order they ended | the newer half costs over `costRisePercent` more a session than the older half | `cost` |
-| Lessons | the open lessons | a P1 is open, a fix resolved in the window recurred, or the inbox passes `lessons.maxOpen` or `lessons.maxAgeDays` | `lesson-triage` |
+- **Knowledge budget**, over the indexed docs: a problem when the `always` docs pass `knowledge.budgets.alwaysBytes`,
+  or a tagged doc passes `taggedDocBytes`. Fix: `split-doc`.
+- **Doc reads**, over the agent and session rows that recorded doc reads: a problem when the doc with the most bytes read
+  takes over `topDocPercent` of them, of two docs read or more, or when a tagged doc was never read. Fix: `split-doc`.
+- **Agents**, per agent type, over its dispatches and its runs with a known send-back: a problem when over `redispatchPercent`
+  of its dispatches repeat a task, or the delivery check sent back over `sentBackPercent` of those runs. Fix: `agent-prompt`.
+- **Reviews**, over the reviewed pull requests merged in the window and the late findings checked: a problem when a pull request
+  takes over `reviewRounds` rounds on average, or over `lateFindingPercent` of late findings sit on a line already reviewed.
+  Fix: `round-cap`.
+- **Hook denies**, over the sessions with a row in the window: a problem when one rule blocked `denyHotSpot` calls or more.
+  Fix: `deny-rule`.
+- **Session cost**, over each half of the window's sessions, in the order they ended: a problem when the newer half costs
+  over `costRisePercent` more a session than the older half. Fix: `cost`.
+- **Lessons**, over the open lessons: a problem when a P1 is open, a fix resolved in the window recurred,
+  or the inbox passes `lessons.maxOpen` or `lessons.maxAgeDays`. Fix: `lesson-triage`.
 
 - **not enough data**: the sample is under `telemetry.health.minSample`. Such a signal is never a problem, whatever its rate:
   3 of 4 is not a trend. The knowledge budget and the lessons are sizes and counts, not rates, so no minimum applies;

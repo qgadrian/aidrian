@@ -10,7 +10,7 @@ const COMMANDS = {
   state: './check.mjs',
   'commit-msg': './commit-message.mjs',
   lint: './lint.mjs',
-  lesson: './lesson-inbox.mjs',
+  lesson: './lesson-cli.mjs',
   handoff: './handoff-brief.mjs',
   worktree: './worktree.mjs',
   pr: './pr.mjs',

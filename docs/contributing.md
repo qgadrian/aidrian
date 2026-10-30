@@ -22,7 +22,8 @@ npm run check    # what CI runs
 
 ## What the tests hold
 
-- Both manifests agree.
+- Both marketplaces publish the one plugin from `./plugins/aidrian`.
+  Both plugin manifests have the same `name`, `version`, `description`, `author`, and `repository`.
 - Every agent preloads the `knowledge` skill, and asks only for tags that skill lists.
 - [Agents and skills](agents-and-skills.md) lists every agent and skill shipped, once.
   Its agent tables match the [group folders](agents.md#groups) of the agent sources.

@@ -3,7 +3,7 @@
     "aidrian-harness": {
       "source": {
         "source": "github",
-        "repo": "qgadrian/aidrian-harness"
+        "repo": "qgadrian/aidrian"
       }
     }
   },

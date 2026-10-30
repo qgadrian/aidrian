@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -8,37 +8,84 @@ import { pathToFileURL } from 'node:url';
 
 import { parse } from 'smol-toml';
 
-import { CODEX_AGENTS, PREFIX, compareCodexAgents, readAgents, renderCodexAgents } from '../scripts/build.mjs';
+import { CODEX_AGENTS, PREFIX, agentSettings, compareGenerated, readAgents, readProviders, renderAgents } from '../scripts/build.mjs';
 
 const BUILD = path.resolve(import.meta.dirname, '../scripts/build.mjs');
 const INSTALL = path.resolve(import.meta.dirname, '../plugins/aidrian/codex/install-agents.mjs');
 
 test('the generated Codex agents are current (npm run build regenerates them)', () => {
-  assert.deepEqual(compareCodexAgents(), []);
+  assert.deepEqual(compareGenerated('codex'), []);
 });
+
+const renderCodexAgents = (agents, defaults = { model_reasoning_effort: 'low' }) => renderAgents('codex', agents, { defaults, entries: {} });
 
 // What the Codex role carries after its preamble: the agent's body, then its Codex add-on.
 const roleText = ({ body, addons }) => (addons.codex ? `${body}\n\n${addons.codex}` : body);
 
-test('each Codex agent is valid TOML that carries its Claude Code agent', () => {
-  for (const { meta, body, addons } of readAgents()) {
+// Codex's reasoning efforts, as `aidrian check` takes them for models.codex (docs/config.md#models).
+const CODEX_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'persistent'];
+
+test('each Codex agent is valid TOML that carries its agent source and its providers/codex.json settings', () => {
+  const agents = readAgents();
+  const { codex } = readProviders({ agents });
+  for (const agent of agents) {
+    const { meta, body, addons } = agent;
     const role = parse(readFileSync(path.join(CODEX_AGENTS, `${PREFIX}${meta.name}.toml`), 'utf8'));
+    const settings = agentSettings('codex', agent, codex);
     assert.equal(role.name, `${PREFIX}${meta.name}`);
     assert.equal(role.description, meta.description.replace(/\s+/g, ' ').trim());
-    assert.equal(role.model_reasoning_effort, meta.effort === 'max' ? 'xhigh' : meta.effort);
+    assert.ok(CODEX_EFFORTS.includes(role.model_reasoning_effort), `${meta.name}: effort`);
+    assert.equal(role.model_reasoning_effort, settings.model_reasoning_effort);
     assert.equal('model' in role, false, 'Codex roles inherit the session model');
     assert.ok(role.developer_instructions.endsWith(`${roleText({ body, addons })}\n`), `${meta.name}: body`);
   }
 });
 
-test('Codex agents that cannot edit in Claude Code are told so', () => {
+test('Codex agents whose source has access: read-only are told not to edit files', () => {
   const role = (name) => parse(readFileSync(path.join(CODEX_AGENTS, `${PREFIX}${name}.toml`), 'utf8')).developer_instructions;
-  assert.match(role('explorer'), /You are read-only/);
-  assert.match(role('integrator'), /Do not create or edit files directly/);
+  for (const { meta } of readAgents()) {
+    const told = /Do not create or edit files directly/.test(role(meta.name));
+    assert.equal(told, meta.access === 'read-only', meta.name);
+  }
+  assert.match(role('explorer'), /Do not create or edit files directly/);
   assert.doesNotMatch(role('planning-agent'), /read-only|Do not create or edit files/);
 });
 
-const agent = (name, body, addons = {}) => ({ file: `${name}.md`, meta: { name, description: `${name} test agent`, model: 'sonnet', effort: 'low' }, body, addons });
+// A Codex role cannot set its own sandbox, so an agent that Claude Code also denies Bash says so in its Codex add-on.
+test('Codex agents that Claude Code denies Bash are told to run only commands that change nothing', () => {
+  const agents = readAgents();
+  const { claude } = readProviders({ agents });
+  const list = (value) => (Array.isArray(value) ? value : String(value).split(',').map((item) => item.trim()));
+  for (const agent of agents) {
+    const { disallowedTools = [], tools } = agentSettings('claude', agent, claude);
+    const canShell = !list(disallowedTools).includes('Bash') && (tools === undefined || list(tools).includes('Bash'));
+    const told = /^You are read-only: do not create or edit files, and run only commands that change nothing\.$/m.test(agent.addons.codex ?? '');
+    assert.equal(told, !canShell, agent.meta.name);
+  }
+});
+
+test('a Codex role carries providers/codex.json fields, tables included, and says where its model comes from', () => {
+  const lead = agent('lead', 'Lead.');
+  const role = renderAgents('codex', [lead], {
+    defaults: { model_reasoning_effort: 'medium' },
+    entries: { lead: { model: 'gpt-5.5', model_verbosity: 'low', features: { shell_tool: false } } },
+  }).get(`${PREFIX}lead.toml`);
+  const { developer_instructions: instructions, ...fields } = parse(role);
+  // smol-toml returns objects without a prototype, which a strict deepEqual tells apart from a literal.
+  assert.deepEqual(JSON.parse(JSON.stringify(fields)), {
+    name: `${PREFIX}lead`,
+    description: 'lead test agent',
+    model: 'gpt-5.5',
+    model_reasoning_effort: 'medium',
+    model_verbosity: 'low',
+    features: { shell_tool: false },
+  });
+  assert.ok(instructions.endsWith('\n\nLead.\n'));
+  assert.match(role, /^# providers\/codex\.json sets this role's model\.$/m);
+  assert.match(renderCodexAgents([lead]).get(`${PREFIX}lead.toml`), /^# This role inherits the Codex session's model\.$/m);
+});
+
+const agent = (name, body, addons = {}, access = 'write') => ({ file: `${name}.md`, meta: { name, description: `${name} test agent`, access }, body, addons });
 
 test('Codex roles give Codex names only to this plugin\'s agents, never to a project\'s own roles', () => {
   const rendered = renderCodexAgents([agent('lead', 'Ask `helper`, then `architect`. You are `lead`.'), agent('helper', 'Help.')]);
@@ -73,32 +120,6 @@ test('a Codex add-on follows the agent body in the Codex role, and the agents it
   assert.ok(parse(rendered.get(`${PREFIX}helper.toml`)).developer_instructions.endsWith('\n\nHelp.\n'));
 });
 
-test('build reads <agent>.codex.md add-ons and fails on any other add-on name', (t) => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-addons-'));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const agentsDir = path.join(dir, 'agents');
-  const addonsDir = path.join(dir, 'agent-addons');
-  mkdirSync(agentsDir);
-  mkdirSync(addonsDir);
-  writeFileSync(path.join(agentsDir, 'lead.md'), '---\nname: lead\neffort: low\n---\n\nLead.\n');
-  assert.deepEqual(readAgents({ agentsDir, addonsDir }).map(({ addons }) => addons), [{}]);
-  writeFileSync(path.join(addonsDir, 'lead.codex.md'), '\nOn Codex only.\n');
-  assert.deepEqual(readAgents({ agentsDir, addonsDir }).map(({ addons }) => addons), [{ codex: 'On Codex only.' }]);
-
-  const cases = [
-    ['lead.claude.md', /lead\.claude\.md: Claude Code reads agents\/lead\.md as it is/],
-    ['lead.opencode.md', /lead\.opencode\.md: no OpenCode role is generated yet/],
-    ['ghost.codex.md', /ghost\.codex\.md: name it <agent>\.codex\.md after an agent/],
-    ['lead.cursor.md', /lead\.cursor\.md: name it <agent>\.codex\.md/],
-    ['notes.md', /notes\.md: name it <agent>\.codex\.md/],
-  ];
-  for (const [file, message] of cases) {
-    writeFileSync(path.join(addonsDir, file), 'text\n');
-    assert.throws(() => readAgents({ agentsDir, addonsDir }), message, file);
-    rmSync(path.join(addonsDir, file));
-  }
-});
-
 test('build fails on an unknown argument instead of regenerating the files', () => {
   const file = path.join(CODEX_AGENTS, readdirSync(CODEX_AGENTS)[0]);
   const before = statSync(file).mtimeMs;
@@ -123,7 +144,7 @@ test('build runs only as the entry script, including through a symlinked path', 
   symlinkSync(path.resolve(import.meta.dirname, '..'), path.join(dir, 'repo'));
   const linked = spawnSync(process.execPath, [path.join(dir, 'repo/scripts/build.mjs'), '--check'], { encoding: 'utf8' });
   assert.equal(linked.status, 0, linked.stderr);
-  assert.match(linked.stdout, /^ok: \d+ Codex agents are current/);
+  assert.match(linked.stdout, /^ok: \d+ Claude Code agents and \d+ Codex agents are current/);
 });
 
 test('install-agents adds and updates its own roles, removes stale ones, and leaves other files alone', (t) => {

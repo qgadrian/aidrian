@@ -7,7 +7,7 @@ import test from 'node:test';
 import { parse } from 'yaml';
 
 import { pluginTags } from '../plugins/aidrian/lib/knowledge.mjs';
-import { readAgents } from '../scripts/build.mjs';
+import { CLAUDE_AGENTS, readAgents } from '../scripts/build.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const PLUGIN = path.join(ROOT, 'plugins/aidrian');
@@ -31,9 +31,17 @@ test('both marketplaces publish the same plugin, and both plugin manifests agree
   assert.equal('agents' in claude, false);
 });
 
+// The agents Claude Code loads, as scripts/build.mjs generates them from agents-src/ and providers/claude.json.
+function claudeAgents() {
+  return readdirSync(CLAUDE_AGENTS).filter((file) => file.endsWith('.md')).sort().map((file) => {
+    const [, frontmatter, body] = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(readFileSync(path.join(CLAUDE_AGENTS, file), 'utf8'));
+    return { file, meta: parse(frontmatter), body };
+  });
+}
+
 test('every agent has the frontmatter Claude Code needs and preloads the knowledge skill', () => {
-  const agents = readAgents();
-  assert.ok(agents.length > 0);
+  const agents = claudeAgents();
+  assert.deepEqual(agents.map(({ meta }) => meta.name), readAgents().map(({ meta }) => meta.name));
   for (const { file, meta, body } of agents) {
     assert.equal(meta.name, file.replace(/\.md$/, ''), file);
     assert.ok(meta.description?.length > 20, `${file}: description`);
@@ -58,7 +66,7 @@ const MCP_ALLOWLISTS = new Map();
 test('no agent allowlists an MCP tool, so a project\'s own MCP tools reach it', () => {
   assert.deepEqual(mcpTools('Read, mcp__github__get_commit'), ['mcp__github__get_commit']);
   assert.deepEqual(mcpTools(['Bash', 'mcp__plugin_linear_linear__get_issue']), ['mcp__plugin_linear_linear__get_issue']);
-  const agents = readAgents();
+  const agents = claudeAgents();
   for (const { file, meta } of agents) {
     if (!MCP_ALLOWLISTS.has(meta.name)) assert.deepEqual(mcpTools(meta.tools), [], `${file}: drop the mcp__ tools, or the whole \`tools\` list`);
   }
@@ -69,7 +77,7 @@ test('no agent allowlists an MCP tool, so a project\'s own MCP tools reach it', 
 
 // With no allowlist, an agent also inherits NotebookEdit, which writes files as Write and Edit do.
 test('an agent denied Write and Edit is denied NotebookEdit too', () => {
-  for (const { file, meta } of readAgents()) {
+  for (const { file, meta } of claudeAgents()) {
     const denied = toolList(meta.disallowedTools);
     if (denied.includes('Write') && denied.includes('Edit')) assert.ok(denied.includes('NotebookEdit'), `${file}: add NotebookEdit to disallowedTools`);
   }
@@ -114,7 +122,7 @@ test('every SKILL.md fits in Codex\'s skill size, with a margin', () => {
 const MAX_ORCHESTRATOR_BYTES = 9000;
 
 test('the orchestrator agent file fits in 9,000 bytes', () => {
-  const bytes = statSync(path.join(PLUGIN, 'agents/orchestrator.md')).size;
+  const bytes = statSync(path.join(CLAUDE_AGENTS, 'orchestrator.md')).size;
   assert.ok(bytes <= MAX_ORCHESTRATOR_BYTES, `orchestrator.md is ${bytes} bytes; move detail into the orchestration skill`);
 });
 

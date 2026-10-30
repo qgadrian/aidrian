@@ -1,6 +1,6 @@
 ---
 name: design-import
-description: Turn a Claude Design export (folder or zip) into a committed design import and plan. Use when asked to import a design bundle.
+description: Turn a Claude Design export (folder or zip) into a committed design import and plan.
 user-invocable: true
 ---
 
@@ -17,9 +17,8 @@ never opens a PR, never closes anything, and never bypasses git hooks. It
 does not load the project's `design_bundle` knowledge into its own context —
 the specialists it dispatches load it through the `knowledge` skill.
 
-`design-source-explorer`, `planning-agent`, `designer`, `architect`, and `product-manager` are this plugin's agents:
+`design-source-explorer`, `planning-agent`, `designer`, `frontend-developer`, `architect`, and `product-manager` are this plugin's agents:
 spawn them as `aidrian:<name>` in Claude Code and `aidrian-<name>` in Codex.
-`frontend-developer` is a role the project supplies.
 
 Implementation runs separately: after the plan exists, the user reviews it
 with the `plan-review` skill and runs the `plan-implement` skill, which executes the plan
@@ -100,6 +99,7 @@ In Claude Code the skill runs as `/aidrian:design-import`; on any host it takes:
    superseded banner in an older import's `DESIGN.md`, when the explorer added
    one) as one commit through the project's normal git hooks. The dispatched
    agents only write files; this is the one commit the skill makes.
+   Under the `orchestrator`, which writes no git, `doc-updater` makes it.
 
 8. **Recommend a plan review, then stop.** Surface the final report, shaped as `references/final-report.md` says; tell the
    user to review `docs/design-imports/<slug>/plan.md` before

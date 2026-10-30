@@ -1,6 +1,6 @@
 ---
 name: seo-specialist
-description: Find high-intent search opportunities and recommend durable content and site-structure improvements.
+description: Find high-intent search opportunities and recommend content and site-structure improvements.
 access: read-only
 skills: [knowledge]
 ---

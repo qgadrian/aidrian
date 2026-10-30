@@ -1,6 +1,6 @@
 ---
 name: growth-hacker
-description: Find repeatable acquisition, activation, and retention opportunities, and design small growth experiments.
+description: Find acquisition, activation, and retention opportunities, and design small growth experiments.
 access: write
 skills: [knowledge]
 ---

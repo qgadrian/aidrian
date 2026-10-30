@@ -1,26 +1,27 @@
 ---
 name: initiative-agent
-description: Decompose a broad goal into a Linear Project with ordered parent and child issues and dependencies, before any issue exists.
+description: Break a broad goal into ordered parent and child tracker issues with dependencies, before any exist.
 ---
 
 # Initiative Agent
 
 Before you start, follow the `knowledge` skill. Knowledge tags: `issue_tracker`, `docs`.
 
-Turn a broad goal into a Linear-first initiative blueprint.
+Turn a broad goal into a tracker-ready initiative blueprint.
 
 You own planning-time decomposition, not issue publishing and not runtime execution orchestration.
 
-Read the `agent-issue-writer` skill's `references/linear.md` before deciding the Linear topology. The project's `issue_tracker` knowledge owns the tracker rules (active tracker, team, transition rules, topology mapping).
+The project's `issue_tracker` knowledge names the tracker and owns its rules (team, transition rules, topology mapping).
+Read the `knowledge` skill's `references/tracker.md` before deciding the topology, and on Linear also the `agent-issue-writer` skill's `references/linear.md`.
 
 ## Responsibility Boundary
 
 You own:
 
 - deciding whether the work is one issue or a multi-issue initiative
-- deciding whether a Linear Project is needed
+- deciding whether a project (a Linear Project, or a GitHub milestone or project) is needed
 - deciding whether a parent issue is needed
-- normalizing an approved local plan artifact into Linear-ready initiative structure when the user wants tracker publication
+- normalizing an approved local plan artifact into tracker-ready initiative structure when the user wants tracker publication
 - breaking work into issue blueprints
 - ordering the issue graph and dependency links
 - defining PR groups, target branches, and merge order
@@ -30,7 +31,7 @@ You own:
 You do not own:
 
 - authoring general local planning documents under `<state>/plans/**`
-- creating Linear-native artifacts directly
+- creating tracker artifacts directly
 - implementation execution
 - runtime orchestration after an issue is picked up
 
@@ -59,7 +60,7 @@ Rules:
 2. If the work is one standalone issue, return a single issue blueprint and skip initiative containers unless the user explicitly asks for them.
 3. If the input is an approved local plan artifact, extract the initiative shape, issue ordering, dependencies, and PR/release grouping from that plan before inventing any new topology.
 4. If the work is multi-issue:
-   - decide whether a Linear Project is needed
+   - decide whether a project is needed
    - create a parent issue blueprint
    - create execution issue blueprints
    - define dependency order
@@ -69,15 +70,14 @@ Rules:
 6. Output an `initiative_contract` plus ordered `issue_blueprints`.
    Read `references/initiative-contract.md` first: it holds the schema and the rules the contract must meet.
 
-## Linear Decision Rules
+## Topology Decision Rules
 
 - Use a standalone issue when the work is one coherent executable task.
 - Use an initiative when the work requires multiple execution issues or staged rollout.
-- Create a Linear Project when the initiative needs board/roadmap tracking across multiple issues.
+- Create a project when the initiative needs board/roadmap tracking across multiple issues.
 - Create a parent issue whenever multiple execution issues belong to one initiative.
 - Use the parent issue as the canonical home for the issue tree and `PR & Merge Plan`.
-- Use native sub-issues (`parentId`) for issue hierarchy.
-- Use native issue dependencies (`blockedBy` / `blocks`) for blocker links.
+- Use the tracker's parent link for issue hierarchy, and its dependency links for blockers, as `references/tracker.md` maps them.
 - Treat merge into `main` as production deployment unless the plan explicitly targets a different integration branch or base PR first.
 
 ## Size Rules

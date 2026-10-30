@@ -1,11 +1,11 @@
 ---
 name: issue-verify-ac
-description: Check each acceptance criterion of a Linear issue against the code, tick the met ones with evidence after asking, and plan the rest. Never fixes or closes.
+description: Check an issue's acceptance criteria against the code, tick met ones after asking, and plan the rest.
 ---
 
 # issue-verify-ac
 
-Verify each acceptance criterion of one Linear issue against the code at one commit, tick the criteria that are met,
+Verify each acceptance criterion of one tracker issue against the code at one commit, tick the criteria that are met,
 and plan the work for the rest. Agents gather the evidence; the session classifies, writes back, and reports.
 It never edits code, never implements a fix, and never closes the issue.
 The `issue-implement` skill implements the plan, when the Human starts it.
@@ -18,7 +18,7 @@ Before you start, follow the `knowledge` skill. Load your `issue_tracker` docs f
 <issue> [--against head|pr|worktree] [--writeback ask|auto|never]
 ```
 
-- `<issue>`: a Linear issue key, such as `ABC-123`, or its URL. One issue per run; for several, ask which one.
+- `<issue>`: an issue key in the project's tracker format, such as `ABC-123` or `#123`, or its URL. One issue per run; for several, ask which one.
 - `--against`, the code to verify:
   - `head`: the default branch on `origin`.
   - `pr`: the head of an open, non-draft pull request the issue links.
@@ -36,7 +36,7 @@ Before you start, follow the `knowledge` skill. Load your `issue_tracker` docs f
 - **Coordination only.** Every piece of evidence comes from an agent. Read code only to route, and to check an anchor in step 3.
 - **An agent's verdict stands.** Never substitute your own. Two agents that disagree on one criterion make it disputed:
   the Human decides before any writeback.
-- **Linear is read-only** except one `save_issue` that changes checkboxes in the description. No comment, label, assignee,
+- **The tracker is read-only** except one body edit that changes checkboxes in the description. No comment, label, assignee,
   priority, state, attachment, or criterion text changes.
 - **No hand-back.** A remediation item an agent can do never becomes a Human follow-up.
 
@@ -57,13 +57,13 @@ Each criterion gets exactly one.
 ## Steps
 
 1. **Resolve.** Read the `issue-implement` skill's `steps/phase-0-resolve.md` (`../issue-implement/` from this folder)
-   and run its sections 2 and 3. A `completed`, `canceled`, or `duplicate` issue: stop and ask whether this is an audit.
+   and run its sections 2 and 3. A closed issue: stop and ask whether this is an audit.
    From the description's acceptance criteria section, record its exact line range, and each line's checkbox (`- [ ]` or `- [x]`)
    and id, such as `AC1`. Without ids, number them by position and report them as derived.
    No section and no checklist: stop and ask, offering `agent-issue-writer`. Vague criteria are `ambiguous` at once and skip step 3.
    A comment that amends a criterion goes in the report; the criteria come from the description unless it defers to a comment.
 2. **Ref.** `--against` when given; `pr` finds its pull request as the first case below. Otherwise:
-   - An issue attachment links a pull request: `gh pr view <url> --json state,isDraft,headRefOid`.
+   - The issue links a pull request: `gh pr view <url> --json state,isDraft,headRefOid`.
      The first open, non-draft one makes the ref `pr`, at its `headRefOid`. Fetch it: `git fetch origin pull/<n>/head`.
    - The current branch is the issue's, with uncommitted source changes: ask whether to verify `worktree` or `head`.
    - Else `head`: `git fetch origin <default>`, then `git rev-parse origin/<default>`, where `<default>` is config.json `defaultBranch`.
@@ -73,7 +73,7 @@ Each criterion gets exactly one.
    - ticked and `met`: leave it.
    - ticked and anything else: leave it, and ask the Human whether to untick. Unticking erases a person's signal.
    - unticked and anything else: leave it; it goes into the plan.
-5. **Writeback**, by `--writeback`: one `save_issue` with the id and the description, nothing else.
+5. **Writeback**, by `--writeback`: one edit of the body, the tracker's step in the `knowledge` skill's `references/tracker.md`, nothing else.
    - Toggle only checkbox markers inside the acceptance criteria section. Keep every other character as it was,
      including the criterion text, bold ids, other sections, and whitespace.
    - Just before the write, fetch the issue again. A description that changed since step 1: stop, and resolve again.
@@ -83,7 +83,7 @@ Each criterion gets exactly one.
 
 ## Output
 
-1. **Scope**: key, title, URL, `statusType`, labels, assignee; the ref and its SHA; the criteria's line range and count.
+1. **Scope**: key, title, URL, state, labels, assignee; the ref and its SHA; the criteria's line range and count.
 2. **Verdicts**: `| id | verdict | evidence anchor | agent | ticked now |`, with exact paths and lines, or commands and outcomes.
 3. **Writeback**: the ids to tick, untick, or leave, and the resulting state; then the confirmation question, the applied change,
    or `writeback: never`.

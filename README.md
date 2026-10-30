@@ -20,13 +20,14 @@ A project's own agent wins over the plugin's for the work it covers ([docs/knowl
 | Agent | What it does |
 | --- | --- |
 | `orchestrator` | The coordination entry: classifies work that spans agents, routes each part, and keeps the Human in the loop. Never edits. |
-| `planning-agent` | Writes or revises a decision-complete local plan before implementation or Linear publishing. |
-| `initiative-agent` | Breaks a broad goal into a Linear initiative blueprint of ordered issues and dependencies. Read-only. |
-| `agent-issue-writer` | Drafts or creates Linear issues with exact scope, dependencies, and verification steps. |
+| `planning-agent` | Writes or revises a decision-complete local plan before implementation or issue publishing. |
+| `initiative-agent` | Breaks a broad goal into an initiative blueprint of ordered tracker issues and dependencies. Read-only. |
+| `agent-issue-writer` | Drafts or creates Linear or GitHub issues with exact scope, dependencies, and verification steps. |
 | `integrator` | Lands ordered slice branches onto a shared task branch and routes the first conflict to its owner. |
 | `architect` | Designs a change before it is built: boundaries, interfaces, trade-offs, and a contract for the builders. Read-only. |
 | `product-manager` | Checks a request, plan, or change against the project's product rules and names missing decisions. Read-only. |
 | `backend-developer` | Implements backend and API work, following the project's backend rules and reusing its helpers. |
+| `frontend-developer` | Implements UI behavior in the project's stack: components, client state, data fetching, accessibility, and the client/server boundary. |
 | `designer` | Implements UI presentation: visual consistency, layout, component reuse, and responsive polish. |
 | `ux-specialist` | Diagnoses and fixes UX in the product's main flows: task success, friction, recovery states, and accessibility. |
 | `design-source-explorer` | Classifies a Claude Design bundle and writes its design import, for the `design-import` skill. |
@@ -47,7 +48,7 @@ A project's own agent wins over the plugin's for the work it covers ([docs/knowl
 | `feedback-synthesizer` | Turns support tickets, reviews, and product signals into ranked, evidence-backed themes. |
 | `ux-researcher` | Finds confusion and friction on activation and marketing surfaces from evidence and user questions. Read-only. |
 | `harness-librarian` | Sets up and keeps a project's `.aidrian/` folder and knowledge indexes, and writes knowledge docs from evidence. |
-| `harness-mechanic` | Maintains this repository: its agents, skills, hooks, scripts, tests, and docs. |
+| `harness-mechanic` | For harness maintainers: changes this repository's agents, skills, hooks, scripts, tests, and docs. Not for project work. |
 
 ### Skills
 
@@ -60,15 +61,15 @@ Claude Code runs each skill as `/aidrian:<skill>`; in Codex, ask for it by name.
 | `orchestration` | The orchestrator's editing steps: worktrees, parallel slices, the pull request, and review findings. |
 | `planning-agent` | Writes or revises a decision-complete local plan file. |
 | `plan-review` | Has `planning-agent` critique a local plan and propose a diff; the Human approves it before it is applied. |
-| `issue-plan` | Plans one Linear issue before implementation, through `planning-agent`. Read-only on Linear. |
-| `initiative-agent` | Decomposes a broad goal into a Linear Project with ordered issues and dependencies. |
-| `agent-issue-writer` | Drafts or creates Linear issues, parent issues, or Project items for agents to implement. |
+| `issue-plan` | Plans one Linear or GitHub issue before implementation, through `planning-agent`. Read-only on the tracker. |
+| `initiative-agent` | Decomposes a broad goal into ordered tracker issues and dependencies. |
+| `agent-issue-writer` | Drafts or creates Linear or GitHub issues, parent issues, or project items for agents to implement. |
 | `challenge` | Tests a plan or design against the project's docs and code, one question at a time. |
 | `adr-writer` | Writes an architecture decision record with the next free number, or supersedes an earlier one. |
-| `issue-implement` | Implements one Linear issue end to end, to a draft pull request. Linear stays read-only. |
-| `plan-implement` | Implements a reviewed local plan with no Linear issue, through the `issue-implement` steps. |
+| `issue-implement` | Implements one Linear or GitHub issue end to end, to a draft pull request. It writes to the tracker only the In Progress move and an estimate fix. |
+| `plan-implement` | Implements a reviewed local plan with no tracker issue, through the `issue-implement` steps. |
 | `autopilot` | Runs one task unattended to a draft pull request and a bounded review loop, then reports. Never merges. |
-| `issue-verify-ac` | Checks a Linear issue's acceptance criteria against the code, and ticks the met ones after asking. |
+| `issue-verify-ac` | Checks a Linear or GitHub issue's acceptance criteria against the code, and ticks the met ones after asking. |
 | `design-import` | Turns a Claude Design export into a committed design import and plan. |
 | `worktree-new` | Creates a task worktree with `aidrian worktree new` and runs the project's bootstrap there. |
 | `worktree-integrate` | Runs `integrator` to land ordered slice branches onto a shared task branch. |

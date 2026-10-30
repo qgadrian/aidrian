@@ -3,8 +3,8 @@
 Read at the start of an autopilot run. Each phase names the skill that does the work.
 Follow that skill as written, with the autopilot `SKILL.md` § Who decides in place of each question it would ask the Human.
 
-The bounds compose: the implementing skill's own per-slice fix cap holds inside phase 1, the round cap bounds phase 3,
-and config.json `github.maxReviewRounds` bounds the bot's reviews over the pull request's whole life.
+The bounds compose: the implementing skill's own per-slice fix cap holds inside phase 1,
+and config.json `github.maxReviewRounds`, the `orchestration` skill's round cap, bounds phase 3.
 
 ## 1. Implement
 
@@ -12,7 +12,7 @@ Pick the engine by the input:
 
 | Input | Engine |
 | --- | --- |
-| A Linear issue key or URL | the `issue-implement` skill on the issue |
+| An issue key or URL | the `issue-implement` skill on the issue |
 | A plan path whose frontmatter has `issue_id` or `issue_ref` | the `issue-implement` skill on that issue |
 | Any other plan path | the `plan-implement` skill on the plan |
 | A one-line task | `planning-agent` writes a plan, then the `plan-implement` skill runs it |
@@ -23,7 +23,7 @@ Pick the engine by the input:
   A plan that comes back `open-questions` or `blocked` leaves nothing to implement: park its questions and stop.
 - **An issue-anchored plan.** `plan-implement` stops on one, so read the plan's frontmatter before picking the engine.
   Run `issue-implement` on its `issue_id`, else its `issue_ref`. That skill's phase 0 reads the plan only at
-  `<state>/plans/<key>-implementation.md`, the key in lowercase: a plan at another path is not the one it would run, so stop.
+  `<state>/plans/<key>-implementation.md` (the `planning-agent` skill's `references/plan-file.md`): a plan at another path is not the one it would run, so stop.
 - **Workspace.** The current checkout when it is a task worktree on the task's branch; otherwise the engine creates one
   through the `orchestration` skill § 1. The launch approves a new branch, so the `worktree-new` skill's question is answered
   for `branch_mode: new`. Its question about reusing an existing branch, and the question about changes in the main checkout,
@@ -41,7 +41,7 @@ Record the pull request's number, link, and head commit.
 
 ## 3. Review rounds
 
-Up to three rounds, or the number the Human set at launch. Each round:
+Up to config.json `github.maxReviewRounds` rounds, or the number the Human set at launch. Each round:
 
 1. **Bot review.** Run the `pr-review-loop` skill on the pull request with `--await-codex`; once the bot is out, without it.
    Record the state its step 1 reports from `aidrian pr await-review`:
@@ -63,7 +63,7 @@ Up to three rounds, or the number the Human set at launch. Each round:
    Reply on its thread with the reason, in the `pr-review-loop` skill's reply shapes, and resolve the thread.
    An `accepted_residual` also goes in the pull request body through the `pr-write` skill, with a code comment.
    A comment that does not apply at all is not a rare edge case: its thread stays open with the evidence, as the loop says.
-5. **Push.** The skills above commit and push each fix. Confirm the remote has the new head with
+5. **Push.** The agent that made each fix commits and pushes it. Confirm the remote has the new head with
    `git ls-remote --heads origin <branch>`, then checkpoint as `SKILL.md` § Checkpoints allows.
 
 ## 4. Stop at sign-off

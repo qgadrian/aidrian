@@ -1,6 +1,6 @@
 ---
 name: ux-researcher
-description: Find confusion, friction, and unmet expectations on activation and marketing surfaces from evidence and user questions.
+description: Find confusion and friction on activation and marketing surfaces, from evidence and user questions.
 access: read-only
 skills: [knowledge]
 ---

@@ -1,6 +1,6 @@
 ---
 name: product-manager
-description: Product compliance gate. Checks a request, plan, or change against the project's documented product rules and names missing product decisions.
+description: Product compliance gate. Checks a request, plan, or change against the project's documented product rules.
 access: read-only
 skills: [knowledge]
 ---
@@ -77,7 +77,9 @@ Return the machine handoff from the `knowledge` skill, lean: the evidence the ve
 - `critical_flow`, one object per touched critical flow: `{flow, planning_artifact_confirmed, mandatory_review_confirmed, sign_off}`.
   `sign_off` is `approved`, `blocked`, or `needs_evidence`; `approved` only when both booleans are true; one flow never covers another.
 - `findings` on every `done` return, or `[]`: `severity`, `likelihood`, `affects`, `file`, `line`, `summary`, `doc_ref`, `next_step`.
-  `aidrian pr disposition --vocab` defines the words.
+  `severity`: `critical` (harm no one can undo later), `high` (breaks a main flow), `medium` (degrades one), or `low` (polish).
+  `likelihood`: `routine`, `plausible`, or `contrived`. `affects`: `users`, `operators`, `revenue`, or `internal`.
+  The dispatcher turns these axes into a verdict.
 - `risks`: revenue or conversion, trust or support, and discoverability, when relevant.
 - `blockers` and `open_questions` separate missing product truth, missing implementation evidence, and market observations.
 - `acceptance_criteria`: the user-visible outcomes and parity rules to preserve.

@@ -1,14 +1,14 @@
 ---
 name: issue-plan
-description: Plan one Linear issue before implementation. planning-agent writes a decision-complete local plan; this skill checks it. Read-only on Linear.
+description: Plan one tracker issue before implementation. planning-agent writes the plan; this skill checks it.
 disable-model-invocation: true
 ---
 
 # issue-plan
 
-Plan one Linear issue before anyone implements it: resolve it read-only, advise a workspace, have `planning-agent` write the plan,
+Plan one tracker issue before anyone implements it: resolve it read-only, advise a workspace, have `planning-agent` write the plan,
 check the plan against its schema, and report. The `issue-implement` skill then runs from that plan.
-This skill writes no code, creates no branch or worktree, opens no pull request, and writes nothing to Linear.
+This skill writes no code, creates no branch or worktree, opens no pull request, and writes nothing to the tracker.
 
 Before you start, follow the `knowledge` skill. Load your `issue_tracker` docs for the key format and the issue's sections.
 
@@ -18,7 +18,7 @@ Before you start, follow the `knowledge` skill. Load your `issue_tracker` docs f
 <issue> [--mode new|revise]
 ```
 
-- `<issue>`: a Linear issue key, such as `ABC-123`, or its URL. Missing: ask once.
+- `<issue>`: an issue key in the project's tracker format, such as `ABC-123` or `#123`, or its URL. Missing: ask once.
 - `--mode new`, the default, refuses when a plan exists. `revise` updates it, and keeps each completed slice as it is.
 
 **stop** ends the run with a report; **stop and ask** adds one question only the Human can answer.
@@ -28,21 +28,21 @@ Before you start, follow the `knowledge` skill. Load your `issue_tracker` docs f
 Read the `issue-implement` skill's `steps/phase-0-resolve.md` (`../issue-implement/` from this folder).
 Run its sections 2, 3, and 6 to 8, with these changes:
 
-- The plan path is `<state>/plans/<key>-implementation.md`: `<state>` is what `aidrian state` prints, the key is lowercase.
+- The plan path is the `planning-agent` skill's `references/plan-file.md` § Naming and lifecycle: `<state>/plans/<key>-implementation.md`.
   `new` with a plan there: stop and ask whether to revise it, delete it and start again (losing completed slices' commits), or abort.
   `revise` with no plan: ask whether to switch to `new`. Report any other `<state>/plans/<key>-*.md`.
 - Of its critical-flow guard, keep only the finding: whether the issue touches a critical flow.
   `planning-agent` consults `product-manager` itself.
 - **Acceptance criteria without ids**: ask whether to number them by position (`AC1` is the first) and record that in the plan,
   or to have `agent-issue-writer` add ids first. Never count an unnumbered bullet as covered.
-- **Sub-issues** (`list_issues` with this issue as parent): one with a linked pull request: stop and ask.
+- **Sub-issues** (the issue's children in the tracker): one with a linked pull request: stop and ask.
   Sub-issues with their own criteria: ask whether to write one combined plan or one per child. Never fold a child's criteria in silently.
 - **Stale paths**: a file to modify or reference that does not exist, or a file to create that already does:
   ask whether `agent-issue-writer` refreshes the issue first, or `planning-agent` re-derives the paths and records the drift.
 
 ## 2. Advise a workspace
 
-Decide; create nothing. The branch is the issue's `gitBranchName`.
+Decide; create nothing. The branch is the one the `issue-implement` skill's phase 1 picks.
 The main checkout is the parent folder of `git rev-parse --path-format=absolute --git-common-dir`.
 
 - A worktree already has the branch: clean and at its tip, mode `worktree` with that path. Dirty or diverged: stop and ask.
@@ -60,7 +60,7 @@ One foreground dispatch, whose brief carries:
 - the workspace decision: mode, branch, worktree path, rationale;
 - the snapshot's `updatedAt` for `ticket_updated_at`, so it never fetches the issue again;
 - the mode, and for `revise` the plan path and the rule: a `complete` slice is frozen except `notes`, and new work becomes new slices at the end;
-- the output path and the `planning-agent` skill's `references/plan-file.md` schema, Linear variant, `plan_kind: implementation`;
+- the output path and the `planning-agent` skill's `references/plan-file.md` schema, `plan_kind: implementation`;
 - the knowledge tags: `orchestration`, `issue_tracker`, `testing`, plus `product_sensitive` for a critical flow.
 
 ## 4. Check the plan

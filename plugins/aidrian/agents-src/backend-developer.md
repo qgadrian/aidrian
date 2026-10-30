@@ -1,6 +1,6 @@
 ---
 name: backend-developer
-description: Implements backend and API work that is correct, secure, tested, and maintainable, following the project's backend rules and reusing its helpers.
+description: Implements backend and API work, tested and secure, following the project's backend rules and helpers.
 access: write
 skills: [knowledge]
 ---

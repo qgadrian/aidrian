@@ -22,21 +22,22 @@ Do not use phrases such as:
 
 Replace each with a concrete path, command, mapping, invariant, owner, or blocked reason.
 
-## Linear Artifact Rules
+## Tracker Artifact Rules
 
-Use Linear-native primitives whenever possible:
+Use the tracker's native primitives whenever possible: on Linear, `references/linear.md`; on GitHub Issues,
+the GitHub column of the `knowledge` skill's `references/tracker.md`.
 
-- Use a real issue (`save_issue`) for executable work.
+- Use a real issue for executable work (Linear `save_issue`, GitHub `gh issue create`).
 - Use a parent issue when an initiative groups multiple execution issues.
-- Use `parentId` for issue hierarchy — Linear's native sub-issue mechanism.
-- Use `blockedBy` / `blocks` for blocker links.
-- Use a Linear Project for multi-issue tracking and views.
-- Leave an issue in the `backlog` status only for incomplete backlog capture, never for an AI-ready executable task — every Linear issue created by this
+- Link each child to its parent: Linear's native `parentId`; on GitHub, the parent's task list.
+- Use `blockedBy` / `blocks` for blocker links on Linear; on GitHub, the body's dependencies section.
+- Use a Linear Project, or the GitHub milestone or project the `issue_tracker` knowledge names, for multi-issue tracking.
+- Leave an issue in the backlog status only for incomplete backlog capture, never for an AI-ready executable task — every issue created by this
   skill is a first-class issue, there is no separate "draft issue" artifact type to avoid.
 - Use the parent issue as the canonical body for issue trees and `PR & Merge Plan`.
 - Treat merge into `main` as production deployment unless the plan explicitly targets a different integration branch or base PR first.
 
-Keep the Tracker Metadata mirror and the Agent Action Plan in the issue body even when native Linear fields exist.
+Keep the Tracker Metadata mirror and the Agent Action Plan in the issue body even when native fields exist.
 
 ## Canonical Markdown Structure
 
@@ -205,10 +206,10 @@ Every file entry must be an exact path plus a short reason.
 
 - Always include:
   - one to three domain/work-type labels (`tracker_fields.labels` — optional; omit when none apply)
-  - Linear Project name or `none`
-  - parent issue reference (`parentId`) or `none`
-  - filed from work on another issue (deferral, follow-up, split): the Linear Project defaults to the source issue's
-  - `parentId` is conditional — set it only for a true child of that parent, otherwise relate this issue to its source and leave the parent unset:
+  - project name (a Linear Project, or a GitHub milestone or project) or `none`
+  - parent issue reference or `none`
+  - filed from work on another issue (deferral, follow-up, split): the project defaults to the source issue's
+  - the parent link is conditional — set it only for a true child of that parent, otherwise relate this issue to its source and leave the parent unset:
     the project's `issue_tracker` knowledge owns both rules, including when a deviation needs a reason
   - dependency links if applicable
   - milestone if provided
@@ -218,8 +219,9 @@ Every file entry must be an exact path plus a short reason.
 
 ### Issue Fields (Priority and Effort)
 
-Both fields are native Linear fields set directly on the same `save_issue` call that creates or updates the issue — there is no separate post-creation API
-call for either. Priority is the native `priority` integer.
+On Linear, both fields are native fields set directly on the same `save_issue` call that creates or updates the issue — there is no separate post-creation API
+call for either. Priority is the native `priority` integer. On GitHub Issues, set them as the labels or project fields
+the `issue_tracker` knowledge names; with none, they live in Tracker Metadata alone.
 Effort is the native `estimate` number: when the team uses Linear's t-shirt estimation scale, the issue's `## Size` maps straight onto it.
 See `references/linear.md` for the exact `save_issue` mechanics and both mapping tables.
 
@@ -242,8 +244,7 @@ An explicit user- or initiative-supplied Priority always overrides the inference
 
 Derive Effort from the issue's `## Size` t-shirt estimate and set the native `estimate` in the same step.
 An explicitly supplied Effort overrides the derivation by changing the recorded `## Size` — never by setting an `estimate` that disagrees with the Size.
-The `check-linear-estimate.mjs` PreToolUse hook denies issue-creating `save_issue` calls that carry a `## Size` but no `estimate`,
-and equally one whose `estimate` disagrees with that Size.
+Never create an issue that carries a `## Size` but no `estimate`, or an `estimate` that disagrees with that Size.
 
 | `## Size` | `issue_fields.effort` | `save_issue(estimate:)` |
 |---|---|---|

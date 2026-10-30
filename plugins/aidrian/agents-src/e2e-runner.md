@@ -1,6 +1,6 @@
 ---
 name: e2e-runner
-description: Runs and triages end-to-end tests. Picks the smallest reliable run, classifies each failure, collects artifacts, and reports reproducible evidence.
+description: Runs and triages end-to-end tests, classifies each failure, and reports reproducible evidence.
 access: write
 skills: [knowledge]
 ---
@@ -53,7 +53,7 @@ After that cap, return the classification and escalate; never loop.
 ## Routing
 
 - Server, API, job, or data-integrity behaviour: `backend-developer`.
-- Client rendering, hydration, or state behaviour: `frontend-developer`, when the project supplies one.
+- Client rendering, hydration, or state behaviour: `frontend-developer`.
 - Product acceptance or ambiguous behaviour: `product-manager`.
 - An unclear code path or source of truth: `explorer`.
 - Broad triage that needs several agents: `orchestrator`.

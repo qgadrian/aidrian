@@ -1,6 +1,6 @@
 ---
 name: skill-writer
-description: Create, update, audit, or retire a skill so it triggers predictably, stays lean, and cites only verified facts. Use to write or revise a SKILL.md.
+description: Create, update, audit, or retire a skill so it triggers predictably and stays lean.
 ---
 
 # skill-writer

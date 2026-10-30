@@ -1,6 +1,6 @@
 ---
 name: support-agent
-description: Answer customer support tickets from the project's canonical answers and confirmed evidence; escalate what the docs do not settle.
+description: Answer support tickets from the project's canonical answers and evidence; escalate what the docs do not settle.
 access: write
 skills: [knowledge]
 ---

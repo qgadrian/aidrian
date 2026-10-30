@@ -1,6 +1,7 @@
 # Phase 0: resolve the issue
 
-Read-only on Linear. A failed guard below is a **stop and ask** unless it says otherwise.
+Read-only on the tracker. A failed guard below is a **stop and ask** unless it says otherwise.
+The `knowledge` skill's `references/tracker.md` maps each step below to the tracker's tool; read it first.
 Linear tool names are the connector's, such as `get_issue`; use the host's Linear tools with the same intent.
 
 ## 1. Preflight
@@ -13,16 +14,14 @@ Linear tool names are the connector's, such as `get_issue`; use the host's Linea
 
 ## 2. Resolve the reference
 
-- A key in the project's format: fetch it directly.
-- A Linear issue URL: take the key from the URL.
-- Anything else, such as `#123` or `owner/repo#123`: ask for the key. Never search Linear to guess it.
-  A key the Human offers may be confirmed by its attachments' link back to the old reference.
+- A key in the project's format, or an issue URL of its tracker: take the key, as `references/tracker.md` says.
+- Anything else, such as a reference to another tracker: ask for the key. Never search a tracker to guess it.
+  A key the Human offers may be confirmed by its links back to the old reference.
 
 ## 3. Fetch
 
-`get_issue` with its relations returns the title, description, labels, `status` and `statusType`, assignee, `attachments`,
-`relations`, `parentId`, `gitBranchName`, and `updatedAt` in one call. `list_comments` adds the comments.
-Keep one snapshot for the run; fetch again only when the Human asks.
+The tracker's read step returns the title, description, labels, state, assignee, links, blocking issues, parent,
+branch name on Linear, comments, and `updatedAt`. Keep one snapshot for the run; fetch again only when the Human asks.
 
 ## 4. Base branch
 
@@ -36,7 +35,7 @@ Record the base and its source for the report.
 
 ## 5. Re-entry
 
-When the issue's `gitBranchName` branch exists with commits ahead of `origin/<base>`:
+When the issue's branch (phase 1) exists with commits ahead of `origin/<base>`:
 
 - `git log --oneline origin/<base>..<branch>` and `git diff --stat origin/<base>...<branch>`.
 - Mark each plan slice whose commit subject appears there `complete`.
@@ -59,13 +58,13 @@ non-goals, and files to modify, then the critical-flow, product, and security ga
 
 ## 8. Guards
 
-- **Terminal**: `statusType` is `completed`, `canceled`, or `duplicate`.
-- **Assignee**: assigned to someone other than the current user (`get_user` for `me`). Never change the assignee.
-- **Blocked**: an issue in `relations.blockedBy` is not terminal. Note `relations.blocks` and `parentId` in the report.
+- **Terminal**: the issue is closed, as `references/tracker.md` defines it.
+- **Assignee**: assigned to someone other than the current user. Never change the assignee.
+- **Blocked**: an issue it is blocked by is not closed. Note the issues it blocks, and its parent, in the report.
 - **Merge dependencies**: the dependencies section lists one that has not merged.
 - **Silent issue**: no acceptance criteria, no meaningful description, and no files to modify. Offer `agent-issue-writer` to fill it in.
 - **Critical flow**: run `aidrian-knowledge route product_sensitive` and read what it lists.
   When the issue touches a flow those docs declare critical: `product-manager` first, then a `planning-agent` plan.
   Implement only after its `sign_off: approved`; `code-reviewer` signs off after the implementation.
 
-Apart from the In Progress move in phase 1, nothing before phase 7 writes to Linear or opens anything on GitHub.
+Apart from the In Progress move in phase 1, nothing before phase 7 writes to the tracker or opens anything on GitHub.

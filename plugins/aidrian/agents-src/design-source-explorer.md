@@ -1,6 +1,6 @@
 ---
 name: design-source-explorer
-description: Used by the design-import skill to classify a Claude Design bundle and write docs/design-imports/<slug>/.
+description: Classifies a Claude Design bundle and writes its design import, for the design-import skill.
 access: write
 skills: [knowledge]
 ---

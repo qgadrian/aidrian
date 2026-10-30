@@ -1,6 +1,6 @@
 ---
 name: adr-writer
-description: Write an architecture decision record (ADR) with the next free number, or supersede an earlier one. Use to record a hard-to-reverse decision.
+description: Write or supersede an architecture decision record (ADR). Use to record a hard-to-reverse decision.
 ---
 
 # adr-writer

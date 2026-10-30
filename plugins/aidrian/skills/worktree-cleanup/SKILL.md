@@ -1,6 +1,6 @@
 ---
 name: worktree-cleanup
-description: Remove task worktrees whose work has merged with `aidrian worktree cleanup`, asking before each one it cannot prove done. Supports --force and --dry-run.
+description: Remove task worktrees whose work merged, asking before any it cannot prove done. Supports --force, --dry-run.
 ---
 
 # worktree-cleanup

@@ -60,7 +60,9 @@ export function configWriteDenial(input, project, { names: { human } }, { also =
     const file = files.find((each) => each === target || (!holdsRoot && isWithin(target, each)));
     if (file) return blocked(input, shown(file), 'changes', human);
   }
-  const named = namedFile(names, files, project, guarded) ?? globbedFile(globs, files);
+  // A glob reaches a file by the path it is spelled with, which a symlink may place in another folder than its target.
+  const spelled = [...configFiles(project), ...also].map((file, i) => [path.resolve(file), files[i]]);
+  const named = namedFile(names, files, project, guarded) ?? globbedFile(globs, spelled);
   return named ? blocked(input, shown(named), 'may change', human) : null;
 }
 
@@ -99,17 +101,19 @@ function namedFile(names, files, project, also) {
 // against the file's own name or the folder that holds it, which a recursive delete removes with it. When the glob's
 // folder is known, only files inside it count, so `rm -rf dist/*` changes nothing guarded; when a glob or an unknown `cd`
 // leaves the folder unknown, any file's name or folder counts: failing closed.
+// `files` pairs each guarded file's spelled path with its canonical one; either may match, and the canonical is returned.
 function globbedFile(globs, files) {
   const regex = (glob) =>
     new RegExp(`^${glob.split(/([*?])/u).map((part) => ({ '*': '.*', '?': '.' })[part] ?? part.replace(/[.+^${}()|[\]\\]/gu, '\\$&')).join('')}$`, 'u');
-  return files.find((file) => globs.some(({ text, dirs = [], unsure = true }) => {
+  return files.find((pair) => pair.some((file) => globs.some(({ text, dirs = [], unsure = true }) => {
     const parts = text.replace(/\/+$/u, '').split('/');
     const pattern = regex(parts.pop());
     const head = parts.join('/') || (text.startsWith('/') ? '/' : '.');
     if (unsure || /[*?[]/u.test(head)) return pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file)));
     const folders = path.isAbsolute(head) ? [head] : dirs.map((dir) => path.resolve(dir, head));
-    return folders.some((folder) => isWithin(canonical(folder), file) && pattern.test(path.relative(canonical(folder), file).split(path.sep)[0]));
-  })) ?? null;
+    return folders.some((folder) =>
+      [folder, canonical(folder)].some((dir) => isWithin(dir, file) && pattern.test(path.relative(dir, file).split(path.sep)[0])));
+  })))?.[1] ?? null;
 }
 
 const wholePart = (name, after) => new RegExp(`(?<![\\w.-])${name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}${after}`, 'u');

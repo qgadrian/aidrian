@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -276,6 +276,17 @@ test('the hook blocks a subagent that changes the gates with exit 2, and lets it
     const { status, stdout, stderr } = run(cwd, input);
     assert.deepEqual([status, stdout, stderr], [0, '', ''], `${cwd}: ${JSON.stringify(input)}`);
   }
+});
+
+test('a glob reaches a config file that is a symlink to another folder, by the path it is spelled with', (t) => {
+  const { dir } = project(t);
+  mkdirSync(path.join(dir, 'settings'));
+  renameSync(path.join(dir, '.aidrian/config.json'), path.join(dir, 'settings/config.json'));
+  symlinkSync('../settings/config.json', path.join(dir, '.aidrian/config.json'));
+  for (const command of ["echo '{\"version\":1}' > .aidrian/*.json", 'rm settings/*']) {
+    assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /config\.json/, command);
+  }
+  assert.equal(verdict(dir, subagent(dir, 'Bash', { command: 'rm src/*' })), null);
 });
 
 test('ln, truncate, install, dd, git checkout --, git restore, and a glob that may name a guarded file change it', (t) => {

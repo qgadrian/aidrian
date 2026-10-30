@@ -136,9 +136,34 @@ export const numbered = (text) => text.split(/\r?\n/u).map((line, i) => ({ numbe
 export const formatHit = (file, hit) =>
   `${file}:${hit.line}: "${hit.term}" -> use "${hit.replacement}" [${hit.rule.id}]${hit.rule.message ? ` ${hit.rule.message}` : ''}`;
 
-// The lines an agent's write adds, per file, as { file, lines }: an Edit's new text without the lines it replaces, a
-// Write's content without the lines the file already has, and the `+` lines of an apply_patch. Line numbers count
-// within the added text for an Edit, and within the file for a Write and a new file.
+// The lines of the file once an Edit's edits apply, in order, that the file did not have, with their line numbers: an
+// edit inside one JSON value is read as the whole line it lands on, so a locale rule sees the value. Without the file,
+// or when an edit's old text is not in it, each edit's new text is read alone.
+function editedLines(file, edits) {
+  let text;
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch {
+    text = null;
+  }
+  const before = new Set(text?.split(/\r?\n/u) ?? []);
+  for (const { old_string: old, new_string: next, replace_all: all } of edits) {
+    if (text === null || typeof old !== 'string' || old === '' || typeof next !== 'string' || !text.includes(old)) {
+      text = null;
+      break;
+    }
+    text = all ? text.replaceAll(old, () => next) : text.replace(old, () => next);
+  }
+  if (text !== null) return numbered(text).filter((line) => !before.has(line.text));
+  return edits.flatMap(({ old_string: old, new_string: next }) => {
+    if (typeof next !== 'string') return [];
+    const replaced = new Set(typeof old === 'string' ? old.split(/\r?\n/u) : []);
+    return numbered(next).filter((line) => !replaced.has(line.text));
+  });
+}
+
+// The lines an agent's write adds, per file, as { file, lines }: the whole lines an Edit writes (editedLines), a Write's
+// content without the lines the file already has, and the `+` lines of an apply_patch.
 export function addedLines(input, cwd) {
   const tool = input.tool_input ?? {};
   const name = input.tool_name;
@@ -152,13 +177,7 @@ export function addedLines(input, cwd) {
     return [{ file: tool.file_path, lines: numbered(tool.content).filter(({ text }) => !before.has(text)) }];
   }
   if (name === 'Edit' && typeof tool.file_path === 'string') {
-    const edits = Array.isArray(tool.edits) ? tool.edits : [tool];
-    const lines = edits.flatMap(({ old_string: old, new_string: next }) => {
-      if (typeof next !== 'string') return [];
-      const replaced = new Set(typeof old === 'string' ? old.split(/\r?\n/u) : []);
-      return numbered(next).filter(({ text }) => !replaced.has(text));
-    });
-    return [{ file: tool.file_path, lines }];
+    return [{ file: tool.file_path, lines: editedLines(path.resolve(cwd, tool.file_path), Array.isArray(tool.edits) ? tool.edits : [tool]) }];
   }
   if (name === 'apply_patch') {
     const files = [];

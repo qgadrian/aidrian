@@ -48,14 +48,15 @@ export const markersIn = (text) =>
 // `owner/name`, lower-cased, from any spelling gh takes: `[HOST/]OWNER/REPO`, a URL, a `.git` suffix; or null.
 export function repoName(value) {
   if (typeof value !== 'string') return null;
-  const parts = normalizeRemote(value.replace(/\/pull\/.*$/u, '')).toLowerCase().split('/').filter(Boolean);
+  const parts = normalizeRemote(value.replace(/\/(?:pull|issues)\/.*$/u, '')).toLowerCase().split('/').filter(Boolean);
   return parts.length >= 2 ? parts.slice(-2).join('/') : null;
 }
 
-// A pull request number from `123`, `#123`, or a `…/pull/123` URL; null otherwise.
+// A pull request number from `123`, `#123`, or a `…/pull/123` or `…/issues/123` URL (gh issue comment takes one, and a
+// pull request is also an issue); null otherwise.
 export function prNumber(value) {
   if (typeof value !== 'string') return null;
-  const match = /\/pull\/(\d+)/u.exec(value) ?? /^#?(\d+)$/u.exec(value);
+  const match = /\/(?:pull|issues)\/(\d+)/u.exec(value) ?? /^#?(\d+)$/u.exec(value);
   return match ? Number(match[1]) : null;
 }
 

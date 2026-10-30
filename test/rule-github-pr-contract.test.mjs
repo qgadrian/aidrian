@@ -10,7 +10,7 @@ import { check } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
 // A full contract, as a project with a closed list of sections, deferrals to tracked issues, and residuals sets it.
 const CONTRACT = {
   title: '^\\[(?:{issueKey}|NOISSUE)\\] (?:{types})(?:\\([a-z0-9./_-]+\\))?!?: \\S.*',
-  issueKey: 'TBL-\\d+',
+  issueKey: 'ABC-\\d+',
   sections: ['TL;DR', 'Risk', 'What changed', 'Tests run', 'Accepted residuals', 'Deferred to issues'],
   deferrals: {
     section: 'Deferred to issues',
@@ -52,11 +52,11 @@ test('the contract keys load, and a bad value is an error that keeps the default
 test('the title must match the pattern, with {types} and {issueKey} filled in, and only when the command sets one', (t) => {
   const { run } = project(t);
   assert.equal(run(create(BODY)), null);
-  assert.equal(run(create(BODY, '[ACME-12] fix(share.links): expire')), null);
+  assert.equal(run(create(BODY, '[ABC-12] fix(share.links): expire')), null);
   assert.match(run(create(BODY, 'feat: share links')), /^Blocked: the title "feat: share links" does not match config\.json `github\.pullRequest\.title`/);
-  assert.match(run(create(BODY, '[ACME-1] wip: x')), /\{types\} is build\|chore/);
-  assert.match(run(create(BODY, '[NOISSUE] feat: follow up on ACME-9')), /^Blocked: the title names an issue key outside its leading \[\.\.\.\] bracket/);
-  assert.equal(run(create(BODY, '[NOISSUE] feat: ATBL-9 and ACME-9a are not keys')), null);
+  assert.match(run(create(BODY, '[ABC-1] wip: x')), /\{types\} is build\|chore/);
+  assert.match(run(create(BODY, '[NOISSUE] feat: follow up on ABC-9')), /^Blocked: the title names an issue key outside its leading \[\.\.\.\] bracket/);
+  assert.equal(run(create(BODY, '[NOISSUE] feat: XABC-9 and ABC-9a are not keys')), null);
   assert.equal(run(`gh pr edit 4 --body '${BODY}'`), null, 'a body-only edit never checks the old title');
   assert.match(run('gh pr edit 4 -t "retitled"'), /does not match/, 'a retitle does');
   assert.equal(run('gh pr edit 4 --title "$TITLE"'), null, 'a title the rule cannot read passes');
@@ -72,15 +72,15 @@ test('the sections are a closed list, outside code fences', (t) => {
 test('every deferral names a reason from the list, not a never-valid one, and an issue', (t) => {
   const { run } = project(t);
   const deferred = (item) => create(`${BODY}\n## Deferred to issues\n\nTwo findings were deferred:\n\n${item}\n`);
-  assert.equal(run(deferred('- Migration — `defer_reason: human_only` — ACME-1234: needs a credential\n  - the key is the Stripe one')), null);
-  assert.equal(run(deferred('- defer_reason: user_chose (asked twice) — ACME-1')), null);
-  assert.match(run(deferred('- Migration — ACME-1')), /is not a valid deferral: it carries no `defer_reason:` value\./);
-  assert.match(run(deferred('- `defer_reason: scope expansion` — ACME-1')), /its reason "scope expansion" is a never-valid reason \("scope expansion"\)/);
-  assert.match(run(deferred('- defer_reason: needs backend-developer oversight — ACME-1')), /never-valid reason \("needs <specialist> oversight"\)/);
-  assert.match(run(deferred('- defer_reason: HUMAN_ONLY — ACME-1')), /its reason "HUMAN_ONLY" is not one of non_goals_collision/);
-  assert.match(run(deferred('- defer_reason: pending_review, ACME-9: add advisory banner')), /its reason "pending_review" is not one of/, 'the issue title is not the reason');
+  assert.equal(run(deferred('- Migration — `defer_reason: human_only` — ABC-1234: needs a credential\n  - the key is the Stripe one')), null);
+  assert.equal(run(deferred('- defer_reason: user_chose (asked twice) — ABC-1')), null);
+  assert.match(run(deferred('- Migration — ABC-1')), /is not a valid deferral: it carries no `defer_reason:` value\./);
+  assert.match(run(deferred('- `defer_reason: scope expansion` — ABC-1')), /its reason "scope expansion" is a never-valid reason \("scope expansion"\)/);
+  assert.match(run(deferred('- defer_reason: needs backend-developer oversight — ABC-1')), /never-valid reason \("needs <specialist> oversight"\)/);
+  assert.match(run(deferred('- defer_reason: HUMAN_ONLY — ABC-1')), /its reason "HUMAN_ONLY" is not one of non_goals_collision/);
+  assert.match(run(deferred('- defer_reason: pending_review, ABC-9: add advisory banner')), /its reason "pending_review" is not one of/, 'the issue title is not the reason');
   assert.match(run(deferred('- defer_reason: human_only')), /it names no issue to defer the work to/);
-  assert.equal(run(deferred('- defer_reason: human_only — ACME-2\n  - the gate rejects `defer_reason: scope expansion`')), null, 'a sub-bullet is prose about the field');
+  assert.equal(run(deferred('- defer_reason: human_only — ABC-2\n  - the gate rejects `defer_reason: scope expansion`')), null, 'a sub-bullet is prose about the field');
 });
 
 test('every residual states each field and names no issue', (t) => {
@@ -88,7 +88,7 @@ test('every residual states each field and names no issue', (t) => {
   const residual = (item) => create(`${BODY}\n## Accepted residuals\n${item}\n`);
   assert.equal(run(residual('- Stale cache — likelihood: low, impact: minor, cost_to_close: a new table')), null);
   assert.match(run(residual('- Stale cache — likelihood: low')), /is not a valid residual: it is missing `impact:`, `cost_to_close:`/);
-  assert.match(run(residual('- Stale cache — likelihood: low, impact: minor, cost_to_close: x, ACME-3')), /it names an issue/);
+  assert.match(run(residual('- Stale cache — likelihood: low, impact: minor, cost_to_close: x, ABC-3')), /it names an issue/);
 });
 
 test('a body file in a shared temp folder is refused, readable or not; one in the project passes', (t) => {

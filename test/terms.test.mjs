@@ -121,6 +121,11 @@ test('the write hook refuses a block hit on the lines a write adds, and tells th
   assert.equal(hook('Write', { file_path: path.join(dir, 'docs/api/old.md'), content: 'Legacy organisation text.\nNew line.\n' }).status, 0, 'a line the file already had');
   assert.equal(hook('Edit', { file_path: 'docs/api/old.md', old_string: 'Legacy organisation text.', new_string: 'Legacy organisation text.' }).status, 0);
   assert.equal(hook('Edit', { file_path: 'docs/api/old.md', old_string: 'Legacy', new_string: 'The organisations' }).status, 2);
+  write('locales/es-ES/app.json', '{\n  "guest": "cliente"\n}\n');
+  const inside = hook('Edit', { file_path: 'locales/es-ES/app.json', old_string: 'cliente', new_string: 'comensal' });
+  assert.equal(inside.status, 2, 'an edit inside one JSON value is read as its whole line');
+  assert.match(inside.stderr, /locales\/es-ES\/app\.json:2: "comensal" -> use "cliente"/);
+  assert.equal(hook('Edit', { file_path: 'locales/es-ES/app.json', old_string: '"guest"', new_string: '"comensal"' }).status, 0, 'a key stays a key');
   const patch = '*** Begin Patch\n*** Update File: locales/es-ES/app.json\n@@\n-  "a": "x"\n+  "a": "comensal"\n*** End Patch';
   assert.equal(hook('apply_patch', { command: patch }).status, 2);
   const warned = hook('Write', { file_path: 'notes.md', content: 'Send an e-mail.\n' });
@@ -129,8 +134,14 @@ test('the write hook refuses a block hit on the lines a write adds, and tells th
   assert.equal(hook('Write', { file_path: 'src/app.js', content: 'organisation' }).status, 0, 'outside every rule');
 });
 
-test('addedLines reads each write tool', () => {
-  assert.deepEqual(addedLines({ tool_name: 'Edit', tool_input: { file_path: 'a', old_string: 'x\ny', new_string: 'x\nz' } }, '/'), [{ file: 'a', lines: [{ number: 2, text: 'z' }] }]);
+test('addedLines reads each write tool', (t) => {
+  assert.deepEqual(addedLines({ tool_name: 'Edit', tool_input: { file_path: 'a', old_string: 'x\ny', new_string: 'x\nz' } }, '/nowhere'), [{ file: 'a', lines: [{ number: 2, text: 'z' }] }]);
+  const { dir, write } = repo(t);
+  write('f.txt', 'one\ntwo a\nthree a\n');
+  const edit = (input) => addedLines({ tool_name: 'Edit', tool_input: { file_path: 'f.txt', ...input } }, dir)[0].lines;
+  assert.deepEqual(edit({ old_string: 'a', new_string: 'b\nc', replace_all: true }), [{ number: 2, text: 'two b' }, { number: 3, text: 'c' }, { number: 4, text: 'three b' }, { number: 5, text: 'c' }]);
+  assert.deepEqual(edit({ edits: [{ old_string: 'one', new_string: 'uno' }, { old_string: 'uno', new_string: 'one' }] }), [], 'edits apply in order, and the end result counts');
+  assert.deepEqual(edit({ edits: [{ old_string: 'one', new_string: 'uno' }, { old_string: 'two', new_string: 'dos' }] }), [{ number: 1, text: 'uno' }, { number: 2, text: 'dos a' }]);
   const patch = '*** Begin Patch\n*** Add File: n.md\n+one\n*** Delete File: gone.md\n*** Update File: u.md\n+two\n*** End Patch';
   assert.deepEqual(addedLines({ tool_name: 'apply_patch', tool_input: { command: patch } }, '/').map(({ file, lines }) => [file, lines.map((l) => l.text)]), [['n.md', ['one']], ['u.md', ['two']]]);
 });

@@ -59,7 +59,7 @@ export function readRequests({ program, args }, reviewer, read, env = {}) {
   if (isComment || (first === 'pr' && second === 'review')) {
     const body = bodyOf(last('-b', '--body'), last('-F', '--body-file'), read);
     if (!asksForReview(body)) return [];
-    return [{ pr: prNumber(target ?? ''), repo: repo ?? (target?.includes('/pull/') ? repoName(target) : null), markers: markersIn(body) }];
+    return [{ pr: prNumber(target ?? ''), repo: repo ?? (/\/(?:pull|issues)\//u.test(target ?? '') ? repoName(target) : null), markers: markersIn(body) }];
   }
   if (first === 'pr' && (second === 'create' || second === 'edit') && reviewer) {
     const named = flags.filter((flag) => ['-r', '--reviewer', '--add-reviewer'].includes(flag.name)).map((flag) => literal(flag.value) ?? '');

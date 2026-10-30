@@ -60,6 +60,7 @@ test('gh comment requests are refused until a review is on record, in every way 
     'gh api -X POST repos/acme/notes/issues/5/comments --input req.json',
     'git push && gh pr comment https://github.com/acme/notes/pull/5 -b "@codex review"',
     'gh pr edit 5 --add-reviewer chatgpt-codex-connector',
+    'gh issue comment https://github.com/acme/notes/issues/5 --body "@codex review"',
   ];
   for (const command of commands) assert.match(run(command) ?? 'passed', /^Blocked: this asks the review bot to review pull request #5,/, command);
   assert.match(run(commands[0]), /against docs\/review-checklist\.md/);
@@ -76,6 +77,7 @@ test('what is not a request to this repository passes; a request without a numbe
     'gh api repos/acme/notes/issues/5/comments --jq ".[].body"',
     'gh api -X GET repos/acme/notes/issues/5/comments -f body="@codex review"',
     'gh pr comment 5 -R other/repo -b "@codex review"',
+    'gh issue comment https://github.com/other/repo/issues/5 -b "@codex review"',
     'gh pr comment 5 --body-file - ',
     'echo "gh pr comment 5 -b @codex review"',
     'gh pr edit 5 --add-reviewer someone',

@@ -1,6 +1,6 @@
 ---
 name: challenge
-description: Ask the user one question at a time to test a plan or design against the project's docs and code. Use on "challenge this plan" or "stress-test my design".
+description: Stress-test a plan or design against the project's docs and code, asking one question at a time.
 ---
 
 # challenge

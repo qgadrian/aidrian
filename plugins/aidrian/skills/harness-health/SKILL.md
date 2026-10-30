@@ -1,6 +1,6 @@
 ---
 name: harness-health
-description: Read-only harness health check. Runs aidrian report health, explains the top 3 problems with their numbers and samples, and names each one's fix.
+description: Read-only harness health check from aidrian report health. The top 3 problems, their numbers, and fixes.
 ---
 
 # harness-health
@@ -57,7 +57,7 @@ Agents are named as `aidrian:<name>` in Claude Code and `aidrian-<name>` in Code
 | `split-doc` | The `always` docs over budget, a tagged doc over `taggedDocBytes`, one doc taking most of the bytes read, or a tagged doc nobody read | `harness-librarian` splits the doc into a short rule card and a reference, or drops its tags so that only search finds it. |
 | `agent-prompt` | An agent re-dispatched, or sent back by the delivery check, too often | `harness-mechanic` reviews that agent's prompt when it is a plugin agent (`lesson.target` is `plugin`); a project's own agent goes to the agent that owns its file. |
 | `deny-rule` | One of the plugin's rules blocking again and again | Check the rule against what the agents tried, which `aidrian report` shows as its most frequent match: reword the rule's message or the blocked agent's instructions, or capture a lesson. |
-| `round-cap` | Many review rounds a pull request, or late findings on lines the bot had already reviewed | Check the autopilot round cap: the `autopilot` skill's three rounds, and config.json `github.maxReviewRounds`. |
+| `round-cap` | Many review rounds a pull request, or late findings on lines the bot had already reviewed | Check the review-round cap, config.json `github.maxReviewRounds`, which the `orchestration` and `autopilot` skills read. |
 | `cost` | The cost a session rising | Name the costly sessions with `aidrian report sessions`, with their main conversation against subagent split, and capture a lesson. |
 
 ## 4. Capture lessons

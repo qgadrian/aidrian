@@ -22,8 +22,8 @@ A gate that fails: fix and check again, or stop. Never skip to the pull request.
 
 ## Phase 6: push
 
-Follow the `orchestration` skill § 3 step 1: push the branch and confirm the last commit is on the remote. Never force-push.
-A pre-push hook can run for minutes: give the shell call a long timeout, and check `git ls-remote` before assuming a hang.
+Each slice's agent pushed its commit. Follow the `orchestration` skill § 3 step 1: confirm the last commit is on the remote.
+A pre-push hook can run for minutes: the agent gives the shell call a long timeout, and checks `git ls-remote` before assuming a hang.
 A rejected push stops the run.
 
 ## Phase 7: the pull request
@@ -41,15 +41,16 @@ The `pr-write` skill owns the title, the body, and the publishing.
 **Integration review.** A plan with an `INTEGRATION-REVIEW` slice runs it on the draft, by the `orchestration` skill § 3 step 3:
 the `pr-review` skill on the assembled branch, then the `pr-review-fix` skill for its `fix_now` findings, one commit per fix, pushed.
 The review itself commits nothing. Set the slice's `status: complete`, with the review's verdict in `notes`.
-When git tracks the plan, commit that one edit alone with a `docs` subject and push it: the only commit no slice owns.
+When git tracks the plan, `doc-updater` commits that one edit alone with a `docs` subject and pushes it: the only commit no slice owns.
 
 This run ends at the draft and its integration review;
 the rest of the review loop of the `orchestration` skill § 3 runs when the Human or the calling skill asks for it.
 
-**Estimate correction.** Only when phase 4 recorded a re-size, after the pull request opens, make two Linear writes:
+**Estimate correction.** Only when phase 4 recorded a re-size, after the pull request opens, make two tracker writes,
+with the tools the `knowledge` skill's `references/tracker.md` maps:
 
-1. One `save_comment` with the new size and its one-line reason.
-2. One `save_issue` that sets `estimate` to the new size on the scale the project's `issue_tracker` knowledge gives,
+1. One comment with the new size and its one-line reason.
+2. One write that sets the estimate to the new size on the scale the project's `issue_tracker` knowledge gives,
    and patches the size wherever the description states it. Keep every other character of the description as it was.
    Skip it when the estimate and every size in the description already match.
 

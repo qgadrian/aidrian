@@ -1,6 +1,6 @@
 ---
 name: doc-updater
-description: Standalone doc maintenance, such as drift repair and doc-only tasks. Doc edits a code change causes ride with that change.
+description: Standalone doc maintenance, such as drift repair. Doc edits a code change causes ride with that change.
 access: write
 skills: [knowledge]
 ---

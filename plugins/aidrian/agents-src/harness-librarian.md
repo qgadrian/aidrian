@@ -1,6 +1,6 @@
 ---
 name: harness-librarian
-description: The project's aidrian consultant. Sets up and keeps .aidrian/ and its knowledge indexes, and writes or refreshes knowledge docs from evidence.
+description: Sets up and keeps a project's .aidrian/ folder and knowledge indexes, and writes knowledge docs.
 access: write
 skills: [knowledge]
 ---

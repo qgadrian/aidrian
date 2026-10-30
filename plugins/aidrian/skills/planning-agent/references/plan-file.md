@@ -1,9 +1,7 @@
 # Plan-File Schema
 
 Implementation-ready plans must use this schema. The `issue-implement` skill consumes a plan driven by a tracker issue;
-the `plan-implement` skill consumes a local plan with no issue. File path convention for an issue-driven plan:
-`<state>/plans/<issue-id>-implementation.md`, where `<issue-id>` is the lowercased issue identifier (e.g., `3737-implementation.md`).
-Other plans: § Naming and lifecycle.
+the `plan-implement` skill consumes a local plan with no issue. File paths: § Naming and lifecycle.
 
 A design-import plan (`plan_kind: technical-design`) changes the frontmatter and the per-slice coverage field:
 read `references/design-import-plan.md` too.
@@ -12,49 +10,22 @@ read `references/design-import-plan.md` too.
 
 ```yaml
 ---
-issue_id: "3737"               # bare issue number, string
-issue_ref: "acme/notes#3737"  # owner/repo#N or URL
-generated_at: "2026-05-07T14:30:00Z" # ISO 8601 UTC, when the plan was authored
-ticket_updated_at: "2026-05-06T09:12:00Z" # ISO 8601 UTC, from the issue's updatedAt at the time of authoring; used for staleness detection
-status: "ready"                # one of: open-questions | ready | in-progress | complete | blocked
-workspace_decision:
-  mode: "worktree"             # one of: current_branch | new_branch | worktree
-  branch_name: "feat/3737-…"   # task-scoped conventional branch name
-  worktree_path: "<repo>/.worktrees/3737"  # only when mode == worktree; absolute
-  rationale: "main checkout dirty with unrelated changes"
-plan_kind: "implementation"    # one of: implementation | rollout | technical-design | revision
-related_plans: []              # other <state>/plans/* paths that depend on or supersede this one
----
-```
-
-### Linear-issue-driven frontmatter variant
-
-Plans driven by a Linear issue use this shape for `issue_id` / `issue_ref` /
-`ticket_updated_at`. File path convention:
-`<state>/plans/<key>-<digits>-implementation.md` (lowercase) — see "Naming and
-lifecycle" below for how this coexists with the bare-numeric GitHub
-convention.
-
-```yaml
----
-issue_id: "ABC-483"                  # Linear issue key, string
-issue_ref: "https://linear.app/acme/issue/ABC-483/observability-lint-rule"  # full Linear issue URL
+issue_id: "ABC-483"            # the issue key, string: a Linear key such as "ABC-483", or a GitHub issue number such as "3737"
+issue_ref: "https://linear.app/acme/issue/ABC-483/observability-lint-rule"  # the issue URL, or owner/repo#N for GitHub
 generated_at: "2026-07-08T14:30:00Z" # ISO 8601 UTC, when the plan was authored
-ticket_updated_at: "2026-07-07T09:12:00Z" # ISO 8601 UTC, from the Linear issue's updatedAt at the time of authoring; used for staleness detection
+ticket_updated_at: "2026-07-07T09:12:00Z" # ISO 8601 UTC, from the issue's updatedAt at the time of authoring; used for staleness detection
 status: "ready"                # one of: open-questions | ready | in-progress | complete | blocked
 workspace_decision:
   mode: "worktree"             # one of: current_branch | new_branch | worktree
-  branch_name: "<username>/abc-483-…"  # the issue's own gitBranchName field, verbatim
-  worktree_path: "<repo>/.worktrees/483-observability-lint-rule"  # only when mode == worktree; absolute
+  branch_name: "<username>/abc-483-…"  # the issue's branch: Linear's gitBranchName verbatim, else the issue_tracker knowledge's format
+  worktree_path: "<repo>/.worktrees/abc-483"  # only when mode == worktree; absolute
   rationale: "main checkout dirty with unrelated changes"
 plan_kind: "implementation"    # one of: implementation | rollout | technical-design | revision
 related_plans: []              # other <state>/plans/* paths that depend on or supersede this one
 ---
 ```
 
-All other frontmatter fields and every body section are unchanged from the
-base schema above. See the project's `issue_tracker` knowledge for the
-canonical issue-ref resolution procedure this variant follows.
+The `knowledge` skill's `references/tracker.md` says how each tracker writes the key, the reference, and the branch.
 
 ## Body sections (in order)
 
@@ -158,9 +129,8 @@ Tools that resume execution from a plan (e.g., `issue-implement`) treat the plan
 
 ## Naming and lifecycle
 
-- Issue-driven plans: `<state>/plans/<issue-id>-implementation.md`.
-  Linear-issue-driven plans use the lowercase issue key (e.g., `abc-483-implementation.md`);
-  GitHub-issue-driven plans use the bare number (e.g., `3737-implementation.md`).
+- Issue-driven plans: `<state>/plans/<key>-implementation.md`, where `<key>` is `issue_id` in lowercase:
+  `abc-483-implementation.md` for a Linear issue, `3737-implementation.md` for a GitHub issue. Every skill uses this one path.
 - Multi-issue or initiative-driven plans: `<state>/plans/<initiative-slug>-plan.md`.
 - Local plans with no issue (run by the `plan-implement` skill): `<state>/plans/<slug>-plan.md`, without `issue_id`, `issue_ref`,
   or `ticket_updated_at`.

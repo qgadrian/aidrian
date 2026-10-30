@@ -1,6 +1,6 @@
 ---
 name: feedback-synthesizer
-description: Turn support tickets, reviews, and product signals into ranked, evidence-backed themes and priorities.
+description: Turn support tickets, reviews, and product signals into ranked, evidence-backed themes.
 access: write
 skills: [knowledge]
 ---

@@ -1,6 +1,6 @@
 ---
 name: session-continue
-description: Resume work in a fresh session from a session-handoff brief. Read it, enter the task worktree, check the state, and continue. Use first after a handoff.
+description: Resume work in a fresh session from a session-handoff brief. Use first after a handoff.
 ---
 
 # session-continue

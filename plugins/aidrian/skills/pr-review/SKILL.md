@@ -1,6 +1,6 @@
 ---
 name: pr-review
-description: Review a GitHub pull request with the right agents, record each finding and its verdict in a JSON manifest, and post one comment with the result.
+description: Review a GitHub pull request with the right agents, record verdicts in a JSON manifest, and post one comment.
 ---
 
 # pr-review
@@ -10,8 +10,8 @@ Every finding gets a verdict from `aidrian pr disposition` and lands in a JSON m
 The result goes on the pull request as one comment, which later rounds update.
 This skill coordinates; the agents review. It never edits code.
 
-Before you start, follow the `knowledge` skill. Load your `orchestration` docs for the project's agent registry,
-`security` docs for the paths that need a security pass, and `product_sensitive` docs for the flows the project declares critical.
+Before you start, follow the `knowledge` skill. Load your `security` docs for the paths that need a security pass,
+and `product_sensitive` docs for the flows the project declares critical.
 
 ## Arguments
 
@@ -62,10 +62,9 @@ Leave lock files, snapshots, binary files, and generated files out of the line r
 Count the files and the changed lines that remain:
 
 - 10 files or fewer and 400 lines or fewer, without `--full`: `code-reviewer` alone.
-- Larger, or with `--full`: `code-reviewer`, plus the owner the project's `orchestration` registry gives each changed path.
-  Without a registry, choose by what the files do, by the `knowledge` skill's rule. This plugin's fallbacks:
-  `backend-developer` for server code and data, `designer` for presentation, `ux-specialist` for user flows,
-  and `architect` when the change spans several modules.
+- Larger, or with `--full`: `code-reviewer`, plus the owner of each changed path by the `knowledge` skill's agent rule.
+  This plugin's fallbacks: `backend-developer` for server code and data, `frontend-developer` for client code and UI state,
+  `designer` for presentation, `ux-specialist` for user flows, and `architect` when the change spans several modules.
 - One owner per area. At most four agents review at the same time.
 
 Print the plan with the reason for each agent before the first dispatch.

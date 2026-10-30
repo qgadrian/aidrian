@@ -13,6 +13,7 @@
   "e2e-runner": { "effort": "high", "color": "yellow" },
   "explorer": { "color": "yellow", "disallowedTools": ["Write", "Edit", "NotebookEdit", "Bash", "Agent"] },
   "feedback-synthesizer": { "color": "orange" },
+  "frontend-developer": { "model": "opus", "effort": "high", "color": "cyan" },
   "github-archaeologist": { "color": "yellow", "disallowedTools": ["Write", "Edit", "NotebookEdit", "Agent"] },
   "growth-hacker": { "color": "orange" },
   "harness-librarian": { "effort": "high", "color": "purple" },

@@ -1,6 +1,6 @@
 ---
 name: planning-agent
-description: Write or revise a decision-complete local plan file. Use when the user wants a durable plan before implementation.
+description: Write or revise a decision-complete local plan file before implementation.
 ---
 
 # Planning Agent
@@ -11,7 +11,7 @@ Create durable local plans for engineers and agents, not tracker artifacts.
 
 The result must be a decision-complete Markdown artifact under `<state>/plans/**`
 that another engineer or agent can implement from directly or later normalize
-into Linear issues without re-discovering intent. `<state>` is the machine-local
+into tracker issues without re-discovering intent. `<state>` is the machine-local
 folder `aidrian state` prints.
 
 ## Responsibility Boundary
@@ -37,7 +37,7 @@ issue-driven plans.
 
 You do not own:
 
-- Linear issue or Project creation
+- tracker issue or project creation
 - initiative topology decisions when the output must be tracker-ready
 - implementation execution
 - runtime orchestration after the plan is approved
@@ -61,7 +61,7 @@ Rules:
 1. Classify whether the user wants:
    - a new local plan
    - a revision to an existing local plan
-   - a local plan that will later be published as Linear issues
+   - a local plan that will later be published as tracker issues
 2. Inspect the repo and any existing local plan artifacts before planning.
 3. Run bounded planning delegation when repo truth or product truth is missing.
 4. Produce or update the `<state>/plans/**` artifact with:
@@ -78,7 +78,7 @@ Rules:
    - A slice goal or acceptance criterion that names two or more triggering surfaces, such as a create and an update
      endpoint: read `references/path-divergence.md` before you lock that slice.
 5. Self-critique once before declaring the plan ready (see § Self-critique pass).
-6. If the user later wants Linear issues or a Linear Project:
+6. If the user later wants tracker issues or a tracker project:
    - treat the local plan as source input
    - route to `initiative-agent` for initiative normalization before `agent-issue-writer` publishes tracker artifacts
 
@@ -88,7 +88,7 @@ Return:
 
 - the updated local plan artifact path
 - a short note on whether the plan is implementation-ready as a local artifact
-- if Linear publication is likely next, a short note that `initiative-agent` should normalize the plan before `agent-issue-writer` publishes it
+- if tracker publication is likely next, a short note that `initiative-agent` should normalize the plan before `agent-issue-writer` publishes it
 
 ## Self-critique pass
 

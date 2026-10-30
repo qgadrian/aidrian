@@ -1,6 +1,6 @@
 ---
 name: marketing-orchestrator
-description: Coordinate growth, content, SEO, AI-citation, brand, and feedback work across the marketing agents into one answer.
+description: Coordinate growth, content, SEO, AI-citation, brand, and feedback agents into one marketing answer.
 access: read-only
 skills: [knowledge]
 ---

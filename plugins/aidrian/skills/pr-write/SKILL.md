@@ -1,6 +1,6 @@
 ---
 name: pr-write
-description: Draft, create, or update a GitHub pull request title and body from the real diff, with the project's required sections and real test evidence.
+description: Draft, create, or update a GitHub pull request title and body from the real diff and real test evidence.
 ---
 
 # pr-write

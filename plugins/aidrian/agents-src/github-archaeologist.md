@@ -1,6 +1,6 @@
 ---
 name: github-archaeologist
-description: Read-only history research that explains why code changed, from pull requests, issues, reviews, and commits.
+description: Read-only history research on why code changed, from pull requests, issues, reviews, and commits.
 access: read-only
 skills: [knowledge]
 ---

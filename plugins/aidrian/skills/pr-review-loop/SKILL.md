@@ -1,6 +1,6 @@
 ---
 name: pr-review-loop
-description: Take every review comment on a GitHub pull request to a verified fix or a reply with evidence. --await-codex first requests and awaits the bot review.
+description: Answer every review comment on a GitHub pull request with a verified fix or evidence. --await-codex awaits the bot.
 ---
 
 # pr-review-loop
@@ -16,7 +16,8 @@ and `product_sensitive` docs when a comment touches what users see, money, or da
 - `git rev-parse --is-inside-work-tree` and `gh auth status` must pass; otherwise stop and say which.
 - Work in the pull request's worktree, on its branch, never the default branch.
   `git status --porcelain` must be clean or hold only this pull request's work; ask before anything else.
-- `git fetch origin && git pull --ff-only`. If that fails, the branch was rewritten upstream: ask before resetting.
+- `git fetch origin`. When `git status -sb` says the branch has diverged from its remote, it was rewritten upstream:
+  ask before anything else. Each fixing agent starts with `git pull --ff-only`, so a branch that is only behind catches up.
 - On a pull request that is already ready for review (not a draft), stop after the triage in step 3:
   report the rows that apply as follow-ups for a new pull request, and change nothing on this branch.
 
@@ -31,7 +32,7 @@ aidrian pr await-review <n> --request     # waits up to 14 minutes; give the she
 | 0 | `received` or `already_present` | collect it with the rest |
 | 2 | `timed_out` | with `retry_recommended: true`, run it once more without `--request`; otherwise record `bot review: not received` |
 | 3 | `blocked_quota` | record `bot review: blocked_quota` and go on with the other comments |
-| 4 | `round_limit` | stop and ask the user: raise `--max-rounds`, redesign, or stop |
+| 4 | `round_limit` | the review-round cap, config.json `github.maxReviewRounds`: stop and ask the Human to raise `--max-rounds`, redesign, or stop |
 
 A `thumbs_up` signal with no other comments and green checks means nothing to address: report it in one line.
 
@@ -78,16 +79,19 @@ A comment names one place; the bot reports the other copies one round at a time.
 For each finding, search the pull request's changed files, and the code they call or are called by, for the same
 mistake, and fix every copy in the same commit. A copy outside the pull request's scope becomes a follow-up note.
 
-When the project supplies specialist agents for the area (its `orchestration` knowledge names them), give each one
-file and its findings; otherwise make the fix yourself. Never let two agents edit the same file at once.
+Pick each fix's owner by the `knowledge` skill's agent rule, and give it its files and findings.
+A session the Human runs directly may make a fix itself; under the `orchestrator`, every fix goes to an owner.
+In one worktree, one fixing agent works at a time.
 Fix the root cause the comment points at, not its literal wording, and nothing unrelated.
 
 ## 5. Verify and commit
 
+The agent that made the fix verifies, commits, and pushes it, then returns the SHAs:
+
 - Run the checks the project's `testing` knowledge names for the touched files, and a new or updated test for every
   behaviour change. A behaviour change without a test change is not done.
 - One Conventional Commits commit per finding or tight group. Never bypass a hook; a failing hook is a verdict.
-- Push, then confirm with `git ls-remote --heads origin <branch>` that every SHA a reply will cite is on the remote.
+- Push. Then confirm with `git ls-remote --heads origin <branch>` that every SHA a reply will cite is on the remote.
 
 ## 6. Reply
 

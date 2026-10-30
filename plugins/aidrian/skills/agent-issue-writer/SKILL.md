@@ -1,30 +1,32 @@
 ---
 name: agent-issue-writer
-description: Draft or create Linear issues, parent issues, or Project items for AI agents to implement.
+description: Draft or create Linear or GitHub issues, parent issues, or projects for AI agents to implement.
 ---
 
 # Agent Issue Writer
 
 Before you start, follow the `knowledge` skill. Knowledge tags: `issue_tracker`, `testing`, `e2e`, `product_sensitive`, `docs`.
 
-Create Linear artifacts for coding agents, not summaries for humans.
+Create tracker artifacts for coding agents, not summaries for humans.
 
 The result must let an execution agent complete the task in one pass and verify it without making hidden scope, testing, or ownership decisions.
 
-Read `references/linear.md` before creating or updating Linear-native artifacts. The project's `issue_tracker` knowledge owns the tracker rules (active tracker, team, transition rules, magic-word grammar, status taxonomy).
+The project's `issue_tracker` knowledge names the tracker and owns its rules (team, transition rules, magic-word grammar, status taxonomy).
+Read the `knowledge` skill's `references/tracker.md` for each step's tool, and on Linear also `references/linear.md`
+before creating or updating Linear-native artifacts.
 
 Read `references/examples.md` when you need a concrete example for a standalone issue, initiative issue tree, or blocked ticket.
 
-Read `references/issue-body.md` (banned phrases, Linear artifact rules, body structure, section rules, Priority and Effort,
+Read `references/issue-body.md` (banned phrases, tracker artifact rules, body structure, section rules, Priority and Effort,
 final quality gate) and `references/action-plan.md` (Agent Action Plan schema, project defaults) before workflow step 8.
 
 ## Responsibility Boundary
 
-You own Linear-ready artifacts:
+You own tracker-ready artifacts:
 
-- Linear issues
+- issues
 - parent issues
-- Linear Project membership
+- project membership: a Linear Project, or a GitHub milestone or project
 - issue dependency links
 - parent issue sequencing plans
 - issue body quality
@@ -63,14 +65,15 @@ Rules:
 - For product-sensitive issues, decide whether the implementation should also
   update a product doc from the project's `product_sensitive` knowledge, and encode
   that in the issue scope or as an explicit follow-up.
-- If a Linear tool is available, create or update the issue or project there; otherwise return a draft payload only.
+- If the tracker's tool is available (the host's Linear tools, or `gh` for GitHub Issues), create or update the issue there;
+  otherwise return a draft payload only.
 - Do not edit repository files. Your responsibility is the tracker artifact only.
 
 ## Required Inputs
 
 Before finalizing, resolve or infer these inputs:
 
-- tracker: must be `linear`
+- tracker: the one the `issue_tracker` knowledge names: `linear`, `github`, or another
 - artifact type: `issue`, `parent_issue`, or `project_issue`
 - mode: `draft_only` or `create_native`
 - target repo or workspace
@@ -104,28 +107,29 @@ If repo context is available, discover missing fields through repo inspection be
    - acceptance criteria
    - minimum verification commands
 
-   **Verify repository context against the working tree before sizing.** Every listed path under files to modify / reference / reuse must pass `git ls-files -- <path>` (tracked and existing), and each files-to-modify entry must be opened far enough to confirm it actually plays the role the issue assigns it — a pure dispatcher/barrel is not a render target; a type-only module is not a mutation site. Derive `size` only from verified context; an unverified assumption about a file's role invalidates the estimate. (Encoded after a 2026-07 run where an S-sized issue named a pure dispatcher as the render target and assumed a settings blob was directly readable — neither held, and "S" became hours plus a shared-helper contract change.)
+   **Verify repository context against the working tree before sizing.** Every listed path under files to modify / reference / reuse must pass `git ls-files -- <path>` (tracked and existing), and each files-to-modify entry must be opened far enough to confirm it actually plays the role the issue assigns it — a pure dispatcher/barrel is not a render target; a type-only module is not a mutation site. Derive `size` only from verified context; an unverified assumption about a file's role invalidates the estimate. An S-sized issue that named a pure dispatcher as its render target once took hours.
 6. Identify whether the task is product-sensitive, migration-sensitive, or e2e-sensitive.
 7. For product-sensitive work, decide whether the issue must also update shared
    product knowledge in a doc from the project's `product_sensitive` knowledge.
 8. Draft the Markdown body using the canonical structure and its Agent Action Plan.
-9. Populate native Linear fields and links when the tool supports them.
-   `priority` **and** `estimate` are non-optional parameters of the creating `save_issue` call — never a follow-up call, never left to the caller.
+9. Populate the tracker's native fields and links when the tool supports them.
+   On Linear, `priority` **and** `estimate` are non-optional parameters of the creating `save_issue` call — never a follow-up call, never left to the caller.
 10. Run the final quality gate in `references/issue-body.md`. If any required detail is still vague, rewrite or block.
 
 ## Output Modes
 
 ### Issue creation mode
 
-If a Linear tool is available and the user asked to create the issue:
+If the tracker's tool is available and the user asked to create the issue:
 
-- populate native fields first — `save_issue(..., priority: <1-4>, estimate: <1|2|3|5>)` on the creating call, both always present
+- populate native fields first — on Linear, `save_issue(..., priority: <1-4>, estimate: <1|2|3|5>)` on the creating call, both always present;
+  on GitHub, `gh issue create` with the labels and milestone the `issue_tracker` knowledge names
 - keep the Markdown body aligned with the canonical structure
 - derive native dependency links from `dependencies`
 
 ### Draft mode
 
-If no Linear tool is available, return:
+If no tracker tool is available, return:
 
 ```md
 Title: ...

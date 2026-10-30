@@ -1,11 +1,11 @@
 ---
 name: plan-implement
-description: Implement a reviewed local plan with no Linear issue, such as a design-import plan, end to end to a draft pull request, through the issue-implement steps.
+description: Implement a reviewed local plan with no tracker issue, such as a design import, to a draft pull request.
 ---
 
 # plan-implement
 
-Implement a decision-complete plan that no Linear issue anchors: a plan under `<state>/plans/`, where `<state>` is the folder
+Implement a decision-complete plan that no tracker issue anchors: a plan under `<state>/plans/`, where `<state>` is the folder
 `aidrian state` prints, or a design import's `docs/design-imports/<slug>/plan.md`.
 This skill replaces the `issue-implement` skill's phase 0 with the plan's own, then runs its phases 1 to 8 with the substitutions below.
 Everything else there applies as written. When the two disagree on shared behaviour, `issue-implement` wins: report the drift.
@@ -28,7 +28,7 @@ except its base branch and re-entry sections, which it cites.
 
 ## Phase 0: resolve the plan
 
-1. **Wrong skill.** Frontmatter with `issue_id` or `issue_ref`: stop and ask. It belongs to `issue-implement`, which runs the Linear guards.
+1. **Wrong skill.** Frontmatter with `issue_id` or `issue_ref`: stop and ask. It belongs to `issue-implement`, which runs the tracker guards.
 2. **Read the plan**: `plan_kind`, `status`, `workspace_decision`, slices, non-goals, acceptance criteria when it declares them, open questions.
 3. **Ready.** Stop and ask on `status: complete`, a likely wrong plan; on `blocked` or a load-bearing open question,
    which goes back to `planning-agent`; or on a status other than `ready` or `in-progress`,
@@ -58,7 +58,7 @@ except its base branch and re-entry sections, which it cites.
 The `design-import` skill's `references/plan-requirements.md` sets their rules; it binds here:
 
 - `S0`, when present, comes first: no screen slice starts before its sign-offs are recorded.
-- Owners come from the plan: `designer` for visual slices, the project's frontend agent for data wiring, after its recorded sign-offs.
+- Owners come from the plan: `designer` for visual slices, `frontend-developer` for data wiring, after its recorded sign-offs.
 - A screen slice is complete only with screenshot-against-artboard evidence for each artboard in its coverage table,
   reviewed by `designer` against the deviation ledger. No evidence: report the exact failure; never claim parity without it.
 

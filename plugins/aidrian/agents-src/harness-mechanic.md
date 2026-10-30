@@ -1,6 +1,6 @@
 ---
 name: harness-mechanic
-description: Maintains the aidrian-harness repository itself (its agents, skills, hooks, scripts, tests, and docs), guided by aidrian report.
+description: For harness maintainers. Changes the aidrian-harness repository itself, not a project that installs it.
 access: write
 skills: [knowledge]
 ---

@@ -1,6 +1,6 @@
 ---
 name: lesson
-description: Capture a session lesson into the local inbox without leaving the task. Use on "note this lesson", or when a mistake, a hang, or a missing check appears.
+description: Capture a session lesson into the local inbox without leaving the task, after a mistake or a hang.
 ---
 
 # lesson

@@ -1,6 +1,6 @@
 ---
 name: knowledge-update
-description: Add or refresh the project's knowledge docs from its code, docs, pull requests, and history, for a new topic, a recent time window, or one resource.
+description: Add or refresh the project's knowledge docs from its code, docs, pull requests, and history.
 ---
 
 # knowledge-update

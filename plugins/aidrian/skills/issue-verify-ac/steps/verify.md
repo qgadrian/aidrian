@@ -2,8 +2,7 @@
 
 ## Owner by surface
 
-Take the owner from the agent registry in the project's `orchestration` knowledge first, by the `knowledge` skill's rule;
-these are the fallbacks.
+Pick the owner by the `knowledge` skill's agent rule; these are the fallbacks.
 
 - **Static or structural**, such as a function with a given signature, a type with a field, or a file that exists: `explorer`.
 - **Behaviour at run time**: `e2e-runner` when the flow has end-to-end tests. Otherwise the code's owner, such as `backend-developer`,

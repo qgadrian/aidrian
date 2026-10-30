@@ -1,6 +1,6 @@
 ---
 name: pr-merge-when-green
-description: Wait until every check on a GitHub pull request is final and passes the project's check policy, then merge once and delete the branch. Never --auto or --admin.
+description: Merge a GitHub pull request once every check is final and passes the project's policy. Never --auto or --admin.
 disable-model-invocation: true
 ---
 

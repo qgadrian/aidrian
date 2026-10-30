@@ -1,6 +1,6 @@
 ---
 name: session-handoff
-description: Write a handoff brief so a fresh session can resume this work. Use when the Human asks, or when config.json session.handoff allows one.
+description: Write a handoff brief so a fresh session can resume this work, when the Human or session.handoff allows.
 ---
 
 # session-handoff

@@ -1,6 +1,6 @@
 ---
 name: code-reviewer
-description: Read-only code review for correctness, anti-patterns, consistency, maintainability, trust boundaries, and test gaps, against the project's own rules.
+description: Read-only code review for correctness, trust boundaries, consistency, and test gaps, by the project's rules.
 access: read-only
 skills: [knowledge]
 ---

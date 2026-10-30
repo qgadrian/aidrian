@@ -9,7 +9,7 @@ The shape of the `initiative_contract` and its `issue_blueprints`, with the rule
   "initiative_title": "[orders] Reassignment reliability rollout",
   "initiative_goal": "Ship the order reassignment fixes in reviewable units with explicit review and validation ownership.",
   "topology": "tracker_project_plus_parent_issue",
-  "create_linear_project": true,
+  "create_tracker_project": true,
   "create_parent_issue": true,
   "parent_issue_is_canonical_release_plan": true,
   "success_criteria": [
@@ -84,14 +84,15 @@ The shape of the `initiative_contract` and its `issue_blueprints`, with the rule
 
 Rules:
 
-- `tracker` must be `linear`.
+- `tracker` is the tracker the `issue_tracker` knowledge names: `linear`, `github`, or another.
 - `topology` must be `single_issue`, `parent_issue_only`, or `tracker_project_plus_parent_issue`.
 - Each `issue_blueprint` may include optional `priority` and `effort` fields. When present, `agent-issue-writer` uses them directly.
   When absent, `agent-issue-writer` applies its default Priority inference rule and Size→Effort derivation rule to fill the gap. Valid values:
   `priority` = `Urgent | High | Medium | Low`; `effort` = `High | Medium | Low`.
 - Blueprints do not set `priority:*` / `effort:*` labels — that mirror is retired.
   `agent-issue-writer` sets both Priority (native `priority`) and Effort (native `estimate`, via the Size→estimate table:
-  `XS`→1, `S`→2, `M`→3, `L`→5; no `XL`) as native Linear fields and mirrors Effort in the issue body; neither is expressed as a label.
+  `XS`→1, `S`→2, `M`→3, `L`→5; no `XL`) as native fields on Linear, or as its `references/issue-body.md` says on GitHub,
+  and mirrors Effort in the issue body; neither is expressed as a `priority:*` or `effort:*` label.
 - `parent_issue_is_canonical_release_plan` must be `true` whenever the topology includes a parent issue.
 - `issue_blueprints` must be ordered for creation and execution.
 - Every `issue_blueprint` must include `size`, `tasks`, and `sequencing`.

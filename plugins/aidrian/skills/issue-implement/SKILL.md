@@ -1,17 +1,17 @@
 ---
 name: issue-implement
-description: Implement one Linear issue end to end. Worktree, slice plan, a fresh agent per slice, review, commits, and a draft pull request; Linear stays read-only.
+description: Implement one Linear or GitHub issue to a draft pull request. Tracker writes are only In Progress and estimate.
 ---
 
 # issue-implement
 
-Take one Linear issue to a draft pull request.
+Take one tracker issue, Linear or GitHub, to a draft pull request.
 The session that runs this skill coordinates: it resolves the issue, locks a slice plan, dispatches one agent per slice,
 checks each result, and opens the pull request through the `pr-write` skill.
 It never edits a repository file itself, never merges, and never closes the issue; it only keeps the plan's slice state.
 
 Before you start, follow the `knowledge` skill. Load your `issue_tracker` docs for the key format, branch names, status names,
-and closing keyword, and your `orchestration` docs for the agent registry. Each dispatched agent loads its own docs.
+and closing keyword. Each dispatched agent loads its own docs.
 Load the `orchestration` skill too: it owns the worktree, parallel slices, the pull request, and review findings.
 This skill adds what an issue needs on top of it.
 
@@ -21,9 +21,8 @@ This skill adds what an issue needs on top of it.
 <issue> [--base <branch>]
 ```
 
-- `<issue>`: a Linear issue key in the project's format, such as `ABC-123`, or the issue's URL. Missing: ask once.
-  The step files call that key `<key>`.
-  A GitHub reference such as `#123`: ask for the Linear key.
+- `<issue>`: an issue key in the project's tracker format, such as `ABC-123` or `#123`, or the issue's URL. Missing: ask once.
+  The step files call that key `<key>`; the `knowledge` skill's `references/tracker.md` says how each tracker writes it.
 - `--base`: the branch the pull request targets. Default: the target branch the issue declares, else config.json `defaultBranch`.
 
 One issue per run. When the Human names two, ask which comes first, and report the other as related, not in scope.
@@ -37,7 +36,7 @@ Work anchored to a plan with no issue belongs to the `plan-implement` skill, whi
 ## Authority contract
 
 - **Coordination only.** Every edit, review, and test run goes to an agent, even a one-line fix.
-  Pick each owner by the `knowledge` skill's rule: a project agent that fits the task, or shares a name, wins; this plugin's agents are the fallback.
+  Pick each owner by the `knowledge` skill's agent rule.
 - **One fresh agent per slice.** Never continue an earlier slice's agent to start the next slice.
   A warm agent that has seen the plan runs ahead: it implements and commits later slices and skips their reviews.
   Within one slice, its own agent may be continued for fixes and the commit.
@@ -49,8 +48,8 @@ Work anchored to a plan with no issue belongs to the `plan-implement` skill, whi
   and each `/` in the branch becomes `-`.
   It writes its machine handoff there first, then sends a short summary as its last message.
   An agent denied `Write`, such as `explorer`, returns the handoff as its last message instead.
-- **Linear is read-only until the pull request exists**, except one move of the issue to In Progress, made by this session.
-  No dispatched agent writes to Linear.
+- **The tracker is read-only until the pull request exists**, except one move of the issue to In Progress, made by this session.
+  No dispatched agent writes to the tracker.
 - **No hand-back.** Work an agent can do is done now, or filed as a new issue through `agent-issue-writer`;
   it never reaches the Human as a follow-up.
 
@@ -79,7 +78,7 @@ One concise report, in this order. Leave out a section with nothing to say.
 5. **Verification**: per slice, the exact commands and outcomes the handoffs report.
 6. **Decided alone**: choices the Human should check, such as slice boundaries, a branch name, or a demoted finding.
 7. **Residual risks**: open risks, findings demoted with a one-line reason, and accepted residuals.
-8. **Pull request**: title, base, link, and the closing line, such as `Fixes ABC-123` or `Refs ABC-123`.
+8. **Pull request**: title, base, link, and the closing line, such as `Fixes ABC-123` or `Refs #123`.
 
 When a blocker stops the run, report what is done, what blocks, and the one question that needs an answer.
 No restated issue, no "read file X" lines.

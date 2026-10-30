@@ -9,6 +9,7 @@ A blocking hook exits 2 and tells the agent why on stderr.
 | Event | What runs | Host | Blocks |
 | --- | --- | --- | --- |
 | Session and subagent start | One line naming the `always` knowledge docs and the commands that find the rest, one line with the [names](config.md#names) for the human and the AI, and, for the main session, a last line while the lesson inbox holds open lessons | both | no |
+| Before any tool call | The project's [agent gates](#agent-gates), when config.json or `.aidrian.local.json` sets any | both | yes |
 | Before a Bash command | The Bash rules below, in this order, in one process | both | yes |
 | Before Edit, Write, NotebookEdit, or Codex's `apply_patch` | The main-checkout rule, when the project turns it on | both | yes |
 | Before an Agent tool call | The project's [model and effort](config.md#models) for this plugin's agent, added to the call | Claude Code | no |
@@ -28,6 +29,7 @@ After you install the plugin in Codex, open a session, run `git commit --amend -
 
 | Hook | Off with |
 | --- | --- |
+| Agent gates | Off unless config.json or `.aidrian.local.json` sets `agents` |
 | Main-checkout rule | Off unless config.json sets `"mainCheckout": { "guard": true }` |
 | Markdown line length | `"docs": { "wrapLimit": 0 }` |
 | Pull request body sections | `"github": { "requiredSections": [] }`; the footer and `--fill` checks stay |
@@ -75,6 +77,29 @@ The rule blocks a write to a file git tracks, or would track, in the main checko
 It allows a git-ignored path, a path in `mainCheckout.allowWrites`, and anything in a worktree or outside the repository.
 [config.md](config.md) lists both keys.
 When git cannot answer, an Edit or Write is blocked to be safe, and a Bash command runs.
+
+## Agent gates
+
+Before every tool call, the hook checks the call against the project's `agents` gates; [config.md](config.md#agents) gives the keys and patterns.
+A blocked call exits 2 with the rule on stderr, such as `agents.main.deny has "Bash(git push)"`.
+The reason also tells the agent not to reach the same result with another tool, and to tell the human what the task needs.
+The hook runs for every tool, so a project without gates still pays for one process that finds the project, reads its config, and exits.
+
+Each host tells the hook who is calling in its own way.
+
+- Claude Code, checked on version 2.1.314 with a hook that logged each call:
+  - A subagent's call carries `agent_type` and `agent_id`.
+    `agent_type` is `aidrian:<agent>` for this plugin's agents, and the agent's own name for a project agent.
+  - The main session's call carries neither, so it is `main`.
+  - A session started with `claude --agent <name>` carries `agent_type` alone, so it is both `main` and that agent.
+- Codex runs the hook once you trust it in `/hooks`, and its tool calls reach it as the Codex tools are named.
+  - Shell commands arrive as `Bash`, file edits as `apply_patch` rather than `Edit` or `Write`, and MCP tools as `mcp__<server>__<tool>`.
+  - Hosted tools, such as web search, never reach the hook.
+- Codex's [hook documentation](https://developers.openai.com/codex/hooks) lists no agent fields for a tool call.
+  - The input schema built into Codex 0.165.0 has `agent_type` and `agent_id` as optional fields; no live Codex session has been checked for them.
+  - So in Codex, `*` gates hold, and `main` gates hold for the main session and for any subagent call that arrives without `agent_id`.
+  - A named agent's gates apply only to a call that carries its `agent_type`.
+    Codex names this plugin's roles `aidrian-<agent>`, which the gates read as `<agent>`.
 
 ## Markdown line length
 

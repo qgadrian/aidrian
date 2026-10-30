@@ -24,6 +24,16 @@
     ],
     "PreToolUse": [
       {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PLUGIN_ROOT/scripts/hook-agent-gates.mjs\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "Bash",
         "hooks": [
           {

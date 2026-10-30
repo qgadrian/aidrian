@@ -6,8 +6,8 @@ The shape of the `initiative_contract` and its `issue_blueprints`, with the rule
 {
   "schema_version": "2.0",
   "tracker": "linear",
-  "initiative_title": "[orders] Reassignment reliability rollout",
-  "initiative_goal": "Ship the order reassignment fixes in reviewable units with explicit review and validation ownership.",
+  "initiative_title": "[tasks] Rescheduling reliability rollout",
+  "initiative_goal": "Ship the task rescheduling fixes in reviewable units with explicit review and validation ownership.",
   "topology": "tracker_project_plus_parent_issue",
   "create_tracker_project": true,
   "create_parent_issue": true,
@@ -29,7 +29,7 @@ The shape of the `initiative_contract` and its `issue_blueprints`, with the rule
       {
         "key": "reassignment-core",
         "title": "Order reassignment fix",
-        "summary": "Land the bounded order mutation fix before the follow-up validation work.",
+        "summary": "Land the bounded task mutation fix before the follow-up validation work.",
         "issue_keys": ["reassignment-fix"],
         "target_branch": "main",
         "merge_after": [],
@@ -43,21 +43,21 @@ The shape of the `initiative_contract` and its `issue_blueprints`, with the rule
   "issue_blueprints": [
     {
       "key": "reassignment-fix",
-      "title": "[orders] Reassign the warehouse after a dashboard date edit",
+      "title": "[tasks] Reschedule a task after a due date edit",
       "issue_type": "feature",
-      "goal": "Ensure dashboard order date edits re-run auto-assignment when the order has no warehouse for the new delivery window.",
+      "goal": "Ensure editing a task's due date re-runs scheduling when the task has no slot in the new window.",
       "size": {
         "tshirt": "S",
-        "rationale": "One bounded order mutation fix with focused regression coverage.",
+        "rationale": "One bounded task mutation fix with focused regression coverage.",
         "split_alert": null,
         "split_candidates": []
       },
       "scope": [
-        "Update the dashboard order mutation to reuse the existing assignment helper after date edits.",
+        "Update the task mutation to reuse the existing scheduling helper after date edits.",
         "Add focused regression coverage for the reassignment branch."
       ],
       "tasks": [
-        "Patch the existing order mutation code path.",
+        "Patch the existing task mutation code path.",
         "Add or update colocated Jest coverage."
       ],
       "non_goals": [

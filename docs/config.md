@@ -34,7 +34,8 @@ In a group such as `github`, set only the keys you change; the others keep their
     "maxReviewRounds": 3,
     "requiredChecks": [],
     "ignoreCancelledChecks": [],
-    "conditionalChecks": []
+    "conditionalChecks": [],
+    "titleIssuePrefix": false
   },
   "docs": { "wrapLimit": 155 },
   "knowledge": { "budgets": { "alwaysBytes": 16384, "taggedDocBytes": 24576 } },
@@ -80,6 +81,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. |
 | `github.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
 | `github.conditionalChecks` | Parts of check names whose `SKIPPED` or `NEUTRAL` result is routine, such as a job a path filter turns off. |
+| `github.titleIssuePrefix` | `true` writes pull request titles as `[<issue key>] type(scope): subject`, or `[NOISSUE] type: subject`; `false`, the default, writes a plain Conventional Commits title. |
 | `docs.wrapLimit` | The longest line, in characters, allowed in a Markdown file an agent writes; `0` turns the check off. |
 | `knowledge.budgets.alwaysBytes` | The bytes all `always` knowledge docs may add up to: [Knowledge budgets](#knowledge-budgets). |
 | `knowledge.budgets.taggedDocBytes` | The bytes one tagged knowledge doc may have: [Knowledge budgets](#knowledge-budgets). |
@@ -269,6 +271,8 @@ An entry has `deny`, `allow`, or both, each a list of tool patterns:
 | `Bash(<command prefix>)`, such as `Bash(git push)` | A Bash call that runs a command whose words start with the prefix. |
 
 - `deny` wins: a call that matches a `deny` pattern is blocked, whatever `allow` says.
+- An `allow` or `deny` that is not a list, or a `deny` with an invalid pattern, leaves the gates unknown: a subagent may then
+  only read files until the file is fixed.
 - With `allow` set, a call that matches none of its patterns is blocked; `"allow": []` blocks every tool.
 - A Bash call passes an `allow` list through its `Bash(...)` patterns only when every command in it starts with an allowed prefix.
   `cd app && npm test` needs both `Bash(cd)` and `Bash(npm test)`.
@@ -276,7 +280,9 @@ An entry has `deny`, `allow`, or both, each a list of tool patterns:
   It also reads past wrappers such as `sudo` and `env`, and past git's own options, so `Bash(git push)` also blocks `git -C app push`.
 - The first word matches the program by its file name, so `Bash(git push)` also matches `/usr/bin/git push`.
 - The command line of `sh -c` or `bash -c` is read too, so `Bash(git push)` blocks `bash -c 'git push'`; an `allow` list must also allow the shell.
-- A gate matches the command text, so a command run by `xargs`, `eval`, a script, or an interpreter is out of sight;
+  So is a heredoc or here-string fed to a shell (`bash <<'EOF'`), a function body, and a `case` arm.
+- A gate matches the command text, so a command run by `xargs`, `find -exec`, `eval`, a script, an interpreter, or text piped
+  into a shell (`echo 'git push' | bash`) is out of sight;
   an `allow` list blocks it unless it allows the outer command, and a `deny` list can name the outer command, such as `Bash(xargs)`.
 
 `.aidrian.local.json` wins over `config.json` one list at a time.

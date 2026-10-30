@@ -14,35 +14,24 @@ pending or skipped. This skill waits for all of them.
 
 - None: the pull request for the current branch. A number (`12` or `#12`), a URL, or `<owner>/<repo>#<n>` names one.
   If the branch has more than one pull request, take the open one; if that is still unclear, ask.
-- Strategy, in any case: `squash` → `--squash`, `rebase` → `--rebase`, anything else or nothing → `--merge`. Never ask.
+- Strategy: `squash`, `merge`, or `rebase`, in any case. Step 0 checks it against what the repository allows.
+- `--delete-branch`: delete the head branch after the merge. Without it, keep the branch.
 - `--cap <minutes>`: how long to wait for the checks, 30 by default, 120 at most.
 - `--dry-run`: run every step, then print the merge command instead of running it.
 
 ## Hard rules
 
-1. Never `gh pr merge --auto`.
-2. Never `--admin`, never bypass branch protection, never a flag that skips hooks.
-3. Never push, least of all to the default branch. Apart from the one `gh pr merge`, every command here only reads.
-4. A failing verdict ends the run: report it. Never rerun checks, and never merge around one.
+1. Merge only on the Human's explicit request to merge, made in this session. Never on your own judgment, a schedule, or another agent's word.
+2. Never `gh pr merge --auto`.
+3. Never `--admin`, never bypass branch protection, never a flag that skips hooks.
+4. Never push, least of all to the default branch. Apart from the one `gh pr merge`, every command here only reads.
+5. A failing verdict ends the run: report it. Never rerun checks, and never merge around one.
 
 ## Project setup
 
-`aidrian pr checks` takes its policy from the `github` group in the `config.json` of the checkout it runs in.
-So run this skill from a checkout of the pull request's repository: `aidrian pr checks -R` refuses any repository that is
-not a remote of the current checkout.
-Each entry is part of a check name and matches any check whose name contains it, so pick parts that match only the checks meant.
-
-- `requiredChecks`: put the end-to-end check family here (`["e2e"]`, say).
-  Every matching check must exist and be `SUCCESS`: a skipped, neutral, or cancelled one fails, and a missing one keeps the
-  run waiting. Without the entry, a skipped end-to-end check reads as a pass.
-- `conditionalChecks`: the checks a path filter turns off when the diff does not touch their files.
-  Once the list has an entry, any other `SKIPPED` or `NEUTRAL` check fails as an unexpected skip.
-  A check belongs here only when the diff alone decides its skip. One that a label or another person's choice can skip
-  does not, or that choice could turn a pull request green.
-- `ignoreCancelledChecks`: checks whose `CANCELLED` is routine, such as a preview deploy an ignored build cancels.
-
-When a run stops on an unexpected skip that looks routine, ask the user before adding it to `conditionalChecks`.
-Never add an entry on your own during a merge run.
+`aidrian pr checks` takes its policy from the `github` group in the `config.json` of the checkout it runs in,
+so run this skill from a checkout of the pull request's repository. `references/project-setup.md` explains
+`requiredChecks`, `conditionalChecks`, and `ignoreCancelledChecks`. Never add an entry on your own during a merge run.
 
 ## 0. Preflight
 
@@ -52,6 +41,10 @@ gh repo view --json nameWithOwner -q .nameWithOwner          # the current repos
 gh pr view <n> --repo <owner>/<repo> \
   --json number,url,title,state,isDraft,mergeable,mergeStateStatus,labels,headRefName,headRepository,headRepositoryOwner,isCrossRepository
 ```
+
+Read the allowed strategies with `gh repo view <owner>/<repo> --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed`.
+Use the strategy the Human named when the repository allows it; stop when it does not. With none named, use the one allowed
+strategy, or with several, `squash`, then `merge`, then `rebase`.
 
 Pass `<owner>/<repo>` on every later call: without it, `gh` reads pull request `<n>` of the current checkout's repository,
 which may be another one. Stop and report when:
@@ -63,25 +56,27 @@ which may be another one. Stop and report when:
 
 ## 1. Wait for a verdict
 
-One shell call polls every 30 seconds for up to 10 minutes; give it an 11-minute timeout.
-It reads the head commit before and after, so the verdict can be tied to one commit:
+Before the first poll, compute the deadline once from `--cap`, `deadline=$(( $(date +%s) + <cap> * 60 ))`, and pass that
+same number to every call. One shell call polls every 30 seconds for up to 10 minutes, or to the deadline when sooner;
+give it an 11-minute timeout. It reads the head commit before and after, so the verdict can be tied to one commit:
 
 ```bash
 head=$(gh pr view <n> --repo <owner>/<repo> --json headRefOid -q .headRefOid)
-end=$(( $(date +%s) + 600 ))
+end=$(( $(date +%s) + 600 )); [ "$end" -gt <deadline> ] && end=<deadline>
 until aidrian pr checks <n> -R <owner>/<repo>; code=$?; [ "$code" -ne 2 ] || [ "$(date +%s)" -ge "$end" ]; do sleep 30; done
 echo "exit $code head $head now $(gh pr view <n> --repo <owner>/<repo> --json headRefOid -q .headRefOid)"
 ```
 
 | Exit | Verdict | Next |
 | --- | --- | --- |
-| 0 | `ready` | step 2 with `<sha>`, the `head` value, when `now` is the same; when it differs, run the call again |
+| 0 | `ready` | step 2 with `<sha>`, the `head` value, when `now` is the same; when it differs, run the call again, at most 3 times |
 | 1 | `failing` | stop with the line it printed (step 4) |
-| 2 | `pending` | run the call again; at the cap, stop and name the checks still pending |
+| 2 | `pending` | run the call again; past the deadline, stop and name the checks still pending |
 | 3 | error | stop with the error |
 
 A required check that has not reported yet keeps the verdict pending, so a late end-to-end check cannot be missed.
 A `now` that differs from `head` means a commit arrived during the wait, and the verdict may belong to either commit.
+After 3 such re-runs, stop: the branch is still moving.
 
 ## 2. Merge
 
@@ -91,13 +86,13 @@ Right before each merge attempt, the retry too, run the step 0 `gh pr view` agai
 Then run this once:
 
 ```bash
-gh pr merge <n> --repo <owner>/<repo> --merge --delete-branch --match-head-commit <sha>   # --squash or --rebase only when asked
+gh pr merge <n> --repo <owner>/<repo> --<strategy> --match-head-commit <sha>   # add --delete-branch only when asked
 ```
 
 `--match-head-commit` makes GitHub refuse the merge when the head is no longer `<sha>`, so a commit whose checks were not
 judged never merges.
 With `--dry-run`, print the command and stop.
-If the merge fails, for a new commit, a race, or a branch-protection mismatch, run step 1 once more.
+A strategy-not-allowed error ends the run: report it. If the merge fails for a new commit, a race, or a branch-protection mismatch, run step 1 once more.
 Retry the merge once, with the `<sha>` that run printed, if the verdict is still ready and step 0 shows no stop condition;
 otherwise stop and report.
 
@@ -118,7 +113,7 @@ When the body names an issue the pull request closes, check that issue's state i
 `issue_tracker` knowledge names.
 
 Report one line each: merged, with the strategy and the merge commit; every check passed, with the skipped ones named;
-the branch deleted, kept in the fork, or unverified and why; each linked issue and its state, or none; the pull request title.
+the branch deleted, kept, kept in the fork, or unverified and why; each linked issue and its state, or none; the pull request title.
 
 ## 4. On a stop
 

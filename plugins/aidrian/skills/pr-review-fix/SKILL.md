@@ -25,12 +25,9 @@ and `product_sensitive` docs when a finding touches what users see, money, or da
 
 ## 1. Preflight
 
-- Work in the pull request's worktree, on its branch, never on the default branch.
-  `git status --porcelain` must be clean or hold only this pull request's work; ask about anything else.
-- `git fetch origin`, before you read the manifest. When `git status -sb` says the branch has diverged from its remote,
-  it was rewritten upstream: ask before anything else. Each owner starts with `git pull --ff-only`.
-- On a pull request already marked ready for review (not a draft), stop after step 3:
-  report the selected findings as follow-ups for a new pull request, and change nothing on this branch.
+- Run the branch preflight of the `orchestration` skill's `references/review-rules.md`, before you read the manifest.
+  Its § A ready pull request says when a ready pull request stops after step 3.
+  Its other sections define the fix-pass cap and the disposition actions.
 
 ## 2. Source
 
@@ -53,6 +50,7 @@ The `pr-review` skill's `references/manifest.md` defines its fields and statuses
    The owner of their files writes the comments in one last commit and pushes it; record it in each finding's `commit` and `note`,
    and keep the status `open`.
 3. `disputed` findings go to the user, one at a time, each with both positions. Never choose for the user.
+   In an unattended run, park each as a Decision for the Human, as the review rules say, and never fix it.
    Record the answer as the manifest's rules say; a finding that becomes `open` joins this selection.
 4. `blocked` findings are listed, and tried again only on the user's word.
 5. Everything else needs no action here: `drop_unless_cited`, `acceptable_as_is`, `needs_axis`, `pre_existing`, `fixed`, and `resolved`.
@@ -74,8 +72,7 @@ Pick each owner by the `knowledge` skill's agent rule; this plugin's agents are 
 Read `steps/fix-loop.md` before the first dispatch, and run it once per slice.
 Each slice is briefed, verified, reviewed by the agent that raised its findings, committed and pushed by its owner,
 and written back to the manifest.
-A finding gets at most 2 passes: the fix, and one corrective pass when the review says it is not fixed or broke something.
-After the second pass it is `blocked`, with the reason in `note`, and goes to the user.
+Each finding gets at most 2 passes, as the review rules say; a `blocked` finding keeps the reason in `note`.
 
 ## 6. Commit and push
 
@@ -86,7 +83,7 @@ After the second pass it is `blocked`, with the reason in `note`, and goes to th
   With `--no-push`, the owner does not push, and the report prints the command.
 - With more than one slice, one `code-reviewer` pass over `git diff <head_sha>..HEAD` checks that no fix broke another.
   A real problem becomes one corrective slice for its owner.
-- Confirm with `git ls-remote --heads <remote> <branch>` that the last commit is there.
+- Unless `--no-push`, confirm with `git ls-remote --heads <remote> <branch>` that the last commit is there.
 
 ## 7. Report
 

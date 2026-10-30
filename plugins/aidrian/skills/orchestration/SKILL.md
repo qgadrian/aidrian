@@ -40,15 +40,14 @@ Editing never happens in the main checkout, the parent folder of `git rev-parse 
 2. Open a draft with the `pr-write` skill.
 3. With more than one slice, run the `pr-review` skill on the assembled branch: it rechecks earlier slices' stubs and
    defaults against the later slices. Its findings go through the `pr-review-fix` skill and § 4.
-4. After each push, run the `pr-review-loop` skill, with `--await-codex` unless the review bot is out, as step 5 defines it.
+4. After each push, run the `pr-review-loop` skill, with `--await-codex` unless the review bot is out, as step 5 says.
    In a round the bot is out, first run the `pr-review` skill on the current head, unless step 3 just did; its findings go through `pr-review-fix`.
    In these skills, route each fix to its owner by § 4, even where a skill says the session fixes it itself.
    The fixing agent commits and pushes; you run the `git ls-remote` check and post the replies.
-5. **The bot is out** for the whole task once `aidrian pr await-review` reports `no_reviewer` (exit 0; config.json `github.reviewer`
-   is `null` or `"none"`), `blocked_quota`, or `round_limit`; for one round when it reports `timed_out` after its retry.
-   Without the bot, review rests on the `pr-review` skill and the Human's comments, which `pr-review-loop` answers.
-6. **The stop rule.** A round is one review of the current head: the bot's, or the `pr-review` skill's when the bot is out.
-   Stop when a round's review of the current head yields no `fix_now`, or after config.json `github.maxReviewRounds` rounds
+5. **The bot is out** and **a review round** are defined once, in `references/review-rules.md`, with the branch preflight,
+   the fix-pass cap, and the disposition actions that `pr-review-loop`, `pr-review-fix`, and `autopilot` share.
+6. **The stop rule.** Stop when a round's review of the current head yields no `fix_now` and `aidrian pr checks <n>`
+   is not failing, or after config.json `github.maxReviewRounds` rounds
    (default 3); `aidrian pr await-review` exit 4, `round_limit`, means that cap. At the cap, report the open `fix_now` findings
    and ask the Human.
 

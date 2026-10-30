@@ -67,4 +67,4 @@ non-goals, and files to modify, then the critical-flow, product, and security ga
   When the issue touches a flow those docs declare critical: `product-manager` first, then a `planning-agent` plan.
   Implement only after its `sign_off: approved`; `code-reviewer` signs off after the implementation.
 
-Apart from the In Progress move in phase 1, nothing before phase 7 writes to the tracker or opens anything on GitHub.
+Nothing writes to the tracker but the writes `references/hard-rules.md` § Tracker writes lists, and nothing before phase 7 opens anything on GitHub.

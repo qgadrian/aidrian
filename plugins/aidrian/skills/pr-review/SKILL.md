@@ -44,6 +44,7 @@ Read `references/manifest.md`, then the manifest `<state>/reviews/pr-<n>.json`, 
 
 - No manifest: this is round 1. Review the whole pull request.
 - The manifest's `head_sha` is the current head: the last round still applies. Report it, and ask before reviewing again.
+  Unattended or under the `orchestrator`, ask nothing: reuse that round's findings.
 - Its `head_sha` is an ancestor of the current head (`git merge-base --is-ancestor`): steps 4 and 5 plan for the files changed
   since then, `git diff --name-only <its head_sha> <head_sha>`, and each agent of an earlier round also gets back its `fix_now`
   findings that are `open` or `fixed`, to confirm.

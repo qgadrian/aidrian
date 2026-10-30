@@ -14,13 +14,9 @@ and `product_sensitive` docs when a comment touches what users see, money, or da
 ## 0. Preflight
 
 - `git rev-parse --is-inside-work-tree` and `gh auth status` must pass; otherwise stop and say which.
-- Work in the pull request's worktree, on its branch, never the default branch.
-  `git status --porcelain` must be clean or hold only this pull request's work; ask before anything else.
-- `git fetch origin`. When `git status -sb` says the branch has diverged from its remote, it was rewritten upstream:
-  ask before anything else. Whoever makes a fix starts with `git pull --ff-only`; until then the checkout can be behind,
-  so triage and search read the fetched head `@{u}`, never the working tree: `git show @{u}:<path>`, `git grep <pattern> @{u}`.
-- On a pull request that is already ready for review (not a draft), stop after the triage in step 3:
-  report the rows that apply as follow-ups for a new pull request, and change nothing on this branch.
+- Run the branch preflight of the `orchestration` skill's `references/review-rules.md`.
+  Its § A ready pull request says when a ready pull request stops after the triage in step 3.
+  Its other sections define the fix-pass cap, the disposition actions, when the bot is out, and a review round.
 
 ## 1. Await the bot review (`--await-codex`)
 
@@ -36,7 +32,6 @@ aidrian pr await-review <n> --request     # waits up to 14 minutes; give the she
 | 3 | `blocked_quota` | record `bot review: blocked_quota` and go on with the other comments |
 | 4 | `round_limit` | the review-round cap, config.json `github.maxReviewRounds`: stop and ask the Human to raise `--max-rounds`, redesign, or stop |
 
-`no_reviewer` means config.json `github.reviewer` is `null` or `"none"`; review then rests on the `pr-review` skill and people's comments.
 A `thumbs_up` signal with no other comments and green checks means nothing to address: report it in one line.
 
 ## 2. Collect every review surface
@@ -72,10 +67,9 @@ One row per item:
   aidrian pr disposition --severity <s> --likelihood <l> --affects <a> [--cost <c>] [--source bot --round <codex_rounds>]
   ```
 
-  Add `--source bot --round <codex_rounds>` for the bot's comments only; a person's comment omits both.
-  `needs_axis` means a person's comment lacks likelihood or affects: set them from the comment and the code, or ask its author.
-  `--vocab` defines every word. `fix_now` is fixed in this pull request. `accepted_residual` goes in the body's
-  Accepted residuals section with a code comment. `acceptable_as_is` and `drop_unless_cited` get a reply with the reason.
+  Add `--source bot --round <codex_rounds>` for the bot's comments only, where `<codex_rounds>` is the `codex_rounds`
+  field of step 1's `aidrian pr await-review` JSON. A person's comment omits both, and so does every comment
+  in a run without `--await-codex`. The review rules define each action.
 - When a comment contradicts a project knowledge doc, the doc wins: reply with the citation and leave the thread open.
 
 ## 4. Fix every copy of the mistake
@@ -86,7 +80,7 @@ mistake, and fix every copy in the same commit. A copy outside the pull request'
 
 Pick each fix's owner by the `knowledge` skill's agent rule, and give it its files and findings.
 A session the Human runs directly may make a fix itself; under the `orchestrator`, every fix goes to an owner.
-In one worktree, one fixing agent works at a time.
+In one worktree, one fixing agent works at a time. Each finding gets at most 2 fix passes, as the review rules say.
 Fix the root cause the comment points at, not its literal wording, and nothing unrelated.
 
 ## 5. Verify and commit
@@ -100,8 +94,9 @@ The agent that made the fix verifies, commits, and pushes it, then returns the S
 
 ## 6. Reply
 
-- Inline thread: reply through `gh api repos/{owner}/{repo}/pulls/<n>/comments/<id>/replies -f body=...`, then
-  resolve the thread with the `resolveReviewThread` GraphQL mutation when the fix addressed it.
+- Inline thread: reply through `gh api repos/{owner}/{repo}/pulls/<n>/comments/<id>/replies -f body=...`.
+  Resolve a bot's thread with the `resolveReviewThread` GraphQL mutation when the fix addressed it.
+  A person's thread gets the reply and stays open: its author resolves it.
 - Review summary or conversation comment: one conversation comment that names the SHA.
 - Check the response of every post. A failed post means the thread is not addressed; say so in the summary.
 - A thread that does not apply gets the evidence and stays open for the reviewer to confirm.

@@ -50,7 +50,7 @@ Work anchored to a plan with no issue belongs to the `plan-implement` skill, whi
   and each `/` in the branch becomes `-`.
   It writes its machine handoff there first, then sends a short summary as its last message.
   An agent denied `Write`, such as `explorer`, returns the handoff as its last message instead.
-- **The tracker is read-only until the pull request exists**, except one move of the issue to In Progress, made by this session.
+- **The tracker is read-only** except the writes `references/hard-rules.md` § Tracker writes lists, all made by this session.
   No dispatched agent writes to the tracker.
 - **No hand-back.** Work an agent can do is done now, or filed as a new issue through `agent-issue-writer`;
   it never reaches the Human as a follow-up.

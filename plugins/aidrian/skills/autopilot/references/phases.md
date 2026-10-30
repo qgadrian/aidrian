@@ -55,13 +55,14 @@ Up to config.json `github.maxReviewRounds` rounds, or the number the Human set a
    | 4 | `round_limit` | the same. The loop's question about raising `--max-rounds` is the Human's: record it, never raise it |
 
 2. **Specialist review.** Run the `pr-review` skill when `--full-review` is set, when the bot is out this round, as the
-   `orchestration` skill § 3 defines it, or in round 1 when the branch has more than one slice, as that section says.
+   `orchestration` skill's `references/review-rules.md` defines it, or in round 1 when the branch has more than one slice, as that section says.
    Skip that round-1 run when the engine's integration review already ran `pr-review` on the current head.
    Its findings go through the `pr-review-fix` skill.
 3. **Findings.** Every finding from either skill goes through the `orchestration` skill § 4: `aidrian pr disposition` gives
    its verdict, and each `fix_now` goes to its owner, highest likelihood × impact first.
 4. **Rare edge cases.** A finding whose verdict is `accepted_residual`, `acceptable_as_is`, or `drop_unless_cited` is not fixed.
-   Reply on its thread with the reason, in the `pr-review-loop` skill's reply shapes, and resolve the thread.
+   Reply on its thread with the reason, in the `pr-review-loop` skill's reply shapes. Resolve a bot's thread;
+   a person's thread stays open for its author.
    An `accepted_residual` also goes in the pull request body through the `pr-write` skill, with a code comment.
    A comment that does not apply at all is not a rare edge case: its thread stays open with the evidence, as the loop says.
 5. **Push.** The agent that made each fix commits and pushes it. Confirm the remote has the new head with
@@ -71,8 +72,8 @@ Up to config.json `github.maxReviewRounds` rounds, or the number the Human set a
 
 The loop ends at the first of these:
 
-- **Sign-off**: a round's review of the current head finds no `fix_now`, failing checks included, so the round pushes no fix:
-  nothing is open, or every open finding is a rare edge case.
+- **Sign-off**: the `orchestration` skill § 3 stop rule: a round's review of the current head finds no `fix_now`,
+  and `aidrian pr checks <n>` is not failing, so the round pushes no fix: nothing is open, or every open finding is a rare edge case.
   A round that pushes a fix moves the head, and no review has seen the new one: run the next round on it.
   The code comment an `accepted_residual` gets is not a fix.
 - **The cap**: the last round ends with `fix_now` findings open, or with fixes pushed that no review has seen.

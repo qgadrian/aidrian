@@ -29,8 +29,9 @@ git diff --stat origin/<base>...HEAD
 
 ## Title
 
-`[<issue key>] <type>(<scope>): <subject>`, or `[NOISSUE] <type>: <subject>` when no issue exists.
-The key format comes from the project's `issue_tracker` knowledge; the type is a Conventional Commits type from config.json
+A plain Conventional Commits title: `<type>(<scope>): <subject>`.
+Only when config.json `github.titleIssuePrefix` is `true`, prefix the issue key: `[<issue key>] <type>(<scope>): <subject>`,
+or `[NOISSUE] <type>: <subject>` when no issue exists. The key format comes from the project's `issue_tracker` knowledge. The type is a Conventional Commits type from config.json
 `git.commits.types`. The subject names the real scope of the branch.
 
 ## Body

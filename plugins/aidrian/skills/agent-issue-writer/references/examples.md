@@ -68,7 +68,7 @@ Compact mode with:
 
 ## Parent Issue Example
 
-Title: `[subscriptions] Soft-cancel rollout and data-integrity hardening`
+Title: `[documents] Soft-delete rollout and data-integrity hardening`
 
 Body excerpt:
 
@@ -80,70 +80,70 @@ Body excerpt:
 
 ## Success Criteria
 
-- [ ] Subscription cancellation no longer deletes rows in production paths.
-- [ ] Soft-cancel behavior ships before restrictive FK changes.
+- [ ] Deleting a document no longer removes its rows in production paths.
+- [ ] Soft-delete behavior ships before the restrictive foreign key change.
 - [ ] All migration-carrying PR groups document merge gates before landing on `main`.
 
 ## Issue Tree
 
-- `cancel-hotfix` `[subscriptions] Stop physical deletion of subscription rows` size `S` - immediate data-loss stopgap
-- `soft-cancel-foundation` `[subscriptions] Add clearOrganizationSubscriptionPointer` size `S` - prerequisite mutation helper
-- `fk-restrict` `[subscriptions] Change FK to ON DELETE RESTRICT` size `S` - final high-risk migration
+- `delete-hotfix` `[documents] Stop physical deletion of document rows` size `S` - immediate data-loss stopgap
+- `soft-delete-foundation` `[documents] Add a soft-delete helper` size `S` - prerequisite mutation helper
+- `fk-restrict` `[documents] Make the foreign key block deletes` size `S` - final high-risk migration
 
 ## PR & Merge Plan
 
 | PR Group | Issues | Target Branch | Merge After | Risk | Migrations |
 | --- | --- | --- | --- | --- | --- |
-| `hotfix` | `cancel-hotfix` | `main` | `none` | `low` | `0` |
-| `foundation` | `soft-cancel-foundation` | `main` | `hotfix` | `low` | `0` |
+| `hotfix` | `delete-hotfix` | `main` | `none` | `low` | `0` |
+| `foundation` | `soft-delete-foundation` | `main` | `hotfix` | `low` | `0` |
 | `fk-restrict` | `fk-restrict` | `main` | `foundation` | `high` | `1` |
 
 Merge into `main` is production deployment for every group above.
 
 `fk-restrict` deployment gates:
-- soft-cancel handler is live in production before merge
+- soft-delete handler is live in production before merge
 - rollback migration is prepared before merge
 ```
 
 ## Initiative Child Issue Example
 
-Title: `[orders] Fix default delivery day when holiday overrides skip today`
+Title: `[scheduler] Fix default run day when a blackout date covers today`
 
 Body excerpt:
 
 ```md
 ## Context
 
-Part of the delivery-days initiative. This issue fixes the default-day regression before the follow-up UI polish issue can ship.
+Part of the run-days initiative. This issue fixes the default-day regression before the follow-up UI polish issue can ship.
 
 ## Size
 
 S
 
-One bounded delivery-date logic fix with focused regression coverage.
+One bounded run-date logic fix with focused regression coverage.
 
 ## Scope
 
-- Update the default-day selection logic to choose the first day open for delivery.
+- Update the default-day selection logic to choose the first day open for runs.
 - Add regression coverage for closed-today and open-tomorrow scenarios.
 
 ## Tasks
 
-- Update the default-day selection logic to skip closed-today and choose the first day open for delivery.
+- Update the default-day selection logic to skip closed-today and choose the first day open for runs.
 - Add regression coverage for closed-today and open-tomorrow scenarios.
 
 ## Dependencies & Sequencing
 
 - depends on: `none`
-- PR group: `delivery-default-day`
+- PR group: `run-default-day`
 - target branch: `main`
 - merge after: `none`
 - merge is production deployment: `true`
 
 ## Tracker Metadata
 
-- labels: `bug`, `orders`
-- Linear Project: `Delivery Days Reliability`
+- labels: `bug`, `scheduler`
+- Linear Project: `Run Days Reliability`
 - parent issue: `ABC-1234`
 - depends on: `none`
 - Priority: `Medium` (bug, inferred)
@@ -160,7 +160,7 @@ Compact mode with:
 
 ## L Split Alert Example
 
-Title: `[billing] Replace subscription cancellation pipeline`
+Title: `[documents] Replace the document deletion pipeline`
 
 Body excerpt:
 
@@ -169,11 +169,11 @@ Body excerpt:
 
 L
 
-Red alert: this issue is still `L` after planning because the webhook cutover and FK migration are intentionally being drafted together for user review.
+Red alert: this issue is still `L` after planning because the handler cutover and foreign key migration are intentionally being drafted together for user review.
 
 Split candidates considered:
-- split webhook handler cutover into its own `M` issue
-- split FK restriction migration into its own `S` migration issue
+- split the handler cutover into its own `M` issue
+- split the foreign key migration into its own `S` migration issue
 
 Why not split yet:
 - the user explicitly asked for one review artifact before issue creation, so this draft is a temporary planning hold and must be decomposed before execution issues are published
@@ -385,14 +385,14 @@ Questions to unblock:
 {
   "schema_version": "2.0",
   "tracker": "linear",
-  "initiative_title": "[delivery-days] Default day reliability",
-  "initiative_goal": "Ship the delivery-days default-day fix with explicit multi-agent review and validation ownership.",
+  "initiative_title": "[run-days] Default day reliability",
+  "initiative_goal": "Ship the run-days default-day fix with explicit multi-agent review and validation ownership.",
   "topology": "parent_issue_only",
   "create_tracker_project": false,
   "create_parent_issue": true,
   "parent_issue_is_canonical_release_plan": true,
   "success_criteria": [
-    "Default-day selection uses the first day open for delivery.",
+    "Default-day selection uses the first day open for runs.",
     "The issue tree encodes explicit review and validation defaults."
   ],
   "issue_order": ["default-day-fix", "ux-follow-up"],
@@ -407,7 +407,7 @@ Questions to unblock:
   "pr_release_plan": {
     "groups": [
       {
-        "key": "delivery-default-day",
+        "key": "run-default-day",
         "title": "Default selected day fix",
         "summary": "Land the default-day logic fix before the UI follow-up.",
         "issue_keys": ["default-day-fix"],
@@ -423,17 +423,17 @@ Questions to unblock:
   "issue_blueprints": [
     {
       "key": "default-day-fix",
-      "title": "[orders] Fix default delivery day when holiday overrides skip today",
+      "title": "[scheduler] Fix default run day when a blackout date covers today",
       "issue_type": "bug",
-      "goal": "Choose the first day open for delivery when a holiday override closes today.",
+      "goal": "Choose the first day open for runs when a blackout date covers today.",
       "size": {
         "tshirt": "S",
-        "rationale": "One bounded delivery-date logic fix with focused regression coverage.",
+        "rationale": "One bounded run-date logic fix with focused regression coverage.",
         "split_alert": null,
         "split_candidates": []
       },
       "scope": [
-        "Update the default-day selection logic to choose the first day open for delivery.",
+        "Update the default-day selection logic to choose the first day open for runs.",
         "Add regression coverage for closed-today and open-tomorrow scenarios."
       ],
       "tasks": [
@@ -441,11 +441,11 @@ Questions to unblock:
         "Add focused regression coverage."
       ],
       "non_goals": [
-        "Do not change the delivery-days UI."
+        "Do not change the run-days UI."
       ],
       "dependencies": [],
       "sequencing": {
-        "pr_group": "delivery-default-day",
+        "pr_group": "run-default-day",
         "target_branch": "main",
         "merge_after": [],
         "merge_is_deploy": true,

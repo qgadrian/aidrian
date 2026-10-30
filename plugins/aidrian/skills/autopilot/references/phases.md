@@ -13,13 +13,17 @@ Pick the engine by the input:
 | Input | Engine |
 | --- | --- |
 | A Linear issue key or URL | the `issue-implement` skill on the issue |
-| A plan path | the `plan-implement` skill on the plan |
+| A plan path whose frontmatter has `issue_id` or `issue_ref` | the `issue-implement` skill on that issue |
+| Any other plan path | the `plan-implement` skill on the plan |
 | A one-line task | `planning-agent` writes a plan, then the `plan-implement` skill runs it |
 
 - **A one-line task.** Dispatch `planning-agent` in the foreground with the task, the Human's launch words,
   and the path `<state>/plans/<slug>-plan.md`, where `<state>` is the folder `aidrian state` prints
   and `<slug>` is the task in a few lowercase words joined by `-`.
   A plan that comes back `open-questions` or `blocked` leaves nothing to implement: park its questions and stop.
+- **An issue-anchored plan.** `plan-implement` stops on one, so read the plan's frontmatter before picking the engine.
+  Run `issue-implement` on its `issue_id`, else its `issue_ref`. That skill's phase 0 reads the plan only at
+  `<state>/plans/<key>-implementation.md`, the key in lowercase: a plan at another path is not the one it would run, so stop.
 - **Workspace.** The current checkout when it is a task worktree on the task's branch; otherwise the engine creates one
   through the `orchestration` skill § 1. The launch approves a new branch, so the `worktree-new` skill's question is answered
   for `branch_mode: new`. Its question about reusing an existing branch, and the question about changes in the main checkout,
@@ -66,8 +70,12 @@ Up to three rounds, or the number the Human set at launch. Each round:
 
 The loop ends at the first of these:
 
-- **Sign-off**: a round leaves no `fix_now` open, failing checks included, and every other open finding is a rare edge case.
-- **The cap**: the last round ends with `fix_now` findings open. List them in the report, and start no further round.
+- **Sign-off**: a round's review of the current head finds no `fix_now`, failing checks included, so the round pushes no fix:
+  nothing is open, or every open finding is a rare edge case.
+  A round that pushes a fix moves the head, and no review has seen the new one: run the next round on it.
+  The code comment an `accepted_residual` gets is not a fix.
+- **The cap**: the last round ends with `fix_now` findings open, or with fixes pushed that no review has seen.
+  List both in the report, and start no further round.
 - **A stop** from `SKILL.md` § Stop.
 
 Then:

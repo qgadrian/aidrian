@@ -82,7 +82,8 @@ Then report, in this order, and stop:
 
 Only on the Human's explicit `apply` in this session.
 
-1. Hash the plan again. When it changed since step 2, say so and go back to step 4.
+1. Hash the plan again. When it changed since step 2, say so and start again at step 2:
+   the changed plan gets a new hash, and the gates judge its new text before the next critique.
 2. Dispatch `planning-agent` with the plan path, the approved findings, the approved diff with the Human's edits,
    and the revision-history line. It writes the same file.
 3. It keeps `issue_id`, `issue_ref`, and `workspace_decision` unless an approved finding changes them; report any such change first.
@@ -92,6 +93,7 @@ Only on the Human's explicit `apply` in this session.
 
 One critique, one apply, and one more critique only when step 5.4 finds a new blocking flaw.
 `--extended` adds one refinement pass, never more. Past the cap, escalate to the Human.
+A restart from step 5.1 reviews a different plan, so its count starts again; it waits on the Human's next `apply` like the first.
 A consult that returns a dispute stops the run: escalate both positions and the missing evidence; never settle on a compromise.
 
 ## Close

@@ -77,8 +77,9 @@ Read `references/phases.md` at the start, and follow it.
 ## Bounds
 
 - **Three review rounds** at most, unless the Human set another number at launch.
-- **No rare edge cases.** End the loop early once every open finding is `accepted_residual`, `acceptable_as_is`,
-  or `drop_unless_cited` by `aidrian pr disposition`, and close their threads with the reason.
+- **No rare edge cases.** End the loop early once a review of the current head leaves every open finding `accepted_residual`,
+  `acceptable_as_is`, or `drop_unless_cited` by `aidrian pr disposition`, and close their threads with the reason.
+  A round that pushed a fix has not reached that point: the next round reviews the new head.
 - **The bot is asked at most once per round** through `aidrian pr await-review`. Its state is recorded every round;
   `blocked_quota` or `round_limit` ends the asking for the rest of the run.
 - **One informed retry.** An agent blocked twice on the same work, or a check still failing after one informed fix, is parked.
@@ -107,6 +108,7 @@ by the names the start hook gives, never "you" or "I". In this order:
 2. **Checks**: verification and CI status, and the bot review state of each round:
    `received`, `already_present`, `timed_out`, `blocked_quota`, or `round_limit`.
 3. **Decisions for the Human**: each parked decision, with its options and the safest recommendation.
-4. **Left open**: findings closed as rare edge cases, each with its reason, and findings still open at the cap.
+4. **Left open**: findings closed as rare edge cases, each with its reason, findings still open at the cap,
+   and fixes the last round pushed that no review has seen.
 5. **Next**: when a brief was written, its path and the resume line the `session-handoff` skill prints;
    otherwise the next action, such as a review by the Human or the `pr-merge-when-green` skill.

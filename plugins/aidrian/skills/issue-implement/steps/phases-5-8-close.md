@@ -7,8 +7,8 @@ must name the worktree and the task branch.
 
 1. Every implementation slice in the plan is `complete`, with passing verification in its handoff.
    `INTEGRATION-REVIEW` waits for phase 7.
-2. The full suite the project's `testing` knowledge names passed on the branch's last commit; the last `code-reviewer` pass shows it.
-   A commit landed after that pass: dispatch `code-reviewer` once more on the delta.
+2. The full suite the project's `testing` knowledge names passed on the branch's last commit, in a `code-reviewer` pass that ran it.
+   No such pass, or a commit landed after it: dispatch `code-reviewer` once more on the delta, asking for the full suite.
    A change to a critical flow: `e2e-runner` on that flow, in the foreground and alone.
 3. No doc the branch makes stale is left without its update.
 4. No `scope_collision` is open.

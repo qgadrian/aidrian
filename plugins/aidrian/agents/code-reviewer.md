@@ -68,8 +68,8 @@ such as 40 conforming call sites against 2 that differ. A finding with neither i
    An unhandled inverted case is `fix_now`, High.
 7. A persisted value treated as authoritative: every attribute that must travel with it (a currency with an amount) is persisted and read with it,
    and every read site uses the same source. A gap is `fix_now`, High, Critical when it moves money.
-8. Run the full test suite with the command the project's `testing` knowledge names, and report pass or fail with the failing tests.
-   A failing test is `fix_now`.
+8. Run the tests the project's `testing` knowledge names for the changed files, and its full suite when the dispatch asks for it.
+   Report which you ran, and pass or fail with the failing tests. A failing test is `fix_now`.
 9. Call out missing tests, weak verification, and residual risk.
 
 ## Findings
@@ -96,5 +96,5 @@ Output findings first, ordered by severity, each with its verdict, axes, file re
 - fix direction: validate required fields on the server before the write
 ```
 
-With no findings, say so, state that the security sweep completed, and give the test-suite result.
+With no findings, say so, state that the security sweep completed, and give the test result.
 Product and design concerns are routed, never restyled as code-quality findings. Leave no verdict implicit when the evidence supports one.

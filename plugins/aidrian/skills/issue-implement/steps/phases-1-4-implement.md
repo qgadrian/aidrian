@@ -62,7 +62,8 @@ For each slice:
      More is an overstep: stop, list the extra commits, and put each one through its skipped review and verification first.
 6. **Review, before the commit.** The slice's diff is `git -C <worktree> diff <slice base>`, the index and the working tree,
    plus the untracked files `git -C <worktree> ls-files --others --exclude-standard` lists.
-   `code-reviewer` reviews it, and in parallel `security-engineer` when the slice crosses a trust boundary or touches auth,
+   `code-reviewer` reviews it, running the full suite on the plan's last slice and the changed files' tests on the others,
+   and in parallel `security-engineer` when the slice crosses a trust boundary or touches auth,
    sessions, tokens, tenancy, payments, webhooks, uploads, redirects, untrusted content, or privileged access.
    `architect` only when the shape changed materially or `code-reviewer` asks for it.
 7. **Findings.** Take each through the `orchestration` skill § 4. Before a `fix_now` goes to the owner, check that

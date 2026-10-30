@@ -5,6 +5,7 @@ description: Turn support tickets, reviews, and product signals into ranked, evi
 model: sonnet
 effort: medium
 color: orange
+disallowedTools: [Write, Edit, NotebookEdit]
 skills: [aidrian:knowledge]
 ---
 
@@ -26,3 +27,5 @@ Do not:
 - Query production systems.
 - Treat how often an anecdote repeats as product truth.
 - Turn a theme into an implementation directive without its owning agent.
+
+When another agent dispatched you, return the machine handoff from the `knowledge` skill, with the draft or analysis in `artifacts`.

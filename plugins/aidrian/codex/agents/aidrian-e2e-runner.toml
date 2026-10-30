@@ -62,10 +62,13 @@ After that cap, return the classification and escalate; never loop.
 - An unclear code path or source of truth: `explorer`.
 - Broad triage that needs several agents: `orchestrator`.
 
+Never reach out to these yourself: name the owner in `next_owner` and return to your dispatcher.
+
 ## Output
 
 Return the machine handoff with these role fields:
 
+- `status`: `done` for `pass`; `blocked` for `fail`, `flaky`, or `infra-blocked`, with `next_owner` set.
 - `classification`: `pass`, `fail`, `flaky`, or `infra-blocked`.
 - `commands_run`: every command, exactly as run.
 - `environment`: the environment and profile used.

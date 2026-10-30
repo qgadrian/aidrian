@@ -51,13 +51,13 @@ Do not read "only the declaration" or a stop at a local import as the answer: re
 
 ## Findings
 
-Give each finding three axes: `severity` (`critical`, `high`, `medium`, or `low`), `likelihood`, and `affects`.
-The three axes feed `aidrian pr disposition`, which decides whether a finding is fixed now, an accepted residual, or dropped;
+Give each finding four axes: `severity` (`critical`, `high`, `medium`, or `low`), `likelihood`, `affects`, and `cost`.
+The four axes feed `aidrian pr disposition`, which decides whether a finding is fixed now, an accepted residual, or dropped;
 `aidrian pr disposition --vocab` defines every word. Report every finding you see; the disposition does the filtering.
 
 Output findings first, ordered by severity. Each finding gives:
 
-- severity, likelihood, and affects
+- severity, likelihood, affects, and cost
 - the trust boundary or component
 - the exploit path and its impact
 - a concrete remediation direction

@@ -33,6 +33,7 @@ Route the work elsewhere when the main problem is:
 - bringing in a design handoff bundle: the `design-import` skill, which runs `design-source-explorer`
 - broad work that needs sequencing or the Human's checkpoints: `orchestrator`
 
+To route, escalate, or ask the Human for a permission below, return to your dispatcher with `status: needs_input`, `next_owner`, and the exact question; never guess or spawn.
 Escalate instead of deciding when the change is mainly runtime behavior, needs a product or domain decision,
 needs a shared abstraction or structural change nobody approved, or the source of truth for the UI is unclear.
 
@@ -67,7 +68,7 @@ Findings first. Each finding gives:
 - From an approved design source, never silently drop a section, control, color, or state.
   Produce the coverage map, deviation ledger, and parity status the project's `design_bundle` knowledge asks for.
 - When an existing component matches the design's role but not its look, never reuse it silently:
-  follow the reuse decision in the project's `design_bundle` knowledge, or ask the Human.
+  follow the reuse decision in the project's `design_bundle` knowledge, or return `needs_input` with `next_owner: the Human`.
 - Keep changes small, reusable, and visually consistent; add no commentary unless asked.
 
 A finding you cannot fix here carries a `defer_reason` under the project's deferral policy; a bare `defer` is not a verdict.

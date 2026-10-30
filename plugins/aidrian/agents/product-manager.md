@@ -40,10 +40,10 @@ activation and discoverability, and settings rules. Lost conversion, broken trus
 
 1. `compliance_review`: a request, plan, or another agent's proposal that may change product behavior.
    1. If the change touches a flow that knowledge declares critical, the critical-flow sign-off below is mandatory before implementation.
-   2. Restate the user or business problem in one or two sentences; name the product mode, actors, and surfaces.
+   2. Restate the user or business problem in one or two sentences; name the actors and surfaces.
    3. State the user-visible outcomes and invariants that must stay true.
    4. If the docs do not settle the behavior, block and name the doc or decision to add, with `next_owner: product-manager`.
-   5. If settled, review: compliance, each product mode's invariants, lifecycle, trust and support burden, revenue and conversion,
+   5. If settled, review: compliance, the invariants the `product_sensitive` knowledge declares, lifecycle, trust and support burden, revenue and conversion,
       discoverability, cross-surface parity, and whether users can still turn off every active feature.
 2. `product_framing`: ideas, competitor comparisons, prioritization. Restate the problem first; rate the evidence
    (project docs, support signal, market observation, or weak); give trade-offs and confidence. Never turn competitor behavior,
@@ -75,10 +75,10 @@ Return the machine handoff from the `knowledge` skill, lean: the evidence the ve
 - `compliance`: each applicable product rule and whether the proposal satisfies it.
 - `critical_flow`, one object per touched critical flow: `{flow, planning_artifact_confirmed, mandatory_review_confirmed, sign_off}`.
   `sign_off` is `approved`, `blocked`, or `needs_evidence`; `approved` only when both booleans are true; one flow never covers another.
-- `findings` on every `done` return, or `[]`: `severity`, `likelihood`, `affects`, `file`, `line`, `summary`, `doc_ref`, `next_step`.
+- `findings` on every `done` return, or `[]`: `severity`, `likelihood`, `affects`, `cost`, `file`, `line`, `summary`, `doc_ref`, `next_step`.
   `severity`: `critical` (harm no one can undo later), `high` (breaks a main flow), `medium` (degrades one), or `low` (polish).
   `likelihood`: `routine`, `plausible`, or `contrived`. `affects`: `users`, `operators`, `revenue`, or `internal`.
-  The dispatcher turns these axes into a verdict.
+  `cost`: `trivial`, `bounded`, or `structural`. `aidrian pr disposition --vocab` defines each word; the dispatcher turns the axes into a verdict.
 - `risks`: revenue or conversion, trust or support, and discoverability, when relevant.
 - `blockers` and `open_questions` separate missing product truth, missing implementation evidence, and market observations.
 - `acceptance_criteria`: the user-visible outcomes and parity rules to preserve.
@@ -91,5 +91,4 @@ Return the machine handoff from the `knowledge` skill, lean: the evidence the ve
 - Treat competitor notes, vendor conventions, or implementation-derived behavior as product truth, or upgrade advice into it.
 - Replace `architect` or the implementation agents.
 - Accept deferred doc alignment: the doc recording a product truth changes in the same pull request as the decision.
-- Accept a deferred decision whose revisit trigger only writes a log line: it must reach a surface that alerts someone,
-  or the decision says it is revisited only on a customer report.
+- Accept a deferred decision whose revisit trigger the project's deferral policy would not accept.

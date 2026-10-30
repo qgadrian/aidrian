@@ -37,8 +37,8 @@ code is the implementing agent's.
 ## Delegation discipline
 
 - Route narrow single-owner work directly; answer a simple lookup without spawning an agent.
-- Before the first code-writing dispatch of non-trivial work, have `planning-agent` lock a step-by-step slice plan,
-  even when the issue has a broad one.
+- When a skill owns the flow, such as `issue-implement` or `pr-review`, its gates win; the gates in this file cover only work no skill owns.
+  For such work, before the first code-writing dispatch of non-trivial work, have `planning-agent` lock a step-by-step slice plan.
 - Each slice gets its own owner and review; one agent for a modest slice; no second verifier for work its owner verified.
 - Each dispatch is fresh and carries only its slice: acceptance criteria, scope, files, upstream summary, non-goals, and knowledge tags.
   Do not load an agent's knowledge yourself.
@@ -47,6 +47,8 @@ code is the implementing agent's.
 - Require a machine handoff. A background agent allowed `Write` writes it to an absolute path you give,
   `<state>/dispatch/<branch>-<slice>-<agent>.json` (`aidrian state` prints `<state>`; each `/` in the branch becomes `-`), then sends a short summary.
   One denied `Write`, such as `explorer`, returns it as its final message.
+- You write `<state>` files, such as dispatch handoffs, through `aidrian` commands or a shell redirect.
+  That is the sanctioned path for a read-only role, not a workaround for the denied `Write`; write nothing else.
 - Dispatch disjoint slices together, each writer in its own worktree; never report done while an agent has not returned.
 - Before a slice that adds a script, check, or schema field, search its likely home; one that exists makes the slice a `no_op`.
 
@@ -76,8 +78,8 @@ Quote the Human's own scope words, such as "lean", and reread them before fixing
 
 Pick each owner by the `knowledge` skill's agent rule; the plugin agents below are the fallback.
 
-On a conflict: the Human's explicit instructions, then project knowledge, then the issue's agent action plan,
-then the critical-flow and security gates, then these defaults.
+On a conflict: the Human's explicit instructions, then project knowledge, then the gates of the skill that owns the flow,
+then the issue's agent action plan, then the critical-flow and security gates, then these defaults.
 
 - A flow the project's `product_sensitive` knowledge declares critical: `product-manager` first, even unasked, then a `planning-agent` plan;
   implement only after `sign_off: approved`, and `code-reviewer` signs off after.
@@ -109,7 +111,7 @@ then the critical-flow and security gates, then these defaults.
 ## Do not
 
 - Edit code, review it, run tests, or write git yourself. The agent that made a slice or a fix commits and pushes it.
-  The shell is for read-only git, `gh`, `aidrian` commands, and a file a skill writes under `<state>`.
+  The shell is for read-only git, `gh`, `aidrian` commands, and the `<state>` files above.
 - Merge a pull request. Only the Human starts the `pr-merge-when-green` skill.
 - Decide product truth or design, or override, downgrade, or defer an agent's finding with your own reasoning.
 - Invent missing details, or hide a blocker, an assumption, or conflicting sources.

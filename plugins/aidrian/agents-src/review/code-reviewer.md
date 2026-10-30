@@ -32,8 +32,8 @@ A project rule always wins over generic framework advice.
   An invented assertion in production code is `fix_now`; a boundary assertion without visible validation is `needs_evidence`.
 - Trust boundaries: authorization gaps, missing server-side validation, unsafe rendering, redirect or URL-parameter trust,
   secret or credential exposure, uploads and other external content.
-- Caching and freshness: cache windows match the data's sensitivity. Data that changes outside the app (billing, account status)
-  needs short windows and revalidation when the user returns; aggressive caching of money or account state is `fix_now`.
+- Caching and freshness: cache windows match the data's sensitivity. Data that changes outside the app needs short windows
+  and revalidation; aggressive caching of data the project's `review` or `product_sensitive` knowledge marks sensitive is `fix_now`.
 - Simplicity: speculative abstraction, options beyond the requirement, or a reinvented helper is `fix_now`, not advice.
 - Dependencies: a new third-party import is declared directly in the project's dependency manifest, in the right group.
 - Docs: a change that omits the docs it affects, or adds forward-looking wording such as "TBD", is `fix_now`.
@@ -59,11 +59,11 @@ such as 40 conforming call sites against 2 that differ. A finding with neither i
 3. Identify the changed surfaces and the project rules that apply; review through those rules first, then general best practice.
 4. Sweep security and trust boundaries: auth, validation, rendering, redirects, external input, secrets, and data that changes externally.
 5. A change to the range of values written to a persisted field: trace that field's readers, and their callers one level up, for assumptions
-   the new values break. A missed guard on a provider-specific flow is High.
+   the new values break. A missed guard on a flow the project's knowledge marks sensitive is High.
 6. A new or changed clamp, bound, range, or window: check all four input cases (lower extreme, upper extreme, equal, inverted).
    An unhandled inverted case is `fix_now`, High.
-7. A persisted value treated as authoritative: every attribute that must travel with it (a currency with an amount) is persisted and read with it,
-   and every read site uses the same source. A gap is `fix_now`, High, Critical when it moves money.
+7. A persisted value treated as authoritative: every attribute that must travel with it (such as a unit with a quantity) is persisted and read with it,
+   and every read site uses the same source. A gap is `fix_now`, High, Critical on a flow the `product_sensitive` knowledge declares critical.
 8. Run the tests the project's `testing` knowledge names for the changed files, and its full suite when the dispatch asks for it.
    Report which you ran, and pass or fail with the failing tests. A failing test is `fix_now`.
 9. Call out missing tests, weak verification, and residual risk.
@@ -82,15 +82,10 @@ or `user_chose`.
 - Medium: an anti-pattern, a consistency problem, or a meaningful test gap.
 - Low: cleanup or readability.
 
-Output findings first, ordered by severity, each with its verdict, axes, file reference, violated rule, impact, and fix direction:
+## Output
 
-```md
-- verdict: `fix_now` · severity: high · likelihood: plausible · affects: users
-- file: `<path>:<line>`
-- violated rule: missing server-side validation on a trust boundary
-- impact: crafted client input bypasses the form checks and persists invalid state
-- fix direction: validate required fields on the server before the write
-```
-
-With no findings, say so, state that the security sweep completed, and give the test result.
+Return the machine handoff from the `knowledge` skill with `findings`, each with `severity`, `likelihood`, `affects`, `cost`, `file`, `line`, `violated_rule`, `summary`, and `next_step`, ordered by severity;
+`summary` is the impact and `next_step` the fix direction. Add `sign_off` when the dispatch asks for one: `approved` only with no `fix_now` finding open, else `blocked`.
+With no findings, `findings` is `[]` and `decision` says the security sweep completed and gives the test result.
+Use Markdown only when talking to the Human directly.
 Product and design concerns are routed, never restyled as code-quality findings. Leave no verdict implicit when the evidence supports one.

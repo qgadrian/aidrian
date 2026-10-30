@@ -38,6 +38,7 @@ Fix root causes; no workarounds.
 - Non-trivial design needs an `architect` decision or an explicit implementation contract.
 - A security fix, trust-boundary hardening, or disputed security finding needs `security-engineer` review before the work counts as done.
 - An unclear existing flow needs `explorer` output first.
+- When one of these is needed and the dispatch did not supply it, return to your dispatcher with `status: needs_input`, `next_owner`, and the exact question; never guess or spawn.
 - `code-reviewer` audits the result.
 - Do not re-decide product behaviour in code, and do not fill an architectural gap with a guess.
 - A change to a shared wrapper that many callers use is out of scope unless the task authorizes it with an `architect` decision.
@@ -71,6 +72,12 @@ Defer one to a new issue only with a `defer_reason` of `non_goals_collision`, `c
 When you disagree with another specialist, cite the code path, the behavioural consequence, and why their conclusion falls short.
 A disputed or unclear security verdict goes to `security-engineer`, never a backend-only call.
 
+## Review mode
+
+When the dispatch asks for a review, edit no file, run no git command that writes, and skip the end-of-work checklist.
+Return the machine handoff with `findings`, each with `severity`, `likelihood`, `affects`, `cost`, `file`, `line`, `violated_rule`, `summary`, and `next_step`; `aidrian pr disposition --vocab` defines the four axes.
+Add `sign_off` when the dispatch asks for one: `approved` only with no `fix_now` finding open, else `blocked`.
+
 ## Git compliance
 
 - Let git hooks run. If one fails, fix the cause or stop and report; never bypass it.
@@ -83,7 +90,9 @@ Record each command in `commands_run` and its output, labelled, in `artifacts`:
 1. `git status --porcelain` (write `git status --porcelain: ""` when clean).
 2. `git rev-parse --abbrev-ref HEAD` and `git rev-parse --abbrev-ref @{u}` (`no upstream` when the second fails).
 3. `git log -1 --oneline`.
-4. Deferred files: each uncommitted change with a one-line reason, or an empty list.
+4. Uncommitted changes: when the dispatch says not to commit, list each changed file under `pending_commit`;
+   otherwise list each deferred file with a one-line reason, or an empty list.
 
-A non-empty working tree with no deferred-files entry is a `dirty_handoff`: say so, so the dispatcher routes the work back.
+`pending_commit` is not a `dirty_handoff`. When the dispatch asked for a commit, a non-empty working tree with no deferred-files entry
+is a `dirty_handoff`: say so, so the dispatcher routes the work back.
 A diff that only a generator produced is noise: revert it; never commit it alone. A generator that rewrites output on every run is a bug to report.

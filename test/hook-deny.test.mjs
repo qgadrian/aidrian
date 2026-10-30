@@ -127,7 +127,7 @@ test('firstSentence drops the Blocked lead and stops at the first sentence or li
   assert.equal(firstSentence(HOOK_BYPASS), 'this skips a git hook.');
   assert.equal(firstSentence('Blocked: the body has no `## Summary` section. config.json `github.requiredSections` lists them.\nMore.'), 'the body has no `## Summary` section.');
   assert.equal(firstSentence('one line\nanother'), 'one line');
-  assert.equal(firstSentence("Blocked: this writes 'a.js', a tracked file in the main checkout (/home/x/repo). Work elsewhere."), "this writes 'a.js', a tracked file in the main checkout.");
+  assert.equal(firstSentence("Blocked: this writes 'a.js', a tracked file in the main checkout (/srv/repo). Work elsewhere."), "this writes 'a.js', a tracked file in the main checkout.");
   const row = denyRow({ session_id: 's', tool_name: 'Bash' }, 'x', 'y'.repeat(200), { env: { CLAUDE_CODE_AGENT: 'orchestrator' }, now: Date.parse('2026-10-29T12:00:00Z') });
   assert.deepEqual({ ...row, reason: row.reason.length }, { event: 'hook_deny', ts: '2026-10-29T12:00:00.000Z', session_id: 's', rule: 'x', tool: 'Bash', agent_type: 'orchestrator', reason: 120 });
 });

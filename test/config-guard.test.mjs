@@ -292,9 +292,10 @@ test('a glob reaches a config file that is a symlink to another folder, by the p
   symlinkSync('../.aidrian/config.json', path.join(dir, 'dist/config.json'));
   assert.match(verdict(dir, subagent(dir, 'Bash', { command: "echo '{}' > dist/*.json" })) ?? '', /config\.json/);
   assert.equal(verdict(dir, subagent(dir, 'Bash', { command: 'rm dist/*.js' })), null);
-  // A link the same call creates before the glob runs is not on disk yet: a write into the glob's folder fails closed.
+  // A link the same call creates before the glob runs, in its folder or above it, is not on disk yet: with any other
+  // write in the call, a glob that may name a guarded file fails closed.
   mkdirSync(path.join(dir, 'out'));
-  for (const command of ["ln -s ../.aidrian/config.json out/alias && echo '{}' > out/*", 'cp x out/ && rm -rf out/*']) {
+  for (const command of ["ln -s ../.aidrian/config.json out/alias && echo '{}' > out/*", 'cp x out/ && rm -rf out/*', "ln -s .. out/link && echo '{}' > out/link/.aidrian/*.json"]) {
     assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /\.aidrian/, command);
   }
   assert.equal(verdict(dir, subagent(dir, 'Bash', { command: 'touch src/a.js && rm -rf out/*.js' })), null);

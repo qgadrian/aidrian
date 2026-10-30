@@ -87,8 +87,10 @@ budget: 2479 of 16384 always-doc bytes (engineering 2479, product 0)
 ```
 
 In a Claude Code session, `aidrian` is on the PATH while the plugin is enabled. It needs Node 22 or later.
-Elsewhere, run it from the plugin folder the host installed, or from a clone of the plugin's repository in CI:
-the README's [Outside a session, and in CI](../README.md#outside-a-session-and-in-ci) has both.
+Elsewhere, run it from the plugin folder the host installed: [Claude Code](providers/claude-code.md#running-aidrian),
+[Codex](providers/codex.md#running-aidrian). In CI, run it from a clone: the README's [In CI](../README.md#in-ci).
+`bin/aidrian` is a shell script, so run it directly, not with `node`.
+Where no shell runs it, use `node <plugin folder>/lib/cli.mjs`, and `node <plugin folder>/lib/knowledge-cli.mjs` for `aidrian-knowledge`.
 
 `aidrian lint` keeps the project's AI instructions cheap and portable, with the limits in config.json. Run it beside `aidrian check`:
 

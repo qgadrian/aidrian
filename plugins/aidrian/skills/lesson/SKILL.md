@@ -25,7 +25,7 @@ LESSON
 Everything travels on stdin through a quoted heredoc, so `$(...)`, backticks, `$VAR`, quotes, and `&` in it are never expanded.
 Leading `evidence:` lines are evidence, zero or more; the note is everything after them. Only the options go on the command line.
 
-- **note**: from the request; if there is none, ask one question. Never guess it.
+- **note**: from the request; if there is none, ask the user one question. Never guess it.
   The first line is the title triage reads first: one sentence that names the problem.
   Keep the specifics after it: the paths, the command, the error text. Triage generalizes; capture must not lose evidence.
 - **evidence**: a file, doc, transcript, pull request, log, or session id, when one is at hand. Optional.

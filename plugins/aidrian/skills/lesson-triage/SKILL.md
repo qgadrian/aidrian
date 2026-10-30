@@ -71,8 +71,8 @@ Then pick one end per lesson:
 
 ## 4. Route and resolve
 
-Show the decisions as one table: id, tier, title, end, owner, and what should move.
-Wait for approval before any write, hand-off, or issue; merges and label changes need none.
+Show the user the decisions as one table: id, tier, title, end, owner, and what should move.
+Wait for the user's approval before any write, hand-off, or issue; merges and label changes need none.
 
 Hand each owner its lessons in one batch: the ids, the project folder, and what should move for each.
 `harness-mechanic` and `harness-librarian` resolve what they fix; check with `aidrian lesson list <id>`.
@@ -109,6 +109,6 @@ Commit nothing here; each change commits through its own owner.
 ## Rules
 
 - Dedupe before you create. A second issue for a known problem is worse than none.
-- Approval before any write, hand-off, or issue: the decision table is the gate.
+- The user's approval before any write, hand-off, or issue: the decision table is the gate.
 - An outcome that changes what users see goes to the project's product owner, when it has one, before an issue is written.
 - Never edit the inbox by hand; `aidrian lesson` is the only change.

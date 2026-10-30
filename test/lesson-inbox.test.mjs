@@ -300,6 +300,17 @@ test('stats prints the summary, and --json the same numbers', (t) => {
   assert.equal(run(['stats', '--since', 'soon']).stderr, '--since takes 7d, 24h, 30m, or YYYY-MM-DD, not soon\n');
 });
 
+test('--project reads another project\'s inbox, and a missing or unknown action prints the usage', (t) => {
+  const { repo, env, add } = setup(t);
+  const id = add('from the project');
+  const elsewhere = spawnSync(CLI, ['lesson', 'list', '--json', '--project', repo], { cwd: tmpdir(), encoding: 'utf8', env });
+  assert.deepEqual(JSON.parse(elsewhere.stdout).map((row) => row.id), [id]);
+  for (const args of [[], ['show']]) {
+    const usage = spawnSync(CLI, ['lesson', ...args], { cwd: repo, encoding: 'utf8', env });
+    assert.deepEqual([usage.status, usage.stderr.startsWith('usage: aidrian lesson add [--tier P1|P2|P3]')], [1, true]);
+  }
+});
+
 test('a lesson another session writes while a resolve runs is never lost', (t) => {
   // The other session opened the inbox before the resolve and writes after it. A resolve that replaced the file would
   // leave that write in the replaced copy, and the lesson would be gone.

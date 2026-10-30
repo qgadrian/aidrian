@@ -9,7 +9,7 @@
     },
     "code-style.md": {
       "summary": "JavaScript module style, naming, comments, and keeping dates in UTC.",
-      "tags": ["code_style"]
+      "tags": ["code_style", "backend"]
     },
     "testing.md": {
       "summary": "Where unit tests live, how to run them with node --test, and what to mock.",
@@ -21,7 +21,7 @@
     },
     "branches-and-reviews.md": {
       "summary": "Branch names, one worktree per task, rebasing, and who reviews product-sensitive changes.",
-      "tags": ["orchestration"]
+      "tags": ["orchestration", "review"]
     },
     "docs-ownership.md": {
       "summary": "Who owns each docs folder, and when docs change with the code.",

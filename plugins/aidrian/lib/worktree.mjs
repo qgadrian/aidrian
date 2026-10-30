@@ -11,6 +11,7 @@ import { spawnSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { CONFIG_ERROR, commandConfig } from './config.mjs';
+import { ghJson } from './gh.mjs';
 import { checkoutRoots, isIgnored } from './git.mjs';
 import { projectAt, worktreesDir } from './project.mjs';
 
@@ -192,11 +193,9 @@ export function parseDuration(text) {
 
 // Head commits of merged pull requests, by branch name, or null when gh cannot answer (absent, offline, no GitHub).
 export function mergedHeads(main) {
-  const listed = run('gh', ['pr', 'list', '--state', 'merged', '--limit', String(GH_PR_LIMIT), '--json', 'headRefName,headRefOid'], { cwd: main });
-  if (listed.status !== 0) return null;
   try {
     const heads = new Map();
-    for (const { headRefName, headRefOid } of JSON.parse(listed.stdout)) {
+    for (const { headRefName, headRefOid } of ghJson(['pr', 'list', '--state', 'merged', '--limit', String(GH_PR_LIMIT), '--json', 'headRefName,headRefOid'], { cwd: main })) {
       if (headRefName && headRefOid) heads.set(headRefName, [...(heads.get(headRefName) ?? []), headRefOid]);
     }
     return heads;

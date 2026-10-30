@@ -44,7 +44,7 @@ test('aidrian commit-msg reads the types from config.json and the message from a
   const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-commit-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   mkdirSync(path.join(dir, '.aidrian'));
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, commits: { types: ['feat', 'wip'] } }));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, git: { commits: { types: ['feat', 'wip'] } } }));
   writeFileSync(path.join(dir, 'MSG'), '# comment\nwip: half done\n');
   const run = (args) => spawnSync(CLI, ['commit-msg', ...args], { cwd: dir, encoding: 'utf8' });
 

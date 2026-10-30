@@ -22,10 +22,6 @@ const GIT_SCHEMA = {
   commits: { types: 'texts' },
 };
 
-// Deprecated: before the `git` group, its keys sat at the top level. loadConfig still reads them there, under the same
-// names and checks, and a `git.*` value wins over its top-level one, key by key. docs/config.md#deprecated-top-level-git-keys.
-export const LEGACY_GIT_KEYS = Object.freeze(Object.keys(GIT_SCHEMA));
-
 // The type of every key. A nested object is one group of keys; a project sets any subset of a group.
 const SCHEMA = {
   git: GIT_SCHEMA,
@@ -154,11 +150,7 @@ export function loadConfig(project) {
   const problem = versionProblem(file, raw.version);
   if (problem) return { config: DEFAULTS, errors: [problem], current: false };
   const { version, ...values } = raw;
-  // The deprecated top-level git keys go over the defaults first; `git.*` then goes over them, key by key.
-  const legacy = Object.fromEntries(LEGACY_GIT_KEYS.filter((key) => Object.hasOwn(values, key)).map((key) => [key, values[key]]));
-  for (const key of LEGACY_GIT_KEYS) delete values[key];
-  const gitBase = merge(GIT_SCHEMA, DEFAULTS.git, legacy, '', file, errors);
-  const config = merge(SCHEMA, { ...DEFAULTS, git: gitBase }, values, '', file, errors);
+  const config = merge(SCHEMA, DEFAULTS, values, '', file, errors);
   if (config.github.reviewer === NO_REVIEWER) config.github = { ...config.github, reviewer: null };
   if (project.localModels !== undefined) config.models = checkModels(project.localModels, project.paths.local, errors, config.models);
   for (const [key, local] of [['names', project.localNames], ['telemetry', project.localTelemetry]]) {

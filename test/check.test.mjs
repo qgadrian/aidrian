@@ -123,9 +123,9 @@ test('init in a linked worktree writes only inside that worktree, never the main
 
 test('check follows worktrees.dir: a folder inside the project needs a line, one outside the repository needs none', (t) => {
   const dir = exampleRepo(t);
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, worktrees: { dir: 'trees' } }));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, git: { worktrees: { dir: 'trees' } } }));
   assert.equal(run(['check'], dir).stderr, 'trees/ is not git-ignored: add the line "trees/" to .gitignore, or run aidrian init\n');
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, worktrees: { dir: '../trees' } }));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, git: { worktrees: { dir: '../trees' } } }));
   assert.equal(run(['check'], dir).status, 0);
 });
 
@@ -270,11 +270,11 @@ test('init adds the missing lines to an existing project and keeps its config', 
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   execFileSync('git', ['init', '-q', dir]);
   mkdirSync(path.join(dir, '.aidrian'));
-  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1, "defaultBranch": "trunk"}');
+  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1, "git": {"defaultBranch": "trunk"}}');
   const { status, stdout } = run(['init'], dir);
   assert.equal(status, 0);
   assert.equal(stdout.split('\n')[0], 'added to .gitignore: .aidrian.local.json, .worktrees/');
-  assert.equal(readFileSync(path.join(dir, '.aidrian/config.json'), 'utf8'), '{"version": 1, "defaultBranch": "trunk"}');
+  assert.equal(readFileSync(path.join(dir, '.aidrian/config.json'), 'utf8'), '{"version": 1, "git": {"defaultBranch": "trunk"}}');
 });
 
 // The tree in docs/project-folder.md is the folder contract: every committed entry exists in the example consumer, every

@@ -78,7 +78,7 @@ test('a git that hangs is stopped after the timeout and counts as git not answer
   // The main-checkout rule lets a Bash write run when git cannot answer. The hook asks git more than once, but waits
   // only for the first call, so it ends well inside the host's 5 s limit.
   mkdirSync(path.join(dir, '.aidrian'), { recursive: true });
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, mainCheckout: { guard: true } }));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, git: { mainCheckout: { guard: true } } }));
   const hook = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-bash.mjs');
   const input = JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'echo x > tracked.md' }, cwd: dir });
   started = Date.now();

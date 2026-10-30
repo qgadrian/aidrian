@@ -105,14 +105,6 @@ In a group such as `github`, set only the keys you change; the others keep their
 A path in `state.dir` or `git.worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
 
-### Deprecated top-level git keys
-
-Before the `git` group, its keys sat at the top level: `defaultBranch`, `worktrees`, `mainCheckout`, and `commits`.
-That location is deprecated, and still read, with the same checks, so an existing `config.json` keeps working.
-When a key is set in both places, the `git` one wins, key by key:
-`"worktrees": { "bootstrap": "npm ci" }` with `"git": { "worktrees": { "dir": "../wt" } }` sets both.
-To migrate, move each of those keys, unchanged, into `"git": { ... }`.
-
 Once `github.conditionalChecks` has an entry, `aidrian pr checks` fails on any other skip; `[]` lets every skip pass, named in the output.
 
 ### No review bot

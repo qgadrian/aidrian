@@ -23,16 +23,15 @@ test('the example consumer config is valid, turns the main-checkout guard on, an
 
 test('file values win; a group keeps the defaults for the keys the file leaves out', (t) => {
   const github = { maxReviewRounds: 3, requiredChecks: ['e2e'], conditionalChecks: ['db tests'] };
-  const { config, errors } = loadConfig(project(t, { version: 1, defaultBranch: 'trunk', github }));
+  const { config, errors } = loadConfig(project(t, { version: 1, git: { defaultBranch: 'trunk' }, github }));
   assert.deepEqual(errors, []);
   assert.equal(config.git.defaultBranch, 'trunk');
   assert.deepEqual(config.github, { ...DEFAULTS.github, ...github });
   assert.deepEqual(config.git.worktrees, DEFAULTS.git.worktrees);
 });
 
-test('git groups the git keys; the deprecated top-level keys still load, and git.* wins key by key', (t) => {
+test('git groups the git keys, and the old top-level keys are unknown', (t) => {
   assert.deepEqual(Object.keys(DEFAULTS.git), ['defaultBranch', 'worktrees', 'mainCheckout', 'commits']);
-  for (const key of Object.keys(DEFAULTS.git)) assert.equal(Object.hasOwn(DEFAULTS, key), false, `no top-level ${key}`);
   const nested = loadConfig(project(t, { version: 1, git: { defaultBranch: 'trunk', worktrees: { dir: '../wt' }, mainCheckout: { guard: true }, commits: { types: ['feat'] } } }));
   assert.deepEqual(nested.errors, []);
   assert.deepEqual(nested.config.git, {
@@ -41,19 +40,11 @@ test('git groups the git keys; the deprecated top-level keys still load, and git
     mainCheckout: { guard: true, allowWrites: [] },
     commits: { types: ['feat'] },
   });
-  const legacy = { defaultBranch: 'old', worktrees: { dir: 'old-wt', bootstrap: 'make setup' }, mainCheckout: { guard: true }, commits: { types: ['wip'] } };
-  assert.deepEqual(loadConfig(project(t, { version: 1, ...legacy })).config.git, {
-    defaultBranch: 'old',
-    worktrees: { ...DEFAULTS.git.worktrees, dir: 'old-wt', bootstrap: 'make setup' },
-    mainCheckout: { guard: true, allowWrites: [] },
-    commits: { types: ['wip'] },
-  });
-  const both = loadConfig(project(t, { version: 1, ...legacy, git: { defaultBranch: 'trunk', worktrees: { dir: '../wt' } } }));
-  assert.deepEqual(both.errors, []);
-  assert.equal(both.config.git.defaultBranch, 'trunk');
-  assert.deepEqual(both.config.git.worktrees, { ...DEFAULTS.git.worktrees, dir: '../wt', bootstrap: 'make setup' }, 'a key git.* leaves out keeps its top-level value');
-  assert.deepEqual(both.config.git.commits, { types: ['wip'] });
-  assert.equal(Object.hasOwn(both.config, 'defaultBranch'), false, 'the loaded config has only git.*');
+  for (const key of Object.keys(DEFAULTS.git)) {
+    const loaded = loadConfig(project(t, { version: 1, [key]: {} }));
+    assert.deepEqual(loaded.errors, [`.aidrian/config.json: unknown key "${key}"`], key);
+    assert.equal(Object.hasOwn(loaded.config, key), false, key);
+  }
   assert.deepEqual(loadConfig(project(t, { version: 1, git: { defaultBranch: ' ', remote: 'origin' } })).errors, [
     '.aidrian/config.json: unknown key "git.remote"',
     '.aidrian/config.json: "git.defaultBranch" must be a non-empty string',
@@ -80,7 +71,7 @@ test('github.reviewer: null or "none" turns the review bot off, as null; an empt
 });
 
 test('the loaded config is frozen all the way down', (t) => {
-  const { config } = loadConfig(project(t, { version: 1, mainCheckout: { allowWrites: ['notes/**'] } }));
+  const { config } = loadConfig(project(t, { version: 1, git: { mainCheckout: { allowWrites: ['notes/**'] } } }));
   assert.throws(() => { config.git.defaultBranch = 'x'; }, TypeError);
   assert.throws(() => { config.github.reviewer = 'x'; }, TypeError);
   assert.throws(() => config.git.mainCheckout.allowWrites.push('x'), TypeError);
@@ -95,13 +86,13 @@ const errorCases = [
   ['unknown key in a group', { version: 1, github: { reviewers: 'x' } }, /: unknown key "github\.reviewers"$/],
   ['zero for a knowledge budget', { version: 1, knowledge: { budgets: { taggedDocBytes: 0 } } }, /"knowledge\.budgets\.taggedDocBytes" must be a whole number above 0$/],
   ['inherited property name as a key', JSON.parse('{"version": 1, "__proto__": {}}'), /: unknown key "__proto__"$/],
-  ['string instead of a list', { version: 1, commits: { types: 'feat' } }, /"commits\.types" must be a list of non-empty strings$/],
+  ['string instead of a list', { version: 1, git: { commits: { types: 'feat' } } }, /"git\.commits\.types" must be a list of non-empty strings$/],
   ['check names that are not a list', { version: 1, github: { conditionalChecks: 'db tests' } }, /"github\.conditionalChecks" must be a list of non-empty strings$/],
   ['group that is not an object', { version: 1, github: [] }, /"github" must be an object$/],
   ['negative number', { version: 1, docs: { wrapLimit: -1 } }, /"docs\.wrapLimit" must be a whole number, 0 or more$/],
   ['zero where a positive number is needed', { version: 1, github: { maxReviewRounds: 0 } }, /"github\.maxReviewRounds" must be a whole number above 0$/],
-  ['string for a boolean', { version: 1, mainCheckout: { guard: 'no' } }, /"mainCheckout\.guard" must be true or false$/],
-  ['empty string', { version: 1, defaultBranch: ' ' }, /"defaultBranch" must be a non-empty string$/],
+  ['string for a boolean', { version: 1, git: { mainCheckout: { guard: 'no' } } }, /"git\.mainCheckout\.guard" must be true or false$/],
+  ['empty string', { version: 1, git: { defaultBranch: ' ' } }, /"git\.defaultBranch" must be a non-empty string$/],
   ['handoff mode outside its list', { version: 1, session: { handoff: 'always' } }, /"session\.handoff" must be "off", "ask", or "auto"$/],
   ['lesson signals switch that is not a boolean', { version: 1, lessons: { auto: 'off' } }, /"lessons\.auto" must be true or false$/],
   ['a negative lesson age limit', { version: 1, lessons: { maxAgeDays: -1 } }, /"lessons\.maxAgeDays" must be a whole number, 0 or more$/],
@@ -290,15 +281,15 @@ test('agents: no gates by default; .aidrian.local.json wins over config.json one
 test('worktrees.dir defaults to .worktrees, bootstrap to null, and disposable to package and build folders; a value replaces each', (t) => {
   const disposable = ['node_modules', 'dist', 'build', '.next', '.cache', 'coverage', '.turbo'];
   assert.deepEqual(DEFAULTS.git.worktrees, { dir: '.worktrees', bootstrap: null, disposable });
-  assert.deepEqual(loadConfig(project(t, { version: 1, worktrees: { bootstrap: null } })).errors, []);
-  const { config } = loadConfig(project(t, { version: 1, worktrees: { dir: '../wt', bootstrap: 'npm ci', disposable: [] } }));
+  assert.deepEqual(loadConfig(project(t, { version: 1, git: { worktrees: { bootstrap: null } } })).errors, []);
+  const { config } = loadConfig(project(t, { version: 1, git: { worktrees: { dir: '../wt', bootstrap: 'npm ci', disposable: [] } } }));
   assert.deepEqual(config.git.worktrees, { dir: '../wt', bootstrap: 'npm ci', disposable: [] });
-  assert.deepEqual(loadConfig(project(t, { version: 1, worktrees: { dir: null } })).errors, [
-    '.aidrian/config.json: "worktrees.dir" must be a non-empty string',
+  assert.deepEqual(loadConfig(project(t, { version: 1, git: { worktrees: { dir: null } } })).errors, [
+    '.aidrian/config.json: "git.worktrees.dir" must be a non-empty string',
   ]);
   for (const bad of [['packages/web/dist'], ['..'], 'node_modules', [' ']]) {
-    const loaded = loadConfig(project(t, { version: 1, worktrees: { disposable: bad } }));
-    assert.deepEqual(loaded.errors, ['.aidrian/config.json: "worktrees.disposable" must be a list of folder names with no "/", such as "node_modules"'], JSON.stringify(bad));
+    const loaded = loadConfig(project(t, { version: 1, git: { worktrees: { disposable: bad } } }));
+    assert.deepEqual(loaded.errors, ['.aidrian/config.json: "git.worktrees.disposable" must be a list of folder names with no "/", such as "node_modules"'], JSON.stringify(bad));
     assert.deepEqual(loaded.config.git.worktrees.disposable, disposable);
   }
 });

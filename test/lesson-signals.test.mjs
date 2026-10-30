@@ -122,7 +122,7 @@ test('the Bash hook still blocks every time, and the third block of a rule in a 
 });
 
 test('the write hook counts its main-checkout blocks the same way', (t) => {
-  const { dir, all, hook } = project(t, { version: 1, mainCheckout: { guard: true } });
+  const { dir, all, hook } = project(t, { version: 1, git: { mainCheckout: { guard: true } } });
   writeFileSync(path.join(dir, 'app.js'), '');
   spawnSync('git', ['-C', dir, 'add', 'app.js']);
   const edit = { tool_name: 'Edit', tool_input: { file_path: path.join(dir, 'app.js') }, session_id: 'write-1' };

@@ -106,7 +106,7 @@ test('ignored files only in worktrees.disposable folders, at any depth, leave a 
   writeFileSync(path.join(dirs.pr, 'build'), '');
   assert.deepEqual(rowOf(plan(), 'pr').ignored, ['build']);
   rmSync(path.join(dirs.pr, 'build'));
-  writeFileSync(path.join(repo, '.aidrian/config.json'), JSON.stringify({ version: 1, worktrees: { disposable: ['.next'] } }));
+  writeFileSync(path.join(repo, '.aidrian/config.json'), JSON.stringify({ version: 1, git: { worktrees: { disposable: ['.next'] } } }));
   assert.deepEqual(rowOf(plan(), 'pr').ignored, ['node_modules/', 'packages/web/node_modules/']);
   writeFileSync(path.join(repo, '.aidrian/config.json'), '{"version": 1}');
 

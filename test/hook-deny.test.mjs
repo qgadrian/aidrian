@@ -89,7 +89,7 @@ test('telemetry.hookDenies false, or telemetry off: no row, the hooks still bloc
 });
 
 test('the write hook, the agent gates, and the config guard record their blocks too; a gate that keeps blocking is the project`s lesson', (t) => {
-  const { dir, hook, rows, inbox } = project(t, { version: 1, mainCheckout: { guard: true }, agents: { explorer: { deny: ['WebFetch'] } } });
+  const { dir, hook, rows, inbox } = project(t, { version: 1, git: { mainCheckout: { guard: true } }, agents: { explorer: { deny: ['WebFetch'] } } });
   const explorer = { agent_type: 'aidrian:explorer', agent_id: 'a1', session_id: 's2' };
   assert.equal(hook('hook-write.mjs', { tool_name: 'Edit', tool_input: { file_path: path.join(dir, 'app.js') }, session_id: 's2' }).status, 2);
   for (let i = 0; i < REPEATED_DENIALS; i += 1) {

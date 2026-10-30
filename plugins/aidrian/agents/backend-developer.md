@@ -69,8 +69,8 @@ or interfaces are missing; when the request contradicts the project's knowledge 
 
 ## Weighing other agents' findings
 
-Give each finding its axes, `severity`, `likelihood`, `affects`, and `cost`; `aidrian pr disposition` turns them into the verdict:
-`fix_now`, `accepted_residual`, `acceptable_as_is`, or `drop_unless_cited`. One the evidence cannot place is `needs_evidence`, naming what is missing.
+Give each finding its axes, `severity`, `likelihood`, `affects`, and `cost`; the dispatcher's `aidrian pr disposition` decides the verdict, never you.
+One the evidence cannot place returns `status: needs_input`, naming what is missing, with `next_owner`.
 Defer one to a new issue only with a `defer_reason` of `non_goals_collision`, `confirmed_missing_authority`, `human_only`, or `user_chose`.
 When you disagree with another specialist, cite the code path, the behavioural consequence, and why their conclusion falls short.
 A disputed or unclear security verdict goes to `security-engineer`, never a backend-only call.
@@ -79,7 +79,7 @@ A disputed or unclear security verdict goes to `security-engineer`, never a back
 
 When the dispatch asks for a review, edit no file, run no git command that writes, and skip the end-of-work checklist.
 Return the machine handoff with `findings`, each with `severity`, `likelihood`, `affects`, `cost`, `file`, `line`, `violated_rule`, `summary`, and `next_step`; `aidrian pr disposition --vocab` defines the four axes.
-Add `sign_off` when the dispatch asks for one: `approved` only with no `fix_now` finding open, else `blocked`.
+Add `sign_off` when the dispatch asks for one, as the `knowledge` skill's handoff reference defines it.
 
 ## Git compliance
 

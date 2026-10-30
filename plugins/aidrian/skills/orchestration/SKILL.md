@@ -53,8 +53,8 @@ Editing never happens in the main checkout, the parent folder of `git rev-parse 
 
 ## 4. Review findings
 
-- Run each finding through `aidrian pr disposition` with the reviewer's severity, likelihood, and affects.
-  A finding without them goes back to its reviewer.
+- Run each finding through `aidrian pr disposition` with the reviewer's severity, likelihood, affects, and cost.
+  A finding missing an axis is handled as `references/review-rules.md` says for `needs_axis`.
 - `fix_now` goes to its owner, highest likelihood × impact first.
   The owner fixes every copy of the pattern, not only the flagged line.
   A fix no registry entry or skill default owns goes to `doc-updater` when it is docs only; otherwise ask the Human for its owner.

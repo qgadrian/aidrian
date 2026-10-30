@@ -85,11 +85,11 @@ Rules:
 
 ## Output Requirements
 
-Return:
+Return the machine handoff from the `knowledge` skill, with:
 
-- the updated local plan artifact path
-- a short note on whether the plan is implementation-ready as a local artifact
-- if tracker publication is likely next, a short note that `initiative-agent` should normalize the plan before `agent-issue-writer` publishes it
+- the local plan path in `artifacts`; the plan file itself stays human-readable as `references/plan-file.md` describes
+- in `decision`, whether the plan is implementation-ready as a local artifact
+- when tracker publication is likely next, `next_owner: initiative-agent`, which normalizes the plan before `agent-issue-writer` publishes it
 
 ## Self-critique pass
 
@@ -107,18 +107,12 @@ One pass only; do not loop.
 
 ## Blocked Mode
 
-If the plan cannot be completed safely, return only:
+If the plan cannot be completed safely, return the machine handoff with `status: blocked`, or `needs_input` when only the Human can answer:
+the missing information and the questions to unblock in `blockers`, the repo paths to inspect in `deferred_refs`,
+and the plan path in `artifacts` when a draft exists.
 
-```md
-Blocked because:
-- ...
+## Critique mode (plan-review)
 
-Missing information:
-- ...
-
-Recommended repo paths to inspect:
-- ...
-
-Questions to unblock:
-- ...
-```
+When the `plan-review` skill dispatches you to critique, stay read-only: edit no file, and skip § Self-critique pass.
+Apply the `plan-review` skill's `references/review-lens.md` and return its findings, with the proposed change as a unified diff
+in `artifacts.proposed_diff` unless the brief says `--findings-only`. Write the plan only when a later dispatch carries the approved diff.

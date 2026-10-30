@@ -44,8 +44,10 @@ A topic that already has a real doc is never `generate`. Ask only when two modes
 6. **Check.** Run `aidrian check`, and `aidrian lint budget` when `always` changed. Fix what they report.
    Never raise a limit to make a check pass.
 7. **Commit.** The agent that wrote the docs commits them: one Conventional Commits commit in the task worktree,
-   never the main checkout, then a push, the first one with `-u`.
-   A session the Human runs directly asks before it commits.
+   never the main checkout. A session the Human runs directly asks before it commits.
+   Push the current branch to `origin`, the first push with `-u`, only when the Human asked or the dispatch says to push,
+   and never to a ready pull request (the `orchestration` skill's `references/review-rules.md` § A ready pull request).
+   A dispatch that does not say to commit gets no commit: return the changed files in `pending_commit`.
 8. **Report:** the docs written, with their modes; the docs skipped, with why; key evidence per source, with links;
    each contradiction and how the user settled it; the sources that were skipped or down; the `aidrian check` line;
    the extra items the mode's file lists; and the commit, or why there is none.

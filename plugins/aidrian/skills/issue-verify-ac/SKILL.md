@@ -25,7 +25,7 @@ Before you start, follow the `knowledge` skill. Load your `issue_tracker` docs f
   - `worktree`: the current working tree, to track progress during implementation.
 - `--writeback`:
   - `ask`, the default: show the change and write after the Human confirms.
-  - `auto`: write without asking, only in an unattended run where every `met` criterion has an anchor, none is disputed,
+  - `auto`: write without asking, only when the Human passed it or `autopilot` launched the run, and every `met` criterion has an anchor, none is disputed,
     and nothing would be unticked. Otherwise it falls back to `ask`.
   - `never`: report only.
 
@@ -62,7 +62,8 @@ Each criterion gets exactly one.
    and id, such as `AC1`. Without ids, number them by position and report them as derived.
    No section and no checklist: stop and ask, offering `agent-issue-writer`. Vague criteria are `ambiguous` at once and skip step 3.
    A comment that amends a criterion goes in the report; the criteria come from the description unless it defers to a comment.
-2. **Ref.** `--against` when given; `pr` finds its pull request as the first case below. Otherwise:
+2. **Ref.** `--against` when given; `pr` finds its pull request as the first case below. Otherwise, on GitHub
+   (on another forge, use `--against head` or `worktree`, or the tracker's pull request reference):
    - The issue links a pull request: `gh pr view <url> --json state,isDraft,headRefOid`.
      The first open, non-draft one makes the ref `pr`, at its `headRefOid`. Fetch it: `git fetch origin pull/<n>/head`.
    - The current branch is the issue's, with uncommitted source changes: ask whether to verify `worktree` or `head`.

@@ -21,7 +21,7 @@ and `security` docs for the surfaces that need a security pass.
 
 - A plan path: absolute or from the repository root. An issue key or URL: the plan for that issue, found as step 1 says.
 - `--findings-only`: critique without a proposed diff.
-- `--apply`: the Human approves the diff this session proposed earlier; go to step 5.
+- `--apply`: the Human approves the diff this session proposed earlier; go to step 5. Valid only as step 5 says.
 - `--extended`: allow one refinement pass more than step 6 does.
 
 **stop** ends the run with a report; **stop and ask** adds one question only the Human can answer.
@@ -81,7 +81,8 @@ Then report, in this order, and stop:
 
 ## 5. Apply
 
-Only on the Human's explicit `apply` in this session.
+Only on the Human's explicit `apply` in this session, after step 4 in this same session: it needs step 2's hash and step 4's diff.
+`--apply` without both: refuse, and say to rerun without `--apply`.
 
 1. Hash the plan again. When it changed since step 2, say so and start again at step 2:
    the changed plan gets a new hash, and the gates judge its new text before the next critique.

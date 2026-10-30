@@ -54,10 +54,11 @@ For each slice:
    - when to escalate: scope grows, product truth or a type is missing, a trust boundary or shared wrapper changes,
      or a hook would need bypassing;
    - tests first where practical. An exception goes in `compliance` as `tdd_exception: <reason>`, with the closest regression test;
-   - implement and verify only, no commit yet.
+   - implement and verify only, no commit yet; list each changed file in `pending_commit`.
 5. **Check what landed.** Before the slice's first dispatch, keep `git -C <worktree> rev-parse HEAD` as the slice base.
    After each dispatch:
-   - `git -C <worktree> status --porcelain` shows the claimed files. Missing: one retry with the same owner, then stop.
+   - `git -C <worktree> status --porcelain` matches the return's `pending_commit`. A file missing from either side:
+     one retry with the same owner, then stop.
    - The commit-count guard: `git -C <worktree> rev-list --count <slice base>..HEAD` equals what the dispatch allowed, 0 or 1.
      More is an overstep: stop, list the extra commits, and put each one through its skipped review and verification first.
 6. **Review, before the commit.** The slice's diff is `git -C <worktree> diff <slice base>`, the index and the working tree,

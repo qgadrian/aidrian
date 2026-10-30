@@ -293,7 +293,12 @@ test('ln, truncate, install, dd, git checkout --, git restore, and a glob that m
   ]) {
     assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /\.aidrian/, command);
   }
-  for (const command of ['rm src/*.js', 'ln -s /tmp/x src/link']) {
+  // A glob whose folder is unknown, through a globbed folder or an unknown cd, still fails closed.
+  for (const command of ['rm -rf */config.json', 'cd "$d" && rm -rf *', 'cd build && rm -rf *']) {
+    assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /\.aidrian/, command);
+  }
+  // A glob in a known folder that holds no guarded file changes none: routine clean-ups run.
+  for (const command of ['rm src/*.js', 'ln -s /tmp/x src/link', 'rm -rf dist/*', 'cp a.txt out/*', 'cd build && rm -rf build/*']) {
     assert.equal(verdict(dir, subagent(dir, 'Bash', { command })), null, command);
   }
 });

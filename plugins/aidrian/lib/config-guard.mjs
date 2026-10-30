@@ -75,7 +75,7 @@ function writeTargets(input) {
   return {
     files: writes.flatMap((write) => write.files),
     names: [...writes.filter((write) => write.unsure && !write.glob && !path.isAbsolute(write.text)).map((write) => write.text), ...interpretedCode(command)],
-    globs: writes.filter((write) => write.glob).map((write) => write.text),
+    globs: writes.filter((write) => write.glob),
   };
 }
 
@@ -95,14 +95,21 @@ function namedFile(names, files, project, also) {
   return patterns.find(([, pattern]) => names.some((name) => pattern.test(name)))?.[0] ?? null;
 }
 
-// The guarded file a glob target may match, or null: its last part, as `*.json` or `.aid*`, against the file's name or
-// its folder's, which a recursive delete removes with it. Where the glob's folder is cannot matter: failing closed.
+// The guarded file a glob target may match, or null: the path part right below the glob's folder, as `*.json` or `.aid*`,
+// against the file's own name or the folder that holds it, which a recursive delete removes with it. When the glob's
+// folder is known, only files inside it count, so `rm -rf dist/*` changes nothing guarded; when a glob or an unknown `cd`
+// leaves the folder unknown, any file's name or folder counts: failing closed.
 function globbedFile(globs, files) {
-  const patterns = globs.map((glob) => {
-    const last = glob.replace(/\/+$/u, '').split('/').pop();
-    return new RegExp(`^${last.split(/([*?])/u).map((part) => ({ '*': '.*', '?': '.' })[part] ?? part.replace(/[.+^${}()|[\]\\]/gu, '\\$&')).join('')}$`, 'u');
-  });
-  return files.find((file) => patterns.some((pattern) => pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file))))) ?? null;
+  const regex = (glob) =>
+    new RegExp(`^${glob.split(/([*?])/u).map((part) => ({ '*': '.*', '?': '.' })[part] ?? part.replace(/[.+^${}()|[\]\\]/gu, '\\$&')).join('')}$`, 'u');
+  return files.find((file) => globs.some(({ text, dirs = [], unsure = true }) => {
+    const parts = text.replace(/\/+$/u, '').split('/');
+    const pattern = regex(parts.pop());
+    const head = parts.join('/') || (text.startsWith('/') ? '/' : '.');
+    if (unsure || /[*?[]/u.test(head)) return pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file)));
+    const folders = path.isAbsolute(head) ? [head] : dirs.map((dir) => path.resolve(dir, head));
+    return folders.some((folder) => isWithin(canonical(folder), file) && pattern.test(path.relative(canonical(folder), file).split(path.sep)[0]));
+  })) ?? null;
 }
 
 const wholePart = (name, after) => new RegExp(`(?<![\\w.-])${name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}${after}`, 'u');

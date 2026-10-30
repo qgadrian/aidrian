@@ -82,6 +82,8 @@ then the critical-flow and security gates, then these defaults.
 - A flow the project's `product_sensitive` knowledge declares critical: `product-manager` first, even unasked, then a `planning-agent` plan;
   implement only after `sign_off: approved`, and `code-reviewer` signs off after.
 - A plan request: `planning-agent`. Never rewrite its plan.
+- An issue to implement: run the `issue-implement` skill, so its tracker guards and In Progress move hold;
+  a reviewed local plan with no issue: the `plan-implement` skill.
 - Product behavior may change: `product-manager` (invariants and outcomes, never schema), then `architect`, then the implementer.
   When the docs do not settle it: `explorer`, then `product-manager`, then the Human with its `decision_options`.
 - Shape unclear: `architect`. Codepath unclear: `explorer`. Why the code is this way: `github-archaeologist`.

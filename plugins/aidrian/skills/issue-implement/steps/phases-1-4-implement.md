@@ -3,7 +3,7 @@
 ## Phase 1: workspace
 
 1. The branch is the issue's branch by `references/tracker.md` in the `knowledge` skill: on Linear its `gitBranchName`, as it is;
-   otherwise, or without one, the branch format the project's `issue_tracker` knowledge names.
+   otherwise, or without one, the branch format the project's `issue_tracker` knowledge names, else the `knowledge` skill's default.
 2. Follow the `orchestration` skill § 1 with that branch and `--base origin/<base>`.
    - An existing worktree for the branch: `git -C <path> status --porcelain` and `git -C <path> log -1 --oneline`.
      Clean and at the branch tip: use it. Dirty with unrelated changes, or diverged: stop and ask.
@@ -38,7 +38,8 @@ For each slice:
 
 1. **Plan state.** Read the plan again and set the slice's `status: in_progress`. Step 9 sets `status: complete`.
    The plan records no commit SHA: `git log` finds a slice's commit by its subject.
-   When git tracks the plan file, as a design import's, the plan is one of the slice's files and goes in its commit.
+   When git tracks the plan file, as a design import's, the plan is one of the slice's files and goes in its commit;
+   under the `orchestrator`, `planning-agent` makes this edit and step 9's.
    The plan file is the record a resumed run trusts.
 2. **Scope gate.** A directive from a knowledge doc that contradicts the issue's non-goals or leaves its files to modify
    is a `scope_collision`: stop and ask, citing both.
@@ -77,7 +78,7 @@ For each slice:
    in the foreground and alone, on that flow.
 9. **Commit.** Once the review is clean, set the slice's `status: complete` in the plan.
    Then the slice's own agent makes exactly one Conventional Commits commit
-   with the planned subject and a `Refs <key>` body line, and pushes it, the first push with `-u`.
+   with the planned subject and a `Refs <ref>` body line, and pushes it, the first push with `-u`.
    The closing keyword goes in the pull request body, not in a commit.
    Its handoff lists the exact `git commit` and `git push` commands and `not_bypassed`, or `hook_failed`, in `compliance`.
    Run the commit-count guard again: one commit. A failed commit sets the status back to `in_progress`.

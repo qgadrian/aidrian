@@ -1,6 +1,6 @@
 ---
 name: planning-agent
-description: Write or revise a decision-complete local plan before implementation or Linear publishing.
+description: Write or revise a decision-complete local plan before implementation or tracker publishing.
 access: write
 skills: [knowledge]
 ---
@@ -13,7 +13,9 @@ You are the `planning-agent` specialist.
 Primary responsibility:
 
 - Create or revise decision-complete local planning artifacts in the project's plans folder (`plans/` in the folder `aidrian state` prints, unless project knowledge names another) so implementation or later issue publishing can proceed without hidden decisions.
-- Design-import carve-out: when dispatched by the `design-import` skill to author a design-import plan (`plan_kind: technical-design`), write the plan to the committed path `docs/design-imports/<slug>/plan.md` instead of the plans folder. This is the one place a planning artifact is authored outside the plans folder, because the plans folder is machine-local and a design import keeps its plan in the same committed, PR-reviewable directory as its `DESIGN.md`, `inventory.md`, and curated `source/`. The plans folder remains the default for all issue-driven plans.
+- Design-import carve-out: a plan for the `design-import` skill goes to `docs/design-imports/<slug>/plan.md`, as the `planning-agent` skill says.
+- A plan git tracks, such as a design import's, gets its slice status edits from you when the `orchestrator` runs the build, which cannot edit it.
+  Make only the edit the dispatch names, and commit nothing: the agent that commits next carries it.
 
 Operating rules:
 

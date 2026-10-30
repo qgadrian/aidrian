@@ -35,21 +35,21 @@ A project rule always wins over generic framework advice.
 ## Focus
 
 - Types: invented or unjustified assertions, weak boundary typing, unclear nullability, non-exhaustive handling, types that hide intent.
-  An invented assertion in production code is `fix now`; a boundary assertion without visible validation needs more evidence.
+  An invented assertion in production code is `fix_now`; a boundary assertion without visible validation is `needs_evidence`.
 - Trust boundaries: authorization gaps, missing server-side validation, unsafe rendering, redirect or URL-parameter trust,
   secret or credential exposure, uploads and other external content.
 - Caching and freshness: cache windows match the data's sensitivity. Data that changes outside the app (billing, account status)
-  needs short windows and revalidation when the user returns; aggressive caching of money or account state is `fix now`.
-- Simplicity: speculative abstraction, options beyond the requirement, or a reinvented helper is `fix now`, not advice.
+  needs short windows and revalidation when the user returns; aggressive caching of money or account state is `fix_now`.
+- Simplicity: speculative abstraction, options beyond the requirement, or a reinvented helper is `fix_now`, not advice.
 - Dependencies: a new third-party import is declared directly in the project's dependency manifest, in the right group.
-- Docs: a change that omits the docs it affects, or adds forward-looking wording such as "TBD", is `fix now`.
+- Docs: a change that omits the docs it affects, or adds forward-looking wording such as "TBD", is `fix_now`.
 
 ## External-contract evidence
 
 When the change sets a literal for a third-party CI action input, a library option object, an environment variable an external service reads,
 a CLI flag, or an external tool's config file, cite the documented contract for each literal:
 the action's definition at the pinned ref, the installed package's type definitions, or versioned docs with a section anchor.
-"Looks plausible" is not evidence; an unverifiable literal is `needs more evidence`, never a pass.
+"Looks plausible" is not evidence; an unverifiable literal is `needs_evidence`, never a pass.
 List every contract you consulted in `loaded_external_refs`, empty when none.
 
 ## Evidence standard for convention findings
@@ -67,11 +67,11 @@ such as 40 conforming call sites against 2 that differ. A finding with neither i
 5. A change to the range of values written to a persisted field: trace that field's readers, and their callers one level up, for assumptions
    the new values break. A missed guard on a provider-specific flow is High.
 6. A new or changed clamp, bound, range, or window: check all four input cases (lower extreme, upper extreme, equal, inverted).
-   An unhandled inverted case is `fix now`, High.
+   An unhandled inverted case is `fix_now`, High.
 7. A persisted value treated as authoritative: every attribute that must travel with it (a currency with an amount) is persisted and read with it,
-   and every read site uses the same source. A gap is `fix now`, High, Critical when it moves money.
+   and every read site uses the same source. A gap is `fix_now`, High, Critical when it moves money.
 8. Run the full test suite with the command the project's `testing` knowledge names, and report pass or fail with the failing tests.
-   A failing test is `fix now`.
+   A failing test is `fix_now`.
 9. Call out missing tests, weak verification, and residual risk.
 
 ## Findings
@@ -79,7 +79,7 @@ such as 40 conforming call sites against 2 that differ. A finding with neither i
 Report every finding, whatever its severity; the axes below rank them afterwards.
 For each, give `severity` (critical, high, medium, low), `likelihood` (routine, plausible, contrived), `affects` (users, operators, revenue,
 internal), and `cost` (trivial, bounded, structural). The verdict comes from
-`aidrian pr disposition --severity <s> --likelihood <l> --affects <a> --cost <c>`, not from severity alone; `needs more evidence` names
+`aidrian pr disposition --severity <s> --likelihood <l> --affects <a> --cost <c>`, not from severity alone; `needs_evidence` names
 the missing evidence. Defer to a new issue only with a `defer_reason` of `non_goals_collision`, `confirmed_missing_authority`, `human_only`,
 or `user_chose`.
 

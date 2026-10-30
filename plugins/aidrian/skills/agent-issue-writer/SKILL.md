@@ -12,7 +12,7 @@ Create tracker artifacts for coding agents, not summaries for humans.
 The result must let an execution agent complete the task in one pass and verify it without making hidden scope, testing, or ownership decisions.
 
 The project's `issue_tracker` knowledge names the tracker and owns its rules (team, transition rules, magic-word grammar, status taxonomy).
-Read the `knowledge` skill's `references/tracker.md` for each step's tool, and on Linear also `references/linear.md`
+Read the `knowledge` skill's `references/tracker.md` for each step's tool, and on Linear also this skill's `references/linear.md`
 before creating or updating Linear-native artifacts.
 
 Read `references/examples.md` when you need a concrete example for a standalone issue, initiative issue tree, or blocked ticket.
@@ -113,7 +113,8 @@ If repo context is available, discover missing fields through repo inspection be
    product knowledge in a doc from the project's `product_sensitive` knowledge.
 8. Draft the Markdown body using the canonical structure and its Agent Action Plan.
 9. Populate the tracker's native fields and links when the tool supports them.
-   On Linear, `priority` **and** `estimate` are non-optional parameters of the creating `save_issue` call — never a follow-up call, never left to the caller.
+   Priority and Effort are always set, as `references/issue-body.md` § Issue Fields says per tracker;
+   on Linear, `priority` **and** `estimate` are parameters of the creating `save_issue` call, never a follow-up call.
 10. Run the final quality gate in `references/issue-body.md`. If any required detail is still vague, rewrite or block.
 
 ## Output Modes
@@ -122,7 +123,7 @@ If repo context is available, discover missing fields through repo inspection be
 
 If the tracker's tool is available and the user asked to create the issue:
 
-- populate native fields first — on Linear, `save_issue(..., priority: <1-4>, estimate: <1|2|3|5>)` on the creating call, both always present;
+- populate native fields first: on Linear, `priority` and `estimate` on the creating `save_issue` call, by `references/linear.md`;
   on GitHub, `gh issue create` with the labels and milestone the `issue_tracker` knowledge names
 - keep the Markdown body aligned with the canonical structure
 - derive native dependency links from `dependencies`

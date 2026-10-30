@@ -82,7 +82,8 @@ Rules:
 
 ## Size Rules
 
-- Every issue blueprint must include a t-shirt size: `S`, `M`, or `L`.
+- Every issue blueprint must include a t-shirt size: `XS`, `S`, `M`, or `L`, the scale `agent-issue-writer` uses.
+- `XS` means a trivial single-site change, such as a one-line fix; anything that needs its own regression test is at least `S`.
 - `S` means one tightly bounded concern that is normally one reviewable PR-sized unit and does not need staged rollout.
 - `M` means one executable issue with multiple coordinated edits, one meaningful migration, or one cross-surface change that should still ship as one bounded PR group.
 - `L` means the work spans multiple independently shippable concerns, needs more than one PR-sized unit, or would reasonably become more than one PR group.

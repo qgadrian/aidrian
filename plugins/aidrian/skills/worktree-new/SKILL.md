@@ -9,7 +9,8 @@ A thin adapter for `aidrian worktree new`. The command owns the git and setup st
 
 ## Inputs
 
-- **Branch**: from the request or its issue, in the project's branch format. When nothing names one, ask.
+- **Branch**: from the request or its issue, in the project's branch format, else the `knowledge` skill's default.
+  When the request is too vague to name one, ask.
 - **Base**: `origin/<defaultBranch>` from config.json unless the request names another ref.
 
 ## Run

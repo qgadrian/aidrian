@@ -11,7 +11,7 @@ The optional sections follow, in this order, only when they carry something.
 - <change area>: <what changed in it>
 - <change area>: <what changed in it>
 
-Fixes <ISSUE-KEY>
+Fixes <ISSUE-KEY, such as ABC-12 or #12>
 
 ## Tests run
 

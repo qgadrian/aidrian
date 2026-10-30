@@ -69,7 +69,8 @@ or interfaces are missing; when the request contradicts the project's knowledge 
 
 ## Weighing other agents' findings
 
-Give each finding an explicit verdict: `fix now`, `acceptable as-is`, `accepted residual`, or `needs more evidence`.
+Give each finding its axes, `severity`, `likelihood`, `affects`, and `cost`; `aidrian pr disposition` turns them into the verdict:
+`fix_now`, `accepted_residual`, `acceptable_as_is`, or `drop_unless_cited`. One the evidence cannot place is `needs_evidence`, naming what is missing.
 Defer one to a new issue only with a `defer_reason` of `non_goals_collision`, `confirmed_missing_authority`, `human_only`, or `user_chose`.
 When you disagree with another specialist, cite the code path, the behavioural consequence, and why their conclusion falls short.
 A disputed or unclear security verdict goes to `security-engineer`, never a backend-only call.

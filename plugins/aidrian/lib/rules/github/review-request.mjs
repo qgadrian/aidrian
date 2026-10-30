@@ -13,17 +13,24 @@ import path from 'node:path';
 import { loadConfig } from '../../config.mjs';
 import { findProject } from '../../project.mjs';
 import { asksForReview, judgeRequests, markersIn, prNumber, repoName } from '../../review-gate.mjs';
-import { commandLines, lexCommand, readInvocation } from '../../shell-lex.mjs';
+import { commandLines, lexCommand, readInvocation, readShortOptions } from '../../shell-lex.mjs';
 
 export { OVERRIDE } from '../../review-gate.mjs';
 
-// gh options, of the commands read here, that take the next word as their value.
-const VALUE_FLAGS = new Set([
-  '-b', '--body', '-F', '--body-file', '-R', '--repo', '-f', '--field', '--raw-field', '-X', '--method', '-H', '--header',
-  '-q', '--jq', '-t', '--template', '--input', '-p', '--preview', '--hostname', '--cache', '-r', '--reviewer', '--add-reviewer',
-  '-T', '--title', '-B', '--base', '-H', '--head', '-a', '--assignee', '-l', '--label', '-m', '--milestone', '--add-label',
-  '--remove-label', '--add-assignee', '--remove-assignee', '--remove-reviewer', '--add-project', '--remove-project',
-]);
+// The options that take a value, per command read here, from each command's `--help`: a switch such as `gh pr review -r`
+// (--request-changes) must not swallow the word after it. -R and --repo take one everywhere.
+const BODY = ['-b', '--body', '-F', '--body-file'];
+const VALUE_FLAGS = {
+  comment: BODY,
+  review: BODY,
+  create: [...BODY, '-a', '--assignee', '-B', '--base', '-H', '--head', '-l', '--label', '-m', '--milestone', '-p', '--project',
+    '-r', '--reviewer', '-t', '--title', '-T', '--template', '--recover'],
+  edit: [...BODY, '-B', '--base', '-t', '--title', '-m', '--milestone', '--add-assignee', '--remove-assignee', '--add-label',
+    '--remove-label', '--add-project', '--remove-project', '--add-reviewer', '--remove-reviewer'],
+  api: ['-f', '--raw-field', '-F', '--field', '-X', '--method', '-H', '--header', '-q', '--jq', '-t', '--template', '--input',
+    '-p', '--preview', '--hostname', '--cache'],
+};
+const ROOT = ['-R', '--repo'];
 
 // The deny reason for `command`, or null.
 export function check(command, { cwd = process.cwd(), env = process.env } = {}) {
@@ -42,14 +49,10 @@ export function check(command, { cwd = process.cwd(), env = process.env } = {}) 
 // The requests in one invocation, as { pr, repo, markers }.
 export function readRequests({ program, args }, reviewer, read, env = {}) {
   if (program !== 'gh') return [];
-  const words = [];
-  const flags = [];
-  for (let i = 0; i < args.length; i += 1) {
-    const { text } = args[i];
-    const [name, inline] = splitFlag(text);
-    if (name === null) words.push(args[i]);
-    else flags.push({ name, value: inline ?? (VALUE_FLAGS.has(name) ? args[++i] ?? null : null) });
-  }
+  const command = readWords(args, new Set(ROOT)).words.map((token) => token.text);
+  const key = command[0] === 'api' ? 'api' : command[1];
+  if (!Object.hasOwn(VALUE_FLAGS, key)) return [];
+  const { words, flags } = readWords(args, new Set([...ROOT, ...VALUE_FLAGS[key]]));
   const last = (...names) => flags.filter((flag) => names.includes(flag.name)).at(-1)?.value ?? null;
   const literal = (token) => (token && !token.dynamic ? token.text : null);
   const repo = literal(last('-R', '--repo')) ?? env.GH_REPO ?? null;
@@ -92,14 +95,29 @@ function apiRequests(endpoint, flags, read, env) {
   return [{ pr: Number(match[2]), repo, markers: asking.flatMap(markersIn) }];
 }
 
-// [name, inline value] for an option word, or [null] for a positional. `--body=x`, `-bx`, and `-b=x` carry their value.
-function splitFlag(text) {
-  if (text === '-' || !text.startsWith('-')) return [null];
-  if (text.startsWith('--')) {
-    const at = text.indexOf('=');
-    return at === -1 ? [text, null] : [text.slice(0, at), { text: text.slice(at + 1), dynamic: false }];
+// The positional words and the options of a gh command line, as gh reads them with `values` taking a value: `--x=v`,
+// `--x v`, `-xv`, `-x=v`, `-x v`, and a cluster of switches ending in one that takes a value, `-cb v`.
+function readWords(args, values) {
+  const words = [];
+  const flags = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const { text, dynamic } = args[i];
+    if (text === '--') {
+      words.push(...args.slice(i + 1));
+      break;
+    }
+    if (text === '-' || !text.startsWith('-')) words.push(args[i]);
+    else if (text.startsWith('--')) {
+      const at = text.indexOf('=');
+      const name = at === -1 ? text : text.slice(0, at);
+      flags.push({ name, value: at !== -1 ? { text: text.slice(at + 1), dynamic } : values.has(name) ? args[++i] ?? null : null });
+    } else {
+      const { options, value } = readShortOptions(text, values);
+      for (const name of options) if (name !== value?.option) flags.push({ name, value: null });
+      if (value) flags.push({ name: value.option, value: value.attached !== null ? { text: value.attached.replace(/^=/u, ''), dynamic } : args[++i] ?? null });
+    }
   }
-  return text.length > 2 && VALUE_FLAGS.has(text.slice(0, 2)) ? [text.slice(0, 2), { text: text.slice(2).replace(/^=/u, ''), dynamic: false }] : [text, null];
+  return { words, flags };
 }
 
 // The body text: an inline body (a substitution's text, heredoc included, is read as written), or a readable file.

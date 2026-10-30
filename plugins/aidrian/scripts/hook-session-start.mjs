@@ -1,6 +1,6 @@
 // SessionStart and SubagentStart hook: one line that tells the agent which knowledge docs to read now and how to find
 // the rest, one line with the names to call the human and the AI, and, for the main session only, a last line when the
-// lesson inbox holds open lessons. SessionStart adds plain stdout to the context; SubagentStart (`--subagent`) needs it
+// lesson inbox holds open lessons, which escalates when the inbox needs triage. SessionStart adds plain stdout to the context; SubagentStart (`--subagent`) needs it
 // wrapped in JSON. Prints nothing outside a project.
 
 import path from 'node:path';
@@ -31,7 +31,7 @@ await runHook((input) => {
     console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: `${line}\n${names}` } }));
   } else {
     console.log(`${line}\n${names}`);
-    const lessons = nudge(inboxPath(project), binCommand('aidrian'));
+    const lessons = nudge(inboxPath(project, config), { command: binCommand('aidrian'), config });
     if (lessons) console.log(lessons);
   }
 });

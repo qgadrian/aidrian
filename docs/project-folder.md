@@ -126,7 +126,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 
 `aidrian state` prints the folder. Skills use it to find plans and handoff briefs, and to draft pull request bodies;
 the orchestrator uses it to name each background agent's handoff file.
-`aidrian lesson` adds, lists, and resolves lessons in the inbox; `aidrian handoff` checks a handoff brief against the one it supersedes.
+`aidrian lesson` adds, lists, resolves, and counts lessons in the inbox ([lessons.md](lessons.md)); `aidrian handoff` checks a handoff brief against the one it supersedes.
 `aidrian report` summarizes the [dispatch log](dispatch-log.md).
 
 ## Task worktrees

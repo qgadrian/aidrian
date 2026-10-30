@@ -114,6 +114,11 @@ export function checkDelivery(input, project) {
   return { claims, missing: missingPaths(claims, cwd) };
 }
 
+// Which subagent stopped, as its `stop` row names it: { session_id, agent_id, agent_type }.
+export function stopAgent(input) {
+  return { session_id: text(input.session_id), agent_id: text(input.agent_id), agent_type: text(input.agent_type) ?? 'general-purpose' };
+}
+
 // SubagentStop: the subagent's tokens, cost, the knowledge docs it read with their sizes, and its delivery check.
 // `docReads: false` (config.json `telemetry.docReads`) records `docs_read: null`.
 export function stopRow(input, project, { now = Date.now(), docReads = true, delivery = checkDelivery(input, project) } = {}) {
@@ -123,9 +128,7 @@ export function stopRow(input, project, { now = Date.now(), docReads = true, del
   return {
     event: 'stop',
     ts: stamp(now),
-    session_id: text(input.session_id),
-    agent_id: text(input.agent_id),
-    agent_type: text(input.agent_type) ?? 'general-purpose',
+    ...stopAgent(input),
     tokens: sumTokens(usage),
     models: Object.keys(usage),
     cost_usd: estimateCostUsd(usage).total,

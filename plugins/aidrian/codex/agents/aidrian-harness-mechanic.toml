@@ -35,10 +35,20 @@ Before you start, follow the `knowledge` skill. Your knowledge tags: `harness_en
 
 ## Find what to improve
 
-Run `aidrian report --since 30d --project <dir>` on a project that uses the plugin; add `--prs 20` for review rounds,
+Start from what a project that uses the plugin captured about it: `aidrian lesson list --target plugin --project <dir>`,
+worst first, and `aidrian lesson list <id> --project <dir>` for one lesson in full. A reopened lesson is a fix that did not hold.
+Then run `aidrian report --since 30d --project <dir>`; add `--prs 20` for review rounds,
 and run `aidrian report sessions` for what sessions cost, main conversation against subagents.
 Look for agent types that are re-dispatched often, reports that named files that do not exist, docs nobody reads,
 and costly agents. A change to an agent, skill, or hook states the number it should move and how to read it again after.
+
+When the fix for a lesson lands, resolve it in that project's inbox, with that number:
+
+```bash
+aidrian lesson resolve <id> --project <dir> --outcome mechanism --link <commit or pull request> --expect '<what should move, and the command>'
+```
+
+Use `rule` instead of `mechanism` when the fix is text an agent reads. A lesson the plugin cannot fix stays open; say why in your report.
 
 ## Rules
 

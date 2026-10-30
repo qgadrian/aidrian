@@ -372,7 +372,8 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     if (result.status === 'round_limit' && project) {
       const { recordSignal, roundLimitSignal } = await import('./lesson-signals.mjs');
       const where = { session: process.env.CLAUDE_CODE_SESSION_ID || null, agent: process.env.CLAUDE_CODE_AGENT || null };
-      recordSignal(project, roundLimitSignal({ repo: result.repo, pr: result.pr, maxRounds: result.max_rounds, ...where }), { config });
+      const signal = roundLimitSignal({ repo: result.repo, pr: result.pr, maxRounds: result.max_rounds, rounds: result.codex_rounds, ...where });
+      recordSignal(project, signal, { config });
     }
     console.log(JSON.stringify(result, null, 2));
     return exitCodeFor(result.status);

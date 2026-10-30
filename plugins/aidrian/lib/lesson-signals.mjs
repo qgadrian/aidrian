@@ -62,10 +62,12 @@ export function denialSignal({ rule, session = null, agent = null }) {
   };
 }
 
-// `aidrian pr await-review` stopped at the review round limit.
-export function roundLimitSignal({ repo, pr, maxRounds, session = null, agent = null }) {
+// `aidrian pr await-review` stopped at the review round limit, with `rounds` bot reviews on the pull request. A re-run that
+// stops at the same count is the same event, so it is one occurrence and never reopens a resolved lesson.
+export function roundLimitSignal({ repo, pr, maxRounds, rounds, session = null, agent = null }) {
   return {
     key: 'review-rounds',
+    once: `${repo ?? ''}#${pr}@${rounds}`,
     tier: 'P2',
     kind: null,
     target: 'project',

@@ -5,7 +5,8 @@
 // The file is only ever appended to, so no session's write can drop another's. Each row is one event on one lesson:
 // `add` starts it, `seen` records it again, `update` changes its tier, kind, or target, and `resolve` closes it.
 // fold() replays the rows into the current state of every lesson. An `add` whose `key` an earlier lesson holds is that
-// lesson seen again, so automatic signals dedupe without reading the file first.
+// lesson seen again, so automatic signals dedupe without reading the file first. One that also repeats an earlier row's
+// `once` is the same event observed again, and adds nothing.
 
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -111,8 +112,9 @@ export function origin({ cwd = process.cwd(), env = process.env } = {}) {
 }
 
 // A new lesson's `add` row. `title` is for a lesson whose note does not start with one, such as an automatic signal.
-export function addRow({ note, evidence = [], tier = 'P2', kind = null, target = null, key = null, title, source = 'manual', now = new Date(), ...where }) {
-  return { event: 'add', id: newId(), at: now.toISOString(), tier, kind, target, key, source, ...(title ? { title } : {}), note, evidence, ...where };
+// `once` names the event a keyed row reports, so the same event recorded twice is one occurrence.
+export function addRow({ note, evidence = [], tier = 'P2', kind = null, target = null, key = null, once = null, title, source = 'manual', now = new Date(), ...where }) {
+  return { event: 'add', id: newId(), at: now.toISOString(), tier, kind, target, key, ...(key && once ? { once } : {}), source, ...(title ? { title } : {}), note, evidence, ...where };
 }
 
 export const newId = () => randomBytes(4).toString('hex');
@@ -129,6 +131,8 @@ export function fold(rows) {
   const byId = new Map();
   const alias = new Map();
   const byKey = new Map();
+  // Every `key` and `once` pair already recorded: a later row with the same pair is the same event.
+  const events = new Set();
   const find = (id) => {
     let current = id;
     for (let hops = 0; alias.has(current) && hops < 100; hops += 1) current = alias.get(current);
@@ -139,13 +143,16 @@ export function fold(rows) {
     const event = row.event ?? (byId.has(row.id) || alias.has(row.id) ? null : 'add');
     if (event === 'add' && !byId.has(row.id) && !alias.has(row.id)) {
       const owner = typeof row.key === 'string' && byKey.has(row.key) ? find(byKey.get(row.key)) : null;
+      const once = typeof row.key === 'string' && typeof row.once === 'string' && row.once ? `${row.key}\n${row.once}` : null;
       if (owner) {
         alias.set(row.id, owner.id);
-        addOccurrence(owner, occurrence(row));
+        if (!events.has(once)) addOccurrence(owner, occurrence(row));
+        if (once) events.add(once);
       } else if (typeof row.note === 'string') {
         const lesson = newLesson(row);
         byId.set(lesson.id, lesson);
         if (lesson.key) byKey.set(lesson.key, lesson.id);
+        if (once) events.add(once);
       }
     } else if (event === 'seen') {
       const lesson = find(row.id);
@@ -206,16 +213,17 @@ function occurrence(row) {
   return { id: row.id, at: row.at ?? null, note: note || null, evidence: texts(row.evidence), session: row.session ?? null, agent: row.agent ?? null };
 }
 
-// One more occurrence. After a resolution, it counts against that resolution; after a fix or a rejection, it reopens the
-// lesson. Occurrences merged in from an older lesson keep their own time, so an old duplicate never reopens a fix.
+// One more occurrence. Every occurrence after the latest resolution counts against it, including those after it reopened
+// the lesson; the first one after a fix or a rejection reopens it. Occurrences merged in from an older lesson keep their
+// own time, so an old duplicate never reopens a fix.
 function addOccurrence(lesson, item) {
   lesson.occurrences.push(item);
   lesson.seen += item.seen ?? 1;
   if (item.at && (!lesson.lastAt || item.at > lesson.lastAt)) lesson.lastAt = item.at;
   const last = lesson.resolutions.at(-1);
-  if (lesson.status !== 'resolved' || !last || !item.at || item.at <= last.at) return;
+  if (!last || !item.at || item.at <= last.at) return;
   last.recurred += 1;
-  if (!REOPENS.has(last.outcome)) return;
+  if (lesson.status !== 'resolved' || !REOPENS.has(last.outcome)) return;
   Object.assign(lesson, { status: 'open', outcome: null, link: null, expect: null, resolvedAt: null, reopened: lesson.reopened + 1 });
 }
 
@@ -231,7 +239,8 @@ function applyResolution(lesson, row, find, alias) {
       lesson.mergedInto = target.id;
       target.merged.push(lesson.id);
       addOccurrence(target, { id: lesson.id, at: lesson.at, note: lesson.note, evidence: lesson.evidence, session: lesson.session, agent: lesson.agent, seen: 1 });
-      for (const item of lesson.occurrences) addOccurrence(target, item);
+      // Moved, not copied: each occurrence lives on one lesson, so totals over every lesson count it once.
+      for (const item of lesson.occurrences.splice(0)) addOccurrence(target, item);
     }
   }
   const expect = typeof row.expect === 'string' && row.expect ? row.expect : null;
@@ -441,7 +450,7 @@ export function lessonStats(all, { sinceMs = 0, now = Date.now() } = {}) {
     },
     window: {
       added: live.filter((lesson) => after(lesson.at)).length,
-      seen_again: all.flatMap((lesson) => lesson.occurrences).filter((item) => after(item.at)).length,
+      seen_again: live.flatMap((lesson) => lesson.occurrences).filter((item) => after(item.at)).length,
       resolved: resolutions.length,
       outcomes: Object.fromEntries(OUTCOMES.map((outcome) => [outcome, resolutions.filter((item) => item.outcome === outcome).length])),
       median_days_to_resolve: median(toResolve),

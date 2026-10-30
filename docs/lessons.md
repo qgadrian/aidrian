@@ -21,6 +21,8 @@ The file is only ever appended to. Each row is one event on one lesson, and the 
 
 No lock is needed: a row is one append, so rows from concurrent sessions never interleave, and nothing rewrites the file.
 A line that does not parse is skipped.
+An `add` row with a `key` may also carry `once`, naming the event it reports: a later row with the same key and `once`
+is that event observed again, and adds nothing.
 
 ## A lesson
 
@@ -81,7 +83,8 @@ Every command takes `--project <dir>`, so one checkout can read another project'
 
 Merging moves the lesson's occurrences to the lesson it names, and any later row for its id or key goes there too.
 An occurrence counts against a resolution only when it happened after it, so merging an old duplicate into a fixed lesson
-never reopens the fix.
+never reopens the fix. Every occurrence after the latest resolution counts against it, also those after the first one
+reopened the lesson, so a fix shows how often it failed, not only that it did.
 
 `stats` lists the fixes in its window: each held for how many days, or recurred, with its `expect`.
 
@@ -122,7 +125,7 @@ and an occurrence after its fix reopens it like any other.
 | --- | --- | --- | --- |
 | The [delivery check](hooks.md#delivery-check) sends a subagent back | `delivery-check:<agent type>` | P2, `bug`; `plugin` for an `aidrian:` agent, `project` for any other | It fires only when a file the agent said it wrote does not exist, once per stop. |
 | One Bash or write rule blocks one session 3 times | `hook-deny:<rule>` | P2, `gap`, `plugin` | One block is the rule doing its job; three in a session is an agent fighting it. |
-| `aidrian pr await-review --request` stops at the round limit, config.json `github.maxReviewRounds` | `review-rounds` | P2, `project` | It fires once per pull request at the limit. |
+| `aidrian pr await-review --request` stops at the round limit, config.json `github.maxReviewRounds` | `review-rounds` | P2, `project` | It fires once per pull request and round count: a re-run at the same count adds nothing. |
 
 A row holds names, counts, paths, and ids, never a prompt, a command, or tool output; the `session` id finds the rest.
 The block counts live in the system's temporary folder, one small file per session.

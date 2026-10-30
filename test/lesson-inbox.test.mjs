@@ -180,6 +180,54 @@ test('a fix that recurs reopens its lesson; an issue keeps counting; an old dupl
   assert.equal(find('aaaaaaaa').outcome, null, 'a reopened lesson carries no outcome');
 });
 
+test('every occurrence after a fix or a rejection counts against it; only the first reopens the lesson', () => {
+  const rows = [
+    lesson('aaaaaaaa', 20),
+    lesson('bbbbbbbb', 20),
+    { event: 'resolve', id: 'aaaaaaaa', at: at(10), outcome: 'mechanism', link: 'abc1234' },
+    { event: 'resolve', id: 'bbbbbbbb', at: at(10), outcome: 'rejected', link: 'one session' },
+    ...[3, 2, 1].flatMap((daysAgo) => ['aaaaaaaa', 'bbbbbbbb'].map((id) => ({ event: 'seen', id, at: at(daysAgo) }))),
+  ];
+  const { lessons } = fold(rows);
+  assert.deepEqual(
+    lessons.map((item) => [item.id, item.status, item.reopened, item.seen, item.resolutions.map((r) => r.recurred)]),
+    [
+      ['aaaaaaaa', 'open', 1, 4, [3]],
+      ['bbbbbbbb', 'open', 1, 4, [3]],
+    ],
+  );
+  const summary = lessonStats(lessons, { sinceMs: NOW - 30 * DAY, now: NOW });
+  assert.deepEqual(summary.fixes.map((fix) => [fix.id, fix.recurred]), [['aaaaaaaa', 3]]);
+  assert.match(formatStats(summary, { file: 'x', since: '30d' }), /  aaaaaaaa {2}mechanism {2}\S+ {2}recurred 3 times {2}lesson aaaaaaaa$/m);
+  const again = fold([...rows, { event: 'resolve', id: 'aaaaaaaa', at: at(0.5), outcome: 'rule', link: 'docs/x.md' }, { event: 'seen', id: 'aaaaaaaa', at: at(0.25) }]);
+  const [fixedTwice] = again.lessons;
+  assert.deepEqual([fixedTwice.status, fixedTwice.reopened, fixedTwice.resolutions.map((r) => r.recurred)], ['open', 2, [3, 1]], 'a later fix takes the later occurrences');
+});
+
+test('merging moves occurrences, so stats count each one once, along a chain of merges too', () => {
+  const window = (rows) => lessonStats(fold(rows).lessons, { sinceMs: NOW - 30 * DAY, now: NOW }).window.seen_again;
+  const pair = [
+    lesson('aaaaaaaa', 9),
+    lesson('bbbbbbbb', 8),
+    { event: 'seen', id: 'bbbbbbbb', at: at(7) },
+    { event: 'seen', id: 'bbbbbbbb', at: at(6) },
+    { event: 'resolve', id: 'bbbbbbbb', at: at(5), outcome: 'merged', link: 'aaaaaaaa' },
+  ];
+  assert.equal(window(pair), 3, 'b itself and its two occurrences, now on a');
+  assert.deepEqual(fold(pair).lessons.map((item) => [item.id, item.occurrences.length]), [['aaaaaaaa', 3], ['bbbbbbbb', 0]]);
+  const chain = [
+    lesson('aaaaaaaa', 9),
+    lesson('bbbbbbbb', 8),
+    lesson('cccccccc', 7),
+    { event: 'seen', id: 'cccccccc', at: at(6) },
+    { event: 'resolve', id: 'cccccccc', at: at(5), outcome: 'merged', link: 'bbbbbbbb' },
+    { event: 'seen', id: 'bbbbbbbb', at: at(4) },
+    { event: 'resolve', id: 'bbbbbbbb', at: at(3), outcome: 'merged', link: 'aaaaaaaa' },
+  ];
+  assert.equal(window(chain), 4, 'b, c, and one occurrence of each');
+  assert.deepEqual(fold(chain).lessons.map((item) => [item.id, item.seen, item.occurrences.length]).at(0), ['aaaaaaaa', 5, 4]);
+});
+
 test('rows the first version wrote, and a resolved row rewritten in place, still fold', () => {
   const { lessons } = fold([
     { id: 'aaaaaaaa', at: at(9), note: 'v1 lesson', kind: 'harness', evidence: ['x'], agent: 'planner', status: 'open' },

@@ -22,12 +22,18 @@ const SCHEMA = {
   session: { handoff: 'handoffMode', maxTokens: 'zeroOrMore', maxCalls: 'zeroOrMore', maxHours: 'zeroOrMore' },
   models: 'models',
   names: { human: 'text', ai: 'textOrNull' },
-  telemetry: { enabled: 'boolean', doc_reads: 'boolean', hook_denies: 'boolean', max_mb: 'positive' },
+  telemetry: { enabled: 'boolean', docReads: 'boolean', hookDenies: 'boolean', maxMb: 'positive' },
 };
 
 // Keys a format change renamed or moved, old name to new; a key inside a group is named with its group, "group.key".
 // A config that still uses the old name gets an error naming the new one.
-const RENAMED = { pr: 'github', 'docs.alwaysBudgetBytes': 'knowledge.budgets.alwaysBytes' };
+const RENAMED = {
+  pr: 'github',
+  'docs.alwaysBudgetBytes': 'knowledge.budgets.alwaysBytes',
+  'telemetry.doc_reads': 'telemetry.docReads',
+  'telemetry.hook_denies': 'telemetry.hookDenies',
+  'telemetry.max_mb': 'telemetry.maxMb',
+};
 
 // What `models` may set for one of this plugin's agents, per host; null takes any non-empty string.
 // Claude Code's Agent tool takes only these model aliases. Codex reads any model name and names these efforts.
@@ -71,7 +77,7 @@ export const DEFAULTS = deepFreeze({
   session: { handoff: 'ask', maxTokens: 150000, maxCalls: 250, maxHours: 4 },
   models: { claude: { agents: {} }, codex: { agents: {} } },
   names: { human: 'the Human', ai: null },
-  telemetry: { enabled: true, doc_reads: true, hook_denies: true, max_mb: 20 },
+  telemetry: { enabled: true, docReads: true, hookDenies: true, maxMb: 20 },
 });
 
 // Returns { config, errors, current }. `config` is frozen and always complete: the file's values over DEFAULTS, one

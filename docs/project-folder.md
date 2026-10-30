@@ -113,7 +113,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── lessons/inbox.jsonl   the lesson inbox
 ├── tmp/                  pull request bodies the pr-write skill drafts
 ├── dispatch-log.jsonl    the dispatch log
-└── dispatch-log.1.jsonl  its rotated part, once the log reaches config.json telemetry.max_mb
+└── dispatch-log.1.jsonl  its rotated part, once the log reaches config.json telemetry.maxMb
 ```
 
 - `$XDG_STATE_HOME` defaults to `~/.local/state`.

@@ -12,6 +12,6 @@ await runHook((input) => {
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   const config = project && loadConfig(project).config;
   if (!config?.telemetry.enabled) return;
-  const row = sessionRow(input, project, { docReads: config.telemetry.doc_reads });
+  const row = sessionRow(input, project, { docReads: config.telemetry.docReads });
   if (row.models.length) appendEvent(project, config, row);
 });

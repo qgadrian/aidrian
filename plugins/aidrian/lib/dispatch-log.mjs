@@ -35,11 +35,11 @@ const rotatedPath = (file) => file.replace(/\.jsonl$/u, '.1.jsonl');
 // A lock older than this was left by a process that died while rotating.
 const STALE_LOCK_MS = 60_000;
 
-// Appends `row`, unless `config.telemetry.enabled` is false. A log of `telemetry.max_mb` or more rotates first.
+// Appends `row`, unless `config.telemetry.enabled` is false. A log of `telemetry.maxMb` or more rotates first.
 export function appendEvent(project, config, row) {
   if (!config.telemetry.enabled) return;
   const file = logPath(project, config);
-  rotate(file, config.telemetry.max_mb * 1024 * 1024);
+  rotate(file, config.telemetry.maxMb * 1024 * 1024);
   appendRow(file, row);
 }
 
@@ -115,7 +115,7 @@ export function checkDelivery(input, project) {
 }
 
 // SubagentStop: the subagent's tokens, cost, the knowledge docs it read with their sizes, and its delivery check.
-// `docReads: false` (config.json `telemetry.doc_reads`) records `docs_read: null`.
+// `docReads: false` (config.json `telemetry.docReads`) records `docs_read: null`.
 export function stopRow(input, project, { now = Date.now(), docReads = true, delivery = checkDelivery(input, project) } = {}) {
   const transcript = typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
   const usage = transcript ? aggregateUsage(transcript).perModel : {};
@@ -262,7 +262,7 @@ export function coverage(rows, config, { sinceMs = 0 } = {}) {
   const lost = rows.some((row) => row.event === 'rotate' && row.dropped === true);
   return {
     enabled: config.telemetry.enabled,
-    doc_reads: config.telemetry.doc_reads,
+    doc_reads: config.telemetry.docReads,
     rows_without_doc_reads: counted.filter((row) => row.docs_read === null).length,
     rotated_out_before: lost && oldest > sinceMs && oldest !== Infinity ? new Date(oldest).toISOString() : null,
   };
@@ -273,12 +273,12 @@ export function coverage(rows, config, { sinceMs = 0 } = {}) {
 export function coverageLines(cover, { docReads = true } = {}) {
   const lines = [];
   if (!cover.enabled) lines.push('Telemetry is off (telemetry.enabled is false): the hooks write no rows, so this shows only older ones.');
-  else if (docReads && !cover.doc_reads) lines.push('Doc reads are off (telemetry.doc_reads is false): new rows do not record them.');
+  else if (docReads && !cover.doc_reads) lines.push('Doc reads are off (telemetry.docReads is false): new rows do not record them.');
   if (docReads && cover.rows_without_doc_reads) {
     lines.push(`Partial: ${cover.rows_without_doc_reads} agent and session rows in the window were written with doc reads off.`);
   }
   if (cover.rotated_out_before) {
-    lines.push(`Partial: the log starts at ${cover.rotated_out_before}; older rows were rotated out at telemetry.max_mb.`);
+    lines.push(`Partial: the log starts at ${cover.rotated_out_before}; older rows were rotated out at telemetry.maxMb.`);
   }
   return lines;
 }

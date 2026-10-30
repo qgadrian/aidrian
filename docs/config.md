@@ -36,7 +36,7 @@ In a group such as `github`, set only the keys you change; the others keep their
   "session": { "handoff": "ask", "maxTokens": 150000, "maxCalls": 250, "maxHours": 4 },
   "models": { "claude": { "agents": {} }, "codex": { "agents": {} } },
   "names": { "human": "the Human", "ai": null },
-  "telemetry": { "enabled": true, "doc_reads": true, "hook_denies": true, "max_mb": 20 }
+  "telemetry": { "enabled": true, "docReads": true, "hookDenies": true, "maxMb": 20 }
 }
 ```
 
@@ -69,9 +69,9 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `names.human` | What agents call the person they work for: [Names](#names). |
 | `names.ai` | What agents call themselves; `null` is the host's name, Claude or Codex: [Names](#names). |
 | `telemetry.enabled` | `false` stops the hooks from writing the [dispatch log](dispatch-log.md): [Telemetry](#telemetry). |
-| `telemetry.doc_reads` | `false` leaves out which knowledge docs each agent read. |
-| `telemetry.hook_denies` | Checked, so a project can set it; no hook reads it in this version. |
-| `telemetry.max_mb` | The size, in megabytes, at which the dispatch log moves to its rotated part. |
+| `telemetry.docReads` | `false` leaves out which knowledge docs each agent read. |
+| `telemetry.hookDenies` | Checked, so a project can set it; no hook reads it in this version. |
+| `telemetry.maxMb` | The size, in megabytes, at which the dispatch log moves to its rotated part. |
 
 A path in `state.dir` or `worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
@@ -156,10 +156,12 @@ A team sets `telemetry` in `config.json`, and one developer in the git-ignored `
 
 - `enabled: false`: the hooks write no rows.
   The [delivery check](hooks.md#delivery-check) still sends a subagent back for a file it named and did not write.
-- `doc_reads: false`: `stop` and `session` rows keep tokens and cost, and hold `docs_read: null` instead of the docs read.
-- `max_mb`: once the log reaches this size, the next row moves it to `dispatch-log.1.jsonl`, replacing the file there.
-  The two files hold about twice `max_mb` at most, and `aidrian report` reads both.
-- `hook_denies`: `aidrian check` checks its value; no hook reads it in this version.
+- `docReads: false`: `stop` and `session` rows keep tokens and cost, and hold `docs_read: null` instead of the docs read.
+- `maxMb`: once the log reaches this size, the next row moves it to `dispatch-log.1.jsonl`, replacing the file there.
+  The two files hold about twice `maxMb` at most, and `aidrian report` reads both.
+- `hookDenies`: `aidrian check` checks its value; no hook reads it in this version.
+
+The last three keys were `doc_reads`, `max_mb`, and `hook_denies`; a file that still sets one gets an error naming the new key.
 
 `aidrian report` says when telemetry is off, and when the rows it read miss part of the window:
 [dispatch-log.md](dispatch-log.md#when-the-report-is-incomplete).

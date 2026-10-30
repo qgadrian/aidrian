@@ -147,9 +147,9 @@ test('telemetry.enabled false: the hooks write no rows, and the delivery check s
   assert.deepEqual(log(), []);
 });
 
-test('telemetry.doc_reads false: stop and session rows record docs_read null, and the rest as before', (t) => {
+test('telemetry.docReads false: stop and session rows record docs_read null, and the rest as before', (t) => {
   const { base, dir, log, hook } = project(t);
-  setTelemetry(dir, { doc_reads: false });
+  setTelemetry(dir, { docReads: false });
   const transcript = path.join(base, 's1.jsonl');
   const doc = path.join(dir, 'docs/knowledge/engineering/testing.md');
   writeFileSync(transcript, JSON.stringify({ type: 'assistant', message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 10, output_tokens: 1 }, content: [{ type: 'tool_use', name: 'Read', input: { file_path: doc } }] } }));
@@ -159,9 +159,9 @@ test('telemetry.doc_reads false: stop and session rows record docs_read null, an
   assert.deepEqual(rows.map((row) => [row.event, row.docs_read, row.tokens?.input ?? row.tokens_by_model['claude-opus-5-5'].input]), [['stop', null, 10], ['session', null, 10]]);
 });
 
-test('a log of telemetry.max_mb rotates into dispatch-log.1.jsonl, a rotate row says whether rows were lost, and reports read both', (t) => {
+test('a log of telemetry.maxMb rotates into dispatch-log.1.jsonl, a rotate row says whether rows were lost, and reports read both', (t) => {
   const { dir, env, state, log, hook } = project(t);
-  setTelemetry(dir, { max_mb: 1 });
+  setTelemetry(dir, { maxMb: 1 });
   const file = path.join(state(), 'dispatch-log.jsonl');
   const rotated = path.join(state(), 'dispatch-log.1.jsonl');
   const ts = new Date(Date.now() - 60_000).toISOString();
@@ -338,10 +338,10 @@ test('coverage: telemetry off, doc reads off, rows written without doc reads, an
   assert.deepEqual(cover, { enabled: false, doc_reads: true, rows_without_doc_reads: 2, rotated_out_before: null }, 'a1 counts its last row; the old row is out of the window, and older than it');
   assert.equal(coverage(rows.slice(0, 5), DEFAULTS, { sinceMs }).rotated_out_before, day(3));
   assert.equal(coverage(rows.slice(1, 5), DEFAULTS, { sinceMs }).rotated_out_before, null, 'no rotate row that dropped rows: nothing is lost');
-  assert.deepEqual(coverageLines(coverage(rows.slice(0, 5), { telemetry: { ...DEFAULTS.telemetry, doc_reads: false } }, { sinceMs })), [
-    'Doc reads are off (telemetry.doc_reads is false): new rows do not record them.',
+  assert.deepEqual(coverageLines(coverage(rows.slice(0, 5), { telemetry: { ...DEFAULTS.telemetry, docReads: false } }, { sinceMs })), [
+    'Doc reads are off (telemetry.docReads is false): new rows do not record them.',
     'Partial: 2 agent and session rows in the window were written with doc reads off.',
-    `Partial: the log starts at ${day(3)}; older rows were rotated out at telemetry.max_mb.`,
+    `Partial: the log starts at ${day(3)}; older rows were rotated out at telemetry.maxMb.`,
   ]);
   assert.deepEqual(coverageLines(cover, { docReads: false }), ['Telemetry is off (telemetry.enabled is false): the hooks write no rows, so this shows only older ones.']);
   assert.deepEqual(coverageLines(coverage([], DEFAULTS)), []);

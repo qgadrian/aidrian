@@ -29,7 +29,7 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | `ts`, `session_id`, `agent_id`, `agent_type` | Which subagent. `agent_id` joins it to its `dispatch` row. |
 | `tokens` | `input`, `output`, `cache_read`, and `cache_write` over the subagent's transcript, counted once per API request. `cache_write` is `cache_write_5m` plus `cache_write_1h`, the cache writes kept 5 minutes and 1 hour, which cost 1.25x and 2x the input price. |
 | `models`, `cost_usd` | The models it used, and the cost estimated from list prices (`lib/transcript.mjs`). |
-| `docs_read` | The knowledge docs it opened with the Read tool, as `{ "path", "bytes" }`: the path the index gives, and the doc's size. `null` while `telemetry.doc_reads` is off. |
+| `docs_read` | The knowledge docs it opened with the Read tool, as `{ "path", "bytes" }`: the path the index gives, and the doc's size. `null` while `telemetry.docReads` is off. |
 | `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not, `chat` when it presents none. |
 | `paths` | Those paths, at most 20. |
 
@@ -54,7 +54,7 @@ A resumed session that ends again writes another row over its whole transcript; 
 
 ### `rotate`: when the log rotates
 
-Once the log reaches config.json `telemetry.max_mb`, the next hook moves it to `dispatch-log.1.jsonl`, replacing the file there,
+Once the log reaches config.json `telemetry.maxMb`, the next hook moves it to `dispatch-log.1.jsonl`, replacing the file there,
 and starts a new log with this row. `aidrian report` reads `dispatch-log.1.jsonl` first, then the log.
 
 | Field | Meaning |
@@ -125,15 +125,15 @@ Every view says so under its first line, and `--json` carries the same facts in 
 ```console
 $ aidrian report docs
 Knowledge docs read, from /home/you/.local/state/aidrian/projects/notes-1a2b3c4d/dispatch-log.jsonl, since 7d
-Doc reads are off (telemetry.doc_reads is false): new rows do not record them.
+Doc reads are off (telemetry.docReads is false): new rows do not record them.
 Partial: 4 agent and session rows in the window were written with doc reads off.
-Partial: the log starts at 2026-10-27T09:12:44.000Z; older rows were rotated out at telemetry.max_mb.
+Partial: the log starts at 2026-10-27T09:12:44.000Z; older rows were rotated out at telemetry.maxMb.
 ```
 
 | Line | `coverage` field | When |
 | --- | --- | --- |
 | Telemetry is off | `enabled: false` | config.json or `.aidrian.local.json` sets `telemetry.enabled` to `false` now. |
-| Doc reads are off | `doc_reads: false` | The same for `telemetry.doc_reads`. |
+| Doc reads are off | `doc_reads: false` | The same for `telemetry.docReads`. |
 | Partial: rows written with doc reads off | `rows_without_doc_reads` | Agent and session rows in the window that hold `docs_read: null`. |
 | Partial: the log starts at | `rotated_out_before` | Rotation dropped rows, and the window starts before the oldest row left. |
 

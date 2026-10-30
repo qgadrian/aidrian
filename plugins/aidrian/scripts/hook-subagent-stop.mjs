@@ -14,7 +14,7 @@ await runHook((input) => {
   if (!project) return;
   const { config } = loadConfig(project);
   const delivery = checkDelivery(input, project);
-  if (config.telemetry.enabled) appendEvent(project, config, stopRow(input, project, { delivery, docReads: config.telemetry.doc_reads }));
+  if (config.telemetry.enabled) appendEvent(project, config, stopRow(input, project, { delivery, docReads: config.telemetry.docReads }));
   const { missing } = delivery;
   if (!missing.length || input.stop_hook_active !== false) return;
   deny(

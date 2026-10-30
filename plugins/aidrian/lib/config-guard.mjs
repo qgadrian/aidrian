@@ -8,7 +8,7 @@
 // unless its code is one of the few that only read (READS). The guard keeps a gate from changing for the next session;
 // within a session, the gates a subagent started with hold anyway (lib/gate-snapshot.mjs).
 
-import { readdirSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
@@ -58,7 +58,7 @@ export function configWriteDenial(input, project, { names: { human } }, { also =
   const shown = (file) => (isWithin(roots[0], file) ? path.relative(roots[0], file) : file);
   for (const target of targets.map((each) => canonical(each))) {
     const holdsRoot = roots.some((root) => isWithin(target, root));
-    const file = files.find((each) => each === target || (!holdsRoot && isWithin(target, each)));
+    const file = files.find((each) => each === target || sameFile(each, target) || (!holdsRoot && isWithin(target, each)));
     if (file) return blocked(input, shown(file), 'changes', human);
   }
   // A glob reaches a file by the path it is spelled with, which a symlink may place in another folder than its target.
@@ -118,8 +118,18 @@ function globbedFile(globs, files, others = true) {
     return folders.some((folder) =>
       [folder, canonical(folder)].some((dir) => isWithin(dir, file) && pattern.test(path.relative(dir, file).split(path.sep)[0])) ||
       // An entry the glob matches may be a symlink to the file from any folder, which a write follows.
-      entries(folder).some((name) => pattern.test(name) && isWithin(canonical(path.join(folder, name)), pair[1])));
+      entries(folder).some((name) => pattern.test(name) && (isWithin(canonical(path.join(folder, name)), pair[1]) || sameFile(path.join(folder, name), pair[1]))));
   })))?.[1] ?? null;
+}
+
+// Whether two paths are one file on disk: a hard link keeps its own path, so only the device and inode tell.
+function sameFile(a, b) {
+  try {
+    const [x, y] = [statSync(a), statSync(b)];
+    return x.dev === y.dev && x.ino === y.ino;
+  } catch {
+    return false;
+  }
 }
 
 // A folder's entry names, or none when it cannot be read.

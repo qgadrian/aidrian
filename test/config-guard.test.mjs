@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -292,6 +292,12 @@ test('a glob reaches a config file that is a symlink to another folder, by the p
   symlinkSync('../.aidrian/config.json', path.join(dir, 'dist/config.json'));
   assert.match(verdict(dir, subagent(dir, 'Bash', { command: "echo '{}' > dist/*.json" })) ?? '', /config\.json/);
   assert.equal(verdict(dir, subagent(dir, 'Bash', { command: 'rm dist/*.js' })), null);
+  // A hard link keeps its own path; only the file's identity shows it is the config, by its name or through a glob.
+  mkdirSync(path.join(dir, 'hard'));
+  linkSync(path.join(dir, 'settings/config.json'), path.join(dir, 'hard/alias'));
+  for (const command of ["echo '{}' > hard/alias", "echo '{}' > hard/*"]) {
+    assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /config\.json/, command);
+  }
   // A link the same call creates before the glob runs, in its folder or above it, is not on disk yet: with any other
   // write in the call, a glob that may name a guarded file fails closed.
   mkdirSync(path.join(dir, 'out'));

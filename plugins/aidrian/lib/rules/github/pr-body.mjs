@@ -2,8 +2,8 @@
 // config.json `github.requiredSections`, and no "Generated with [Claude Code]" footer. `gh pr create --fill` is refused:
 // gh then writes the body from the commit messages. A non-web `gh pr create` with no --body or --body-file is refused
 // too, when sections are configured: gh then takes the body from an editor, a prompt, or a template, unchecked.
-// `--web` and `--help` pass. `gh pr edit` without a body flag passes (a title-only edit), and so does a body flag whose
-// body the rule cannot read (a variable, stdin, a missing file): it denies only what it reads. Runs only inside a project. A
+// `--web` and `--help` pass. `gh pr edit` without a body flag passes (a title-only edit). A body flag whose body the
+// rule cannot read (a variable, a substitution, stdin, a missing file) is refused when sections are configured. Runs only inside a project. A
 // command substitution that runs, as in `url=$(gh pr create …)`, is read as the command line is.
 //
 // `github.pullRequest` adds the project's contract (docs/config.md#pull-request-contract), each part off until set:
@@ -139,6 +139,11 @@ function judge(call, command, { cwd, env, listOpenPrs }) {
       'without the sections config.json `github.requiredSections` asks for. Write the body to a file and pass --body-file (the pr-write skill does).');
   }
   const body = readBody(call, command, cwd);
+  if (body === null && sectioned && (call.body || call.bodyFile)) {
+    return deny('the body is one this rule cannot read (a variable, a command substitution, stdin, or a missing file), so the ' +
+      'sections config.json `github.requiredSections` asks for go unchecked. Pass a literal --body, a heredoc ' +
+      `(--body "$(cat <<'EOF' … EOF)"), or a --body-file that exists (the pr-write skill does).`);
+  }
   const reason = body === null ? null : judgeBody(body, config) ?? judgeDuplicate(body, call, contract, listOpenPrs);
   return reason ?? judgeTitle(call.title, config);
 }

@@ -36,39 +36,54 @@ export function check(command, { cwd = process.cwd(), env = process.env, input, 
   if (env[OVERRIDE] === '1' || typeof input?.transcript_path !== 'string' || !/\b(?:commit|pr)\b/u.test(command)) return null;
   const { gitCommits, prCreates } = readCalls(command, cwd);
   if (!gitCommits.length && !prCreates.length) return null;
-  const project = findProject(cwd);
-  if (!project) return null;
-  const { config } = loadConfig(project);
-  const { commit: commitFields, pullRequest: prFields, exclude } = config.attribution;
-  if (!commitFields.length && !prFields.length) return null;
-  const author = currentAuthor(input, env);
-  if (commitFields.length) {
-    const expected = expectedTrailers(commitFields, author);
-    for (const { messages, trailers, cleanup } of gitCommits) {
-      const carried = carriedTrailers(messages.length ? [cleanup(messages.join('\n\n'))] : [], trailers);
-      const missing = expected.filter((trailer) => !carried.has(trailer));
-      if (missing.length) return commitReason(expected, missing);
+  // Each call answers to the project it runs in, as its own folder finds it; in a folder the rule cannot know, the
+  // session's.
+  const projects = new Map();
+  const settings = (dir) => {
+    const at = dir ?? cwd;
+    if (!projects.has(at)) {
+      const project = findProject(at);
+      projects.set(at, project ? { project, config: loadConfig(project).config } : null);
     }
+    return projects.get(at);
+  };
+  let author;
+  const who = () => (author ??= currentAuthor(input, env));
+  for (const { messages, trailers, cleanup, dir } of gitCommits) {
+    const fields = settings(dir)?.config.attribution.commit ?? [];
+    if (!fields.length) continue;
+    const expected = expectedTrailers(fields, who());
+    const carried = carriedTrailers(messages.length ? [cleanup(messages.join('\n\n'))] : [], trailers);
+    const missing = expected.filter((trailer) => !carried.has(trailer));
+    if (missing.length) return commitReason(expected, missing);
   }
-  if (prFields.length) {
-    for (const { call, dir } of prCreates) {
-      const body = dir ? readBody(call, dir) : null;
-      if (body === null) {
-        return hint('the attribution rule cannot read this pull request body (a variable, a command substitution, stdin, a missing ' +
-          `file, or none), so it cannot check its attribution. Pass a literal --body, a heredoc (--body "$(cat <<'EOF' … EOF)"), ` +
-          'or a --body-file that exists.');
-      }
-      const agents = prFields.includes('agents')
-        ? prAgents({ commits: commits(dir, staticText(call.base) ?? config.git.defaultBranch, staticText(call.head) ?? 'HEAD'), rows: readLog(project, config).rows, sessionId: input.session_id, exclude })
-        : [];
-      const expected = prLines(prFields, author, agents);
-      if (prMissing(body, expected).length) return prReason(expected);
+  for (const { call, dir } of prCreates) {
+    const found = settings(dir);
+    const prFields = found?.config.attribution.pullRequest ?? [];
+    if (!prFields.length) continue;
+    const { project, config } = found;
+    const body = readBody(call, dir);
+    if (body === null) {
+      return hint('the attribution rule cannot read this pull request body (a variable, a command substitution, stdin, a missing ' +
+        `file, or none), so it cannot check its attribution. Pass a literal --body, a heredoc (--body "$(cat <<'EOF' … EOF)"), ` +
+        'or a --body-file that exists.');
     }
+    const head = staticText(call.head) ?? 'HEAD';
+    const agents = prFields.includes('agents')
+      ? prAgents({
+        commits: dir ? commits(dir, staticText(call.base) ?? config.git.defaultBranch, head) : [],
+        rows: readLog(project, config).rows,
+        sessionId: input.session_id,
+        exclude: config.attribution.exclude,
+      })
+      : [];
+    const expected = prLines(prFields, who(), agents);
+    if (prMissing(body, expected).length) return prReason(expected);
   }
   return null;
 }
 
-// The command's commits, as { messages, trailers }, and its `gh pr create` calls, as { call, dir }, in order. Each is
+// The command's commits, as { messages, trailers, cleanup, dir }, and its `gh pr create` calls, as { call, dir }, in order. Each is
 // read in the folder it runs in: the shell's, moved by each earlier `cd` or `pushd` to a named folder, by a wrapper's
 // directory change, and by `git -C`. `dir` is null once a move goes where no word names, and a relative file there is
 // not read. A help or dry-run commit writes nothing and is left out. The command line of `sh -c` or `bash -c` is read
@@ -98,6 +113,7 @@ function readCalls(command, cwd, depth = 0) {
           if (token.text === '-C') at = moveTo(at, git.globals[i + 1]);
         });
         const read = commitMessage(git.rest, at);
+        read.dir = at;
         // A commit that writes nothing still holds its heredoc, so the later ones keep their own.
         if (read.holdsHeredoc) pending.push(read);
         if (!read.writesNothing) gitCommits.push(read);

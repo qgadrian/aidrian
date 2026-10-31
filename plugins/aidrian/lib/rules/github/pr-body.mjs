@@ -51,7 +51,8 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
   const pending = new Map();
   for (const { segment, folder, line } of walkCommands(command, cwd)) {
     if (!readPrCall(segment)) continue;
-    if (!pending.has(line)) pending.set(line, readPrCalls(line));
+    // The same line text can run again, as two identical `sh -c` bodies do: a spent queue starts over.
+    if (!pending.get(line)?.length) pending.set(line, readPrCalls(line));
     const call = pending.get(line).shift();
     if (!call) continue;
     const reason = judge(call, line, { cwd: folder ?? cwd, folderKnown: folder !== null, env, listOpenPrs: folder === null || folder === cwd ? listOpenPrs : openPrBodies(folder) });

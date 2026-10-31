@@ -147,6 +147,16 @@ test('the message is read after the cleanup git applies', (t) => {
   assert.match(run('git commit --edit -F cut.txt') ?? '', /Blocked/, 'the repository cleanup');
 });
 
+test('each call answers to the project it runs in', (t) => {
+  const { dir, input } = setup(t);
+  mkdirSync(path.join(dir, 'other/.aidrian'), { recursive: true });
+  writeFileSync(path.join(dir, 'other/.aidrian/config.json'), JSON.stringify({ version: 1, attribution: { commit: ['agent'] } }));
+  const run = (command) => check(command, { cwd: dir, env: {}, input, commits: () => [] });
+  assert.equal(run('git commit -m unsigned'), null, 'this project has it off');
+  assert.match(run('cd other && git commit -m unsigned') ?? '', /Agent: main/);
+  assert.match(run('git -C other commit -m unsigned') ?? '', /Agent: main/);
+});
+
 test('help and dry-run commits pass', (t) => {
   const { run } = setup(t, { commit: ['agent'] });
   for (const command of ['git commit -h', 'git commit --help', 'git commit --dry-run -m x', 'git commit --dry -m x', 'git commit --short', 'git commit --porcelain', 'git commit --long', 'git commit --null', 'git commit -z']) assert.equal(run(command), null, command);

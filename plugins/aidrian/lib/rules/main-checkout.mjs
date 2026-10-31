@@ -4,6 +4,10 @@
 // mkdir, and truncate, dd's of=, and the local destination of rsync, with its sources too under --remove-source-files. A move removes its sources. A command
 // substitution that runs is read as the command line is.
 //
+// It also keeps the main checkout's git state for the session that owns it: no `git switch` or `git checkout <branch>`
+// away from the default branch, and no staging of every change at once (`git add -A`, `--all`, `-u`, `.`, `:/`,
+// `git commit -a`), which takes whatever other sessions left in the folder.
+//
 // It is off until a project sets config.json `"git": { "mainCheckout": { "guard": true } }`. A target is allowed when it is outside
 // every main checkout (in a worktree, or outside the repository), in a project without a project folder or with the
 // guard off, matched by `git.mainCheckout.allowWrites`, or git-ignored. When git cannot tell, a tool write is denied to be
@@ -100,7 +104,58 @@ const REMOTE = /^[^/]*:/u;
 // Bash: the deny reason for `command`, or null. A command with no certain target never runs git.
 export function check(command, { cwd = process.cwd(), env = process.env } = {}) {
   if (env[OVERRIDE] === '1') return null;
-  return decide(bashTargets(command, cwd), cwd, false, 'this command writes');
+  return decide(bashTargets(command, cwd), cwd, false, 'this command writes') ?? gitStateDenial(command, cwd);
+}
+
+// The git calls that change the main checkout's state for every session in it, as { what, at }: `at` the folder git
+// runs in, from `git -C`; a call after a `cd` is skipped, as its folder is not certain.
+const BULK_ADD = new Set(['-A', '--all', '-u', '--update', '.', ':/', ':', '*']);
+function gitStateChanges(command, cwd) {
+  const found = [];
+  let known = true;
+  for (const { segment } of lexSteps(command)) {
+    const { program } = readInvocation(segment);
+    if (CHANGES_DIRECTORY.has(program)) known = false;
+    const call = known ? readGit(segment) : null;
+    if (!call) continue;
+    let at = cwd;
+    call.globals.forEach((token, i) => {
+      const value = call.globals[i + 1];
+      if (token.text === '-C' && value && !value.dynamic) at = path.resolve(at, value.text);
+    });
+    const words = call.rest.filter((token) => !token.dynamic).map((token) => token.text);
+    const options = words.filter((word) => word.startsWith('-') && word !== '--');
+    const operands = words.filter((word) => !word.startsWith('-'));
+    const short = (letter) => options.some((option) => /^-[A-Za-z]+$/u.test(option) && option.includes(letter));
+    if (call.subcommand === 'add' && (words.some((word) => BULK_ADD.has(word)) || short('A') || short('u'))) {
+      found.push({ what: `\`git add ${words.join(' ')}\` stages every change in the folder, including other sessions' work`, at });
+    } else if (call.subcommand === 'commit' && (short('a') || options.some((option) => isLongOption(option, '--all', '--al')))) {
+      found.push({ what: '`git commit -a` commits every change in the folder, including other sessions\' work', at });
+    } else if (call.subcommand === 'switch' || (call.subcommand === 'checkout' && !words.includes('--') && !operands.some((word) => existsSync(path.resolve(at, word)))
+      && (operands.length || options.some((o) => /^-[bB]$|^--orphan$|^--detach$/u.test(o))))) {
+      // `git checkout <path>` restores a file, which the guard allows; only a word that is not a path names a branch.
+      const target = call.subcommand === 'switch' ? operands.at(-1) : operands[0];
+      found.push({ what: `\`git ${call.subcommand}\` moves the folder every session shares to another branch`, at, target: target ?? null, creates: options.some((o) => /^-[bBcC]$|^--orphan$|^--create$|^--detach$/u.test(o)) });
+    }
+  }
+  return found;
+}
+
+// The deny reason for a git call that changes the main checkout's state, or null. Moving back to the default branch
+// is allowed: it is where the main checkout belongs.
+function gitStateDenial(command, cwd) {
+  for (const change of gitStateChanges(command, cwd)) {
+    const folder = existingFolder(change.at);
+    const project = findProject(folder);
+    if (!project) continue;
+    const { config } = loadConfig(project);
+    if (!config.git.mainCheckout.guard) continue;
+    const roots = checkoutRoots(folder);
+    if (!roots || canonical(roots.current) !== canonical(roots.main)) continue;
+    if (change.target !== undefined && !change.creates && change.target === config.git.defaultBranch) continue;
+    return reason(`Blocked: ${change.what}, in the main checkout (${roots.main}).`, project, config);
+  }
+  return null;
 }
 
 // Edit, Write, NotebookEdit, and apply_patch: the deny reason for the hook payload, or null.

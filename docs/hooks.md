@@ -88,7 +88,7 @@ What each rule matches:
 - Review gate: `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose body
   asks `@codex review`; `gh pr create --reviewer` and `gh pr edit --add-reviewer` naming `github.reviewer`.
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
-  `touch`, `mkdir`, and `rsync` (sources too under `--remove-source-files`).
+  `touch`, `mkdir`, and `rsync` (sources too under `--remove-source-files`); and a branch switch or `git add -A` there.
 
 Each rule is a file in `plugins/aidrian/lib/rules/`; a rule that reads only `gh` commands, such as the pull request body rule, is in `rules/github/`.
 Each block is recorded: [Recorded blocks](#recorded-blocks).
@@ -130,6 +130,14 @@ The rule blocks a write to a file git tracks, or would track, in the main checko
 It allows a git-ignored path, a path in `git.mainCheckout.allowWrites`, and anything in a worktree or outside the repository.
 [config.md](config.md) lists both keys.
 When git cannot answer, an Edit or Write is blocked to be safe, and a Bash command runs.
+
+Several sessions can share the main checkout, so the rule also keeps its git state to the default branch and to what
+each session names:
+
+- `git switch` and `git checkout <branch>` are blocked, except back to `git.defaultBranch`; `git checkout <path>` and
+  `git checkout -- <path>` restore files and pass.
+- `git add -A`, `--all`, `-u`, `.`, and `:/`, and `git commit -a`, are blocked: they take every change in the folder,
+  another session's included. Stage files by name.
 
 ## Agent gates
 

@@ -293,3 +293,18 @@ test('bashTargets finds the targets of ln, truncate, install, and dd; with resto
   assert.deepEqual(restored('git restore --staged src/a.ts'), [], 'only the index changes');
   assert.deepEqual(restored('git restore --staged --worktree src/a.ts'), ['src/a.ts']);
 });
+
+test('in the main checkout, no session moves the branch away from the default or stages every change at once', (t) => {
+  const { repo } = fixture(t);
+  const denied = (command, cwd = repo) => check(command, { cwd, env: ENV });
+  for (const command of ['git add -A', 'git add --all', 'git add .', 'git add -u', 'git add :/', 'git commit -am x', 'git commit --all -m x', 'git switch task', 'git switch -c fresh', 'git checkout task', 'git checkout -b fresh', 'git -C src add -A']) {
+    assert.match(denied(command) ?? '', /^Blocked: .* in the main checkout/, command);
+  }
+  for (const command of ['git add src/app.js', 'git commit -m x', 'git switch main', 'git checkout main', 'git checkout src/app.js', 'git checkout -- src/app.js', 'git status', 'git pull --ff-only']) {
+    assert.equal(denied(command), null, command);
+  }
+  assert.equal(denied('git add -A', path.join(repo, 'wt/task')), null, 'a worktree is the session`s own');
+  assert.equal(denied('cd wt/task && git add -A'), null, 'after a cd the folder is not certain');
+  const off = fixture(t, { version: 1 }).repo;
+  assert.equal(check('git add -A', { cwd: off, env: ENV }), null, 'the guard is off');
+});

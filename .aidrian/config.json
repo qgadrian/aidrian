@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "git": {
+    "defaultBranch": "main",
+    "worktrees": { "dir": ".worktrees" },
+    "mainCheckout": { "guard": true }
+  }
+}

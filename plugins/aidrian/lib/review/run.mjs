@@ -28,9 +28,9 @@ import { changedFiles, diffLines, fileAt, isAncestor, isClean, mergeBase, resolv
 import { checkReview } from './config.mjs';
 import { citationProblem, flowState, invariantsOf, parseVerdicts } from './flows.mjs';
 import { computeVerdict } from '../pr-checks.mjs';
-import { globPattern, isDirectory } from '../fs.mjs';
+import { isDirectory } from '../fs.mjs';
 import { dedupe, packageRoots } from './split.mjs';
-import { buildPlan, classify, flowsInForce, HARNESS_FLOW, mergePlans, validatePlan } from './plan.mjs';
+import { buildPlan, classify, flowsInForce, HARNESS_FLOW, mergePlans, pathPattern, validatePlan } from './plan.mjs';
 import { BUILT_IN, resolveEngine, reviewerMap, runExec, satisfies } from './reviewers.mjs';
 import { emptyState, isSummary, newer, readLocalState, stateFromComment, summaryBody, writeLocalState } from './state.mjs';
 
@@ -236,7 +236,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   // A flow's deleted test stops the review whatever else the change does, even when nothing else needs a review.
   const removedTests = [];
   for (const [id, definition] of Object.entries(review.flows)) {
-    const tests = (definition.tests ?? []).map(globPattern);
+    const tests = (definition.tests ?? []).map(pathPattern);
     const gone = changes.filter((each) => each.status === 'D' && tests.some((pattern) => pattern.test(each.file))).map((each) => each.file);
     if (gone.length) removedTests.push({ flow: id, deleted: gone, accept: `aidrian pr signoff ${n} --flow ${id} --head ${head}` });
   }

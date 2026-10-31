@@ -35,6 +35,7 @@ another.
 }
 ```
 
+- A path list takes globs and `re:<regex>` entries, matched against the `/`-separated path.
 - `when` takes `onlyFiles` (every reviewed file matches), `anyFiles` (some changed file matches), and `lines.over`
   (changed lines, not counting `review.ignore`). That is all it will ever take: anything smarter is a plan command.
 - `depth: "none"` needs `onlyFiles`, so it only covers the files it names, and any rule that asks for more wins.
@@ -109,7 +110,7 @@ of its invariants, with evidence, and the flow must be signed before the review 
 
 | Key | |
 | --- | --- |
-| `files` | required: globs; a changed file that can change behaviour triggers the flow |
+| `files` | required: globs, or `re:<regex>` over the path; a changed file that can change behaviour triggers the flow |
 | `added` | regular expressions over the added lines of any file, for a use that lives outside the flow's folders |
 | `invariants` | a doc, whose `##` and `###` headings are the invariants, or a list of `{ id, text, cite? }` |
 | `require` | the flow's reviewers; the code-reviewer agent by default |

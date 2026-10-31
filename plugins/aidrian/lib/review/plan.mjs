@@ -35,8 +35,11 @@ export const HARNESS_FLOW = 'harness-config';
 
 const DEPTH_RANK = Object.fromEntries(DEPTHS.map((depth, i) => [depth, i]));
 const maxDepth = (a, b) => (DEPTH_RANK[b] > DEPTH_RANK[a] ? b : a);
+// A path entry of a rule or flow: a glob, or `re:<regular expression>` over the `/`-separated path, for a set a glob
+// cannot name (an alternation across folders, a file-name pattern in any folder).
+export const pathPattern = (entry) => (entry.startsWith('re:') ? new RegExp(entry.slice('re:'.length), 'u') : globPattern(entry));
 const matcher = (globs) => {
-  const patterns = (globs ?? []).map(globPattern);
+  const patterns = (globs ?? []).map(pathPattern);
   return (file) => patterns.some((pattern) => pattern.test(file));
 };
 

@@ -87,7 +87,11 @@ function checkRules(rules, bad) {
       if (!isObject(rule.when)) problems.push(`"${at}.when" must be an object`);
       else {
         for (const key of Object.keys(rule.when)) if (!['onlyFiles', 'anyFiles', 'lines'].includes(key)) problems.push(`unknown key "${at}.when.${key}"`);
-        for (const key of ['onlyFiles', 'anyFiles']) if (rule.when[key] !== undefined && !someTexts(rule.when[key])) problems.push(`"${at}.when.${key}" must be a list of globs`);
+        for (const key of ['onlyFiles', 'anyFiles']) {
+          if (rule.when[key] === undefined) continue;
+          if (!someTexts(rule.when[key])) problems.push(`"${at}.when.${key}" must be a list of globs`);
+          else if (pathsProblem(rule.when[key])) problems.push(`"${at}.when.${key}" ${pathsProblem(rule.when[key])}`);
+        }
         if (rule.when.lines !== undefined && !(isObject(rule.when.lines) && Number.isInteger(rule.when.lines.over) && rule.when.lines.over >= 0)) {
           problems.push(`"${at}.when.lines" must be { "over": <whole number> }`);
         }
@@ -118,6 +122,8 @@ function checkFlows(flows, bad) {
     const keys = ['files', 'added', 'tests', 'checks', 'invariants', 'require', 'signoff'];
     for (const key of Object.keys(flow)) if (!keys.includes(key)) problems.push(`unknown key "${at}.${key}"`);
     if (!someTexts(flow.files)) problems.push(`"${at}.files" must be a non-empty list of globs`);
+    else if (pathsProblem(flow.files)) problems.push(`"${at}.files" ${pathsProblem(flow.files)}`);
+    if (texts(flow.tests ?? []) && pathsProblem(flow.tests ?? [])) problems.push(`"${at}.tests" ${pathsProblem(flow.tests)}`);
     for (const key of ['tests', 'checks']) if (flow[key] !== undefined && !texts(flow[key])) problems.push(`"${at}.${key}" must be a list`);
     if (flow.added !== undefined) {
       if (!texts(flow.added)) problems.push(`"${at}.added" must be a list of regular expressions`);
@@ -199,4 +205,15 @@ function checkSplit(split, bad) {
     else bad(`"review.split.${key}" must be a whole number from ${ranges[key][0]} to ${ranges[key][1]}`);
   }
   return out;
+}
+
+// The problem with a list of path entries (globs, or `re:<regular expression>`), or null.
+function pathsProblem(list) {
+  for (const entry of list) {
+    if (entry.startsWith('re:')) {
+      const problem = regexProblem(entry.slice('re:'.length));
+      if (problem) return `has ${entry}: ${problem}`;
+    }
+  }
+  return null;
 }

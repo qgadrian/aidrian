@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { bannedHits, bannedPatterns, bodyFiles, judgeCommand } from '../scripts/banned-terms.mjs';
+import { bannedHits, bannedPatterns, bodyFiles, judgeCommand, prePushProblems } from '../scripts/banned-terms.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SCRIPT = path.join(ROOT, 'scripts/banned-terms.mjs');
@@ -42,6 +42,7 @@ test('a gh or git commit command is judged by its text and its body file; other 
   assert.match(judge('gh --repo o/r pr create --title secretco --body ok'), /secretco/, '--repo before the subcommand');
   assert.match(judge('gh -Ro/r issue create --title secretco --body ok'), /secretco/, '-R attached');
   assert.match(judge('gh pr create -t x -dF bad.md'), /in bad\.md/, 'a short cluster');
+  for (const quoted of [`"${dir}"`, `'${dir}'`]) assert.match(judge(`cd ${quoted} && gh issue create -F bad.md`, '/'), /in bad\.md/, 'a quoted cd');
 });
 
 test('the commit-msg hook refuses a private word and ignores comment lines', (t) => {
@@ -68,4 +69,20 @@ test("a linked worktree reads the main checkout's private patterns, which git do
   writeFileSync(path.join(main, '.banned-terms.local'), '# private\nzq-\\d+\n');
   git('worktree', 'add', '-q', path.join(dir, 'wt'));
   assert.ok(bannedPatterns(path.join(dir, 'wt')).some((pattern) => pattern.test('ZQ-4')));
+});
+
+test("a push is judged on its branch names and on the commits its destination does not have", (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-banned-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: dir, encoding: 'utf8' }).trim();
+  git('init', '-q');
+  git('commit', '-q', '--allow-empty', '-m', 'fix zq-1');
+  const old = git('rev-parse', 'HEAD');
+  git('update-ref', 'refs/remotes/origin/main', old);
+  git('commit', '-q', '--allow-empty', '-m', 'fine');
+  const head = git('rev-parse', 'HEAD');
+  const push = (ref, remote) => prePushProblems(`refs/heads/${ref} ${head} refs/heads/${ref} ${'0'.repeat(40)}\n`, remote, { cwd: dir, patterns });
+  assert.deepEqual(push('topic', 'origin'), [], "origin already has the private commit");
+  assert.equal(push('topic', 'public').length, 1, 'another remote does not');
+  assert.equal(push('zq-2-topic', 'origin').length, 1, 'a branch name');
 });

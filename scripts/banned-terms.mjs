@@ -54,8 +54,8 @@ export function bodyFiles(command) {
 // left out of the text, since a home or temp path names the user; a body file's contents are read instead.
 export function judgeCommand(command, { cwd = process.cwd(), patterns = bannedPatterns() } = {}) {
   if (!/\bgh\b[^\n;&|]*\b(?:pr|issue)\b|\bgit\b[^\n;&|]*\bcommit\b/u.test(command)) return null;
-  const cd = /^\s*cd\s+([^\s;&|$`'"~()]+)\s*&&/u.exec(command);
-  const base = cd ? path.resolve(cwd, cd[1]) : cwd;
+  const cd = /^\s*cd\s+('([^']*)'|"([^"$`\\]*)"|([^\s;&|$`'"~()]+))\s*&&/u.exec(command);
+  const base = cd ? path.resolve(cwd, cd[2] ?? cd[3] ?? cd[4]) : cwd;
   let text = cd ? command.replace(cd[1], '<path>') : command;
   const files = bodyFiles(command);
   for (const { operand } of files) text = text.replace(operand, '<path>');
@@ -70,22 +70,37 @@ export function judgeCommand(command, { cwd = process.cwd(), patterns = bannedPa
   return found.size ? `names a private word (${[...found].join(', ')}); see .banned-terms.local. Reword it.` : null;
 }
 
-// Whether `sha` is a commit this clone has: the destination's advertised head, when the push does not replace a fetch.
-function known(sha) {
-  if (!sha || /^0+$/u.test(sha)) return false;
-  try {
-    git(['cat-file', '-e', `${sha}^{commit}`]);
-    return true;
-  } catch {
-    return false;
+// The problems of a push: git's pre-push input `lines` ("<local ref> <local sha> <remote ref> <remote sha>") to the remote
+// `remote`. A pushed branch name is read, and each commit message the destination does not have yet: commits reachable
+// from another remote's branches still count, since that remote may be private.
+export function prePushProblems(lines, remote, { cwd = ROOT, patterns = bannedPatterns(cwd) } = {}) {
+  const git = (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  const known = (sha) => {
+    if (!sha || /^0+$/u.test(sha)) return false;
+    try {
+      git(['cat-file', '-e', `${sha}^{commit}`]);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const problems = [];
+  for (const line of lines.split('\n').filter(Boolean)) {
+    const [localRef, localSha, remoteRef, remoteSha] = line.split(' ');
+    if (/^0+$/u.test(localSha)) continue;
+    for (const ref of new Set([localRef, remoteRef])) {
+      for (const hit of bannedHits(ref, patterns)) problems.push(`branch ${ref}: ${hit}`);
+    }
+    const exclude = [`--remotes=${remote}`, ...(known(remoteSha) ? [remoteSha] : [])];
+    for (const sha of git(['rev-list', localSha, '--not', ...exclude]).split('\n').filter(Boolean)) {
+      for (const hit of bannedHits(git(['log', '-1', '--format=%B', sha]), patterns)) problems.push(`commit ${sha.slice(0, 12)}: ${hit}`);
+    }
   }
+  return problems;
 }
 
-function git(args) {
-  return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8' });
-}
-
-function main([mode, file, remote]) {
+// `file` is the message file for commit-msg, and the push remote's name for pre-push, as the git hooks pass them.
+function main([mode, file]) {
   if (mode === 'commit-msg') {
     // Git keeps `#` lines with -m, -F, or --cleanup=verbatim, so only a verbose commit's diff below the scissors is skipped.
     const hits = bannedHits(readFileSync(file, 'utf8').split(/^# -+ >8 -+$/mu)[0]);
@@ -94,17 +109,7 @@ function main([mode, file, remote]) {
     return 1;
   }
   if (mode === 'pre-push') {
-    const problems = [];
-    for (const line of readFileSync(0, 'utf8').split('\n').filter(Boolean)) {
-      const [localRef, localSha, remoteRef, remoteSha] = line.split(' ');
-      if (/^0+$/u.test(localSha)) continue;
-      for (const ref of new Set([localRef, remoteRef])) {
-        for (const hit of bannedHits(ref)) problems.push(`branch ${ref}: ${hit}`);
-      }
-      for (const sha of git(['rev-list', localSha, '--not', `--remotes=${remote}`, ...(known(remoteSha) ? [remoteSha] : [])]).split('\n').filter(Boolean)) {
-        for (const hit of bannedHits(git(['log', '-1', '--format=%B', sha]))) problems.push(`commit ${sha.slice(0, 12)}: ${hit}`);
-      }
-    }
+    const problems = prePushProblems(readFileSync(0, 'utf8'), file);
     if (!problems.length) return 0;
     console.error(`push names a private word; see .banned-terms.local:\n  ${problems.join('\n  ')}`);
     return 1;
@@ -119,7 +124,7 @@ function main([mode, file, remote]) {
     }
     return 0;
   }
-  console.error('usage: banned-terms.mjs commit-msg <file> | pre-push | claude-hook');
+  console.error('usage: banned-terms.mjs commit-msg <file> | pre-push <remote> | claude-hook');
   return 2;
 }
 

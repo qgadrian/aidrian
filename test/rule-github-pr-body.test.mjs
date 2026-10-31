@@ -138,10 +138,17 @@ test('a cd earlier on the line moves where the body file and the project are rea
   assert.equal(run(`cd ${dir} && gh pr create --title x --body-file short.md`), null, "the worktree's file, not the session's");
   writeFileSync(path.join(dir, 'short.md'), '## Summary\nx\n');
   assert.match(run(`cd ${dir} && gh pr create --title x --body-file short.md`), /^Blocked: the body has no `## Tests run` section/);
+  assert.match(run(`cd "${dir}" && gh pr create --title x --body-file short.md`), /^Blocked: the body has no `## Tests run` section/, 'a quoted cd');
   for (const line of [`(cd ${dir}); gh`, `cd ${dir} | cat; gh`, `cd ${dir} || gh`, `cd ${dir}; gh`, `cd /tmp && cd ${dir} && gh`]) {
     assert.match(run(`${line} pr create --title x --body-file short.md`), /cannot read/, `${line}: the folder gh runs in is unknown`);
   }
   for (const moved of ['cd "$WT"', 'cd', 'cd -', 'cd ~/x', 'popd']) {
     assert.match(run(`${moved} && gh pr create --title x --body-file short.md`), /cannot read/, `${moved}: an unknown folder`);
   }
+});
+
+test('a directory change after gh leaves the folder gh ran in known', (t) => {
+  const run = project(t, { version: 1 }, { 'body.md': GOOD });
+  assert.equal(run('gh pr create --title x --body-file body.md && cd ..'), null);
+  assert.match(run('cd .. || true; gh pr create --title x --body-file body.md'), /cannot read/);
 });

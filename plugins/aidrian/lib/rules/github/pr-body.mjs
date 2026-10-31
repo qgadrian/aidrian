@@ -45,16 +45,15 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
   if (env[OVERRIDE] === '1') return null;
   for (const line of commandLines(command)) {
     // The folder gh runs in: a leading `cd <dir> &&` moves it, so `cd <worktree> && gh pr create --body-file b.md` reads
-    // that worktree's b.md and project, not the session's. Any other directory change on the line (in a subshell, a
-    // pipe, after `||`, a second one) leaves the folder unknown: null.
-    const segments = lexCommand(line);
-    const moves = segments.filter((segment) => CHANGES_DIRECTORY.has(readInvocation(segment).program));
+    // that worktree's b.md and project, not the session's. Any other directory change (in a subshell, a pipe, after `||`,
+    // a second one) leaves the folder unknown, null, for the commands after it.
     let here = cwd;
-    if (moves.length === 1 && moves[0] === segments[0] && LEADING_CD.test(line)) here = movedTo(cwd, readInvocation(segments[0]));
-    else if (moves.length) here = null;
-    for (const segment of segments) {
+    for (const [index, segment] of lexCommand(line).entries()) {
       const invocation = readInvocation(segment);
-      if (CHANGES_DIRECTORY.has(invocation.program)) continue;
+      if (CHANGES_DIRECTORY.has(invocation.program)) {
+        here = index === 0 && LEADING_CD.test(line) ? movedTo(cwd, invocation) : null;
+        continue;
+      }
       const call = readPrCall(segment);
       if (!call) continue;
       // In a folder this rule cannot know, the project is the session's and a relative body file is unreadable.
@@ -67,7 +66,7 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
 }
 
 const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
-const LEADING_CD = /^\s*cd\s+[^\s;&|()]+\s*&&/u;
+const LEADING_CD = /^\s*cd\s+(?:'[^']*'|"[^"]*"|[^\s;&|()'"]+)\s*&&/u;
 
 // The folder after a `cd`, `pushd`, or `popd` invocation from `here`, or null when it cannot be known.
 function movedTo(here, { program, args }) {

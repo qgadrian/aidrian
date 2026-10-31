@@ -231,7 +231,8 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
         // ruby changes folder at each option, so `ruby -C one -C two` runs in one/two; perl keeps only its last -x.
         const next = value.attached === null ? args[i + 1] ?? null : { text: value.attached, dynamic: args[i].dynamic };
         const compose = program === 'ruby' && folder !== null && next && !path.isAbsolute(next.text);
-        if (next) folder = compose ? { text: path.join(folder.text, next.text), dynamic: folder.dynamic || next.dynamic } : next;
+        // A bare perl -x keeps the folder an earlier -x chose.
+        if (next && next.text !== '') folder = compose ? { text: path.join(folder.text, next.text), dynamic: folder.dynamic || next.dynamic } : next;
       }
       if (value?.attached === null) i += 1;
     } else if (text !== '') {
@@ -254,8 +255,8 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
     return (removesSources ? operands : operands.slice(-1)).filter((token) => !REMOTE.test(token.text));
   }
   if (SCRIPT_OPTIONS.has(program)) {
-    // perl -i and ruby -i edit their files in place; without -i they only read them.
-    if (!flags.includes('-i')) return [];
+    // perl -i and ruby -i edit their files in place; without -i they only read them, and -c only checks syntax.
+    if (!flags.includes('-i') || flags.includes('-c')) return [];
     const edited = flags.some((flag) => SCRIPT_OPTIONS.get(program).includes(flag)) ? operands : operands.slice(1);
     // A suffix also writes a backup: `-i.bak` beside each file, `-i'old/*'` with `*` for the file's name.
     const backups = suffix?.text ? edited.map((token) => ({ ...token, dynamic: token.dynamic || suffix.dynamic, text: backupOf(program, token.text, suffix.text) })) : [];

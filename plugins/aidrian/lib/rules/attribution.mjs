@@ -165,6 +165,8 @@ function commitMessage(rest, dir) {
       reused = true;
       value();
     }
+    else if (flag === '--no-fixup' || flag === '--no-squash') generated = false;
+    else if (flag === '--no-reuse-message' || flag === '--no-reedit-message') reused = false;
     else if (flag === '--no-message') messages.length = 0;
     else if (flag === '--no-file') fileText = null;
     else if (isLongOption(flag, '--message', '--m')) [kind, token] = ['message', value()];

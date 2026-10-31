@@ -145,6 +145,10 @@ test('help and dry-run commits pass', (t) => {
   assert.match(run('git commit -m subject -m "Agent: main" -m "$(printf unsigned)"') ?? '', /Blocked/);
   assert.equal(run("git commit --allow-empty --fixup=HEAD -m 'Agent: main'"), null, 'git writes the fixup subject');
   assert.equal(run("git commit --squash HEAD -m 'Agent: main'"), null);
+  assert.match(run("git commit --allow-empty --fixup=HEAD --no-fixup -m 'Agent: main'") ?? '', /Blocked/, 'a cancelled fixup');
+  assert.match(run("git commit --squash=HEAD --no-squash -m 'Agent: main'") ?? '', /Blocked/);
+  assert.equal(run('git commit -C HEAD --no-reuse-message -m "fix: x" -m "Agent: main"'), null, 'a cancelled reuse');
+  assert.equal(run('git commit -c HEAD --no-reedit-message -m "fix: x" -m "Agent: main"'), null);
 });
 
 test('the PR rule reads the commits of the head and base gh pr create names', (t) => {

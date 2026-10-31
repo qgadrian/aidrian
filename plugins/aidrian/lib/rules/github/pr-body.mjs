@@ -1,9 +1,12 @@
 // Bash rule: a pull request body written through `gh pr create` or `gh pr edit` has a `## ` heading for every section in
 // config.json `github.requiredSections`, and no "Generated with [Claude Code]" footer. `gh pr create --fill` is refused:
-// gh then writes the body from the commit messages. `gh pr edit` without a body flag passes, and so does a body the
-// rule cannot read (a variable, stdin, a missing file): it denies only what it reads. Runs only inside a project. A
-// command substitution that runs, as in `url=$(gh pr create …)`, is read as the command line is. A `cd` earlier on the
-// line moves the folder the body file and the project are read from; one the rule cannot follow passes the call.
+// gh then writes the body from the commit messages. A non-web `gh pr create` with no --body or --body-file is refused
+// too, when sections are configured: gh then takes the body from an editor, a prompt, or a template, unchecked.
+// `--web` and `--help` pass. `gh pr edit` without a body flag passes (a title-only edit). A body flag whose body the
+// rule cannot read (a variable, a substitution, stdin, a missing file) is refused when sections are configured. Runs only inside a project. A
+// command substitution that runs, as in `url=$(gh pr create …)`, is read as the command line is. A leading `cd <dir> &&`
+// moves the folder the body file and the project are read from; after any other directory change on the line, a relative
+// body file is one the rule cannot read.
 //
 // `github.pullRequest` adds the project's contract (docs/config.md#pull-request-contract), each part off until set:
 // the title pattern, an issue key outside the title's leading bracket, the closed list of sections, the items of the
@@ -54,10 +57,9 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
       if (CHANGES_DIRECTORY.has(invocation.program)) continue;
       const call = readPrCall(segment);
       if (!call) continue;
-      // A folder this rule cannot know is a body it cannot read: it denies only what it reads.
+      // In a folder this rule cannot know, the project is the session's and a relative body file is unreadable.
       const at = here !== null && invocation.chdir ? movedTo(here, { program: 'cd', args: [invocation.chdir] }) : here;
-      if (at === null) continue;
-      const reason = judge(call, line, { cwd: at, env, listOpenPrs: at === cwd ? listOpenPrs : openPrBodies(at) });
+      const reason = judge(call, line, { cwd: at ?? cwd, folderKnown: at !== null, env, listOpenPrs: at === null || at === cwd ? listOpenPrs : openPrBodies(at) });
       if (reason) return reason;
     }
   }
@@ -85,27 +87,44 @@ function readPrCall(segment) {
   let i = 0;
   const words = [];
   let repo = null;
+  let help = false;
   for (; i < args.length && words.length < 2; i += 1) {
     const { text, dynamic } = args[i];
     if (dynamic) return null;
-    if (text === '-R' || text === '--repo') repo = args[++i] ?? null;
+    if (text === '-h' || /^--help(?:=|$)/u.test(text)) help = isTrue(text.includes('=') ? text.slice(text.indexOf('=') + 1) : null);
+    else if (text === '-R' || text === '--repo') repo = args[++i] ?? null;
     else if (text.startsWith('--repo=')) repo = { text: text.slice('--repo='.length), dynamic };
     else if (!text.startsWith('-')) words.push(text);
   }
   if (words[0] !== 'pr' || !['create', 'edit'].includes(words[1])) return null;
-  const call = { subcommand: words[1], fill: false, body: null, bodyFile: null, title: null, repo, target: null };
+  const call = { subcommand: words[1], fill: false, web: false, help, body: null, bodyFile: null, title: null, repo, target: null };
   for (; i < args.length; i += 1) {
     const { text, dynamic } = args[i];
+    // After `--` every word is a positional: no flag, but still the pull request an edit names.
+    if (text === '--') {
+      call.target ??= args[i + 1] ?? null;
+      break;
+    }
     let [flag, inline] = text.startsWith('--') && text.includes('=') ? [text.slice(0, text.indexOf('=')), text.slice(text.indexOf('=') + 1)] : [text, null];
     if (/^-[^-]/u.test(text)) {
-      // A short word as gh reads it: `-dF body.md`, `-Fbody.md`, and `-F=body.md`.
-      const { options, value } = readShortOptions(text, SHORT_VALUES);
-      if (options.includes('-f')) call.fill = true;
+      // A short word as gh reads it: `-dF body.md`, `-Fbody.md`, and `-F=body.md`. A switch ending a cluster takes an
+      // explicit value after `=`, as pflag reads it: `-w=0` and `-dw=false` are web off.
+      const split = /^-([^=]+)=(.*)$/u.exec(text);
+      const explicit = split && !readShortOptions(`-${split[1]}`, SHORT_VALUES).value ? split : null;
+      const { options, value } = readShortOptions(explicit ? `-${explicit[1]}` : text, SHORT_VALUES);
+      const last = options.at(-1);
+      const on = (option) => options.includes(option) && (option !== last || !explicit || isTrue(explicit[2], dynamic));
+      // --fill is refused unless it is statically off; --web and --help exempt only when statically on.
+      if (options.includes('-f') && !(last === '-f' && explicit && isFalse(explicit[2], dynamic))) call.fill = true;
+      if (options.includes('-w')) call.web = on('-w');
+      if (options.includes('-h')) call.help = on('-h');
       if (!value) continue;
       [flag, inline] = [value.option, value.attached?.replace(/^=/u, '') ?? null];
     }
     const value = () => (inline !== null ? { text: inline, dynamic } : args[++i] ?? null);
     if (FILL.has(flag)) call.fill = true;
+    else if (flag === '--web') call.web = isTrue(inline, dynamic);
+    else if (flag === '--help') call.help = isTrue(inline, dynamic);
     else if (flag === '--body' || flag === '-b') [call.body, call.bodyFile] = [value(), null];
     else if (flag === '--body-file' || flag === '-F') [call.bodyFile, call.body] = [value(), null];
     else if (flag === '--title' || flag === '-t') call.title = value();
@@ -116,6 +135,11 @@ function readPrCall(segment) {
   return call;
 }
 
+// A boolean option's value as gh (pflag) reads it: bare or a pflag true word is on, a false word is off. A value the
+// rule cannot read is neither, so it grants no exemption.
+const isTrue = (inline, dynamic = false) => inline === null || (!dynamic && /^(?:true|1|t|TRUE|True|T)$/u.test(inline));
+const isFalse = (inline, dynamic = false) => inline !== null && !dynamic && /^(?:false|0|f|FALSE|False|F)$/u.test(inline);
+
 // The long options of `gh pr create` and `gh pr edit` that take a value, so their value is never read as the target.
 const LONG_VALUES = new Set([
   '--assignee', '--base', '--head', '--label', '--milestone', '--project', '--reviewer', '--template', '--recover', '--attach',
@@ -123,11 +147,12 @@ const LONG_VALUES = new Set([
   '--add-reviewer', '--remove-reviewer',
 ]);
 
-function judge(call, command, { cwd, env, listOpenPrs }) {
+function judge(call, command, { cwd, folderKnown = true, env, listOpenPrs }) {
   const project = findProject(cwd);
   if (!project) return null;
   const { config } = loadConfig(project);
   const contract = config.github.pullRequest;
+  if (call.help) return null;
   if (call.fill && call.subcommand === 'create') {
     return deny(`\`--fill\` writes the body from the commit messages, without the sections config.json \`github.requiredSections\` asks for. ` +
       'Write the body to a file and pass --body-file (the pr-write skill does).');
@@ -137,7 +162,17 @@ function judge(call, command, { cwd, env, listOpenPrs }) {
       "another session's body can publish under this pull request. Write the body to a file inside the current worktree " +
       '(config.json `github.pullRequest.sharedTempBodyFile`).');
   }
-  const body = readBody(call, command, cwd);
+  const sectioned = config.github.requiredSections.length > 0 || Boolean(contract.sections?.length);
+  if (call.subcommand === 'create' && !call.web && !call.body && !call.bodyFile && sectioned) {
+    return deny('`gh pr create` has no --body or --body-file, so gh takes the body from an editor, a prompt, or a template, ' +
+      'without the sections config.json `github.requiredSections` asks for. Write the body to a file and pass --body-file (the pr-write skill does).');
+  }
+  const body = readBody(call, command, folderKnown ? cwd : null);
+  if (body === null && sectioned && (call.body || call.bodyFile)) {
+    return deny('the body is one this rule cannot read (a variable, a command substitution, stdin, or a missing file), so the ' +
+      'sections config.json `github.requiredSections` asks for go unchecked. Pass a literal --body, a heredoc ' +
+      `(--body "$(cat <<'EOF' … EOF)"), or a --body-file that exists, by an absolute path when a cd on the line moves the folder (the pr-write skill does).`);
+  }
   const reason = body === null ? null : judgeBody(body, config) ?? judgeDuplicate(body, call, contract, listOpenPrs);
   return reason ?? judgeTitle(call.title, config);
 }
@@ -276,12 +311,14 @@ function openPrBodies(cwd) {
   };
 }
 
-// The body text, or null when this rule cannot know it.
+// The body text, or null when this rule cannot know it. A null `cwd` is a folder it cannot know: only an absolute body
+// file reads.
 function readBody(call, command, cwd) {
   if (call.body) return call.body.dynamic ? BODY_HEREDOC.exec(command)?.[3] ?? null : call.body.text;
   if (!call.bodyFile || call.bodyFile.dynamic || call.bodyFile.text === '-') return null;
+  if (cwd === null && !path.isAbsolute(call.bodyFile.text)) return null;
   try {
-    return readFileSync(path.resolve(cwd, call.bodyFile.text), 'utf8');
+    return readFileSync(path.resolve(cwd ?? '/', call.bodyFile.text), 'utf8');
   } catch {
     return null;
   }

@@ -165,7 +165,8 @@ test('a write to an unknown folder, or code an interpreter runs, is judged by th
     ["ruby -e\"File.delete('.aidrian/config.json')\"", '.aidrian/config.json'],
     ["ruby -we\"File.delete('.aidrian.local.json')\"", '.aidrian.local.json'],
   ]) {
-    assert.match(reasonOf(command) ?? '', new RegExp(`^aidrian: Bash is blocked .* it may change ${file.replaceAll('.', '\\.')}, which sets`), command);
+    // perl -i and ruby -i are certain writes, so they read "changes"; the rest are code the guard cannot follow.
+    assert.match(reasonOf(command) ?? '', new RegExp(`^aidrian: Bash is blocked .* it (?:may change|changes) ${file.replaceAll('.', '\\.')}, which sets`), command);
   }
   // Code that names a file and is not one of the few reads, whatever it calls: a rename or replace the guard has no
   // name for, a read beside a change, a read whose function the code first redefines, ruby and perl, and a write mode.

@@ -33,11 +33,12 @@ codex plugin marketplace add git@github.com:<owner>/aidrian-harness.git
 ```sh
 codex plugin marketplace upgrade aidrian-harness
 codex plugin add aidrian@aidrian-harness
-node "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/aidrian-harness/aidrian/*/codex/install-agents.mjs
+aidrian_dir="$(ls -d "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/aidrian-harness/aidrian/*/ | sort -V | tail -1)"
+node "${aidrian_dir}codex/install-agents.mjs"
 ```
 
 Then trust the hooks in `/hooks` again.
-Codex keeps one version folder and replaces it on update, so the `*` finds it.
+`aidrian_dir` is the newest version folder by version number, so an old folder left in the cache is never used.
 
 ## From a local checkout
 
@@ -56,7 +57,8 @@ From the checkout, `make codex-agents` installs the agents.
 This puts both commands on the PATH of the current shell:
 
 ```sh
-export PATH="$(echo "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/aidrian-harness/aidrian/*/bin):$PATH"
+aidrian_dir="$(ls -d "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/aidrian-harness/aidrian/*/ | sort -V | tail -1)"
+export PATH="${aidrian_dir}bin:$PATH"
 ```
 
 ## Hooks
@@ -79,7 +81,8 @@ The user folder, `$CODEX_HOME/agents`, serves every project, so it never gets a 
 [config.md](../config.md#models) has the keys.
 
 ```sh
-node "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/aidrian-harness/aidrian/*/codex/install-agents.mjs --target .codex/agents
+aidrian_dir="$(ls -d "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/aidrian-harness/aidrian/*/ | sort -V | tail -1)"
+node "${aidrian_dir}codex/install-agents.mjs" --target .codex/agents
 ```
 
 - Run it again after each change to `models.codex`. The next Codex session reads the new roles.

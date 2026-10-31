@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -160,6 +160,21 @@ test('install-agents adds and updates its own roles, removes stale ones, and lea
   assert.deepEqual(readdirSync(target).sort(), [...shipped, 'my-own-agent.toml'].sort());
   for (const file of shipped) assert.equal(readFileSync(path.join(target, file), 'utf8'), readFileSync(path.join(CODEX_AGENTS, file), 'utf8'));
   assert.match(run(), new RegExp(`are up to date \\(${shipped.length}\\)`));
+});
+
+test('install-agents applies the project models.codex only with --target, never to the user folder', (t) => {
+  const project = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-codex-project-')));
+  t.after(() => rmSync(project, { recursive: true, force: true }));
+  mkdirSync(path.join(project, '.aidrian'));
+  writeFileSync(path.join(project, '.aidrian/config.json'), JSON.stringify({ version: 1, models: { codex: { agents: { explorer: { effort: 'low' } } } } }));
+  // CODEX_HOME inside the project: without the fix, the default target finds the project above it.
+  const home = path.join(project, 'home');
+  const env = { ...process.env, CODEX_HOME: home };
+  execFileSync(process.execPath, [INSTALL], { cwd: project, env, encoding: 'utf8' });
+  const shipped = readFileSync(path.join(CODEX_AGENTS, `${PREFIX}explorer.toml`), 'utf8');
+  assert.equal(readFileSync(path.join(home, `agents/${PREFIX}explorer.toml`), 'utf8'), shipped);
+  execFileSync(process.execPath, [INSTALL, '--target', path.join(project, '.codex/agents')], { cwd: project, env, encoding: 'utf8' });
+  assert.notEqual(readFileSync(path.join(project, `.codex/agents/${PREFIX}explorer.toml`), 'utf8'), shipped);
 });
 
 test('install-agents fails on a bad argument, and touches nothing', (t) => {

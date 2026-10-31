@@ -313,6 +313,7 @@ test('parseSince takes a span or a date; aidrian report prints the log, --json t
   assert.equal(parseSince('24h', NOW), NOW - 86_400_000);
   assert.equal(parseSince('2026-10-01', NOW), Date.parse('2026-10-01T00:00:00Z'));
   assert.throws(() => parseSince('soon'), /--since takes/);
+  for (const date of ['2026-02-31', '2026-13-01', '2026-00-10']) assert.throws(() => parseSince(date), /--since takes/, date);
   const { dir, env } = project(t);
   const report = (args) => spawnSync(CLI, ['report', ...args], { cwd: dir, env, encoding: 'utf8' });
   assert.match(report([]).stdout, /^Dispatch log .*dispatch-log\.jsonl, since 7d\nNo rows yet\.\n$/);

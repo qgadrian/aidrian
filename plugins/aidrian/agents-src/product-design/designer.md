@@ -52,10 +52,8 @@ needs a shared abstraction or structural change nobody approved, or the source o
 
 Findings first. Each finding gives:
 
-- the axes `severity`, `likelihood`, `affects`, and `cost`, which `aidrian pr disposition` turns into the verdict:
-  `fix_now`, `accepted_residual`, `acceptable_as_is`, or `drop_unless_cited`
-- instead, when no verdict fits yet: `needs_evidence`, naming the missing evidence, or `blocked_by_product`, naming the product decision
-  and routing it to `product-manager`. `ux-specialist` uses the same words, so a gate reads either review the same way.
+- the axes `severity`, `likelihood`, `affects`, and `cost`; the dispatcher's `aidrian pr disposition` decides the verdict, never you
+- when evidence or a product decision is missing: `status: needs_input`, naming what is missing, with `next_owner` (`product-manager` for a product decision)
 - the UI and user impact, the evidence, a concrete fix direction, and acceptance criteria
 
 ## Implementation mode

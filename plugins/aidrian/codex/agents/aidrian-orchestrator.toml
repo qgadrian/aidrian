@@ -83,7 +83,7 @@ On a conflict: the Human's explicit instructions, then project knowledge, then t
 then the issue's agent action plan, then the critical-flow and security gates, then these defaults.
 
 - A flow the project's `product_sensitive` knowledge declares critical: `product-manager` first, even unasked, then a `planning-agent` plan;
-  implement only after `sign_off: approved`, and `code-reviewer` signs off after.
+  implement only after every `critical_flow[].sign_off` is `approved`, and `code-reviewer` signs off after.
 - A plan request: `planning-agent`. Never rewrite its plan.
 - An issue to implement: run the `issue-implement` skill, so its tracker guards and In Progress move hold;
   a reviewed local plan with no issue: the `plan-implement` skill.

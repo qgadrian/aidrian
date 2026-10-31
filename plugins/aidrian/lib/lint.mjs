@@ -4,7 +4,7 @@
 //           names and descriptions within skills.listingBytes (both hosts list them in every session), and a file
 //           under SKILL_CUT_BYTES, with a warning above SKILL_WARN_BYTES
 //   agents  every <dir>/*.md: `name` equals the file name, a `description` like a skill's, and a known model and effort
-//   paths   tracked files hold no personal home folder such as /Users/<name>/; --staged reads what the index holds
+//   paths   tracked and untracked, non-ignored files hold no personal home folder such as /Users/<name>/; --staged reads what the index holds
 //   budget  the knowledge budgets that `aidrian check` also runs: the `always` docs and each tagged doc (knowledge.mjs)
 //   terms   tracked files hold no banned term of the terms file (terms.mjs): a `block` hit fails, a `warn` hit warns;
 //           --staged reads what the index holds. Off while config.json `terms.file` is null
@@ -115,20 +115,26 @@ export function lintAgents(dirs, { descriptionChars }) {
 }
 
 export function lintPaths(root, staged = false) {
-  const args = staged ? ['diff', '--cached', '--name-only', '--diff-filter=ACMR', '-z'] : ['ls-files', '-z'];
   // A command, not a hook: listing a large repository's files may take longer than a hook's git call may.
-  const { status, stdout } = runGit(args, root, { timeout: 0 });
-  if (status !== 0) return { problems: [`git ${args[0]} failed in ${root}`], summary: '' };
-  const files = stdout.split('\0').filter((file) => file && !BINARY.test(file));
+  const list = (args) => {
+    const { status, stdout } = runGit(args, root, { timeout: 0 });
+    return status === 0 ? stdout.split('\0').filter((file) => file && !BINARY.test(file)) : null;
+  };
+  // Untracked, non-ignored files are the next commit's candidates, so the full check reads them too.
+  const lists = staged
+    ? [list(['diff', '--cached', '--name-only', '--diff-filter=ACMR', '-z'])]
+    : [list(['ls-files', '-z']), list(['ls-files', '--others', '--exclude-standard', '-z'])];
+  if (lists.includes(null)) return { problems: [`git ${staged ? 'diff' : 'ls-files'} failed in ${root}`], summary: '' };
   const problems = [];
-  for (const file of files) {
+  for (const file of lists.flat()) {
     const text = staged ? stagedText(root, file) : workingText(root, file);
     if (text === null || text.includes('\0')) continue; // an unreadable file holds nothing to report
     text.split('\n').forEach((line, index) => {
       if (PERSONAL_PATH.test(line)) problems.push(`${file}:${index + 1}: a personal home folder: ${line.trim().slice(0, 120)}`);
     });
   }
-  return { problems, summary: `no personal paths in ${files.length} ${staged ? 'staged' : 'tracked'} files` };
+  const counted = staged ? `${lists[0].length} staged` : `${lists[0].length} tracked and ${lists[1].length} untracked`;
+  return { problems, summary: `no personal paths in ${counted} files` };
 }
 
 export function lintTerms(project, config, staged = false) {

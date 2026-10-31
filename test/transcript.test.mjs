@@ -77,3 +77,14 @@ test('filesRead lists each Read file_path once; subagentTranscripts finds a sess
   assert.deepEqual(subagentTranscripts(path.join(dir, 's-1.jsonl'), '../s-1'), [], 'a session id never builds a path outside');
   assert.deepEqual(subagentTranscripts(path.join(dir, 'none.jsonl'), 'none'), []);
 });
+
+test('Opus 4 and 4.1 cost $15/$75, Opus 4.5 and later $5/$25, and the Claude 3 models have their own rows', () => {
+  const rates = (model) => [priceFor(model)?.input, priceFor(model)?.output];
+  assert.deepEqual(rates('claude-opus-4-20250514'), [15, 75]);
+  assert.deepEqual(rates('claude-opus-4-1-20250805'), [15, 75]);
+  assert.deepEqual(rates('claude-opus-4-5-20251101'), [5, 25]);
+  assert.deepEqual(rates('claude-opus-4-6'), [5, 25]);
+  assert.deepEqual(rates('claude-3-5-haiku-20241022'), [0.8, 4]);
+  assert.deepEqual(rates('claude-3-haiku-20240307'), [0.25, 1.25]);
+  assert.deepEqual(rates('claude-3-opus-20240229'), [15, 75]);
+});

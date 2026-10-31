@@ -34,8 +34,8 @@ except its base branch and re-entry sections, which it cites.
    which goes back to `planning-agent`; or on a status other than `ready` or `in-progress`,
    with a recommendation to review it first with the `plan-review` skill.
    An "implement anyway" from the Human goes in the report.
-4. **Gates.** A critical flow in the project's `product_sensitive` knowledge: a `product-manager` `sign_off`,
-   unless the plan records one; `blocked` or `needs_evidence` stops the run.
+4. **Gates.** A critical flow in the project's `product_sensitive` knowledge: a `product-manager` return where every `critical_flow[].sign_off` is `approved`,
+   unless the plan records one; any other `sign_off` stops the run.
    A security-sensitive slice: `security-engineer` reviews the approach, unless the plan records that review;
    a finding whose disposition is `fix_now` stops the run.
 5. **Re-entry**: as issue-implement's phase 0 re-entry section says, against the plan's slices.

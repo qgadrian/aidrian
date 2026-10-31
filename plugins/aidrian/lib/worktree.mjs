@@ -50,8 +50,7 @@ export const commands = {
         if (action === 'cleanup' && ['plan', 'execute', undefined].includes(target) && !extra.length) {
           const minAgeSec = parseDuration(values['min-age'] ?? '24h');
           if (target !== 'execute') return print(planCleanup({ minAgeSec }));
-          const raw = readFileSync(0, 'utf8');
-          return print(executeCleanup({ minAgeSec, force: Boolean(values.force), decisions: raw.trim() ? JSON.parse(raw) : {} }));
+          return print(executeCleanup({ minAgeSec, force: Boolean(values.force), decisions: readDecisions(readFileSync(0, 'utf8')) }));
         }
       } catch (error) {
         console.log(JSON.stringify({ status: 'blocked', phase: error.phase ?? 'arguments', reason: error.message, ...(error.nextStep ? { next_step: error.nextStep } : {}) }));
@@ -316,6 +315,24 @@ function patchIds(main, args) {
   if (patches.status !== 0 || !patches.stdout) return [];
   const ids = run('git', ['-C', main, 'patch-id', '--stable'], { input: patches.stdout });
   return ids.status === 0 ? ids.stdout.split('\n').filter(Boolean).map((line) => line.split(' ')[0]) : [];
+}
+
+// The decisions JSON on stdin: { "<worktree path>": "delete" | "keep" }, `{}` for none. Empty or other input fails, so
+// a lost pipe or a typo never runs as "no decisions".
+function readDecisions(raw) {
+  if (!raw.trim()) throw new Error('execute reads its decisions as JSON on stdin: {"<path>": "delete" | "keep"}, or {} for none');
+  let decisions;
+  try {
+    decisions = JSON.parse(raw);
+  } catch {
+    decisions = null;
+  }
+  if (!decisions || typeof decisions !== 'object' || Array.isArray(decisions)) {
+    throw new Error('decisions must be a JSON object: {"<path>": "delete" | "keep"}, or {} for none');
+  }
+  const bad = Object.values(decisions).find((decision) => decision !== 'delete' && decision !== 'keep');
+  if (bad !== undefined) throw new Error(`${JSON.stringify(bad)} is not a decision: use "delete" or "keep"`);
+  return decisions;
 }
 
 // Sorts again, then removes every auto row and every confirm row whose path `decisions` marks "delete". A decision's

@@ -12,12 +12,13 @@ import { formatReport, summarize } from './report-agents.mjs';
 import { formatDocs, knowledgeOf, summarizeDocs } from './report-docs.mjs';
 import { formatSessions, summarizeSessions } from './report-sessions.mjs';
 
-// `7d`, `24h`, `30m`, or a date (YYYY-MM-DD): the earliest time to report, in ms.
+// `7d`, `24h`, `30m`, or a date (YYYY-MM-DD, midnight UTC): the earliest time to report, in ms.
 export function parseSince(value, now = Date.now()) {
   const span = /^(\d+)([dhm])$/u.exec(value);
   if (span) return now - Number(span[1]) * { d: 86_400_000, h: 3_600_000, m: 60_000 }[span[2]];
   const date = /^\d{4}-\d{2}-\d{2}$/u.test(value) ? Date.parse(`${value}T00:00:00Z`) : NaN;
-  if (Number.isNaN(date)) throw new Error(`--since takes 7d, 24h, 30m, or YYYY-MM-DD, not ${value}`);
+  // Date.parse rolls 2026-02-31 over to March 3; a date that does not read back the same is not a date.
+  if (Number.isNaN(date) || new Date(date).toISOString().slice(0, 10) !== value) throw new Error(`--since takes 7d, 24h, 30m, or YYYY-MM-DD, not ${value}`);
   return date;
 }
 

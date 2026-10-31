@@ -65,6 +65,6 @@ non-goals, and files to modify, then the critical-flow, product, and security ga
 - **Silent issue**: no acceptance criteria, no meaningful description, and no files to modify. Offer `agent-issue-writer` to fill it in.
 - **Critical flow**: run `aidrian-knowledge route product_sensitive` and read what it lists.
   When the issue touches a flow those docs declare critical: `product-manager` first, then a `planning-agent` plan.
-  Implement only after its `sign_off: approved`; `code-reviewer` signs off after the implementation.
+  Implement only after every `critical_flow[].sign_off` is `approved`; `code-reviewer` signs off after the implementation.
 
 Nothing writes to the tracker but the writes `references/hard-rules.md` § Tracker writes lists, and nothing before phase 7 opens anything on GitHub.

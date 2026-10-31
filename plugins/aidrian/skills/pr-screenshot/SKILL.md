@@ -46,7 +46,7 @@ gh pr view --json number,url     # the current branch's, or pass the number or U
 ## 3. Confirm, then upload once
 
 An upload publishes the file to the repository's attachment store and cannot be undone.
-Name the files and the repository, get one confirmation per request, then upload them all in one call:
+Name the files, the repository, and the surface (the named pull request body section, or a new comment), get one confirmation per request, then upload them all in one call:
 
 ```bash
 gh image --repo <owner>/<repo> "/abs/path/order-form-before.png" "/abs/path/order-form-after.png"
@@ -69,7 +69,7 @@ Embed each file once, in one form: the printed reference, or an `<img>` tag when
     <img width="800" alt="order form after the change" src="https://github.com/user-attachments/assets/<uuid>" />
   ```
 
-- **No section named**: post a pull request comment, which leaves the body alone. Pass all reference lines as the one
+- **No section named**: post a pull request comment, as confirmed in step 3, which leaves the body alone. Pass all reference lines as the one
   `%s` argument:
 
   ```bash

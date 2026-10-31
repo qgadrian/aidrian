@@ -15,6 +15,8 @@ The caller must already have approved parallelization and locked the landing ord
 Dispatch `integrator` with those inputs plus `non_goals` and `escalate_if`, and the knowledge tags the task needs beyond the agent's own.
 Check its machine handoff before relaying it: every slice appears in `landings[]`, and a `blocked` result names the conflicted files and their owner.
 Route a conflict to that owner, then dispatch `integrator` again for the remaining slices.
+At most two conflict passes per slice, as the `orchestration` skill's `references/review-rules.md` § Fix passes caps fix passes;
+still conflicted after the second: return `blocked` with `next_owner: the Human` and the conflicted files.
 
 Do not run Git commands, restate its landing procedure, resolve conflicts, push branches, or remove slice worktrees.
 Slice worktrees are removed after the task's pull request merges.

@@ -8,6 +8,7 @@
 // unless its code is one of the few that only read (READS). The guard keeps a gate from changing for the next session;
 // within a session, the gates a subagent started with hold anyway (lib/gate-snapshot.mjs).
 
+import { readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
@@ -57,10 +58,12 @@ export function configWriteDenial(input, project, { names: { human } }, { also =
   const shown = (file) => (isWithin(roots[0], file) ? path.relative(roots[0], file) : file);
   for (const target of targets.map((each) => canonical(each))) {
     const holdsRoot = roots.some((root) => isWithin(target, root));
-    const file = files.find((each) => each === target || (!holdsRoot && isWithin(target, each)));
+    const file = files.find((each) => each === target || sameFile(each, target) || (!holdsRoot && isWithin(target, each)));
     if (file) return blocked(input, shown(file), 'changes', human);
   }
-  const named = namedFile(names, files, project, guarded) ?? globbedFile(globs, files);
+  // A glob reaches a file by the path it is spelled with, which a symlink may place in another folder than its target.
+  const spelled = [...configFiles(project), ...also].map((file, i) => [path.resolve(file), files[i]]);
+  const named = namedFile(names, files, project, guarded) ?? globbedFile(globs, spelled, targets.length + names.length + globs.length > 1, input.tool_input?.command ?? '');
   return named ? blocked(input, shown(named), 'may change', human) : null;
 }
 
@@ -75,7 +78,7 @@ function writeTargets(input) {
   return {
     files: writes.flatMap((write) => write.files),
     names: [...writes.filter((write) => write.unsure && !write.glob && !path.isAbsolute(write.text)).map((write) => write.text), ...interpretedCode(command)],
-    globs: writes.filter((write) => write.glob).map((write) => write.text),
+    globs: writes.filter((write) => write.glob),
   };
 }
 
@@ -95,14 +98,55 @@ function namedFile(names, files, project, also) {
   return patterns.find(([, pattern]) => names.some((name) => pattern.test(name)))?.[0] ?? null;
 }
 
-// The guarded file a glob target may match, or null: its last part, as `*.json` or `.aid*`, against the file's name or
-// its folder's, which a recursive delete removes with it. Where the glob's folder is cannot matter: failing closed.
-function globbedFile(globs, files) {
-  const patterns = globs.map((glob) => {
-    const last = glob.replace(/\/+$/u, '').split('/').pop();
-    return new RegExp(`^${last.split(/([*?])/u).map((part) => ({ '*': '.*', '?': '.' })[part] ?? part.replace(/[.+^${}()|[\]\\]/gu, '\\$&')).join('')}$`, 'u');
-  });
-  return files.find((file) => patterns.some((pattern) => pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file))))) ?? null;
+// The guarded file a glob target may match, or null: the path part right below the glob's folder, as `*.json` or `.aid*`,
+// against the file's own name or the folder that holds it, which a recursive delete removes with it. When the glob's
+// folder is known, only files inside it count, so `rm -rf dist/*` changes nothing guarded; when a glob or an unknown `cd`
+// leaves the folder unknown, any file's name or folder counts: failing closed.
+// `files` pairs each guarded file's spelled path with its canonical one; either may match, and the canonical is returned.
+// `others` says the call has another write, a glob or not, which may create a link, in the glob's folder or above it,
+// that the glob then follows after the disk was read; `command` is the call's whole command line.
+function globbedFile(globs, files, others = true, command = '') {
+  // The glob's folder is trusted only in one simple command the lexer reads exactly: a plain file tool, plain words, no
+  // `..`. A `cd`, a wrapper (`env -C`), a variable, braces, quotes, or a second command may each move or hide what the
+  // glob reaches, and every such shape is judged by name instead: failing closed.
+  const simple =
+    !others && SIMPLE_COMMAND.test(command) && !command.split(/[ \t/]+/u).includes('..');
+  const regex = (glob) =>
+    new RegExp(`^${glob.split(/([*?])/u).map((part) => ({ '*': '.*', '?': '.' })[part] ?? part.replace(/[.+^${}()|[\]\\]/gu, '\\$&')).join('')}$`, 'u');
+  return files.find((pair) => pair.some((file) => globs.some(({ text, dirs = [], unsure = true }) => {
+    const parts = text.replace(/\/+$/u, '').split('/');
+    const pattern = regex(parts.pop());
+    const head = parts.join('/') || (text.startsWith('/') ? '/' : '.');
+    if (unsure || !simple || /[*?[]/u.test(head)) return pattern.test(path.basename(file)) || pattern.test(path.basename(path.dirname(file)));
+    const folders = path.isAbsolute(head) ? [head] : dirs.map((dir) => path.resolve(dir, head));
+    return folders.some((folder) =>
+      [folder, canonical(folder)].some((dir) => isWithin(dir, file) && pattern.test(path.relative(dir, file).split(path.sep)[0])) ||
+      // An entry the glob matches may be a symlink to the file from any folder, which a write follows.
+      entries(folder).some((name) => pattern.test(name) && (isWithin(canonical(path.join(folder, name)), pair[1]) || sameFile(path.join(folder, name), pair[1]))));
+  })))?.[1] ?? null;
+}
+
+// Whether two paths are one file on disk: a hard link keeps its own path, so only the device and inode tell.
+function sameFile(a, b) {
+  try {
+    const [x, y] = [statSync(a), statSync(b)];
+    return x.dev === y.dev && x.ino === y.ino;
+  } catch {
+    return false;
+  }
+}
+
+// Spaces and tabs only: a newline separates commands, as `;` does. No `cp` or `mv`: they write into a directory the glob
+// matches, below the entry this check resolves. `rm` removes a link, never its target.
+const SIMPLE_COMMAND = /^[ \t]*(?:rm|touch|truncate|tee|echo|printf|cat|mkdir)(?:[ \t]+[\w./*?=>-]+)*[ \t]*$/u;
+
+// A folder's entry names, or none when it cannot be read.
+function entries(folder) {
+  try {
+    return readdirSync(folder);
+  } catch {
+    return [];
+  }
 }
 
 const wholePart = (name, after) => new RegExp(`(?<![\\w.-])${name.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}${after}`, 'u');

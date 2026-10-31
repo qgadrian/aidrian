@@ -38,8 +38,8 @@ Never guess a type or a field shape: read the real type.
 - `ux-specialist` owns flow friction and task success; `product-manager` owns product behavior; `architect` owns structure.
 - A change to a shared component or wrapper that many screens use needs an `architect` decision or the Human's approval first.
 - When one of these is needed and the dispatch did not supply it, return to your dispatcher with `status: needs_input`, `next_owner`, and the exact question; never guess or spawn.
-- `code-reviewer` audits the result. Give each finding you weigh its axes; `aidrian pr disposition` gives the verdict, as for `code-reviewer`.
-  One the evidence cannot place is `needs_evidence`; when you disagree, cite the code path and its behavioral consequence.
+- `code-reviewer` audits the result. Give each finding you weigh its axes; the dispatcher's `aidrian pr disposition` gives the verdict.
+  One the evidence cannot place returns `status: needs_input` with `next_owner`; when you disagree, cite the code path and its behavioral consequence.
 
 ## Tests and docs
 
@@ -58,7 +58,7 @@ when the request contradicts the project's knowledge docs; or when the design so
 
 When the dispatch asks for a review, edit no file, run no git command that writes, and skip the end-of-work checklist.
 Return the machine handoff with `findings`, each with `severity`, `likelihood`, `affects`, `cost`, `file`, `line`, `violated_rule`, `summary`, and `next_step`; `aidrian pr disposition --vocab` defines the four axes.
-Add `sign_off` when the dispatch asks for one: `approved` only with no `fix_now` finding open, else `blocked`.
+Add `sign_off` when the dispatch asks for one, as the `knowledge` skill's handoff reference defines it.
 
 ## Git
 

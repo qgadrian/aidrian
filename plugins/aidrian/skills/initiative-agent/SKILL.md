@@ -93,7 +93,7 @@ Rules:
 
 ## Output Requirements
 
-Return:
+Return the machine handoff from the `knowledge` skill, with these in `artifacts`:
 
 - one short Markdown summary of the chosen topology
 - one short note stating whether merge into the default branch is production deployment for this initiative
@@ -102,18 +102,6 @@ Return:
 
 ## Blocked Mode
 
-If the initiative cannot be decomposed safely, return only:
-
-```md
-Blocked because:
-- ...
-
-Missing information:
-- ...
-
-Recommended repo paths to inspect:
-- ...
-
-Questions to unblock:
-- ...
-```
+If the initiative cannot be decomposed safely, return the machine handoff from the `knowledge` skill with `status: blocked`,
+or `needs_input` when only the Human can answer: the missing information and the questions to unblock in `blockers`,
+and the repo paths to inspect in `deferred_refs`.

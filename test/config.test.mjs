@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { commandConfig, CONFIG_ERROR, DEFAULTS, loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { commandConfig, CONFIG_ERROR, DEFAULTS, loadConfig, malformedGates } from '../plugins/aidrian/lib/config.mjs';
 import { linksOutside } from '../plugins/aidrian/lib/fs.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 
@@ -104,7 +104,7 @@ const errorCases = [
   ['unknown key in a group', { version: 1, github: { reviewers: 'x' } }, /: unknown key "github\.reviewers"$/],
   ['zero for a knowledge budget', { version: 1, knowledge: { budgets: { taggedDocBytes: 0 } } }, /"knowledge\.budgets\.taggedDocBytes" must be a whole number above 0$/],
   ['inherited property name as a key', JSON.parse('{"version": 1, "__proto__": {}}'), /: unknown key "__proto__"$/],
-  ['string instead of a list', { version: 1, git: { commits: { types: 'feat' } } }, /"git\.commits\.types" must be a list of non-empty strings$/],
+  ['string instead of a list', { version: 1, git: { commits: { types: 'feat' } } }, /"git\.commits\.types" must be a non-empty list of non-empty strings$/],
   ['check names that are not a list', { version: 1, github: { conditionalChecks: 'db tests' } }, /"github\.conditionalChecks" must be a list of non-empty strings$/],
   ['group that is not an object', { version: 1, github: [] }, /"github" must be an object$/],
   ['negative number', { version: 1, docs: { wrapLimit: -1 } }, /"docs\.wrapLimit" must be a whole number, 0 or more$/],
@@ -181,6 +181,7 @@ const errorCases = [
   ['an operator in a Bash prefix', { version: 1, agents: { main: { allow: ['Bash(npm test && rm)'] } } }, /Bash\(\.\.\.\) takes plain words/],
   ['an empty Bash prefix', { version: 1, agents: { main: { deny: ['Bash( )'] } } }, /Bash\(\) needs a command prefix/],
   ['a path pattern', { version: 1, agents: { main: { deny: ['Read(./secrets/**)'] } } }, /a pattern is a tool name such as Read/],
+  ['an empty list of commit types', { version: 1, git: { commits: { types: [] } } }, /"git\.commits\.types" must be a non-empty list of non-empty strings$/],
 ];
 
 for (const [name, value, expected] of errorCases) {
@@ -193,6 +194,27 @@ for (const [name, value, expected] of errorCases) {
     for (const key of ['git', 'github', 'docs']) assert.deepEqual(config[key], DEFAULTS[key], key);
   });
 }
+
+// Errors that drop a deny list or a whole agents entry are gate errors, whatever their text; a bad allow pattern is not.
+test('gateErrors lists the errors that drop a gate, and malformedGates reads only them', (t) => {
+  const gateLoss = [
+    { explorer: { Deny: ['Bash'] } },
+    { 'Explorer!': { deny: ['Bash'] } },
+    { explorer: { deny: 'Bash' } },
+    { explorer: ['Bash'] },
+    { explorer: { deny: ['Read(x)'] } },
+  ];
+  for (const agents of gateLoss) {
+    const { errors, gateErrors } = loadConfig(project(t, { version: 1, agents }));
+    assert.equal(gateErrors.length, 1, JSON.stringify(agents));
+    assert.equal(`${gateErrors[0].file}: ${gateErrors[0].problem}`, errors[0]);
+    assert.deepEqual(malformedGates(gateErrors), gateErrors[0]);
+  }
+  const { errors, gateErrors } = loadConfig(project(t, { version: 1, agents: { explorer: { allow: ['Read(x)'] } } }));
+  assert.equal(errors.length, 1);
+  assert.deepEqual(gateErrors, []);
+  assert.equal(malformedGates(gateErrors), null);
+});
 
 // A missing, older, or newer version is one error that points at the migration notes, and nothing else is read.
 const versionCases = [
@@ -237,7 +259,7 @@ test('models: .aidrian.local.json wins over config.json one field at a time, and
 test('names: "the Human" and the host\'s name by default; .aidrian.local.json wins over config.json one name at a time', (t) => {
   assert.deepEqual(DEFAULTS.names, { human: 'the Human', ai: null });
   const team = project(t, { version: 1, names: { human: 'the team lead', ai: 'the agent' } });
-  assert.deepEqual(loadConfig(team), { config: { ...DEFAULTS, names: { human: 'the team lead', ai: 'the agent' } }, errors: [], current: true });
+  assert.deepEqual(loadConfig(team), { config: { ...DEFAULTS, names: { human: 'the team lead', ai: 'the agent' } }, errors: [], gateErrors: [], current: true });
   const local = path.join(team.root, '.aidrian.local.json');
   writeFileSync(local, JSON.stringify({ names: { human: 'the product owner', ai: ' ' } }));
   const { config, errors } = loadConfig(findProject(team.root));
@@ -281,7 +303,7 @@ test('agents: no gates by default; .aidrian.local.json wins over config.json one
   assert.deepEqual(DEFAULTS.agents, {});
   const agents = { '*': { deny: ['mcp__slack__*'] }, main: { deny: ['Bash(git push)'] }, explorer: { allow: ['Read', 'Grep'], deny: ['Bash'] } };
   const team = project(t, { version: 1, agents });
-  assert.deepEqual(loadConfig(team), { config: { ...DEFAULTS, agents }, errors: [], current: true });
+  assert.deepEqual(loadConfig(team), { config: { ...DEFAULTS, agents }, errors: [], gateErrors: [], current: true });
   writeFileSync(
     path.join(team.root, '.aidrian.local.json'),
     JSON.stringify({ agents: { explorer: { allow: ['Read', 'Glo*b', 'Bash(git log)'] }, 'aidrian:architect': { deny: ['Edit'] } } }),

@@ -4,6 +4,7 @@
 
 const FENCE = /^(`{3,}|~{3,})(.*)$/;
 const FRONTMATTER = /^---\s*$/;
+const FRONTMATTER_END = /^(?:---|\.\.\.)\s*$/;
 
 // Fence state after `line`: null outside a fence. A fence closes only on its own character, at least as long as the
 // opener, with nothing but spaces after it; so a ```` block can show a ``` line, and a ```js line inside a block is code.
@@ -20,12 +21,10 @@ export function findWrapViolations(text, limit) {
   const violations = [];
   const lines = String(text ?? '').split('\n');
   let fence = null;
-  let inFrontmatter = FRONTMATTER.test(lines[0] ?? '');
+  // A leading --- opens frontmatter only when a --- or ... closes it; otherwise it is a rule.
+  const frontmatterEnd = FRONTMATTER.test(lines[0] ?? '') ? lines.findIndex((line, index) => index > 0 && FRONTMATTER_END.test(line)) : -1;
   for (const [index, line] of lines.entries()) {
-    if (inFrontmatter) {
-      if (index > 0 && FRONTMATTER.test(line)) inFrontmatter = false;
-      continue;
-    }
+    if (index <= frontmatterEnd) continue;
     const wasInFence = fence !== null;
     fence = nextFenceState(fence, line);
     if (wasInFence || fence !== null) continue;
@@ -36,13 +35,18 @@ export function findWrapViolations(text, limit) {
   return violations;
 }
 
-// The 1-based lines of `fileText` that `introduced` spans, every occurrence; null when it is not in the file.
-export function affectedLines(fileText, introduced) {
+// The 1-based lines of `fileText` that `introduced` spans; null when it is not in the file. With `replaceAll`, every
+// occurrence. Without it the edit wrote one occurrence, and the file after it cannot tell which: more than one is an
+// empty set, so no line the edit did not write is named.
+export function affectedLines(fileText, introduced, replaceAll = false) {
   if (typeof introduced !== 'string' || introduced === '') return null;
   const hits = new Set();
+  let found = 0;
   for (let at = fileText.indexOf(introduced); at !== -1; at = fileText.indexOf(introduced, at + introduced.length)) {
+    found += 1;
     const first = fileText.slice(0, at).split('\n').length;
     for (let n = first; n < first + introduced.split('\n').length; n += 1) hits.add(n);
   }
-  return hits.size > 0 ? hits : null;
+  if (found === 0) return null;
+  return replaceAll || found === 1 ? hits : new Set();
 }

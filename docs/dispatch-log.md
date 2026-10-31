@@ -132,6 +132,8 @@ Hook denies: 6 in 2 sessions
   and the `reason` it logged most often. A rule an agent keeps hitting needs clearer words in that agent's instructions or in the rule's message.
 
 `--since` takes `30m`, `24h`, `7d`, or a date such as `2026-10-01`; the default is `7d`.
+A date is midnight UTC, and one that does not exist, such as `2026-02-31`, is an error.
+Row times and day buckets, such as `Per day:`, are UTC too.
 `--json` prints the same summary as one JSON object, with `rotated`, the path of the rotated part or `null`, `coverage`,
 and `hook_denies` with every rule's agents and up to three reasons.
 
@@ -166,6 +168,8 @@ Most costly sessions, top 3:
 - **tool calls per request that made one**: 1.00 means every turn made one tool call at a time;
   a higher number means the agent batched independent calls into one turn, which saves a round trip each.
 - **Cache writes**: a 1-hour write costs 2x the input price, a 5-minute write 1.25x. A large 1-hour share explains a cost that tokens alone do not.
+- **Unpriced models**: a model the price map in `lib/transcript.mjs` does not know counts as $0 in every figure; this line names it.
+  `--json` lists them in `unknown_models`.
 - **Per effort**: `-` is a session whose main conversation recorded no level, such as one logged before the field existed.
 - A session logged before the main and subagent split counts in the total, per day, and per effort; a `Partial:` line says how many.
 

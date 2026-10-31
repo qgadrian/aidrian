@@ -43,9 +43,9 @@ async function gate(input) {
     if (denial) await block(input, 'agent-gates', denial.reason, { match: 'the gate snapshot cannot be read', project: project ?? undefined, config: settings });
   }
   if (!project) return;
-  const { config, errors, current } = loadConfig(project);
-  // An `agents` list of the wrong shape is dropped, which lifts its gate; read it as a file that cannot be read.
-  const broken = unreadable(project, current, errors) ?? (current ? malformedGates(errors) : null);
+  const { config, errors, gateErrors, current } = loadConfig(project);
+  // An `agents` error that lifts a gate: read it as a file that cannot be read.
+  const broken = unreadable(project, current, errors) ?? (current ? malformedGates(gateErrors) : null);
   const failed = broken && unreadableConfigDenial(input, broken.file, broken.problem, config);
   if (failed) await block(input, 'agent-gates', failed.reason, { match: failed.match, project, config });
   const started = (snapshot?.gates ?? []).filter((agents) => Object.keys(agents).length > 0);

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { listTags, loadKnowledge as loadKnowledgeOf, routeKnowledge } from '../plugins/aidrian/lib/knowledge.mjs';
+import { initBucket, listTags, loadKnowledge as loadKnowledgeOf, routeKnowledge } from '../plugins/aidrian/lib/knowledge.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -102,7 +102,7 @@ const bucketCases = [
   ['file name that is not an id', (p) => writeFileSync(path.join(p, '.aidrian/knowledge/Bad Id.json'), '{}'), /^\.aidrian\/knowledge\/Bad Id\.json: the file name is the bucket id/],
   ['no dir', (p) => bucket(p, { dir: undefined }), /kb\.json: "dir" must be a folder inside the project$/],
   ['dir outside the project', (p) => bucket(p, { dir: '../elsewhere' }), /kb\.json: "dir" must be a folder inside the project$/],
-  ['dir that does not exist', (p) => bucket(p, { dir: 'nope' }), /kb\.json: "dir" must be a folder inside the project$/],
+  ['dir that does not exist', (p) => bucket(p, { dir: 'nope' }), /kb\.json: "dir": "nope" does not exist \(relative to .*\)$/],
   ['dir that is a file', (p) => bucket(p, { dir: 'outside.md' }), /kb\.json: "dir" must be a folder inside the project$/],
   ['no description', (p) => bucket(p, { description: '' }), /"description" must/],
   ['unknown bucket key', (p) => bucket(p, { owner: 'x' }), /unknown key "owner"/],
@@ -184,7 +184,7 @@ test('buckets load in file-name order, the file name is the id, and a README in 
 test('a project with no knowledge folder has no buckets and no errors', (t) => {
   const project = validProject(t);
   rmSync(path.join(project, '.aidrian/knowledge'), { recursive: true });
-  assert.deepEqual(loadKnowledge(project), { config: loadKnowledge(project).config, buckets: [], errors: [] });
+  assert.deepEqual(loadKnowledge(project), { config: loadKnowledge(project).config, buckets: [], errors: [], warnings: [] });
 });
 
 test('the folder named by .aidrian.json holds config.json and the indexes', (t) => {
@@ -313,3 +313,14 @@ function bucket(project, overrides) {
   const value = { dir: 'kb', description: 'Test rules.', always: ['rules.md'], docs: BASE_DOCS, ...overrides };
   writeFileSync(path.join(project, INDEX), JSON.stringify(value));
 }
+
+test('initBucket drafts a summary past CRLF frontmatter', (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-kb-init-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  mkdirSync(path.join(dir, 'notes'));
+  writeFileSync(path.join(dir, 'notes/a.md'), '---\r\ntitle: hidden\r\n---\r\n# Rules\r\nKeep it short.\r\n');
+  const { file } = initBucket(findProject(dir), 'notes');
+  assert.equal(JSON.parse(readFileSync(path.join(dir, file), 'utf8')).docs['a.md'].summary, 'Rules: Keep it short.');
+});

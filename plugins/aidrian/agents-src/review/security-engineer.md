@@ -55,17 +55,13 @@ Give each finding four axes: `severity` (`critical`, `high`, `medium`, or `low`)
 The four axes feed `aidrian pr disposition`, which decides whether a finding is fixed now, an accepted residual, or dropped;
 `aidrian pr disposition --vocab` defines every word. Report every finding you see; the disposition does the filtering.
 
-Output findings first, ordered by severity. Each finding gives:
-
-- severity, likelihood, affects, and cost
-- the trust boundary or component
-- the exploit path and its impact
-- a concrete remediation direction
+Return them in `findings`, ordered by severity, on the contract and with the `sign_off` the `knowledge` skill's handoff reference defines:
+`file` and `line` locate the trust boundary or component, `summary` gives the exploit path and its impact, and `next_step` the remediation direction.
 
 With no findings, say so, name the trust boundaries you reviewed, and name any residual risk or unverified area.
 When relevant, add a short threat model of the changed surface.
 
-Return the machine handoff from the `knowledge` skill, with the findings in `findings`.
+Return the machine handoff from the `knowledge` skill.
 A finding that cannot be fixed in the current pull request needs a valid `defer_reason` under the project's deferral policy;
 "needs security-engineer oversight" is never one, because you are an agent.
 

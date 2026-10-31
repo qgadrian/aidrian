@@ -8,7 +8,7 @@ import { parseArgs } from 'node:util';
 import { commandConfig, VERSION } from './config.mjs';
 import { isWithin, linksOutside } from './fs.mjs';
 import { checkoutRoots, isIgnored } from './git.mjs';
-import { checkBudgets, indexRows, loadKnowledge } from './knowledge.mjs';
+import { checkBudgets, indexRows, loadKnowledge, tagWarnings } from './knowledge.mjs';
 import { findProject, noProjectMessage, projectAt, stateDir, worktreesDir } from './project.mjs';
 import { loadTerms } from './terms.mjs';
 
@@ -25,14 +25,16 @@ export const commands = {
         console.error(noProjectMessage(start));
         return 1;
       }
-      const { config, buckets, errors } = loadKnowledge(project);
+      const { config, buckets, errors, warnings } = loadKnowledge(project);
       const budgets = checkBudgets(project.root, buckets, config.knowledge.budgets);
       errors.push(...budgets.problems);
       errors.push(...(loadTerms(project, config)?.errors ?? []));
       for (const { line, gitignore } of unignored(project, config)) {
         errors.push(`${line} is not git-ignored: add the line "${line}" to ${gitignore}, or run aidrian init`);
       }
-      if (budgets.warnings.length) console.error(budgets.warnings.map((warning) => `warning: ${warning}`).join('\n'));
+      const tags = tagWarnings(buckets);
+      const shown = [...budgets.warnings, ...warnings, ...tags.warnings].map((warning) => `warning: ${warning}`);
+      if (shown.length || tags.notes.length) console.error([...shown, ...tags.notes.map((note) => `note: ${note}`)].join('\n'));
       if (errors.length) {
         console.error(errors.join('\n'));
         return 1;

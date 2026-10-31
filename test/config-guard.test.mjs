@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { linkSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -278,6 +278,54 @@ test('the hook blocks a subagent that changes the gates with exit 2, and lets it
   }
 });
 
+test('a glob reaches a config file that is a symlink to another folder, by the path it is spelled with', (t) => {
+  const { dir } = project(t);
+  mkdirSync(path.join(dir, 'settings'));
+  renameSync(path.join(dir, '.aidrian/config.json'), path.join(dir, 'settings/config.json'));
+  symlinkSync('../settings/config.json', path.join(dir, '.aidrian/config.json'));
+  for (const command of ["echo '{\"version\":1}' > .aidrian/*.json", 'rm settings/*']) {
+    assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /may change/, command);
+  }
+  assert.equal(verdict(dir, subagent(dir, 'Bash', { command: 'rm src/*' })), null);
+  // An ordinary folder may hold a link to the config, which a glob there reaches.
+  mkdirSync(path.join(dir, 'dist'));
+  symlinkSync('../.aidrian/config.json', path.join(dir, 'dist/config.json'));
+  assert.match(verdict(dir, subagent(dir, 'Bash', { command: 'echo x > dist/*.json' })) ?? '', /config\.json/);
+  assert.equal(verdict(dir, subagent(dir, 'Bash', { command: 'rm dist/*.js' })), null);
+  // A hard link keeps its own path; only the file's identity shows it is the config, by its name or through a glob.
+  mkdirSync(path.join(dir, 'hard'));
+  linkSync(path.join(dir, 'settings/config.json'), path.join(dir, 'hard/alias'));
+  for (const command of ['echo x > hard/alias', 'echo x > hard/*']) {
+    assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /config\.json/, command);
+  }
+  // A `cd` before the glob, which `-P` resolves through links, and a folder the shell expands, as braces do, fail closed.
+  for (const command of [
+    "cd -P out/link/.. && echo '{}' > config*.json",
+    'printf x | tee .{aidrian,unused}/*.json',
+    `target=out/alias; ln -s ../.aidrian/config.json "$target" && echo '{}' > out/*`,
+    "printf x | env -C out/link/.. bash -c 'tee config*.json'",
+    'echo\n./prepare\ncat payload.json > out/*',
+    'cp payload/config.json out/*',
+    'cp -t out/* payload/config.json',
+  ]) {
+    assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /may change/, command);
+  }
+  // Past a symlink, `..` climbs out of the link's target, not back to the folder the path names.
+  assert.match(verdict(dir, subagent(dir, 'Bash', { command: "echo '{}' > out/link/../*.json" })) ?? '', /\.aidrian/);
+  // A link the same call creates before the glob runs, in its folder or above it, is not on disk yet: with any other
+  // write in the call, a glob that may name a guarded file fails closed.
+  mkdirSync(path.join(dir, 'out'));
+  for (const command of [
+    "ln -s ../.aidrian/config.json out/alias && echo '{}' > out/*",
+    'cp x out/ && rm -rf out/*',
+    "ln -s .. out/link && echo '{}' > out/link/.aidrian/*.json",
+    "ln -sf ../.aidrian/config.json out/* && echo '{}' > out/*",
+  ]) {
+    assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /\.aidrian/, command);
+  }
+  assert.equal(verdict(dir, subagent(dir, 'Bash', { command: 'touch src/a.js && rm -rf out/*.js' })), null);
+});
+
 test('ln, truncate, install, dd, git checkout --, git restore, and a glob that may name a guarded file change it', (t) => {
   const { dir } = project(t);
   for (const command of [
@@ -293,7 +341,12 @@ test('ln, truncate, install, dd, git checkout --, git restore, and a glob that m
   ]) {
     assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /\.aidrian/, command);
   }
-  for (const command of ['rm src/*.js', 'ln -s /tmp/x src/link']) {
+  // A glob whose folder is unknown, through a globbed folder or an unknown cd, still fails closed.
+  for (const command of ['rm -rf */config.json', 'cd "$d" && rm -rf *', 'cd build && rm -rf *']) {
+    assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /\.aidrian/, command);
+  }
+  // A glob in a known folder that holds no guarded file changes none: routine clean-ups run.
+  for (const command of ['rm src/*.js', 'ln -s /tmp/x src/link', 'rm -rf dist/*', 'cp a.txt out/*.js']) {
     assert.equal(verdict(dir, subagent(dir, 'Bash', { command })), null, command);
   }
 });

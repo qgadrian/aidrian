@@ -5,7 +5,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-// USD per million tokens, matched by substring in this order (more specific first). List prices from
+// USD per million tokens, matched by substring (or a RegExp) in this order (more specific first). List prices from
 // https://platform.claude.com/docs/en/about-claude/pricing, read 2026-10-28. `cacheRead` is the cache-hit multiplier
 // of the input rate where a model sets one below the standard 0.1x. Cache writes cost 1.25x (5 minutes) and 2x (1 hour).
 export const PRICE_MAP = [
@@ -15,18 +15,25 @@ export const PRICE_MAP = [
   { match: 'mythos-5', input: 10, output: 50 },
   { match: 'opus-5-5', input: 4, output: 20, cacheRead: 0.05 },
   { match: 'opus-5', input: 5, output: 25 },
+  // Opus 4 and 4.1 kept the old $15/$75; from 4.5 on, $5/$25. A date suffix follows the version: opus-4-20250514.
+  { match: 'opus-4-1', input: 15, output: 75 },
+  { match: /opus-4(?:-\d{8}|$)/, input: 15, output: 75 },
   { match: 'opus-4', input: 5, output: 25 },
+  { match: 'claude-3-opus', input: 15, output: 75 },
   { match: 'sonnet-5-5', input: 2, output: 10, cacheRead: 0.05 },
   { match: 'sonnet-5', input: 2, output: 10 },
   { match: 'sonnet', input: 3, output: 15 },
   { match: 'haiku-5-5', input: 0.1, output: 0.5 },
+  { match: 'claude-3-5-haiku', input: 0.8, output: 4 },
+  { match: 'claude-3-haiku', input: 0.25, output: 1.25 },
   { match: 'haiku', input: 1, output: 5 },
 ];
 const CACHE_READ_MULT = 0.1;
 const CACHE_WRITE_5M_MULT = 1.25;
 const CACHE_WRITE_1H_MULT = 2;
 
-export const priceFor = (model) => PRICE_MAP.find((price) => typeof model === 'string' && model.includes(price.match));
+export const priceFor = (model) =>
+  PRICE_MAP.find((price) => typeof model === 'string' && (price.match instanceof RegExp ? price.match.test(model) : model.includes(price.match)));
 
 const emptyUsage = () => ({ calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite5m: 0, cacheWrite1h: 0 });
 

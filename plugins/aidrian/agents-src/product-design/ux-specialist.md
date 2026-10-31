@@ -59,13 +59,12 @@ Preserve the domain invariants the project's `product_sensitive` knowledge decla
 
 Findings first, ordered by severity: critical, high, medium, low. Each finding gives:
 
-- the axes and verdict words `designer` uses: `severity`, `likelihood`, `affects`, and `cost` for `aidrian pr disposition`,
-  or `needs_evidence` or `blocked_by_product` when no verdict fits yet
+- the axes `severity`, `likelihood`, `affects`, and `cost`; the dispatcher's `aidrian pr disposition` decides the verdict, never you
 - the user impact, and the evidence: the screen or flow, and the file path when known
 - a concrete fix, its owner (`designer`, `frontend-developer`, or `product-manager`), and acceptance criteria
 
 Keep recommendations implementable in the current architecture; no speculative redesigns.
-When a recommendation depends on unresolved product behavior or runtime constraints, use `blocked_by_product` or `needs_evidence`
+When a recommendation depends on unresolved product behavior or runtime constraints, return `status: needs_input`, naming what is missing,
 and name its owner in `next_owner` instead of forcing a UX conclusion.
 
 ## Implementation mode

@@ -103,7 +103,8 @@ const FOLDERS_LIMIT = 16;
 
 // Every target a Bash command writes, as { text, files, unsure }: `text` as the command names it, `files` the absolute
 // paths it can be, and `unsure` when the shell may be in a folder no path names, as after `cd "$dir"`. `globs` keeps a
-// target with a glob, which bashTargets drops, as { text, files: [], unsure: true, glob: true }; `restores` counts git
+// target with a glob, which bashTargets drops, as { text, files: [], dirs, unsure, glob: true }, `dirs` the folders it
+// is relative to; `restores` counts git
 // checkout -- and git restore as writes.
 // By default a `cd` makes the shell's folder unknown, as bashTargets reads it. `followCd` follows each `cd` to a named
 // folder, and, since a `cd` that fails leaves the shell where it was, keeps the folders before it as well. `shells` also
@@ -132,7 +133,7 @@ export function bashWrites(command, cwd, { followCd = false, shells = false, res
   return targets
     .filter(({ token }) => (!token.dynamic || (globs && !/[$`]/u.test(token.text))) && token.text !== '')
     .map(({ token: { text, dynamic }, place }) => {
-      if (dynamic) return { text, files: [], unsure: true, glob: true };
+      if (dynamic) return { text, files: [], dirs: place.dirs, unsure: place.unsure, glob: true };
       if (path.isAbsolute(text)) return { text, files: [text], unsure: false };
       return { text, files: place.dirs.map((dir) => path.resolve(dir, text)), unsure: place.unsure };
     });

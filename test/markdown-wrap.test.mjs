@@ -32,14 +32,17 @@ test('fences close only on their own delimiter, never on an info-string line', (
 test('frontmatter, tables, indented code, and an unbreakable token are skipped', () => {
   assert.deepEqual(lines(['---', `description: ${long(400)}`, '---', 'Body.'].join('\n')), []);
   assert.deepEqual(lines(['Intro.', '---', long(200)].join('\n')), [3], 'a --- rule mid-document is not frontmatter');
+  assert.deepEqual(lines(['---', '', long(200)].join('\n')), [3], 'a leading --- rule with no closer is not frontmatter');
+  assert.deepEqual(lines(['---', `title: ${long(200)}`, '...', long(200)].join('\n')), [4], 'frontmatter may close on ...');
   assert.deepEqual(lines([`| ${long(200)} |`, `    ${long(200)}`, `\t${long(200)}`].join('\n')), []);
   assert.deepEqual(lines(`See the note at https://example.test/${'a'.repeat(160)} before you continue with the rest.`), []);
   assert.deepEqual(lines(`${'a'.repeat(150)} and then some more words here to wrap on`), [1]);
 });
 
-test('affectedLines spans the introduced text, every occurrence, or null when it is gone', () => {
+test('affectedLines spans the introduced text, every occurrence for replace_all, or null when it is gone', () => {
   assert.deepEqual([...affectedLines('one\ntwo\nthree\nfour', 'two\nthree')], [2, 3]);
-  assert.deepEqual([...affectedLines('dup\nother\ndup', 'dup')], [1, 3]);
+  assert.deepEqual([...affectedLines('dup\nother\ndup', 'dup', true)], [1, 3]);
+  assert.deepEqual([...affectedLines('dup\nother\ndup', 'dup')], [], 'one edit, two places it could be: name no line');
   assert.equal(affectedLines('one\ntwo', 'nowhere'), null);
 });
 
@@ -73,7 +76,7 @@ test('the hook exits 2 naming the file, the lines, and the limit, after a write'
 test('after an edit, the hook names only the touched lines, and reads fences from the whole file', (t) => {
   const dir = project(t);
   const file = path.join(dir, 'docs/a.md');
-  writeFileSync(file, `${long(300)}\nshort line\n${long(200)}\n`);
+  writeFileSync(file, `${'term '.repeat(60).trim()}\nshort line\n${long(200)}\n`);
   assert.deepEqual(hook(edit(file, 'short line')), { status: 0, stdout: '', stderr: '' }, 'a long line nobody touched');
   assert.equal(hook(edit(file, long(200))).status, 2);
   assert.match(hook(edit(file, long(200))).stderr, /a\.md:3: 200 characters/);

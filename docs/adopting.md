@@ -37,8 +37,18 @@ Load them with the `knowledge` skill before you plan, edit, or review.
 
 ## 3. Install the plugin for the team
 
-- Claude Code: commit `.claude/settings.json`, so Claude Code offers the plugin to everyone who opens the project:
-  [Claude Code install](providers/claude-code.md#install).
+- Claude Code: commit `.claude/settings.json`, so Claude Code offers the plugin to everyone who opens the project
+  ([Claude Code install](providers/claude-code.md#install)):
+
+  ```json
+  {
+    "extraKnownMarketplaces": {
+      "aidrian-harness": { "source": { "source": "github", "repo": "qgadrian/aidrian" } }
+    },
+    "enabledPlugins": { "aidrian@aidrian-harness": true }
+  }
+  ```
+
 - Codex: each user installs once per machine, as in the [README](../README.md#codex).
   Or install the agents into the project with `install-agents.mjs --target .codex/agents`, and run it again after each update.
   [Models and effort](providers/codex.md#models-and-effort) says when to keep that folder out of git.

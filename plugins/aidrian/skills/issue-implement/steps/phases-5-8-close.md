@@ -14,7 +14,7 @@ must name the worktree and the task branch.
 4. No `scope_collision` is open.
 5. Every slice that called `security-engineer` has its review back, with no security finding open whose disposition is `fix_now`:
    `security-engineer` confirmed each one fixed on the slice's next review. A disputed finding or a missing review blocks the pull request.
-6. A critical flow has the `product-manager` `sign_off: approved` from phase 0.
+6. For a critical flow, every `critical_flow[].sign_off` is `approved` in the `product-manager` return from phase 0.
 7. **Acceptance criteria coverage.** Every acceptance criterion id maps to a committed slice.
    A gap turns `Fixes <ref>` into `Refs <ref>`, and the report names the gap.
 

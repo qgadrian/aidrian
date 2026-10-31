@@ -19,16 +19,18 @@ export function loadKnowledge(project) {
   const { config, errors: configErrors, current } = loadConfig(project);
   const errors = [...project.errors, ...configErrors];
   const buckets = [];
+  const warnings = [];
   // A folder of another version may hold indexes of another shape; config.json already reports it.
-  if (!current) return { config, buckets, errors };
+  if (!current) return { config, buckets, errors, warnings };
   // The index file that defines each bucket id, as errors show it.
   const owners = new Map();
   for (const source of project.sources) {
     // Each error of a local source starts with the source, as the local sources file lists it.
     const own = [];
+    const ownWarnings = [];
     if (!source.local || localVersion(source, own)) {
       for (const name of indexFiles(source)) {
-        const bucket = loadBucket(source, name, own);
+        const bucket = loadBucket(source, name, own, ownWarnings);
         if (!bucket) continue;
         const shown = source.local ? `${source.label}/${source.index}/${name}` : `${source.index}/${name}`;
         if (owners.has(bucket.id)) {
@@ -40,8 +42,9 @@ export function loadKnowledge(project) {
       }
     }
     errors.push(...own.map((error) => (source.local ? `${source.label}: ${error}` : error)));
+    warnings.push(...ownWarnings.map((warning) => (source.local ? `${source.label}: ${warning}` : warning)));
   }
-  return { config, buckets, errors };
+  return { config, buckets, errors, warnings };
 }
 
 // A local source's optional config.json holds only `version`. Returns whether the source is of this plugin's version.
@@ -66,7 +69,7 @@ function indexFiles(source) {
 }
 
 // Paths in errors are relative to the source; a local source's docs leave with absolute paths.
-function loadBucket(source, name, errors) {
+function loadBucket(source, name, errors, warnings = []) {
   const root = source.base;
   const scope = source.local ? 'its source' : 'the project';
   const file = `${source.index}/${name}`;
@@ -80,12 +83,18 @@ function loadBucket(source, name, errors) {
   checkKeys(raw, ['dir', 'description', 'always', 'docs'], file, errors);
 
   const dir = insidePath(root, '', raw.dir);
+  if (dir && !existsSync(path.join(root, dir))) {
+    errors.push(`${file}: "dir": ${JSON.stringify(raw.dir)} does not exist (relative to ${root})`);
+    return null;
+  }
   if (!dir || !isDirectory(path.join(root, dir))) {
     errors.push(`${file}: "dir" must be a folder inside ${scope}`);
     return null;
   }
   if (typeof raw.description !== 'string' || raw.description.trim() === '') {
     errors.push(`${file}: "description" must say what the bucket covers`);
+  } else if (raw.description === `Docs in ${dir}.`) {
+    warnings.push(`${file}: "description" is still the placeholder ${JSON.stringify(raw.description)}; say what the bucket covers`);
   }
 
   const docs = [];
@@ -129,6 +138,42 @@ function loadBucket(source, name, errors) {
     }
   }
   return { id, source: label, dir: shown(dir), description: raw.description, always: always.map(shown), docs: out, tags };
+}
+
+// The tags the plugin's agents and skills ask for: the list under "## Tags" in the knowledge skill.
+let vocabulary;
+export function tagVocabulary() {
+  const skill = () => readFileSync(path.join(import.meta.dirname, '../skills/knowledge/SKILL.md'), 'utf8');
+  vocabulary ??= [...(/^## Tags\n([\s\S]*?)(?=^## |(?![\s\S]))/m.exec(skill())?.[1] ?? '').matchAll(/^- `([a-z0-9_]+)`:/gm)].map(([, tag]) => tag);
+  return vocabulary;
+}
+
+// Warnings for tags outside the vocabulary, with the closest tag within 2 edits, and a note on docs no route reaches:
+// neither tagged nor "always". A project may route its own tags, so none of these fail the check.
+export function tagWarnings(buckets, known = tagVocabulary()) {
+  const warnings = [];
+  let untagged = 0;
+  const docs = buckets.flatMap((bucket) => bucket.docs.map((doc) => ({ doc, always: bucket.always.includes(doc.path) })));
+  for (const { doc, always } of docs) {
+    if (!doc.tags.length && !always) untagged += 1;
+    for (const tag of doc.tags.filter((each) => !known.includes(each))) {
+      const near = known.map((each) => [editDistance(tag, each), each]).sort((a, b) => a[0] - b[0])[0];
+      const hint = near && near[0] <= 2 ? `did you mean ${JSON.stringify(near[1])}?` : 'only a skill or dispatch of your own routes to it';
+      warnings.push(`${doc.path}: tag ${JSON.stringify(tag)} is not one the plugin asks for; ${hint}`);
+    }
+  }
+  const notes = untagged ? [`${untagged} of ${docs.length} docs have no tags; no agent routes to them`] : [];
+  return { warnings, notes };
+}
+
+function editDistance(a, b) {
+  let row = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i += 1) {
+    const next = [i];
+    for (let j = 1; j <= b.length; j += 1) next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    row = next;
+  }
+  return row[b.length];
 }
 
 // Returns the path relative to the project, or null after adding the reason to `errors`.
@@ -284,7 +329,7 @@ function draftSummary(text) {
   let heading = '';
   let sentence = '';
   let fenced = false;
-  for (const line of text.replace(/^---\n[\s\S]*?\n---\n/, '').split('\n').map((each) => each.trim())) {
+  for (const line of text.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '').split('\n').map((each) => each.trim())) {
     if (/^(```|~~~)/.test(line)) fenced = !fenced;
     if (fenced || line === '' || /^(```|~~~|[|<!])/.test(line)) continue;
     const title = /^#{1,6}\s+(.*)$/.exec(line);

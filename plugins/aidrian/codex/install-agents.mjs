@@ -32,7 +32,8 @@ const target = targetDir
 const ours = (dir) => readdirSync(dir).filter((file) => file.startsWith(PREFIX) && file.endsWith('.toml'));
 const agentName = (file) => file.slice(PREFIX.length, -'.toml'.length);
 const shipped = ours(source);
-const models = codexModels(findProject(target));
+// Only a project folder takes the project's models: the user folder serves every project.
+const models = targetDir ? codexModels(findProject(target)) : {};
 mkdirSync(target, { recursive: true });
 
 const changes = { added: [], updated: [], removed: [] };

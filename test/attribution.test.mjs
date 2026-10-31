@@ -123,6 +123,13 @@ test('only a trailer block git would parse counts', () => {
   assert.equal(carriedTrailers(['fix: x\n\nAgent: main\nCo-Authored-By: A <a@b>\n  folded'], []).has('Agent: main'), true);
 });
 
+test('a commit or pull request inside sh -c is read', (t) => {
+  const { run } = setup(t, { commit: ['agent'], pullRequest: ['tool'] });
+  assert.match(run("bash -c 'git commit --allow-empty -m unsigned'") ?? '', /Blocked/);
+  assert.equal(run(`bash -c "git commit -m x --trailer 'Agent: main'"`), null);
+  assert.match(run("sh -c 'gh pr create -t x -b unsigned'") ?? '', /Blocked/);
+});
+
 test('help and dry-run commits pass', (t) => {
   const { run } = setup(t, { commit: ['agent'] });
   for (const command of ['git commit -h', 'git commit --help', 'git commit --dry-run -m x', 'git commit --dry -m x']) assert.equal(run(command), null, command);

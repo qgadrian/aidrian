@@ -327,9 +327,11 @@ and prints the exact lines to add. Both lists are empty by default, which turns 
 | `tool` | `Claude Code` or `Codex` | `CODEX_THREAD_ID` | `Agent-Tool:` |
 | `env` | `local`, `cloud`, or `ci` | `CLAUDE_CODE_REMOTE=true` is `cloud`; `GITHUB_ACTIONS` or `CI` is `ci` | `Agent-Env:` |
 
-`commit` takes any of these fields. A commit carries a trailer in its message's last paragraph, which is where git reads
-trailers, or as a `--trailer` option. Each `git commit` in a command is checked on its own message.
-A message from stdin (`-F -`) or an editor counts only its `--trailer` options.
+`commit` takes any of these fields. A commit carries a trailer as a `--trailer` option, or in its message's trailer
+block: the last paragraph, past the subject, with only `Key: value` lines, as git reads it.
+Each `git commit` in a command is checked on its own message, and a `-F` file is read where the commit runs.
+A message from stdin (`-F -`) or an editor counts only its `--trailer` options. `-h`, `--help`, and `--dry-run` pass.
+The rule also reads `sh -c` and `bash -c` command lines; a script on a shell's stdin, such as `bash <<'EOF'`, is not read.
 
 `pullRequest` takes `tool`, `model`, `effort`, and `env` for one line, and `agents` for one line per agent:
 

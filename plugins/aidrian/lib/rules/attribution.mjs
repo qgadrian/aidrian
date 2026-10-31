@@ -12,7 +12,7 @@ import { branchCommits, carriedTrailers, currentAuthor, expectedTrailers, prAgen
 import { loadConfig } from '../config.mjs';
 import { readLog } from '../dispatch-log.mjs';
 import { findProject } from '../project.mjs';
-import { commandLines, isLongOption, lexCommand, readGit, readInvocation } from '../shell-lex.mjs';
+import { commandLines, inlineShellCommand, isLongOption, lexCommand, readGit, readInvocation } from '../shell-lex.mjs';
 import { readText } from '../transcript.mjs';
 import { readBody, readPrCall, readPrCalls } from './github/pr-body.mjs';
 
@@ -21,6 +21,8 @@ export const OVERRIDE = 'AIDRIAN_ALLOW_UNATTRIBUTED';
 // The heredoc a `-m` or `--message` command substitution holds, as `-m "$(cat <<'EOF' … EOF)"`: group 3 is its body.
 const MESSAGE_HEREDOC = /(?:--message(?:=|\s+)|(?<![\w-])-[A-Za-z]*m=?\s*)"?\$\([^<]*<<-?\s*(['"]?)(\w+)\1\r?\n([\s\S]*?)\r?\n[ \t]*\2\b/gu;
 const CHANGES_DIRECTORY = new Set(['cd', 'pushd']);
+// How deep `sh -c` inside `sh -c` is read.
+const SHELL_DEPTH_LIMIT = 4;
 
 // A token's text, or null when it is missing or dynamic.
 const staticText = (token) => (token && !token.dynamic && token.text ? token.text : null);
@@ -65,8 +67,9 @@ export function check(command, { cwd = process.cwd(), env = process.env, input, 
 // The command's commits, as { messages, trailers }, and its `gh pr create` calls, as { call, dir }, in order. Each is
 // read in the folder it runs in: the shell's, moved by each earlier `cd` or `pushd` to a named folder, by a wrapper's
 // directory change, and by `git -C`. `dir` is null once a move goes where no word names, and a relative file there is
-// not read. A help or dry-run commit writes nothing and is left out.
-function readCalls(command, cwd) {
+// not read. A help or dry-run commit writes nothing and is left out. The command line of `sh -c` or `bash -c` is read
+// too, starting where that shell runs; a script on a shell's stdin is not.
+function readCalls(command, cwd, depth = 0) {
   const gitCommits = [];
   const prCreates = [];
   for (const line of commandLines(command)) {
@@ -75,8 +78,15 @@ function readCalls(command, cwd) {
     const pending = [];
     const prCalls = readPrCalls(line);
     for (const segment of lexCommand(line)) {
-      const { program, args, chdir } = readInvocation(segment);
+      const invocation = readInvocation(segment);
+      const { program, args, chdir } = invocation;
       const own = chdir ? moveTo(dir, chdir) : dir;
+      const inner = depth < SHELL_DEPTH_LIMIT ? inlineShellCommand(invocation) : null;
+      if (inner) {
+        const nested = readCalls(inner, own, depth + 1);
+        gitCommits.push(...nested.gitCommits);
+        prCreates.push(...nested.prCreates);
+      }
       const git = readGit(segment);
       if (git?.subcommand === 'commit') {
         let at = own;

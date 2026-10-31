@@ -32,6 +32,8 @@ Note each in the report under decided alone.
 - Creating the task worktree, or using an existing clean one at the branch tip.
 - Reusing a fresh plan instead of planning again.
 - Retrying a flaky end-to-end test once.
+- Retrying a push once when it exits non-zero after its hooks passed and `git ls-remote` shows the remote unchanged:
+  a long pre-push hook can outlast the connection (exit 141). A refused push is still a stop.
 - Demoting a finding that fails self-verification, except a security `fix_now`: only `security-engineer` closes one.
 
 ## Every step

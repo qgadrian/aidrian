@@ -114,3 +114,23 @@ test('SessionEnd deletes the reminder marker the Stop hook wrote for the session
   spawnSync(process.execPath, [end], { input: JSON.stringify({ session_id: session, cwd: temp }), cwd: temp, env, encoding: 'utf8' });
   assert.deepEqual(readdirSync(temp).filter((name) => name.startsWith('aidrian-session-length-')), ['aidrian-session-length-other']);
 });
+
+test('an approved plan in a long session offers a handoff before the build; a short session or a subagent gets nothing', (t) => {
+  const { transcript } = setup(t, null);
+  const planHook = path.join(path.dirname(HOOK), 'hook-plan-exit.mjs');
+  const run = (session, fields = {}) => {
+    const dir = path.join(path.dirname(transcript), `p-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(path.join(dir, '.aidrian'), { recursive: true });
+    writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, session }));
+    const input = JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'ExitPlanMode', transcript_path: transcript, cwd: dir, ...fields });
+    const { status, stdout } = spawnSync(process.execPath, [planHook], { input, cwd: dir, encoding: 'utf8' });
+    assert.equal(status, 0);
+    return stdout ? JSON.parse(stdout).hookSpecificOutput.additionalContext : '';
+  };
+  // Three calls and 6k tokens: half of maxCalls 6 is reached, the full limit is not.
+  assert.match(run({ maxCalls: 6 }), /^The plan is approved, and this session already carries 3 model calls\..*hand off now, or build here\?/s);
+  assert.match(run({ handoff: 'auto', maxTokens: 12000 }), /6k tokens of context.*run the session-handoff skill/s);
+  assert.equal(run({ maxCalls: 8, maxTokens: 0, maxHours: 0 }), '', 'under half of every limit');
+  assert.equal(run({ handoff: 'off', maxCalls: 1 }), '');
+  assert.equal(run({ maxCalls: 1 }, { agent_id: 'sub' }), '', 'a subagent');
+});

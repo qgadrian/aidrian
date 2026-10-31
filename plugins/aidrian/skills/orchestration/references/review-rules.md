@@ -19,6 +19,13 @@ A pull request that `autopilot` or the `orchestrator` marked ready in this run g
 report the remaining items as follow-ups for a new pull request, and change nothing on its branch.
 Any other ready pull request is worked as a draft is, in a session the Human runs: a person's review usually lands on one.
 
+## Verify the premise
+
+Before a finding gets a fix or reaches the Human as fact, read the code it names at `@{u}`.
+A claim that something is missing, such as "no test covers the deny path", is checked with a search, not trusted:
+reviewers often miss what sits in another file. A finding that contradicts a project knowledge doc loses to the doc.
+A premise that does not hold is `does not apply`, answered with the file and line that show it.
+
 ## Fix passes
 
 A finding or a failing check gets at most 2 passes: the fix, and one corrective pass when the review or the check says

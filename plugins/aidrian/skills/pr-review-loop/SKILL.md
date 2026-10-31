@@ -28,7 +28,7 @@ aidrian pr await-review <n> --request     # waits up to 14 minutes; give the she
 | --- | --- | --- |
 | 0 | `received` or `already_present` | collect it with the rest |
 | 0 | `no_reviewer` | the project has no review bot, and nothing was posted: record `bot review: none` |
-| 2 | `timed_out` | with `retry_recommended: true`, run it once more without `--request`; otherwise record `bot review: not received` |
+| 2 | `timed_out` | with `head_lag: true` (GitHub had not caught up with the push), run the same command once more; with `retry_recommended: true`, once more without `--request`; otherwise record `bot review: not received` |
 | 3 | `blocked_quota` | record `bot review: blocked_quota` and go on with the other comments |
 | 4 | `round_limit` | the review-round cap, config.json `github.maxReviewRounds`: stop and ask the Human to raise `--max-rounds`, redesign, or stop |
 | 5 | `review_required` | the [review gate](#review-gate): nothing was posted; run the review it names, then this step again |

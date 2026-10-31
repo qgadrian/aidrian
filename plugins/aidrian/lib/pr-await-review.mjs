@@ -13,6 +13,10 @@
 //      recording the head it asks about, unless a 👀 already acknowledges a trigger for this head.
 //   5. Poll until a signal covers the current head or the timeout ends. Head is re-read on every poll; with
 //      --request the bot is asked once per new head.
+//   7. GitHub can report the old head for minutes after a push. When the checkout tracks the pull request's branch in
+//      its repository, the head it waits for is that upstream commit (or --head <sha>): while GitHub reports an
+//      ancestor of it, nothing counts as covered and nothing is posted, so a review of the previous head never answers
+//      for the push.
 //   0. With --request and config.json `github.reviewGate` on: post nothing and end with `review_required` until a review
 //      is on record (lib/review-gate.mjs), and put the record's marker in the request.
 //   6. With --request: at --max-rounds bot reviews (config.json `github.maxReviewRounds`) post nothing and end with
@@ -29,6 +33,7 @@
 
 import { DEFAULTS as CONFIG_DEFAULTS, NO_REVIEWER } from './config.mjs';
 import { runGh } from './gh.mjs';
+import { runGit } from './git.mjs';
 
 export const DEFAULT_REVIEWER = CONFIG_DEFAULTS.github.reviewer;
 export const REQUEST_COMMENT = '@codex review';
@@ -102,7 +107,7 @@ export const exitCodeFor = (status) => {
 
 // `defaults` carries config.json `github.reviewer` and `github.maxReviewRounds`; flags win.
 export const parseArgs = (argv, defaults = {}) => {
-  const out = { pr: null, repo: null, request: false, ...DEFAULTS, reviewer: DEFAULT_REVIEWER, ...defaults };
+  const out = { pr: null, repo: null, head: null, request: false, ...DEFAULTS, reviewer: DEFAULT_REVIEWER, ...defaults };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     const next = () => {
@@ -117,6 +122,7 @@ export const parseArgs = (argv, defaults = {}) => {
     else if (a === '--interval-sec') out.intervalSec = Number(next());
     else if (a === '--max-rounds') out.maxRounds = Number(next());
     else if (a === '--pr') out.pr = next();
+    else if (a === '--head') out.head = next();
     else if (a.startsWith('--')) throw new Error(`unknown argument: ${a}`);
     else if (out.pr === null) out.pr = a;
     else throw new Error(`unexpected argument: ${a}`);
@@ -124,6 +130,7 @@ export const parseArgs = (argv, defaults = {}) => {
   if (!Number.isFinite(out.timeoutSec) || out.timeoutSec < 0) throw new Error('--timeout-sec must be >= 0');
   if (!Number.isFinite(out.intervalSec) || out.intervalSec < 5) throw new Error('--interval-sec must be >= 5');
   if (!Number.isInteger(out.maxRounds) || out.maxRounds < 1) throw new Error('--max-rounds must be an integer >= 1');
+  if (out.head !== null && !/^[0-9a-f]{7,40}$/iu.test(out.head)) throw new Error('--head must be a commit SHA');
   const m = typeof out.pr === 'string' && out.pr.match(/github\.com\/([^/]+\/[^/]+)\/pull\/(\d+)/);
   if (m) {
     out.repo = out.repo ?? m[1];
@@ -284,9 +291,31 @@ const snapshot = (gh, repo, n) => {
   return { pr, reviews, reviewComments, issueComments, reactions, headCommittedAt: headCommit?.commit?.committer?.date ?? null };
 };
 
-// The whole wait. `gh` (api, currentPr, repo), `sleep`, and `now` are the only side-effect seams. `gate(repo, n)`, with
+// The local view of the push, through git in the current folder. `pushedHead(repo, branch)` is the upstream commit of
+// the checked-out branch when that upstream is `branch` on a remote of GitHub repository `repo`, else null.
+// `behind(a, b)` is whether commit a is a known, strict ancestor of commit b; a commit git does not have is never behind.
+export const localGit = (cwd = process.cwd()) => {
+  const line = (args) => {
+    const r = runGit(args, cwd);
+    return r.status === 0 ? r.stdout.trim() || null : null;
+  };
+  return {
+    pushedHead: (repo, branch) => {
+      const local = line(['symbolic-ref', '--quiet', '--short', 'HEAD']);
+      const remote = local && line(['config', `branch.${local}.remote`]);
+      const url = remote && line(['remote', 'get-url', remote]);
+      const named = url?.match(/github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/iu)?.[1];
+      if (!repo || !branch || !named || named.toLowerCase() !== repo.toLowerCase()) return null;
+      if (line(['config', `branch.${local}.merge`]) !== `refs/heads/${branch}`) return null;
+      return line(['rev-parse', '--verify', '--quiet', '@{u}']);
+    },
+    behind: (a, b) => a !== b && runGit(['merge-base', '--is-ancestor', a, b], cwd).status === 0,
+  };
+};
+
+// The whole wait. `gh` (api, currentPr, repo), `git` (localGit), `sleep`, and `now` are the only side-effect seams. `gate(repo, n)`, with
 // --request, returns { reason } to post nothing, or { marker } to carry in the request (lib/review-gate.mjs).
-export const awaitReview = async (opts, { gh = defaultGh, sleep = (s) => new Promise((r) => setTimeout(r, s * 1000)), now = () => Date.now(), gate = null } = {}) => {
+export const awaitReview = async (opts, { gh = defaultGh, git = localGit(), sleep = (s) => new Promise((r) => setTimeout(r, s * 1000)), now = () => Date.now(), gate = null } = {}) => {
   if (opts.reviewer === null) {
     return { status: 'no_reviewer', pr: opts.pr === null ? null : Number(opts.pr), repo: opts.repo, reviewer: null, requested: false, signal: null, waited_sec: 0 };
   }
@@ -297,6 +326,10 @@ export const awaitReview = async (opts, { gh = defaultGh, sleep = (s) => new Pro
   const started = now();
   let s = snapshot(gh, repo, n);
   let head = s.pr.head?.sha ?? null;
+  // The head the push left behind, when known. GitHub lags only when it reports a commit the push built on; a head git
+  // does not know, or one past the push, is someone else's newer work and counts as the pull request's state.
+  const pushed = opts.head ?? git.pushedHead(s.pr.head?.repo?.full_name ?? null, s.pr.head?.ref ?? null);
+  const lagging = () => Boolean(pushed && head) && !sameCommit(pushed, head) && git.behind(head, pushed);
   let since = latestTrigger(s);
   let sinceHead = latestTriggerHead(s);
   let signal = null;
@@ -308,6 +341,7 @@ export const awaitReview = async (opts, { gh = defaultGh, sleep = (s) => new Pro
   // per head when the signal is missing or covers an older head. Returns covered, blocked_quota, round_limit, or null.
   const evaluate = () => {
     head = s.pr.head?.sha ?? null;
+    if (lagging()) return null;
     signal = latestBotSignal({ ...s, reviewer: opts.reviewer, since });
     stale = isStale(signal, head, s.headCommittedAt, sinceHead);
     const ack = acknowledgement({ reactions: s.reactions, issueComments: s.issueComments, reviewer: opts.reviewer, since });
@@ -338,6 +372,9 @@ export const awaitReview = async (opts, { gh = defaultGh, sleep = (s) => new Pro
       repo,
       reviewer: opts.reviewer,
       head_sha: head,
+      pushed_head: pushed,
+      // GitHub still reported a head older than the push when the wait ended: re-run once it catches up.
+      ...(status === 'timed_out' && lagging() ? { head_lag: true } : {}),
       head_committed_at: s.headCommittedAt,
       trigger_at: since,
       requested,

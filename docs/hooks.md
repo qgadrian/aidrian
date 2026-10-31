@@ -15,10 +15,12 @@ see [Recorded blocks](#recorded-blocks).
 | Before any tool call | The [agent gates](#agent-gates), when the project sets any | both | yes |
 | Before a Bash command | The [Bash rules](#bash-rules) | both | yes |
 | Before a file edit | The [main-checkout rule](#main-checkout), when the project turns it on, then the [terms rule](#terms) | both | yes |
+| Before `EnterWorktree` in a subagent | A block: the tool would move the whole session into the worktree | Claude Code | yes |
 | Before a GitHub MCP comment | The [review gate](config.md#review-gate), when the project turns it on | both | yes |
 | Before an Agent tool call | The project's [model and effort](config.md#models) for that agent | Claude Code | no |
 | After a Markdown write | The [line-length check](#markdown-line-length) | Claude Code | feedback |
 | Before compaction | A checklist of what the summary must keep | both | no |
+| The Human approves a plan | The [plan handoff offer](#session-length), in a long main session | Claude Code | no |
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
 | The main session ends a turn | The [session-length reminder](#session-length) | Claude Code | once |
 | A subagent stops | A `stop` row, then the [delivery check](#delivery-check) | Claude Code | once |
@@ -46,7 +48,7 @@ At the start of every session and subagent, the hook prints:
 | Pull request contract | Off unless config.json sets `github.pullRequest`, but for `"sharedTempBodyFile": false` |
 | Review gate | Off unless config.json sets `"github": { "reviewGate": { "enabled": true } }` |
 | Terms rule | Off unless config.json sets `"terms": { "file": "…" }` |
-| Session-length reminder | `"session": { "handoff": "off" }` |
+| Session-length reminder and plan handoff offer | `"session": { "handoff": "off" }` |
 | Dispatch log rows | `"telemetry": { "enabled": false }`, in config.json or `.aidrian.local.json`; the delivery check still runs |
 | `hook_deny` rows alone | `"telemetry": { "hookDenies": false }`; the rules still block |
 | Automatic lessons from the stop hook and the blocking rules | `"lessons": { "auto": false }` |
@@ -236,6 +238,9 @@ When one of them reaches its limit in config.json `session`, the hook acts once 
 Either way it never comes back in that session, so a "keep going" is final.
 A marker in the system's temporary folder remembers this; a new session starts fresh.
 The defaults are 150,000 tokens, 250 calls, and 4 hours; a limit of `0` turns that one off. [config.md](config.md) lists the keys.
+When the Human approves a plan (Claude Code's `ExitPlanMode`) and the main session has passed half of one limit,
+another hook tells the agent to offer the same handoff before its first build step: `ask` asks, `auto` writes the brief.
+The plan is on disk and nothing is running, so this is the cheapest moment for a fresh session.
 It reads Claude Code transcripts only: a transcript with no Claude Code usage, or a payload without `stop_hook_active`, does nothing.
 
 ## Overrides

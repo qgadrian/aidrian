@@ -129,6 +129,9 @@ function gitStateChanges(command, cwd, depth = 0) {
     if (known && depth < SUBSTITUTION_DEPTH_LIMIT) for (const body of substitutions) found.push(...gitStateChanges(body, cwd, depth + 1));
     const invocation = readInvocation(segment);
     if (CHANGES_DIRECTORY.has(invocation.program)) known = false;
+    // `sh -c`, `bash -c`, `flock … -c`, and a heredoc fed to a shell run their command where the invocation runs.
+    const inner = known && depth < SUBSTITUTION_DEPTH_LIMIT ? inlineShellCommand(invocation) : null;
+    if (inner !== null && !invocation.chdir?.dynamic) found.push(...gitStateChanges(inner, invocation.chdir ? path.resolve(cwd, invocation.chdir.text) : cwd, depth + 1));
     const call = known ? readGit(segment) : null;
     if (!call || !['add', 'commit', 'switch', 'checkout'].includes(call.subcommand)) continue;
     const folders = gitFolders(call.globals, invocation.chdir, cwd, segment);
@@ -145,7 +148,7 @@ function gitStateChanges(command, cwd, depth = 0) {
     const at = folders[0];
     // --work-tree or --git-dir points git at a repository this hook does not read words in: only a commit without -a
     // is plainly safe there.
-    if ((folders.length > 1 || !plainGlobals || gitEnv) && call.subcommand !== 'commit') {
+    if ((folders.length > 1 || !plainGlobals || gitEnv) && (call.subcommand !== 'commit' || commitsAll(call.rest) || gitEnv)) {
       found.push({ what: `\`git ${call.subcommand}\` with another repository, work tree, or pathspec option can change the shared checkout`, folders, target: null });
       continue;
     }
@@ -181,10 +184,12 @@ function gitFolders(globals, chdir, cwd, segment = []) {
   // command count the same.
   const pending = [];
   for (const { text, dynamic } of segment) {
-    const assigned = /^(GIT_DIR|GIT_WORK_TREE)=(.*)$/su.exec(text);
+    const assigned = /^(GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE)=(.*)$/su.exec(text);
     if (!assigned) continue;
     if (dynamic) return null;
-    pending.push([assigned[2], assigned[1] === 'GIT_DIR' ? checkoutOfGitDir : (p) => p]);
+    // An index file sits in its git folder, so it names that folder's checkout.
+    const toFolder = { GIT_DIR: checkoutOfGitDir, GIT_WORK_TREE: (p) => p, GIT_INDEX_FILE: (p) => checkoutOfGitDir(path.dirname(p)) }[assigned[1]];
+    pending.push([assigned[2], toFolder]);
   }
   for (let i = 0; i < globals.length; i += 1) {
     const { text, dynamic } = globals[i];

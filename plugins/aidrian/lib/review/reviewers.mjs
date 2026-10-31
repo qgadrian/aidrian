@@ -142,6 +142,8 @@ export function reviewPrompt(input) {
   ].filter((line) => line !== '').join('\n');
 }
 
+const lastLine = (text) => text.trim().split('\n').filter(Boolean).at(-1) ?? '';
+
 // Runs one exec reviewer on one pass: resolves to { status: 'done', findings, verdicts, dropped } or
 // { status: 'failed' | 'quota' | 'timed_out', reason }. `env` must already be clean (run.mjs isolates it).
 export function runExec(reviewer, input, { root, env, spawnImpl = spawn }) {
@@ -167,8 +169,9 @@ export function runExec(reviewer, input, { root, env, spawnImpl = spawn }) {
     child.on('close', (code, signal) => {
       if (signal === 'SIGTERM') timedOut = true;
       if (timedOut) return finish({ status: 'timed_out', reason: `no answer in ${reviewer.timeoutSec ?? 600} s` });
-      if (/usage limit|rate limit|quota/iu.test(stderr)) return finish({ status: 'quota', reason: stderr.trim().split('\n').at(-1) });
-      if (code !== 0) return finish({ status: 'failed', reason: `exit ${code}: ${stderr.trim().split('\n').at(-1) ?? ''}` });
+      // Only a failed run can be a quota stop: a successful one logs its whole session to stderr, words included.
+      if (code !== 0 && /usage limit|rate limit|quota/iu.test(stderr)) return finish({ status: 'quota', reason: lastLine(stderr) });
+      if (code !== 0) return finish({ status: 'failed', reason: `exit ${code}: ${lastLine(stderr)}` });
       let raw;
       try {
         raw = JSON.parse(reviewer.builtIn === 'codex' ? readFileSync(out, 'utf8') : stdout);

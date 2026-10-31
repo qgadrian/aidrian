@@ -184,6 +184,10 @@ test('a subshell cd stays in the subshell, and git -c holds for the commit', (t)
   execFileSync('git', ['init', '-q'], { cwd: dir });
   assert.match(run("git -c trailer.ifExists=replace commit -m s --trailer 'Agent: main' --trailer 'Agent: other'") ?? '', /Blocked/);
   assert.match(run("bash <<'EOF'\ngit commit -m unsigned\nEOF") ?? '', /Blocked/, 'a script on a shell stdin');
+  assert.match(run("git -c core.commentChar=A commit --allow-empty --cleanup=strip -m subject --trailer 'Agent: main'") ?? '', /Blocked/,
+    'the cleanup runs after the --trailer values go in');
+  assert.match(run('git commit -m "subject\n\nAgent: main\n---\n\nunsigned"') ?? '', /Blocked/, 'a --- line is text');
+  assert.equal(run('git commit -m "subject\n\nnotes\n---\n\nAgent: main"'), null);
 });
 
 test('help and dry-run commits pass', (t) => {

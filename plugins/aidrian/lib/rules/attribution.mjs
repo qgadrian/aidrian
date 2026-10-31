@@ -26,19 +26,23 @@ const MESSAGE_HEREDOC = /(?:--message(?:=|\s+)|(?<![\w-])-[A-Za-z]*m=?\s*)"?\$\(
 const DYNAMIC = Symbol('dynamic message');
 
 // The trailers the commit will carry, as `Key: value`. git answers in the folder the commit runs in, with that
-// repository's trailer settings: `git interpret-trailers` adds the --trailer values to the message's trailer block.
+// repository's trailer settings: `git interpret-trailers` adds the --trailer values to the message's trailer block,
+// and `cleanup` is the commit's message cleanup.
 // A message the rule cannot read (null) counts only the --trailer values. When git cannot answer, carriedTrailers reads
 // them by git's defaults.
-function commitTrailers(message, trailers, dir, config = []) {
+function commitTrailers(message, trailers, dir, config = [], cleanup = (text) => text) {
   if (dir) {
-    const args = [...config, 'interpret-trailers', '--only-trailers', '--unfold', ...trailers.flatMap((trailer) => ['--trailer', trailer])];
-    const result = runGit(args, dir, { input: message ?? '' });
-    if (result.status === 0) {
-      const lines = result.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+    // As git commits: the --trailer values go in first, the cleanup runs over the whole message, and the trailers are
+    // read from what is left. `--no-divider`: a `---` line in a commit message is text, not the start of a patch.
+    const git = (args, input) => runGit([...config, 'interpret-trailers', '--no-divider', ...args], dir, { input });
+    const full = git(trailers.flatMap((trailer) => ['--trailer', trailer]), message ?? '');
+    const parsed = full.status === 0 ? git(['--only-trailers', '--unfold'], cleanup(full.stdout)) : null;
+    if (parsed?.status === 0) {
+      const lines = parsed.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
       return new Set(lines.map((line) => line.replace(/^([A-Za-z0-9-]+):\s*/u, '$1: ')));
     }
   }
-  return carriedTrailers(message === null ? [] : [message], trailers);
+  return carriedTrailers(message === null ? [] : [cleanup(message)], trailers);
 }
 
 // A token's text, or null when it is missing or dynamic.
@@ -66,7 +70,7 @@ export function check(command, { cwd = process.cwd(), env = process.env, input, 
     const fields = settings(dir)?.config.attribution.commit ?? [];
     if (!fields.length) continue;
     const expected = expectedTrailers(fields, who());
-    const carried = commitTrailers(messages.length ? cleanup(messages.join('\n\n')) : null, trailers, dir, config);
+    const carried = commitTrailers(messages.length ? messages.join('\n\n') : null, trailers, dir, config, cleanup);
     const missing = expected.filter((trailer) => !carried.has(trailer));
     if (missing.length) return commitReason(expected, missing);
   }

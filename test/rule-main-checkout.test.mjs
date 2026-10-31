@@ -327,6 +327,8 @@ test('in the main checkout, only named files are staged and only the default bra
   assert.match(denied(`git --git-dir=${repo}/.git --work-tree=${repo} add -A`, beside) ?? '', /main checkout/, 'from a worktree into the main checkout');
   assert.equal(denied('cd wt/task && git add -A'), null, 'after a cd the folder is not certain');
   assert.match(denied(`git --git-dir=${repo}/.git --work-tree=${repo} checkout task`, base) ?? '', /main checkout/, 'from outside the repository');
+  assert.match(denied(`git --git-dir=repo/.git --work-tree=repo -C ${base} add -A`, '/') ?? '', /main checkout/, 'relative repository paths after -C');
+  assert.equal(denied(`git add ${path.join(repo, 'src/app.js')}`), null, 'an absolute path to one file');
   execFileSync('git', ['-C', repo, 'rm', '-q', '--cached', 'src/app.js']);
   execFileSync('git', ['-C', repo, 'add', 'src/app.js']);
   rmSync(path.join(repo, 'src'), { recursive: true, force: true });

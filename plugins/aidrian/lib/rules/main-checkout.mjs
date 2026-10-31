@@ -171,7 +171,8 @@ function gitStateChanges(command, cwd, depth = 0) {
 function gitFolders(globals, chdir, cwd) {
   if (chdir?.dynamic) return null;
   let at = chdir ? path.resolve(cwd, chdir.text) : cwd;
-  const others = [];
+  // git resolves --work-tree and --git-dir from where it ends up, after every -C.
+  const pending = [];
   for (let i = 0; i < globals.length; i += 1) {
     const { text, dynamic } = globals[i];
     const next = globals[i + 1];
@@ -181,10 +182,10 @@ function gitFolders(globals, chdir, cwd) {
       if (given === undefined) continue;
       if (!given || given.dynamic) return null;
       if (toFolder === null) at = path.resolve(at, given.text);
-      else others.push(toFolder(path.resolve(at, given.text)));
+      else pending.push([given.text, toFolder]);
     }
   }
-  return [at, ...others];
+  return [at, ...pending.map(([given, toFolder]) => toFolder(path.resolve(at, given)))];
 }
 
 // Whether `git commit` with these words commits every tracked change: -a or --all in any spelling. A short cluster is
@@ -217,10 +218,13 @@ function switchesTo(at, word) {
 
 // Whether git tracks nothing under `word` but `word` itself: a folder deleted from disk still names every file in it.
 function tracksAtMostItself(at, word) {
-  const listed = runGit(['ls-files', '-z', '--', word], existingFolder(at));
-  if (listed.status !== 0) return false;
-  const files = listed.stdout.split('\0').filter(Boolean);
-  return files.length === 0 || (files.length === 1 && files[0] === path.normalize(word));
+  const folder = existingFolder(at);
+  const top = runGit(['rev-parse', '--show-toplevel'], folder);
+  const listed = runGit(['ls-files', '-z', '--full-name', '--', word], folder);
+  if (top.status !== 0 || listed.status !== 0) return false;
+  // An unmerged file is listed once per stage: count each path once.
+  const files = new Set(listed.stdout.split('\0').filter(Boolean).map((file) => canonical(path.join(top.stdout.trim(), file))));
+  return files.size === 0 || (files.size === 1 && files.has(canonical(path.resolve(at, word))));
 }
 
 const isFolder = (file) => {

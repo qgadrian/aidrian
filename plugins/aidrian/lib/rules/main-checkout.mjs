@@ -43,7 +43,7 @@ const WRITERS = new Map([
   // Options that take the rest of their word or the next one (perlrun, ruby -h). The rest-only ones are in REST_VALUES:
   // listed here, they would take the next word, which can be the file written.
   ['perl', new Set(['-e', '-E', '-I'])],
-  ['ruby', new Set(['-e', '-I', '-C'])],
+  ['ruby', new Set(['-e', '-I', '-C', '-r', '-E'])],
   // A value option whose name extends a switch (`--partial-dir`, `--backup-dir`) is left out, so the switch never
   // swallows an operand. An unlisted option's value reads as one more path: blocked by mistake, never missed.
   [
@@ -62,8 +62,8 @@ const WRITERS = new Map([
 // next word: `perl -M strict` is an error.
 const REST_VALUES = new Map([
   ['sed', new Set(['-i', '-I'])],
-  ['perl', new Set(['-i', '-M', '-m', '-C', '-x', '-d', '-D'])],
-  ['ruby', new Set(['-i', '-r', '-E', '-F', '-W', '-x', '-K', '-T'])],
+  ['perl', new Set(['-i', '-M', '-m', '-C', '-x', '-d', '-D', '-F'])],
+  ['ruby', new Set(['-i', '-F', '-W', '-x', '-K', '-T'])],
 ]);
 // Options whose value is only the digits after them, so the switches after the digits still count: `-0777pi`, `-lpi`.
 const DIGIT_VALUES = new Map([['perl', /([0l])(?:x[0-9a-f]+|[0-7]+)?/giu], ['ruby', /(0)(?:[0-7]+)?/gu]]);
@@ -219,6 +219,8 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
       if (value?.attached === null) i += 1;
     } else if (text !== '') {
       operands.push(args[i]); // an empty operand is BSD sed's `-i ''` suffix
+      // perl and ruby read their own options only up to the first operand; what follows is the script's.
+      if (SCRIPT_OPTIONS.has(program)) ended = true;
     }
   }
   if (program === 'dd') return operands.filter(({ text }) => text.startsWith('of=')).map((token) => ({ ...token, text: token.text.slice(3) }));

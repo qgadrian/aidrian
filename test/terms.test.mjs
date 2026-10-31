@@ -301,6 +301,7 @@ test('a quoted URL keeps its closing quote, and code names keep letters of any s
   const hits = (text) => proseLines(text).map((line, i) => (line !== null && termPattern('you', { compound: true }).test(line) ? i + 1 : null)).filter(Boolean);
   assert.deepEqual(hits('See "https://example.com" and you should continue.\nYou must wait.'), [1, 2]);
   assert.deepEqual(hits('See “https://example.com” and you go.'), [1]);
+  assert.deepEqual(hits('``a ```b`` and you `x`'), [1], 'a longer backtick run inside a span');
   assert.deepEqual(identifiers('const caféparty = partyé;'), ['const', 'caféparty', 'partyé']);
   assert.equal(codeName('caféParty'), 'café party');
   assert.notEqual(codeName('partyé'), 'party');

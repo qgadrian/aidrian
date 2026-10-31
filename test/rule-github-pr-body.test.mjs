@@ -95,14 +95,16 @@ test('what the rule cannot read, gh pr edit without a body, other commands, and 
 
 test('a non-web gh pr create with no body flag is denied when sections are configured', (t) => {
   const run = project(t);
-  for (const command of ['gh pr create --title x', 'gh pr create -t x -d', 'gh pr create --title x --editor', 'gh pr create -T bug.md', 'url=$(gh pr create --title x)']) {
+  for (const command of ['gh pr create --title x', 'gh pr create -t x -d', 'gh pr create --title x --editor', 'gh pr create -T bug.md', 'url=$(gh pr create --title x)',
+    'gh pr create --title x --web=false', 'gh pr create --title x --help=false', 'gh pr create --web --web=false', 'gh pr create -t x -- --web', 'gh pr create -tw']) {
     assert.match(run(command), /^Blocked: `gh pr create` has no --body or --body-file.*pass --body-file/, command);
   }
-  for (const command of ['gh pr create --web', 'gh pr create -w --title x', 'gh pr create -dw', 'gh pr create --help', 'gh pr create -h', 'gh pr edit 3 --title y']) {
+  for (const command of ['gh pr create --web', 'gh pr create -w --title x', 'gh pr create -dw', 'gh pr create --help', 'gh pr create -h', 'gh pr create --web=true', 'gh pr edit 3 --title y']) {
     assert.equal(run(command), null, command);
   }
   assert.match(project(t, { version: 1, github: { requiredSections: [], pullRequest: { sections: ['Summary'] } } })('gh pr create -t x'), /no --body or --body-file/, 'a closed section list');
   assert.equal(project(t, { version: 1, github: { requiredSections: [] } })('gh pr create --title x'), null, 'no sections configured');
+  assert.match(run('gh pr create -bh'), /no `## Summary`/, 'h in -bh is the body, read and checked');
 });
 
 test('outside a project folder nothing is checked', (t) => {

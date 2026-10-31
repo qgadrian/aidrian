@@ -72,6 +72,7 @@ function readPrCall(segment) {
   const call = { subcommand: words[1], fill: false, web: false, help: false, body: null, bodyFile: null, title: null, repo, target: null };
   for (; i < args.length; i += 1) {
     const { text, dynamic } = args[i];
+    if (text === '--') break;
     let [flag, inline] = text.startsWith('--') && text.includes('=') ? [text.slice(0, text.indexOf('=')), text.slice(text.indexOf('=') + 1)] : [text, null];
     if (/^-[^-]/u.test(text)) {
       // A short word as gh reads it: `-dF body.md`, `-Fbody.md`, and `-F=body.md`.
@@ -84,8 +85,8 @@ function readPrCall(segment) {
     }
     const value = () => (inline !== null ? { text: inline, dynamic } : args[++i] ?? null);
     if (FILL.has(flag)) call.fill = true;
-    else if (flag === '--web') call.web = true;
-    else if (flag === '--help') call.help = true;
+    else if (flag === '--web') call.web = isTrue(inline);
+    else if (flag === '--help') call.help = isTrue(inline);
     else if (flag === '--body' || flag === '-b') [call.body, call.bodyFile] = [value(), null];
     else if (flag === '--body-file' || flag === '-F') [call.bodyFile, call.body] = [value(), null];
     else if (flag === '--title' || flag === '-t') call.title = value();
@@ -95,6 +96,9 @@ function readPrCall(segment) {
   }
   return call;
 }
+
+// A boolean long option's value as gh (pflag) reads it: bare is true, `=false` is false.
+const isTrue = (inline) => inline === null || !/^(?:false|0|f|FALSE|False|F)$/u.test(inline);
 
 // The long options of `gh pr create` and `gh pr edit` that take a value, so their value is never read as the target.
 const LONG_VALUES = new Set([

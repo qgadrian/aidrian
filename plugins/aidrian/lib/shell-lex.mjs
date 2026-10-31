@@ -408,6 +408,8 @@ function splitStringInvocation(value, depth, rest = []) {
 // parentheses, a `!` (which runs the command and inverts its status: `negated`), leading `VAR=value` assignments, and
 // the wrappers above with their options, so `(sudo env FOO=1 command grep -c x f)` reads as grep. `program` is the base
 // name; `args` exclude redirections and their targets; `chdir` is the directory a wrapper moves to, or null.
+// `environment` lists, in order, the changes the assignments and env make to the program's environment: { name, value }
+// sets a variable to a token, { name, value: null } unsets it, and { clear: true } empties the environment (`env -i`).
 export function readInvocation(segment, depth = 0) {
   const targets = new Set();
   for (let i = 0; i < segment.length; i += 1) {
@@ -417,6 +419,7 @@ export function readInvocation(segment, depth = 0) {
   let index = 0;
   let negated = false;
   let chdir = null;
+  const environment = [];
   // The lexer leaves a subshell's parentheses glued to its words, as in `(git commit --amend)`. A word left empty goes.
   const retext = (at, text) => {
     if (text === usable[at].text) return;
@@ -424,7 +427,12 @@ export function readInvocation(segment, depth = 0) {
     else usable.splice(at, 1);
   };
   const peelAssignments = () => {
-    while (index < usable.length && /^[A-Za-z_][A-Za-z0-9_]*=/u.test(usable[index].text)) index += 1;
+    while (index < usable.length && /^[A-Za-z_][A-Za-z0-9_]*=/u.test(usable[index].text)) {
+      const { text, dynamic } = usable[index];
+      const at = text.indexOf('=');
+      environment.push({ name: text.slice(0, at), value: { text: text.slice(at + 1), dynamic } });
+      index += 1;
+    }
   };
   if (usable.length > 0) retext(usable.length - 1, withoutUnmatchedClose(usable.at(-1).text));
   for (;;) {
@@ -469,6 +477,7 @@ export function readInvocation(segment, depth = 0) {
       if (!token.text.startsWith('-')) break;
       index += 1;
       const option = wrapperOption(token, WRAPPER_VALUE_FLAGS.get(wrapper) ?? NO_OPTIONS);
+      if (wrapper === 'env' && clearsEnvironment(token.text, option)) environment.push({ clear: true });
       if (!option) continue;
       let { value } = option;
       if (value === null) {
@@ -476,9 +485,13 @@ export function readInvocation(segment, depth = 0) {
         index += 1;
       }
       if (WRAPPER_CHDIR_FLAGS.get(wrapper)?.has(option.name)) chdir = composeChdir(chdir, value);
+      if (wrapper === 'env' && ['-u', '--unset'].includes(option.name)) environment.push({ name: value?.text ?? '', value: null });
       if (wrapper === 'env' && SPLIT_STRING_FLAGS.has(option.name)) {
         const carried = splitStringInvocation(value, depth, usable.slice(index));
-        if (carried) return { ...carried, negated: negated || carried.negated, chdir: composeChdir(chdir, carried.chdir) };
+        if (carried) {
+          return { ...carried, negated: negated || carried.negated, chdir: composeChdir(chdir, carried.chdir),
+            environment: [...environment, ...carried.environment] };
+        }
       }
     }
     // timeout's duration comes before the command; take it by position, since strtod accepts too many spellings.
@@ -494,7 +507,16 @@ export function readInvocation(segment, depth = 0) {
     peelAssignments();
   }
   const program = usable[index]?.text ?? '';
-  return { program: program.split('/').pop() ?? '', args: usable.slice(index + 1), negated, chdir };
+  return { program: program.split('/').pop() ?? '', args: usable.slice(index + 1), negated, chdir, environment };
+}
+
+// Whether an env option word empties the environment: `-`, `-i`, `--ignore-environment`, or a cluster with `-i` before
+// the option that takes a value (`option`, as wrapperOption reads it).
+function clearsEnvironment(text, option) {
+  if (text === '-' || isLongOption(text, '--ignore-environment', '--ignore-e')) return true;
+  if (text.startsWith('--')) return false;
+  const end = option ? text.indexOf(option.name[1], 1) : text.length;
+  return text.slice(1, end).includes('i');
 }
 
 // The option of a wrapper's option word that takes a value, as { name, value }: the value is a token when the word

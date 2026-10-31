@@ -47,19 +47,22 @@ export function check(command, { cwd = process.cwd(), env = process.env } = {}) 
 }
 
 // The requests in one invocation, as { pr, repo, markers }.
-export function readRequests({ program, args }, reviewer, read, env = {}) {
+export function readRequests({ program, args, environment = [] }, reviewer, read, env = {}) {
   if (program !== 'gh') return [];
-  const command = readWords(args, new Set(ROOT)).words.map((token) => token.text);
+  const command = commandPath(args);
   const key = command[0] === 'api' ? 'api' : command[1];
   if (!Object.hasOwn(VALUE_FLAGS, key)) return [];
   const { words, flags } = readWords(args, new Set([...ROOT, ...VALUE_FLAGS[key]]));
   const last = (...names) => flags.filter((flag) => names.includes(flag.name)).at(-1)?.value ?? null;
   const literal = (token) => (token && !token.dynamic ? token.text : null);
-  const repo = literal(last('-R', '--repo')) ?? env.GH_REPO ?? null;
+  const ghRepo = invocationRepo(environment, env);
   const [first, second, target] = words.map((token) => token.text);
-  // A pull request or issue URL names its repository, unless -R names one.
-  const targetRepo = repo ?? (/\/(?:pull|issues)\//u.test(target ?? '') ? repoName(target) : null);
-  if (first === 'api') return apiRequests(words[1], flags, read, env);
+  // -R names the repository; else a pull request or issue URL does; else GH_REPO, which gh reads only without either.
+  const urlRepo = /\/(?:pull|issues)\//u.test(target ?? '') ? repoName(target) : null;
+  // An -R the rule cannot read (`-R "$R"`) may name this repository: it counts as this one.
+  const flagRepo = last('-R', '--repo');
+  const targetRepo = flagRepo ? literal(flagRepo) : urlRepo ?? ghRepo;
+  if (first === 'api') return apiRequests(words[1], flags, read, ghRepo);
   const isComment = ['pr', 'issue'].includes(first) && second === 'comment';
   if (isComment || (first === 'pr' && second === 'review')) {
     const body = bodyOf(last('-b', '--body'), last('-F', '--body-file'), read);
@@ -76,7 +79,7 @@ export function readRequests({ program, args }, reviewer, read, env = {}) {
 }
 
 // `gh api repos/<o>/<r>/issues/<n>/comments` sent as a POST: the bodies its `-f`/`-F body=` fields or `--input` file send.
-function apiRequests(endpoint, flags, read, env) {
+function apiRequests(endpoint, flags, read, ghRepo) {
   const match = /(?:^|\/)repos\/([^/]+\/[^/]+)\/issues\/(\d+)\/comments\b/u.exec(endpoint?.text ?? '');
   const method = flags.filter((flag) => flag.name === '-X' || flag.name === '--method').at(-1)?.value?.text?.toUpperCase() ?? null;
   if (!match || (method !== null && method !== 'POST')) return [];
@@ -91,8 +94,38 @@ function apiRequests(endpoint, flags, read, env) {
   }
   const asking = bodies.filter(asksForReview);
   if (!asking.length) return [];
-  const repo = match[1].includes('{') ? env.GH_REPO ?? null : match[1];
+  // gh fills `{owner}` and `{repo}` from GH_REPO, or from this repository without it, and leaves literal parts alone.
+  const [owner, name] = (ghRepo ?? '').split('/');
+  const repo = !match[1].includes('{') ? match[1]
+    : ghRepo ? match[1].replaceAll('{owner}', owner).replaceAll('{repo}', name) : null;
   return [{ pr: Number(match[2]), repo, markers: asking.flatMap(markersIn) }];
+}
+
+// The command words of a gh command line, read as gh finds its command before it knows the command's options: an
+// option word without `=`, other than a switch every command has, takes the next word as its value, wherever it is.
+// So `gh pr -b x comment 5` is `pr comment`.
+const SWITCHES = new Set(['-h', '--help', '--version']);
+function commandPath(args) {
+  const words = [];
+  for (let i = 0; i < args.length && words.length < 2; i += 1) {
+    const { text } = args[i];
+    if (text === '--') break;
+    if (text === '-' || !text.startsWith('-')) words.push(text);
+    else if (!SWITCHES.has(text) && !text.includes('=') && (text.startsWith('--') || text.length === 2)) i += 1;
+  }
+  return words;
+}
+
+// The repository GH_REPO names for this invocation, after its assignments and env changes (`GH_REPO=x gh`,
+// `env -u GH_REPO gh`, `env -i gh`), or null for this repository. A value the rule cannot read is this repository.
+function invocationRepo(environment, env) {
+  let repo = env.GH_REPO ?? null;
+  for (const change of environment) {
+    if (change.clear) repo = change.keep?.includes('GH_REPO') ? repo : null;
+    else if (change.name === 'GH_REPO') repo = change.value && !change.value.dynamic ? change.value.text : null;
+  }
+  // GH_REPO is `[HOST/]OWNER/REPO`.
+  return repo ? repoName(repo) ?? repo : null;
 }
 
 // The positional words and the options of a gh command line, as gh reads them with `values` taking a value: `--x=v`,

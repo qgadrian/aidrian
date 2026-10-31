@@ -249,3 +249,15 @@ test('readInvocation peels setsid, doas, flock, caffeinate, and coproc', () => {
   const shell = readInvocation(lexCommand("flock /tmp/lock -c 'git push'")[0]);
   assert.deepEqual([shell.program, ...shell.args.map((token) => token.text)], ['sh', '-c', 'git push'], 'flock -c runs a shell string');
 });
+
+test('readInvocation lists the environment changes of assignments and env, in order', () => {
+  const changes = (line) => readInvocation(lexCommand(line)[0]).environment.map((change) => (change.clear ? 'clear' : `${change.name}=${change.value?.text ?? '<unset>'}`));
+  assert.deepEqual(changes('A=1 env -u B -iu C D=2 gh'), ['A=1', 'B=<unset>', 'clear', 'C=<unset>', 'D=2']);
+  assert.deepEqual(changes('env --ignore-env - --unset=E gh'), ['clear', 'clear', 'E=<unset>']);
+  assert.deepEqual(changes("env -S 'F=3 gh' pr"), ['F=3']);
+  assert.deepEqual(changes('G=4 exec -c gh'), ['G=4', 'clear']);
+  assert.deepEqual(changes('G=4 exec -lca x gh'), ['G=4', 'clear']);
+  assert.deepEqual(changes('G=4 exec -a c gh'), ['G=4']);
+  assert.deepEqual(changes('G=4 sudo -u x H=5 gh'), ['G=4', 'clear', 'H=5']);
+  assert.deepEqual(changes('G=4 sudo -E gh'), ['G=4']);
+});

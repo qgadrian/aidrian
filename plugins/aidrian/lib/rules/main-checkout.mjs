@@ -112,6 +112,8 @@ export function check(command, { cwd = process.cwd(), env = process.env } = {}) 
 // where its command runs; a call after a `cd` is skipped, as its folder is not certain.
 // Options are read as git reads them: a value option takes the rest of its word or the next word (`-am"msg"` is -a and
 // -m, `-bnew` creates `new`), and a long option by any unambiguous prefix (`--al` is `--all`).
+// Options whose value can only be attached: `-uall`, `-Sabc123`.
+const GIT_STATE_ATTACHED = { commit: new Set(['-u', '-S']), add: new Set(), switch: new Set(), checkout: new Set() };
 const GIT_STATE_VALUES = {
   add: new Set(['--chmod', '--pathspec-from-file']),
   commit: new Set(['-m', '-F', '-c', '-C', '-t', '--message', '--file', '--author', '--date', '--template', '--reuse-message', '--reedit-message', '--fixup', '--squash', '--cleanup', '--trailer', '--pathspec-from-file']),
@@ -130,14 +132,25 @@ function gitStateChanges(command, cwd, depth = 0) {
     const call = known ? readGit(segment) : null;
     if (!call) continue;
     let at = invocation.chdir && !invocation.chdir.dynamic ? path.resolve(cwd, invocation.chdir.text) : invocation.chdir ? null : cwd;
+    // git's -C moves where it runs (`-C path` or `-Cpath`); --work-tree, or else --git-dir's folder, names the checkout.
+    let tree = null;
     call.globals.forEach((token, i) => {
-      // git's -C as its own word or attached: `-C path` or `-Cpath`.
-      const value = token.text === '-C' ? call.globals[i + 1] : /^-C./u.test(token.text) ? { text: token.text.slice(2), dynamic: token.dynamic } : null;
-      if (value && at !== null) at = value.dynamic ? null : path.resolve(at, value.text);
+      const valueOf = (name) => (token.text === name ? call.globals[i + 1] : token.text.startsWith(`${name}=`) ? { text: token.text.slice(name.length + 1), dynamic: token.dynamic } : null);
+      const chdir = token.text === '-C' ? call.globals[i + 1] : /^-C./u.test(token.text) ? { text: token.text.slice(2), dynamic: token.dynamic } : null;
+      if (chdir && at !== null) at = chdir.dynamic ? null : path.resolve(at, chdir.text);
+      const workTree = valueOf('--work-tree');
+      const gitDir = valueOf('--git-dir');
+      if (workTree) tree = workTree.dynamic ? false : { at: workTree.text, strong: true };
+      else if (gitDir && !tree?.strong) tree = gitDir.dynamic ? false : { at: path.join(gitDir.text, '..'), strong: false };
     });
+    if (tree === false) continue;
+    if (tree && at !== null) at = path.resolve(at, tree.at);
     if (at === null) continue;
-    const { options, operands, afterDashes } = readGitArgs(call.rest, GIT_STATE_VALUES[call.subcommand] ?? new Set());
+    const { options, operands, afterDashes } = readGitArgs(call.rest, GIT_STATE_VALUES[call.subcommand] ?? new Set(), GIT_STATE_ATTACHED[call.subcommand]);
     const has = (short, long, shortest) => options.some((option) => option === short || (long && isLongOption(option, long, shortest)));
+    // A preview changes nothing.
+    if (has('-n', '--dry-run', '--dr') && call.subcommand === 'add') continue;
+    if (has(null, '--dry-run', '--dr') && call.subcommand === 'commit') continue;
     if (call.subcommand === 'add') {
       const whole = [...operands, ...afterDashes].some((word) => WHOLE_FOLDER.has(path.posix.normalize(word.replace(/\/+$/u, '') || '.')));
       if (whole || has('-A', '--all', '--al') || has('-u', '--update', '--u')) found.push({ what: '`git add` of every change stages other sessions\' work too', at });
@@ -151,7 +164,9 @@ function gitStateChanges(command, cwd, depth = 0) {
       // remote branch git would create locally; a commit followed by paths, with or without `--`, restores those
       // paths; any other word is a path to restore. The guard allows a restore.
       const target = call.subcommand === 'switch' ? operands.at(-1) : operands[0];
-      const lone = operands.length === 1 && !afterDashes.length;
+      // --pathspec-from-file and -p restore files from the commit they name.
+      const restores = has('-p', '--patch', '--pa') || has(null, '--pathspec-from-file', '--pathspec');
+      const lone = operands.length === 1 && !afterDashes.length && !restores;
       const switches = call.subcommand === 'switch' || creates || (lone && (target === '-' || names(at, target) || tracksRemote(at, target)));
       if (switches) found.push({ what: `\`git ${call.subcommand}\` moves the folder every session shares to another branch`, at, target: target ?? null, creates });
     }
@@ -160,7 +175,7 @@ function gitStateChanges(command, cwd, depth = 0) {
 }
 
 // A git call's words after its subcommand, as { options, operands, afterDashes }: each option by its full name.
-function readGitArgs(rest, valueFlags) {
+function readGitArgs(rest, valueFlags, attachedFlags = new Set()) {
   const options = [];
   const operands = [];
   const afterDashes = [];
@@ -175,7 +190,7 @@ function readGitArgs(rest, valueFlags) {
       options.push(full ?? name);
       if (full && inline === undefined) i += 1;
     } else if (text.startsWith('-') && text.length > 1) {
-      const { options: letters, value } = readShortOptions(text, valueFlags);
+      const { options: letters, value } = readShortOptions(text, valueFlags, attachedFlags);
       options.push(...letters);
       if (value?.attached === null) i += 1;
     } else {

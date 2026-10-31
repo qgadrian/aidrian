@@ -68,7 +68,7 @@ export function reviewInForce(baseReview, headReview) {
     return { review: { ...headReview, planCommand: null, reviewers: pending }, changed: ['planCommand', 'reviewers'].filter((key) => JSON.stringify(headReview[key]) !== JSON.stringify(key === 'planCommand' ? null : {})) };
   }
   const changed = [];
-  for (const key of ['rules', 'ignore', 'nonBehaviour', 'flows', 'planCommand', 'reviewers']) {
+  for (const key of ['rules', 'ignore', 'nonBehaviour', 'flows', 'planCommand', 'reviewers', 'split']) {
     if (JSON.stringify(baseReview[key]) !== JSON.stringify(headReview[key])) changed.push(key);
   }
   return {
@@ -77,6 +77,7 @@ export function reviewInForce(baseReview, headReview) {
       rules: [...baseReview.rules, ...headReview.rules.filter((rule) => !baseReview.rules.some((each) => JSON.stringify(each) === JSON.stringify(rule)))],
       ignore: baseReview.ignore,
       nonBehaviour: baseReview.nonBehaviour,
+      split: baseReview.split,
       flows: flowsInForce(baseReview.flows, headReview.flows),
       // The plan command and the reviewers a project defines are code: only the base branch's run. A head may add a
       // reviewer under a new name, never redefine one, and a plan command it adds runs once it is merged.
@@ -253,9 +254,12 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     if (!deltaCache.has(from)) deltaCache.set(from, isAncestor(root, from, head) ? changedFiles(root, from, head) : null);
     return deltaCache.get(from);
   };
+  // A pass with a file list (a slice, a flow pass) keeps its history only while it covers the same files: when a fix
+  // repacks slices, a slice's earlier result and findings are another set of files' and count for nothing.
+  const sameFiles = (pass, result) => !Array.isArray(pass.files) || JSON.stringify([...pass.files].sort()) === JSON.stringify(result.files ?? null);
   const resultFor = (pass) => {
     const result = state.passes[pass.id];
-    if (!result) return null;
+    if (!result || !sameFiles(pass, result)) return null;
     if (result.head === head) return result;
     const since = delta(result.head);
     return since && !touches(since, pass.files) && result.open === 0 ? result : null;
@@ -319,7 +323,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
         for (const [pass, outcome] of outcomes) {
           if (outcome.status !== 'done') continue;
           state.passes[pass.id] = {
-            head, reviewer: pass.reviewer, findings: outcome.findings.length, open: outcome.findings.length, list: outcome.findings, verdicts: outcome.verdicts,
+            head, reviewer: pass.reviewer, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, findings: outcome.findings.length, open: outcome.findings.length, list: outcome.findings, verdicts: outcome.verdicts,
             ...(pass.role ? { contracts: outcome.contracts ?? [], cross_notes: outcome.cross_notes ?? [] } : {}), dropped: outcome.dropped,
           };
           recorded = true;
@@ -367,6 +371,8 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
       const agents = pending.filter((pass) => map[pass.reviewer]?.kind === 'agent' || pass.kind === 'agent');
       if (agents.length) {
         recorded = true;
+        // What each dispatched pass covers, so its attest records the same files.
+        state.dispatched = { ...(state.dispatched ?? {}), ...Object.fromEntries(agents.map((pass) => [pass.id, { head, files: Array.isArray(pass.files) ? [...pass.files].sort() : null }])) };
         return finish('dispatch', { stage: stage.name, dispatch: agents.map((pass) => dispatchFor(pass, stage)) });
       }
     }
@@ -401,7 +407,8 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
 
   // The input every reviewer of a pass reads.
   function passInput(pass, stage) {
-    const prior = resultFor(pass) ?? state.passes[pass.id];
+    const recorded = state.passes[pass.id];
+    const prior = resultFor(pass) ?? (recorded && sameFiles(pass, recorded) ? recorded : null);
     const from = prior && prior.head !== head && isAncestor(root, prior.head, head) ? prior.head : base;
     const flows = plan.flows.filter((flow) => (pass.flows ?? []).includes(flow.id) || stage.name !== 'local').map((flow) => ({
       id: flow.id,
@@ -485,7 +492,8 @@ export function recordPass(project, { pr, repo, pass, head, reviewer, findings, 
   } catch {}
   const state = current(project, pr, repo, remote);
   const before = state.passes[pass];
-  state.passes[pass] = { head, reviewer, findings, open: findings - fixed - accepted, verdicts, ...report, list: before?.head === head ? before.list : null };
+  const files = state.dispatched?.[pass]?.files ?? null;
+  state.passes[pass] = { head, reviewer, files, findings, open: findings - fixed - accepted, verdicts, ...report, list: before?.head === head ? before.list : null };
   writeLocalState(project, state);
   return state.passes[pass];
 }

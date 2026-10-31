@@ -119,19 +119,19 @@ test('after a fix only the touched slice and the cross pass run again', async (t
 });
 
 test('a slice that fails twice runs as two halves; a partial review is never received', async (t) => {
-  const r = repo(t, { split: { sliceLines: 1000, parallel: 8, maxSlices: 8 } });
-  const exec = async (_reviewer, input) => (input.role === 'slice' && input.files.length > 2 ? { status: 'failed', reason: 'too big' } : { status: 'done', findings: [], verdicts: [], contracts: [], cross_notes: [], dropped: [] });
-  // sliceLines 1000 puts each folder in its own slice; merge them into one big slice with maxSlices 2.
-  r.write('.aidrian/config.json', JSON.stringify({ version: 1, review: { rules: [{ when: { lines: { over: 1 } }, depth: 'split' }], split: { sliceLines: 1000, parallel: 8, maxSlices: 2 } } }));
-  r.commit();
-  const one = await r.step(exec);
-  const two = await r.step(exec);
-  assert.deepEqual([one.status, two.status], ['incomplete', 'incomplete']);
-  assert.match(two.reason, /runs as two halves next/u);
-  const three = await r.step(exec);
-  assert.notEqual(three.status, 'received');
-  const done = await r.step(exec);
-  assert.equal(done.status, 'received');
+  // maxSlices 2 merges the four folders into two slices of two files each.
+  const r = repo(t, { split: { sliceLines: 1000, parallel: 8, maxSlices: 2 } });
+  const exec = async (_reviewer, input) => (input.role === 'slice' && input.files.length > 1 ? { status: 'failed', reason: 'too big' } : { status: 'done', findings: [], verdicts: [], contracts: [], cross_notes: [], dropped: [] });
+  const statuses = [];
+  const reasons = [];
+  for (let step = 0; step < 12 && statuses.at(-1) !== 'received'; step += 1) {
+    const result = await r.step(exec);
+    statuses.push(result.status);
+    if (result.reason) reasons.push(result.reason);
+  }
+  assert.equal(statuses.at(-1), 'received');
+  assert.ok(statuses.slice(0, -1).every((status) => status !== 'received'), 'nothing passes while a slice is missing');
+  assert.equal(reasons.filter((reason) => /runs as two halves next/u.test(reason)).length, 2, 'each two-file slice was halved after its second failure');
 });
 
 test('the self engine splits too: one agent dispatch per slice, then the cross pass', async (t) => {
@@ -176,4 +176,30 @@ test('bench: a reviewer run that fails makes the sample incomplete, never a meas
   const failing = { name: 'f', kind: 'exec', command: [process.execPath, '-e', 'process.exit(1)'], timeoutSec: 5 };
   const context = { base: 'a', head: 'b', changes: [change('src/a.js')], roots: new Set(), env: process.env };
   for (const split of [false, true]) await assert.rejects(reviewAt(dir, failing, { ...context, split }), (error) => error.incomplete === true);
+});
+
+test('a slice that covers other files after a fix keeps none of its old history', async (t) => {
+  const r = repo(t, { split: { sliceLines: 100, parallel: 8, maxSlices: 8 } });
+  const seen = [];
+  const exec = async (_reviewer, input) => {
+    seen.push([input.role, input.files, input.context, input.priorFindings.length]);
+    const bug = input.files?.includes('src/b/x.js') && !input.files.includes('src/a/y.js') ? [{ file: 'src/b/x.js', line: 1, title: 'bug', body: 'b', severity: 'high' }] : [];
+    return { status: 'done', findings: bug, verdicts: [], contracts: [], cross_notes: [], dropped: [] };
+  };
+  await r.step(exec);
+  assert.equal((await r.step(exec)).status, 'fix_required');
+  // A new file in src/a makes the src/a slice cover two files: its id stays, its files change.
+  r.write('src/a/y.js', '1\n');
+  r.commit();
+  seen.length = 0;
+  await r.step(exec);
+  const slice = seen.find(([role, files]) => role === 'slice' && files.includes('src/a/y.js'));
+  assert.deepEqual([slice[2], slice[3]], ['full', 0], 'the repacked slice is reviewed whole, with no other slice`s findings');
+});
+
+test('a pull request cannot shrink its own split: review.split comes from the base and its change needs the Human', async () => {
+  const { reviewInForce } = await import('../plugins/aidrian/lib/review/run.mjs');
+  const base = { rules: [], ignore: [], nonBehaviour: [], flows: {}, planCommand: null, reviewers: {}, split: { sliceLines: 100, parallel: 4, maxSlices: 8 } };
+  const { review, changed } = reviewInForce(base, { ...base, split: { sliceLines: 10000, parallel: 4, maxSlices: 2 } });
+  assert.deepEqual([review.split, changed], [base.split, ['split']]);
 });

@@ -172,7 +172,7 @@ export const commands = {
       const outcome = verdict(results, Number(values.tolerance ?? 1));
       // An incomplete sample, or none at all, is no evidence either way: exit 2, never a pass.
       const complete = incomplete.length === 0 && results.length > 0;
-      console.log(JSON.stringify({ results, incomplete, ...outcome, passes: complete && outcome.passes, tolerance: Number(values.tolerance ?? 1), split: { ...SPLIT_DEFAULTS } }, null, 2));
+      console.log(JSON.stringify({ results, incomplete, ...outcome, passes: complete && outcome.passes, tolerance: Number(values.tolerance ?? 1), settings: { ...SPLIT_DEFAULTS } }, null, 2));
       return complete ? (outcome.passes ? 0 : 1) : 2;
     },
   },

@@ -12,11 +12,13 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { codeName, identifiers } from './code-words.mjs';
+import { codeName, identifiers, maskCode } from './code-words.mjs';
 import { globPattern, isObject } from './fs.mjs';
 import { proseLines } from './markdown-prose.mjs';
 
 export const TERMS_VERSION = 1;
+// Files no rule reads, on any surface: binaries, lockfiles, and minified bundles. A file holding a NUL byte is binary too.
+export const NOT_TEXT = /\.(png|jpe?g|gif|webp|ico|woff2?|ttf|eot|otf|pdf|zip|gz|tar|tgz|mp[34]|wav|ogg)$|\.min\.[a-z]+$|(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|Cargo\.lock|Gemfile\.lock|poetry\.lock|composer\.lock)$/i;
 const SEVERITIES = ['block', 'warn'];
 const RULE_KEYS = ['id', 'paths', 'exclude', 'locale', 'severity', 'message', 'prose', 'code', 'terms'];
 // Scripts written without spaces between words: their terms match anywhere, not as whole words.
@@ -127,6 +129,7 @@ export function termPattern(term, { compound = false } = {}) {
 // that read every file: they read what git keeps, as `aidrian lint terms` does.
 export function rulesFor(rules, rel, { ignored = false } = {}) {
   const file = rel.split(path.sep).join('/');
+  if (NOT_TEXT.test(file)) return [];
   return rules.filter((rule) => file !== rule.self && !(ignored && rule.everywhere)
     && rule.include.some((glob) => glob.test(file)) && !rule.exclude.some((glob) => glob.test(file)));
 }
@@ -154,16 +157,19 @@ export function jsonValues(line) {
 //   code      false leaves out `code` rules (lint)
 export function scanLines(lines, rel, rules, { text = null, before = null, reliable = true, ignored = false, code = true } = {}) {
   const applying = rulesFor(rules, rel, { ignored }).filter((rule) => code || rule.mode !== 'code');
-  if (!applying.length) return [];
+  if (!applying.length || (text ?? '').includes('\0') || lines.some((line) => line.text.includes('\0'))) return [];
   const json = /\.json$/iu.test(rel);
   const hits = [];
   let prose = null;
+  let maskedCode = null;
   for (const rule of applying) {
     const severity = rule.mode === 'prose' && !(reliable && text !== null) ? 'warn' : rule.severity;
     const hit = (line, term) => hits.push({ line: line.number, text: line.text, term: term.term, replacement: term.replacement, rule, severity });
     if (rule.mode === 'code') {
+      // With the whole file, a block comment or template literal that opens above a line still masks it.
+      const masked = reliable && text !== null ? (maskedCode ??= maskCode(String(text)).split(/\r?\n/u)) : null;
       for (const line of lines) {
-        for (const name of identifiers(line.text)) {
+        for (const name of masked ? identifiers(masked[line.number - 1] ?? '', true) : identifiers(line.text)) {
           const term = rule.names.get(codeName(name));
           if (term) hit(line, term);
         }

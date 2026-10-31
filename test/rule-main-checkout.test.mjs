@@ -117,6 +117,11 @@ test('bashTargets finds the certain write targets, resolved against cwd, and not
   assert.deepEqual(at("perl -ne 'print' src/a.ts"), [], 'without -i perl only reads');
   assert.deepEqual(at("ruby -rjson -i -pe 'sub(/a/, \"b\")' src/a.ts"), ['src/a.ts']);
   assert.deepEqual(at("ruby -ne 'print' src/a.ts"), []);
+  assert.deepEqual(at("perl -lpi -e 's/a/b/' src/a.ts"), ['src/a.ts'], '-l takes only digits');
+  assert.deepEqual(at("perl -0pi -e 's/a/b/' src/a.ts"), ['src/a.ts'], '-0 takes only digits');
+  assert.deepEqual(at("perl -0777pi -e 's/a/b/' src/a.ts"), ['src/a.ts']);
+  assert.deepEqual(at("perl -l012pi -e 's/a/b/' src/a.ts"), ['src/a.ts']);
+  assert.deepEqual(at("ruby -0pi -e 'sub(/a/, \\\"b\\\")' src/a.ts"), ['src/a.ts']);
   assert.deepEqual(at("sed -i '' -e 's/a/b/' src/a.ts"), ['src/a.ts'], 'BSD sed`s empty suffix');
   assert.deepEqual(at("sed -n 's/a/b/p' src/a.ts"), [], 'sed without -i only prints');
   assert.deepEqual(at("sed --i 's/a/b/' src/a.ts"), ['src/a.ts'], 'GNU sed takes a prefix of --in-place');

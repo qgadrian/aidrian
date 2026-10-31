@@ -58,13 +58,15 @@ const WRITERS = new Map([
 ]);
 // Options that take only the rest of their word: sed's in-place suffix, `-i.bak`, so `-ie` is -i with the suffix "e".
 // BSD sed's -I edits in place too.
-// perl and ruby take `-i[suffix]` the same way, and their other rest-only options (`-Mstrict`, `-0777`, `-rjson`) never
-// take the next word: `perl -M strict` is an error.
+// perl and ruby take `-i[suffix]` the same way, and their other rest-only options (`-Mstrict`, `-rjson`) never take the
+// next word: `perl -M strict` is an error.
 const REST_VALUES = new Map([
   ['sed', new Set(['-i', '-I'])],
-  ['perl', new Set(['-i', '-M', '-m', '-0', '-l', '-C', '-x', '-d', '-D'])],
-  ['ruby', new Set(['-i', '-r', '-C', '-E', '-F', '-0', '-W', '-x', '-K', '-T'])],
+  ['perl', new Set(['-i', '-M', '-m', '-C', '-x', '-d', '-D'])],
+  ['ruby', new Set(['-i', '-r', '-C', '-E', '-F', '-W', '-x', '-K', '-T'])],
 ]);
+// Options whose value is only the digits after them, so the switches after the digits still count: `-0777pi`, `-lpi`.
+const DIGIT_VALUES = new Map([['perl', /([0l])(?:x[0-9a-f]+|[0-7]+)?/giu], ['ruby', /(0)(?:[0-7]+)?/gu]]);
 // The option that gives a script on the command line, so every operand is a file; without it the first is the script.
 const SCRIPT_OPTIONS = new Map([['perl', ['-e', '-E']], ['ruby', ['-e']]]);
 // git subcommands whose every path is written: git mv removes its sources, git rm its paths.
@@ -206,7 +208,9 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
       flags.push(text);
       if (valueFlags.has(text) || (/^--[^=]+$/u.test(text) && [...valueFlags].some((option) => option.startsWith(text)))) i += 1;
     } else if (!ended && text.startsWith('-') && text.length > 1) {
-      const { options, value } = readShortOptions(text, valueFlags, REST_VALUES.get(program));
+      // Drop the digits of a digit-valued option, up to the first option that takes the rest of the word.
+      const cluster = DIGIT_VALUES.has(program) ? withoutDigitValues(text, program) : text;
+      const { options, value } = readShortOptions(cluster, valueFlags, REST_VALUES.get(program));
       flags.push(...options);
       if (value?.attached === null) i += 1;
     } else if (text !== '') {
@@ -237,6 +241,24 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
   if (!inPlace) return [];
   const scripted = flags.some((flag) => flag === '-e' || flag === '-f' || isLongOption(flag, '--expression', '--e') || isLongOption(flag, '--file', '--fi'));
   return scripted ? operands : operands.slice(1);
+}
+
+// A perl or ruby option cluster without the digits that `-0` and perl's `-l` take: `-0777pi` reads as `-0pi`. Digits
+// after an option that takes the rest of the word (`-i.bak0`, `-Mfoo0`) belong to it and stay.
+function withoutDigitValues(text, program) {
+  const rest = REST_VALUES.get(program);
+  const values = WRITERS.get(program);
+  let out = '-';
+  for (let i = 1; i < text.length; i += 1) {
+    const option = `-${text[i]}`;
+    if (rest.has(option) || values.has(option)) return out + text.slice(i);
+    out += text[i];
+    const pattern = DIGIT_VALUES.get(program);
+    pattern.lastIndex = i;
+    const match = pattern.exec(text);
+    if (match?.index === i) i += match[0].length - 1;
+  }
+  return out;
 }
 
 // The directory cp or mv writes into with GNU -t, in any spelling: `-t DIR`, `-tDIR`, `-ft DIR`, `--target-directory=DIR`,

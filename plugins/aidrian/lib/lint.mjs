@@ -19,15 +19,15 @@ import { isDirectory, isFile } from './fs.mjs';
 import { runGit } from './git.mjs';
 import { checkBudgets, loadKnowledge } from './knowledge.mjs';
 import { projectAt } from './project.mjs';
-import { formatHit, loadTerms, numbered, scanLines } from './terms.mjs';
+import { formatHit, loadTerms, NOT_TEXT, numbered, scanLines } from './terms.mjs';
 
 const KINDS = ['skills', 'agents', 'paths', 'budget', 'terms'];
 const MODELS = new Set(['haiku', 'sonnet', 'opus', 'fable', 'inherit']);
 const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 // Home folders of placeholder or CI users are not personal.
 const PERSONAL_PATH = /\/(?:Users|home)\/(?!(?:runner|you|user|example)\/)[A-Za-z_][A-Za-z0-9_.-]*\//;
-// Files no lint reads: binaries, lockfiles, and minified bundles.
-const BINARY = /\.(png|jpe?g|gif|webp|ico|woff2?|ttf|eot|otf|pdf|zip|gz|tar|tgz|mp[34]|wav|ogg)$|\.min\.[a-z]+$|(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|Cargo\.lock|Gemfile\.lock|poetry\.lock|composer\.lock)$/i;
+// Files no lint reads: binaries, lockfiles, and minified bundles (terms.mjs, which the write hook shares).
+const BINARY = NOT_TEXT;
 // Codex cuts a SKILL.md longer than 8,000 bytes when it loads it: MAX_SKILL_PROMPT_BYTES in
 // codex-rs/ext/skills/src/render.rs. A file at the cut has no room left, so it fails there; the warning leaves a margin.
 const SKILL_CUT_BYTES = 8000;

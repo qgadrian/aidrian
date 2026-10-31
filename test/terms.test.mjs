@@ -271,3 +271,28 @@ test('aidrian lint terms --rule runs one rule, and names a rule that is not ther
   assert.match(soft.stdout, /\(1 rules\)/);
   assert.match(lint('--rule', 'nope').stderr, /no rule "nope"/);
 });
+
+test('no rule reads a lockfile, a minified bundle, or binary content, on writes as in lint', (t) => {
+  const { dir } = repo(t, { version: 1, rules: [{ id: 'clients', terms: { guest: 'client' } }] });
+  const hook = (file, content) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ tool_name: 'Write', cwd: dir, tool_input: { file_path: file, content } }), encoding: 'utf8' }).status;
+  assert.equal(hook('package-lock.json', '{"guest":"guest"}'), 0);
+  assert.equal(hook('dist/bundle.min.js', 'guest'), 0);
+  assert.equal(hook('data.bin', 'a\0guest\0'), 0);
+  assert.equal(hook('notes.md', 'guest'), 2);
+});
+
+test('a code rule keeps comments and template literals masked across lines when it sees the whole file', (t) => {
+  const { dir } = repo(t, { version: 1, rules: [{ id: 'names', paths: ['src/**'], code: true, terms: { party: 'guests' } }] });
+  const hook = (content) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ tool_name: 'Write', cwd: dir, tool_input: { file_path: 'src/a.ts', content } }), encoding: 'utf8' }).status;
+  assert.equal(hook('/*\nparty\n*/\n'), 0, 'a block comment');
+  assert.equal(hook('const s = `\nparty\n`;\n'), 0, 'a template literal');
+  assert.equal(hook("const a = 'it\\'s';\nconst party = 1;\n"), 2, 'an escaped quote ends nothing');
+  assert.equal(hook('// party\nconst party = 1;\n'), 2, 'a line comment ends at its line');
+});
+
+test('a prose rule masks a quotation that wraps over lines, straight or curly, until the paragraph ends', () => {
+  const hits = (text) => proseLines(text).map((line, i) => (line !== null && termPattern('you', { compound: true }).test(line) ? i + 1 : null)).filter(Boolean);
+  assert.deepEqual(hits('The quote is: "first line\nyou must wait\nlast line". Then you go.'), [3]);
+  assert.deepEqual(hits('A “curly\nyou quote” and you.'), [2]);
+  assert.deepEqual(hits('An unclosed "quote\n\nyou are back in prose.'), [3], 'a blank line ends the paragraph');
+});

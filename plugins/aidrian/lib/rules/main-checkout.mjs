@@ -21,7 +21,7 @@ import { globPattern } from '../fs.mjs';
 import { loadConfig } from '../config.mjs';
 import { checkoutRoots, isIgnored, runGit } from '../git.mjs';
 import { findProject, worktreesDir } from '../project.mjs';
-import { inlineShellCommand, isLongOption, lexSteps, readGit, readInvocation, readShortOptions, SUBSTITUTION_DEPTH_LIMIT } from '../shell-lex.mjs';
+import { inlineShellCommand, isLongOption, lexInputs, lexSteps, readGit, readInvocation, readShortOptions, readsShellInput, SUBSTITUTION_DEPTH_LIMIT } from '../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_MAIN_WRITE';
 
@@ -129,6 +129,18 @@ function gitStateChanges(command, cwd, depth = 0, inherited = []) {
   const found = [];
   let known = true;
   const env = [...inherited];
+  // A shell reading its input runs a heredoc or here-string body as commands, where that shell runs.
+  if (depth < SUBSTITUTION_DEPTH_LIMIT) {
+    const { segments, inputs } = lexInputs(command);
+    segments.forEach((segment, i) => {
+      const invocation = readInvocation(segment);
+      if (!inputs[i].length || !readsShellInput(invocation) || invocation.chdir?.dynamic) return;
+      const where = invocation.chdir ? path.resolve(cwd, invocation.chdir.text) : cwd;
+      const program = segment.findIndex((token) => !token.operator && token.text === invocation.program);
+      const own = (program === -1 ? [] : segment.slice(0, program)).filter((token) => GIT_ASSIGNMENT.test(token.text));
+      for (const body of inputs[i]) found.push(...gitStateChanges(body, where, depth + 1, [...inherited, ...own]));
+    });
+  }
   for (const { segment, substitutions } of lexSteps(command)) {
     if (known && depth < SUBSTITUTION_DEPTH_LIMIT) for (const body of substitutions) found.push(...gitStateChanges(body, cwd, depth + 1, env));
     const invocation = readInvocation(segment);
@@ -240,8 +252,16 @@ function checkoutOfGitDir(gitDir) {
 function commitsAll(rest) {
   for (let i = 0; i < rest.length; i += 1) {
     const { text, dynamic } = rest[i];
-    // A word that may expand could be -a; a value option's value (a message) is read past below.
-    if (dynamic) return true;
+    // A word that may expand could be -a, unless it is a value option with the expansion in its value: `-m"$MSG"`,
+    // `--message="$MSG"`. A value in the next word is read past below.
+    if (dynamic) {
+      const literal = text.split(/[$`]/u)[0];
+      if (literal.startsWith('--') && literal.includes('=') && COMMIT_VALUES.has(literal.slice(0, literal.indexOf('=')))) continue;
+      if (!literal.startsWith('-') || literal.startsWith('--')) return true;
+      const { options, value } = readShortOptions(literal, COMMIT_VALUES, COMMIT_ATTACHED);
+      if (options.includes('-a') || !value) return true;
+      continue;
+    }
     if (text === '--') return false;
     if (text.startsWith('--')) {
       if (isLongOption(text, '--all', '--al')) return true;

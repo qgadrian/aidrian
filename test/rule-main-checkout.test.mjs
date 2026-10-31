@@ -350,6 +350,10 @@ test('in the main checkout, only named files are staged and only the default bra
     assert.match(denied(command) ?? '', /main checkout/, `a word that may expand: ${command}`);
   }
   assert.equal(denied('git commit -m "$MESSAGE"'), null, 'a message that expands is still a message');
+  for (const command of ['git commit -m"$MSG"', 'git commit --message="$MSG"', 'git commit -F"$FILE"']) assert.equal(denied(command), null, command);
+  assert.match(denied('git commit -am"$MSG"') ?? '', /main checkout/, '-a before an expanding message');
+  assert.match(denied("bash <<'EOF'\ngit add -A\nEOF") ?? '', /main checkout/, 'a heredoc fed to a shell');
+  assert.match(denied("bash <<< 'git checkout task'") ?? '', /main checkout/, 'a here-string');
   symlinkSync('src', path.join(repo, 'link'));
   assert.equal(denied('git add link'), null, 'a symlink to a folder is one file');
   for (const command of ['(export GIT_DIR="$HOME/unused"); git add -A', 'export GIT_DIR="$HOME/unused" | cat; git add -A', 'GIT_DIR="$X" git add src/app.js']) {

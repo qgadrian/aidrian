@@ -105,6 +105,11 @@ test('what is not a request to this repository passes; a request without a numbe
     "env -S 'GH_REPO=other/repo gh' pr comment 5 -b '@codex review'",
   ]) assert.equal(run(command), null, command);
   assert.equal(run("gh pr comment 5 -b '@codex review'", { GH_REPO: 'other/repo' }), null, 'the ambient GH_REPO');
+  for (const command of ["sudo -E gh pr comment 5 -b '@codex review'", "sudo --preserve-env gh pr comment 5 -b '@codex review'",
+    "sudo --preserve-env=PATH,GH_REPO gh pr comment 5 -b '@codex review'", "sudo -nE gh pr comment 5 -b '@codex review'"]) {
+    assert.equal(run(command, { GH_REPO: 'other/repo' }), null, command);
+  }
+  assert.match(run("sudo --preserve-env=PATH gh pr comment 5 -b '@codex review'", { GH_REPO: 'other/repo' }) ?? 'passed', /^Blocked/);
   for (const command of ["env -u GH_REPO gh pr comment 5 -b '@codex review'", "env -i gh pr comment 5 -b '@codex review'",
     "env -i PATH=/bin gh pr comment 5 -b '@codex review'", "GH_REPO=acme/notes gh pr comment 5 -b '@codex review'"]) {
     assert.match(run(command, { GH_REPO: 'other/repo' }) ?? 'passed', /^Blocked/, command);

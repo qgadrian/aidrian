@@ -121,7 +121,7 @@ function commandPath(args) {
 function invocationRepo(environment, env) {
   let repo = env.GH_REPO ?? null;
   for (const change of environment) {
-    if (change.clear) repo = null;
+    if (change.clear) repo = change.keep?.includes('GH_REPO') ? repo : null;
     else if (change.name === 'GH_REPO') repo = change.value && !change.value.dynamic ? change.value.text : null;
   }
   // GH_REPO is `[HOST/]OWNER/REPO`.

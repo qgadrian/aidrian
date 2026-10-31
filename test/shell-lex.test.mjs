@@ -259,4 +259,5 @@ test('readInvocation lists the environment changes of assignments and env, in or
   assert.deepEqual(changes('G=4 exec -lca x gh'), ['G=4', 'clear']);
   assert.deepEqual(changes('G=4 exec -a c gh'), ['G=4']);
   assert.deepEqual(changes('G=4 sudo -u x H=5 gh'), ['G=4', 'clear', 'H=5']);
+  assert.deepEqual(changes('G=4 sudo -E gh'), ['G=4']);
 });

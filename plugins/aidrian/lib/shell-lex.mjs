@@ -409,7 +409,8 @@ function splitStringInvocation(value, depth, rest = []) {
 // the wrappers above with their options, so `(sudo env FOO=1 command grep -c x f)` reads as grep. `program` is the base
 // name; `args` exclude redirections and their targets; `chdir` is the directory a wrapper moves to, or null.
 // `environment` lists, in order, the changes the assignments and env make to the program's environment: { name, value }
-// sets a variable to a token, { name, value: null } unsets it, and { clear: true } empties the environment (`env -i`).
+// sets a variable to a token, { name, value: null } unsets it, and { clear: true, keep } empties the environment
+// (`env -i`) but for the names in `keep`, if any.
 export function readInvocation(segment, depth = 0) {
   const targets = new Set();
   for (let i = 0; i < segment.length; i += 1) {
@@ -455,8 +456,9 @@ export function readInvocation(segment, depth = 0) {
     // `time` is a reserved word only when bare; /usr/bin/time is another program.
     if (wrapper === 'time' && spelled !== wrapper) break;
     index += 1;
-    // sudo and doas reset the environment by default; read it as emptied, so a variable set outside them does not count.
-    if (wrapper === 'sudo' || wrapper === 'doas') environment.push({ clear: true });
+    // sudo and doas reset the environment by default, so a variable set outside them does not count, unless sudo's
+    // -E or --preserve-env keeps it all, or --preserve-env=LIST keeps the ones listed (`keep`).
+    let reset = wrapper === 'sudo' || wrapper === 'doas' ? { clear: true, keep: [] } : null;
     if (wrapper === 'rtk') {
       if (usable[index]?.text === 'proxy') index += 1;
       continue;
@@ -479,6 +481,7 @@ export function readInvocation(segment, depth = 0) {
       if (!token.text.startsWith('-')) break;
       index += 1;
       const option = wrapperOption(token, WRAPPER_VALUE_FLAGS.get(wrapper) ?? NO_OPTIONS);
+      if (reset && wrapper === 'sudo') reset = afterPreserve(reset, token, option);
       if (clearsEnvironment(wrapper, token.text, option)) environment.push({ clear: true });
       if (!option) continue;
       let { value } = option;
@@ -499,6 +502,7 @@ export function readInvocation(segment, depth = 0) {
         }
       }
     }
+    if (reset) environment.push(reset);
     // timeout's duration comes before the command; take it by position, since strtod accepts too many spellings.
     if (wrapper === 'timeout' && index < usable.length) index += 1;
     if (wrapper === 'flock' && index < usable.length) {
@@ -513,6 +517,19 @@ export function readInvocation(segment, depth = 0) {
   }
   const program = usable[index]?.text ?? '';
   return { program: program.split('/').pop() ?? '', args: usable.slice(index + 1), negated, chdir, environment };
+}
+
+// sudo's environment reset after one of its option words: none for -E or a bare --preserve-env, which keep it all;
+// --preserve-env=LIST adds the names it lists to `keep`, and a list the rule cannot read keeps it all.
+function afterPreserve(reset, { text, dynamic }, option) {
+  if (isLongOption(text, '--preserve-env', '--preserve-e')) {
+    const at = text.indexOf('=');
+    if (at === -1 || dynamic) return null;
+    return { ...reset, keep: [...reset.keep, ...text.slice(at + 1).split(',')] };
+  }
+  if (text.startsWith('--')) return reset;
+  const end = option ? text.indexOf(option.name[1], 1) : text.length;
+  return text.slice(1, end).includes('E') ? null : reset;
 }
 
 // Whether a wrapper's option word empties the environment: env's `-`, `-i`, and `--ignore-environment`, and bash's

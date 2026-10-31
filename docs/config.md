@@ -339,7 +339,8 @@ Assisted-by: backend-developer (claude-sonnet-5-5)
 Assisted-by: code-reviewer (claude-opus-5-5)
 ```
 
-- The agents are those in the `Agent:` trailers of the branch's commits past `git.defaultBranch`, from any session,
+- The agents are those in the `Agent:` trailers of the commits on the pull request's head (`--head`, else the current branch)
+  past its base (`--base`, else `git.defaultBranch`), from any session,
   and those this session dispatched, with the models their `stop` rows name; `main` and `exclude` are left out.
 - The `Authored-with:` line must match as written. Each agent needs an `Assisted-by:` line, in any order, whatever models it names.
 - Only `gh pr create` is checked; `gh pr edit` and `--web` pass. A body the rule cannot read, such as `--body "$VAR"`, is refused.

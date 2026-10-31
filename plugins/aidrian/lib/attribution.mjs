@@ -111,17 +111,21 @@ export function prAgents({ commits = [], rows = [], sessionId, exclude = [] }) {
   return [...agents].map(([name, models]) => ({ name, models: [...models] }));
 }
 
-// The `Agent:` and `Agent-Model:` trailers of the commits on this branch that `base` lacks: [{ agent, model }].
-// [] when git cannot tell.
-export function branchCommits(cwd, base) {
+// The `Agent:` and `Agent-Model:` trailers of the commits on `head` that `base` lacks: [{ agent, model }]. `head` is a
+// branch, or `<owner>:<branch>` as gh takes it; HEAD by default. [] when git cannot tell.
+export function branchCommits(cwd, base, head = 'HEAD') {
   const format = '%(trailers:key=Agent,valueonly,separator=%x1f)%x1e%(trailers:key=Agent-Model,valueonly,separator=%x1f)%x1d';
-  for (const ref of [`origin/${base}`, base]) {
-    const result = runGit(['log', `${ref}..HEAD`, `--format=${format}`], cwd);
-    if (result.status !== 0) continue;
-    return result.stdout.split('\x1d').map((entry) => entry.trim()).filter(Boolean).flatMap((entry) => {
-      const [agents = [], models = []] = entry.split('\x1e').map((part) => part.split('\x1f').map((each) => each.trim()).filter(Boolean));
-      return agents.map((agent) => ({ agent, model: models[0] ?? null }));
-    });
+  const branch = head.replace(/^[^:]+:/u, '');
+  const tips = branch === 'HEAD' ? ['HEAD'] : [branch, `origin/${branch}`];
+  for (const tip of tips) {
+    for (const ref of [`origin/${base}`, base]) {
+      const result = runGit(['log', `${ref}..${tip}`, `--format=${format}`, '--'], cwd);
+      if (result.status !== 0) continue;
+      return result.stdout.split('\x1d').map((entry) => entry.trim()).filter(Boolean).flatMap((entry) => {
+        const [agents = [], models = []] = entry.split('\x1e').map((part) => part.split('\x1f').map((each) => each.trim()).filter(Boolean));
+        return agents.map((agent) => ({ agent, model: models[0] ?? null }));
+      });
+    }
   }
   return [];
 }

@@ -22,7 +22,10 @@ export const OVERRIDE = 'AIDRIAN_ALLOW_UNATTRIBUTED';
 const MESSAGE_HEREDOC = /(?:--message(?:=|\s+)|(?<![\w-])-[A-Za-z]*m=?\s*)"?\$\([^<]*<<-?\s*(['"]?)(\w+)\1\r?\n([\s\S]*?)\r?\n[ \t]*\2\b/gu;
 const CHANGES_DIRECTORY = new Set(['cd', 'pushd']);
 
-// The deny reason for `command`, or null. `commits(cwd, base)` is the test seam for the branch's commit trailers.
+// A token's text, or null when it is missing or dynamic.
+const staticText = (token) => (token && !token.dynamic && token.text ? token.text : null);
+
+// The deny reason for `command`, or null. `commits(cwd, base, head)` is the test seam for the branch's commit trailers.
 export function check(command, { cwd = process.cwd(), env = process.env, input, commits = branchCommits } = {}) {
   if (env[OVERRIDE] === '1' || typeof input?.transcript_path !== 'string' || !/\b(?:commit|pr)\b/u.test(command)) return null;
   const { gitCommits, prCreates } = readCalls(command, cwd);
@@ -50,7 +53,7 @@ export function check(command, { cwd = process.cwd(), env = process.env, input, 
           'or a --body-file that exists.');
       }
       const agents = prFields.includes('agents')
-        ? prAgents({ commits: commits(dir, config.git.defaultBranch), rows: readLog(project, config).rows, sessionId: input.session_id, exclude })
+        ? prAgents({ commits: commits(dir, staticText(call.base) ?? config.git.defaultBranch, staticText(call.head) ?? 'HEAD'), rows: readLog(project, config).rows, sessionId: input.session_id, exclude })
         : [];
       const expected = prLines(prFields, author, agents);
       if (prMissing(body, expected).length) return prReason(expected);
@@ -75,14 +78,15 @@ function readCalls(command, cwd) {
       const { program, args, chdir } = readInvocation(segment);
       const own = chdir ? moveTo(dir, chdir) : dir;
       const git = readGit(segment);
-      if (git?.subcommand === 'commit' && !writesNothing(git.rest)) {
+      if (git?.subcommand === 'commit') {
         let at = own;
         git.globals.forEach((token, i) => {
           if (token.text === '-C') at = moveTo(at, git.globals[i + 1]);
         });
         const read = commitMessage(git.rest, at);
-        gitCommits.push(read);
+        // A commit that writes nothing still holds its heredoc, so the later ones keep their own.
         if (read.dynamic) pending.push(read);
+        if (!read.writesNothing) gitCommits.push(read);
       }
       if (readPrCall(segment)) {
         const call = prCalls.shift();
@@ -106,14 +110,18 @@ function moveTo(dir, to) {
   return dir ? path.resolve(dir, to.text) : null;
 }
 
-// `git commit -h`, `--help`, or `--dry-run`: no commit is made.
-const writesNothing = (rest) =>
-  rest.some(({ text }) => text === '-h' || isLongOption(text, '--help', '--he') || isLongOption(text, '--dry-run', '--dr'));
+// The `git commit` options that take the next word as their value, besides -m, -F, and --trailer.
+const COMMIT_VALUES = ['--author', '--date', '--template', '--fixup', '--squash', '--cleanup', '--reuse-message', '--reedit-message',
+  '--pathspec-from-file'];
+const COMMIT_SHORT_VALUES = new Set(['-C', '-c', '-t']);
 
-// One commit's { messages, trailers, dynamic, at }: its -m values in order, or its -F file's text, its --trailer values,
-// whether a -m value is a command substitution, and where in `messages` that value goes.
+// One commit's { messages, trailers, dynamic, at, writesNothing }: its -m values in order, or its -F file's text, its
+// --trailer values, whether a -m value is a command substitution, where in `messages` that value goes, and whether the
+// call makes no commit: `-h`, `--help`, or a `--dry-run` that no later `--no-dry-run` undoes. Option values are skipped,
+// so `-m --help` is a message.
 function commitMessage(rest, dir) {
-  const read = { messages: [], trailers: [], dynamic: false, at: 0 };
+  const read = { messages: [], trailers: [], dynamic: false, at: 0, writesNothing: false };
+  let dryRun = false;
   for (let i = 0; i < rest.length; i += 1) {
     const { text } = rest[i];
     if (text === '--') break;
@@ -121,7 +129,11 @@ function commitMessage(rest, dir) {
     const value = () => (inline !== null ? { text: inline, dynamic: rest[i].dynamic } : rest[++i] ?? null);
     let token = null;
     let kind = null;
-    if (isLongOption(flag, '--message', '--m')) [kind, token] = ['message', value()];
+    if (text === '-h' || isLongOption(flag, '--help', '--he')) read.writesNothing = true;
+    else if (isLongOption(flag, '--dry-run', '--dr')) dryRun = true;
+    else if (isLongOption(flag, '--no-dry-run', '--no-d')) dryRun = false;
+    else if (COMMIT_VALUES.some((option) => isLongOption(flag, option, option)) || COMMIT_SHORT_VALUES.has(text)) value();
+    else if (isLongOption(flag, '--message', '--m')) [kind, token] = ['message', value()];
     else if (isLongOption(flag, '--file', '--fi')) [kind, token] = ['file', value()];
     else if (isLongOption(flag, '--trailer', '--tr')) [kind, token] = ['trailer', value()];
     else if (/^-[^-]/u.test(text)) {
@@ -141,6 +153,7 @@ function commitMessage(rest, dir) {
       read.messages.push((file && readText(file)) ?? '');
     }
   }
+  read.writesNothing ||= dryRun;
   return read;
 }
 

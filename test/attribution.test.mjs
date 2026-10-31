@@ -126,6 +126,21 @@ test('only a trailer block git would parse counts', () => {
 test('help and dry-run commits pass', (t) => {
   const { run } = setup(t, { commit: ['agent'] });
   for (const command of ['git commit -h', 'git commit --help', 'git commit --dry-run -m x', 'git commit --dry -m x']) assert.equal(run(command), null, command);
+  assert.match(run('git commit --allow-empty --dry-run --no-dry-run -m unsigned') ?? '', /Blocked/, 'a later --no-dry-run commits');
+  assert.match(run("git commit --allow-empty -m '--help'") ?? '', /Blocked/, 'a message, not an option');
+  assert.match(run("git commit --author 'A <a@b>' -C HEAD -m x") ?? '', /Blocked/, 'option values are skipped');
+});
+
+test('the PR rule reads the commits of the head and base gh pr create names', (t) => {
+  const { run } = setup(t, { pullRequest: ['agents'] });
+  const seen = [];
+  const commits = (dir, base, head) => {
+    seen.push([base, head]);
+    return [];
+  };
+  run("gh pr create --title x --body 'x'", { commits });
+  run("gh pr create --head owner:feature -B develop --title x --body 'x'", { commits });
+  assert.deepEqual(seen, [['main', 'HEAD'], ['develop', 'owner:feature']]);
 });
 
 test('the rule is off by default, outside a transcript, and under its override', (t) => {
@@ -161,6 +176,9 @@ test('branchCommits reads the Agent trailers of the commits past the base', (t) 
   git('commit', '-q', '--allow-empty', '-m', 'feat: x', '--trailer', 'Agent: backend-developer', '--trailer', 'Agent-Model: m1');
   git('commit', '-q', '--allow-empty', '-m', 'fix: y');
   assert.deepEqual(branchCommits(dir, 'main'), [{ agent: 'backend-developer', model: 'm1' }]);
+  git('checkout', '-q', 'main');
+  assert.deepEqual(branchCommits(dir, 'main'), [], 'HEAD is main');
+  assert.deepEqual(branchCommits(dir, 'main', 'owner:topic'), [{ agent: 'backend-developer', model: 'm1' }], 'a named head');
   assert.deepEqual(branchCommits(dir, 'no-such-branch'), []);
 });
 

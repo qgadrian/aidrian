@@ -63,8 +63,8 @@ export function readPrCalls(line) {
   return calls;
 }
 
-// { subcommand, fill, body, bodyFile, title, repo, target } for a `gh [-R repo] pr create|edit …` segment, else null.
-// Later flags win, as in gh. `title` and `repo` are tokens; `target` is the first positional (the pull request an edit
+// { subcommand, fill, body, bodyFile, title, repo, target, head, base } for a `gh [-R repo] pr create|edit …` segment, else null.
+// Later flags win, as in gh. `title`, `repo`, `head`, and `base` are tokens; `target` is the first positional (the pull request an edit
 // names).
 export function readPrCall(segment) {
   const { program, args } = readInvocation(segment);
@@ -82,7 +82,7 @@ export function readPrCall(segment) {
     else if (!text.startsWith('-')) words.push(text);
   }
   if (words[0] !== 'pr' || !['create', 'edit'].includes(words[1])) return null;
-  const call = { subcommand: words[1], fill: false, web: false, help, body: null, bodyFile: null, title: null, repo, target: null };
+  const call = { subcommand: words[1], fill: false, web: false, help, body: null, bodyFile: null, title: null, repo, target: null, head: null, base: null };
   for (; i < args.length; i += 1) {
     const { text, dynamic } = args[i];
     // After `--` every word is a positional: no flag, but still the pull request an edit names.
@@ -113,6 +113,8 @@ export function readPrCall(segment) {
     else if (flag === '--body' || flag === '-b') [call.body, call.bodyFile] = [value(), null];
     else if (flag === '--body-file' || flag === '-F') [call.bodyFile, call.body] = [value(), null];
     else if (flag === '--title' || flag === '-t') call.title = value();
+    else if (flag === '--head' || flag === '-H') call.head = value();
+    else if (flag === '--base' || flag === '-B') call.base = value();
     else if (flag === '--repo' || flag === '-R') call.repo = value();
     else if (SHORT_VALUES.has(flag) || LONG_VALUES.has(flag)) value();
     else if (!text.startsWith('-') && call.target === null) call.target = args[i];

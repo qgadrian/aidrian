@@ -46,7 +46,8 @@ Note each in the report under decided alone.
 - **One slice, one commit.** Never batch slices into one commit, and never push a slice without its verification.
   The review-only `INTEGRATION-REVIEW` slice makes no commit.
 - **Run every task command in the worktree**, with `git -C <worktree>`, or check `git rev-parse --show-toplevel` first.
-  A shell that drifted back to the main checkout gives a clean, meaningless result.
+  A shell that drifted back to the main checkout gives a clean, meaningless result: a subagent's Bash folder resets between calls,
+  so every command names its worktree in the same call (`git -C <worktree>`, `cd <worktree> && …`, or the runner's root flag).
 - **Check each claim.** After a dispatch, confirm with git that the claimed files changed. Never report a result no handoff or command shows.
 - **Keep internal data out of web searches**: no issue text, code, or tool output.
 

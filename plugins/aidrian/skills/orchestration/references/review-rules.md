@@ -23,7 +23,9 @@ Any other ready pull request is worked as a draft is, in a session the Human run
 
 Before a finding gets a fix or reaches the Human as fact, read the code it names at `@{u}`.
 A claim that something is missing, such as "no test covers the deny path", is checked with a search, not trusted:
-reviewers often miss what sits in another file. A finding that contradicts a project knowledge doc loses to the doc.
+reviewers often miss what sits in another file.
+A finding that says a project knowledge doc is wrong is a conflict between two sources, not a verdict: read the passage it
+cites once, then fix nothing and report it to the Human as disputed, naming the doc's owner (`harness-librarian`).
 A premise that does not hold is `does not apply`, answered with the file and line that show it.
 
 ## Fix passes

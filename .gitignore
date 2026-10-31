@@ -6,3 +6,4 @@ dist/
 .claude/session-artifacts/
 /.claude/
 .banned-terms.local
+.aidrian.local.json

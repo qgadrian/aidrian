@@ -10,8 +10,9 @@ Below, `<team>` is the team name or id from that knowledge, and `<KEY>` its issu
 - Set `parentId` on each child issue's `save_issue` call to represent the parent/child hierarchy — Linear's native sub-issue mechanism.
 - Use `blockedBy` / `blocks` on `save_issue` for blocking relationships. Both are append-only: a later call adds relations, it never removes ones set by an earlier call. Use `removeBlockedBy` / `removeBlocks` to remove one explicitly.
 - Use a Linear Project (`save_project`) when the initiative needs board or roadmap tracking across multiple issues.
-- Keep the full issue tree and `PR & Merge Plan` on the parent issue's Markdown body — a Linear Project's `description`/`summary` has no equivalent for this level of prose detail.
-- Keep the Linear Project's `description`/`summary` short and pointed back to the parent issue.
+- Whether a parent issue or a Linear Project holds the full issue tree and `PR & Merge Plan` follows the project's `issue_tracker` knowledge.
+  Either can: a Project's `description` renders full Markdown, tables and dividers included; its `summary` is one short line.
+- When the project's knowledge does not say, ask the Human before choosing; keep the other one short and pointed at the one that holds the plan.
 
 ## Publishing Order
 

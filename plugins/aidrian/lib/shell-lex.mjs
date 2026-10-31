@@ -5,6 +5,7 @@
 // or a glob, so a rule never guesses at its value; `operator` for a redirection (`>`, `>>`, `<`); `fdDup` for the
 // `&1` of `2>&1`. Everything a rule cannot read is meant to fail open: an unknown shape yields no match, never a deny.
 
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 
 const CONTINUATION = '\n';
@@ -189,9 +190,11 @@ function lexSegments(command) {
     }
 
     if ((ch === '$' && command[i + 1] === '(') || ch === '`') {
-      // A substitution is opaque: its value is never a path or a word a rule may read.
+      // A substitution is opaque: its value is never a path or a word a rule may read. Unquoted, it can split into
+      // several words.
       const token = start();
       token.dynamic = true;
+      token.splits = true;
       if (ch === '`') {
         const closing = command.indexOf('`', i + 1);
         if (closing !== -1) substitutions.push(command.slice(i + 1, closing));
@@ -291,6 +294,7 @@ function lexSegments(command) {
     const token = start();
     token.text += ch;
     if (ch === '$' || ch === '`' || ch === '*' || ch === '?') token.dynamic = true;
+    if (ch === '$') token.splits = true;
   }
 
   endSegment();
@@ -600,7 +604,7 @@ export function readsShellInput(invocation) {
 }
 
 // Git global options that take the next token as their value.
-const GIT_VALUE_GLOBALS = new Set(['-C', '-c', '--config-env', '--git-dir', '--work-tree', '--namespace', '--exec-path']);
+export const GIT_VALUE_GLOBALS = new Set(['-C', '-c', '--config-env', '--git-dir', '--work-tree', '--namespace', '--exec-path']);
 
 // A segment's git subcommand, the tokens after it, and the git global options before it; null when the segment does
 // not run git, or a dynamic token hides the subcommand.
@@ -647,4 +651,67 @@ export function readShortOptions(text, valueFlags, restFlags = NO_OPTIONS) {
 export function isLongOption(text, option, shortest) {
   const name = text.split('=', 1)[0];
   return name.startsWith(shortest) && option.startsWith(name);
+}
+
+const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
+
+// Every command a command line runs, in the order it runs, nested ones included: the body of each command substitution
+// (before the command that owns it), each `sh -c "<string>"`, and each command line a heredoc or here-string feeds a
+// shell. Each is { segment, invocation, folder, line, inputs }: `folder` is the folder it runs in, from `cwd`, or null
+// when it cannot be known; `line` is the command line it was read from; `inputs` the heredoc bodies and here-string
+// words fed to its input. A leading `cd <dir> &&` moves the folder; any other directory change (in a subshell, a pipe,
+// after `;` or `||`, a second one) leaves it unknown for the commands after it. A wrapper's own directory (`env -C`)
+// and git's `-C` apply to their command only. Directory changes themselves are left out.
+export function walkCommands(command, cwd) {
+  const out = [];
+  const walk = (line, start, depth) => {
+    const { segments, separators, substitutions, ends, heredocs } = lexSegments(line);
+    const nested = (body, folder) => {
+      if (depth < SUBSTITUTION_DEPTH_LIMIT) walk(body, folder, depth + 1);
+    };
+    let here = start;
+    segments.forEach((segment, index) => {
+      for (const body of substitutions.slice(ends[index - 1] ?? 0, ends[index])) nested(body, here);
+      const invocation = readInvocation(segment);
+      if (CHANGES_DIRECTORY.has(invocation.program)) {
+        const leading = index === 0 && separators[0] === '&&' && !segment[0]?.text.startsWith('(');
+        here = leading ? folderAfter(start, invocation) : null;
+        return;
+      }
+      let folder = invocation.chdir ? folderAfter(here, { program: 'cd', args: [invocation.chdir] }) : here;
+      if (invocation.program === 'git') {
+        const { args } = invocation;
+        for (let i = 0; i < args.length && args[i].text.startsWith('-'); i += 1) {
+          if (args[i].text === '-C') folder = folderAfter(folder, { program: 'cd', args: [args[i + 1]] });
+          if (GIT_VALUE_GLOBALS.has(args[i].text)) i += 1;
+        }
+      }
+      const inputs = [
+        ...heredocs.filter((each) => each.segment === index).map((each) => each.body),
+        ...segment.flatMap((token, at) => (token.operator && token.text === '<<<' && segment[at + 1] ? [segment[at + 1].text] : [])),
+      ];
+      out.push({ segment, invocation, folder, line, inputs });
+      const inner = inlineShellCommand(invocation);
+      if (inner !== null) nested(inner, folder);
+      else if (readsShellInput(invocation)) for (const body of inputs) nested(body, folder);
+    });
+    for (const body of substitutions.slice(ends.at(-1) ?? 0)) nested(body, here);
+  };
+  walk(command, cwd, 0);
+  return out;
+}
+
+// The folder a `cd`, `pushd`, or `popd` invocation reaches from `here`, or null when it cannot be known. It is the
+// physical folder, as the kernel resolves a file's `..` from it: `cd link && cat ../f` reads beside the link's target.
+function folderAfter(here, { program, args }) {
+  if (program === 'popd') return null;
+  const to = args.find((token) => !token || token.dynamic || !token.text.startsWith('-'));
+  if (!to || to.dynamic || to.text === '-' || to.text.startsWith('~')) return null;
+  if (!path.isAbsolute(to.text) && here === null) return null;
+  const reached = path.resolve(here ?? '/', to.text);
+  try {
+    return realpathSync(reached);
+  } catch {
+    return reached;
+  }
 }

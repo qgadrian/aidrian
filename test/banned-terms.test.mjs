@@ -29,6 +29,9 @@ test('body and message files are read from each way gh and git take one; reads p
     ['git -C x commit -F g.txt', ['g.txt']],
     ['git commit --file=h.txt', ['h.txt']],
     ['git commit -F=i.txt', ['=i.txt']],
+    ['git commit --fil j.txt', ['j.txt']],
+    ['git commit --fil=k.txt', ['k.txt']],
+    ['git commit --mess -Fx.txt', []],
     ['gh pr view 1 --json body', null],
     ['gh issue list --search x', null],
     ['git log --grep commit', null],
@@ -87,12 +90,15 @@ test('a gh or git commit command is judged by its text and its body file; other 
   assert.match(judge('gh issue create -F link/../body.md'), /in link\/\.\.\/body\.md/, "so is a symlink's .. inside the operand");
 });
 
-test('the commit-msg hook refuses a private word and ignores comment lines', (t) => {
+test('the commit-msg hook reads the whole message, scissors and # lines included', (t) => {
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-banned-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const msg = path.join(dir, 'MSG');
-  writeFileSync(msg, 'fix: thing\n# ------------------------ >8 ------------------------\n-removed zq-1\n');
-  assert.equal(spawnSync('node', [SCRIPT, 'commit-msg', msg], { cwd: dir }).status, 0, 'a verbose diff below the scissors is skipped');
+  writeFileSync(msg, 'fix: thing\n# a comment\n');
+  assert.equal(spawnSync('node', [SCRIPT, 'commit-msg', msg], { cwd: dir }).status, 0);
+  // A public pattern, so the test needs no private file; the brackets keep this file from matching it.
+  writeFileSync(msg, `fine\n# ------------------------ >8 ------------------------\n${'g' + 'rill'}\n`);
+  assert.equal(spawnSync('node', [SCRIPT, 'commit-msg', msg], { cwd: dir }).status, 1, 'git can keep text below the scissors');
 });
 
 test('the git hooks call the script', () => {

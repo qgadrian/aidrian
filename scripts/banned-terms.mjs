@@ -16,7 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { GIT_VALUE_GLOBALS, readShortOptions, walkCommands } from '../plugins/aidrian/lib/shell-lex.mjs';
+import { GIT_VALUE_GLOBALS, isLongOption, readShortOptions, walkCommands } from '../plugins/aidrian/lib/shell-lex.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const PUBLIC = [];
@@ -54,7 +54,21 @@ const GH_LONG_VALUES = new Set([
   '--add-label', '--remove-label', '--add-assignee', '--remove-assignee', '--add-reviewer', '--remove-reviewer',
   '--add-project', '--remove-project', '--subject', '--comment', '--recover',
 ]);
-const GIT_LONG_VALUES = new Set(['--message', '--author', '--date', '--template', '--reuse-message', '--reedit-message', '--fixup', '--squash', '--trailer', '--cleanup']);
+// git commit's long options that take a value, each with its shortest unambiguous prefix: git takes any prefix from
+// there on (`--fil` is `--file`, `--mess` is `--message`); gh (pflag) takes only the whole name.
+const GIT_LONG = new Map([
+  ['--file', '--fil'], ['--message', '--me'], ['--author', '--au'], ['--date', '--da'], ['--template', '--te'],
+  ['--reuse-message', '--reu'], ['--reedit-message', '--ree'], ['--fixup', '--fix'], ['--squash', '--sq'],
+  ['--trailer', '--tr'], ['--cleanup', '--cl'],
+]);
+const GIT_LONG_VALUES = new Set([...GIT_LONG.keys()].filter((option) => option !== '--file'));
+
+// A git long option word with its option spelled in full, `=value` kept; any other word as it is.
+function gitLongWord(text) {
+  if (!text.startsWith('--') || text === '--') return text;
+  const option = [...GIT_LONG].find(([name, shortest]) => isLongOption(text, name, shortest))?.[0];
+  return option ? option + (text.includes('=') ? text.slice(text.indexOf('=')) : '') : text;
+}
 
 // What an invocation publishes, as { words, files }: the arguments git or GitHub keep (titles, bodies, messages,
 // labels), and the files whose contents it publishes (`--body-file`, `--file`, `-F`), as tokens. null for an invocation
@@ -86,7 +100,8 @@ export function published({ program, args }) {
   const words = [];
   const files = [];
   for (let i = 0; i < rest.length; i += 1) {
-    const { text, dynamic } = rest[i];
+    const { dynamic } = rest[i];
+    const text = program === 'git' && !dynamic ? gitLongWord(rest[i].text) : rest[i].text;
     if (text === '--') {
       words.push(...rest.slice(i + 1));
       break;
@@ -183,8 +198,9 @@ export function prePushProblems(lines, remote, { cwd = ROOT, patterns = bannedPa
 // `file` is the message file for commit-msg, and the push remote's name for pre-push, as the git hooks pass them.
 function main([mode, file]) {
   if (mode === 'commit-msg') {
-    // Git keeps `#` lines with -m, -F, or --cleanup=verbatim, so only a verbose commit's diff below the scissors is skipped.
-    const hits = bannedHits(readFileSync(file, 'utf8').split(/^# -+ >8 -+$/mu)[0]);
+    // The whole file: which `#` lines and scissors text git strips depends on --cleanup and the editor, which this hook
+    // cannot see, so nothing is assumed stripped.
+    const hits = bannedHits(readFileSync(file, 'utf8'));
     if (!hits.length) return 0;
     console.error(`commit message names a private word (${hits.join(', ')}); see .banned-terms.local.`);
     return 1;

@@ -520,11 +520,12 @@ export function readInvocation(segment, depth = 0) {
 }
 
 // sudo's environment reset after one of its option words: none for -E or a bare --preserve-env, which keep it all;
-// --preserve-env=LIST adds the names it lists to `keep`, and a list the rule cannot read keeps it all.
+// --preserve-env=LIST adds the names it lists to `keep`, and a list the rule cannot read keeps none.
 function afterPreserve(reset, { text, dynamic }, option) {
   if (isLongOption(text, '--preserve-env', '--preserve-e')) {
     const at = text.indexOf('=');
-    if (at === -1 || dynamic) return null;
+    if (at === -1) return null;
+    if (dynamic) return reset;
     return { ...reset, keep: [...reset.keep, ...text.slice(at + 1).split(',')] };
   }
   if (text.startsWith('--')) return reset;

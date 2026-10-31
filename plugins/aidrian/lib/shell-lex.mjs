@@ -601,7 +601,7 @@ export function readsShellInput(invocation) {
 }
 
 // Git global options that take the next token as their value.
-const GIT_VALUE_GLOBALS = new Set(['-C', '-c', '--config-env', '--git-dir', '--work-tree', '--namespace', '--exec-path']);
+export const GIT_VALUE_GLOBALS = new Set(['-C', '-c', '--config-env', '--git-dir', '--work-tree', '--namespace', '--exec-path']);
 
 // A segment's git subcommand, the tokens after it, and the git global options before it; null when the segment does
 // not run git, or a dynamic token hides the subcommand.

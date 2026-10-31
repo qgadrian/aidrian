@@ -73,6 +73,12 @@ test('a gh or git commit command is judged by its text and its body file; other 
   assert.match(judge("gh issue create -t '-Rsecretco' -b clean"), /secretco/, 'a value shaped like an option is published');
   assert.match(judge("git commit -m '-Fsecretco'"), /secretco/);
   assert.match(judge('gh pr create --title -Rsecretco --body ok'), /secretco/);
+  for (const global of ['--git-dir .git', '--work-tree .', '--namespace x', '--config-env a=B']) {
+    assert.match(judge(`git ${global} commit --allow-empty -m secretco`), /secretco/, `git ${global}`);
+  }
+  for (const repo of ['--repo=secretco/r', '--repo secretco/r', '-Rsecretco/r', '-R secretco/r']) {
+    assert.equal(judge(`gh issue create ${repo} -t fine -b fine`), null, `${repo} is not published`);
+  }
   mkdirSync(path.join(dir, 'real', 'nested'), { recursive: true });
   writeFileSync(path.join(dir, 'real', 'body.md'), 'secretco\n');
   symlinkSync(path.join(dir, 'real', 'nested'), path.join(dir, 'link'));

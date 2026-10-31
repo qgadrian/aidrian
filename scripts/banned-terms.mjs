@@ -16,7 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { readShortOptions, walkCommands } from '../plugins/aidrian/lib/shell-lex.mjs';
+import { GIT_VALUE_GLOBALS, readShortOptions, walkCommands } from '../plugins/aidrian/lib/shell-lex.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const PUBLIC = [];
@@ -76,7 +76,7 @@ export function published({ program, args }) {
     [start, fileFlag, values, longValues] = [i, '--body-file', GH_VALUES, GH_LONG_VALUES];
   } else if (program === 'git') {
     let i = 0;
-    for (; i < args.length && texts[i].startsWith('-'); i += 1) if (['-C', '-c'].includes(texts[i])) i += 1;
+    for (; i < args.length && texts[i].startsWith('-'); i += 1) if (GIT_VALUE_GLOBALS.has(texts[i])) i += 1;
     if (texts[i] !== 'commit') return null;
     [start, fileFlag, values, longValues] = [i + 1, '--file', GIT_VALUES, GIT_LONG_VALUES];
   } else {
@@ -95,8 +95,8 @@ export function published({ program, args }) {
       files.push(text === fileFlag ? rest[++i] : { text: text.slice(fileFlag.length + 1), dynamic });
       continue;
     }
-    if (text === '--repo') {
-      i += 1;
+    if (text === '--repo' || text.startsWith('--repo=')) {
+      if (text === '--repo') i += 1;
       continue;
     }
     // A value is published as it is, whatever its shape: it is never read as one more option.

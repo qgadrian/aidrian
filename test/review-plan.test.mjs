@@ -67,7 +67,7 @@ test('buildPlan: zero config is one engine pass; docs only is none; the review g
 
 test('buildPlan: an agent reviews at most 3 flows per pass; a self engine merges with the required code-reviewer', () => {
   const flows = Object.fromEntries(['a', 'b', 'c', 'd'].map((id) => [id, { files: [`src/${id}/**`] }]));
-  const four = plan(['a', 'b', 'c', 'd'].map((id) => change(`src/${id}/x.js`)), { flows }, { engine: { name: 'self', kind: 'agent', stage: 'local', agent: 'code-reviewer' } });
+  const four = plan(['a', 'b', 'c', 'd'].map((id) => change(`src/${id}/x.js`)), { flows }, { engine: { name: 'self', kind: 'agent', stage: 'local', agent: 'code-reviewer', builtIn: true } });
   assert.deepEqual(four.stages.map((stage) => stage.passes.map((pass) => [pass.id, pass.files])), [[
     ['agent:code-reviewer:a+b+c', null],
     ['agent:code-reviewer:d', ['src/d/x.js']],

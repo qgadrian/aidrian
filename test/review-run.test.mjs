@@ -49,7 +49,11 @@ function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = 
     edit: (_repo, id, body) => (comments.find((c) => c.id === id).body = body),
   };
   const project = projectAt(dir);
-  const step = (deps = {}, opts = {}) => reviewStep({ pr: '7', ...opts }, { project, config: loadConfig(project).config, gh, codex: () => ({ ok: true }), ...deps });
+  // A fresh project per step, so a local settings file written mid-test is read.
+  const step = (deps = {}, opts = {}) => {
+    const current = projectAt(dir);
+    return reviewStep({ pr: '7', ...opts }, { project: current, config: loadConfig(current).config, gh, codex: () => ({ ok: true }), ...deps });
+  };
   return { dir, git, write, gh, comments, project, step, commit: (msg = 'next') => (git('add', '-A'), git('commit', '-q', '-m', msg), git('rev-parse', 'HEAD')) };
 }
 
@@ -397,4 +401,53 @@ writeFileSync(${JSON.stringify(pidFile)}, String(g.pid)); process.on('SIGTERM', 
   const result = await runExec({ name: 'escape', kind: 'exec', command: [process.execPath, file], timeoutSec: 1 }, {}, { root: dir, env: process.env });
   assert.equal(result.status, 'timed_out');
   assert.ok(Date.now() - started < 15000);
+});
+
+test('a project exec reviewer runs as the base has it, and editing its script is a change to the review', async (t) => {
+  const scan = (title) => `let s='';process.stdin.on('data',c=>s+=c).on('end',()=>console.log(JSON.stringify({findings:${title ? `[{file:'src/app.js',line:1,title:'${title}',body:'b',severity:'low'}]` : '[]'},verdicts:[]})))`;
+  const reviewers = { scan: { kind: 'exec', command: ['node', 'scripts/scan.mjs'], timeoutSec: 30 } };
+  const r = repo(t, {
+    baseConfig: { version: 1, review: { reviewers } },
+    baseFiles: { 'scripts/scan.mjs': scan('base found it') },
+    change: (write) => {
+      write('scripts/scan.mjs', scan(null));
+      write('src/app.js', 'z\n');
+    },
+  });
+  r.write('.aidrian.local.json', JSON.stringify({ review: { engine: 'scan' } }));
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'local engine');
+  const first = await r.step();
+  assert.ok(first.plan.flows.includes('harness-config'), 'editing a reviewer`s script is a change to the review');
+  for (const pass of first.dispatch) recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: holdsAll(pass, 'src/app.js:1') });
+  const result = await r.step();
+  assert.equal(result.status, 'fix_required');
+  assert.equal(result.open[0].findings[0].title, 'base found it', 'the PR`s emptied scanner did not run');
+});
+
+test('a flow only the review bot could review is unsatisfied, never a loop that cannot end', async (t) => {
+  const flows = { pay: { files: ['src/pay/**'], require: ['independent-model'] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => write('src/pay/a.js', '1\n') });
+  const result = await r.step({ exec: clean, codex: () => ({ ok: false, reason: 'the codex CLI is not installed' }) });
+  assert.equal(result.status, 'unsatisfied');
+  assert.match(result.reason, /flow pay needs a reviewer that answers its invariants/u);
+});
+
+test('a project agent reviewer as the engine keeps its name, stage, and independence', async (t) => {
+  const reviewers = { second: { kind: 'agent', agent: 'second-opinion', stage: 'independent', independent: true } };
+  const r = repo(t, { baseConfig: { version: 1, review: { reviewers, rules: [{ require: ['independent-model'] }] } }, change: (write) => write('src/app.js', 'p\n') });
+  r.write('.aidrian.local.json', JSON.stringify({ review: { engine: 'second' } }));
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'engine');
+  const result = await r.step({ exec: clean });
+  assert.deepEqual([result.status, result.stage, result.dispatch[0].pass, result.dispatch[0].agent], ['dispatch', 'independent', 'engine:second', 'second-opinion']);
+});
+
+test('the review gate`s checklist reaches every reviewer', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, github: { reviewGate: { enabled: true, checklist: 'docs/flows/booking.md' } } }, change: (write) => write('src/app.js', 'k\n') });
+  const result = await r.step({ exec: clean });
+  const [pass] = result.dispatch;
+  assert.equal(pass.checklist.path, 'docs/flows/booking.md');
+  assert.match(pass.checklist.text, /No double booking/u);
+  assert.match(pass.brief, /against the checklist/u);
 });

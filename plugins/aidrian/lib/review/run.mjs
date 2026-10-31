@@ -28,7 +28,7 @@ import { citationProblem, flowState, invariantsOf, parseVerdicts } from './flows
 import { computeVerdict } from '../pr-checks.mjs';
 import { globPattern } from '../fs.mjs';
 import { buildPlan, classify, flowsInForce, HARNESS_FLOW, mergePlans, validatePlan } from './plan.mjs';
-import { resolveEngine, reviewerMap, runExec, satisfies } from './reviewers.mjs';
+import { BUILT_IN, resolveEngine, reviewerMap, runExec, satisfies } from './reviewers.mjs';
 import { emptyState, isSummary, newer, readLocalState, stateFromComment, summaryBody, writeLocalState } from './state.mjs';
 
 export const EXIT = Object.freeze({
@@ -100,18 +100,29 @@ function commandFiles(root, command, commit) {
   return (command ?? '').split(/\s+/u).filter((word) => /[./]/u.test(word) && !word.startsWith('-') && fileAt(root, commit, word) !== null);
 }
 
-// A planCommand's plan: it reads { base, head, changes } on stdin and prints a plan. It runs in a temporary worktree
-// of the base branch, so a pull request that edits the planner cannot run its own version; the worktree shares the
-// repository's objects, so the planner can still read the head. Its env is isolated like a reviewer's.
-function runPlanCommand(command, input, { root, env, baseTip }) {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-plan-'));
+// A temporary worktree of the base tip, for running the project's own review code (a plan command, an exec
+// reviewer) as the base branch has it: a pull request that edits that code cannot run its own version. The worktree
+// shares the repository's objects, so the code can still read the head with git. `use(dir)` runs inside it.
+async function inBaseWorktree(root, baseTip, use) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-base-'));
   const tree = path.join(dir, 'base');
   const added = runGit(['worktree', 'add', '--detach', '--quiet', tree, baseTip], root, { timeout: 60_000 });
   if (added.status !== 0) {
     rmSync(dir, { recursive: true, force: true });
-    throw new Error(`review.planCommand: could not check out the base: ${(added.stderr || '').trim()}`);
+    throw new Error(`could not check out the base to run the project's review code: ${(added.stderr || '').trim()}`);
   }
   try {
+    return await use(tree);
+  } finally {
+    runGit(['worktree', 'remove', '--force', tree], root, { timeout: 60_000 });
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// A planCommand's plan: it reads { base, head, changes } on stdin and prints a plan. It runs in a worktree of the
+// base, with an env isolated like a reviewer's.
+function runPlanCommand(command, input, { root, env, baseTip }) {
+  return inBaseWorktree(root, baseTip, (tree) => {
     const result = spawnSync('sh', ['-c', command], { cwd: tree, env, input: JSON.stringify(input), encoding: 'utf8', timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
     if (result.status !== 0) throw new Error(`review.planCommand failed: ${(result.stderr || '').trim().split('\n').at(-1) || `exit ${result.status}`}`);
     let plan;
@@ -123,10 +134,7 @@ function runPlanCommand(command, input, { root, env, baseTip }) {
     const problems = validatePlan(plan);
     if (problems.length) throw new Error(`review.planCommand printed a bad plan: ${problems.join('; ')}`);
     return plan;
-  } finally {
-    runGit(['worktree', 'remove', '--force', tree], root, { timeout: 60_000 });
-    rmSync(dir, { recursive: true, force: true });
-  }
+  });
 }
 
 // Whether the change from `from` to `to` touches `files` (null: any reviewed file).
@@ -155,16 +163,19 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   if (changed.length && changedPaths.has(project.paths.config)) harnessChanged.push(project.paths.config);
   for (const file of commandFiles(root, review.planCommand, baseTip)) if (changedPaths.has(file)) harnessChanged.push(file);
   for (const flow of Object.values(baseReview?.flows ?? {})) if (typeof flow.invariants === 'string' && changedPaths.has(flow.invariants)) harnessChanged.push(flow.invariants);
+  for (const reviewer of Object.values(baseReview?.reviewers ?? {})) {
+    for (const file of commandFiles(root, (reviewer.command ?? []).join(' '), baseTip)) if (changedPaths.has(file)) harnessChanged.push(file);
+  }
   const { addedLines, removedFiles } = diffLines(root, base, head);
 
   const engine = resolveEngine(effective, codex ? { codex } : {});
   if (engine.problem) return { status: 'unsatisfied', pr: n, repo, head, reason: engine.problem };
   let plan = buildPlan({
     head, base, changes, addedLines, removedFiles, config: effective, harnessChanged: [...new Set(harnessChanged)],
-    engine: { name: engine.reviewer.name, kind: engine.reviewer.kind, stage: engine.reviewer.stage, agent: engine.reviewer.agent },
+    engine: { name: engine.reviewer.name, kind: engine.reviewer.kind, stage: engine.reviewer.stage, agent: engine.reviewer.agent, builtIn: Boolean(BUILT_IN[engine.reviewer.name]) },
   });
   if (review.planCommand) {
-    const project_ = runPlanCommand(review.planCommand, { base, head, changes }, { root, env: cleanEnv, baseTip });
+    const project_ = await runPlanCommand(review.planCommand, { base, head, changes }, { root, env: cleanEnv, baseTip });
     plan = mergePlans(plan, project_);
   }
   // --with-bot (the skill's --await-codex): the review bot runs as the last stage too, after this machine's engine.
@@ -188,6 +199,10 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   // A pass nobody can run would never finish and never block: refuse the plan instead.
   const orphan = passes.find((pass) => pass.kind !== 'agent' && !map[pass.reviewer]);
   if (orphan) return { status: 'unsatisfied', pr: n, repo, head, reason: `pass ${orphan.id} names reviewer "${orphan.reviewer}", which is not an agent pass or a reviewer of review.reviewers`, plan };
+  // Every pass after the local stage answers for every flow: a violated from any reviewer blocks the flow, and a flow
+  // only the independent model reviews is signed by it. The review bot gives no verdicts, so a flow needs another
+  // pass that can answer for it.
+  for (const stage of plan.stages) if (stage.name !== 'local') for (const pass of stage.passes) pass.flows = plan.flows.map((flow) => flow.id);
   for (const word of plan.require) {
     if (!satisfies(word, passes, map)) return { status: 'unsatisfied', pr: n, repo, head, reason: `the plan requires ${word}, and the engine here is ${engine.reviewer.name} (${engine.reason})`, plan };
   }
@@ -198,6 +213,8 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     const gone = changes.filter((each) => each.status === 'D' && tests.some((pattern) => pattern.test(each.file))).map((each) => each.file);
     if (gone.length) removedTests.push({ flow: id, deleted: gone, accept: `aidrian pr signoff ${n} --flow ${id} --head ${head}` });
   }
+  const answerless = plan.flows.find((flow) => !passes.some((pass) => (pass.flows ?? []).includes(flow.id) && map[pass.reviewer]?.kind !== 'remote'));
+  if (answerless) return { status: 'unsatisfied', pr: n, repo, head, reason: `flow ${answerless.id} needs a reviewer that answers its invariants, and the review bot does not: run codex-local, or require an agent for the flow`, plan };
   if (!passes.length && !removedTests.length) return { status: 'none_needed', pr: n, repo, head, base, depth: plan.depth, engine: plan.engine, plan: { depth: plan.depth, reasons: plan.reasons, flows: [], stages: [] } };
 
   // The record so far: the newer of this machine's and the pull request's.
@@ -226,9 +243,6 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   });
   const flowStatus = (flow) => flowState(flow.invariants, verdictsFor(flow.id), (evidence) => citationProblem(evidence, { root, head }));
 
-  // Every pass after the local stage answers for every flow: a violated from any reviewer blocks the flow, and a flow
-  // only the independent model reviews is signed by it.
-  for (const stage of plan.stages) if (stage.name !== 'local') for (const pass of stage.passes) pass.flows = plan.flows.map((flow) => flow.id);
 
   const finalStage = plan.stages.at(-1) ?? null;
   const current = state.rounds.at(-1);
@@ -264,7 +278,13 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
           undoRound();
           return finish('incomplete', { reason: `a local reviewer reads the checkout: check out ${head.slice(0, 7)} with a clean working tree first`, retry_recommended: true });
         }
-        const outcomes = await Promise.all(execs.map((pass) => exec(map[pass.reviewer], passInput(pass, stage), { root, env: cleanEnv }).then((outcome) => [pass, outcome])));
+        // Codex reads the checkout at the head; a project's own reviewer runs as the base has it, and reads the head
+        // through git (its input names both commits).
+        const run = (tree) => Promise.all(execs.map((pass) => {
+          const reviewer = map[pass.reviewer];
+          return exec(reviewer, passInput(pass, stage), { root: reviewer.builtIn ? root : tree, env: cleanEnv }).then((outcome) => [pass, outcome]);
+        }));
+        const outcomes = execs.some((pass) => !map[pass.reviewer].builtIn) ? await inBaseWorktree(root, baseTip, run) : await run(root);
         for (const [pass, outcome] of outcomes) {
           if (outcome.status !== 'done') continue;
           state.passes[pass.id] = { head, reviewer: pass.reviewer, findings: outcome.findings.length, open: outcome.findings.length, list: outcome.findings, verdicts: outcome.verdicts, dropped: outcome.dropped };
@@ -339,7 +359,11 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
       files: flow.files,
       ...(stage.name !== 'local' ? { earlierVerdicts: verdictsFor(flow.id) } : {}),
     }));
-    return { pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files, flows, priorFindings: prior?.list ?? [] };
+    const checklist = config.github.reviewGate.enabled ? config.github.reviewGate.checklist : null;
+    return {
+      pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files, flows, priorFindings: prior?.list ?? [],
+      ...(checklist ? { checklist: { path: checklist, text: fileAt(root, baseTip, checklist) } } : {}),
+    };
   }
 
   function dispatchFor(pass, stage) {
@@ -347,6 +371,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     return {
       pass: pass.id,
       agent: map[pass.reviewer]?.agent ?? pass.reviewer,
+      ...(input.checklist ? { brief: `Review the diff against the checklist in ${input.checklist.path} as well as for bugs.` } : {}),
       ...input,
       record: `aidrian pr attest ${n} --pass ${pass.id} --head ${head} --reviewer ${pass.reviewer} --findings <n> --fixed <n> [--accepted <n>]${input.flows.length ? ' --verdicts <file.json>' : ''}`,
     };

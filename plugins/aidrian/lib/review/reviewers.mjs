@@ -102,7 +102,10 @@ export function resolveEngine(config, { codex = codexAvailable } = {}) {
 // reviewer that is not the author's model; `agent:<name>` needs that agent.
 export function satisfies(word, passes, map) {
   if (word === 'independent-model') return passes.some((pass) => map[pass.reviewer]?.independent);
-  if (word.startsWith('agent:')) return passes.some((pass) => pass.kind === 'agent' && pass.reviewer === word.slice('agent:'.length));
+  if (word.startsWith('agent:')) {
+    const name = word.slice('agent:'.length);
+    return passes.some((pass) => pass.kind === 'agent' && (pass.reviewer === name || map[pass.reviewer]?.agent === name));
+  }
   return false;
 }
 
@@ -134,6 +137,7 @@ export function reviewPrompt(input) {
     input.files ? `Report findings only in these files: ${input.files.join(', ')}.` : 'Report findings in any changed file.',
     'Look for correctness bugs, regressions, edge cases, security, data consistency, error handling, and missing tests.',
     'When you find a mistake, search the whole change for every copy and list each in that finding. Finish the whole review before answering.',
+    input.checklist ? `Also review the change against the project's checklist (${input.checklist.path}), included in the input.` : '',
     input.flows.length ? 'For each critical flow below, give one verdict per invariant: holds, violated, not_affected, or cannot_verify. Evidence for holds or not_affected must cite file:line at the head commit, or a test name. Earlier reviewers\' verdicts are listed: challenge every "holds" you cannot confirm yourself.' : '',
     'Answer with JSON only, in the schema you were given.',
     '',

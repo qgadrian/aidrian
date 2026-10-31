@@ -173,8 +173,10 @@ export function buildPlan({ head, base, changes, addedLines, removedFiles, confi
     }
   }
   if (depth !== 'none' && engine) {
-    // An agent engine (self) is the same reviewer as a required agent of that name, so they merge into one pass.
-    if (engine.kind === 'agent') passes.local.push({ id: `agent:${engine.agent}`, reviewer: engine.agent, kind: 'agent', files: null, context: 'full' });
+    // The built-in self engine is the same reviewer as a required code-reviewer, so they merge into one pass. A
+    // project's agent reviewer keeps its own name, stage, and independence.
+    if (engine.kind === 'agent' && engine.builtIn) passes.local.push({ id: `agent:${engine.agent}`, reviewer: engine.agent, kind: 'agent', files: null, context: 'full' });
+    else if (engine.kind === 'agent') passes[engine.stage].push({ id: `engine:${engine.name}`, reviewer: engine.name, kind: 'agent', engine: true, files: null, context: 'full' });
     else passes[engine.stage].push({ id: `engine:${engine.name}`, reviewer: engine.name, kind: engine.kind, files: null, context: 'full' });
   }
   const stages = STAGES.filter((stage) => passes[stage].length).map((stage) => ({ name: stage, passes: mergeAgentPasses(passes[stage]) }));
@@ -195,7 +197,7 @@ function mergeAgentPasses(passes) {
   const byAgent = new Map();
   const others = [];
   for (const pass of passes) {
-    if (pass.kind !== 'agent') {
+    if (pass.kind !== 'agent' || pass.engine) {
       others.push(pass);
       continue;
     }

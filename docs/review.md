@@ -40,7 +40,8 @@ another.
   (changed lines, not counting `review.ignore`). That is all it will ever take: anything smarter is a plan command.
 - `depth: "none"` needs `onlyFiles`, so it only covers the files it names, and any rule that asks for more wins.
 - `require` takes `agent:<name>` and `independent-model`. A plan that requires what this machine cannot run stops as
-  `unsatisfied`; it never falls back to a weaker reviewer.
+  `unsatisfied`; it never falls back to a weaker reviewer. So does a flow whose only reviewer would be the review bot,
+  which gives no verdicts.
 
 `review.ignore` lists files no review reads and no size counts: lockfiles, snapshots, generated, vendored, and
 minified files by default. `review.nonBehaviour` lists files that cannot change behaviour: prose docs and static
@@ -138,6 +139,9 @@ A project adds its own in `review.reviewers`:
   `{ "findings": [{ file, line, title, body, severity }], "verdicts": [...] }`. It runs with no session, override, or
   git variables in its environment, in its own process group, with a time limit: SIGTERM, then SIGKILL. Output that does not parse is a failure, never a pass;
   malformed findings are dropped and named. A failure is `incomplete` and retried; the third is `stuck`.
+- A project's own exec reviewer runs from a temporary checkout of the base, like the plan command, and reads the head
+  through git: a pull request that edits its script cannot run its own version, and the edit triggers
+  `harness-config`. `codex-local` reads the checkout at the head.
 - `agent`: the command cannot start an agent, so it returns `dispatch` and the skill runs it and records the result.
 
 ### The engine

@@ -126,3 +126,41 @@ test('outside a project folder nothing is checked', (t) => {
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   assert.equal(check('gh pr create --fill', { cwd: dir, env: {} }), null);
 });
+
+test('a cd earlier on the line moves where the body file and the project are read', (t) => {
+  const run = project(t, { version: 1 }, { 'short.md': '## Summary\nx\n' });
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-prbody-wt-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  writeFileSync(path.join(dir, 'short.md'), GOOD);
+  assert.match(run('gh pr create --title x --body-file short.md'), /^Blocked: the body has no `## Tests run` section/);
+  assert.equal(run(`cd ${dir} && gh pr create --title x --body-file short.md`), null, "the worktree's file, not the session's");
+  writeFileSync(path.join(dir, 'short.md'), '## Summary\nx\n');
+  assert.match(run(`cd ${dir} && gh pr create --title x --body-file short.md`), /^Blocked: the body has no `## Tests run` section/);
+  assert.match(run(`cd "${dir}" && gh pr create --title x --body-file short.md`), /^Blocked: the body has no `## Tests run` section/, 'a quoted cd');
+  for (const line of [`(cd ${dir}); gh`, `cd ${dir} | cat; gh`, `cd ${dir} || gh`, `cd ${dir}; gh`, `cd /tmp && cd ${dir} && gh`]) {
+    assert.match(run(`${line} pr create --title x --body-file short.md`), /cannot read/, `${line}: the folder gh runs in is unknown`);
+  }
+  for (const moved of ['cd "$WT"', 'cd', 'cd -', 'cd ~/x', 'popd']) {
+    assert.match(run(`${moved} && gh pr create --title x --body-file short.md`), /cannot read/, `${moved}: an unknown folder`);
+  }
+});
+
+test('a directory change after gh leaves the folder gh ran in known', (t) => {
+  const run = project(t, { version: 1 }, { 'body.md': GOOD });
+  assert.equal(run('gh pr create --title x --body-file body.md && cd ..'), null);
+  assert.match(run('cd .. || true; gh pr create --title x --body-file body.md'), /cannot read/);
+});
+
+test('a substitution or an inline shell runs gh in the folder of its command', (t) => {
+  const run = project(t, { version: 1 }, { 'body.md': GOOD });
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-prbody-sub-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  writeFileSync(path.join(dir, 'body.md'), '## Summary\nx\n');
+  assert.equal(run('url=$(gh pr create --title x --body-file body.md)'), null);
+  assert.match(run(`cd ${dir} && url=$(gh pr create --title x --body-file body.md)`), /^Blocked: the body has no `## Tests run` section/);
+  assert.match(run(`cd ${dir} && bash -c 'gh pr create --title x --body-file body.md'`), /^Blocked: the body has no `## Tests run` section/);
+});

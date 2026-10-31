@@ -1,7 +1,7 @@
 # Maintainer tasks. `make` lists them.
 
 .DEFAULT_GOAL := help
-.PHONY: help build bump check codex-agents
+.PHONY: help build bump check codex-agents hooks
 
 ## List the targets.
 help:
@@ -22,3 +22,7 @@ check:
 ## Install the Codex agents from this checkout into ~/.codex/agents. TARGET=dir installs elsewhere.
 codex-agents:
 	node plugins/aidrian/codex/install-agents.mjs $(if $(TARGET),--target "$$TARGET")
+
+## Install the git hooks that keep the private words of .banned-terms.local out of commit messages and branch names.
+hooks:
+	git config core.hooksPath .githooks

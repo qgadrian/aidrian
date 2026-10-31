@@ -4,7 +4,9 @@
 // too, when sections are configured: gh then takes the body from an editor, a prompt, or a template, unchecked.
 // `--web` and `--help` pass. `gh pr edit` without a body flag passes (a title-only edit). A body flag whose body the
 // rule cannot read (a variable, a substitution, stdin, a missing file) is refused when sections are configured. Runs only inside a project. A
-// command substitution that runs, as in `url=$(gh pr create …)`, is read as the command line is.
+// command substitution that runs, as in `url=$(gh pr create …)`, is read as the command line is. A leading `cd <dir> &&`
+// moves the folder the body file and the project are read from; after any other directory change on the line, a relative
+// body file is one the rule cannot read.
 //
 // `github.pullRequest` adds the project's contract (docs/config.md#pull-request-contract), each part off until set:
 // the title pattern, an issue key outside the title's leading bracket, the closed list of sections, the items of the
@@ -19,7 +21,7 @@ import { loadConfig } from '../../config.mjs';
 import { runGh } from '../../gh.mjs';
 import { headings, sectionItems, unfencedLines } from '../../markdown-sections.mjs';
 import { findProject } from '../../project.mjs';
-import { commandLines, lexCommand, readInvocation, readShortOptions } from '../../shell-lex.mjs';
+import { readInvocation, readShortOptions, walkCommands } from '../../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PR_BODY';
 
@@ -41,13 +43,14 @@ const LIST_TIMEOUT_MS = 3000;
 // of the one check that leaves the process.
 export function check(command, { cwd = process.cwd(), env = process.env, listOpenPrs = openPrBodies(cwd) } = {}) {
   if (env[OVERRIDE] === '1') return null;
-  for (const line of commandLines(command)) {
-    for (const segment of lexCommand(line)) {
-      const call = readPrCall(segment);
-      if (!call) continue;
-      const reason = judge(call, line, { cwd, env, listOpenPrs });
-      if (reason) return reason;
-    }
+  // Each gh call with the folder it runs in (shell-lex `walkCommands`), in substitutions and inline shells too:
+  // `cd <worktree> && gh pr create --body-file b.md` reads that worktree's b.md and project. In a folder this rule
+  // cannot know, the project is the session's and a relative body file is unreadable.
+  for (const { segment, folder, line } of walkCommands(command, cwd)) {
+    const call = readPrCall(segment);
+    if (!call) continue;
+    const reason = judge(call, line, { cwd: folder ?? cwd, folderKnown: folder !== null, env, listOpenPrs: folder === null || folder === cwd ? listOpenPrs : openPrBodies(folder) });
+    if (reason) return reason;
   }
   return null;
 }
@@ -121,7 +124,7 @@ const LONG_VALUES = new Set([
   '--add-reviewer', '--remove-reviewer',
 ]);
 
-function judge(call, command, { cwd, env, listOpenPrs }) {
+function judge(call, command, { cwd, folderKnown = true, env, listOpenPrs }) {
   const project = findProject(cwd);
   if (!project) return null;
   const { config } = loadConfig(project);
@@ -141,11 +144,11 @@ function judge(call, command, { cwd, env, listOpenPrs }) {
     return deny('`gh pr create` has no --body or --body-file, so gh takes the body from an editor, a prompt, or a template, ' +
       'without the sections config.json `github.requiredSections` asks for. Write the body to a file and pass --body-file (the pr-write skill does).');
   }
-  const body = readBody(call, command, cwd);
+  const body = readBody(call, command, folderKnown ? cwd : null);
   if (body === null && sectioned && (call.body || call.bodyFile)) {
     return deny('the body is one this rule cannot read (a variable, a command substitution, stdin, or a missing file), so the ' +
       'sections config.json `github.requiredSections` asks for go unchecked. Pass a literal --body, a heredoc ' +
-      `(--body "$(cat <<'EOF' … EOF)"), or a --body-file that exists (the pr-write skill does).`);
+      `(--body "$(cat <<'EOF' … EOF)"), or a --body-file that exists, by an absolute path when a cd on the line moves the folder (the pr-write skill does).`);
   }
   const reason = body === null ? null : judgeBody(body, config) ?? judgeDuplicate(body, call, contract, listOpenPrs);
   return reason ?? judgeTitle(call.title, config);
@@ -285,12 +288,16 @@ function openPrBodies(cwd) {
   };
 }
 
-// The body text, or null when this rule cannot know it.
+// The body text, or null when this rule cannot know it. A null `cwd` is a folder it cannot know: only an absolute body
+// file reads.
 function readBody(call, command, cwd) {
   if (call.body) return call.body.dynamic ? BODY_HEREDOC.exec(command)?.[3] ?? null : call.body.text;
   if (!call.bodyFile || call.bodyFile.dynamic || call.bodyFile.text === '-') return null;
+  if (cwd === null && !path.isAbsolute(call.bodyFile.text)) return null;
   try {
-    return readFileSync(path.resolve(cwd, call.bodyFile.text), 'utf8');
+    // Joined, not resolved: the filesystem follows a symlink before a `..`, as gh opens the operand.
+    const file = call.bodyFile.text;
+    return readFileSync(path.isAbsolute(file) ? file : `${cwd}/${file}`, 'utf8');
   } catch {
     return null;
   }

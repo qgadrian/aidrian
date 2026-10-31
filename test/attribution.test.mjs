@@ -96,7 +96,7 @@ test('the commit rule asks for each configured trailer, and passes once the comm
 });
 
 test('a heredoc counts only for the commit or pull request that holds it', (t) => {
-  const { run } = setup(t, { commit: ['agent'], pullRequest: ['tool'] });
+  const { dir, run } = setup(t, { commit: ['agent'], pullRequest: ['tool'] });
   const signed = `git commit -m "$(cat <<'EOF'\nfix: y\n\nAgent: main\nEOF\n)"`;
   assert.equal(run(signed), null);
   assert.match(run(`git commit -m "$(printf 'fix: unsigned')" && ${signed}`) ?? '', /Blocked/);
@@ -104,6 +104,11 @@ test('a heredoc counts only for the commit or pull request that holds it', (t) =
   assert.equal(run(inline), null);
   assert.equal(run(`${inline} && ${inline}`), null, 'the same body run twice');
   assert.match(run(`git commit -m "$(printf unsigned <<'EOF'\nfix: y\n\nAgent: main\nEOF\n)"`) ?? '', /Blocked/, 'printf prints its own text');
+  assert.match(run(`git commit -m "$(cat <<'EOF'\nfix: y\n\nAgent: main\nEOF\nprintf '\\n\\nunsigned')"`) ?? '', /Blocked/, 'more output after the heredoc');
+  assert.match(run(`git commit -m "$(cat <<'EOF'\nfix: y\n\nAgent: main\nEOF\n) unsigned"`) ?? '', /Blocked/, 'more text after the substitution');
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  execFileSync('git', ['config', 'trailer.separators', '='], { cwd: dir });
+  assert.equal(run("git commit --allow-empty -m subject --trailer 'Agent=main'"), null, 'a configured separator');
   assert.match(run(`gh pr create -t x --body "$(printf x <<'EOF'\nAuthored-with: Claude Code\nEOF\n)"`) ?? '', /Blocked/);
   const pr = (lines) => `gh pr create --title x --body "$(cat <<'EOF'\n## Summary\nx\n${lines}EOF\n)"`;
   assert.equal(run(pr('\nAuthored-with: Claude Code\n')), null);

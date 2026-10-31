@@ -20,8 +20,9 @@ import { readBody, readPrCall, readPrCalls } from './github/pr-body.mjs';
 export const OVERRIDE = 'AIDRIAN_ALLOW_UNATTRIBUTED';
 
 // The heredoc a `-m` or `--message` command substitution prints unchanged, `-m "$(cat <<'EOF' … EOF)"`: group 3 is its
-// body. Any other substitution, such as `$(printf x <<'EOF' … EOF)`, may print something else, so it is not read.
-const MESSAGE_HEREDOC = /(?:--message(?:=|\s+)|(?<![\w-])-[A-Za-z]*m=?\s*)"?\$\(\s*cat\s*<<-?\s*(['"]?)(\w+)\1\r?\n([\s\S]*?)\r?\n[ \t]*\2\b/gu;
+// body. The substitution must be the whole word and hold only the heredoc: any other, such as `$(printf x <<'EOF' … EOF)`
+// or one that prints more after it, may print something else, so it is not read.
+const MESSAGE_HEREDOC = /(?:--message(?:=|\s+)|(?<![\w-])-[A-Za-z]*m=?\s*)(?<quote>"?)\$\(\s*cat\s*<<-?\s*(['"]?)(\w+)\2\r?\n([\s\S]*?)\r?\n[ \t]*\3[ \t]*\r?\n?[ \t]*\)\k<quote>(?=\s|$|[;&|)])/gu;
 // Where a -m command substitution sits among a commit's messages, until its heredoc is read.
 const DYNAMIC = Symbol('dynamic message');
 
@@ -42,7 +43,8 @@ function commitTrailers(message, trailers, dir, config = [], cleanup = (text) =>
     const parsed = full.status === 0 ? git(['--only-trailers', '--only-input', '--unfold'], cleanup(full.stdout)) : null;
     if (parsed?.status === 0) {
       const lines = parsed.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
-      return new Set(lines.map((line) => line.replace(/^([A-Za-z0-9-]+):\s*/u, '$1: ')));
+      // git writes each trailer with its configured separator (trailer.separators), such as `Agent= main`.
+      return new Set(lines.map((line) => line.replace(/^([A-Za-z0-9-]+)\s*[^\w\s-]\s*/u, '$1: ')));
     }
   }
   return carriedTrailers(message === null ? [] : [cleanup(message)], trailers);
@@ -112,7 +114,7 @@ function readCalls(command, cwd) {
   const prCreates = [];
   const lines = new Map();
   const state = (line) => {
-    if (!lines.has(line)) lines.set(line, { heredocs: [...line.matchAll(MESSAGE_HEREDOC)].map((match) => match[3]), pending: [], prCalls: [] });
+    if (!lines.has(line)) lines.set(line, { heredocs: [...line.matchAll(MESSAGE_HEREDOC)].map((match) => match[4]), pending: [], prCalls: [] });
     return lines.get(line);
   };
   for (const { segment, folder, line } of walkCommands(command, cwd)) {

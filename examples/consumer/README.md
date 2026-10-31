@@ -5,7 +5,8 @@ It shows the only things a project adds: its [project folder](../../docs/project
 
 | File | Why it is here |
 | --- | --- |
-| `.aidrian/config.json` | The folder version, and the main-checkout guard, which this project turns on. [docs/config.md](../../docs/config.md) lists the other keys. |
+| `.aidrian/config.json` | The folder version, the main-checkout guard, the pull request contract, and the review gate, which this project turns on. [docs/config.md](../../docs/config.md) lists the other keys. |
+| `.aidrian/terms.json` | The project's banned terms and their replacements, for agent writes and `aidrian lint terms` ([docs/config.md](../../docs/config.md#terms)). |
 | `.aidrian/knowledge/*.json` | Each bucket's index: its doc folder, a one-line summary and the tags of every doc, and which docs load always. |
 | `docs/knowledge/**/*.md` | The project's rules, in the project's own words. |
 | `.claude/settings.json` | Offers the aidrian plugin to everyone who opens the project in Claude Code. |

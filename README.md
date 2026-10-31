@@ -111,11 +111,12 @@ Run `aidrian` or `aidrian-knowledge` with no arguments to list every subcommand 
 | --- | --- | --- |
 | `aidrian init` | Creates the project folder. | [Setting up](docs/project-folder.md#setting-up-and-checking) |
 | `aidrian check` | Checks the project folder and its indexes. | [Setting up](docs/project-folder.md#setting-up-and-checking) |
-| `aidrian lint` | Lints the project's skills, agents, paths, and knowledge size. | [Setting up](docs/project-folder.md#setting-up-and-checking) |
+| `aidrian lint` | Lints the project's skills, agents, paths, knowledge size, and banned terms. | [Setting up](docs/project-folder.md#setting-up-and-checking) |
 | `aidrian state` | Prints the state folder. | [Local state](docs/project-folder.md#local-state) |
 | `aidrian worktree new` | Creates a task worktree. | [Task worktrees](docs/project-folder.md#task-worktrees) |
 | `aidrian worktree cleanup` | Removes the task worktrees whose work merged. | [Task worktrees](docs/project-folder.md#task-worktrees) |
 | `aidrian pr await-review` | Waits for the review bot. | [`pr-review-loop`](plugins/aidrian/skills/pr-review-loop/SKILL.md) |
+| `aidrian pr attest` | Records the review the review gate asks for before the bot. | [Review gate](docs/config.md#review-gate) |
 | `aidrian pr checks` | Gives a one-line verdict on the checks. | [`pr-merge-when-green`](plugins/aidrian/skills/pr-merge-when-green/SKILL.md) |
 | `aidrian pr disposition` | Decides what to do with one review finding. | [`pr-review`](plugins/aidrian/skills/pr-review/SKILL.md) |
 | `aidrian commit-msg` | Checks a commit message. | [Commit messages](docs/hooks.md#commit-messages) |

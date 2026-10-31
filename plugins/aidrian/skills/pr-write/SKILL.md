@@ -33,6 +33,7 @@ A plain Conventional Commits title: `<type>(<scope>): <subject>`.
 Only when config.json `github.titleIssuePrefix` is `true`, prefix the issue key: `[<issue key>] <type>(<scope>): <subject>`,
 or `[NOISSUE] <type>: <subject>` when no issue exists. The key format comes from the project's `issue_tracker` knowledge. The type is a Conventional Commits type from config.json
 `git.commits.types`. The subject names the real scope of the branch.
+When config.json `github.pullRequest.title` is set, the title matches that pattern; the Bash hook refuses one that does not.
 
 ## Body
 
@@ -40,6 +41,8 @@ Every section in config.json `github.requiredSections` (default `Summary`, `Test
 `aidrian check` validates the config; the Bash hook refuses a body that lacks a required section.
 Add an optional section only when it carries something: [references/body-template.md](references/body-template.md)
 lists the sections and what goes in each.
+When config.json `github.pullRequest` sets them, use only the `sections` it lists, give each `deferrals` item a reason
+from its list and the issue it went to, and each `residuals` item every field it lists, as `field: value`.
 
 - **Evidence is what ran.** List the exact commands you or an agent ran in this branch, and what each proved.
   If evidence is missing, say so; never invent a test, a screenshot, or a result.

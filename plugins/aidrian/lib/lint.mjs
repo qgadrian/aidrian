@@ -6,6 +6,8 @@
 //   agents  every <dir>/*.md: `name` equals the file name, a `description` like a skill's, and a known model and effort
 //   paths   tracked and untracked, non-ignored files hold no personal home folder such as /Users/<name>/; --staged reads what the index holds
 //   budget  the knowledge budgets that `aidrian check` also runs: the `always` docs and each tagged doc (knowledge.mjs)
+//   terms   tracked files hold no banned term of the terms file (terms.mjs): a `block` hit fails, a `warn` hit warns;
+//           --staged reads what the index holds. Off while config.json `terms.file` is null
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -16,8 +18,9 @@ import { isDirectory, isFile } from './fs.mjs';
 import { runGit } from './git.mjs';
 import { checkBudgets, loadKnowledge } from './knowledge.mjs';
 import { projectAt } from './project.mjs';
+import { formatHit, loadTerms, numbered, scanLines } from './terms.mjs';
 
-const KINDS = ['skills', 'agents', 'paths', 'budget'];
+const KINDS = ['skills', 'agents', 'paths', 'budget', 'terms'];
 const MODELS = new Set(['haiku', 'sonnet', 'opus', 'fable', 'inherit']);
 const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 // Home folders of placeholder or CI users are not personal.
@@ -32,8 +35,8 @@ const STAGED_MAX_BYTES = 64 * 1024 * 1024;
 
 export const commands = {
   lint: {
-    usage: '[skills|agents|paths|budget] [DIR...] [--staged] [--project DIR]',
-    about: 'lint skills, agents, personal paths, and the knowledge budgets; DIR replaces .claude/skills or .claude/agents',
+    usage: '[skills|agents|paths|budget|terms] [DIR...] [--staged] [--project DIR]',
+    about: 'lint skills, agents, personal paths, the knowledge budgets, and the banned terms; DIR replaces .claude/skills or .claude/agents',
     run(args) {
       const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { project: { type: 'string' }, staged: { type: 'boolean' } } });
       const [kind, ...dirs] = positionals;
@@ -50,6 +53,7 @@ export const commands = {
         agents: () => lintAgents(dirs.length ? dirs : [at('.claude/agents')], config.skills),
         paths: () => lintPaths(project.root, values.staged),
         budget: () => checkBudgets(project.root, buckets, config.knowledge.budgets),
+        terms: () => lintTerms(project, config, values.staged),
       };
       const results = (kind ? [kind] : KINDS).map((name) => [name, runs[name]()]);
       for (const [name, { problems, warnings = [], summary }] of results) {
@@ -131,6 +135,26 @@ export function lintPaths(root, staged = false) {
   }
   const counted = staged ? `${lists[0].length} staged` : `${lists[0].length} tracked and ${lists[1].length} untracked`;
   return { problems, summary: `no personal paths in ${counted} files` };
+}
+
+export function lintTerms(project, config, staged = false) {
+  const terms = loadTerms(project, config);
+  if (terms === null) return { problems: [], summary: 'off (config.json terms.file is null)' };
+  if (terms.errors.length) return { problems: terms.errors, summary: '' };
+  const args = staged ? ['diff', '--cached', '--name-only', '--diff-filter=ACMR', '-z', '--relative'] : ['ls-files', '-z'];
+  const { status, stdout } = runGit(args, project.root, { timeout: 0 });
+  if (status !== 0) return { problems: [`git ${args[0]} failed in ${project.root}`], summary: '' };
+  const problems = [];
+  const warnings = [];
+  let files = 0;
+  for (const file of stdout.split('\0').filter((name) => name && !BINARY.test(name))) {
+    // Paths are relative to the project, which may sit below the repository root: `:./` reads the index from there.
+    const text = staged ? stagedText(project.root, `./${file}`) : workingText(project.root, file);
+    if (text === null || text.includes('\0')) continue;
+    files += 1;
+    for (const hit of scanLines(numbered(text), file, terms.rules)) (hit.rule.severity === 'block' ? problems : warnings).push(formatHit(file, hit));
+  }
+  return { problems, warnings, summary: `no banned terms in ${files} ${staged ? 'staged' : 'tracked'} files (${terms.rules.length} rules)` };
 }
 
 function workingText(root, file) {

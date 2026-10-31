@@ -1,4 +1,14 @@
 {
   "version": 1,
-  "git": { "mainCheckout": { "guard": true } }
+  "git": { "mainCheckout": { "guard": true } },
+  "github": {
+    "requiredSections": ["Summary", "Tests run"],
+    "pullRequest": {
+      "sections": ["Summary", "Risk", "Tests run", "Deferred to issues"],
+      "issueKey": "NOTES-\\d+",
+      "deferrals": { "section": "Deferred to issues", "field": "defer_reason", "reasons": ["needs_owner_decision", "user_chose"], "neverValid": ["out of scope"] }
+    },
+    "reviewGate": { "enabled": true, "checklist": "docs/knowledge/engineering/testing.md" }
+  },
+  "terms": { "file": ".aidrian/terms.json" }
 }

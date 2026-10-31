@@ -6,14 +6,16 @@ How each host runs them: [Claude Code](providers/claude-code.md#hooks), [Codex](
 Every hook lets the action run when it cannot read its input, so a hook never breaks a session.
 A git call a hook makes is stopped after 2 seconds and counts as git not answering; the hook's later git calls then do not wait.
 A blocking hook exits 2 and tells the agent why on stderr.
-The Bash rules, the main-checkout rule, the agent gates, and the config guard also record each block: see [Recorded blocks](#recorded-blocks).
+The Bash rules, the main-checkout rule, the terms rule, the GitHub MCP hook, the agent gates, and the config guard also record each block:
+see [Recorded blocks](#recorded-blocks).
 
 | When | What runs | Host | Blocks |
 | --- | --- | --- | --- |
 | A session or subagent starts | The [start lines](#start-lines) | both | no |
 | Before any tool call | The [agent gates](#agent-gates), when the project sets any | both | yes |
 | Before a Bash command | The [Bash rules](#bash-rules) | both | yes |
-| Before a file edit | The [main-checkout rule](#main-checkout), when the project turns it on | both | yes |
+| Before a file edit | The [main-checkout rule](#main-checkout), when the project turns it on, then the [terms rule](#terms) | both | yes |
+| Before a GitHub MCP comment | The [review gate](config.md#review-gate), when the project turns it on | both | yes |
 | Before an Agent tool call | The project's [model and effort](config.md#models) for that agent | Claude Code | no |
 | After a Markdown write | The [line-length check](#markdown-line-length) | Claude Code | feedback |
 | Before compaction | A checklist of what the summary must keep | both | no |
@@ -41,6 +43,9 @@ At the start of every session and subagent, the hook prints:
 | Main-checkout rule | Off unless config.json sets `"git": { "mainCheckout": { "guard": true } }` |
 | Markdown line length | `"docs": { "wrapLimit": 0 }` |
 | Pull request body sections | `"github": { "requiredSections": [] }`; the footer and `--fill` checks stay |
+| Pull request contract | Off unless config.json sets `github.pullRequest`, but for `"sharedTempBodyFile": false` |
+| Review gate | Off unless config.json sets `"github": { "reviewGate": { "enabled": true } }` |
+| Terms rule | Off unless config.json sets `"terms": { "file": "…" }` |
 | Session-length reminder | `"session": { "handoff": "off" }` |
 | Dispatch log rows | `"telemetry": { "enabled": false }`, in config.json or `.aidrian.local.json`; the delivery check still runs |
 | `hook_deny` rows alone | `"telemetry": { "hookDenies": false }`; the rules still block |
@@ -61,7 +66,8 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Kill by name | Killing processes by name | `AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME=1` |
 | Command-line listing | Listing the command lines of other processes | `AIDRIAN_ALLOW_PROCESS_ARGS_LISTING=1` |
 | Counting grep in `&&` | A `grep -c` whose exit status an `&&` chain reads | `AIDRIAN_ALLOW_GREP_EXIT_CHAIN=1` |
-| Pull request body | A pull request body without the required sections, or with the footer | `AIDRIAN_ALLOW_PR_BODY=1` |
+| Pull request body | A pull request body without the required sections, or with the footer; the [contract](config.md#pull-request-contract) | `AIDRIAN_ALLOW_PR_BODY=1` |
+| Review gate, when turned on | Asking the review bot before a review is on record ([config.md](config.md#review-gate)) | `AIDRIAN_ALLOW_UNREVIEWED_REQUEST=1` |
 | Main checkout, when turned on | A shell write to a tracked file in the main checkout | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
 
 What each rule matches:
@@ -74,6 +80,10 @@ What each rule matches:
 - Counting grep in `&&`: such as `grep -c x log && npm test`.
 - Pull request body: `gh pr create` or `gh pr edit` with a body that lacks a config.json `github.requiredSections` heading,
   or that carries the "Generated with [Claude Code]" footer; and `gh pr create --fill`.
+  With `github.pullRequest` set, also the title, the closed list of sections, the deferral and residual items,
+  a body file in a shared temp folder, and a body identical to another open pull request's.
+- Review gate: `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose body
+  asks `@codex review`; `gh pr create --reviewer` and `gh pr edit --add-reviewer` naming `github.reviewer`.
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
   `touch`, `mkdir`, and `rsync` (sources too under `--remove-source-files`).
 
@@ -99,7 +109,7 @@ in `plugins/aidrian/lib/hook-deny.mjs`, before the hook exits 2:
   an agent that keeps trying was not shown the allowed way. The count does not depend on telemetry.
 
 The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `process-kill` (both the kill and the listing rule),
-`grep-exit-chain`, `pr-body`, `main-checkout`, `agent-gates`, and `config-guard`.
+`grep-exit-chain`, `pr-body`, `review-gate` (the Bash rule and the MCP hook), `main-checkout`, `terms`, `agent-gates`, and `config-guard`.
 The hooks load the recorder only when they block, so a call they let run costs no more than before.
 When the recorder fails, the call is still blocked.
 
@@ -178,6 +188,15 @@ Each host tells the hook who is calling in its own way.
 - Codex: [Agent gates](providers/codex.md#agent-gates).
   Codex's [hook documentation](https://developers.openai.com/codex/hooks) lists no agent fields for a tool call,
   but the input schema built into Codex 0.165.0 has `agent_type` and `agent_id` as optional fields.
+
+## Terms
+
+When config.json `terms.file` names a [terms file](config.md#terms), the file-write hook checks the lines an Edit, Write,
+or `apply_patch` adds against its rules: an Edit's new text without the lines it replaces, a Write's content without the
+lines the file already has, and a patch's `+` lines.
+A `block` hit refuses the write, naming each term and its replacement, and is [recorded](#recorded-blocks) as `terms`.
+A `warn` hit lets the write run and gives the agent the same lines as additional context; Claude Code shows it to the agent.
+The rule has no override: a term that is right in some file belongs in its rule's `exclude`.
 
 ## Markdown line length
 

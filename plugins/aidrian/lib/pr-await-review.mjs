@@ -13,12 +13,15 @@
 //      recording the head it asks about, unless a 👀 already acknowledges a trigger for this head.
 //   5. Poll until a signal covers the current head or the timeout ends. Head is re-read on every poll; with
 //      --request the bot is asked once per new head.
+//   0. With --request and config.json `github.reviewGate` on: post nothing and end with `review_required` until a review
+//      is on record (lib/review-gate.mjs), and put the record's marker in the request.
 //   6. With --request: at --max-rounds bot reviews (config.json `github.maxReviewRounds`) post nothing and end with
 //      `round_limit`; a long run of rounds is a design problem more review will not fix. A raised limit is recorded
 //      in the request comment, and later runs keep the highest one.
 //
 // stdout: one JSON object. Exit 0 received | already_present | no_reviewer, 2 timed_out (re-run once without --request
-// when `retry_recommended` is true), 3 blocked_quota, 4 round_limit, 1 error. Read-only except the --request comment and,
+// when `retry_recommended` is true), 3 blocked_quota, 4 round_limit, 5 review_required, 1 error. Read-only except the
+// --request comment and,
 // at round_limit, a lesson in the local lesson inbox (lib/lesson-signals.mjs). With no review bot (config.json
 // `github.reviewer` null or "none", or `--reviewer none`) it ends at once as `no_reviewer`: it runs no gh, posts nothing,
 // and waits for nothing.
@@ -71,10 +74,11 @@ export const codexRounds = (reviews, reviewer) => (reviews ?? []).filter((r) => 
 // The pattern accepts short hex so fixtures stay readable; this command always writes the full SHA.
 export const TRIGGER_HEAD_PATTERN = /<!--\s*pr-await-review:\s*head=([0-9a-f]{3,40})\s*-->/i;
 export const triggerHeadSha = (body) => (typeof body === 'string' ? body.match(TRIGGER_HEAD_PATTERN)?.[1] ?? null : null);
-export const requestCommentBody = (headSha, maxRounds = DEFAULTS.maxRounds) => {
+export const requestCommentBody = (headSha, maxRounds = DEFAULTS.maxRounds, reviewMarker = null) => {
   const request = `${REQUEST_COMMENT}\n\n${REQUEST_INSTRUCTIONS}`;
   const marked = headSha ? `${request}\n\n<!-- pr-await-review: head=${headSha} -->` : request;
-  return maxRounds > DEFAULTS.maxRounds ? `${marked}\n<!-- pr-await-review: max-rounds=${maxRounds} -->` : marked;
+  const rounds = maxRounds > DEFAULTS.maxRounds ? `${marked}\n<!-- pr-await-review: max-rounds=${maxRounds} -->` : marked;
+  return reviewMarker ? `${rounds}\n${reviewMarker}` : rounds;
 };
 
 // The bot's out-of-credits reply: an ordinary comment, by the same author, that names the condition.
@@ -92,6 +96,7 @@ export const exitCodeFor = (status) => {
   if (status === 'timed_out') return 2;
   if (status === 'blocked_quota') return 3;
   if (status === 'round_limit') return 4;
+  if (status === 'review_required') return 5;
   return 0;
 };
 
@@ -279,13 +284,16 @@ const snapshot = (gh, repo, n) => {
   return { pr, reviews, reviewComments, issueComments, reactions, headCommittedAt: headCommit?.commit?.committer?.date ?? null };
 };
 
-// The whole wait. `gh` (api, currentPr, repo), `sleep`, and `now` are the only side-effect seams.
-export const awaitReview = async (opts, { gh = defaultGh, sleep = (s) => new Promise((r) => setTimeout(r, s * 1000)), now = () => Date.now() } = {}) => {
+// The whole wait. `gh` (api, currentPr, repo), `sleep`, and `now` are the only side-effect seams. `gate(repo, n)`, with
+// --request, returns { reason } to post nothing, or { marker } to carry in the request (lib/review-gate.mjs).
+export const awaitReview = async (opts, { gh = defaultGh, sleep = (s) => new Promise((r) => setTimeout(r, s * 1000)), now = () => Date.now(), gate = null } = {}) => {
   if (opts.reviewer === null) {
     return { status: 'no_reviewer', pr: opts.pr === null ? null : Number(opts.pr), repo: opts.repo, reviewer: null, requested: false, signal: null, waited_sec: 0 };
   }
   const repo = opts.repo ?? gh.repo();
   const n = opts.pr ?? String(gh.currentPr().number);
+  const review = opts.request && gate ? gate(repo, n) : {};
+  if (review.reason) return { status: 'review_required', pr: Number(n), repo, reviewer: opts.reviewer, requested: false, reason: review.reason, signal: null, waited_sec: 0 };
   const started = now();
   let s = snapshot(gh, repo, n);
   let head = s.pr.head?.sha ?? null;
@@ -311,7 +319,7 @@ export const awaitReview = async (opts, { gh = defaultGh, sleep = (s) => new Pro
       maxRounds = Math.max(maxRounds, recordedMaxRounds(s.issueComments) ?? 0);
       if (codexRounds(s.reviews, opts.reviewer) >= maxRounds) return 'round_limit';
       const beforePost = flooredInstant(now());
-      const posted = gh.api(`repos/${repo}/issues/${n}/comments`, { method: 'POST', fields: { body: requestCommentBody(head, maxRounds) } });
+      const posted = gh.api(`repos/${repo}/issues/${n}/comments`, { method: 'POST', fields: { body: requestCommentBody(head, maxRounds, review.marker ?? null) } });
       requested = true;
       requestedForHead = head;
       since = postedTriggerInstant(posted) ?? beforePost;
@@ -361,11 +369,23 @@ export const awaitReview = async (opts, { gh = defaultGh, sleep = (s) => new Pro
   return result('timed_out');
 };
 
+// The review gate for this project: the request passes only with a review on record, and carries its marker.
+async function reviewGate(project, config) {
+  const { attestation, judgeRequests, originRepo } = await import('./review-gate.mjs');
+  const origin = originRepo(project);
+  return (repo, n) => {
+    const reason = judgeRequests([{ pr: Number(n), repo, markers: [] }], { project, config, origin });
+    return reason ? { reason } : { marker: attestation(project, Number(n), repo, origin) };
+  };
+}
+
 // The CLI body: prints the result JSON and returns its exit code; a usage or gh error prints one line and returns 1.
 // At round_limit, `project` gets a lesson; `deps` replaces awaitReview's gh, clock, and sleep in tests.
 export async function runAwaitReview(args, config, project = null, deps = {}) {
   try {
-    const result = await awaitReview(parseArgs(args, { reviewer: config.github.reviewer, maxRounds: config.github.maxReviewRounds }), deps);
+    const gate = project && config.github.reviewGate.enabled ? await reviewGate(project, config) : null;
+    const result = await awaitReview(parseArgs(args, { reviewer: config.github.reviewer, maxRounds: config.github.maxReviewRounds }), { gate, ...deps });
+    if (result.status === 'review_required') console.error(result.reason);
     if (result.status === 'round_limit' && project) {
       const { recordSignal, roundLimitSignal } = await import('./lesson-signals.mjs');
       const where = { session: process.env.CLAUDE_CODE_SESSION_ID || null, agent: process.env.CLAUDE_CODE_AGENT || null };

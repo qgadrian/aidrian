@@ -14,10 +14,21 @@ const EXAMPLE = path.join(ROOT, 'examples/consumer');
 const REPOSITORY = JSON.parse(readFileSync(path.join(ROOT, 'plugins/aidrian/plugin.json'), 'utf8')).repository;
 const MIGRATING = `see ${REPOSITORY}/blob/main/docs/project-folder.md#migrating`;
 
-test('the example consumer config is valid, turns the main-checkout guard on, and gets every other default', () => {
+test('the example consumer config is valid, turns its rules on, and gets every other default', () => {
   const { config, errors, current } = loadConfig(findProject(EXAMPLE));
   assert.deepEqual([errors, current], [[], true]);
-  assert.deepEqual(config, { ...DEFAULTS, git: { ...DEFAULTS.git, mainCheckout: { ...DEFAULTS.git.mainCheckout, guard: true } } });
+  const pullRequest = {
+    ...DEFAULTS.github.pullRequest,
+    sections: ['Summary', 'Risk', 'Tests run', 'Deferred to issues'],
+    issueKey: 'NOTES-\\d+',
+    deferrals: { section: 'Deferred to issues', field: 'defer_reason', reasons: ['needs_owner_decision', 'user_chose'], neverValid: ['out of scope'] },
+  };
+  assert.deepEqual(config, {
+    ...DEFAULTS,
+    git: { ...DEFAULTS.git, mainCheckout: { ...DEFAULTS.git.mainCheckout, guard: true } },
+    github: { ...DEFAULTS.github, pullRequest, reviewGate: { enabled: true, checklist: 'docs/knowledge/engineering/testing.md' } },
+    terms: { file: '.aidrian/terms.json' },
+  });
   assert.equal(DEFAULTS.git.mainCheckout.guard, false, 'a project opts in; a fresh one is never blocked');
 });
 

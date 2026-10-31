@@ -123,6 +123,8 @@ test('only a trailer block git would parse counts', () => {
   assert.equal(carriedTrailers(['fix: x\n\nAgent=main'], []).has('Agent: main'), false, '= is for --trailer only');
   assert.equal(carriedTrailers(['fix: x\n\nSome prose\nAgent: main'], []).has('Agent: main'), false, 'prose in the block');
   assert.equal(carriedTrailers(['fix: x\n\nAgent: main\nCo-Authored-By: A <a@b>\n  folded'], []).has('Agent: main'), true);
+  assert.equal(carriedTrailers(['fix: x\n\nAgent: main\n other-agent'], []).has('Agent: main'), false, 'git unfolds the value');
+  assert.equal(carriedTrailers(['fix: x\n\nAgent: main\n other-agent'], []).has('Agent: main other-agent'), true);
 });
 
 test('a commit or pull request inside sh -c is read', (t) => {
@@ -140,6 +142,9 @@ test('the message is read after the cleanup git applies', (t) => {
   writeFileSync(path.join(dir, 'comment.txt'), 'fix: x\n\nAgent: main\n# a comment\n');
   assert.equal(run('git commit --cleanup=strip -F comment.txt'), null, 'strip drops the comment');
   assert.match(run('git commit -F comment.txt') ?? '', /Blocked/, 'whitespace keeps the comment');
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  execFileSync('git', ['config', 'commit.cleanup', 'scissors'], { cwd: dir });
+  assert.match(run('git commit --edit -F cut.txt') ?? '', /Blocked/, 'the repository cleanup');
 });
 
 test('help and dry-run commits pass', (t) => {

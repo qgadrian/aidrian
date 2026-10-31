@@ -11,6 +11,7 @@ import path from 'node:path';
 import { branchCommits, carriedTrailers, currentAuthor, expectedTrailers, prAgents, prLines, prMissing } from '../attribution.mjs';
 import { loadConfig } from '../config.mjs';
 import { readLog } from '../dispatch-log.mjs';
+import { runGit } from '../git.mjs';
 import { findProject } from '../project.mjs';
 import { commandLines, inlineShellCommand, isLongOption, lexCommand, readGit, readInvocation } from '../shell-lex.mjs';
 import { readText } from '../transcript.mjs';
@@ -221,7 +222,10 @@ function commitMessage(rest, dir) {
   read.dynamic = kept.includes(DYNAMIC);
   read.at = kept.indexOf(DYNAMIC);
   read.messages = kept.filter((each) => each !== DYNAMIC);
-  read.cleanup = (text) => cleanMessage(text, cleanup, edit);
+  // Without --cleanup, git takes the repository's commit.cleanup, read in the folder the commit runs in.
+  const configured = cleanup === null && dir ? runGit(['config', 'commit.cleanup'], dir) : null;
+  const mode = cleanup ?? (configured?.status === 0 ? configured.stdout.trim() : null);
+  read.cleanup = (text) => cleanMessage(text, mode, edit);
   return read;
 }
 

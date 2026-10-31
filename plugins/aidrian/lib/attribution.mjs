@@ -85,7 +85,13 @@ export function carriedTrailers(messages, trailers) {
   const paragraphs = messages.join('\n\n').replace(/\r\n/gu, '\n').split(/\n[ \t]*\n/u).map((part) => part.trim()).filter(Boolean);
   const block = paragraphs.length > 1 ? paragraphs.at(-1).split('\n') : [];
   const isBlock = block.length > 0 && block.every((line) => /^[A-Za-z0-9-]+:\s*\S/u.test(line) || /^\s+\S/u.test(line));
-  const fromMessage = isBlock ? block.filter((line) => !/^\s/u.test(line)).map((line) => line.replace(/^([A-Za-z0-9-]+):\s*/u, '$1: ').trim()) : [];
+  // An indented line continues the trailer above it; git unfolds it into that value with one space.
+  const unfolded = [];
+  for (const line of isBlock ? block : []) {
+    if (/^\s/u.test(line)) unfolded[unfolded.length - 1] += ` ${line.trim()}`;
+    else unfolded.push(line.replace(/^([A-Za-z0-9-]+):\s*/u, '$1: ').trim());
+  }
+  const fromMessage = unfolded;
   const fromOptions = trailers.map((line) => line.trim().replace(/^([A-Za-z0-9-]+)\s*[:=]\s*/u, '$1: '));
   return new Set([...fromOptions, ...fromMessage]);
 }

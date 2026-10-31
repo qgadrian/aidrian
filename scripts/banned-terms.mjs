@@ -13,6 +13,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -43,11 +44,14 @@ export function bodyFiles(command) {
 }
 
 // The deny reason for a Bash command, or null. Only commands whose text GitHub or git keeps are read.
-export function judgeCommand(command, { cwd = process.cwd(), patterns = bannedPatterns() } = {}) {
+// Paths are left out of the text: one is read, never published, and a home or temp path names the user.
+// A body file's contents are still read.
+export function judgeCommand(command, { cwd = process.cwd(), patterns = bannedPatterns(), home = homedir() } = {}) {
   if (!/\bgh\s+(?:-R\s+\S+\s+)?(?:pr|issue)\b|\bgit\b[^\n;&|]*\bcommit\b/u.test(command)) return null;
   const cdTo = /^\s*cd\s+([^\s;&|$`'"~]+)\s*(?:&&|;)/u.exec(command)?.[1];
   const base = cdTo ? path.resolve(cwd, cdTo) : cwd;
-  const found = new Set(bannedHits(command, patterns));
+  const text = (home ? command.replaceAll(home, '~') : command).replace(/(^|[\s='"])(?:~|\.{0,2})?\/[^\s'"]*/gu, '$1<path>');
+  const found = new Set(bannedHits(text, patterns));
   for (const file of bodyFiles(command)) {
     try {
       for (const hit of bannedHits(readFileSync(path.resolve(base, file), 'utf8'), patterns)) found.add(`${hit} in ${file}`);

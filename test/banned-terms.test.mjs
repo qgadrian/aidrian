@@ -32,6 +32,9 @@ test('a gh or git commit command is judged by its text and its body file; other 
   assert.match(judge('git -C x commit -m "secretco fix"'), /secretco/);
   assert.equal(judge('gh pr create --title fix --body-file good.md'), null);
   assert.equal(judge('grep -r ZQ-1 .'), null, 'a search is not published');
+  assert.equal(judgeCommand('gh pr create --body-file /srv/secretco/b.md', { cwd: dir, patterns, home: '/srv/secretco' }), null, 'the home path');
+  assert.equal(judge('gh pr create --body-file /tmp/x-secretco-y/good.md'), null, 'any path');
+  assert.match(judge('gh pr create --title "secretco" --body-file /tmp/x/good.md'), /secretco/, 'the title still counts');
 });
 
 test('the commit-msg hook refuses a private word and ignores comment lines', (t) => {

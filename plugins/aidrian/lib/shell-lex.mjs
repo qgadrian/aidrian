@@ -455,6 +455,8 @@ export function readInvocation(segment, depth = 0) {
     // `time` is a reserved word only when bare; /usr/bin/time is another program.
     if (wrapper === 'time' && spelled !== wrapper) break;
     index += 1;
+    // sudo and doas reset the environment by default; read it as emptied, so a variable set outside them does not count.
+    if (wrapper === 'sudo' || wrapper === 'doas') environment.push({ clear: true });
     if (wrapper === 'rtk') {
       if (usable[index]?.text === 'proxy') index += 1;
       continue;

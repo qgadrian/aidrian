@@ -111,6 +111,9 @@ export function check(command, { cwd = process.cwd(), env = process.env } = {}) 
 // every folder the call may act on, after a wrapper's `env -C`, git's own `-C`, and `--work-tree` or `--git-dir`.
 // Substitutions that run are read too; a call after a `cd` is skipped, as its folder is not certain.
 //
+// Like every Bash rule, it reads shell text, so it guards against accidents, not intent. Accepted residuals: a bracket
+// glob that names a branch or `--all` (`topi[c]`), shell arguments after `bash -c` shaped like assignments, and quoted
+// literal braces read as an expansion, which blocks a safe call in the main checkout.
 // The main checkout is shared, so this reads what is plainly safe and blocks the rest, every other spelling included:
 //   git add      only named files (no option but -v, -f, -N, -p, and no folder, glob, or pathspec magic)
 //   git commit   any options but -a and --all, with no `--no-` form and no unknown short cluster holding `a`

@@ -141,6 +141,7 @@ through, whatever the spelling:
 
 The rule follows `env -C`, `git -C`, `--work-tree`, and `--git-dir`, so a call from a worktree into the main checkout
 is blocked and one into a worktree passes. Anything blocked here belongs in a task worktree.
+Like the Bash rules, it reads the command's text: it stops accidents, not someone set on getting around it.
 
 ## Agent gates
 

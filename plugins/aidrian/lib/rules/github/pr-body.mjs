@@ -87,8 +87,9 @@ function readPrCall(segment) {
       const explicit = split && !readShortOptions(`-${split[1]}`, SHORT_VALUES).value ? split : null;
       const { options, value } = readShortOptions(explicit ? `-${explicit[1]}` : text, SHORT_VALUES);
       const last = options.at(-1);
-      const on = (option) => options.includes(option) && (option !== last || !explicit || isTrue(explicit[2]));
-      if (on('-f')) call.fill = true;
+      const on = (option) => options.includes(option) && (option !== last || !explicit || isTrue(explicit[2], dynamic));
+      // --fill is refused unless it is statically off; --web and --help exempt only when statically on.
+      if (options.includes('-f') && !(last === '-f' && explicit && isFalse(explicit[2], dynamic))) call.fill = true;
       if (options.includes('-w')) call.web = on('-w');
       if (options.includes('-h')) call.help = on('-h');
       if (!value) continue;
@@ -96,8 +97,8 @@ function readPrCall(segment) {
     }
     const value = () => (inline !== null ? { text: inline, dynamic } : args[++i] ?? null);
     if (FILL.has(flag)) call.fill = true;
-    else if (flag === '--web') call.web = isTrue(inline);
-    else if (flag === '--help') call.help = isTrue(inline);
+    else if (flag === '--web') call.web = isTrue(inline, dynamic);
+    else if (flag === '--help') call.help = isTrue(inline, dynamic);
     else if (flag === '--body' || flag === '-b') [call.body, call.bodyFile] = [value(), null];
     else if (flag === '--body-file' || flag === '-F') [call.bodyFile, call.body] = [value(), null];
     else if (flag === '--title' || flag === '-t') call.title = value();
@@ -108,8 +109,10 @@ function readPrCall(segment) {
   return call;
 }
 
-// A boolean long option's value as gh (pflag) reads it: bare is true, `=false` is false.
-const isTrue = (inline) => inline === null || !/^(?:false|0|f|FALSE|False|F)$/u.test(inline);
+// A boolean option's value as gh (pflag) reads it: bare or a pflag true word is on, a false word is off. A value the
+// rule cannot read is neither, so it grants no exemption.
+const isTrue = (inline, dynamic = false) => inline === null || (!dynamic && /^(?:true|1|t|TRUE|True|T)$/u.test(inline));
+const isFalse = (inline, dynamic = false) => inline !== null && !dynamic && /^(?:false|0|f|FALSE|False|F)$/u.test(inline);
 
 // The long options of `gh pr create` and `gh pr edit` that take a value, so their value is never read as the target.
 const LONG_VALUES = new Set([

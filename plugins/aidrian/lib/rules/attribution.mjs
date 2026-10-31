@@ -13,7 +13,7 @@ import { loadConfig } from '../config.mjs';
 import { readLog } from '../dispatch-log.mjs';
 import { runGit } from '../git.mjs';
 import { findProject } from '../project.mjs';
-import { isLongOption, readGit, walkCommands } from '../shell-lex.mjs';
+import { isLongOption, lexCommand, readGit, walkCommands } from '../shell-lex.mjs';
 import { readText } from '../transcript.mjs';
 import { readBody, readPrCall, readPrCalls } from './github/pr-body.mjs';
 
@@ -35,7 +35,9 @@ function commitTrailers(message, trailers, dir, config = [], cleanup = (text) =>
     // As git commits: the --trailer values go in first, the cleanup runs over the whole message, and the trailers are
     // read from what is left. `--no-divider`: a `---` line in a commit message is text, not the start of a patch.
     const git = (args, input) => runGit([...config, 'interpret-trailers', '--no-divider', ...args], dir, { input });
-    const full = git(trailers.flatMap((trailer) => ['--trailer', trailer]), message ?? '');
+    // git's prepared message ends in a newline; without it, a --trailer would join the subject's paragraph.
+    const text = message === null || message.endsWith('\n') ? message ?? '' : `${message}\n`;
+    const full = git(trailers.flatMap((trailer) => ['--trailer', trailer]), text);
     const parsed = full.status === 0 ? git(['--only-trailers', '--unfold'], cleanup(full.stdout)) : null;
     if (parsed?.status === 0) {
       const lines = parsed.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
@@ -134,10 +136,13 @@ function readCalls(command, cwd) {
   // The n-th commit whose message is a command substitution takes its line's n-th message heredoc, and only when the
   // counts match: one commit's heredoc never stands in for another's. A message part the rule cannot read may end the
   // message, past any trailer block, so then only --trailer counts.
-  for (const { heredocs, pending } of lines.values()) {
+  // A line that runs more than once, as an `sh -c` body run twice does, pairs each run with the line's heredocs anew.
+  for (const [line, { heredocs, pending }] of lines) {
+    const perRun = lexCommand(line).map(readGit).filter((git) => git?.subcommand === 'commit' && commitMessage(git.rest, null).holdsHeredoc).length;
+    const paired = perRun > 0 && perRun === heredocs.length && pending.length % perRun === 0;
     pending.forEach((read, i) => {
       if (!read.dynamic) return;
-      if (heredocs.length === pending.length) read.messages.splice(read.at, 0, heredocs[i]);
+      if (paired) read.messages.splice(read.at, 0, heredocs[i % perRun]);
       else read.messages = [];
     });
   }

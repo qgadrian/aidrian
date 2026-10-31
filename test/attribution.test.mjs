@@ -100,6 +100,9 @@ test('a heredoc counts only for the commit or pull request that holds it', (t) =
   const signed = `git commit -m "$(cat <<'EOF'\nfix: y\n\nAgent: main\nEOF\n)"`;
   assert.equal(run(signed), null);
   assert.match(run(`git commit -m "$(printf 'fix: unsigned')" && ${signed}`) ?? '', /Blocked/);
+  const inline = `bash -c "git commit -m \\"\\$(cat <<'EOF'\nfix: y\n\nAgent: main\nEOF\n)\\""`;
+  assert.equal(run(inline), null);
+  assert.equal(run(`${inline} && ${inline}`), null, 'the same body run twice');
   assert.match(run(`git commit -m "$(printf unsigned <<'EOF'\nfix: y\n\nAgent: main\nEOF\n)"`) ?? '', /Blocked/, 'printf prints its own text');
   assert.match(run(`gh pr create -t x --body "$(printf x <<'EOF'\nAuthored-with: Claude Code\nEOF\n)"`) ?? '', /Blocked/);
   const pr = (lines) => `gh pr create --title x --body "$(cat <<'EOF'\n## Summary\nx\n${lines}EOF\n)"`;

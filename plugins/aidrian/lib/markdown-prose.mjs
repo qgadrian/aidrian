@@ -13,7 +13,7 @@ const blank = (match) => ' '.repeat(match.length);
 
 // One line with its quoted spans blanked, and the quote still open at its end. `open` is the quote mark open before it.
 export function maskQuoted(line, open = null) {
-  const plain = line.replace(/https?:\/\/\S+/gu, blank).replace(/(`+)[\s\S]*?\1/gu, blank);
+  const plain = line.replace(/https?:\/\/[^\s"“”]+/gu, blank).replace(/(`+)[\s\S]*?\1/gu, blank);
   let out = '';
   for (const char of plain) {
     if (open !== null) {

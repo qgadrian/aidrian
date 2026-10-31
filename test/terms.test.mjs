@@ -296,3 +296,12 @@ test('a prose rule masks a quotation that wraps over lines, straight or curly, u
   assert.deepEqual(hits('A “curly\nyou quote” and you.'), [2]);
   assert.deepEqual(hits('An unclosed "quote\n\nyou are back in prose.'), [3], 'a blank line ends the paragraph');
 });
+
+test('a quoted URL keeps its closing quote, and code names keep letters of any script', () => {
+  const hits = (text) => proseLines(text).map((line, i) => (line !== null && termPattern('you', { compound: true }).test(line) ? i + 1 : null)).filter(Boolean);
+  assert.deepEqual(hits('See "https://example.com" and you should continue.\nYou must wait.'), [1, 2]);
+  assert.deepEqual(hits('See “https://example.com” and you go.'), [1]);
+  assert.deepEqual(identifiers('const caféparty = partyé;'), ['const', 'caféparty', 'partyé']);
+  assert.equal(codeName('caféParty'), 'café party');
+  assert.notEqual(codeName('partyé'), 'party');
+});

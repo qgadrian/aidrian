@@ -118,6 +118,10 @@ test('bashTargets finds the certain write targets, resolved against cwd, and not
   assert.deepEqual(at("ruby -rjson -i -pe 'sub(/a/, \"b\")' src/a.ts"), ['src/a.ts']);
   assert.deepEqual(at("ruby -ne 'print' src/a.ts"), []);
   assert.deepEqual(at("perl -lpi -e 's/a/b/' src/a.ts"), ['src/a.ts'], '-l takes only digits');
+  assert.deepEqual(at("ruby -Cnested -pi -e 'x' file"), ['nested/file'], 'ruby -C moves the files');
+  assert.deepEqual(at("ruby -C nested -pi -e 'x' file"), ['nested/file']);
+  assert.deepEqual(at('perl -xsub -i script.pl file'), ['sub/file'], 'perl -x with a folder');
+  assert.deepEqual(at("ruby -C nested -pi -e 'x' /abs/file"), ['../abs/file'], 'an absolute file stays');
   assert.deepEqual(at("perl -0pi -e 's/a/b/' src/a.ts"), ['src/a.ts'], '-0 takes only digits');
   assert.deepEqual(at("perl -0777pi -e 's/a/b/' src/a.ts"), ['src/a.ts']);
   assert.deepEqual(at("perl -l012pi -e 's/a/b/' src/a.ts"), ['src/a.ts']);

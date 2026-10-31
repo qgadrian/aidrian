@@ -43,7 +43,7 @@ const WRITERS = new Map([
   // Options that take the rest of their word or the next one (perlrun, ruby -h). The rest-only ones are in REST_VALUES:
   // listed here, they would take the next word, which can be the file written.
   ['perl', new Set(['-e', '-E', '-I'])],
-  ['ruby', new Set(['-e', '-I'])],
+  ['ruby', new Set(['-e', '-I', '-C'])],
   // A value option whose name extends a switch (`--partial-dir`, `--backup-dir`) is left out, so the switch never
   // swallows an operand. An unlisted option's value reads as one more path: blocked by mistake, never missed.
   [
@@ -63,12 +63,14 @@ const WRITERS = new Map([
 const REST_VALUES = new Map([
   ['sed', new Set(['-i', '-I'])],
   ['perl', new Set(['-i', '-M', '-m', '-C', '-x', '-d', '-D'])],
-  ['ruby', new Set(['-i', '-r', '-C', '-E', '-F', '-W', '-x', '-K', '-T'])],
+  ['ruby', new Set(['-i', '-r', '-E', '-F', '-W', '-x', '-K', '-T'])],
 ]);
 // Options whose value is only the digits after them, so the switches after the digits still count: `-0777pi`, `-lpi`.
 const DIGIT_VALUES = new Map([['perl', /([0l])(?:x[0-9a-f]+|[0-7]+)?/giu], ['ruby', /(0)(?:[0-7]+)?/gu]]);
 // The option that gives a script on the command line, so every operand is a file; without it the first is the script.
 const SCRIPT_OPTIONS = new Map([['perl', ['-e', '-E']], ['ruby', ['-e']]]);
+// The options that change the folder the interpreter runs in.
+const CHANGES_FOLDER = new Map([['perl', ['-x']], ['ruby', ['-C', '-x']]]);
 // git subcommands whose every path is written: git mv removes its sources, git rm its paths.
 const GIT_WRITERS = new Map([
   ['mv', new Set()],
@@ -200,6 +202,7 @@ function gitWritten(segment, place, restores) {
 function written(program, args, valueFlags = WRITERS.get(program)) {
   const flags = [];
   const operands = [];
+  let folder = null;
   let ended = false;
   for (let i = 0; i < args.length; i += 1) {
     const { text } = args[i];
@@ -212,6 +215,7 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
       const cluster = DIGIT_VALUES.has(program) ? withoutDigitValues(text, program) : text;
       const { options, value } = readShortOptions(cluster, valueFlags, REST_VALUES.get(program));
       flags.push(...options);
+      if (CHANGES_FOLDER.get(program)?.includes(value?.option)) folder = value.attached === null ? args[i + 1] ?? null : { text: value.attached, dynamic: args[i].dynamic };
       if (value?.attached === null) i += 1;
     } else if (text !== '') {
       operands.push(args[i]); // an empty operand is BSD sed's `-i ''` suffix
@@ -233,7 +237,10 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
   if (SCRIPT_OPTIONS.has(program)) {
     // perl -i and ruby -i edit their files in place; without -i they only read them.
     if (!flags.includes('-i')) return [];
-    return flags.some((flag) => SCRIPT_OPTIONS.get(program).includes(flag)) ? operands : operands.slice(1);
+    const files = flags.some((flag) => SCRIPT_OPTIONS.get(program).includes(flag)) ? operands : operands.slice(1);
+    // ruby -C and -x, and perl -x, run in the folder they name: a relative file is read from there.
+    if (folder === null || folder.text === '') return files;
+    return files.map((token) => (path.isAbsolute(token.text) ? token : { ...token, text: path.join(folder.text, token.text), dynamic: token.dynamic || folder.dynamic }));
   }
   if (program !== 'sed') return operands;
   // GNU sed takes a prefix of a long option: `--i` is `--in-place`, `--e` is `--expression`, `--fi` is `--file`.

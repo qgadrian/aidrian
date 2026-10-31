@@ -43,7 +43,13 @@ const WRITERS = new Map([
   // Options that take the rest of their word or the next one (perlrun, ruby -h). The rest-only ones are in REST_VALUES:
   // listed here, they would take the next word, which can be the file written.
   ['perl', new Set(['-e', '-E', '-I'])],
-  ['ruby', new Set(['-e', '-I', '-C', '-r', '-E', '--encoding', '--external-encoding', '--internal-encoding'])],
+  [
+    'ruby',
+    new Set([
+      '-e', '-I', '-C', '-r', '-E', '--encoding', '--external-encoding', '--internal-encoding', '--enable', '--disable',
+      '--backtrace-limit', '--parser', '--crash-report', '--dump',
+    ]),
+  ],
   // A value option whose name extends a switch (`--partial-dir`, `--backup-dir`) is left out, so the switch never
   // swallows an operand. An unlisted option's value reads as one more path: blocked by mistake, never missed.
   [
@@ -69,7 +75,7 @@ const REST_VALUES = new Map([
 // `-dpi`, `-W0pi`, `-Kupi`. Each pattern matches the option letter and its value.
 const SHORT_VALUES = new Map([
   ['perl', /0(?:x[0-9a-f]+|[0-7]+)?|l[0-7]*|dt?(?::[\w:=,]+)?/giu],
-  ['ruby', /0[0-7]*|W(?:[0-2]|:\w+)?|K[a-z]?|T[0-9]*/gu],
+  ['ruby', /0[0-7]*|W(?:[0-2]|:\w+)?|K[a-zA-Z]?|T[0-9]*/gu],
 ]);
 // The option that gives a script on the command line, so every operand is a file; without it the first is the script.
 const SCRIPT_OPTIONS = new Map([['perl', ['-e', '-E']], ['ruby', ['-e']]]);

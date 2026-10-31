@@ -1,32 +1,28 @@
 // The prose of a Markdown file: what the doc says in its own voice, for the terms rule's `prose` rules (lib/terms.mjs).
 // Text the doc quotes is not its voice, so it is left out: fenced code, blockquote lines, lines with `<!-- lint-skip -->`,
-// and, on the lines read, inline code, URLs, and "double-quoted" or “curly-quoted” spans, each of which may wrap over lines
-// until a blank line or a code block ends the paragraph. Blanked spans keep their length, so columns stay where they were.
+// and, within a paragraph, code spans, URLs, and "double-quoted" or “curly-quoted” spans, each of which may wrap over
+// lines. A code span needs a closing run of the same length, and an escaped backtick opens none, as in Markdown.
+// Blanked spans keep their length and line breaks, so lines and columns stay where they were.
 
 import { fencedLines } from './markdown-sections.mjs';
 
 export const SKIP_MARKER = '<!-- lint-skip -->';
 const BLOCKQUOTE = /^\s*>/u;
+const CODE_SPAN = /(?<![`\\])(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)/gu;
+const URL = /https?:\/\/[^\s"“”`]+/gu;
 const CLOSES = { '"': '"', '“': '”' };
 
-const blank = (match) => ' '.repeat(match.length);
+const blank = (match) => match.replace(/[^\n]/gu, ' ');
 
-// One line with its quoted spans blanked, and what is still open at its end: a quote mark, or a code span's backtick
-// run. `open` is what was open before the line. A code span closes only on a run of the same length.
-export function maskQuoted(line, open = null) {
-  const plain = line.replace(/https?:\/\/[^\s"“”`]+/gu, blank);
+// A paragraph with its code spans, URLs, and quotations blanked.
+export function maskParagraph(text) {
+  let open = null;
   let out = '';
-  for (let i = 0; i < plain.length; i += 1) {
-    const char = plain[i];
-    if (char === '`') {
-      let run = 1;
-      while (plain[i + run] === '`') run += 1;
-      if (open === null) open = '`'.repeat(run);
-      else if (open === '`'.repeat(run)) open = null;
-      out += ' '.repeat(run);
-      i += run - 1;
+  for (const char of text.replace(CODE_SPAN, blank).replace(URL, blank)) {
+    if (char === '\n') {
+      out += char;
     } else if (open !== null) {
-      if (open[0] !== '`' && char === CLOSES[open]) open = null;
+      if (char === CLOSES[open]) open = null;
       out += ' ';
     } else if (char in CLOSES) {
       open = char;
@@ -35,21 +31,26 @@ export function maskQuoted(line, open = null) {
       out += char;
     }
   }
-  return { text: out, open };
+  return out;
 }
 
-// Each line of `text` as the prose it holds, masked, or null for a line that holds none.
+// Each line of `text` as the prose it holds, masked, or null for a line that holds none. A paragraph is a run of read
+// lines; a blank, fenced, blockquote, or lint-skip line ends it.
 export function proseLines(text) {
+  const lines = String(text).split(/\r?\n/u);
   const fenced = fencedLines(text);
-  let open = null;
-  return String(text).split(/\r?\n/u).map((line, i) => {
-    if (fenced[i] || line.trim() === '') {
-      open = null;
-      return null;
-    }
-    if (BLOCKQUOTE.test(line) || line.includes(SKIP_MARKER)) return null;
-    const masked = maskQuoted(line, open);
-    open = masked.open;
-    return masked.text;
+  const out = lines.map(() => null);
+  let start = null;
+  const flush = (end) => {
+    if (start === null) return;
+    maskParagraph(lines.slice(start, end).join('\n')).split('\n').forEach((line, i) => { out[start + i] = line; });
+    start = null;
+  };
+  lines.forEach((line, i) => {
+    const read = !fenced[i] && line.trim() !== '' && !BLOCKQUOTE.test(line) && !line.includes(SKIP_MARKER);
+    if (!read) flush(i);
+    else if (start === null) start = i;
   });
+  flush(lines.length);
+  return out;
 }

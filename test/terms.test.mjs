@@ -304,6 +304,8 @@ test('a quoted URL keeps its closing quote, and code names keep letters of any s
   assert.deepEqual(hits('``a ```b`` and you `x`'), [1], 'a longer backtick run inside a span');
   assert.deepEqual(hits('See `https://example.com` and you can `run` it.'), [1], 'a URL in a code span');
   assert.deepEqual(hits('Run `first line\nyou\nlast line` now, you.'), [3], 'a code span that wraps');
+  assert.deepEqual(hits('Use the ` character; you can type it.'), [1], 'an unmatched backtick is text');
+  assert.deepEqual(hits('Use \\`you\\` here.'), [1], 'escaped backticks open no span');
   assert.deepEqual(identifiers('const caféparty = partyé;'), ['const', 'caféparty', 'partyé']);
   assert.equal(codeName('caféParty'), 'café party');
   assert.notEqual(codeName('partyé'), 'party');

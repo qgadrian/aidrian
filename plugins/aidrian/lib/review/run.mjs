@@ -325,10 +325,22 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
         // code-reviewer's pass, and under the plan's own cap: nothing here raises the cap the request records.
         const waiting = plan.stages.slice(0, plan.stages.indexOf(stage)).flatMap((each) => each.passes).filter((pass) => !resultFor(pass));
         if (waiting.length) return finish('incomplete', { reason: `the review bot waits for ${waiting.map((pass) => pass.id).join(', ')}`, retry_recommended: true });
-        const reviewed = Object.values(state.passes).find((result) => result.reviewer === 'code-reviewer' && result.head === head);
-        const gate = () => ({ marker: reviewed ? markerFor({ pr: n, repo, head, reviewer: 'code-reviewer', findings: reviewed.findings, fixed: reviewed.findings - reviewed.open }) : null });
+        // The marker sums every code-reviewer pass that counts for this head (a carried-forward one too); with the gate
+        // on and none on record, nothing is posted.
+        const reviewed = passes.filter((pass) => pass.kind === 'agent' && pass.reviewer === 'code-reviewer').map(resultFor).filter(Boolean);
+        const gate = () => {
+          if (!config.github.reviewGate.enabled) return {};
+          if (!reviewed.length) return { reason: 'the review gate needs the code-reviewer pass on record before the bot is asked' };
+          const findings = reviewed.reduce((total, result) => total + result.findings, 0);
+          const open = reviewed.reduce((total, result) => total + result.open, 0);
+          return { marker: markerFor({ pr: n, repo, head, reviewer: 'code-reviewer', findings, fixed: findings - open }) };
+        };
         const wait = awaitBot ?? (await import('../pr-await-review.mjs')).awaitReview;
         const bot = await wait({ pr: String(n), repo, head, request: true, reviewer: config.github.reviewer, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds }, { gate });
+        if (bot.status === 'review_required') {
+          undoRound();
+          return finish('incomplete', { reason: bot.reason, retry_recommended: false });
+        }
         if (bot.status === 'timed_out' || bot.status === 'blocked_quota' || bot.status === 'round_limit') {
           if (!bot.requested) undoRound();
           return finish(bot.status, { bot });

@@ -2,6 +2,7 @@
 // pull request's head, reads what has happened so far, does the next thing it can do itself (run an exec reviewer, ask
 // the review bot), and returns the next action. Calling it again is always safe. The review skill is a loop around it:
 //
+//   running         a split review ran some of its slices: call again for the rest
 //   dispatch        run the listed agent passes, then record each with `aidrian pr attest <PR> --pass <id> ...`
 //   fix_required    fix or disposition the listed findings and unsigned invariants, push, call again
 //   human_required  a flow needs the Human's sign-off: `aidrian pr signoff <PR> --flow <id>`
@@ -27,13 +28,14 @@ import { changedFiles, diffLines, fileAt, isAncestor, isClean, mergeBase, resolv
 import { checkReview } from './config.mjs';
 import { citationProblem, flowState, invariantsOf, parseVerdicts } from './flows.mjs';
 import { computeVerdict } from '../pr-checks.mjs';
-import { globPattern, isDirectory } from '../fs.mjs';
-import { buildPlan, classify, flowsInForce, HARNESS_FLOW, mergePlans, validatePlan } from './plan.mjs';
+import { isDirectory } from '../fs.mjs';
+import { dedupe, packageRoots } from './split.mjs';
+import { buildPlan, classify, flowsInForce, HARNESS_FLOW, mergePlans, pathPattern, validatePlan } from './plan.mjs';
 import { BUILT_IN, resolveEngine, reviewerMap, runExec, satisfies } from './reviewers.mjs';
 import { emptyState, isSummary, newer, readLocalState, stateFromComment, summaryBody, writeLocalState } from './state.mjs';
 
 export const EXIT = Object.freeze({
-  dispatch: 0, fix_required: 0, received: 0, none_needed: 0, human_required: 9,
+  dispatch: 0, running: 0, fix_required: 0, received: 0, none_needed: 0, human_required: 9,
   timed_out: 2, checks_pending: 2, blocked_quota: 3, round_limit: 4, unsatisfied: 6, incomplete: 7, stuck: 8, too_large: 8,
 });
 export const MAX_ATTEMPTS = 3;
@@ -66,7 +68,7 @@ export function reviewInForce(baseReview, headReview) {
     return { review: { ...headReview, planCommand: null, reviewers: pending }, changed: ['planCommand', 'reviewers'].filter((key) => JSON.stringify(headReview[key]) !== JSON.stringify(key === 'planCommand' ? null : {})) };
   }
   const changed = [];
-  for (const key of ['rules', 'ignore', 'nonBehaviour', 'flows', 'planCommand', 'reviewers']) {
+  for (const key of ['rules', 'ignore', 'nonBehaviour', 'flows', 'planCommand', 'reviewers', 'split']) {
     if (JSON.stringify(baseReview[key]) !== JSON.stringify(headReview[key])) changed.push(key);
   }
   return {
@@ -75,6 +77,7 @@ export function reviewInForce(baseReview, headReview) {
       rules: [...baseReview.rules, ...headReview.rules.filter((rule) => !baseReview.rules.some((each) => JSON.stringify(each) === JSON.stringify(rule)))],
       ignore: baseReview.ignore,
       nonBehaviour: baseReview.nonBehaviour,
+      split: baseReview.split,
       flows: flowsInForce(baseReview.flows, headReview.flows),
       // The plan command and the reviewers a project defines are code: only the base branch's run. A head may add a
       // reviewer under a new name, never redefine one, and a plan command it adds runs once it is merged.
@@ -147,6 +150,12 @@ function runPlanCommand(command, input, { root, env, baseTip }) {
   });
 }
 
+// The files tracked at `commit`.
+function trackedAt(root, commit) {
+  const result = runGit(['ls-tree', '-r', '--name-only', '-z', commit], root, { timeout: 30_000, maxBuffer: 256 * 1024 * 1024 });
+  return result.status === 0 ? result.stdout.split('\0').filter(Boolean) : [];
+}
+
 // Whether the change from `from` to `to` touches `files` (null: any reviewed file).
 const touches = (changes, files) => (files === null ? changes.length > 0 : changes.some((change) => files.includes(change.file)));
 
@@ -181,14 +190,24 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   }
   const { addedLines, removedFiles } = diffLines(root, base, head);
 
+  // The record so far: the newer of this machine's and the pull request's.
+  const comments = gh.comments(repo, n);
+  const summary = comments.filter((comment) => isSummary(comment.body)).at(-1) ?? null;
+  let state = newer(readLocalState(project, n), stateFromComment(summary?.body, n)) ?? emptyState(n, repo);
+
   const engine = resolveEngine(effective, codex ? { codex } : {});
   if (engine.problem) return { status: 'unsatisfied', pr: n, repo, head, reason: engine.problem };
-  let plan = buildPlan({
+  const planFor = (minDepth) => buildPlan({
     head, base, changes, addedLines, removedFiles, config: effective, harnessChanged: [...new Set(harnessChanged)],
+    roots: packageRoots(trackedAt(root, head)), halved: state.halved ?? {},
     engine: { name: engine.reviewer.name, kind: engine.reviewer.kind, stage: engine.reviewer.stage, agent: engine.reviewer.agent, builtIn: Boolean(BUILT_IN[engine.reviewer.name]) },
+    minDepth,
   });
+  let plan = planFor('none');
   if (review.planCommand) {
     const project_ = await runPlanCommand(review.planCommand, { base, head, changes }, { root, env: cleanEnv, baseTip });
+    // A plan command that raises the depth to split gets the slices too: the built-in plan is rebuilt at that depth.
+    if (project_.depth === 'split' && plan.depth !== 'split') plan = planFor('split');
     plan = mergePlans(plan, project_);
   }
   // --with-bot (the skill's --await-codex): the review bot runs as the last stage too, after this machine's engine.
@@ -222,7 +241,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   // A flow's deleted test stops the review whatever else the change does, even when nothing else needs a review.
   const removedTests = [];
   for (const [id, definition] of Object.entries(review.flows)) {
-    const tests = (definition.tests ?? []).map(globPattern);
+    const tests = (definition.tests ?? []).map(pathPattern);
     const gone = changes.filter((each) => each.status === 'D' && tests.some((pattern) => pattern.test(each.file))).map((each) => each.file);
     if (gone.length) removedTests.push({ flow: id, deleted: gone, accept: `aidrian pr signoff ${n} --flow ${id} --head ${head}` });
   }
@@ -230,10 +249,6 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   if (answerless) return { status: 'unsatisfied', pr: n, repo, head, reason: `flow ${answerless.id} needs a reviewer that answers its invariants, and the review bot does not: run codex-local, or require an agent for the flow`, plan };
   if (!passes.length && !removedTests.length) return { status: 'none_needed', pr: n, repo, head, base, depth: plan.depth, engine: plan.engine, plan: { depth: plan.depth, reasons: plan.reasons, flows: [], stages: [] } };
 
-  // The record so far: the newer of this machine's and the pull request's.
-  const comments = gh.comments(repo, n);
-  const summary = comments.filter((comment) => isSummary(comment.body)).at(-1) ?? null;
-  let state = newer(readLocalState(project, n), stateFromComment(summary?.body, n)) ?? emptyState(n, repo);
   const maxRounds = opts.maxRounds ?? config.github.maxReviewRounds;
 
   // A pass's result counts for this head when it is for this head, or for an earlier one the change since does not
@@ -243,9 +258,12 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     if (!deltaCache.has(from)) deltaCache.set(from, isAncestor(root, from, head) ? changedFiles(root, from, head) : null);
     return deltaCache.get(from);
   };
+  // A pass with a file list (a slice, a flow pass) keeps its history only while it covers the same files: when a fix
+  // repacks slices, a slice's earlier result and findings are another set of files' and count for nothing.
+  const sameFiles = (pass, result) => !Array.isArray(pass.files) || JSON.stringify([...pass.files].sort()) === JSON.stringify(result.files ?? null);
   const resultFor = (pass) => {
     const result = state.passes[pass.id];
-    if (!result) return null;
+    if (!result || !sameFiles(pass, result)) return null;
     if (result.head === head) return result;
     const since = delta(result.head);
     return since && !touches(since, pass.files) && result.open === 0 ? result : null;
@@ -284,10 +302,16 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   // In the last round the final stage runs first and is judged last, once the earlier stages' verdicts are in.
   const order = lastRound && plan.stages.length > 1 && finalStage ? [{ stage: finalStage, runOnly: true }, ...plan.stages.map((stage) => ({ stage }))] : plan.stages.map((stage) => ({ stage }));
   for (const { stage, runOnly } of order) {
-    const pending = stage.passes.filter((pass) => !resultFor(pass));
+    const unfinished = stage.passes.filter((pass) => !resultFor(pass));
+    // A pass runs once the passes it comes after have results: the cross-cutting pass waits for every slice.
+    const pending = unfinished.filter((pass) => (pass.after ?? []).every((id) => resultFor(stage.passes.find((each) => each.id === id) ?? { id })));
+    if (unfinished.length && !pending.length) return finish('incomplete', { reason: `${unfinished.map((pass) => pass.id).join(', ')} wait for passes that cannot finish`, retry_recommended: false });
     if (pending.length) {
       if (openRound() === 'round_limit') return finish('round_limit', { max_rounds: maxRounds });
-      const execs = pending.filter((pass) => map[pass.reviewer]?.kind === 'exec');
+      // At most `parallel` local reviewers per step: each runs up to its time limit, and a step must end inside one
+      // shell call. The rest run on the next step, which `running` asks for.
+      const ready = pending.filter((pass) => map[pass.reviewer]?.kind === 'exec');
+      const execs = ready.slice(0, review.split?.parallel ?? 4);
       if (execs.length) {
         if (resolve(root, 'HEAD') !== head || !isClean(root)) {
           undoRound();
@@ -302,7 +326,10 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
         const outcomes = execs.some((pass) => !map[pass.reviewer].builtIn) ? await inBaseWorktree(root, baseTip, run) : await run(root);
         for (const [pass, outcome] of outcomes) {
           if (outcome.status !== 'done') continue;
-          state.passes[pass.id] = { head, reviewer: pass.reviewer, findings: outcome.findings.length, open: outcome.findings.length, list: outcome.findings, verdicts: outcome.verdicts, dropped: outcome.dropped };
+          state.passes[pass.id] = {
+            head, reviewer: pass.reviewer, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, findings: outcome.findings.length, open: outcome.findings.length, list: outcome.findings, verdicts: outcome.verdicts,
+            ...(pass.role ? { contracts: outcome.contracts ?? [], cross_notes: outcome.cross_notes ?? [] } : {}), dropped: outcome.dropped,
+          };
           recorded = true;
         }
         const quota = outcomes.find(([, outcome]) => outcome.status === 'quota');
@@ -314,10 +341,16 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
         if (failed) {
           const key = `${head}:${failed[0].id}`;
           state.failures[key] = (state.failures[key] ?? 0) + 1;
-          const stuck = state.failures[key] >= MAX_ATTEMPTS;
+          // A slice that fails twice is cut in half on the next step: a smaller slice is likelier to fit.
+          const halve = failed[0].role === 'slice' && state.failures[key] === 2 && (failed[0].files?.length ?? 0) > 1 && !failed[0].id.match(/\.[ab]$/u);
+          if (halve) state.halved = { ...(state.halved ?? {}), [failed[0].id]: true };
+          const stuck = state.failures[key] >= MAX_ATTEMPTS && !halve;
           undoRound();
-          return finish(stuck ? 'stuck' : 'incomplete', { reason: `${failed[0].id}: ${failed[1].reason}`, attempts: state.failures[key], retry_recommended: !stuck });
+          return finish(stuck ? 'stuck' : 'incomplete', { reason: `${failed[0].id}: ${failed[1].reason}${halve ? '; it runs as two halves next' : ''}`, attempts: state.failures[key], retry_recommended: !stuck });
         }
+        // Passes still without a result, a cross pass included, keep the stage open: a partial review never passes.
+        const left = stage.passes.filter((pass) => !resultFor(pass) && map[pass.reviewer]?.kind === 'exec');
+        if (left.length) return finish('running', { stage: stage.name, done: stage.passes.filter((pass) => resultFor(pass)).length, total: stage.passes.length });
       }
       const remote = pending.find((pass) => map[pass.reviewer]?.kind === 'remote');
       if (remote) {
@@ -354,6 +387,8 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
       const agents = pending.filter((pass) => map[pass.reviewer]?.kind === 'agent' || pass.kind === 'agent');
       if (agents.length) {
         recorded = true;
+        // What each dispatched pass covers, so its attest records the same files.
+        state.dispatched = { ...(state.dispatched ?? {}), ...Object.fromEntries(agents.map((pass) => [pass.id, { head, files: Array.isArray(pass.files) ? [...pass.files].sort() : null }])) };
         return finish('dispatch', { stage: stage.name, dispatch: agents.map((pass) => dispatchFor(pass, stage)) });
       }
     }
@@ -365,6 +400,8 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
       return finish(lastRound ? 'round_limit' : 'fix_required', {
         stage: stage.name,
         open: open.map(([pass, result]) => ({ pass: pass.id, reviewer: pass.reviewer, head: result.head, open: result.open, findings: result.list ?? null })),
+        // One entry per mistake when slices and the cross pass report the same one.
+        ...(stage.passes.some((pass) => pass.role) ? { findings_merged: dedupe(open.map(([pass, result]) => [pass.id, result.list ?? []])) } : {}),
         flows: unsigned.map(([flow, status]) => ({ flow: flow.id, violated: status.open, unverified: status.unverified })),
       });
     }
@@ -386,7 +423,8 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
 
   // The input every reviewer of a pass reads.
   function passInput(pass, stage) {
-    const prior = resultFor(pass) ?? state.passes[pass.id];
+    const recorded = state.passes[pass.id];
+    const prior = resultFor(pass) ?? (recorded && sameFiles(pass, recorded) ? recorded : null);
     const from = prior && prior.head !== head && isAncestor(root, prior.head, head) ? prior.head : base;
     const flows = plan.flows.filter((flow) => (pass.flows ?? []).includes(flow.id) || stage.name !== 'local').map((flow) => ({
       id: flow.id,
@@ -395,7 +433,20 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
       ...(stage.name !== 'local' ? { earlierVerdicts: verdictsFor(flow.id) } : {}),
     }));
     const checklist = config.github.reviewGate.enabled ? config.github.reviewGate.checklist : null;
+    const split = pass.role ? {
+      role: pass.role,
+      manifest: changes.map((change) => ({ file: change.file, status: change.status, added: change.added, removed: change.removed })),
+      ...(pass.role === 'slice' ? { slice: pass.slice } : {}),
+      ...(pass.role === 'cross' ? {
+        slices: stage.passes.filter((each) => each.role === 'slice').map((each) => {
+          const result = resultFor(each);
+          return { id: each.id, slice: each.slice, files: each.files, contracts: result?.contracts ?? [], cross_notes: result?.cross_notes ?? [], findings: result?.list ?? [] };
+        }),
+        interfaceFiles: plan.interfaceFiles ?? [],
+      } : {}),
+    } : {};
     return {
+      ...split,
       pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files, flows, priorFindings: prior?.list ?? [],
       ...(checklist ? { checklist: { path: checklist, text: fileAt(root, baseTip, checklist) } } : {}),
     };
@@ -448,9 +499,17 @@ export function remoteState(repo, pr, gh = defaultGh) {
 export function recordPass(project, { pr, repo, pass, head, reviewer, findings, fixed, accepted = 0, verdictsText = null, remote = null }) {
   if (fixed + accepted > findings) throw new Error('--fixed and --accepted together cannot exceed --findings');
   const verdicts = verdictsText === null ? [] : parseVerdicts(verdictsText);
+  // An agent slice writes its report to the cross pass in the same file: { verdicts, contracts, cross_notes }.
+  let report = {};
+  try {
+    const raw = verdictsText === null ? null : JSON.parse(verdictsText);
+    const strings = (list) => (Array.isArray(list) ? list.filter((each) => typeof each === 'string').slice(0, 50) : []);
+    if (raw && !Array.isArray(raw)) report = { contracts: strings(raw.contracts), cross_notes: strings(raw.cross_notes) };
+  } catch {}
   const state = current(project, pr, repo, remote);
   const before = state.passes[pass];
-  state.passes[pass] = { head, reviewer, findings, open: findings - fixed - accepted, verdicts, list: before?.head === head ? before.list : null };
+  const files = state.dispatched?.[pass]?.files ?? null;
+  state.passes[pass] = { head, reviewer, files, findings, open: findings - fixed - accepted, verdicts, ...report, list: before?.head === head ? before.list : null };
   writeLocalState(project, state);
   return state.passes[pass];
 }

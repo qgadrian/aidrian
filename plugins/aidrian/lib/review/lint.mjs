@@ -7,7 +7,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { globPattern } from '../fs.mjs';
+import { pathPattern } from './plan.mjs';
 import { runGit } from '../git.mjs';
 import { invariantsOf } from './flows.mjs';
 
@@ -31,7 +31,7 @@ export function lintReview(project, config) {
   if (ids.length > FLOW_BUDGET) warnings.push(`${ids.length} flows is past ${FLOW_BUDGET}: name the critical ones, not every feature`);
   for (const [id, flow] of Object.entries(flows)) {
     for (const glob of flow.files) {
-      const pattern = globPattern(glob);
+      const pattern = pathPattern(glob);
       if (!tracked.some((file) => pattern.test(file))) problems.push(`flow ${id}: files "${glob}" matches no tracked file`);
     }
     const { invariants, unspecified, problem } = invariantsOf(flow, read(project.root));

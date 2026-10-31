@@ -1,6 +1,6 @@
 {
   "name": "aidrian",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "An engineering crew of agents (orchestrator, planning, architecture, product, development, review, security, design, support, and marketing), the skills that drive it from plan to pull request, safety hooks, and the aidrian command. Each project supplies its rules and settings in one project folder.",
   "author": {
     "name": "aidrian"

@@ -11,8 +11,7 @@ engine. Everything below is optional.
 
 A plan has a **depth**, **stages**, and **flows**.
 
-- **Depth** is `none`, `single`, or `split`. `split` is accepted and runs as one pass until the split executor ships;
-  the summary says so.
+- **Depth** is `none`, `single`, or `split` (below).
 - **Stages** run in order, and the passes inside a stage run in parallel. A stage starts only when every finding of
   the stage before it is fixed or dispositioned, and every flow it holds is signed. The defaults:
   1. `local`: the agents the plan requires, and the flow passes.
@@ -36,6 +35,7 @@ another.
 }
 ```
 
+- A path list takes globs and `re:<regex>` entries, matched against the `/`-separated path.
 - `when` takes `onlyFiles` (every reviewed file matches), `anyFiles` (some changed file matches), and `lines.over`
   (changed lines, not counting `review.ignore`). That is all it will ever take: anything smarter is a plan command.
 - `depth: "none"` needs `onlyFiles`, so it only covers the files it names, and any rule that asks for more wins.
@@ -46,6 +46,39 @@ another.
 `review.ignore` lists files no review reads and no size counts: lockfiles, snapshots, generated, vendored, and
 minified files by default. `review.nonBehaviour` lists files that cannot change behaviour: prose docs and static
 assets by default. Tests are not on it: deleting a test changes what the code is held to.
+
+## Split
+
+A large change reviewed in one pass gets a shallow review: the reviewer runs out of attention before it runs out of
+diff. `depth: "split"` cuts the change into slices that run in parallel, then one cross-cutting pass.
+
+- **Slices** follow the code: the changed files under one package root (the nearest folder with a `package.json`,
+  `go.mod`, `Cargo.toml`, `pyproject.toml`, or similar), else under their first two folders. A slice past
+  `review.split.sliceLines` (800) is cut; past `maxSlices` (8), the smallest neighbours merge. A plan command can hand
+  over its own partitions as passes.
+- **A slice** reads its own files' diff, a manifest of every changed file, and the repository at the head. It reports
+  findings in its files only, the contracts its files change (signatures, types, schemas, routes, events), and notes
+  about what other files must agree with.
+- **The cross-cutting pass** runs after every slice. It reads each slice's contracts, notes, and findings, plus any
+  interface files a plan command flags, and reports only bugs that cross slices. It always runs again after a fix.
+- **Findings** that two passes report (same file, lines within 3, same title words) are listed once, at the higher
+  severity, in `findings_merged`.
+- **Failures**: a slice that fails twice runs as two halves; a slice still failing is `stuck`. A review with a slice
+  or the cross pass missing is never `received`.
+- **Steps**: at most `review.split.parallel` (4) slices run per step, so a step fits one shell call; `running` asks
+  for the next. After a fix, only the slices the fix touches run again, and the cross pass.
+- The `self` engine splits into one agent dispatch per slice. The review bot cannot split.
+
+Turn it on with a rule, such as `{ "when": { "lines": { "over": 1500 } }, "depth": "split" }`. Before making it a
+default above a threshold, measure it on your own history:
+
+```sh
+aidrian review bench --prs 812,840,901    # two full reviews per pull request; prints recall per source
+```
+
+It replays each merged pull request at the commit its first review saw, once as one pass and once split, against
+the problems known to exist: resolved bot threads, resolved human threads, and `fix:` or `revert:` commits that
+touched its files within 14 days of the merge. It passes when split finds at least as many as one pass, less one.
 
 ## Flows
 
@@ -77,7 +110,7 @@ of its invariants, with evidence, and the flow must be signed before the review 
 
 | Key | |
 | --- | --- |
-| `files` | required: globs; a changed file that can change behaviour triggers the flow |
+| `files` | required: globs, or `re:<regex>` over the path; a changed file that can change behaviour triggers the flow |
 | `added` | regular expressions over the added lines of any file, for a use that lives outside the flow's folders |
 | `invariants` | a doc, whose `##` and `###` headings are the invariants, or a list of `{ id, text, cite? }` |
 | `require` | the flow's reviewers; the code-reviewer agent by default |

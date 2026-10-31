@@ -23,8 +23,13 @@ repository describes the plan itself.
 - `record`: the command that records the pass. `--findings` is what the agent found, `--fixed` what was fixed in a
   pushed commit, `--accepted` what was dispositioned another way (step 3). `--verdicts` takes the file above.
 
+A split review's passes carry `role`: a `slice` reviews only its `files` and also writes `contracts` and
+`cross_notes` (lists of strings) into its `--verdicts` file, as `{ "verdicts": [...], "contracts": [...], "cross_notes": [...] }`; the `cross` pass reads `slices` and reports only what
+crosses them.
+
 ## `fix_required`
 
+- `findings_merged[]` (split reviews): each mistake once, with the passes that reported it in `sources`.
 - `open[]`: passes with findings still open: `findings` lists them for a local model; the bot's are on the pull request.
 - `flows[]`: flows not signed off: `violated` invariants are findings to fix; `unverified` need a verdict with evidence.
 - `tests_removed[]`: a flow's test was deleted. Restore it, or the Human accepts it with the `accept` command.

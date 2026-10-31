@@ -5,6 +5,7 @@
 
 import { isObject } from '../fs.mjs';
 import { DEFAULT_IGNORE, DEFAULT_NON_BEHAVIOUR, DEPTHS, HARNESS_FLOW } from './plan.mjs';
+import { SPLIT_DEFAULTS } from './split.mjs';
 
 export const ENGINES = Object.freeze(['auto', 'codex-local', 'pr-bot', 'self']);
 export const KINDS = Object.freeze(['exec', 'agent']);
@@ -19,6 +20,7 @@ export const REVIEW_DEFAULTS = Object.freeze({
   flows: {},
   planCommand: null,
   reviewers: {},
+  split: SPLIT_DEFAULTS,
 });
 
 const texts = (value) => Array.isArray(value) && value.every((each) => typeof each === 'string' && each !== '');
@@ -60,6 +62,7 @@ export function checkReview(value, file, errors) {
   if (Object.hasOwn(value, 'rules')) out.rules = checkRules(value.rules, bad);
   if (Object.hasOwn(value, 'flows')) out.flows = checkFlows(value.flows, bad);
   if (Object.hasOwn(value, 'reviewers')) out.reviewers = checkReviewers(value.reviewers, bad);
+  if (Object.hasOwn(value, 'split')) out.split = checkSplit(value.split, bad);
   return out;
 }
 
@@ -84,7 +87,11 @@ function checkRules(rules, bad) {
       if (!isObject(rule.when)) problems.push(`"${at}.when" must be an object`);
       else {
         for (const key of Object.keys(rule.when)) if (!['onlyFiles', 'anyFiles', 'lines'].includes(key)) problems.push(`unknown key "${at}.when.${key}"`);
-        for (const key of ['onlyFiles', 'anyFiles']) if (rule.when[key] !== undefined && !someTexts(rule.when[key])) problems.push(`"${at}.when.${key}" must be a list of globs`);
+        for (const key of ['onlyFiles', 'anyFiles']) {
+          if (rule.when[key] === undefined) continue;
+          if (!someTexts(rule.when[key])) problems.push(`"${at}.when.${key}" must be a list of globs`);
+          else if (pathsProblem(rule.when[key])) problems.push(`"${at}.when.${key}" ${pathsProblem(rule.when[key])}`);
+        }
         if (rule.when.lines !== undefined && !(isObject(rule.when.lines) && Number.isInteger(rule.when.lines.over) && rule.when.lines.over >= 0)) {
           problems.push(`"${at}.when.lines" must be { "over": <whole number> }`);
         }
@@ -115,6 +122,8 @@ function checkFlows(flows, bad) {
     const keys = ['files', 'added', 'tests', 'checks', 'invariants', 'require', 'signoff'];
     for (const key of Object.keys(flow)) if (!keys.includes(key)) problems.push(`unknown key "${at}.${key}"`);
     if (!someTexts(flow.files)) problems.push(`"${at}.files" must be a non-empty list of globs`);
+    else if (pathsProblem(flow.files)) problems.push(`"${at}.files" ${pathsProblem(flow.files)}`);
+    if (texts(flow.tests ?? []) && pathsProblem(flow.tests ?? [])) problems.push(`"${at}.tests" ${pathsProblem(flow.tests)}`);
     for (const key of ['tests', 'checks']) if (flow[key] !== undefined && !texts(flow[key])) problems.push(`"${at}.${key}" must be a list`);
     if (flow.added !== undefined) {
       if (!texts(flow.added)) problems.push(`"${at}.added" must be a list of regular expressions`);
@@ -180,4 +189,31 @@ export function checkLocalReview(value, file, errors) {
   if (isText(value.engine) && NAME.test(value.engine)) return value.engine;
   errors.push(`${file}: "review.engine" must be ${ENGINES.map((each) => `"${each}"`).join(', ')}, or a reviewer of review.reviewers`);
   return 'auto';
+}
+
+// `review.split`: slice size, parallel passes, and the most slices. Each is a whole number in a sane range.
+function checkSplit(split, bad) {
+  const out = { ...SPLIT_DEFAULTS };
+  if (!isObject(split)) {
+    bad('"review.split" must be an object');
+    return out;
+  }
+  const ranges = { sliceLines: [100, 10000], parallel: [1, 8], maxSlices: [2, 16] };
+  for (const [key, value] of Object.entries(split)) {
+    if (!Object.hasOwn(ranges, key)) bad(`unknown key "review.split.${key}"`);
+    else if (Number.isInteger(value) && value >= ranges[key][0] && value <= ranges[key][1]) out[key] = value;
+    else bad(`"review.split.${key}" must be a whole number from ${ranges[key][0]} to ${ranges[key][1]}`);
+  }
+  return out;
+}
+
+// The problem with a list of path entries (globs, or `re:<regular expression>`), or null.
+function pathsProblem(list) {
+  for (const entry of list) {
+    if (entry.startsWith('re:')) {
+      const problem = regexProblem(entry.slice('re:'.length));
+      if (problem) return `has ${entry}: ${problem}`;
+    }
+  }
+  return null;
 }

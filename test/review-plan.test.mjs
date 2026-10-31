@@ -117,3 +117,12 @@ test('mergePlans: a plan command pass with a built-in id cannot replace it', () 
   assert.deepEqual(merged.stages, builtIn.stages);
   assert.match(merged.reasons.at(-1), /engine:codex-local is built in and was kept as built/u);
 });
+
+test('a path entry may be re:<regex>: rules, flows, and tests match it, and a bad one is an error', () => {
+  const flows = { booking: { files: ['re:^src/(?:.*/)?bookings?/|^src/app/subdomain/'] } };
+  const sorted = classify([change('src/lib/booking/a.ts'), change('src/app/subdomain/p.tsx'), change('src/other.ts')]);
+  assert.deepEqual(detectFlows(flows, { sorted })[0].files, ['src/app/subdomain/p.tsx', 'src/lib/booking/a.ts']);
+  const errors = [];
+  checkReview({ flows: { bad: { files: ['re:(unclosed'] } }, rules: [{ when: { anyFiles: ['re:['] }, depth: 'split' }] }, 'c.json', errors);
+  assert.equal(errors.length, 2);
+});

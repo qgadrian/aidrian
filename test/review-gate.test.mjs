@@ -42,6 +42,8 @@ test('a request is a body asking @codex review outside code and quotes', () => {
   assert.equal(asksForReview('`@codex review` is the trigger'), false);
   assert.equal(asksForReview('> @codex review\nthanks'), false);
   assert.equal(asksForReview('```\n@codex review\n```'), false);
+  assert.equal(asksForReview('```@codex review``` is the trigger.\n\n@codex review'), true, 'a line that opens with a code span is no fence');
+  assert.equal(asksForReview('````\n```\n@codex review\n```\n````'), false, 'a nested fence');
   assert.equal(asksForReview('@codex reviewer'), false);
 });
 

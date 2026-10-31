@@ -14,6 +14,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { runGit } from './git.mjs';
+import { unfencedLines } from './markdown-sections.mjs';
 import { normalizeRemote, stateDir } from './project.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_UNREVIEWED_REQUEST';
@@ -27,15 +28,7 @@ const SHA = /^[0-9a-f]{7,40}$/iu;
 // quote. Wider than "opens a line" on purpose: for a gate, the safe error is a review that was not strictly needed.
 export function asksForReview(text) {
   if (typeof text !== 'string') return false;
-  let fence = null;
-  const prose = [];
-  for (const line of text.split('\n')) {
-    const marker = /^ {0,3}(`{3,}|~{3,})/u.exec(line)?.[1] ?? null;
-    if (fence === null && marker) fence = marker;
-    else if (fence !== null && marker && marker[0] === fence[0] && marker.length >= fence.length) fence = null;
-    else if (fence === null) prose.push(line);
-  }
-  return prose.filter((line) => !/^\s*>/u.test(line)).some((line) => REQUEST.test(line.replace(/`[^`]*`/gu, '')));
+  return [...unfencedLines(text)].filter((line) => !/^\s*>/u.test(line)).some((line) => REQUEST.test(line.replace(/`[^`]*`/gu, '')));
 }
 
 // The marker names its repository and pull request: a number is unique only within one repository.

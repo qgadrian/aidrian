@@ -294,34 +294,36 @@ test('bashTargets finds the targets of ln, truncate, install, and dd; with resto
   assert.deepEqual(restored('git restore --staged --worktree src/a.ts'), ['src/a.ts']);
 });
 
-test('in the main checkout, no session moves the branch away from the default or stages every change at once', (t) => {
+test('in the main checkout, only named files are staged and only the default branch is checked out', (t) => {
   const { repo, base } = fixture(t);
   execFileSync('git', ['-C', repo, 'branch', 'src']);
   execFileSync('git', ['-C', repo, 'update-ref', 'refs/remotes/origin/remote-only', 'HEAD']);
+  const beside = path.join(base, 'beside');
   const denied = (command, cwd = repo) => check(command, { cwd, env: ENV });
   for (const command of [
-    'git add -A', 'git add --all', 'git add --al', 'git add .', 'git add ./', 'git add *', 'git add -u', 'git add :/',
-    'git commit -am x', 'git commit -am"fix: x"', 'git commit --all -m x', 'git switch task', 'git switch -c fresh', 'git switch -cnew main',
+    'git add -A', 'git add --all', 'git add --al', 'git add .', 'git add ./', 'git add *', 'git add -u', 'git add :/', 'git add src',
+    `git add ${repo}`, 'git add --dry-run --no-dry-run -A', 'git add', 'git add "$FILES"',
+    'git commit -am x', 'git commit -am"fix: x"', 'git commit --all -m x', 'git commit --dry-run --no-dry-run -am x',
+    'git switch task', 'git switch -c fresh', 'git switch -cnew main', 'git switch -d main',
     'git checkout task', 'git checkout -b fresh', 'git checkout -bnew main', 'git checkout task --', 'git checkout src',
+    'git checkout -', 'git checkout remote-only', 'git checkout -d main', 'git checkout --patch --no-patch task',
     'git -C src add -A', 'echo "$(git add -A)"', `env -C ${repo} git add -A`, `git -C${repo} add -A`,
-    'git checkout -', 'git checkout remote-only', 'git checkout -d main', 'git switch -d main',
-    `git --git-dir=${repo}/.git --work-tree=${repo} add -A`,
+    `git --work-tree=${beside} checkout task`, `git --work-tree=${beside} add -A`,
   ]) {
     assert.match(denied(command) ?? '', /^Blocked: .* in the main checkout/, command);
   }
+  assert.match(denied('git add ..', path.join(repo, 'src')) ?? '', /main checkout/, 'a parent folder');
   for (const command of [
-    'git add src/app.js', 'git commit -m x', 'git commit -mrelease', 'git switch main', 'git checkout main', 'git checkout src/app.js',
-    'git checkout -- src/app.js', 'git checkout gone.txt', 'git checkout task -- src/app.js', 'git checkout HEAD src/app.js',
-    'git commit -uall -m x', 'git commit -Sabc123 -m x', 'git checkout --pathspec-from-file=paths HEAD', 'git checkout -p HEAD',
-    'git add --dry-run -A', 'git add -n .', 'git commit --dry-run -a',
-    'git status', 'git pull --ff-only',
+    'git add src/app.js', 'git add -v src/app.js gone.txt', 'git commit -m x', 'git commit -mrelease', 'git commit -uall -m x',
+    'git commit -Sabc123 -m x', 'git switch main', 'git checkout main', 'git checkout src/app.js', 'git checkout -- src/app.js',
+    'git checkout gone.txt', 'git checkout task -- src/app.js', 'git checkout HEAD src/app.js', 'git status', 'git pull --ff-only',
   ]) {
     assert.equal(denied(command), null, command);
   }
   assert.equal(denied('git add -A', path.join(repo, 'wt/task')), null, 'a worktree is the session`s own');
-  assert.equal(denied(`env -C ${path.join(base, 'beside')} git add -A`), null, 'env -C into a worktree');
-  assert.equal(denied(`git -C${path.join(base, 'beside')} add -A`), null, 'git -C into a worktree');
-  assert.match(denied(`git --git-dir=${repo}/.git --work-tree=${repo} add -A`, path.join(base, 'beside')) ?? '', /main checkout/, 'from a worktree into the main checkout');
+  assert.equal(denied(`env -C ${beside} git add -A`), null, 'env -C into a worktree');
+  assert.equal(denied(`git -C${beside} add -A`), null, 'git -C into a worktree');
+  assert.match(denied(`git --git-dir=${repo}/.git --work-tree=${repo} add -A`, beside) ?? '', /main checkout/, 'from a worktree into the main checkout');
   assert.equal(denied('cd wt/task && git add -A'), null, 'after a cd the folder is not certain');
   const off = fixture(t, { version: 1 }).repo;
   assert.equal(check('git add -A', { cwd: off, env: ENV }), null, 'the guard is off');

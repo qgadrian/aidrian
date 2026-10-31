@@ -13,7 +13,7 @@
 // guard off, matched by `git.mainCheckout.allowWrites`, or git-ignored. When git cannot tell, a tool write is denied to be
 // safe and a Bash command runs: a command line is never as certain as a file path.
 
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { globPattern } from '../fs.mjs';
@@ -107,21 +107,18 @@ export function check(command, { cwd = process.cwd(), env = process.env } = {}) 
   return decide(bashTargets(command, cwd), cwd, false, 'this command writes') ?? gitStateDenial(command, cwd);
 }
 
-// The git calls that change the main checkout's state for every session in it, as { what, at, target, creates }: `at`
-// the folder git runs in, after a wrapper's `env -C` and git's own `-C`. Substitutions that run are read too, each from
-// where its command runs; a call after a `cd` is skipped, as its folder is not certain.
-// Options are read as git reads them: a value option takes the rest of its word or the next word (`-am"msg"` is -a and
-// -m, `-bnew` creates `new`), and a long option by any unambiguous prefix (`--al` is `--all`).
-// Options whose value can only be attached: `-uall`, `-Sabc123`.
-const GIT_STATE_ATTACHED = { commit: new Set(['-u', '-S']), add: new Set(), switch: new Set(), checkout: new Set() };
-const GIT_STATE_VALUES = {
-  add: new Set(['--chmod', '--pathspec-from-file']),
-  commit: new Set(['-m', '-F', '-c', '-C', '-t', '--message', '--file', '--author', '--date', '--template', '--reuse-message', '--reedit-message', '--fixup', '--squash', '--cleanup', '--trailer', '--pathspec-from-file']),
-  switch: new Set(['-c', '-C', '--create', '--force-create', '--orphan', '--conflict']),
-  checkout: new Set(['-b', '-B', '--orphan', '--conflict', '--pathspec-from-file']),
-};
-// Pathspecs that name the whole folder: every change in it.
-const WHOLE_FOLDER = new Set(['.', ':/', ':', '*', ':/*', '.*']);
+// The git calls that change the main checkout's state for every session in it, as { what, folders, target }: `folders`
+// every folder the call may act on, after a wrapper's `env -C`, git's own `-C`, and `--work-tree` or `--git-dir`.
+// Substitutions that run are read too; a call after a `cd` is skipped, as its folder is not certain.
+//
+// The main checkout is shared, so this reads what is plainly safe and blocks the rest, every other spelling included:
+//   git add      only named files (no option but -v, -f, -N, -p, and no folder, glob, or pathspec magic)
+//   git commit   any options but -a and --all, with no `--no-` form and no unknown short cluster holding `a`
+//   git switch   only back to the default branch, with no option
+//   git checkout the default branch with no option, or paths: after `--`, or words that name no commit
+const ADD_SAFE = new Set(['-v', '--verbose', '-f', '--force', '-N', '--intent-to-add', '-p', '--patch']);
+const COMMIT_VALUES = new Set(['-m', '-F', '-c', '-C', '-t', '--message', '--file', '--author', '--date', '--template', '--reuse-message', '--reedit-message', '--fixup', '--squash', '--cleanup', '--trailer']);
+const COMMIT_ATTACHED = new Set(['-u', '-S']);
 function gitStateChanges(command, cwd, depth = 0) {
   const found = [];
   let known = true;
@@ -130,101 +127,111 @@ function gitStateChanges(command, cwd, depth = 0) {
     const invocation = readInvocation(segment);
     if (CHANGES_DIRECTORY.has(invocation.program)) known = false;
     const call = known ? readGit(segment) : null;
-    if (!call) continue;
-    let at = invocation.chdir && !invocation.chdir.dynamic ? path.resolve(cwd, invocation.chdir.text) : invocation.chdir ? null : cwd;
-    // git's -C moves where it runs (`-C path` or `-Cpath`); --work-tree, or else --git-dir's folder, names the checkout.
-    let tree = null;
-    call.globals.forEach((token, i) => {
-      const valueOf = (name) => (token.text === name ? call.globals[i + 1] : token.text.startsWith(`${name}=`) ? { text: token.text.slice(name.length + 1), dynamic: token.dynamic } : null);
-      const chdir = token.text === '-C' ? call.globals[i + 1] : /^-C./u.test(token.text) ? { text: token.text.slice(2), dynamic: token.dynamic } : null;
-      if (chdir && at !== null) at = chdir.dynamic ? null : path.resolve(at, chdir.text);
-      const workTree = valueOf('--work-tree');
-      const gitDir = valueOf('--git-dir');
-      if (workTree) tree = workTree.dynamic ? false : { at: workTree.text, strong: true };
-      else if (gitDir && !tree?.strong) tree = gitDir.dynamic ? false : { at: path.join(gitDir.text, '..'), strong: false };
-    });
-    if (tree === false) continue;
-    if (tree && at !== null) at = path.resolve(at, tree.at);
-    if (at === null) continue;
-    const { options, operands, afterDashes } = readGitArgs(call.rest, GIT_STATE_VALUES[call.subcommand] ?? new Set(), GIT_STATE_ATTACHED[call.subcommand]);
-    const has = (short, long, shortest) => options.some((option) => option === short || (long && isLongOption(option, long, shortest)));
-    // A preview changes nothing.
-    if (has('-n', '--dry-run', '--dr') && call.subcommand === 'add') continue;
-    if (has(null, '--dry-run', '--dr') && call.subcommand === 'commit') continue;
+    if (!call || !['add', 'commit', 'switch', 'checkout'].includes(call.subcommand)) continue;
+    const folders = gitFolders(call.globals, invocation.chdir, cwd);
+    if (folders === null) continue;
+    const words = call.rest.map((token) => token.text);
+    const dashes = words.indexOf('--');
+    const before = dashes === -1 ? words : words.slice(0, dashes);
+    const after = dashes === -1 ? [] : words.slice(dashes + 1);
+    const options = before.filter((word) => word.startsWith('-') && word.length > 1);
+    const operands = before.filter((word) => !(word.startsWith('-') && word.length > 1));
+    const at = folders[0];
     if (call.subcommand === 'add') {
-      const whole = [...operands, ...afterDashes].some((word) => WHOLE_FOLDER.has(path.posix.normalize(word.replace(/\/+$/u, '') || '.')));
-      if (whole || has('-A', '--all', '--al') || has('-u', '--update', '--u')) found.push({ what: '`git add` of every change stages other sessions\' work too', at });
-    } else if (call.subcommand === 'commit' && has('-a', '--all', '--al')) {
-      found.push({ what: '`git commit -a` commits every change in the folder, other sessions\' work included', at });
-    } else if (call.subcommand === 'switch' || call.subcommand === 'checkout') {
-      // Creating a branch or detaching HEAD leaves the default branch, whatever the target is named.
-      const creates = has('-b') || has('-B') || has('-c', '--create', '--cr') || has('-C', '--force-create', '--fo') || has(null, '--orphan', '--or')
-        || has('-d', '--detach', '--det');
-      // checkout: one word and no paths is a branch switch when it names a commit, the previous branch (`-`), or a
-      // remote branch git would create locally; a commit followed by paths, with or without `--`, restores those
-      // paths; any other word is a path to restore. The guard allows a restore.
-      const target = call.subcommand === 'switch' ? operands.at(-1) : operands[0];
-      // --pathspec-from-file and -p restore files from the commit they name.
-      const restores = has('-p', '--patch', '--pa') || has(null, '--pathspec-from-file', '--pathspec');
-      const lone = operands.length === 1 && !afterDashes.length && !restores;
-      const switches = call.subcommand === 'switch' || creates || (lone && (target === '-' || names(at, target) || tracksRemote(at, target)));
-      if (switches) found.push({ what: `\`git ${call.subcommand}\` moves the folder every session shares to another branch`, at, target: target ?? null, creates });
+      const named = (word) => !/[*?[\]:]/u.test(word) && !isFolder(path.resolve(at, word));
+      const dynamic = call.rest.some((token) => token.dynamic);
+      if (dynamic || !options.every((option) => ADD_SAFE.has(option)) || ![...operands, ...after].every(named) || ![...operands, ...after].length) {
+        found.push({ what: '`git add` of anything but named files can stage other sessions\' work', folders });
+      }
+    } else if (call.subcommand === 'commit') {
+      if (commitsAll(call.rest)) found.push({ what: '`git commit -a` commits every change in the folder, other sessions\' work included', folders });
+    } else if (call.subcommand === 'switch') {
+      const back = options.length === 0 && operands.length === 1 && !after.length;
+      found.push({ what: '`git switch` moves the folder every session shares to another branch', folders, target: back ? operands[0] : null });
+    } else {
+      const restore = options.length === 0 && (dashes !== -1 ? after.length > 0 : operands.length > 1 || (operands.length === 1 && !switchesTo(at, operands[0])));
+      if (!restore) {
+        const back = options.length === 0 && operands.length === 1 && dashes === -1;
+        found.push({ what: '`git checkout` moves the folder every session shares to another branch', folders, target: back ? operands[0] : null });
+      }
     }
   }
   return found;
 }
 
-// A git call's words after its subcommand, as { options, operands, afterDashes }: each option by its full name.
-function readGitArgs(rest, valueFlags, attachedFlags = new Set()) {
-  const options = [];
-  const operands = [];
-  const afterDashes = [];
-  let ended = false;
-  for (let i = 0; i < rest.length; i += 1) {
-    const { text } = rest[i];
-    if (ended) afterDashes.push(text);
-    else if (text === '--') ended = true;
-    else if (text.startsWith('--')) {
-      const [name, inline] = text.split(/=(.*)/su);
-      const full = [...valueFlags].find((flag) => flag.startsWith('--') && flag.startsWith(name) && name.length > 3);
-      options.push(full ?? name);
-      if (full && inline === undefined) i += 1;
-    } else if (text.startsWith('-') && text.length > 1) {
-      const { options: letters, value } = readShortOptions(text, valueFlags, attachedFlags);
-      options.push(...letters);
-      if (value?.attached === null) i += 1;
-    } else {
-      operands.push(text);
+// The folders a git call may act on: where it runs (a wrapper's `env -C`, then each `-C`), and its `--work-tree` and
+// the folder holding its `--git-dir`. Null when one of them cannot be read, which leaves the call alone, as a path that
+// may expand is.
+function gitFolders(globals, chdir, cwd) {
+  if (chdir?.dynamic) return null;
+  let at = chdir ? path.resolve(cwd, chdir.text) : cwd;
+  const others = [];
+  for (let i = 0; i < globals.length; i += 1) {
+    const { text, dynamic } = globals[i];
+    const next = globals[i + 1];
+    const value = (name) => (text === name ? next : text.startsWith(`${name}=`) ? { text: text.slice(name.length + 1), dynamic } : undefined);
+    const chdirTo = text === '-C' ? next : /^-C./u.test(text) ? { text: text.slice(2), dynamic } : undefined;
+    for (const [given, toFolder] of [[chdirTo, null], [value('--work-tree'), (p) => p], [value('--git-dir'), (p) => path.dirname(p)]]) {
+      if (given === undefined) continue;
+      if (!given || given.dynamic) return null;
+      if (toFolder === null) at = path.resolve(at, given.text);
+      else others.push(toFolder(path.resolve(at, given.text)));
     }
   }
-  return { options, operands, afterDashes };
+  return [at, ...others];
 }
 
-// Whether some remote has a branch `word`, which `git checkout <word>` creates and switches to.
-function tracksRemote(at, word) {
-  const result = runGit(['for-each-ref', '--format=%(refname)', `refs/remotes/*/${word}`], existingFolder(at));
-  return result.status === 0 && result.stdout.trim() !== '';
+// Whether `git commit` with these words commits every tracked change: -a or --all in any spelling. A short cluster is
+// read up to its first value option, so `-am msg` holds -a and `-mall` does not.
+function commitsAll(rest) {
+  for (let i = 0; i < rest.length; i += 1) {
+    const { text } = rest[i];
+    if (text === '--') return false;
+    if (text.startsWith('--')) {
+      if (isLongOption(text, '--all', '--al')) return true;
+      if (COMMIT_VALUES.has(text)) i += 1;
+    } else if (text.startsWith('-') && text.length > 1) {
+      const { options, value } = readShortOptions(text, COMMIT_VALUES, COMMIT_ATTACHED);
+      if (options.includes('-a')) return true;
+      if (value?.attached === null) i += 1;
+    }
+  }
+  return false;
 }
 
-// Whether `word` names a commit in the repository at `at`: a branch, a tag, or a hash. A word git cannot read is no
-// commit, so `git checkout <path>` restores, even for a file that is gone.
-function names(at, word) {
-  return runGit(['rev-parse', '--verify', '--quiet', '--end-of-options', `${word}^{commit}`], existingFolder(at)).status === 0;
+// Whether `git checkout <word>` would switch branches: the previous branch (`-`), a commit, or a remote branch git
+// would create locally. Any other word is a path to restore.
+function switchesTo(at, word) {
+  if (word === '-') return true;
+  const folder = existingFolder(at);
+  if (runGit(['rev-parse', '--verify', '--quiet', '--end-of-options', `${word}^{commit}`], folder).status === 0) return true;
+  const remote = runGit(['for-each-ref', '--format=%(refname)', `refs/remotes/*/${word}`], folder);
+  return remote.status === 0 && remote.stdout.trim() !== '';
 }
+
+const isFolder = (file) => {
+  try {
+    return statSync(file).isDirectory();
+  } catch {
+    return false;
+  }
+};
 
 // The deny reason for a git call that changes the main checkout's state, or null. Moving back to the default branch
 // is allowed: it is where the main checkout belongs.
 function gitStateDenial(command, cwd) {
   for (const change of gitStateChanges(command, cwd)) {
-    const folder = existingFolder(change.at);
-    const project = findProject(folder);
-    if (!project) continue;
-    const { config } = loadConfig(project);
-    if (!config.git.mainCheckout.guard) continue;
-    const roots = checkoutRoots(folder);
-    if (!roots || canonical(roots.current) !== canonical(roots.main)) continue;
-    if (change.target !== undefined && !change.creates && change.target === config.git.defaultBranch) continue;
-    return reason(`Blocked: ${change.what}, in the main checkout (${roots.main}).`, project, config);
+    for (const at of change.folders) {
+      const folder = existingFolder(at);
+      const project = findProject(folder);
+      if (!project) continue;
+      const { config } = loadConfig(project);
+      if (!config.git.mainCheckout.guard) continue;
+      const roots = checkoutRoots(folder);
+      if (!roots || canonical(roots.current) !== canonical(roots.main)) continue;
+      if (change.target && change.target === config.git.defaultBranch) continue;
+      return reason(`Blocked: ${change.what}, in the main checkout (${roots.main}).`, project, config);
+    }
   }
   return null;
 }

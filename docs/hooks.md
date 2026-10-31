@@ -131,13 +131,16 @@ It allows a git-ignored path, a path in `git.mainCheckout.allowWrites`, and anyt
 [config.md](config.md) lists both keys.
 When git cannot answer, an Edit or Write is blocked to be safe, and a Bash command runs.
 
-Several sessions can share the main checkout, so the rule also keeps its git state to the default branch and to what
-each session names:
+Several sessions can share the main checkout, so the rule also keeps its git state, and lets only what is plainly safe
+through, whatever the spelling:
 
-- `git switch` and `git checkout <branch>` are blocked, except back to `git.defaultBranch`; `git checkout <path>` and
-  `git checkout -- <path>` restore files and pass.
-- `git add -A`, `--all`, `-u`, `.`, and `:/`, and `git commit -a`, are blocked: they take every change in the folder,
-  another session's included. Stage files by name.
+- `git add` of named files only: no folder, glob, `-A`, `-u`, or other option but `-v`, `-f`, `-N`, and `-p`.
+- `git commit` without `-a` or `--all`.
+- `git switch` and `git checkout` only back to `git.defaultBranch`; `git checkout -- <path>`, `git checkout <path>`, and
+  `git checkout <commit> <path>` restore files and pass.
+
+The rule follows `env -C`, `git -C`, `--work-tree`, and `--git-dir`, so a call from a worktree into the main checkout
+is blocked and one into a worktree passes. Anything blocked here belongs in a task worktree.
 
 ## Agent gates
 

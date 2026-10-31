@@ -8,6 +8,8 @@ import test from 'node:test';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { lintTerms } from '../plugins/aidrian/lib/lint.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
+import { codeName, identifiers } from '../plugins/aidrian/lib/code-words.mjs';
+import { proseLines } from '../plugins/aidrian/lib/markdown-prose.mjs';
 import { addedLines, loadTerms, numbered, scanLines, termPattern } from '../plugins/aidrian/lib/terms.mjs';
 
 const CLI = path.resolve('plugins/aidrian/lib/cli.mjs');
@@ -73,7 +75,7 @@ test('the file is validated: a bad rule is named and left out, the rest apply', 
   });
   const { errors } = loadTerms(project, loadConfig(project).config);
   assert.deepEqual(errors, [
-    '.aidrian/terms.json: rule "bad": needs "paths", or "locale" with the file\'s "locales"',
+    '.aidrian/terms.json: rule "bad": "locale" needs the file\'s "locales"',
     '.aidrian/terms.json: rule "bad": "severity" must be "block" or "warn"',
     '.aidrian/terms.json: rule "bad": "terms" must map each banned term to its replacement, both non-empty strings',
     '.aidrian/terms.json: rule "ok": another rule has this id',
@@ -140,7 +142,7 @@ test('the write hook refuses a block hit on the lines a write adds, and tells th
 });
 
 test('addedLines reads each write tool', (t) => {
-  assert.deepEqual(addedLines({ tool_name: 'Edit', tool_input: { file_path: 'a', old_string: 'x\ny', new_string: 'x\nz' } }, '/nowhere'), [{ file: 'a', lines: [{ number: 2, text: 'z' }] }]);
+  assert.deepEqual(addedLines({ tool_name: 'Edit', tool_input: { file_path: 'a', old_string: 'x\ny', new_string: 'x\nz' } }, '/nowhere'), [{ file: 'a', lines: [{ number: 2, text: 'z' }], text: null, before: null, reliable: false }]);
   const { dir, write } = repo(t);
   write('f.txt', 'one\ntwo a\nthree a\n');
   const edit = (input) => addedLines({ tool_name: 'Edit', tool_input: { file_path: 'f.txt', ...input } }, dir)[0].lines;
@@ -149,4 +151,123 @@ test('addedLines reads each write tool', (t) => {
   assert.deepEqual(edit({ edits: [{ old_string: 'one', new_string: 'uno' }, { old_string: 'two', new_string: 'dos' }] }), [{ number: 1, text: 'uno' }, { number: 2, text: 'dos a' }]);
   const patch = '*** Begin Patch\n*** Add File: n.md\n+one\n*** Delete File: gone.md\n*** Update File: u.md\n*** Move to: moved.md\n@@\n+two\n*** End Patch';
   assert.deepEqual(addedLines({ tool_name: 'apply_patch', tool_input: { command: patch } }, '/').map(({ file, lines }) => [file, lines.map((l) => l.text)]), [['n.md', ['one']], ['moved.md', ['two']]]);
+});
+
+const errorsOf = (t, rules, extra = {}) => {
+  const { project } = repo(t, { version: 1, ...extra, rules });
+  return loadTerms(project, loadConfig(project).config).errors.map((error) => error.replace(/^\.aidrian\/terms\.json: /u, ''));
+};
+
+test('aidrian check validates prose, code, and optional paths', (t) => {
+  assert.deepEqual(errorsOf(t, [{ id: 'everywhere', terms: { guest: 'client' } }]), [], 'a rule with no paths is valid');
+  assert.deepEqual(errorsOf(t, [
+    { id: 'a', prose: 'yes', code: 1, terms: { x: 'y' } },
+    { id: 'b', prose: true, code: true, paths: ['**'], terms: { x: 'y' } },
+    { id: 'c', prose: true, locale: 'es', terms: { x: 'y' } },
+    { id: 'd', code: true, terms: { x: 'y' } },
+    { id: 'e', code: true, paths: ['src/**'], terms: { 'part*': 'y', 'party size': 'n', partySize: 'n' } },
+    { id: 'f', paths: [], terms: { x: 'y' } },
+  ], { locales: 'locales/{locale}/*.json' }), [
+    'rule "a": "prose" must be true or false',
+    'rule "a": "code" must be true or false',
+    'rule "b": "prose" and "code" cannot both be true',
+    'rule "c": "prose" does not go with "locale"',
+    'rule "d": a "code" rule needs "paths": code names and prose words differ',
+    'rule "e": "part*": a "code" term has no "*"',
+    'rule "e": "party size" and "partySize" name the same identifier',
+    'rule "f": "paths" must be a list of globs',
+  ]);
+});
+
+test('a rule with no paths reads every file but the terms file; a locale glob takes *', (t) => {
+  const { rules } = repo(t, {
+    version: 1,
+    locales: 'locales/{locale}/*.json',
+    rules: [
+      { id: 'clients', exclude: ['vendor/**'], terms: { guest: 'client' } },
+      { id: 'es', locale: 'es*', terms: { comensal: 'cliente' } },
+    ],
+  });
+  const scan = (rel, text, options) => scanLines(numbered(text), rel, rules(), options).map((hit) => `${hit.line}:${hit.rule.id}`);
+  assert.deepEqual(scan('src/a.ts', 'const guest = 1;'), ['1:clients']);
+  assert.deepEqual(scan('package.json', '{ "guest": 1 }'), ['1:clients'], 'JSON keys are read');
+  assert.deepEqual(scan('vendor/x.md', 'guest'), [], 'excluded');
+  assert.deepEqual(scan('.aidrian/terms.json', '"guest": "client"'), [], 'the terms file names its terms');
+  assert.deepEqual(scan('plans/p.md', 'guest', { ignored: true }), [], 'git ignores it');
+  assert.deepEqual(scan('locales/es/a.json', '{ "a": "comensal" }'), ['1:es']);
+  assert.deepEqual(scan('locales/es-ES/a.json', '{ "a": "comensal" }'), ['1:es']);
+  assert.deepEqual(scan('locales/fr/a.json', '{ "a": "comensal" }'), []);
+});
+
+test('prose reads a Markdown file in its own voice', () => {
+  const text = [
+    'You read this.',
+    '```js',
+    'you();',
+    '```',
+    '~~~~',
+    '```',
+    'still you',
+    '~~~~',
+    '> you said',
+    'Run `you` or ``a `you` b`` at https://x.io/you now.',
+    'He said "you are" and “you too”.',
+    'An open quote: "you wrap',
+    'onto here" and you.',
+    'you <!-- lint-skip -->',
+    'show-your-work and you-know-who',
+  ].join('\n');
+  assert.deepEqual(proseLines(text).map((line, i) => (line !== null && termPattern('you', { compound: true }).test(line) ? i + 1 : null)).filter(Boolean), [1, 13]);
+});
+
+test('a prose rule reads what a write adds to the prose, and only warns without the whole file', (t) => {
+  const { dir, write } = repo(t, { version: 1, rules: [{ id: 'second-person', paths: ['docs/**/*.md'], prose: true, terms: { you: 'the agent' } }] });
+  write('docs/a.md', 'Intro.\n```\nexample\n```\nyou <!-- lint-skip -->\nEnd.\n');
+  const hook = (toolName, toolInput) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ tool_name: toolName, cwd: dir, tool_input: toolInput }), encoding: 'utf8' });
+  assert.equal(hook('Edit', { file_path: 'docs/a.md', old_string: 'example', new_string: 'you run it' }).status, 0, 'inside a fence');
+  assert.equal(hook('Edit', { file_path: 'docs/a.md', old_string: 'End.', new_string: 'Then you run it.' }).status, 2, 'in prose');
+  assert.equal(hook('Edit', { file_path: 'docs/a.md', old_string: 'you <!-- lint-skip -->', new_string: 'you' }).status, 2, 'moved out of a lint-skip line');
+  assert.equal(hook('Write', { file_path: 'docs/a.md', content: 'End.\nIntro.\n```\nexample\n```\nyou <!-- lint-skip -->\n' }).status, 0, 'a reorder');
+  assert.equal(hook('Write', { file_path: 'docs/new.md', content: '```\nyou\n```\n' }).status, 0, 'a new file with a fence');
+  const fallback = hook('Edit', { file_path: 'docs/a.md', old_string: 'not there', new_string: 'you' });
+  assert.equal(fallback.status, 0, 'an Edit whose old text is gone only warns');
+  assert.match(JSON.parse(fallback.stdout).hookSpecificOutput.additionalContext, /"you" -> use "the agent"/);
+  const patch = hook('apply_patch', { command: '*** Begin Patch\n*** Update File: docs/a.md\n@@\n+you\n*** End Patch' });
+  assert.equal(patch.status, 0, 'a patch only warns');
+  assert.match(JSON.parse(patch.stdout).hookSpecificOutput.additionalContext, /\[second-person\]/);
+});
+
+test('a code rule matches whole identifiers in any case style, on agent writes only', (t) => {
+  for (const name of ['partySize', 'PartySize', 'party_size', 'PARTY_SIZE', 'party-size', 'party size']) assert.equal(codeName(name), 'party size', name);
+  assert.equal(codeName('HTMLParser'), 'html parser');
+  assert.deepEqual(identifiers("const a = 'party' + \"party\" + `party ${party}`; // party"), ['const', 'a']);
+  assert.deepEqual(identifiers('x = /* party */ party_size'), ['x', 'party_size']);
+  const { dir, write, git, rules } = repo(t, {
+    version: 1,
+    rules: [{ id: 'guest-count', paths: ['src/**'], exclude: ['src/legacy/**'], code: true, severity: 'warn', terms: { party: 'numberOfGuests', 'party size': 'numberOfGuests' } }],
+  });
+  const scan = (rel, text) => scanLines(numbered(text), rel, rules()).map((hit) => `${hit.line}:${hit.term}`);
+  assert.deepEqual(scan('src/a.ts', 'const partySize = booking.party;\nconst minimumPartySize = thirdParty;\nconst PARTY_SIZE = 1;'), ['1:party size', '1:party', '3:party size']);
+  assert.deepEqual(scan('src/legacy/a.ts', 'const party = 1;'), []);
+  const hook = spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ tool_name: 'Write', cwd: dir, tool_input: { file_path: 'src/b.ts', content: 'const party_size = 2;\n' } }), encoding: 'utf8' });
+  assert.equal(hook.status, 0);
+  assert.match(JSON.parse(hook.stdout).hookSpecificOutput.additionalContext, /src\/b\.ts:1: "party size" -> use "numberOfGuests" \[guest-count\]/);
+  write('src/c.ts', 'const party = 1;\n');
+  git('add', '.');
+  const lint = spawnSync(process.execPath, [CLI, 'lint', 'terms', '--project', dir], { encoding: 'utf8' });
+  assert.equal(lint.status, 0, 'lint leaves code names to the project linter');
+  assert.doesNotMatch(lint.stderr, /party/);
+});
+
+test('aidrian lint terms --rule runs one rule, and names a rule that is not there', (t) => {
+  const { dir, write, git } = repo(t);
+  write('docs/api/a.md', 'The organisation.\n');
+  write('notes.md', 'Send an e-mail.\n');
+  git('add', '.');
+  const lint = (...args) => spawnSync(process.execPath, [CLI, 'lint', 'terms', '--project', dir, ...args], { encoding: 'utf8' });
+  const soft = lint('--rule', 'soft');
+  assert.equal(soft.status, 0, 'the block rule is not run');
+  assert.match(soft.stderr, /warning: notes\.md:1: "e-mail"/);
+  assert.match(soft.stdout, /\(1 rules\)/);
+  assert.match(lint('--rule', 'nope').stderr, /no rule "nope"/);
 });

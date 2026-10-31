@@ -86,7 +86,7 @@ What each rule matches:
   a body file in a shared temp folder, and a body identical to another open pull request's.
 - Review gate: `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose body
   asks `@codex review`; `gh pr create --reviewer` and `gh pr edit --add-reviewer` naming `github.reviewer`.
-- Main checkout: `>`, `>>`, `tee`, `sed -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
+- Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
   `touch`, `mkdir`, and `rsync` (sources too under `--remove-source-files`).
 
 Each rule is a file in `plugins/aidrian/lib/rules/`; a rule that reads only `gh` commands, such as the pull request body rule, is in `rules/github/`.

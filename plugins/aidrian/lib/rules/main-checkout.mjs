@@ -1,6 +1,6 @@
 // Write rule: no writes to a tracked file in a project's main checkout; task work happens in a git worktree.
 // It covers Edit, Write, and NotebookEdit, Codex's apply_patch, and the Bash commands whose target is certain:
-// `>` and `>>`, tee, sed -i, the destination of cp, ln, and install, every path of mv, git mv, rm, git rm, unlink, touch,
+// `>` and `>>`, tee, sed -i, perl -i, ruby -i, the destination of cp, ln, and install, every path of mv, git mv, rm, git rm, unlink, touch,
 // mkdir, and truncate, dd's of=, and the local destination of rsync, with its sources too under --remove-source-files. A move removes its sources. A command
 // substitution that runs is read as the command line is.
 //
@@ -40,6 +40,10 @@ const WRITERS = new Map([
   ['install', new Set(['-S', '--suffix', '-t', '--target-directory', '-m', '--mode', '-o', '--owner', '-g', '--group'])],
   ['truncate', new Set(['-s', '--size', '-r', '--reference', '-o'])],
   ['dd', new Set()],
+  // Options that take the rest of their word or the next one (perlrun, ruby -h). The rest-only ones are in REST_VALUES:
+  // listed here, they would take the next word, which can be the file written.
+  ['perl', new Set(['-e', '-E', '-I'])],
+  ['ruby', new Set(['-e', '-I'])],
   // A value option whose name extends a switch (`--partial-dir`, `--backup-dir`) is left out, so the switch never
   // swallows an operand. An unlisted option's value reads as one more path: blocked by mistake, never missed.
   [
@@ -54,7 +58,15 @@ const WRITERS = new Map([
 ]);
 // Options that take only the rest of their word: sed's in-place suffix, `-i.bak`, so `-ie` is -i with the suffix "e".
 // BSD sed's -I edits in place too.
-const REST_VALUES = new Map([['sed', new Set(['-i', '-I'])]]);
+// perl and ruby take `-i[suffix]` the same way, and their other rest-only options (`-Mstrict`, `-0777`, `-rjson`) never
+// take the next word: `perl -M strict` is an error.
+const REST_VALUES = new Map([
+  ['sed', new Set(['-i', '-I'])],
+  ['perl', new Set(['-i', '-M', '-m', '-0', '-l', '-C', '-x', '-d', '-D'])],
+  ['ruby', new Set(['-i', '-r', '-C', '-E', '-F', '-0', '-W', '-x', '-K', '-T'])],
+]);
+// The option that gives a script on the command line, so every operand is a file; without it the first is the script.
+const SCRIPT_OPTIONS = new Map([['perl', ['-e', '-E']], ['ruby', ['-e']]]);
 // git subcommands whose every path is written: git mv removes its sources, git rm its paths.
 const GIT_WRITERS = new Map([
   ['mv', new Set()],
@@ -213,6 +225,11 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
     if (operands.length < 2) return [];
     const removesSources = flags.some((flag) => isLongOption(flag, '--remove-source-files', '--remov') || isLongOption(flag, '--remove-sent-files', '--remov'));
     return (removesSources ? operands : operands.slice(-1)).filter((token) => !REMOTE.test(token.text));
+  }
+  if (SCRIPT_OPTIONS.has(program)) {
+    // perl -i and ruby -i edit their files in place; without -i they only read them.
+    if (!flags.includes('-i')) return [];
+    return flags.some((flag) => SCRIPT_OPTIONS.get(program).includes(flag)) ? operands : operands.slice(1);
   }
   if (program !== 'sed') return operands;
   // GNU sed takes a prefix of a long option: `--i` is `--in-place`, `--e` is `--expression`, `--fi` is `--file`.

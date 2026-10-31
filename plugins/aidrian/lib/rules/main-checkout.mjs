@@ -122,23 +122,31 @@ const SAFE_GLOBALS = /^(?:-C.*|--git-dir(?:=.*)?|--work-tree(?:=.*)?|--no-pager|
 const ADD_SAFE = new Set(['-v', '--verbose', '-f', '--force', '-N', '--intent-to-add', '-p', '--patch']);
 const COMMIT_VALUES = new Set(['-m', '-F', '-c', '-C', '-t', '--message', '--file', '--author', '--date', '--template', '--reuse-message', '--reedit-message', '--fixup', '--squash', '--cleanup', '--trailer']);
 const COMMIT_ATTACHED = new Set(['-u', '-S']);
-function gitStateChanges(command, cwd, depth = 0) {
+// `inherited` holds the GIT_* assignments in force: set before an inline shell, or by an earlier `export` or bare
+// assignment on the same command line.
+const GIT_ASSIGNMENT = /^GIT_[A-Z_]+=/u;
+function gitStateChanges(command, cwd, depth = 0, inherited = []) {
   const found = [];
   let known = true;
+  const env = [...inherited];
   for (const { segment, substitutions } of lexSteps(command)) {
-    if (known && depth < SUBSTITUTION_DEPTH_LIMIT) for (const body of substitutions) found.push(...gitStateChanges(body, cwd, depth + 1));
+    if (known && depth < SUBSTITUTION_DEPTH_LIMIT) for (const body of substitutions) found.push(...gitStateChanges(body, cwd, depth + 1, env));
     const invocation = readInvocation(segment);
+    const assignments = segment.filter((token) => GIT_ASSIGNMENT.test(token.text));
+    // `export GIT_DIR=…` or a bare `GIT_DIR=…` lasts for the rest of the line.
+    if (invocation.program === 'export' || (assignments.length && !invocation.program)) env.push(...assignments);
     if (CHANGES_DIRECTORY.has(invocation.program)) known = false;
     // `sh -c`, `bash -c`, `flock … -c`, and a heredoc fed to a shell run their command where the invocation runs.
     const inner = known && depth < SUBSTITUTION_DEPTH_LIMIT ? inlineShellCommand(invocation) : null;
-    if (inner !== null && !invocation.chdir?.dynamic) found.push(...gitStateChanges(inner, invocation.chdir ? path.resolve(cwd, invocation.chdir.text) : cwd, depth + 1));
+    if (inner !== null && !invocation.chdir?.dynamic) found.push(...gitStateChanges(inner, invocation.chdir ? path.resolve(cwd, invocation.chdir.text) : cwd, depth + 1, [...env, ...assignments]));
     const call = known ? readGit(segment) : null;
     if (!call || !['add', 'commit', 'switch', 'checkout'].includes(call.subcommand)) continue;
-    const folders = gitFolders(call.globals, invocation.chdir, cwd, segment);
+    const scope = [...env, ...segment];
+    const folders = gitFolders(call.globals, invocation.chdir, cwd, scope);
     if (folders === null) continue;
     // A global option that changes how paths match or which repository is read makes nothing plainly safe.
     const plainGlobals = call.globals.every(({ text }, i) => SAFE_GLOBALS.test(text) || (call.globals[i - 1] && ['-C', '--git-dir', '--work-tree'].includes(call.globals[i - 1].text)));
-    const gitEnv = segment.some(({ text }) => /^GIT_[A-Z_]+=/u.test(text));
+    const gitEnv = scope.some(({ text }) => GIT_ASSIGNMENT.test(text));
     const words = call.rest.map((token) => token.text);
     const dashes = words.indexOf('--');
     const before = dashes === -1 ? words : words.slice(0, dashes);

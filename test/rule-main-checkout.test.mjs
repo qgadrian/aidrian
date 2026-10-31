@@ -343,6 +343,9 @@ test('in the main checkout, only named files are staged and only the default bra
   assert.match(denied("bash -c 'git add -A'") ?? '', /main checkout/, 'an inline shell');
   assert.match(denied("sh -c 'git checkout task'") ?? '', /main checkout/);
   assert.match(denied(`GIT_INDEX_FILE=${repo}/.git/index git add -A`, beside) ?? '', /main checkout/, 'an index file names its checkout');
+  assert.match(denied(`GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo} bash -c 'git add -A'`, beside) ?? '', /main checkout/, 'git environment into an inline shell');
+  assert.match(denied(`export GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo}; git checkout task`, beside) ?? '', /main checkout/, 'an export earlier on the line');
+  assert.match(denied(`GIT_WORK_TREE=${repo}; GIT_DIR=${repo}/.git; export GIT_DIR GIT_WORK_TREE; git add -A`, beside) ?? '', /main checkout/, 'bare assignments');
   execFileSync('git', ['-C', repo, 'rm', '-q', '--cached', 'src/app.js']);
   execFileSync('git', ['-C', repo, 'add', 'src/app.js']);
   rmSync(path.join(repo, 'src'), { recursive: true, force: true });

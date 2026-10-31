@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -346,6 +346,12 @@ test('in the main checkout, only named files are staged and only the default bra
   assert.match(denied(`GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo} bash -c 'git add -A'`, beside) ?? '', /main checkout/, 'git environment into an inline shell');
   assert.match(denied(`export GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo}; git checkout task`, beside) ?? '', /main checkout/, 'an export earlier on the line');
   assert.match(denied(`GIT_DIR="$HOME/unused"; GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo} git add -A`, beside) ?? '', /main checkout/, 'the last assignment wins');
+  for (const command of ['branch=task; git checkout "$branch"', 'git checkout "$(printf task)"', 'flags=-am; git commit $flags x']) {
+    assert.match(denied(command) ?? '', /main checkout/, `a word that may expand: ${command}`);
+  }
+  assert.equal(denied('git commit -m "$MESSAGE"'), null, 'a message that expands is still a message');
+  symlinkSync('src', path.join(repo, 'link'));
+  assert.equal(denied('git add link'), null, 'a symlink to a folder is one file');
   for (const command of ['(export GIT_DIR="$HOME/unused"); git add -A', 'export GIT_DIR="$HOME/unused" | cat; git add -A', 'GIT_DIR="$X" git add src/app.js']) {
     assert.match(denied(command) ?? '', /main checkout/, `an unreadable value fails closed: ${command}`);
   }

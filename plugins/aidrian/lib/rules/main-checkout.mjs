@@ -13,7 +13,7 @@
 // guard off, matched by `git.mainCheckout.allowWrites`, or git-ignored. When git cannot tell, a tool write is denied to be
 // safe and a Bash command runs: a command line is never as certain as a file path.
 
-import { existsSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { globPattern } from '../fs.mjs';
@@ -172,6 +172,9 @@ function gitStateChanges(command, cwd, depth = 0, inherited = []) {
       }
     } else if (call.subcommand === 'commit') {
       if (commitsAll(call.rest)) found.push({ what: '`git commit -a` commits every change in the folder, other sessions\' work included', folders });
+    } else if (call.rest.some((token) => token.dynamic)) {
+      // A word that may expand can name any branch or option: a checkout or switch with one is not plainly safe.
+      found.push({ what: `\`git ${call.subcommand}\` with a word that may expand can move the folder every session shares`, folders, target: null });
     } else if (call.subcommand === 'switch') {
       const back = options.length === 0 && operands.length === 1 && !after.length;
       found.push({ what: '`git switch` moves the folder every session shares to another branch', folders, target: back ? operands[0] : null });
@@ -236,7 +239,9 @@ function checkoutOfGitDir(gitDir) {
 // read up to its first value option, so `-am msg` holds -a and `-mall` does not.
 function commitsAll(rest) {
   for (let i = 0; i < rest.length; i += 1) {
-    const { text } = rest[i];
+    const { text, dynamic } = rest[i];
+    // A word that may expand could be -a; a value option's value (a message) is read past below.
+    if (dynamic) return true;
     if (text === '--') return false;
     if (text.startsWith('--')) {
       if (isLongOption(text, '--all', '--al')) return true;
@@ -273,7 +278,7 @@ function tracksAtMostItself(at, word) {
 
 const isFolder = (file) => {
   try {
-    return statSync(file).isDirectory();
+    return lstatSync(file).isDirectory();
   } catch {
     return false;
   }

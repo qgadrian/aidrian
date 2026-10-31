@@ -107,7 +107,7 @@ function compile(rule, locales, termsFile) {
     include: paths.map(globPattern),
     exclude: (rule.exclude ?? []).map(globPattern),
     // The terms file itself names every banned term: no rule reads it.
-    self: termsFile ? termsFile.split(path.sep).join('/').replace(/^\.\//u, '') : null,
+    self: termsFile ? path.posix.normalize(termsFile.split(path.sep).join('/')) : null,
     terms,
     // A code rule looks identifiers up by name; the others make one pass over a line for every term of the rule, and
     // only a line it matches is read term by term.

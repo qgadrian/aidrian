@@ -312,3 +312,8 @@ test('a quoted URL keeps its closing quote, and code names keep letters of any s
   assert.equal(codeName('caféParty'), 'café party');
   assert.notEqual(codeName('partyé'), 'party');
 });
+
+test('the terms file is skipped however config.json spells its path', (t) => {
+  const { rules } = repo(t, { version: 1, rules: [{ id: 'clients', terms: { guest: 'client' } }] }, { version: 1, terms: { file: '././.aidrian/../.aidrian/terms.json' } });
+  assert.deepEqual(scanLines(numbered('"guest": "client"'), '.aidrian/terms.json', rules()), []);
+});

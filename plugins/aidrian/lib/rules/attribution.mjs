@@ -110,7 +110,10 @@ function readCalls(command, cwd, depth = 0) {
     // The n-th commit whose message is a command substitution takes the line's n-th message heredoc, and only when the
     // counts match: one commit's heredoc never stands in for another's.
     pending.forEach((read, i) => {
-      if (read.dynamic && messageHeredocs.length === pending.length) read.messages.splice(read.at, 0, messageHeredocs[i]);
+      if (!read.dynamic) return;
+      // A message part the rule cannot read may end the message, past any trailer block: then only --trailer counts.
+      if (messageHeredocs.length === pending.length) read.messages.splice(read.at, 0, messageHeredocs[i]);
+      else read.messages = [];
     });
   }
   return { gitCommits, prCreates };
@@ -124,7 +127,9 @@ function moveTo(dir, to) {
 }
 
 // The `git commit` options that take the next word as their value, besides -m, -F, and --trailer.
-const COMMIT_VALUES = ['--author', '--date', '--template', '--fixup', '--squash', '--cleanup', '--pathspec-from-file'];
+const COMMIT_VALUES = ['--author', '--date', '--template', '--cleanup', '--pathspec-from-file'];
+// The options after which git writes the subject itself, `fixup! …` or `squash! …`, above the -m values.
+const GENERATED_SUBJECT = ['--fixup', '--squash'];
 const COMMIT_SHORT_VALUES = new Set(['-t']);
 // The options that take the message from another commit, which the rule does not read.
 const REUSE_VALUES = ['--reuse-message', '--reedit-message'];
@@ -133,12 +138,14 @@ const REUSE_SHORT = new Set(['-C', '-c']);
 // One commit's { messages, trailers, dynamic, holdsHeredoc, at, writesNothing }: its -m values in order, or its -F file's text, its
 // --trailer values, whether a kept or dropped -m value is a command substitution, where in `messages` it goes, and whether the
 // call makes no commit: `-h`, `--help`, or a `--dry-run` that no later `--no-dry-run` undoes. Option values are skipped,
-// so `-m --help` is a message. `--no-message` and `--no-file` drop the -m values and the -F file before them.
+// so `-m --help` is a message. `--no-message` and `--no-file` drop the -m values and the -F file before them. Under
+// `--fixup` or `--squash`, git writes a subject above the -m values, so a single -m can hold the trailer block.
 function commitMessage(rest, dir) {
   const read = { messages: [], trailers: [], dynamic: false, at: 0, writesNothing: false };
   const messages = [];
   let fileText = null;
   let reused = false;
+  let generated = false;
   let dryRun = false;
   for (let i = 0; i < rest.length; i += 1) {
     const { text } = rest[i];
@@ -151,7 +158,10 @@ function commitMessage(rest, dir) {
     else if (isLongOption(flag, '--dry-run', '--dr')) dryRun = true;
     else if (isLongOption(flag, '--no-dry-run', '--no-d')) dryRun = false;
     else if (COMMIT_VALUES.some((option) => isLongOption(flag, option, option)) || COMMIT_SHORT_VALUES.has(text)) value();
-    else if (REUSE_VALUES.some((option) => isLongOption(flag, option, option)) || REUSE_SHORT.has(text)) {
+    else if (GENERATED_SUBJECT.some((option) => isLongOption(flag, option, option))) {
+      generated = true;
+      value();
+    } else if (REUSE_VALUES.some((option) => isLongOption(flag, option, option)) || REUSE_SHORT.has(text)) {
       reused = true;
       value();
     }
@@ -181,7 +191,7 @@ function commitMessage(rest, dir) {
   read.writesNothing ||= dryRun;
   // The message git writes: another commit's when one is reused, which the rule cannot read; else the -m values, else
   // the -F file. Only the --trailer values then count for a message the rule cannot read.
-  const kept = reused ? [] : messages.length ? messages : fileText !== null ? [fileText] : [];
+  const kept = reused ? [] : messages.length ? [...(generated ? ['fixup! subject'] : []), ...messages] : fileText !== null ? [fileText] : [];
   read.holdsHeredoc = messages.includes(DYNAMIC);
   read.dynamic = kept.includes(DYNAMIC);
   read.at = kept.indexOf(DYNAMIC);

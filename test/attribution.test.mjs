@@ -141,6 +141,10 @@ test('help and dry-run commits pass', (t) => {
   assert.match(run('git commit --allow-empty -m "fix: x\n\nAgent: main" --no-message -C HEAD') ?? '', /Blocked/, 'a reused message');
   assert.match(run('git commit -m "fix: x\n\nAgent: main" --no-message -m y') ?? '', /Blocked/, '--no-message drops it');
   assert.equal(run("git commit -C HEAD --trailer 'Agent: main'"), null, 'a --trailer still counts');
+  assert.match(run('git commit --allow-empty -m subject -m "Agent: main" -m "$BODY"') ?? '', /Blocked/, 'an unread last part');
+  assert.match(run('git commit -m subject -m "Agent: main" -m "$(printf unsigned)"') ?? '', /Blocked/);
+  assert.equal(run("git commit --allow-empty --fixup=HEAD -m 'Agent: main'"), null, 'git writes the fixup subject');
+  assert.equal(run("git commit --squash HEAD -m 'Agent: main'"), null);
 });
 
 test('the PR rule reads the commits of the head and base gh pr create names', (t) => {

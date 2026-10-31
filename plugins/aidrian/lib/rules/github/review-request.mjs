@@ -92,7 +92,10 @@ function apiRequests(endpoint, flags, read, ghRepo) {
   }
   const asking = bodies.filter(asksForReview);
   if (!asking.length) return [];
-  const repo = match[1].includes('{') ? ghRepo : match[1];
+  // gh fills `{owner}` and `{repo}` from GH_REPO, or from this repository without it, and leaves literal parts alone.
+  const [owner, name] = (ghRepo ?? '').split('/');
+  const repo = !match[1].includes('{') ? match[1]
+    : ghRepo ? match[1].replaceAll('{owner}', owner).replaceAll('{repo}', name) : null;
   return [{ pr: Number(match[2]), repo, markers: asking.flatMap(markersIn) }];
 }
 

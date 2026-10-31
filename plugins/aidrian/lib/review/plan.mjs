@@ -9,6 +9,7 @@
 // config, and an agent can only add. Nothing here lowers what the base branch's config asks for.
 
 import { globPattern, isObject } from '../fs.mjs';
+import { partition, SPLIT_DEFAULTS, splitPasses } from './split.mjs';
 
 export const DEPTHS = Object.freeze(['none', 'single', 'split']);
 export const STAGES = Object.freeze(['local', 'independent', 'remote']);
@@ -140,7 +141,7 @@ export function requirement(word) {
 
 // The built-in plan. `engine` is the machine's resolved reviewer: { name, kind, stage, independent }.
 // A local stage holds every required agent and flow pass; the engine's pass sits in its own stage after it.
-export function buildPlan({ head, base, changes, addedLines, removedFiles, config, engine, presentationOnly = [], extraFlows = [], harnessChanged = [] }) {
+export function buildPlan({ head, base, changes, addedLines, removedFiles, config, engine, presentationOnly = [], extraFlows = [], harnessChanged = [], roots = new Set(), halved = {} }) {
   const review = config.review;
   const sorted = classify(changes, review);
   const files = [...sorted.behaviour, ...sorted.nonBehaviour];
@@ -155,7 +156,6 @@ export function buildPlan({ head, base, changes, addedLines, removedFiles, confi
   }
   if (harnessChanged.length) flows.push({ id: HARNESS_FLOW, files: harnessChanged, reasons: ['the review config, its plan command, or a flow invariants doc changed'] });
   if (flows.length && depth === 'none') depth = 'single';
-  if (depth === 'split') reasons.push('split runs as one pass until the split executor ships');
   const passes = { local: [], independent: [], remote: [] };
   const require = new Set(evaluated.require);
   if (config.github.reviewGate.enabled && depth !== 'none') require.add('agent:code-reviewer');
@@ -179,6 +179,21 @@ export function buildPlan({ head, base, changes, addedLines, removedFiles, confi
     else if (engine.kind === 'agent') passes[engine.stage].push({ id: `engine:${engine.name}`, reviewer: engine.name, kind: 'agent', engine: true, files: null, context: 'full' });
     else passes[engine.stage].push({ id: `engine:${engine.name}`, reviewer: engine.name, kind: engine.kind, files: null, context: 'full' });
   }
+  // A split review: the engine's one pass becomes a pass per slice and a cross-cutting pass after them. The review
+  // bot reviews the whole pull request in one go, so it cannot split.
+  if (depth === 'split' && engine) {
+    const stage = engine.kind === 'agent' && engine.builtIn ? 'local' : engine.stage;
+    const reviewer = engine.kind === 'agent' && engine.builtIn ? engine.agent : engine.name;
+    const id = engine.kind === 'agent' && engine.builtIn ? `agent:${engine.agent}` : `engine:${engine.name}`;
+    if (engine.kind === 'remote') reasons.push('split: the review bot reviews the whole pull request in one pass');
+    else {
+      const reviewed = changes.filter((change) => sorted.behaviour.includes(change.file) || sorted.nonBehaviour.includes(change.file));
+      const slices = partition(reviewed, roots, { ...SPLIT_DEFAULTS, ...review.split });
+      passes[stage] = passes[stage].filter((pass) => pass.id !== id);
+      passes[stage].push(...splitPasses(reviewer, slices, { kind: engine.kind, halved }));
+      reasons.push(`split into ${slices.length} slices and a cross-cutting pass`);
+    }
+  }
   const stages = STAGES.filter((stage) => passes[stage].length).map((stage) => ({ name: stage, passes: mergeAgentPasses(passes[stage]) }));
   return {
     head,
@@ -197,7 +212,7 @@ function mergeAgentPasses(passes) {
   const byAgent = new Map();
   const others = [];
   for (const pass of passes) {
-    if (pass.kind !== 'agent' || pass.engine) {
+    if (pass.kind !== 'agent' || pass.engine || pass.role) {
       others.push(pass);
       continue;
     }
@@ -275,5 +290,6 @@ export function mergePlans(builtIn, project) {
   const flows = [...builtIn.flows];
   for (const flow of project.flows ?? []) if (!flows.some((each) => each.id === flow.id)) flows.push({ signoff: 'reviewer', reasons: [], files: [], ...flow });
   const notes = shadowed.map((id) => `plan command: pass ${id} is built in and was kept as built`);
-  return { ...builtIn, depth, stages: stages.filter((stage) => stage.passes.length), flows, reasons: [...builtIn.reasons, ...(project.reasons ?? []).map((reason) => `plan command: ${reason}`), ...notes] };
+  const interfaceFiles = [...new Set([...(builtIn.interfaceFiles ?? []), ...(Array.isArray(project.interfaceFiles) ? project.interfaceFiles.filter((each) => typeof each === 'string') : [])])];
+  return { ...builtIn, depth, interfaceFiles, stages: stages.filter((stage) => stage.passes.length), flows, reasons: [...builtIn.reasons, ...(project.reasons ?? []).map((reason) => `plan command: ${reason}`), ...notes] };
 }

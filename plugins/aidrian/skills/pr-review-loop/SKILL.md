@@ -31,7 +31,7 @@ Act on `status`, then run it again, until it stops:
 | --- | --- |
 | `dispatch` | run each `dispatch[]` entry as its read-only `agent`, briefed with the entry; record each with its `record` command |
 | `fix_required` | triage `open`, `flows`, `tests_removed`, and `checks_failing` in step 3, fix, push |
-| `checks_pending`, `timed_out` | run it again; `incomplete` with `retry_recommended`: once more |
+| `running`, `checks_pending`, `timed_out` | run it again; `incomplete` with `retry_recommended`: once more |
 | `received`, `none_needed` | go to step 2 for comments people or the bot left, then step 7 |
 | `human_required`, `stuck`, `too_large`, `unsatisfied`, `round_limit`, `blocked_quota` | stop: report it and ask the Human |
 

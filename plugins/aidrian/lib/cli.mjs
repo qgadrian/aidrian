@@ -15,6 +15,7 @@ const COMMANDS = {
   handoff: './handoff-brief.mjs',
   worktree: './worktree.mjs',
   pr: './pr.mjs',
+  review: './review/bench.mjs',
   report: './report.mjs',
 };
 

@@ -17,8 +17,11 @@ import { isObject } from '../fs.mjs';
 export const FINDINGS_SCHEMA = Object.freeze({
   type: 'object',
   additionalProperties: false,
-  required: ['findings', 'verdicts'],
+  required: ['findings', 'verdicts', 'contracts', 'cross_notes'],
   properties: {
+    // A slice's report to the cross-cutting pass: the contracts it changed, and what it saw about other slices.
+    contracts: { type: 'array', items: { type: 'string' } },
+    cross_notes: { type: 'array', items: { type: 'string' } },
     findings: {
       type: 'array',
       items: {
@@ -126,7 +129,8 @@ export function cleanOutput(raw) {
     if (!ok) dropped.push(`verdicts[${i}] is malformed`);
     return ok;
   });
-  return { findings, verdicts, dropped, valid: true };
+  const strings = (list) => (Array.isArray(list) ? list.filter((each) => typeof each === 'string').slice(0, 50) : []);
+  return { findings, verdicts, contracts: strings(raw.contracts), cross_notes: strings(raw.cross_notes), dropped, valid: true };
 }
 
 // The prompt a model reviewer reads: the pass input as instructions and data. The input is JSON, so a diff cannot
@@ -135,7 +139,11 @@ export function reviewPrompt(input) {
   return [
     'You are reviewing a pull request. You did not write it. Read-only: change nothing.',
     `Review the diff from ${input.base} to ${input.head} (run \`git diff ${input.base} ${input.head}\`; read any file at ${input.head} you need).`,
-    input.files ? `Report findings only in these files: ${input.files.join(', ')}.` : 'Report findings in any changed file.',
+    input.role === 'slice'
+      ? `This is one slice of a large change. Review the diff of these files only: ${input.files.join(', ')} (\`git diff ${input.base} ${input.head} -- <file>\`); \`manifest\` lists every changed file, and you may read any file at ${input.head}. Report findings only in your files. In \`contracts\`, list every exported or behavioural contract your files change (signatures, types, schemas, routes, events, config); in \`cross_notes\`, anything you saw that other changed files must agree with.`
+      : input.role === 'cross'
+        ? 'This is the cross-cutting pass of a review split into slices. `slices` holds each slice\'s contracts, notes, and findings. Report only bugs that cross slices: a changed contract a caller in another slice does not follow, a schema and its users disagreeing, an assumption one slice makes that another breaks. Do not repeat a slice\'s findings.'
+        : input.files ? `Report findings only in these files: ${input.files.join(', ')}.` : 'Report findings in any changed file.',
     'Look for correctness bugs, regressions, edge cases, security, data consistency, error handling, and missing tests.',
     'When you find a mistake, search the whole change for every copy and list each in that finding. Finish the whole review before answering.',
     input.checklist ? `Also review the change against the project's checklist (${input.checklist.path}), included in the input.` : '',
@@ -203,7 +211,7 @@ export function runExec(reviewer, input, { root, env, spawnImpl = spawn }) {
         return finish({ status: 'failed', reason: 'the reviewer did not print JSON' });
       }
       const clean = cleanOutput(raw);
-      finish(clean.valid ? { status: 'done', findings: clean.findings, verdicts: clean.verdicts, dropped: clean.dropped } : { status: 'failed', reason: clean.dropped[0] });
+      finish(clean.valid ? { status: 'done', findings: clean.findings, verdicts: clean.verdicts, contracts: clean.contracts, cross_notes: clean.cross_notes, dropped: clean.dropped } : { status: 'failed', reason: clean.dropped[0] });
     });
     child.stdin.on('error', () => {});
     child.stdin.end(stdinText);

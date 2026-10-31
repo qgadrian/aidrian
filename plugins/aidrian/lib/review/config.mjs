@@ -5,6 +5,7 @@
 
 import { isObject } from '../fs.mjs';
 import { DEFAULT_IGNORE, DEFAULT_NON_BEHAVIOUR, DEPTHS, HARNESS_FLOW } from './plan.mjs';
+import { SPLIT_DEFAULTS } from './split.mjs';
 
 export const ENGINES = Object.freeze(['auto', 'codex-local', 'pr-bot', 'self']);
 export const KINDS = Object.freeze(['exec', 'agent']);
@@ -19,6 +20,7 @@ export const REVIEW_DEFAULTS = Object.freeze({
   flows: {},
   planCommand: null,
   reviewers: {},
+  split: SPLIT_DEFAULTS,
 });
 
 const texts = (value) => Array.isArray(value) && value.every((each) => typeof each === 'string' && each !== '');
@@ -60,6 +62,7 @@ export function checkReview(value, file, errors) {
   if (Object.hasOwn(value, 'rules')) out.rules = checkRules(value.rules, bad);
   if (Object.hasOwn(value, 'flows')) out.flows = checkFlows(value.flows, bad);
   if (Object.hasOwn(value, 'reviewers')) out.reviewers = checkReviewers(value.reviewers, bad);
+  if (Object.hasOwn(value, 'split')) out.split = checkSplit(value.split, bad);
   return out;
 }
 
@@ -180,4 +183,20 @@ export function checkLocalReview(value, file, errors) {
   if (isText(value.engine) && NAME.test(value.engine)) return value.engine;
   errors.push(`${file}: "review.engine" must be ${ENGINES.map((each) => `"${each}"`).join(', ')}, or a reviewer of review.reviewers`);
   return 'auto';
+}
+
+// `review.split`: slice size, parallel passes, and the most slices. Each is a whole number in a sane range.
+function checkSplit(split, bad) {
+  const out = { ...SPLIT_DEFAULTS };
+  if (!isObject(split)) {
+    bad('"review.split" must be an object');
+    return out;
+  }
+  const ranges = { sliceLines: [100, 10000], parallel: [1, 8], maxSlices: [2, 16] };
+  for (const [key, value] of Object.entries(split)) {
+    if (!Object.hasOwn(ranges, key)) bad(`unknown key "review.split.${key}"`);
+    else if (Number.isInteger(value) && value >= ranges[key][0] && value <= ranges[key][1]) out[key] = value;
+    else bad(`"review.split.${key}" must be a whole number from ${ranges[key][0]} to ${ranges[key][1]}`);
+  }
+  return out;
 }

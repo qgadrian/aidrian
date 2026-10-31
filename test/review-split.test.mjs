@@ -203,3 +203,26 @@ test('a pull request cannot shrink its own split: review.split comes from the ba
   const { review, changed } = reviewInForce(base, { ...base, split: { sliceLines: 10000, parallel: 4, maxSlices: 2 } });
   assert.deepEqual([review.split, changed], [base.split, ['split']]);
 });
+
+test('a plan command that raises the depth to split gets slices and a cross pass', async (t) => {
+  const planner = "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>console.log(JSON.stringify({depth:'split',stages:[]})))";
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-split-pc-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' }).stdout.trim();
+  const write = (file, text) => (mkdirSync(path.dirname(path.join(dir, file)), { recursive: true }), writeFileSync(path.join(dir, file), text));
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.email', 't@example.com');
+  git('config', 'user.name', 'T');
+  write('.aidrian/config.json', JSON.stringify({ version: 1, review: { planCommand: 'node plan.mjs' } }));
+  write('plan.mjs', planner);
+  git('add', '-A');
+  git('commit', '-q', '-m', 'base');
+  git('switch', '-q', '-c', 'feat');
+  for (const d of ['a', 'b']) write(`src/${d}/x.js`, '1\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'change');
+  const gh = { pr: () => ({ number: 4, headRefOid: git('rev-parse', 'HEAD'), baseRefName: 'main' }), repo: () => 'o/r', comments: () => [], post: () => {}, edit: () => {} };
+  const project = projectAt(dir);
+  const result = await reviewStep({ pr: '4' }, { project, config: loadConfig(project).config, gh, codex: () => ({ ok: true }), exec: async () => ({ status: 'done', findings: [], verdicts: [], contracts: [], cross_notes: [], dropped: [] }) });
+  assert.deepEqual(result.plan.stages[0].passes.map((id) => id.split(':')[0]), ['slice', 'slice', 'cross']);
+});

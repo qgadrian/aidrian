@@ -58,11 +58,18 @@ export function verdict(results, tolerance = 1) {
 // The known problems of one merged pull request.
 function knownProblems(root, repo, n, bot, info) {
   const [owner, name] = repo.split('/');
-  const query = `query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{path line originalLine originalCommit{oid} author{login}}}}}}}}`;
-  const data = JSON.parse(runGh(['api', 'graphql', '-f', `query=${query}`, '-F', `o=${owner}`, '-F', `r=${name}`, '-F', `n=${n}`]));
+  const query = `query($o:String!,$r:String!,$n:Int!,$after:String){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:1){nodes{path line originalLine originalCommit{oid} author{login}}}}}}}}`;
+  // Every page of threads: a pull request with more than 100 would otherwise lose problems from the denominator.
+  const threads = [];
+  let after = null;
+  do {
+    const page = JSON.parse(runGh(['api', 'graphql', '-f', `query=${query}`, '-F', `o=${owner}`, '-F', `r=${name}`, '-F', `n=${n}`, ...(after ? ['-f', `after=${after}`] : [])])).data.repository.pullRequest.reviewThreads;
+    threads.push(...page.nodes);
+    after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+  } while (after);
   const problems = [];
   const seen = [];
-  for (const thread of data.data.repository.pullRequest.reviewThreads.nodes) {
+  for (const thread of threads) {
     const comment = thread.comments.nodes[0];
     if (!comment || !thread.isResolved) continue;
     const isBot = comment.author?.login === bot || comment.author?.login === bot.replace(/\[bot\]$/u, '');

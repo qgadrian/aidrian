@@ -197,13 +197,17 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
 
   const engine = resolveEngine(effective, codex ? { codex } : {});
   if (engine.problem) return { status: 'unsatisfied', pr: n, repo, head, reason: engine.problem };
-  let plan = buildPlan({
+  const planFor = (minDepth) => buildPlan({
     head, base, changes, addedLines, removedFiles, config: effective, harnessChanged: [...new Set(harnessChanged)],
     roots: packageRoots(trackedAt(root, head)), halved: state.halved ?? {},
     engine: { name: engine.reviewer.name, kind: engine.reviewer.kind, stage: engine.reviewer.stage, agent: engine.reviewer.agent, builtIn: Boolean(BUILT_IN[engine.reviewer.name]) },
+    minDepth,
   });
+  let plan = planFor('none');
   if (review.planCommand) {
     const project_ = await runPlanCommand(review.planCommand, { base, head, changes }, { root, env: cleanEnv, baseTip });
+    // A plan command that raises the depth to split gets the slices too: the built-in plan is rebuilt at that depth.
+    if (project_.depth === 'split' && plan.depth !== 'split') plan = planFor('split');
     plan = mergePlans(plan, project_);
   }
   // --with-bot (the skill's --await-codex): the review bot runs as the last stage too, after this machine's engine.

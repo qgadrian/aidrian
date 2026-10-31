@@ -144,13 +144,13 @@ export function requirement(word) {
 
 // The built-in plan. `engine` is the machine's resolved reviewer: { name, kind, stage, independent }.
 // A local stage holds every required agent and flow pass; the engine's pass sits in its own stage after it.
-export function buildPlan({ head, base, changes, addedLines, removedFiles, config, engine, presentationOnly = [], extraFlows = [], harnessChanged = [], roots = new Set(), halved = {} }) {
+export function buildPlan({ head, base, changes, addedLines, removedFiles, config, engine, presentationOnly = [], extraFlows = [], harnessChanged = [], roots = new Set(), halved = {}, minDepth = 'none' }) {
   const review = config.review;
   const sorted = classify(changes, review);
   const files = [...sorted.behaviour, ...sorted.nonBehaviour];
   const evaluated = evaluateRules(review.rules, files, sorted);
   const reasons = [...evaluated.reasons];
-  let depth = evaluated.depth;
+  let depth = maxDepth(evaluated.depth, minDepth);
   const flows = detectFlows(review.flows, { sorted, addedLines, removedFiles, presentationOnly });
   for (const extra of extraFlows) {
     const known = flows.find((flow) => flow.id === extra.id);

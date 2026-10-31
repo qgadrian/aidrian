@@ -5,3 +5,4 @@ dist/
 .claude/runs/
 .claude/session-artifacts/
 /.claude/
+.banned-terms.local

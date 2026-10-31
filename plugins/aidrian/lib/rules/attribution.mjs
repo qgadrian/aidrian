@@ -160,7 +160,7 @@ function readCalls(command, cwd) {
 // The `git commit` options that take the next word as their value, besides -m, -F, and --trailer.
 const COMMIT_VALUES = ['--author', '--date', '--template', '--pathspec-from-file'];
 // The status formats, which make a commit a dry run that only prints the status.
-const STATUS_FORMATS = ['--short', '--porcelain', '--long', '--null'];
+const STATUS_FORMATS = ['--short', '--porcelain', '--long'];
 // The options after which git writes the subject itself, `fixup! …` or `squash! …`, above the -m values.
 const GENERATED_SUBJECT = ['--fixup', '--squash'];
 const COMMIT_SHORT_VALUES = new Set(['-t']);
@@ -204,7 +204,10 @@ function commitMessage(rest, dir, config = []) {
   let reused = false;
   let generated = false;
   let dryRun = false;
-  const formats = new Set();
+  // git keeps one status format, which --short, --porcelain, and --long set and any of their --no- forms clears, and
+  // a separate -z/--null.
+  let format = null;
+  let nul = false;
   let cleanup = null;
   let edit = false;
   for (let i = 0; i < rest.length; i += 1) {
@@ -216,8 +219,10 @@ function commitMessage(rest, dir, config = []) {
     let kind = null;
     if (text === '-h' || isLongOption(flag, '--help', '--he')) read.writesNothing = true;
     else if (isLongOption(flag, '--dry-run', '--dr')) dryRun = true;
-    else if (STATUS_FORMATS.includes(flag) || text === '-z') formats.add(text === '-z' ? '--null' : flag);
-    else if (STATUS_FORMATS.includes(flag.replace(/^--no-/u, '--'))) formats.delete(flag.replace(/^--no-/u, '--'));
+    else if (text === '-z' || flag === '--null') nul = true;
+    else if (flag === '--no-null') nul = false;
+    else if (STATUS_FORMATS.includes(flag)) format = flag;
+    else if (STATUS_FORMATS.includes(flag.replace(/^--no-/u, '--'))) format = null;
     else if (flag === '--cleanup') cleanup = value()?.text ?? null;
     else if (text === '-e' || flag === '--edit') edit = true;
     else if (flag === '--no-edit') edit = false;
@@ -256,12 +261,15 @@ function commitMessage(rest, dir, config = []) {
       fileText = (file && readText(file)) ?? '';
     }
   }
-  read.writesNothing ||= dryRun || formats.size > 0;
+  read.writesNothing ||= dryRun || format !== null || nul;
   // The message git writes: another commit's when one is reused, which the rule cannot read; else the -m values, else
   // the -F file. Only the --trailer values then count for a message the rule cannot read.
   const kept = reused ? [] : messages.length ? [...(generated ? ['fixup! subject'] : []), ...messages] : fileText !== null ? [fileText] : [];
   read.holdsHeredoc = messages.includes(DYNAMIC);
-  read.dynamic = kept.includes(DYNAMIC);
+  // Only one -m substitution can take a heredoc; with more, the message is one the rule cannot read.
+  const unread = kept.filter((each) => each === DYNAMIC).length > 1;
+  read.dynamic = !unread && kept.includes(DYNAMIC);
+  if (unread) kept.length = 0;
   read.at = kept.indexOf(DYNAMIC);
   read.messages = kept.filter((each) => each !== DYNAMIC);
   // Without --cleanup, git takes the repository's commit.cleanup, read in the folder the commit runs in.

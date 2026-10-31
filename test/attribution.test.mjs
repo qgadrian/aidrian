@@ -107,6 +107,7 @@ test('a heredoc counts only for the commit or pull request that holds it', (t) =
   assert.match(run(`git commit -m "$(cat <<'EOF'\nfix: y\n\nAgent: main\nEOF\nprintf '\\n\\nunsigned')"`) ?? '', /Blocked/, 'more output after the heredoc');
   assert.match(run(`git commit -m "$(cat <<'EOF'\nfix: y\n\nAgent: main\nEOF\n) unsigned"`) ?? '', /Blocked/, 'more text after the substitution');
   assert.match(run('git commit -m "$(cat <<EOF\nfix: y\n\nAgent: main\n# $BODY\nEOF\n)"') ?? '', /Blocked/, 'a bare delimiter expands');
+  assert.match(run(`git commit -m "$(cat <<'EOF'\nfix: y\n\nAgent: main\nEOF\n)" -m "$(printf unsigned)"`) ?? '', /Blocked/, 'every part must resolve');
   assert.equal(run('git commit -m "$(cat <<EOF\nfix: y\n\nAgent: main\nEOF\n)"'), null, 'nothing to expand');
   assert.match(run('git com\\mit --allow-empty -m unsigned') ?? '', /Blocked/, 'an escaped word');
   execFileSync('git', ['init', '-q'], { cwd: dir });
@@ -206,7 +207,8 @@ test('a subshell cd stays in the subshell, and git -c holds for the commit', (t)
 test('help and dry-run commits pass', (t) => {
   const { run } = setup(t, { commit: ['agent'] });
   for (const command of ['git commit -h', 'git commit --help', 'git commit --dry-run -m x', 'git commit --dry -m x', 'git commit --short', 'git commit --porcelain', 'git commit --long', 'git commit --null', 'git commit -z']) assert.equal(run(command), null, command);
-  for (const command of ['--short --no-short', '--porcelain --no-porcelain', '--long --no-long', '--null --no-null', '-z --no-null']) {
+  for (const command of ['--short --no-short', '--porcelain --no-porcelain', '--long --no-long', '--null --no-null', '-z --no-null',
+    '--short --no-long', '--porcelain --no-short']) {
     assert.match(run(`git commit --allow-empty ${command} -m unsigned`) ?? '', /Blocked/, command);
   }
   assert.match(run('git commit --allow-empty --dry-run --no-dry-run -m unsigned') ?? '', /Blocked/, 'a later --no-dry-run commits');

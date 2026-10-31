@@ -7,7 +7,8 @@
 //   paths   tracked and untracked, non-ignored files hold no personal home folder such as /Users/<name>/; --staged reads what the index holds
 //   budget  the knowledge budgets that `aidrian check` also runs: the `always` docs and each tagged doc (knowledge.mjs)
 //   terms   tracked files hold no banned term of the terms file (terms.mjs): a `block` hit fails, a `warn` hit warns;
-//           --staged reads what the index holds. Off while config.json `terms.file` is null
+//           --staged reads what the index holds, --rule <id> runs one rule. `code` rules are left to the project's
+//           linter. Off while config.json `terms.file` is null
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -18,14 +19,15 @@ import { isDirectory, isFile } from './fs.mjs';
 import { runGit } from './git.mjs';
 import { checkBudgets, loadKnowledge } from './knowledge.mjs';
 import { projectAt } from './project.mjs';
-import { formatHit, loadTerms, numbered, scanLines } from './terms.mjs';
+import { formatHit, loadTerms, NOT_TEXT, numbered, scanLines } from './terms.mjs';
 
 const KINDS = ['skills', 'agents', 'paths', 'budget', 'terms'];
 const MODELS = new Set(['haiku', 'sonnet', 'opus', 'fable', 'inherit']);
 const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 // Home folders of placeholder or CI users are not personal.
 const PERSONAL_PATH = /\/(?:Users|home)\/(?!(?:runner|you|user|example)\/)[A-Za-z_][A-Za-z0-9_.-]*\//;
-const BINARY = /\.(png|jpe?g|gif|webp|ico|woff2?|ttf|eot|otf|pdf|zip|gz|tar|tgz|mp[34]|wav|ogg)$|(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml)$/i;
+// Files no lint reads: binaries, lockfiles, and minified bundles (terms.mjs, which the write hook shares).
+const BINARY = NOT_TEXT;
 // Codex cuts a SKILL.md longer than 8,000 bytes when it loads it: MAX_SKILL_PROMPT_BYTES in
 // codex-rs/ext/skills/src/render.rs. A file at the cut has no room left, so it fails there; the warning leaves a margin.
 const SKILL_CUT_BYTES = 8000;
@@ -35,10 +37,10 @@ const STAGED_MAX_BYTES = 64 * 1024 * 1024;
 
 export const commands = {
   lint: {
-    usage: '[skills|agents|paths|budget|terms] [DIR...] [--staged] [--project DIR]',
+    usage: '[skills|agents|paths|budget|terms] [DIR...] [--staged] [--rule ID] [--project DIR]',
     about: 'lint skills, agents, personal paths, the knowledge budgets, and the banned terms; DIR replaces .claude/skills or .claude/agents',
     run(args) {
-      const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { project: { type: 'string' }, staged: { type: 'boolean' } } });
+      const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { project: { type: 'string' }, staged: { type: 'boolean' }, rule: { type: 'string' } } });
       const [kind, ...dirs] = positionals;
       if (kind !== undefined && !KINDS.includes(kind)) {
         console.error(`unknown lint: ${kind}; use one of ${KINDS.join(', ')}`);
@@ -53,7 +55,7 @@ export const commands = {
         agents: () => lintAgents(dirs.length ? dirs : [at('.claude/agents')], config.skills),
         paths: () => lintPaths(project.root, values.staged),
         budget: () => checkBudgets(project.root, buckets, config.knowledge.budgets),
-        terms: () => lintTerms(project, config, values.staged),
+        terms: () => lintTerms(project, config, values.staged, values.rule ?? null),
       };
       const results = (kind ? [kind] : KINDS).map((name) => [name, runs[name]()]);
       for (const [name, { problems, warnings = [], summary }] of results) {
@@ -137,10 +139,13 @@ export function lintPaths(root, staged = false) {
   return { problems, summary: `no personal paths in ${counted} files` };
 }
 
-export function lintTerms(project, config, staged = false) {
+// `only`, a rule id, runs that rule alone: the way to read a new rule's hits at `warn` before it blocks.
+export function lintTerms(project, config, staged = false, only = null) {
   const terms = loadTerms(project, config);
   if (terms === null) return { problems: [], summary: 'off (config.json terms.file is null)' };
   if (terms.errors.length) return { problems: terms.errors, summary: '' };
+  const rules = only === null ? terms.rules : terms.rules.filter((rule) => rule.id === only);
+  if (only !== null && !rules.length) return { problems: [`no rule "${only}" in ${terms.file}`], summary: '' };
   const args = staged ? ['diff', '--cached', '--name-only', '--diff-filter=ACMR', '-z', '--relative'] : ['ls-files', '-z'];
   const { status, stdout } = runGit(args, project.root, { timeout: 0 });
   if (status !== 0) return { problems: [`git ${args[0]} failed in ${project.root}`], summary: '' };
@@ -152,9 +157,9 @@ export function lintTerms(project, config, staged = false) {
     const text = staged ? stagedText(project.root, `./${file}`) : workingText(project.root, file);
     if (text === null || text.includes('\0')) continue;
     files += 1;
-    for (const hit of scanLines(numbered(text), file, terms.rules)) (hit.rule.severity === 'block' ? problems : warnings).push(formatHit(file, hit));
+    for (const hit of scanLines(numbered(text), file, rules, { text, code: false })) (hit.severity === 'block' ? problems : warnings).push(formatHit(file, hit));
   }
-  return { problems, warnings, summary: `no banned terms in ${files} ${staged ? 'staged' : 'tracked'} files (${terms.rules.length} rules)` };
+  return { problems, warnings, summary: `no banned terms in ${files} ${staged ? 'staged' : 'tracked'} files (${rules.length} rules)` };
 }
 
 function workingText(root, file) {

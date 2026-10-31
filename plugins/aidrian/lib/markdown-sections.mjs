@@ -8,28 +8,30 @@ const FENCE = /^\s*(`{3,}|~{3,})(.*)$/u;
 const HEADING = /^ {0,3}##(?!#)\s+(.+?)\s*$/u;
 const LIST_ITEM = /^(\s*)(?:[-*+]|\d+[.)])\s+/u;
 
-// The lines outside fenced code blocks, in order. A fence closes on the same character at a run at least as long and
-// with no info string, as CommonMark says; an unterminated fence runs to the end. A backtick "fence" whose info string
-// holds a backtick is a line that opens with an inline code span, not a fence.
-export function* unfencedLines(body) {
+// For each line, whether it is code: a fence line or a line inside a fenced block. A fence closes on the same character
+// at a run at least as long and with no info string, as CommonMark says; an unterminated fence runs to the end. A
+// backtick "fence" whose info string holds a backtick is a line that opens with an inline code span, not a fence.
+export function fencedLines(body) {
   let open = null;
-  for (const line of String(body).split(/\r?\n/u)) {
+  return String(body).split(/\r?\n/u).map((line) => {
     const fence = FENCE.exec(line);
-    if (fence) {
-      const [, marker, rest] = fence;
-      if (open === null) {
-        if (marker[0] === '`' && rest.includes('`')) {
-          yield line;
-          continue;
-        }
-        open = { char: marker[0], length: marker.length };
-      } else if (marker[0] === open.char && marker.length >= open.length && rest.trim() === '') {
-        open = null;
-      }
-      continue;
+    if (!fence) return open !== null;
+    const [, marker, rest] = fence;
+    if (open === null) {
+      if (marker[0] === '`' && rest.includes('`')) return false;
+      open = { char: marker[0], length: marker.length };
+    } else if (marker[0] === open.char && marker.length >= open.length && rest.trim() === '') {
+      open = null;
     }
-    if (open === null) yield line;
-  }
+    return true;
+  });
+}
+
+// The lines outside fenced code blocks, in order.
+export function* unfencedLines(body) {
+  const fenced = fencedLines(body);
+  const lines = String(body).split(/\r?\n/u);
+  for (let i = 0; i < lines.length; i += 1) if (!fenced[i]) yield lines[i];
 }
 
 // The title of a `## ` heading line, or null.

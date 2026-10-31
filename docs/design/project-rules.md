@@ -50,34 +50,26 @@ that did not write the change is on record for the pull request. The record is w
 ## 3. Terms: `terms.file`
 
 `"terms": { "file": ".aidrian/terms.json" }` turns the rule on; without it nothing runs.
-The file holds rules of banned terms and their replacements, so a project can list hundreds without touching `config.json`:
-
-```json
-{
-  "version": 1,
-  "locales": "locales/{locale}/*.json",
-  "rules": [
-    { "id": "us-spelling", "paths": ["docs/api/**"], "severity": "block", "terms": { "organisation": "organization" } },
-    { "id": "es-ES guest", "locale": "es-ES", "exclude": ["locales/es-ES/landing.json"], "terms": { "comensal": "cliente" } }
-  ]
-}
-```
+The file holds rules of banned terms and their replacements, so a project can list hundreds without touching `config.json`.
+[config.md](../config.md#terms) describes every key.
 
 - A term matches as a whole word, in any case, after Unicode normalization; `*` inside it stands for more letters of the word.
-  A term in a script written without spaces, such as Japanese, matches anywhere.
-- `paths` and `exclude` are globs with `*` and `**`. A rule with `locale` and no `paths` uses `locales` with `{locale}` filled in,
-  and reads only the string values of a JSON file, never its keys.
+- A rule reads its `paths`, its `locale`'s translation values, or, with neither, every file git keeps but the terms file.
+- Three modes: plain text; `prose`, a Markdown file's own voice, without code, quotes, and blockquotes; and `code`,
+  identifiers matched whole in any case style.
 - `severity`: `block` (default) or `warn`.
 
 Where it runs, one surface per moment:
 
 - Agent writes: the PreToolUse file-write hook checks only the lines an Edit, Write, or `apply_patch` adds.
   A `block` hit refuses the write, recorded as `terms`; a `warn` hit lets it run and tells the agent.
+  A `prose` hit warns when the hook cannot see the whole file.
 - Commits and CI: `aidrian lint terms` checks every tracked file, and `--staged` the staged files as the index holds them.
-  A project runs it from its own git hook. A `block` hit fails; a `warn` hit is printed.
+  A project runs it from its own git hook. A `block` hit fails; a `warn` hit is printed. `code` rules are not run here.
 - `aidrian check` validates the file.
 
 ## Not included
 
-- Identifier rules for code, such as a banned variable name: a linter of the language does that better.
+- A syntax-aware identifier check: a `code` rule tells an agent at the moment it writes a banned name, and the
+  project's own linter, which sees declarations, stays the gate at commit and in CI, reading the same terms file.
 - A glossary injected into every session: the knowledge docs already carry project vocabulary.

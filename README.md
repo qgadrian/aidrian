@@ -46,10 +46,11 @@ Run these in a terminal:
 ```sh
 codex plugin marketplace add qgadrian/aidrian
 codex plugin add aidrian@aidrian-harness
-node "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/aidrian-harness/aidrian/*/codex/install-agents.mjs
+aidrian_dir="$(ls -d "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/aidrian-harness/aidrian/*/ | sort -V | tail -1)"
+node "${aidrian_dir}codex/install-agents.mjs"
 ```
 
-The last command installs the agents. Its `*` assumes one version folder, which is what Codex keeps.
+The last two lines install the agents from the newest installed version.
 Then open Codex and trust the plugin's hooks in `/hooks`.
 Installing from a private fork or mirror: [Codex](docs/providers/codex.md#private-fork-or-mirror).
 

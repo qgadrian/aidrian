@@ -194,22 +194,18 @@ and repository also passes, so a new session or machine need not review again.
 
 ## Terms
 
-`"terms": { "file": ".aidrian/terms.json" }` turns on the terms rule: banned terms, each with its replacement, per file scope.
-The file is JSON of its own, so a project can list hundreds of terms without growing `config.json`:
+`"terms": { "file": ".aidrian/terms.json" }` turns on the terms rule: a project's vocabulary, as banned terms each with
+its replacement. The file is JSON of its own, so a project can list hundreds of terms without growing `config.json`:
 
 ```json
 {
   "version": 1,
   "locales": "locales/{locale}/*.json",
   "rules": [
-    {
-      "id": "american-spelling",
-      "paths": ["docs/api/**"],
-      "message": "Use American spelling in the public API.",
-      "terms": { "organisation": "organization", "organisations": "organizations" }
-    },
-    { "id": "es-ES guest", "locale": "es-ES", "exclude": ["locales/es-ES/landing.json"], "terms": { "comensal": "cliente" } },
-    { "id": "email", "paths": ["**/*.md"], "severity": "warn", "terms": { "e-mail": "email" } }
+    { "id": "clients", "severity": "warn", "exclude": ["locales/**", "src/**"], "terms": { "guest": "client", "guests": "clients" } },
+    { "id": "es guests", "locale": "es*", "terms": { "comensal": "cliente", "comensales": "clientes" } },
+    { "id": "shared docs", "paths": ["docs/**/*.md"], "prose": true, "terms": { "you": "the agent" } },
+    { "id": "guest count", "paths": ["src/**/*.ts"], "code": true, "severity": "warn", "terms": { "party size": "guestCount" } }
   ]
 }
 ```
@@ -217,26 +213,51 @@ The file is JSON of its own, so a project can list hundreds of terms without gro
 | Key | Meaning |
 | --- | --- |
 | `version` | `1`. |
-| `locales` | Where translation files are, as a glob with `{locale}`. Needed by a rule with `locale` and no `paths`. |
+| `locales` | Where translation files are, as a glob with `{locale}`. Needed by a rule with `locale`. |
 | `rules[].id` | A unique name, shown with every hit. |
-| `rules[].paths` | The files the rule reads, as globs relative to the project root, with `*` and `**`. |
-| `rules[].locale` | A translation locale: without `paths`, the rule reads `locales` with `{locale}` filled in. It reads only a JSON file's string values. |
-| `rules[].exclude` | Globs of files the rule skips, such as marketing copy where a term is meant. |
+| `rules[].paths` | The files the rule reads, as globs relative to the project root, with `*` and `**`. Without it, and without `locale`, the rule reads every file. |
+| `rules[].locale` | A translation locale, put in place of `{locale}` in `locales`; it may hold `*`, so `"es*"` reads `es`, `es-ES`, and `es-419`. It reads only a JSON file's string values, never its keys. |
+| `rules[].exclude` | Globs of files the rule skips, such as a vendor's contract or marketing copy where a term is meant. |
 | `rules[].severity` | `"block"`, the default, or `"warn"`. |
 | `rules[].message` | Shown with every hit. |
+| `rules[].prose` | `true`: read only a Markdown file's own prose (see below). |
+| `rules[].code` | `true`: match code names, whole, in any case style (see below). Needs `paths`. |
 | `rules[].terms` | Each banned term and what to write instead. |
 
 A term matches as a whole word, in any case, after Unicode normalization: `comensal` does not match `comensales`.
-A `*` stands for more letters of the same word, so `usuári*` matches `usuárias`; list word forms instead when a stem would
-also match a correct word. A term in a script written without spaces, such as Japanese or Chinese, matches anywhere.
+List each word form a rule bans (`guest`, `guests`, `guest's`); synonyms are more entries. A `*` stands for more letters
+of the same word, so `usuári*` matches `usuárias`; use it only when every continuation is wrong, since `guest*` also
+matches `guestbook`. A term in a script written without spaces, such as Japanese or Chinese, matches anywhere.
+
+A rule with neither `paths` nor `locale` holds everywhere: every text file git tracks, and on agent writes every file
+git does not ignore. Binaries, lockfiles, and `*.min.*` files are never read, and no rule reads the terms file itself.
+Such a rule reads whole lines, JSON keys included, so translations belong to `locale` rules and code names to `code`
+rules; `exclude` takes out the rest.
+
+A `prose` rule reads what a Markdown file says in its own voice. It skips fenced code, blockquotes, lines with
+`<!-- lint-skip -->`, and, within a line, inline code, URLs, and "quoted" or “quoted” spans. A word joined by `-` is part
+of a compound, so `you` does not match `show-your-work`.
+On an agent write it reads the lines whose prose is new: a line moved out of a code block counts, a reordered line does
+not. When the hook cannot see the whole file, as with Codex's `apply_patch`, a `prose` hit only warns.
+
+A `code` rule matches identifiers whole: `party size` is `partySize`, `PartySize`, `party_size`, `PARTY_SIZE`, and
+`party-size`, never `minimumPartySize`. Strings and `//` or `/* */` comments are skipped. It reads text, not a syntax
+tree, so a read such as `booking.partySize` also matches, code inside a template literal's `${}` and after a quote in a
+regular expression can be missed, and JSX text reads as code; start such a rule at `warn`. It runs on agent writes
+only: the project's own linter is the gate for code names at commit and in CI, and can read the same file.
 
 Where it runs:
 
 - The file-write hook checks the lines an Edit, Write, or `apply_patch` adds: a `block` hit refuses the write, and a `warn`
   hit lets it run and tells the agent. A line the file already had is never reported, so old text does not block new work.
 - `aidrian lint terms` checks every tracked file, and `--staged` the staged files as the index holds them: a `block` hit fails,
-  a `warn` hit is printed. A project runs `aidrian lint terms --staged` from its own git hook, as it runs [commit-msg](hooks.md#commit-messages).
+  a `warn` hit is printed. `--rule <id>` runs one rule. A project runs `aidrian lint terms --staged` from its own git hook,
+  as it runs [commit-msg](hooks.md#commit-messages).
 - `aidrian check` names every problem in the file; a bad rule is left out, and the others still apply.
+
+To add a rule, start it at `"severity": "warn"`, run `aidrian lint terms --rule <id>`, and fix or `exclude` each hit.
+Then drop `severity`, so it blocks. A vocabulary rule that reads every file can match thousands of lines in a large
+project; this order finds them before they stop anyone's work.
 
 ## Models
 

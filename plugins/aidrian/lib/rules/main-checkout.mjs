@@ -1,6 +1,6 @@
 // Write rule: no writes to a tracked file in a project's main checkout; task work happens in a git worktree.
 // It covers Edit, Write, and NotebookEdit, Codex's apply_patch, and the Bash commands whose target is certain:
-// `>` and `>>`, tee, sed -i, the destination of cp, ln, and install, every path of mv, git mv, rm, git rm, unlink, touch,
+// `>` and `>>`, tee, sed -i, perl -i, ruby -i, the destination of cp, ln, and install, every path of mv, git mv, rm, git rm, unlink, touch,
 // mkdir, and truncate, dd's of=, and the local destination of rsync, with its sources too under --remove-source-files. A move removes its sources. A command
 // substitution that runs is read as the command line is.
 //
@@ -40,6 +40,16 @@ const WRITERS = new Map([
   ['install', new Set(['-S', '--suffix', '-t', '--target-directory', '-m', '--mode', '-o', '--owner', '-g', '--group'])],
   ['truncate', new Set(['-s', '--size', '-r', '--reference', '-o'])],
   ['dd', new Set()],
+  // Options that take the rest of their word or the next one (perlrun, ruby -h). The rest-only ones are in REST_VALUES:
+  // listed here, they would take the next word, which can be the file written.
+  ['perl', new Set(['-e', '-E', '-I'])],
+  [
+    'ruby',
+    new Set([
+      '-e', '-I', '-C', '-r', '-E', '--encoding', '--external-encoding', '--internal-encoding', '--enable', '--disable',
+      '--backtrace-limit', '--parser', '--crash-report', '--dump',
+    ]),
+  ],
   // A value option whose name extends a switch (`--partial-dir`, `--backup-dir`) is left out, so the switch never
   // swallows an operand. An unlisted option's value reads as one more path: blocked by mistake, never missed.
   [
@@ -54,7 +64,23 @@ const WRITERS = new Map([
 ]);
 // Options that take only the rest of their word: sed's in-place suffix, `-i.bak`, so `-ie` is -i with the suffix "e".
 // BSD sed's -I edits in place too.
-const REST_VALUES = new Map([['sed', new Set(['-i', '-I'])]]);
+// perl and ruby take `-i[suffix]` the same way, and their other rest-only options (`-Mstrict`, `-rjson`) never take the
+// next word: `perl -M strict` is an error.
+const REST_VALUES = new Map([
+  ['sed', new Set(['-i', '-I'])],
+  ['perl', new Set(['-i', '-M', '-m', '-C', '-x', '-D', '-F'])],
+  ['ruby', new Set(['-i', '-F', '-x'])],
+]);
+// Options whose value has a fixed shape (perl -h, ruby -h), so the switches after it still count: `-0777pi`, `-lpi`,
+// `-dpi`, `-W0pi`, `-Kupi`. Each pattern matches the option letter and its value.
+const SHORT_VALUES = new Map([
+  ['perl', /0(?:x[0-9a-f]+|[0-7]+)?|l[0-7]*|dt?(?::[\w:=,]+)?/giu],
+  ['ruby', /0[0-7]*|W(?:[0-2]|:\w+)?|K[a-zA-Z]?|T[0-9]*/gu],
+]);
+// The option that gives a script on the command line, so every operand is a file; without it the first is the script.
+const SCRIPT_OPTIONS = new Map([['perl', ['-e', '-E']], ['ruby', ['-e']]]);
+// The options that change the folder the interpreter runs in.
+const CHANGES_FOLDER = new Map([['perl', ['-x']], ['ruby', ['-C', '-x']]]);
 // git subcommands whose every path is written: git mv removes its sources, git rm its paths.
 const GIT_WRITERS = new Map([
   ['mv', new Set()],
@@ -186,6 +212,8 @@ function gitWritten(segment, place, restores) {
 function written(program, args, valueFlags = WRITERS.get(program)) {
   const flags = [];
   const operands = [];
+  let folder = null;
+  let suffix = null;
   let ended = false;
   for (let i = 0; i < args.length; i += 1) {
     const { text } = args[i];
@@ -194,11 +222,23 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
       flags.push(text);
       if (valueFlags.has(text) || (/^--[^=]+$/u.test(text) && [...valueFlags].some((option) => option.startsWith(text)))) i += 1;
     } else if (!ended && text.startsWith('-') && text.length > 1) {
-      const { options, value } = readShortOptions(text, valueFlags, REST_VALUES.get(program));
+      // Drop the values of fixed-shape options, up to the first option that takes the rest of the word.
+      const cluster = SHORT_VALUES.has(program) ? withoutShortValues(text, program) : text;
+      const { options, value } = readShortOptions(cluster, valueFlags, REST_VALUES.get(program));
       flags.push(...options);
+      if (SCRIPT_OPTIONS.has(program) && value?.option === '-i') suffix = { text: value.attached ?? '', dynamic: args[i].dynamic };
+      if (CHANGES_FOLDER.get(program)?.includes(value?.option)) {
+        // ruby changes folder at each option, so `ruby -C one -C two` runs in one/two; perl keeps only its last -x.
+        const next = value.attached === null ? args[i + 1] ?? null : { text: value.attached, dynamic: args[i].dynamic };
+        const compose = program === 'ruby' && folder !== null && next && !path.isAbsolute(next.text);
+        // A bare perl -x keeps the folder an earlier -x chose.
+        if (next && next.text !== '') folder = compose ? { text: path.join(folder.text, next.text), dynamic: folder.dynamic || next.dynamic } : next;
+      }
       if (value?.attached === null) i += 1;
     } else if (text !== '') {
       operands.push(args[i]); // an empty operand is BSD sed's `-i ''` suffix
+      // perl and ruby read their own options only up to the first operand; what follows is the script's.
+      if (SCRIPT_OPTIONS.has(program)) ended = true;
     }
   }
   if (program === 'dd') return operands.filter(({ text }) => text.startsWith('of=')).map((token) => ({ ...token, text: token.text.slice(3) }));
@@ -214,12 +254,48 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
     const removesSources = flags.some((flag) => isLongOption(flag, '--remove-source-files', '--remov') || isLongOption(flag, '--remove-sent-files', '--remov'));
     return (removesSources ? operands : operands.slice(-1)).filter((token) => !REMOTE.test(token.text));
   }
+  if (SCRIPT_OPTIONS.has(program)) {
+    // perl -i and ruby -i edit their files in place; without -i they only read them, and -c only checks syntax.
+    if (!flags.includes('-i') || flags.includes('-c')) return [];
+    const edited = flags.some((flag) => SCRIPT_OPTIONS.get(program).includes(flag)) ? operands : operands.slice(1);
+    // A suffix also writes a backup: `-i.bak` beside each file, `-i'old/*'` with `*` for the file's name.
+    const backups = suffix?.text ? edited.map((token) => ({ ...token, dynamic: token.dynamic || suffix.dynamic, text: backupOf(program, token.text, suffix.text) })) : [];
+    const files = [...edited, ...backups];
+    // ruby -C and -x, and perl -x, run in the folder they name: a relative file is read from there.
+    if (folder === null || folder.text === '') return files;
+    return files.map((token) => (path.isAbsolute(token.text) ? token : { ...token, text: path.join(folder.text, token.text), dynamic: token.dynamic || folder.dynamic }));
+  }
   if (program !== 'sed') return operands;
   // GNU sed takes a prefix of a long option: `--i` is `--in-place`, `--e` is `--expression`, `--fi` is `--file`.
   const inPlace = flags.some((flag) => REST_VALUES.get('sed').has(flag) || isLongOption(flag, '--in-place', '--i'));
   if (!inPlace) return [];
   const scripted = flags.some((flag) => flag === '-e' || flag === '-f' || isLongOption(flag, '--expression', '--e') || isLongOption(flag, '--file', '--fi'));
   return scripted ? operands : operands.slice(1);
+}
+
+// The backup an in-place edit with `suffix` writes for `file`, as each interpreter does it (checked by running both):
+// perl puts the file, as written, in place of each `*` (`-i'old/*'` on `src/f` writes `old/src/f`) and otherwise
+// appends the suffix; ruby always appends it, `*` included.
+function backupOf(program, file, suffix) {
+  return program === 'perl' && suffix.includes('*') ? suffix.replaceAll('*', file) : `${file}${suffix}`;
+}
+
+// A perl or ruby option cluster without the values of its fixed-shape options: `-0777pi` reads as `-0pi`. What follows
+// an option that takes the rest of the word (`-i.bak0`, `-Mfoo0`) belongs to it and stays.
+function withoutShortValues(text, program) {
+  const rest = REST_VALUES.get(program);
+  const values = WRITERS.get(program);
+  let out = '-';
+  for (let i = 1; i < text.length; i += 1) {
+    const option = `-${text[i]}`;
+    if (rest.has(option) || values.has(option)) return out + text.slice(i);
+    out += text[i];
+    const pattern = SHORT_VALUES.get(program);
+    pattern.lastIndex = i;
+    const match = pattern.exec(text);
+    if (match?.index === i) i += match[0].length - 1;
+  }
+  return out;
 }
 
 // The directory cp or mv writes into with GNU -t, in any spelling: `-t DIR`, `-tDIR`, `-ft DIR`, `--target-directory=DIR`,

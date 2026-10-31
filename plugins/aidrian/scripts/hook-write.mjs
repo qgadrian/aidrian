@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import { loadConfig } from '../lib/config.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
+import { isIgnored } from '../lib/git.mjs';
 import { findProject } from '../lib/project.mjs';
 import { checkTool } from '../lib/rules/main-checkout.mjs';
 
@@ -19,7 +20,7 @@ await runHook(async (input) => {
   if (!hits.length) return;
   const { formatHit } = await import('../lib/terms.mjs');
   const shown = (list) => [...list.slice(0, MAX_REPORTED).map(({ file, hit }) => `  ${formatHit(file, hit)}`), ...(list.length > MAX_REPORTED ? [`  ... and ${list.length - MAX_REPORTED} more`] : [])];
-  const blocking = hits.filter(({ hit }) => hit.rule.severity === 'block');
+  const blocking = hits.filter(({ hit }) => hit.severity === 'block');
   if (blocking.length) {
     await block(input, 'terms', [
       `Blocked: this write adds ${blocking.length} banned term(s) from the project's terms file:`,
@@ -39,7 +40,7 @@ async function termHits(input) {
   const terms = await import('../lib/terms.mjs');
   const rulesOf = new Map();
   const hits = [];
-  for (const { file, lines } of terms.addedLines(input, cwd)) {
+  for (const { file, lines, text, before, reliable } of terms.addedLines(input, cwd)) {
     const absolute = path.resolve(cwd, file);
     const project = findProject(path.dirname(absolute));
     if (!project) continue;
@@ -48,7 +49,10 @@ async function termHits(input) {
       rulesOf.set(project.root, config.terms.file === null ? [] : terms.loadTerms(project, config).rules);
     }
     const rel = path.relative(project.root, absolute);
-    for (const hit of terms.scanLines(lines, rel, rulesOf.get(project.root))) hits.push({ file: rel, hit });
+    const rules = rulesOf.get(project.root);
+    // A rule that reads every file skips what git ignores, as lint does; git is asked only when such a rule applies.
+    const ignored = rules.some((rule) => rule.everywhere) && isIgnored(project.root, rel) === true;
+    for (const hit of terms.scanLines(lines, rel, rules, { text, before, reliable, ignored })) hits.push({ file: rel, hit });
   }
   return hits;
 }

@@ -13,7 +13,7 @@ import { loadConfig } from '../config.mjs';
 import { readLog } from '../dispatch-log.mjs';
 import { runGit } from '../git.mjs';
 import { findProject } from '../project.mjs';
-import { commandLines, inlineShellCommand, isLongOption, lexCommand, readGit, readInvocation } from '../shell-lex.mjs';
+import { isLongOption, readGit, walkCommands } from '../shell-lex.mjs';
 import { readText } from '../transcript.mjs';
 import { readBody, readPrCall, readPrCalls } from './github/pr-body.mjs';
 
@@ -22,9 +22,6 @@ export const OVERRIDE = 'AIDRIAN_ALLOW_UNATTRIBUTED';
 // The heredoc a `-m` or `--message` command substitution prints unchanged, `-m "$(cat <<'EOF' … EOF)"`: group 3 is its
 // body. Any other substitution, such as `$(printf x <<'EOF' … EOF)`, may print something else, so it is not read.
 const MESSAGE_HEREDOC = /(?:--message(?:=|\s+)|(?<![\w-])-[A-Za-z]*m=?\s*)"?\$\(\s*cat\s*<<-?\s*(['"]?)(\w+)\1\r?\n([\s\S]*?)\r?\n[ \t]*\2\b/gu;
-const CHANGES_DIRECTORY = new Set(['cd', 'pushd']);
-// How deep `sh -c` inside `sh -c` is read.
-const SHELL_DEPTH_LIMIT = 4;
 // Where a -m command substitution sits among a commit's messages, until its heredoc is read.
 const DYNAMIC = Symbol('dynamic message');
 
@@ -32,9 +29,9 @@ const DYNAMIC = Symbol('dynamic message');
 // repository's trailer settings: `git interpret-trailers` adds the --trailer values to the message's trailer block.
 // A message the rule cannot read (null) counts only the --trailer values. When git cannot answer, carriedTrailers reads
 // them by git's defaults.
-function commitTrailers(message, trailers, dir) {
+function commitTrailers(message, trailers, dir, config = []) {
   if (dir) {
-    const args = ['interpret-trailers', '--only-trailers', '--unfold', ...trailers.flatMap((trailer) => ['--trailer', trailer])];
+    const args = [...config, 'interpret-trailers', '--only-trailers', '--unfold', ...trailers.flatMap((trailer) => ['--trailer', trailer])];
     const result = runGit(args, dir, { input: message ?? '' });
     if (result.status === 0) {
       const lines = result.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
@@ -65,11 +62,11 @@ export function check(command, { cwd = process.cwd(), env = process.env, input, 
   };
   let author;
   const who = () => (author ??= currentAuthor(input, env));
-  for (const { messages, trailers, cleanup, dir } of gitCommits) {
+  for (const { messages, trailers, cleanup, dir, config } of gitCommits) {
     const fields = settings(dir)?.config.attribution.commit ?? [];
     if (!fields.length) continue;
     const expected = expectedTrailers(fields, who());
-    const carried = commitTrailers(messages.length ? cleanup(messages.join('\n\n')) : null, trailers, dir);
+    const carried = commitTrailers(messages.length ? cleanup(messages.join('\n\n')) : null, trailers, dir, config);
     const missing = expected.filter((trailer) => !carried.has(trailer));
     if (missing.length) return commitReason(expected, missing);
   }
@@ -99,64 +96,48 @@ export function check(command, { cwd = process.cwd(), env = process.env, input, 
   return null;
 }
 
-// The command's commits, as { messages, trailers, cleanup, dir }, and its `gh pr create` calls, as { call, dir }, in order. Each is
-// read in the folder it runs in: the shell's, moved by each earlier `cd` or `pushd` to a named folder, by a wrapper's
-// directory change, and by `git -C`. `dir` is null once a move goes where no word names, and a relative file there is
-// not read. A help or dry-run commit writes nothing and is left out. The command line of `sh -c` or `bash -c` is read
-// too, starting where that shell runs; a script on a shell's stdin is not.
-function readCalls(command, cwd, depth = 0) {
+// The command's commits, as { messages, trailers, cleanup, dir, config }, and its `gh pr create` calls, as { call, dir },
+// in the order they run, with the folder each runs in from shell-lex `walkCommands`: substitutions, `sh -c`, and scripts
+// fed to a shell included, and a folder it cannot know as null, where a relative file is not read. A help or dry-run
+// commit writes nothing and is left out.
+function readCalls(command, cwd) {
   const gitCommits = [];
   const prCreates = [];
-  for (const line of commandLines(command)) {
-    let dir = cwd;
-    const messageHeredocs = [...line.matchAll(MESSAGE_HEREDOC)].map((match) => match[3]);
-    const pending = [];
-    const prCalls = readPrCalls(line);
-    for (const segment of lexCommand(line)) {
-      const invocation = readInvocation(segment);
-      const { program, args, chdir } = invocation;
-      const own = chdir ? moveTo(dir, chdir) : dir;
-      const inner = depth < SHELL_DEPTH_LIMIT ? inlineShellCommand(invocation) : null;
-      if (inner) {
-        const nested = readCalls(inner, own, depth + 1);
-        gitCommits.push(...nested.gitCommits);
-        prCreates.push(...nested.prCreates);
-      }
-      const git = readGit(segment);
-      if (git?.subcommand === 'commit') {
-        let at = own;
-        git.globals.forEach((token, i) => {
-          if (token.text === '-C') at = moveTo(at, git.globals[i + 1]);
-        });
-        const read = commitMessage(git.rest, at);
-        read.dir = at;
-        // A commit that writes nothing still holds its heredoc, so the later ones keep their own.
-        if (read.holdsHeredoc) pending.push(read);
-        if (!read.writesNothing) gitCommits.push(read);
-      }
-      if (readPrCall(segment)) {
-        const call = prCalls.shift();
-        if (call?.subcommand === 'create' && !call.help && !call.web && !call.dryRun) prCreates.push({ call, dir: own });
-      }
-      if (CHANGES_DIRECTORY.has(program)) dir = moveTo(dir, args.find((token) => !/^-[LPe@]+$/u.test(token.text)));
+  const lines = new Map();
+  const state = (line) => {
+    if (!lines.has(line)) lines.set(line, { heredocs: [...line.matchAll(MESSAGE_HEREDOC)].map((match) => match[3]), pending: [], prCalls: [] });
+    return lines.get(line);
+  };
+  for (const { segment, folder, line } of walkCommands(command, cwd)) {
+    const git = readGit(segment);
+    if (git?.subcommand === 'commit') {
+      // `git -c key=value` holds for this commit only, so the rule's own git calls take it too.
+      const config = git.globals.flatMap((token, i) => (token.text === '-c' && git.globals[i + 1] && !git.globals[i + 1].dynamic ? ['-c', git.globals[i + 1].text] : []));
+      const read = commitMessage(git.rest, folder, config);
+      Object.assign(read, { dir: folder, config });
+      // A commit that writes nothing still holds its heredoc, so the later ones keep their own.
+      if (read.holdsHeredoc) state(line).pending.push(read);
+      if (!read.writesNothing) gitCommits.push(read);
     }
-    // The n-th commit whose message is a command substitution takes the line's n-th message heredoc, and only when the
-    // counts match: one commit's heredoc never stands in for another's.
+    if (readPrCall(segment)) {
+      const here = state(line);
+      // The same line text can run again, as two identical `sh -c` bodies do: a spent queue starts over.
+      if (!here.prCalls.length) here.prCalls = readPrCalls(line);
+      const call = here.prCalls.shift();
+      if (call?.subcommand === 'create' && !call.help && !call.web && !call.dryRun) prCreates.push({ call, dir: folder });
+    }
+  }
+  // The n-th commit whose message is a command substitution takes its line's n-th message heredoc, and only when the
+  // counts match: one commit's heredoc never stands in for another's. A message part the rule cannot read may end the
+  // message, past any trailer block, so then only --trailer counts.
+  for (const { heredocs, pending } of lines.values()) {
     pending.forEach((read, i) => {
       if (!read.dynamic) return;
-      // A message part the rule cannot read may end the message, past any trailer block: then only --trailer counts.
-      if (messageHeredocs.length === pending.length) read.messages.splice(read.at, 0, messageHeredocs[i]);
+      if (heredocs.length === pending.length) read.messages.splice(read.at, 0, heredocs[i]);
       else read.messages = [];
     });
   }
   return { gitCommits, prCreates };
-}
-
-// The folder `to` names from `dir`, or null when either is unknown.
-function moveTo(dir, to) {
-  if (!to || to.dynamic || /^(?:-|[+-]\d+)$/u.test(to.text)) return null;
-  if (path.isAbsolute(to.text)) return to.text;
-  return dir ? path.resolve(dir, to.text) : null;
 }
 
 // The `git commit` options that take the next word as their value, besides -m, -F, and --trailer.
@@ -172,9 +153,9 @@ const REUSE_SHORT = new Set(['-C', '-c']);
 
 // git's comment string in `dir`: core.commentString, else core.commentChar, else `#`; `auto` picks per message, so `#`
 // stands in for it.
-function commentChar(dir) {
+function commentChar(dir, config = []) {
   for (const key of ['core.commentString', 'core.commentChar']) {
-    const result = dir ? runGit(['config', key], dir) : null;
+    const result = dir ? runGit([...config, 'config', key], dir) : null;
     const value = result?.status === 0 ? result.stdout.replace(/\n$/u, '') : '';
     if (value && value !== 'auto') return value;
   }
@@ -199,7 +180,7 @@ export function cleanMessage(text, mode, edit, comment = '#') {
 // call makes no commit: `-h`, `--help`, or a `--dry-run` or status format that no later `--no-dry-run` undoes. Option values are skipped,
 // so `-m --help` is a message. `--no-message` and `--no-file` drop the -m values and the -F file before them. Under
 // `--fixup` or `--squash`, git writes a subject above the -m values, so a single -m can hold the trailer block.
-function commitMessage(rest, dir) {
+function commitMessage(rest, dir, config = []) {
   const read = { messages: [], trailers: [], dynamic: false, at: 0, writesNothing: false };
   const messages = [];
   let fileText = null;
@@ -266,9 +247,9 @@ function commitMessage(rest, dir) {
   read.at = kept.indexOf(DYNAMIC);
   read.messages = kept.filter((each) => each !== DYNAMIC);
   // Without --cleanup, git takes the repository's commit.cleanup, read in the folder the commit runs in.
-  const configured = cleanup === null && dir ? runGit(['config', 'commit.cleanup'], dir) : null;
+  const configured = cleanup === null && dir ? runGit([...config, 'config', 'commit.cleanup'], dir) : null;
   const mode = cleanup ?? (configured?.status === 0 ? configured.stdout.trim() : null);
-  read.cleanup = (text) => cleanMessage(text, mode, edit, commentChar(dir));
+  read.cleanup = (text) => cleanMessage(text, mode, edit, commentChar(dir, config));
   return read;
 }
 

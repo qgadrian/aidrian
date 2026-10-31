@@ -170,6 +170,17 @@ test('git trailer.ifExists decides which --trailer values the commit keeps', (t)
   assert.match(run("git commit -m s -m 'Agent: other' --trailer 'Agent: main'") ?? '', /Blocked/, 'doNothing keeps the first');
 });
 
+test('a subshell cd stays in the subshell, and git -c holds for the commit', (t) => {
+  const { dir, run } = setup(t, { commit: ['agent'] });
+  mkdirSync(path.join(dir, 'signed'));
+  writeFileSync(path.join(dir, 'signed/msg'), 'fix: x\n\nAgent: main\n');
+  writeFileSync(path.join(dir, 'msg'), 'fix: x\n');
+  assert.match(run('(cd signed && true); git commit --allow-empty -F msg') ?? '', /Blocked/);
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  assert.match(run("git -c trailer.ifExists=replace commit -m s --trailer 'Agent: main' --trailer 'Agent: other'") ?? '', /Blocked/);
+  assert.match(run("bash <<'EOF'\ngit commit -m unsigned\nEOF") ?? '', /Blocked/, 'a script on a shell stdin');
+});
+
 test('help and dry-run commits pass', (t) => {
   const { run } = setup(t, { commit: ['agent'] });
   for (const command of ['git commit -h', 'git commit --help', 'git commit --dry-run -m x', 'git commit --dry -m x', 'git commit --short', 'git commit --porcelain', 'git commit --long', 'git commit --null', 'git commit -z']) assert.equal(run(command), null, command);

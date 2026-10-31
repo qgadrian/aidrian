@@ -134,7 +134,7 @@ test('a commit or pull request inside sh -c is read', (t) => {
 
 test('help and dry-run commits pass', (t) => {
   const { run } = setup(t, { commit: ['agent'] });
-  for (const command of ['git commit -h', 'git commit --help', 'git commit --dry-run -m x', 'git commit --dry -m x']) assert.equal(run(command), null, command);
+  for (const command of ['git commit -h', 'git commit --help', 'git commit --dry-run -m x', 'git commit --dry -m x', 'git commit --short', 'git commit --porcelain', 'git commit --long', 'git commit --null', 'git commit -z']) assert.equal(run(command), null, command);
   assert.match(run('git commit --allow-empty --dry-run --no-dry-run -m unsigned') ?? '', /Blocked/, 'a later --no-dry-run commits');
   assert.match(run("git commit --allow-empty -m '--help'") ?? '', /Blocked/, 'a message, not an option');
   assert.match(run("git commit --author 'A <a@b>' -t tpl -m x") ?? '', /Blocked/, 'option values are skipped');

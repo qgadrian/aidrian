@@ -330,7 +330,7 @@ and prints the exact lines to add. Both lists are empty by default, which turns 
 `commit` takes any of these fields. A commit carries a trailer as a `--trailer` option, or in its message's trailer
 block: the last paragraph, past the subject, with only `Key: value` lines, as git reads it.
 Each `git commit` in a command is checked on its own message, and a `-F` file is read where the commit runs.
-A message from stdin (`-F -`), an editor, or another commit (`-C`, `-c`) counts only its `--trailer` options. `-h`, `--help`, and `--dry-run` pass.
+A message from stdin (`-F -`), an editor, or another commit (`-C`, `-c`) counts only its `--trailer` options. `-h`, `--help`, `--dry-run`, and the status formats, such as `--short`, pass.
 The rule also reads `sh -c` and `bash -c` command lines; a script on a shell's stdin, such as `bash <<'EOF'`, is not read.
 
 `pullRequest` takes `tool`, `model`, `effort`, and `env` for one line, and `agents` for one line per agent:

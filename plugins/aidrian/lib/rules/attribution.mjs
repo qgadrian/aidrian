@@ -128,6 +128,8 @@ function moveTo(dir, to) {
 
 // The `git commit` options that take the next word as their value, besides -m, -F, and --trailer.
 const COMMIT_VALUES = ['--author', '--date', '--template', '--cleanup', '--pathspec-from-file'];
+// The status formats, which make a commit a dry run that only prints the status.
+const STATUS_FORMATS = ['--short', '--porcelain', '--long', '--null'];
 // The options after which git writes the subject itself, `fixup! …` or `squash! …`, above the -m values.
 const GENERATED_SUBJECT = ['--fixup', '--squash'];
 const COMMIT_SHORT_VALUES = new Set(['-t']);
@@ -137,7 +139,7 @@ const REUSE_SHORT = new Set(['-C', '-c']);
 
 // One commit's { messages, trailers, dynamic, holdsHeredoc, at, writesNothing }: its -m values in order, or its -F file's text, its
 // --trailer values, whether a kept or dropped -m value is a command substitution, where in `messages` it goes, and whether the
-// call makes no commit: `-h`, `--help`, or a `--dry-run` that no later `--no-dry-run` undoes. Option values are skipped,
+// call makes no commit: `-h`, `--help`, or a `--dry-run` or status format that no later `--no-dry-run` undoes. Option values are skipped,
 // so `-m --help` is a message. `--no-message` and `--no-file` drop the -m values and the -F file before them. Under
 // `--fixup` or `--squash`, git writes a subject above the -m values, so a single -m can hold the trailer block.
 function commitMessage(rest, dir) {
@@ -155,7 +157,7 @@ function commitMessage(rest, dir) {
     let token = null;
     let kind = null;
     if (text === '-h' || isLongOption(flag, '--help', '--he')) read.writesNothing = true;
-    else if (isLongOption(flag, '--dry-run', '--dr')) dryRun = true;
+    else if (isLongOption(flag, '--dry-run', '--dr') || STATUS_FORMATS.some((option) => isLongOption(flag, option, option)) || text === '-z') dryRun = true;
     else if (isLongOption(flag, '--no-dry-run', '--no-d')) dryRun = false;
     else if (COMMIT_VALUES.some((option) => isLongOption(flag, option, option)) || COMMIT_SHORT_VALUES.has(text)) value();
     else if (GENERATED_SUBJECT.some((option) => isLongOption(flag, option, option))) {

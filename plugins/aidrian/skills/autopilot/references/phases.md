@@ -52,7 +52,7 @@ Up to config.json `github.maxReviewRounds` rounds, or the number the Human set a
    | 0 | `no_reviewer` | no bot: config.json `github.reviewer` is `null` or `"none"`. Ask no more; the `pr-review` skill runs every round |
    | 2 | `timed_out` | after the loop's single retry, record `timed_out`; the `pr-review` skill runs this round |
    | 3 | `blocked_quota` | ask the bot no more in this run; the `pr-review` skill runs this round and each later one |
-   | 4 | `round_limit` | the same. The loop's question about raising `--max-rounds` is the Human's: record it, never raise it |
+   | 4 | `round_limit` | the same. The loop's question about raising `--max-rounds` is the Human's: record it, never raise it (the command refuses without `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`) |
 
 2. **Specialist review.** Run the `pr-review` skill when `--full-review` is set, when the bot is out this round, as the
    `orchestration` skill's `references/review-rules.md` defines it, or in round 1 when the branch has more than one slice, as that section says.

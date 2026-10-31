@@ -20,8 +20,9 @@
 //   0. With --request and config.json `github.reviewGate` on: post nothing and end with `review_required` until a review
 //      is on record (lib/review-gate.mjs), and put the record's marker in the request.
 //   6. With --request: at --max-rounds bot reviews (config.json `github.maxReviewRounds`) post nothing and end with
-//      `round_limit`; a long run of rounds is a design problem more review will not fix. A raised limit is recorded
-//      in the request comment, and later runs keep the highest one.
+//      `round_limit`; a long run of rounds is a design problem more review will not fix. Raising --max-rounds past
+//      the config value is the Human's call: it needs ROUNDS_OVERRIDE set in their own shell (roundCapProblem), whatever
+//      reviews the pull request. A raised limit is recorded in the request comment, and later runs keep the highest one.
 //
 // stdout: one JSON object. Exit 0 received | already_present | no_reviewer, 2 timed_out (re-run once without --request
 // when `retry_recommended` is true), 3 blocked_quota, 4 round_limit, 5 review_required, 1 error. Read-only except the
@@ -104,6 +105,19 @@ export const exitCodeFor = (status) => {
   if (status === 'review_required') return 5;
   return 0;
 };
+
+// The variable the Human sets, in their own shell before the session starts, to let --max-rounds go past config.json
+// `github.maxReviewRounds`. An agent never sets it: more rounds is a decision the cap exists to hand back.
+export const ROUNDS_OVERRIDE = 'AIDRIAN_ALLOW_EXTRA_ROUNDS';
+
+// Why `maxRounds` may not run, or null: a cap above the project's `cap` without ROUNDS_OVERRIDE in `env`. It judges the
+// command's own flag, so it holds for any reviewer the command waits on; a lower cap always runs.
+export function roundCapProblem(maxRounds, cap, env = process.env) {
+  if (maxRounds <= cap || env[ROUNDS_OVERRIDE] === '1') return null;
+  return `--max-rounds ${maxRounds} goes past config.json github.maxReviewRounds (${cap}). More review rounds are the Human's ` +
+    `decision: stop and ask them to raise the cap, redesign, or stop. To raise it, the Human sets ${ROUNDS_OVERRIDE}=1 in their ` +
+    "own shell before starting the session (agents must never set it on the user's behalf).";
+}
 
 // `defaults` carries config.json `github.reviewer` and `github.maxReviewRounds`; flags win.
 export const parseArgs = (argv, defaults = {}) => {
@@ -417,11 +431,14 @@ async function reviewGate(project, config) {
 }
 
 // The CLI body: prints the result JSON and returns its exit code; a usage or gh error prints one line and returns 1.
-// At round_limit, `project` gets a lesson; `deps` replaces awaitReview's gh, clock, and sleep in tests.
+// At round_limit, `project` gets a lesson; `deps` replaces awaitReview's gh, clock, and sleep, and `env`, in tests.
 export async function runAwaitReview(args, config, project = null, deps = {}) {
   try {
     const gate = project && config.github.reviewGate.enabled ? await reviewGate(project, config) : null;
-    const result = await awaitReview(parseArgs(args, { reviewer: config.github.reviewer, maxRounds: config.github.maxReviewRounds }), { gate, ...deps });
+    const opts = parseArgs(args, { reviewer: config.github.reviewer, maxRounds: config.github.maxReviewRounds });
+    const capped = roundCapProblem(opts.maxRounds, config.github.maxReviewRounds, deps.env ?? process.env);
+    if (capped) throw new Error(capped);
+    const result = await awaitReview(opts, { gate, ...deps });
     if (result.status === 'review_required') console.error(result.reason);
     if (result.status === 'round_limit' && project) {
       const { recordSignal, roundLimitSignal } = await import('./lesson-signals.mjs');

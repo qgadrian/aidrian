@@ -191,6 +191,8 @@ test('a subshell cd stays in the subshell, and git -c holds for the commit', (t)
     'the cleanup runs after the --trailer values go in');
   assert.match(run('git commit -m "subject\n\nAgent: main\n---\n\nunsigned"') ?? '', /Blocked/, 'a --- line is text');
   assert.equal(run('git commit -m "subject\n\nnotes\n---\n\nAgent: main"'), null);
+  assert.match(run("git -c trailer.agent.key=Agent -c 'trailer.agent.command=echo main' commit --allow-empty -m unsigned") ?? '', /Blocked/,
+    'no --trailer, so git applies no trailer command');
 });
 
 test('help and dry-run commits pass', (t) => {

@@ -37,8 +37,9 @@ function commitTrailers(message, trailers, dir, config = [], cleanup = (text) =>
     const git = (args, input) => runGit([...config, 'interpret-trailers', '--no-divider', ...args], dir, { input });
     // git's prepared message ends in a newline; without it, a --trailer would join the subject's paragraph.
     const text = message === null || message.endsWith('\n') ? message ?? '' : `${message}\n`;
-    const full = git(trailers.flatMap((trailer) => ['--trailer', trailer]), text);
-    const parsed = full.status === 0 ? git(['--only-trailers', '--unfold'], cleanup(full.stdout)) : null;
+    // git applies trailer.* settings only when it adds a --trailer; the final read applies none (`--only-input`).
+    const full = trailers.length ? git(trailers.flatMap((trailer) => ['--trailer', trailer]), text) : { status: 0, stdout: text };
+    const parsed = full.status === 0 ? git(['--only-trailers', '--only-input', '--unfold'], cleanup(full.stdout)) : null;
     if (parsed?.status === 0) {
       const lines = parsed.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
       return new Set(lines.map((line) => line.replace(/^([A-Za-z0-9-]+):\s*/u, '$1: ')));

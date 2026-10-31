@@ -134,6 +134,7 @@ test('bashTargets finds the certain write targets, resolved against cwd, and not
   assert.deepEqual(at("perl -d:Trace -pi -e 'x' file"), ['file']);
   assert.deepEqual(at("ruby --encoding utf-8 -pi -e 'x' file"), ['file'], 'a long option takes the next word');
   assert.deepEqual(at("ruby -C one -C two -pi -e 'x' file"), ['one/two/file'], 'folder changes compose');
+  assert.deepEqual(at('perl -xone -xtwo -pi script.pl file'), ['two/file'], 'perl keeps its last -x');
   assert.deepEqual(at('perl script.pl -i file'), []);
   assert.deepEqual(at("perl -F'i' -ane 'print' file"), [], '-F takes the rest of its word');
   assert.deepEqual(at("ruby -r json -pi -e 'x' file"), ['file'], '-r takes the next word');

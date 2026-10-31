@@ -228,9 +228,10 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
       flags.push(...options);
       if (SCRIPT_OPTIONS.has(program) && value?.option === '-i') suffix = { text: value.attached ?? '', dynamic: args[i].dynamic };
       if (CHANGES_FOLDER.get(program)?.includes(value?.option)) {
-        // Each folder change is relative to the one before: `ruby -C one -C two` runs in one/two.
+        // ruby changes folder at each option, so `ruby -C one -C two` runs in one/two; perl keeps only its last -x.
         const next = value.attached === null ? args[i + 1] ?? null : { text: value.attached, dynamic: args[i].dynamic };
-        if (next) folder = folder === null || path.isAbsolute(next.text) ? next : { text: path.join(folder.text, next.text), dynamic: folder.dynamic || next.dynamic };
+        const compose = program === 'ruby' && folder !== null && next && !path.isAbsolute(next.text);
+        if (next) folder = compose ? { text: path.join(folder.text, next.text), dynamic: folder.dynamic || next.dynamic } : next;
       }
       if (value?.attached === null) i += 1;
     } else if (text !== '') {

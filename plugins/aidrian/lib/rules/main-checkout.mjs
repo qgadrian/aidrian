@@ -131,8 +131,9 @@ function gitStateChanges(command, cwd, depth = 0) {
     if (!call) continue;
     let at = invocation.chdir && !invocation.chdir.dynamic ? path.resolve(cwd, invocation.chdir.text) : invocation.chdir ? null : cwd;
     call.globals.forEach((token, i) => {
-      const value = call.globals[i + 1];
-      if (token.text === '-C' && value && at !== null) at = value.dynamic ? null : path.resolve(at, value.text);
+      // git's -C as its own word or attached: `-C path` or `-Cpath`.
+      const value = token.text === '-C' ? call.globals[i + 1] : /^-C./u.test(token.text) ? { text: token.text.slice(2), dynamic: token.dynamic } : null;
+      if (value && at !== null) at = value.dynamic ? null : path.resolve(at, value.text);
     });
     if (at === null) continue;
     const { options, operands, afterDashes } = readGitArgs(call.rest, GIT_STATE_VALUES[call.subcommand] ?? new Set());
@@ -143,11 +144,15 @@ function gitStateChanges(command, cwd, depth = 0) {
     } else if (call.subcommand === 'commit' && has('-a', '--all', '--al')) {
       found.push({ what: '`git commit -a` commits every change in the folder, other sessions\' work included', at });
     } else if (call.subcommand === 'switch' || call.subcommand === 'checkout') {
-      const creates = has('-b') || has('-B') || has('-c', '--create', '--cr') || has('-C', '--force-create', '--fo') || has(null, '--orphan', '--or') || has(null, '--detach', '--det');
-      // checkout: a first word that names a commit is a branch switch, unless paths follow `--`, which restore files
-      // from it; any other word is a path to restore, which the guard allows.
+      // Creating a branch or detaching HEAD leaves the default branch, whatever the target is named.
+      const creates = has('-b') || has('-B') || has('-c', '--create', '--cr') || has('-C', '--force-create', '--fo') || has(null, '--orphan', '--or')
+        || has('-d', '--detach', '--det');
+      // checkout: one word and no paths is a branch switch when it names a commit, the previous branch (`-`), or a
+      // remote branch git would create locally; a commit followed by paths, with or without `--`, restores those
+      // paths; any other word is a path to restore. The guard allows a restore.
       const target = call.subcommand === 'switch' ? operands.at(-1) : operands[0];
-      const switches = call.subcommand === 'switch' || creates || (target !== undefined && !afterDashes.length && names(at, target));
+      const lone = operands.length === 1 && !afterDashes.length;
+      const switches = call.subcommand === 'switch' || creates || (lone && (target === '-' || names(at, target) || tracksRemote(at, target)));
       if (switches) found.push({ what: `\`git ${call.subcommand}\` moves the folder every session shares to another branch`, at, target: target ?? null, creates });
     }
   }
@@ -178,6 +183,12 @@ function readGitArgs(rest, valueFlags) {
     }
   }
   return { options, operands, afterDashes };
+}
+
+// Whether some remote has a branch `word`, which `git checkout <word>` creates and switches to.
+function tracksRemote(at, word) {
+  const result = runGit(['for-each-ref', '--format=%(refname)', `refs/remotes/*/${word}`], existingFolder(at));
+  return result.status === 0 && result.stdout.trim() !== '';
 }
 
 // Whether `word` names a commit in the repository at `at`: a branch, a tag, or a hash. A word git cannot read is no

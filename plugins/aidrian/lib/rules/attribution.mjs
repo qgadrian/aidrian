@@ -234,7 +234,8 @@ function commitMessage(rest, dir, config = []) {
     else if (kind === 'message') messages.push(token.text);
     else if (token.dynamic || token.text === '-') fileText = '';
     else {
-      const file = path.isAbsolute(token.text) ? token.text : dir ? path.resolve(dir, token.text) : null;
+      // Joined, not resolved: the filesystem follows a symlink before a `..`, as git opens the operand.
+      const file = path.isAbsolute(token.text) ? token.text : dir ? `${dir}/${token.text}` : null;
       fileText = (file && readText(file)) ?? '';
     }
   }

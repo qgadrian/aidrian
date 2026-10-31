@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -176,6 +176,11 @@ test('a subshell cd stays in the subshell, and git -c holds for the commit', (t)
   writeFileSync(path.join(dir, 'signed/msg'), 'fix: x\n\nAgent: main\n');
   writeFileSync(path.join(dir, 'msg'), 'fix: x\n');
   assert.match(run('(cd signed && true); git commit --allow-empty -F msg') ?? '', /Blocked/);
+  mkdirSync(path.join(dir, 'target/sub'), { recursive: true });
+  writeFileSync(path.join(dir, 'target/msg'), 'fix: x\n');
+  writeFileSync(path.join(dir, 'msg'), 'fix: x\n\nAgent: main\n');
+  symlinkSync(path.join(dir, 'target/sub'), path.join(dir, 'link'));
+  assert.match(run('git commit --allow-empty -F link/../msg') ?? '', /Blocked/, 'a symlink resolves before ..');
   execFileSync('git', ['init', '-q'], { cwd: dir });
   assert.match(run("git -c trailer.ifExists=replace commit -m s --trailer 'Agent: main' --trailer 'Agent: other'") ?? '', /Blocked/);
   assert.match(run("bash <<'EOF'\ngit commit -m unsigned\nEOF") ?? '', /Blocked/, 'a script on a shell stdin');

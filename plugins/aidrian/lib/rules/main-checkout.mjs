@@ -19,7 +19,7 @@ import path from 'node:path';
 import { globPattern } from '../fs.mjs';
 
 import { loadConfig } from '../config.mjs';
-import { checkoutRoots, isIgnored } from '../git.mjs';
+import { checkoutRoots, isIgnored, runGit } from '../git.mjs';
 import { findProject, worktreesDir } from '../project.mjs';
 import { inlineShellCommand, isLongOption, lexSteps, readGit, readInvocation, readShortOptions, SUBSTITUTION_DEPTH_LIMIT } from '../shell-lex.mjs';
 
@@ -107,38 +107,83 @@ export function check(command, { cwd = process.cwd(), env = process.env } = {}) 
   return decide(bashTargets(command, cwd), cwd, false, 'this command writes') ?? gitStateDenial(command, cwd);
 }
 
-// The git calls that change the main checkout's state for every session in it, as { what, at }: `at` the folder git
-// runs in, from `git -C`; a call after a `cd` is skipped, as its folder is not certain.
-const BULK_ADD = new Set(['-A', '--all', '-u', '--update', '.', ':/', ':', '*']);
-function gitStateChanges(command, cwd) {
+// The git calls that change the main checkout's state for every session in it, as { what, at, target, creates }: `at`
+// the folder git runs in, after a wrapper's `env -C` and git's own `-C`. Substitutions that run are read too, each from
+// where its command runs; a call after a `cd` is skipped, as its folder is not certain.
+// Options are read as git reads them: a value option takes the rest of its word or the next word (`-am"msg"` is -a and
+// -m, `-bnew` creates `new`), and a long option by any unambiguous prefix (`--al` is `--all`).
+const GIT_STATE_VALUES = {
+  add: new Set(['--chmod', '--pathspec-from-file']),
+  commit: new Set(['-m', '-F', '-c', '-C', '-t', '--message', '--file', '--author', '--date', '--template', '--reuse-message', '--reedit-message', '--fixup', '--squash', '--cleanup', '--trailer', '--pathspec-from-file']),
+  switch: new Set(['-c', '-C', '--create', '--force-create', '--orphan', '--conflict']),
+  checkout: new Set(['-b', '-B', '--orphan', '--conflict', '--pathspec-from-file']),
+};
+// Pathspecs that name the whole folder: every change in it.
+const WHOLE_FOLDER = new Set(['.', ':/', ':', '*', ':/*', '.*']);
+function gitStateChanges(command, cwd, depth = 0) {
   const found = [];
   let known = true;
-  for (const { segment } of lexSteps(command)) {
-    const { program } = readInvocation(segment);
-    if (CHANGES_DIRECTORY.has(program)) known = false;
+  for (const { segment, substitutions } of lexSteps(command)) {
+    if (known && depth < SUBSTITUTION_DEPTH_LIMIT) for (const body of substitutions) found.push(...gitStateChanges(body, cwd, depth + 1));
+    const invocation = readInvocation(segment);
+    if (CHANGES_DIRECTORY.has(invocation.program)) known = false;
     const call = known ? readGit(segment) : null;
     if (!call) continue;
-    let at = cwd;
+    let at = invocation.chdir && !invocation.chdir.dynamic ? path.resolve(cwd, invocation.chdir.text) : invocation.chdir ? null : cwd;
     call.globals.forEach((token, i) => {
       const value = call.globals[i + 1];
-      if (token.text === '-C' && value && !value.dynamic) at = path.resolve(at, value.text);
+      if (token.text === '-C' && value && at !== null) at = value.dynamic ? null : path.resolve(at, value.text);
     });
-    const words = call.rest.filter((token) => !token.dynamic).map((token) => token.text);
-    const options = words.filter((word) => word.startsWith('-') && word !== '--');
-    const operands = words.filter((word) => !word.startsWith('-'));
-    const short = (letter) => options.some((option) => /^-[A-Za-z]+$/u.test(option) && option.includes(letter));
-    if (call.subcommand === 'add' && (words.some((word) => BULK_ADD.has(word)) || short('A') || short('u'))) {
-      found.push({ what: `\`git add ${words.join(' ')}\` stages every change in the folder, including other sessions' work`, at });
-    } else if (call.subcommand === 'commit' && (short('a') || options.some((option) => isLongOption(option, '--all', '--al')))) {
-      found.push({ what: '`git commit -a` commits every change in the folder, including other sessions\' work', at });
-    } else if (call.subcommand === 'switch' || (call.subcommand === 'checkout' && !words.includes('--') && !operands.some((word) => existsSync(path.resolve(at, word)))
-      && (operands.length || options.some((o) => /^-[bB]$|^--orphan$|^--detach$/u.test(o))))) {
-      // `git checkout <path>` restores a file, which the guard allows; only a word that is not a path names a branch.
+    if (at === null) continue;
+    const { options, operands, afterDashes } = readGitArgs(call.rest, GIT_STATE_VALUES[call.subcommand] ?? new Set());
+    const has = (short, long, shortest) => options.some((option) => option === short || (long && isLongOption(option, long, shortest)));
+    if (call.subcommand === 'add') {
+      const whole = [...operands, ...afterDashes].some((word) => WHOLE_FOLDER.has(path.posix.normalize(word.replace(/\/+$/u, '') || '.')));
+      if (whole || has('-A', '--all', '--al') || has('-u', '--update', '--u')) found.push({ what: '`git add` of every change stages other sessions\' work too', at });
+    } else if (call.subcommand === 'commit' && has('-a', '--all', '--al')) {
+      found.push({ what: '`git commit -a` commits every change in the folder, other sessions\' work included', at });
+    } else if (call.subcommand === 'switch' || call.subcommand === 'checkout') {
+      const creates = has('-b') || has('-B') || has('-c', '--create', '--cr') || has('-C', '--force-create', '--fo') || has(null, '--orphan', '--or') || has(null, '--detach', '--det');
+      // checkout: a first word that names a commit is a branch switch, unless paths follow `--`, which restore files
+      // from it; any other word is a path to restore, which the guard allows.
       const target = call.subcommand === 'switch' ? operands.at(-1) : operands[0];
-      found.push({ what: `\`git ${call.subcommand}\` moves the folder every session shares to another branch`, at, target: target ?? null, creates: options.some((o) => /^-[bBcC]$|^--orphan$|^--create$|^--detach$/u.test(o)) });
+      const switches = call.subcommand === 'switch' || creates || (target !== undefined && !afterDashes.length && names(at, target));
+      if (switches) found.push({ what: `\`git ${call.subcommand}\` moves the folder every session shares to another branch`, at, target: target ?? null, creates });
     }
   }
   return found;
+}
+
+// A git call's words after its subcommand, as { options, operands, afterDashes }: each option by its full name.
+function readGitArgs(rest, valueFlags) {
+  const options = [];
+  const operands = [];
+  const afterDashes = [];
+  let ended = false;
+  for (let i = 0; i < rest.length; i += 1) {
+    const { text } = rest[i];
+    if (ended) afterDashes.push(text);
+    else if (text === '--') ended = true;
+    else if (text.startsWith('--')) {
+      const [name, inline] = text.split(/=(.*)/su);
+      const full = [...valueFlags].find((flag) => flag.startsWith('--') && flag.startsWith(name) && name.length > 3);
+      options.push(full ?? name);
+      if (full && inline === undefined) i += 1;
+    } else if (text.startsWith('-') && text.length > 1) {
+      const { options: letters, value } = readShortOptions(text, valueFlags);
+      options.push(...letters);
+      if (value?.attached === null) i += 1;
+    } else {
+      operands.push(text);
+    }
+  }
+  return { options, operands, afterDashes };
+}
+
+// Whether `word` names a commit in the repository at `at`: a branch, a tag, or a hash. A word git cannot read is no
+// commit, so `git checkout <path>` restores, even for a file that is gone.
+function names(at, word) {
+  return runGit(['rev-parse', '--verify', '--quiet', '--end-of-options', `${word}^{commit}`], existingFolder(at)).status === 0;
 }
 
 // The deny reason for a git call that changes the main checkout's state, or null. Moving back to the default branch

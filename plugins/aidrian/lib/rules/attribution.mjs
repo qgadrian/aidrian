@@ -28,16 +28,20 @@ const SHELL_DEPTH_LIMIT = 4;
 // Where a -m command substitution sits among a commit's messages, until its heredoc is read.
 const DYNAMIC = Symbol('dynamic message');
 
-// git's trailer.ifExists in `dir`, per lower-case key, `trailer.<key>.ifExists` over `trailer.ifExists`; null for the default.
-function trailerPolicy(dir) {
-  if (!dir) return () => null;
-  const result = runGit(['config', '--get-regexp', '^trailer\\.'], dir);
-  const settings = new Map();
-  for (const line of result.status === 0 ? result.stdout.split('\n') : []) {
-    const match = /^trailer\.(?:(.+)\.)?ifexists\s+(\S+)$/iu.exec(line.trim());
-    if (match) settings.set(match[1]?.toLowerCase() ?? '', match[2]);
+// The trailers the commit will carry, as `Key: value`. git answers in the folder the commit runs in, with that
+// repository's trailer settings: `git interpret-trailers` adds the --trailer values to the message's trailer block.
+// A message the rule cannot read (null) counts only the --trailer values. When git cannot answer, carriedTrailers reads
+// them by git's defaults.
+function commitTrailers(message, trailers, dir) {
+  if (dir) {
+    const args = ['interpret-trailers', '--only-trailers', '--unfold', ...trailers.flatMap((trailer) => ['--trailer', trailer])];
+    const result = runGit(args, dir, { input: message ?? '' });
+    if (result.status === 0) {
+      const lines = result.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+      return new Set(lines.map((line) => line.replace(/^([A-Za-z0-9-]+):\s*/u, '$1: ')));
+    }
   }
-  return (key) => settings.get(key) ?? settings.get('') ?? null;
+  return carriedTrailers(message === null ? [] : [message], trailers);
 }
 
 // A token's text, or null when it is missing or dynamic.
@@ -65,7 +69,7 @@ export function check(command, { cwd = process.cwd(), env = process.env, input, 
     const fields = settings(dir)?.config.attribution.commit ?? [];
     if (!fields.length) continue;
     const expected = expectedTrailers(fields, who());
-    const carried = carriedTrailers(messages.length ? [cleanup(messages.join('\n\n'))] : [], trailers, trailerPolicy(dir));
+    const carried = commitTrailers(messages.length ? cleanup(messages.join('\n\n')) : null, trailers, dir);
     const missing = expected.filter((trailer) => !carried.has(trailer));
     if (missing.length) return commitReason(expected, missing);
   }
@@ -166,14 +170,25 @@ const COMMIT_SHORT_VALUES = new Set(['-t']);
 const REUSE_VALUES = ['--reuse-message', '--reedit-message'];
 const REUSE_SHORT = new Set(['-C', '-c']);
 
+// git's comment string in `dir`: core.commentString, else core.commentChar, else `#`; `auto` picks per message, so `#`
+// stands in for it.
+function commentChar(dir) {
+  for (const key of ['core.commentString', 'core.commentChar']) {
+    const result = dir ? runGit(['config', key], dir) : null;
+    const value = result?.status === 0 ? result.stdout.replace(/\n$/u, '') : '';
+    if (value && value !== 'auto') return value;
+  }
+  return '#';
+}
+
 // A message as git stores it under `--cleanup` (`mode`), which defaults to `strip` when the message is edited and to
-// `whitespace` when not: `strip` drops `#` comment lines; `scissors`, when edited, drops the scissors line and all after it.
-export function cleanMessage(text, mode, edit) {
+// `whitespace` when not: `strip` drops the lines that start with the `comment` string; `scissors`, when edited, drops the scissors line and all after it.
+export function cleanMessage(text, mode, edit, comment = '#') {
   const effective = mode && mode !== 'default' ? mode : edit ? 'strip' : 'whitespace';
   let lines = text.split('\n');
-  if (effective === 'strip') lines = lines.filter((line) => !line.startsWith('#'));
+  if (effective === 'strip') lines = lines.filter((line) => !line.startsWith(comment));
   if (effective === 'scissors' && edit) {
-    const cut = lines.findIndex((line) => /^# -+ >8 -+$/u.test(line));
+    const cut = lines.findIndex((line) => line === `${comment} ------------------------ >8 ------------------------`);
     if (cut !== -1) lines = lines.slice(0, cut);
   }
   return lines.join('\n');
@@ -253,7 +268,7 @@ function commitMessage(rest, dir) {
   // Without --cleanup, git takes the repository's commit.cleanup, read in the folder the commit runs in.
   const configured = cleanup === null && dir ? runGit(['config', 'commit.cleanup'], dir) : null;
   const mode = cleanup ?? (configured?.status === 0 ? configured.stdout.trim() : null);
-  read.cleanup = (text) => cleanMessage(text, mode, edit);
+  read.cleanup = (text) => cleanMessage(text, mode, edit, commentChar(dir));
   return read;
 }
 

@@ -138,13 +138,16 @@ test('the message is read after the cleanup git applies', (t) => {
   const { dir, run } = setup(t, { commit: ['agent'] });
   writeFileSync(path.join(dir, 'cut.txt'), 'fix: x\n# ------------------------ >8 ------------------------\n\nAgent: main\n');
   assert.match(run('git commit --cleanup=scissors --edit -F cut.txt') ?? '', /Blocked/, 'cut by the scissors');
-  assert.equal(run('git commit --cleanup=scissors -F cut.txt'), null, 'scissors cut only an edited message');
+  assert.match(run('git commit --cleanup=scissors -F cut.txt') ?? '', /Blocked/, 'git reads no trailer below a scissors line');
   writeFileSync(path.join(dir, 'comment.txt'), 'fix: x\n\nAgent: main\n# a comment\n');
   assert.equal(run('git commit --cleanup=strip -F comment.txt'), null, 'strip drops the comment');
   assert.match(run('git commit -F comment.txt') ?? '', /Blocked/, 'whitespace keeps the comment');
   execFileSync('git', ['init', '-q'], { cwd: dir });
   execFileSync('git', ['config', 'commit.cleanup', 'scissors'], { cwd: dir });
   assert.match(run('git commit --edit -F cut.txt') ?? '', /Blocked/, 'the repository cleanup');
+  execFileSync('git', ['config', 'core.commentChar', ';'], { cwd: dir });
+  writeFileSync(path.join(dir, 'semi.txt'), 'fix: x\n; ------------------------ >8 ------------------------\n\nAgent: main\n');
+  assert.match(run('git commit --edit -F semi.txt') ?? '', /Blocked/, 'the repository comment character');
 });
 
 test('each call answers to the project it runs in', (t) => {

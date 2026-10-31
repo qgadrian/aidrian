@@ -193,11 +193,13 @@ function proseRead(lines, { text, before, reliable }) {
     const masked = proseLines(lines.map((line) => line.text).join('\n'));
     return lines.map((line, i) => ({ line, part: masked[i] })).filter(({ part }) => part !== null);
   }
-  const old = new Set(before === null ? [] : proseLines(before).filter((part) => part !== null));
+  // Compared with blanks collapsed: a code span, URL, or quotation that only changes length leaves the prose as it was.
+  const key = (part) => part.replace(/\s+/gu, ' ').trim();
+  const old = new Set(before === null ? [] : proseLines(before).filter((part) => part !== null).map(key));
   const all = String(text).split(/\r?\n/u);
   return proseLines(text)
     .map((part, i) => ({ line: { number: i + 1, text: all[i] }, part }))
-    .filter(({ part }) => part !== null && part.trim() !== '' && !old.has(part));
+    .filter(({ part }) => part !== null && part.trim() !== '' && !old.has(key(part)));
 }
 
 export const numbered = (text) => text.split(/\r?\n/u).map((line, i) => ({ number: i + 1, text: line }));

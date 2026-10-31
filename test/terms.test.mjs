@@ -317,3 +317,11 @@ test('the terms file is skipped however config.json spells its path', (t) => {
   const { rules } = repo(t, { version: 1, rules: [{ id: 'clients', terms: { guest: 'client' } }] }, { version: 1, terms: { file: '././.aidrian/../.aidrian/terms.json' } });
   assert.deepEqual(scanLines(numbered('"guest": "client"'), '.aidrian/terms.json', rules()), []);
 });
+
+test('a prose line whose quoted or code span only changes length is not new', (t) => {
+  const { dir, write } = repo(t, { version: 1, rules: [{ id: 'second-person', paths: ['docs/**/*.md'], prose: true, terms: { you: 'the agent' } }] });
+  write('docs/a.md', 'You can run `x`.\n');
+  const hook = (toolName, toolInput) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify({ tool_name: toolName, cwd: dir, tool_input: toolInput }), encoding: 'utf8' }).status;
+  assert.equal(hook('Edit', { file_path: 'docs/a.md', old_string: '`x`', new_string: '`longerExample`' }), 0);
+  assert.equal(hook('Write', { file_path: 'docs/a.md', content: 'You can run `y`.\nNow you can.\n' }), 2, 'a new prose line still counts');
+});

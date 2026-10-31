@@ -7,8 +7,9 @@
 // whole file is read. Known limits: code inside a template literal's `${…}` is blanked with it, a quote or `//` inside
 // a regular-expression literal can blank the rest of its line, and JSX text reads as code.
 // Letters of any script: `caféparty` is one identifier, never `café` and `party`.
-const IDENTIFIER = /[\p{L}_$][\p{L}\p{N}_$]*(?:-[\p{L}_$][\p{L}\p{N}_$]*)*/gu;
-const WORDS = /\p{Lu}+(?!\p{Ll})|\p{Lu}?\p{Ll}+|\p{Lo}+|\p{N}+/gu;
+// Combining marks belong to the letter before them: `party\u0301` is not `party`.
+const IDENTIFIER = /[\p{L}_$][\p{L}\p{M}\p{N}_$]*(?:-[\p{L}_$][\p{L}\p{M}\p{N}_$]*)*/gu;
+const WORDS = /(?:\p{Lu}\p{M}*)+(?!\p{Ll})|(?:\p{Lu}\p{M}*)?(?:\p{Ll}\p{M}*)+|(?:\p{Lo}\p{M}*)+|\p{N}+/gu;
 
 // An identifier, or a term written as words or as an identifier, as its lowercase words joined by one space.
 export const codeName = (text) => (String(text).match(WORDS) ?? []).map((word) => word.toLowerCase()).join(' ');

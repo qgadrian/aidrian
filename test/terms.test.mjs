@@ -311,6 +311,9 @@ test('a quoted URL keeps its closing quote, and code names keep letters of any s
   assert.deepEqual(identifiers('const caféparty = partyé;'), ['const', 'caféparty', 'partyé']);
   assert.equal(codeName('caféParty'), 'café party');
   assert.notEqual(codeName('partyé'), 'party');
+  assert.deepEqual(identifiers('const cafe\u0301party = party\u0301;'), ['const', 'cafe\u0301party', 'party\u0301']);
+  assert.notEqual(codeName('party\u0301'), 'party', 'a combining mark stays with its letter');
+  assert.equal(codeName('PARTY_SIZE'), 'party size');
 });
 
 test('the terms file is skipped however config.json spells its path', (t) => {

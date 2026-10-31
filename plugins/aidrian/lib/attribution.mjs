@@ -80,8 +80,8 @@ export function expectedTrailers(fields, author) {
 // The trailer lines a commit carries, as `Key: value`: each `--trailer` value, which git takes with `:` or `=`, and the
 // message's trailer block, as git reads one by default: its last paragraph, past the subject, when every line is a
 // `Key: value` trailer or a continuation indented under one. `messages` are the -m values in order, which git joins as
-// paragraphs, or a -F file's text.
-export function carriedTrailers(messages, trailers) {
+// paragraphs, or a -F file's text. `ifExists(key)` is git's trailer.ifExists for that lower-case key, or null.
+export function carriedTrailers(messages, trailers, ifExists = () => null) {
   const paragraphs = messages.join('\n\n').replace(/\r\n/gu, '\n').split(/\n[ \t]*\n/u).map((part) => part.trim()).filter(Boolean);
   const block = paragraphs.length > 1 ? paragraphs.at(-1).split('\n') : [];
   const isBlock = block.length > 0 && block.every((line) => /^[A-Za-z0-9-]+:\s*\S/u.test(line) || /^\s+\S/u.test(line));
@@ -93,7 +93,18 @@ export function carriedTrailers(messages, trailers) {
   }
   const fromMessage = unfolded;
   const fromOptions = trailers.map((line) => line.trim().replace(/^([A-Za-z0-9-]+)\s*[:=]\s*/u, '$1: '));
-  return new Set([...fromOptions, ...fromMessage]);
+  // A --trailer is added after the message's trailers as git's trailer.ifExists, for its key or for all, says: `replace`
+  // drops the earlier ones with its key, `doNothing` drops it when its key is there, any other mode adds it.
+  const result = [...fromMessage];
+  for (const line of fromOptions) {
+    const key = line.slice(0, line.indexOf(':')).toLowerCase();
+    const same = (each) => each.slice(0, each.indexOf(':')).toLowerCase() === key;
+    const mode = ifExists(key);
+    if (mode === 'doNothing' && result.some(same)) continue;
+    if (mode === 'replace') for (let i = result.length - 1; i >= 0; i -= 1) if (same(result[i])) result.splice(i, 1);
+    result.push(line);
+  }
+  return new Set(result);
 }
 
 // The agents of a pull request with their models, in first-seen order: each `Agent:` trailer on the branch's commits

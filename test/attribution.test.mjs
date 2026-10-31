@@ -157,6 +157,16 @@ test('each call answers to the project it runs in', (t) => {
   assert.match(run('git -C other commit -m unsigned') ?? '', /Agent: main/);
 });
 
+test('git trailer.ifExists decides which --trailer values the commit keeps', (t) => {
+  const { dir, run } = setup(t, { commit: ['agent'] });
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  assert.equal(run("git commit -m s --trailer 'Agent: main' --trailer 'Agent: other'"), null, 'the default adds both');
+  execFileSync('git', ['config', 'trailer.ifExists', 'replace'], { cwd: dir });
+  assert.match(run("git commit -m s --trailer 'Agent: main' --trailer 'Agent: other'") ?? '', /Blocked/, 'replace keeps the last');
+  execFileSync('git', ['config', 'trailer.agent.ifExists', 'doNothing'], { cwd: dir });
+  assert.match(run("git commit -m s -m 'Agent: other' --trailer 'Agent: main'") ?? '', /Blocked/, 'doNothing keeps the first');
+});
+
 test('help and dry-run commits pass', (t) => {
   const { run } = setup(t, { commit: ['agent'] });
   for (const command of ['git commit -h', 'git commit --help', 'git commit --dry-run -m x', 'git commit --dry -m x', 'git commit --short', 'git commit --porcelain', 'git commit --long', 'git commit --null', 'git commit -z']) assert.equal(run(command), null, command);

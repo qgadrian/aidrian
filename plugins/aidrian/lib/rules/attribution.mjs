@@ -28,6 +28,18 @@ const SHELL_DEPTH_LIMIT = 4;
 // Where a -m command substitution sits among a commit's messages, until its heredoc is read.
 const DYNAMIC = Symbol('dynamic message');
 
+// git's trailer.ifExists in `dir`, per lower-case key, `trailer.<key>.ifExists` over `trailer.ifExists`; null for the default.
+function trailerPolicy(dir) {
+  if (!dir) return () => null;
+  const result = runGit(['config', '--get-regexp', '^trailer\\.'], dir);
+  const settings = new Map();
+  for (const line of result.status === 0 ? result.stdout.split('\n') : []) {
+    const match = /^trailer\.(?:(.+)\.)?ifexists\s+(\S+)$/iu.exec(line.trim());
+    if (match) settings.set(match[1]?.toLowerCase() ?? '', match[2]);
+  }
+  return (key) => settings.get(key) ?? settings.get('') ?? null;
+}
+
 // A token's text, or null when it is missing or dynamic.
 const staticText = (token) => (token && !token.dynamic && token.text ? token.text : null);
 
@@ -53,7 +65,7 @@ export function check(command, { cwd = process.cwd(), env = process.env, input, 
     const fields = settings(dir)?.config.attribution.commit ?? [];
     if (!fields.length) continue;
     const expected = expectedTrailers(fields, who());
-    const carried = carriedTrailers(messages.length ? [cleanup(messages.join('\n\n'))] : [], trailers);
+    const carried = carriedTrailers(messages.length ? [cleanup(messages.join('\n\n'))] : [], trailers, trailerPolicy(dir));
     const missing = expected.filter((trailer) => !carried.has(trailer));
     if (missing.length) return commitReason(expected, missing);
   }

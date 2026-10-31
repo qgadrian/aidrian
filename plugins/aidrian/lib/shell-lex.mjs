@@ -409,6 +409,9 @@ function splitStringInvocation(value, depth, rest = []) {
 // parentheses, a `!` (which runs the command and inverts its status: `negated`), leading `VAR=value` assignments, and
 // the wrappers above with their options, so `(sudo env FOO=1 command grep -c x f)` reads as grep. `program` is the base
 // name; `args` exclude redirections and their targets; `chdir` is the directory a wrapper moves to, or null.
+// `environment` lists, in order, the changes the assignments and env make to the program's environment: { name, value }
+// sets a variable to a token, { name, value: null } unsets it, and { clear: true, keep } empties the environment
+// (`env -i`) but for the names in `keep`, if any.
 export function readInvocation(segment, depth = 0) {
   const targets = new Set();
   for (let i = 0; i < segment.length; i += 1) {
@@ -418,6 +421,7 @@ export function readInvocation(segment, depth = 0) {
   let index = 0;
   let negated = false;
   let chdir = null;
+  const environment = [];
   // The lexer leaves a subshell's parentheses glued to its words, as in `(git commit --amend)`. A word left empty goes.
   const retext = (at, text) => {
     if (text === usable[at].text) return;
@@ -425,7 +429,12 @@ export function readInvocation(segment, depth = 0) {
     else usable.splice(at, 1);
   };
   const peelAssignments = () => {
-    while (index < usable.length && /^[A-Za-z_][A-Za-z0-9_]*=/u.test(usable[index].text)) index += 1;
+    while (index < usable.length && /^[A-Za-z_][A-Za-z0-9_]*=/u.test(usable[index].text)) {
+      const { text, dynamic } = usable[index];
+      const at = text.indexOf('=');
+      environment.push({ name: text.slice(0, at), value: { text: text.slice(at + 1), dynamic } });
+      index += 1;
+    }
   };
   if (usable.length > 0) retext(usable.length - 1, withoutUnmatchedClose(usable.at(-1).text));
   for (;;) {
@@ -448,6 +457,9 @@ export function readInvocation(segment, depth = 0) {
     // `time` is a reserved word only when bare; /usr/bin/time is another program.
     if (wrapper === 'time' && spelled !== wrapper) break;
     index += 1;
+    // sudo and doas reset the environment by default, so a variable set outside them does not count, unless sudo's
+    // -E or --preserve-env keeps it all, or --preserve-env=LIST keeps the ones listed (`keep`).
+    let reset = wrapper === 'sudo' || wrapper === 'doas' ? { clear: true, keep: [] } : null;
     if (wrapper === 'rtk') {
       if (usable[index]?.text === 'proxy') index += 1;
       continue;
@@ -470,6 +482,8 @@ export function readInvocation(segment, depth = 0) {
       if (!token.text.startsWith('-')) break;
       index += 1;
       const option = wrapperOption(token, WRAPPER_VALUE_FLAGS.get(wrapper) ?? NO_OPTIONS);
+      if (reset && wrapper === 'sudo') reset = afterPreserve(reset, token, option);
+      if (clearsEnvironment(wrapper, token.text, option)) environment.push({ clear: true });
       if (!option) continue;
       let { value } = option;
       if (value === null) {
@@ -477,11 +491,19 @@ export function readInvocation(segment, depth = 0) {
         index += 1;
       }
       if (WRAPPER_CHDIR_FLAGS.get(wrapper)?.has(option.name)) chdir = composeChdir(chdir, value);
+      // An unset whose name cannot be read may name any variable: read it as emptying the environment.
+      if (wrapper === 'env' && ['-u', '--unset'].includes(option.name)) {
+        environment.push(value && !value.dynamic ? { name: value.text, value: null } : { clear: true });
+      }
       if (wrapper === 'env' && SPLIT_STRING_FLAGS.has(option.name)) {
         const carried = splitStringInvocation(value, depth, usable.slice(index));
-        if (carried) return { ...carried, negated: negated || carried.negated, chdir: composeChdir(chdir, carried.chdir) };
+        if (carried) {
+          return { ...carried, negated: negated || carried.negated, chdir: composeChdir(chdir, carried.chdir),
+            environment: [...environment, ...carried.environment] };
+        }
       }
     }
+    if (reset) environment.push(reset);
     // timeout's duration comes before the command; take it by position, since strtod accepts too many spellings.
     if (wrapper === 'timeout' && index < usable.length) index += 1;
     if (wrapper === 'flock' && index < usable.length) {
@@ -495,7 +517,32 @@ export function readInvocation(segment, depth = 0) {
     peelAssignments();
   }
   const program = usable[index]?.text ?? '';
-  return { program: program.split('/').pop() ?? '', args: usable.slice(index + 1), negated, chdir };
+  return { program: program.split('/').pop() ?? '', args: usable.slice(index + 1), negated, chdir, environment };
+}
+
+// sudo's environment reset after one of its option words: none for -E or a bare --preserve-env, which keep it all;
+// --preserve-env=LIST adds the names it lists to `keep`, and a list the rule cannot read keeps none.
+function afterPreserve(reset, { text, dynamic }, option) {
+  if (isLongOption(text, '--preserve-env', '--preserve-e')) {
+    const at = text.indexOf('=');
+    if (at === -1) return null;
+    if (dynamic) return reset;
+    return { ...reset, keep: [...reset.keep, ...text.slice(at + 1).split(',')] };
+  }
+  if (text.startsWith('--')) return reset;
+  const end = option ? text.indexOf(option.name[1], 1) : text.length;
+  return text.slice(1, end).includes('E') ? null : reset;
+}
+
+// Whether a wrapper's option word empties the environment: env's `-`, `-i`, and `--ignore-environment`, and bash's
+// `exec -c`, alone or in a cluster before the option that takes a value (`option`, as wrapperOption reads it).
+const CLEAR_SWITCH = new Map([['env', 'i'], ['exec', 'c']]);
+function clearsEnvironment(wrapper, text, option) {
+  if (!CLEAR_SWITCH.has(wrapper)) return false;
+  if (wrapper === 'env' && (text === '-' || isLongOption(text, '--ignore-environment', '--ignore-e'))) return true;
+  if (text.startsWith('--')) return false;
+  const end = option ? text.indexOf(option.name[1], 1) : text.length;
+  return text.slice(1, end).includes(CLEAR_SWITCH.get(wrapper));
 }
 
 // The option of a wrapper's option word that takes a value, as { name, value }: the value is a token when the word
@@ -504,8 +551,11 @@ export function readInvocation(segment, depth = 0) {
 function wrapperOption({ text, dynamic }, valueFlags) {
   if (text.startsWith('--')) {
     const equals = text.indexOf('=');
-    const name = equals === -1 ? text : text.slice(0, equals);
-    if (!valueFlags.has(name)) return null;
+    const written = equals === -1 ? text : text.slice(0, equals);
+    // getopt_long takes an unambiguous prefix of a long option: `env --un=X` is `--unset=X`.
+    const longs = [...valueFlags].filter((flag) => flag.startsWith('--') && flag.startsWith(written));
+    const name = valueFlags.has(written) ? written : longs.length === 1 && written.length > 2 ? longs[0] : null;
+    if (!name) return null;
     return { name, value: equals === -1 ? null : { text: text.slice(equals + 1), dynamic } };
   }
   const { value } = readShortOptions(text, valueFlags);

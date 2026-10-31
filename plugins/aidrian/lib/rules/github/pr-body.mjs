@@ -27,10 +27,11 @@ const FOOTER = /Generated with \[Claude Code\]/u;
 const FILL = new Set(['--fill', '--fill-first', '--fill-verbose', '-f']);
 // The short options of `gh pr create` and `gh pr edit` that take a value; -d, -e, -f, and -w are switches.
 const SHORT_VALUES = new Set(['-a', '-B', '-b', '-F', '-H', '-l', '-m', '-p', '-r', '-R', '-T', '-t']);
-// The canonical heredoc form, `--body "$(cat <<'EOF' … EOF)"`, read from the raw command: the token holding it is
+// The canonical heredoc form, `--body "$(cat <<'EOF' … EOF)"`, and only it, since another command may print something
+// else, read from the raw command: the token holding it is
 // dynamic, and its text has lost the body's quotes. -b takes it attached too, or at the end of a cluster. Group 3 is
 // the body.
-const BODY_HEREDOC = /(?:--body(?:=|\s+)|-[A-Za-z]*b=?\s*)"?\$\([^<]*<<-?\s*(['"]?)(\w+)\1\r?\n([\s\S]*?)\r?\n[ \t]*\2\b/gu;
+const BODY_HEREDOC = /(?:--body(?:=|\s+)|-[A-Za-z]*b=?\s*)"?\$\(\s*cat\s*<<-?\s*(['"]?)(\w+)\1\r?\n([\s\S]*?)\r?\n[ \t]*\2\b/gu;
 
 // Shared temp folders: concurrent sessions write the same names there, and one session's body can publish as another's.
 const SHARED_TEMP = ['/tmp/', '/private/tmp/', '/var/tmp/', '/private/var/tmp/', '/var/folders/', '/private/var/folders/'];

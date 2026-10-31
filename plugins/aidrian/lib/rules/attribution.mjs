@@ -18,8 +18,9 @@ import { readBody, readPrCall, readPrCalls } from './github/pr-body.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_UNATTRIBUTED';
 
-// The heredoc a `-m` or `--message` command substitution holds, as `-m "$(cat <<'EOF' … EOF)"`: group 3 is its body.
-const MESSAGE_HEREDOC = /(?:--message(?:=|\s+)|(?<![\w-])-[A-Za-z]*m=?\s*)"?\$\([^<]*<<-?\s*(['"]?)(\w+)\1\r?\n([\s\S]*?)\r?\n[ \t]*\2\b/gu;
+// The heredoc a `-m` or `--message` command substitution prints unchanged, `-m "$(cat <<'EOF' … EOF)"`: group 3 is its
+// body. Any other substitution, such as `$(printf x <<'EOF' … EOF)`, may print something else, so it is not read.
+const MESSAGE_HEREDOC = /(?:--message(?:=|\s+)|(?<![\w-])-[A-Za-z]*m=?\s*)"?\$\(\s*cat\s*<<-?\s*(['"]?)(\w+)\1\r?\n([\s\S]*?)\r?\n[ \t]*\2\b/gu;
 const CHANGES_DIRECTORY = new Set(['cd', 'pushd']);
 // How deep `sh -c` inside `sh -c` is read.
 const SHELL_DEPTH_LIMIT = 4;

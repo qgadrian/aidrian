@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Private words (source projects, their tracker keys, people) never leave this checkout: not in a tracked file, and not
-// in what git and GitHub keep beside the files, which `npm run check` never reads. The patterns are the public ones below
-// plus the git-ignored `.banned-terms.local`, one case-insensitive regular expression per line, `#` for a comment.
-// The brackets keep this file from matching its own patterns.
+// in what git and GitHub keep beside the files, which `npm run check` never reads. The patterns live only in
+// the git-ignored `.banned-terms.local`, one case-insensitive regular expression per line, `#` for a comment, so no
+// tracked file names them.
 //
 //   node scripts/banned-terms.mjs commit-msg <file>   git commit-msg hook: the message
 //   node scripts/banned-terms.mjs pre-push <remote>   git pre-push hook: each pushed branch name, and each commit message
@@ -19,15 +19,13 @@ import path from 'node:path';
 import { GIT_VALUE_GLOBALS, isLongOption, readShortOptions, walkCommands } from '../plugins/aidrian/lib/shell-lex.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-const PUBLIC = [];
-
-// The public patterns and those of `.banned-terms.local`, read from `root` and from the main checkout: the file is
+// The patterns of `.banned-terms.local`, read from `root` and from the main checkout: the file is
 // git-ignored, so a linked worktree has no copy of its own.
 export function bannedPatterns(root = ROOT) {
   const roots = new Set([root, mainCheckout(root)].filter(Boolean));
   const local = [...roots].map((dir) => path.join(dir, '.banned-terms.local')).filter((file) => existsSync(file))
     .flatMap((file) => readFileSync(file, 'utf8').split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('#')));
-  return [...PUBLIC, ...[...new Set(local)].map((line) => new RegExp(line, 'iu'))];
+  return [...new Set(local)].map((line) => new RegExp(line, 'iu'));
 }
 
 function mainCheckout(root) {
@@ -200,7 +198,7 @@ function main([mode, file]) {
   if (mode === 'commit-msg') {
     // The whole file: which `#` lines and scissors text git strips depends on --cleanup and the editor, which this hook
     // cannot see, so nothing is assumed stripped.
-    const hits = bannedHits(readFileSync(file, 'utf8'));
+    const hits = bannedHits(readFileSync(file, 'utf8'), bannedPatterns(process.cwd()));
     if (!hits.length) return 0;
     console.error(`commit message names a private word (${hits.join(', ')}); see .banned-terms.local.`);
     return 1;

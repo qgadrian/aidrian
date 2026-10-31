@@ -74,7 +74,11 @@ function readPrCall(segment) {
   const call = { subcommand: words[1], fill: false, web: false, help, body: null, bodyFile: null, title: null, repo, target: null };
   for (; i < args.length; i += 1) {
     const { text, dynamic } = args[i];
-    if (text === '--') break;
+    // After `--` every word is a positional: no flag, but still the pull request an edit names.
+    if (text === '--') {
+      call.target ??= args[i + 1] ?? null;
+      break;
+    }
     let [flag, inline] = text.startsWith('--') && text.includes('=') ? [text.slice(0, text.indexOf('=')), text.slice(text.indexOf('=') + 1)] : [text, null];
     if (/^-[^-]/u.test(text)) {
       // A short word as gh reads it: `-dF body.md`, `-Fbody.md`, and `-F=body.md`. A switch ending a cluster takes an

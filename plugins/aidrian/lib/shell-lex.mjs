@@ -190,9 +190,11 @@ function lexSegments(command) {
     }
 
     if ((ch === '$' && command[i + 1] === '(') || ch === '`') {
-      // A substitution is opaque: its value is never a path or a word a rule may read.
+      // A substitution is opaque: its value is never a path or a word a rule may read. Unquoted, it can split into
+      // several words.
       const token = start();
       token.dynamic = true;
+      token.splits = true;
       if (ch === '`') {
         const closing = command.indexOf('`', i + 1);
         if (closing !== -1) substitutions.push(command.slice(i + 1, closing));
@@ -292,6 +294,7 @@ function lexSegments(command) {
     const token = start();
     token.text += ch;
     if (ch === '$' || ch === '`' || ch === '*' || ch === '?') token.dynamic = true;
+    if (ch === '$') token.splits = true;
   }
 
   endSegment();

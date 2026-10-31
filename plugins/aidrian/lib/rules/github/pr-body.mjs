@@ -55,7 +55,7 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
 // { subcommand, fill, body, bodyFile, title, repo, target } for a `gh [-R repo] pr create|edit …` segment, else null.
 // Later flags win, as in gh. `title` and `repo` are tokens; `target` is the first positional (the pull request an edit
 // names).
-function readPrCall(segment) {
+export function readPrCall(segment) {
   const { program, args } = readInvocation(segment);
   if (program !== 'gh') return null;
   let i = 0;
@@ -286,7 +286,7 @@ function openPrBodies(cwd) {
 }
 
 // The body text, or null when this rule cannot know it.
-function readBody(call, command, cwd) {
+export function readBody(call, command, cwd) {
   if (call.body) return call.body.dynamic ? BODY_HEREDOC.exec(command)?.[3] ?? null : call.body.text;
   if (!call.bodyFile || call.bodyFile.dynamic || call.bodyFile.text === '-') return null;
   try {

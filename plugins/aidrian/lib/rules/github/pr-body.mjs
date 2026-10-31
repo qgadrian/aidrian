@@ -1,7 +1,9 @@
 // Bash rule: a pull request body written through `gh pr create` or `gh pr edit` has a `## ` heading for every section in
 // config.json `github.requiredSections`, and no "Generated with [Claude Code]" footer. `gh pr create --fill` is refused:
-// gh then writes the body from the commit messages. `gh pr edit` without a body flag passes, and so does a body the
-// rule cannot read (a variable, stdin, a missing file): it denies only what it reads. Runs only inside a project. A
+// gh then writes the body from the commit messages. A non-web `gh pr create` with no --body or --body-file is refused
+// too, when sections are configured: gh then takes the body from an editor, a prompt, or a template, unchecked.
+// `--web` and `--help` pass. `gh pr edit` without a body flag passes (a title-only edit), and so does a body flag whose
+// body the rule cannot read (a variable, stdin, a missing file): it denies only what it reads. Runs only inside a project. A
 // command substitution that runs, as in `url=$(gh pr create …)`, is read as the command line is.
 //
 // `github.pullRequest` adds the project's contract (docs/config.md#pull-request-contract), each part off until set:
@@ -67,7 +69,7 @@ function readPrCall(segment) {
     else if (!text.startsWith('-')) words.push(text);
   }
   if (words[0] !== 'pr' || !['create', 'edit'].includes(words[1])) return null;
-  const call = { subcommand: words[1], fill: false, body: null, bodyFile: null, title: null, repo, target: null };
+  const call = { subcommand: words[1], fill: false, web: false, help: false, body: null, bodyFile: null, title: null, repo, target: null };
   for (; i < args.length; i += 1) {
     const { text, dynamic } = args[i];
     let [flag, inline] = text.startsWith('--') && text.includes('=') ? [text.slice(0, text.indexOf('=')), text.slice(text.indexOf('=') + 1)] : [text, null];
@@ -75,11 +77,15 @@ function readPrCall(segment) {
       // A short word as gh reads it: `-dF body.md`, `-Fbody.md`, and `-F=body.md`.
       const { options, value } = readShortOptions(text, SHORT_VALUES);
       if (options.includes('-f')) call.fill = true;
+      if (options.includes('-w')) call.web = true;
+      if (options.includes('-h')) call.help = true;
       if (!value) continue;
       [flag, inline] = [value.option, value.attached?.replace(/^=/u, '') ?? null];
     }
     const value = () => (inline !== null ? { text: inline, dynamic } : args[++i] ?? null);
     if (FILL.has(flag)) call.fill = true;
+    else if (flag === '--web') call.web = true;
+    else if (flag === '--help') call.help = true;
     else if (flag === '--body' || flag === '-b') [call.body, call.bodyFile] = [value(), null];
     else if (flag === '--body-file' || flag === '-F') [call.bodyFile, call.body] = [value(), null];
     else if (flag === '--title' || flag === '-t') call.title = value();
@@ -102,6 +108,7 @@ function judge(call, command, { cwd, env, listOpenPrs }) {
   if (!project) return null;
   const { config } = loadConfig(project);
   const contract = config.github.pullRequest;
+  if (call.help) return null;
   if (call.fill && call.subcommand === 'create') {
     return deny(`\`--fill\` writes the body from the commit messages, without the sections config.json \`github.requiredSections\` asks for. ` +
       'Write the body to a file and pass --body-file (the pr-write skill does).');
@@ -110,6 +117,11 @@ function judge(call, command, { cwd, env, listOpenPrs }) {
     return deny(`the body file \`${call.bodyFile.text}\` is in a shared temp folder, which concurrent sessions overwrite: ` +
       "another session's body can publish under this pull request. Write the body to a file inside the current worktree " +
       '(config.json `github.pullRequest.sharedTempBodyFile`).');
+  }
+  const sectioned = config.github.requiredSections.length > 0 || Boolean(contract.sections?.length);
+  if (call.subcommand === 'create' && !call.web && !call.body && !call.bodyFile && sectioned) {
+    return deny('`gh pr create` has no --body or --body-file, so gh takes the body from an editor, a prompt, or a template, ' +
+      'without the sections config.json `github.requiredSections` asks for. Write the body to a file and pass --body-file (the pr-write skill does).');
   }
   const body = readBody(call, command, cwd);
   const reason = body === null ? null : judgeBody(body, config) ?? judgeDuplicate(body, call, contract, listOpenPrs);

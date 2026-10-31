@@ -81,8 +81,8 @@ test('what the rule cannot read, gh pr edit without a body, other commands, and 
     'gh pr create --title x --body "$BODY"',
     'gh pr create --title x --body-file -',
     'gh pr create --title x --body-file missing.md',
-    'gh pr create --title x',
     'gh pr edit 3 --add-label ready',
+    'gh pr edit 3 --title "new title"',
     'gh pr view 3 --json body',
     'gh issue create --body "no sections"',
     'echo "gh pr create --fill"',
@@ -91,6 +91,18 @@ test('what the rule cannot read, gh pr edit without a body, other commands, and 
     assert.equal(run(command), null, command);
   }
   assert.equal(run('gh pr create --fill', { [OVERRIDE]: '1' }), null, 'the override');
+});
+
+test('a non-web gh pr create with no body flag is denied when sections are configured', (t) => {
+  const run = project(t);
+  for (const command of ['gh pr create --title x', 'gh pr create -t x -d', 'gh pr create --title x --editor', 'gh pr create -T bug.md', 'url=$(gh pr create --title x)']) {
+    assert.match(run(command), /^Blocked: `gh pr create` has no --body or --body-file.*pass --body-file/, command);
+  }
+  for (const command of ['gh pr create --web', 'gh pr create -w --title x', 'gh pr create -dw', 'gh pr create --help', 'gh pr create -h', 'gh pr edit 3 --title y']) {
+    assert.equal(run(command), null, command);
+  }
+  assert.match(project(t, { version: 1, github: { requiredSections: [], pullRequest: { sections: ['Summary'] } } })('gh pr create -t x'), /no --body or --body-file/, 'a closed section list');
+  assert.equal(project(t, { version: 1, github: { requiredSections: [] } })('gh pr create --title x'), null, 'no sections configured');
 });
 
 test('outside a project folder nothing is checked', (t) => {

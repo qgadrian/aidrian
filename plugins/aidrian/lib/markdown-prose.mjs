@@ -8,7 +8,8 @@ import { fencedLines } from './markdown-sections.mjs';
 
 export const SKIP_MARKER = '<!-- lint-skip -->';
 const BLOCKQUOTE = /^\s*>/u;
-const CODE_SPAN = /(?<![`\\])(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)/gu;
+// An opening run counts after an even number of backslashes, which escape each other, never after an odd one.
+const CODE_SPAN = /(?<![`\\])((?:\\\\)*)(`+)(?!`)[\s\S]*?(?<!`)\2(?!`)/gu;
 const URL = /https?:\/\/[^\s"“”`]+/gu;
 const CLOSES = { '"': '"', '“': '”' };
 
@@ -18,7 +19,7 @@ const blank = (match) => match.replace(/[^\n]/gu, ' ');
 export function maskParagraph(text) {
   let open = null;
   let out = '';
-  for (const char of text.replace(CODE_SPAN, blank).replace(URL, blank)) {
+  for (const char of text.replace(CODE_SPAN, (match, escapes) => escapes + blank(match.slice(escapes.length))).replace(URL, blank)) {
     if (char === '\n') {
       out += char;
     } else if (open !== null) {

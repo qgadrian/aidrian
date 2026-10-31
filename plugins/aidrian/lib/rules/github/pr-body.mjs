@@ -41,15 +41,17 @@ const LIST_TIMEOUT_MS = 3000;
 export function check(command, { cwd = process.cwd(), env = process.env, listOpenPrs = openPrBodies(cwd) } = {}) {
   if (env[OVERRIDE] === '1') return null;
   for (const line of commandLines(command)) {
-    // The folder gh runs in: a `cd` earlier on the line moves it, so `cd <worktree> && gh pr create --body-file b.md`
-    // reads that worktree's b.md and project, not the session's. null once a move cannot be followed.
+    // The folder gh runs in: a leading `cd <dir> &&` moves it, so `cd <worktree> && gh pr create --body-file b.md` reads
+    // that worktree's b.md and project, not the session's. Any other directory change on the line (in a subshell, a
+    // pipe, after `||`, a second one) leaves the folder unknown: null.
+    const segments = lexCommand(line);
+    const moves = segments.filter((segment) => CHANGES_DIRECTORY.has(readInvocation(segment).program));
     let here = cwd;
-    for (const segment of lexCommand(line)) {
+    if (moves.length === 1 && moves[0] === segments[0] && LEADING_CD.test(line)) here = movedTo(cwd, readInvocation(segments[0]));
+    else if (moves.length) here = null;
+    for (const segment of segments) {
       const invocation = readInvocation(segment);
-      if (CHANGES_DIRECTORY.has(invocation.program)) {
-        here = movedTo(here, invocation);
-        continue;
-      }
+      if (CHANGES_DIRECTORY.has(invocation.program)) continue;
       const call = readPrCall(segment);
       if (!call) continue;
       // A folder this rule cannot know is a body it cannot read: it denies only what it reads.
@@ -63,6 +65,7 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
 }
 
 const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
+const LEADING_CD = /^\s*cd\s+[^\s;&|()]+\s*&&/u;
 
 // The folder after a `cd`, `pushd`, or `popd` invocation from `here`, or null when it cannot be known.
 function movedTo(here, { program, args }) {

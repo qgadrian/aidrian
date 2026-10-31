@@ -108,9 +108,11 @@ test('a cd earlier on the line moves where the body file and the project are rea
   writeFileSync(path.join(dir, 'short.md'), GOOD);
   assert.match(run('gh pr create --title x --body-file short.md'), /^Blocked: the body has no `## Tests run` section/);
   assert.equal(run(`cd ${dir} && gh pr create --title x --body-file short.md`), null, "the worktree's file, not the session's");
-  assert.equal(run(`cd ${dir}; gh pr create --title x --body-file short.md`), null);
   writeFileSync(path.join(dir, 'short.md'), '## Summary\nx\n');
   assert.match(run(`cd ${dir} && gh pr create --title x --body-file short.md`), /^Blocked: the body has no `## Tests run` section/);
+  for (const line of [`(cd ${dir}); gh`, `cd ${dir} | cat; gh`, `cd ${dir} || gh`, `cd ${dir}; gh`, `cd /tmp && cd ${dir} && gh`]) {
+    assert.equal(run(`${line} pr create --title x --body-file short.md`), null, `${line}: the folder gh runs in is unknown, so it passes`);
+  }
   for (const moved of ['cd "$WT"', 'cd', 'cd -', 'cd ~/x', 'popd']) {
     assert.equal(run(`${moved} && gh pr create --title x --body-file short.md`), null, `${moved}: an unknown folder passes`);
   }

@@ -342,7 +342,7 @@ Assisted-by: code-reviewer (claude-opus-5-5)
 - The agents are those in the `Agent:` trailers of the branch's commits past `git.defaultBranch`, from any session,
   and those this session dispatched, with the models their `stop` rows name; `main` and `exclude` are left out.
 - The `Authored-with:` line must match as written. Each agent needs an `Assisted-by:` line, in any order, whatever models it names.
-- Only `gh pr create` is checked. `gh pr edit`, `--web`, and a body the rule cannot read pass.
+- Only `gh pr create` is checked; `gh pr edit` and `--web` pass. A body the rule cannot read, such as `--body "$VAR"`, is refused.
 - A field with no known value is left out, never guessed.
 - The commit names only the agent that runs `git commit`. When the main session commits a subagent's work,
   the subagent shows in the pull request's `Assisted-by:` lines, not as a co-author.

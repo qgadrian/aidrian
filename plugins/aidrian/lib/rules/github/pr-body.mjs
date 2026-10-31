@@ -30,7 +30,7 @@ const SHORT_VALUES = new Set(['-a', '-B', '-b', '-F', '-H', '-l', '-m', '-p', '-
 // The canonical heredoc form, `--body "$(cat <<'EOF' … EOF)"`, read from the raw command: the token holding it is
 // dynamic, and its text has lost the body's quotes. -b takes it attached too, or at the end of a cluster. Group 3 is
 // the body.
-const BODY_HEREDOC = /(?:--body(?:=|\s+)|-[A-Za-z]*b=?\s*)"?\$\([^<]*<<-?\s*(['"]?)(\w+)\1\r?\n([\s\S]*?)\r?\n[ \t]*\2\b/u;
+const BODY_HEREDOC = /(?:--body(?:=|\s+)|-[A-Za-z]*b=?\s*)"?\$\([^<]*<<-?\s*(['"]?)(\w+)\1\r?\n([\s\S]*?)\r?\n[ \t]*\2\b/gu;
 
 // Shared temp folders: concurrent sessions write the same names there, and one session's body can publish as another's.
 const SHARED_TEMP = ['/tmp/', '/private/tmp/', '/var/tmp/', '/private/var/tmp/', '/var/folders/', '/private/var/folders/'];
@@ -42,14 +42,25 @@ const LIST_TIMEOUT_MS = 3000;
 export function check(command, { cwd = process.cwd(), env = process.env, listOpenPrs = openPrBodies(cwd) } = {}) {
   if (env[OVERRIDE] === '1') return null;
   for (const line of commandLines(command)) {
-    for (const segment of lexCommand(line)) {
-      const call = readPrCall(segment);
-      if (!call) continue;
+    for (const call of readPrCalls(line)) {
       const reason = judge(call, line, { cwd, env, listOpenPrs });
       if (reason) return reason;
     }
   }
   return null;
+}
+
+// Every `gh pr create|edit` call of one command line, in order, as readPrCall reads it, with `heredoc`: the body of the
+// heredoc its dynamic --body holds. The n-th dynamic body takes the line's n-th body heredoc, and only when the counts
+// match: otherwise no dynamic body is read, so one call's heredoc never stands in for another's.
+export function readPrCalls(line) {
+  const calls = lexCommand(line).map((segment) => readPrCall(segment)).filter(Boolean);
+  const dynamic = calls.filter((call) => call.body?.dynamic);
+  const heredocs = [...line.matchAll(BODY_HEREDOC)].map((match) => match[3]);
+  dynamic.forEach((call, i) => {
+    call.heredoc = heredocs.length === dynamic.length ? heredocs[i] : null;
+  });
+  return calls;
 }
 
 // { subcommand, fill, body, bodyFile, title, repo, target } for a `gh [-R repo] pr create|edit …` segment, else null.
@@ -141,7 +152,7 @@ function judge(call, command, { cwd, env, listOpenPrs }) {
     return deny('`gh pr create` has no --body or --body-file, so gh takes the body from an editor, a prompt, or a template, ' +
       'without the sections config.json `github.requiredSections` asks for. Write the body to a file and pass --body-file (the pr-write skill does).');
   }
-  const body = readBody(call, command, cwd);
+  const body = readBody(call, cwd);
   if (body === null && sectioned && (call.body || call.bodyFile)) {
     return deny('the body is one this rule cannot read (a variable, a command substitution, stdin, or a missing file), so the ' +
       'sections config.json `github.requiredSections` asks for go unchecked. Pass a literal --body, a heredoc ' +
@@ -286,8 +297,8 @@ function openPrBodies(cwd) {
 }
 
 // The body text, or null when this rule cannot know it.
-export function readBody(call, command, cwd) {
-  if (call.body) return call.body.dynamic ? BODY_HEREDOC.exec(command)?.[3] ?? null : call.body.text;
+export function readBody(call, cwd) {
+  if (call.body) return call.body.dynamic ? call.heredoc ?? null : call.body.text;
   if (!call.bodyFile || call.bodyFile.dynamic || call.bodyFile.text === '-') return null;
   try {
     return readFileSync(path.resolve(cwd, call.bodyFile.text), 'utf8');

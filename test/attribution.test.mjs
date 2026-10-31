@@ -95,6 +95,39 @@ test('the commit rule asks for each configured trailer, and passes once the comm
   assert.equal(run('git status && git log --grep commit'), null, 'not a commit');
 });
 
+test('a heredoc counts only for the commit or pull request that holds it', (t) => {
+  const { run } = setup(t, { commit: ['agent'], pullRequest: ['tool'] });
+  const signed = `git commit -m "$(cat <<'EOF'\nfix: y\n\nAgent: main\nEOF\n)"`;
+  assert.equal(run(signed), null);
+  assert.match(run(`git commit -m "$(printf 'fix: unsigned')" && ${signed}`) ?? '', /Blocked/);
+  const pr = (lines) => `gh pr create --title x --body "$(cat <<'EOF'\n## Summary\nx\n${lines}EOF\n)"`;
+  assert.equal(run(pr('\nAuthored-with: Claude Code\n')), null);
+  assert.match(run(`${pr('\nAuthored-with: Claude Code\n')} && gh pr create --title y --body "$(printf x)"`) ?? '', /Blocked/);
+  assert.equal(run(`gh api user && ${pr('\nAuthored-with: Claude Code\n')}`), null, 'another gh call first');
+});
+
+test('a -F file is read where the commit runs: git -C, cd, and an unknown folder', (t) => {
+  const { dir, run } = setup(t, { commit: ['agent'] });
+  mkdirSync(path.join(dir, 'sub'));
+  writeFileSync(path.join(dir, 'sub/msg.txt'), 'fix: x\n\nAgent: main\n');
+  writeFileSync(path.join(dir, 'msg.txt'), 'fix: x\n');
+  assert.equal(run('git -C sub commit -F msg.txt'), null);
+  assert.equal(run('cd sub && git commit -F msg.txt'), null);
+  assert.match(run('git -C sub commit -F ../msg.txt') ?? '', /Blocked/);
+  assert.match(run('cd "$X" && git commit -F msg.txt') ?? '', /Blocked/, 'an unknown folder reads no file');
+});
+
+test('only a trailer block git would parse counts', () => {
+  assert.equal(carriedTrailers(['fix: x\n\nAgent=main'], []).has('Agent: main'), false, '= is for --trailer only');
+  assert.equal(carriedTrailers(['fix: x\n\nSome prose\nAgent: main'], []).has('Agent: main'), false, 'prose in the block');
+  assert.equal(carriedTrailers(['fix: x\n\nAgent: main\nCo-Authored-By: A <a@b>\n  folded'], []).has('Agent: main'), true);
+});
+
+test('help and dry-run commits pass', (t) => {
+  const { run } = setup(t, { commit: ['agent'] });
+  for (const command of ['git commit -h', 'git commit --help', 'git commit --dry-run -m x', 'git commit --dry -m x']) assert.equal(run(command), null, command);
+});
+
 test('the rule is off by default, outside a transcript, and under its override', (t) => {
   assert.equal(setup(t).run('git commit -m "fix: x"'), null);
   const { run } = setup(t, { commit: ['agent'] });

@@ -77,13 +77,17 @@ export function expectedTrailers(fields, author) {
   return fields.filter((field) => author[field] && SAFE.test(author[field])).map((field) => `${TRAILERS[field]}: ${author[field]}`);
 }
 
-// The trailer lines a commit carries: each `--trailer` value, and the lines of the message's last paragraph, which is
-// where git reads trailers. `messages` are the -m values in order, which git joins as paragraphs, or a -F file's text.
-// A one-paragraph message has no trailers.
+// The trailer lines a commit carries, as `Key: value`: each `--trailer` value, which git takes with `:` or `=`, and the
+// message's trailer block, as git reads one by default: its last paragraph, past the subject, when every line is a
+// `Key: value` trailer or a continuation indented under one. `messages` are the -m values in order, which git joins as
+// paragraphs, or a -F file's text.
 export function carriedTrailers(messages, trailers) {
   const paragraphs = messages.join('\n\n').replace(/\r\n/gu, '\n').split(/\n[ \t]*\n/u).map((part) => part.trim()).filter(Boolean);
-  const last = paragraphs.length > 1 ? paragraphs.at(-1).split('\n') : [];
-  return new Set([...trailers, ...last].map((line) => line.trim().replace(/^([\w-]+)\s*[:=]\s*/u, '$1: ')));
+  const block = paragraphs.length > 1 ? paragraphs.at(-1).split('\n') : [];
+  const isBlock = block.length > 0 && block.every((line) => /^[A-Za-z0-9-]+:\s*\S/u.test(line) || /^\s+\S/u.test(line));
+  const fromMessage = isBlock ? block.filter((line) => !/^\s/u.test(line)).map((line) => line.replace(/^([A-Za-z0-9-]+):\s*/u, '$1: ').trim()) : [];
+  const fromOptions = trailers.map((line) => line.trim().replace(/^([A-Za-z0-9-]+)\s*[:=]\s*/u, '$1: '));
+  return new Set([...fromOptions, ...fromMessage]);
 }
 
 // The agents of a pull request with their models, in first-seen order: each `Agent:` trailer on the branch's commits

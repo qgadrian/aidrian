@@ -122,6 +122,15 @@ const SAFE_GLOBALS = /^(?:-C.*|--git-dir(?:=.*)?|--work-tree(?:=.*)?|--no-pager|
 const ADD_SAFE = new Set(['-v', '--verbose', '-f', '--force', '-N', '--intent-to-add', '-p', '--patch']);
 const COMMIT_VALUES = new Set(['-m', '-F', '-c', '-C', '-t', '--message', '--file', '--author', '--date', '--template', '--reuse-message', '--reedit-message', '--fixup', '--squash', '--cleanup', '--trailer']);
 const COMMIT_ATTACHED = new Set(['-u', '-S']);
+// The GIT_* assignments of one command: the words before it runs (and an `env` wrapper's), never its arguments, so in
+// `git commit -m "GIT_DIR=x"` the message is no assignment; `export` takes them as its arguments. The command word is
+// matched by name, so `/bin/bash` is `bash`.
+function assignmentsOf(segment, invocation) {
+  const program = segment.findIndex((token) => !token.operator && path.basename(token.text) === invocation.program);
+  const head = invocation.program === 'export' ? segment : program === -1 ? segment : segment.slice(0, program);
+  return head.filter((token) => !token.operator && GIT_ASSIGNMENT.test(token.text));
+}
+
 // `inherited` holds the GIT_* assignments in force: set before an inline shell, or by an earlier `export` or bare
 // assignment on the same command line.
 const GIT_ASSIGNMENT = /^GIT_[A-Z_]+=/u;
@@ -132,23 +141,20 @@ function gitStateChanges(command, cwd, depth = 0, inherited = []) {
   // A shell reading its input runs a heredoc or here-string body as commands, where that shell runs.
   if (depth < SUBSTITUTION_DEPTH_LIMIT) {
     const { segments, inputs } = lexInputs(command);
+    const lineEnv = [...inherited];
     segments.forEach((segment, i) => {
       const invocation = readInvocation(segment);
+      const own = assignmentsOf(segment, invocation);
+      if (invocation.program === 'export' || (own.length && !invocation.program)) lineEnv.push(...own);
       if (!inputs[i].length || !readsShellInput(invocation) || invocation.chdir?.dynamic) return;
       const where = invocation.chdir ? path.resolve(cwd, invocation.chdir.text) : cwd;
-      const program = segment.findIndex((token) => !token.operator && token.text === invocation.program);
-      const own = (program === -1 ? [] : segment.slice(0, program)).filter((token) => GIT_ASSIGNMENT.test(token.text));
-      for (const body of inputs[i]) found.push(...gitStateChanges(body, where, depth + 1, [...inherited, ...own]));
+      for (const body of inputs[i]) found.push(...gitStateChanges(body, where, depth + 1, [...lineEnv, ...own]));
     });
   }
   for (const { segment, substitutions } of lexSteps(command)) {
     if (known && depth < SUBSTITUTION_DEPTH_LIMIT) for (const body of substitutions) found.push(...gitStateChanges(body, cwd, depth + 1, env));
     const invocation = readInvocation(segment);
-    // Assignments are the words before the command runs (and an `env` wrapper's), never its arguments: in
-    // `git commit -m "GIT_DIR=x"` the message is no assignment. `export` takes them as its arguments.
-    const program = segment.findIndex((token) => !token.operator && token.text === invocation.program);
-    const head = invocation.program === 'export' ? segment : program === -1 ? segment : segment.slice(0, program);
-    const assignments = head.filter((token) => !token.operator && GIT_ASSIGNMENT.test(token.text));
+    const assignments = assignmentsOf(segment, invocation);
     // `export GIT_DIR=…` or a bare `GIT_DIR=…` lasts for the rest of the line.
     if (invocation.program === 'export' || (assignments.length && !invocation.program)) env.push(...assignments);
     if (CHANGES_DIRECTORY.has(invocation.program)) known = false;
@@ -254,6 +260,8 @@ function commitsAll(rest) {
     const { text, dynamic } = rest[i];
     // A word that may expand could be -a, unless it is a value option with the expansion in its value: `-m"$MSG"`,
     // `--message="$MSG"`. A value in the next word is read past below.
+    // An unquoted expansion can split into more words, -a among them.
+    if (rest[i].splits) return true;
     if (dynamic) {
       const literal = text.split(/[$`]/u)[0];
       if (literal.startsWith('--') && literal.includes('=') && COMMIT_VALUES.has(literal.slice(0, literal.indexOf('=')))) continue;
@@ -265,11 +273,18 @@ function commitsAll(rest) {
     if (text === '--') return false;
     if (text.startsWith('--')) {
       if (isLongOption(text, '--all', '--al')) return true;
-      if (COMMIT_VALUES.has(text)) i += 1;
+      if (COMMIT_VALUES.has(text)) {
+        if (rest[i + 1]?.splits) return true;
+        i += 1;
+      }
     } else if (text.startsWith('-') && text.length > 1) {
       const { options, value } = readShortOptions(text, COMMIT_VALUES, COMMIT_ATTACHED);
       if (options.includes('-a')) return true;
-      if (value?.attached === null) i += 1;
+      if (value?.attached === null) {
+        // The value is the next word; unquoted, it can split into more words.
+        if (rest[i + 1]?.splits) return true;
+        i += 1;
+      }
     }
   }
   return false;

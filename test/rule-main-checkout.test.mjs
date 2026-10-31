@@ -354,6 +354,11 @@ test('in the main checkout, only named files are staged and only the default bra
   assert.match(denied('git commit -am"$MSG"') ?? '', /main checkout/, '-a before an expanding message');
   assert.match(denied("bash <<'EOF'\ngit add -A\nEOF") ?? '', /main checkout/, 'a heredoc fed to a shell');
   assert.match(denied("bash <<< 'git checkout task'") ?? '', /main checkout/, 'a here-string');
+  for (const command of ['MSG="m -a"; git commit -m$MSG', 'git commit --message=$MSG', 'git commit -m $MSG']) {
+    assert.match(denied(command) ?? '', /main checkout/, `an unquoted expansion can split: ${command}`);
+  }
+  assert.match(denied(`export GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo}; bash <<< 'git add -A'`, beside) ?? '', /main checkout/, 'an export before shell input');
+  assert.match(denied(`GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo} /bin/bash <<< 'git add -A'`, beside) ?? '', /main checkout/, 'assignments before /bin/bash');
   symlinkSync('src', path.join(repo, 'link'));
   assert.equal(denied('git add link'), null, 'a symlink to a folder is one file');
   for (const command of ['(export GIT_DIR="$HOME/unused"); git add -A', 'export GIT_DIR="$HOME/unused" | cat; git add -A', 'GIT_DIR="$X" git add src/app.js']) {

@@ -77,34 +77,23 @@ export function expectedTrailers(fields, author) {
   return fields.filter((field) => author[field] && SAFE.test(author[field])).map((field) => `${TRAILERS[field]}: ${author[field]}`);
 }
 
-// The trailer lines a commit carries, as `Key: value`: each `--trailer` value, which git takes with `:` or `=`, and the
-// message's trailer block, as git reads one by default: its last paragraph, past the subject, when every line is a
+// The trailer lines a commit carries, as `Key: value`, read by git's defaults: each `--trailer` value, which git takes
+// with `:` or `=`, and the message's trailer block, its last paragraph past the subject when every line is a
 // `Key: value` trailer or a continuation indented under one. `messages` are the -m values in order, which git joins as
-// paragraphs, or a -F file's text. `ifExists(key)` is git's trailer.ifExists for that lower-case key, or null.
-export function carriedTrailers(messages, trailers, ifExists = () => null) {
+// paragraphs, or a -F file's text. The rule asks git itself first (`git interpret-trailers`); this reads the same
+// defaults when git cannot answer.
+export function carriedTrailers(messages, trailers) {
   const paragraphs = messages.join('\n\n').replace(/\r\n/gu, '\n').split(/\n[ \t]*\n/u).map((part) => part.trim()).filter(Boolean);
   const block = paragraphs.length > 1 ? paragraphs.at(-1).split('\n') : [];
   const isBlock = block.length > 0 && block.every((line) => /^[A-Za-z0-9-]+:\s*\S/u.test(line) || /^\s+\S/u.test(line));
   // An indented line continues the trailer above it; git unfolds it into that value with one space.
-  const unfolded = [];
+  const fromMessage = [];
   for (const line of isBlock ? block : []) {
-    if (/^\s/u.test(line)) unfolded[unfolded.length - 1] += ` ${line.trim()}`;
-    else unfolded.push(line.replace(/^([A-Za-z0-9-]+):\s*/u, '$1: ').trim());
+    if (/^\s/u.test(line)) fromMessage[fromMessage.length - 1] += ` ${line.trim()}`;
+    else fromMessage.push(line.replace(/^([A-Za-z0-9-]+):\s*/u, '$1: ').trim());
   }
-  const fromMessage = unfolded;
   const fromOptions = trailers.map((line) => line.trim().replace(/^([A-Za-z0-9-]+)\s*[:=]\s*/u, '$1: '));
-  // A --trailer is added after the message's trailers as git's trailer.ifExists, for its key or for all, says: `replace`
-  // drops the earlier ones with its key, `doNothing` drops it when its key is there, any other mode adds it.
-  const result = [...fromMessage];
-  for (const line of fromOptions) {
-    const key = line.slice(0, line.indexOf(':')).toLowerCase();
-    const same = (each) => each.slice(0, each.indexOf(':')).toLowerCase() === key;
-    const mode = ifExists(key);
-    if (mode === 'doNothing' && result.some(same)) continue;
-    if (mode === 'replace') for (let i = result.length - 1; i >= 0; i -= 1) if (same(result[i])) result.splice(i, 1);
-    result.push(line);
-  }
-  return new Set(result);
+  return new Set([...fromMessage, ...fromOptions]);
 }
 
 // The agents of a pull request with their models, in first-seen order: each `Agent:` trailer on the branch's commits

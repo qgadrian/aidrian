@@ -61,6 +61,10 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
   return null;
 }
 
+// A heredoc match's body (group 4) as bash passes it: as written under a quoted delimiter (group 2), or under a bare one
+// when it holds nothing bash expands (`$`, a backtick, or a backslash); else null, a body no rule can know.
+export const unchangedHeredoc = (match) => (match[2] || !/[$`\\]/u.test(match[4]) ? match[4] : null);
+
 // Every `gh pr create|edit` call of one command line, in order, as readPrCall reads it, with `heredoc`: the body of the
 // heredoc its dynamic --body holds. The n-th dynamic body takes the line's n-th body heredoc, and only when the counts
 // match: otherwise no dynamic body is read, so one call's heredoc never stands in for another's. A heredoc under a bare
@@ -68,7 +72,7 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
 export function readPrCalls(line) {
   const calls = lexCommand(line).map((segment) => readPrCall(segment)).filter(Boolean);
   const dynamic = calls.filter((call) => call.body?.dynamic);
-  const heredocs = [...line.matchAll(BODY_HEREDOC)].map((match) => (match[2] || !/[$`\\]/u.test(match[4]) ? match[4] : null));
+  const heredocs = [...line.matchAll(BODY_HEREDOC)].map(unchangedHeredoc);
   dynamic.forEach((call, i) => {
     call.heredoc = heredocs.length === dynamic.length ? heredocs[i] : null;
   });

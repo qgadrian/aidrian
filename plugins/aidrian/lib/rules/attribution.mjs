@@ -1,10 +1,16 @@
 // Bash rule: an agent's `git commit` carries the trailers config.json `attribution.commit` lists, and its `gh pr create`
 // body ends with the lines `attribution.pullRequest` asks for (docs/config.md#attribution). lib/attribution.mjs reads the
 // values. Off while both lists are empty; runs only inside a project, on a call whose payload names a transcript.
-// Each `git commit` of the command is judged on its own message: its -m values, the heredoc of a -m command substitution,
-// or its -F file, plus its --trailer values. A message on stdin (-F -) or from an
-// editor counts only its --trailer values. A `gh pr create` body the rule cannot read is refused. `gh pr edit` passes:
-// another session would attribute the same pull request differently.
+//
+// Scope: it catches an agent that forgot or mistyped its attribution in an ordinary command. It is not a security
+// boundary: a command built to hide its message from a static reader, such as text echoed to look like a heredoc, is out
+// of scope. Where the rule cannot read a message it counts only the --trailer values, so it errs toward asking.
+//
+// Each `git commit` is judged on its own message, read where it runs (shell-lex walkCommands): its -m values, the
+// heredoc of a -m `$(cat <<'EOF' … EOF)`, or its -F file, cleaned as git cleans it, with its --trailer values; then
+// `git interpret-trailers` in that folder says which trailers the commit gets. A help, dry-run, or status call passes.
+// A `gh pr create` body the rule cannot read is refused. `gh pr edit` passes: another session would attribute the same
+// pull request differently.
 
 import path from 'node:path';
 
@@ -15,7 +21,7 @@ import { runGit } from '../git.mjs';
 import { findProject } from '../project.mjs';
 import { isLongOption, lexCommand, readGit, walkCommands } from '../shell-lex.mjs';
 import { readText } from '../transcript.mjs';
-import { readBody, readPrCall, readPrCalls } from './github/pr-body.mjs';
+import { readBody, readPrCall, readPrCalls, unchangedHeredoc } from './github/pr-body.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_UNATTRIBUTED';
 
@@ -49,10 +55,6 @@ function commitTrailers(message, trailers, dir, config = [], cleanup = (text) =>
   }
   return carriedTrailers(message === null ? [] : [cleanup(message)], trailers);
 }
-
-// A heredoc match's body as bash passes it: as written under a quoted delimiter, or under a bare one when it holds
-// nothing bash expands (`$`, a backtick, or a backslash); else null, a body the rule cannot know.
-export const unchangedHeredoc = (match) => (match[2] || !/[$`\\]/u.test(match[4]) ? match[4] : null);
 
 // A token's text, or null when it is missing or dynamic.
 const staticText = (token) => (token && !token.dynamic && token.text ? token.text : null);
@@ -168,19 +170,23 @@ const COMMIT_SHORT_VALUES = new Set(['-t']);
 const REUSE_VALUES = ['--reuse-message', '--reedit-message'];
 const REUSE_SHORT = new Set(['-C', '-c']);
 
-// git's comment string in `dir`: core.commentString, else core.commentChar, else `#`; `auto` picks per message, so `#`
-// stands in for it.
-function commentChar(dir, config = []) {
-  for (const key of ['core.commentString', 'core.commentChar']) {
-    const result = dir ? runGit([...config, 'config', key], dir) : null;
-    const value = result?.status === 0 ? result.stdout.replace(/\n$/u, '') : '';
-    if (value && value !== 'auto') return value;
+// The message settings git reads in `dir`, with the commit's own `git -c` values, in one call: { cleanup, comment },
+// `cleanup` the commit.cleanup mode or null, `comment` core.commentString, else core.commentChar, else `#` (`auto` picks
+// per message, so `#` stands in for it).
+function messageSettings(dir, config = []) {
+  const result = dir ? runGit([...config, 'config', '--get-regexp', '^(commit\\.cleanup|core\\.commentstring|core\\.commentchar)$'], dir) : null;
+  const values = new Map();
+  for (const line of result?.status === 0 ? result.stdout.split('\n') : []) {
+    const at = line.indexOf(' ');
+    if (at > 0) values.set(line.slice(0, at).toLowerCase(), line.slice(at + 1));
   }
-  return '#';
+  const comment = [values.get('core.commentstring'), values.get('core.commentchar')].find((value) => value && value !== 'auto') ?? '#';
+  return { cleanup: values.get('commit.cleanup') ?? null, comment };
 }
 
 // A message as git stores it under `--cleanup` (`mode`), which defaults to `strip` when the message is edited and to
-// `whitespace` when not: `strip` drops the lines that start with the `comment` string; `scissors`, when edited, drops the scissors line and all after it.
+// `whitespace` when not: `strip` drops the lines that start with the `comment` string; `scissors`, when edited, drops
+// the scissors line and all after it.
 export function cleanMessage(text, mode, edit, comment = '#') {
   const effective = mode && mode !== 'default' ? mode : edit ? 'strip' : 'whitespace';
   let lines = text.split('\n');
@@ -273,9 +279,8 @@ function commitMessage(rest, dir, config = []) {
   read.at = kept.indexOf(DYNAMIC);
   read.messages = kept.filter((each) => each !== DYNAMIC);
   // Without --cleanup, git takes the repository's commit.cleanup, read in the folder the commit runs in.
-  const configured = cleanup === null && dir ? runGit([...config, 'config', 'commit.cleanup'], dir) : null;
-  const mode = cleanup ?? (configured?.status === 0 ? configured.stdout.trim() : null);
-  read.cleanup = (text) => cleanMessage(text, mode, edit, commentChar(dir, config));
+  const settings = messageSettings(dir, config);
+  read.cleanup = (text) => cleanMessage(text, cleanup ?? settings.cleanup, edit, settings.comment);
   return read;
 }
 

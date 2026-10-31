@@ -353,6 +353,10 @@ Assisted-by: code-reviewer (claude-opus-5-5)
 - On Codex, `tool` and `env` are known, and `agent` when Codex sends it. `model`, `effort`, and the dispatched agents
   are not: the transcript reader and the dispatch log read Claude Code's formats. Codex never reports `cloud`.
 
+The rule catches an agent that forgot or mistyped its attribution in an ordinary command. It is not a security
+boundary: a command built to hide its message from a static reader is out of scope, and where the rule cannot read a
+message it asks for `--trailer` options.
+
 To skip the rule, the Human sets `AIDRIAN_ALLOW_UNATTRIBUTED=1` before starting the session.
 The host adds its own attribution, such as Claude Code's `Co-Authored-By:` trailer and session link.
 Claude Code's `attribution` setting in `.claude/settings.json` turns those off.

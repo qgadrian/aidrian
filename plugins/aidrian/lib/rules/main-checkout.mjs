@@ -178,7 +178,7 @@ function gitFolders(globals, chdir, cwd) {
     const next = globals[i + 1];
     const value = (name) => (text === name ? next : text.startsWith(`${name}=`) ? { text: text.slice(name.length + 1), dynamic } : undefined);
     const chdirTo = text === '-C' ? next : /^-C./u.test(text) ? { text: text.slice(2), dynamic } : undefined;
-    for (const [given, toFolder] of [[chdirTo, null], [value('--work-tree'), (p) => p], [value('--git-dir'), (p) => path.dirname(p)]]) {
+    for (const [given, toFolder] of [[chdirTo, null], [value('--work-tree'), (p) => p], [value('--git-dir'), checkoutOfGitDir]]) {
       if (given === undefined) continue;
       if (!given || given.dynamic) return null;
       if (toFolder === null) at = path.resolve(at, given.text);
@@ -186,6 +186,13 @@ function gitFolders(globals, chdir, cwd) {
     }
   }
   return [at, ...pending.map(([given, toFolder]) => toFolder(path.resolve(at, given)))];
+}
+
+// The checkout a git folder belongs to: its configured work tree, as for a separate git folder, or else the folder
+// that holds it.
+function checkoutOfGitDir(gitDir) {
+  const tree = runGit(['--git-dir', gitDir, 'config', '--get', 'core.worktree'], existingFolder(path.dirname(gitDir)));
+  return tree.status === 0 && tree.stdout.trim() ? path.resolve(gitDir, tree.stdout.trim()) : path.dirname(gitDir);
 }
 
 // Whether `git commit` with these words commits every tracked change: -a or --all in any spelling. A short cluster is

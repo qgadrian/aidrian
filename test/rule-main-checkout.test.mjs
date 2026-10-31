@@ -329,6 +329,13 @@ test('in the main checkout, only named files are staged and only the default bra
   assert.match(denied(`git --git-dir=${repo}/.git --work-tree=${repo} checkout task`, base) ?? '', /main checkout/, 'from outside the repository');
   assert.match(denied(`git --git-dir=repo/.git --work-tree=repo -C ${base} add -A`, '/') ?? '', /main checkout/, 'relative repository paths after -C');
   assert.equal(denied(`git add ${path.join(repo, 'src/app.js')}`), null, 'an absolute path to one file');
+  const meta = path.join(base, 'meta.git');
+  const separate = path.join(base, 'separate');
+  execFileSync('git', ['init', '-q', '-b', 'main', '--separate-git-dir', meta, separate]);
+  execFileSync('git', ['--git-dir', meta, 'config', 'core.worktree', separate]);
+  mkdirSync(path.join(separate, '.aidrian'));
+  writeFileSync(path.join(separate, '.aidrian/config.json'), JSON.stringify({ version: 1, git: { mainCheckout: { guard: true } } }));
+  assert.match(denied(`git --git-dir=${meta} checkout task`, base) ?? '', /main checkout/, 'a separate git folder names its checkout');
   execFileSync('git', ['-C', repo, 'rm', '-q', '--cached', 'src/app.js']);
   execFileSync('git', ['-C', repo, 'add', 'src/app.js']);
   rmSync(path.join(repo, 'src'), { recursive: true, force: true });

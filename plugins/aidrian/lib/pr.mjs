@@ -12,13 +12,27 @@ const ACTIONS = {
     const project = projectAt(process.cwd());
     return (await import('./pr-await-review.mjs')).runAwaitReview(args, commandConfig(project, { exitCode: 1 }), project);
   },
+  review: async (args) => {
+    const project = projectAt(process.cwd());
+    return (await import('./review/run.mjs')).runReview(args, commandConfig(project, { exitCode: 1 }), project);
+  },
+  signoff: async (args) => {
+    const project = projectAt(process.cwd());
+    commandConfig(project);
+    try {
+      return await (await import('./review-gate.mjs')).runSignoff(args, project);
+    } catch (error) {
+      console.error(`aidrian pr signoff: ${error.message}`);
+      return 1;
+    }
+  },
   checks: async (args) => (await import('./pr-checks.mjs')).runChecks(args, config(3)),
   disposition: async (args) => (await import('./finding-disposition.mjs')).runDisposition(args),
   attest: async (args) => {
     const project = projectAt(process.cwd());
     commandConfig(project);
     try {
-      return (await import('./review-gate.mjs')).runAttest(args, project);
+      return await (await import('./review-gate.mjs')).runAttest(args, project);
     } catch (error) {
       console.error(`aidrian pr attest: ${error.message}`);
       return 1;
@@ -28,8 +42,8 @@ const ACTIONS = {
 
 export const commands = {
   pr: {
-    usage: 'await-review [PR] [--request] [--max-rounds N] [--head SHA] | attest PR --head SHA --reviewer WHO --findings N --fixed N [--note T] | attest PR --check | checks [PR] [-R OWNER/REPO] [--json] | disposition --severity S [--likelihood L --affects A] [--cost C] [--source bot [--round N]] [--vocab]',
-    about: 'wait for the review bot, record the review the review gate asks for, give a one-line check verdict, or decide what to do with one review finding',
+    usage: 'review [PR] [--max-rounds N] | signoff PR --flow ID --head SHA | await-review [PR] [--request] [--max-rounds N] [--head SHA] | attest PR --head SHA --reviewer WHO --findings N --fixed N [--note T] | attest PR --pass ID --head SHA --reviewer WHO --findings N --fixed N [--accepted N] [--verdicts FILE] | attest PR --check | checks [PR] [-R OWNER/REPO] [--json] | disposition --severity S [--likelihood L --affects A] [--cost C] [--source bot [--round N]] [--vocab]',
+    about: 'run the review plan one step at a time, record a flow sign-off, wait for the review bot, record the review the review gate asks for, give a one-line check verdict, or decide what to do with one review finding',
     async run(args) {
       const [action, ...rest] = args;
       if (!Object.hasOwn(ACTIONS, action ?? '')) {

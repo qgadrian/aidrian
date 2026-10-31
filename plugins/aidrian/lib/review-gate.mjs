@@ -120,7 +120,7 @@ export function denyReason(pr, checklist) {
 
 // `aidrian pr attest <PR> --head <sha> --reviewer <who> --findings <n> --fixed <n> [--note <text>]`, or `--check`.
 // Exit 0 recorded, 3 not recorded (--check), 1 a usage error.
-export function runAttest(args, project) {
+export async function runAttest(args, project) {
   const [ref, ...rest] = args;
   const pr = prNumber(ref);
   if (pr === null) throw new Error('attest needs a pull request number');
@@ -128,7 +128,7 @@ export function runAttest(args, project) {
   for (let i = 0; i < rest.length; i += 1) {
     const flag = rest[i];
     if (flag === '--check') flags.check = true;
-    else if (['--head', '--reviewer', '--findings', '--fixed', '--note'].includes(flag)) {
+    else if (['--head', '--reviewer', '--findings', '--fixed', '--note', '--pass', '--accepted', '--verdicts'].includes(flag)) {
       const value = rest[++i];
       if (value === undefined || value === '' || value.startsWith('--')) throw new Error(`${flag} needs a value`);
       flags[flag.slice(2)] = value;
@@ -145,11 +145,22 @@ export function runAttest(args, project) {
     return Number(value);
   });
   if (fixed > findings) throw new Error('--fixed cannot exceed --findings');
+  const accepted = flags.accepted === undefined ? 0 : /^\d+$/u.test(flags.accepted) ? Number(flags.accepted) : NaN;
+  if (Number.isNaN(accepted)) throw new Error('--accepted must be a whole number');
+  if (flags.pass === undefined && (flags.accepted !== undefined || flags.verdicts !== undefined)) throw new Error('--accepted and --verdicts need --pass');
   if (!SHA.test(flags.head) || runGit(['cat-file', '-e', `${flags.head}^{commit}`], project.root).status !== 0) {
     throw new Error(`--head ${flags.head} is not a commit in this repository`);
   }
   const repo = originRepo(project);
   if (repo === null) throw new Error("cannot read this repository's origin; the marker must name it");
+  if (flags.pass !== undefined) {
+    const { recordPass } = await import('./review/run.mjs');
+    const verdictsText = flags.verdicts === undefined ? null : readFileSync(flags.verdicts, 'utf8');
+    const result = recordPass(project, { pr, repo, pass: flags.pass, head: flags.head, reviewer: flags.reviewer, findings, fixed, accepted, verdictsText });
+    console.log(`recorded pass ${flags.pass} of pull request #${pr} at ${flags.head.slice(0, 7)}: ${result.open} open`);
+    console.log('Run `aidrian pr review` again for the next step.');
+    return 0;
+  }
   const record = { pr, repo, head: flags.head, reviewer: flags.reviewer, findings, fixed, note: flags.note ?? null };
   writeRecord(project, record);
   console.log(`recorded the review of pull request #${pr} at ${flags.head.slice(0, 7)}`);
@@ -164,4 +175,28 @@ export function attestation(project, pr, repo = null, origin = originRepo(projec
   if (repo !== null && (origin === null || repoName(repo) !== origin)) return null;
   const record = readRecord(project, pr);
   return record?.head && record?.repo ? markerFor(record) : null;
+}
+
+// `aidrian pr signoff <PR> --flow <id> --head <sha>`: the Human's sign-off of a critical flow on one head. It is an audit
+// entry, not proof: an agent holds the same shell. The review summary on the pull request shows every sign-off.
+export async function runSignoff(args, project) {
+  const [ref, ...rest] = args;
+  const pr = prNumber(ref);
+  if (pr === null) throw new Error('signoff needs a pull request number');
+  const flags = {};
+  for (let i = 0; i < rest.length; i += 1) {
+    const flag = rest[i];
+    if (!['--flow', '--head'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
+    const value = rest[++i];
+    if (value === undefined || value.startsWith('--')) throw new Error(`${flag} needs a value`);
+    flags[flag.slice(2)] = value;
+  }
+  if (!flags.flow || !flags.head) throw new Error('--flow and --head are required');
+  if (!SHA.test(flags.head) || runGit(['cat-file', '-e', `${flags.head}^{commit}`], project.root).status !== 0) throw new Error(`--head ${flags.head} is not a commit in this repository`);
+  const repo = originRepo(project);
+  const by = runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown';
+  const { recordSignoff } = await import('./review/run.mjs');
+  recordSignoff(project, { pr, repo, flow: flags.flow, head: flags.head, by });
+  console.log(`recorded ${by}'s sign-off of flow ${flags.flow} on ${flags.head.slice(0, 7)}. Run \`aidrian pr review\` again.`);
+  return 0;
 }

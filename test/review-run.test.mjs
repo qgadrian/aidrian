@@ -1,0 +1,261 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+
+import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { projectAt } from '../plugins/aidrian/lib/project.mjs';
+import { citationProblem, flowState, invariantsOf } from '../plugins/aidrian/lib/review/flows.mjs';
+import { cleanOutput, resolveEngine, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
+import { EXIT, recordPass, recordSignoff, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
+import { stateFromComment } from '../plugins/aidrian/lib/review/state.mjs';
+
+// A repository with `main` (carrying `baseConfig`) and a `feat` branch made by `change(dir)`. Returns the helpers a
+// review step needs, with GitHub faked in memory.
+function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = {} } = {}) {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-review-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => {
+    const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(r.stderr);
+    return r.stdout.trim();
+  };
+  const write = (file, text) => {
+    mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+    writeFileSync(path.join(dir, file), text);
+  };
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.email', 't@example.com');
+  git('config', 'user.name', 'Tester');
+  write('.aidrian/config.json', JSON.stringify(baseConfig));
+  write('src/app.js', 'export const app = 1;\n');
+  for (const [file, text] of Object.entries(baseFiles)) write(file, text);
+  write('docs/flows/booking.md', '# Booking\n\n## No double booking\nTwo bookings never hold one slot.\n\n## Refund cap\nA refund never exceeds the charge.\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'base');
+  git('switch', '-q', '-c', 'feat');
+  change(write, dir);
+  if (headConfig) write('.aidrian/config.json', JSON.stringify(headConfig));
+  git('add', '-A');
+  git('commit', '-q', '-m', 'change');
+  const comments = [];
+  const gh = {
+    pr: () => ({ number: 7, headRefOid: git('rev-parse', 'HEAD'), baseRefName: 'main', url: 'https://github.com/o/r/pull/7' }),
+    repo: () => 'o/r',
+    comments: () => comments,
+    post: (_repo, _n, body) => comments.push({ id: comments.length + 1, body }),
+    edit: (_repo, id, body) => (comments.find((c) => c.id === id).body = body),
+  };
+  const project = projectAt(dir);
+  const step = (deps = {}, opts = {}) => reviewStep({ pr: '7', ...opts }, { project, config: loadConfig(project).config, gh, codex: () => ({ ok: true }), ...deps });
+  return { dir, git, write, gh, comments, project, step, commit: (msg = 'next') => (git('add', '-A'), git('commit', '-q', '-m', msg), git('rev-parse', 'HEAD')) };
+}
+
+const clean = async () => ({ status: 'done', findings: [], verdicts: [], dropped: [] });
+const finding = { file: 'src/app.js', line: 1, title: 'off by one', body: 'x', severity: 'high' };
+
+test('a docs-only change needs no review and posts nothing', async (t) => {
+  const r = repo(t, { change: (write) => write('docs/guide.md', 'hello\n') });
+  const result = await r.step({ exec: clean });
+  assert.equal(result.status, 'none_needed');
+  assert.equal(r.comments.length, 0);
+});
+
+test('zero config: codex-local reviews once; a finding is fix_required until a new head comes back clean', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const seen = [];
+  const exec = async (reviewer, input) => (seen.push([reviewer.name, input.context]), seen.length === 1 ? { status: 'done', findings: [finding], verdicts: [], dropped: [] } : clean());
+  const first = await r.step({ exec });
+  assert.equal(first.status, 'fix_required');
+  assert.deepEqual(first.open.map((each) => [each.pass, each.open]), [['engine:codex-local', 1]]);
+  assert.equal((await r.step({ exec })).status, 'fix_required', 'calling again on the same head re-runs nothing');
+  assert.equal(seen.length, 1);
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit();
+  const second = await r.step({ exec });
+  assert.equal(second.status, 'received');
+  assert.deepEqual(seen, [['codex-local', 'full'], ['codex-local', 'delta']]);
+  assert.equal(second.round, 2);
+  assert.equal(r.comments.length, 1, 'one summary comment, edited in place');
+  assert.equal(stateFromComment(r.comments[0].body, 7).rounds.length, 2);
+});
+
+test('a flow adds a local agent pass that must cite evidence for every invariant before the engine runs', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'], invariants: 'docs/flows/booking.md', require: ['agent:product-manager'] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => write('src/booking/book.js', 'export function book() {\n  return lock();\n}\n') });
+  let ran = 0;
+  const exec = async () => (ran += 1, clean());
+  const first = await r.step({ exec });
+  assert.equal(first.status, 'dispatch');
+  assert.equal(ran, 0, 'the independent stage waits for the local one');
+  const [pass] = first.dispatch;
+  assert.equal(pass.agent, 'product-manager');
+  assert.deepEqual(pass.flows[0].invariants.map((each) => each.id), ['no-double-booking', 'refund-cap']);
+  const head = first.head;
+  const verdicts = (evidence) => JSON.stringify([
+    { flow: 'booking', invariant: 'no-double-booking', verdict: 'holds', evidence },
+    { flow: 'booking', invariant: 'refund-cap', verdict: 'not_affected', evidence: 'src/booking/book.js:1' },
+  ]);
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head, reviewer: 'product-manager', findings: 0, fixed: 0, verdictsText: verdicts('src/booking/book.js:99') });
+  const uncited = await r.step({ exec });
+  assert.equal(uncited.status, 'fix_required');
+  assert.deepEqual(uncited.flows, [{ flow: 'booking', violated: [], unverified: ['no-double-booking'] }], 'a citation to a line that is not there does not count');
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head, reviewer: 'product-manager', findings: 0, fixed: 0, verdictsText: verdicts('src/booking/book.js:2') });
+  const done = await r.step({ exec: async (_reviewer, input) => {
+    assert.deepEqual(input.flows[0].earlierVerdicts.map((each) => each.verdict), ['holds', 'not_affected'], 'the independent reviewer sees the local verdicts to challenge');
+    return exec();
+  } });
+  assert.equal(done.status, 'received');
+  assert.equal(ran, 1);
+});
+
+test('a pull request cannot weaken the review it is under: a removed flow still runs, and the config change needs the Human', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, headConfig: { version: 1 }, change: (write) => write('src/booking/book.js', 'x\n') });
+  const first = await r.step({ exec: clean });
+  assert.deepEqual(first.plan.flows, ['booking', 'harness-config']);
+  for (const pass of first.dispatch) {
+    const ids = pass.flows.flatMap((flow) => flow.invariants.map((each) => [flow.id, each.id]));
+    recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0,
+      verdictsText: JSON.stringify(ids.map(([flow, invariant]) => ({ flow, invariant, verdict: 'holds', evidence: 'src/booking/book.js:1' }))) });
+  }
+  const human = await r.step({ exec: clean });
+  assert.equal(human.status, 'human_required');
+  assert.equal(EXIT.human_required, 9);
+  assert.deepEqual(human.flows, ['harness-config']);
+  recordSignoff(r.project, { pr: 7, repo: 'o/r', flow: 'harness-config', head: first.head, by: 'Tester' });
+  assert.equal((await r.step({ exec: clean })).status, 'received');
+});
+
+test('reviewInForce: rules add up, flows and ignore lists come from the base, and every change is named', () => {
+  const base = { rules: [{ depth: 'split', when: { lines: { over: 1 } } }], ignore: ['a'], nonBehaviour: [], flows: { f: { files: ['x'] } }, planCommand: 'base', reviewers: {} };
+  const head = { rules: [], ignore: ['a', 'src/**'], nonBehaviour: [], flows: {}, planCommand: null, reviewers: {} };
+  const { review, changed } = reviewInForce(base, head);
+  assert.deepEqual([review.rules, review.ignore, review.flows, review.planCommand], [base.rules, ['a'], base.flows, 'base']);
+  assert.deepEqual(changed, ['rules', 'ignore', 'flows', 'planCommand']);
+});
+
+test('the round cap: the last round goes to the final stage, and a round past the cap posts nothing new', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'] } };
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 2 }, review: { flows } }, change: (write) => write('src/booking/a.js', '1\n') });
+  const first = await r.step({ exec: clean });
+  assert.equal(first.status, 'dispatch');
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: first.dispatch[0].pass, head: first.head, reviewer: 'code-reviewer', findings: 2, fixed: 0 });
+  assert.equal((await r.step({ exec: clean })).status, 'fix_required');
+  r.write('src/booking/a.js', '2\n');
+  r.commit();
+  let independent = 0;
+  const last = await r.step({ exec: async () => (independent += 1, clean()) });
+  assert.equal(independent, 1, 'round 2 of 2 ran the independent stage even though the local stage still had open findings');
+  assert.equal(last.status, 'round_limit');
+  r.write('src/booking/a.js', '3\n');
+  r.commit();
+  assert.equal((await r.step({ exec: clean })).status, 'round_limit');
+});
+
+test('a failing reviewer is incomplete, then stuck after three attempts; a quota is not a failure', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'y\n') });
+  const failing = async () => ({ status: 'failed', reason: 'boom' });
+  assert.deepEqual([(await r.step({ exec: failing })).status, (await r.step({ exec: failing })).status, (await r.step({ exec: failing })).status], ['incomplete', 'incomplete', 'stuck']);
+  const other = repo(t, { change: (write) => write('src/app.js', 'z\n') });
+  assert.equal((await other.step({ exec: async () => ({ status: 'quota', reason: 'usage limit' }) })).status, 'blocked_quota');
+});
+
+test('unsatisfied: a flow that requires an independent model on a machine whose engine is self', async (t) => {
+  const flows = { pay: { files: ['src/pay/**'], require: ['independent-model'] } };
+  const r = repo(t, { baseConfig: { version: 1, github: { reviewer: 'none' }, review: { flows } }, change: (write) => write('src/pay/a.js', '1\n') });
+  const result = await r.step({ exec: clean, codex: () => ({ ok: false, reason: 'the codex CLI is not installed' }) });
+  assert.equal(result.status, 'unsatisfied');
+  assert.match(result.reason, /requires independent-model, and the engine here is self/u);
+});
+
+test('resolveEngine: auto takes codex, then the bot, then self; an explicit engine that cannot run is a problem', () => {
+  const base = loadConfig({ root: '/nowhere', paths: { config: 'none.json', local: 'none' } }).config;
+  const no = () => ({ ok: false, reason: 'codex is not logged in (`codex login`)' });
+  assert.equal(resolveEngine(base, { codex: () => ({ ok: true }) }).reviewer.name, 'codex-local');
+  assert.equal(resolveEngine(base, { codex: no }).reviewer.name, 'pr-bot');
+  assert.equal(resolveEngine({ ...base, github: { ...base.github, reviewer: null } }, { codex: no }).reviewer.name, 'self');
+  assert.match(resolveEngine({ ...base, reviewEngine: 'codex-local' }, { codex: no }).problem, /not logged in/u);
+  assert.match(resolveEngine({ ...base, reviewEngine: 'mine' }).problem, /not a built-in engine/u);
+});
+
+test('runExec: a project reviewer reads its input on stdin and prints findings; bad output is a failure, never a pass', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-exec-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const script = (body) => {
+    const file = path.join(dir, `r${Math.random()}.mjs`);
+    writeFileSync(file, body);
+    return { name: 'mine', kind: 'exec', command: [process.execPath, file], timeoutSec: 5 };
+  };
+  const echo = script("let s='';process.stdin.on('data',c=>s+=c).on('end',()=>{const i=JSON.parse(s);console.log(JSON.stringify({findings:[{file:i.files[0],line:1,title:'t',body:'b',severity:'low'},{bad:1}],verdicts:[]}))})");
+  const done = await runExec(echo, { files: ['a.js'] }, { root: dir, env: process.env });
+  assert.deepEqual([done.status, done.findings.length, done.dropped], ['done', 1, ['findings[1] is malformed']]);
+  assert.equal((await runExec(script('console.log("not json")'), {}, { root: dir, env: process.env })).status, 'failed');
+  assert.equal((await runExec(script('process.exit(3)'), {}, { root: dir, env: process.env })).status, 'failed');
+  assert.equal((await runExec({ ...script('setTimeout(()=>{}, 10000)'), timeoutSec: 1 }, {}, { root: dir, env: process.env })).status, 'timed_out');
+  assert.equal(cleanOutput({ verdicts: [] }).valid, false);
+});
+
+test('invariantsOf and flowState: a doc gives one invariant per heading; a flow with none is unspecified', () => {
+  const read = (file) => (file === 'inv.md' ? '# T\n\n## Never lose a booking\nA booking stays.\n' : null);
+  assert.deepEqual(invariantsOf({ invariants: 'inv.md' }, read).invariants, [{ id: 'never-lose-a-booking', text: 'Never lose a booking: A booking stays.', cite: 'inv.md#never-lose-a-booking' }]);
+  assert.equal(invariantsOf({}, read).unspecified, true);
+  assert.equal(invariantsOf({ invariants: 'gone.md' }, read).problem, 'gone.md is missing');
+  const state = flowState([{ id: 'a' }, { id: 'b' }, { id: 'c' }], [
+    { invariant: 'a', verdict: 'holds', evidence: 'ok' },
+    { invariant: 'b', verdict: 'violated', evidence: 'ok' },
+    { invariant: 'c', verdict: 'holds', evidence: 'bad' },
+  ], (evidence) => (evidence === 'ok' ? null : 'missing'));
+  assert.deepEqual(state, { signed: false, open: ['b'], unverified: ['c'] });
+});
+
+test('citationProblem: a path:line must exist at the head, a test:<name> must appear in a file', (t) => {
+  const r = repo(t, { change: (write) => write('src/app.test.js', "test('books a slot', () => {});\n") });
+  const head = r.git('rev-parse', 'HEAD');
+  assert.equal(citationProblem('src/app.js:1', { root: r.dir, head }), null);
+  assert.match(citationProblem('src/app.js:9', { root: r.dir, head }), /no line 9/u);
+  assert.equal(citationProblem('test:books a slot', { root: r.dir, head }), null);
+  assert.match(citationProblem('test:missing', { root: r.dir, head }), /names the test/u);
+  assert.match(citationProblem('trust me', { root: r.dir, head }), /not path:line/u);
+});
+
+test('flow evidence: a deleted flow test needs the Human, and the flow`s checks must pass on the head', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'], tests: ['test/booking*'], checks: ['E2E booking'] } };
+  const r = repo(t, {
+    baseConfig: { version: 1, review: { flows } },
+    baseFiles: { 'test/booking.test.js': "test('books', () => {});\n" },
+    change: (write, dir) => {
+      write('src/booking/a.js', '1\n');
+      rmSync(path.join(dir, 'test/booking.test.js'));
+    },
+  });
+  const head = r.git('rev-parse', 'HEAD');
+  let rows = [{ name: 'E2E booking (shard 1)', state: 'PENDING' }];
+  r.gh.checks = () => rows;
+  const first = await r.step({ exec: clean });
+  for (const pass of first.dispatch) {
+    recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head, reviewer: 'code-reviewer', findings: 0, fixed: 0,
+      verdictsText: JSON.stringify([{ flow: 'booking', invariant: 'unspecified', verdict: 'holds', evidence: 'src/booking/a.js:1' }]) });
+  }
+  const removed = await r.step({ exec: clean });
+  assert.equal(removed.status, 'fix_required');
+  assert.deepEqual(removed.tests_removed.map((each) => each.deleted), [['test/booking.test.js']]);
+  recordSignoff(r.project, { pr: 7, repo: 'o/r', flow: 'booking', head, by: 'Tester' });
+  assert.equal((await r.step({ exec: clean })).status, 'checks_pending');
+  rows = [{ name: 'E2E booking (shard 1)', state: 'SKIPPED' }];
+  assert.equal((await r.step({ exec: clean })).status, 'fix_required', 'a skipped required check is not a pass');
+  rows = [{ name: 'E2E booking (shard 1)', state: 'SUCCESS' }];
+  assert.equal((await r.step({ exec: clean })).status, 'received');
+});
+
+test('the review bot as the engine: a thumbs-up passes, a review with comments is open', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'b\n') });
+  const off = () => ({ ok: false, reason: 'the codex CLI is not installed' });
+  const comments = await r.step({ codex: off, awaitBot: async () => ({ status: 'received', signal: { kind: 'review', line_comments: 2 } }) });
+  assert.deepEqual([comments.status, comments.open[0].open], ['fix_required', 2]);
+  r.write('src/app.js', 'c\n');
+  r.commit();
+  assert.equal((await r.step({ codex: off, awaitBot: async () => ({ status: 'received', signal: { kind: 'thumbs_up' } }) })).status, 'received');
+});

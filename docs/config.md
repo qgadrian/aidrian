@@ -47,6 +47,7 @@ In a group such as `github`, set only the keys you change; the others keep their
     },
     "reviewGate": { "enabled": false, "checklist": null }
   },
+  "review": { "rules": [], "ignore": ["<lockfiles, snapshots, generated, vendored, minified>"], "nonBehaviour": ["<docs and assets>"], "flows": {}, "planCommand": null, "reviewers": {} },
   "docs": { "wrapLimit": 155 },
   "terms": { "file": null },
   "knowledge": { "budgets": { "alwaysBytes": 16384, "taggedDocBytes": 24576 } },
@@ -167,7 +168,16 @@ In `neverValid`, a `<word>` stands for any one word, so `needs <specialist> over
 }
 ```
 
+## Review plan
+
+`review` decides how `aidrian pr review` reviews a pull request: its depth, its stages, the critical flows it holds
+to their invariants, and the reviewers a project adds. [review.md](review.md) describes every key. The machine's
+engine is not here: it is `review.engine` in `.aidrian.local.json`.
+
 ## Review gate
+
+With `aidrian pr review`, an enabled gate is one more required reviewer: the code-reviewer agent runs in the local
+stage before any model or bot. The rest of this section is about asking the bot directly.
 
 With `"github": { "reviewGate": { "enabled": true } }`, the review bot is asked to review a pull request only once one
 review of its diff, by an agent that did not write it, is on record. The record is written once per pull request:

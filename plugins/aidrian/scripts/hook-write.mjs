@@ -31,19 +31,24 @@ await runHook(async (input) => {
   console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: context } }));
 });
 
-// Every terms hit in the lines the write adds, as { file, hit }, with `file` relative to its project. Silent outside a
-// project and while config.json `terms.file` is null; the terms module loads only then.
+// Every terms hit in the lines the write adds, as { file, hit }, with `file` relative to its project. Each file is
+// judged by its own project, so a patch from a parent folder, or across projects, uses each file's rules. Silent outside
+// a project and while its config.json `terms.file` is null.
 async function termHits(input) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
-  const file = input.tool_input?.file_path;
-  const project = findProject(typeof file === 'string' ? path.dirname(path.resolve(cwd, file)) : cwd);
-  const config = project ? loadConfig(project).config : null;
-  if (!config || config.terms.file === null) return [];
-  const { addedLines, loadTerms, scanLines } = await import('../lib/terms.mjs');
-  const { rules } = loadTerms(project, config);
-  return addedLines(input, cwd).flatMap(({ file, lines }) => {
-    const rel = path.relative(project.root, path.resolve(cwd, file));
-    if (rel.startsWith('..') || path.isAbsolute(rel)) return [];
-    return scanLines(lines, rel, rules).map((hit) => ({ file: rel, hit }));
-  });
+  const terms = await import('../lib/terms.mjs');
+  const rulesOf = new Map();
+  const hits = [];
+  for (const { file, lines } of terms.addedLines(input, cwd)) {
+    const absolute = path.resolve(cwd, file);
+    const project = findProject(path.dirname(absolute));
+    if (!project) continue;
+    if (!rulesOf.has(project.root)) {
+      const config = loadConfig(project).config;
+      rulesOf.set(project.root, config.terms.file === null ? [] : terms.loadTerms(project, config).rules);
+    }
+    const rel = path.relative(project.root, absolute);
+    for (const hit of terms.scanLines(lines, rel, rulesOf.get(project.root))) hits.push({ file: rel, hit });
+  }
+  return hits;
 }

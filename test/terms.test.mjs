@@ -132,6 +132,11 @@ test('the write hook refuses a block hit on the lines a write adds, and tells th
   assert.equal(warned.status, 0);
   assert.match(JSON.parse(warned.stdout).hookSpecificOutput.additionalContext, /notes\.md:1: "e-mail" -> use "email" \[soft\]/);
   assert.equal(hook('Write', { file_path: 'src/app.js', content: 'organisation' }).status, 0, 'outside every rule');
+  const parent = spawnSync(process.execPath, [HOOK], {
+    input: JSON.stringify({ tool_name: 'apply_patch', cwd: path.dirname(dir), tool_input: { command: `*** Begin Patch\n*** Add File: ${path.basename(dir)}/docs/api/a.md\n+The organisation.\n*** End Patch` } }),
+    encoding: 'utf8',
+  });
+  assert.equal(parent.status, 2, 'a patch from a parent folder uses the project of each file');
 });
 
 test('addedLines reads each write tool', (t) => {

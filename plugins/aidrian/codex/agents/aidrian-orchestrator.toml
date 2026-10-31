@@ -52,6 +52,7 @@ code is the implementing agent's.
   That is the sanctioned path for a read-only role, not a workaround for the denied `Write`; write nothing else.
 - Dispatch disjoint slices together, each writer in its own worktree; never report done while an agent has not returned.
 - Before a slice that adds a script, check, or schema field, search its likely home; one that exists makes the slice a `no_op`.
+  A finding that says something is missing, or that a knowledge doc is wrong: check its premise first (orchestration skill).
 
 ## Security-sensitive findings
 

@@ -2,7 +2,8 @@
 // config.json `github.requiredSections`, and no "Generated with [Claude Code]" footer. `gh pr create --fill` is refused:
 // gh then writes the body from the commit messages. `gh pr edit` without a body flag passes, and so does a body the
 // rule cannot read (a variable, stdin, a missing file): it denies only what it reads. Runs only inside a project. A
-// command substitution that runs, as in `url=$(gh pr create …)`, is read as the command line is.
+// command substitution that runs, as in `url=$(gh pr create …)`, is read as the command line is. A `cd` earlier on the
+// line moves the folder the body file and the project are read from; one the rule cannot follow passes the call.
 //
 // `github.pullRequest` adds the project's contract (docs/config.md#pull-request-contract), each part off until set:
 // the title pattern, an issue key outside the title's leading bracket, the closed list of sections, the items of the
@@ -40,14 +41,36 @@ const LIST_TIMEOUT_MS = 3000;
 export function check(command, { cwd = process.cwd(), env = process.env, listOpenPrs = openPrBodies(cwd) } = {}) {
   if (env[OVERRIDE] === '1') return null;
   for (const line of commandLines(command)) {
+    // The folder gh runs in: a `cd` earlier on the line moves it, so `cd <worktree> && gh pr create --body-file b.md`
+    // reads that worktree's b.md and project, not the session's. null once a move cannot be followed.
+    let here = cwd;
     for (const segment of lexCommand(line)) {
+      const invocation = readInvocation(segment);
+      if (CHANGES_DIRECTORY.has(invocation.program)) {
+        here = movedTo(here, invocation);
+        continue;
+      }
       const call = readPrCall(segment);
       if (!call) continue;
-      const reason = judge(call, line, { cwd, env, listOpenPrs });
+      // A folder this rule cannot know is a body it cannot read: it denies only what it reads.
+      const at = here !== null && invocation.chdir ? movedTo(here, { program: 'cd', args: [invocation.chdir] }) : here;
+      if (at === null) continue;
+      const reason = judge(call, line, { cwd: at, env, listOpenPrs: at === cwd ? listOpenPrs : openPrBodies(at) });
       if (reason) return reason;
     }
   }
   return null;
+}
+
+const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
+
+// The folder after a `cd`, `pushd`, or `popd` invocation from `here`, or null when it cannot be known.
+function movedTo(here, { program, args }) {
+  if (program === 'popd') return null;
+  const to = args.find((token) => token.dynamic || !token.text.startsWith('-'));
+  if (!to || to.dynamic || to.text === '-' || to.text.startsWith('~')) return null;
+  if (path.isAbsolute(to.text)) return to.text;
+  return here === null ? null : path.resolve(here, to.text);
 }
 
 // { subcommand, fill, body, bodyFile, title, repo, target } for a `gh [-R repo] pr create|edit …` segment, else null.

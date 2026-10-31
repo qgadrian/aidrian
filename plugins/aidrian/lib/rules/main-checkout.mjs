@@ -132,7 +132,11 @@ function gitStateChanges(command, cwd, depth = 0, inherited = []) {
   for (const { segment, substitutions } of lexSteps(command)) {
     if (known && depth < SUBSTITUTION_DEPTH_LIMIT) for (const body of substitutions) found.push(...gitStateChanges(body, cwd, depth + 1, env));
     const invocation = readInvocation(segment);
-    const assignments = segment.filter((token) => GIT_ASSIGNMENT.test(token.text));
+    // Assignments are the words before the command runs (and an `env` wrapper's), never its arguments: in
+    // `git commit -m "GIT_DIR=x"` the message is no assignment. `export` takes them as its arguments.
+    const program = segment.findIndex((token) => !token.operator && token.text === invocation.program);
+    const head = invocation.program === 'export' ? segment : program === -1 ? segment : segment.slice(0, program);
+    const assignments = head.filter((token) => !token.operator && GIT_ASSIGNMENT.test(token.text));
     // `export GIT_DIR=…` or a bare `GIT_DIR=…` lasts for the rest of the line.
     if (invocation.program === 'export' || (assignments.length && !invocation.program)) env.push(...assignments);
     if (CHANGES_DIRECTORY.has(invocation.program)) known = false;
@@ -141,7 +145,7 @@ function gitStateChanges(command, cwd, depth = 0, inherited = []) {
     if (inner !== null && !invocation.chdir?.dynamic) found.push(...gitStateChanges(inner, invocation.chdir ? path.resolve(cwd, invocation.chdir.text) : cwd, depth + 1, [...env, ...assignments]));
     const call = known ? readGit(segment) : null;
     if (!call || !['add', 'commit', 'switch', 'checkout'].includes(call.subcommand)) continue;
-    const scope = [...env, ...segment];
+    const scope = [...env, ...assignments];
     const folders = gitFolders(call.globals, invocation.chdir, cwd, scope);
     if (folders === null) continue;
     // A global option that changes how paths match or which repository is read makes nothing plainly safe.
@@ -185,13 +189,13 @@ function gitStateChanges(command, cwd, depth = 0, inherited = []) {
 // The folders a git call may act on: where it runs (a wrapper's `env -C`, then each `-C`), and its `--work-tree` and
 // the folder holding its `--git-dir`. Null when one of them cannot be read, which leaves the call alone, as a path that
 // may expand is.
-function gitFolders(globals, chdir, cwd, segment = []) {
+function gitFolders(globals, chdir, cwd, assignments = []) {
   if (chdir?.dynamic) return null;
   let at = chdir ? path.resolve(cwd, chdir.text) : cwd;
   // git resolves --work-tree and --git-dir from where it ends up, after every -C; GIT_DIR and GIT_WORK_TREE set on the
   // command count the same.
   const pending = [];
-  for (const { text, dynamic } of segment) {
+  for (const { text, dynamic } of assignments) {
     const assigned = /^(GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE)=(.*)$/su.exec(text);
     if (!assigned) continue;
     if (dynamic) return null;

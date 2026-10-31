@@ -303,7 +303,7 @@ test('in the main checkout, only named files are staged and only the default bra
   for (const command of [
     'git add -A', 'git add --all', 'git add --al', 'git add .', 'git add ./', 'git add *', 'git add -u', 'git add :/', 'git add src',
     `git add ${repo}`, 'git add --dry-run --no-dry-run -A', 'git add', 'git add "$FILES"',
-    'git commit -am x', 'git commit -am"fix: x"', 'git commit --all -m x', 'git commit --dry-run --no-dry-run -am x',
+    'git commit -am x', 'git commit -am"fix: x"', 'git commit --all -m x', 'git commit -am "GIT_DIR=$HOME"', 'git commit --dry-run --no-dry-run -am x',
     'git switch task', 'git switch -c fresh', 'git switch -cnew main', 'git switch -d main',
     'git checkout task', 'git checkout -b fresh', 'git checkout -bnew main', 'git checkout task --', 'git checkout src',
     'git checkout -', 'git checkout remote-only', 'git checkout -d main', 'git checkout --patch --no-patch task',
@@ -316,7 +316,7 @@ test('in the main checkout, only named files are staged and only the default bra
   assert.match(denied('git add ..', path.join(repo, 'src')) ?? '', /main checkout/, 'a parent folder');
   for (const command of [
     'git add src/app.js', 'git add -v src/app.js gone.txt', 'git commit -m x', 'git commit -mrelease', 'git commit -uall -m x',
-    'git commit -Sabc123 -m x', 'git switch main', 'git checkout main', 'git checkout src/app.js', 'git checkout -- src/app.js',
+    'git commit -Sabc123 -m x', "git commit -m 'GIT_DIR=docs'", 'git switch main', 'git checkout main', 'git checkout src/app.js', 'git checkout -- src/app.js',
     'git checkout gone.txt', 'git checkout task -- src/app.js', 'git checkout HEAD src/app.js', 'git status', 'git pull --ff-only',
   ]) {
     assert.equal(denied(command), null, command);

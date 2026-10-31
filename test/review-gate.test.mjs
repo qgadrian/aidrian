@@ -66,6 +66,19 @@ test('gh comment requests are refused until a review is on record, in every way 
     'git push && gh pr comment https://github.com/acme/notes/pull/5 -b "@codex review"',
     'gh pr edit 5 --add-reviewer chatgpt-codex-connector',
     'gh issue comment https://github.com/acme/notes/issues/5 --body "@codex review"',
+    "gh pr -b '@codex review' comment 5",
+    "gh -X POST -f body='@codex review' api repos/acme/notes/issues/5/comments",
+    "GH_REPO=acme/notes gh pr comment 5 -b '@codex review'",
+    "GH_REPO=other/repo env GH_REPO=acme/notes gh pr comment 5 -b '@codex review'",
+    "env -S 'GH_REPO=acme/notes gh' pr comment 5 -b '@codex review'",
+    "GH_REPO=other/repo gh pr comment https://github.com/acme/notes/pull/5 -b '@codex review'",
+    "GH_REPO=other/repo exec -c gh pr comment 5 -b '@codex review'",
+    "GH_REPO=other/repo sudo gh pr comment 5 -b '@codex review'",
+    "GH_REPO=other/notes gh api 'repos/acme/{repo}/issues/5/comments' -f body='@codex review'",
+    "GH_REPO=github.com/acme/notes gh api 'repos/{owner}/{repo}/issues/5/comments' -f body='@codex review'",
+    "GH_REPO=other/repo env --un=GH_REPO gh pr comment 5 -b '@codex review'",
+    "GH_REPO=other/repo gh pr comment 5 -R \"$REPO\" -b '@codex review'",
+    "GH_REPO=other/repo env -u \"$NAME\" gh pr comment 5 -b '@codex review'",
   ];
   for (const command of commands) assert.match(run(command) ?? 'passed', /^Blocked: this asks the review bot to review pull request #5,/, command);
   assert.match(run(commands[0]), /against docs\/review-checklist\.md/);
@@ -87,7 +100,22 @@ test('what is not a request to this repository passes; a request without a numbe
     'gh pr comment 5 --body-file - ',
     'echo "gh pr comment 5 -b @codex review"',
     'gh pr edit 5 --add-reviewer someone',
+    "GH_REPO=other/repo gh pr comment 5 -b '@codex review'",
+    "env GH_REPO=other/repo gh api 'repos/{owner}/{repo}/issues/5/comments' -f body='@codex review'",
+    "env -S 'GH_REPO=other/repo gh' pr comment 5 -b '@codex review'",
   ]) assert.equal(run(command), null, command);
+  assert.equal(run("gh pr comment 5 -b '@codex review'", { GH_REPO: 'other/repo' }), null, 'the ambient GH_REPO');
+  for (const command of ["sudo -E gh pr comment 5 -b '@codex review'", "sudo --preserve-env gh pr comment 5 -b '@codex review'",
+    "sudo --preserve-env=PATH,GH_REPO gh pr comment 5 -b '@codex review'", "sudo -nE gh pr comment 5 -b '@codex review'"]) {
+    assert.equal(run(command, { GH_REPO: 'other/repo' }), null, command);
+  }
+  assert.match(run("sudo --preserve-env=\"$KEEP\" gh pr comment 5 -b '@codex review'", { GH_REPO: 'other/repo' }) ?? 'passed', /^Blocked/);
+  assert.match(run("sudo --preserve-env=PATH gh pr comment 5 -b '@codex review'", { GH_REPO: 'other/repo' }) ?? 'passed', /^Blocked/);
+  for (const command of ["env -u GH_REPO gh pr comment 5 -b '@codex review'", "env -i gh pr comment 5 -b '@codex review'",
+    "env -i PATH=/bin gh pr comment 5 -b '@codex review'", "GH_REPO=acme/notes gh pr comment 5 -b '@codex review'"]) {
+    assert.match(run(command, { GH_REPO: 'other/repo' }) ?? 'passed', /^Blocked/, command);
+  }
+  assert.equal(run("GH_REPO=acme/notes gh pr comment 5 -R other/repo -b '@codex review'"), null, '-R wins over GH_REPO');
   assert.match(run('gh pr comment -b "@codex review"'), /the pull request number could not be read/);
   assert.match(run('gh pr create -t x -b y --reviewer chatgpt-codex-connector[bot]'), /could not be read/, 'a new pull request has no review yet');
 });

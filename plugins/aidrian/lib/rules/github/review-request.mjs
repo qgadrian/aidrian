@@ -59,7 +59,9 @@ export function readRequests({ program, args, environment = [] }, reviewer, read
   const [first, second, target] = words.map((token) => token.text);
   // -R names the repository; else a pull request or issue URL does; else GH_REPO, which gh reads only without either.
   const urlRepo = /\/(?:pull|issues)\//u.test(target ?? '') ? repoName(target) : null;
-  const targetRepo = literal(last('-R', '--repo')) ?? urlRepo ?? ghRepo;
+  // An -R the rule cannot read (`-R "$R"`) may name this repository: it counts as this one.
+  const flagRepo = last('-R', '--repo');
+  const targetRepo = flagRepo ? literal(flagRepo) : urlRepo ?? ghRepo;
   if (first === 'api') return apiRequests(words[1], flags, read, ghRepo);
   const isComment = ['pr', 'issue'].includes(first) && second === 'comment';
   if (isComment || (first === 'pr' && second === 'review')) {

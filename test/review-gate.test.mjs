@@ -77,6 +77,7 @@ test('gh comment requests are refused until a review is on record, in every way 
     "GH_REPO=other/notes gh api 'repos/acme/{repo}/issues/5/comments' -f body='@codex review'",
     "GH_REPO=github.com/acme/notes gh api 'repos/{owner}/{repo}/issues/5/comments' -f body='@codex review'",
     "GH_REPO=other/repo env --un=GH_REPO gh pr comment 5 -b '@codex review'",
+    "GH_REPO=other/repo gh pr comment 5 -R \"$REPO\" -b '@codex review'",
   ];
   for (const command of commands) assert.match(run(command) ?? 'passed', /^Blocked: this asks the review bot to review pull request #5,/, command);
   assert.match(run(commands[0]), /against docs\/review-checklist\.md/);

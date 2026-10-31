@@ -213,6 +213,7 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
   const flags = [];
   const operands = [];
   let folder = null;
+  let suffix = null;
   let ended = false;
   for (let i = 0; i < args.length; i += 1) {
     const { text } = args[i];
@@ -225,6 +226,7 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
       const cluster = SHORT_VALUES.has(program) ? withoutShortValues(text, program) : text;
       const { options, value } = readShortOptions(cluster, valueFlags, REST_VALUES.get(program));
       flags.push(...options);
+      if (SCRIPT_OPTIONS.has(program) && value?.option === '-i') suffix = { text: value.attached ?? '', dynamic: args[i].dynamic };
       if (CHANGES_FOLDER.get(program)?.includes(value?.option)) {
         // Each folder change is relative to the one before: `ruby -C one -C two` runs in one/two.
         const next = value.attached === null ? args[i + 1] ?? null : { text: value.attached, dynamic: args[i].dynamic };
@@ -253,7 +255,10 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
   if (SCRIPT_OPTIONS.has(program)) {
     // perl -i and ruby -i edit their files in place; without -i they only read them.
     if (!flags.includes('-i')) return [];
-    const files = flags.some((flag) => SCRIPT_OPTIONS.get(program).includes(flag)) ? operands : operands.slice(1);
+    const edited = flags.some((flag) => SCRIPT_OPTIONS.get(program).includes(flag)) ? operands : operands.slice(1);
+    // A suffix also writes a backup: `-i.bak` beside each file, `-i'old/*'` with `*` for the file's name.
+    const backups = suffix?.text ? edited.map((token) => ({ ...token, dynamic: token.dynamic || suffix.dynamic, text: backupOf(token.text, suffix.text) })) : [];
+    const files = [...edited, ...backups];
     // ruby -C and -x, and perl -x, run in the folder they name: a relative file is read from there.
     if (folder === null || folder.text === '') return files;
     return files.map((token) => (path.isAbsolute(token.text) ? token : { ...token, text: path.join(folder.text, token.text), dynamic: token.dynamic || folder.dynamic }));
@@ -264,6 +269,13 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
   if (!inPlace) return [];
   const scripted = flags.some((flag) => flag === '-e' || flag === '-f' || isLongOption(flag, '--expression', '--e') || isLongOption(flag, '--file', '--fi'));
   return scripted ? operands : operands.slice(1);
+}
+
+// The backup an in-place edit with `suffix` writes for `file` (perlrun -i): each `*` is the file's name, and a suffix
+// without one is appended. A backup path is relative to the file's folder.
+function backupOf(file, suffix) {
+  if (!suffix.includes('*')) return `${file}${suffix}`;
+  return path.join(path.dirname(file), suffix.replaceAll('*', path.basename(file)));
 }
 
 // A perl or ruby option cluster without the values of its fixed-shape options: `-0777pi` reads as `-0pi`. What follows

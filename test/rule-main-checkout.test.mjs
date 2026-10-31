@@ -107,12 +107,12 @@ test('bashTargets finds the certain write targets, resolved against cwd, and not
   assert.deepEqual(at('node build.mjs &> out.log'), ['out.log']);
   assert.deepEqual(at("sed -i 's/a/b/' src/a.ts"), ['src/a.ts']);
   assert.deepEqual(at("perl -pi -e 's/a/b/' src/a.ts src/b.ts"), ['src/a.ts', 'src/b.ts']);
-  assert.deepEqual(at("perl -i.bak -pe 's/a/b/' src/a.ts"), ['src/a.ts']);
+  assert.deepEqual(at("perl -i.bak -pe 's/a/b/' src/a.ts"), ['src/a.ts', 'src/a.ts.bak']);
   assert.deepEqual(at("perl -0777 -i -pe 's/a/b/' src/a.ts"), ['src/a.ts']);
   assert.deepEqual(at("perl -Mstrict -pi -e 's/a/b/' src/a.ts"), ['src/a.ts'], '-M takes only the rest of its word');
   assert.deepEqual(at("perl -I lib -i -pe 's/a/b/' src/a.ts"), ['src/a.ts'], '-I takes the next word');
   assert.deepEqual(at("perl -i -e 's/a/b/' -- src/a.ts"), ['src/a.ts']);
-  assert.deepEqual(at('perl -pie script.pl src/a.ts'), ['src/a.ts'], '-pie is -i with the suffix e, then a script file');
+  assert.deepEqual(at('perl -pie script.pl src/a.ts'), ['src/a.ts', 'src/a.tse'], '-pie is -i with the suffix e, then a script file');
   assert.deepEqual(at('perl -i script.pl src/a.ts'), ['src/a.ts'], 'without -e the first operand is the script');
   assert.deepEqual(at("perl -ne 'print' src/a.ts"), [], 'without -i perl only reads');
   assert.deepEqual(at("ruby -rjson -i -pe 'sub(/a/, \"b\")' src/a.ts"), ['src/a.ts']);
@@ -123,6 +123,9 @@ test('bashTargets finds the certain write targets, resolved against cwd, and not
   assert.deepEqual(at("ruby -W0pi -e 'x' file"), ['file'], 'ruby -W takes a level');
   assert.deepEqual(at("ruby -Kupi -e 'x' file"), ['file'], 'ruby -K takes one letter');
   assert.deepEqual(at("ruby -KEpi -e 'x' file"), ['file']);
+  assert.deepEqual(at("perl -i.bak -pe 'x' file"), ['file', 'file.bak'], 'a suffix writes a backup');
+  assert.deepEqual(at("perl -i'../main/*' -pe 'x' file"), ['file', '../main/file'], 'a * suffix names the backup');
+  assert.deepEqual(at("ruby -i.orig -pe 'x' src/a.rb"), ['src/a.rb', 'src/a.rb.orig']);
   assert.deepEqual(at("ruby --disable gems -pi -e 'x' file"), ['file']);
   assert.deepEqual(at("ruby --disable=gems -pi -e 'x' file"), ['file']);
   assert.deepEqual(at("perl -dpi -e 'x' file"), ['file'], 'perl -d takes only t and :MOD');

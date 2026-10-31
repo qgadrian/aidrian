@@ -38,8 +38,9 @@ export function maskCode(text) {
       }
       continue;
     }
-    if (char === '\\' && state !== '//' && state !== '/*' && next !== undefined && next !== '\n') {
-      out += '  ';
+    if (char === '\\' && state !== '//' && state !== '/*' && next !== undefined) {
+      // An escaped line break continues the string on the next line.
+      out += next === '\n' ? ' \n' : '  ';
       i += 1;
       continue;
     }

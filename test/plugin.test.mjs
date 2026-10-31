@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
@@ -227,13 +227,22 @@ test('plugin content holds no project-specific paths or leftover template marker
 
 // The repository names no project it came from, no person, and no third-party skill. The owner's GitHub slug appears only
 // where a user needs it to install the plugin: the README, the manifests' repository URLs, and the example's marketplace source.
-// The brackets keep this file from matching its own patterns; the owner comes from the manifest for the same reason.
+// Private words (source projects, their tracker keys, people) are never written here, where they would be public:
+// they live in the git-ignored `.banned-terms.local`, one case-insensitive regular expression per line, `#` for a comment.
+// Without that file only the public patterns run. The brackets keep this file from matching its own patterns; the owner
+// comes from the manifest for the same reason.
+const LOCAL_TERMS = path.join(ROOT, '.banned-terms.local');
+const localTerms = () =>
+  existsSync(LOCAL_TERMS)
+    ? readFileSync(LOCAL_TERMS, 'utf8').split('\n').map((line) => line.trim()).filter((line) => line && !line.startsWith('#')).map((line) => new RegExp(line, 'iu'))
+    : [];
+
 test('no tracked file names a source project, its tracker keys, a person, or a third-party skill', () => {
   const { repository } = json('plugins/aidrian/plugin.json');
   const slug = new URL(repository).pathname.replace(/^\/|\.git$/g, '');
   const owner = slug.split('/')[0];
   const installFiles = ['README.md', 'NOTICE', 'docs/adopting.md', 'examples/consumer/.claude/settings.json', 'plugins/aidrian/.claude-plugin/plugin.json', 'plugins/aidrian/plugin.json'];
-  const banned = [/t[a]blesit/i, /T[B]L-\d+/, /\ba[d]ri[aá]n\b/i, /q[u]intas/i];
+  const banned = [...localTerms()];
   const hits = [];
   for (const file of execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' }).split('\0').filter(Boolean)) {
     const text = `${file}\n${readFileSync(path.join(ROOT, file), 'utf8')}`;
@@ -242,6 +251,11 @@ test('no tracked file names a source project, its tracker keys, a person, or a t
     if (outsideInstall.toLowerCase().includes(owner.toLowerCase())) hits.push(`${file}: the owner's GitHub name`);
   }
   assert.deepEqual(hits, []);
+});
+
+test('the local banned terms file stays out of git', () => {
+  const ignored = spawnSync('git', ['check-ignore', '-q', '.banned-terms.local'], { cwd: ROOT });
+  assert.equal(ignored.status, 0, '.banned-terms.local must be git-ignored');
 });
 
 test('only lib/project.mjs names the project folder; other plugin code asks it for paths', () => {

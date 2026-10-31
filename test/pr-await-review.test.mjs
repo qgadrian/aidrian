@@ -28,6 +28,8 @@ import {
   REQUEST_INSTRUCTIONS,
   codexRounds,
   recordedMaxRounds,
+  roundCapProblem,
+  ROUNDS_OVERRIDE,
   runAwaitReview,
   latestTriggerHead,
   reviewedCommit,
@@ -1133,4 +1135,24 @@ test('localGit: the pushed head is the upstream of the same branch in the same r
   assert.equal(local.behind(c, a), false);
   assert.equal(local.behind(c, c), false);
   assert.equal(local.behind('0123456789abcdef0123456789abcdef01234567', c), false, 'a commit git does not have');
+});
+
+test('raising --max-rounds past the config cap needs the Human override, whatever the reviewer', async () => {
+  assert.equal(roundCapProblem(3, 3, {}), null, 'at the cap');
+  assert.equal(roundCapProblem(2, 3, {}), null, 'a lower cap always runs');
+  assert.match(roundCapProblem(5, 3, {}) ?? '', /AIDRIAN_ALLOW_EXTRA_ROUNDS=1 in their own shell/);
+  assert.equal(roundCapProblem(5, 3, { [ROUNDS_OVERRIDE]: '1' }), null);
+  const config = { github: { reviewer: 'someone[bot]', maxReviewRounds: 3, reviewGate: { enabled: false } } };
+  const gh = () => {
+    throw new Error('gh must not run');
+  };
+  const errors = [];
+  const error = console.error;
+  console.error = (line) => errors.push(line);
+  try {
+    assert.equal(await runAwaitReview(['42', '--request', '--max-rounds', '9'], config, null, { gh, env: {} }), 1);
+  } finally {
+    console.error = error;
+  }
+  assert.match(errors.join('\n'), /goes past config\.json github\.maxReviewRounds \(3\)/);
 });

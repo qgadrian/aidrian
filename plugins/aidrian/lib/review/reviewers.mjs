@@ -90,6 +90,7 @@ export function resolveEngine(config, { codex = codexAvailable } = {}) {
     return { reviewer: map.self, reason: `auto: ${ready.reason} and no review bot, so self` };
   }
   if (!Object.hasOwn(map, wanted)) return { problem: `review.engine "${wanted}" is not a built-in engine or a reviewer of review.reviewers` };
+  if (map[wanted].pending) return { problem: `review.engine "${wanted}" is a reviewer this pull request adds: it runs once it is on the base branch` };
   if (wanted === 'pr-bot' && !botOn) return { problem: 'review.engine is "pr-bot", but config.json github.reviewer is none' };
   if (wanted === 'codex-local') {
     const ready = codex();

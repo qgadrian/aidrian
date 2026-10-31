@@ -310,7 +310,7 @@ test('the plan command runs from the base: a PR that edits it, or adds one, cann
 test('a PR cannot redefine a project reviewer: the base definition runs, and a new name is only added', () => {
   const base = { rules: [], ignore: [], nonBehaviour: [], flows: {}, planCommand: null, reviewers: { lint: { kind: 'exec', command: ['bin/strict'] } } };
   const head = { ...base, reviewers: { lint: { kind: 'exec', command: ['true'] }, extra: { kind: 'agent', agent: 'x' } } };
-  assert.deepEqual(reviewInForce(base, head).review.reviewers, { lint: { kind: 'exec', command: ['bin/strict'] }, extra: { kind: 'agent', agent: 'x' } });
+  assert.deepEqual(reviewInForce(base, head).review.reviewers, { lint: { kind: 'exec', command: ['bin/strict'] }, extra: { kind: 'agent', agent: 'x', pending: true } });
   assert.deepEqual(reviewInForce(base, head).changed, ['reviewers']);
 });
 
@@ -450,4 +450,50 @@ test('the review gate`s checklist reaches every reviewer', async (t) => {
   assert.equal(pass.checklist.path, 'docs/flows/booking.md');
   assert.match(pass.checklist.text, /No double booking/u);
   assert.match(pass.brief, /against the checklist/u);
+});
+
+test('the head`s review config comes from the head commit, even when the checkout is on another branch', async (t) => {
+  const flows = { pay: { files: ['src/pay/**'], invariants: [{ id: 'cap', text: 'refund cap' }], signoff: 'human' } };
+  const r = repo(t, { headConfig: { version: 1, review: { flows } }, change: (write) => write('src/pay/a.js', '1\n') });
+  const head = r.git('rev-parse', 'HEAD');
+  r.git('switch', '-q', 'main');
+  r.gh.pr = () => ({ number: 7, headRefOid: head, baseRefName: 'main', url: 'u' });
+  const result = await r.step({ exec: clean });
+  assert.deepEqual(result.plan.flows.sort(), ['harness-config', 'pay']);
+});
+
+test('the review bot: asked only after earlier passes, with the gate marker and the plan`s cap; an answer for another head counts for nothing', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, github: { reviewGate: { enabled: true, checklist: null } } }, change: (write) => write('src/app.js', 'w\n') });
+  const off = () => ({ ok: false, reason: 'the codex CLI is not installed' });
+  const calls = [];
+  const bot = (answer) => async (opts, deps) => (calls.push([opts.maxRounds, deps.gate().marker]), answer);
+  const first = await r.step({ codex: off, awaitBot: bot({}) });
+  assert.equal(first.status, 'dispatch');
+  assert.equal(calls.length, 0, 'the bot waits for the code-reviewer');
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: first.dispatch[0].pass, head: first.head, reviewer: 'code-reviewer', findings: 1, fixed: 1 });
+  const moved = await r.step({ codex: off, awaitBot: bot({ status: 'received', head_sha: 'f'.repeat(40), signal: { kind: 'thumbs_up' } }) });
+  assert.equal(moved.status, 'incomplete');
+  assert.equal(calls[0][0], 3, 'the request carries the plan`s cap, never an unlimited one');
+  assert.match(calls[0][1], /aidrian-review: pr=7 repo=o\/r head=[0-9a-f]{40} reviewer=code-reviewer findings=1 fixed=1/u);
+  const ok = await r.step({ codex: off, awaitBot: bot({ status: 'received', head_sha: first.head, signal: { kind: 'thumbs_up' } }) });
+  assert.equal(ok.status, 'received');
+});
+
+test('a reviewer the pull request adds runs once merged; picking it as the engine says so', async (t) => {
+  const r = repo(t, { headConfig: { version: 1, review: { reviewers: { fresh: { kind: 'exec', command: ['node', 'scripts/fresh.mjs'] } } } }, change: (write) => write('src/app.js', 'n\n') });
+  r.write('.aidrian.local.json', JSON.stringify({ review: { engine: 'fresh' } }));
+  r.git('add', '-A');
+  r.git('commit', '-q', '-m', 'engine');
+  const result = await r.step({ exec: clean });
+  assert.equal(result.status, 'unsatisfied');
+  assert.match(result.reason, /a reviewer this pull request adds/u);
+});
+
+test('base code that imports an installed dependency runs: the checkout`s dependency folders are linked in', async (t) => {
+  const planner = "import dep from 'dep'; let s='';process.stdin.on('data',c=>s+=c).on('end',()=>console.log(JSON.stringify({depth:dep,stages:[]})))";
+  const r = repo(t, { baseConfig: { version: 1, review: { planCommand: 'node scripts/plan.mjs' } }, baseFiles: { 'scripts/plan.mjs': planner, '.gitignore': 'node_modules\n' }, change: (write) => write('src/app.js', 'd\n') });
+  r.write('node_modules/dep/package.json', JSON.stringify({ name: 'dep', type: 'module', main: 'index.js' }));
+  r.write('node_modules/dep/index.js', "export default 'single';");
+  const result = await r.step({ exec: clean });
+  assert.equal(result.depth, 'single');
 });

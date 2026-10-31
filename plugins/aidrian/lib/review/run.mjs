@@ -15,18 +15,19 @@
 // docs/review.md describes the plan, the stages, and the record.
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { runGh } from '../gh.mjs';
 import { runGit } from '../git.mjs';
+import { markerFor } from '../review-gate.mjs';
 import { isolate } from './env.mjs';
 import { changedFiles, diffLines, fileAt, isAncestor, isClean, mergeBase, resolve } from './diff.mjs';
 import { checkReview } from './config.mjs';
 import { citationProblem, flowState, invariantsOf, parseVerdicts } from './flows.mjs';
 import { computeVerdict } from '../pr-checks.mjs';
-import { globPattern } from '../fs.mjs';
+import { globPattern, isDirectory } from '../fs.mjs';
 import { buildPlan, classify, flowsInForce, HARNESS_FLOW, mergePlans, validatePlan } from './plan.mjs';
 import { BUILT_IN, resolveEngine, reviewerMap, runExec, satisfies } from './reviewers.mjs';
 import { emptyState, isSummary, newer, readLocalState, stateFromComment, summaryBody, writeLocalState } from './state.mjs';
@@ -36,6 +37,8 @@ export const EXIT = Object.freeze({
   timed_out: 2, checks_pending: 2, blocked_quota: 3, round_limit: 4, unsatisfied: 6, incomplete: 7, stuck: 8, too_large: 8,
 });
 export const MAX_ATTEMPTS = 3;
+// The folders of installed dependencies linked into a base worktree.
+export const DEPENDENCY_DIRS = Object.freeze(['node_modules', 'vendor', '.venv', 'venv']);
 export const MAX_LINES = 20000;
 
 const HARNESS_INVARIANT = Object.freeze({
@@ -49,20 +52,19 @@ export const defaultGh = {
   comments: (repo, n) => JSON.parse(runGh(['api', `repos/${repo}/issues/${n}/comments`, '--paginate', '--slurp']) || '[]').flat(),
   post: (repo, n, body) => JSON.parse(runGh(['api', `repos/${repo}/issues/${n}/comments`, '--method', 'POST', '-f', `body=${body}`])),
   edit: (repo, id, body) => JSON.parse(runGh(['api', `repos/${repo}/issues/comments/${id}`, '--method', 'PATCH', '-f', `body=${body}`])),
-  checks: (repo, n) => {
-    try {
-      return JSON.parse(runGh(['pr', 'checks', String(n), '-R', repo, '--json', 'name,state']) || '[]');
-    } catch (error) {
-      // gh exits non-zero while checks fail or are pending, and still prints the rows.
-      return JSON.parse(error.stdout || '[]');
-    }
-  },
+  // The check runs of one commit, as `gh pr checks` rows: the evidence must be for the head under review.
+  checks: (repo, sha) => JSON.parse(runGh(['api', `repos/${repo}/commits/${sha}/check-runs`, '--paginate', '--slurp']) || '[]')
+    .flatMap((page) => page.check_runs ?? [])
+    .map((run) => ({ name: run.name, state: run.status === 'completed' ? String(run.conclusion ?? 'unknown').toUpperCase() : 'PENDING' })),
 };
 
 // The `review` config in force: the base branch's, which a pull request cannot weaken, plus what the head adds.
 // `changed` lists the review settings the head changes, which trigger the harness-config flow.
 export function reviewInForce(baseReview, headReview) {
-  if (!baseReview) return { review: { ...headReview, planCommand: null }, changed: headReview.planCommand ? ['planCommand'] : [] };
+  if (!baseReview) {
+    const pending = Object.fromEntries(Object.entries(headReview.reviewers).map(([name, reviewer]) => [name, { ...reviewer, pending: true }]));
+    return { review: { ...headReview, planCommand: null, reviewers: pending }, changed: ['planCommand', 'reviewers'].filter((key) => JSON.stringify(headReview[key]) !== JSON.stringify(key === 'planCommand' ? null : {})) };
+  }
   const changed = [];
   for (const key of ['rules', 'ignore', 'nonBehaviour', 'flows', 'planCommand', 'reviewers']) {
     if (JSON.stringify(baseReview[key]) !== JSON.stringify(headReview[key])) changed.push(key);
@@ -77,13 +79,16 @@ export function reviewInForce(baseReview, headReview) {
       // The plan command and the reviewers a project defines are code: only the base branch's run. A head may add a
       // reviewer under a new name, never redefine one, and a plan command it adds runs once it is merged.
       planCommand: baseReview.planCommand,
-      reviewers: { ...headReview.reviewers, ...baseReview.reviewers },
+      reviewers: {
+        ...Object.fromEntries(Object.entries(headReview.reviewers).filter(([name]) => !Object.hasOwn(baseReview.reviewers, name)).map(([name, reviewer]) => [name, { ...reviewer, pending: true }])),
+        ...baseReview.reviewers,
+      },
     },
     changed,
   };
 }
 
-// The base branch's `review` group, or null when the base has no config.
+// The `review` group of the project config at `commit`, or null when that commit has no config.
 function baseReviewAt(project, commit) {
   const text = fileAt(project.root, commit, project.paths.config);
   if (text === null) return null;
@@ -110,6 +115,11 @@ async function inBaseWorktree(root, baseTip, use) {
   if (added.status !== 0) {
     rmSync(dir, { recursive: true, force: true });
     throw new Error(`could not check out the base to run the project's review code: ${(added.stderr || '').trim()}`);
+  }
+  // The checkout's installed dependencies, linked in, so base code that imports them runs. They are the checkout's
+  // install, not the base's: the code is pinned to the base, its packages to what this machine has.
+  for (const name of DEPENDENCY_DIRS) {
+    if (isDirectory(path.join(root, name)) && !existsSync(path.join(tree, name))) symlinkSync(path.join(root, name), path.join(tree, name));
   }
   try {
     return await use(tree);
@@ -154,8 +164,11 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   const base = mergeBase(root, baseTip, head);
 
   // The config in force, and what in the change touches how the project is reviewed.
+  // The head's review config is read from the head commit, not this checkout, which may be on another branch; only
+  // machine settings (the engine) come from the checkout.
   const baseReview = baseReviewAt(project, baseTip);
-  const { review, changed } = reviewInForce(baseReview, config.review);
+  const headReview = baseReviewAt(project, head) ?? checkReview({}, project.paths.config, []);
+  const { review, changed } = reviewInForce(baseReview, headReview);
   const effective = { ...config, review };
   const changes = changedFiles(root, base, head);
   const changedPaths = new Set(changes.map((change) => change.file));
@@ -244,7 +257,9 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   const flowStatus = (flow) => flowState(flow.invariants, verdictsFor(flow.id), (evidence) => citationProblem(evidence, { root, head }));
 
 
-  const finalStage = plan.stages.at(-1) ?? null;
+  // The stage the last round runs first: the last one that needs no earlier result, so never the review bot, which
+  // waits for every earlier pass.
+  const finalStage = [...plan.stages].reverse().find((stage) => stage.passes.every((pass) => map[pass.reviewer]?.kind !== 'remote')) ?? null;
   const current = state.rounds.at(-1);
   const newRound = current?.head !== head;
   // The last round runs the final stage first, so an independent review always happens before the cap. A round that
@@ -306,12 +321,20 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
       }
       const remote = pending.find((pass) => map[pass.reviewer]?.kind === 'remote');
       if (remote) {
+        // The bot is asked only after every earlier pass has a result, with the review-gate marker from the
+        // code-reviewer's pass, and under the plan's own cap: nothing here raises the cap the request records.
+        const waiting = plan.stages.slice(0, plan.stages.indexOf(stage)).flatMap((each) => each.passes).filter((pass) => !resultFor(pass));
+        if (waiting.length) return finish('incomplete', { reason: `the review bot waits for ${waiting.map((pass) => pass.id).join(', ')}`, retry_recommended: true });
+        const reviewed = Object.values(state.passes).find((result) => result.reviewer === 'code-reviewer' && result.head === head);
+        const gate = () => ({ marker: reviewed ? markerFor({ pr: n, repo, head, reviewer: 'code-reviewer', findings: reviewed.findings, fixed: reviewed.findings - reviewed.open }) : null });
         const wait = awaitBot ?? (await import('../pr-await-review.mjs')).awaitReview;
-        const bot = await wait({ pr: String(n), repo, head: null, request: true, reviewer: config.github.reviewer, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds: Number.MAX_SAFE_INTEGER }, {});
-        if (bot.status === 'timed_out' || bot.status === 'blocked_quota') {
+        const bot = await wait({ pr: String(n), repo, head, request: true, reviewer: config.github.reviewer, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds }, { gate });
+        if (bot.status === 'timed_out' || bot.status === 'blocked_quota' || bot.status === 'round_limit') {
           if (!bot.requested) undoRound();
           return finish(bot.status, { bot });
         }
+        // A push during the wait: the bot's answer is for another commit, so it counts for nothing here.
+        if (bot.head_sha && bot.head_sha !== head) return finish('incomplete', { reason: `the pull request moved to ${String(bot.head_sha).slice(0, 7)} during the wait: run the step again`, retry_recommended: true });
         const open = bot.signal?.kind === 'thumbs_up' ? 0 : Math.max(1, bot.signal?.line_comments ?? 0);
         state.passes[remote.id] = { head, reviewer: remote.reviewer, findings: open, open, bot: { kind: bot.signal?.kind ?? null, review_id: bot.signal?.review_id ?? null } };
         recorded = true;
@@ -340,7 +363,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   if (unaccepted.length) return finish(lastRound ? 'round_limit' : 'fix_required', { stage: 'evidence', tests_removed: unaccepted });
   const wanted = [...new Set(plan.flows.flatMap((flow) => review.flows[flow.id]?.checks ?? []))];
   if (wanted.length) {
-    const rows = gh.checks(repo, n).filter((row) => wanted.some((part) => row.name.includes(part)));
+    const rows = gh.checks(repo, head).filter((row) => wanted.some((part) => row.name.includes(part)));
     const verdict = computeVerdict(rows, { requiredChecks: wanted });
     if (verdict.verdict === 'pending') return finish('checks_pending', { checks: verdict.pending });
     if (verdict.verdict === 'failing') return finish(lastRound ? 'round_limit' : 'fix_required', { stage: 'evidence', checks_failing: [...verdict.failing, ...(verdict.unexpected_skips ?? [])] });

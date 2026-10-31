@@ -141,7 +141,9 @@ A project adds its own in `review.reviewers`:
   malformed findings are dropped and named. A failure is `incomplete` and retried; the third is `stuck`.
 - A project's own exec reviewer runs from a temporary checkout of the base, like the plan command, and reads the head
   through git: a pull request that edits its script cannot run its own version, and the edit triggers
-  `harness-config`. `codex-local` reads the checkout at the head.
+  `harness-config`. The checkout's installed dependency folders (`node_modules`, `vendor`, `.venv`) are linked in, so
+  the base code runs with this machine's packages. A reviewer the pull request adds runs once it is merged.
+  `codex-local` reads the checkout at the head.
 - `agent`: the command cannot start an agent, so it returns `dispatch` and the skill runs it and records the result.
 
 ### The engine
@@ -160,7 +162,9 @@ when nothing is left to fix, and stops at the cap when a fix would need another 
 its quota gives the round back. After a fix, each pass re-reviews only what changed since its last review; a pass
 the change does not touch carries forward.
 
-`--with-bot` adds the review bot as a last stage after this machine's engine.
+`--with-bot` adds the review bot as a last stage after this machine's engine. The bot is asked only once every
+earlier pass has a result, with the review gate's marker, under the plan's round cap; an answer for a commit other
+than the one under review counts for nothing. A flow's required checks are read for that commit too.
 
 ## The plan command
 
@@ -172,6 +176,7 @@ nobody can run is refused. The command and its files are the base branch's, like
 
 ## The record
 
-Each step writes the review's record to the state folder and to one summary comment on the pull request, edited in
+The review config of the pull request is read from its head commit, so a step run from another branch plans the
+same review. Each step writes the review's record to the state folder and to one summary comment on the pull request, edited in
 place: the rounds, each pass's result per head, the verdicts, the sign-offs, and the overrides used. Another machine
 reads it from the comment. It is the reviewers' word, not proof, and it is all visible on the pull request.

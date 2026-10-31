@@ -26,6 +26,12 @@ Editing never happens in the main checkout, the parent folder of `git rev-parse 
   - When the command reports that the branch is checked out in the main checkout, ask the Human whether to work there instead.
 - Give the worktree's absolute path to every editing dispatch.
 
+## Dispatches that go quiet
+
+A background agent that stays silent may be waiting on a permission prompt that no one sees.
+Before you dispatch the same work again, read what it has done so far, and ask the Human whether a prompt is waiting.
+Never put a second agent on work the first may still be doing.
+
 ## 2. Parallel slices
 
 - Slices run in parallel only when their files are disjoint and they share no generated file, such as a lockfile.
@@ -53,6 +59,7 @@ Editing never happens in the main checkout, the parent folder of `git rev-parse 
 
 ## 4. Review findings
 
+- Check each finding's premise first, as `references/review-rules.md` § Verify the premise says.
 - Run each finding through `aidrian pr disposition` with the reviewer's severity, likelihood, affects, and cost.
   A finding missing an axis is handled as `references/review-rules.md` says for `needs_axis`.
 - `fix_now` goes to its owner, highest likelihood × impact first.

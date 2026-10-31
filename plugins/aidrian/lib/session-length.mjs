@@ -50,3 +50,23 @@ export function handoffReason(mode, over) {
     'If they choose to hand off, run the session-handoff skill. If they keep going, carry on: this question does not come back in this session. ' +
     'Do no other work before you ask.';
 }
+
+// What the plan hook adds once the Human approves a plan, or null. Half a limit is enough here: the plan is on disk and
+// nothing is in flight, so a handoff costs least at this moment, and the build would carry the whole planning context.
+export function planApprovedContext(mode, length, limits) {
+  if (mode === 'off') return null;
+  const half = overLimits(length, {
+    maxTokens: Math.ceil(limits.maxTokens / 2),
+    maxCalls: Math.ceil(limits.maxCalls / 2),
+    maxHours: limits.maxHours / 2,
+  });
+  if (!half.length) return null;
+  const head = `The plan is approved, and this session already carries ${half.join(', ')}. ` +
+    'Building in a fresh session that reads the plan costs less per turn, and now no worktree, branch, or running agent needs a brief. ';
+  if (mode === 'auto') {
+    return `${head}Before the first build step, run the session-handoff skill to write the brief, then tell the user its path and that ` +
+      'the session-continue skill resumes it. Build here instead only when the rest takes a few calls.';
+  }
+  return `${head}Before the first build step, ask the user one short question: hand off now, or build here? ` +
+    'Skip the question only when the rest takes a few calls.';
+}

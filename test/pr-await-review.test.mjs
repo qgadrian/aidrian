@@ -418,7 +418,7 @@ const fakeGh = (frames, { head = 'bbb', draft = false, created = T(0), headCommi
     api: (p, { method, fields } = {}) => {
       if (method === 'POST') { posts.push({ p, fields }); return {}; }
       const f = frame();
-      if (p.endsWith('/pulls/42')) return { draft, created_at: created, head: { sha: f.head ?? head } };
+      if (p.endsWith('/pulls/42')) return { draft, created_at: created, head: { sha: f.head ?? head, ref: 'feat' } };
       if (p.includes('/commits/')) return { commit: { committer: { date: f.headCommittedAt ?? headCommittedAt } } };
       if (p.endsWith('/reviews')) return f.reviews ?? [];
       if (p.endsWith('/pulls/42/comments')) return f.reviewComments ?? [];
@@ -434,6 +434,35 @@ const clock = () => {
   let t = Date.parse(T(10));
   return { now: () => t, sleep: async (s) => { t += s * 1000; } };
 };
+
+test('awaitReview: a review of the head before the push never answers for it while GitHub lags', async () => {
+  // GitHub still reports aaa, which the bot reviewed, for a poll after the push of ccc.
+  const review = { id: 1, user: BOT, submitted_at: T(6), commit_id: 'aaa', state: 'COMMENTED' };
+  const git = { pushedHead: (ref) => (ref === 'feat' ? 'ccc' : null), descends: () => false };
+  const gh = fakeGh([{ head: 'aaa', reviews: [review] }, { head: 'ccc', reviews: [review] }]);
+  const c = clock();
+  const sleep = async (sec) => { await c.sleep(sec); gh.advance(); };
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { gh, git, now: c.now, sleep });
+  assert.equal(r.status, 'timed_out', 'the review of aaa is not already_present');
+  assert.equal(gh.posts.length, 1, 'one request, for the pushed head only');
+  assert.match(gh.posts[0].fields.body, /head=ccc/);
+  assert.equal(r.pushed_head, 'ccc');
+  assert.equal(r.head_lag, undefined);
+
+  const stuck = fakeGh([{ head: 'aaa', reviews: [review] }]);
+  const r2 = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 60, intervalSec: 60 }, { gh: stuck, git, ...clock() });
+  assert.equal(r2.status, 'timed_out');
+  assert.equal(r2.head_lag, true);
+  assert.equal(stuck.posts.length, 0, 'nothing is posted for a head GitHub has not caught up to');
+
+  // A head that already contains the push, or --head naming GitHub's head, is no lag.
+  const ahead = { pushedHead: () => 'ccc', descends: () => true };
+  const r3 = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 0, intervalSec: 60 }, { gh: fakeGh([{ head: 'aaa', reviews: [review] }]), git: ahead, ...clock() });
+  assert.equal(r3.status, 'already_present');
+  const r4 = await awaitReview({ pr: '42', repo: null, head: 'aaa', reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 0, intervalSec: 60 }, { gh: fakeGh([{ head: 'aaa', reviews: [review] }]), git, ...clock() });
+  assert.equal(r4.status, 'already_present');
+  assert.throws(() => parseArgs(['42', '--head', 'main']), /--head must be a commit SHA/);
+});
 
 test('awaitReview: the final sleep is clamped to the remaining budget, never a full interval past it', async () => {
   // Timeout 100 s, interval 60 s: the loop sleeps 60, then 40 — not 60 + 60,
@@ -1070,7 +1099,7 @@ test('aidrian pr prints its usage for an unknown action, and await-review report
   const cli = new URL('../plugins/aidrian/bin/aidrian', import.meta.url).pathname;
   const unknown = spawnSync(cli, ['pr', 'merge'], { encoding: 'utf8' });
   assert.deepEqual([unknown.status, unknown.stderr], [1, [
-    'usage: aidrian pr await-review [PR] [--request] [--max-rounds N]',
+    'usage: aidrian pr await-review [PR] [--request] [--max-rounds N] [--head SHA]',
     '       aidrian pr attest PR --head SHA --reviewer WHO --findings N --fixed N [--note T]',
     '       aidrian pr attest PR --check',
     '       aidrian pr checks [PR] [-R OWNER/REPO] [--json]',

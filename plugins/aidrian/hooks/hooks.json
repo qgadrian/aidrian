@@ -34,6 +34,16 @@
         ]
       },
       {
+        "matcher": "EnterWorktree",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PLUGIN_ROOT/scripts/hook-enter-worktree.mjs\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "Bash",
         "hooks": [
           {
@@ -91,6 +101,16 @@
           {
             "type": "command",
             "command": "node \"$CLAUDE_PLUGIN_ROOT/scripts/hook-agent-post.mjs\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PLUGIN_ROOT/scripts/hook-plan-exit.mjs\"",
             "timeout": 5
           }
         ]

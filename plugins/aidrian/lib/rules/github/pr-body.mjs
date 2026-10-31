@@ -295,7 +295,9 @@ function readBody(call, command, cwd) {
   if (!call.bodyFile || call.bodyFile.dynamic || call.bodyFile.text === '-') return null;
   if (cwd === null && !path.isAbsolute(call.bodyFile.text)) return null;
   try {
-    return readFileSync(path.resolve(cwd ?? '/', call.bodyFile.text), 'utf8');
+    // Joined, not resolved: the filesystem follows a symlink before a `..`, as gh opens the operand.
+    const file = call.bodyFile.text;
+    return readFileSync(path.isAbsolute(file) ? file : `${cwd}/${file}`, 'utf8');
   } catch {
     return null;
   }

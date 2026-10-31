@@ -84,6 +84,7 @@ test('a gh or git commit command is judged by its text and its body file; other 
   writeFileSync(path.join(dir, 'real', 'body.md'), 'secretco\n');
   symlinkSync(path.join(dir, 'real', 'nested'), path.join(dir, 'link'));
   assert.match(judge('cd link && gh issue create -F ../body.md'), /in \.\.\/body\.md/, "a symlinked folder's .. is its target's parent");
+  assert.match(judge('gh issue create -F link/../body.md'), /in link\/\.\.\/body\.md/, "so is a symlink's .. inside the operand");
 });
 
 test('the commit-msg hook refuses a private word and ignores comment lines', (t) => {

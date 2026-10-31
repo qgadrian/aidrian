@@ -140,8 +140,9 @@ export function judgeCommand(command, { cwd = process.cwd(), patterns = bannedPa
         found.add(`the unchecked file ${text}: a cd on the line hides its folder, so pass an absolute path`);
         continue;
       }
+      // Joined, not resolved: the filesystem follows a symlink before a `..`, as gh and git open the operand.
       try {
-        for (const hit of bannedHits(readFileSync(path.resolve(folder, text), 'utf8'), patterns)) found.add(`${hit} in ${text}`);
+        for (const hit of bannedHits(readFileSync(path.isAbsolute(text) ? text : `${folder}/${text}`, 'utf8'), patterns)) found.add(`${hit} in ${text}`);
       } catch {
         // A file that cannot be read is gh's or git's error to report.
       }

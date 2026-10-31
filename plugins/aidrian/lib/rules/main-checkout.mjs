@@ -181,7 +181,8 @@ function gitStateChanges(command, cwd, depth = 0, inherited = []) {
     if (!call || !['add', 'commit', 'switch', 'checkout'].includes(call.subcommand)) continue;
     const scope = [...env, ...assignments];
     const folders = gitFolders(call.globals, invocation.chdir, cwd, scope);
-    if (folders === null) continue;
+    // Nothing below costs a git call unless one of the folders is a guarded main checkout.
+    if (folders === null || !folders.some((folder) => guardedMain(folder))) continue;
     // A global option that changes how paths match or which repository is read makes nothing plainly safe.
     const plainGlobals = call.globals.every(({ text }, i) => SAFE_GLOBALS.test(text) || (call.globals[i - 1] && ['-C', '--git-dir', '--work-tree'].includes(call.globals[i - 1].text)));
     const gitEnv = scope.some(({ text }) => GIT_ASSIGNMENT.test(text));
@@ -328,18 +329,30 @@ const isFolder = (file) => {
   }
 };
 
+// The guarded main checkout `at` is in, as { project, config, roots }, or null. Read once per folder per hook run.
+const guardedMains = new Map();
+function guardedMain(at) {
+  if (guardedMains.has(at)) return guardedMains.get(at);
+  let found = null;
+  const folder = existingFolder(at);
+  const project = findProject(folder);
+  if (project) {
+    const { config } = loadConfig(project);
+    const roots = config.git.mainCheckout.guard ? checkoutRoots(folder) : null;
+    if (roots && canonical(roots.current) === canonical(roots.main)) found = { project, config, roots };
+  }
+  guardedMains.set(at, found);
+  return found;
+}
+
 // The deny reason for a git call that changes the main checkout's state, or null. Moving back to the default branch
 // is allowed: it is where the main checkout belongs.
 function gitStateDenial(command, cwd) {
   for (const change of gitStateChanges(command, cwd)) {
     for (const at of change.folders) {
-      const folder = existingFolder(at);
-      const project = findProject(folder);
-      if (!project) continue;
-      const { config } = loadConfig(project);
-      if (!config.git.mainCheckout.guard) continue;
-      const roots = checkoutRoots(folder);
-      if (!roots || canonical(roots.current) !== canonical(roots.main)) continue;
+      const main = guardedMain(at);
+      if (!main) continue;
+      const { project, config, roots } = main;
       if (change.target && change.target === config.git.defaultBranch) continue;
       return reason(`Blocked: ${change.what}, in the main checkout (${roots.main}).`, project, config);
     }

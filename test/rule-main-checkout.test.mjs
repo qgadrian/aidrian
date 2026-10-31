@@ -336,6 +336,10 @@ test('in the main checkout, only named files are staged and only the default bra
   mkdirSync(path.join(separate, '.aidrian'));
   writeFileSync(path.join(separate, '.aidrian/config.json'), JSON.stringify({ version: 1, git: { mainCheckout: { guard: true } } }));
   assert.match(denied(`git --git-dir=${meta} checkout task`, base) ?? '', /main checkout/, 'a separate git folder names its checkout');
+  assert.match(denied(`GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo} git add -A`, base) ?? '', /main checkout/, 'git environment on the command');
+  assert.match(denied(`env GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo} git checkout task`, base) ?? '', /main checkout/);
+  assert.match(denied('git --icase-pathspecs add src/app.js') ?? '', /main checkout/, 'a pathspec option');
+  assert.match(denied(`git -c core.worktree=${repo} add src/app.js`, base) ?? '', /main checkout/, 'a config value');
   execFileSync('git', ['-C', repo, 'rm', '-q', '--cached', 'src/app.js']);
   execFileSync('git', ['-C', repo, 'add', 'src/app.js']);
   rmSync(path.join(repo, 'src'), { recursive: true, force: true });

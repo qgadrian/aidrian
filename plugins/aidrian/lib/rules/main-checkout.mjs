@@ -116,6 +116,9 @@ export function check(command, { cwd = process.cwd(), env = process.env } = {}) 
 //   git commit   any options but -a and --all, with no `--no-` form and no unknown short cluster holding `a`
 //   git switch   only back to the default branch, with no option
 //   git checkout the default branch with no option, or paths: after `--`, or words that name no commit
+// git's own options that change nothing about the repository or how paths match. `-c` is not one: a value such as
+// core.worktree moves the checkout.
+const SAFE_GLOBALS = /^(?:-C.*|--git-dir(?:=.*)?|--work-tree(?:=.*)?|--no-pager|-P|--paginate|-p|--no-optional-locks|--no-replace-objects)$/u;
 const ADD_SAFE = new Set(['-v', '--verbose', '-f', '--force', '-N', '--intent-to-add', '-p', '--patch']);
 const COMMIT_VALUES = new Set(['-m', '-F', '-c', '-C', '-t', '--message', '--file', '--author', '--date', '--template', '--reuse-message', '--reedit-message', '--fixup', '--squash', '--cleanup', '--trailer']);
 const COMMIT_ATTACHED = new Set(['-u', '-S']);
@@ -128,8 +131,11 @@ function gitStateChanges(command, cwd, depth = 0) {
     if (CHANGES_DIRECTORY.has(invocation.program)) known = false;
     const call = known ? readGit(segment) : null;
     if (!call || !['add', 'commit', 'switch', 'checkout'].includes(call.subcommand)) continue;
-    const folders = gitFolders(call.globals, invocation.chdir, cwd);
+    const folders = gitFolders(call.globals, invocation.chdir, cwd, segment);
     if (folders === null) continue;
+    // A global option that changes how paths match or which repository is read makes nothing plainly safe.
+    const plainGlobals = call.globals.every(({ text }, i) => SAFE_GLOBALS.test(text) || (call.globals[i - 1] && ['-C', '--git-dir', '--work-tree'].includes(call.globals[i - 1].text)));
+    const gitEnv = segment.some(({ text }) => /^GIT_[A-Z_]+=/u.test(text));
     const words = call.rest.map((token) => token.text);
     const dashes = words.indexOf('--');
     const before = dashes === -1 ? words : words.slice(0, dashes);
@@ -139,8 +145,8 @@ function gitStateChanges(command, cwd, depth = 0) {
     const at = folders[0];
     // --work-tree or --git-dir points git at a repository this hook does not read words in: only a commit without -a
     // is plainly safe there.
-    if (folders.length > 1 && call.subcommand !== 'commit') {
-      found.push({ what: `\`git ${call.subcommand}\` with --work-tree or --git-dir can change the shared checkout`, folders, target: null });
+    if ((folders.length > 1 || !plainGlobals || gitEnv) && call.subcommand !== 'commit') {
+      found.push({ what: `\`git ${call.subcommand}\` with another repository, work tree, or pathspec option can change the shared checkout`, folders, target: null });
       continue;
     }
     if (call.subcommand === 'add') {
@@ -168,16 +174,28 @@ function gitStateChanges(command, cwd, depth = 0) {
 // The folders a git call may act on: where it runs (a wrapper's `env -C`, then each `-C`), and its `--work-tree` and
 // the folder holding its `--git-dir`. Null when one of them cannot be read, which leaves the call alone, as a path that
 // may expand is.
-function gitFolders(globals, chdir, cwd) {
+function gitFolders(globals, chdir, cwd, segment = []) {
   if (chdir?.dynamic) return null;
   let at = chdir ? path.resolve(cwd, chdir.text) : cwd;
-  // git resolves --work-tree and --git-dir from where it ends up, after every -C.
+  // git resolves --work-tree and --git-dir from where it ends up, after every -C; GIT_DIR and GIT_WORK_TREE set on the
+  // command count the same.
   const pending = [];
+  for (const { text, dynamic } of segment) {
+    const assigned = /^(GIT_DIR|GIT_WORK_TREE)=(.*)$/su.exec(text);
+    if (!assigned) continue;
+    if (dynamic) return null;
+    pending.push([assigned[2], assigned[1] === 'GIT_DIR' ? checkoutOfGitDir : (p) => p]);
+  }
   for (let i = 0; i < globals.length; i += 1) {
     const { text, dynamic } = globals[i];
     const next = globals[i + 1];
     const value = (name) => (text === name ? next : text.startsWith(`${name}=`) ? { text: text.slice(name.length + 1), dynamic } : undefined);
     const chdirTo = text === '-C' ? next : /^-C./u.test(text) ? { text: text.slice(2), dynamic } : undefined;
+    // -c core.worktree=<path> moves the work tree as --work-tree does.
+    if (text === '-c' && next && /^core\.worktree=/iu.test(next.text)) {
+      if (next.dynamic) return null;
+      pending.push([next.text.slice(next.text.indexOf('=') + 1), (p) => p]);
+    }
     for (const [given, toFolder] of [[chdirTo, null], [value('--work-tree'), (p) => p], [value('--git-dir'), checkoutOfGitDir]]) {
       if (given === undefined) continue;
       if (!given || given.dynamic) return null;

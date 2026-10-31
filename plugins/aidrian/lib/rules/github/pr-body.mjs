@@ -61,25 +61,32 @@ function readPrCall(segment) {
   let i = 0;
   const words = [];
   let repo = null;
+  let help = false;
   for (; i < args.length && words.length < 2; i += 1) {
     const { text, dynamic } = args[i];
     if (dynamic) return null;
-    if (text === '-R' || text === '--repo') repo = args[++i] ?? null;
+    if (text === '-h' || /^--help(?:=|$)/u.test(text)) help = isTrue(text.includes('=') ? text.slice(text.indexOf('=') + 1) : null);
+    else if (text === '-R' || text === '--repo') repo = args[++i] ?? null;
     else if (text.startsWith('--repo=')) repo = { text: text.slice('--repo='.length), dynamic };
     else if (!text.startsWith('-')) words.push(text);
   }
   if (words[0] !== 'pr' || !['create', 'edit'].includes(words[1])) return null;
-  const call = { subcommand: words[1], fill: false, web: false, help: false, body: null, bodyFile: null, title: null, repo, target: null };
+  const call = { subcommand: words[1], fill: false, web: false, help, body: null, bodyFile: null, title: null, repo, target: null };
   for (; i < args.length; i += 1) {
     const { text, dynamic } = args[i];
     if (text === '--') break;
     let [flag, inline] = text.startsWith('--') && text.includes('=') ? [text.slice(0, text.indexOf('=')), text.slice(text.indexOf('=') + 1)] : [text, null];
     if (/^-[^-]/u.test(text)) {
-      // A short word as gh reads it: `-dF body.md`, `-Fbody.md`, and `-F=body.md`.
-      const { options, value } = readShortOptions(text, SHORT_VALUES);
-      if (options.includes('-f')) call.fill = true;
-      if (options.includes('-w')) call.web = true;
-      if (options.includes('-h')) call.help = true;
+      // A short word as gh reads it: `-dF body.md`, `-Fbody.md`, and `-F=body.md`. A switch ending a cluster takes an
+      // explicit value after `=`, as pflag reads it: `-w=0` and `-dw=false` are web off.
+      const split = /^-([^=]+)=(.*)$/u.exec(text);
+      const explicit = split && !readShortOptions(`-${split[1]}`, SHORT_VALUES).value ? split : null;
+      const { options, value } = readShortOptions(explicit ? `-${explicit[1]}` : text, SHORT_VALUES);
+      const last = options.at(-1);
+      const on = (option) => options.includes(option) && (option !== last || !explicit || isTrue(explicit[2]));
+      if (on('-f')) call.fill = true;
+      if (options.includes('-w')) call.web = on('-w');
+      if (options.includes('-h')) call.help = on('-h');
       if (!value) continue;
       [flag, inline] = [value.option, value.attached?.replace(/^=/u, '') ?? null];
     }

@@ -48,6 +48,13 @@ const READS = new Set(['view', 'list', 'status', 'checks', 'diff', 'checkout']);
 // The short options that take a value, of gh pr/issue and of git commit.
 const GH_VALUES = new Set(['-a', '-B', '-b', '-F', '-H', '-l', '-m', '-p', '-r', '-R', '-T', '-t']);
 const GIT_VALUES = new Set(['-m', '-F', '-C', '-c', '-t']);
+// The long options whose value is the next word, so a value shaped like an option (`--title -Rx`) is never read as one.
+const GH_LONG_VALUES = new Set([
+  '--title', '--body', '--label', '--assignee', '--milestone', '--project', '--reviewer', '--base', '--head', '--template',
+  '--add-label', '--remove-label', '--add-assignee', '--remove-assignee', '--add-reviewer', '--remove-reviewer',
+  '--add-project', '--remove-project', '--subject', '--comment', '--recover',
+]);
+const GIT_LONG_VALUES = new Set(['--message', '--author', '--date', '--template', '--reuse-message', '--reedit-message', '--fixup', '--squash', '--trailer', '--cleanup']);
 
 // What an invocation publishes, as { words, files }: the arguments git or GitHub keep (titles, bodies, messages,
 // labels), and the files whose contents it publishes (`--body-file`, `--file`, `-F`), as tokens. null for an invocation
@@ -57,6 +64,7 @@ export function published({ program, args }) {
   let start;
   let fileFlag;
   let values;
+  let longValues;
   if (program === 'gh') {
     const words = [];
     let i = 0;
@@ -65,12 +73,12 @@ export function published({ program, args }) {
       else if (!texts[i].startsWith('-')) words.push(texts[i]);
     }
     if (!['pr', 'issue'].includes(words[0]) || !words[1] || READS.has(words[1])) return null;
-    [start, fileFlag, values] = [i, '--body-file', GH_VALUES];
+    [start, fileFlag, values, longValues] = [i, '--body-file', GH_VALUES, GH_LONG_VALUES];
   } else if (program === 'git') {
     let i = 0;
     for (; i < args.length && texts[i].startsWith('-'); i += 1) if (['-C', '-c'].includes(texts[i])) i += 1;
     if (texts[i] !== 'commit') return null;
-    [start, fileFlag, values] = [i + 1, '--file', GIT_VALUES];
+    [start, fileFlag, values, longValues] = [i + 1, '--file', GIT_VALUES, GIT_LONG_VALUES];
   } else {
     return null;
   }
@@ -79,6 +87,10 @@ export function published({ program, args }) {
   const files = [];
   for (let i = 0; i < rest.length; i += 1) {
     const { text, dynamic } = rest[i];
+    if (text === '--') {
+      words.push(...rest.slice(i + 1));
+      break;
+    }
     if (text === fileFlag || text.startsWith(`${fileFlag}=`)) {
       files.push(text === fileFlag ? rest[++i] : { text: text.slice(fileFlag.length + 1), dynamic });
       continue;
@@ -87,14 +99,17 @@ export function published({ program, args }) {
       i += 1;
       continue;
     }
+    // A value is published as it is, whatever its shape: it is never read as one more option.
+    if (longValues.has(text)) {
+      if (rest[i + 1]) words.push(rest[++i]);
+      continue;
+    }
     if (/^-[^-]/u.test(text) && !dynamic) {
       const { value } = readShortOptions(text, values);
-      if (value?.option === '-F') {
-        files.push(value.attached === null ? rest[++i] : { text: value.attached.replace(/^=/u, ''), dynamic });
-        continue;
-      }
-      if (value?.option === '-R') {
-        if (value.attached === null) i += 1;
+      if (value) {
+        const operand = value.attached === null ? rest[++i] : { text: value.attached.replace(/^=/u, ''), dynamic };
+        if (value.option === '-F') files.push(operand);
+        else if (value.option !== '-R' && operand) words.push(operand);
         continue;
       }
     }

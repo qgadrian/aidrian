@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -70,6 +70,13 @@ test('a gh or git commit command is judged by its text and its body file; other 
   writeFileSync(path.join(dir, 'B', 'good.md'), 'secretco\n');
   assert.match(judge('cd B && url=$(gh issue create -F good.md)'), /in good\.md/, 'a substitution keeps the folder of its command');
   assert.match(judge('git -C B commit -F good.md'), /in good\.md/, "git's -C");
+  assert.match(judge("gh issue create -t '-Rsecretco' -b clean"), /secretco/, 'a value shaped like an option is published');
+  assert.match(judge("git commit -m '-Fsecretco'"), /secretco/);
+  assert.match(judge('gh pr create --title -Rsecretco --body ok'), /secretco/);
+  mkdirSync(path.join(dir, 'real', 'nested'), { recursive: true });
+  writeFileSync(path.join(dir, 'real', 'body.md'), 'secretco\n');
+  symlinkSync(path.join(dir, 'real', 'nested'), path.join(dir, 'link'));
+  assert.match(judge('cd link && gh issue create -F ../body.md'), /in \.\.\/body\.md/, "a symlinked folder's .. is its target's parent");
 });
 
 test('the commit-msg hook refuses a private word and ignores comment lines', (t) => {

@@ -5,6 +5,7 @@
 // or a glob, so a rule never guesses at its value; `operator` for a redirection (`>`, `>>`, `<`); `fdDup` for the
 // `&1` of `2>&1`. Everything a rule cannot read is meant to fail open: an unknown shape yields no match, never a deny.
 
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 
 const CONTINUATION = '\n';
@@ -647,11 +648,17 @@ export function walkCommands(command, cwd) {
   return out;
 }
 
-// The folder a `cd`, `pushd`, or `popd` invocation reaches from `here`, or null when it cannot be known.
+// The folder a `cd`, `pushd`, or `popd` invocation reaches from `here`, or null when it cannot be known. It is the
+// physical folder, as the kernel resolves a file's `..` from it: `cd link && cat ../f` reads beside the link's target.
 function folderAfter(here, { program, args }) {
   if (program === 'popd') return null;
   const to = args.find((token) => !token || token.dynamic || !token.text.startsWith('-'));
   if (!to || to.dynamic || to.text === '-' || to.text.startsWith('~')) return null;
-  if (path.isAbsolute(to.text)) return to.text;
-  return here === null ? null : path.resolve(here, to.text);
+  if (!path.isAbsolute(to.text) && here === null) return null;
+  const reached = path.resolve(here ?? '/', to.text);
+  try {
+    return realpathSync(reached);
+  } catch {
+    return reached;
+  }
 }

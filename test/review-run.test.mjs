@@ -497,3 +497,14 @@ test('base code that imports an installed dependency runs: the checkout`s depend
   const result = await r.step({ exec: clean });
   assert.equal(result.depth, 'single');
 });
+
+test('the gate marker sums the code-reviewer passes that count for the head, a carried-forward one included', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, github: { reviewGate: { enabled: true, checklist: null } } }, baseFiles: { 'src/other.js': '0\n' }, change: (write) => write('src/app.js', 'g\n') });
+  const off = () => ({ ok: false, reason: 'the codex CLI is not installed' });
+  const markers = [];
+  const bot = async (_opts, deps) => (markers.push(deps.gate()), { status: 'received', head_sha: r.git('rev-parse', 'HEAD'), signal: { kind: 'review', line_comments: 1 } });
+  const first = await r.step({ codex: off, awaitBot: bot });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: first.dispatch[0].pass, head: first.head, reviewer: 'code-reviewer', findings: 2, fixed: 2 });
+  assert.equal((await r.step({ codex: off, awaitBot: bot })).status, 'fix_required');
+  assert.match(markers[0].marker, /findings=2 fixed=2/u);
+});

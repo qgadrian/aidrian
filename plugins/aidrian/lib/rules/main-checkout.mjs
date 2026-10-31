@@ -195,7 +195,9 @@ function gitFolders(globals, chdir, cwd, assignments = []) {
   // git resolves --work-tree and --git-dir from where it ends up, after every -C; GIT_DIR and GIT_WORK_TREE set on the
   // command count the same.
   const pending = [];
-  for (const { text, dynamic } of assignments) {
+  // The last assignment of each variable is the one in force, as in the shell.
+  const last = new Map(assignments.map((token) => [token.text.slice(0, token.text.indexOf('=')), token]));
+  for (const { text, dynamic } of last.values()) {
     const assigned = /^(GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE)=(.*)$/su.exec(text);
     if (!assigned) continue;
     if (dynamic) return null;

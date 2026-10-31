@@ -120,6 +120,12 @@ test('bashTargets finds the certain write targets, resolved against cwd, and not
   assert.deepEqual(at("perl -lpi -e 's/a/b/' src/a.ts"), ['src/a.ts'], '-l takes only digits');
   assert.deepEqual(at("ruby -Cnested -pi -e 'x' file"), ['nested/file'], 'ruby -C moves the files');
   assert.deepEqual(at('ruby script.rb -i file'), [], "a script's own -i is not ruby's");
+  assert.deepEqual(at("ruby -W0pi -e 'x' file"), ['file'], 'ruby -W takes a level');
+  assert.deepEqual(at("ruby -Kupi -e 'x' file"), ['file'], 'ruby -K takes one letter');
+  assert.deepEqual(at("perl -dpi -e 'x' file"), ['file'], 'perl -d takes only t and :MOD');
+  assert.deepEqual(at("perl -d:Trace -pi -e 'x' file"), ['file']);
+  assert.deepEqual(at("ruby --encoding utf-8 -pi -e 'x' file"), ['file'], 'a long option takes the next word');
+  assert.deepEqual(at("ruby -C one -C two -pi -e 'x' file"), ['one/two/file'], 'folder changes compose');
   assert.deepEqual(at('perl script.pl -i file'), []);
   assert.deepEqual(at("perl -F'i' -ane 'print' file"), [], '-F takes the rest of its word');
   assert.deepEqual(at("ruby -r json -pi -e 'x' file"), ['file'], '-r takes the next word');

@@ -1,6 +1,6 @@
 // The prose of a Markdown file: what the doc says in its own voice, for the terms rule's `prose` rules (lib/terms.mjs).
 // Text the doc quotes is not its voice, so it is left out: fenced code, blockquote lines, lines with `<!-- lint-skip -->`,
-// and, on the lines read, inline code, URLs, and "double-quoted" or “curly-quoted” spans, which may wrap over lines
+// and, on the lines read, inline code, URLs, and "double-quoted" or “curly-quoted” spans, each of which may wrap over lines
 // until a blank line or a code block ends the paragraph. Blanked spans keep their length, so columns stay where they were.
 
 import { fencedLines } from './markdown-sections.mjs';
@@ -11,13 +11,22 @@ const CLOSES = { '"': '"', '“': '”' };
 
 const blank = (match) => ' '.repeat(match.length);
 
-// One line with its quoted spans blanked, and the quote still open at its end. `open` is the quote mark open before it.
+// One line with its quoted spans blanked, and what is still open at its end: a quote mark, or a code span's backtick
+// run. `open` is what was open before the line. A code span closes only on a run of the same length.
 export function maskQuoted(line, open = null) {
-  const plain = line.replace(/https?:\/\/[^\s"“”]+/gu, blank).replace(/(?<!`)(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)/gu, blank);
+  const plain = line.replace(/https?:\/\/[^\s"“”`]+/gu, blank);
   let out = '';
-  for (const char of plain) {
-    if (open !== null) {
-      if (char === CLOSES[open]) open = null;
+  for (let i = 0; i < plain.length; i += 1) {
+    const char = plain[i];
+    if (char === '`') {
+      let run = 1;
+      while (plain[i + run] === '`') run += 1;
+      if (open === null) open = '`'.repeat(run);
+      else if (open === '`'.repeat(run)) open = null;
+      out += ' '.repeat(run);
+      i += run - 1;
+    } else if (open !== null) {
+      if (open[0] !== '`' && char === CLOSES[open]) open = null;
       out += ' ';
     } else if (char in CLOSES) {
       open = char;

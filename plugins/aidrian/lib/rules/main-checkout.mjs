@@ -43,7 +43,7 @@ const WRITERS = new Map([
   // Options that take the rest of their word or the next one (perlrun, ruby -h). The rest-only ones are in REST_VALUES:
   // listed here, they would take the next word, which can be the file written.
   ['perl', new Set(['-e', '-E', '-I'])],
-  ['ruby', new Set(['-e', '-I', '-C', '-r', '-E'])],
+  ['ruby', new Set(['-e', '-I', '-C', '-r', '-E', '--encoding', '--external-encoding', '--internal-encoding'])],
   // A value option whose name extends a switch (`--partial-dir`, `--backup-dir`) is left out, so the switch never
   // swallows an operand. An unlisted option's value reads as one more path: blocked by mistake, never missed.
   [
@@ -62,11 +62,15 @@ const WRITERS = new Map([
 // next word: `perl -M strict` is an error.
 const REST_VALUES = new Map([
   ['sed', new Set(['-i', '-I'])],
-  ['perl', new Set(['-i', '-M', '-m', '-C', '-x', '-d', '-D', '-F'])],
-  ['ruby', new Set(['-i', '-F', '-W', '-x', '-K', '-T'])],
+  ['perl', new Set(['-i', '-M', '-m', '-C', '-x', '-D', '-F'])],
+  ['ruby', new Set(['-i', '-F', '-x'])],
 ]);
-// Options whose value is only the digits after them, so the switches after the digits still count: `-0777pi`, `-lpi`.
-const DIGIT_VALUES = new Map([['perl', /([0l])(?:x[0-9a-f]+|[0-7]+)?/giu], ['ruby', /(0)(?:[0-7]+)?/gu]]);
+// Options whose value has a fixed shape (perl -h, ruby -h), so the switches after it still count: `-0777pi`, `-lpi`,
+// `-dpi`, `-W0pi`, `-Kupi`. Each pattern matches the option letter and its value.
+const SHORT_VALUES = new Map([
+  ['perl', /0(?:x[0-9a-f]+|[0-7]+)?|l[0-7]*|dt?(?::[\w:=,]+)?/giu],
+  ['ruby', /0[0-7]*|W(?:[0-2]|:\w+)?|K[a-z]?|T[0-9]*/gu],
+]);
 // The option that gives a script on the command line, so every operand is a file; without it the first is the script.
 const SCRIPT_OPTIONS = new Map([['perl', ['-e', '-E']], ['ruby', ['-e']]]);
 // The options that change the folder the interpreter runs in.
@@ -211,11 +215,15 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
       flags.push(text);
       if (valueFlags.has(text) || (/^--[^=]+$/u.test(text) && [...valueFlags].some((option) => option.startsWith(text)))) i += 1;
     } else if (!ended && text.startsWith('-') && text.length > 1) {
-      // Drop the digits of a digit-valued option, up to the first option that takes the rest of the word.
-      const cluster = DIGIT_VALUES.has(program) ? withoutDigitValues(text, program) : text;
+      // Drop the values of fixed-shape options, up to the first option that takes the rest of the word.
+      const cluster = SHORT_VALUES.has(program) ? withoutShortValues(text, program) : text;
       const { options, value } = readShortOptions(cluster, valueFlags, REST_VALUES.get(program));
       flags.push(...options);
-      if (CHANGES_FOLDER.get(program)?.includes(value?.option)) folder = value.attached === null ? args[i + 1] ?? null : { text: value.attached, dynamic: args[i].dynamic };
+      if (CHANGES_FOLDER.get(program)?.includes(value?.option)) {
+        // Each folder change is relative to the one before: `ruby -C one -C two` runs in one/two.
+        const next = value.attached === null ? args[i + 1] ?? null : { text: value.attached, dynamic: args[i].dynamic };
+        if (next) folder = folder === null || path.isAbsolute(next.text) ? next : { text: path.join(folder.text, next.text), dynamic: folder.dynamic || next.dynamic };
+      }
       if (value?.attached === null) i += 1;
     } else if (text !== '') {
       operands.push(args[i]); // an empty operand is BSD sed's `-i ''` suffix
@@ -252,9 +260,9 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
   return scripted ? operands : operands.slice(1);
 }
 
-// A perl or ruby option cluster without the digits that `-0` and perl's `-l` take: `-0777pi` reads as `-0pi`. Digits
-// after an option that takes the rest of the word (`-i.bak0`, `-Mfoo0`) belong to it and stay.
-function withoutDigitValues(text, program) {
+// A perl or ruby option cluster without the values of its fixed-shape options: `-0777pi` reads as `-0pi`. What follows
+// an option that takes the rest of the word (`-i.bak0`, `-Mfoo0`) belongs to it and stays.
+function withoutShortValues(text, program) {
   const rest = REST_VALUES.get(program);
   const values = WRITERS.get(program);
   let out = '-';
@@ -262,7 +270,7 @@ function withoutDigitValues(text, program) {
     const option = `-${text[i]}`;
     if (rest.has(option) || values.has(option)) return out + text.slice(i);
     out += text[i];
-    const pattern = DIGIT_VALUES.get(program);
+    const pattern = SHORT_VALUES.get(program);
     pattern.lastIndex = i;
     const match = pattern.exec(text);
     if (match?.index === i) i += match[0].length - 1;

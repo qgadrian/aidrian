@@ -258,10 +258,13 @@ export function validatePlan(plan) {
 // built-in pass the command left out is put back in its stage, and every built-in flow stays.
 export function mergePlans(builtIn, project) {
   const depth = maxDepth(builtIn.depth, project.depth);
-  const stages = project.stages.map((stage) => ({ name: stage.name, passes: [...stage.passes] }));
-  const present = new Set(stages.flatMap((stage) => stage.passes.map((pass) => pass.id)));
+  // A built-in pass is kept as built: a project pass with the same id is dropped, so it cannot swap the reviewer,
+  // narrow the files, or drop a flow from a pass the config requires.
+  const builtInIds = new Set(builtIn.stages.flatMap((stage) => stage.passes.map((pass) => pass.id)));
+  const shadowed = project.stages.flatMap((stage) => stage.passes.filter((pass) => builtInIds.has(pass.id)).map((pass) => pass.id));
+  const stages = project.stages.map((stage) => ({ name: stage.name, passes: stage.passes.filter((pass) => !builtInIds.has(pass.id)) }));
   for (const stage of builtIn.stages) {
-    const missing = stage.passes.filter((pass) => !present.has(pass.id));
+    const missing = stage.passes;
     if (!missing.length) continue;
     const target = stages.find((each) => each.name === stage.name);
     if (target) target.passes.push(...missing);
@@ -269,5 +272,6 @@ export function mergePlans(builtIn, project) {
   }
   const flows = [...builtIn.flows];
   for (const flow of project.flows ?? []) if (!flows.some((each) => each.id === flow.id)) flows.push({ signoff: 'reviewer', reasons: [], files: [], ...flow });
-  return { ...builtIn, depth, stages, flows, reasons: [...builtIn.reasons, ...(project.reasons ?? []).map((reason) => `plan command: ${reason}`)] };
+  const notes = shadowed.map((id) => `plan command: pass ${id} is built in and was kept as built`);
+  return { ...builtIn, depth, stages: stages.filter((stage) => stage.passes.length), flows, reasons: [...builtIn.reasons, ...(project.reasons ?? []).map((reason) => `plan command: ${reason}`), ...notes] };
 }

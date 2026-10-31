@@ -14,7 +14,7 @@ import { stateDir } from '../project.mjs';
 export const SUMMARY_MARKER = '<!-- aidrian-review-summary -->';
 const STATE = /<!--\s*aidrian-review-state:([A-Za-z0-9+/=]+)\s*-->/u;
 
-export const emptyState = (pr, repo) => ({ version: 1, pr, repo, rounds: [], passes: {}, signoffs: {}, overrides: [], failures: {} });
+export const emptyState = (pr, repo) => ({ version: 1, revision: 0, pr, repo, rounds: [], passes: {}, signoffs: {}, overrides: [], failures: {} });
 
 const file = (project, pr) => path.join(stateDir(project), 'reviews', `pr-${pr}-review.json`);
 
@@ -31,7 +31,9 @@ export function readLocalState(project, pr) {
   }
 }
 
+// Every write raises the record's revision, so the newer of two records is the one written last.
 export function writeLocalState(project, state) {
+  state.revision = (state.revision ?? 0) + 1;
   const target = file(project, state.pr);
   mkdirSync(path.dirname(target), { recursive: true });
   writeFileSync(target, `${JSON.stringify(state, null, 2)}\n`);
@@ -49,15 +51,12 @@ export function stateFromComment(body, pr) {
   }
 }
 
-// The newer of two records: more rounds, then more pass results. A machine that reviewed later wins; nothing merges
-// half of each, so a record never mixes two reviews.
+// The newer of two records: the higher revision, which every write raises. Nothing merges half of each, so a record
+// never mixes two reviews.
 export function newer(a, b) {
   if (!a) return b;
   if (!b) return a;
-  const score = (state) => [state.rounds.length, Object.keys(state.passes).length, Object.keys(state.signoffs).length];
-  const [x, y] = [score(a), score(b)];
-  for (let i = 0; i < x.length; i += 1) if (x[i] !== y[i]) return x[i] > y[i] ? a : b;
-  return a;
+  return (b.revision ?? 0) > (a.revision ?? 0) ? b : a;
 }
 
 // The summary comment's text: a table a person reads, then the marker with the record.

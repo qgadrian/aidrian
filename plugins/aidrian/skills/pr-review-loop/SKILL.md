@@ -37,7 +37,7 @@ Act on `status`, then run it again, until it stops:
 
 A flow pass answers every invariant it is given with a verdict and evidence: `path:line` at the head, or
 `test:<name>`. `references/review-plan.md` has the verdicts file and what each status carries.
-With `--await-codex`, the bot is the plan's last stage; `aidrian pr await-review` still waits for it alone.
+With `--await-codex`, run `aidrian pr review <n> --with-bot`: the review bot then runs as the last stage too.
 
 ## 2. Collect every review surface
 

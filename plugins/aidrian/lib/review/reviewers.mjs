@@ -157,18 +157,31 @@ export function runExec(reviewer, input, { root, env, spawnImpl = spawn }) {
   } else argv = reviewer.command;
   const stdinText = reviewer.builtIn === 'codex' ? reviewPrompt(input) : JSON.stringify(input);
   return new Promise((done) => {
-    const child = spawnImpl(argv[0], argv.slice(1), { cwd: root, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    // Its own process group, so a timeout stops the reviewer and everything it started.
+    const child = spawnImpl(argv[0], argv.slice(1), { cwd: root, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
     let stdout = '';
     let stderr = '';
-    const timer = setTimeout(() => child.kill('SIGTERM'), (reviewer.timeoutSec ?? 600) * 1000);
     let timedOut = false;
-    timer.unref?.();
+    const limit = (reviewer.timeoutSec ?? 600) * 1000;
+    const kill = (signal) => {
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+        child.kill(signal);
+      }
+    };
+    // SIGTERM at the limit; SIGKILL 5 s later; and an answer 2 s after that even if a grandchild still holds the pipes.
+    const timer = setTimeout(() => {
+      timedOut = true;
+      kill('SIGTERM');
+      setTimeout(() => kill('SIGKILL'), 5000).unref?.();
+      setTimeout(() => finish({ status: 'timed_out', reason: `no answer in ${limit / 1000} s` }), 7000).unref?.();
+    }, limit);
     child.on('error', (error) => finish({ status: 'failed', reason: error.code === 'ENOENT' ? `${argv[0]} is not installed` : error.message }));
     child.stdout.on('data', (chunk) => (stdout += chunk));
     child.stderr.on('data', (chunk) => (stderr += chunk));
-    child.on('close', (code, signal) => {
-      if (signal === 'SIGTERM') timedOut = true;
-      if (timedOut) return finish({ status: 'timed_out', reason: `no answer in ${reviewer.timeoutSec ?? 600} s` });
+    child.on('close', (code) => {
+      if (timedOut) return finish({ status: 'timed_out', reason: `no answer in ${limit / 1000} s` });
       // Only a failed run can be a quota stop: a successful one logs its whole session to stderr, words included.
       if (code !== 0 && /usage limit|rate limit|quota/iu.test(stderr)) return finish({ status: 'quota', reason: lastLine(stderr) });
       if (code !== 0) return finish({ status: 'failed', reason: `exit ${code}: ${lastLine(stderr)}` });

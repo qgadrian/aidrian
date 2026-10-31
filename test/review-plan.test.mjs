@@ -110,3 +110,10 @@ test('checkReview: bad rules, flows, and reviewers are errors and left out; engi
   assert.equal(checkLocalReview({ engine: 'no way', depth: 'x' }, 'local', local), 'auto');
   assert.equal(local.length, 2);
 });
+
+test('mergePlans: a plan command pass with a built-in id cannot replace it', () => {
+  const builtIn = plan([change('src/a.js')], {});
+  const merged = mergePlans(builtIn, { depth: 'single', stages: [{ name: 'local', passes: [{ id: 'engine:codex-local', reviewer: 'self', kind: 'agent', files: ['x'] }] }] });
+  assert.deepEqual(merged.stages, builtIn.stages);
+  assert.match(merged.reasons.at(-1), /engine:codex-local is built in and was kept as built/u);
+});

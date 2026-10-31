@@ -148,8 +148,11 @@ test('the round cap: the last round goes to the final stage, and a round past th
   r.commit();
   let independent = 0;
   const last = await r.step({ exec: async () => (independent += 1, clean()) });
-  assert.equal(independent, 1, 'round 2 of 2 ran the independent stage even though the local stage still had open findings');
-  assert.equal(last.status, 'round_limit');
+  assert.equal(independent, 1, 'round 2 of 2 ran the independent stage first, before the local stage was done');
+  assert.equal(last.status, 'dispatch', 'the local stage can still finish within the last round');
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: last.dispatch[0].pass, head: last.head, reviewer: 'code-reviewer', findings: 1, fixed: 0 });
+  const capped = await r.step({ exec: clean });
+  assert.deepEqual([capped.status, capped.open[0].open], ['round_limit', 1], 'a fix needs a new head, and there is no round left');
   r.write('src/booking/a.js', '3\n');
   r.commit();
   assert.equal((await r.step({ exec: clean })).status, 'round_limit');
@@ -261,4 +264,100 @@ test('the review bot as the engine: a thumbs-up passes, a review with comments i
   r.write('src/app.js', 'c\n');
   r.commit();
   assert.equal((await r.step({ codex: off, awaitBot: async () => ({ status: 'received', signal: { kind: 'thumbs_up' } }) })).status, 'received');
+});
+
+const holdsAll = (pass, evidence) => JSON.stringify(pass.flows.flatMap((flow) => flow.invariants.map((each) => ({ flow: flow.id, invariant: each.id, verdict: 'holds', evidence }))));
+
+test('an independent reviewer`s violated verdict blocks the flow even with no findings', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, review: { flows: { booking: { files: ['src/booking/**'] } } } }, change: (write) => write('src/booking/a.js', '1\n') });
+  const first = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: first.dispatch[0].pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: holdsAll(first.dispatch[0], 'src/booking/a.js:1') });
+  const violated = async () => ({ status: 'done', findings: [], verdicts: [{ flow: 'booking', invariant: 'unspecified', verdict: 'violated', evidence: 'src/booking/a.js:1' }], dropped: [] });
+  const result = await r.step({ exec: violated });
+  assert.deepEqual([result.status, result.stage, result.flows], ['fix_required', 'independent', [{ flow: 'booking', violated: ['unspecified'], unverified: [] }]]);
+});
+
+test('a flow only the independent model reviews is signed by its verdicts', async (t) => {
+  const flows = { pay: { files: ['src/pay/**'], require: ['independent-model'] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => write('src/pay/a.js', '1\n') });
+  const holds = async () => ({ status: 'done', findings: [], verdicts: [{ flow: 'pay', invariant: 'unspecified', verdict: 'holds', evidence: 'src/pay/a.js:1' }], dropped: [] });
+  assert.equal((await r.step({ exec: clean })).status, 'fix_required');
+  r.write('src/pay/a.js', '2\n');
+  r.commit();
+  assert.equal((await r.step({ exec: holds })).status, 'received');
+});
+
+test('the plan command runs from the base: a PR that edits it, or adds one, cannot run its own', async (t) => {
+  const planner = (extra) => `let s='';process.stdin.on('data',c=>s+=c).on('end',()=>console.log(JSON.stringify({depth:'single',stages:[{name:'local',passes:[{id:'${extra}',reviewer:'${extra}',kind:'agent',files:null}]}]})))`;
+  const r = repo(t, {
+    baseConfig: { version: 1, review: { planCommand: 'node scripts/plan.mjs' } },
+    baseFiles: { 'scripts/plan.mjs': planner('base-reviewer') },
+    change: (write) => write('scripts/plan.mjs', planner('head-reviewer')),
+  });
+  const result = await r.step({ exec: clean });
+  assert.deepEqual(result.dispatch.map((each) => each.agent).sort(), ['base-reviewer', 'code-reviewer']);
+  assert.ok(result.plan.flows.includes('harness-config'), 'editing the planner is a change to the review');
+  const added = repo(t, { headConfig: { version: 1, review: { planCommand: 'node -e "process.exit(9)"' } }, change: (write) => write('src/app.js', '5\n') });
+  const run = await added.step({ exec: clean });
+  assert.notEqual(run.status, 'unsatisfied', 'a planner the PR adds does not run');
+  assert.ok(run.plan.flows.includes('harness-config'));
+});
+
+test('a PR cannot redefine a project reviewer: the base definition runs, and a new name is only added', () => {
+  const base = { rules: [], ignore: [], nonBehaviour: [], flows: {}, planCommand: null, reviewers: { lint: { kind: 'exec', command: ['bin/strict'] } } };
+  const head = { ...base, reviewers: { lint: { kind: 'exec', command: ['true'] }, extra: { kind: 'agent', agent: 'x' } } };
+  assert.deepEqual(reviewInForce(base, head).review.reviewers, { lint: { kind: 'exec', command: ['bin/strict'] }, extra: { kind: 'agent', agent: 'x' } });
+  assert.deepEqual(reviewInForce(base, head).changed, ['reviewers']);
+});
+
+test('deleting a flow`s test alone, with the flow`s code untouched, still stops the review', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'], tests: ['test/booking*'] } };
+  const r = repo(t, {
+    baseConfig: { version: 1, review: { flows } },
+    baseFiles: { 'test/booking.test.js': 'x\n', 'src/booking/a.js': 'y\n' },
+    change: (write, dir) => {
+      rmSync(path.join(dir, 'test/booking.test.js'));
+      write('src/app.js', '2\n');
+    },
+  });
+  const result = await r.step({ exec: clean });
+  assert.equal(result.status, 'fix_required');
+  assert.deepEqual(result.tests_removed.map((each) => [each.flow, each.deleted]), [['booking', ['test/booking.test.js']]]);
+});
+
+test('a clean last round passes; a failed or quota run gives its round back', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'] } };
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 1 }, review: { flows } }, change: (write) => write('src/booking/a.js', '1\n') });
+  assert.equal((await r.step({ exec: async () => ({ status: 'failed', reason: 'x' }) })).status, 'incomplete');
+  assert.equal((await r.step({ exec: async () => ({ status: 'quota', reason: 'usage limit' }) })).status, 'blocked_quota');
+  const first = await r.step({ exec: clean });
+  assert.deepEqual([first.status, first.round], ['dispatch', 1], 'the failed runs used no round, and the final stage ran first');
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: first.dispatch[0].pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: holdsAll(first.dispatch[0], 'src/booking/a.js:1') });
+  assert.equal((await r.step({ exec: clean })).status, 'received');
+});
+
+test('--with-bot adds the review bot as the last stage after this machine`s engine', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', '9\n') });
+  let asked = 0;
+  const result = await r.step({ exec: clean, awaitBot: async () => (asked += 1, { status: 'received', requested: true, signal: { kind: 'thumbs_up' } }) }, { withBot: true });
+  assert.deepEqual([result.status, asked, result.plan.stages.map((stage) => stage.name)], ['received', 1, ['independent', 'remote']]);
+});
+
+test('runExec: a reviewer that ignores SIGTERM is killed, and the step still answers', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-exec-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'stubborn.mjs');
+  writeFileSync(file, "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);");
+  const started = Date.now();
+  const result = await runExec({ name: 'stubborn', kind: 'exec', command: [process.execPath, file], timeoutSec: 1 }, {}, { root: dir, env: process.env });
+  assert.equal(result.status, 'timed_out');
+  assert.ok(Date.now() - started < 15000);
+});
+
+test('newer: the record with the higher revision wins, whatever its counts', async () => {
+  const { newer } = await import('../plugins/aidrian/lib/review/state.mjs');
+  const stale = { revision: 3, rounds: [{}, {}], passes: { a: { open: 0 } } };
+  const fresh = { revision: 4, rounds: [{}], passes: { a: { open: 2 } } };
+  assert.equal(newer(stale, fresh), fresh);
+  assert.equal(newer(fresh, stale), fresh);
 });

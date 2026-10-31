@@ -96,9 +96,12 @@ can remove the way into a flow.
 
 ### A pull request cannot weaken its own review
 
-The flows, rules, ignore lists, plan command, and invariants docs in force are the **base branch's**. The pull
-request's own config can only add flows and rules; its changes to the rest take effect once they are merged. A change
-to any of them also triggers the built-in `harness-config` flow, which the Human signs off.
+The flows, rules, ignore lists, reviewers, plan command, and invariants docs in force are the **base branch's**. The
+pull request's own config can only add flows, rules, and reviewers under new names; its changes to the rest, and a
+plan command it adds, take effect once they are merged. The plan command runs from a temporary checkout of the base,
+so editing its script changes nothing until the merge. A flow the pull request adds reads its invariants from the
+pull request. A change to any of these triggers the built-in `harness-config` flow, which the Human signs off. A
+flow's deleted test stops the review even when the change touches nothing else in the flow.
 
 `aidrian lint review` fails on a flow whose globs match no tracked file, an invariants doc that is missing or has no
 headings, and a cite to a heading that is not there. It warns past 12 flows, or 10 invariants in one flow: a flow is a
@@ -133,7 +136,7 @@ A project adds its own in `review.reviewers`:
 
 - `exec`: the command reads the pass as JSON on stdin (`base`, `head`, `files`, `flows`, `priorFindings`) and prints
   `{ "findings": [{ file, line, title, body, severity }], "verdicts": [...] }`. It runs with no session, override, or
-  git variables in its environment, and a time limit. Output that does not parse is a failure, never a pass;
+  git variables in its environment, in its own process group, with a time limit: SIGTERM, then SIGKILL. Output that does not parse is a failure, never a pass;
   malformed findings are dropped and named. A failure is `incomplete` and retried; the third is `stuck`.
 - `agent`: the command cannot start an agent, so it returns `dispatch` and the skill runs it and records the result.
 
@@ -147,15 +150,20 @@ machines with and without Codex.
 ## Rounds
 
 A round is one run of the plan on one head. The cap is `github.maxReviewRounds`, and raising it needs
-`AIDRIAN_ALLOW_EXTRA_ROUNDS=1` in the Human's own shell. The last round always runs the final stage, even when an
-earlier stage still has open work, so a pull request always gets its independent review before the cap. After a
-fix, each pass re-reviews only what changed since its last review; a pass the change does not touch carries forward.
+`AIDRIAN_ALLOW_EXTRA_ROUNDS=1` in the Human's own shell. The last round runs the final stage first, so a pull request
+always gets its independent review before the cap, then lets the earlier stages finish on the same head; it passes
+when nothing is left to fix, and stops at the cap when a fix would need another head. A reviewer that fails or hits
+its quota gives the round back. After a fix, each pass re-reviews only what changed since its last review; a pass
+the change does not touch carries forward.
+
+`--with-bot` adds the review bot as a last stage after this machine's engine.
 
 ## The plan command
 
 `review.planCommand` runs a project's own planner: it reads `{ base, head, changes }` on stdin and prints a plan in
 the same shape as the built-in one. The built-in plan is computed too, and the two merge: the command may add depth,
-flows, passes, and stages, and reorder stages, never remove a built-in pass or flow. A plan that names a reviewer
+flows, passes, and stages, and reorder stages, never remove or replace a built-in pass or flow: a pass with a built-in
+pass's id is dropped, and the plan says so. A plan that names a reviewer
 nobody can run is refused. The command and its files are the base branch's, like the rest of the review config.
 
 ## The record

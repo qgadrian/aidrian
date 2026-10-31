@@ -199,8 +199,8 @@ function gitFolders(globals, chdir, cwd, assignments = []) {
   const last = new Map(assignments.map((token) => [token.text.slice(0, token.text.indexOf('=')), token]));
   for (const { text, dynamic } of last.values()) {
     const assigned = /^(GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE)=(.*)$/su.exec(text);
-    if (!assigned) continue;
-    if (dynamic) return null;
+    // A value that may expand names no folder; the call stays unsafe and is judged where it runs.
+    if (!assigned || dynamic) continue;
     // An index file sits in its git folder, so it names that folder's checkout.
     const toFolder = { GIT_DIR: checkoutOfGitDir, GIT_WORK_TREE: (p) => p, GIT_INDEX_FILE: (p) => checkoutOfGitDir(path.dirname(p)) }[assigned[1]];
     pending.push([assigned[2], toFolder]);

@@ -346,6 +346,9 @@ test('in the main checkout, only named files are staged and only the default bra
   assert.match(denied(`GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo} bash -c 'git add -A'`, beside) ?? '', /main checkout/, 'git environment into an inline shell');
   assert.match(denied(`export GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo}; git checkout task`, beside) ?? '', /main checkout/, 'an export earlier on the line');
   assert.match(denied(`GIT_DIR="$HOME/unused"; GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo} git add -A`, beside) ?? '', /main checkout/, 'the last assignment wins');
+  for (const command of ['(export GIT_DIR="$HOME/unused"); git add -A', 'export GIT_DIR="$HOME/unused" | cat; git add -A', 'GIT_DIR="$X" git add src/app.js']) {
+    assert.match(denied(command) ?? '', /main checkout/, `an unreadable value fails closed: ${command}`);
+  }
   assert.match(denied(`GIT_WORK_TREE=${repo}; GIT_DIR=${repo}/.git; export GIT_DIR GIT_WORK_TREE; git add -A`, beside) ?? '', /main checkout/, 'bare assignments');
   execFileSync('git', ['-C', repo, 'rm', '-q', '--cached', 'src/app.js']);
   execFileSync('git', ['-C', repo, 'add', 'src/app.js']);

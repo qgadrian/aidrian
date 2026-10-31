@@ -39,9 +39,14 @@ export function maskCode(text) {
       continue;
     }
     if (char === '\\' && state !== '//' && state !== '/*' && next !== undefined) {
-      // An escaped line break continues the string on the next line.
-      out += next === '\n' ? ' \n' : '  ';
-      i += 1;
+      // An escaped line break, LF or CRLF, continues the string on the next line.
+      if (next === '\r' && text[i + 2] === '\n') {
+        out += ' \r\n';
+        i += 2;
+      } else {
+        out += next === '\n' ? ' \n' : '  ';
+        i += 1;
+      }
       continue;
     }
     if (state === '/*' && char === '*' && next === '/') {

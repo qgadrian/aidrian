@@ -257,7 +257,7 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
     if (!flags.includes('-i')) return [];
     const edited = flags.some((flag) => SCRIPT_OPTIONS.get(program).includes(flag)) ? operands : operands.slice(1);
     // A suffix also writes a backup: `-i.bak` beside each file, `-i'old/*'` with `*` for the file's name.
-    const backups = suffix?.text ? edited.map((token) => ({ ...token, dynamic: token.dynamic || suffix.dynamic, text: backupOf(token.text, suffix.text) })) : [];
+    const backups = suffix?.text ? edited.map((token) => ({ ...token, dynamic: token.dynamic || suffix.dynamic, text: backupOf(program, token.text, suffix.text) })) : [];
     const files = [...edited, ...backups];
     // ruby -C and -x, and perl -x, run in the folder they name: a relative file is read from there.
     if (folder === null || folder.text === '') return files;
@@ -271,11 +271,11 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
   return scripted ? operands : operands.slice(1);
 }
 
-// The backup an in-place edit with `suffix` writes for `file` (perlrun -i): each `*` is the file's name, and a suffix
-// without one is appended. A backup path is relative to the file's folder.
-function backupOf(file, suffix) {
-  if (!suffix.includes('*')) return `${file}${suffix}`;
-  return path.join(path.dirname(file), suffix.replaceAll('*', path.basename(file)));
+// The backup an in-place edit with `suffix` writes for `file`, as each interpreter does it (checked by running both):
+// perl puts the file, as written, in place of each `*` (`-i'old/*'` on `src/f` writes `old/src/f`) and otherwise
+// appends the suffix; ruby always appends it, `*` included.
+function backupOf(program, file, suffix) {
+  return program === 'perl' && suffix.includes('*') ? suffix.replaceAll('*', file) : `${file}${suffix}`;
 }
 
 // A perl or ruby option cluster without the values of its fixed-shape options: `-0777pi` reads as `-0pi`. What follows

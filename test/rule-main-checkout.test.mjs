@@ -125,6 +125,8 @@ test('bashTargets finds the certain write targets, resolved against cwd, and not
   assert.deepEqual(at("ruby -KEpi -e 'x' file"), ['file']);
   assert.deepEqual(at("perl -i.bak -pe 'x' file"), ['file', 'file.bak'], 'a suffix writes a backup');
   assert.deepEqual(at("perl -i'../main/*' -pe 'x' file"), ['file', '../main/file'], 'a * suffix names the backup');
+  assert.deepEqual(at("perl -i'../main/*' -pe 'x' src/file"), ['src/file', '../main/src/file'], 'perl puts the whole operand in place of *');
+  assert.deepEqual(at("ruby -i'*' -pe 'x' src/file"), ['src/file', 'src/file*'], 'ruby appends even a *');
   assert.deepEqual(at("ruby -i.orig -pe 'x' src/a.rb"), ['src/a.rb', 'src/a.rb.orig']);
   assert.deepEqual(at("ruby --disable gems -pi -e 'x' file"), ['file']);
   assert.deepEqual(at("ruby --disable=gems -pi -e 'x' file"), ['file']);

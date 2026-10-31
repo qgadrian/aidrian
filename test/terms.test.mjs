@@ -289,6 +289,7 @@ test('a code rule keeps comments and template literals masked across lines when 
   assert.equal(hook("const a = 'it\\'s';\nconst party = 1;\n"), 2, 'an escaped quote ends nothing');
   assert.equal(hook('// party\nconst party = 1;\n'), 2, 'a line comment ends at its line');
   assert.equal(hook("const s = 'a \\\nparty';\n"), 0, 'a string continued over a line break');
+  assert.equal(hook("const s = 'a \\\r\nparty';\r\n"), 0, 'over a CRLF line break');
 });
 
 test('a prose rule masks a quotation that wraps over lines, straight or curly, until the paragraph ends', () => {

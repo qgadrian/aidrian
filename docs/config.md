@@ -330,7 +330,7 @@ and prints the exact lines to add. Both lists are empty by default, which turns 
 `commit` takes any of these fields. A commit carries a trailer as a `--trailer` option, or in its message's trailer
 block: the last paragraph, past the subject, with only `Key: value` lines, as git reads it.
 Each `git commit` in a command is checked on its own message, and a `-F` file is read where the commit runs.
-A message from stdin (`-F -`) or an editor counts only its `--trailer` options. `-h`, `--help`, and `--dry-run` pass.
+A message from stdin (`-F -`), an editor, or another commit (`-C`, `-c`) counts only its `--trailer` options. `-h`, `--help`, and `--dry-run` pass.
 The rule also reads `sh -c` and `bash -c` command lines; a script on a shell's stdin, such as `bash <<'EOF'`, is not read.
 
 `pullRequest` takes `tool`, `model`, `effort`, and `env` for one line, and `agents` for one line per agent:
@@ -345,7 +345,7 @@ Assisted-by: code-reviewer (claude-opus-5-5)
   past its base (`--base`, else `git.defaultBranch`), from any session,
   and those this session dispatched, with the models their `stop` rows name; `main` and `exclude` are left out.
 - The `Authored-with:` line must match as written. Each agent needs an `Assisted-by:` line, in any order, whatever models it names.
-- Only `gh pr create` is checked; `gh pr edit` and `--web` pass. A body the rule cannot read, such as `--body "$VAR"`, is refused.
+- Only `gh pr create`, and its alias `gh pr new`, is checked; `gh pr edit`, `--web`, and `--dry-run` pass. A body the rule cannot read, such as `--body "$VAR"`, is refused.
 - A field with no known value is left out, never guessed.
 - The commit names only the agent that runs `git commit`. When the main session commits a subagent's work,
   the subagent shows in the pull request's `Assisted-by:` lines, not as a co-author.

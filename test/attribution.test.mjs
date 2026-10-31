@@ -135,7 +135,10 @@ test('help and dry-run commits pass', (t) => {
   for (const command of ['git commit -h', 'git commit --help', 'git commit --dry-run -m x', 'git commit --dry -m x']) assert.equal(run(command), null, command);
   assert.match(run('git commit --allow-empty --dry-run --no-dry-run -m unsigned') ?? '', /Blocked/, 'a later --no-dry-run commits');
   assert.match(run("git commit --allow-empty -m '--help'") ?? '', /Blocked/, 'a message, not an option');
-  assert.match(run("git commit --author 'A <a@b>' -C HEAD -m x") ?? '', /Blocked/, 'option values are skipped');
+  assert.match(run("git commit --author 'A <a@b>' -t tpl -m x") ?? '', /Blocked/, 'option values are skipped');
+  assert.match(run('git commit --allow-empty -m "fix: x\n\nAgent: main" --no-message -C HEAD') ?? '', /Blocked/, 'a reused message');
+  assert.match(run('git commit -m "fix: x\n\nAgent: main" --no-message -m y') ?? '', /Blocked/, '--no-message drops it');
+  assert.equal(run("git commit -C HEAD --trailer 'Agent: main'"), null, 'a --trailer still counts');
 });
 
 test('the PR rule reads the commits of the head and base gh pr create names', (t) => {
@@ -211,6 +214,8 @@ test('the PR rule checks gh pr create, never gh pr edit, and names the session a
   assert.equal(run(`gh pr create --title x --body '${signed}'`, { commits }), null);
   assert.equal(run(`gh pr edit 3 --body '${body}'`, { commits }), null);
   assert.equal(run('gh pr create --web', { commits }), null);
+  assert.equal(run(`gh pr create --dry-run --title x --body '${body}'`, { commits }), null, 'a preview');
+  assert.match(run(`gh pr new --title x --body '${body}'`, { commits }) ?? '', /Blocked/, 'the new alias');
 });
 
 test('config rejects an unknown attribution field and keeps the default', (t) => {

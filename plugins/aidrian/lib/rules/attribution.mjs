@@ -23,6 +23,8 @@ const MESSAGE_HEREDOC = /(?:--message(?:=|\s+)|(?<![\w-])-[A-Za-z]*m=?\s*)"?\$\(
 const CHANGES_DIRECTORY = new Set(['cd', 'pushd']);
 // How deep `sh -c` inside `sh -c` is read.
 const SHELL_DEPTH_LIMIT = 4;
+// Where a -m command substitution sits among a commit's messages, until its heredoc is read.
+const DYNAMIC = Symbol('dynamic message');
 
 // A token's text, or null when it is missing or dynamic.
 const staticText = (token) => (token && !token.dynamic && token.text ? token.text : null);
@@ -95,19 +97,19 @@ function readCalls(command, cwd, depth = 0) {
         });
         const read = commitMessage(git.rest, at);
         // A commit that writes nothing still holds its heredoc, so the later ones keep their own.
-        if (read.dynamic) pending.push(read);
+        if (read.holdsHeredoc) pending.push(read);
         if (!read.writesNothing) gitCommits.push(read);
       }
       if (readPrCall(segment)) {
         const call = prCalls.shift();
-        if (call?.subcommand === 'create' && !call.help && !call.web) prCreates.push({ call, dir: own });
+        if (call?.subcommand === 'create' && !call.help && !call.web && !call.dryRun) prCreates.push({ call, dir: own });
       }
       if (CHANGES_DIRECTORY.has(program)) dir = moveTo(dir, args.find((token) => !/^-[LPe@]+$/u.test(token.text)));
     }
     // The n-th commit whose message is a command substitution takes the line's n-th message heredoc, and only when the
     // counts match: one commit's heredoc never stands in for another's.
     pending.forEach((read, i) => {
-      if (messageHeredocs.length === pending.length) read.messages.splice(read.at, 0, messageHeredocs[i]);
+      if (read.dynamic && messageHeredocs.length === pending.length) read.messages.splice(read.at, 0, messageHeredocs[i]);
     });
   }
   return { gitCommits, prCreates };
@@ -121,16 +123,21 @@ function moveTo(dir, to) {
 }
 
 // The `git commit` options that take the next word as their value, besides -m, -F, and --trailer.
-const COMMIT_VALUES = ['--author', '--date', '--template', '--fixup', '--squash', '--cleanup', '--reuse-message', '--reedit-message',
-  '--pathspec-from-file'];
-const COMMIT_SHORT_VALUES = new Set(['-C', '-c', '-t']);
+const COMMIT_VALUES = ['--author', '--date', '--template', '--fixup', '--squash', '--cleanup', '--pathspec-from-file'];
+const COMMIT_SHORT_VALUES = new Set(['-t']);
+// The options that take the message from another commit, which the rule does not read.
+const REUSE_VALUES = ['--reuse-message', '--reedit-message'];
+const REUSE_SHORT = new Set(['-C', '-c']);
 
-// One commit's { messages, trailers, dynamic, at, writesNothing }: its -m values in order, or its -F file's text, its
-// --trailer values, whether a -m value is a command substitution, where in `messages` that value goes, and whether the
+// One commit's { messages, trailers, dynamic, holdsHeredoc, at, writesNothing }: its -m values in order, or its -F file's text, its
+// --trailer values, whether a kept or dropped -m value is a command substitution, where in `messages` it goes, and whether the
 // call makes no commit: `-h`, `--help`, or a `--dry-run` that no later `--no-dry-run` undoes. Option values are skipped,
-// so `-m --help` is a message.
+// so `-m --help` is a message. `--no-message` and `--no-file` drop the -m values and the -F file before them.
 function commitMessage(rest, dir) {
   const read = { messages: [], trailers: [], dynamic: false, at: 0, writesNothing: false };
+  const messages = [];
+  let fileText = null;
+  let reused = false;
   let dryRun = false;
   for (let i = 0; i < rest.length; i += 1) {
     const { text } = rest[i];
@@ -143,6 +150,12 @@ function commitMessage(rest, dir) {
     else if (isLongOption(flag, '--dry-run', '--dr')) dryRun = true;
     else if (isLongOption(flag, '--no-dry-run', '--no-d')) dryRun = false;
     else if (COMMIT_VALUES.some((option) => isLongOption(flag, option, option)) || COMMIT_SHORT_VALUES.has(text)) value();
+    else if (REUSE_VALUES.some((option) => isLongOption(flag, option, option)) || REUSE_SHORT.has(text)) {
+      reused = true;
+      value();
+    }
+    else if (flag === '--no-message') messages.length = 0;
+    else if (flag === '--no-file') fileText = null;
     else if (isLongOption(flag, '--message', '--m')) [kind, token] = ['message', value()];
     else if (isLongOption(flag, '--file', '--fi')) [kind, token] = ['file', value()];
     else if (isLongOption(flag, '--trailer', '--tr')) [kind, token] = ['trailer', value()];
@@ -156,14 +169,22 @@ function commitMessage(rest, dir) {
     }
     if (!token) continue;
     if (kind === 'trailer') read.trailers.push(token.text);
-    else if (kind === 'message' && token.dynamic) [read.dynamic, read.at] = [true, read.messages.length];
-    else if (kind === 'message') read.messages.push(token.text);
-    else if (!token.dynamic && token.text !== '-') {
+    else if (kind === 'message' && token.dynamic) messages.push(DYNAMIC);
+    else if (kind === 'message') messages.push(token.text);
+    else if (token.dynamic || token.text === '-') fileText = '';
+    else {
       const file = path.isAbsolute(token.text) ? token.text : dir ? path.resolve(dir, token.text) : null;
-      read.messages.push((file && readText(file)) ?? '');
+      fileText = (file && readText(file)) ?? '';
     }
   }
   read.writesNothing ||= dryRun;
+  // The message git writes: another commit's when one is reused, which the rule cannot read; else the -m values, else
+  // the -F file. Only the --trailer values then count for a message the rule cannot read.
+  const kept = reused ? [] : messages.length ? messages : fileText !== null ? [fileText] : [];
+  read.holdsHeredoc = messages.includes(DYNAMIC);
+  read.dynamic = kept.includes(DYNAMIC);
+  read.at = kept.indexOf(DYNAMIC);
+  read.messages = kept.filter((each) => each !== DYNAMIC);
   return read;
 }
 

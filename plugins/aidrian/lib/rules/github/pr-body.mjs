@@ -63,7 +63,7 @@ export function readPrCalls(line) {
   return calls;
 }
 
-// { subcommand, fill, body, bodyFile, title, repo, target, head, base } for a `gh [-R repo] pr create|edit …` segment, else null.
+// { subcommand, fill, body, bodyFile, title, repo, target, head, base, dryRun } for a `gh [-R repo] pr create|edit …` segment, else null.
 // Later flags win, as in gh. `title`, `repo`, `head`, and `base` are tokens; `target` is the first positional (the pull request an edit
 // names).
 export function readPrCall(segment) {
@@ -81,8 +81,10 @@ export function readPrCall(segment) {
     else if (text.startsWith('--repo=')) repo = { text: text.slice('--repo='.length), dynamic };
     else if (!text.startsWith('-')) words.push(text);
   }
+  // `gh pr new` is gh's built-in alias for `gh pr create`.
+  if (words[1] === 'new') words[1] = 'create';
   if (words[0] !== 'pr' || !['create', 'edit'].includes(words[1])) return null;
-  const call = { subcommand: words[1], fill: false, web: false, help, body: null, bodyFile: null, title: null, repo, target: null, head: null, base: null };
+  const call = { subcommand: words[1], fill: false, web: false, help, body: null, bodyFile: null, title: null, repo, target: null, head: null, base: null, dryRun: false };
   for (; i < args.length; i += 1) {
     const { text, dynamic } = args[i];
     // After `--` every word is a positional: no flag, but still the pull request an edit names.
@@ -109,6 +111,7 @@ export function readPrCall(segment) {
     const value = () => (inline !== null ? { text: inline, dynamic } : args[++i] ?? null);
     if (FILL.has(flag)) call.fill = true;
     else if (flag === '--web') call.web = isTrue(inline, dynamic);
+    else if (flag === '--dry-run') call.dryRun = isTrue(inline, dynamic);
     else if (flag === '--help') call.help = isTrue(inline, dynamic);
     else if (flag === '--body' || flag === '-b') [call.body, call.bodyFile] = [value(), null];
     else if (flag === '--body-file' || flag === '-F') [call.bodyFile, call.body] = [value(), null];

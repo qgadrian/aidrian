@@ -362,6 +362,10 @@ test('in the main checkout, only named files are staged and only the default bra
   assert.match(denied(`GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo} /bin/bash <<< 'git add -A'`, beside) ?? '', /main checkout/, 'assignments before /bin/bash');
   assert.match(denied(`env -C ${base}/git GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo} git add -A`, base) ?? '', /main checkout/, 'a wrapper folder named git');
   assert.equal(denied(`cd ${beside} && bash <<< 'git add -A'`), null, 'shell input after a cd');
+  for (const command of ['git add {.,src}', 'git commit --{all,verbose} -m msg', 'git checkout task{1..1}']) {
+    assert.match(denied(command) ?? '', /main checkout/, `a brace expansion: ${command}`);
+  }
+  assert.match(denied(`(GIT_DIR=${repo}/.git git checkout task)`, beside) ?? '', /main checkout/, 'an assignment in a subshell');
   symlinkSync('src', path.join(repo, 'link'));
   assert.equal(denied('git add link'), null, 'a symlink to a folder is one file');
   for (const command of ['(export GIT_DIR="$HOME/unused"); git add -A', 'export GIT_DIR="$HOME/unused" | cat; git add -A', 'GIT_DIR="$X" git add src/app.js']) {

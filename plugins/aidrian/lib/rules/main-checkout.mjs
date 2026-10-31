@@ -132,8 +132,13 @@ function assignmentsOf(segment, invocation, call = null) {
   const matches = segment.map((token, i) => (!token.operator && path.basename(token.text) === invocation.program && (end === -1 || i < end) ? i : -1)).filter((i) => i !== -1);
   const program = matches.at(-1) ?? -1;
   const head = invocation.program === 'export' ? segment : program === -1 ? segment : segment.slice(0, program);
-  return head.filter((token) => !token.operator && GIT_ASSIGNMENT.test(token.text));
+  // A subshell's `(` stays glued to its first word: `(GIT_DIR=…` is an assignment too.
+  return head.filter((token) => !token.operator && GIT_ASSIGNMENT.test(token.text.replace(/^\(+/u, ''))).map((token) => ({ ...token, text: token.text.replace(/^\(+/u, '') }));
 }
+
+// Whether a word may become other words when the shell expands it: a parameter, a substitution, a glob (the lexer's
+// `dynamic`), or a brace expansion such as `{.,src}` or `--{all,x}`.
+const expands = (token) => token.dynamic || /\{[^{}]*(?:,|\.\.)[^{}]*\}/u.test(token.text);
 
 // `inherited` holds the GIT_* assignments in force: set before an inline shell, or by an earlier `export` or bare
 // assignment on the same command line.
@@ -192,13 +197,13 @@ function gitStateChanges(command, cwd, depth = 0, inherited = []) {
     }
     if (call.subcommand === 'add') {
       const named = (word) => !/[*?[\]:]/u.test(word) && !isFolder(path.resolve(at, word)) && tracksAtMostItself(at, word);
-      const dynamic = call.rest.some((token) => token.dynamic);
+      const dynamic = call.rest.some(expands);
       if (dynamic || !options.every((option) => ADD_SAFE.has(option)) || ![...operands, ...after].every(named) || ![...operands, ...after].length) {
         found.push({ what: '`git add` of anything but named files can stage other sessions\' work', folders });
       }
     } else if (call.subcommand === 'commit') {
       if (commitsAll(call.rest)) found.push({ what: '`git commit -a` commits every change in the folder, other sessions\' work included', folders });
-    } else if (call.rest.some((token) => token.dynamic)) {
+    } else if (call.rest.some(expands)) {
       // A word that may expand can name any branch or option: a checkout or switch with one is not plainly safe.
       found.push({ what: `\`git ${call.subcommand}\` with a word that may expand can move the folder every session shares`, folders, target: null });
     } else if (call.subcommand === 'switch') {
@@ -265,7 +270,8 @@ function checkoutOfGitDir(gitDir) {
 // read up to its first value option, so `-am msg` holds -a and `-mall` does not.
 function commitsAll(rest) {
   for (let i = 0; i < rest.length; i += 1) {
-    const { text, dynamic } = rest[i];
+    const { text } = rest[i];
+    const dynamic = expands(rest[i]);
     // A word that may expand could be -a, unless it is a value option with the expansion in its value: `-m"$MSG"`,
     // `--message="$MSG"`. A value in the next word is read past below.
     // A word that may expand can become several words, -a among them (`$@`, arrays, unquoted words): nothing that
@@ -275,14 +281,14 @@ function commitsAll(rest) {
     if (text.startsWith('--')) {
       if (isLongOption(text, '--all', '--al')) return true;
       if (COMMIT_VALUES.has(text)) {
-        if (rest[i + 1]?.dynamic) return true;
+        if (rest[i + 1] && expands(rest[i + 1])) return true;
         i += 1;
       }
     } else if (text.startsWith('-') && text.length > 1) {
       const { options, value } = readShortOptions(text, COMMIT_VALUES, COMMIT_ATTACHED);
       if (options.includes('-a')) return true;
       if (value?.attached === null) {
-        if (rest[i + 1]?.dynamic) return true;
+        if (rest[i + 1] && expands(rest[i + 1])) return true;
         i += 1;
       }
     }

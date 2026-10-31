@@ -30,8 +30,7 @@ function project(t, config = { version: 1 }) {
   spawnSync('git', ['-C', dir, 'add', 'app.js']);
   const temp = path.join(base, 'tmp');
   mkdirSync(temp);
-  const clean = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('AIDRIAN_ALLOW_')));
-  const env = { ...clean, XDG_STATE_HOME: path.join(base, 'state'), TMPDIR: temp };
+  const env = { ...process.env, XDG_STATE_HOME: path.join(base, 'state'), TMPDIR: temp };
   const hook = (script, input) => spawnSync(process.execPath, [path.join(SCRIPTS, script)], { input: JSON.stringify({ cwd: dir, ...input }), encoding: 'utf8', env });
   const state = () => spawnSync(CLI, ['state'], { cwd: dir, env, encoding: 'utf8' }).stdout.trim();
   const rows = () => {

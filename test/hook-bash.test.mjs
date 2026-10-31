@@ -13,8 +13,7 @@ const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-
 
 // Runs the hook with `input` on stdin and no override set.
 function bashHook(input, env = {}) {
-  const clean = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('AIDRIAN_ALLOW_')));
-  return spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env: { ...clean, ...env } });
+  return spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env: { ...process.env, ...env } });
 }
 
 const bash = (command) => JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: process.cwd() });

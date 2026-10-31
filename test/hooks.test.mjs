@@ -46,7 +46,7 @@ test('every hook exits 0 with nothing on stderr for input it cannot use, inside 
     rmSync(state, { recursive: true, force: true });
     rmSync(outside, { recursive: true, force: true });
   });
-  const env = { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('AIDRIAN_ALLOW_'))), XDG_STATE_HOME: state };
+  const env = { ...process.env, XDG_STATE_HOME: state };
   for (const { event, script, args } of hookCommands()) {
     for (const cwd of [outside, path.join(ROOT, 'examples/consumer')]) {
       for (const input of HOSTILE) {

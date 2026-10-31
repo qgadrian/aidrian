@@ -107,7 +107,9 @@ export function published({ program, args }) {
     if (/^-[^-]/u.test(text) && !dynamic) {
       const { value } = readShortOptions(text, values);
       if (value) {
-        const operand = value.attached === null ? rest[++i] : { text: value.attached.replace(/^=/u, ''), dynamic };
+        // gh (pflag) reads `-F=x` as x; git keeps the `=`, as a file named `=x`.
+        const attached = program === 'gh' ? value.attached?.replace(/^=/u, '') : value.attached;
+        const operand = value.attached === null ? rest[++i] : { text: attached, dynamic };
         if (value.option === '-F') files.push(operand);
         else if (value.option !== '-R' && operand) words.push(operand);
         continue;

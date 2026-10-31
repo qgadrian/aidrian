@@ -28,6 +28,7 @@ test('body and message files are read from each way gh and git take one; reads p
     ['gh issue comment 3 -Ff.md', ['f.md']],
     ['git -C x commit -F g.txt', ['g.txt']],
     ['git commit --file=h.txt', ['h.txt']],
+    ['git commit -F=i.txt', ['=i.txt']],
     ['gh pr view 1 --json body', null],
     ['gh issue list --search x', null],
     ['git log --grep commit', null],

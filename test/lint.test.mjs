@@ -190,7 +190,7 @@ test('aidrian lint runs every lint on a project and prints the always-doc budget
   const all = run(['--project', 'examples/consumer']);
   assert.equal(all.status, 0, all.stderr);
   assert.match(all.stdout, /^skills: 0 skills, 0 of 9216 listing bytes\nagents: 0 agents\npaths: no personal paths in \d+ tracked and \d+ untracked files\n/);
-  assert.match(all.stdout, /\nbudget: \d+ of 16384 always-doc bytes \(engineering \d+, product 0\)\nterms: no banned terms in \d+ tracked files \(2 rules\)\n$/);
+  assert.match(all.stdout, /\nbudget: \d+ of 16384 always-doc bytes \(engineering \d+, product 0\)\nterms: no banned terms in \d+ tracked files \(2 rules\)\nreview: 0 flows, 0 project reviewers, all pointing at real files\n$/);
 
   const dir = tempDir(t);
   execFileSync('git', ['init', '-q', dir]);
@@ -207,5 +207,31 @@ test('aidrian lint runs every lint on a project and prints the always-doc budget
   assert.deepEqual([near.status, near.stdout, near.stderr], [0, 'budget: 27 of 20 always-doc bytes (kb 27)\n', `budget: warning: always docs: 27 bytes, over knowledge.budgets.alwaysBytes (20); ${advice}`]);
   const over = budget(13);
   assert.deepEqual([over.status, over.stderr], [1, `budget: always docs: 27 bytes, over twice knowledge.budgets.alwaysBytes (13); ${advice}`]);
-  assert.deepEqual([run(['nope']).status, run(['nope']).stderr], [1, 'unknown lint: nope; use one of skills, agents, paths, budget, terms\n']);
+  assert.deepEqual([run(['nope']).status, run(['nope']).stderr], [1, 'unknown lint: nope; use one of skills, agents, paths, budget, terms, review\n']);
+});
+
+test('aidrian lint review: dead flow globs, a missing invariants doc, and a bad cite are errors; no invariants is a warning', (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-lint-review-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  spawnSync('git', ['init', '-q', dir]);
+  mkdirSync(path.join(dir, '.aidrian'), { recursive: true });
+  mkdirSync(path.join(dir, 'src/booking'), { recursive: true });
+  writeFileSync(path.join(dir, 'src/booking/a.js'), '');
+  writeFileSync(path.join(dir, 'inv.md'), '# Booking\n\n## Never double book\n');
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, review: { flows: {
+    booking: { files: ['src/booking/**'], invariants: 'inv.md' },
+    gone: { files: ['src/gone/**'], invariants: 'missing.md' },
+    loose: { files: ['src/booking/**'], invariants: [{ id: 'x', text: 'y', cite: 'inv.md#nope' }] },
+    bare: { files: ['src/booking/**'] },
+  } } }));
+  spawnSync('git', ['-C', dir, 'add', '-A']);
+  const run = spawnSync(CLI, ['lint', 'review', '--project', dir], { encoding: 'utf8' });
+  assert.equal(run.status, 1);
+  assert.equal(run.stderr, [
+    'review: warning: flow bare states no invariants: its reviewer checks only that nothing in it is removed or weakened',
+    'review: flow gone: files "src/gone/**" matches no tracked file',
+    'review: flow gone: invariants missing.md is missing',
+    'review: flow loose: invariant x cites #nope, a heading inv.md does not have',
+    '',
+  ].join('\n'));
 });

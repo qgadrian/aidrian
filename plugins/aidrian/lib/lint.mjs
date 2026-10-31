@@ -9,6 +9,7 @@
 //   terms   tracked files hold no banned term of the terms file (terms.mjs): a `block` hit fails, a `warn` hit warns;
 //           --staged reads what the index holds, --rule <id> runs one rule. `code` rules are left to the project's
 //           linter. Off while config.json `terms.file` is null
+//   review  the review config's flows and reviewers point at real files and stay within budget (review/lint.mjs)
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -19,9 +20,10 @@ import { isDirectory, isFile } from './fs.mjs';
 import { runGit } from './git.mjs';
 import { checkBudgets, loadKnowledge } from './knowledge.mjs';
 import { projectAt } from './project.mjs';
+import { lintReview } from './review/lint.mjs';
 import { formatHit, loadTerms, NOT_TEXT, numbered, scanLines } from './terms.mjs';
 
-const KINDS = ['skills', 'agents', 'paths', 'budget', 'terms'];
+const KINDS = ['skills', 'agents', 'paths', 'budget', 'terms', 'review'];
 const MODELS = new Set(['haiku', 'sonnet', 'opus', 'fable', 'inherit']);
 const EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 // Home folders of placeholder or CI users are not personal.
@@ -37,8 +39,8 @@ const STAGED_MAX_BYTES = 64 * 1024 * 1024;
 
 export const commands = {
   lint: {
-    usage: '[skills|agents|paths|budget|terms] [DIR...] [--staged] [--rule ID] [--project DIR]',
-    about: 'lint skills, agents, personal paths, the knowledge budgets, and the banned terms; DIR replaces .claude/skills or .claude/agents',
+    usage: '[skills|agents|paths|budget|terms|review] [DIR...] [--staged] [--rule ID] [--project DIR]',
+    about: 'lint skills, agents, personal paths, the knowledge budgets, the banned terms, and the review config; DIR replaces .claude/skills or .claude/agents',
     run(args) {
       const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { project: { type: 'string' }, staged: { type: 'boolean' }, rule: { type: 'string' } } });
       const [kind, ...dirs] = positionals;
@@ -56,6 +58,7 @@ export const commands = {
         paths: () => lintPaths(project.root, values.staged),
         budget: () => checkBudgets(project.root, buckets, config.knowledge.budgets),
         terms: () => lintTerms(project, config, values.staged, values.rule ?? null),
+        review: () => lintReview(project, config),
       };
       const results = (kind ? [kind] : KINDS).map((name) => [name, runs[name]()]);
       for (const [name, { problems, warnings = [], summary }] of results) {

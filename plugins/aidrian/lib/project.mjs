@@ -109,6 +109,7 @@ export function openProject(root, roots) {
     localNames: local.names,
     localTelemetry: local.telemetry,
     localAgents: local.agents,
+    localReview: local.review,
     errors,
     unreadable,
   };
@@ -145,7 +146,7 @@ function checkoutsOf(root, roots) {
   return main && main !== realpathSync(root) ? [root, main] : [root];
 }
 
-// `.aidrian.local.json`: { sources, models, names, telemetry, agents }. A git worktree has no copy of that git-ignored file, so it is read
+// `.aidrian.local.json`: { sources, models, names, telemetry, agents, review }. A git worktree has no copy of that git-ignored file, so it is read
 // from the main checkout then: from the first of `checkouts` that has it. Each source is a folder with its own knowledge/
 // and, optionally, a config.json with `version`.
 function readLocal(checkouts, errors, unreadable) {
@@ -158,9 +159,9 @@ function readLocal(checkouts, errors, unreadable) {
     return none;
   }
   for (const key of Object.keys(raw)) {
-    if (!['sources', 'models', 'names', 'telemetry', 'agents'].includes(key)) errors.push(`${LOCAL}: unknown key "${key}"`);
+    if (!['sources', 'models', 'names', 'telemetry', 'agents', 'review'].includes(key)) errors.push(`${LOCAL}: unknown key "${key}"`);
   }
-  return { sources: localSources(holder, raw, errors), models: raw.models, names: raw.names, telemetry: raw.telemetry, agents: raw.agents };
+  return { sources: localSources(holder, raw, errors), models: raw.models, names: raw.names, telemetry: raw.telemetry, agents: raw.agents, review: raw.review };
 }
 
 function localSources(holder, raw, errors) {

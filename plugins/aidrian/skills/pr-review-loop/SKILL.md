@@ -18,30 +18,26 @@ and `product_sensitive` docs when a comment touches what users see, money, or da
   Its § A ready pull request says when a ready pull request stops after the triage in step 3.
   Its other sections define the fix-pass cap, the disposition actions, when the bot is out, and a review round.
 
-## 1. Await the bot review (`--await-codex`)
+## 1. Run the review plan
 
 ```bash
-aidrian pr await-review <n> --request     # waits up to 14 minutes; give the shell call a 15-minute timeout
+aidrian pr review <n>    # one step of the project's review plan; give the shell call a 15-minute timeout
 ```
 
-| Exit | Status | Next |
-| --- | --- | --- |
-| 0 | `received` or `already_present` | collect it with the rest |
-| 0 | `no_reviewer` | the project has no review bot, and nothing was posted: record `bot review: none` |
-| 2 | `timed_out` | with `head_lag: true` (GitHub had not caught up with the push), run the same command once more; with `retry_recommended: true`, once more without `--request`; otherwise record `bot review: not received` |
-| 3 | `blocked_quota` | record `bot review: blocked_quota` and go on with the other comments |
-| 4 | `round_limit` | the review-round cap, config.json `github.maxReviewRounds`: stop and ask the Human to raise it, redesign, or stop. Only the Human raises it: `--max-rounds` past the cap needs `AIDRIAN_ALLOW_EXTRA_ROUNDS=1` in their shell |
-| 5 | `review_required` | the [review gate](#review-gate): nothing was posted; run the review it names, then this step again |
+It plans the review from the diff and config.json `review`, runs what it can itself, and prints the next action.
+Act on `status`, then run it again, until it stops:
 
-### Review gate
+| Status | Do |
+| --- | --- |
+| `dispatch` | run each `dispatch[]` entry as its read-only `agent`, briefed with the entry; record each with its `record` command |
+| `fix_required` | triage `open`, `flows`, `tests_removed`, and `checks_failing` in step 3, fix, push |
+| `checks_pending`, `timed_out` | run it again; `incomplete` with `retry_recommended`: once more |
+| `received`, `none_needed` | go to step 2 for comments people or the bot left, then step 7 |
+| `human_required`, `stuck`, `too_large`, `unsatisfied`, `round_limit`, `blocked_quota` | stop: report it and ask the Human |
 
-With config.json `github.reviewGate.enabled`, the bot is asked only once a review of the whole diff is on record.
-Dispatch one read-only reviewer that did not write the change, such as the `code-reviewer` agent, with the diff and
-config.json `github.reviewGate.checklist` when set. Fix what it finds, then record it once per pull request:
-`aidrian pr attest <n> --head <sha> --reviewer <agent> --findings <n> --fixed <n>`.
-`--request` then carries the marker by itself; never post a second request by hand.
-
-A `thumbs_up` signal with no other comments and green checks means nothing to address: report it in one line.
+A flow pass answers every invariant it is given with a verdict and evidence: `path:line` at the head, or
+`test:<name>`. `references/review-plan.md` has the verdicts file and what each status carries.
+With `--await-codex`, run `aidrian pr review <n> --with-bot`: the review bot then runs as the last stage too.
 
 ## 2. Collect every review surface
 
@@ -73,12 +69,11 @@ One row per item:
 - **Action** comes from the disposition table, never from severity alone:
 
   ```bash
-  aidrian pr disposition --severity <s> --likelihood <l> --affects <a> [--cost <c>] [--source bot --round <codex_rounds>]
+  aidrian pr disposition --severity <s> --likelihood <l> --affects <a> [--cost <c>] [--source bot --round <round>]
   ```
 
-  Add `--source bot --round <codex_rounds>` for the bot's comments only, where `<codex_rounds>` is the `codex_rounds`
-  field of step 1's `aidrian pr await-review` JSON. A person's comment omits both, and so does every comment
-  in a run without `--await-codex`. The review rules define each action.
+  Add `--source bot --round <round>` for every finding no person wrote: the bot's, a local model's, an agent pass's.
+  `<round>` is the `round` field of step 1's JSON. A person's comment omits both. The review rules define each action.
 - When a comment contradicts a project knowledge doc, the doc wins: reply with the citation and leave the thread open.
 
 ## 4. Fix every copy of the mistake

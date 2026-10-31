@@ -1102,8 +1102,12 @@ test('aidrian pr prints its usage for an unknown action, and await-review report
   const cli = new URL('../plugins/aidrian/bin/aidrian', import.meta.url).pathname;
   const unknown = spawnSync(cli, ['pr', 'merge'], { encoding: 'utf8' });
   assert.deepEqual([unknown.status, unknown.stderr], [1, [
-    'usage: aidrian pr await-review [PR] [--request] [--max-rounds N] [--head SHA]',
+    'usage: aidrian pr review [PR] [--with-bot] [--max-rounds N]',
+    '       aidrian pr signoff PR --flow ID --head SHA',
+    '       aidrian pr await-review [PR] [--request] [--max-rounds N] [--head SHA]',
     '       aidrian pr attest PR --head SHA --reviewer WHO --findings N --fixed N [--note T]',
+    '       aidrian pr attest PR --pass ID --head SHA --reviewer WHO --findings N --fixed N',
+    '               [--accepted N] [--verdicts FILE]',
     '       aidrian pr attest PR --check',
     '       aidrian pr checks [PR] [-R OWNER/REPO] [--json]',
     '       aidrian pr disposition --severity S [--likelihood L --affects A] [--cost C]',

@@ -7,6 +7,7 @@ import path from 'node:path';
 
 import { agentNameProblem, patternProblem } from './agent-gates.mjs';
 import { isFile, isObject, readJson } from './fs.mjs';
+import { checkLocalReview, checkReview, REVIEW_DEFAULTS } from './review/config.mjs';
 
 // The project folder format this plugin reads. A format change raises it and documents the migration.
 export const VERSION = 1;
@@ -45,6 +46,7 @@ const SCHEMA = {
     },
     reviewGate: { enabled: 'boolean', checklist: 'textOrNull' },
   },
+  review: 'review',
   docs: { wrapLimit: 'zeroOrMore' },
   terms: { file: 'textOrNull' },
   knowledge: { budgets: { alwaysBytes: 'positive', taggedDocBytes: 'positive' } },
@@ -165,6 +167,8 @@ export const DEFAULTS = deepFreeze({
     // The review that must be on record before the review bot is asked (lib/review-gate.mjs).
     reviewGate: { enabled: false, checklist: null },
   },
+  // How a pull request is reviewed (lib/review/, docs/review.md).
+  review: REVIEW_DEFAULTS,
   docs: { wrapLimit: 155 },
   // The terms file (lib/terms.mjs); null turns the terms rule off.
   terms: { file: null },
@@ -195,6 +199,7 @@ export const DEFAULTS = deepFreeze({
     },
   },
   agents: {},
+  reviewEngine: 'auto',
 });
 
 // Returns { config, errors, gateErrors, current }. `config` is frozen and always complete: the file's values over DEFAULTS, one
@@ -219,6 +224,8 @@ export function loadConfig(project) {
   for (const [key, local] of [['names', project.localNames], ['telemetry', project.localTelemetry]]) {
     if (local !== undefined) config[key] = merge({ [key]: SCHEMA[key] }, config, { [key]: local }, '', project.paths.local, errors)[key];
   }
+  // The machine's review engine lives only in the local file (lib/review/config.mjs).
+  config.reviewEngine = project.localReview === undefined ? 'auto' : checkLocalReview(project.localReview, project.paths.local, errors);
   if (project.localAgents !== undefined) config.agents = checkAgents(project.localAgents, project.paths.local, errors, config.agents, gateErrors);
   return { config: deepFreeze(config), errors, gateErrors, current: true };
 }
@@ -264,6 +271,8 @@ function merge(schema, defaults, values, prefix, file, errors, gateErrors = []) 
       else errors.push(`${file}: "${prefix}${key}" must be an object`);
     } else if (type === 'models') {
       out[key] = checkModels(value, file, errors, defaults[key]);
+    } else if (type === 'review') {
+      out[key] = checkReview(value, file, errors);
     } else if (type === 'agents') {
       out[key] = checkAgents(value, file, errors, defaults[key], gateErrors);
     } else if (TYPES[type][0](value)) {

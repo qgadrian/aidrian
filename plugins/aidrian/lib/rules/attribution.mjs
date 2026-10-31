@@ -50,12 +50,16 @@ function commitTrailers(message, trailers, dir, config = [], cleanup = (text) =>
   return carriedTrailers(message === null ? [] : [cleanup(message)], trailers);
 }
 
+// A heredoc match's body as bash passes it: as written under a quoted delimiter, or under a bare one when it holds
+// nothing bash expands (`$`, a backtick, or a backslash); else null, a body the rule cannot know.
+export const unchangedHeredoc = (match) => (match[2] || !/[$`\\]/u.test(match[4]) ? match[4] : null);
+
 // A token's text, or null when it is missing or dynamic.
 const staticText = (token) => (token && !token.dynamic && token.text ? token.text : null);
 
 // The deny reason for `command`, or null. `commits(cwd, base, head)` is the test seam for the branch's commit trailers.
 export function check(command, { cwd = process.cwd(), env = process.env, input, commits = branchCommits } = {}) {
-  if (env[OVERRIDE] === '1' || typeof input?.transcript_path !== 'string' || !/\b(?:commit|pr)\b/u.test(command)) return null;
+  if (env[OVERRIDE] === '1' || typeof input?.transcript_path !== 'string') return null;
   const { gitCommits, prCreates } = readCalls(command, cwd);
   if (!gitCommits.length && !prCreates.length) return null;
   // Each call answers to the project it runs in, as its own folder finds it; in a folder the rule cannot know, the
@@ -114,7 +118,7 @@ function readCalls(command, cwd) {
   const prCreates = [];
   const lines = new Map();
   const state = (line) => {
-    if (!lines.has(line)) lines.set(line, { heredocs: [...line.matchAll(MESSAGE_HEREDOC)].map((match) => match[4]), pending: [], prCalls: [] });
+    if (!lines.has(line)) lines.set(line, { heredocs: [...line.matchAll(MESSAGE_HEREDOC)].map(unchangedHeredoc), pending: [], prCalls: [] });
     return lines.get(line);
   };
   for (const { segment, folder, line } of walkCommands(command, cwd)) {
@@ -145,7 +149,8 @@ function readCalls(command, cwd) {
     const paired = perRun > 0 && perRun === heredocs.length && pending.length % perRun === 0;
     pending.forEach((read, i) => {
       if (!read.dynamic) return;
-      if (paired) read.messages.splice(read.at, 0, heredocs[i % perRun]);
+      const heredoc = paired ? heredocs[i % perRun] : null;
+      if (heredoc !== null) read.messages.splice(read.at, 0, heredoc);
       else read.messages = [];
     });
   }

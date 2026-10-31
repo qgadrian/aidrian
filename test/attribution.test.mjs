@@ -106,6 +106,9 @@ test('a heredoc counts only for the commit or pull request that holds it', (t) =
   assert.match(run(`git commit -m "$(printf unsigned <<'EOF'\nfix: y\n\nAgent: main\nEOF\n)"`) ?? '', /Blocked/, 'printf prints its own text');
   assert.match(run(`git commit -m "$(cat <<'EOF'\nfix: y\n\nAgent: main\nEOF\nprintf '\\n\\nunsigned')"`) ?? '', /Blocked/, 'more output after the heredoc');
   assert.match(run(`git commit -m "$(cat <<'EOF'\nfix: y\n\nAgent: main\nEOF\n) unsigned"`) ?? '', /Blocked/, 'more text after the substitution');
+  assert.match(run('git commit -m "$(cat <<EOF\nfix: y\n\nAgent: main\n# $BODY\nEOF\n)"') ?? '', /Blocked/, 'a bare delimiter expands');
+  assert.equal(run('git commit -m "$(cat <<EOF\nfix: y\n\nAgent: main\nEOF\n)"'), null, 'nothing to expand');
+  assert.match(run('git com\\mit --allow-empty -m unsigned') ?? '', /Blocked/, 'an escaped word');
   execFileSync('git', ['init', '-q'], { cwd: dir });
   execFileSync('git', ['config', 'trailer.separators', '='], { cwd: dir });
   assert.equal(run("git commit --allow-empty -m subject --trailer 'Agent=main'"), null, 'a configured separator');

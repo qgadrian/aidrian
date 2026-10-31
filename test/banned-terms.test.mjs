@@ -96,8 +96,8 @@ test('the commit-msg hook reads the whole message, scissors and # lines included
   const msg = path.join(dir, 'MSG');
   writeFileSync(msg, 'fix: thing\n# a comment\n');
   assert.equal(spawnSync('node', [SCRIPT, 'commit-msg', msg], { cwd: dir }).status, 0);
-  // A public pattern, so the test needs no private file; the brackets keep this file from matching it.
-  writeFileSync(msg, `fine\n# ------------------------ >8 ------------------------\n${'g' + 'rill'}\n`);
+  writeFileSync(path.join(dir, '.banned-terms.local'), '# a comment\nsecretco\n');
+  writeFileSync(msg, 'fine\n# ------------------------ >8 ------------------------\nsecretco\n');
   assert.equal(spawnSync('node', [SCRIPT, 'commit-msg', msg], { cwd: dir }).status, 1, 'git can keep text below the scissors');
 });
 

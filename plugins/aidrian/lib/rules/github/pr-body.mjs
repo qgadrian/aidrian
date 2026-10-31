@@ -21,7 +21,7 @@ import { loadConfig } from '../../config.mjs';
 import { runGh } from '../../gh.mjs';
 import { headings, sectionItems, unfencedLines } from '../../markdown-sections.mjs';
 import { findProject } from '../../project.mjs';
-import { commandLines, lexCommand, readInvocation, readShortOptions } from '../../shell-lex.mjs';
+import { commandFolders, commandLines, readInvocation, readShortOptions } from '../../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PR_BODY';
 
@@ -44,37 +44,17 @@ const LIST_TIMEOUT_MS = 3000;
 export function check(command, { cwd = process.cwd(), env = process.env, listOpenPrs = openPrBodies(cwd) } = {}) {
   if (env[OVERRIDE] === '1') return null;
   for (const line of commandLines(command)) {
-    // The folder gh runs in: a leading `cd <dir> &&` moves it, so `cd <worktree> && gh pr create --body-file b.md` reads
-    // that worktree's b.md and project, not the session's. Any other directory change (in a subshell, a pipe, after `||`,
-    // a second one) leaves the folder unknown, null, for the commands after it.
-    let here = cwd;
-    for (const [index, segment] of lexCommand(line).entries()) {
-      const invocation = readInvocation(segment);
-      if (CHANGES_DIRECTORY.has(invocation.program)) {
-        here = index === 0 && LEADING_CD.test(line) ? movedTo(cwd, invocation) : null;
-        continue;
-      }
+    // The folder gh runs in (shell-lex `commandFolders`): `cd <worktree> && gh pr create --body-file b.md` reads that
+    // worktree's b.md and project. In a folder this rule cannot know, the project is the session's and a relative body
+    // file is unreadable.
+    for (const { segment, folder } of commandFolders(line, cwd)) {
       const call = readPrCall(segment);
       if (!call) continue;
-      // In a folder this rule cannot know, the project is the session's and a relative body file is unreadable.
-      const at = here !== null && invocation.chdir ? movedTo(here, { program: 'cd', args: [invocation.chdir] }) : here;
-      const reason = judge(call, line, { cwd: at ?? cwd, folderKnown: at !== null, env, listOpenPrs: at === null || at === cwd ? listOpenPrs : openPrBodies(at) });
+      const reason = judge(call, line, { cwd: folder ?? cwd, folderKnown: folder !== null, env, listOpenPrs: folder === null || folder === cwd ? listOpenPrs : openPrBodies(folder) });
       if (reason) return reason;
     }
   }
   return null;
-}
-
-const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
-const LEADING_CD = /^\s*cd\s+(?:'[^']*'|"[^"]*"|[^\s;&|()'"]+)\s*&&/u;
-
-// The folder after a `cd`, `pushd`, or `popd` invocation from `here`, or null when it cannot be known.
-function movedTo(here, { program, args }) {
-  if (program === 'popd') return null;
-  const to = args.find((token) => token.dynamic || !token.text.startsWith('-'));
-  if (!to || to.dynamic || to.text === '-' || to.text.startsWith('~')) return null;
-  if (path.isAbsolute(to.text)) return to.text;
-  return here === null ? null : path.resolve(here, to.text);
 }
 
 // { subcommand, fill, body, bodyFile, title, repo, target } for a `gh [-R repo] pr create|edit …` segment, else null.

@@ -16,6 +16,8 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { commandFolders, commandLines, readShortOptions } from '../plugins/aidrian/lib/shell-lex.mjs';
+
 const ROOT = path.resolve(import.meta.dirname, '..');
 const PUBLIC = [];
 
@@ -41,33 +43,91 @@ export function bannedHits(text, patterns = bannedPatterns()) {
   return patterns.filter((pattern) => pattern.test(text)).map(String);
 }
 
-// The body files a command names, with the operand as written: `--body-file x`, `--body-file=x`, `-F x`, `-F=x`, `-Fx`,
-// and a short cluster such as `-dF x`. `-` (stdin) and variables are left out.
-const BODY_FILE = /(?:--body-file(?:=|\s+)|(?<=\s)-[A-Za-z]*F(?:=|\s*))('([^']*)'|"([^"$`]*)"|([^\s'"$`;&|)]+))/gu;
-export function bodyFiles(command) {
-  return [...command.matchAll(BODY_FILE)].map((match) => ({ operand: match[1], file: match[2] ?? match[3] ?? match[4] }))
-    .filter(({ file }) => file && file !== '-');
+// The gh pr and issue subcommands that only read: nothing they take is published.
+const READS = new Set(['view', 'list', 'status', 'checks', 'diff', 'checkout']);
+// The short options that take a value, of gh pr/issue and of git commit.
+const GH_VALUES = new Set(['-a', '-B', '-b', '-F', '-H', '-l', '-m', '-p', '-r', '-R', '-T', '-t']);
+const GIT_VALUES = new Set(['-m', '-F', '-C', '-c', '-t']);
+
+// What an invocation publishes, as { words, files }: the arguments git or GitHub keep (titles, bodies, messages,
+// labels), and the files whose contents it publishes (`--body-file`, `--file`, `-F`), as tokens. null for an invocation
+// that publishes nothing: anything but gh pr/issue (other than a read) and git commit.
+export function published({ program, args }) {
+  const texts = args.map((token) => token.text);
+  let start;
+  let fileFlag;
+  let values;
+  if (program === 'gh') {
+    const words = [];
+    let i = 0;
+    for (; i < args.length && words.length < 2; i += 1) {
+      if (texts[i] === '-R' || texts[i] === '--repo') i += 1;
+      else if (!texts[i].startsWith('-')) words.push(texts[i]);
+    }
+    if (!['pr', 'issue'].includes(words[0]) || !words[1] || READS.has(words[1])) return null;
+    [start, fileFlag, values] = [i, '--body-file', GH_VALUES];
+  } else if (program === 'git') {
+    let i = 0;
+    for (; i < args.length && texts[i].startsWith('-'); i += 1) if (['-C', '-c'].includes(texts[i])) i += 1;
+    if (texts[i] !== 'commit') return null;
+    [start, fileFlag, values] = [i + 1, '--file', GIT_VALUES];
+  } else {
+    return null;
+  }
+  const rest = args.slice(start);
+  const words = [];
+  const files = [];
+  for (let i = 0; i < rest.length; i += 1) {
+    const { text, dynamic } = rest[i];
+    if (text === fileFlag || text.startsWith(`${fileFlag}=`)) {
+      files.push(text === fileFlag ? rest[++i] : { text: text.slice(fileFlag.length + 1), dynamic });
+      continue;
+    }
+    if (text === '--repo') {
+      i += 1;
+      continue;
+    }
+    if (/^-[^-]/u.test(text) && !dynamic) {
+      const { value } = readShortOptions(text, values);
+      if (value?.option === '-F') {
+        files.push(value.attached === null ? rest[++i] : { text: value.attached.replace(/^=/u, ''), dynamic });
+        continue;
+      }
+      if (value?.option === '-R') {
+        if (value.attached === null) i += 1;
+        continue;
+      }
+    }
+    words.push(rest[i]);
+  }
+  return { words, files: files.filter((file) => file && file.text !== '-') };
 }
 
-// The deny reason for a Bash command, or null. Only gh pr/issue and git commit commands are read: their text is what
-// GitHub and git keep. The operands that name files read, never published (a body file, a leading `cd` target), are
-// left out of the text, since a home or temp path names the user; a body file's contents are read instead.
+// The deny reason for a Bash command, or null. Only what a gh pr/issue or git commit invocation publishes is read: its
+// arguments and its body or message file's contents, never its file paths (a home or temp path names the user). A
+// relative file in a folder a `cd` hides (shell-lex `commandFolders`) is refused, since it cannot be checked.
 export function judgeCommand(command, { cwd = process.cwd(), patterns = bannedPatterns() } = {}) {
-  if (!/\bgh\b[^\n;&|]*\b(?:pr|issue)\b|\bgit\b[^\n;&|]*\bcommit\b/u.test(command)) return null;
-  const cd = /^\s*cd\s+('([^']*)'|"([^"$`\\]*)"|([^\s;&|$`'"~()]+))\s*&&/u.exec(command);
-  const base = cd ? path.resolve(cwd, cd[2] ?? cd[3] ?? cd[4]) : cwd;
-  let text = cd ? command.replace(cd[1], '<path>') : command;
-  const files = bodyFiles(command);
-  for (const { operand } of files) text = text.replace(operand, '<path>');
-  const found = new Set(bannedHits(text, patterns));
-  for (const { file } of files) {
-    try {
-      for (const hit of bannedHits(readFileSync(path.resolve(base, file), 'utf8'), patterns)) found.add(`${hit} in ${file}`);
-    } catch {
-      // A body file that cannot be read is gh's error to report.
+  const found = new Set();
+  for (const line of commandLines(command)) {
+    for (const { invocation, folder } of commandFolders(line, cwd)) {
+      const what = published(invocation);
+      if (!what) continue;
+      for (const hit of bannedHits(what.words.map((token) => token.text).join('\n'), patterns)) found.add(hit);
+      for (const { text, dynamic } of what.files) {
+        if (dynamic) continue;
+        if (folder === null && !path.isAbsolute(text)) {
+          found.add(`the unchecked file ${text}: a cd on the line hides its folder, so pass an absolute path`);
+          continue;
+        }
+        try {
+          for (const hit of bannedHits(readFileSync(path.resolve(folder ?? cwd, text), 'utf8'), patterns)) found.add(`${hit} in ${text}`);
+        } catch {
+          // A file that cannot be read is gh's or git's error to report.
+        }
+      }
     }
   }
-  return found.size ? `names a private word (${[...found].join(', ')}); see .banned-terms.local. Reword it.` : null;
+  return found.size ? `names a private word or an unchecked file (${[...found].join('; ')}); see .banned-terms.local.` : null;
 }
 
 // The problems of a push: git's pre-push input `lines` ("<local ref> <local sha> <remote ref> <remote sha>") to the remote

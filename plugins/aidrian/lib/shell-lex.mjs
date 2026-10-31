@@ -598,3 +598,34 @@ export function isLongOption(text, option, shortest) {
   const name = text.split('=', 1)[0];
   return name.startsWith(shortest) && option.startsWith(name);
 }
+
+const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
+
+// Each command of a line in the order it runs, as { segment, invocation, folder }: the folder it runs in, from `cwd`.
+// A leading `cd <dir> &&` moves it; any other directory change (in a subshell, a pipe, after `;` or `||`, a second one)
+// leaves it unknown, null, for the commands after it. A wrapper's own directory (`env -C`) applies to its command only.
+// Directory changes themselves are left out.
+export function commandFolders(line, cwd) {
+  const { segments, separators } = lexPipeline(line);
+  const out = [];
+  let here = cwd;
+  segments.forEach((segment, index) => {
+    const invocation = readInvocation(segment);
+    if (CHANGES_DIRECTORY.has(invocation.program)) {
+      const leading = index === 0 && separators[0] === '&&' && !segment[0]?.text.startsWith('(');
+      here = leading ? folderAfter(cwd, invocation) : null;
+      return;
+    }
+    const folder = here !== null && invocation.chdir ? folderAfter(here, { program: 'cd', args: [invocation.chdir] }) : here;
+    out.push({ segment, invocation, folder });
+  });
+  return out;
+}
+
+// The folder a `cd`, `pushd`, or `popd` invocation reaches from `here`, or null when it cannot be known.
+function folderAfter(here, { program, args }) {
+  if (program === 'popd') return null;
+  const to = args.find((token) => token.dynamic || !token.text.startsWith('-'));
+  if (!to || to.dynamic || to.text === '-' || to.text.startsWith('~')) return null;
+  return path.isAbsolute(to.text) ? to.text : path.resolve(here, to.text);
+}

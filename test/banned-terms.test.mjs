@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { bannedHits, bannedPatterns, bodyFiles, judgeCommand, prePushProblems } from '../scripts/banned-terms.mjs';
+import { lexCommand, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
+import { bannedHits, bannedPatterns, judgeCommand, prePushProblems, published } from '../scripts/banned-terms.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SCRIPT = path.join(ROOT, 'scripts/banned-terms.mjs');
@@ -16,10 +17,21 @@ test('a private word matches in any case', () => {
   assert.deepEqual(bannedHits('fix: azq-12', patterns), []);
 });
 
-test('body files are read from each way gh takes one', () => {
-  const files = (command) => bodyFiles(command).map(({ file }) => file);
-  assert.deepEqual(files('gh pr create --body-file a.md && gh pr edit 1 --body-file=b.md -F c.md -F "$X" --body-file -'), ['a.md', 'b.md', 'c.md']);
-  assert.deepEqual(files('gh pr create -F=d.md && gh pr create -dF e.md && gh issue create -Ff.md'), ['d.md', 'e.md', 'f.md']);
+test('body and message files are read from each way gh and git take one; reads publish nothing', () => {
+  const files = (command) => published(readInvocation(lexCommand(command)[0]))?.files.map(({ text }) => text) ?? null;
+  for (const [command, expected] of [
+    ['gh pr create --body-file a.md', ['a.md']],
+    ['gh pr edit 1 --body-file=b.md', ['b.md']],
+    ['gh issue create -F c.md -F "$X" --body-file -', ['c.md', '$X']],
+    ['gh pr create -F=d.md', ['d.md']],
+    ['gh pr create -dF e.md', ['e.md']],
+    ['gh issue comment 3 -Ff.md', ['f.md']],
+    ['git -C x commit -F g.txt', ['g.txt']],
+    ['git commit --file=h.txt', ['h.txt']],
+    ['gh pr view 1 --json body', null],
+    ['gh issue list --search x', null],
+    ['git log --grep commit', null],
+  ]) assert.deepEqual(files(command), expected, command);
 });
 
 test('a gh or git commit command is judged by its text and its body file; other commands are not read', (t) => {
@@ -43,6 +55,13 @@ test('a gh or git commit command is judged by its text and its body file; other 
   assert.match(judge('gh -Ro/r issue create --title secretco --body ok'), /secretco/, '-R attached');
   assert.match(judge('gh pr create -t x -dF bad.md'), /in bad\.md/, 'a short cluster');
   for (const quoted of [`"${dir}"`, `'${dir}'`]) assert.match(judge(`cd ${quoted} && gh issue create -F bad.md`, '/'), /in bad\.md/, 'a quoted cd');
+  assert.match(judge('gh pr create --title "$(cat <<\'EOF\'\nfix secretco\nEOF\n)" -F good.md'), /secretco/, 'a heredoc body');
+  for (const hidden of [`cd / && cd ${dir} && gh pr create -F bad.md`, `cd ${dir}; gh pr create -F bad.md`, `(cd ${dir}) && gh issue create -F bad.md`]) {
+    assert.match(judge(hidden, '/'), /unchecked file bad\.md/, `${hidden}: a folder it cannot know`);
+  }
+  assert.match(judge(`gh pr create -F good.md && gh issue create -F bad.md`), /in bad\.md/, 'every publishing command');
+  assert.equal(judge('gh pr view 1 --json body | rg secretco'), null, 'a read is not published');
+  assert.equal(judge('rg secretco . && git commit -m fine'), null, 'nor is a search beside a clean commit');
 });
 
 test('the commit-msg hook refuses a private word and ignores comment lines', (t) => {

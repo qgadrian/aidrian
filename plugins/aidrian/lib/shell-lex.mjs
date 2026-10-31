@@ -601,31 +601,57 @@ export function isLongOption(text, option, shortest) {
 
 const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
 
-// Each command of a line in the order it runs, as { segment, invocation, folder }: the folder it runs in, from `cwd`.
-// A leading `cd <dir> &&` moves it; any other directory change (in a subshell, a pipe, after `;` or `||`, a second one)
-// leaves it unknown, null, for the commands after it. A wrapper's own directory (`env -C`) applies to its command only.
-// Directory changes themselves are left out.
-export function commandFolders(line, cwd) {
-  const { segments, separators } = lexPipeline(line);
+// Every command a command line runs, in the order it runs, nested ones included: the body of each command substitution
+// (before the command that owns it), each `sh -c "<string>"`, and each command line a heredoc or here-string feeds a
+// shell. Each is { segment, invocation, folder, line, inputs }: `folder` is the folder it runs in, from `cwd`, or null
+// when it cannot be known; `line` is the command line it was read from; `inputs` the heredoc bodies and here-string
+// words fed to its input. A leading `cd <dir> &&` moves the folder; any other directory change (in a subshell, a pipe,
+// after `;` or `||`, a second one) leaves it unknown for the commands after it. A wrapper's own directory (`env -C`)
+// and git's `-C` apply to their command only. Directory changes themselves are left out.
+export function walkCommands(command, cwd) {
   const out = [];
-  let here = cwd;
-  segments.forEach((segment, index) => {
-    const invocation = readInvocation(segment);
-    if (CHANGES_DIRECTORY.has(invocation.program)) {
-      const leading = index === 0 && separators[0] === '&&' && !segment[0]?.text.startsWith('(');
-      here = leading ? folderAfter(cwd, invocation) : null;
-      return;
-    }
-    const folder = here !== null && invocation.chdir ? folderAfter(here, { program: 'cd', args: [invocation.chdir] }) : here;
-    out.push({ segment, invocation, folder });
-  });
+  const walk = (line, start, depth) => {
+    const { segments, separators, substitutions, ends, heredocs } = lexSegments(line);
+    const nested = (body, folder) => {
+      if (depth < SUBSTITUTION_DEPTH_LIMIT) walk(body, folder, depth + 1);
+    };
+    let here = start;
+    segments.forEach((segment, index) => {
+      for (const body of substitutions.slice(ends[index - 1] ?? 0, ends[index])) nested(body, here);
+      const invocation = readInvocation(segment);
+      if (CHANGES_DIRECTORY.has(invocation.program)) {
+        const leading = index === 0 && separators[0] === '&&' && !segment[0]?.text.startsWith('(');
+        here = leading ? folderAfter(start, invocation) : null;
+        return;
+      }
+      let folder = invocation.chdir ? folderAfter(here, { program: 'cd', args: [invocation.chdir] }) : here;
+      if (invocation.program === 'git') {
+        const { args } = invocation;
+        for (let i = 0; i < args.length && args[i].text.startsWith('-'); i += 1) {
+          if (args[i].text === '-C') folder = folderAfter(folder, { program: 'cd', args: [args[i + 1]] });
+          if (GIT_VALUE_GLOBALS.has(args[i].text)) i += 1;
+        }
+      }
+      const inputs = [
+        ...heredocs.filter((each) => each.segment === index).map((each) => each.body),
+        ...segment.flatMap((token, at) => (token.operator && token.text === '<<<' && segment[at + 1] ? [segment[at + 1].text] : [])),
+      ];
+      out.push({ segment, invocation, folder, line, inputs });
+      const inner = inlineShellCommand(invocation);
+      if (inner !== null) nested(inner, folder);
+      else if (readsShellInput(invocation)) for (const body of inputs) nested(body, folder);
+    });
+    for (const body of substitutions.slice(ends.at(-1) ?? 0)) nested(body, here);
+  };
+  walk(command, cwd, 0);
   return out;
 }
 
 // The folder a `cd`, `pushd`, or `popd` invocation reaches from `here`, or null when it cannot be known.
 function folderAfter(here, { program, args }) {
   if (program === 'popd') return null;
-  const to = args.find((token) => token.dynamic || !token.text.startsWith('-'));
+  const to = args.find((token) => !token || token.dynamic || !token.text.startsWith('-'));
   if (!to || to.dynamic || to.text === '-' || to.text.startsWith('~')) return null;
-  return path.isAbsolute(to.text) ? to.text : path.resolve(here, to.text);
+  if (path.isAbsolute(to.text)) return to.text;
+  return here === null ? null : path.resolve(here, to.text);
 }

@@ -16,7 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { commandFolders, commandLines, readShortOptions } from '../plugins/aidrian/lib/shell-lex.mjs';
+import { readShortOptions, walkCommands } from '../plugins/aidrian/lib/shell-lex.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const PUBLIC = [];
@@ -100,30 +100,33 @@ export function published({ program, args }) {
     }
     words.push(rest[i]);
   }
-  return { words, files: files.filter((file) => file && file.text !== '-') };
+  return { words, files: files.filter(Boolean) };
 }
 
-// The deny reason for a Bash command, or null. Only what a gh pr/issue or git commit invocation publishes is read: its
-// arguments and its body or message file's contents, never its file paths (a home or temp path names the user). A
-// relative file in a folder a `cd` hides (shell-lex `commandFolders`) is refused, since it cannot be checked.
+// The deny reason for a Bash command, or null. Only what a gh pr/issue or git commit invocation publishes is read, in
+// substitutions and inline shells too (shell-lex `walkCommands`): its arguments, its body or message file's contents,
+// and for `-F -` the heredoc or here-string on its input; never its file paths (a home or temp path names the user). A
+// relative file in a folder a `cd` hides is refused, since it cannot be checked.
 export function judgeCommand(command, { cwd = process.cwd(), patterns = bannedPatterns() } = {}) {
   const found = new Set();
-  for (const line of commandLines(command)) {
-    for (const { invocation, folder } of commandFolders(line, cwd)) {
-      const what = published(invocation);
-      if (!what) continue;
-      for (const hit of bannedHits(what.words.map((token) => token.text).join('\n'), patterns)) found.add(hit);
-      for (const { text, dynamic } of what.files) {
-        if (dynamic) continue;
-        if (folder === null && !path.isAbsolute(text)) {
-          found.add(`the unchecked file ${text}: a cd on the line hides its folder, so pass an absolute path`);
-          continue;
-        }
-        try {
-          for (const hit of bannedHits(readFileSync(path.resolve(folder ?? cwd, text), 'utf8'), patterns)) found.add(`${hit} in ${text}`);
-        } catch {
-          // A file that cannot be read is gh's or git's error to report.
-        }
+  for (const { invocation, folder, inputs } of walkCommands(command, cwd)) {
+    const what = published(invocation);
+    if (!what) continue;
+    for (const hit of bannedHits(what.words.map((token) => token.text).join('\n'), patterns)) found.add(hit);
+    for (const { text, dynamic } of what.files) {
+      if (text === '-') {
+        for (const hit of bannedHits(inputs.join('\n'), patterns)) found.add(`${hit} on its input`);
+        continue;
+      }
+      if (dynamic) continue;
+      if (folder === null && !path.isAbsolute(text)) {
+        found.add(`the unchecked file ${text}: a cd on the line hides its folder, so pass an absolute path`);
+        continue;
+      }
+      try {
+        for (const hit of bannedHits(readFileSync(path.resolve(folder, text), 'utf8'), patterns)) found.add(`${hit} in ${text}`);
+      } catch {
+        // A file that cannot be read is gh's or git's error to report.
       }
     }
   }

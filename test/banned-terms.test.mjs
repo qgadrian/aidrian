@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -22,7 +22,7 @@ test('body and message files are read from each way gh and git take one; reads p
   for (const [command, expected] of [
     ['gh pr create --body-file a.md', ['a.md']],
     ['gh pr edit 1 --body-file=b.md', ['b.md']],
-    ['gh issue create -F c.md -F "$X" --body-file -', ['c.md', '$X']],
+    ['gh issue create -F c.md -F "$X" --body-file -', ['c.md', '$X', '-']],
     ['gh pr create -F=d.md', ['d.md']],
     ['gh pr create -dF e.md', ['e.md']],
     ['gh issue comment 3 -Ff.md', ['f.md']],
@@ -62,6 +62,14 @@ test('a gh or git commit command is judged by its text and its body file; other 
   assert.match(judge(`gh pr create -F good.md && gh issue create -F bad.md`), /in bad\.md/, 'every publishing command');
   assert.equal(judge('gh pr view 1 --json body | rg secretco'), null, 'a read is not published');
   assert.equal(judge('rg secretco . && git commit -m fine'), null, 'nor is a search beside a clean commit');
+  assert.match(judge("gh issue create -t fine -F - <<'EOF'\nsecretco\nEOF"), /on its input/, 'a heredoc on stdin');
+  assert.match(judge('git commit -F - <<< "secretco"'), /on its input/, 'a here-string on stdin');
+  assert.match(judge("bash -lc 'gh issue create --title fine --body secretco'"), /secretco/, 'an inline shell');
+  assert.match(judge("bash <<'EOF'\ngh pr create --title secretco --body ok\nEOF"), /secretco/, 'a shell reading its input');
+  mkdirSync(path.join(dir, 'B'));
+  writeFileSync(path.join(dir, 'B', 'good.md'), 'secretco\n');
+  assert.match(judge('cd B && url=$(gh issue create -F good.md)'), /in good\.md/, 'a substitution keeps the folder of its command');
+  assert.match(judge('git -C B commit -F good.md'), /in good\.md/, "git's -C");
 });
 
 test('the commit-msg hook refuses a private word and ignores comment lines', (t) => {

@@ -152,3 +152,15 @@ test('a directory change after gh leaves the folder gh ran in known', (t) => {
   assert.equal(run('gh pr create --title x --body-file body.md && cd ..'), null);
   assert.match(run('cd .. || true; gh pr create --title x --body-file body.md'), /cannot read/);
 });
+
+test('a substitution or an inline shell runs gh in the folder of its command', (t) => {
+  const run = project(t, { version: 1 }, { 'body.md': GOOD });
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-prbody-sub-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  writeFileSync(path.join(dir, 'body.md'), '## Summary\nx\n');
+  assert.equal(run('url=$(gh pr create --title x --body-file body.md)'), null);
+  assert.match(run(`cd ${dir} && url=$(gh pr create --title x --body-file body.md)`), /^Blocked: the body has no `## Tests run` section/);
+  assert.match(run(`cd ${dir} && bash -c 'gh pr create --title x --body-file body.md'`), /^Blocked: the body has no `## Tests run` section/);
+});

@@ -21,7 +21,7 @@ import { loadConfig } from '../../config.mjs';
 import { runGh } from '../../gh.mjs';
 import { headings, sectionItems, unfencedLines } from '../../markdown-sections.mjs';
 import { findProject } from '../../project.mjs';
-import { commandFolders, commandLines, readInvocation, readShortOptions } from '../../shell-lex.mjs';
+import { readInvocation, readShortOptions, walkCommands } from '../../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PR_BODY';
 
@@ -43,16 +43,14 @@ const LIST_TIMEOUT_MS = 3000;
 // of the one check that leaves the process.
 export function check(command, { cwd = process.cwd(), env = process.env, listOpenPrs = openPrBodies(cwd) } = {}) {
   if (env[OVERRIDE] === '1') return null;
-  for (const line of commandLines(command)) {
-    // The folder gh runs in (shell-lex `commandFolders`): `cd <worktree> && gh pr create --body-file b.md` reads that
-    // worktree's b.md and project. In a folder this rule cannot know, the project is the session's and a relative body
-    // file is unreadable.
-    for (const { segment, folder } of commandFolders(line, cwd)) {
-      const call = readPrCall(segment);
-      if (!call) continue;
-      const reason = judge(call, line, { cwd: folder ?? cwd, folderKnown: folder !== null, env, listOpenPrs: folder === null || folder === cwd ? listOpenPrs : openPrBodies(folder) });
-      if (reason) return reason;
-    }
+  // Each gh call with the folder it runs in (shell-lex `walkCommands`), in substitutions and inline shells too:
+  // `cd <worktree> && gh pr create --body-file b.md` reads that worktree's b.md and project. In a folder this rule
+  // cannot know, the project is the session's and a relative body file is unreadable.
+  for (const { segment, folder, line } of walkCommands(command, cwd)) {
+    const call = readPrCall(segment);
+    if (!call) continue;
+    const reason = judge(call, line, { cwd: folder ?? cwd, folderKnown: folder !== null, env, listOpenPrs: folder === null || folder === cwd ? listOpenPrs : openPrBodies(folder) });
+    if (reason) return reason;
   }
   return null;
 }

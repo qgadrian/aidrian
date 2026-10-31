@@ -137,8 +137,14 @@ function gitStateChanges(command, cwd, depth = 0) {
     const options = before.filter((word) => word.startsWith('-') && word.length > 1);
     const operands = before.filter((word) => !(word.startsWith('-') && word.length > 1));
     const at = folders[0];
+    // --work-tree or --git-dir points git at a repository this hook does not read words in: only a commit without -a
+    // is plainly safe there.
+    if (folders.length > 1 && call.subcommand !== 'commit') {
+      found.push({ what: `\`git ${call.subcommand}\` with --work-tree or --git-dir can change the shared checkout`, folders, target: null });
+      continue;
+    }
     if (call.subcommand === 'add') {
-      const named = (word) => !/[*?[\]:]/u.test(word) && !isFolder(path.resolve(at, word));
+      const named = (word) => !/[*?[\]:]/u.test(word) && !isFolder(path.resolve(at, word)) && tracksAtMostItself(at, word);
       const dynamic = call.rest.some((token) => token.dynamic);
       if (dynamic || !options.every((option) => ADD_SAFE.has(option)) || ![...operands, ...after].every(named) || ![...operands, ...after].length) {
         found.push({ what: '`git add` of anything but named files can stage other sessions\' work', folders });
@@ -207,6 +213,14 @@ function switchesTo(at, word) {
   if (runGit(['rev-parse', '--verify', '--quiet', '--end-of-options', `${word}^{commit}`], folder).status === 0) return true;
   const remote = runGit(['for-each-ref', '--format=%(refname)', `refs/remotes/*/${word}`], folder);
   return remote.status === 0 && remote.stdout.trim() !== '';
+}
+
+// Whether git tracks nothing under `word` but `word` itself: a folder deleted from disk still names every file in it.
+function tracksAtMostItself(at, word) {
+  const listed = runGit(['ls-files', '-z', '--', word], existingFolder(at));
+  if (listed.status !== 0) return false;
+  const files = listed.stdout.split('\0').filter(Boolean);
+  return files.length === 0 || (files.length === 1 && files[0] === path.normalize(word));
 }
 
 const isFolder = (file) => {

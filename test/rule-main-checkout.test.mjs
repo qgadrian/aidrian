@@ -309,6 +309,7 @@ test('in the main checkout, only named files are staged and only the default bra
     'git checkout -', 'git checkout remote-only', 'git checkout -d main', 'git checkout --patch --no-patch task',
     'git -C src add -A', 'echo "$(git add -A)"', `env -C ${repo} git add -A`, `git -C${repo} add -A`,
     `git --work-tree=${beside} checkout task`, `git --work-tree=${beside} add -A`,
+    `git --git-dir=${repo}/.git --work-tree=${repo} add src/app.js`,
   ]) {
     assert.match(denied(command) ?? '', /^Blocked: .* in the main checkout/, command);
   }
@@ -325,6 +326,12 @@ test('in the main checkout, only named files are staged and only the default bra
   assert.equal(denied(`git -C${beside} add -A`), null, 'git -C into a worktree');
   assert.match(denied(`git --git-dir=${repo}/.git --work-tree=${repo} add -A`, beside) ?? '', /main checkout/, 'from a worktree into the main checkout');
   assert.equal(denied('cd wt/task && git add -A'), null, 'after a cd the folder is not certain');
+  assert.match(denied(`git --git-dir=${repo}/.git --work-tree=${repo} checkout task`, base) ?? '', /main checkout/, 'from outside the repository');
+  execFileSync('git', ['-C', repo, 'rm', '-q', '--cached', 'src/app.js']);
+  execFileSync('git', ['-C', repo, 'add', 'src/app.js']);
+  rmSync(path.join(repo, 'src'), { recursive: true, force: true });
+  assert.match(denied('git add src') ?? '', /main checkout/, 'a tracked folder deleted from disk');
+  assert.equal(denied('git add src/app.js'), null, 'one deleted file by name');
   const off = fixture(t, { version: 1 }).repo;
   assert.equal(check('git add -A', { cwd: off, env: ENV }), null, 'the guard is off');
 });

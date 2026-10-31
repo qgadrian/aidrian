@@ -132,9 +132,22 @@ test('a commit or pull request inside sh -c is read', (t) => {
   assert.match(run("sh -c 'gh pr create -t x -b unsigned'") ?? '', /Blocked/);
 });
 
+test('the message is read after the cleanup git applies', (t) => {
+  const { dir, run } = setup(t, { commit: ['agent'] });
+  writeFileSync(path.join(dir, 'cut.txt'), 'fix: x\n# ------------------------ >8 ------------------------\n\nAgent: main\n');
+  assert.match(run('git commit --cleanup=scissors --edit -F cut.txt') ?? '', /Blocked/, 'cut by the scissors');
+  assert.equal(run('git commit --cleanup=scissors -F cut.txt'), null, 'scissors cut only an edited message');
+  writeFileSync(path.join(dir, 'comment.txt'), 'fix: x\n\nAgent: main\n# a comment\n');
+  assert.equal(run('git commit --cleanup=strip -F comment.txt'), null, 'strip drops the comment');
+  assert.match(run('git commit -F comment.txt') ?? '', /Blocked/, 'whitespace keeps the comment');
+});
+
 test('help and dry-run commits pass', (t) => {
   const { run } = setup(t, { commit: ['agent'] });
   for (const command of ['git commit -h', 'git commit --help', 'git commit --dry-run -m x', 'git commit --dry -m x', 'git commit --short', 'git commit --porcelain', 'git commit --long', 'git commit --null', 'git commit -z']) assert.equal(run(command), null, command);
+  for (const command of ['--short --no-short', '--porcelain --no-porcelain', '--long --no-long', '--null --no-null', '-z --no-null']) {
+    assert.match(run(`git commit --allow-empty ${command} -m unsigned`) ?? '', /Blocked/, command);
+  }
   assert.match(run('git commit --allow-empty --dry-run --no-dry-run -m unsigned') ?? '', /Blocked/, 'a later --no-dry-run commits');
   assert.match(run("git commit --allow-empty -m '--help'") ?? '', /Blocked/, 'a message, not an option');
   assert.match(run("git commit --author 'A <a@b>' -t tpl -m x") ?? '', /Blocked/, 'option values are skipped');

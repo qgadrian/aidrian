@@ -43,8 +43,8 @@ export function check(command, { cwd = process.cwd(), env = process.env, input, 
   const author = currentAuthor(input, env);
   if (commitFields.length) {
     const expected = expectedTrailers(commitFields, author);
-    for (const { messages, trailers } of gitCommits) {
-      const carried = carriedTrailers(messages, trailers);
+    for (const { messages, trailers, cleanup } of gitCommits) {
+      const carried = carriedTrailers(messages.length ? [cleanup(messages.join('\n\n'))] : [], trailers);
       const missing = expected.filter((trailer) => !carried.has(trailer));
       if (missing.length) return commitReason(expected, missing);
     }
@@ -127,7 +127,7 @@ function moveTo(dir, to) {
 }
 
 // The `git commit` options that take the next word as their value, besides -m, -F, and --trailer.
-const COMMIT_VALUES = ['--author', '--date', '--template', '--cleanup', '--pathspec-from-file'];
+const COMMIT_VALUES = ['--author', '--date', '--template', '--pathspec-from-file'];
 // The status formats, which make a commit a dry run that only prints the status.
 const STATUS_FORMATS = ['--short', '--porcelain', '--long', '--null'];
 // The options after which git writes the subject itself, `fixup! …` or `squash! …`, above the -m values.
@@ -137,7 +137,20 @@ const COMMIT_SHORT_VALUES = new Set(['-t']);
 const REUSE_VALUES = ['--reuse-message', '--reedit-message'];
 const REUSE_SHORT = new Set(['-C', '-c']);
 
-// One commit's { messages, trailers, dynamic, holdsHeredoc, at, writesNothing }: its -m values in order, or its -F file's text, its
+// A message as git stores it under `--cleanup` (`mode`), which defaults to `strip` when the message is edited and to
+// `whitespace` when not: `strip` drops `#` comment lines; `scissors`, when edited, drops the scissors line and all after it.
+export function cleanMessage(text, mode, edit) {
+  const effective = mode && mode !== 'default' ? mode : edit ? 'strip' : 'whitespace';
+  let lines = text.split('\n');
+  if (effective === 'strip') lines = lines.filter((line) => !line.startsWith('#'));
+  if (effective === 'scissors' && edit) {
+    const cut = lines.findIndex((line) => /^# -+ >8 -+$/u.test(line));
+    if (cut !== -1) lines = lines.slice(0, cut);
+  }
+  return lines.join('\n');
+}
+
+// One commit's { messages, trailers, dynamic, holdsHeredoc, at, writesNothing, cleanup }: its -m values in order, or its -F file's text, its
 // --trailer values, whether a kept or dropped -m value is a command substitution, where in `messages` it goes, and whether the
 // call makes no commit: `-h`, `--help`, or a `--dry-run` or status format that no later `--no-dry-run` undoes. Option values are skipped,
 // so `-m --help` is a message. `--no-message` and `--no-file` drop the -m values and the -F file before them. Under
@@ -149,6 +162,9 @@ function commitMessage(rest, dir) {
   let reused = false;
   let generated = false;
   let dryRun = false;
+  const formats = new Set();
+  let cleanup = null;
+  let edit = false;
   for (let i = 0; i < rest.length; i += 1) {
     const { text } = rest[i];
     if (text === '--') break;
@@ -157,7 +173,12 @@ function commitMessage(rest, dir) {
     let token = null;
     let kind = null;
     if (text === '-h' || isLongOption(flag, '--help', '--he')) read.writesNothing = true;
-    else if (isLongOption(flag, '--dry-run', '--dr') || STATUS_FORMATS.some((option) => isLongOption(flag, option, option)) || text === '-z') dryRun = true;
+    else if (isLongOption(flag, '--dry-run', '--dr')) dryRun = true;
+    else if (STATUS_FORMATS.includes(flag) || text === '-z') formats.add(text === '-z' ? '--null' : flag);
+    else if (STATUS_FORMATS.includes(flag.replace(/^--no-/u, '--'))) formats.delete(flag.replace(/^--no-/u, '--'));
+    else if (flag === '--cleanup') cleanup = value()?.text ?? null;
+    else if (text === '-e' || flag === '--edit') edit = true;
+    else if (flag === '--no-edit') edit = false;
     else if (isLongOption(flag, '--no-dry-run', '--no-d')) dryRun = false;
     else if (COMMIT_VALUES.some((option) => isLongOption(flag, option, option)) || COMMIT_SHORT_VALUES.has(text)) value();
     else if (GENERATED_SUBJECT.some((option) => isLongOption(flag, option, option))) {
@@ -192,7 +213,7 @@ function commitMessage(rest, dir) {
       fileText = (file && readText(file)) ?? '';
     }
   }
-  read.writesNothing ||= dryRun;
+  read.writesNothing ||= dryRun || formats.size > 0;
   // The message git writes: another commit's when one is reused, which the rule cannot read; else the -m values, else
   // the -F file. Only the --trailer values then count for a message the rule cannot read.
   const kept = reused ? [] : messages.length ? [...(generated ? ['fixup! subject'] : []), ...messages] : fileText !== null ? [fileText] : [];
@@ -200,6 +221,7 @@ function commitMessage(rest, dir) {
   read.dynamic = kept.includes(DYNAMIC);
   read.at = kept.indexOf(DYNAMIC);
   read.messages = kept.filter((each) => each !== DYNAMIC);
+  read.cleanup = (text) => cleanMessage(text, cleanup, edit);
   return read;
 }
 

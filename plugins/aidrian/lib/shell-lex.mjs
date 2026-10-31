@@ -487,7 +487,10 @@ export function readInvocation(segment, depth = 0) {
         index += 1;
       }
       if (WRAPPER_CHDIR_FLAGS.get(wrapper)?.has(option.name)) chdir = composeChdir(chdir, value);
-      if (wrapper === 'env' && ['-u', '--unset'].includes(option.name)) environment.push({ name: value?.text ?? '', value: null });
+      // An unset whose name cannot be read may name any variable: read it as emptying the environment.
+      if (wrapper === 'env' && ['-u', '--unset'].includes(option.name)) {
+        environment.push(value && !value.dynamic ? { name: value.text, value: null } : { clear: true });
+      }
       if (wrapper === 'env' && SPLIT_STRING_FLAGS.has(option.name)) {
         const carried = splitStringInvocation(value, depth, usable.slice(index));
         if (carried) {

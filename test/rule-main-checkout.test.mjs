@@ -349,9 +349,10 @@ test('in the main checkout, only named files are staged and only the default bra
   for (const command of ['branch=task; git checkout "$branch"', 'git checkout "$(printf task)"', 'flags=-am; git commit $flags x']) {
     assert.match(denied(command) ?? '', /main checkout/, `a word that may expand: ${command}`);
   }
-  assert.equal(denied('git commit -m "$MESSAGE"'), null, 'a message that expands is still a message');
-  for (const command of ['git commit -m"$MSG"', 'git commit --message="$MSG"', 'git commit -F"$FILE"']) assert.equal(denied(command), null, command);
-  assert.match(denied('git commit -am"$MSG"') ?? '', /main checkout/, '-a before an expanding message');
+  for (const command of ['git commit -m "$MESSAGE"', 'git commit -m"$MSG"', 'set -- m -a; git commit -m"$@"', 'git commit -m "${args[@]}"']) {
+    assert.match(denied(command) ?? '', /main checkout/, `a commit word that expands: ${command}`);
+  }
+  assert.equal(denied('git commit -m "a literal message"'), null);
   assert.match(denied("bash <<'EOF'\ngit add -A\nEOF") ?? '', /main checkout/, 'a heredoc fed to a shell');
   assert.match(denied("bash <<< 'git checkout task'") ?? '', /main checkout/, 'a here-string');
   for (const command of ['MSG="m -a"; git commit -m$MSG', 'git commit --message=$MSG', 'git commit -m $MSG']) {
@@ -359,6 +360,8 @@ test('in the main checkout, only named files are staged and only the default bra
   }
   assert.match(denied(`export GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo}; bash <<< 'git add -A'`, beside) ?? '', /main checkout/, 'an export before shell input');
   assert.match(denied(`GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo} /bin/bash <<< 'git add -A'`, beside) ?? '', /main checkout/, 'assignments before /bin/bash');
+  assert.match(denied(`env -C ${base}/git GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo} git add -A`, base) ?? '', /main checkout/, 'a wrapper folder named git');
+  assert.equal(denied(`cd ${beside} && bash <<< 'git add -A'`), null, 'shell input after a cd');
   symlinkSync('src', path.join(repo, 'link'));
   assert.equal(denied('git add link'), null, 'a symlink to a folder is one file');
   for (const command of ['(export GIT_DIR="$HOME/unused"); git add -A', 'export GIT_DIR="$HOME/unused" | cat; git add -A', 'GIT_DIR="$X" git add src/app.js']) {

@@ -135,7 +135,7 @@ Several sessions can share the main checkout, so the rule also keeps its git sta
 through, whatever the spelling:
 
 - `git add` of named files only: no folder, glob, `-A`, `-u`, or other option but `-v`, `-f`, `-N`, and `-p`.
-- `git commit` without `-a` or `--all`.
+- `git commit` without `-a` or `--all`, and with no word that expands (`"$MSG"`, `"$(…)"`), which could become `-a`.
 - `git switch` and `git checkout` only back to `git.defaultBranch`; `git checkout -- <path>`, `git checkout <path>`, and
   `git checkout <commit> <path>` restore files and pass.
 

@@ -4,20 +4,24 @@
 // mkdir, and truncate, dd's of=, and the local destination of rsync, with its sources too under --remove-source-files. A move removes its sources. A command
 // substitution that runs is read as the command line is.
 //
+// It also keeps the main checkout's git state for the session that owns it: no `git switch` or `git checkout <branch>`
+// away from the default branch, and no staging of every change at once (`git add -A`, `--all`, `-u`, `.`, `:/`,
+// `git commit -a`), which takes whatever other sessions left in the folder.
+//
 // It is off until a project sets config.json `"git": { "mainCheckout": { "guard": true } }`. A target is allowed when it is outside
 // every main checkout (in a worktree, or outside the repository), in a project without a project folder or with the
 // guard off, matched by `git.mainCheckout.allowWrites`, or git-ignored. When git cannot tell, a tool write is denied to be
 // safe and a Bash command runs: a command line is never as certain as a file path.
 
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { globPattern } from '../fs.mjs';
 
 import { loadConfig } from '../config.mjs';
-import { checkoutRoots, isIgnored } from '../git.mjs';
+import { checkoutRoots, isIgnored, runGit } from '../git.mjs';
 import { findProject, worktreesDir } from '../project.mjs';
-import { inlineShellCommand, isLongOption, lexSteps, readGit, readInvocation, readShortOptions, SUBSTITUTION_DEPTH_LIMIT } from '../shell-lex.mjs';
+import { inlineShellCommand, isLongOption, lexInputs, lexSteps, readGit, readInvocation, readShortOptions, readsShellInput, SUBSTITUTION_DEPTH_LIMIT } from '../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_MAIN_WRITE';
 
@@ -100,7 +104,260 @@ const REMOTE = /^[^/]*:/u;
 // Bash: the deny reason for `command`, or null. A command with no certain target never runs git.
 export function check(command, { cwd = process.cwd(), env = process.env } = {}) {
   if (env[OVERRIDE] === '1') return null;
-  return decide(bashTargets(command, cwd), cwd, false, 'this command writes');
+  return decide(bashTargets(command, cwd), cwd, false, 'this command writes') ?? gitStateDenial(command, cwd);
+}
+
+// The git calls that change the main checkout's state for every session in it, as { what, folders, target }: `folders`
+// every folder the call may act on, after a wrapper's `env -C`, git's own `-C`, and `--work-tree` or `--git-dir`.
+// Substitutions that run are read too; a call after a `cd` is skipped, as its folder is not certain.
+//
+// Like every Bash rule, it reads shell text, so it guards against accidents, not intent. Accepted residuals: a bracket
+// glob that names a branch or `--all` (`topi[c]`), shell arguments after `bash -c` shaped like assignments, and quoted
+// literal braces read as an expansion, which blocks a safe call in the main checkout.
+// The main checkout is shared, so this reads what is plainly safe and blocks the rest, every other spelling included:
+//   git add      only named files (no option but -v, -f, -N, -p, and no folder, glob, or pathspec magic)
+//   git commit   any options but -a and --all, with no `--no-` form and no unknown short cluster holding `a`
+//   git switch   only back to the default branch, with no option
+//   git checkout the default branch with no option, or paths: after `--`, or words that name no commit
+// git's own options that change nothing about the repository or how paths match. `-c` is not one: a value such as
+// core.worktree moves the checkout.
+const SAFE_GLOBALS = /^(?:-C.*|--git-dir(?:=.*)?|--work-tree(?:=.*)?|--no-pager|-P|--paginate|-p|--no-optional-locks|--no-replace-objects)$/u;
+const ADD_SAFE = new Set(['-v', '--verbose', '-f', '--force', '-N', '--intent-to-add', '-p', '--patch']);
+const COMMIT_VALUES = new Set(['-m', '-F', '-c', '-C', '-t', '--message', '--file', '--author', '--date', '--template', '--reuse-message', '--reedit-message', '--fixup', '--squash', '--cleanup', '--trailer']);
+const COMMIT_ATTACHED = new Set(['-u', '-S']);
+// The GIT_* assignments of one command: the words before it runs (and an `env` wrapper's), never its arguments, so in
+// `git commit -m "GIT_DIR=x"` the message is no assignment; `export` takes them as its arguments. The command word is
+// matched by name, so `/bin/bash` is `bash`.
+function assignmentsOf(segment, invocation, call = null) {
+  // The command word is the last word named like the program before git's subcommand, so `env -C /x/git … git add`
+  // reads up to the real `git`.
+  const end = call ? segment.findIndex((token, i) => i > 0 && token.text === call.subcommand && path.basename(segment[i - 1].text) === 'git') : -1;
+  const matches = segment.map((token, i) => (!token.operator && path.basename(token.text) === invocation.program && (end === -1 || i < end) ? i : -1)).filter((i) => i !== -1);
+  const program = matches.at(-1) ?? -1;
+  const head = invocation.program === 'export' ? segment : program === -1 ? segment : segment.slice(0, program);
+  // A subshell's `(` stays glued to its first word: `(GIT_DIR=…` is an assignment too.
+  return head.filter((token) => !token.operator && GIT_ASSIGNMENT.test(token.text.replace(/^\(+/u, ''))).map((token) => ({ ...token, text: token.text.replace(/^\(+/u, '') }));
+}
+
+// Whether a word may become other words when the shell expands it: a parameter, a substitution, a glob (the lexer's
+// `dynamic`), or a brace expansion such as `{.,src}` or `--{all,x}`.
+const expands = (token) => token.dynamic || /\{[^{}]*(?:,|\.\.)[^{}]*\}/u.test(token.text);
+
+// `inherited` holds the GIT_* assignments in force: set before an inline shell, or by an earlier `export` or bare
+// assignment on the same command line.
+const GIT_ASSIGNMENT = /^GIT_[A-Z_]+=/u;
+function gitStateChanges(command, cwd, depth = 0, inherited = []) {
+  const found = [];
+  let known = true;
+  const env = [...inherited];
+  // A shell reading its input runs a heredoc or here-string body as commands, where that shell runs.
+  if (depth < SUBSTITUTION_DEPTH_LIMIT) {
+    const { segments, inputs } = lexInputs(command);
+    const lineEnv = [...inherited];
+    let here = true;
+    segments.forEach((segment, i) => {
+      const invocation = readInvocation(segment);
+      // After a `cd` the shell's folder is not certain, as in the main pass.
+      if (CHANGES_DIRECTORY.has(invocation.program)) here = false;
+      if (!here) return;
+      const own = assignmentsOf(segment, invocation);
+      if (invocation.program === 'export' || (own.length && !invocation.program)) lineEnv.push(...own);
+      if (!inputs[i].length || !readsShellInput(invocation) || invocation.chdir?.dynamic) return;
+      const where = invocation.chdir ? path.resolve(cwd, invocation.chdir.text) : cwd;
+      for (const body of inputs[i]) found.push(...gitStateChanges(body, where, depth + 1, [...lineEnv, ...own]));
+    });
+  }
+  for (const { segment, substitutions } of lexSteps(command)) {
+    if (known && depth < SUBSTITUTION_DEPTH_LIMIT) for (const body of substitutions) found.push(...gitStateChanges(body, cwd, depth + 1, env));
+    const invocation = readInvocation(segment);
+    const assignments = assignmentsOf(segment, invocation, readGit(segment));
+    // `export GIT_DIR=…` or a bare `GIT_DIR=…` lasts for the rest of the line.
+    if (invocation.program === 'export' || (assignments.length && !invocation.program)) env.push(...assignments);
+    if (CHANGES_DIRECTORY.has(invocation.program)) known = false;
+    // `sh -c`, `bash -c`, `flock … -c`, and a heredoc fed to a shell run their command where the invocation runs.
+    const inner = known && depth < SUBSTITUTION_DEPTH_LIMIT ? inlineShellCommand(invocation) : null;
+    if (inner !== null && !invocation.chdir?.dynamic) found.push(...gitStateChanges(inner, invocation.chdir ? path.resolve(cwd, invocation.chdir.text) : cwd, depth + 1, [...env, ...assignments]));
+    const call = known ? readGit(segment) : null;
+    if (!call || !['add', 'commit', 'switch', 'checkout'].includes(call.subcommand)) continue;
+    const scope = [...env, ...assignments];
+    const folders = gitFolders(call.globals, invocation.chdir, cwd, scope);
+    // Nothing below costs a git call unless one of the folders is a guarded main checkout.
+    if (folders === null || !folders.some((folder) => guardedMain(folder))) continue;
+    // A global option that changes how paths match or which repository is read makes nothing plainly safe.
+    const plainGlobals = call.globals.every(({ text }, i) => SAFE_GLOBALS.test(text) || (call.globals[i - 1] && ['-C', '--git-dir', '--work-tree'].includes(call.globals[i - 1].text)));
+    const gitEnv = scope.some(({ text }) => GIT_ASSIGNMENT.test(text));
+    const words = call.rest.map((token) => token.text);
+    const dashes = words.indexOf('--');
+    const before = dashes === -1 ? words : words.slice(0, dashes);
+    const after = dashes === -1 ? [] : words.slice(dashes + 1);
+    const options = before.filter((word) => word.startsWith('-') && word.length > 1);
+    const operands = before.filter((word) => !(word.startsWith('-') && word.length > 1));
+    const at = folders[0];
+    // --work-tree or --git-dir points git at a repository this hook does not read words in: only a commit without -a
+    // is plainly safe there.
+    if ((folders.length > 1 || !plainGlobals || gitEnv) && (call.subcommand !== 'commit' || commitsAll(call.rest) || gitEnv)) {
+      found.push({ what: `\`git ${call.subcommand}\` with another repository, work tree, or pathspec option can change the shared checkout`, folders, target: null });
+      continue;
+    }
+    if (call.subcommand === 'add') {
+      const named = (word) => !/[*?[\]:]/u.test(word) && !isFolder(path.resolve(at, word)) && tracksAtMostItself(at, word);
+      const dynamic = call.rest.some(expands);
+      if (dynamic || !options.every((option) => ADD_SAFE.has(option)) || ![...operands, ...after].every(named) || ![...operands, ...after].length) {
+        found.push({ what: '`git add` of anything but named files can stage other sessions\' work', folders });
+      }
+    } else if (call.subcommand === 'commit') {
+      if (commitsAll(call.rest)) found.push({ what: '`git commit -a` commits every change in the folder, other sessions\' work included', folders });
+    } else if (call.rest.some(expands)) {
+      // A word that may expand can name any branch or option: a checkout or switch with one is not plainly safe.
+      found.push({ what: `\`git ${call.subcommand}\` with a word that may expand can move the folder every session shares`, folders, target: null });
+    } else if (call.subcommand === 'switch') {
+      const back = options.length === 0 && operands.length === 1 && !after.length;
+      found.push({ what: '`git switch` moves the folder every session shares to another branch', folders, target: back ? operands[0] : null });
+    } else {
+      const restore = options.length === 0 && (dashes !== -1 ? after.length > 0 : operands.length > 1 || (operands.length === 1 && !switchesTo(at, operands[0])));
+      if (!restore) {
+        const back = options.length === 0 && operands.length === 1 && dashes === -1;
+        found.push({ what: '`git checkout` moves the folder every session shares to another branch', folders, target: back ? operands[0] : null });
+      }
+    }
+  }
+  return found;
+}
+
+// The folders a git call may act on: where it runs (a wrapper's `env -C`, then each `-C`), and its `--work-tree` and
+// the folder holding its `--git-dir`. Null when one of them cannot be read, which leaves the call alone, as a path that
+// may expand is.
+function gitFolders(globals, chdir, cwd, assignments = []) {
+  if (chdir?.dynamic) return null;
+  let at = chdir ? path.resolve(cwd, chdir.text) : cwd;
+  // git resolves --work-tree and --git-dir from where it ends up, after every -C; GIT_DIR and GIT_WORK_TREE set on the
+  // command count the same.
+  const pending = [];
+  // The last assignment of each variable is the one in force, as in the shell.
+  const last = new Map(assignments.map((token) => [token.text.slice(0, token.text.indexOf('=')), token]));
+  for (const { text, dynamic } of last.values()) {
+    const assigned = /^(GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE)=(.*)$/su.exec(text);
+    // A value that may expand names no folder; the call stays unsafe and is judged where it runs.
+    if (!assigned || dynamic) continue;
+    // An index file sits in its git folder, so it names that folder's checkout.
+    const toFolder = { GIT_DIR: checkoutOfGitDir, GIT_WORK_TREE: (p) => p, GIT_INDEX_FILE: (p) => checkoutOfGitDir(path.dirname(p)) }[assigned[1]];
+    pending.push([assigned[2], toFolder]);
+  }
+  for (let i = 0; i < globals.length; i += 1) {
+    const { text, dynamic } = globals[i];
+    const next = globals[i + 1];
+    const value = (name) => (text === name ? next : text.startsWith(`${name}=`) ? { text: text.slice(name.length + 1), dynamic } : undefined);
+    const chdirTo = text === '-C' ? next : /^-C./u.test(text) ? { text: text.slice(2), dynamic } : undefined;
+    // -c core.worktree=<path> moves the work tree as --work-tree does.
+    if (text === '-c' && next && /^core\.worktree=/iu.test(next.text)) {
+      if (next.dynamic) return null;
+      pending.push([next.text.slice(next.text.indexOf('=') + 1), (p) => p]);
+    }
+    for (const [given, toFolder] of [[chdirTo, null], [value('--work-tree'), (p) => p], [value('--git-dir'), checkoutOfGitDir]]) {
+      if (given === undefined) continue;
+      if (!given || given.dynamic) return null;
+      if (toFolder === null) at = path.resolve(at, given.text);
+      else pending.push([given.text, toFolder]);
+    }
+  }
+  return [at, ...pending.map(([given, toFolder]) => toFolder(path.resolve(at, given)))];
+}
+
+// The checkout a git folder belongs to: its configured work tree, as for a separate git folder, or else the folder
+// that holds it.
+function checkoutOfGitDir(gitDir) {
+  const tree = runGit(['--git-dir', gitDir, 'config', '--get', 'core.worktree'], existingFolder(path.dirname(gitDir)));
+  return tree.status === 0 && tree.stdout.trim() ? path.resolve(gitDir, tree.stdout.trim()) : path.dirname(gitDir);
+}
+
+// Whether `git commit` with these words commits every tracked change: -a or --all in any spelling. A short cluster is
+// read up to its first value option, so `-am msg` holds -a and `-mall` does not.
+function commitsAll(rest) {
+  for (let i = 0; i < rest.length; i += 1) {
+    const { text } = rest[i];
+    const dynamic = expands(rest[i]);
+    // A word that may expand could be -a, unless it is a value option with the expansion in its value: `-m"$MSG"`,
+    // `--message="$MSG"`. A value in the next word is read past below.
+    // A word that may expand can become several words, -a among them (`$@`, arrays, unquoted words): nothing that
+    // expands is plainly safe in the shared checkout.
+    if (dynamic) return true;
+    if (text === '--') return false;
+    if (text.startsWith('--')) {
+      if (isLongOption(text, '--all', '--al')) return true;
+      if (COMMIT_VALUES.has(text)) {
+        if (rest[i + 1] && expands(rest[i + 1])) return true;
+        i += 1;
+      }
+    } else if (text.startsWith('-') && text.length > 1) {
+      const { options, value } = readShortOptions(text, COMMIT_VALUES, COMMIT_ATTACHED);
+      if (options.includes('-a')) return true;
+      if (value?.attached === null) {
+        if (rest[i + 1] && expands(rest[i + 1])) return true;
+        i += 1;
+      }
+    }
+  }
+  return false;
+}
+
+// Whether `git checkout <word>` would switch branches: the previous branch (`-`), a commit, or a remote branch git
+// would create locally. Any other word is a path to restore.
+function switchesTo(at, word) {
+  if (word === '-') return true;
+  const folder = existingFolder(at);
+  if (runGit(['rev-parse', '--verify', '--quiet', '--end-of-options', `${word}^{commit}`], folder).status === 0) return true;
+  const remote = runGit(['for-each-ref', '--format=%(refname)', `refs/remotes/*/${word}`], folder);
+  return remote.status === 0 && remote.stdout.trim() !== '';
+}
+
+// Whether git tracks nothing under `word` but `word` itself: a folder deleted from disk still names every file in it.
+function tracksAtMostItself(at, word) {
+  const folder = existingFolder(at);
+  const top = runGit(['rev-parse', '--show-toplevel'], folder);
+  const listed = runGit(['ls-files', '-z', '--full-name', '--', word], folder);
+  if (top.status !== 0 || listed.status !== 0) return false;
+  // An unmerged file is listed once per stage: count each path once.
+  const files = new Set(listed.stdout.split('\0').filter(Boolean).map((file) => canonical(path.join(top.stdout.trim(), file))));
+  return files.size === 0 || (files.size === 1 && files.has(canonical(path.resolve(at, word))));
+}
+
+const isFolder = (file) => {
+  try {
+    return lstatSync(file).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+// The guarded main checkout `at` is in, as { project, config, roots }, or null. Read once per folder per hook run.
+const guardedMains = new Map();
+function guardedMain(at) {
+  if (guardedMains.has(at)) return guardedMains.get(at);
+  let found = null;
+  const folder = existingFolder(at);
+  const project = findProject(folder);
+  if (project) {
+    const { config } = loadConfig(project);
+    const roots = config.git.mainCheckout.guard ? checkoutRoots(folder) : null;
+    if (roots && canonical(roots.current) === canonical(roots.main)) found = { project, config, roots };
+  }
+  guardedMains.set(at, found);
+  return found;
+}
+
+// The deny reason for a git call that changes the main checkout's state, or null. Moving back to the default branch
+// is allowed: it is where the main checkout belongs.
+function gitStateDenial(command, cwd) {
+  for (const change of gitStateChanges(command, cwd)) {
+    for (const at of change.folders) {
+      const main = guardedMain(at);
+      if (!main) continue;
+      const { project, config, roots } = main;
+      if (change.target && change.target === config.git.defaultBranch) continue;
+      return reason(`Blocked: ${change.what}, in the main checkout (${roots.main}).`, project, config);
+    }
+  }
+  return null;
 }
 
 // Edit, Write, NotebookEdit, and apply_patch: the deny reason for the hook payload, or null.

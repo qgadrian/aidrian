@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -292,4 +292,91 @@ test('bashTargets finds the targets of ln, truncate, install, and dd; with resto
   assert.deepEqual(restored('git restore -s main src/a.ts'), ['src/a.ts']);
   assert.deepEqual(restored('git restore --staged src/a.ts'), [], 'only the index changes');
   assert.deepEqual(restored('git restore --staged --worktree src/a.ts'), ['src/a.ts']);
+});
+
+test('in the main checkout, only named files are staged and only the default branch is checked out', (t) => {
+  const { repo, base } = fixture(t);
+  execFileSync('git', ['-C', repo, 'branch', 'src']);
+  execFileSync('git', ['-C', repo, 'update-ref', 'refs/remotes/origin/remote-only', 'HEAD']);
+  const beside = path.join(base, 'beside');
+  const denied = (command, cwd = repo) => check(command, { cwd, env: ENV });
+  for (const command of [
+    'git add -A', 'git add --all', 'git add --al', 'git add .', 'git add ./', 'git add *', 'git add -u', 'git add :/', 'git add src',
+    `git add ${repo}`, 'git add --dry-run --no-dry-run -A', 'git add', 'git add "$FILES"',
+    'git commit -am x', 'git commit -am"fix: x"', 'git commit --all -m x', 'git commit -am "GIT_DIR=$HOME"', 'git commit --dry-run --no-dry-run -am x',
+    'git switch task', 'git switch -c fresh', 'git switch -cnew main', 'git switch -d main',
+    'git checkout task', 'git checkout -b fresh', 'git checkout -bnew main', 'git checkout task --', 'git checkout src',
+    'git checkout -', 'git checkout remote-only', 'git checkout -d main', 'git checkout --patch --no-patch task',
+    'git -C src add -A', 'echo "$(git add -A)"', `env -C ${repo} git add -A`, `git -C${repo} add -A`,
+    `git --work-tree=${beside} checkout task`, `git --work-tree=${beside} add -A`,
+    `git --git-dir=${repo}/.git --work-tree=${repo} add src/app.js`,
+  ]) {
+    assert.match(denied(command) ?? '', /^Blocked: .* in the main checkout/, command);
+  }
+  assert.match(denied('git add ..', path.join(repo, 'src')) ?? '', /main checkout/, 'a parent folder');
+  for (const command of [
+    'git add src/app.js', 'git add -v src/app.js gone.txt', 'git commit -m x', 'git commit -mrelease', 'git commit -uall -m x',
+    'git commit -Sabc123 -m x', "git commit -m 'GIT_DIR=docs'", 'git switch main', 'git checkout main', 'git checkout src/app.js', 'git checkout -- src/app.js',
+    'git checkout gone.txt', 'git checkout task -- src/app.js', 'git checkout HEAD src/app.js', 'git status', 'git pull --ff-only',
+  ]) {
+    assert.equal(denied(command), null, command);
+  }
+  assert.equal(denied('git add -A', path.join(repo, 'wt/task')), null, 'a worktree is the session`s own');
+  assert.equal(denied(`env -C ${beside} git add -A`), null, 'env -C into a worktree');
+  assert.equal(denied(`git -C${beside} add -A`), null, 'git -C into a worktree');
+  assert.match(denied(`git --git-dir=${repo}/.git --work-tree=${repo} add -A`, beside) ?? '', /main checkout/, 'from a worktree into the main checkout');
+  assert.equal(denied('cd wt/task && git add -A'), null, 'after a cd the folder is not certain');
+  assert.match(denied(`git --git-dir=${repo}/.git --work-tree=${repo} checkout task`, base) ?? '', /main checkout/, 'from outside the repository');
+  assert.match(denied(`git --git-dir=repo/.git --work-tree=repo -C ${base} add -A`, '/') ?? '', /main checkout/, 'relative repository paths after -C');
+  assert.equal(denied(`git add ${path.join(repo, 'src/app.js')}`), null, 'an absolute path to one file');
+  const meta = path.join(base, 'meta.git');
+  const separate = path.join(base, 'separate');
+  execFileSync('git', ['init', '-q', '-b', 'main', '--separate-git-dir', meta, separate]);
+  execFileSync('git', ['--git-dir', meta, 'config', 'core.worktree', separate]);
+  mkdirSync(path.join(separate, '.aidrian'));
+  writeFileSync(path.join(separate, '.aidrian/config.json'), JSON.stringify({ version: 1, git: { mainCheckout: { guard: true } } }));
+  assert.match(denied(`git --git-dir=${meta} checkout task`, base) ?? '', /main checkout/, 'a separate git folder names its checkout');
+  assert.match(denied(`GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo} git add -A`, base) ?? '', /main checkout/, 'git environment on the command');
+  assert.match(denied(`env GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo} git checkout task`, base) ?? '', /main checkout/);
+  assert.match(denied('git --icase-pathspecs add src/app.js') ?? '', /main checkout/, 'a pathspec option');
+  assert.match(denied(`git -c core.worktree=${repo} add src/app.js`, base) ?? '', /main checkout/, 'a config value');
+  assert.match(denied("bash -c 'git add -A'") ?? '', /main checkout/, 'an inline shell');
+  assert.match(denied("sh -c 'git checkout task'") ?? '', /main checkout/);
+  assert.match(denied(`GIT_INDEX_FILE=${repo}/.git/index git add -A`, beside) ?? '', /main checkout/, 'an index file names its checkout');
+  assert.match(denied(`GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo} bash -c 'git add -A'`, beside) ?? '', /main checkout/, 'git environment into an inline shell');
+  assert.match(denied(`export GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo}; git checkout task`, beside) ?? '', /main checkout/, 'an export earlier on the line');
+  assert.match(denied(`GIT_DIR="$HOME/unused"; GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo} git add -A`, beside) ?? '', /main checkout/, 'the last assignment wins');
+  for (const command of ['branch=task; git checkout "$branch"', 'git checkout "$(printf task)"', 'flags=-am; git commit $flags x']) {
+    assert.match(denied(command) ?? '', /main checkout/, `a word that may expand: ${command}`);
+  }
+  for (const command of ['git commit -m "$MESSAGE"', 'git commit -m"$MSG"', 'set -- m -a; git commit -m"$@"', 'git commit -m "${args[@]}"']) {
+    assert.match(denied(command) ?? '', /main checkout/, `a commit word that expands: ${command}`);
+  }
+  assert.equal(denied('git commit -m "a literal message"'), null);
+  assert.match(denied("bash <<'EOF'\ngit add -A\nEOF") ?? '', /main checkout/, 'a heredoc fed to a shell');
+  assert.match(denied("bash <<< 'git checkout task'") ?? '', /main checkout/, 'a here-string');
+  for (const command of ['MSG="m -a"; git commit -m$MSG', 'git commit --message=$MSG', 'git commit -m $MSG']) {
+    assert.match(denied(command) ?? '', /main checkout/, `an unquoted expansion can split: ${command}`);
+  }
+  assert.match(denied(`export GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo}; bash <<< 'git add -A'`, beside) ?? '', /main checkout/, 'an export before shell input');
+  assert.match(denied(`GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo} /bin/bash <<< 'git add -A'`, beside) ?? '', /main checkout/, 'assignments before /bin/bash');
+  assert.match(denied(`env -C ${base}/git GIT_DIR=${repo}/.git GIT_WORK_TREE=${repo} git add -A`, base) ?? '', /main checkout/, 'a wrapper folder named git');
+  assert.equal(denied(`cd ${beside} && bash <<< 'git add -A'`), null, 'shell input after a cd');
+  for (const command of ['git add {.,src}', 'git commit --{all,verbose} -m msg', 'git checkout task{1..1}']) {
+    assert.match(denied(command) ?? '', /main checkout/, `a brace expansion: ${command}`);
+  }
+  assert.match(denied(`(GIT_DIR=${repo}/.git git checkout task)`, beside) ?? '', /main checkout/, 'an assignment in a subshell');
+  symlinkSync('src', path.join(repo, 'link'));
+  assert.equal(denied('git add link'), null, 'a symlink to a folder is one file');
+  for (const command of ['(export GIT_DIR="$HOME/unused"); git add -A', 'export GIT_DIR="$HOME/unused" | cat; git add -A', 'GIT_DIR="$X" git add src/app.js']) {
+    assert.match(denied(command) ?? '', /main checkout/, `an unreadable value fails closed: ${command}`);
+  }
+  assert.match(denied(`GIT_WORK_TREE=${repo}; GIT_DIR=${repo}/.git; export GIT_DIR GIT_WORK_TREE; git add -A`, beside) ?? '', /main checkout/, 'bare assignments');
+  execFileSync('git', ['-C', repo, 'rm', '-q', '--cached', 'src/app.js']);
+  execFileSync('git', ['-C', repo, 'add', 'src/app.js']);
+  rmSync(path.join(repo, 'src'), { recursive: true, force: true });
+  assert.match(denied('git add src') ?? '', /main checkout/, 'a tracked folder deleted from disk');
+  assert.equal(denied('git add src/app.js'), null, 'one deleted file by name');
+  const off = fixture(t, { version: 1 }).repo;
+  assert.equal(check('git add -A', { cwd: off, env: ENV }), null, 'the guard is off');
 });

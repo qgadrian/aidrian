@@ -3,6 +3,10 @@
 This page is for changing the plugin itself. To use the plugin in a project, start at the [README](../README.md#install).
 [architecture.md](architecture.md) maps the repository.
 
+This repository runs the plugin on itself with the [main-checkout guard](hooks.md#main-checkout) on (`.aidrian/config.json`).
+Change it in a task worktree, `aidrian worktree new <branch>`, never in the main checkout: several sessions share that
+folder, so the guard blocks edits there, branch switches away from `main`, and `git add -A` or `git commit -a`.
+
 ## Build and check
 
 ```sh

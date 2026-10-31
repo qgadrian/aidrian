@@ -88,7 +88,7 @@ What each rule matches:
 - Review gate: `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose body
   asks `@codex review`; `gh pr create --reviewer` and `gh pr edit --add-reviewer` naming `github.reviewer`.
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
-  `touch`, `mkdir`, and `rsync` (sources too under `--remove-source-files`).
+  `touch`, `mkdir`, and `rsync` (sources too under `--remove-source-files`); and a branch switch or `git add -A` there.
 
 Each rule is a file in `plugins/aidrian/lib/rules/`; a rule that reads only `gh` commands, such as the pull request body rule, is in `rules/github/`.
 Each block is recorded: [Recorded blocks](#recorded-blocks).
@@ -130,6 +130,18 @@ The rule blocks a write to a file git tracks, or would track, in the main checko
 It allows a git-ignored path, a path in `git.mainCheckout.allowWrites`, and anything in a worktree or outside the repository.
 [config.md](config.md) lists both keys.
 When git cannot answer, an Edit or Write is blocked to be safe, and a Bash command runs.
+
+Several sessions can share the main checkout, so the rule also keeps its git state, and lets only what is plainly safe
+through, whatever the spelling:
+
+- `git add` of named files only: no folder, glob, `-A`, `-u`, or other option but `-v`, `-f`, `-N`, and `-p`.
+- `git commit` without `-a` or `--all`, and with no word that expands (`"$MSG"`, `"$(…)"`), which could become `-a`.
+- `git switch` and `git checkout` only back to `git.defaultBranch`; `git checkout -- <path>`, `git checkout <path>`, and
+  `git checkout <commit> <path>` restore files and pass.
+
+The rule follows `env -C`, `git -C`, `--work-tree`, and `--git-dir`, so a call from a worktree into the main checkout
+is blocked and one into a worktree passes. Anything blocked here belongs in a task worktree.
+Like the Bash rules, it reads the command's text: it stops accidents, not someone set on getting around it.
 
 ## Agent gates
 

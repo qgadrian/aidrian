@@ -55,6 +55,7 @@ In a group such as `github`, set only the keys you change; the others keep their
   "lessons": { "auto": true, "maxOpen": 20, "maxAgeDays": 14 },
   "models": { "claude": { "agents": {} }, "codex": { "agents": {} } },
   "names": { "human": "the Human", "ai": null },
+  "attribution": { "commit": [], "pullRequest": [], "exclude": ["explorer", "helper-scout", "Explore", "claude-code-guide", "statusline-setup"] },
   "telemetry": {
     "enabled": true,
     "docReads": true,
@@ -112,6 +113,9 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `models` | The model and effort of the plugin's agents, per host, in place of the ones the plugin ships: [Models](#models). |
 | `names.human` | What agents call the person they work for: [Names](#names). |
 | `names.ai` | What agents call themselves; `null` is the host's name, Claude or Codex: [Names](#names). |
+| `attribution.commit` | The trailers an agent's commit must carry: [Attribution](#attribution). `[]`, the default, is off. |
+| `attribution.pullRequest` | The lines a pull request body an agent opens must end with: [Attribution](#attribution). `[]` is off. |
+| `attribution.exclude` | The agents the `Assisted-by:` lines leave out; by default the ones that only search and read. |
 | `telemetry.enabled` | `false` stops the hooks from writing the [dispatch log](dispatch-log.md): [Telemetry](#telemetry). |
 | `telemetry.docReads` | `false` leaves out which knowledge docs each agent read. |
 | `telemetry.hookDenies` | `false` leaves out the `hook_deny` row each block by one of the plugin's rules writes; the rules still block. |
@@ -307,6 +311,59 @@ A team sets its names in `config.json`, and one developer in the git-ignored `.a
 
 `.aidrian.local.json` wins over `config.json`, one name at a time.
 `aidrian check` names an unknown key and a name that is not a non-empty string.
+
+## Attribution
+
+`attribution` says which agents wrote a commit or a pull request. The values come from the hook payload, the session
+transcript, the environment, git, and the [dispatch log](dispatch-log.md), never from what an agent writes about itself.
+The attribution rule ([hooks.md](hooks.md#bash-rules)) blocks an agent's `git commit` or `gh pr create` that lacks them
+and prints the exact lines to add. Both lists are empty by default, which turns the rule off.
+
+| Field | Value | Read from | Commit trailer |
+| --- | --- | --- | --- |
+| `agent` | `backend-developer`, or `main` | The subagent making the call, else the session's `--agent`; without the `aidrian:` prefix | `Agent:` |
+| `model` | `claude-opus-5-5` | The agent's last API request in its own transcript | `Agent-Model:` |
+| `effort` | `high` | That request, else `CLAUDE_EFFORT` in the main session only: a subagent inherits it | `Agent-Effort:` |
+| `tool` | `Claude Code` or `Codex` | `CODEX_THREAD_ID` | `Agent-Tool:` |
+| `env` | `local`, `cloud`, or `ci` | `CLAUDE_CODE_REMOTE=true` is `cloud`; `GITHUB_ACTIONS` or `CI` is `ci` | `Agent-Env:` |
+
+`commit` takes any of these fields. A commit carries a trailer as a `--trailer` option, or in its message's trailer
+block: the last paragraph, past the subject, with only `Key: value` lines, as git reads it.
+Each `git commit` in a command is checked on its own message, and a `-F` file is read where the commit runs.
+A message from stdin (`-F -`), an editor, or another commit (`-C`, `-c`) counts only its `--trailer` options. `-h`, `--help`, `--dry-run`, and the status formats, such as `--short`, pass.
+The rule also reads `sh -c` and `bash -c` command lines and a script fed to a shell, such as `bash <<'EOF'`.
+The trailers are those `git interpret-trailers` reads in the commit's folder, with its `git -c` settings.
+
+`pullRequest` takes `tool`, `model`, `effort`, and `env` for one line, and `agents` for one line per agent:
+
+```text
+Authored-with: Claude Code — claude-opus-5-5 (high effort, local)
+Assisted-by: backend-developer (claude-sonnet-5-5)
+Assisted-by: code-reviewer (claude-opus-5-5)
+```
+
+- The agents are those in the `Agent:` trailers of the commits on the pull request's head (`--head`, else the current branch)
+  past its base (`--base`, else `git.defaultBranch`), from any session,
+  and those this session dispatched, with the models their `stop` rows name; `main` and `exclude` are left out.
+- The `Authored-with:` line must match as written. Each agent needs an `Assisted-by:` line, in any order, whatever models it names.
+- Only `gh pr create`, and its alias `gh pr new`, is checked; `gh pr edit`, `--web`, and `--dry-run` pass. A body the rule cannot read, such as `--body "$VAR"`, is refused.
+- A field with no known value is left out, never guessed.
+- The commit names only the agent that runs `git commit`. When the main session commits a subagent's work,
+  the subagent shows in the pull request's `Assisted-by:` lines, not as a co-author.
+- On Codex, `tool` and `env` are known, and `agent` when Codex sends it. `model`, `effort`, and the dispatched agents
+  are not: the transcript reader and the dispatch log read Claude Code's formats. Codex never reports `cloud`.
+
+The rule catches an agent that forgot or mistyped its attribution in an ordinary command. It is not a security
+boundary: a command built to hide its message from a static reader is out of scope, and where the rule cannot read a
+message it asks for `--trailer` options.
+
+To skip the rule, the Human sets `AIDRIAN_ALLOW_UNATTRIBUTED=1` before starting the session.
+The host adds its own attribution, such as Claude Code's `Co-Authored-By:` trailer and session link.
+Claude Code's `attribution` setting in `.claude/settings.json` turns those off.
+
+```json
+{ "attribution": { "commit": ["agent", "model", "effort"], "pullRequest": ["tool", "model", "effort", "agents"] } }
+```
 
 ## Telemetry
 

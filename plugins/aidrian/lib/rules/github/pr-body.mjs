@@ -21,7 +21,7 @@ import { loadConfig } from '../../config.mjs';
 import { runGh } from '../../gh.mjs';
 import { headings, sectionItems, unfencedLines } from '../../markdown-sections.mjs';
 import { findProject } from '../../project.mjs';
-import { readInvocation, readShortOptions, walkCommands } from '../../shell-lex.mjs';
+import { lexCommand, readInvocation, readShortOptions, walkCommands } from '../../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PR_BODY';
 
@@ -29,10 +29,11 @@ const FOOTER = /Generated with \[Claude Code\]/u;
 const FILL = new Set(['--fill', '--fill-first', '--fill-verbose', '-f']);
 // The short options of `gh pr create` and `gh pr edit` that take a value; -d, -e, -f, and -w are switches.
 const SHORT_VALUES = new Set(['-a', '-B', '-b', '-F', '-H', '-l', '-m', '-p', '-r', '-R', '-T', '-t']);
-// The canonical heredoc form, `--body "$(cat <<'EOF' … EOF)"`, read from the raw command: the token holding it is
-// dynamic, and its text has lost the body's quotes. -b takes it attached too, or at the end of a cluster. Group 3 is
-// the body.
-const BODY_HEREDOC = /(?:--body(?:=|\s+)|-[A-Za-z]*b=?\s*)"?\$\([^<]*<<-?\s*(['"]?)(\w+)\1\r?\n([\s\S]*?)\r?\n[ \t]*\2\b/u;
+// The canonical heredoc form, `--body "$(cat <<'EOF' … EOF)"`, and only it, since another command may print something
+// else, read from the raw command: the token holding it is
+// dynamic, and its text has lost the body's quotes. -b takes it attached too, or at the end of a cluster. The
+// substitution must be the whole word and hold only the heredoc. Group 4 is the body.
+const BODY_HEREDOC = /(?:--body(?:=|\s+)|-[A-Za-z]*b=?\s*)(?<quote>"?)\$\(\s*cat\s*<<-?\s*(['"]?)(\w+)\2\r?\n([\s\S]*?)\r?\n[ \t]*\3[ \t]*\r?\n?[ \t]*\)\k<quote>(?=\s|$|[;&|)])/gu;
 
 // Shared temp folders: concurrent sessions write the same names there, and one session's body can publish as another's.
 const SHARED_TEMP = ['/tmp/', '/private/tmp/', '/var/tmp/', '/private/var/tmp/', '/var/folders/', '/private/var/folders/'];
@@ -45,9 +46,14 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
   if (env[OVERRIDE] === '1') return null;
   // Each gh call with the folder it runs in (shell-lex `walkCommands`), in substitutions and inline shells too:
   // `cd <worktree> && gh pr create --body-file b.md` reads that worktree's b.md and project. In a folder this rule
-  // cannot know, the project is the session's and a relative body file is unreadable.
+  // cannot know, the project is the session's and a relative body file is unreadable. Each call takes its own heredoc
+  // from readPrCalls on its line.
+  const pending = new Map();
   for (const { segment, folder, line } of walkCommands(command, cwd)) {
-    const call = readPrCall(segment);
+    if (!readPrCall(segment)) continue;
+    // The same line text can run again, as two identical `sh -c` bodies do: a spent queue starts over.
+    if (!pending.get(line)?.length) pending.set(line, readPrCalls(line));
+    const call = pending.get(line).shift();
     if (!call) continue;
     const reason = judge(call, line, { cwd: folder ?? cwd, folderKnown: folder !== null, env, listOpenPrs: folder === null || folder === cwd ? listOpenPrs : openPrBodies(folder) });
     if (reason) return reason;
@@ -55,10 +61,28 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
   return null;
 }
 
-// { subcommand, fill, body, bodyFile, title, repo, target } for a `gh [-R repo] pr create|edit …` segment, else null.
-// Later flags win, as in gh. `title` and `repo` are tokens; `target` is the first positional (the pull request an edit
+// A heredoc match's body (group 4) as bash passes it: as written under a quoted delimiter (group 2), or under a bare one
+// when it holds nothing bash expands (`$`, a backtick, or a backslash); else null, a body no rule can know.
+export const unchangedHeredoc = (match) => (match[2] || !/[$`\\]/u.test(match[4]) ? match[4] : null);
+
+// Every `gh pr create|edit` call of one command line, in order, as readPrCall reads it, with `heredoc`: the body of the
+// heredoc its dynamic --body holds. The n-th dynamic body takes the line's n-th body heredoc, and only when the counts
+// match: otherwise no dynamic body is read, so one call's heredoc never stands in for another's. A heredoc under a bare
+// delimiter that holds `$`, a backtick, or a backslash is expanded by bash, so it is not read either.
+export function readPrCalls(line) {
+  const calls = lexCommand(line).map((segment) => readPrCall(segment)).filter(Boolean);
+  const dynamic = calls.filter((call) => call.body?.dynamic);
+  const heredocs = [...line.matchAll(BODY_HEREDOC)].map(unchangedHeredoc);
+  dynamic.forEach((call, i) => {
+    call.heredoc = heredocs.length === dynamic.length ? heredocs[i] : null;
+  });
+  return calls;
+}
+
+// { subcommand, fill, body, bodyFile, title, repo, target, head, base, dryRun } for a `gh [-R repo] pr create|edit …` segment, else null.
+// Later flags win, as in gh. `title`, `repo`, `head`, and `base` are tokens; `target` is the first positional (the pull request an edit
 // names).
-function readPrCall(segment) {
+export function readPrCall(segment) {
   const { program, args } = readInvocation(segment);
   if (program !== 'gh') return null;
   let i = 0;
@@ -73,8 +97,10 @@ function readPrCall(segment) {
     else if (text.startsWith('--repo=')) repo = { text: text.slice('--repo='.length), dynamic };
     else if (!text.startsWith('-')) words.push(text);
   }
+  // `gh pr new` is gh's built-in alias for `gh pr create`.
+  if (words[1] === 'new') words[1] = 'create';
   if (words[0] !== 'pr' || !['create', 'edit'].includes(words[1])) return null;
-  const call = { subcommand: words[1], fill: false, web: false, help, body: null, bodyFile: null, title: null, repo, target: null };
+  const call = { subcommand: words[1], fill: false, web: false, help, body: null, bodyFile: null, title: null, repo, target: null, head: null, base: null, dryRun: false };
   for (; i < args.length; i += 1) {
     const { text, dynamic } = args[i];
     // After `--` every word is a positional: no flag, but still the pull request an edit names.
@@ -101,10 +127,13 @@ function readPrCall(segment) {
     const value = () => (inline !== null ? { text: inline, dynamic } : args[++i] ?? null);
     if (FILL.has(flag)) call.fill = true;
     else if (flag === '--web') call.web = isTrue(inline, dynamic);
+    else if (flag === '--dry-run') call.dryRun = isTrue(inline, dynamic);
     else if (flag === '--help') call.help = isTrue(inline, dynamic);
     else if (flag === '--body' || flag === '-b') [call.body, call.bodyFile] = [value(), null];
     else if (flag === '--body-file' || flag === '-F') [call.bodyFile, call.body] = [value(), null];
     else if (flag === '--title' || flag === '-t') call.title = value();
+    else if (flag === '--head' || flag === '-H') call.head = value();
+    else if (flag === '--base' || flag === '-B') call.base = value();
     else if (flag === '--repo' || flag === '-R') call.repo = value();
     else if (SHORT_VALUES.has(flag) || LONG_VALUES.has(flag)) value();
     else if (!text.startsWith('-') && call.target === null) call.target = args[i];
@@ -144,7 +173,7 @@ function judge(call, command, { cwd, folderKnown = true, env, listOpenPrs }) {
     return deny('`gh pr create` has no --body or --body-file, so gh takes the body from an editor, a prompt, or a template, ' +
       'without the sections config.json `github.requiredSections` asks for. Write the body to a file and pass --body-file (the pr-write skill does).');
   }
-  const body = readBody(call, command, folderKnown ? cwd : null);
+  const body = readBody(call, folderKnown ? cwd : null);
   if (body === null && sectioned && (call.body || call.bodyFile)) {
     return deny('the body is one this rule cannot read (a variable, a command substitution, stdin, or a missing file), so the ' +
       'sections config.json `github.requiredSections` asks for go unchecked. Pass a literal --body, a heredoc ' +
@@ -289,9 +318,9 @@ function openPrBodies(cwd) {
 }
 
 // The body text, or null when this rule cannot know it. A null `cwd` is a folder it cannot know: only an absolute body
-// file reads.
-function readBody(call, command, cwd) {
-  if (call.body) return call.body.dynamic ? BODY_HEREDOC.exec(command)?.[3] ?? null : call.body.text;
+// file reads. A dynamic --body reads the heredoc readPrCalls gave the call.
+export function readBody(call, cwd) {
+  if (call.body) return call.body.dynamic ? call.heredoc ?? null : call.body.text;
   if (!call.bodyFile || call.bodyFile.dynamic || call.bodyFile.text === '-') return null;
   if (cwd === null && !path.isAbsolute(call.bodyFile.text)) return null;
   try {

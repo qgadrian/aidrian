@@ -164,3 +164,18 @@ test('a substitution or an inline shell runs gh in the folder of its command', (
   assert.match(run(`cd ${dir} && url=$(gh pr create --title x --body-file body.md)`), /^Blocked: the body has no `## Tests run` section/);
   assert.match(run(`cd ${dir} && bash -c 'gh pr create --title x --body-file body.md'`), /^Blocked: the body has no `## Tests run` section/);
 });
+
+test('two identical inline shells in different folders are each checked', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-prbody-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  for (const [name, text] of [['good', GOOD], ['bad', 'no sections\n']]) {
+    mkdirSync(path.join(dir, name));
+    writeFileSync(path.join(dir, name, 'body.md'), text);
+  }
+  const run = (command) => check(command, { cwd: dir, env: {}, listOpenPrs: () => [] });
+  const inline = (folder) => `env -C ${folder} sh -c 'gh pr create -t x -F body.md'`;
+  assert.equal(run(inline('good')), null);
+  assert.match(run(`${inline('good')} && ${inline('bad')}`) ?? '', /Blocked/);
+});

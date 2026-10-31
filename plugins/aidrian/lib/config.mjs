@@ -53,6 +53,7 @@ const SCHEMA = {
   lessons: { auto: 'boolean', maxOpen: 'zeroOrMore', maxAgeDays: 'zeroOrMore' },
   models: 'models',
   names: { human: 'text', ai: 'textOrNull' },
+  attribution: { commit: 'commitFields', pullRequest: 'prFields', exclude: 'texts' },
   telemetry: {
     enabled: 'boolean',
     docReads: 'boolean',
@@ -83,6 +84,10 @@ const RENAMED = {
 };
 
 // What `models` may set for one of this plugin's agents, per host; null takes any non-empty string.
+// The fields config.json `attribution` may list (lib/attribution.mjs).
+export const COMMIT_FIELDS = ['agent', 'model', 'effort', 'tool', 'env'];
+export const PR_FIELDS = ['tool', 'model', 'effort', 'env', 'agents'];
+
 // Claude Code's Agent tool takes only these model aliases. Codex reads any model name and names these efforts.
 // docs/config.md#models cites both.
 const MODEL_CHOICES = {
@@ -128,6 +133,8 @@ const TYPES = {
   positive: [(value) => Number.isInteger(value) && value > 0, 'a whole number above 0'],
   percent: [(value) => Number.isInteger(value) && value > 0 && value <= 100, 'a whole number from 1 to 100'],
   zeroOrMore: [(value) => Number.isInteger(value) && value >= 0, 'a whole number, 0 or more'],
+  commitFields: [(value) => Array.isArray(value) && value.every((f) => COMMIT_FIELDS.includes(f)), `a list of ${COMMIT_FIELDS.map((f) => `"${f}"`).join(', ')}`],
+  prFields: [(value) => Array.isArray(value) && value.every((f) => PR_FIELDS.includes(f)), `a list of ${PR_FIELDS.map((f) => `"${f}"`).join(', ')}`],
   handoffMode: [(value) => ['off', 'ask', 'auto'].includes(value), '"off", "ask", or "auto"'],
 };
 
@@ -167,6 +174,9 @@ export const DEFAULTS = deepFreeze({
   lessons: { auto: true, maxOpen: 20, maxAgeDays: 14 },
   models: { claude: { agents: {} }, codex: { agents: {} } },
   names: { human: 'the Human', ai: null },
+  // What a commit and a pull request say about the agents that wrote them (lib/attribution.mjs); [] is off. `exclude`
+  // names the agents a pull request's `Assisted-by:` lines leave out: by default the ones that only search and read.
+  attribution: { commit: [], pullRequest: [], exclude: ['explorer', 'helper-scout', 'Explore', 'claude-code-guide', 'statusline-setup'] },
   telemetry: {
     enabled: true,
     docReads: true,

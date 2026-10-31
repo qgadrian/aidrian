@@ -69,6 +69,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Command-line listing | Listing the command lines of other processes | `AIDRIAN_ALLOW_PROCESS_ARGS_LISTING=1` |
 | Counting grep in `&&` | A `grep -c` whose exit status an `&&` chain reads | `AIDRIAN_ALLOW_GREP_EXIT_CHAIN=1` |
 | Pull request body | A pull request body without the required sections, or with the footer; the [contract](config.md#pull-request-contract) | `AIDRIAN_ALLOW_PR_BODY=1` |
+| Attribution, when turned on | An agent's commit or new pull request without the [attribution](config.md#attribution) lines | `AIDRIAN_ALLOW_UNATTRIBUTED=1` |
 | Review gate, when turned on | Asking the review bot before a review is on record ([config.md](config.md#review-gate)) | `AIDRIAN_ALLOW_UNREVIEWED_REQUEST=1` |
 | Main checkout, when turned on | A shell write to a tracked file in the main checkout | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
 
@@ -85,6 +86,8 @@ What each rule matches:
   and, when sections are configured, a non-web `gh pr create` with no `--body` or `--body-file`.
   With `github.pullRequest` set, also the title, the closed list of sections, the deferral and residual items,
   a body file in a shared temp folder, and a body identical to another open pull request's.
+- Attribution: an agent's `git commit` whose message's last paragraph and `--trailer` options lack a configured trailer;
+  and a `gh pr create` body without the configured `Authored-with:` and `Assisted-by:` lines.
 - Review gate: `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose body
   asks `@codex review`; `gh pr create --reviewer` and `gh pr edit --add-reviewer` naming `github.reviewer`.
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,

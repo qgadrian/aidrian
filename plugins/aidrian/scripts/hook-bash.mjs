@@ -5,6 +5,7 @@
 // session again and again. Anything this hook cannot read lets the command run: rules deny only what they positively identify.
 
 import { block, runHook } from '../lib/hook-io.mjs';
+import * as attribution from '../lib/rules/attribution.mjs';
 import * as gitAmend from '../lib/rules/git-amend.mjs';
 import * as gitHookBypass from '../lib/rules/git-hook-bypass.mjs';
 import * as prBody from '../lib/rules/github/pr-body.mjs';
@@ -19,6 +20,7 @@ const RULES = [
   ['git-amend', gitAmend],
   ['process-kill', processKill],
   ['grep-exit-chain', grepExitChain],
+  ['attribution', attribution],
   ['pr-body', prBody],
   ['review-gate', reviewRequest],
   ['main-checkout', mainCheckout],
@@ -27,7 +29,7 @@ const RULES = [
 await runHook(async (input) => {
   const command = input.tool_input?.command;
   if (input.tool_name !== 'Bash' || typeof command !== 'string' || command === '') return;
-  const context = { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), env: process.env };
+  const context = { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), env: process.env, input };
   for (const [name, rule] of RULES) {
     const reason = rule.check(command, context);
     if (reason) await block(input, name, reason);

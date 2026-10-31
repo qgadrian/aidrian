@@ -8,7 +8,8 @@
 //           request changed: a problem every review missed; matched by file only
 // A finding matches a problem in the same file within 10 lines (any line for an escaped one). The verdict passes when
 // split recall is at least single recall minus `--tolerance` problems (1 by default), so a small sample's noise cannot
-// block it forever. It costs two full reviews per pull request: run it by hand, not in CI.
+// block it forever. A failed reviewer run makes its pull request incomplete; any incomplete one makes the whole run exit
+// 2, never a pass. It costs two full reviews per pull request: run it by hand, not in CI.
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -60,14 +61,16 @@ function knownProblems(root, repo, n, bot, info) {
   const query = `query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{path line originalLine originalCommit{oid} author{login}}}}}}}}`;
   const data = JSON.parse(runGh(['api', 'graphql', '-f', `query=${query}`, '-F', `o=${owner}`, '-F', `r=${name}`, '-F', `n=${n}`]));
   const problems = [];
-  let first = null;
+  const seen = [];
   for (const thread of data.data.repository.pullRequest.reviewThreads.nodes) {
     const comment = thread.comments.nodes[0];
     if (!comment || !thread.isResolved) continue;
     const isBot = comment.author?.login === bot || comment.author?.login === bot.replace(/\[bot\]$/u, '');
     problems.push({ source: isBot ? 'bot' : 'human', file: comment.path, line: comment.originalLine ?? comment.line ?? null });
-    if (isBot && !first) first = comment.originalCommit?.oid ?? null;
+    if (comment.originalCommit?.oid) seen.push(comment.originalCommit.oid);
   }
+  // The earliest commit any resolved thread was opened on, bot or person: the code before any reported bug was fixed.
+  const first = seen.find((oid) => seen.every((other) => other === oid || runGit(['merge-base', '--is-ancestor', oid, other], root).status === 0)) ?? seen[0] ?? null;
   const files = new Set(changedFiles(root, info.base, info.head).map((change) => change.file));
   if (info.mergedAt) {
     const until = new Date(Date.parse(info.mergedAt) + ESCAPE_DAYS * 86_400_000).toISOString();
@@ -82,28 +85,30 @@ function knownProblems(root, repo, n, bot, info) {
 }
 
 // One review of a commit, as one pass or split: the findings of every pass.
-async function reviewAt(root, reviewer, { base, head, changes, roots, split, env }) {
+export async function reviewAt(root, reviewer, { base, head, changes, roots, split, env }) {
   const sorted = classify(changes);
   const reviewed = changes.filter((change) => sorted.behaviour.includes(change.file) || sorted.nonBehaviour.includes(change.file));
   const manifest = changes.map((change) => ({ file: change.file, status: change.status, added: change.added, removed: change.removed }));
   const input = (extra) => ({ pr: null, repo: null, base, head, context: 'full', flows: [], priorFindings: [], ...extra });
-  if (!split) {
-    const outcome = await runExec(reviewer, input({ files: null }), { root, env });
-    return outcome.status === 'done' ? outcome.findings : [];
-  }
+  // A failed run is not a review that found nothing: it makes the sample incomplete, and the bench does not pass.
+  const done = (outcome, what) => {
+    if (outcome.status !== 'done') throw Object.assign(new Error(`${what}: ${outcome.status}: ${outcome.reason ?? ''}`), { incomplete: true });
+    return outcome;
+  };
+  if (!split) return done(await runExec(reviewer, input({ files: null }), { root, env }), 'single pass').findings;
   const passes = splitPasses(reviewer.name, partition(reviewed, roots, SPLIT_DEFAULTS), { kind: 'exec' });
   const results = new Map();
   const slices = passes.filter((pass) => pass.role === 'slice');
   for (let i = 0; i < slices.length; i += SPLIT_DEFAULTS.parallel) {
     const batch = slices.slice(i, i + SPLIT_DEFAULTS.parallel);
     const outcomes = await Promise.all(batch.map((pass) => runExec(reviewer, input({ role: 'slice', slice: pass.slice, files: pass.files, manifest }), { root, env })));
-    batch.forEach((pass, j) => results.set(pass.id, outcomes[j].status === 'done' ? outcomes[j] : { findings: [], contracts: [], cross_notes: [] }));
+    batch.forEach((pass, j) => results.set(pass.id, done(outcomes[j], pass.id)));
   }
   const cross = await runExec(reviewer, input({
     role: 'cross', files: null, manifest,
     slices: slices.map((pass) => ({ id: pass.id, slice: pass.slice, files: pass.files, ...results.get(pass.id) })),
   }), { root, env });
-  return [...[...results.values()].flatMap((each) => each.findings), ...(cross.status === 'done' ? cross.findings : [])];
+  return [...[...results.values()].flatMap((each) => each.findings), ...done(cross, 'cross pass').findings];
 }
 
 export const commands = {
@@ -132,10 +137,14 @@ export const commands = {
       }
       const env = isolate({ ...process.env });
       const results = [];
+      const incomplete = [];
       for (const n of values.prs.split(',').map((each) => Number(each.trim()))) {
         const info = JSON.parse(runGh(['pr', 'view', String(n), '-R', repo, '--json', 'headRefOid,baseRefName,mergedAt']));
-        runGit(['fetch', '-q', 'origin', `pull/${n}/head`, info.baseRefName], root, { timeout: 120_000 });
-        const base = mergeBase(root, `origin/${info.baseRefName}`, info.headRefOid);
+        // The base the pull request was opened against, not today's base tip: once merged, its head is an ancestor of
+        // the base branch, and a merge base with the tip would be the head itself.
+        const baseSha = JSON.parse(runGh(['api', `repos/${repo}/pulls/${n}`])).base.sha;
+        runGit(['fetch', '-q', 'origin', `pull/${n}/head`, info.baseRefName, baseSha], root, { timeout: 120_000 });
+        const base = mergeBase(root, baseSha, info.headRefOid);
         const { problems, reviewedAt } = knownProblems(root, repo, n, config.github.reviewer ?? '', { ...info, base, head: info.headRefOid });
         const at = mergeBase(root, base, reviewedAt) === base ? reviewedAt : info.headRefOid;
         const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-bench-'));
@@ -145,18 +154,26 @@ export const commands = {
           const changes = changedFiles(tree, base, at);
           const roots = packageRoots(runGit(['ls-tree', '-r', '--name-only', at], tree, { timeout: 30_000 }).stdout.split('\n').filter(Boolean));
           const context = { base, head: at, changes, roots, env };
+          if (!changes.length) throw Object.assign(new Error('the replayed change is empty'), { incomplete: true });
           const single = await reviewAt(tree, reviewer, { ...context, split: false });
           const split = await reviewAt(tree, reviewer, { ...context, split: true });
           results.push({ pr: n, reviewed: at, problems: problems.length, single: recall(problems, single), split: recall(problems, split) });
           console.error(`#${n}: ${problems.length} known problems; single ${JSON.stringify(results.at(-1).single)}; split ${JSON.stringify(results.at(-1).split)}`);
+        } catch (error) {
+          if (!error.incomplete) throw error;
+          incomplete.push({ pr: n, reason: error.message });
+          console.error(`#${n}: incomplete: ${error.message}`);
+          continue;
         } finally {
           runGit(['worktree', 'remove', '--force', tree], root, { timeout: 60_000 });
           rmSync(dir, { recursive: true, force: true });
         }
       }
       const outcome = verdict(results, Number(values.tolerance ?? 1));
-      console.log(JSON.stringify({ results, ...outcome, tolerance: Number(values.tolerance ?? 1), note: { ...SPLIT_DEFAULTS } }, null, 2));
-      return outcome.passes ? 0 : 1;
+      // An incomplete sample, or none at all, is no evidence either way: exit 2, never a pass.
+      const complete = incomplete.length === 0 && results.length > 0;
+      console.log(JSON.stringify({ results, incomplete, ...outcome, passes: complete && outcome.passes, tolerance: Number(values.tolerance ?? 1), split: { ...SPLIT_DEFAULTS } }, null, 2));
+      return complete ? (outcome.passes ? 0 : 1) : 2;
     },
   },
 };

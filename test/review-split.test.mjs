@@ -168,3 +168,12 @@ test('an agent slice`s contracts reach the cross pass through attest', async (t)
   assert.equal(cross.dispatch[0].role, 'cross');
   assert.deepEqual(cross.dispatch[0].slices.map((each) => each.contracts[0]), ['src/a/x.js exports x', 'src/b/x.js exports x', 'src/c/x.js exports x', 'src/d/x.js exports x']);
 });
+
+test('bench: a reviewer run that fails makes the sample incomplete, never a measured zero', async (t) => {
+  const { reviewAt } = await import('../plugins/aidrian/lib/review/bench.mjs');
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-bench-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const failing = { name: 'f', kind: 'exec', command: [process.execPath, '-e', 'process.exit(1)'], timeoutSec: 5 };
+  const context = { base: 'a', head: 'b', changes: [change('src/a.js')], roots: new Set(), env: process.env };
+  for (const split of [false, true]) await assert.rejects(reviewAt(dir, failing, { ...context, split }), (error) => error.incomplete === true);
+});

@@ -529,8 +529,11 @@ function clearsEnvironment(wrapper, text, option) {
 function wrapperOption({ text, dynamic }, valueFlags) {
   if (text.startsWith('--')) {
     const equals = text.indexOf('=');
-    const name = equals === -1 ? text : text.slice(0, equals);
-    if (!valueFlags.has(name)) return null;
+    const written = equals === -1 ? text : text.slice(0, equals);
+    // getopt_long takes an unambiguous prefix of a long option: `env --un=X` is `--unset=X`.
+    const longs = [...valueFlags].filter((flag) => flag.startsWith('--') && flag.startsWith(written));
+    const name = valueFlags.has(written) ? written : longs.length === 1 && written.length > 2 ? longs[0] : null;
+    if (!name) return null;
     return { name, value: equals === -1 ? null : { text: text.slice(equals + 1), dynamic } };
   }
   const { value } = readShortOptions(text, valueFlags);

@@ -122,7 +122,8 @@ function invocationRepo(environment, env) {
     if (change.clear) repo = null;
     else if (change.name === 'GH_REPO') repo = change.value && !change.value.dynamic ? change.value.text : null;
   }
-  return repo || null;
+  // GH_REPO is `[HOST/]OWNER/REPO`.
+  return repo ? repoName(repo) ?? repo : null;
 }
 
 // The positional words and the options of a gh command line, as gh reads them with `values` taking a value: `--x=v`,

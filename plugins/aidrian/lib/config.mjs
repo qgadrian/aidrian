@@ -26,8 +26,27 @@ const GIT_SCHEMA = {
 const SCHEMA = {
   git: GIT_SCHEMA,
   state: { dir: 'textOrNull' },
-  github: { requiredSections: 'texts', reviewer: 'textOrNull', maxReviewRounds: 'positive', requiredChecks: 'texts', ignoreCancelledChecks: 'texts', conditionalChecks: 'texts', titleIssuePrefix: 'boolean' },
+  github: {
+    requiredSections: 'texts',
+    reviewer: 'textOrNull',
+    maxReviewRounds: 'positive',
+    requiredChecks: 'texts',
+    ignoreCancelledChecks: 'texts',
+    conditionalChecks: 'texts',
+    titleIssuePrefix: 'boolean',
+    pullRequest: {
+      title: 'patternOrNull',
+      issueKey: 'patternOrNull',
+      sections: 'textsOrNull',
+      deferrals: 'deferralsOrNull',
+      residuals: 'residualsOrNull',
+      sharedTempBodyFile: 'boolean',
+      duplicateBody: 'boolean',
+    },
+    reviewGate: { enabled: 'boolean', checklist: 'textOrNull' },
+  },
   docs: { wrapLimit: 'zeroOrMore' },
+  terms: { file: 'textOrNull' },
   knowledge: { budgets: { alwaysBytes: 'positive', taggedDocBytes: 'positive' } },
   skills: { descriptionChars: 'positive', listingBytes: 'positive' },
   session: { handoff: 'handoffMode', maxTokens: 'zeroOrMore', maxCalls: 'zeroOrMore', maxHours: 'zeroOrMore' },
@@ -72,10 +91,34 @@ const MODEL_CHOICES = {
 };
 
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
+const isTexts = (value) => Array.isArray(value) && value.every(isText);
+// A regular expression a project writes as a string; `{types}` and `{issueKey}` are filled in before it compiles
+// (lib/rules/github/pr-body.mjs), so they are checked filled with a plain word.
+const isPattern = (value) => {
+  if (!isText(value)) return false;
+  try {
+    new RegExp(value.replaceAll('{types}', 'x').replaceAll('{issueKey}', 'x'), 'u');
+    return true;
+  } catch {
+    return false;
+  }
+};
+const hasOnly = (value, keys) => isObject(value) && Object.keys(value).every((key) => keys.includes(key));
 const TYPES = {
   text: [isText, 'a non-empty string'],
   textOrNull: [(value) => value === null || isText(value), 'a non-empty string or null'],
-  texts: [(value) => Array.isArray(value) && value.every(isText), 'a list of non-empty strings'],
+  texts: [isTexts, 'a list of non-empty strings'],
+  textsOrNull: [(value) => value === null || isTexts(value), 'a list of non-empty strings, or null'],
+  patternOrNull: [(value) => value === null || isPattern(value), 'a regular expression as a string, or null'],
+  deferralsOrNull: [
+    (value) => value === null || (hasOnly(value, ['section', 'field', 'reasons', 'neverValid']) && isText(value.section) && isText(value.field) &&
+      isTexts(value.reasons) && value.reasons.length > 0 && (value.neverValid === undefined || isTexts(value.neverValid))),
+    'null, or { "section", "field", "reasons": [...], "neverValid": [...] } with at least one reason',
+  ],
+  residualsOrNull: [
+    (value) => value === null || (hasOnly(value, ['section', 'fields']) && isText(value.section) && isTexts(value.fields) && value.fields.length > 0),
+    'null, or { "section", "fields": [...] } with at least one field',
+  ],
   folderNames: [
     (value) => Array.isArray(value) && value.every((name) => isText(name) && !/[/\\]/u.test(name) && name !== '.' && name !== '..'),
     'a list of folder names with no "/", such as "node_modules"',
@@ -109,8 +152,14 @@ export const DEFAULTS = deepFreeze({
     ignoreCancelledChecks: [],
     conditionalChecks: [],
     titleIssuePrefix: false,
+    // The pull request contract the pull request body rule holds beyond requiredSections (lib/rules/github/pr-body.mjs).
+    pullRequest: { title: null, issueKey: null, sections: null, deferrals: null, residuals: null, sharedTempBodyFile: true, duplicateBody: false },
+    // The review that must be on record before the review bot is asked (lib/review-gate.mjs).
+    reviewGate: { enabled: false, checklist: null },
   },
   docs: { wrapLimit: 155 },
+  // The terms file (lib/terms.mjs); null turns the terms rule off.
+  terms: { file: null },
   knowledge: { budgets: { alwaysBytes: 16384, taggedDocBytes: 24576 } },
   skills: { descriptionChars: 160, listingBytes: 9216 },
   session: { handoff: 'ask', maxTokens: 150000, maxCalls: 250, maxHours: 4 },

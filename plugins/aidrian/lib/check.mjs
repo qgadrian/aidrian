@@ -10,6 +10,7 @@ import { isWithin, linksOutside } from './fs.mjs';
 import { checkoutRoots, isIgnored } from './git.mjs';
 import { checkBudgets, indexRows, loadKnowledge } from './knowledge.mjs';
 import { findProject, noProjectMessage, projectAt, stateDir, worktreesDir } from './project.mjs';
+import { loadTerms } from './terms.mjs';
 
 const OPTIONS = { project: { type: 'string' } };
 
@@ -27,6 +28,7 @@ export const commands = {
       const { config, buckets, errors } = loadKnowledge(project);
       const budgets = checkBudgets(project.root, buckets, config.knowledge.budgets);
       errors.push(...budgets.problems);
+      errors.push(...(loadTerms(project, config)?.errors ?? []));
       for (const { line, gitignore } of unignored(project, config)) {
         errors.push(`${line} is not git-ignored: add the line "${line}" to ${gitignore}, or run aidrian init`);
       }

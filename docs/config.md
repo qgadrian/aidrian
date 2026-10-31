@@ -35,9 +35,20 @@ In a group such as `github`, set only the keys you change; the others keep their
     "requiredChecks": [],
     "ignoreCancelledChecks": [],
     "conditionalChecks": [],
-    "titleIssuePrefix": false
+    "titleIssuePrefix": false,
+    "pullRequest": {
+      "title": null,
+      "issueKey": null,
+      "sections": null,
+      "deferrals": null,
+      "residuals": null,
+      "sharedTempBodyFile": true,
+      "duplicateBody": false
+    },
+    "reviewGate": { "enabled": false, "checklist": null }
   },
   "docs": { "wrapLimit": 155 },
+  "terms": { "file": null },
   "knowledge": { "budgets": { "alwaysBytes": 16384, "taggedDocBytes": 24576 } },
   "skills": { "descriptionChars": 160, "listingBytes": 9216 },
   "session": { "handoff": "ask", "maxTokens": 150000, "maxCalls": 250, "maxHours": 4 },
@@ -82,6 +93,10 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
 | `github.conditionalChecks` | Parts of check names whose `SKIPPED` or `NEUTRAL` result is routine, such as a job a path filter turns off. |
 | `github.titleIssuePrefix` | `true` writes pull request titles as `[<issue key>] type(scope): subject`, or `[NOISSUE] type: subject`; `false`, the default, writes a plain Conventional Commits title. |
+| `github.pullRequest` | The project's [pull request contract](#pull-request-contract), beyond the required sections; off by default but for `sharedTempBodyFile`. |
+| `github.reviewGate.enabled` | `true` asks the review bot only once a review of the diff is on record: [Review gate](#review-gate). |
+| `github.reviewGate.checklist` | A file the reviewer reads the diff against, named in the gate's message; `null` names none. |
+| `terms.file` | The [terms file](#terms) of banned terms and their replacements, relative to the project root; `null` turns the rule off. |
 | `docs.wrapLimit` | The longest line, in characters, allowed in a Markdown file an agent writes; `0` turns the check off. |
 | `knowledge.budgets.alwaysBytes` | The bytes all `always` knowledge docs may add up to: [Knowledge budgets](#knowledge-budgets). |
 | `knowledge.budgets.taggedDocBytes` | The bytes one tagged knowledge doc may have: [Knowledge budgets](#knowledge-budgets). |
@@ -117,6 +132,111 @@ A project without the Codex review bot sets `"github": { "reviewer": null }`, or
   It runs no `gh`, posts no review request, and waits for nothing. `--reviewer none` does the same for one run.
 - `aidrian report reviews` and the Reviews line of `aidrian report health` say that no review bot is set.
 - The `orchestration` and `autopilot` skills then run the `pr-review` skill in every review round.
+
+## Pull request contract
+
+The pull request body rule ([hooks.md](hooks.md#bash-rules)) reads every `gh pr create` and `gh pr edit`.
+`github.requiredSections` says which sections a body must have; `github.pullRequest` adds what else it holds to:
+
+| Key | The rule refuses |
+| --- | --- |
+| `title` | A `--title` that does not match this regular expression. `{types}` stands for `git.commits.types`, `{issueKey}` for `issueKey`. |
+| `issueKey` | One issue key, as a regular expression, such as `"ABC-\\d+"`. With `title` set, a title with a key outside its leading `[...]`. |
+| `sections` | A `## ` heading not on this closed list. Headings inside code fences are quotes and do not count. |
+| `deferrals` | An item of the `section` list that names no `field:` reason from `reasons`, names one of `neverValid`, or, with `issueKey`, no issue. |
+| `residuals` | An item of the `section` list that lacks one of `fields`, written `field:`, or that names an issue. |
+| `sharedTempBodyFile` | `--body-file` in `/tmp`, `/var/tmp`, `/var/folders`, or `$TMPDIR`, unless inside the project: concurrent sessions overwrite those. |
+| `duplicateBody` | A body identical to another open pull request's. This check runs `gh pr list`, and lets the command run when gh does not answer in 3 s. |
+
+A title is checked only when the command sets one, so a body-only `gh pr edit` never blocks on a title written before the rule.
+The items of a section are its list items; prose under the heading, and a bullet indented under an item, are not items.
+The first `field:` on an item's own line is its reason, and the reason's first word decides it, so prose may follow it.
+In `neverValid`, a `<word>` stands for any one word, so `needs <specialist> oversight` also matches `needs backend-developer oversight`.
+
+```json
+{
+  "github": {
+    "requiredSections": ["Summary"],
+    "pullRequest": {
+      "title": "^\\[(?:{issueKey}|NOISSUE)\\] (?:{types})(?:\\([a-z0-9./_-]+\\))?!?: \\S.*",
+      "issueKey": "ABC-\\d+",
+      "sections": ["Summary", "Risk", "Tests run", "Deferred to issues"],
+      "deferrals": { "section": "Deferred to issues", "field": "defer_reason", "reasons": ["human_only", "user_chose"], "neverValid": ["out of scope"] }
+    }
+  }
+}
+```
+
+## Review gate
+
+With `"github": { "reviewGate": { "enabled": true } }`, the review bot is asked to review a pull request only once one
+review of its diff, by an agent that did not write it, is on record. The record is written once per pull request:
+
+```sh
+aidrian pr attest <PR> --head <sha> --reviewer <who> --findings <n> --fixed <n> [--note <text>]
+aidrian pr attest <PR> --check     # exit 0 recorded, 3 not
+```
+
+`attest` writes the record to the [state folder](project-folder.md#local-state), which every worktree shares, and prints a marker:
+`<!-- aidrian-review: pr=<n> repo=<owner/name> head=<sha> ... -->`. A request that carries the marker for its own pull request
+and repository also passes, so a new session or machine need not review again.
+
+- `aidrian pr await-review --request` checks the gate before it posts. It ends with `review_required`, exit 5, and posts
+  nothing, or puts the marker in its request.
+- The Bash rule refuses `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose
+  body asks `@codex review` outside code and quotes, and `gh pr create --reviewer` or `gh pr edit --add-reviewer` naming `github.reviewer`.
+- A hook on the GitHub MCP comment tools refuses the same body.
+- A request to another repository passes. A request whose pull request number the rule cannot read is refused: name it.
+- `AIDRIAN_ALLOW_UNREVIEWED_REQUEST=1`, set by a person in their own shell, lets the request run and records an override
+  for the pull request.
+
+`checklist` names a file the reviewer reads the diff against; the gate's message names it.
+
+## Terms
+
+`"terms": { "file": ".aidrian/terms.json" }` turns on the terms rule: banned terms, each with its replacement, per file scope.
+The file is JSON of its own, so a project can list hundreds of terms without growing `config.json`:
+
+```json
+{
+  "version": 1,
+  "locales": "locales/{locale}/*.json",
+  "rules": [
+    {
+      "id": "american-spelling",
+      "paths": ["docs/api/**"],
+      "message": "Use American spelling in the public API.",
+      "terms": { "organisation": "organization", "organisations": "organizations" }
+    },
+    { "id": "es-ES guest", "locale": "es-ES", "exclude": ["locales/es-ES/landing.json"], "terms": { "comensal": "cliente" } },
+    { "id": "email", "paths": ["**/*.md"], "severity": "warn", "terms": { "e-mail": "email" } }
+  ]
+}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `version` | `1`. |
+| `locales` | Where translation files are, as a glob with `{locale}`. Needed by a rule with `locale` and no `paths`. |
+| `rules[].id` | A unique name, shown with every hit. |
+| `rules[].paths` | The files the rule reads, as globs relative to the project root, with `*` and `**`. |
+| `rules[].locale` | A translation locale: without `paths`, the rule reads `locales` with `{locale}` filled in. It reads only a JSON file's string values. |
+| `rules[].exclude` | Globs of files the rule skips, such as marketing copy where a term is meant. |
+| `rules[].severity` | `"block"`, the default, or `"warn"`. |
+| `rules[].message` | Shown with every hit. |
+| `rules[].terms` | Each banned term and what to write instead. |
+
+A term matches as a whole word, in any case, after Unicode normalization: `comensal` does not match `comensales`.
+A `*` stands for more letters of the same word, so `usuári*` matches `usuárias`; list word forms instead when a stem would
+also match a correct word. A term in a script written without spaces, such as Japanese or Chinese, matches anywhere.
+
+Where it runs:
+
+- The file-write hook checks the lines an Edit, Write, or `apply_patch` adds: a `block` hit refuses the write, and a `warn`
+  hit lets it run and tells the agent. A line the file already had is never reported, so old text does not block new work.
+- `aidrian lint terms` checks every tracked file, and `--staged` the staged files as the index holds them: a `block` hit fails,
+  a `warn` hit is printed. A project runs `aidrian lint terms --staged` from its own git hook, as it runs [commit-msg](hooks.md#commit-messages).
+- `aidrian check` names every problem in the file; a bad rule is left out, and the others still apply.
 
 ## Models
 

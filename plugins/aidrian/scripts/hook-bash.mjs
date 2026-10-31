@@ -8,6 +8,7 @@ import { block, runHook } from '../lib/hook-io.mjs';
 import * as gitAmend from '../lib/rules/git-amend.mjs';
 import * as gitHookBypass from '../lib/rules/git-hook-bypass.mjs';
 import * as prBody from '../lib/rules/github/pr-body.mjs';
+import * as reviewRequest from '../lib/rules/github/review-request.mjs';
 import * as grepExitChain from '../lib/rules/grep-exit-chain.mjs';
 import * as mainCheckout from '../lib/rules/main-checkout.mjs';
 import * as processKill from '../lib/rules/process-kill.mjs';
@@ -19,6 +20,7 @@ const RULES = [
   ['process-kill', processKill],
   ['grep-exit-chain', grepExitChain],
   ['pr-body', prBody],
+  ['review-gate', reviewRequest],
   ['main-checkout', mainCheckout],
 ];
 

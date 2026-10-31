@@ -186,7 +186,7 @@ test('aidrian lint runs every lint on a project and prints the always-doc budget
   const all = run(['--project', 'examples/consumer']);
   assert.equal(all.status, 0, all.stderr);
   assert.match(all.stdout, /^skills: 0 skills, 0 of 9216 listing bytes\nagents: 0 agents\npaths: no personal paths in \d+ tracked files\n/);
-  assert.match(all.stdout, /\nbudget: \d+ of 16384 always-doc bytes \(engineering \d+, product 0\)\n$/);
+  assert.match(all.stdout, /\nbudget: \d+ of 16384 always-doc bytes \(engineering \d+, product 0\)\nterms: no banned terms in \d+ tracked files \(2 rules\)\n$/);
 
   const dir = tempDir(t);
   execFileSync('git', ['init', '-q', dir]);
@@ -203,5 +203,5 @@ test('aidrian lint runs every lint on a project and prints the always-doc budget
   assert.deepEqual([near.status, near.stdout, near.stderr], [0, 'budget: 27 of 20 always-doc bytes (kb 27)\n', `budget: warning: always docs: 27 bytes, over knowledge.budgets.alwaysBytes (20); ${advice}`]);
   const over = budget(13);
   assert.deepEqual([over.status, over.stderr], [1, `budget: always docs: 27 bytes, over twice knowledge.budgets.alwaysBytes (13); ${advice}`]);
-  assert.deepEqual([run(['nope']).status, run(['nope']).stderr], [1, 'unknown lint: nope; use one of skills, agents, paths, budget\n']);
+  assert.deepEqual([run(['nope']).status, run(['nope']).stderr], [1, 'unknown lint: nope; use one of skills, agents, paths, budget, terms\n']);
 });

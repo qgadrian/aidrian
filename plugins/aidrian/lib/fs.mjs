@@ -106,3 +106,16 @@ function isEntry(file) {
 export function isObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
+
+// A glob as a regular expression over a `/`-separated relative path: `*` matches within one path segment, `**` across
+// segments, and `**/` also matches no folder at all.
+export function globPattern(glob) {
+  let body = '';
+  for (const part of glob.split(/(\*\*\/|\*\*|\*)/u)) {
+    if (part === '**/') body += '(?:.*/)?';
+    else if (part === '**') body += '.*';
+    else if (part === '*') body += '[^/]*';
+    else body += part.replace(/[.+?^${}()|[\]\\]/gu, '\\$&');
+  }
+  return new RegExp(`^${body}$`, 'u');
+}

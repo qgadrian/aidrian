@@ -54,6 +54,16 @@
         ]
       },
       {
+        "matcher": "mcp__github__add_issue_comment|mcp__github__add_reply_to_pull_request_comment|mcp__github__pull_request_review_write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PLUGIN_ROOT/scripts/hook-mcp-github.mjs\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "Agent|Task",
         "hooks": [
           {

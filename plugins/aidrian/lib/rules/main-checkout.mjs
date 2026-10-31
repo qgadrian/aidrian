@@ -12,6 +12,8 @@
 import { existsSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
+import { globPattern } from '../fs.mjs';
+
 import { loadConfig } from '../config.mjs';
 import { checkoutRoots, isIgnored } from '../git.mjs';
 import { findProject, worktreesDir } from '../project.mjs';
@@ -275,17 +277,6 @@ function reason(lead, project, config) {
   ].join('\n');
 }
 
-// `*` matches within one path segment, `**` across segments.
-function globPattern(glob) {
-  let body = '';
-  for (const part of glob.split(/(\*\*\/|\*\*|\*)/u)) {
-    if (part === '**/') body += '(?:.*/)?';
-    else if (part === '**') body += '.*';
-    else if (part === '*') body += '[^/]*';
-    else body += part.replace(/[.+?^${}()|[\]\\]/gu, '\\$&');
-  }
-  return new RegExp(`^${body}$`, 'u');
-}
 
 // The path with symlinks resolved, for the part of it that exists; git reports the main checkout that way.
 export function canonical(file) {

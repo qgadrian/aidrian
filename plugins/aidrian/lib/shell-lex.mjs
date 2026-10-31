@@ -477,7 +477,7 @@ export function readInvocation(segment, depth = 0) {
       if (!token.text.startsWith('-')) break;
       index += 1;
       const option = wrapperOption(token, WRAPPER_VALUE_FLAGS.get(wrapper) ?? NO_OPTIONS);
-      if (wrapper === 'env' && clearsEnvironment(token.text, option)) environment.push({ clear: true });
+      if (clearsEnvironment(wrapper, token.text, option)) environment.push({ clear: true });
       if (!option) continue;
       let { value } = option;
       if (value === null) {
@@ -510,13 +510,15 @@ export function readInvocation(segment, depth = 0) {
   return { program: program.split('/').pop() ?? '', args: usable.slice(index + 1), negated, chdir, environment };
 }
 
-// Whether an env option word empties the environment: `-`, `-i`, `--ignore-environment`, or a cluster with `-i` before
-// the option that takes a value (`option`, as wrapperOption reads it).
-function clearsEnvironment(text, option) {
-  if (text === '-' || isLongOption(text, '--ignore-environment', '--ignore-e')) return true;
+// Whether a wrapper's option word empties the environment: env's `-`, `-i`, and `--ignore-environment`, and bash's
+// `exec -c`, alone or in a cluster before the option that takes a value (`option`, as wrapperOption reads it).
+const CLEAR_SWITCH = new Map([['env', 'i'], ['exec', 'c']]);
+function clearsEnvironment(wrapper, text, option) {
+  if (!CLEAR_SWITCH.has(wrapper)) return false;
+  if (wrapper === 'env' && (text === '-' || isLongOption(text, '--ignore-environment', '--ignore-e'))) return true;
   if (text.startsWith('--')) return false;
   const end = option ? text.indexOf(option.name[1], 1) : text.length;
-  return text.slice(1, end).includes('i');
+  return text.slice(1, end).includes(CLEAR_SWITCH.get(wrapper));
 }
 
 // The option of a wrapper's option word that takes a value, as { name, value }: the value is a token when the word

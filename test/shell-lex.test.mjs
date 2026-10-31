@@ -255,4 +255,7 @@ test('readInvocation lists the environment changes of assignments and env, in or
   assert.deepEqual(changes('A=1 env -u B -iu C D=2 gh'), ['A=1', 'B=<unset>', 'clear', 'C=<unset>', 'D=2']);
   assert.deepEqual(changes('env --ignore-env - --unset=E gh'), ['clear', 'clear', 'E=<unset>']);
   assert.deepEqual(changes("env -S 'F=3 gh' pr"), ['F=3']);
+  assert.deepEqual(changes('G=4 exec -c gh'), ['G=4', 'clear']);
+  assert.deepEqual(changes('G=4 exec -lca x gh'), ['G=4', 'clear']);
+  assert.deepEqual(changes('G=4 exec -a c gh'), ['G=4']);
 });

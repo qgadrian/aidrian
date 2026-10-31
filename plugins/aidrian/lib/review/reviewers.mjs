@@ -175,7 +175,13 @@ export function runExec(reviewer, input, { root, env, spawnImpl = spawn }) {
       timedOut = true;
       kill('SIGTERM');
       setTimeout(() => kill('SIGKILL'), 5000).unref?.();
-      setTimeout(() => finish({ status: 'timed_out', reason: `no answer in ${limit / 1000} s` }), 7000).unref?.();
+      setTimeout(() => {
+        // A grandchild in another process group can outlive the kill and hold the pipes: let go of them, so the
+        // command can still exit.
+        for (const stream of [child.stdin, child.stdout, child.stderr]) stream?.destroy();
+        child.unref();
+        finish({ status: 'timed_out', reason: `no answer in ${limit / 1000} s` });
+      }, 7000).unref?.();
     }, limit);
     child.on('error', (error) => finish({ status: 'failed', reason: error.code === 'ENOENT' ? `${argv[0]} is not installed` : error.message }));
     child.stdout.on('data', (chunk) => (stdout += chunk));

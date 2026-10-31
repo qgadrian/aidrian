@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -360,4 +360,41 @@ test('newer: the record with the higher revision wins, whatever its counts', asy
   const fresh = { revision: 4, rounds: [{}], passes: { a: { open: 2 } } };
   assert.equal(newer(stale, fresh), fresh);
   assert.equal(newer(fresh, stale), fresh);
+});
+
+test('deleting only an ignored flow test, with nothing else to review, still stops the review', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'], tests: ['test/booking*'] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, baseFiles: { 'test/booking.snap': 'x\n' }, change: (write, dir) => rmSync(path.join(dir, 'test/booking.snap')) });
+  const result = await r.step({ exec: clean });
+  assert.deepEqual([result.status, result.tests_removed?.[0]?.deleted], ['fix_required', ['test/booking.snap']]);
+  recordSignoff(r.project, { pr: 7, repo: 'o/r', flow: 'booking', head: result.head, by: 'Tester' });
+  assert.equal((await r.step({ exec: clean })).status, 'received');
+});
+
+test('a pass recorded on a stale local copy builds on the pull request`s newer record', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'q\n') });
+  const remote = { version: 1, revision: 9, updatedAt: '2026-10-31T00:00:00.000Z', pr: 7, repo: 'o/r', rounds: [{ head: 'x' }], passes: { other: { head: 'x', open: 2 } }, signoffs: {}, overrides: [], failures: {} };
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: 'mine', head: 'h', reviewer: 'r', findings: 0, fixed: 0, remote });
+  const { readLocalState } = await import('../plugins/aidrian/lib/review/state.mjs');
+  const state = readLocalState(r.project, 7);
+  assert.deepEqual([state.revision, Object.keys(state.passes).sort(), state.passes.other.open], [10, ['mine', 'other'], 2]);
+});
+
+test('runExec: a grandchild in its own process group that holds the pipes does not keep the step waiting', async (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-exec-'));
+  const pidFile = path.join(dir, 'pid');
+  t.after(() => {
+    try {
+      process.kill(Number(readFileSync(pidFile, 'utf8')), 'SIGKILL');
+    } catch {}
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const file = path.join(dir, 'escape.mjs');
+  writeFileSync(file, `import { spawn } from 'node:child_process'; import { writeFileSync } from 'node:fs';
+const g = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] });
+writeFileSync(${JSON.stringify(pidFile)}, String(g.pid)); process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);`);
+  const started = Date.now();
+  const result = await runExec({ name: 'escape', kind: 'exec', command: [process.execPath, file], timeoutSec: 1 }, {}, { root: dir, env: process.env });
+  assert.equal(result.status, 'timed_out');
+  assert.ok(Date.now() - started < 15000);
 });

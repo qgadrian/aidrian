@@ -34,6 +34,7 @@ export function readLocalState(project, pr) {
 // Every write raises the record's revision, so the newer of two records is the one written last.
 export function writeLocalState(project, state) {
   state.revision = (state.revision ?? 0) + 1;
+  state.updatedAt = new Date().toISOString();
   const target = file(project, state.pr);
   mkdirSync(path.dirname(target), { recursive: true });
   writeFileSync(target, `${JSON.stringify(state, null, 2)}\n`);
@@ -51,12 +52,14 @@ export function stateFromComment(body, pr) {
   }
 }
 
-// The newer of two records: the higher revision, which every write raises. Nothing merges half of each, so a record
-// never mixes two reviews.
+// The newer of two records: the higher revision, which every write raises, then the later write. Every write first
+// reads the newer of this machine's record and the pull request's, so a revision always builds on the newest one
+// either side has seen. Nothing merges half of each, so a record never mixes two reviews.
 export function newer(a, b) {
   if (!a) return b;
   if (!b) return a;
-  return (b.revision ?? 0) > (a.revision ?? 0) ? b : a;
+  if ((a.revision ?? 0) !== (b.revision ?? 0)) return (b.revision ?? 0) > (a.revision ?? 0) ? b : a;
+  return String(b.updatedAt ?? '') > String(a.updatedAt ?? '') ? b : a;
 }
 
 // The summary comment's text: a table a person reads, then the marker with the record.

@@ -154,9 +154,9 @@ export async function runAttest(args, project) {
   const repo = originRepo(project);
   if (repo === null) throw new Error("cannot read this repository's origin; the marker must name it");
   if (flags.pass !== undefined) {
-    const { recordPass } = await import('./review/run.mjs');
+    const { recordPass, remoteState } = await import('./review/run.mjs');
     const verdictsText = flags.verdicts === undefined ? null : readFileSync(flags.verdicts, 'utf8');
-    const result = recordPass(project, { pr, repo, pass: flags.pass, head: flags.head, reviewer: flags.reviewer, findings, fixed, accepted, verdictsText });
+    const result = recordPass(project, { pr, repo, pass: flags.pass, head: flags.head, reviewer: flags.reviewer, findings, fixed, accepted, verdictsText, remote: remoteState(repo, pr) });
     console.log(`recorded pass ${flags.pass} of pull request #${pr} at ${flags.head.slice(0, 7)}: ${result.open} open`);
     console.log('Run `aidrian pr review` again for the next step.');
     return 0;
@@ -195,8 +195,8 @@ export async function runSignoff(args, project) {
   if (!SHA.test(flags.head) || runGit(['cat-file', '-e', `${flags.head}^{commit}`], project.root).status !== 0) throw new Error(`--head ${flags.head} is not a commit in this repository`);
   const repo = originRepo(project);
   const by = runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown';
-  const { recordSignoff } = await import('./review/run.mjs');
-  recordSignoff(project, { pr, repo, flow: flags.flow, head: flags.head, by });
+  const { recordSignoff, remoteState } = await import('./review/run.mjs');
+  recordSignoff(project, { pr, repo, flow: flags.flow, head: flags.head, by, remote: remoteState(repo, pr) });
   console.log(`recorded ${by}'s sign-off of flow ${flags.flow} on ${flags.head.slice(0, 7)}. Run \`aidrian pr review\` again.`);
   return 0;
 }

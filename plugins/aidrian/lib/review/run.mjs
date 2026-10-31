@@ -191,7 +191,14 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   for (const word of plan.require) {
     if (!satisfies(word, passes, map)) return { status: 'unsatisfied', pr: n, repo, head, reason: `the plan requires ${word}, and the engine here is ${engine.reviewer.name} (${engine.reason})`, plan };
   }
-  if (!passes.length) return { status: 'none_needed', pr: n, repo, head, base, depth: plan.depth, engine: plan.engine, plan: { depth: plan.depth, reasons: plan.reasons, flows: [], stages: [] } };
+  // A flow's deleted test stops the review whatever else the change does, even when nothing else needs a review.
+  const removedTests = [];
+  for (const [id, definition] of Object.entries(review.flows)) {
+    const tests = (definition.tests ?? []).map(globPattern);
+    const gone = changes.filter((each) => each.status === 'D' && tests.some((pattern) => pattern.test(each.file))).map((each) => each.file);
+    if (gone.length) removedTests.push({ flow: id, deleted: gone, accept: `aidrian pr signoff ${n} --flow ${id} --head ${head}` });
+  }
+  if (!passes.length && !removedTests.length) return { status: 'none_needed', pr: n, repo, head, base, depth: plan.depth, engine: plan.engine, plan: { depth: plan.depth, reasons: plan.reasons, flows: [], stages: [] } };
 
   // The record so far: the newer of this machine's and the pull request's.
   const comments = gh.comments(repo, n);
@@ -223,7 +230,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   // only the independent model reviews is signed by it.
   for (const stage of plan.stages) if (stage.name !== 'local') for (const pass of stage.passes) pass.flows = plan.flows.map((flow) => flow.id);
 
-  const finalStage = plan.stages.at(-1);
+  const finalStage = plan.stages.at(-1) ?? null;
   const current = state.rounds.at(-1);
   const newRound = current?.head !== head;
   // The last round runs the final stage first, so an independent review always happens before the cap. A round that
@@ -236,7 +243,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     if (opened) return null;
     if (state.rounds.length >= maxRounds) return 'round_limit';
     state.rounds.push({ head, at: new Date().toISOString(), ...(lastRound ? { final: true } : {}) });
-    if (lastRound && plan.stages.length > 1) state.overrides = [...new Set([...state.overrides, `round ${maxRounds} ran the ${finalStage.name} stage first`])];
+    if (lastRound && plan.stages.length > 1 && finalStage) state.overrides = [...new Set([...state.overrides, `round ${maxRounds} ran the ${finalStage.name} stage first`])];
     opened = true;
     return null;
   };
@@ -246,7 +253,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   };
 
   // In the last round the final stage runs first and is judged last, once the earlier stages' verdicts are in.
-  const order = lastRound && plan.stages.length > 1 ? [{ stage: finalStage, runOnly: true }, ...plan.stages.map((stage) => ({ stage }))] : plan.stages.map((stage) => ({ stage }));
+  const order = lastRound && plan.stages.length > 1 && finalStage ? [{ stage: finalStage, runOnly: true }, ...plan.stages.map((stage) => ({ stage }))] : plan.stages.map((stage) => ({ stage }));
   for (const { stage, runOnly } of order) {
     const pending = stage.passes.filter((pass) => !resultFor(pass));
     if (pending.length) {
@@ -307,15 +314,10 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
       });
     }
   }
-  // Evidence beyond the reviewers: no flow's tests are deleted (whether or not the change touches the flow's code),
-  // and the required checks of the flows it touches passed on this head.
-  const removedTests = [];
-  for (const [id, definition] of Object.entries(review.flows)) {
-    const tests = (definition.tests ?? []).map(globPattern);
-    const gone = changes.filter((each) => each.status === 'D' && tests.some((pattern) => pattern.test(each.file))).map((each) => each.file);
-    if (gone.length && state.signoffs[id]?.head !== head) removedTests.push({ flow: id, deleted: gone, accept: `aidrian pr signoff ${n} --flow ${id} --head ${head}` });
-  }
-  if (removedTests.length) return finish(lastRound ? 'round_limit' : 'fix_required', { stage: 'evidence', tests_removed: removedTests });
+  // Evidence beyond the reviewers: no flow test deleted without the Human's word, and the required checks of the
+  // flows the change touches passed on this head.
+  const unaccepted = removedTests.filter((each) => state.signoffs[each.flow]?.head !== head);
+  if (unaccepted.length) return finish(lastRound ? 'round_limit' : 'fix_required', { stage: 'evidence', tests_removed: unaccepted });
   const wanted = [...new Set(plan.flows.flatMap((flow) => review.flows[flow.id]?.checks ?? []))];
   if (wanted.length) {
     const rows = gh.checks(repo, n).filter((row) => wanted.some((part) => row.name.includes(part)));
@@ -367,11 +369,26 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   }
 }
 
+// The record to change: the newer of this machine's and the pull request's (`remote`, from its summary comment), so
+// a write never builds on a stale copy.
+function current(project, pr, repo, remote) {
+  return newer(readLocalState(project, pr), remote) ?? emptyState(pr, repo);
+}
+
+// The record the pull request's summary comment carries, or null when it cannot be read (offline: the local record).
+export function remoteState(repo, pr, gh = defaultGh) {
+  try {
+    return stateFromComment(gh.comments(repo, pr).filter((comment) => isSummary(comment.body)).at(-1)?.body, pr);
+  } catch {
+    return null;
+  }
+}
+
 // `aidrian pr attest <PR> --pass <id> ...`: one pass's result, for this head, into the review record.
-export function recordPass(project, { pr, repo, pass, head, reviewer, findings, fixed, accepted = 0, verdictsText = null }) {
+export function recordPass(project, { pr, repo, pass, head, reviewer, findings, fixed, accepted = 0, verdictsText = null, remote = null }) {
   if (fixed + accepted > findings) throw new Error('--fixed and --accepted together cannot exceed --findings');
   const verdicts = verdictsText === null ? [] : parseVerdicts(verdictsText);
-  const state = readLocalState(project, pr) ?? emptyState(pr, repo);
+  const state = current(project, pr, repo, remote);
   const before = state.passes[pass];
   state.passes[pass] = { head, reviewer, findings, open: findings - fixed - accepted, verdicts, list: before?.head === head ? before.list : null };
   writeLocalState(project, state);
@@ -380,8 +397,8 @@ export function recordPass(project, { pr, repo, pass, head, reviewer, findings, 
 
 // `aidrian pr signoff <PR> --flow <id> --head <sha>`: the Human's sign-off of a flow on a head. An audit entry, not
 // proof: the summary comment shows it, and who ran it.
-export function recordSignoff(project, { pr, repo, flow, head, by }) {
-  const state = readLocalState(project, pr) ?? emptyState(pr, repo);
+export function recordSignoff(project, { pr, repo, flow, head, by, remote = null }) {
+  const state = current(project, pr, repo, remote);
   state.signoffs[flow] = { head, by, at: new Date().toISOString() };
   writeLocalState(project, state);
   return state.signoffs[flow];

@@ -56,10 +56,10 @@ export function readRequests({ program, args, environment = [] }, reviewer, read
   const last = (...names) => flags.filter((flag) => names.includes(flag.name)).at(-1)?.value ?? null;
   const literal = (token) => (token && !token.dynamic ? token.text : null);
   const ghRepo = invocationRepo(environment, env);
-  const repo = literal(last('-R', '--repo')) ?? ghRepo;
   const [first, second, target] = words.map((token) => token.text);
-  // A pull request or issue URL names its repository, unless -R names one.
-  const targetRepo = repo ?? (/\/(?:pull|issues)\//u.test(target ?? '') ? repoName(target) : null);
+  // -R names the repository; else a pull request or issue URL does; else GH_REPO, which gh reads only without either.
+  const urlRepo = /\/(?:pull|issues)\//u.test(target ?? '') ? repoName(target) : null;
+  const targetRepo = literal(last('-R', '--repo')) ?? urlRepo ?? ghRepo;
   if (first === 'api') return apiRequests(words[1], flags, read, ghRepo);
   const isComment = ['pr', 'issue'].includes(first) && second === 'comment';
   if (isComment || (first === 'pr' && second === 'review')) {

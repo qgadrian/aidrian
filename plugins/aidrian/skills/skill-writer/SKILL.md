@@ -1,134 +1,135 @@
 ---
 name: skill-writer
-description: Create, update, audit, or retire a skill so it triggers predictably and stays lean.
+description: Creates, updates, audits, or retires a skill, tested against real tasks and kept small. Use when asked to write, fix, review, or remove a skill.
 ---
 
 # skill-writer
 
-A skill exists to wring a predictable process out of a stochastic model.
-**Predictability**, the agent taking the same path on every run rather than producing the same output, is the root virtue.
-Every phase below is a lever on it.
+A skill is worth its tokens only when it changes what the model does on a real task.
+This skill builds that evidence first, then writes the least text that produces the change.
 
 Before you start, follow the `knowledge` skill. Knowledge tags: `harness_engineering`, `docs`.
 
-The craft vocabulary (leading word, completion criterion, and the failure modes) is in [references/glossary.md](references/glossary.md).
-Read it in full on your first run in a session; after that, read it when a phase names a term you cannot define precisely.
+Read [references/checklist.md](references/checklist.md) before Step 4 and again in Step 6.
 
 ## Where skills live, and their limits
 
 - This plugin's own skills: `plugins/aidrian/skills/<name>/SKILL.md`, in the plugin's repository.
 - A project's skills: the folder its `harness_engineering` knowledge names, else `.claude/skills/<name>/SKILL.md`.
   When that knowledge names a generator or a mirror for another host, run it after every edit.
-- `aidrian lint skills <folder>` fails a `SKILL.md` at 8,000 bytes, where Codex cuts it, and warns above 7,500: rely on it, not a count.
+- `aidrian lint skills <folder>` fails a `SKILL.md` at 8,000 bytes, where Codex cuts it, and warns above 7,500.
 - The `description` is one line of at most 160 characters (config.json `skills.descriptionChars`),
   and all skill names and descriptions together fit in `skills.listingBytes`: both hosts list them in every session.
 
-## Branches
+## Paths
 
-Establish the task worktree with the `worktree-new` skill (`aidrian worktree new <branch>`) and make every edit there.
-A session already in one stays in it; a report-only audit needs none.
+Make every edit in a task worktree from the `worktree-new` skill (`aidrian worktree new <branch>`).
+A session already in one stays in it; an audit that only reports needs none.
 
-- **Create** a skill: the worktree, then Phases 1 to 7 in order.
-- **Update** a skill's behavior: the worktree, then Phase 1 to re-scope, then 2 to 7.
-- **Audit** with no behavior change: Phase 6 first, Phase 4 for each citation the sweep touched, then 5 and 7 if the file changed.
-  Establish the worktree before the sweep's first edit.
-- **Retire or rename** a skill: the worktree, then § Retire or rename.
+- **Create**: Steps 1 to 8.
+- **Update**: Step 1 for the change, then Steps 2 to 8.
+- **Audit**: Step 6, Step 5 for each claim the audit touched, then Steps 7 and 8 if a file changed.
+- **Retire or rename**: § Retire or rename.
 
-## Phase 1: Scope
+## Step 1: Find the gap
 
-1. List the neighbors: every skill in this plugin and in the project. Read the description of each one that could overlap.
+Run the task without the skill, or with the current version, on two or three real requests.
+Write down what went wrong: a missed step, a wrong default, a guess where a fact existed.
+
+**Done when** each gap is written as one observed failure, not a feature idea.
+
+## Step 2: Write the test cases
+
+Turn the gaps into at least three cases: a request, the files it needs, and the behaviors a correct run shows.
+Keep them beside the skill's pull request or in the project's eval folder, if it has one.
+
+**Done when** every case passes or fails on behavior someone can check from the transcript.
+
+## Step 3: Choose the home
+
+1. Read the description of every skill in this plugin and the project that could overlap.
    Run `aidrian-knowledge search <words>` for a doc that already owns the behavior.
-2. Choose: **extend** an existing skill (the default when trigger and audience are shared),
-   **create** one (only for a distinct phrase the user will actually say), or **decline** (a one-off prompt, not a repeatable process).
-3. Name it in kebab-case, verb-first or by role (`pr-write`, `adr-writer`), and unused by any skill or agent in the plugin or the project.
+2. Extend an existing skill when the trigger and the audience match. Create one only for a request users really make.
+   Decline when the need is a one-off prompt.
+3. Name a new skill in kebab-case, by its action or role (`pr-write`, `adr-writer`), unused in the plugin or the project.
 
-**Done when** one sentence names the closest existing skill and why extending it was or was not right.
+**Done when** one sentence names the closest existing skill and why it was or was not extended.
 
-## Phase 2: Description
+## Step 4: Write the frontmatter
 
-The `description` is the skill's trigger and its permanent context cost, so it earns harder pruning than the body.
+The description is how the model picks the skill, and it sits in every session's context.
 
-- Lead with the skill's leading word: the word the user types when they want it.
-- Say what the skill is in one clause, then "Use when ..." with each distinct branch once. Synonyms for one branch are duplication.
-- A skill only the human ever runs gets `disable-model-invocation: true`: Claude Code drops it from the model's listing,
-  and the human still runs it by name.
+- Third person, saying what the skill does and when to use it, with the words a user would type.
+- Each path from Step 3 once; no synonym lists.
+- A skill only the Human runs gets `disable-model-invocation: true`. Claude Code then hides it from the model;
+  Codex ignores the field and lists it anyway, so its description still counts toward `skills.listingBytes`.
 
-**Done when** every branch from Phase 1 appears exactly once, and deleting any remaining word would lose a trigger.
+**Done when** the description fits the limit and a reader can tell from it alone when the skill applies.
 
-## Phase 3: Draft the body
+## Step 5: Write the body
 
-Arrange content on the ladder in the glossary: steps first, then in-file reference, then disclosed reference.
+- Write only what the model would not do on its own. Cut background it already knows.
+- Match the strictness to the risk: firm steps for fragile or ordered work, short guidance where judgment fits.
+- Give numbered steps for multi-step work, each ending in a **Done when** someone can check.
+- Give one default, with the exception that changes it, rather than a menu of options.
+- Put what only some paths need in `references/<topic>.md`, linked from `SKILL.md` with when to read it.
+  Keep links one level deep; a reference file links to no other reference.
+- Say what to do, not what to avoid. Keep one term for one thing. Leave out dates and versions that will go stale.
+- Check every fact while you write the sentence that states it:
 
-- Each step ends on a completion criterion that is checkable, and exhaustive where it matters ("every modified file accounted for").
-- Disclose what only some branches need into `references/<topic>.md`; inline what every path needs.
-  Name each disclosed file in `SKILL.md` with when to read it: "Read `references/<topic>.md` before <the step that needs it>."
-- Co-locate a concept's definition, rules, and caveats under one heading.
-- Reach for leading words, and state the target behavior instead of prohibiting its opposite.
-
-**Done when** every step has a checkable completion criterion, and every disclosed file is named with its trigger.
-
-## Phase 4: Verify every claim
-
-Open the source of every field, path, flag, tool behavior, or script while you write the sentence that cites it, never from memory.
-
-| The draft cites | Check before it ships |
+| The draft states | Check |
 | --- | --- |
-| A schema field or enum value | Read the schema and one real artifact; both must agree |
-| A file path or glob | `ls` a real instance; compare the glob's match count with the folder's total |
-| A skill or agent | Its folder or file exists in the plugin or the project |
-| A command or flag | Run it with `--help` or real arguments, and check the output shape |
-| A script | It exists at that path; read its header; say what to do when it is absent |
-| "The project does X" | `grep` finds at least one real instance |
+| A schema field or enum value | Read the schema and one real file; they agree |
+| A path or glob | `ls` a real instance; the glob matches what it should |
+| A skill or agent | Its folder or file exists |
+| A command or flag | Run it with `--help` or real arguments |
+| A script | It exists; read its header; say what to do when it is absent |
+| "The project does X" | `grep` finds a real instance |
 
-Write placeholders as `<name>`. A path that differs per worktree is derived from `git rev-parse`, never guessed.
+Write placeholders as `<name>`. A path that differs per worktree comes from `git rev-parse`, never a guess.
 
-**Done when** every citation has had its check, and you hold the list of commands you ran: Phase 7 needs it verbatim.
+**Done when** every step has a check, every reference file is linked with its trigger, and you hold the list of commands
+you ran to verify facts: Step 8 needs it.
 
-## Phase 5: Check
+## Step 6: Review against the checklist
 
-Run `aidrian lint skills <folder>`; in this plugin's repository, run `npm run check`.
-Run any generator or check the project's `harness_engineering` knowledge names.
+Go through [references/checklist.md](references/checklist.md) item by item, on the draft or, for an audit, the current skill.
+Remove each sentence that fails it, or fix it.
 
-**Done when** every command exits 0 with no size warning for this skill, and any generated file is staged beside its source.
+**Done when** every item passes. An audit of an older skill that removes nothing deserves a second look.
 
-## Phase 6: Prune
+## Step 7: Run the checks and the cases
 
-Sweep the draft, or on the audit branch the existing skill, sentence by sentence against the failure modes in the glossary:
+1. Run `aidrian lint skills <folder>`; in this plugin's repository, `npm run check`. Run any generator the project names.
+2. Run the Step 2 cases with the skill, on each model the project uses. Watch the transcript: files read in an odd order,
+   a reference never opened, or one opened every time, each says the structure should move.
+3. Fix what failed, and repeat from 1.
 
-- **No-op**: the model does it by default. Delete the whole sentence.
-- **Duplication**: one meaning in two places. Keep one, or replace both with a leading word.
-- **Sediment**: a stale line about behavior or paths that drifted. Verify it again, or delete it.
-- **Sprawl**: all live and unique, still too long. Move reference down the ladder, or split by branch.
-- **Negation**: a prohibition that names what to avoid. Rewrite it as the target behavior.
-- **Premature completion**: a step that rushes. Sharpen its completion criterion before splitting the sequence.
+**Done when** every command exits 0 with no size warning for this skill, every case passes, and generated files are staged.
 
-When the sweep changed any file, run Phase 5 on the result before Phase 7, generators included: the version that ships is the one that passed.
+## Step 8: Ship
 
-**Done when** each surviving sentence passes the no-op and relevance tests. An audit of an old skill that deletes nothing is suspect.
+Skip this step for an audit that changed no file.
 
-## Phase 7: Ship
-
-Skip this phase only for a report-only audit: an audit that changed no file in any phase of the run.
-
-1. Commit from the task worktree, with the Phase 4 commands in the message:
+1. Commit from the task worktree, with the commands from Step 5 and the case results in the message:
 
    ```text
    Verification:
    - <command> (<what it showed>)
    ```
 
-2. Open a draft pull request with the `pr-write` skill only when the caller asked for one, or the running flow owns publishing.
+2. Open a draft pull request with the `pr-write` skill only when the caller asked, or the running flow publishes.
    Otherwise report the commit as ready to publish.
 
-**Done when** the commit lists the commands actually run, and the pull request exists or the commit is reported as ready.
+**Done when** the commit lists the commands really run, and the pull request exists or the commit is reported ready.
 
 ## Retire or rename
 
-In one commit, never a follow-up:
+In one commit:
 
 1. Delete the skill's folder and any generated copy.
 2. `grep -rn '<old-name>'` across skills, agent sources (`agents-src/<group>/` in this plugin), docs, and the project folder.
-   Point every live reference at the skill that now owns the work, or remove it.
-3. Run Phase 5.
+   Point each live reference at the skill that now does the work, or remove it.
+3. Run Step 7's first item.
 
 **Done when** the grep finds the old name only in history, such as changelogs and decision records.

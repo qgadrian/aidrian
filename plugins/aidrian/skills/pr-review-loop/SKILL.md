@@ -122,5 +122,6 @@ commands with pass or fail; the replies posted, and any that failed; and a sign-
 not applicable, accepted, and blocked rows, the residual risks, and whether the pull request is ready for another review.
 On a draft, report convergence; the author marks it ready. Only when the Human asked for that in this session,
 or config.json `github.markReady` is `"auto"`, mark it ready yourself with `gh pr ready <n>`
-once the loop ended at sign-off and `aidrian pr checks <n>` says ready. Pending or failing: leave it a draft and say why.
+once a review of the current head signed off with no blocked row, and `aidrian pr checks <n>` says ready.
+A fix pushed after that review sends the loop back to step 1 first. Pending or failing: leave it a draft and say why.
 After `gh pr ready`, push nothing more. Run by `autopilot` or the `orchestrator`, never mark it ready: the caller does, after all its reviews.

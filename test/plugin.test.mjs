@@ -260,6 +260,7 @@ test('a skill that runs the pr-review-loop skill says when it marks the pull req
   // pr-review-loop leaves marking ready to such a caller, so a caller without the step leaves a green pull request a draft.
   const callers = [['autopilot', 'autopilot', 'references/phases.md'], ['orchestration', 'orchestrator', 'SKILL.md']];
   const loop = readFileSync(path.join(PLUGIN, 'skills/pr-review-loop/SKILL.md'), 'utf8');
+  assert.match(loop, /review of the current head signed off/, 'the loop marks ready only after the current head is reviewed');
   for (const [skill, name, file] of callers) {
     assert.ok(loop.includes('`' + name + '`'), `pr-review-loop names the ${name} as a caller`);
     const text = readFileSync(path.join(PLUGIN, 'skills', skill, file), 'utf8');

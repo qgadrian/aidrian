@@ -36,6 +36,7 @@ In a group such as `github`, set only the keys you change; the others keep their
     "ignoreCancelledChecks": [],
     "conditionalChecks": [],
     "titleIssuePrefix": false,
+    "markReady": "ask",
     "pullRequest": {
       "title": null,
       "issueKey": null,

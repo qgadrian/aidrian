@@ -8,6 +8,7 @@ import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { checkReview } from '../plugins/aidrian/lib/review/config.mjs';
 import { attachMode, captureDir, captureKeys, captureVisual, capturesBody, readManifest, uploadCaptures, visualMatrix, visualRoutes } from '../plugins/aidrian/lib/review/visual.mjs';
 
+const R = (...routes) => routes.map((route) => ({ route, base: null }));
 const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
 const visualConfig = (over = {}) => checkReview({ visual: {
   platform: 'web',
@@ -42,14 +43,14 @@ const base = (hook) => async (use) => use(hook);
 
 test('routes come from the targets a change touches; the matrix is route x variant x locale x width, with {locale} filled', () => {
   const visual = visualConfig();
-  assert.deepEqual(visualRoutes(visual, [{ file: 'src/components/Button.tsx' }]), ['/dashboard', '/{locale}/book']);
+  assert.deepEqual(visualRoutes(visual, [{ file: 'src/components/Button.tsx' }]), R('/dashboard', '/{locale}/book'));
   assert.deepEqual(visualRoutes(visual, [{ file: 'src/lib/x.ts' }]), []);
-  const entries = visualMatrix(visual, ['/dashboard', '/{locale}/book']);
+  const entries = visualMatrix(visual, R('/dashboard', '/{locale}/book'));
   assert.equal(entries.length, 2 * 2 * 2 * 2);
   assert.ok(entries.some((entry) => entry.key === 'locale-book-f45c08--360--de--appointments'));
-  const keys = visualMatrix(visual, ['/a/b', '/a-b', '/A/b']).map((entry) => entry.key.split('--')[0]);
+  const keys = visualMatrix(visual, R('/a/b', '/a-b', '/A/b')).map((entry) => entry.key.split('--')[0]);
   assert.equal(new Set(keys).size, 3, 'routes that slug alike keep their own capture');
-  const many = Array.from({ length: 30 }, (_, i) => `/r${i}`);
+  const many = R(...Array.from({ length: 30 }, (_, i) => `/r${i}`));
   assert.throws(() => visualMatrix(visual, many), /240 images, past 200.*\/r0, \/r1/u);
 });
 
@@ -65,7 +66,7 @@ test('attach: private repositories attach, public ones keep captures local, and 
 test('captureVisual signs in per variant from the base, captures once per head, and keeps no secret on disk', async (t) => {
   const p = project(t);
   const visual = visualConfig();
-  const entries = visualMatrix(visual, ['/{locale}/book']);
+  const entries = visualMatrix(visual, R('/{locale}/book'));
   const hooks = [];
   const hook = async (command, input) => (hooks.push([command, input]), JSON.stringify({ storageState: { cookies: [{ name: 's', value: 'secret' }] }, ...(input.variant === 'appointments' ? { baseUrl: 'https://appts.localhost:3000' } : {}) }));
   const seen = [];
@@ -85,7 +86,7 @@ test('captureVisual signs in per variant from the base, captures once per head, 
 test('captureVisual: no base URL, a missing Playwright, or a failed login is a status for reviewers, not a crash', async (t) => {
   const p = project(t);
   const visual = visualConfig({ variants: [], login: undefined });
-  const entries = visualMatrix(visual, ['/dashboard']);
+  const entries = visualMatrix(visual, R('/dashboard'));
   const none = await captureVisual({ project: p, pr: 1, head: 'b'.repeat(40), visual, entries, baseUrl: null, env: {}, withBase: base(async () => '') });
   assert.equal(none.status, 'unavailable');
   assert.match(none.reason, /no base URL/u);
@@ -110,7 +111,7 @@ test('uploadCaptures sends only this head\'s PNGs whose bytes match the manifest
   const p = project(t);
   const visual = visualConfig({ variants: [], login: undefined, locales: undefined });
   const head = 'f'.repeat(40);
-  const manifest = await captureVisual({ project: p, pr: 2, head, visual: { ...visual, locales: [] }, entries: visualMatrix({ ...visual, locales: [] }, ['/dashboard']), baseUrl: 'http://localhost:3000', env: {}, withBase: base(async () => ''), spawn: fakeAdapter((entry) => (entry.width === 1280 ? Buffer.from('GIF89a') : PNG)) });
+  const manifest = await captureVisual({ project: p, pr: 2, head, visual: { ...visual, locales: [] }, entries: visualMatrix({ ...visual, locales: [] }, R('/dashboard')), baseUrl: 'http://localhost:3000', env: {}, withBase: base(async () => ''), spawn: fakeAdapter((entry) => (entry.width === 1280 ? Buffer.from('GIF89a') : PNG)) });
   assert.deepEqual(manifest.entries.map((entry) => [entry.width, entry.error ?? 'ok']), [[360, 'ok'], [1280, 'not a PNG']]);
   // A planted file that the manifest names but whose bytes changed is not uploaded.
   const planted = { ...manifest, entries: [...manifest.entries, { key: 'planted', file: path.join(captureDir(p, 2, head), 'planted.png'), sha256: '0'.repeat(64) }] };
@@ -129,4 +130,36 @@ test('uploadCaptures sends only this head\'s PNGs whose bytes match the manifest
   assert.match(body, /Attach: \*\*auto\*\*, private repository/u);
   assert.match(body, /horizontal overflow 400>360/u);
   assert.match(body, /error: not a PNG/u);
+});
+
+test('a target may use a named base the login prints per variant: a subdomain, or the app root', async (t) => {
+  const p = project(t);
+  const visual = visualConfig({
+    targets: [{ files: ['src/app/book/**'], routes: ['/{locale}/book'], base: 'guest' }, { files: ['src/app/sign-in/**'], routes: ['/sign-in'], base: 'root' }, { files: ['src/app/dash/**'], routes: ['/'] }],
+    locales: ['en'], viewports: [360],
+  });
+  const routes = visualRoutes(visual, [{ file: 'src/app/book/page.tsx' }, { file: 'src/app/sign-in/page.tsx' }, { file: 'src/app/dash/page.tsx' }]);
+  assert.deepEqual(routes, [{ route: '/', base: null }, { route: '/{locale}/book', base: 'guest' }, { route: '/sign-in', base: 'root' }]);
+  const entries = visualMatrix(visual, routes);
+  const hook = async (_command, input) => JSON.stringify({
+    storageState: {},
+    baseUrl: `http://localhost:3000/dashboard/${input.variant}`,
+    bases: input.variant === 'hospitality' ? { guest: 'http://happy-cuts.localhost:3000', root: 'http://localhost:3000' } : { root: 'http://localhost:3000' },
+  });
+  const seen = [];
+  const manifest = await captureVisual({ project: p, pr: 3, head: '9'.repeat(40), visual, entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base(hook), spawn: fakeAdapter(undefined, seen) });
+  const urls = seen[0].entries.map((job) => `${job.variant} ${job.url}`).sort();
+  assert.deepEqual(urls, [
+    'appointments http://localhost:3000/dashboard/appointments/',
+    'appointments http://localhost:3000/sign-in',
+    'hospitality http://happy-cuts.localhost:3000/en/book',
+    'hospitality http://localhost:3000/dashboard/hospitality/',
+    'hospitality http://localhost:3000/sign-in',
+  ]);
+  assert.equal(manifest.status, 'partial');
+  assert.match(manifest.entries.find((entry) => entry.base === 'guest' && entry.variant === 'appointments').error, /no base "guest" for appointments/u);
+  const bad = [];
+  checkReview({ visual: { platform: 'web', targets: [{ files: ['x/**'], routes: ['/'], base: 'Guest Page' }], viewports: [360] } }, 'config.json', bad);
+  assert.match(bad.join('\n'), /\.base" must name a base/u);
+  assert.match(bad.join('\n'), /base" needs review\.visual\.login/u);
 });

@@ -229,10 +229,10 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
 | Key | |
 | --- | --- |
 | `platform` | `web`: Playwright, loaded from the project's own dependencies (`playwright` or `@playwright/test`) |
-| `targets` | which changed files capture which routes; a route may hold `{locale}` |
+| `targets` | which changed files capture which routes; a route may hold `{locale}`, and `base` names a base the login prints, for screens on another host or path |
 | `viewports`, `locales` | the widths and locale tags; each image is taken at one of each |
 | `variants` | the product modes to capture, each with the name of a demo account to sign in as, or none for a public page |
-| `login` | a command, run from the base branch, that reads `{ account, variant, baseUrl }` on stdin and prints `{ "storageState": {...}, "baseUrl"? }`; the account's secret comes from its environment, never config |
+| `login` | a command, run from the base branch, that reads `{ account, variant, baseUrl }` on stdin and prints `{ "storageState": {...}, "baseUrl"?, "bases"? }`; the account's secret comes from its environment, never config |
 | `preview` | a command, run from the base branch, that reads `{ pr, head }` and prints the base URL, such as a preview deployment |
 | `attach` | `auto`, `local`, or `off`; unset, `auto` on a private or internal repository and `local` on a public one |
 | `reviewers` | the agents that get the captures; `designer` and `ux-specialist` by default |
@@ -241,6 +241,10 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
 - The base URL is `review.visual.baseUrl` in `.aidrian.local.json`, a machine setting such as `http://localhost:3000`,
   else the `preview` command's. With neither, or without Playwright, the reviewers get a status instead of images
   and review from code; the review does not stop.
+- **Bases**: a variant's routes open on its `baseUrl` from the login, else the machine's. A screen elsewhere, such as
+  a public page on a per-variant subdomain or sign-in at the app root, goes in a target with `"base": "guest"`, and
+  the login prints it per variant: `"bases": { "guest": "http://shop.localhost:3000", "root": "http://localhost:3000" }`.
+  A variant whose login prints no such base gets an error entry for that route, never a capture of another host.
 - **Limits**: a route may ask for at most 60 images (viewports x locales x variants), a config error past it. One
   review captures at most 200; past that it stops as `too_large` and names the routes to narrow.
 - **Once per head**: the capture runs when a visual reviewer is dispatched, and its manifest (each image's key, file,

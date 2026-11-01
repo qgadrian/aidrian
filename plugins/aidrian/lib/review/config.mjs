@@ -92,7 +92,8 @@ function checkVisual(visual, bad) {
     visual.targets.forEach((target, i) => {
       const at = `review.visual.targets[${i}]`;
       if (!isObject(target)) return problems.push(`"${at}" must be an object`);
-      for (const key of Object.keys(target)) if (!['files', 'routes'].includes(key)) problems.push(`unknown key "${at}.${key}"`);
+      for (const key of Object.keys(target)) if (!['files', 'routes', 'base'].includes(key)) problems.push(`unknown key "${at}.${key}"`);
+      if (target.base !== undefined && !FLOW_ID.test(String(target.base))) problems.push(`"${at}.base" must name a base the login command prints, such as "guest"`);
       if (!someTexts(target.files)) problems.push(`"${at}.files" must be a non-empty list of globs`);
       else if (pathsProblem(target.files)) problems.push(`"${at}.files" ${pathsProblem(target.files)}`);
       if (!someTexts(target.routes) || !target.routes.every((route) => route.startsWith('/'))) problems.push(`"${at}.routes" must be a non-empty list of paths starting with /`);
@@ -111,6 +112,7 @@ function checkVisual(visual, bad) {
   } else if (new Set(variants.map((variant) => variant.id)).size !== variants.length) problems.push('"review.visual.variants" ids must be unique');
   for (const key of ['login', 'preview', 'checklist']) if (visual[key] !== undefined && !isText(visual[key])) problems.push(`"review.visual.${key}" must be a ${key === 'checklist' ? 'doc path' : 'command line'}`);
   if (Array.isArray(variants) && variants.some((variant) => variant?.account) && !isText(visual.login)) problems.push('"review.visual.login" must name the command that signs in a variant\'s account');
+  if (Array.isArray(visual.targets) && visual.targets.some((target) => target?.base !== undefined) && !isText(visual.login)) problems.push('"review.visual.targets[].base" needs review.visual.login, which prints the named bases');
   if (visual.attach !== undefined && !ATTACH_MODES.includes(visual.attach)) problems.push(`"review.visual.attach" must be ${ATTACH_MODES.map((each) => `"${each}"`).join(', ')}`);
   if (visual.reviewers !== undefined && !(someTexts(visual.reviewers) && visual.reviewers.every((name) => NAME.test(name)))) problems.push('"review.visual.reviewers" must be a non-empty list of agent names');
   if (!problems.length) {

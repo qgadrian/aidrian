@@ -32,16 +32,18 @@ const slug = (text) => text.toLowerCase().replace(/[^a-z0-9]+/gu, '-').replace(/
 // share a file.
 const routeId = (route) => `${slug(route)}-${createHash('sha256').update(route).digest('hex').slice(0, 6)}`;
 
-// The routes a change touches: every route of a target whose files match a changed file, deleted files included,
-// since removing a component changes the screen too.
+// The routes a change touches, as [{ route, base }]: every route of a target whose files match a changed file, deleted
+// files included, since removing a component changes the screen too. `base` is the target's named base, or null for
+// the variant's own.
 export function visualRoutes(visual, changes) {
   if (!visual) return [];
-  const routes = new Set();
+  const routes = new Map();
   for (const target of visual.targets) {
     const patterns = target.files.map(pathPattern);
-    if (changes.some((change) => patterns.some((pattern) => pattern.test(change.file)))) for (const route of target.routes) routes.add(route);
+    if (!changes.some((change) => patterns.some((pattern) => pattern.test(change.file)))) continue;
+    for (const route of target.routes) routes.set(`${target.base ?? ''}\0${route}`, { route, base: target.base ?? null });
   }
-  return [...routes].sort();
+  return [...routes.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, each]) => each);
 }
 
 // One entry per route, width, locale, and variant. A route may hold `{locale}`, filled per locale. Throws past
@@ -50,18 +52,19 @@ export function visualMatrix(visual, routes) {
   const locales = visual.locales.length ? visual.locales : [null];
   const variants = visual.variants.length ? visual.variants : [{ id: 'default' }];
   const entries = [];
-  for (const route of routes) {
+  for (const { route, base } of routes) {
+    const id = base ? routeId(`${base}:${route}`) : routeId(route);
     for (const variant of variants) {
       for (const locale of locales) {
         for (const width of visual.viewports) {
-          entries.push({ key: [routeId(route), width, locale ?? 'default', variant.id].join('--'), route, width, locale, variant: variant.id });
+          entries.push({ key: [id, width, locale ?? 'default', variant.id].join('--'), route, ...(base ? { base } : {}), width, locale, variant: variant.id });
         }
       }
     }
   }
   if (new Set(entries.map((entry) => entry.key)).size !== entries.length) throw new Error('review.visual: two captures share a key; list each locale and route once');
   if (entries.length > VISUAL_PER_RUN) {
-    throw new Error(`the visual capture would take ${entries.length} images, past ${VISUAL_PER_RUN}: narrow review.visual.targets for these routes, or split the pull request: ${routes.join(', ')}`);
+    throw new Error(`the visual capture would take ${entries.length} images, past ${VISUAL_PER_RUN}: narrow review.visual.targets for these routes, or split the pull request: ${routes.map(({ route, base }) => (base ? `${base}:${route}` : route)).join(', ')}`);
   }
   return entries;
 }
@@ -112,6 +115,7 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
       if (!url && visual.preview) url = urlFrom(await hook(visual.preview, { pr, head }), 'review.visual.preview');
       if (!url) return fail('unavailable', 'no base URL: set review.visual.baseUrl in the local settings file, or review.visual.preview');
       const urls = {};
+      const bases = {};
       const storageStates = {};
       for (const variant of visual.variants) {
         urls[variant.id] = url;
@@ -124,18 +128,27 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
         }
         if (!isObject(signedIn?.storageState)) return fail('failed', `review.visual.login for ${variant.id} printed no { "storageState": {...} }`);
         if (signedIn.baseUrl !== undefined) urls[variant.id] = urlFrom(signedIn.baseUrl, `review.visual.login for ${variant.id}`);
+        // Named bases, for a target whose screens live on another host or path of this variant (a per-variant
+        // subdomain, the app root): { "bases": { "guest": "http://shop.localhost:3000" } }.
+        if (signedIn.bases !== undefined) {
+          if (!isObject(signedIn.bases)) return fail('failed', `review.visual.login for ${variant.id}: "bases" must map names to URLs`);
+          bases[variant.id] = Object.fromEntries(Object.entries(signedIn.bases).map(([name, value]) => [name, urlFrom(value, `review.visual.login for ${variant.id}, base ${name}`)]));
+        }
         const file = path.join(dir, `.auth-${variant.id}.json`);
         writeFileSync(file, JSON.stringify(signedIn.storageState), { mode: 0o600 });
         chmodSync(file, 0o600);
         authFiles.push(file);
         storageStates[variant.id] = file;
       }
-      return { urls, fallback: url, storageStates };
+      return { urls, bases, fallback: url, storageStates };
     });
     if (prepared.status) return write({ ...base, ...prepared, entries: [] });
-    const jobs = entries.map((entry) => ({
+    const prefix = (entry) => (entry.base ? prepared.bases[entry.variant]?.[entry.base] : prepared.urls[entry.variant] ?? prepared.fallback);
+    // An entry whose named base this variant's login did not print is reported, never captured on another host.
+    const missingBase = new Map(entries.filter((entry) => !prefix(entry)).map((entry) => [entry.key, `review.visual.login printed no base "${entry.base}" for ${entry.variant}`]));
+    const jobs = entries.filter((entry) => !missingBase.has(entry.key)).map((entry) => ({
       key: entry.key,
-      url: `${prepared.urls[entry.variant] ?? prepared.fallback}${entry.locale ? entry.route.replaceAll('{locale}', entry.locale) : entry.route.replaceAll('/{locale}', '').replaceAll('{locale}', '')}`,
+      url: `${prefix(entry)}${entry.locale ? entry.route.replaceAll('{locale}', entry.locale) : entry.route.replaceAll('/{locale}', '').replaceAll('{locale}', '')}`,
       width: entry.width,
       locale: entry.locale,
       variant: entry.variant,
@@ -148,6 +161,7 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
     if (run.status !== 0) return write({ ...base, status: 'failed', reason: reason || (run.signal ? `killed by ${run.signal}` : `exit ${run.status}`), entries: [] });
     const results = new Map((JSON.parse(run.stdout).results ?? []).map((result) => [result.key, result]));
     const captured = entries.map((entry) => {
+      if (missingBase.has(entry.key)) return { ...entry, error: missingBase.get(entry.key) };
       const result = results.get(entry.key);
       const file = path.join(dir, `${entry.key}.png`);
       if (!result || result.error || !existsSync(file)) return { ...entry, error: result?.error ?? 'no image' };

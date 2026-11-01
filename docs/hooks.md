@@ -88,6 +88,9 @@ What each rule matches:
   and, when sections are configured, a non-web `gh pr create` with no `--body` or `--body-file`.
   With `github.pullRequest` set, also the title, the closed list of sections, the deferral and residual items,
   a body file in a shared temp folder, and a body identical to another open pull request's.
+  A deny about where the body comes from names the one path the `pr-write` skill writes, `<state>/tmp/pr-body-<branch>.md`,
+  written out for the project and the branch. The footer deny says that line does not apply even when the host asks for it,
+  and that the `attribution.pullRequest` lines replace it when set.
 - Attribution: an agent's `git commit` whose message's last paragraph and `--trailer` options lack a configured trailer;
   and a `gh pr create` body without the configured `Authored-with:` and `Assisted-by:` lines.
 - Review gate: `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose body

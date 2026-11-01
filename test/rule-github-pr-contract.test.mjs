@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { check } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
 
 // A full contract, as a project with a closed list of sections, deferrals to tracked issues, and residuals sets it.
@@ -100,6 +102,32 @@ test('a body file in a shared temp folder is refused, readable or not; one in th
   assert.equal(run('gh pr create -t "[NOISSUE] feat: x" -F body.md'), null, 'the project may itself sit in a temp folder');
   const off = project(t, { version: 1, github: { requiredSections: [], pullRequest: { sharedTempBodyFile: false } } });
   assert.equal(off.run('gh pr edit 3 -F /tmp/pr-body.md'), null);
+});
+
+test('the shared temp deny names the one body path pr-write uses, and a body file there passes', (t) => {
+  const { dir } = project(t);
+  // A git checkout on a branch with a slash, so the path is the real one; GIT_DIR stays unset.
+  const git = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: dir } });
+  git('init', '-q', '-b', 'fix/share-links');
+  // The state folder sits in the system temp folder here, as XDG_STATE_HOME may put it: its own files are not shared.
+  const env = { XDG_STATE_HOME: realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-prcontract-state-'))) };
+  t.after(() => rmSync(env.XDG_STATE_HOME, { recursive: true, force: true }));
+  const state = stateDir({ root: dir, paths: { config: '.aidrian/config.json' } }, { env });
+  const file = path.join(state, 'tmp', 'pr-body-fix-share-links.md');
+  const run = (command) => check(command, { cwd: dir, env, listOpenPrs: () => [] });
+  const scratchpad = '/private/tmp/claude-501/-work-app/0b1c/scratchpad/pr-body.md';
+  const reason = run(`gh pr create -t "[NOISSUE] feat: x" --body-file ${scratchpad}`);
+  assert.match(reason, /^Blocked: the body file `\/private\/tmp\/claude-501\/.*` is in a shared temp folder/);
+  assert.ok(reason.includes(`Write the body to \`${file}\` and pass that path, written out, to --body-file`), reason);
+  assert.match(reason, /scratchpad/);
+  assert.doesNotMatch(reason, /current worktree/, 'pr-write writes the body outside the repository');
+  assert.ok(run(`gh pr create -H acme:feat/other -t "[NOISSUE] feat: x" -F ${scratchpad}`).includes(path.join(state, 'tmp', 'pr-body-feat-other.md')), 'the --head branch');
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, BODY);
+  assert.equal(run(`gh pr create -t "[NOISSUE] feat: x" --body-file ${file}`), null, 'the state folder is not a shared temp folder');
+  assert.match(run(`gh pr create -t "[NOISSUE] feat: x" --body-file ${path.join(path.dirname(state), 'other', 'b.md')}`), /shared temp folder/, 'only this project\'s state folder');
+  const outside = project(t);
+  assert.match(outside.run('gh pr edit 3 -F /tmp/pr-body.md', env), /\/tmp\/pr-body-<branch>\.md` \(`<branch>` is the branch name with each `\/` replaced by `-`\)/, 'outside git, the branch is a placeholder');
 });
 
 test('a body identical to another open pull request is refused; the edited one itself and other repos are told apart', (t) => {

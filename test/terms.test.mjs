@@ -167,6 +167,8 @@ test('aidrian check validates prose, code, and optional paths', (t) => {
     { id: 'd', code: true, terms: { x: 'y' } },
     { id: 'e', code: true, paths: ['src/**'], terms: { 'part*': 'y', 'party size': 'n', partySize: 'n' } },
     { id: 'f', paths: [], terms: { x: 'y' } },
+    { id: 'g', compounds: true, terms: { x: 'y' } },
+    { id: 'h', prose: true, compounds: 'yes', terms: { x: 'y' } },
   ], { locales: 'locales/{locale}/*.json' }), [
     'rule "a": "prose" must be true or false',
     'rule "a": "code" must be true or false',
@@ -176,7 +178,23 @@ test('aidrian check validates prose, code, and optional paths', (t) => {
     'rule "e": "part*": a "code" term has no "*"',
     'rule "e": "party size" and "partySize" name the same identifier',
     'rule "f": "paths" must be a list of globs',
+    'rule "g": "compounds" goes only with "prose"',
+    'rule "h": "compounds" must be true or false',
   ]);
+});
+
+test('a prose rule skips a word inside a hyphen compound unless it sets compounds', (t) => {
+  const { rules } = repo(t, {
+    version: 1,
+    rules: [
+      { id: 'second-person', paths: ['docs/**/*.md'], prose: true, terms: { you: 'the agent' } },
+      { id: 'name', paths: ['docs/**/*.md'], prose: true, compounds: true, terms: { acme: 'the vendor' } },
+    ],
+  });
+  const scan = (text) => scanLines(numbered(text), 'docs/a.md', rules()).map((hit) => `${hit.line}:${hit.rule.id}`);
+  assert.deepEqual(scan('Show-your-work.\nAs you said.'), ['2:second-person'], 'without the switch, as before');
+  assert.deepEqual(scan('This is acme-approved.\nNon-acme text.\nAcme ships.\nAcmes and acmeish.'), ['1:name', '2:name', '3:name'], 'with it, still a whole word');
+  assert.deepEqual(scan('Run `acme-approved` here.'), [], 'inline code stays skipped');
 });
 
 test('a rule with no paths reads every file but the terms file; a locale glob takes *', (t) => {

@@ -96,7 +96,7 @@ Write the brief first when checkpoints are allowed.
 ## Hard rules
 
 1. Never merge: no `gh pr merge`, and never the `pr-merge-when-green` skill.
-2. Leave the pull request a draft, unless the Human asked at launch to mark it ready; § 4 of the phases says when.
+2. Leave the pull request a draft, unless the Human asked at launch to mark it ready or `github.markReady` is `"auto"`; § 4 of the phases says when.
 3. Never approve a product or security gate yourself, and never guess a critical decision that cannot be undone.
 4. Every edit happens in a task worktree, never in the main checkout. Never bypass a hook.
 5. Coordinate only: agents write the code, review it, and verify it.

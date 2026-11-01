@@ -5,5 +5,5 @@
     "worktrees": { "dir": ".worktrees" },
     "mainCheckout": { "guard": true }
   },
-  "review": { "engine": "pr-bot", "record": "local" }
+  "review": { "engine": "codex-local", "record": "local" }
 }

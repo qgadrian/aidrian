@@ -36,6 +36,7 @@ In a group such as `github`, set only the keys you change; the others keep their
     "ignoreCancelledChecks": [],
     "conditionalChecks": [],
     "titleIssuePrefix": false,
+    "markReady": "ask",
     "pullRequest": {
       "title": null,
       "issueKey": null,
@@ -95,6 +96,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. |
 | `github.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
 | `github.conditionalChecks` | Parts of check names whose `SKIPPED` or `NEUTRAL` result is routine, such as a job a path filter turns off. |
+| `github.markReady` | Who marks a draft pull request ready. `"ask"`, the default: its author, or the review loop when the Human asks in the session. `"auto"`: the `pr-review-loop` skill, or `autopilot` and the `orchestrator` when they run it, mark it ready once review signs off and `aidrian pr checks` says ready. Either way, nothing is pushed after it is marked ready, and nothing merges it. |
 | `github.titleIssuePrefix` | `true` writes pull request titles as `[<issue key>] type(scope): subject`, or `[NOISSUE] type: subject`; `false`, the default, writes a plain Conventional Commits title. |
 | `github.pullRequest` | The project's [pull request contract](#pull-request-contract), beyond the required sections; off by default but for `sharedTempBodyFile`. |
 | `github.reviewGate.enabled` | `true` asks the review bot only once a review of the diff is on record: [Review gate](#review-gate). |
@@ -117,7 +119,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `models` | The model and effort of the plugin's agents, per host, in place of the ones the plugin ships: [Models](#models). |
 | `names.human` | What agents call the person they work for: [Names](#names). |
 | `names.ai` | What agents call themselves; `null` is the host's name, Claude or Codex: [Names](#names). |
-| `requires.aidrian` | The oldest plugin version the project's config needs, such as `"0.16.0"`; `null` asks for none: [Plugin version](#plugin-version). |
+| `requires.aidrian` | The oldest plugin version the project's config needs, such as `"0.17.0"`; `null` asks for none: [Plugin version](#plugin-version). |
 | `attribution.commit` | The trailers an agent's commit must carry: [Attribution](#attribution). `[]`, the default, is off. |
 | `attribution.pullRequest` | The lines a pull request body an agent opens must end with: [Attribution](#attribution). `[]` is off. |
 | `attribution.exclude` | The agents the `Assisted-by:` lines leave out; by default the ones that only search and read. |
@@ -334,12 +336,12 @@ project was set up with, such as a resumed session from another checkout. `requi
 the project needs:
 
 ```json
-{ "requires": { "aidrian": "0.16.0" } }
+{ "requires": { "aidrian": "0.17.0" } }
 ```
 
 When the running plugin is older, `aidrian check` fails and the session-start hook adds a line, both naming the
 version and the folder of the copy that runs, so the stale install shows at the first prompt. A plugin older than
-0.16.0 does not know the key and rejects it as unknown, which fails as loudly with a less specific message.
+0.17.0 does not know the key and rejects it as unknown, which fails as loudly with a less specific message.
 
 ## Attribution
 

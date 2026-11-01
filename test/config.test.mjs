@@ -81,6 +81,13 @@ test('github.reviewer: null or "none" turns the review bot off, as null; an empt
   ]);
 });
 
+test('github.markReady: "ask" by default, "auto" lets the review loop mark a green draft ready', (t) => {
+  assert.equal(DEFAULTS.github.markReady, 'ask');
+  const { config, errors } = loadConfig(project(t, { version: 1, github: { markReady: 'auto' } }));
+  assert.deepEqual([errors, config.github.markReady], [[], 'auto']);
+  assert.match(loadConfig(project(t, { version: 1, github: { markReady: true } })).errors[0], /"github\.markReady" must be "ask" or "auto"$/);
+});
+
 test('github.titleIssuePrefix: off by default, so pull request titles are plain Conventional Commits', (t) => {
   assert.equal(DEFAULTS.github.titleIssuePrefix, false);
   const { config, errors } = loadConfig(project(t, { version: 1, github: { titleIssuePrefix: true } }));

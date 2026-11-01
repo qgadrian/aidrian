@@ -36,6 +36,7 @@ const SCHEMA = {
     ignoreCancelledChecks: 'texts',
     conditionalChecks: 'texts',
     titleIssuePrefix: 'boolean',
+    markReady: 'readyMode',
     pullRequest: {
       title: 'patternOrNull',
       issueKey: 'patternOrNull',
@@ -141,7 +142,8 @@ const TYPES = {
   commitFields: [(value) => Array.isArray(value) && value.every((f) => COMMIT_FIELDS.includes(f)), `a list of ${COMMIT_FIELDS.map((f) => `"${f}"`).join(', ')}`],
   prFields: [(value) => Array.isArray(value) && value.every((f) => PR_FIELDS.includes(f)), `a list of ${PR_FIELDS.map((f) => `"${f}"`).join(', ')}`],
   handoffMode: [(value) => ['off', 'ask', 'auto'].includes(value), '"off", "ask", or "auto"'],
-  versionOrNull: [(value) => value === null || (typeof value === 'string' && SEMVER.test(value)), 'a plugin version such as "0.16.0", or null'],
+  readyMode: [(value) => ['ask', 'auto'].includes(value), '"ask" or "auto"'],
+  versionOrNull: [(value) => value === null || (typeof value === 'string' && SEMVER.test(value)), 'a plugin version such as "0.17.0", or null'],
 };
 
 // `state.dir: null` is the per-project folder under `$XDG_STATE_HOME` (lib/project.mjs). Task worktrees sit beside the
@@ -166,6 +168,8 @@ export const DEFAULTS = deepFreeze({
     ignoreCancelledChecks: [],
     conditionalChecks: [],
     titleIssuePrefix: false,
+    // Who marks a draft ready: the author, or the loop when the Human asks ("ask"); or the loop once it is green ("auto").
+    markReady: 'ask',
     // The pull request contract the pull request body rule holds beyond requiredSections (lib/rules/github/pr-body.mjs).
     pullRequest: { title: null, issueKey: null, sections: null, deferrals: null, residuals: null, sharedTempBodyFile: true, duplicateBody: false },
     // The review that must be on record before the review bot is asked (lib/review-gate.mjs).

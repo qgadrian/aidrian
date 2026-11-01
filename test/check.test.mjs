@@ -50,7 +50,7 @@ test('check fails, and session start warns, when the running plugin is older tha
   writeFileSync(file, JSON.stringify({ ...config, requires: { aidrian: '0.1.0' } }));
   assert.equal(run(['check'], dir).status, 0, 'a floor at or below the running plugin passes');
   writeFileSync(file, JSON.stringify({ ...config, requires: { aidrian: 'latest' } }));
-  assert.match(run(['check'], dir).stderr, /"requires\.aidrian" must be a plugin version such as "0\.16\.0", or null/u);
+  assert.match(run(['check'], dir).stderr, /"requires\.aidrian" must be a plugin version such as "0\.17\.0", or null/u);
 });
 
 test('check warns past the knowledge budgets, and fails when the always docs pass twice theirs', (t) => {

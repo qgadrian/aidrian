@@ -56,6 +56,9 @@ Never put a second agent on work the first may still be doing.
    is not failing, or after config.json `github.maxReviewRounds` rounds
    (default 3); `aidrian pr await-review` exit 4, `round_limit`, means that cap. At the cap, report the open `fix_now` findings
    and ask the Human.
+7. **Ready.** Stopped by a clean round, not the cap, mark it ready with `gh pr ready <n>` when the Human asked for that
+   or config.json `github.markReady` is `"auto"`, and `aidrian pr checks <n>` says ready; then push nothing more.
+   Otherwise it stays a draft. Never merge.
 
 ## 4. Review findings
 

@@ -91,7 +91,9 @@ const indentOf = (line) => /^ */u.exec(line)[0].length;
 // list item, where that item ends. Indentation counts tabs to 4-column stops. Blank lines are dropped from block edges.
 export function blocksOf(body) {
   const lines = String(body ?? '').split('\n').map(expandTabs);
-  // The least indentation outside fences, from a first pass that matches delimiters only.
+  // The least indentation outside fences, from a first pass that matches delimiters only. Accepted residual: this pass
+  // does not end an unclosed fence where its list item ends, so a section can get too high a base, and a deeper bullet
+  // after such a fence becomes its own block.
   const indents = [];
   let scan = null;
   for (const line of lines) {

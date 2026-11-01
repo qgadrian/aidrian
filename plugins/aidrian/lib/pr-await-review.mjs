@@ -23,13 +23,10 @@
 //      `round_limit`; a long run of rounds is a design problem more review will not fix. Raising --max-rounds past
 //      the config value is the Human's call: it needs ROUNDS_OVERRIDE set in their own shell (roundCapProblem), whatever
 //      reviews the pull request. A raised limit is recorded in the request comment, and later runs keep the highest one.
-//   8. With config.json `github.reviewRequest: "automatic"`, the connector reviews by its own Automatic review setting:
-//      nothing is ever posted, with or without --request. --request still ends at round_limit, and steps 3, 5, and 7
-//      run as above; a timeout carries a hint naming the connector settings to check.
 //
 // stdout: one JSON object. Exit 0 received | already_present | no_reviewer, 2 timed_out (re-run once without --request
 // when `retry_recommended` is true), 3 blocked_quota, 4 round_limit, 5 review_required, 1 error. Read-only except the
-// --request comment (none when automatic) and,
+// --request comment and,
 // at round_limit, a lesson in the local lesson inbox (lib/lesson-signals.mjs). With no review bot (config.json
 // `github.reviewer` null or "none", or `--reviewer none`) it ends at once as `no_reviewer`: it runs no gh, posts nothing,
 // and waits for nothing.
@@ -41,13 +38,7 @@ import { runGit } from './git.mjs';
 
 export const DEFAULT_REVIEWER = CONFIG_DEFAULTS.github.reviewer;
 export const REQUEST_COMMENT = '@codex review';
-export const DEFAULTS = Object.freeze({ timeoutSec: 840, intervalSec: 60, maxRounds: CONFIG_DEFAULTS.github.maxReviewRounds, reviewRequest: CONFIG_DEFAULTS.github.reviewRequest });
-
-// What a timeout says when the bot reviews on its own: the harness asked for nothing, so only the bot's settings can.
-export const AUTOMATIC_HINT =
-  'config.json github.reviewRequest is "automatic", so nothing asked the bot for this review. Check that the Codex ' +
-  'connector\'s Automatic review is on for this repository (Codex settings > Personal preferences) and that its Review ' +
-  'trigger covers this pull request and push, then run this again. Never post a review request instead.';
+export const DEFAULTS = Object.freeze({ timeoutSec: 840, intervalSec: 60, maxRounds: CONFIG_DEFAULTS.github.maxReviewRounds });
 
 // What the request asks for after the trigger phrase. A bare "@codex review" returned about two findings per review,
 // and most later-round findings were copies of a mistake an earlier round had named, so this asks for the whole
@@ -128,7 +119,7 @@ export function roundCapProblem(maxRounds, cap, env = process.env) {
     "own shell before starting the session (agents must never set it on the user's behalf).";
 }
 
-// `defaults` carries config.json `github.reviewer`, `github.reviewRequest`, and `github.maxReviewRounds`; flags win.
+// `defaults` carries config.json `github.reviewer` and `github.maxReviewRounds`; flags win.
 export const parseArgs = (argv, defaults = {}) => {
   const out = { pr: null, repo: null, head: null, request: false, ...DEFAULTS, reviewer: DEFAULT_REVIEWER, ...defaults };
   for (let i = 0; i < argv.length; i += 1) {
@@ -360,7 +351,6 @@ export const awaitReview = async (opts, { gh = defaultGh, git = localGit(), slee
   let requestedForHead = null;
   let stale = false;
   let maxRounds = opts.maxRounds ?? DEFAULTS.maxRounds;
-  const automatic = opts.reviewRequest === 'automatic';
   // One step for the first look and every poll: read the current head, find the newest bot signal, and request once
   // per head when the signal is missing or covers an older head. Returns covered, blocked_quota, round_limit, or null.
   const evaluate = () => {
@@ -376,11 +366,6 @@ export const awaitReview = async (opts, { gh = defaultGh, git = localGit(), slee
       // at limit + 1 reviews; the bot exposes no per-trigger completion to reserve against.
       maxRounds = Math.max(maxRounds, recordedMaxRounds(s.issueComments) ?? 0);
       if (codexRounds(s.reviews, opts.reviewer) >= maxRounds) return 'round_limit';
-      // The bot reviews by its own settings: the cap is checked, and nothing is posted, ever.
-      if (automatic) {
-        requestedForHead = head;
-        return null;
-      }
       const beforePost = flooredInstant(now());
       const posted = gh.api(`repos/${repo}/issues/${n}/comments`, { method: 'POST', fields: { body: requestCommentBody(head, maxRounds, review.marker ?? null) } });
       requested = true;
@@ -411,8 +396,6 @@ export const awaitReview = async (opts, { gh = defaultGh, git = localGit(), slee
       // A timeout after the bot acknowledged this head ran past a budget that cannot grow: one re-run without --request
       // is worth its wait. A timeout with nothing acknowledged, or acknowledged for another head, is not.
       ...(status === 'timed_out' ? { retry_recommended: acknowledgedForHead(ack, head, s.headCommittedAt, sinceHead) && !(Boolean(signal) && !stale) } : {}),
-      ...(automatic ? { review_request: 'automatic' } : {}),
-      ...(status === 'timed_out' && automatic ? { hint: AUTOMATIC_HINT } : {}),
       // The review round, for `aidrian pr disposition --round`.
       codex_rounds: codexRounds(s.reviews, opts.reviewer),
       ...(status === 'round_limit' ? { max_rounds: maxRounds } : {}),
@@ -452,7 +435,7 @@ async function reviewGate(project, config) {
 export async function runAwaitReview(args, config, project = null, deps = {}) {
   try {
     const gate = project && config.github.reviewGate.enabled ? await reviewGate(project, config) : null;
-    const opts = parseArgs(args, { reviewer: config.github.reviewer, reviewRequest: config.github.reviewRequest, maxRounds: config.github.maxReviewRounds });
+    const opts = parseArgs(args, { reviewer: config.github.reviewer, maxRounds: config.github.maxReviewRounds });
     const capped = roundCapProblem(opts.maxRounds, config.github.maxReviewRounds, deps.env ?? process.env);
     if (capped) throw new Error(capped);
     const result = await awaitReview(opts, { gate, ...deps });

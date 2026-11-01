@@ -19,7 +19,6 @@ import {
   postedTriggerInstant,
   flooredInstant,
   awaitReview,
-  AUTOMATIC_HINT,
   isQuotaNotice,
   isReviewSummaryCard,
   REVIEW_SUMMARY_CARD_MARKER,
@@ -1160,48 +1159,4 @@ test('raising --max-rounds past the config cap needs the Human override, whateve
     console.error = error;
   }
   assert.match(errors.join('\n'), /goes past config\.json github\.maxReviewRounds \(3\)/);
-});
-
-test('automatic review requests: the bot reviews on its own, so nothing is posted, with or without --request', async () => {
-  const stale = { id: 1, user: BOT, submitted_at: T(6), commit_id: 'aaa', state: 'COMMENTED' };
-  const fresh = { id: 2, user: BOT, submitted_at: T(12), commit_id: 'bbb', state: 'COMMENTED' };
-  for (const request of [true, false]) {
-    const gh = fakeGh([{ reviews: [stale] }, { reviews: [stale, fresh] }], { head: 'bbb' });
-    const c = clock();
-    const sleep = async (s) => { await c.sleep(s); gh.advance(); };
-    const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, reviewRequest: 'automatic', request, timeoutSec: 900, intervalSec: 60 }, { gh, now: c.now, sleep });
-    assert.deepEqual(gh.posts, [], 'no request is ever posted');
-    assert.deepEqual([r.status, r.requested, r.review_request, r.signal.commit_id, r.stale], ['received', false, 'automatic', 'bbb', false], `request: ${request}`);
-    assert.equal(r.codex_rounds, 2);
-  }
-});
-
-test('automatic review requests: --request still stops at the round cap, and a timeout names the connector settings', async () => {
-  const rounds = (n) => Array.from({ length: n }, (_, i) => ({ id: i + 1, user: BOT, submitted_at: T(1), commit_id: 'aaa', state: 'COMMENTED' }));
-  const atLimit = fakeGh([{ reviews: rounds(3) }], { head: 'bbb' });
-  const capped = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, reviewRequest: 'automatic', request: true, maxRounds: 3, timeoutSec: 120, intervalSec: 60 }, { gh: atLimit, ...clock() });
-  assert.deepEqual([capped.status, capped.codex_rounds, capped.max_rounds, capped.requested], ['round_limit', 3, 3, false]);
-  assert.equal(atLimit.posts.length, 0);
-
-  const quiet = fakeGh([{ reviews: rounds(1) }], { head: 'bbb' });
-  const waited = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, reviewRequest: 'automatic', request: true, maxRounds: 3, timeoutSec: 120, intervalSec: 60 }, { gh: quiet, ...clock() });
-  assert.deepEqual([waited.status, waited.stale, waited.hint], ['timed_out', true, AUTOMATIC_HINT]);
-  assert.match(AUTOMATIC_HINT, /Automatic review/u);
-  assert.match(AUTOMATIC_HINT, /Review trigger/u);
-  assert.equal(quiet.posts.length, 0, 'a timeout never falls back to a request');
-  assert.equal(exitCodeFor(waited.status), 2);
-
-  const asked = fakeGh([{ reviews: rounds(1) }], { head: 'bbb' });
-  const byComment = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, maxRounds: 3, timeoutSec: 60, intervalSec: 60 }, { gh: asked, ...clock() });
-  assert.equal(asked.posts.length, 1, 'the default still posts its request');
-  assert.ok(!('hint' in byComment) && !('review_request' in byComment), 'the default output is as before');
-});
-
-test('runAwaitReview: config.json github.reviewRequest "automatic" reaches the wait', async (t) => {
-  const { config, log, project } = roundsProject(t);
-  const automatic = { ...config, github: { ...config.github, reviewRequest: 'automatic' } };
-  const gh = fakeGh([{ reviews: [{ id: 1, user: BOT, submitted_at: T(1), commit_id: 'aaa', state: 'COMMENTED' }] }], { head: 'bbb' });
-  assert.equal(await runAwaitReview(['42', '--request', '--timeout-sec', '0'], automatic, project, { gh, ...clock() }), 2);
-  assert.equal(gh.posts.length, 0);
-  assert.equal(JSON.parse(log.mock.calls[0].arguments[0]).review_request, 'automatic');
 });

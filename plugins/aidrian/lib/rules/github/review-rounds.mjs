@@ -5,8 +5,7 @@
 //   - a direct request for a bot review through gh, in every form the review gate reads (lib/rules/github/review-request.mjs):
 //     only `aidrian pr await-review --request` and `aidrian pr review` post one, and they count rounds against
 //     `github.maxReviewRounds` first. A direct comment would skip that count, which is how one pull request once took
-//     twenty bot reviews. With `github.reviewRequest: "automatic"` the bot reviews by its own settings, and nothing
-//     posts a request: the reason says to wait for it instead.
+//     twenty bot reviews.
 // Anything the rule cannot read lets the command run.
 
 import { readFileSync } from 'node:fs';
@@ -29,14 +28,6 @@ export const REQUEST_REASON =
   'Blocked: request a bot review with `aidrian pr await-review --request` (or `aidrian pr review --with-bot`), which counts ' +
   'the rounds against config.json github.maxReviewRounds before it posts. A direct request skips that count.';
 
-export const AUTOMATIC_REASON =
-  'Blocked: config.json github.reviewRequest is "automatic": the review bot reviews this pull request by its own Automatic ' +
-  'review setting, and nothing asks it. Wait for its review with `aidrian pr await-review --request` (or `aidrian pr review ' +
-  '--with-bot`), which counts the rounds and posts nothing.';
-
-// The deny reason for a direct bot request under `config`.
-export const requestReason = (config) => (config.github.reviewRequest === 'automatic' ? AUTOMATIC_REASON : REQUEST_REASON);
-
 export const botNamed = (reviewer) => typeof reviewer === 'string' && reviewer !== '' && reviewer.toLowerCase() !== 'none';
 
 // Whether one invocation sets the override.
@@ -57,7 +48,7 @@ export function check(command, { cwd = process.cwd(), env = process.env } = {}) 
     for (const segment of lexCommand(line)) {
       const invocation = readInvocation(segment);
       if (setsOverride(invocation)) return OVERRIDE_REASON;
-      if (readRequests(invocation, config.github.reviewer, read, env).length > 0) return requestReason(config);
+      if (readRequests(invocation, config.github.reviewer, read, env).length > 0) return REQUEST_REASON;
     }
   }
   return null;

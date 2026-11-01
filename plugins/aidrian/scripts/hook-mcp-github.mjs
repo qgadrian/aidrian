@@ -8,7 +8,7 @@ import { loadConfig } from '../lib/config.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
 import { findProject } from '../lib/project.mjs';
 import { asksForReview, judgeRequests, markersIn } from '../lib/review-gate.mjs';
-import { botNamed, requestReason } from '../lib/rules/github/review-rounds.mjs';
+import { botNamed, REQUEST_REASON } from '../lib/rules/github/review-rounds.mjs';
 
 // Each tool, and the field that names the pull request.
 const PR_FIELD = {
@@ -27,7 +27,7 @@ await runHook(async (input) => {
   const repo = typeof toolInput.owner === 'string' && typeof toolInput.repo === 'string' ? `${toolInput.owner}/${toolInput.repo}` : null;
   const request = { pr: Number.isInteger(pr) && pr > 0 ? pr : null, repo, markers: markersIn(toolInput.body) };
   const { config } = loadConfig(project);
-  if (botNamed(config.github.reviewer)) return block(input, 'review-rounds', requestReason(config));
+  if (botNamed(config.github.reviewer)) return block(input, 'review-rounds', REQUEST_REASON);
   const reason = judgeRequests([request], { project, config });
   if (reason) await block(input, 'review-gate', reason);
 });

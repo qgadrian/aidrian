@@ -31,7 +31,6 @@ In a group such as `github`, set only the keys you change; the others keep their
   "github": {
     "requiredSections": ["Summary", "Tests run"],
     "reviewer": "chatgpt-codex-connector[bot]",
-    "reviewRequest": "comment",
     "maxReviewRounds": 3,
     "requiredChecks": [],
     "ignoreCancelledChecks": [],
@@ -91,7 +90,6 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `state.dir` | The machine-local [state folder](project-folder.md#local-state); `null` is the one under `$XDG_STATE_HOME`. |
 | `github.requiredSections` | The `## ` sections every pull request body must have ([Bash rules](hooks.md#bash-rules)); `[]` checks none. |
 | `github.reviewer` | The login of the Codex review bot that `aidrian pr await-review` waits for. `null` or `"none"`: no bot ([below](#no-review-bot)). |
-| `github.reviewRequest` | How the review bot is asked: `"comment"` posts `@codex review` for each head; `"automatic"` posts nothing and waits for the connector's own reviews ([below](#automatic-review-requests)). |
 | `github.maxReviewRounds` | The review rounds a pull request may get, 3 by default: the review loop and `aidrian pr await-review --request` stop there. A `--max-rounds` above it runs only with `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, which the Human sets; a Bash rule refuses an agent command that sets it, and any bot request made outside `aidrian pr`. |
 | `github.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. |
 | `github.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
@@ -141,16 +139,6 @@ A project without the Codex review bot sets `"github": { "reviewer": null }`, or
   It runs no `gh`, posts no review request, and waits for nothing. `--reviewer none` does the same for one run.
 - `aidrian report reviews` and the Reviews line of `aidrian report health` say that no review bot is set.
 - The `orchestration` and `autopilot` skills then run the `pr-review` skill in every review round.
-
-### Automatic review requests
-
-With `"github": { "reviewRequest": "automatic" }`, the Codex connector reviews pull requests by its own settings:
-the Human turns on Automatic review, with a Review trigger, in the connector's Codex settings (Personal preferences).
-
-- `aidrian pr await-review`, with or without `--request`, and the bot stage of `aidrian pr review` post nothing.
-  They wait for the bot's review of the current head, under the same round cap.
-- A wait that ends with no review is `timed_out`, with a `hint` naming the connector settings to check. It never
-  falls back to posting a request, and the Bash rule refuses a request posted by hand.
 
 ## Pull request contract
 

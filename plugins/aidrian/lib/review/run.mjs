@@ -372,7 +372,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
           return { marker: markerFor({ pr: n, repo, head, reviewer: 'code-reviewer', findings, fixed: findings - open }) };
         };
         const wait = awaitBot ?? (await import('../pr-await-review.mjs')).awaitReview;
-        const bot = await wait({ pr: String(n), repo, head, request: true, reviewer: config.github.reviewer, reviewRequest: config.github.reviewRequest, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds }, { gate });
+        const bot = await wait({ pr: String(n), repo, head, request: true, reviewer: config.github.reviewer, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds }, { gate });
         if (bot.status === 'review_required') {
           undoRound();
           return finish('incomplete', { reason: bot.reason, retry_recommended: false });

@@ -525,12 +525,12 @@ test('the gate marker sums the code-reviewer passes that count for the head, a c
   assert.match(markers[0].marker, /findings=2 fixed=2/u);
 });
 
-test('the project`s engine wins over this machine`s local one, and the bot stage passes on github.reviewRequest', async (t) => {
-  const r = repo(t, { baseConfig: { version: 1, github: { reviewRequest: 'automatic' }, review: { engine: 'pr-bot' } }, change: (write) => write('src/app.js', 'e\n') });
+test('the project`s engine wins over this machine`s local one, and the bot stage still runs', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, review: { engine: 'pr-bot' } }, change: (write) => write('src/app.js', 'e\n') });
   r.write('.aidrian.local.json', JSON.stringify({ review: { engine: 'codex-local' } }));
   const asked = [];
-  const result = await r.step({ exec: async () => assert.fail('codex-local must not run'), awaitBot: async (opts) => (asked.push(opts.reviewRequest), { status: 'received', head_sha: opts.head, signal: { kind: 'thumbs_up' } }) });
-  assert.deepEqual([result.status, result.engine.name, asked], ['received', 'pr-bot', ['automatic']]);
+  const result = await r.step({ exec: async () => assert.fail('codex-local must not run'), awaitBot: async (opts) => (asked.push(opts.request), { status: 'received', head_sha: opts.head, signal: { kind: 'thumbs_up' } }) });
+  assert.deepEqual([result.status, result.engine.name, asked], ['received', 'pr-bot', [true]]);
   assert.match(result.engine.reason, /set by the project config/u);
 });
 

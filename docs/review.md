@@ -203,9 +203,7 @@ the change does not touch carries forward.
 
 `--with-bot` adds the review bot as a last stage after this machine's engine. The bot is asked only once every
 earlier pass has a result, with the review gate's marker, under the plan's round cap; an answer for a commit other
-than the one under review counts for nothing. A flow's required checks are read for that commit too. With
-`github.reviewRequest: "automatic"` ([config.md](config.md#automatic-review-requests)), the bot is never asked: the
-stage waits for the connector's own review of the commit, under the same cap.
+than the one under review counts for nothing. A flow's required checks are read for that commit too.
 
 ## The plan command
 

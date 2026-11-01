@@ -112,7 +112,6 @@ const errorCases = [
   ['string for a boolean', { version: 1, git: { mainCheckout: { guard: 'no' } } }, /"git\.mainCheckout\.guard" must be true or false$/],
   ['empty string', { version: 1, git: { defaultBranch: ' ' } }, /"git\.defaultBranch" must be a non-empty string$/],
   ['handoff mode outside its list', { version: 1, session: { handoff: 'always' } }, /"session\.handoff" must be "off", "ask", or "auto"$/],
-  ['review request mode outside its list', { version: 1, github: { reviewRequest: 'auto' } }, /"github\.reviewRequest" must be "comment" or "automatic"$/],
   ['review record outside its list', { version: 1, review: { record: 'pr' } }, /"review\.record" must be "comment" or "local"$/],
   ['review engine that is not a name', { version: 1, review: { engine: 'two words' } }, /"review\.engine" must be "auto", "codex-local", "pr-bot", "self", or a reviewer of review\.reviewers$/],
   ['lesson signals switch that is not a boolean', { version: 1, lessons: { auto: 'off' } }, /"lessons\.auto" must be true or false$/],

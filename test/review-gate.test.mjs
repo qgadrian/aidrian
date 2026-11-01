@@ -197,11 +197,13 @@ test('the MCP hook holds the gate for the GitHub comment tools', (t) => {
       encoding: 'utf8',
       env: { ...process.env, AIDRIAN_TELEMETRY: '0' },
     });
-  const denied = hook({ owner: 'acme', repo: 'notes', issue_number: 5, body: '@codex review' });
-  assert.equal(denied.status, 2);
-  assert.match(denied.stderr, /pull request #5/);
-  assert.equal(hook({ owner: 'other', repo: 'x', issue_number: 5, body: '@codex review' }).status, 0);
   assert.equal(hook({ owner: 'acme', repo: 'notes', pullNumber: 5, body: 'thanks' }, 'mcp__github__pull_request_review_write').status, 0);
+  // With a review bot set, the review-round rule sends every request through `aidrian pr`, record or not.
+  for (const owner of ['acme', 'other']) {
+    const denied = hook({ owner, repo: 'notes', issue_number: 5, body: '@codex review' });
+    assert.equal(denied.status, 2);
+    assert.match(denied.stderr, /aidrian pr await-review --request/);
+  }
   reviewed(project, 5);
-  assert.equal(hook({ owner: 'acme', repo: 'notes', issue_number: 5, body: '@codex review' }).status, 0);
+  assert.equal(hook({ owner: 'acme', repo: 'notes', issue_number: 5, body: '@codex review' }).status, 2);
 });

@@ -189,7 +189,8 @@ machines with and without Codex.
 ## Rounds
 
 A round is one run of the plan on one head. The cap is `github.maxReviewRounds`, and raising it needs
-`AIDRIAN_ALLOW_EXTRA_ROUNDS=1` in the Human's own shell. The last round runs the final stage first, so a pull request
+`AIDRIAN_ALLOW_EXTRA_ROUNDS=1` in the Human's own shell. The `review-rounds` rule ([hooks.md](hooks.md#bash-rules)) refuses an
+agent command that sets it, and a bot request posted any way but through `aidrian pr`. The last round runs the final stage first, so a pull request
 always gets its independent review before the cap, then lets the earlier stages finish on the same head; it passes
 when nothing is left to fix, and stops at the cap when a fix would need another head. A reviewer that fails or hits
 its quota gives the round back. After a fix, each pass re-reviews only what changed since its last review; a pass

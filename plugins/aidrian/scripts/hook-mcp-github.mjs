@@ -1,11 +1,14 @@
 // PreToolUse hook for the GitHub MCP tools that post a comment: the review gate (lib/review-gate.mjs), as the Bash rule
 // lib/rules/github/review-request.mjs holds it for gh. Off unless config.json `github.reviewGate.enabled` is true.
+// It also holds the review-round rule (lib/rules/github/review-rounds.mjs): with a review bot set, a request goes
+// through `aidrian pr`, which counts rounds first, never through a comment tool.
 // Anything this hook cannot read lets the call run.
 
 import { loadConfig } from '../lib/config.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
 import { findProject } from '../lib/project.mjs';
 import { asksForReview, judgeRequests, markersIn } from '../lib/review-gate.mjs';
+import { botNamed, REQUEST_REASON } from '../lib/rules/github/review-rounds.mjs';
 
 // Each tool, and the field that names the pull request.
 const PR_FIELD = {
@@ -23,6 +26,8 @@ await runHook(async (input) => {
   const pr = Number(toolInput[field]);
   const repo = typeof toolInput.owner === 'string' && typeof toolInput.repo === 'string' ? `${toolInput.owner}/${toolInput.repo}` : null;
   const request = { pr: Number.isInteger(pr) && pr > 0 ? pr : null, repo, markers: markersIn(toolInput.body) };
-  const reason = judgeRequests([request], { project, config: loadConfig(project).config });
+  const { config } = loadConfig(project);
+  if (botNamed(config.github.reviewer)) return block(input, 'review-rounds', REQUEST_REASON);
+  const reason = judgeRequests([request], { project, config });
   if (reason) await block(input, 'review-gate', reason);
 });

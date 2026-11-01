@@ -13,7 +13,7 @@
 import path from 'node:path';
 
 export const EXTENSIONS_RE = /\.[cm]?[jt]sx?$/u;
-export const RESOLVE_SUFFIXES = Object.freeze(['', '.ts', '.tsx', '.mjs', '.js', '/index.ts', '/index.tsx']);
+export const RESOLVE_SUFFIXES = Object.freeze(['', '.ts', '.tsx', '.mts', '.cts', '.mjs', '.cjs', '.js', '.jsx', '/index.ts', '/index.tsx', '/index.mjs', '/index.js', '/index.jsx']);
 
 // A call head: a name or a member of one, optional type arguments, and the opening parenthesis.
 const CALL = /\b((?:\w+\.)?\w+)\s*(?:<[^()]*?>)?\s*\(/gu;
@@ -130,6 +130,39 @@ function balanced(text, at, end, open, close) {
   return end;
 }
 
+// The code in `text` only: strings, comments, regular expressions, and the text of template literals become a space,
+// and a template's `${...}`, which is code, stays. A name inside a string or comment is not an argument, and a quote
+// inside a comment or template text cannot hide the code after it.
+export function codeOnly(text) {
+  let out = '';
+  let prev = '';
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === '`') {
+      for (i += 1; i < text.length && text[i] !== '`'; i += 1) {
+        if (text[i] === '\\') i += 1;
+        else if (text[i] === '$' && text[i + 1] === '{') {
+          const close = balanced(text, i + 2, text.length, '{', '}');
+          out += ` ${codeOnly(text.slice(i + 2, close))} `;
+          i = close;
+        }
+      }
+      out += ' ';
+      prev = 'a';
+      continue;
+    }
+    const skipped = skipLiteral(text, i, text.length, prev);
+    if (skipped !== -1) {
+      out += ' ';
+      i = skipped;
+      prev = 'a';
+      continue;
+    }
+    out += text[i];
+    if (!/\s/u.test(text[i])) prev = text[i];
+  }
+  return out;
+}
+
 // The argument text of the call whose opening parenthesis is at `open`, up to its balanced closing one. Parentheses
 // inside a string, a template literal (nested ones too), a comment, or a regular expression do not count, so
 // `load(")", client)` still reads to its end. Past MAX_ARGUMENTS characters the arguments are cut.
@@ -146,7 +179,7 @@ export function callsWith(text, names, vars, factory = null) {
   for (const m of text.matchAll(CALL)) {
     if (!names.has(m[1].split('.')[0])) continue;
     // Quoted strings out, template literals kept: a name inside a string is not an argument.
-    const args = argumentsAt(text, m.index + m[0].length - 1).replace(/(['"])(?:\\.|(?!\1)[^\\\n])*\1/gu, '');
+    const args = codeOnly(argumentsAt(text, m.index + m[0].length - 1));
     const variable = patterns.find(([, pattern]) => pattern.test(args))?.[0] ?? (factory?.test(args) ? INLINE_FACTORY : null);
     if (variable) calls.push({ name: m[1], variable, line: text.slice(0, m.index).split('\n').length });
   }

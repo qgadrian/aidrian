@@ -93,7 +93,7 @@ const change = (file, status = 'M') => ({ file, status, added: 1, removed: 1 });
 test('trace-js: the source files it reads, the suffixes it resolves, and the word an importer names a file by', () => {
   assert.ok(['a.ts', 'a.tsx', 'a.js', 'a.jsx', 'a.mjs', 'a.cjs', 'a.mts', 'a.cts'].every((file) => EXTENSIONS_RE.test(file)));
   assert.ok(!['a.mdx', 'a.json', 'a.sql', 'a.d'].some((file) => EXTENSIONS_RE.test(file)));
-  assert.deepEqual(RESOLVE_SUFFIXES, ['', '.ts', '.tsx', '.mjs', '.js', '/index.ts', '/index.tsx']);
+  assert.deepEqual(RESOLVE_SUFFIXES, ['', '.ts', '.tsx', '.mts', '.cts', '.mjs', '.cjs', '.js', '.jsx', '/index.ts', '/index.tsx', '/index.mjs', '/index.js', '/index.jsx']);
   assert.equal(importWord('src/lib/widgets/load-widget.ts'), 'load-widget');
   assert.equal(importWord('src/lib/gadgets/mutations/index.ts'), 'mutations');
 });
@@ -139,6 +139,10 @@ test('trace-js callsWith: balanced arguments, quoted strings left out, generic a
     { name: 'load', variable: 'db', line: 6 },
   ]);
   assert.deepEqual(callsWith('load(getAdminClient());', names, [], null), [], 'no factory, no inline match');
+  for (const call of ["load(/* user's client */ adminClient, 'tag');", "load(`user's ${adminClient}`, 'tag');", "load(x, // it's here\n adminClient);"]) {
+    assert.deepEqual(callsWith(call, names, ['adminClient']).map((each) => each.variable), ['adminClient'], `a quote in a comment or template text hides nothing: ${call}`);
+  }
+  assert.deepEqual(callsWith("load('adminClient', `adminClient`, /* adminClient */ x);", names, ['adminClient']), [], 'a name only inside a string, template text, or comment is not an argument');
   for (const call of ['load(`${ /* { */ x }`, client); use(adminClient);', 'load(`${ /{/.test(x) }`, client); use(adminClient);', 'load(a / b, client); use(adminClient);']) {
     assert.deepEqual(callsWith(call, names, ['adminClient']), [], `a brace or slash in a comment, regex, or division does not swallow the next statement: ${call}`);
   }
@@ -457,4 +461,11 @@ test('diffLines names a file git would quote by its real path', async (t) => {
   const { diffLines } = await import('../plugins/aidrian/lib/review/diff.mjs');
   const { root, base, head } = fixture(t, { 'src/café.ts': 'a\n' }, { 'src/café.ts': 'a\nb\n' });
   assert.deepEqual(diffLines(root, base, head).addedLines, { 'src/café.ts': ['b'] });
+});
+
+test('a JavaScript project resolves .jsx files and index.js or index.jsx folders', () => {
+  for (const target of ['src/helpers/index.js', 'src/helpers/index.jsx', 'src/helpers.jsx', 'src/helpers.cjs']) {
+    const { imports } = parse('src/page.js', "import { load } from './helpers';\n", { tracked: new Set([target]) });
+    assert.equal(imports.get('load')?.target, target, target);
+  }
 });

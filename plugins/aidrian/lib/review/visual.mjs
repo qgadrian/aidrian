@@ -32,49 +32,54 @@ const slug = (text) => text.toLowerCase().replace(/[^a-z0-9]+/gu, '-').replace(/
 // share a file.
 const routeId = (route) => `${slug(route)}-${createHash('sha256').update(route).digest('hex').slice(0, 6)}`;
 
-// A target's locale subset as the matrix reads it: null for every locale, `[]` (one capture in the default locale) as
-// [null].
-const targetLocales = (target) => (target.locales ? (target.locales.length ? target.locales : [null]) : null);
-// Two targets' subsets of one route, joined: either one unfiltered leaves the route unfiltered.
-const union = (a, b, order) => (a && b ? order.filter((each) => a.includes(each) || b.includes(each)) : null);
+// The (variant, locale) pairs one target captures, as `variant\0locale` strings: its own subsets, else every variant
+// and locale. `"locales": []` is the default locale, the empty string here.
+function targetPairs(visual, target) {
+  const variants = target.variants ?? (visual.variants.length ? visual.variants.map((variant) => variant.id) : ['default']);
+  const locales = target.locales ? (target.locales.length ? target.locales : ['']) : visual.locales.length ? visual.locales : [''];
+  return variants.flatMap((variant) => locales.map((locale) => `${variant}\0${locale}`));
+}
 
-// The routes a change touches, as [{ route, base, locales?, variants? }]: every route of a target whose files match a
-// changed file, deleted files included, since removing a component changes the screen too. `base` is the target's
-// named base, or null for the variant's own. `locales` and `variants` are present when the touched targets narrow
-// them; a route two touched targets list gets both targets' captures.
+// The routes a change touches, as [{ route, base, pairs? }]: every route of a target whose files match a changed file,
+// deleted files included, since removing a component changes the screen too. `base` is the target's named base, or null
+// for the variant's own. `pairs` ([[variant, locale|null]]) is present when the touched targets narrow the route: a
+// route two targets list gets the union of the captures each asks for, never a combination neither asked for.
 export function visualRoutes(visual, changes) {
   if (!visual) return [];
   const routes = new Map();
-  const localeOrder = [null, ...(visual.locales ?? [])];
-  const variantOrder = (visual.variants ?? []).map((variant) => variant.id);
+  const full = targetPairs(visual, {});
   for (const target of visual.targets) {
     const patterns = target.files.map(pathPattern);
     if (!changes.some((change) => patterns.some((pattern) => pattern.test(change.file)))) continue;
     for (const route of target.routes) {
       const key = `${target.base ?? ''}\0${route}`;
-      const known = routes.get(key);
-      const locales = known ? union(known.locales ?? null, targetLocales(target), localeOrder) : targetLocales(target);
-      const variants = known ? union(known.variants ?? null, target.variants ?? null, variantOrder) : target.variants ?? null;
-      routes.set(key, { route, base: target.base ?? null, ...(locales ? { locales } : {}), ...(variants ? { variants } : {}) });
+      const known = routes.get(key) ?? { route, base: target.base ?? null, pairs: new Set() };
+      for (const pair of targetPairs(visual, target)) known.pairs.add(pair);
+      routes.set(key, known);
     }
   }
-  return [...routes.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, each]) => each);
+  return [...routes.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, { route, base, pairs }]) => {
+    const everything = pairs.size === full.length && full.every((pair) => pairs.has(pair));
+    return { route, base, ...(everything ? {} : { pairs: [...pairs].map((pair) => pair.split('\0')).map(([variant, locale]) => [variant, locale || null]) }) };
+  });
 }
 
-// One entry per route, width, locale, and variant. A route may hold `{locale}`, filled per locale. Throws past
-// VISUAL_PER_RUN images, naming the routes, so the review stops loudly rather than capture part of the matrix.
+// One entry per route, width, locale, and variant, or per the route's `pairs` and width. A route may hold `{locale}`,
+// filled per locale. Throws past VISUAL_PER_RUN images, naming the routes, so the review stops loudly rather than
+// capture part of the matrix.
 export function visualMatrix(visual, routes) {
-  const allLocales = visual.locales.length ? visual.locales : [null];
-  const allVariants = visual.variants.length ? visual.variants : [{ id: 'default' }];
+  const locales = visual.locales.length ? visual.locales : [null];
+  const variants = visual.variants.length ? visual.variants.map((variant) => variant.id) : ['default'];
+  const order = [null, ...locales];
   const entries = [];
-  for (const { route, base, locales = allLocales, variants: only } of routes) {
+  for (const { route, base, pairs } of routes) {
     const id = base ? routeId(`${base}:${route}`) : routeId(route);
-    const variants = only ? allVariants.filter((variant) => only.includes(variant.id)) : allVariants;
-    for (const variant of variants) {
-      for (const locale of locales) {
-        for (const width of visual.viewports) {
-          entries.push({ key: [id, width, locale ?? 'default', variant.id].join('--'), route, ...(base ? { base } : {}), width, locale, variant: variant.id });
-        }
+    const wanted = pairs
+      ? variants.flatMap((variant) => order.filter((locale) => pairs.some(([v, l]) => v === variant && l === locale)).map((locale) => [variant, locale]))
+      : variants.flatMap((variant) => locales.map((locale) => [variant, locale]));
+    for (const [variant, locale] of wanted) {
+      for (const width of visual.viewports) {
+        entries.push({ key: [id, width, locale ?? 'default', variant].join('--'), route, ...(base ? { base } : {}), width, locale, variant });
       }
     }
   }
@@ -150,8 +155,10 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
       // One profile per variant ({ url, bases, auth }), and per variant and locale where the login printed one.
       const profiles = {};
       const storageStates = {};
-      const keep = (id, storageState) => {
-        const file = path.join(dir, `.auth-${id}.json`);
+      // Storage states are numbered, never named after a variant or locale, so no two personas share a file.
+      const keep = (storageState) => {
+        const id = `auth-${authFiles.length + 1}`;
+        const file = path.join(dir, `.${id}.json`);
         writeFileSync(file, JSON.stringify(storageState), { mode: 0o600 });
         chmodSync(file, 0o600);
         authFiles.push(file);
@@ -171,7 +178,7 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
         if (!isObject(signedIn?.storageState)) return fail('failed', `${what} printed no { "storageState": {...} }`);
         const own = overrides(signedIn, what);
         if (own.error) return fail('failed', own.error);
-        const profile = { url: own.url ?? url, bases: own.bases ?? {}, auth: keep(variant.id, signedIn.storageState), locales: {} };
+        const profile = { url: own.url ?? url, bases: own.bases ?? {}, auth: keep(signedIn.storageState), locales: {} };
         // A signed-in persona per locale, for screens whose language comes from a stored preference and not the
         // browser: { "locales": { "de": { "storageState": {...}, "baseUrl"?, "bases"? } } }. Each field it gives
         // replaces the variant's for that locale's captures.
@@ -186,7 +193,7 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
             profile.locales[locale] = {
               url: mine.url ?? profile.url,
               bases: mine.bases ?? profile.bases,
-              auth: value.storageState ? keep(`${variant.id}--${locale}`, value.storageState) : profile.auth,
+              auth: value.storageState ? keep(value.storageState) : profile.auth,
             };
           }
         }

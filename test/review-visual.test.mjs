@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -173,14 +173,19 @@ test('a target may narrow the locales and variants: [] locales is one default ca
     ],
   });
   assert.deepEqual(visualRoutes(visual, [{ file: 'src/app/dash/a.tsx' }, { file: 'src/app/onboarding/a.tsx' }]), [
-    { route: '/dashboard', base: null, locales: ['en'] },
-    { route: '/onboarding', base: null, locales: [null], variants: ['hospitality'] },
+    { route: '/dashboard', base: null, pairs: [['hospitality', 'en'], ['appointments', 'en']] },
+    { route: '/onboarding', base: null, pairs: [['hospitality', null]] },
   ]);
+  const shot = (routes) => visualMatrix({ ...visual, viewports: [360] }, routes).map((entry) => `${entry.variant} ${entry.locale ?? 'default'}`);
   const both = visualRoutes(visual, [{ file: 'src/app/dash/a.tsx' }, { file: 'src/components/b.tsx' }]);
-  assert.deepEqual(both, [{ route: '/dashboard', base: null, locales: ['en', 'de'] }], 'an unfiltered variant list wins the join');
-  const entries = visualMatrix(visual, visualRoutes(visual, [{ file: 'src/app/onboarding/a.tsx' }]));
-  assert.deepEqual(entries.map((entry) => entry.key.split('--').slice(1).join(' ')), ['360 default hospitality', '1280 default hospitality']);
-  assert.equal(visualMatrix(visual, both).length, 2 * 2 * 2);
+  assert.deepEqual(shot(both), ['hospitality en', 'appointments en', 'appointments de'], 'two targets join their captures, never mix their lists');
+  assert.deepEqual(shot(visualRoutes(visual, [{ file: 'src/app/onboarding/a.tsx' }])), ['hospitality default']);
+  const withAll = visualConfig({ targets: [{ files: ['a/**'], routes: ['/x'], locales: [] }, { files: ['b/**'], routes: ['/x'] }] });
+  const joined = visualRoutes(withAll, [{ file: 'a/1' }, { file: 'b/1' }]);
+  assert.deepEqual(visualMatrix({ ...withAll, viewports: [360] }, joined).map((entry) => `${entry.variant} ${entry.locale ?? 'default'}`), [
+    'hospitality default', 'hospitality en', 'hospitality de', 'appointments default', 'appointments en', 'appointments de',
+  ], 'a default-locale target keeps its capture beside an unfiltered one');
+  assert.deepEqual(visualRoutes(withAll, [{ file: 'b/1' }]), [{ route: '/x', base: null }], 'an unfiltered route carries no pairs');
   const bad = [];
   checkReview({ visual: { platform: 'web', targets: [{ files: ['x/**'], routes: ['/'], locales: ['fr'], variants: ['nope'] }], viewports: [360], locales: ['en'], variants: [{ id: 'a' }] } }, 'config.json', bad);
   assert.match(bad.join('\n'), /targets\[0\]\.locales" must list tags from review\.visual\.locales/u);
@@ -203,18 +208,31 @@ test('the login gets the locales, and may print a persona per locale that replac
     storageState: { cookies: [{ name: 's', value: input.variant }] },
     ...(input.variant === 'hospitality' ? { locales: { de: { storageState: { cookies: [{ name: 's', value: 'h-de' }] }, baseUrl: 'http://de.localhost:3000' } } } : {}),
   }));
+  // The storage states are removed after the capture, so the adapter reads them while it runs.
   const seen = [];
-  const manifest = await captureVisual({ project: p, pr: 4, head: '8'.repeat(40), visual, entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base(hook), spawn: fakeAdapter(undefined, seen) });
+  const states = {};
+  const adapter = (node, args, options) => {
+    for (const [auth, file] of Object.entries(JSON.parse(options.input).storageStates)) states[auth] = JSON.parse(readFileSync(file, 'utf8')).cookies?.[0]?.value;
+    return fakeAdapter(undefined, seen)(node, args, options);
+  };
+  const manifest = await captureVisual({ project: p, pr: 4, head: '8'.repeat(40), visual, entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base(hook), spawn: adapter });
   assert.equal(manifest.status, 'captured');
   assert.deepEqual(inputs.map((input) => input.locales), [['en', 'de'], ['en', 'de']]);
-  const jobs = Object.fromEntries(seen[0].entries.map((job) => [`${job.variant} ${job.locale}`, `${job.auth} ${job.url}`]));
+  const state = (auth) => states[auth];
+  const jobs = Object.fromEntries(seen[0].entries.map((job) => [`${job.variant} ${job.locale}`, `${state(job.auth)} ${job.url}`]));
   assert.deepEqual(jobs, {
     'hospitality en': 'hospitality http://localhost:3000/dashboard',
-    'hospitality de': 'hospitality--de http://de.localhost:3000/dashboard',
+    'hospitality de': 'h-de http://de.localhost:3000/dashboard',
     'appointments en': 'appointments http://localhost:3000/dashboard',
     'appointments de': 'appointments http://localhost:3000/dashboard',
   });
-  assert.deepEqual(Object.keys(seen[0].storageStates).sort(), ['appointments', 'hospitality', 'hospitality--de']);
+  assert.equal(Object.keys(seen[0].storageStates).length, 3);
+  // A variant named like another's locale persona keeps its own sign-in.
+  const clash = visualConfig({ targets: [{ files: ['src/**'], routes: ['/d'] }], viewports: [360], variants: [{ id: 'a', account: 'demo-a' }, { id: 'a--de', account: 'demo-ade' }] });
+  const clashHook = async (_command, input) => JSON.stringify({ storageState: { cookies: [{ name: 's', value: input.account }] }, ...(input.variant === 'a' ? { locales: { de: { storageState: { cookies: [{ name: 's', value: 'a-de' }] } } } } : {}) });
+  seen.length = 0;
+  await captureVisual({ project: p, pr: 4, head: '6'.repeat(40), visual: clash, entries: visualMatrix(clash, R('/d')), baseUrl: 'http://localhost:3000', env: {}, withBase: base(clashHook), spawn: adapter });
+  assert.deepEqual(seen[0].entries.map((job) => `${job.variant} ${job.locale} ${states[job.auth]}`), ['a en demo-a', 'a de a-de', 'a--de en demo-ade', 'a--de de demo-ade']);
   const unknown = await captureVisual({ project: p, pr: 4, head: '7'.repeat(40), visual, entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base(async () => JSON.stringify({ storageState: {}, locales: { fr: { storageState: {} } } })) });
   assert.equal(unknown.status, 'failed');
   assert.match(unknown.reason, /locale fr: not in review\.visual\.locales/u);

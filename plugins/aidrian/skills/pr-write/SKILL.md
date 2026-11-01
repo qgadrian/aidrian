@@ -68,7 +68,7 @@ gh pr create --draft --base <base> --title "<title>" --body-file <file>   # new:
 gh pr edit <n> --title "<title>" --body-file <file>                       # existing: update, never recreate
 ```
 
-- Draft by default: the review loop runs on the draft, and the author marks it ready, or the loop does when the Human asked. Open it ready only when asked.
+- Draft by default: the review loop runs on the draft, and the author marks it ready, or the loop does when the Human asked or config.json `github.markReady` is `"auto"`. Open it ready only when asked.
 - Before an edit, read the live body again (`gh pr view <n> --json body`) and keep what is still true.
 - After publishing, read it back and confirm each closing line is plain text on its own line.
 

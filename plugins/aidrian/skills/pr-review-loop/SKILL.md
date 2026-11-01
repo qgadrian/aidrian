@@ -121,5 +121,6 @@ Report, in this order: the triage table; what changed per file with its triage n
 commands with pass or fail; the replies posted, and any that failed; and a sign-off naming the addressed,
 not applicable, accepted, and blocked rows, the residual risks, and whether the pull request is ready for another review.
 On a draft, report convergence; the author marks it ready. Only when the Human asked for that in this session,
-mark it ready yourself with `gh pr ready <n>` once the loop ended at sign-off and `aidrian pr checks <n>` says ready.
-Pending or failing: leave it a draft and say why. After `gh pr ready`, push nothing more.
+or config.json `github.markReady` is `"auto"`, mark it ready yourself with `gh pr ready <n>`
+once the loop ended at sign-off and `aidrian pr checks <n>` says ready. Pending or failing: leave it a draft and say why.
+After `gh pr ready`, push nothing more.

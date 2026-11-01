@@ -1,0 +1,10 @@
+{
+  "dir": "docs/knowledge/product",
+  "description": "What Corner Shop promises its customers, and the rules a change must keep.",
+  "docs": {
+    "refunds.md": {
+      "summary": "Refunds: the critical flows, how a refund returns money, and the refund window.",
+      "tags": ["product_sensitive"]
+    }
+  }
+}

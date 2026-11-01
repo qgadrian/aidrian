@@ -117,14 +117,60 @@ of its invariants, with evidence, and the flow must be signed before the review 
 | `tests` | the flow's tests: deleting one stops the review until it is restored or the Human accepts it |
 | `checks` | check names that must be `SUCCESS` on the head; a skipped or missing one does not pass |
 | `signoff` | `reviewer` (default), or `human`: the Human also signs it off with `aidrian pr signoff` |
+| `content` | whole-file probes and caller tracing for files the globs miss: [Content and tracing](#content-and-tracing) |
 
 The flow's reviewer answers every invariant `holds`, `violated`, `not_affected`, or `cannot_verify`. `holds` and
-`not_affected` must cite `path:line` at the head or `test:<name>`, and the command checks that the place exists. A
+`not_affected` must cite `path:line` at the head, `test:<name>`, or `capture:<key>` (an image the
+[visual capture](#visual-review) took of the head), and the command checks that the place exists. A
 citation proves the line is there, not that it proves the point, so the independent stage gets every flow's
 invariants and the earlier verdicts and is asked to challenge each `holds`. A flow with no invariants is held to one
 generic invariant, that nothing in it is removed or weakened, and is marked unspecified.
 
-A project's plan command can report flows the globs miss, from an import graph or a route map, and mark files as
+An invariant in a list that cites a heading, `{ "id": "no-double", "cite": "docs/product/booking.md#no-double-booking" }`,
+reaches its reviewer with that section as `source`: the heading and its text up to the next heading of the same or a
+higher level, read from the base branch. The reviewer judges against the source; `text` is only the question, and
+without one the question comes from the heading. So the rule lives once, in the doc, and config cannot drift from it.
+A change to a cited doc triggers `harness-config`. `aidrian lint review` warns about a cited section with no text.
+
+### Content and tracing
+
+Globs and `added` patterns see paths and new lines. A flow about a privileged value, such as a service-role database
+client, also needs the files that use it in lines the change did not touch, and the functions it is handed to.
+`content` adds them, with no plan command:
+
+```json
+"service-role": {
+  "files": ["src/core/supabase/get-admin-client.ts"],
+  "added": ["\\bget\\w*AdminClient\\s*\\(", "\\bsupabaseAdmin\\b"],
+  "require": ["agent:security-engineer"],
+  "content": {
+    "roots": ["src", "supabase/functions"],
+    "exclude": ["re:(?:^|/)(?:__tests__|__mocks__)/", "re:\\.(?:test|spec)\\.[cm]?[jt]sx?$"],
+    "probes": ["\\badminClient\\b"],
+    "trace": {
+      "variables": ["adminClient", "supabaseAdmin", "ctx.adminClient"],
+      "factories": ["get\\w*AdminClient\\s*\\("],
+      "params": ["client", "supabase", "db"],
+      "aliases": { "~/": "src/" },
+      "hops": 2
+    }
+  }
+}
+```
+
+- **Content**: a changed source file under `roots`, not under `exclude`, whose whole head content matches one of the
+  flow's `added` patterns or `probes`, joins the flow, even when the change only edits a query below the client.
+  `probes` are for names that only a whole-file read ties to the flow, which `added` would trip on in every test.
+- **Hop 1**: a privileged file (one the flow's `files` name, or whose content matches) calls a function imported from
+  the changed file, and the call's arguments hold a `variables` name, a variable assigned from a `factories` call, or
+  such a call inline. Named, aliased, default, namespace (`ns.fn(client)`), and generic (`fn<T>(client)`) calls
+  count, through one level of `export { } from` barrels. Quoted strings in the arguments are ignored.
+- **Hop 2** (`hops: 2`): the same once more inside a selected callee, where a `params` name counts as privileged.
+- It reads the head through git in batches: one `git grep` per hop and one batched object read. Any git error stops
+  the review, never a plan with less in it. The tracer reads JavaScript and TypeScript (`lib/review/trace-js.mjs`); other files are
+  not scanned. A parser for another language is a second module with the same exports.
+
+A project's plan command can report flows the globs miss and `content` cannot, and mark files as
 presentation only. A presentation-only file in a flow does not trigger it unless it removes lines: deleting a button
 can remove the way into a flow.
 
@@ -138,14 +184,93 @@ pull request. A change to any of these triggers the built-in `harness-config` fl
 flow's deleted test stops the review even when the change touches nothing else in the flow.
 
 `aidrian lint review` fails on a flow whose globs match no tracked file, an invariants doc that is missing or has no
-headings, and a cite to a heading that is not there. It warns past 12 flows, or 10 invariants in one flow: a flow is a
-critical path, not every feature.
+headings, and a cite to a heading that is not there. It warns past 16 flows, or 10 invariants in one flow. The budget
+stands for how many passes a review dispatches (an agent reviews up to 3 flows per pass); a flow is a critical path,
+not every feature. The warning never blocks.
 
 ### Sign-off by the Human
 
-`signoff: "human"` adds `aidrian pr signoff <PR> --flow <id> --head <sha>`, run by the Human. It is an audit entry,
-not proof: an agent holds the same shell and the same GitHub token. Every sign-off and override is listed in the
-review summary on the pull request. For proof, protect the branch with a required review from a second account.
+`signoff: "human"` adds `aidrian pr signoff <PR> --flow <id> --head <sha>`, run by the Human in their own shell (`!`
+in a Claude Code prompt, or another terminal). The `review-signoff` rule ([hooks.md](hooks.md#bash-rules)) blocks an
+agent that runs it. It is still an audit entry, not proof: an agent holds the same GitHub token. Every sign-off and
+override is listed in the review summary on the pull request. For proof, protect the branch with a required review
+from a second account.
+
+A sign-off holds on a later head when the signed head is its ancestor and the change since selects nothing of the
+flow, through the same selection the plan uses: its globs, `added` patterns, `content`, the plan command, its tests,
+and its invariants docs. A push that touches nothing of the flow does not ask the Human again; a rebase does. A
+deleted flow test is still accepted only for the exact head.
+
+## Visual review
+
+A change to a screen gets reviewed as a picture too. `review.visual` names the screens; before the visual reviewers run,
+`aidrian pr review` captures every touched route at each width, locale, and variant, and hands them the images with
+facts measured in the page: horizontal overflow, text cut off by its box, and controls under 44 px.
+
+```json
+"review": {
+  "visual": {
+    "platform": "web",
+    "targets": [{ "files": ["re:^src/app/.*\\.tsx$", "src/components/**"], "routes": ["/dashboard", "/{locale}/book"] }],
+    "viewports": [360, 768, 1280],
+    "locales": ["en", "de"],
+    "variants": [{ "id": "hospitality", "account": "demo-hospitality" }, { "id": "appointments", "account": "demo-appointments" }],
+    "login": "node scripts/visual-login.mjs",
+    "preview": "node scripts/preview-url.mjs",
+    "checklist": "docs/ui/visual-ui.md#fit-checks"
+  },
+  "flows": {
+    "ui-surface": { "files": ["re:^src/app/.*\\.tsx$", "src/components/**"], "require": ["agent:designer", "agent:ux-specialist"],
+      "invariants": [{ "id": "fit", "cite": "docs/ui/visual-ui.md#fit-checks" }] }
+  }
+}
+```
+
+| Key | |
+| --- | --- |
+| `platform` | `web`: Playwright, loaded from the project's own dependencies (`playwright` or `@playwright/test`) |
+| `targets` | which changed files capture which routes; a route may hold `{locale}`, and `base` names a base the login prints, for screens on another host or path |
+| `viewports`, `locales` | the widths and locale tags; each image is taken at one of each |
+| `variants` | the product modes to capture, each with the name of a demo account to sign in as, or none for a public page |
+| `login` | a command, run from the base branch, that reads `{ account, variant, baseUrl }` on stdin and prints `{ "storageState": {...}, "baseUrl"?, "bases"? }`; the account's secret comes from its environment, never config |
+| `preview` | a command, run from the base branch, that reads `{ pr, head }` and prints the base URL, such as a preview deployment |
+| `attach` | `auto`, `local`, or `off`; unset, `auto` on a private or internal repository and `local` on a public one |
+| `reviewers` | the agents that get the captures; `designer` and `ux-specialist` by default |
+| `checklist` | a doc the visual reviewers check against, included in their input |
+
+- The base URL is `review.visual.baseUrl` in `.aidrian.local.json`, a machine setting such as `http://localhost:3000`,
+  else the `preview` command's. With neither, or without Playwright, the reviewers get a status instead of images
+  and review from code; the review does not stop.
+- **Bases**: a variant's routes open on its `baseUrl` from the login, else the machine's. A screen elsewhere, such as
+  a public page on a per-variant subdomain or sign-in at the app root, goes in a target with `"base": "guest"`, and
+  the login prints it per variant: `"bases": { "guest": "http://shop.localhost:3000", "root": "http://localhost:3000" }`.
+  A variant whose login prints no such base gets an error entry for that route, never a capture of another host.
+- **Limits**: a route may ask for at most 60 images (viewports x locales x variants), a config error past it. One
+  review captures at most 200; past that it stops as `too_large` and names the routes to narrow.
+- **Once per head**: the capture runs when a visual reviewer is dispatched, and its manifest (each image's key, file,
+  hash, and facts) is kept in the state folder. Flow verdicts cite an image as `capture:<key>`; a key of another head
+  is no evidence. Animations are off and motion is reduced, so an unchanged screen gives the same bytes.
+- **Attach**: with `auto`, `aidrian pr review` uploads the images through the
+  [gh-image](https://github.com/drogers0/gh-image) extension, with no confirmation, into one captures comment edited
+  in place. It uploads only images this capture wrote and listed, checked by hash and PNG signature, and each hash
+  once. The visibility is read at upload time, so a repository made public later stops uploading by itself, and the
+  review summary shows the mode and the visibility. Without gh-image the images stay local and the review goes on.
+- `review.visual`, `login`, and `preview` are the base branch's, like the plan command: a pull request cannot switch
+  itself to attaching or point the capture elsewhere, and a change to them triggers `harness-config`.
+- A presentation-only change, such as a class name, triggers the flow by its path like any other change.
+
+### Findings one by one
+
+A visual reviewer records its pass with `--findings-file` rather than counts, so the
+[disposition table](../plugins/aidrian/lib/finding-disposition.json) decides what blocks, not the reviewer's word:
+
+```json
+[{ "title": "Label clipped at 360px", "file": "src/app/x.tsx", "line": 4, "severity": "medium", "likelihood": "routine", "affects": "users", "state": "open" }]
+```
+
+A finding blocks the pass while it is open and not `acceptable_as_is`, or accepted with a disposition that cannot be
+accepted (`fix_now`, or no likelihood and affects yet). Any agent pass may record this way. Flow results gate the
+review step; they are not a merge gate by themselves, so protect the branch with the checks the review posts.
 
 ## Reviewers
 
@@ -188,8 +313,9 @@ machines with and without Codex.
 
 ## Rounds
 
-A round is one run of the plan on one head. The cap is `github.maxReviewRounds`, and raising it needs
-`AIDRIAN_ALLOW_EXTRA_ROUNDS=1` in the Human's own shell. The `review-rounds` rule ([hooks.md](hooks.md#bash-rules)) refuses an
+A round is one run of the plan on one head. The cap is `github.maxReviewRounds` as the base branch commits it, so an
+edit to the working copy's config cannot raise it, and raising it needs `AIDRIAN_ALLOW_EXTRA_ROUNDS=1` in the Human's
+own shell. The `review-rounds` rule ([hooks.md](hooks.md#bash-rules)) refuses an
 agent command that sets it, and a bot request posted any way but through `aidrian pr`. The last round runs the final stage first, so a pull request
 always gets its independent review before the cap, then lets the earlier stages finish on the same head; it passes
 when nothing is left to fix, and stops at the cap when a fix would need another head. A reviewer that fails or hits
@@ -205,8 +331,10 @@ than the one under review counts for nothing. A flow's required checks are read 
 `review.planCommand` runs a project's own planner: it reads `{ base, head, changes }` on stdin and prints a plan in
 the same shape as the built-in one. The built-in plan is computed too, and the two merge: the command may add depth,
 flows, passes, and stages, and reorder stages, never remove or replace a built-in pass or flow: a pass with a built-in
-pass's id is dropped, and the plan says so. A plan that names a reviewer
-nobody can run is refused. The command and its files are the base branch's, like the rest of the review config.
+pass's id is dropped, and the plan says so. Its passes then merge with the built-in ones per agent, so an agent both
+plans ask for is dispatched once; a flow both plans name keeps the files and reasons of both. A plan that names a
+reviewer nobody can run is refused. A failed command shows the last lines of its stderr, with token-shaped strings
+masked. The command and its files are the base branch's, like the rest of the review config.
 
 ## The record
 

@@ -14,12 +14,13 @@ export const GH_EXEC_OPTIONS = Object.freeze({ encoding: 'utf8', stdio: ['ignore
 
 // gh's stdout, so no call site inherits the 1 MB default or waits forever. An overflow names the command and the limit;
 // a timeout names the command and how long it waited.
-export function runGh(args, { cwd, exec = execFileSync } = {}) {
+// `timeoutMs` raises the limit for a call that is long by nature, such as an upload of many files.
+export function runGh(args, { cwd, exec = execFileSync, timeoutMs = GH_TIMEOUT_MS } = {}) {
   try {
-    return exec('gh', args, cwd === undefined ? GH_EXEC_OPTIONS : { ...GH_EXEC_OPTIONS, cwd });
+    return exec('gh', args, { ...GH_EXEC_OPTIONS, ...(cwd === undefined ? {} : { cwd }), ...(timeoutMs === GH_TIMEOUT_MS ? {} : { timeout: timeoutMs }) });
   } catch (err) {
     if (err?.code === 'ETIMEDOUT') {
-      throw new Error(`gh ${args.join(' ')} did not finish in ${GH_TIMEOUT_MS / 1000} s and was stopped. Check the network and \`gh auth status\`.`);
+      throw new Error(`gh ${args.join(' ')} did not finish in ${timeoutMs / 1000} s and was stopped. Check the network and \`gh auth status\`.`);
     }
     if (err?.code !== 'ENOBUFS') throw err;
     const mb = Math.round(GH_MAX_BUFFER_BYTES / 1024 / 1024);

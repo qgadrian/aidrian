@@ -42,7 +42,7 @@ const ACTIONS = {
 
 export const commands = {
   pr: {
-    usage: 'review [PR] [--with-bot] [--max-rounds N] | signoff PR --flow ID --head SHA | await-review [PR] [--request] [--max-rounds N] [--head SHA] | attest PR --head SHA --reviewer WHO --findings N --fixed N [--note T] | attest PR --pass ID --head SHA --reviewer WHO --findings N --fixed N [--accepted N] [--verdicts FILE] | attest PR --check | checks [PR] [-R OWNER/REPO] [--json] | disposition --severity S [--likelihood L --affects A] [--cost C] [--source bot [--round N]] [--vocab]',
+    usage: 'review [PR] [--with-bot] [--max-rounds N] | signoff PR --flow ID --head SHA | await-review [PR] [--request] [--max-rounds N] [--head SHA] | attest PR --head SHA --reviewer WHO --findings N --fixed N [--note T] | attest PR --pass ID --head SHA --reviewer WHO (--findings N --fixed N [--accepted N] | --findings-file FILE) [--verdicts FILE] | attest PR --check | checks [PR] [-R OWNER/REPO] [--json] | disposition --severity S [--likelihood L --affects A] [--cost C] [--source bot [--round N]] [--vocab]',
     about: 'run the review plan one step at a time, record a flow sign-off, wait for the review bot, record the review the review gate asks for, give a one-line check verdict, or decide what to do with one review finding',
     async run(args) {
       const [action, ...rest] = args;

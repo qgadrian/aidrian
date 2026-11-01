@@ -90,7 +90,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `state.dir` | The machine-local [state folder](project-folder.md#local-state); `null` is the one under `$XDG_STATE_HOME`. |
 | `github.requiredSections` | The `## ` sections every pull request body must have ([Bash rules](hooks.md#bash-rules)); `[]` checks none. |
 | `github.reviewer` | The login of the Codex review bot that `aidrian pr await-review` waits for. `null` or `"none"`: no bot ([below](#no-review-bot)). |
-| `github.maxReviewRounds` | The review rounds a pull request may get, 3 by default: the review loop and `aidrian pr await-review --request` stop there. A `--max-rounds` above it runs only with `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, which the Human sets; a Bash rule refuses an agent command that sets it, and any bot request made outside `aidrian pr`. |
+| `github.maxReviewRounds` | The review rounds a pull request may get, 3 by default: the review loop and `aidrian pr await-review --request` stop there. They read it from the pull request's base branch, so an edit to the working copy does not raise it. A `--max-rounds` above it runs only with `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, which the Human sets; a Bash rule refuses an agent command that sets it, and any bot request made outside `aidrian pr`. |
 | `github.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. |
 | `github.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
 | `github.conditionalChecks` | Parts of check names whose `SKIPPED` or `NEUTRAL` result is routine, such as a job a path filter turns off. |
@@ -175,8 +175,9 @@ In `neverValid`, a `<word>` stands for any one word, so `needs <specialist> over
 ## Review plan
 
 `review` decides how `aidrian pr review` reviews a pull request: its depth, its stages, the critical flows it holds
-to their invariants, and the reviewers a project adds. [review.md](review.md) describes every key. The machine's
-engine is not here: it is `review.engine` in `.aidrian.local.json`.
+to their invariants, the reviewers a project adds, and the [visual capture](review.md#visual-review).
+[review.md](review.md) describes every key. Two machine settings are not here: the engine, `review.engine`, and the
+visual capture's base URL, `review.visual.baseUrl`, both in `.aidrian.local.json`.
 
 ## Review gate
 

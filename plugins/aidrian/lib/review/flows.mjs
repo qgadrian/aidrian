@@ -15,7 +15,7 @@ const slug = (text) => text.toLowerCase().replace(/[`*_]/gu, '').replace(/[^a-z0
 // The invariants of a flow. A list is used as written. A doc's invariants are its `##` and `###` headings, each with
 // the paragraph under it; `read(path)` returns the doc's text or null. Returns { invariants, unspecified, problem }.
 export function invariantsOf(flow, read) {
-  if (Array.isArray(flow.invariants)) return { invariants: flow.invariants, unspecified: false, problem: null };
+  if (Array.isArray(flow.invariants)) return { invariants: flow.invariants.map((invariant) => withSource(invariant, read)), unspecified: false, problem: null };
   if (typeof flow.invariants !== 'string') return { invariants: [UNSPECIFIED], unspecified: true, problem: null };
   const text = read(flow.invariants);
   if (text === null) return { invariants: [UNSPECIFIED], unspecified: true, problem: `${flow.invariants} is missing` };
@@ -32,18 +32,54 @@ export function invariantsOf(flow, read) {
   return list.length ? { invariants: list, unspecified: false, problem: null } : { invariants: [UNSPECIFIED], unspecified: true, problem: `${flow.invariants} has no ## headings` };
 }
 
+// The most of a cited section a reviewer reads.
+export const MAX_SOURCE = 4000;
+
+// The section of a markdown doc under the heading whose slug is `anchor`: the heading and its body, up to the next
+// heading of the same or a higher level. Null when the doc has no such heading.
+export function sectionOf(text, anchor) {
+  const lines = String(text ?? '').split('\n');
+  let start = -1;
+  let level = 0;
+  for (const [i, line] of lines.entries()) {
+    const heading = /^(#{1,6})\s+(.+?)\s*#*\s*$/u.exec(line);
+    if (!heading) continue;
+    if (start === -1 && slug(heading[2]) === anchor) {
+      start = i;
+      level = heading[1].length;
+    } else if (start !== -1 && heading[1].length <= level) return { heading: lines[start].replace(/^#+\s+/u, '').trim(), body: lines.slice(start + 1, i).join('\n').trim() };
+  }
+  return start === -1 ? null : { heading: lines[start].replace(/^#+\s+/u, '').trim(), body: lines.slice(start + 1).join('\n').trim() };
+}
+
+// An invariant of a list with the doc section it cites as `source`, which the reviewer judges against: the text is
+// the question, the cited doc is the rule. With no text, the question comes from the cited heading.
+function withSource(invariant, read) {
+  if (typeof invariant.cite !== 'string' || !invariant.cite.includes('#')) return invariant;
+  const [file, anchor] = invariant.cite.split('#');
+  const section = sectionOf(read(file), anchor);
+  const text = invariant.text ?? (section ? `Does the change keep "${section.heading}" as the cited section defines it?` : `Does the change keep ${invariant.cite} as it defines?`);
+  if (!section) return { ...invariant, text };
+  const source = `${section.heading}\n\n${section.body}`;
+  return { ...invariant, text, source: source.length > MAX_SOURCE ? `${source.slice(0, MAX_SOURCE)}\n[cut at ${MAX_SOURCE} characters; read ${file}]` : source };
+}
+
 // Whether a verdict's evidence names something real at `head`: `path:line` of a file that has that line, or
 // `test:<name>` that appears in a file at head. A citation proves the place exists, not that it shows the invariant
 // holds; the independent stage challenges that, and the summary says so.
-export function citationProblem(evidence, { root, head }) {
+// `capture:<key>` names an image the visual capture took of this head (lib/review/visual.mjs): `captures` holds this
+// head's keys, so an image of another head, or a file an agent put there, is no evidence.
+export function citationProblem(evidence, { root, head, captures = new Set() }) {
   if (typeof evidence !== 'string' || evidence.trim() === '') return 'no evidence';
+  const capture = /^capture:(.+)$/u.exec(evidence.trim());
+  if (capture) return captures.has(capture[1].trim()) ? null : `no capture "${capture[1].trim()}" of ${head.slice(0, 7)}`;
   const test = /^test:(.+)$/u.exec(evidence.trim());
   if (test) {
     const found = runGit(['grep', '-F', '-q', '-e', test[1].trim(), head], root, { timeout: 15_000 });
     return found.status === 0 ? null : `no file at ${head.slice(0, 7)} names the test "${test[1].trim()}"`;
   }
   const place = /^(.+?):(\d+)(?:-\d+)?$/u.exec(evidence.trim());
-  if (!place) return `"${evidence}" is not path:line or test:<name>`;
+  if (!place) return `"${evidence}" is not path:line, test:<name>, or capture:<key>`;
   const shown = runGit(['show', `${head}:${place[1]}`], root, { timeout: 15_000 });
   if (shown.status !== 0) return `${place[1]} is not in ${head.slice(0, 7)}`;
   const lines = shown.stdout.split('\n').length;
@@ -59,7 +95,7 @@ export function flowState(invariants, verdicts, check) {
   for (const invariant of invariants) {
     const mine = verdicts.filter((verdict) => verdict.invariant === invariant.id);
     if (mine.some((verdict) => verdict.verdict === 'violated')) open.push(invariant.id);
-    else if (!mine.some((verdict) => ['holds', 'not_affected'].includes(verdict.verdict) && check(verdict.evidence) === null)) unverified.push(invariant.id);
+    else if (!mine.some((verdict) => ['holds', 'not_affected'].includes(verdict.verdict) && check(verdict.evidence, verdict) === null)) unverified.push(invariant.id);
   }
   return { signed: open.length === 0 && unverified.length === 0, open, unverified };
 }

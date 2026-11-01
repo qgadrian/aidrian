@@ -120,12 +120,15 @@ export function focusBlocks(section, focuses) {
 }
 
 // What a reviewer reads of a cited section: the heading and its blocks (only the focused ones when the invariant has a
-// `focus`), cut at a block boundary to the limit with a note naming every block it left out and where to read it. A
+// `focus` that matches), cut at a block boundary to the limit with a note naming every block it left out and where to read it. A
 // first block longer than the limit is cut inside it. Returns { source, length, limit }, `length` before any cut.
 export function sourceOf(section, invariant) {
-  const focuses = focusesOf(invariant);
+  // A focus that starts no block, such as after an edit of the doc, falls back to the whole section: the reviewer then
+  // reads more than it needs instead of nothing, and `aidrian lint review` reports the focus.
+  const picked = focusesOf(invariant).length ? focusBlocks(section, focusesOf(invariant)).blocks : [];
+  const focuses = picked.length ? focusesOf(invariant) : [];
   const limit = focuses.length ? MAX_FOCUSED : MAX_SOURCE;
-  const blocks = focuses.length ? focusBlocks(section, focuses).blocks : blocksOf(section.raw ?? section.body);
+  const blocks = focuses.length ? picked : blocksOf(section.raw ?? section.body);
   const full = [section.heading, ...blocks].join('\n\n');
   if (full.length <= limit) return { source: full, length: full.length, limit };
   let kept = section.heading;

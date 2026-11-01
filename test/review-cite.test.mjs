@@ -64,6 +64,8 @@ test('focus sends only the blocks it names, in section order, and names the ques
   assert.deepEqual(two.blocks.map((block) => block.split('\n')[0]), ['- Domain separation is strict:', '- Settings controllability is non-negotiable:']);
   assert.deepEqual(two.missing, ['Nope'], 'markup and case do not matter; a focus that starts no block is reported');
   assert.deepEqual(focusBlocks(section, ['Settings control']).missing, ['Settings control'], 'a focus ends on a whole word');
+  const stale = sourceOf(section, { cite: 'product.md#core-product-invariants', focus: 'Gone rule' }).source;
+  assert.match(stale, /^Core Product Invariants\n\n- Domain separation is strict:/u, 'a focus that matches nothing sends the whole section, not the heading alone');
 });
 
 test('a long section is cut between blocks, and the note names every block the reviewer did not see', () => {

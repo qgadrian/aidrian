@@ -227,6 +227,7 @@ test('aidrian lint review: dead flow globs, a missing invariants doc, and a bad 
       { id: 'miss', cite: 'long.md#rules', focus: 'Nothing like this' },
       { id: 'wide', text: 'Does the change remove a rule?', cite: 'long.md#rules' },
       { id: 'narrow', cite: 'long.md#rules', focus: 'Rule 1' },
+      { id: 'empty', cite: 'inv.md#never-double-book', focus: 'Refund cap' },
     ] },
     bare: { files: ['src/booking/**'] },
   } } }));
@@ -236,11 +237,13 @@ test('aidrian lint review: dead flow globs, a missing invariants doc, and a bad 
   assert.equal(run.stderr, [
     'review: warning: flow focused: invariant wide text asks with "remove", so yes would be the breach: ask whether the change still keeps the rule',
     'review: warning: flow focused: invariant wide cites 5145 characters of #rules; the reviewer reads the first 4000: add "focus" to name the blocks it judges against',
+    'review: warning: flow focused: invariant empty cites #never-double-book, a section with no text under its heading for the reviewer to judge against',
     'review: warning: flow bare states no invariants: its reviewer checks only that nothing in it is removed or weakened',
     'review: flow gone: files "src/gone/**" matches no tracked file',
     'review: flow gone: invariants missing.md is missing',
     'review: flow loose: invariant x cites #nope, a heading inv.md does not have',
     'review: flow focused: invariant miss has focus "Nothing like this", which starts no top-level block of #rules',
+    'review: flow focused: invariant empty has focus "Refund cap", which starts no top-level block of #never-double-book',
     '',
   ].join('\n'));
 });

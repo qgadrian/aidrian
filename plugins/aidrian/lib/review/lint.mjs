@@ -68,11 +68,13 @@ export function lintReview(project, config) {
       if (text === null) problems.push(`flow ${id}: invariant ${invariant.id} cites ${file}, which is missing`);
       else if (anchor && !section) {
         problems.push(`flow ${id}: invariant ${invariant.id} cites #${anchor}, a heading ${file} does not have`);
-      } else if (anchor && !section.body) {
-        warnings.push(`flow ${id}: invariant ${invariant.id} cites #${anchor}, a section with no text under its heading for the reviewer to judge against`);
       } else if (section) {
         const { missing } = focusBlocks(section, focusesOf(invariant));
         for (const focus of missing) problems.push(`flow ${id}: invariant ${invariant.id} has focus "${focus}", which starts no top-level block of #${anchor}`);
+        if (!section.body) {
+          warnings.push(`flow ${id}: invariant ${invariant.id} cites #${anchor}, a section with no text under its heading for the reviewer to judge against`);
+          continue;
+        }
         const { length, limit } = sourceOf(section, invariant);
         if (!missing.length && length > limit) {
           const advice = focusesOf(invariant).length ? 'narrow its "focus"' : 'add "focus" to name the blocks it judges against';

@@ -89,10 +89,11 @@ function headRepo({ root, head, roots, spawn }) {
   const grep = (words, grepRoots, keep) => {
     if (!words.length) return [];
     const patterns = words.flatMap((word) => ['-e', word]);
-    const out = spawn('git', ['grep', '-l', '-F', ...patterns, head, '--', ...grepRoots.map(pathspec)], { ...options, encoding: 'utf8' });
+    // NUL after each name (-z), so git prints a path such as `src/café.ts` as it is, never quoted.
+    const out = spawn('git', ['grep', '-l', '-z', '-F', ...patterns, head, '--', ...grepRoots.map(pathspec)], { ...options, encoding: 'utf8' });
     // Exit 1 is "no match"; a spawn error, a signal, or any other status is a grep that did not run.
     if (gitFailed(out, [0, 1])) throw new Error(`git grep at ${head} failed: ${gitProblem(out)}`);
-    const files = out.stdout.split('\n').filter(Boolean).map((each) => each.slice(head.length + 1));
+    const files = out.stdout.split('\0').filter(Boolean).map((each) => each.slice(head.length + 1));
     prefetch(files.filter(keep));
     return files;
   };

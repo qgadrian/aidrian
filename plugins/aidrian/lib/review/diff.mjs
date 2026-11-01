@@ -16,9 +16,9 @@ export const mergeBase = (root, base, head) => git(root, ['merge-base', base, he
 
 // [{ file, added, removed, status }] between two commits. A binary file counts 0 lines; a rename is its new path.
 export function changedFiles(root, from, to) {
-  const numstat = git(root, ['diff', '--numstat', '-z', '--no-renames', from, to]);
+  const numstat = git(root, ['diff', '--numstat', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', from, to]);
   const status = new Map();
-  const names = git(root, ['diff', '--name-status', '-z', '--no-renames', from, to]).split('\0');
+  const names = git(root, ['diff', '--name-status', '-z', '--no-renames', '--no-ext-diff', from, to]).split('\0');
   for (let i = 0; i + 1 < names.length; i += 2) status.set(names[i + 1], names[i]);
   const out = [];
   for (const record of numstat.split('\0').filter(Boolean)) {
@@ -30,7 +30,9 @@ export function changedFiles(root, from, to) {
 
 // The added lines per file, and the files that lost lines, from one unified diff with no context.
 export function diffLines(root, from, to, files = null) {
-  const text = git(root, ['diff', '--unified=0', '--no-color', '--no-renames', from, to, ...(files ? ['--', ...files] : [])]);
+  // Unquoted paths (core.quotePath=false), so a header names `src/café.ts` as the file list does; no external diff or
+  // text conversion, so the lines are the file's own.
+  const text = git(root, ['-c', 'core.quotePath=false', 'diff', '--unified=0', '--no-color', '--no-renames', '--no-ext-diff', '--no-textconv', from, to, ...(files ? ['--', ...files] : [])]);
   const addedLines = {};
   const removedFiles = new Set();
   let file = null;

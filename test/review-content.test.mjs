@@ -442,3 +442,19 @@ test('a root of "." or "./src" reads the same files as "src": git names paths wi
     assert.deepEqual(contentFlows({ root, head, changes: [change(CTX_FILE)], flows: scoped }).map((each) => each.files), [[CTX_FILE]], JSON.stringify(roots));
   }
 });
+
+test('an importer whose name git would quote, such as src/café.ts, is still traced', (t) => {
+  const callee = 'src/lib/widgets/queries/list-widgets.ts';
+  const body = (filter) => `export const listWidgets = async (client) => client.from('w').select('*')${filter};\n`;
+  const importer = "import { listWidgets } from './lib/widgets/queries/list-widgets';\nexport const page = async (adminClient) => listWidgets(adminClient);\n";
+  const { root, head } = fixture(t, { [callee]: body(''), 'src/café.ts': importer }, { [callee]: body(".eq('a', 1)") });
+  const selected = contentFlows({ root, head, changes: [change(callee)], addedLines: { [callee]: [body(".eq('a', 1)").trim()] }, flows });
+  assert.deepEqual(selected.map((each) => each.files), [[callee]]);
+  assert.match(selected[0].reasons[0], /src\/café\.ts:2 calls listWidgets/u);
+});
+
+test('diffLines names a file git would quote by its real path', async (t) => {
+  const { diffLines } = await import('../plugins/aidrian/lib/review/diff.mjs');
+  const { root, base, head } = fixture(t, { 'src/café.ts': 'a\n' }, { 'src/café.ts': 'a\nb\n' });
+  assert.deepEqual(diffLines(root, base, head).addedLines, { 'src/café.ts': ['b'] });
+});

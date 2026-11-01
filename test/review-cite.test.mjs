@@ -49,6 +49,8 @@ test('blocksOf takes the least indentation as top level, and a fence closes only
   const indented = sectionOf('## Rules\n\n  - First: one\n    - nested\n  - Second: two\n  - Third: three\n', 'rules');
   assert.deepEqual(blocksOf(indented.raw), ['- First: one\n  - nested', '- Second: two', '- Third: three']);
   assert.deepEqual(focusBlocks(indented, ['Second']).blocks, ['- Second: two'], 'each indented sibling is its own block');
+  assert.deepEqual(blocksOf('Intro.\n\n  - First: one\n    - nested\n  - Second: two'), ['Intro.', '  - First: one\n    - nested', '  - Second: two'], 'bullets indented under a plain paragraph');
+  assert.deepEqual(blocksOf('- Item: one\n\n  more of the item\n- Next'), ['- Item: one\n\n  more of the item', '- Next'], 'a paragraph at the content column stays in its item');
   const fenced = ['````md', '```js', 'x()', '```', '', '- not a rule, still the example', '````', '', '- Real rule'].join('\n');
   assert.deepEqual(blocksOf(fenced), [fenced.split('\n\n- Real rule')[0], '- Real rule'], 'the inner ``` does not close the ```` fence');
   assert.deepEqual(blocksOf('~~~\n```\n~~~ not bare\n~~~\n\nAfter.'), ['~~~\n```\n~~~ not bare\n~~~', 'After.']);

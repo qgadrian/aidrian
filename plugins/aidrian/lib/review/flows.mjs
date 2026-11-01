@@ -71,10 +71,12 @@ const fenceOf = (line) => {
   return { char: found[2][0], length: found[2].length, bare: found[1] === '' && found[3].trim() === '' };
 };
 
-// The top-level blocks of a section body, in order: a sub-heading, a top-level list item with its more indented
-// lines, a fenced block, or a paragraph. Top level is the body's least indentation outside fences, so a section whose bullets are
-// all indented still splits into them. A fenced code block stays inside the block it starts in, and closes only on a
-// bare fence of its own character, at least as long. Blank lines are dropped from block edges.
+// The top-level blocks of a section body, in order: a sub-heading, a top-level list item with its nested lines, a
+// fenced block, or a paragraph. As in CommonMark, a line belongs to the list item above it when it is indented to that
+// item's content column or deeper; otherwise a line up to 3 spaces past the body's least indentation (outside fences)
+// is top level. So bullets split whether the section indents them all, or indents them under a plain paragraph. A
+// fenced code block stays inside the block it starts in, and closes only on a bare fence of its own character, at least
+// as long. Blank lines are dropped from block edges.
 export function blocksOf(body) {
   const lines = String(body ?? '').split('\n');
   // Per line: inside a fence (its closing line included), opening one, or the first line after one closes.
@@ -95,18 +97,24 @@ export function blocksOf(body) {
       closed = true;
     }
   }
-  const indents = lines.filter((line, i) => !inFence[i] && line.trim()).map((line) => /^[ \t]*/u.exec(line)[0].length);
+  const indentOf = (line) => /^[ \t]*/u.exec(line)[0].length;
+  const indents = lines.filter((line, i) => !inFence[i] && line.trim()).map(indentOf);
   const base = indents.length ? Math.min(...indents) : 0;
   const blocks = [];
   let current = null;
+  // The content column of the list item the current block is, or null when it is not one.
+  let column = null;
   let blank = true;
   for (const [i, line] of lines.entries()) {
-    const top = !inFence[i] && line.trim() !== '' && /^[ \t]*/u.exec(line)[0].length === base;
-    const text = line.slice(Math.min(base, /^[ \t]*/u.exec(line)[0].length));
-    const starts = top && (/^#{1,6}\s/u.test(text) || /^(?:[-*+]|\d+[.)])\s/u.test(text) || blank || opens[i] || afterFence[i]);
+    const indent = indentOf(line);
+    const text = line.slice(Math.min(base, indent));
+    const item = /^([ \t]*)((?:[-*+]|\d+[.)])[ \t]+)\S/u.exec(line);
+    const top = !inFence[i] && line.trim() !== '' && indent - base <= 3 && (column === null || indent < column);
+    const starts = top && (/^#{1,6}\s/u.test(text.trimStart()) || item !== null || blank || opens[i] || afterFence[i]);
     if (starts || (!current && line.trim())) {
       current = [];
       blocks.push(current);
+      column = item ? item[1].length + item[2].length : null;
     }
     if (current) current.push(text);
     blank = line.trim() === '';

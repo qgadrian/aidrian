@@ -80,26 +80,30 @@ export function codexAvailable(run = spawnSync) {
   return codexReady;
 }
 
-// The engine this machine reviews with, from the local file's `review.engine`: { reviewer, reason } or { problem }.
-// `auto` takes codex-local, else the review bot, else self, and says which and why.
+// The engine this machine reviews with: config.json `review.engine` when the project sets it, which is policy and wins,
+// else the local file's. { reviewer, reason } or { problem }. `auto` takes codex-local, else the review bot, else self,
+// and says which and why; a project's engine says it came from the project config.
 export function resolveEngine(config, { codex = codexAvailable } = {}) {
   const map = reviewerMap(config);
-  const wanted = config.reviewEngine ?? 'auto';
+  const project = config.review?.engine ?? null;
+  const wanted = project ?? config.reviewEngine ?? 'auto';
+  const key = project ? 'config.json review.engine' : 'review.engine';
+  const said = (reason) => (project ? `${reason} (set by the project config)` : reason);
   const botOn = config.github.reviewer !== null;
   if (wanted === 'auto') {
     const ready = codex();
-    if (ready.ok) return { reviewer: map['codex-local'], reason: 'auto: codex is installed and logged in' };
-    if (botOn) return { reviewer: map['pr-bot'], reason: `auto: ${ready.reason}, so the review bot` };
-    return { reviewer: map.self, reason: `auto: ${ready.reason} and no review bot, so self` };
+    if (ready.ok) return { reviewer: map['codex-local'], reason: said('auto: codex is installed and logged in') };
+    if (botOn) return { reviewer: map['pr-bot'], reason: said(`auto: ${ready.reason}, so the review bot`) };
+    return { reviewer: map.self, reason: said(`auto: ${ready.reason} and no review bot, so self`) };
   }
-  if (!Object.hasOwn(map, wanted)) return { problem: `review.engine "${wanted}" is not a built-in engine or a reviewer of review.reviewers` };
-  if (map[wanted].pending) return { problem: `review.engine "${wanted}" is a reviewer this pull request adds: it runs once it is on the base branch` };
-  if (wanted === 'pr-bot' && !botOn) return { problem: 'review.engine is "pr-bot", but config.json github.reviewer is none' };
+  if (!Object.hasOwn(map, wanted)) return { problem: `${key} "${wanted}" is not a built-in engine or a reviewer of review.reviewers` };
+  if (map[wanted].pending) return { problem: `${key} "${wanted}" is a reviewer this pull request adds: it runs once it is on the base branch` };
+  if (wanted === 'pr-bot' && !botOn) return { problem: `${key} is "pr-bot", but config.json github.reviewer is none` };
   if (wanted === 'codex-local') {
     const ready = codex();
-    if (!ready.ok) return { problem: `review.engine is "codex-local", but ${ready.reason}` };
+    if (!ready.ok) return { problem: `${key} is "codex-local", but ${ready.reason}` };
   }
-  return { reviewer: map[wanted], reason: `review.engine: ${wanted}` };
+  return { reviewer: map[wanted], reason: said(`review.engine: ${wanted}`) };
 }
 
 // Whether `reviewers` (the names of the passes a plan will run) meet a `require` word. `independent-model` needs a

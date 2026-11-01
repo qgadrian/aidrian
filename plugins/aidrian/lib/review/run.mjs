@@ -72,10 +72,10 @@ export const defaultGh = {
 export function reviewInForce(baseReview, headReview) {
   if (!baseReview) {
     const pending = Object.fromEntries(Object.entries(headReview.reviewers).map(([name, reviewer]) => [name, { ...reviewer, pending: true }]));
-    return { review: { ...headReview, planCommand: null, visual: null, reviewers: pending }, changed: ['planCommand', 'reviewers', 'visual'].filter((key) => JSON.stringify(headReview[key] ?? null) !== JSON.stringify(key === 'reviewers' ? {} : null)) };
+    return { review: { ...headReview, engine: null, planCommand: null, visual: null, reviewers: pending }, changed: ['engine', 'planCommand', 'reviewers', 'visual'].filter((key) => JSON.stringify(headReview[key] ?? null) !== JSON.stringify(key === 'reviewers' ? {} : null)) };
   }
   const changed = [];
-  for (const key of ['rules', 'ignore', 'nonBehaviour', 'flows', 'planCommand', 'reviewers', 'split', 'visual']) {
+  for (const key of ['engine', 'rules', 'ignore', 'nonBehaviour', 'flows', 'planCommand', 'reviewers', 'split', 'visual']) {
     if (JSON.stringify(baseReview[key] ?? null) !== JSON.stringify(headReview[key] ?? null)) changed.push(key);
   }
   return {
@@ -85,6 +85,8 @@ export function reviewInForce(baseReview, headReview) {
       ignore: baseReview.ignore,
       nonBehaviour: baseReview.nonBehaviour,
       split: baseReview.split,
+      // The project's engine is policy, like the plan command: a pull request's own pick runs once it is merged.
+      engine: baseReview.engine ?? null,
       flows: flowsInForce(baseReview.flows, headReview.flows),
       // The plan command and the reviewers a project defines are code: only the base branch's run. A head may add a
       // reviewer under a new name, never redefine one, and a plan command it adds runs once it is merged.
@@ -227,8 +229,10 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   }
   const { addedLines, removedFiles } = diffLines(root, base, head);
 
-  // The record so far: the newer of this machine's and the pull request's.
-  const comments = gh.comments(repo, n);
+  // The record so far: the newer of this machine's and the pull request's. With config.json `review.record: "local"`
+  // the pull request is never read or written: the record is this machine's state folder only.
+  const onPr = config.review.record !== 'local';
+  const comments = onPr ? gh.comments(repo, n) : [];
   const summary = comments.filter((comment) => isSummary(comment.body)).at(-1) ?? null;
   let state = newer(readLocalState(project, n), stateFromComment(summary?.body, n)) ?? emptyState(n, repo);
 
@@ -541,7 +545,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
       state.captures = keepUploaded(state.captures ?? {}, up.uploaded);
       uploadError = up.error;
     }
-    if (mode !== 'off') {
+    if (mode !== 'off' && onPr) {
       const body = capturesBody(manifest, state.captures ?? {}, { mode, visibility, error: uploadError });
       try {
         const known = comments.find((comment) => typeof comment.body === 'string' && comment.body.startsWith(VISUAL_MARKER));
@@ -608,8 +612,8 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
 
   function finish(status, extra) {
     const result = { status, pr: n, repo, head, base, depth: plan.depth, round: state.rounds.length, max_rounds: maxRounds, engine: plan.engine, ...extra };
-    {
-      writeLocalState(project, state);
+    writeLocalState(project, state);
+    if (onPr) {
       const body = summaryBody(state, { ...plan, flows: plan.flows.map((flow) => ({ ...flow, signed: flowStatus(flow).signed, humanSigned: keptSignoffs.has(flow.id) })) }, status);
       try {
         if (summary) gh.edit(repo, summary.id, body);
@@ -630,7 +634,9 @@ function current(project, pr, repo, remote) {
 }
 
 // The record the pull request's summary comment carries, or null when it cannot be read (offline: the local record).
-export function remoteState(repo, pr, gh = defaultGh) {
+// With config.json `review.record: "local"` there is no summary comment, and the pull request is not read.
+export function remoteState(repo, pr, gh = defaultGh, config = null) {
+  if (config?.review.record === 'local') return null;
   try {
     return stateFromComment(gh.comments(repo, pr).filter((comment) => isSummary(comment.body)).at(-1)?.body, pr);
   } catch {

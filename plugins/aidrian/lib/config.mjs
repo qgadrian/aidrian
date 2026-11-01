@@ -226,7 +226,7 @@ export function loadConfig(project) {
   for (const [key, local] of [['names', project.localNames], ['telemetry', project.localTelemetry]]) {
     if (local !== undefined) config[key] = merge({ [key]: SCHEMA[key] }, config, { [key]: local }, '', project.paths.local, errors)[key];
   }
-  // The machine's review engine lives only in the local file (lib/review/config.mjs).
+  // The machine's review engine, from the local file; config.json `review.engine`, when set, wins (lib/review/reviewers.mjs).
   config.reviewEngine = project.localReview === undefined ? 'auto' : checkLocalReview(project.localReview, project.paths.local, errors);
   config.reviewVisual = checkLocalVisual(project.localReview, project.paths.local, errors);
   if (project.localAgents !== undefined) config.agents = checkAgents(project.localAgents, project.paths.local, errors, config.agents, gateErrors);

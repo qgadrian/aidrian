@@ -47,7 +47,7 @@ In a group such as `github`, set only the keys you change; the others keep their
     },
     "reviewGate": { "enabled": false, "checklist": null }
   },
-  "review": { "rules": [], "ignore": ["<lockfiles, snapshots, generated, vendored, minified>"], "nonBehaviour": ["<docs and assets>"], "flows": {}, "planCommand": null, "reviewers": {} },
+  "review": { "engine": null, "record": "comment", "rules": [], "ignore": ["<lockfiles, snapshots, generated, vendored, minified>"], "nonBehaviour": ["<docs and assets>"], "flows": {}, "planCommand": null, "reviewers": {} },
   "docs": { "wrapLimit": 155 },
   "terms": { "file": null },
   "knowledge": { "budgets": { "alwaysBytes": 16384, "taggedDocBytes": 24576 } },
@@ -98,6 +98,8 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.pullRequest` | The project's [pull request contract](#pull-request-contract), beyond the required sections; off by default but for `sharedTempBodyFile`. |
 | `github.reviewGate.enabled` | `true` asks the review bot only once a review of the diff is on record: [Review gate](#review-gate). |
 | `github.reviewGate.checklist` | A file the reviewer reads the diff against, named in the gate's message; `null` names none. |
+| `review.engine` | The project's [review engine](review.md#the-engine); it wins over the machine's. `null` leaves the choice to each machine. |
+| `review.record` | Where the [review record](review.md#the-record) goes: `"comment"` also writes a summary comment on the pull request; `"local"` keeps it in the state folder only. |
 | `terms.file` | The [terms file](#terms) of banned terms and their replacements, relative to the project root; `null` turns the rule off. |
 | `docs.wrapLimit` | The longest line, in characters, allowed in a Markdown file an agent writes; `0` turns the check off. |
 | `knowledge.budgets.alwaysBytes` | The bytes all `always` knowledge docs may add up to: [Knowledge budgets](#knowledge-budgets). |
@@ -176,8 +178,8 @@ In `neverValid`, a `<word>` stands for any one word, so `needs <specialist> over
 
 `review` decides how `aidrian pr review` reviews a pull request: its depth, its stages, the critical flows it holds
 to their invariants, the reviewers a project adds, and the [visual capture](review.md#visual-review).
-[review.md](review.md) describes every key. Two machine settings are not here: the engine, `review.engine`, and the
-visual capture's base URL, `review.visual.baseUrl`, both in `.aidrian.local.json`.
+[review.md](review.md) describes every key. Two machine settings live in `.aidrian.local.json`: the engine,
+`review.engine`, unless the project sets it here, and the visual capture's base URL, `review.visual.baseUrl`.
 
 ## Review gate
 

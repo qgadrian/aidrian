@@ -91,10 +91,10 @@ test('validatePlan and mergePlans: a plan command may add and reorder, never dro
   assert.deepEqual(merged.flows.map((flow) => flow.id), ['booking', 'checkout']);
 });
 
-test('checkReview: bad rules, flows, and reviewers are errors and left out; engine belongs to the machine', () => {
+test('checkReview: bad rules, flows, reviewers, and engine are errors and left out', () => {
   const errors = [];
   const review = checkReview({
-    engine: 'self',
+    engine: 'no way',
     rules: [{ depth: 'none' }, { when: { anyFiles: ['x/**'] }, require: ['bogus'] }, { when: { lines: { over: 10 } }, depth: 'split' }],
     flows: { Booking: { files: ['a/**'] }, pay: { files: ['p/**'], signoff: 'human' }, ok: { files: ['o/**'], added: ['('] }, good: { files: ['g/**'] } },
     reviewers: { mine: { kind: 'exec', command: ['bin/review'] }, self: { kind: 'agent', agent: 'x' } },
@@ -103,7 +103,8 @@ test('checkReview: bad rules, flows, and reviewers are errors and left out; engi
   assert.deepEqual(Object.keys(review.flows), ['good']);
   assert.deepEqual(Object.keys(review.reviewers), ['mine']);
   assert.equal(errors.length, 7);
-  assert.match(errors.join('\n'), /review.engine" is a machine setting/u);
+  assert.match(errors.join('\n'), /"review.engine" must be "auto", "codex-local", "pr-bot", "self", or a reviewer/u);
+  assert.equal(review.engine, null, 'a bad engine is left out: the machine`s applies');
   assert.match(errors.join('\n'), /a flow the Human signs off must state its invariants/u);
   assert.equal(checkLocalReview({ engine: 'codex-local' }, 'local', []), 'codex-local');
   const local = [];

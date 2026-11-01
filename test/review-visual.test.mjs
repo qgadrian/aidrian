@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -100,7 +100,7 @@ test('captureVisual: no base URL, a missing Playwright, or a failed login is a s
   assert.match(refused.reason, /4 of 4 captures failed: net::ERR_CONNECTION_REFUSED/u);
   const recovered = await captureVisual({ project: p, pr: 1, head: 'f'.repeat(40), visual, entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base(async () => ''), spawn: fakeAdapter() });
   assert.equal(recovered.status, 'captured', 'a capture whose pages all failed runs again once the server is up');
-  const login = await captureVisual({ project: p, pr: 1, head: 'd'.repeat(40), visual: visualConfig(), entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base(async () => { throw new Error('bad password'); }) });
+  const login = await captureVisual({ project: p, pr: 1, head: 'd'.repeat(40), visual: visualConfig(), entries: visualMatrix(visualConfig(), R('/dashboard')), baseUrl: 'http://localhost:3000', env: {}, withBase: base(async () => { throw new Error('bad password'); }) });
   assert.equal(login.status, 'failed');
   assert.match(login.reason, /hospitality: bad password/u);
   const preview = await captureVisual({ project: p, pr: 1, head: 'e'.repeat(40), visual: { ...visual, preview: 'node scripts/preview.mjs' }, entries, baseUrl: null, env: {}, withBase: base(async () => 'https://pr-1.preview.example\n'), spawn: fakeAdapter() });
@@ -162,4 +162,89 @@ test('a target may use a named base the login prints per variant: a subdomain, o
   checkReview({ visual: { platform: 'web', targets: [{ files: ['x/**'], routes: ['/'], base: 'Guest Page' }], viewports: [360] } }, 'config.json', bad);
   assert.match(bad.join('\n'), /\.base" must name a base/u);
   assert.match(bad.join('\n'), /base" needs review\.visual\.login/u);
+});
+
+test('a target may narrow the locales and variants: [] locales is one default capture, and two targets of a route join', () => {
+  const visual = visualConfig({
+    targets: [
+      { files: ['src/app/dash/**'], routes: ['/dashboard'], locales: ['en'] },
+      { files: ['src/app/onboarding/**'], routes: ['/onboarding'], variants: ['hospitality'], locales: [] },
+      { files: ['src/components/**'], routes: ['/dashboard'], locales: ['de'], variants: ['appointments'] },
+    ],
+  });
+  assert.deepEqual(visualRoutes(visual, [{ file: 'src/app/dash/a.tsx' }, { file: 'src/app/onboarding/a.tsx' }]), [
+    { route: '/dashboard', base: null, pairs: [['hospitality', 'en'], ['appointments', 'en']] },
+    { route: '/onboarding', base: null, pairs: [['hospitality', null]] },
+  ]);
+  const shot = (routes) => visualMatrix({ ...visual, viewports: [360] }, routes).map((entry) => `${entry.variant} ${entry.locale ?? 'default'}`);
+  const both = visualRoutes(visual, [{ file: 'src/app/dash/a.tsx' }, { file: 'src/components/b.tsx' }]);
+  assert.deepEqual(shot(both), ['hospitality en', 'appointments en', 'appointments de'], 'two targets join their captures, never mix their lists');
+  assert.deepEqual(shot(visualRoutes(visual, [{ file: 'src/app/onboarding/a.tsx' }])), ['hospitality default']);
+  const withAll = visualConfig({ targets: [{ files: ['a/**'], routes: ['/x'], locales: [] }, { files: ['b/**'], routes: ['/x'] }] });
+  const joined = visualRoutes(withAll, [{ file: 'a/1' }, { file: 'b/1' }]);
+  assert.deepEqual(visualMatrix({ ...withAll, viewports: [360] }, joined).map((entry) => `${entry.variant} ${entry.locale ?? 'default'}`), [
+    'hospitality default', 'hospitality en', 'hospitality de', 'appointments default', 'appointments en', 'appointments de',
+  ], 'a default-locale target keeps its capture beside an unfiltered one');
+  assert.deepEqual(visualRoutes(withAll, [{ file: 'b/1' }]), [{ route: '/x', base: null }], 'an unfiltered route carries no pairs');
+  const noLocales = checkReview({ visual: { platform: 'web', viewports: [360], variants: [{ id: 'hospitality' }, { id: 'appointments' }], targets: [{ files: ['a/**'], routes: ['/x'], variants: ['hospitality'] }] } }, 'config.json', []).visual;
+  assert.deepEqual(visualMatrix({ ...noLocales, viewports: [360] }, visualRoutes(noLocales, [{ file: 'a/1' }])).map((entry) => `${entry.variant} ${entry.locale ?? 'default'}`), ['hospitality default'], 'a variant filter without configured locales captures once');
+  const bad = [];
+  checkReview({ visual: { platform: 'web', targets: [{ files: ['x/**'], routes: ['/'], locales: ['fr'], variants: ['nope'] }], viewports: [360], locales: ['en'], variants: [{ id: 'a' }] } }, 'config.json', bad);
+  assert.match(bad.join('\n'), /targets\[0\]\.locales" must list tags from review\.visual\.locales/u);
+  assert.match(bad.join('\n'), /targets\[0\]\.variants" must be a non-empty list of ids/u);
+  const big = [];
+  const wide = { platform: 'web', viewports: [360, 768, 1024, 1280, 1440, 1920], locales: ['en', 'de', 'fr', 'es', 'it'], variants: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] };
+  checkReview({ visual: { ...wide, targets: [{ files: ['x/**'], routes: ['/'] }] } }, 'config.json', big);
+  assert.match(big.join('\n'), /targets\[0\] asks for 90 images per route/u);
+  const narrowed = [];
+  assert.ok(checkReview({ visual: { ...wide, targets: [{ files: ['x/**'], routes: ['/'], locales: ['en'] }] } }, 'config.json', narrowed).visual);
+  assert.deepEqual(narrowed, [], 'the budget is per target');
+});
+
+test('the login gets the locales, and may print a persona per locale that replaces the variant\'s for that locale', async (t) => {
+  const p = project(t);
+  const visual = visualConfig({ targets: [{ files: ['src/**'], routes: ['/dashboard'] }], viewports: [360] });
+  const entries = visualMatrix(visual, R('/dashboard'));
+  const inputs = [];
+  const hook = async (_command, input) => (inputs.push(input), JSON.stringify({
+    storageState: { cookies: [{ name: 's', value: input.variant }] },
+    ...(input.variant === 'hospitality' ? { locales: { de: { storageState: { cookies: [{ name: 's', value: 'h-de' }] }, baseUrl: 'http://de.localhost:3000' } } } : {}),
+  }));
+  // The storage states are removed after the capture, so the adapter reads them while it runs.
+  const seen = [];
+  const states = {};
+  const adapter = (node, args, options) => {
+    for (const [auth, file] of Object.entries(JSON.parse(options.input).storageStates)) states[auth] = JSON.parse(readFileSync(file, 'utf8')).cookies?.[0]?.value;
+    return fakeAdapter(undefined, seen)(node, args, options);
+  };
+  const manifest = await captureVisual({ project: p, pr: 4, head: '8'.repeat(40), visual, entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base(hook), spawn: adapter });
+  assert.equal(manifest.status, 'captured');
+  assert.deepEqual(inputs.map((input) => input.locales), [['en', 'de'], ['en', 'de']]);
+  const state = (auth) => states[auth];
+  const jobs = Object.fromEntries(seen[0].entries.map((job) => [`${job.variant} ${job.locale}`, `${state(job.auth)} ${job.url}`]));
+  assert.deepEqual(jobs, {
+    'hospitality en': 'hospitality http://localhost:3000/dashboard',
+    'hospitality de': 'h-de http://de.localhost:3000/dashboard',
+    'appointments en': 'appointments http://localhost:3000/dashboard',
+    'appointments de': 'appointments http://localhost:3000/dashboard',
+  });
+  assert.equal(Object.keys(seen[0].storageStates).length, 3);
+  // A variant named like another's locale persona keeps its own sign-in.
+  const clash = visualConfig({ targets: [{ files: ['src/**'], routes: ['/d'] }], viewports: [360], variants: [{ id: 'a', account: 'demo-a' }, { id: 'a--de', account: 'demo-ade' }] });
+  const clashHook = async (_command, input) => JSON.stringify({ storageState: { cookies: [{ name: 's', value: input.account }] }, ...(input.variant === 'a' ? { locales: { de: { storageState: { cookies: [{ name: 's', value: 'a-de' }] } } } } : {}) });
+  seen.length = 0;
+  await captureVisual({ project: p, pr: 4, head: '6'.repeat(40), visual: clash, entries: visualMatrix(clash, R('/d')), baseUrl: 'http://localhost:3000', env: {}, withBase: base(clashHook), spawn: adapter });
+  assert.deepEqual(seen[0].entries.map((job) => `${job.variant} ${job.locale} ${states[job.auth]}`), ['a en demo-a', 'a de a-de', 'a--de en demo-ade', 'a--de de demo-ade']);
+  // A variant no touched target captures is never signed in, so its missing credentials stop nothing.
+  const narrowed = visualConfig({ targets: [{ files: ['src/**'], routes: ['/d'], variants: ['appointments'] }], viewports: [360] });
+  const signedIn = [];
+  const only = await captureVisual({ project: p, pr: 4, head: '5'.repeat(40), visual: narrowed, entries: visualMatrix(narrowed, visualRoutes(narrowed, [{ file: 'src/a' }])), baseUrl: 'http://localhost:3000', env: {}, withBase: base(async (_command, input) => {
+    signedIn.push(input.variant);
+    if (input.variant === 'hospitality') throw new Error('no password for demo-h');
+    return JSON.stringify({ storageState: {} });
+  }), spawn: fakeAdapter() });
+  assert.deepEqual([only.status, signedIn], ['captured', ['appointments']]);
+  const unknown = await captureVisual({ project: p, pr: 4, head: '7'.repeat(40), visual, entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base(async () => JSON.stringify({ storageState: {}, locales: { fr: { storageState: {} } } })) });
+  assert.equal(unknown.status, 'failed');
+  assert.match(unknown.reason, /locale fr: not in review\.visual\.locales/u);
 });

@@ -229,10 +229,10 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
 | Key | |
 | --- | --- |
 | `platform` | `web`: Playwright, loaded from the project's own dependencies (`playwright` or `@playwright/test`) |
-| `targets` | which changed files capture which routes; a route may hold `{locale}`, and `base` names a base the login prints, for screens on another host or path |
+| `targets` | which changed files capture which routes; a route may hold `{locale}`, and `base` names a base the login prints, for screens on another host or path. `locales` and `variants` narrow the target to a subset of the lists below; `"locales": []` is one capture in the default locale |
 | `viewports`, `locales` | the widths and locale tags; each image is taken at one of each |
 | `variants` | the product modes to capture, each with the name of a demo account to sign in as, or none for a public page |
-| `login` | a command, run from the base branch, that reads `{ account, variant, baseUrl }` on stdin and prints `{ "storageState": {...}, "baseUrl"?, "bases"? }`; the account's secret comes from its environment, never config |
+| `login` | a command, run from the base branch, that reads `{ account, variant, baseUrl, locales }` on stdin and prints `{ "storageState": {...}, "baseUrl"?, "bases"?, "locales"? }`; the account's secret comes from its environment, never config |
 | `preview` | a command, run from the base branch, that reads `{ pr, head }` and prints the base URL, such as a preview deployment |
 | `attach` | `auto`, `local`, or `off`; unset, `auto` on a private or internal repository and `local` on a public one |
 | `reviewers` | the agents that get the captures; `designer` and `ux-specialist` by default |
@@ -245,7 +245,14 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
   a public page on a per-variant subdomain or sign-in at the app root, goes in a target with `"base": "guest"`, and
   the login prints it per variant: `"bases": { "guest": "http://shop.localhost:3000", "root": "http://localhost:3000" }`.
   A variant whose login prints no such base gets an error entry for that route, never a capture of another host.
-- **Limits**: a route may ask for at most 60 images (viewports x locales x variants), a config error past it. One
+- **Signed in per locale**: a screen that takes its language from a stored user or organization preference ignores
+  the browser locale and `{locale}`. The login then prints a persona per locale, `"locales": { "de": { "storageState":
+  {...} } }`, and each field it gives (`storageState`, `baseUrl`, `bases`) replaces the variant's for that locale's
+  captures. A tag not in `review.visual.locales` fails the capture. A login that ignores `locales` signs in once per
+  variant, as before.
+- **Per target**: a screen that does not change with the mode or the language narrows its target, such as
+  `"variants": ["hospitality"]` or `"locales": ["en"]`. A route two touched targets list gets both targets' captures.
+- **Limits**: a route may ask for at most 60 images (viewports x locales x variants, per target), a config error past it. One
   review captures at most 200; past that it stops as `too_large` and names the routes to narrow.
 - **Once per head**: the capture runs when a visual reviewer is dispatched, and its manifest (each image's key, file,
   hash, and facts) is kept in the state folder. Flow verdicts cite an image as `capture:<key>`; a key of another head

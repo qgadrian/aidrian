@@ -139,7 +139,7 @@ test('trace-js callsWith: balanced arguments, quoted strings left out, generic a
     { name: 'load', variable: 'db', line: 6 },
   ]);
   assert.deepEqual(callsWith('load(getAdminClient());', names, [], null), [], 'no factory, no inline match');
-  for (const call of ['load(")", adminClient);', "load(')', adminClient);", 'load(`(${x}`, adminClient);', 'load(/* ) */ x, adminClient);', 'load(x, // )\n adminClient);']) {
+  for (const call of ['load(")", adminClient);', "load(')', adminClient);", 'load(`(${x}`, adminClient);', 'load(/* ) */ x, adminClient);', 'load(x, // )\n adminClient);', 'load(`outer ( ${`inner )`}`, adminClient);', 'load(`a ${f(")")} b`, adminClient);', 'load(`${ { a: "}" }.a } )`, adminClient);']) {
     assert.deepEqual(callsWith(call, names, ['adminClient']).map((each) => each.variable), ['adminClient'], `a parenthesis in a string or comment does not end the arguments: ${call}`);
   }
   const pad = (n) => `load(${'x'.repeat(n)}, adminClient);`;

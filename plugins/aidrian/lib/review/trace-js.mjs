@@ -67,20 +67,42 @@ export function parse(file, text, { tracked, aliases = {} }) {
   return { imports, reExports };
 }
 
+const QUOTES = new Set(['"', "'", '`']);
+
+// The index of the character that closes the string or template literal opened at `at` (`end` when none does). A
+// template's `${...}` is read as code, so a literal nested in it closes on its own.
+function skipQuoted(text, at, end) {
+  const quote = text[at];
+  for (let i = at + 1; i < end; i += 1) {
+    if (text[i] === '\\') i += 1;
+    else if (text[i] === quote || (quote !== '`' && text[i] === '\n')) return i;
+    else if (quote === '`' && text[i] === '$' && text[i + 1] === '{') i = skipExpression(text, i + 2, end);
+  }
+  return end;
+}
+
+// The index of the `}` that closes a template's `${` expression, whose code starts at `at`.
+function skipExpression(text, at, end) {
+  let depth = 1;
+  for (let i = at; i < end; i += 1) {
+    if (QUOTES.has(text[i])) i = skipQuoted(text, i, end);
+    else if (text[i] === '{') depth += 1;
+    else if (text[i] === '}' && (depth -= 1) === 0) return i;
+  }
+  return end;
+}
+
 // The argument text of the call whose opening parenthesis is at `open`, up to its balanced closing one. Parentheses
-// inside a string, a template literal, or a comment do not count, so `load(")", client)` still reads to its end.
+// inside a string, a template literal (nested ones too), or a comment do not count, so `load(")", client)` still
+// reads to its end.
 const argumentsAt = (text, open) => {
   let depth = 1;
   let at = open + 1;
   const end = Math.min(text.length, open + 1 + MAX_ARGUMENTS);
   for (; at < end && depth; at += 1) {
     const ch = text[at];
-    if (ch === '"' || ch === "'" || ch === '`') {
-      for (at += 1; at < end && text[at] !== ch; at += 1) {
-        if (text[at] === '\\') at += 1;
-        else if (ch !== '`' && text[at] === '\n') break;
-      }
-    } else if (ch === '/' && text[at + 1] === '/') {
+    if (QUOTES.has(ch)) at = skipQuoted(text, at, end);
+    else if (ch === '/' && text[at + 1] === '/') {
       while (at < end && text[at] !== '\n') at += 1;
     } else if (ch === '/' && text[at + 1] === '*') {
       const close = text.indexOf('*/', at + 2);

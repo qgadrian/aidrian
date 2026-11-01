@@ -5,7 +5,8 @@
 * Claude Code and Codex plugin (for now)
 * A team of agents, skills, and safety hooks
 * Very opinionated, it might be extended or not
-* Vibe coded and maintained holistically
+* Very opinionated, deterministic behavior preferred ("less AI" for some things)
+* Vibe coded and maintained _holistically_
 
 ###### what is this (concept)
 

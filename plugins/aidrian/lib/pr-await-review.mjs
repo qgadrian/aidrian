@@ -32,7 +32,7 @@
 // and waits for nothing.
 // The default timeout is 840 s: a foreground Claude Code Bash call stops at 900 s, gh calls included.
 
-import { DEFAULTS as CONFIG_DEFAULTS, NO_REVIEWER } from './config.mjs';
+import { committedConfig, DEFAULTS as CONFIG_DEFAULTS, NO_REVIEWER } from './config.mjs';
 import { runGh } from './gh.mjs';
 import { runGit } from './git.mjs';
 
@@ -430,13 +430,27 @@ async function reviewGate(project, config) {
   };
 }
 
+// The round cap as the pull request's base branch commits it, so an edit to the working copy's config cannot raise it.
+// GitHub always names the base; a response without one keeps the loaded config's cap.
+function committedCap(project, opts, gh, config) {
+  const repo = opts.repo ?? gh.repo();
+  const n = opts.pr ?? String(gh.currentPr().number);
+  const ref = gh.api(`repos/${repo}/pulls/${n}`)?.base?.ref;
+  if (typeof ref !== 'string' || ref === '') return config.github.maxReviewRounds;
+  const tip = [`origin/${ref}`, ref].map((each) => runGit(['rev-parse', '--verify', '--quiet', `${each}^{commit}`], project.root)).find((r) => r.status === 0)?.stdout.trim();
+  if (!tip) throw new Error(`the base branch ${ref} is not in this checkout: git fetch first`);
+  return committedConfig(project, tip).github.maxReviewRounds;
+}
+
 // The CLI body: prints the result JSON and returns its exit code; a usage or gh error prints one line and returns 1.
 // At round_limit, `project` gets a lesson; `deps` replaces awaitReview's gh, clock, and sleep, and `env`, in tests.
 export async function runAwaitReview(args, config, project = null, deps = {}) {
   try {
     const gate = project && config.github.reviewGate.enabled ? await reviewGate(project, config) : null;
     const opts = parseArgs(args, { reviewer: config.github.reviewer, maxRounds: config.github.maxReviewRounds });
-    const capped = roundCapProblem(opts.maxRounds, config.github.maxReviewRounds, deps.env ?? process.env);
+    const cap = project && opts.reviewer !== null ? committedCap(project, opts, deps.gh ?? defaultGh, config) : config.github.maxReviewRounds;
+    if (!args.includes('--max-rounds')) opts.maxRounds = cap;
+    const capped = roundCapProblem(opts.maxRounds, cap, deps.env ?? process.env);
     if (capped) throw new Error(capped);
     const result = await awaitReview(opts, { gate, ...deps });
     if (result.status === 'review_required') console.error(result.reason);

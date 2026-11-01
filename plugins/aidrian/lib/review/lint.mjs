@@ -9,9 +9,9 @@ import path from 'node:path';
 
 import { pathPattern } from './plan.mjs';
 import { runGit } from '../git.mjs';
-import { invariantsOf } from './flows.mjs';
+import { invariantsOf, sectionOf } from './flows.mjs';
 
-export const FLOW_BUDGET = 12;
+export const FLOW_BUDGET = 16;
 export const INVARIANT_BUDGET = 10;
 
 const read = (root) => (file) => {
@@ -43,8 +43,10 @@ export function lintReview(project, config) {
       const [file, anchor] = invariant.cite.split('#');
       const text = read(project.root)(file);
       if (text === null) problems.push(`flow ${id}: invariant ${invariant.id} cites ${file}, which is missing`);
-      else if (anchor && !invariantsOf({ invariants: file }, () => text).invariants.some((each) => each.id === anchor)) {
+      else if (anchor && !sectionOf(text, anchor)) {
         problems.push(`flow ${id}: invariant ${invariant.id} cites #${anchor}, a heading ${file} does not have`);
+      } else if (anchor && !sectionOf(text, anchor).body) {
+        warnings.push(`flow ${id}: invariant ${invariant.id} cites #${anchor}, a section with no text under its heading for the reviewer to judge against`);
       }
     }
     for (const word of flow.require ?? []) {

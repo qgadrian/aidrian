@@ -66,6 +66,9 @@ Findings first, ordered by severity: critical, high, medium, low. Each finding g
 - the user impact, and the evidence: the screen or flow, and the file path when known
 - a concrete fix, its owner (`designer`, `frontend-developer`, or `product-manager`), and acceptance criteria
 
+When the pass input holds `visual` captures, open each image and weigh its measured facts (overflow, clipped text,
+small targets) at every width, locale, and variant; cite an image as `capture:<key>` in a flow verdict.
+
 Keep recommendations implementable in the current architecture; no speculative redesigns.
 When a recommendation depends on unresolved product behavior or runtime constraints, return `status: needs_input`, naming what is missing,
 and name its owner in `next_owner` instead of forcing a UX conclusion.

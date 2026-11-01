@@ -119,6 +119,7 @@ export function denyReason(pr, checklist) {
 }
 
 // `aidrian pr attest <PR> --head <sha> --reviewer <who> --findings <n> --fixed <n> [--note <text>]`, or `--check`.
+// With --pass, `--findings-file <file>` replaces the counts with the findings one by one (lib/review/findings.mjs).
 // Exit 0 recorded, 3 not recorded (--check), 1 a usage error.
 export async function runAttest(args, project, config = null) {
   const [ref, ...rest] = args;
@@ -128,7 +129,7 @@ export async function runAttest(args, project, config = null) {
   for (let i = 0; i < rest.length; i += 1) {
     const flag = rest[i];
     if (flag === '--check') flags.check = true;
-    else if (['--head', '--reviewer', '--findings', '--fixed', '--note', '--pass', '--accepted', '--verdicts'].includes(flag)) {
+    else if (['--head', '--reviewer', '--findings', '--fixed', '--note', '--pass', '--accepted', '--verdicts', '--findings-file'].includes(flag)) {
       const value = rest[++i];
       if (value === undefined || value === '' || value.startsWith('--')) throw new Error(`${flag} needs a value`);
       flags[flag.slice(2)] = value;
@@ -138,6 +139,11 @@ export async function runAttest(args, project, config = null) {
     const found = readRecord(project, pr) !== null;
     console.log(`${found ? 'recorded' : 'not recorded'}: pull request #${pr}`);
     return found ? 0 : 3;
+  }
+  if (flags['findings-file'] !== undefined) {
+    if (flags.pass === undefined) throw new Error('--findings-file needs --pass');
+    if (['findings', 'fixed', 'accepted'].some((key) => flags[key] !== undefined)) throw new Error('--findings-file replaces --findings, --fixed, and --accepted: pass one or the other');
+    Object.assign(flags, { findings: '0', fixed: '0' });
   }
   for (const key of ['head', 'reviewer', 'findings', 'fixed']) if (flags[key] === undefined) throw new Error(`--${key} is required`);
   const [findings, fixed] = [flags.findings, flags.fixed].map((value, i) => {
@@ -156,7 +162,8 @@ export async function runAttest(args, project, config = null) {
   if (flags.pass !== undefined) {
     const { recordPass, remoteState } = await import('./review/run.mjs');
     const verdictsText = flags.verdicts === undefined ? null : readFileSync(flags.verdicts, 'utf8');
-    const result = recordPass(project, { pr, repo, pass: flags.pass, head: flags.head, reviewer: flags.reviewer, findings, fixed, accepted, verdictsText, remote: remoteState(repo, pr, undefined, config) });
+    const findingsText = flags['findings-file'] === undefined ? null : readFileSync(flags['findings-file'], 'utf8');
+    const result = recordPass(project, { pr, repo, pass: flags.pass, head: flags.head, reviewer: flags.reviewer, findings, fixed, accepted, verdictsText, findingsText, remote: remoteState(repo, pr, undefined, config) });
     console.log(`recorded pass ${flags.pass} of pull request #${pr} at ${flags.head.slice(0, 7)}: ${result.open} open`);
     console.log('Run `aidrian pr review` again for the next step.');
     return 0;

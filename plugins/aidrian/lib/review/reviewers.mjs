@@ -151,7 +151,7 @@ export function reviewPrompt(input) {
     'Look for correctness bugs, regressions, edge cases, security, data consistency, error handling, and missing tests.',
     'When you find a mistake, search the whole change for every copy and list each in that finding. Finish the whole review before answering.',
     input.checklist ? `Also review the change against the project's checklist (${input.checklist.path}), included in the input.` : '',
-    input.flows.length ? 'For each critical flow below, give one verdict per invariant: holds, violated, not_affected, or cannot_verify. Evidence for holds or not_affected must cite file:line at the head commit, or a test name. Earlier reviewers\' verdicts are listed: challenge every "holds" you cannot confirm yourself.' : '',
+    input.flows.length ? 'For each critical flow below, give one verdict per invariant: holds, violated, not_affected, or cannot_verify. Evidence for holds or not_affected must cite file:line at the head commit, or a test name. Earlier reviewers\' verdicts are listed: challenge every "holds" you cannot confirm yourself. Where an invariant has a `source`, the section of the project doc it cites, judge against that source: `text` is only the question.' : '',
     'Answer with JSON only, in the schema you were given.',
     '',
     'Input (JSON):',

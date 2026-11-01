@@ -60,6 +60,9 @@ Findings first. Each finding gives:
 - when evidence or a product decision is missing: `status: needs_input`, naming what is missing, with `next_owner` (`product-manager` for a product decision)
 - the UI and user impact, the evidence, a concrete fix direction, and acceptance criteria
 
+When the pass input holds `visual` captures, open each image and weigh its measured facts (overflow, clipped text,
+small targets) at every width, locale, and variant; cite an image as `capture:<key>` in a flow verdict.
+
 ## Implementation mode
 
 - Make focused presentation-layer edits. Keep runtime behavior unless its owner approved a change.

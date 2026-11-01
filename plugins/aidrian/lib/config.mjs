@@ -2,12 +2,13 @@
 // docs/config.md lists the keys; docs/project-folder.md gives the version rule.
 // No dependencies: this file runs from the installed plugin, which has no node_modules.
 
+import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { agentNameProblem, patternProblem } from './agent-gates.mjs';
 import { isFile, isObject, readJson } from './fs.mjs';
-import { checkLocalReview, checkReview, REVIEW_DEFAULTS } from './review/config.mjs';
+import { checkLocalReview, checkLocalVisual, checkReview, REVIEW_DEFAULTS } from './review/config.mjs';
 
 // The project folder format this plugin reads. A format change raises it and documents the migration.
 export const VERSION = 1;
@@ -200,6 +201,7 @@ export const DEFAULTS = deepFreeze({
   },
   agents: {},
   reviewEngine: 'auto',
+  reviewVisual: { baseUrl: null },
 });
 
 // Returns { config, errors, gateErrors, current }. `config` is frozen and always complete: the file's values over DEFAULTS, one
@@ -226,8 +228,29 @@ export function loadConfig(project) {
   }
   // The machine's review engine, from the local file; config.json `review.engine`, when set, wins (lib/review/reviewers.mjs).
   config.reviewEngine = project.localReview === undefined ? 'auto' : checkLocalReview(project.localReview, project.paths.local, errors);
+  config.reviewVisual = checkLocalVisual(project.localReview, project.paths.local, errors);
   if (project.localAgents !== undefined) config.agents = checkAgents(project.localAgents, project.paths.local, errors, config.agents, gateErrors);
   return { config: deepFreeze(config), errors, gateErrors, current: true };
+}
+
+// The project config as committed at `commit`, with no machine settings: what a pull request cannot change from its
+// own working copy, such as github.maxReviewRounds. A commit with no config, or one that does not parse, gives
+// DEFAULTS; a value that fails its check keeps its default, as loadConfig does.
+export function committedConfig(project, commit) {
+  const shown = spawnSync('git', ['show', `${commit}:${project.paths.config}`], { cwd: project.root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 15_000 });
+  if (shown.error || shown.signal) throw new Error(`git show ${commit}:${project.paths.config} failed: ${shown.error?.message ?? shown.signal}`);
+  if (shown.status !== 0) return DEFAULTS;
+  let raw;
+  try {
+    raw = JSON.parse(shown.stdout);
+  } catch {
+    return DEFAULTS;
+  }
+  if (!isObject(raw) || versionProblem(project.paths.config, raw.version)) return DEFAULTS;
+  const { version, ...values } = raw;
+  const config = merge(SCHEMA, DEFAULTS, values, '', project.paths.config, [], []);
+  if (config.github.reviewer === NO_REVIEWER) config.github = { ...config.github, reviewer: null };
+  return deepFreeze(config);
 }
 
 // The `code` of the error commandConfig throws; cli.mjs prints its message and exits with its `exitCode`.

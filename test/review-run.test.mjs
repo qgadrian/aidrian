@@ -549,3 +549,139 @@ test('review.record "local": the record stays in the state folder, and nothing o
   const config = loadConfig(projectAt(r.dir)).config;
   assert.equal(remoteState('o/r', 7, { comments: () => assert.fail('the pull request is not read') }, config), null);
 });
+
+test('the round cap is the base branch\'s: an uncommitted edit to the working copy cannot raise it', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 2 } }, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  r.write('.aidrian/config.json', JSON.stringify({ version: 1, github: { maxReviewRounds: 9 } }));
+  await assert.rejects(r.step({ exec: clean, env: {} }, { maxRounds: 5 }), /--max-rounds 5 goes past config\.json github\.maxReviewRounds \(2\)/u);
+  const result = await r.step({ exec: clean, env: {} });
+  assert.equal(result.max_rounds, 2);
+});
+
+test('a Human sign-off survives a push that touches nothing of the flow, and not one that does', async (t) => {
+  const flows = { pay: { files: ['src/pay/**'], invariants: [{ id: 'cap', text: 'A refund never exceeds the charge.' }], require: ['agent:security-engineer'], signoff: 'human' } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => write('src/pay/a.js', 'export const refund = (x) => x;\n') });
+  const attest = (dispatch, head) => recordPass(r.project, { pr: 7, repo: 'o/r', pass: dispatch.pass, head, reviewer: 'security-engineer', findings: 0, fixed: 0, verdictsText: JSON.stringify([{ flow: 'pay', invariant: 'cap', verdict: 'holds', evidence: 'src/pay/a.js:1' }]) });
+  const first = await r.step({ exec: clean });
+  attest(first.dispatch[0], first.head);
+  const asked = await r.step({ exec: clean });
+  assert.equal(asked.status, 'human_required');
+  recordSignoff(r.project, { pr: 7, repo: 'o/r', flow: 'pay', head: first.head, by: 'Tester' });
+  assert.equal((await r.step({ exec: clean })).status, 'received');
+
+  r.write('src/other.js', 'export const other = 1;\n');
+  r.commit('unrelated');
+  const kept = await r.step({ exec: clean });
+  assert.equal(kept.status, 'received', 'nothing since the signed head touches the flow');
+  assert.match(r.comments.find((c) => c.body.startsWith('<!-- aidrian-review-summary -->')).body, /recorded on `[0-9a-f]{7}` and kept/u);
+
+  r.write('src/pay/a.js', 'export const refund = (x) => Math.min(x, 10);\n');
+  const touched = r.commit('touch the flow');
+  const again = await r.step({ exec: clean });
+  assert.equal(again.status, 'dispatch');
+  attest(again.dispatch[0], touched);
+  assert.equal((await r.step({ exec: clean })).status, 'human_required', 'a change to the flow asks the Human again');
+});
+
+test('the visual capture runs before the visual reviewers, attaches on a private repository, and its captures are flow evidence', async (t) => {
+  const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
+  const visual = { platform: 'web', targets: [{ files: ['src/components/**'], routes: ['/dashboard'] }], viewports: [360, 1280], checklist: 'docs/fit.md#fit-checks' };
+  const flows = { ui: { files: ['src/components/**'], invariants: [{ id: 'fit', text: 'No horizontal overflow at the fit-check widths.' }], require: ['agent:designer'] } };
+  const r = repo(t, {
+    baseConfig: { version: 1, review: { flows, visual } },
+    baseFiles: { 'docs/fit.md': '# Fit\n\n## Fit checks\nNo page scrolls sideways at 360, 768, or 1280 px.\n' },
+    change: (write) => write('src/components/Button.tsx', 'export const Button = () => <button className="px-2" />;\n'),
+  });
+  r.write('.aidrian.local.json', JSON.stringify({ review: { visual: { baseUrl: 'http://localhost:3000' } } }));
+  const captureSpawn = (_node, _args, { input }) => {
+    const job = JSON.parse(input);
+    const results = job.entries.map((entry) => {
+      const file = path.join(job.outDir, `${entry.key}.png`);
+      writeFileSync(file, Buffer.concat([PNG, Buffer.from(entry.key)]));
+      return { key: entry.key, file, facts: { status: 200, overflowX: null, clippedText: [], smallTargets: [] } };
+    });
+    return { status: 0, stdout: JSON.stringify({ results }), stderr: '' };
+  };
+  const uploads = [];
+  r.gh.visibility = () => 'PRIVATE';
+  r.gh.image = (_repo, files) => (uploads.push(files.length), { status: 0, stdout: files.map((file) => `![${path.basename(file, '.png')}](https://github.com/user-attachments/assets/u-${path.basename(file, '.png')})`).join('\n') });
+  const first = await r.step({ exec: clean, captureSpawn });
+  assert.equal(first.status, 'dispatch');
+  const [pass] = first.dispatch;
+  assert.equal(pass.agent, 'designer');
+  assert.equal(pass.visual.status, 'captured');
+  assert.deepEqual(pass.visual.captures.map((capture) => [capture.key, Boolean(capture.url)]), [['dashboard-89347b--360--default--default', true], ['dashboard-89347b--1280--default--default', true]]);
+  assert.match(pass.visual.checklist.text, /sideways/u);
+  assert.match(pass.record, /--findings-file/u);
+  assert.match(pass.brief, /captures in `visual`/u);
+  assert.deepEqual(uploads, [2]);
+  assert.ok(r.comments.some((c) => c.body.startsWith('<!-- aidrian-visual-captures -->') && /Attach: \*\*auto\*\*, private repository/u.test(c.body)));
+  assert.equal((await r.step({ exec: clean, captureSpawn: () => assert.fail('captured twice') })).status, 'dispatch', 'one capture per head');
+
+  const findings = JSON.stringify([{ title: 'Label clipped at 360px', severity: 'medium', likelihood: 'routine', affects: 'users', state: 'open' }]);
+  const verdict = (evidence) => JSON.stringify([{ flow: 'ui', invariant: 'fit', verdict: 'holds', evidence }]);
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'designer', findingsText: findings, verdictsText: verdict('capture:dashboard-89347b--360--default--default') });
+  const blocked = await r.step({ exec: clean });
+  assert.equal(blocked.status, 'fix_required');
+  assert.equal(blocked.open[0].findings[0].title, 'Label clipped at 360px');
+  assert.deepEqual(blocked.flows, [], 'a capture of this head is evidence');
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'designer', findingsText: '[]', verdictsText: verdict('capture:dashboard-89347b--768--default--default') });
+  const unknown = await r.step({ exec: clean });
+  assert.deepEqual(unknown.flows, [{ flow: 'ui', violated: [], unverified: ['fit'] }], 'a capture key the manifest does not have is no evidence');
+  assert.match(r.comments.find((c) => c.body.startsWith('<!-- aidrian-review-summary -->')).body, /visual capture of `[0-9a-f]{7}`: captured \(2 of 2\); attach \*\*auto\*\*, private repository/u);
+
+  // A clean pass whose verdict cites a capture carries forward over a push that touches nothing of it, and still
+  // counts on a machine without the images: the record holds the captured keys.
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'designer', findingsText: '[]', verdictsText: verdict('capture:dashboard-89347b--360--default--default') });
+  assert.equal((await r.step({ exec: clean })).status, 'received');
+  r.write('docs/notes.md', 'notes\n');
+  r.commit('docs only');
+  const { captureDir } = await import('../plugins/aidrian/lib/review/visual.mjs');
+  rmSync(captureDir(r.project, 7, first.head), { recursive: true, force: true });
+  const carried = await r.step({ exec: clean });
+  assert.equal(carried.status, 'received', 'the earlier head\'s capture evidence still holds');
+});
+
+test('an invariant that cites a doc section carries that section as its source, read from the base, and a change to the doc needs the Human', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'], invariants: [{ id: 'no-double', cite: 'docs/flows/booking.md#no-double-booking' }], require: ['agent:product-manager'] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => {
+    write('src/booking/book.js', 'export const book = () => 1;\n');
+    write('docs/flows/booking.md', '# Booking\n\n## No double booking\nRewritten by the pull request.\n');
+  } });
+  const first = await r.step({ exec: clean });
+  const invariant = first.dispatch.find((each) => each.agent === 'product-manager').flows.find((flow) => flow.id === 'booking').invariants[0];
+  assert.equal(invariant.text, 'Does the change keep "No double booking" as the cited section defines it?');
+  assert.match(invariant.source, /^No double booking\n\nTwo bookings never hold one slot\.$/u, 'the base branch\'s section, not the pull request\'s');
+  assert.ok(first.plan.flows.includes('harness-config'), 'the cited doc changed');
+});
+
+test('a sign-off of harness-config does not survive a push that changes a project reviewer\'s script', async (t) => {
+  const reviewers = { lint: { kind: 'exec', command: ['scripts/review-lint.sh'], stage: 'local' } };
+  const r = repo(t, {
+    baseConfig: { version: 1, review: { reviewers } },
+    baseFiles: { 'scripts/review-lint.sh': '#!/bin/sh\necho \'{"findings":[]}\'\n' },
+    change: (write) => write('scripts/review-lint.sh', '#!/bin/sh\necho \'{"findings":[]}\' # v2\n'),
+  });
+  const verdicts = JSON.stringify([{ flow: 'harness-config', invariant: 'review-not-weakened', verdict: 'holds', evidence: 'scripts/review-lint.sh:1' }]);
+  const exec = async () => ({ status: 'done', findings: [], verdicts: [{ flow: 'harness-config', invariant: 'review-not-weakened', verdict: 'holds', evidence: 'scripts/review-lint.sh:1' }], dropped: [] });
+  // Runs steps, recording every dispatched agent pass as clean, until the review stops for something else.
+  const settle = async () => {
+    for (let i = 0; i < 6; i += 1) {
+      const result = await r.step({ exec });
+      if (result.status !== 'dispatch') return result;
+      for (const each of result.dispatch) recordPass(r.project, { pr: 7, repo: 'o/r', pass: each.pass, head: result.head, reviewer: each.agent, findings: 0, fixed: 0, verdictsText: verdicts });
+    }
+    throw new Error('the review did not settle');
+  };
+  const asked = await settle();
+  assert.equal(asked.status, 'human_required');
+  assert.deepEqual(asked.flows, ['harness-config']);
+  recordSignoff(r.project, { pr: 7, repo: 'o/r', flow: 'harness-config', head: asked.head, by: 'Tester' });
+  assert.equal((await settle()).status, 'received');
+  r.write('src/other.js', 'export const other = 1;\n');
+  r.commit('unrelated');
+  assert.equal((await settle()).status, 'received', 'an unrelated push keeps the sign-off');
+  r.write('scripts/review-lint.sh', '#!/bin/sh\necho \'{"findings":[]}\' # v3\n');
+  r.commit('change the reviewer again');
+  assert.equal((await settle()).status, 'human_required', 'the reviewer script changed since the sign-off');
+});

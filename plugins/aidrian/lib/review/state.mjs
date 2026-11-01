@@ -78,7 +78,12 @@ export function summaryBody(state, plan, status) {
   }
   for (const flow of plan?.flows ?? []) {
     const signoff = state.signoffs[flow.id];
-    lines.push(`- flow **${flow.id}**${flow.unspecified ? ' (unspecified: no invariants stated)' : ''}: ${flow.signed ? 'signed by its reviewer' : 'not signed'}${flow.signoff === 'human' ? `; Human sign-off ${signoff?.head === plan.head ? 'recorded (an audit entry, not proof)' : 'needed'}` : ''}`);
+    const human = !flow.humanSigned ? 'needed' : signoff?.head === plan.head ? 'recorded (an audit entry, not proof)' : `recorded on \`${String(signoff?.head).slice(0, 7)}\` and kept: nothing since touches the flow`;
+    lines.push(`- flow **${flow.id}**${flow.unspecified ? ' (unspecified: no invariants stated)' : ''}: ${flow.signed ? 'signed by its reviewer' : 'not signed'}${flow.signoff === 'human' ? `; Human sign-off ${human}` : ''}`);
+  }
+  if (state.visual) {
+    const visual = state.visual;
+    lines.push('', `- visual capture of \`${String(visual.head).slice(0, 7)}\`: ${visual.status}${visual.status === 'captured' ? ` (${visual.captured} of ${visual.of})` : visual.reason ? ` (${visual.reason})` : ''}; attach **${visual.mode}**${visual.visibility ? `, ${String(visual.visibility).toLowerCase()} repository` : ', visibility unknown'}${visual.error ? `; ${visual.error}` : ''}`);
   }
   if (state.overrides.length) lines.push('', '**Overrides used:**', ...state.overrides.map((each) => `- ${each}`));
   lines.push('', 'A citation shows the cited line exists, not that it proves the invariant; the independent reviewer challenges each one.');

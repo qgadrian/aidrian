@@ -8,6 +8,7 @@ The objection ledger, `<state>/quorum/<name>-<plan-hash>.json`, and how each rou
 - [Agent answers](#agent-answers): how an agent's answer is held to its schema before it is written.
 - [Settled answers](#settled-answers): the Human's answers from earlier runs on the same plan.
 - [Filling it](#filling-it): what the coordinator writes after each round.
+- [Under plan-review](#under-plan-review): the triggers `plan-review` passes, and what its critique receives.
 
 ## Schemas
 
@@ -29,7 +30,8 @@ schema. A test holds the list below to `LEDGER_SCHEMA`: a field added there and 
 - `same_model_reason`: why B ran as an agent, or `null` when `same_model` is `false`.
   It is the `status: reason` line `aidrian quorum codex` printed, or `Codex host`.
   When the command printed no line (a usage error, exit 127, a shell timeout), it is the exit code and the last stderr line.
-- `trigger`: what started the run: the plan line or gate a calling skill names, or `the Human asked`.
+- `trigger`: what started the run: the plan line or gate a calling skill names, as [Under plan-review](#under-plan-review)
+  lists, or `the Human asked`.
 - `objections`: every objection both adversaries raised.
   - `objections[].id`: `A1` to `A7` and `B1` to `B7`, in each adversary's own order.
   - `objections[].by`: `A` or `B`.
@@ -82,6 +84,8 @@ one at this plan's hash. For each of their `human_answers`, the settled block of
 objection it answered, from that ledger, and the answer.
 Settled answers stay in their own ledgers: the new ledger's `human_answers` holds only this run's answers.
 The architect rejects an objection that reopens a settled answer, citing the plan's revision-history line that applied it.
+An answer the plan holds no revision-history line for yet, as after a `plan-review` restart from its step 5.1, is asked
+again: its objection escalates with the earlier answer as the recommended answer, and its ruling gets no retry.
 
 ## Filling it
 
@@ -103,6 +107,31 @@ The architect rejects an objection that reopens a settled answer, citing the pla
   `accepted`; any other decision makes it `escalated`. A final ruling that is invalid or missing gets one retry when the
   cap leaves a dispatch for it; otherwise its objection becomes `escalated`.
 - **After the Human.** Add each answer to `human_answers`. The objection becomes `accepted` or `rejected` as the answer
-  says; a partial accept stays `accepted` either way, with its rejected part settled by the answer. A deferred
+  says; a valid partial accept stays `accepted`, with its rejected part settled by the answer. A deferred
   escalation stays `escalated`. Then write `status: complete`, and run `quorum check`: it exits 1 on a complete ledger
   that still holds a `pending` objection, or a ruled status with no `ruling`.
+
+## Under plan-review
+
+`plan-review` runs this skill at its step 3b, after its gates and before its critique, with the gate verdicts and one
+trigger, the first of these that holds:
+
+- `critical flow gate` or `security gate`: that gate ran in its step 3. With both, `critical flow gate, security gate`.
+- The plan line, word for word, that names a decision-record path or the `adr-writer` skill. A decision-record path is
+  a path in the ADR folder that the `adr-writer` skill's step 1 finds.
+- `forced by the Human`: the Human passed `--quorum` on a plan that neither of the above covers.
+
+`--no-quorum`, a missing `quorum` skill, or no trigger skips the run, and `plan-review`'s report says which.
+`plan-review`'s Gates item carries the Report's Ledger item, with `same_model`.
+
+Ask every escalation, one at a time, before `plan-review`'s critique starts. The Report goes back to `plan-review`,
+not to a separate dispatch: its accepted objections, with each plan change, the Human's answers, and its
+revision-history line go into `planning-agent`'s critique brief as authoritative, like gate verdicts, so they land in
+the diff the Human approves. That diff takes the Report's revision-history line as its own.
+Rejected objections and opinions are context there, never findings to apply. A deferred escalation goes into the
+critique's open questions.
+When this skill stops with `blocked`, `plan-review` stops with `blocked on quorum`, naming the ledger and what
+`quorum check` printed, and resumes from step 3b.
+
+A `plan-review` re-critique of a plan it just applied does not run the quorum again. A restart of `plan-review` because
+the plan changed runs it under the new hash, with this run's answers as [settled answers](#settled-answers).

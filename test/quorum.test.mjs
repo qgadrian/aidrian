@@ -605,6 +605,7 @@ test('codexAnswer: an unknown mode, or rebut with no ledger, is failed, not thro
 });
 
 const SKILL = path.resolve(import.meta.dirname, '../plugins/aidrian/skills/quorum');
+const PLAN_REVIEW = path.resolve(import.meta.dirname, '../plugins/aidrian/skills/plan-review/SKILL.md');
 
 // The field paths of `schema`, as the ledger reference writes them: `a.b` for a property, `a[]` for an array's items.
 // A schema node used in several places, such as the citation or the ruling, is listed at each place and expanded only
@@ -667,8 +668,14 @@ test('ledger.md names every field of LEDGER_SCHEMA and no other, its enum values
 test('the quorum skill names exactly the flags `aidrian quorum` takes, real --mode values, and every codex status with its exit code', async () => {
   const flags = (text) => new Set([...text.matchAll(/(?<![\w-])--[a-z][a-z-]*/gu)].map((match) => match[0]));
   const texts = Object.fromEntries(['SKILL.md', 'references/briefs.md', 'references/ledger.md'].map((file) => [file, readFileSync(path.join(SKILL, file), 'utf8')]));
-  const used = flags(Object.values(texts).join('\n'));
-  assert.deepEqual([...used].sort(), [...flags(commands.quorum.usage)].sort());
+  const all = Object.values(texts).join('\n');
+  const usage = flags(commands.quorum.usage);
+  // A line that runs `aidrian quorum` names exactly the flags it takes.
+  const onCommand = flags(all.split('\n').filter((line) => line.includes('aidrian quorum')).join('\n'));
+  assert.deepEqual([...onCommand].sort(), [...usage].sort());
+  // Any other flag is one of the command's, or one the calling plan-review skill lists in its Inputs.
+  const callerInputs = flags(readFileSync(PLAN_REVIEW, 'utf8').split('\n## Inputs\n')[1].split('\n## ')[0]);
+  for (const flag of flags(all)) assert.ok(usage.has(flag) || callerInputs.has(flag), `the quorum skill names ${flag}, which neither aidrian quorum nor plan-review's Inputs takes`);
   // Each --mode value the skill names is one the command takes: an unknown mode fails before Codex is looked for.
   const modes = new Set([...Object.values(texts).join('\n').matchAll(/--mode ([a-z]+)/gu)].map((match) => match[1]));
   assert.ok(modes.size, 'the skill names a --mode');
@@ -682,4 +689,18 @@ test('the quorum skill names exactly the flags `aidrian quorum` takes, real --mo
     const exits = new RegExp(`\\b${code} on (?:\`\\w+\`(?:, | or |, or ))*\`${status}\``, 'u');
     assert.match(skill.replace(/\s+/gu, ' '), exits, `SKILL.md: ${status} exits ${code}`);
   }
+});
+
+test('plan-review runs the quorum skill at step 3b, lists its flags in Inputs, and ledger.md says how it runs there', () => {
+  // A plan-review that forgets the step, or a ledger.md that drops its section, leaves the quorum's plan use undescribed.
+  const review = readFileSync(PLAN_REVIEW, 'utf8');
+  const inputs = review.split('\n## Inputs\n')[1].split('\n## ')[0];
+  for (const flag of ['--quorum', '--no-quorum']) assert.match(inputs, new RegExp(`\`${flag}\``, 'u'), `plan-review's Inputs lists ${flag}`);
+  const step = review.split('\n## 3b. Quorum\n')[1]?.split('\n## ')[0];
+  assert.ok(step, 'plan-review has a step 3b');
+  assert.ok(review.indexOf('\n## 3. Gates\n') < review.indexOf('\n## 3b. Quorum\n') && review.indexOf('\n## 3b. Quorum\n') < review.indexOf('\n## 4. Critique\n'), 'step 3b sits between the gates and the critique');
+  assert.match(step, /the `quorum` skill/u, 'step 3b names the quorum skill');
+  const ledger = readFileSync(path.join(SKILL, 'references/ledger.md'), 'utf8');
+  assert.match(ledger, /\n## Under plan-review\n/u, 'ledger.md has § Under plan-review');
+  assert.match(ledger, /\[Under plan-review\]\(#under-plan-review\)/u, 'ledger.md links its plan-review section');
 });

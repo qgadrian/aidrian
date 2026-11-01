@@ -32,8 +32,10 @@ export function invariantsOf(flow, read) {
   return list.length ? { invariants: list, unspecified: false, problem: null } : { invariants: [UNSPECIFIED], unspecified: true, problem: `${flow.invariants} has no ## headings` };
 }
 
-// The most of a cited section a reviewer reads.
+// The most of a cited section a reviewer reads, and of the blocks a `focus` picks: the project chose those as the rule,
+// so they get more room before a cut.
 export const MAX_SOURCE = 4000;
+export const MAX_FOCUSED = 8000;
 
 // The section of a markdown doc under the heading whose slug is `anchor`: the heading and its body, up to the next
 // heading of the same or a higher level. Null when the doc has no such heading.
@@ -52,16 +54,78 @@ export function sectionOf(text, anchor) {
   return start === -1 ? null : { heading: lines[start].replace(/^#+\s+/u, '').trim(), body: lines.slice(start + 1).join('\n').trim() };
 }
 
+// The top-level blocks of a section body, in order: a sub-heading, a top-level list item with its indented lines, or a
+// paragraph. A fenced code block stays inside the block it starts in. Blank lines are dropped from block edges.
+export function blocksOf(body) {
+  const blocks = [];
+  let current = null;
+  let fenced = false;
+  let blank = true;
+  for (const line of String(body ?? '').split('\n')) {
+    const fence = /^\s*(?:```|~~~)/u.test(line);
+    const starts = !fenced && (/^#{1,6}\s/u.test(line) || /^(?:[-*+]|\d+[.)])\s/u.test(line) || (blank && /^\S/u.test(line)));
+    if (starts || (!current && line.trim())) {
+      current = [];
+      blocks.push(current);
+    }
+    if (current) current.push(line);
+    if (fence) fenced = !fenced;
+    blank = line.trim() === '';
+  }
+  return blocks.map((lines) => lines.join('\n').trim()).filter(Boolean);
+}
+
+// A block's first line in plain words, lowercase: the list marker, heading marks, and inline markup removed.
+const plain = (text) => String(text).split('\n')[0].replace(/^\s*(?:#{1,6}|[-*+]|\d+[.)])\s+/u, '').replace(/[`*_]/gu, '').replace(/\s+/gu, ' ').trim().toLowerCase();
+
+// The focus words of an invariant, as a list: `focus` is one string or a list of them.
+export const focusesOf = (invariant) => (invariant.focus === undefined ? [] : [invariant.focus].flat());
+
+// Whether a block starts with the focus words, whole words only: "Rule 1" starts "Rule 1: ..." but not "Rule 10".
+const startsWith = (block, focus) => {
+  const [text, words] = [plain(block), plain(focus)];
+  return words !== '' && text.startsWith(words) && !/[\p{L}\p{N}]/u.test(text[words.length] ?? '');
+};
+
+// The blocks of `section` that each focus starts, in section order, and the focuses no block starts.
+export function focusBlocks(section, focuses) {
+  const blocks = blocksOf(section.body);
+  const missing = focuses.filter((focus) => !blocks.some((block) => startsWith(block, focus)));
+  return { blocks: blocks.filter((block) => focuses.some((focus) => startsWith(block, focus))), missing };
+}
+
+// What a reviewer reads of a cited section: the heading and its blocks (only the focused ones when the invariant has a
+// `focus`), cut at a block boundary to the limit with a note naming every block it left out and where to read it. A
+// first block longer than the limit is cut inside it. Returns { source, length, limit }, `length` before any cut.
+export function sourceOf(section, invariant) {
+  const focuses = focusesOf(invariant);
+  const limit = focuses.length ? MAX_FOCUSED : MAX_SOURCE;
+  const blocks = focuses.length ? focusBlocks(section, focuses).blocks : blocksOf(section.body);
+  const full = [section.heading, ...blocks].join('\n\n');
+  if (full.length <= limit) return { source: full, length: full.length, limit };
+  let kept = section.heading;
+  let shown = 0;
+  while (shown < blocks.length && `${kept}\n\n${blocks[shown]}`.length <= limit) kept = `${kept}\n\n${blocks[shown++]}`;
+  if (shown === 0) {
+    kept = `${kept}\n\n${blocks[0]}`.slice(0, limit);
+    shown = 1;
+  }
+  const left = blocks.slice(shown).map((block) => `"${block.split('\n')[0].replace(/^\s*(?:[-*+]|\d+[.)])\s+/u, '').slice(0, 80)}"`);
+  const note = left.length ? `not shown: ${left.join(', ')}` : 'the rest of the block is not shown';
+  return { source: `${kept}\n[cut at ${limit} characters; ${note}; read ${invariant.cite}]`, length: full.length, limit };
+}
+
 // An invariant of a list with the doc section it cites as `source`, which the reviewer judges against: the text is
-// the question, the cited doc is the rule. With no text, the question comes from the cited heading.
+// the question, the cited doc is the rule. With no text, the question comes from the cited heading and focus.
 function withSource(invariant, read) {
   if (typeof invariant.cite !== 'string' || !invariant.cite.includes('#')) return invariant;
   const [file, anchor] = invariant.cite.split('#');
   const section = sectionOf(read(file), anchor);
-  const text = invariant.text ?? (section ? `Does the change keep "${section.heading}" as the cited section defines it?` : `Does the change keep ${invariant.cite} as it defines?`);
+  const focus = focusesOf(invariant);
+  const named = section ? (focus.length ? `${section.heading}: ${focus.join('; ')}` : section.heading) : null;
+  const text = invariant.text ?? (named ? `Does the change keep "${named}" as the cited section defines it?` : `Does the change keep ${invariant.cite} as it defines?`);
   if (!section) return { ...invariant, text };
-  const source = `${section.heading}\n\n${section.body}`;
-  return { ...invariant, text, source: source.length > MAX_SOURCE ? `${source.slice(0, MAX_SOURCE)}\n[cut at ${MAX_SOURCE} characters; read ${file}]` : source };
+  return { ...invariant, text, source: sourceOf(section, invariant).source };
 }
 
 // Whether a verdict's evidence names something real at `head`: `path:line` of a file that has that line, or

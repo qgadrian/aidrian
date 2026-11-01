@@ -218,20 +218,29 @@ test('aidrian lint review: dead flow globs, a missing invariants doc, and a bad 
   mkdirSync(path.join(dir, 'src/booking'), { recursive: true });
   writeFileSync(path.join(dir, 'src/booking/a.js'), '');
   writeFileSync(path.join(dir, 'inv.md'), '# Booking\n\n## Never double book\n');
+  writeFileSync(path.join(dir, 'long.md'), `# Long\n\n## Rules\n\n${Array.from({ length: 50 }, (_, i) => `- Rule ${i}: ${'x'.repeat(90)}`).join('\n')}\n`);
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, review: { flows: {
     booking: { files: ['src/booking/**'], invariants: 'inv.md' },
     gone: { files: ['src/gone/**'], invariants: 'missing.md' },
     loose: { files: ['src/booking/**'], invariants: [{ id: 'x', text: 'y', cite: 'inv.md#nope' }] },
+    focused: { files: ['src/booking/**'], invariants: [
+      { id: 'miss', cite: 'long.md#rules', focus: 'Nothing like this' },
+      { id: 'wide', text: 'Does the change remove a rule?', cite: 'long.md#rules' },
+      { id: 'narrow', cite: 'long.md#rules', focus: 'Rule 1' },
+    ] },
     bare: { files: ['src/booking/**'] },
   } } }));
   spawnSync('git', ['-C', dir, 'add', '-A']);
   const run = spawnSync(CLI, ['lint', 'review', '--project', dir], { encoding: 'utf8' });
   assert.equal(run.status, 1);
   assert.equal(run.stderr, [
+    'review: warning: flow focused: invariant wide text asks with "remove", so yes would be the breach: ask whether the change still keeps the rule',
+    'review: warning: flow focused: invariant wide cites 5145 characters of #rules; the reviewer reads the first 4000: add "focus" to name the blocks it judges against',
     'review: warning: flow bare states no invariants: its reviewer checks only that nothing in it is removed or weakened',
     'review: flow gone: files "src/gone/**" matches no tracked file',
     'review: flow gone: invariants missing.md is missing',
     'review: flow loose: invariant x cites #nope, a heading inv.md does not have',
+    'review: flow focused: invariant miss has focus "Nothing like this", which starts no top-level block of #rules',
     '',
   ].join('\n'));
 });

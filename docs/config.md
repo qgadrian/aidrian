@@ -56,6 +56,7 @@ In a group such as `github`, set only the keys you change; the others keep their
   "lessons": { "auto": true, "maxOpen": 20, "maxAgeDays": 14 },
   "models": { "claude": { "agents": {} }, "codex": { "agents": {} } },
   "names": { "human": "the Human", "ai": null },
+  "requires": { "aidrian": null },
   "attribution": { "commit": [], "pullRequest": [], "exclude": ["explorer", "helper-scout", "Explore", "claude-code-guide", "statusline-setup"] },
   "telemetry": {
     "enabled": true,
@@ -116,6 +117,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `models` | The model and effort of the plugin's agents, per host, in place of the ones the plugin ships: [Models](#models). |
 | `names.human` | What agents call the person they work for: [Names](#names). |
 | `names.ai` | What agents call themselves; `null` is the host's name, Claude or Codex: [Names](#names). |
+| `requires.aidrian` | The oldest plugin version the project's config needs, such as `"0.16.0"`; `null` asks for none: [Plugin version](#plugin-version). |
 | `attribution.commit` | The trailers an agent's commit must carry: [Attribution](#attribution). `[]`, the default, is off. |
 | `attribution.pullRequest` | The lines a pull request body an agent opens must end with: [Attribution](#attribution). `[]` is off. |
 | `attribution.exclude` | The agents the `Assisted-by:` lines leave out; by default the ones that only search and read. |
@@ -324,6 +326,20 @@ A team sets its names in `config.json`, and one developer in the git-ignored `.a
 
 `.aidrian.local.json` wins over `config.json`, one name at a time.
 `aidrian check` names an unknown key and a name that is not a non-empty string.
+
+## Plugin version
+
+A config that uses a newer key fails on an older plugin, and a session can load an older install than the one the
+project was set up with, such as a resumed session from another checkout. `requires.aidrian` names the oldest plugin
+the project needs:
+
+```json
+{ "requires": { "aidrian": "0.16.0" } }
+```
+
+When the running plugin is older, `aidrian check` fails and the session-start hook adds a line, both naming the
+version and the folder of the copy that runs, so the stale install shows at the first prompt. A plugin older than
+0.16.0 does not know the key and rejects it as unknown, which fails as loudly with a less specific message.
 
 ## Attribution
 

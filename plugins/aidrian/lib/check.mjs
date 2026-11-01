@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { commandConfig, VERSION } from './config.mjs';
+import { commandConfig, VERSION, versionFloorProblem } from './config.mjs';
 import { isWithin, linksOutside } from './fs.mjs';
 import { checkoutRoots, isIgnored } from './git.mjs';
 import { checkBudgets, indexRows, loadKnowledge, tagWarnings } from './knowledge.mjs';
@@ -29,6 +29,8 @@ export const commands = {
       const budgets = checkBudgets(project.root, buckets, config.knowledge.budgets);
       errors.push(...budgets.problems);
       errors.push(...(loadTerms(project, config)?.errors ?? []));
+      const floor = versionFloorProblem(config);
+      if (floor) errors.push(floor);
       for (const { line, gitignore } of unignored(project, config)) {
         errors.push(`${line} is not git-ignored: add the line "${line}" to ${gitignore}, or run aidrian init`);
       }

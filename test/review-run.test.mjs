@@ -115,6 +115,23 @@ test('a flow adds a local agent pass that must cite evidence for every invariant
   assert.equal(ran, 1);
 });
 
+test('a later round reviews the delta for bugs, but judges flow invariants from the merge base', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'], invariants: 'docs/flows/booking.md', require: ['agent:product-manager'] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => write('src/booking/book.js', 'export const book = 1;\n') });
+  const base = r.git('merge-base', 'main', 'HEAD');
+  const first = await r.step({ exec: clean });
+  const [pass] = first.dispatch;
+  assert.deepEqual([pass.context, pass.flowBase], ['full', undefined], 'the first round is already the whole change');
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'product-manager', findings: 1, fixed: 0, verdictsText: '[]' });
+  r.write('src/booking/book.js', 'export const book = 2;\n');
+  r.commit();
+  const second = await r.step({ exec: clean });
+  const again = second.dispatch.find((each) => each.pass === pass.pass);
+  assert.deepEqual([again.context, again.base, again.flowBase], ['delta', first.head, base]);
+  assert.match(again.brief, new RegExp(`judge every flow invariant on the whole change, \`git diff ${base} ${again.head}\``, 'u'));
+  assert.match(again.brief, /holds means the change keeps the rule/u, 'the verdict means the rule, whatever the question\'s wording');
+});
+
 test('a pull request cannot weaken the review it is under: a removed flow still runs, and the config change needs the Human', async (t) => {
   const flows = { booking: { files: ['src/booking/**'] } };
   const r = repo(t, { baseConfig: { version: 1, review: { flows } }, headConfig: { version: 1 }, change: (write) => write('src/booking/book.js', 'x\n') });

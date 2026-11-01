@@ -1,13 +1,14 @@
 // SessionStart and SubagentStart hook: one line that tells the agent which knowledge docs to read now and how to find
 // the rest, one line with the names to call the human and the AI, and, for the main session only, a last line when the
-// lesson inbox holds open lessons, which escalates when the inbox needs triage. SessionStart adds plain stdout to the context; SubagentStart (`--subagent`) needs it
+// lesson inbox holds open lessons, which escalates when the inbox needs triage, and a line when the plugin copy running
+// is older than the version the project requires (`requires` in config.json). SessionStart adds plain stdout to the context; SubagentStart (`--subagent`) needs it
 // wrapped in JSON. Prints nothing outside a project.
 // At SessionStart it also saves the project's agent gates for the session (lib/gate-snapshot.mjs), which the gate hook
 // holds every subagent to until the session ends.
 
 import path from 'node:path';
 
-import { loadConfig } from '../lib/config.mjs';
+import { loadConfig, versionFloorProblem } from '../lib/config.mjs';
 import { saveGateSnapshot } from '../lib/gate-snapshot.mjs';
 import { runHook } from '../lib/hook-io.mjs';
 import { indexRows, loadKnowledge } from '../lib/knowledge.mjs';
@@ -39,6 +40,8 @@ await runHook((input) => {
     console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: `${line}\n${names}` } }));
   } else {
     console.log(`${line}\n${names}`);
+    const floor = versionFloorProblem(config);
+    if (floor) console.log(`Plugin too old: ${floor}. Its hooks and commands may reject this project's config until then.`);
     const lessons = nudge(inboxPath(project, config), { command: binCommand('aidrian'), config });
     if (lessons) console.log(lessons);
   }

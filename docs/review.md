@@ -136,7 +136,8 @@ A reviewer reads at most 4000 characters of a source. A longer section is cut be
 item with its nested lines, a paragraph, a sub-heading, a code fence), and a note names each block left out and the
 cite to read. When the rule is one or two blocks of a long section, `focus` sends only those: one string or a list,
 each the first words of a top-level block, matched as whole words, without case or markup. Focused blocks get up to
-8000 characters, since the project chose them as the rule.
+8000 characters, since the project chose them as the rule. When any focus starts no block, as after an edit of the doc,
+the reviewer gets the whole section instead, and `aidrian lint review` reports the focus.
 
 ```json
 { "id": "controls", "cite": "docs/product.md#core-product-invariants", "focus": "Settings controllability" }

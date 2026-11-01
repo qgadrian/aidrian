@@ -68,18 +68,28 @@ const fenceOf = (line) => {
 };
 
 // The top-level blocks of a section body, in order: a sub-heading, a top-level list item with its more indented
-// lines, or a paragraph. Top level is the body's least indentation outside fences, so a section whose bullets are
+// lines, a fenced block, or a paragraph. Top level is the body's least indentation outside fences, so a section whose bullets are
 // all indented still splits into them. A fenced code block stays inside the block it starts in, and closes only on a
 // bare fence of its own character, at least as long. Blank lines are dropped from block edges.
 export function blocksOf(body) {
   const lines = String(body ?? '').split('\n');
+  // Per line: inside a fence (its closing line included), opening one, or the first line after one closes.
   const inFence = [];
+  const opens = [];
+  const afterFence = [];
   let open = null;
+  let closed = false;
   for (const line of lines) {
     const fence = fenceOf(line);
     inFence.push(open !== null);
+    opens.push(open === null && fence !== null);
+    afterFence.push(closed);
+    closed = false;
     if (open === null && fence) open = fence;
-    else if (open && fence?.bare && fence.char === open.char && fence.length >= open.length) open = null;
+    else if (open && fence?.bare && fence.char === open.char && fence.length >= open.length) {
+      open = null;
+      closed = true;
+    }
   }
   const indents = lines.filter((line, i) => !inFence[i] && line.trim()).map((line) => /^[ \t]*/u.exec(line)[0].length);
   const base = indents.length ? Math.min(...indents) : 0;
@@ -89,7 +99,7 @@ export function blocksOf(body) {
   for (const [i, line] of lines.entries()) {
     const top = !inFence[i] && line.trim() !== '' && /^[ \t]*/u.exec(line)[0].length === base;
     const text = line.slice(Math.min(base, /^[ \t]*/u.exec(line)[0].length));
-    const starts = top && (/^#{1,6}\s/u.test(text) || /^(?:[-*+]|\d+[.)])\s/u.test(text) || blank);
+    const starts = top && (/^#{1,6}\s/u.test(text) || /^(?:[-*+]|\d+[.)])\s/u.test(text) || blank || opens[i] || afterFence[i]);
     if (starts || (!current && line.trim())) {
       current = [];
       blocks.push(current);
@@ -120,12 +130,13 @@ export function focusBlocks(section, focuses) {
 }
 
 // What a reviewer reads of a cited section: the heading and its blocks (only the focused ones when the invariant has a
-// `focus` that matches), cut at a block boundary to the limit with a note naming every block it left out and where to read it. A
+// `focus` when every one matches), cut at a block boundary to the limit with a note naming every block it left out and where to read it. A
 // first block longer than the limit is cut inside it. Returns { source, length, limit }, `length` before any cut.
 export function sourceOf(section, invariant) {
-  // A focus that starts no block, such as after an edit of the doc, falls back to the whole section: the reviewer then
-  // reads more than it needs instead of nothing, and `aidrian lint review` reports the focus.
-  const picked = focusesOf(invariant).length ? focusBlocks(section, focusesOf(invariant)).blocks : [];
+  // When any focus starts no block, such as after an edit of the doc, the reviewer reads the whole section: more than
+  // it needs, instead of part of the rule silently gone. `aidrian lint review` reports the focus.
+  const chosen = focusesOf(invariant).length ? focusBlocks(section, focusesOf(invariant)) : null;
+  const picked = chosen && !chosen.missing.length ? chosen.blocks : [];
   const focuses = picked.length ? focusesOf(invariant) : [];
   const limit = focuses.length ? MAX_FOCUSED : MAX_SOURCE;
   const blocks = focuses.length ? picked : blocksOf(section.raw ?? section.body);

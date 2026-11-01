@@ -52,6 +52,7 @@ test('blocksOf takes the least indentation as top level, and a fence closes only
   const fenced = ['````md', '```js', 'x()', '```', '', '- not a rule, still the example', '````', '', '- Real rule'].join('\n');
   assert.deepEqual(blocksOf(fenced), [fenced.split('\n\n- Real rule')[0], '- Real rule'], 'the inner ``` does not close the ```` fence');
   assert.deepEqual(blocksOf('~~~\n```\n~~~ not bare\n~~~\n\nAfter.'), ['~~~\n```\n~~~ not bare\n~~~', 'After.']);
+  assert.deepEqual(blocksOf('Intro line.\n```\ncode\n```\nRefund cap: never exceeds the charge.'), ['Intro line.', '```\ncode\n```', 'Refund cap: never exceeds the charge.'], 'a fence is its own block, blank lines or not');
 });
 
 test('focus sends only the blocks it names, in section order, and names the question after them', () => {
@@ -66,6 +67,8 @@ test('focus sends only the blocks it names, in section order, and names the ques
   assert.deepEqual(focusBlocks(section, ['Settings control']).missing, ['Settings control'], 'a focus ends on a whole word');
   const stale = sourceOf(section, { cite: 'product.md#core-product-invariants', focus: 'Gone rule' }).source;
   assert.match(stale, /^Core Product Invariants\n\n- Domain separation is strict:/u, 'a focus that matches nothing sends the whole section, not the heading alone');
+  const partial = sourceOf(section, { cite: 'product.md#core-product-invariants', focus: ['Settings controllability', 'Gone rule'] }).source;
+  assert.match(partial, /- Domain separation is strict:/u, 'one unmatched focus of a list also sends the whole section');
 });
 
 test('a long section is cut between blocks, and the note names every block the reviewer did not see', () => {

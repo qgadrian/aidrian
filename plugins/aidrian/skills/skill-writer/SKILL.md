@@ -1,6 +1,6 @@
 ---
 name: skill-writer
-description: Create, update, audit, rename, or retire a skill in this plugin or a project, held to aidrian lint limits. Use when asked to write or change any SKILL.md.
+description: Create, update, audit, rename, or retire a skill in this plugin or a project, held to aidrian lint limits. Use when asked to write, change, or audit any SKILL.md.
 ---
 
 # skill-writer

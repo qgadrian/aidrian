@@ -68,6 +68,35 @@ export function parse(file, text, { tracked, aliases = {} }) {
 }
 
 const QUOTES = new Set(['"', "'", '`']);
+// The characters after which a `/` starts a regular expression literal rather than a division.
+const REGEX_AFTER = new Set(['', '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '<', '>', '~', '^']);
+
+// The index of the last character of the string, template literal, comment, or regular expression literal that
+// starts at `i`, or -1 when none starts there. `prev` is the last code character before `i`, which tells a regular
+// expression from a division.
+function skipLiteral(text, i, end, prev) {
+  const ch = text[i];
+  if (QUOTES.has(ch)) return skipQuoted(text, i, end);
+  if (ch !== '/') return -1;
+  if (text[i + 1] === '/') {
+    const newline = text.indexOf('\n', i);
+    return newline === -1 || newline >= end ? end : newline;
+  }
+  if (text[i + 1] === '*') {
+    const close = text.indexOf('*/', i + 2);
+    return close === -1 || close >= end ? end : close + 1;
+  }
+  if (!REGEX_AFTER.has(prev)) return -1;
+  let inClass = false;
+  for (let j = i + 1; j < end; j += 1) {
+    if (text[j] === '\\') j += 1;
+    else if (text[j] === '\n') return -1;
+    else if (inClass) inClass = text[j] !== ']';
+    else if (text[j] === '[') inClass = true;
+    else if (text[j] === '/') return j;
+  }
+  return -1;
+}
 
 // The index of the character that closes the string or template literal opened at `at` (`end` when none does). A
 // template's `${...}` is read as code, so a literal nested in it closes on its own.
@@ -76,41 +105,37 @@ function skipQuoted(text, at, end) {
   for (let i = at + 1; i < end; i += 1) {
     if (text[i] === '\\') i += 1;
     else if (text[i] === quote || (quote !== '`' && text[i] === '\n')) return i;
-    else if (quote === '`' && text[i] === '$' && text[i + 1] === '{') i = skipExpression(text, i + 2, end);
+    else if (quote === '`' && text[i] === '$' && text[i + 1] === '{') i = balanced(text, i + 2, end, '{', '}');
   }
   return end;
 }
 
-// The index of the `}` that closes a template's `${` expression, whose code starts at `at`.
-function skipExpression(text, at, end) {
+// The index of the `close` that balances an `open` just before `at`, reading the code in between: strings, templates,
+// comments, and regular expression literals do not count (`end` when nothing balances it).
+function balanced(text, at, end, open, close) {
   let depth = 1;
+  let prev = open;
   for (let i = at; i < end; i += 1) {
-    if (QUOTES.has(text[i])) i = skipQuoted(text, i, end);
-    else if (text[i] === '{') depth += 1;
-    else if (text[i] === '}' && (depth -= 1) === 0) return i;
+    const skipped = skipLiteral(text, i, end, prev);
+    if (skipped !== -1) {
+      i = skipped;
+      prev = 'a';
+      continue;
+    }
+    const ch = text[i];
+    if (ch === open) depth += 1;
+    else if (ch === close && (depth -= 1) === 0) return i;
+    if (!/\s/u.test(ch)) prev = ch;
   }
   return end;
 }
 
 // The argument text of the call whose opening parenthesis is at `open`, up to its balanced closing one. Parentheses
-// inside a string, a template literal (nested ones too), or a comment do not count, so `load(")", client)` still
-// reads to its end.
+// inside a string, a template literal (nested ones too), a comment, or a regular expression do not count, so
+// `load(")", client)` still reads to its end. Past MAX_ARGUMENTS characters the arguments are cut.
 const argumentsAt = (text, open) => {
-  let depth = 1;
-  let at = open + 1;
   const end = Math.min(text.length, open + 1 + MAX_ARGUMENTS);
-  for (; at < end && depth; at += 1) {
-    const ch = text[at];
-    if (QUOTES.has(ch)) at = skipQuoted(text, at, end);
-    else if (ch === '/' && text[at + 1] === '/') {
-      while (at < end && text[at] !== '\n') at += 1;
-    } else if (ch === '/' && text[at + 1] === '*') {
-      const close = text.indexOf('*/', at + 2);
-      at = close === -1 || close >= end ? end : close + 1;
-    } else if (ch === '(') depth += 1;
-    else if (ch === ')') depth -= 1;
-  }
-  return text.slice(open + 1, depth ? at : at - 1);
+  return text.slice(open + 1, balanced(text, open + 1, end, '(', ')'));
 };
 
 // The calls in `text` to a local name in `names`, or to a member of one, type arguments or not, whose arguments hold

@@ -139,7 +139,10 @@ test('trace-js callsWith: balanced arguments, quoted strings left out, generic a
     { name: 'load', variable: 'db', line: 6 },
   ]);
   assert.deepEqual(callsWith('load(getAdminClient());', names, [], null), [], 'no factory, no inline match');
-  for (const call of ['load(")", adminClient);', "load(')', adminClient);", 'load(`(${x}`, adminClient);', 'load(/* ) */ x, adminClient);', 'load(x, // )\n adminClient);', 'load(`outer ( ${`inner )`}`, adminClient);', 'load(`a ${f(")")} b`, adminClient);', 'load(`${ { a: "}" }.a } )`, adminClient);']) {
+  for (const call of ['load(`${ /* { */ x }`, client); use(adminClient);', 'load(`${ /{/.test(x) }`, client); use(adminClient);', 'load(a / b, client); use(adminClient);']) {
+    assert.deepEqual(callsWith(call, names, ['adminClient']), [], `a brace or slash in a comment, regex, or division does not swallow the next statement: ${call}`);
+  }
+  for (const call of ['load(")", adminClient);', "load(')', adminClient);", 'load(`(${x}`, adminClient);', 'load(/* ) */ x, adminClient);', 'load(x, // )\n adminClient);', 'load(`outer ( ${`inner )`}`, adminClient);', 'load(`a ${f(")")} b`, adminClient);', 'load(`${ { a: "}" }.a } )`, adminClient);', 'load(`${ /* } */ `inner )` }`, adminClient);', 'load(/\\)/, adminClient);', 'load(`${ /[)}]/.test(x) }`, adminClient);']) {
     assert.deepEqual(callsWith(call, names, ['adminClient']).map((each) => each.variable), ['adminClient'], `a parenthesis in a string or comment does not end the arguments: ${call}`);
   }
   const pad = (n) => `load(${'x'.repeat(n)}, adminClient);`;

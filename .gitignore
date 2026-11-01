@@ -7,3 +7,4 @@ dist/
 /.claude/
 .banned-terms.local
 .aidrian.local.json
+plugins/aidrian/evals/**/results/

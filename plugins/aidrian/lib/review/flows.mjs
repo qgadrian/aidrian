@@ -63,9 +63,12 @@ export function sectionOf(text, anchor) {
 
 // A fence line: its delimiter, and whether the line is the delimiter alone, which only a closing fence may be. An
 // opening fence may follow list markers, as in "- ```js"; such a line is never bare, so it never closes one.
+// CommonMark: https://spec.commonmark.org/0.31.2/#fenced-code-blocks
 const fenceOf = (line) => {
   const found = /^\s*((?:(?:[-*+]|\d+[.)])\s+)*)(`{3,}|~{3,})(.*)$/u.exec(line);
-  return found ? { char: found[2][0], length: found[2].length, bare: found[1] === '' && found[3].trim() === '' } : null;
+  // A backtick fence's info string has no backtick, so "```code``` stays literal" is inline code, not a fence.
+  if (!found || (found[2][0] === '`' && found[3].includes('`'))) return null;
+  return { char: found[2][0], length: found[2].length, bare: found[1] === '' && found[3].trim() === '' };
 };
 
 // The top-level blocks of a section body, in order: a sub-heading, a top-level list item with its more indented

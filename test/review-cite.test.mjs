@@ -59,6 +59,10 @@ test('blocksOf takes the least indentation as top level, and a fence closes only
       assert.deepEqual(blocksOf(`${item}\n${marker} Refund cap: never exceeds the charge.`), [item, `${marker} Refund cap: never exceeds the charge.`], `a fence opened by "${marker} ${delimiter}"`);
     }
   }
+  for (const marker of ['-', '1.']) {
+    const rules = [`${marker} \`\`\`code\`\`\` examples stay literal.`, `${marker} Refund cap: never exceeds the charge.`];
+    assert.deepEqual(blocksOf(rules.join('\n')), rules, 'inline code of three backticks opens no fence');
+  }
 });
 
 test('focus sends only the blocks it names, in section order, and names the question after them', () => {

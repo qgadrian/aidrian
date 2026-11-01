@@ -50,10 +50,20 @@ To try a branch in a real session before it merges, install the plugin from your
 
 `plugins/aidrian/evals/<case>/` holds behavior cases for skills, run with model calls, so not by `npm run check`.
 Bash runs inside that temporary clone. Each case's `scaffold.sh` clones the committed HEAD into the run's folder and removes the skill under test, so the
-baseline run without the plugin cannot read it. Commit first, then, from `plugins/aidrian`:
+baseline run without the plugin cannot read it. A case with a `fixture/` folder, such as `quorum-seeded-flaw`, copies that
+small project into the run's folder instead, so both arms review the same project and only the plugin arm has the skills.
+`Agent` in a case's `allowed_tools` lets it dispatch subagents: Claude Code runs them in the background, and the run waits for them.
+Commit first, then, from `plugins/aidrian`, run the routine cases:
 
 ```sh
-claude plugin eval . --scaffold --trust-plugin --no-publish --runs 1 --allow-tools Bash --model <haiku|sonnet|opus>
+claude plugin eval . --scaffold --trust-plugin --no-publish --case 'skill-writer-*' --runs 1 --allow-tools Bash --model <haiku|sonnet|opus>
+```
+
+`quorum-seeded-flaw` runs a whole `plan-review` with its quorum in each plugin run, up to an hour each.
+Run it on its own, and only when the Human approves the cost:
+
+```sh
+claude plugin eval . --scaffold --trust-plugin --no-publish --case quorum-seeded-flaw --runs 3 --allow-tools Bash --model sonnet
 ```
 
 A case earns its place when it passes with the plugin and fails without it. Results go to `evals/**/results/`, which git ignores.

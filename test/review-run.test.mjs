@@ -7,7 +7,7 @@ import test from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
-import { citationProblem, flowState, invariantsOf } from '../plugins/aidrian/lib/review/flows.mjs';
+import { blocksOf, citationProblem, flowState, invariantsOf, sectionOf } from '../plugins/aidrian/lib/review/flows.mjs';
 import { cleanOutput, resolveEngine, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { EXIT, recordPass, recordSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { readLocalState, stateFromComment } from '../plugins/aidrian/lib/review/state.mjs';
@@ -239,6 +239,36 @@ test('runExec: a project reviewer reads its input on stdin and prints findings; 
   assert.equal((await runExec(script("console.error('You hit your usage limit');process.exit(1)"), {}, { root: dir, env: process.env })).status, 'quota');
   assert.equal((await runExec({ ...script('setTimeout(()=>{}, 10000)'), timeoutSec: 1 }, {}, { root: dir, env: process.env })).status, 'timed_out');
   assert.equal(cleanOutput({ verdicts: [] }).valid, false);
+});
+
+test('sectionOf: a heading or a shell comment inside a fenced block is code, not a heading', () => {
+  const doc = '# Doc\n\n## Deploy\nRun:\n\n```bash\n# build first\n## Fake\n```\n\nThen ship.\n\n## Next\nOther.\n';
+  assert.equal(sectionOf(doc, 'fake'), null);
+  const body = 'Run:\n\n```bash\n# build first\n## Fake\n```\n\nThen ship.';
+  assert.deepEqual(sectionOf(doc, 'deploy'), { heading: 'Deploy', body, raw: body }, '`raw` keeps the fenced lines too');
+});
+
+test('sectionOf and invariantsOf: a fence opened after a list marker closes at its bare fence, and a heading after it is a heading', () => {
+  const doc = '# T\n\n## A\nSteps:\n\n- ```bash\n  # build\n  npm run build\n  ```\n\n## B\nOther.\n\n- ```md\n  ## Fake\n\n## C\nLast.\n';
+  assert.deepEqual(sectionOf(doc, 'a').raw, 'Steps:\n\n- ```bash\n  # build\n  npm run build\n  ```');
+  assert.deepEqual(sectionOf(doc, 'b').body, 'Other.\n\n- ```md\n  ## Fake', 'an unclosed fence in a list item ends where the item ends');
+  assert.equal(sectionOf(doc, 'fake'), null);
+  assert.deepEqual(invariantsOf({ invariants: 'x.md' }, () => doc).invariants.map((each) => each.id), ['a', 'b', 'c']);
+});
+
+test('sectionOf, invariantsOf, and blocksOf read a CRLF doc: a heading or a comment in a fence is still code', () => {
+  const doc = ['# T', '', '## A', 'Run:', '', '```bash', '# comment', '## Fake', '```', '', 'Then ship.', '', '## B', '', 'Other.', ''].join('\r\n');
+  const body = 'Run:\n\n```bash\n# comment\n## Fake\n```\n\nThen ship.';
+  assert.deepEqual(sectionOf(doc, 'a'), { heading: 'A', body, raw: body });
+  assert.equal(sectionOf(doc, 'fake'), null);
+  assert.equal(sectionOf(doc, 'b').raw, 'Other.', 'no CRLF blank line kept at the start of raw');
+  assert.deepEqual(invariantsOf({ invariants: 'x.md' }, () => doc).invariants.map((each) => each.id), ['a', 'b']);
+  assert.deepEqual(blocksOf(['Run:', '', '```bash', '# comment', '```', '', 'Then ship.'].join('\r\n')), ['Run:', '```bash\n# comment\n```', 'Then ship.']);
+});
+
+test('invariantsOf: a heading inside a fenced block is not an invariant', () => {
+  const read = () => '# T\n\n## Keep bookings\nA booking stays.\n\n```md\n## Fake\nnot a rule\n```\n';
+  assert.deepEqual(invariantsOf({ invariants: 'inv.md' }, read).invariants.map((each) => each.id), ['keep-bookings']);
 });
 
 test('invariantsOf and flowState: a doc gives one invariant per heading; a flow with none is unspecified', () => {

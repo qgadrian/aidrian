@@ -10,7 +10,7 @@ export const UNSPECIFIED = Object.freeze({
   text: 'The change keeps this flow working as before: no entry point, user action, or guarantee of the flow is removed or weakened.',
 });
 
-const slug = (text) => text.toLowerCase().replace(/[`*_]/gu, '').replace(/[^a-z0-9]+/gu, '-').replace(/^-|-$/gu, '');
+export const slug = (text) => text.toLowerCase().replace(/[`*_]/gu, '').replace(/[^a-z0-9]+/gu, '-').replace(/^-|-$/gu, '');
 
 // The invariants of a flow. A list is used as written. A doc's invariants are its `##` and `###` headings, each with
 // the paragraph under it; `read(path)` returns the doc's text or null. Returns { invariants, unspecified, problem }.
@@ -21,7 +21,11 @@ export function invariantsOf(flow, read) {
   if (text === null) return { invariants: [UNSPECIFIED], unspecified: true, problem: `${flow.invariants} is missing` };
   const invariants = [];
   let current = null;
-  for (const line of text.split('\n')) {
+  // A `##` line in a fenced code block is code, not an invariant.
+  const lines = text.split(/\r?\n/u);
+  const fenced = fencedIn(lines);
+  for (const [i, line] of lines.entries()) {
+    if (fenced[i]) continue;
     const heading = /^#{2,3}\s+(.+?)\s*$/u.exec(line);
     if (heading) {
       current = { id: slug(heading[1]), text: heading[1], cite: `${flow.invariants}#${slug(heading[1])}` };
@@ -39,14 +43,17 @@ export const MAX_FOCUSED = 8000;
 
 // The section of a markdown doc under the heading whose slug is `anchor`: the heading and its body, up to the next
 // heading of the same or a higher level; `raw` is the body with its indentation kept, for blocksOf. Null when the doc
-// has no such heading.
+// has no such heading. A `#` line in a fenced code block, such as a shell comment, is code, not a heading: it neither
+// ends a section nor matches the anchor.
 export function sectionOf(text, anchor) {
-  const lines = String(text ?? '').split('\n');
+  // CRLF or LF: a `\r` left on a line would hide its fence, and `raw` is rejoined with LF.
+  const lines = String(text ?? '').split(/\r?\n/u);
+  const fenced = fencedIn(lines);
   let start = -1;
   let level = 0;
   let end = lines.length;
   for (const [i, line] of lines.entries()) {
-    const heading = /^(#{1,6})\s+(.+?)\s*#*\s*$/u.exec(line);
+    const heading = fenced[i] ? null : /^(#{1,6})\s+(.+?)\s*#*\s*$/u.exec(line);
     if (!heading) continue;
     if (start === -1 && slug(heading[2]) === anchor) {
       start = i;
@@ -73,6 +80,26 @@ const fenceOf = (line) => {
 };
 const closes = (fence, open) => fence?.bare && fence.char === open.char && fence.length >= open.length;
 
+// For each line, whether it is code: a fence line or a line inside a fenced block, by the delimiters blocksOf uses. A
+// fence may open after list markers, as in "- ```bash", and one that opened after them ends where that item ends, so the
+// bare fence that closes it never opens another. sectionOf and invariantsOf skip these lines as headings.
+// Known limit: an unclosed fence on a line of its own runs to the end of the doc, even inside a list item, where
+// blocksOf ends it with the item.
+function fencedIn(lines) {
+  let open = null;
+  return lines.map((raw) => {
+    const line = expandTabs(raw);
+    if (open?.item != null && line.trim() && indentOf(line) < open.item) open = null;
+    const fence = fenceOf(line);
+    if (open) {
+      if (closes(fence, open)) open = null;
+      return true;
+    }
+    open = fence;
+    return fence !== null;
+  });
+}
+
 // A line with the tabs of its indentation and list markers expanded to 4-column stops, so indentation is measured in
 // columns: a tab-indented nested bullet stays nested.
 const expandTabs = (line) => {
@@ -90,7 +117,7 @@ const indentOf = (line) => /^ */u.exec(line)[0].length;
 // the block it starts in, and ends at a bare fence of its own character, at least as long, or, when it opened inside a
 // list item, where that item ends. Indentation counts tabs to 4-column stops. Blank lines are dropped from block edges.
 export function blocksOf(body) {
-  const lines = String(body ?? '').split('\n').map(expandTabs);
+  const lines = String(body ?? '').split(/\r?\n/u).map(expandTabs);
   // The least indentation outside fences, from a first pass that matches delimiters only. Accepted residual: this pass
   // does not end an unclosed fence where its list item ends, so a section can get too high a base, and a deeper bullet
   // after such a fence becomes its own block.

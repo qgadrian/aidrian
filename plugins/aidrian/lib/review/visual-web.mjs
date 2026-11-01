@@ -1,7 +1,8 @@
 // The web adapter of the visual capture (lib/review/visual.mjs): one screenshot per route, width, locale, and variant,
 // with the geometry facts a reviewer cannot see in a picture, measured in the page. It runs as its own process in the
 // project folder and loads the project's own Playwright (`playwright` or `@playwright/test`): the plugin ships no
-// browser. Input on stdin: { outDir, entries: [{ key, url, width, locale, variant }], storageStates: { variant: file } }.
+// browser. Input on stdin: { outDir, entries: [{ key, url, width, locale, variant, auth? }], storageStates: { auth: file } },
+// where `auth` names the signed-in persona of the entry's variant, or of its variant and locale.
 // Output on stdout: { results: [{ key, file, facts } | { key, error }] }, or exit 3 with the reason when Playwright or
 // its browser is missing. Animations and the caret are off, and motion is reduced, so the same page gives the same
 // bytes and a re-run uploads nothing new.
@@ -93,7 +94,7 @@ async function main() {
         deviceScaleFactor: 1,
         ...(entry.locale ? { locale: entry.locale } : {}),
         reducedMotion: 'reduce',
-        ...(input.storageStates?.[entry.variant] ? { storageState: input.storageStates[entry.variant] } : {}),
+        ...(entry.auth && input.storageStates?.[entry.auth] ? { storageState: input.storageStates[entry.auth] } : {}),
       });
       try {
         const page = await context.newPage();

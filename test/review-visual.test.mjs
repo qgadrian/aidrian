@@ -163,3 +163,59 @@ test('a target may use a named base the login prints per variant: a subdomain, o
   assert.match(bad.join('\n'), /\.base" must name a base/u);
   assert.match(bad.join('\n'), /base" needs review\.visual\.login/u);
 });
+
+test('a target may narrow the locales and variants: [] locales is one default capture, and two targets of a route join', () => {
+  const visual = visualConfig({
+    targets: [
+      { files: ['src/app/dash/**'], routes: ['/dashboard'], locales: ['en'] },
+      { files: ['src/app/onboarding/**'], routes: ['/onboarding'], variants: ['hospitality'], locales: [] },
+      { files: ['src/components/**'], routes: ['/dashboard'], locales: ['de'], variants: ['appointments'] },
+    ],
+  });
+  assert.deepEqual(visualRoutes(visual, [{ file: 'src/app/dash/a.tsx' }, { file: 'src/app/onboarding/a.tsx' }]), [
+    { route: '/dashboard', base: null, locales: ['en'] },
+    { route: '/onboarding', base: null, locales: [null], variants: ['hospitality'] },
+  ]);
+  const both = visualRoutes(visual, [{ file: 'src/app/dash/a.tsx' }, { file: 'src/components/b.tsx' }]);
+  assert.deepEqual(both, [{ route: '/dashboard', base: null, locales: ['en', 'de'] }], 'an unfiltered variant list wins the join');
+  const entries = visualMatrix(visual, visualRoutes(visual, [{ file: 'src/app/onboarding/a.tsx' }]));
+  assert.deepEqual(entries.map((entry) => entry.key.split('--').slice(1).join(' ')), ['360 default hospitality', '1280 default hospitality']);
+  assert.equal(visualMatrix(visual, both).length, 2 * 2 * 2);
+  const bad = [];
+  checkReview({ visual: { platform: 'web', targets: [{ files: ['x/**'], routes: ['/'], locales: ['fr'], variants: ['nope'] }], viewports: [360], locales: ['en'], variants: [{ id: 'a' }] } }, 'config.json', bad);
+  assert.match(bad.join('\n'), /targets\[0\]\.locales" must list tags from review\.visual\.locales/u);
+  assert.match(bad.join('\n'), /targets\[0\]\.variants" must be a non-empty list of ids/u);
+  const big = [];
+  const wide = { platform: 'web', viewports: [360, 768, 1024, 1280, 1440, 1920], locales: ['en', 'de', 'fr', 'es', 'it'], variants: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] };
+  checkReview({ visual: { ...wide, targets: [{ files: ['x/**'], routes: ['/'] }] } }, 'config.json', big);
+  assert.match(big.join('\n'), /targets\[0\] asks for 90 images per route/u);
+  const narrowed = [];
+  assert.ok(checkReview({ visual: { ...wide, targets: [{ files: ['x/**'], routes: ['/'], locales: ['en'] }] } }, 'config.json', narrowed).visual);
+  assert.deepEqual(narrowed, [], 'the budget is per target');
+});
+
+test('the login gets the locales, and may print a persona per locale that replaces the variant\'s for that locale', async (t) => {
+  const p = project(t);
+  const visual = visualConfig({ targets: [{ files: ['src/**'], routes: ['/dashboard'] }], viewports: [360] });
+  const entries = visualMatrix(visual, R('/dashboard'));
+  const inputs = [];
+  const hook = async (_command, input) => (inputs.push(input), JSON.stringify({
+    storageState: { cookies: [{ name: 's', value: input.variant }] },
+    ...(input.variant === 'hospitality' ? { locales: { de: { storageState: { cookies: [{ name: 's', value: 'h-de' }] }, baseUrl: 'http://de.localhost:3000' } } } : {}),
+  }));
+  const seen = [];
+  const manifest = await captureVisual({ project: p, pr: 4, head: '8'.repeat(40), visual, entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base(hook), spawn: fakeAdapter(undefined, seen) });
+  assert.equal(manifest.status, 'captured');
+  assert.deepEqual(inputs.map((input) => input.locales), [['en', 'de'], ['en', 'de']]);
+  const jobs = Object.fromEntries(seen[0].entries.map((job) => [`${job.variant} ${job.locale}`, `${job.auth} ${job.url}`]));
+  assert.deepEqual(jobs, {
+    'hospitality en': 'hospitality http://localhost:3000/dashboard',
+    'hospitality de': 'hospitality--de http://de.localhost:3000/dashboard',
+    'appointments en': 'appointments http://localhost:3000/dashboard',
+    'appointments de': 'appointments http://localhost:3000/dashboard',
+  });
+  assert.deepEqual(Object.keys(seen[0].storageStates).sort(), ['appointments', 'hospitality', 'hospitality--de']);
+  const unknown = await captureVisual({ project: p, pr: 4, head: '7'.repeat(40), visual, entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base(async () => JSON.stringify({ storageState: {}, locales: { fr: { storageState: {} } } })) });
+  assert.equal(unknown.status, 'failed');
+  assert.match(unknown.reason, /locale fr: not in review\.visual\.locales/u);
+});

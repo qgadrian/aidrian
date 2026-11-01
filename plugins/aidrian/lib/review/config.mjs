@@ -102,7 +102,15 @@ function checkVisual(visual, bad) {
     visual.targets.forEach((target, i) => {
       const at = `review.visual.targets[${i}]`;
       if (!isObject(target)) return problems.push(`"${at}" must be an object`);
-      for (const key of Object.keys(target)) if (!['files', 'routes', 'base'].includes(key)) problems.push(`unknown key "${at}.${key}"`);
+      for (const key of Object.keys(target)) if (!['files', 'routes', 'base', 'locales', 'variants'].includes(key)) problems.push(`unknown key "${at}.${key}"`);
+      // A target's own subset of the locales and variants, for a screen that does not change with them: [] locales is
+      // one capture in the app's default locale.
+      if (target.locales !== undefined && !(Array.isArray(target.locales) && target.locales.every((locale) => Array.isArray(visual.locales) && visual.locales.includes(locale)) && new Set(target.locales).size === target.locales.length)) {
+        problems.push(`"${at}.locales" must list tags from review.visual.locales, each once, or be [] for one capture in the default locale`);
+      }
+      if (target.variants !== undefined && !(someTexts(target.variants) && target.variants.every((id) => Array.isArray(visual.variants) && visual.variants.some((variant) => variant?.id === id)) && new Set(target.variants).size === target.variants.length)) {
+        problems.push(`"${at}.variants" must be a non-empty list of ids from review.visual.variants, each once`);
+      }
       if (target.base !== undefined && !FLOW_ID.test(String(target.base))) problems.push(`"${at}.base" must name a base the login command prints, such as "guest"`);
       if (!someTexts(target.files)) problems.push(`"${at}.files" must be a non-empty list of globs`);
       else if (pathsProblem(target.files)) problems.push(`"${at}.files" ${pathsProblem(target.files)}`);
@@ -126,8 +134,11 @@ function checkVisual(visual, bad) {
   if (visual.attach !== undefined && !ATTACH_MODES.includes(visual.attach)) problems.push(`"review.visual.attach" must be ${ATTACH_MODES.map((each) => `"${each}"`).join(', ')}`);
   if (visual.reviewers !== undefined && !(someTexts(visual.reviewers) && visual.reviewers.every((name) => NAME.test(name)))) problems.push('"review.visual.reviewers" must be a non-empty list of agent names');
   if (!problems.length) {
-    const perRoute = widths.length * (visual.locales?.length ?? 1) * Math.max(variants.length, 1);
-    if (perRoute > VISUAL_PER_ROUTE) problems.push(`review.visual asks for ${perRoute} images per route (viewports x locales x variants), past ${VISUAL_PER_ROUTE}: trim a list`);
+    visual.targets.forEach((target, i) => {
+      const locales = target.locales ? Math.max(target.locales.length, 1) : visual.locales?.length ?? 1;
+      const perRoute = widths.length * locales * Math.max(target.variants?.length ?? variants.length, 1);
+      if (perRoute > VISUAL_PER_ROUTE) problems.push(`review.visual.targets[${i}] asks for ${perRoute} images per route (viewports x locales x variants), past ${VISUAL_PER_ROUTE}: trim a list`);
+    });
   }
   if (problems.length) {
     problems.forEach(bad);

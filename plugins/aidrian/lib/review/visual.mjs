@@ -32,16 +32,31 @@ const slug = (text) => text.toLowerCase().replace(/[^a-z0-9]+/gu, '-').replace(/
 // share a file.
 const routeId = (route) => `${slug(route)}-${createHash('sha256').update(route).digest('hex').slice(0, 6)}`;
 
-// The routes a change touches, as [{ route, base }]: every route of a target whose files match a changed file, deleted
-// files included, since removing a component changes the screen too. `base` is the target's named base, or null for
-// the variant's own.
+// A target's locale subset as the matrix reads it: null for every locale, `[]` (one capture in the default locale) as
+// [null].
+const targetLocales = (target) => (target.locales ? (target.locales.length ? target.locales : [null]) : null);
+// Two targets' subsets of one route, joined: either one unfiltered leaves the route unfiltered.
+const union = (a, b, order) => (a && b ? order.filter((each) => a.includes(each) || b.includes(each)) : null);
+
+// The routes a change touches, as [{ route, base, locales?, variants? }]: every route of a target whose files match a
+// changed file, deleted files included, since removing a component changes the screen too. `base` is the target's
+// named base, or null for the variant's own. `locales` and `variants` are present when the touched targets narrow
+// them; a route two touched targets list gets both targets' captures.
 export function visualRoutes(visual, changes) {
   if (!visual) return [];
   const routes = new Map();
+  const localeOrder = [null, ...(visual.locales ?? [])];
+  const variantOrder = (visual.variants ?? []).map((variant) => variant.id);
   for (const target of visual.targets) {
     const patterns = target.files.map(pathPattern);
     if (!changes.some((change) => patterns.some((pattern) => pattern.test(change.file)))) continue;
-    for (const route of target.routes) routes.set(`${target.base ?? ''}\0${route}`, { route, base: target.base ?? null });
+    for (const route of target.routes) {
+      const key = `${target.base ?? ''}\0${route}`;
+      const known = routes.get(key);
+      const locales = known ? union(known.locales ?? null, targetLocales(target), localeOrder) : targetLocales(target);
+      const variants = known ? union(known.variants ?? null, target.variants ?? null, variantOrder) : target.variants ?? null;
+      routes.set(key, { route, base: target.base ?? null, ...(locales ? { locales } : {}), ...(variants ? { variants } : {}) });
+    }
   }
   return [...routes.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, each]) => each);
 }
@@ -49,11 +64,12 @@ export function visualRoutes(visual, changes) {
 // One entry per route, width, locale, and variant. A route may hold `{locale}`, filled per locale. Throws past
 // VISUAL_PER_RUN images, naming the routes, so the review stops loudly rather than capture part of the matrix.
 export function visualMatrix(visual, routes) {
-  const locales = visual.locales.length ? visual.locales : [null];
-  const variants = visual.variants.length ? visual.variants : [{ id: 'default' }];
+  const allLocales = visual.locales.length ? visual.locales : [null];
+  const allVariants = visual.variants.length ? visual.variants : [{ id: 'default' }];
   const entries = [];
-  for (const { route, base } of routes) {
+  for (const { route, base, locales = allLocales, variants: only } of routes) {
     const id = base ? routeId(`${base}:${route}`) : routeId(route);
+    const variants = only ? allVariants.filter((variant) => only.includes(variant.id)) : allVariants;
     for (const variant of variants) {
       for (const locale of locales) {
         for (const width of visual.viewports) {
@@ -86,6 +102,23 @@ export const captureKeys = (manifest) => new Set((manifest?.entries ?? []).filte
 
 const fail = (status, reason) => ({ status, reason });
 
+// The `baseUrl` and `bases` a login printed, checked: { url?, bases? }, or { error }.
+function overrides(printed, what) {
+  try {
+    const out = {};
+    if (printed.baseUrl !== undefined) out.url = urlFrom(printed.baseUrl, what);
+    // Named bases, for a target whose screens live on another host or path of this variant (a per-variant
+    // subdomain, the app root): { "bases": { "guest": "http://shop.localhost:3000" } }.
+    if (printed.bases !== undefined) {
+      if (!isObject(printed.bases)) return { error: `${what}: "bases" must map names to URLs` };
+      out.bases = Object.fromEntries(Object.entries(printed.bases).map(([name, value]) => [name, urlFrom(value, `${what}, base ${name}`)]));
+    }
+    return out;
+  } catch (error) {
+    return { error: error.message };
+  }
+}
+
 // The base URL a hook printed: its first line, which must be an http(s) URL.
 function urlFrom(text, what) {
   const line = String(text ?? '').trim().split('\n')[0]?.trim() ?? '';
@@ -114,36 +147,59 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
       let url = baseUrl;
       if (!url && visual.preview) url = urlFrom(await hook(visual.preview, { pr, head }), 'review.visual.preview');
       if (!url) return fail('unavailable', 'no base URL: set review.visual.baseUrl in the local settings file, or review.visual.preview');
-      const urls = {};
-      const bases = {};
+      // One profile per variant ({ url, bases, auth }), and per variant and locale where the login printed one.
+      const profiles = {};
       const storageStates = {};
-      for (const variant of visual.variants) {
-        urls[variant.id] = url;
-        if (!variant.account) continue;
-        let signedIn;
-        try {
-          signedIn = JSON.parse(await hook(visual.login, { account: variant.account, variant: variant.id, baseUrl: url }));
-        } catch (error) {
-          return fail('failed', `review.visual.login for ${variant.id}: ${error.message.split('\n')[0]}`);
-        }
-        if (!isObject(signedIn?.storageState)) return fail('failed', `review.visual.login for ${variant.id} printed no { "storageState": {...} }`);
-        if (signedIn.baseUrl !== undefined) urls[variant.id] = urlFrom(signedIn.baseUrl, `review.visual.login for ${variant.id}`);
-        // Named bases, for a target whose screens live on another host or path of this variant (a per-variant
-        // subdomain, the app root): { "bases": { "guest": "http://shop.localhost:3000" } }.
-        if (signedIn.bases !== undefined) {
-          if (!isObject(signedIn.bases)) return fail('failed', `review.visual.login for ${variant.id}: "bases" must map names to URLs`);
-          bases[variant.id] = Object.fromEntries(Object.entries(signedIn.bases).map(([name, value]) => [name, urlFrom(value, `review.visual.login for ${variant.id}, base ${name}`)]));
-        }
-        const file = path.join(dir, `.auth-${variant.id}.json`);
-        writeFileSync(file, JSON.stringify(signedIn.storageState), { mode: 0o600 });
+      const keep = (id, storageState) => {
+        const file = path.join(dir, `.auth-${id}.json`);
+        writeFileSync(file, JSON.stringify(storageState), { mode: 0o600 });
         chmodSync(file, 0o600);
         authFiles.push(file);
-        storageStates[variant.id] = file;
+        storageStates[id] = file;
+        return id;
+      };
+      for (const variant of visual.variants) {
+        profiles[variant.id] = { url, bases: {}, auth: null, locales: {} };
+        if (!variant.account) continue;
+        const what = `review.visual.login for ${variant.id}`;
+        let signedIn;
+        try {
+          signedIn = JSON.parse(await hook(visual.login, { account: variant.account, variant: variant.id, baseUrl: url, locales: visual.locales }));
+        } catch (error) {
+          return fail('failed', `${what}: ${error.message.split('\n')[0]}`);
+        }
+        if (!isObject(signedIn?.storageState)) return fail('failed', `${what} printed no { "storageState": {...} }`);
+        const own = overrides(signedIn, what);
+        if (own.error) return fail('failed', own.error);
+        const profile = { url: own.url ?? url, bases: own.bases ?? {}, auth: keep(variant.id, signedIn.storageState), locales: {} };
+        // A signed-in persona per locale, for screens whose language comes from a stored preference and not the
+        // browser: { "locales": { "de": { "storageState": {...}, "baseUrl"?, "bases"? } } }. Each field it gives
+        // replaces the variant's for that locale's captures.
+        if (signedIn.locales !== undefined) {
+          if (!isObject(signedIn.locales)) return fail('failed', `${what}: "locales" must map locale tags to { "storageState"?, "baseUrl"?, "bases"? }`);
+          for (const [locale, value] of Object.entries(signedIn.locales)) {
+            const at = `${what}, locale ${locale}`;
+            if (!visual.locales.includes(locale)) return fail('failed', `${at}: not in review.visual.locales`);
+            if (!isObject(value) || (value.storageState !== undefined && !isObject(value.storageState))) return fail('failed', `${at}: must be { "storageState"?, "baseUrl"?, "bases"? }`);
+            const mine = overrides(value, at);
+            if (mine.error) return fail('failed', mine.error);
+            profile.locales[locale] = {
+              url: mine.url ?? profile.url,
+              bases: mine.bases ?? profile.bases,
+              auth: value.storageState ? keep(`${variant.id}--${locale}`, value.storageState) : profile.auth,
+            };
+          }
+        }
+        profiles[variant.id] = profile;
       }
-      return { urls, bases, fallback: url, storageStates };
+      return { profiles, fallback: url, storageStates };
     });
     if (prepared.status) return write({ ...base, ...prepared, entries: [] });
-    const prefix = (entry) => (entry.base ? prepared.bases[entry.variant]?.[entry.base] : prepared.urls[entry.variant] ?? prepared.fallback);
+    const profileOf = (entry) => {
+      const profile = prepared.profiles[entry.variant];
+      return profile ? profile.locales[entry.locale] ?? profile : { url: prepared.fallback, bases: {}, auth: null };
+    };
+    const prefix = (entry) => (entry.base ? profileOf(entry).bases[entry.base] : profileOf(entry).url);
     // An entry whose named base this variant's login did not print is reported, never captured on another host.
     const missingBase = new Map(entries.filter((entry) => !prefix(entry)).map((entry) => [entry.key, `review.visual.login printed no base "${entry.base}" for ${entry.variant}`]));
     const jobs = entries.filter((entry) => !missingBase.has(entry.key)).map((entry) => ({
@@ -152,6 +208,7 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
       width: entry.width,
       locale: entry.locale,
       variant: entry.variant,
+      ...(profileOf(entry).auth ? { auth: profileOf(entry).auth } : {}),
     }));
     const run = spawn(process.execPath, [ADAPTERS[visual.platform]], {
       cwd: project.root, env, input: JSON.stringify({ outDir: dir, entries: jobs, storageStates: prepared.storageStates }), encoding: 'utf8', timeout: CAPTURE_MS, maxBuffer: 64 * 1024 * 1024,

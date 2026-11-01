@@ -569,7 +569,7 @@ test('the visual capture runs before the visual reviewers, attaches on a private
   const [pass] = first.dispatch;
   assert.equal(pass.agent, 'designer');
   assert.equal(pass.visual.status, 'captured');
-  assert.deepEqual(pass.visual.captures.map((capture) => [capture.key, Boolean(capture.url)]), [['dashboard--360--default--default', true], ['dashboard--1280--default--default', true]]);
+  assert.deepEqual(pass.visual.captures.map((capture) => [capture.key, Boolean(capture.url)]), [['dashboard-89347b--360--default--default', true], ['dashboard-89347b--1280--default--default', true]]);
   assert.match(pass.visual.checklist.text, /sideways/u);
   assert.match(pass.record, /--findings-file/u);
   assert.match(pass.brief, /captures in `visual`/u);
@@ -579,12 +579,12 @@ test('the visual capture runs before the visual reviewers, attaches on a private
 
   const findings = JSON.stringify([{ title: 'Label clipped at 360px', severity: 'medium', likelihood: 'routine', affects: 'users', state: 'open' }]);
   const verdict = (evidence) => JSON.stringify([{ flow: 'ui', invariant: 'fit', verdict: 'holds', evidence }]);
-  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'designer', findingsText: findings, verdictsText: verdict('capture:dashboard--360--default--default') });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'designer', findingsText: findings, verdictsText: verdict('capture:dashboard-89347b--360--default--default') });
   const blocked = await r.step({ exec: clean });
   assert.equal(blocked.status, 'fix_required');
   assert.equal(blocked.open[0].findings[0].title, 'Label clipped at 360px');
   assert.deepEqual(blocked.flows, [], 'a capture of this head is evidence');
-  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'designer', findingsText: '[]', verdictsText: verdict('capture:dashboard--768--default--default') });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'designer', findingsText: '[]', verdictsText: verdict('capture:dashboard-89347b--768--default--default') });
   const unknown = await r.step({ exec: clean });
   assert.deepEqual(unknown.flows, [{ flow: 'ui', violated: [], unverified: ['fit'] }], 'a capture key the manifest does not have is no evidence');
   assert.match(r.comments.find((c) => c.body.startsWith('<!-- aidrian-review-summary -->')).body, /visual capture of `[0-9a-f]{7}`: captured \(2 of 2\); attach \*\*auto\*\*, private repository/u);
@@ -601,4 +601,35 @@ test('an invariant that cites a doc section carries that section as its source, 
   assert.equal(invariant.text, 'Does the change keep "No double booking" as the cited section defines it?');
   assert.match(invariant.source, /^No double booking\n\nTwo bookings never hold one slot\.$/u, 'the base branch\'s section, not the pull request\'s');
   assert.ok(first.plan.flows.includes('harness-config'), 'the cited doc changed');
+});
+
+test('a sign-off of harness-config does not survive a push that changes a project reviewer\'s script', async (t) => {
+  const reviewers = { lint: { kind: 'exec', command: ['scripts/review-lint.sh'], stage: 'local' } };
+  const r = repo(t, {
+    baseConfig: { version: 1, review: { reviewers } },
+    baseFiles: { 'scripts/review-lint.sh': '#!/bin/sh\necho \'{"findings":[]}\'\n' },
+    change: (write) => write('scripts/review-lint.sh', '#!/bin/sh\necho \'{"findings":[]}\' # v2\n'),
+  });
+  const verdicts = JSON.stringify([{ flow: 'harness-config', invariant: 'review-not-weakened', verdict: 'holds', evidence: 'scripts/review-lint.sh:1' }]);
+  const exec = async () => ({ status: 'done', findings: [], verdicts: [{ flow: 'harness-config', invariant: 'review-not-weakened', verdict: 'holds', evidence: 'scripts/review-lint.sh:1' }], dropped: [] });
+  // Runs steps, recording every dispatched agent pass as clean, until the review stops for something else.
+  const settle = async () => {
+    for (let i = 0; i < 6; i += 1) {
+      const result = await r.step({ exec });
+      if (result.status !== 'dispatch') return result;
+      for (const each of result.dispatch) recordPass(r.project, { pr: 7, repo: 'o/r', pass: each.pass, head: result.head, reviewer: each.agent, findings: 0, fixed: 0, verdictsText: verdicts });
+    }
+    throw new Error('the review did not settle');
+  };
+  const asked = await settle();
+  assert.equal(asked.status, 'human_required');
+  assert.deepEqual(asked.flows, ['harness-config']);
+  recordSignoff(r.project, { pr: 7, repo: 'o/r', flow: 'harness-config', head: asked.head, by: 'Tester' });
+  assert.equal((await settle()).status, 'received');
+  r.write('src/other.js', 'export const other = 1;\n');
+  r.commit('unrelated');
+  assert.equal((await settle()).status, 'received', 'an unrelated push keeps the sign-off');
+  r.write('scripts/review-lint.sh', '#!/bin/sh\necho \'{"findings":[]}\' # v3\n');
+  r.commit('change the reviewer again');
+  assert.equal((await settle()).status, 'human_required', 'the reviewer script changed since the sign-off');
 });

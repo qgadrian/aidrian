@@ -28,6 +28,9 @@ const CAPTURE_MS = 15 * 60_000;
 const MAX_UPLOADED = 600;
 
 const slug = (text) => text.toLowerCase().replace(/[^a-z0-9]+/gu, '-').replace(/^-|-$/gu, '') || 'root';
+// A route's part of a capture key: readable, plus a short hash of the exact route, so `/a/b`, `/a-b`, and `/A/b` never
+// share a file.
+const routeId = (route) => `${slug(route)}-${createHash('sha256').update(route).digest('hex').slice(0, 6)}`;
 
 // The routes a change touches: every route of a target whose files match a changed file, deleted files included,
 // since removing a component changes the screen too.
@@ -51,11 +54,12 @@ export function visualMatrix(visual, routes) {
     for (const variant of variants) {
       for (const locale of locales) {
         for (const width of visual.viewports) {
-          entries.push({ key: [slug(route), width, locale ? slug(locale) : 'default', variant.id].join('--'), route, width, locale, variant: variant.id });
+          entries.push({ key: [routeId(route), width, locale ?? 'default', variant.id].join('--'), route, width, locale, variant: variant.id });
         }
       }
     }
   }
+  if (new Set(entries.map((entry) => entry.key)).size !== entries.length) throw new Error('review.visual: two captures share a key; list each locale and route once');
   if (entries.length > VISUAL_PER_RUN) {
     throw new Error(`the visual capture would take ${entries.length} images, past ${VISUAL_PER_RUN}: narrow review.visual.targets for these routes, or split the pull request: ${routes.join(', ')}`);
   }

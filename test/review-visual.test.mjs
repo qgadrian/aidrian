@@ -46,7 +46,9 @@ test('routes come from the targets a change touches; the matrix is route x varia
   assert.deepEqual(visualRoutes(visual, [{ file: 'src/lib/x.ts' }]), []);
   const entries = visualMatrix(visual, ['/dashboard', '/{locale}/book']);
   assert.equal(entries.length, 2 * 2 * 2 * 2);
-  assert.ok(entries.some((entry) => entry.key === 'locale-book--360--de--appointments'));
+  assert.ok(entries.some((entry) => entry.key === 'locale-book-f45c08--360--de--appointments'));
+  const keys = visualMatrix(visual, ['/a/b', '/a-b', '/A/b']).map((entry) => entry.key.split('--')[0]);
+  assert.equal(new Set(keys).size, 3, 'routes that slug alike keep their own capture');
   const many = Array.from({ length: 30 }, (_, i) => `/r${i}`);
   assert.throws(() => visualMatrix(visual, many), /240 images, past 200.*\/r0, \/r1/u);
 });
@@ -110,7 +112,7 @@ test('uploadCaptures sends only this head\'s PNGs whose bytes match the manifest
   const sent = [];
   const image = (_repo, files) => (sent.push(files.map((file) => path.basename(file))), { status: 0, stdout: files.map((file) => `![${path.basename(file, '.png')}](https://github.com/user-attachments/assets/${path.basename(file, '.png')})`).join('\n') });
   const first = uploadCaptures({ project: p, pr: 2, manifest: planted, repo: 'o/r', image });
-  assert.deepEqual(sent, [['dashboard--360--default--default.png']]);
+  assert.deepEqual(sent, [['dashboard-89347b--360--default--default.png']]);
   assert.equal(Object.keys(first.uploaded).length, 1);
   assert.equal(first.error, null);
   assert.deepEqual(uploadCaptures({ project: p, pr: 2, manifest, uploaded: first.uploaded, repo: 'o/r', image: () => assert.fail('uploaded twice') }).uploaded, {});

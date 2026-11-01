@@ -139,6 +139,9 @@ test('trace-js callsWith: balanced arguments, quoted strings left out, generic a
     { name: 'load', variable: 'db', line: 6 },
   ]);
   assert.deepEqual(callsWith('load(getAdminClient());', names, [], null), [], 'no factory, no inline match');
+  for (const call of ['load(")", adminClient);', "load(')', adminClient);", 'load(`(${x}`, adminClient);', 'load(/* ) */ x, adminClient);', 'load(x, // )\n adminClient);']) {
+    assert.deepEqual(callsWith(call, names, ['adminClient']).map((each) => each.variable), ['adminClient'], `a parenthesis in a string or comment does not end the arguments: ${call}`);
+  }
   const pad = (n) => `load(${'x'.repeat(n)}, adminClient);`;
   assert.equal(callsWith(pad(19980), names, ['adminClient']).length, 1, 'an argument list under the cap is read whole');
   assert.equal(callsWith(pad(20000), names, ['adminClient']).length, 0, 'past 20000 characters the arguments are cut');

@@ -67,14 +67,26 @@ export function parse(file, text, { tracked, aliases = {} }) {
   return { imports, reExports };
 }
 
-// The argument text of the call whose opening parenthesis is at `open`, up to its balanced closing one.
+// The argument text of the call whose opening parenthesis is at `open`, up to its balanced closing one. Parentheses
+// inside a string, a template literal, or a comment do not count, so `load(")", client)` still reads to its end.
 const argumentsAt = (text, open) => {
   let depth = 1;
   let at = open + 1;
   const end = Math.min(text.length, open + 1 + MAX_ARGUMENTS);
   for (; at < end && depth; at += 1) {
-    if (text[at] === '(') depth += 1;
-    else if (text[at] === ')') depth -= 1;
+    const ch = text[at];
+    if (ch === '"' || ch === "'" || ch === '`') {
+      for (at += 1; at < end && text[at] !== ch; at += 1) {
+        if (text[at] === '\\') at += 1;
+        else if (ch !== '`' && text[at] === '\n') break;
+      }
+    } else if (ch === '/' && text[at + 1] === '/') {
+      while (at < end && text[at] !== '\n') at += 1;
+    } else if (ch === '/' && text[at + 1] === '*') {
+      const close = text.indexOf('*/', at + 2);
+      at = close === -1 || close >= end ? end : close + 1;
+    } else if (ch === '(') depth += 1;
+    else if (ch === ')') depth -= 1;
   }
   return text.slice(open + 1, depth ? at : at - 1);
 };

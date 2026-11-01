@@ -272,7 +272,8 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   // A Human sign-off on an earlier head still holds when that head is an ancestor of this one and the change since
   // selects nothing of the flow, run through the same selection as the plan: its globs, added-line patterns, content
   // tracing, plan command, tests, and invariants doc. Accepting a deleted test stays exact to the head.
-  const harnessFiles = new Set([project.paths.config, ...[review.planCommand, review.visual?.login, review.visual?.preview].flatMap((command) => commandFiles(root, command, baseTip))]);
+  const reviewCommands = [review.planCommand, review.visual?.login, review.visual?.preview, ...Object.values(baseReview?.reviewers ?? {}).map((reviewer) => (reviewer.command ?? []).join(' '))];
+  const harnessFiles = new Set([project.paths.config, ...reviewCommands.flatMap((command) => commandFiles(root, command, baseTip))]);
   for (const file of citedDocs(review.flows)) harnessFiles.add(file);
   const reselected = new Map();
   const selectedSince = async (from) => {

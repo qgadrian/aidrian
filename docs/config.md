@@ -278,7 +278,7 @@ project; this order finds them before they stop anyone's work.
 
 ## Models
 
-Each agent file in the plugin sets the model and effort the agent ships with, from the plugin's [provider files](agents.md#provider-files).
+Each agent file in the plugin sets the model and effort the agent ships with, from the plugin's [provider files](agent-sources.md#provider-files).
 A team can choose others in `config.json`, and one developer in the git-ignored `.aidrian.local.json` at the project root:
 
 ```json

@@ -173,7 +173,7 @@ Codex names an agent `aidrian-<agent>`; ask for a skill by name.
 | [Claude Code](docs/providers/claude-code.md) | Update the plugin and see how Claude Code runs it. |
 | [Codex](docs/providers/codex.md) | Update the plugin and see how Codex runs it. |
 | [Agents and skills](docs/agents-and-skills.md) | Find the agent or skill for a job. |
-| [Agents](docs/agents.md) | See how the agent sources are written and built. |
+| [Agents](docs/agent-sources.md) | See how the agent sources are written and built. |
 | [Architecture](docs/architecture.md) | See how the plugin's parts fit together. |
 | [Project folder](docs/project-folder.md) | Know the `.aidrian/` folder, the state folder, and task worktrees. |
 | [Config](docs/config.md) | Change a setting in `config.json`. |

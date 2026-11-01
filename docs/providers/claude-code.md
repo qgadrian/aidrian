@@ -78,4 +78,4 @@ So Claude Code holds each agent to its gates, tool by tool and pattern by patter
 ## Limits
 
 Claude Code enforces each agent's tool limits.
-A read-only agent cannot use `Write`, `Edit`, or `NotebookEdit`: [Merge order](../agents.md#merge-order).
+A read-only agent cannot use `Write`, `Edit`, or `NotebookEdit`: [Merge order](../agent-sources.md#merge-order).

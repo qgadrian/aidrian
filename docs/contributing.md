@@ -3,9 +3,7 @@
 This page is for changing the plugin itself. To use the plugin in a project, start at the [README](../README.md#install).
 [architecture.md](architecture.md) maps the repository.
 
-This repository runs the plugin on itself with the [main-checkout guard](hooks.md#main-checkout) on (`.aidrian/config.json`).
-Change it in a task worktree, `aidrian worktree new <branch>`, never in the main checkout: several sessions share that
-folder, so the guard blocks edits there, branch switches away from `main`, and `git add -A` or `git commit -a`.
+Read [working-agreement.md](working-agreement.md) first: the rules every change keeps, and where to work.
 
 ## Build and check
 
@@ -20,7 +18,7 @@ npm run check    # what CI runs
 `npm run check` fails when:
 
 - a generated agent is stale, or edited by hand;
-- the example's project folder is invalid;
+- the example's project folder, or this repository's own, is invalid;
 - a test fails;
 - the plugin changed without a version bump ([Versions](#versions)).
 
@@ -30,7 +28,7 @@ npm run check    # what CI runs
   Both plugin manifests have the same `name`, `version`, `description`, `author`, and `repository`.
 - Every agent preloads the `knowledge` skill, and asks only for tags that skill lists.
 - [Agents and skills](agents-and-skills.md) lists every agent and skill shipped, once.
-  Its agent tables match the [group folders](agents.md#groups) of the agent sources.
+  Its agent tables match the [group folders](agent-sources.md#groups) of the agent sources.
 - No project-specific path leaks into the plugin.
 - No tracked file names a person.
   The owner's GitHub name appears only where a user installs: the README, the example's settings, and the manifests.
@@ -81,5 +79,5 @@ To resolve the conflict, take main's version in every conflicted file, then run 
 
 ## Not included
 
-- OpenCode support. [Adding a provider](agents.md#adding-a-provider) says what a new host needs.
+- OpenCode support. [Adding a provider](agent-sources.md#adding-a-provider) says what a new host needs.
 - The optional cockpit pane. It lives on the `parked/cockpit` branch and is not reviewed.

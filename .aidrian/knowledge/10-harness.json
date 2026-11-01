@@ -1,0 +1,71 @@
+{
+  "dir": "docs",
+  "description": "How the aidrian plugin is built, checked, versioned, and changed: its agents, skills, hooks, commands, and project-folder contract.",
+  "always": ["working-agreement.md"],
+  "docs": {
+    "working-agreement.md": {
+      "summary": "Rules every change here keeps: worktrees, generated agents, tests, hooks failing open, docs, version bumps, the knowledge index.",
+      "tags": []
+    },
+    "contributing.md": {
+      "summary": "Building and checking the plugin: npm run build and check, what the tests hold, trying a branch, skill evals, version bumps.",
+      "tags": ["harness_engineering", "docs"]
+    },
+    "architecture.md": {
+      "summary": "Repository layout and how agents-src, providers, generated agents, skills, hooks, lib, and the aidrian command connect.",
+      "tags": ["harness_engineering", "docs"]
+    },
+    "agent-sources.md": {
+      "summary": "Editing the plugin's agents: group folders, neutral fields, provider files, addon merge order, adding a provider.",
+      "tags": ["harness_engineering"]
+    },
+    "agents-and-skills.md": {
+      "summary": "The catalog of every agent and skill the plugin ships, grouped; tests hold it in sync with agents-src folders.",
+      "tags": ["docs"]
+    },
+    "hooks.md": {
+      "summary": "Plugin hooks and Bash rules: pr-body, main-checkout, review-gate, review-rounds, process-kill, git-amend, terms, agent gates, commit messages.",
+      "tags": []
+    },
+    "project-folder.md": {
+      "summary": "The .aidrian/ folder: aidrian init, check, and lint, the local state folder, task worktrees, local knowledge sources, migrating.",
+      "tags": []
+    },
+    "review.md": {
+      "summary": "aidrian pr review: review plan, splits, critical flows and invariants, visual review, reviewers, review rounds and their limit, sign-off.",
+      "tags": []
+    },
+    "knowledge.md": {
+      "summary": "Knowledge buckets: index file format, tags, shaping buckets, overrides, project agents, aidrian-knowledge commands, checks.",
+      "tags": ["harness_engineering"]
+    },
+    "lessons.md": {
+      "summary": "Lesson inbox and aidrian lesson add, list, resolve, stats: tiers, kinds, targets, outcomes, automatic lessons from repeated hook blocks.",
+      "tags": []
+    },
+    "config.md": {
+      "summary": "config.json keys: pull request title and body sections, review plan and gate, terms, models and effort, names, attribution, telemetry.",
+      "tags": []
+    },
+    "dispatch-log.md": {
+      "summary": "Dispatch log rows (dispatch, stop, session, hook_deny) and aidrian report: costs, tokens, doc reads, reviews, health thresholds.",
+      "tags": []
+    },
+    "adopting.md": {
+      "summary": "Finishing a project's setup: shaping buckets, pointing the main session at them, team install, review bot, first check.",
+      "tags": []
+    },
+    "design/project-rules.md": {
+      "summary": "Design for the pull request contract, review gate, and terms rules, generalized from one consumer project's scripts.",
+      "tags": []
+    },
+    "providers/claude-code.md": {
+      "summary": "Claude Code host: install, update, from a local checkout, running aidrian, hooks, models and effort, agent gates, limits.",
+      "tags": []
+    },
+    "providers/codex.md": {
+      "summary": "Codex host: install, update, from a local checkout, running aidrian, hooks, models and effort, agent gates, limits.",
+      "tags": []
+    }
+  }
+}

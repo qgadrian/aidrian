@@ -53,6 +53,12 @@ test('blocksOf takes the least indentation as top level, and a fence closes only
   assert.deepEqual(blocksOf(fenced), [fenced.split('\n\n- Real rule')[0], '- Real rule'], 'the inner ``` does not close the ```` fence');
   assert.deepEqual(blocksOf('~~~\n```\n~~~ not bare\n~~~\n\nAfter.'), ['~~~\n```\n~~~ not bare\n~~~', 'After.']);
   assert.deepEqual(blocksOf('Intro line.\n```\ncode\n```\nRefund cap: never exceeds the charge.'), ['Intro line.', '```\ncode\n```', 'Refund cap: never exceeds the charge.'], 'a fence is its own block, blank lines or not');
+  for (const marker of ['-', '1.']) {
+    for (const delimiter of ['```', '~~~']) {
+      const item = `${marker} ${delimiter}js\n   - not a rule\n   ${delimiter}`;
+      assert.deepEqual(blocksOf(`${item}\n${marker} Refund cap: never exceeds the charge.`), [item, `${marker} Refund cap: never exceeds the charge.`], `a fence opened by "${marker} ${delimiter}"`);
+    }
+  }
 });
 
 test('focus sends only the blocks it names, in section order, and names the question after them', () => {

@@ -61,10 +61,11 @@ export function sectionOf(text, anchor) {
   return { heading: lines[start].replace(/^#+\s+/u, '').trim(), body: raw.trim(), raw };
 }
 
-// A fence line: its delimiter, and whether the line is the delimiter alone, which only a closing fence may be.
+// A fence line: its delimiter, and whether the line is the delimiter alone, which only a closing fence may be. An
+// opening fence may follow list markers, as in "- ```js"; such a line is never bare, so it never closes one.
 const fenceOf = (line) => {
-  const found = /^\s*(`{3,}|~{3,})(.*)$/u.exec(line);
-  return found ? { char: found[1][0], length: found[1].length, bare: found[2].trim() === '' } : null;
+  const found = /^\s*((?:(?:[-*+]|\d+[.)])\s+)*)(`{3,}|~{3,})(.*)$/u.exec(line);
+  return found ? { char: found[2][0], length: found[2].length, bare: found[1] === '' && found[3].trim() === '' } : null;
 };
 
 // The top-level blocks of a section body, in order: a sub-heading, a top-level list item with its more indented

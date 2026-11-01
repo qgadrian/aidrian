@@ -38,41 +38,66 @@ export const MAX_SOURCE = 4000;
 export const MAX_FOCUSED = 8000;
 
 // The section of a markdown doc under the heading whose slug is `anchor`: the heading and its body, up to the next
-// heading of the same or a higher level. Null when the doc has no such heading.
+// heading of the same or a higher level; `raw` is the body with its indentation kept, for blocksOf. Null when the doc
+// has no such heading.
 export function sectionOf(text, anchor) {
   const lines = String(text ?? '').split('\n');
   let start = -1;
   let level = 0;
+  let end = lines.length;
   for (const [i, line] of lines.entries()) {
     const heading = /^(#{1,6})\s+(.+?)\s*#*\s*$/u.exec(line);
     if (!heading) continue;
     if (start === -1 && slug(heading[2]) === anchor) {
       start = i;
       level = heading[1].length;
-    } else if (start !== -1 && heading[1].length <= level) return { heading: lines[start].replace(/^#+\s+/u, '').trim(), body: lines.slice(start + 1, i).join('\n').trim() };
+    } else if (start !== -1 && heading[1].length <= level) {
+      end = i;
+      break;
+    }
   }
-  return start === -1 ? null : { heading: lines[start].replace(/^#+\s+/u, '').trim(), body: lines.slice(start + 1).join('\n').trim() };
+  if (start === -1) return null;
+  const raw = lines.slice(start + 1, end).join('\n').replace(/^(?:[ \t]*\n)+/u, '').trimEnd();
+  return { heading: lines[start].replace(/^#+\s+/u, '').trim(), body: raw.trim(), raw };
 }
 
-// The top-level blocks of a section body, in order: a sub-heading, a top-level list item with its indented lines, or a
-// paragraph. A fenced code block stays inside the block it starts in. Blank lines are dropped from block edges.
+// A fence line: its delimiter, and whether the line is the delimiter alone, which only a closing fence may be.
+const fenceOf = (line) => {
+  const found = /^\s*(`{3,}|~{3,})(.*)$/u.exec(line);
+  return found ? { char: found[1][0], length: found[1].length, bare: found[2].trim() === '' } : null;
+};
+
+// The top-level blocks of a section body, in order: a sub-heading, a top-level list item with its more indented
+// lines, or a paragraph. Top level is the body's least indentation outside fences, so a section whose bullets are
+// all indented still splits into them. A fenced code block stays inside the block it starts in, and closes only on a
+// bare fence of its own character, at least as long. Blank lines are dropped from block edges.
 export function blocksOf(body) {
+  const lines = String(body ?? '').split('\n');
+  const inFence = [];
+  let open = null;
+  for (const line of lines) {
+    const fence = fenceOf(line);
+    inFence.push(open !== null);
+    if (open === null && fence) open = fence;
+    else if (open && fence?.bare && fence.char === open.char && fence.length >= open.length) open = null;
+  }
+  const indents = lines.filter((line, i) => !inFence[i] && line.trim()).map((line) => /^[ \t]*/u.exec(line)[0].length);
+  const base = indents.length ? Math.min(...indents) : 0;
   const blocks = [];
   let current = null;
-  let fenced = false;
   let blank = true;
-  for (const line of String(body ?? '').split('\n')) {
-    const fence = /^\s*(?:```|~~~)/u.test(line);
-    const starts = !fenced && (/^#{1,6}\s/u.test(line) || /^(?:[-*+]|\d+[.)])\s/u.test(line) || (blank && /^\S/u.test(line)));
+  for (const [i, line] of lines.entries()) {
+    const top = !inFence[i] && line.trim() !== '' && /^[ \t]*/u.exec(line)[0].length === base;
+    const text = line.slice(Math.min(base, /^[ \t]*/u.exec(line)[0].length));
+    const starts = top && (/^#{1,6}\s/u.test(text) || /^(?:[-*+]|\d+[.)])\s/u.test(text) || blank);
     if (starts || (!current && line.trim())) {
       current = [];
       blocks.push(current);
     }
-    if (current) current.push(line);
-    if (fence) fenced = !fenced;
+    if (current) current.push(text);
     blank = line.trim() === '';
   }
-  return blocks.map((lines) => lines.join('\n').trim()).filter(Boolean);
+  return blocks.map((each) => each.join('\n').replace(/^(?:[ \t]*\n)+/u, '').trimEnd()).filter((each) => each.trim());
 }
 
 // A block's first line in plain words, lowercase: the list marker, heading marks, and inline markup removed.
@@ -89,7 +114,7 @@ const startsWith = (block, focus) => {
 
 // The blocks of `section` that each focus starts, in section order, and the focuses no block starts.
 export function focusBlocks(section, focuses) {
-  const blocks = blocksOf(section.body);
+  const blocks = blocksOf(section.raw ?? section.body);
   const missing = focuses.filter((focus) => !blocks.some((block) => startsWith(block, focus)));
   return { blocks: blocks.filter((block) => focuses.some((focus) => startsWith(block, focus))), missing };
 }
@@ -100,7 +125,7 @@ export function focusBlocks(section, focuses) {
 export function sourceOf(section, invariant) {
   const focuses = focusesOf(invariant);
   const limit = focuses.length ? MAX_FOCUSED : MAX_SOURCE;
-  const blocks = focuses.length ? focusBlocks(section, focuses).blocks : blocksOf(section.body);
+  const blocks = focuses.length ? focusBlocks(section, focuses).blocks : blocksOf(section.raw ?? section.body);
   const full = [section.heading, ...blocks].join('\n\n');
   if (full.length <= limit) return { source: full, length: full.length, limit };
   let kept = section.heading;

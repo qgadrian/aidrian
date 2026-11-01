@@ -45,6 +45,15 @@ test('blocksOf splits a section into top-level list items, paragraphs, and fence
   assert.equal(blocks[4], '```\n- not a list item, inside a fence\n```');
 });
 
+test('blocksOf takes the least indentation as top level, and a fence closes only on its own delimiter', () => {
+  const indented = sectionOf('## Rules\n\n  - First: one\n    - nested\n  - Second: two\n  - Third: three\n', 'rules');
+  assert.deepEqual(blocksOf(indented.raw), ['- First: one\n  - nested', '- Second: two', '- Third: three']);
+  assert.deepEqual(focusBlocks(indented, ['Second']).blocks, ['- Second: two'], 'each indented sibling is its own block');
+  const fenced = ['````md', '```js', 'x()', '```', '', '- not a rule, still the example', '````', '', '- Real rule'].join('\n');
+  assert.deepEqual(blocksOf(fenced), [fenced.split('\n\n- Real rule')[0], '- Real rule'], 'the inner ``` does not close the ```` fence');
+  assert.deepEqual(blocksOf('~~~\n```\n~~~ not bare\n~~~\n\nAfter.'), ['~~~\n```\n~~~ not bare\n~~~', 'After.']);
+});
+
 test('focus sends only the blocks it names, in section order, and names the question after them', () => {
   const [one] = invariantsOf({ invariants: [{ id: 'controls', cite: 'product.md#core-product-invariants', focus: 'settings controllability' }] }, read).invariants;
   assert.equal(one.text, 'Does the change keep "Core Product Invariants: settings controllability" as the cited section defines it?');

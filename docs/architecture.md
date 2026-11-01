@@ -35,7 +35,7 @@ test/                               node --test suites
 ## How the parts connect
 
 - **Agents**: each agent is written once, in a group folder of `agents-src/`.
-  `npm run build` writes the Claude Code agent and the Codex role from it, in flat folders. [agents.md](agents.md) has the details.
+  `npm run build` writes the Claude Code agent and the Codex role from it, in flat folders. [agent-sources.md](agent-sources.md) has the details.
 - **Skills**: both hosts read `skills/*/SKILL.md` as they are. Nothing is generated.
   They have no group folders: Claude Code finds a plugin skill only at `skills/<name>/SKILL.md`.
 - **Hooks**: `hooks/hooks.json` names the events. Each event runs one `scripts/hook-*.mjs`.

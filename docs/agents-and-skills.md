@@ -1,13 +1,13 @@
 # Agents and skills
 
 Every agent and skill the plugin ships, grouped, with what each does.
-To edit one of the plugin's own agents, see [agents.md](agents.md).
+To edit one of the plugin's own agents, see [agents.md](agent-sources.md).
 
 ## Agents
 
 Claude Code names each agent `aidrian:<agent>`, and Codex `aidrian-<agent>`.
 A project's own agent wins over the plugin's for the work it covers: [Project agents](knowledge.md#project-agents).
-Each table is one [group folder](agents.md#groups) of the plugin's agent sources.
+Each table is one [group folder](agent-sources.md#groups) of the plugin's agent sources.
 The agent that builds or fixes a change commits and pushes it; the orchestrator never writes git.
 
 | Coordination | What it does |

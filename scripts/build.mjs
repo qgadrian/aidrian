@@ -8,7 +8,7 @@
 // plugins/aidrian/providers/<provider>.json holds what one host decides per agent, such as model, effort, and tools,
 // with an optional "*" entry of defaults. Each field merges on its own, most specific last: the "*" defaults, then the
 // `access` shortcut, then the agent's own entry, which can extend or replace what the shortcut set. A project's `models`
-// config applies after all of these, at run time (docs/config.md#models). docs/agents.md describes the layout.
+// config applies after all of these, at run time (docs/config.md#models). docs/agent-sources.md describes the layout.
 //
 // Claude Code loads plugins/aidrian/agents/*.md from the plugin. A subfolder there would become part of the agent's name,
 // agents/build/x.md as aidrian:build:x, so the build writes none. Codex cannot load agents from a plugin, so each agent

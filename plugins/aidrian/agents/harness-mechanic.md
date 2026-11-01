@@ -19,7 +19,7 @@ Before you start, follow the `knowledge` skill. Your knowledge tags: `harness_en
 
 - `plugins/aidrian/agents-src/<group>/<name>.md`: the agents, written for every host, one folder per group.
   `providers/<provider>.json` holds each host's model, effort, and tools, and `agent-addons/<name>.<provider>.md` text for one host only.
-  `docs/agents.md` has the fields, the groups, and the merge order.
+  `docs/agent-sources.md` has the fields, the groups, and the merge order.
 - `plugins/aidrian/skills/*/SKILL.md`, with their `references/` and `steps/` files: both hosts read them as they are.
 - `plugins/aidrian/hooks/hooks.json` and `scripts/hook-*.mjs`: the hooks. `lib/`: the code behind them and the commands.
   It has no dependencies, because it runs from the installed plugin.

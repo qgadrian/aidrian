@@ -248,6 +248,14 @@ test('no tracked file names a source project, its tracker keys, a person, or a t
   assert.deepEqual(hits, []);
 });
 
+test('only the repository root and the example name a file AGENTS.md or CLAUDE.md, in any case', () => {
+  // On a case-insensitive disk Claude Code loads docs/agents.md as a nested AGENTS.md into every session that reads in docs/.
+  const instructionFiles = ['AGENTS.md', 'CLAUDE.md', 'examples/consumer/AGENTS.md', 'examples/consumer/CLAUDE.md'];
+  const named = execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' }).split('\0')
+    .filter((file) => /^(agents|claude)\.md$/i.test(path.basename(file)));
+  assert.deepEqual(named.filter((file) => !instructionFiles.includes(file)), []);
+});
+
 test('the local banned terms file stays out of git', () => {
   const ignored = spawnSync('git', ['check-ignore', '-q', '.banned-terms.local'], { cwd: ROOT });
   assert.equal(ignored.status, 0, '.banned-terms.local must be git-ignored');

@@ -1,17 +1,21 @@
 {
   "dir": "docs",
   "description": "How the aidrian plugin is built, checked, versioned, and changed: its agents, skills, hooks, commands, and project-folder contract.",
-  "always": ["contributing.md"],
+  "always": ["working-agreement.md"],
   "docs": {
-    "contributing.md": {
-      "summary": "Changing the plugin: worktrees, build and check, the rules every change keeps, version bumps, evals, the harness tools here.",
+    "working-agreement.md": {
+      "summary": "Rules every change here keeps: worktrees, generated agents, tests, hooks failing open, docs, version bumps, the knowledge index.",
       "tags": []
+    },
+    "contributing.md": {
+      "summary": "Building and checking the plugin: npm run build and check, what the tests hold, trying a branch, skill evals, version bumps.",
+      "tags": ["harness_engineering", "docs"]
     },
     "architecture.md": {
       "summary": "Repository layout and how agents-src, providers, generated agents, skills, hooks, lib, and the aidrian command connect.",
       "tags": ["harness_engineering", "docs"]
     },
-    "agents.md": {
+    "agent-sources.md": {
       "summary": "Editing the plugin's agents: group folders, neutral fields, provider files, addon merge order, adding a provider.",
       "tags": ["harness_engineering"]
     },
@@ -20,15 +24,15 @@
       "tags": ["docs"]
     },
     "hooks.md": {
-      "summary": "Every plugin hook: start lines, Bash rules, main-checkout guard, agent gates, terms, delivery check, overrides, commit messages.",
+      "summary": "Plugin hooks and Bash rules: pr-body, main-checkout, review-gate, review-rounds, process-kill, git-amend, terms, agent gates, commit messages.",
       "tags": []
     },
     "project-folder.md": {
-      "summary": "The .aidrian/ contract: structure, location, versioning, init and check, lint, local state folder, task worktrees, local sources.",
+      "summary": "The .aidrian/ folder: aidrian init, check, and lint, the local state folder, task worktrees, local knowledge sources, migrating.",
       "tags": []
     },
     "review.md": {
-      "summary": "aidrian pr review: review plans, splits, critical flows, visual review, reviewers, rounds, and the review record.",
+      "summary": "aidrian pr review: review plan, splits, critical flows and invariants, visual review, reviewers, review rounds and their limit, sign-off.",
       "tags": []
     },
     "knowledge.md": {
@@ -36,15 +40,15 @@
       "tags": ["harness_engineering"]
     },
     "lessons.md": {
-      "summary": "The lesson inbox: event rows, lesson fields, aidrian lesson commands, outcomes, session-start nudge, automatic lessons.",
+      "summary": "Lesson inbox and aidrian lesson add, list, resolve, stats: tiers, kinds, targets, outcomes, automatic lessons from repeated hook blocks.",
       "tags": []
     },
     "config.md": {
-      "summary": "Every config.json key: pull request contract, review plan and gate, terms, models, names, attribution, telemetry, budgets.",
+      "summary": "config.json keys: pull request title and body sections, review plan and gate, terms, models and effort, names, attribution, telemetry.",
       "tags": []
     },
     "dispatch-log.md": {
-      "summary": "Dispatch log rows (agents, cost, docs read, delivery, hook denies) and what aidrian report and report health print.",
+      "summary": "Dispatch log rows (dispatch, stop, session, hook_deny) and aidrian report: costs, tokens, doc reads, reviews, health thresholds.",
       "tags": []
     },
     "adopting.md": {

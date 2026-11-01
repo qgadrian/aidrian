@@ -7,7 +7,7 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
-import { CODEX_TIMEOUT_SEC, LEDGER_SCHEMA, OBJECTIONS_SCHEMA, REBUTTALS_SCHEMA, codexAnswer, commands, schemaProblems } from '../plugins/aidrian/lib/quorum.mjs';
+import { CODEX_TIMEOUT_SEC, LEDGER_SCHEMA, OBJECTIONS_SCHEMA, REBUTTALS_SCHEMA, codexAnswer, commands, rebuttalProblems, schemaProblems } from '../plugins/aidrian/lib/quorum.mjs';
 import { slug } from '../plugins/aidrian/lib/review/flows.mjs';
 import { FINDINGS_SCHEMA, runCodex, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 
@@ -243,12 +243,15 @@ const RULED = ledger([
 
 const ANSWER = { objections: [{ severity: 'blocking', claim: 'breaks the rule', citations: [PASSING.adr] }] };
 
+// The statuses `aidrian quorum codex` prints, and the exit code of each: the codex tests and the SKILL.md test below read them here.
+const CODEX_EXITS = { done: 0, unavailable: 3, timed_out: 1, quota: 1, failed: 1 };
+
 test('quorum codex: done writes the objections, prints one line, and exits 0; Codex runs read-only, isolated, on the brief then the plan', async (t) => {
   const fake = fakeCodex({ answer: ANSWER });
   const r = codexRun(t, fake);
   process.env.CLAUDE_CODE_SESSION_ID = 'quorum-test';
   t.after(() => delete process.env.CLAUDE_CODE_SESSION_ID);
-  assert.equal(await r.run(), 0);
+  assert.equal(await r.run(), CODEX_EXITS.done);
   assert.deepEqual(r.printed.map((line) => Object.keys(JSON.parse(line))), [['status', 'reason']]);
   assert.equal(JSON.parse(r.printed[0]).status, 'done');
   assert.deepEqual(JSON.parse(readFileSync(r.out, 'utf8')), ANSWER);
@@ -264,7 +267,7 @@ test('quorum codex: done writes the objections, prints one line, and exits 0; Co
 test('quorum codex: unavailable exits 3 without starting Codex', async (t) => {
   const fake = fakeCodex();
   const r = codexRun(t, fake, { codex: () => ({ ok: false, reason: 'the codex CLI is not installed' }) });
-  assert.equal(await r.run(), 3);
+  assert.equal(await r.run(), CODEX_EXITS.unavailable);
   assert.deepEqual(r.printed.map((line) => JSON.parse(line)), [{ status: 'unavailable', reason: 'the codex CLI is not installed' }]);
   assert.equal(fake.calls.length, 0);
 });
@@ -277,7 +280,7 @@ test('quorum codex: quota and failed exit 1, and an answer off the schema is fai
     [fakeCodex({ answer: { objections: [{ severity: 'nit', claim: 'x', citations: [] }] } }), 'failed', /does not follow the schema/u],
   ]) {
     const r = codexRun(t, fake);
-    assert.equal(await r.run(), 1, status);
+    assert.equal(await r.run(), CODEX_EXITS[status], status);
     const line = JSON.parse(r.printed[0]);
     assert.equal(r.printed.length, 1);
     assert.equal(line.status, status);
@@ -299,7 +302,7 @@ test('quorum codex: timed_out after 780 s, with SIGTERM then SIGKILL, exits 1', 
   t.mock.timers.tick(5000);
   assert.deepEqual(child.signals, ['SIGTERM', 'SIGKILL']);
   t.mock.timers.tick(2000);
-  assert.equal(await exit, 1);
+  assert.equal(await exit, CODEX_EXITS.timed_out);
   assert.deepEqual(r.printed.map((line) => JSON.parse(line)), [{ status: 'timed_out', reason: 'no answer in 780 s' }]);
 });
 
@@ -523,10 +526,10 @@ test('quorum codex --mode rebut: an answer that does not fit the ledger is faile
   const entry = (objection_id, verdict = 'concede') => ({ objection_id, verdict, claim: 'c', citations: [] });
   for (const [entries, reason] of [
     [[entry('B1'), entry('B1', 'rebut')], /^the answer does not fit the ledger: the answer names B1 more than once$/u],
-    [[entry('B1'), entry('B9')], /: the answer names B9, not B's objection ruled reject or accept in the ledger$/u],
-    [[entry('B1'), entry('A1')], /: the answer names A1, not B's objection ruled reject or accept in the ledger$/u],
-    [[entry('B1'), entry('B3'), entry('B4')], /: the answer names B3, B4, not B's objection ruled reject or accept/u],
-    [[entry('B2')], /: the answer has no entry for B1, B's objection ruled reject$/u],
+    [[entry('B1'), entry('B9')], /: the answer names B9, not B's objection ruled reject or accept, and not escalated, in the ledger$/u],
+    [[entry('B1'), entry('A1')], /: the answer names A1, not B's objection ruled reject or accept, and not escalated, in the ledger$/u],
+    [[entry('B1'), entry('B3'), entry('B4')], /: the answer names B3, B4, not B's objection ruled reject or accept, and not escalated/u],
+    [[entry('B2')], /: the answer has no entry for B1, B's objection rejected in the ledger$/u],
     [[], /: the answer has no entry for B1/u],
     [[entry('B1'), entry('B1'), entry('A1')], /names B1 more than once; the answer names A1, not/u],
     [Array.from({ length: 8 }, (_, i) => entry(`B${i}`)), /^the answer does not follow the schema: \$\.rebuttals has 8 items, more than 7$/u],
@@ -542,6 +545,23 @@ test('quorum codex --mode rebut: an answer that does not fit the ledger is faile
   // Only B1 is required: a partial accept (B2) may be answered or not.
   const r = codexRun(t, fakeCodex({ answer: { rebuttals: [entry('B1', 'rebut')] } }));
   assert.equal(await r.run({}, undefined, r.rebut), 0, r.printed[0]);
+});
+
+test('rebuttalProblems: an escalated B objection gets no rebuttal, even when its ruling is reject; only a rejected one needs an entry', () => {
+  const entry = (objection_id) => ({ objection_id, verdict: 'concede', claim: 'c', citations: [] });
+  // B5 was ruled reject, but its ruling was invalid twice, so it escalated: it goes to the Human, not to a rebuttal.
+  const escalated = ledger([
+    objection('B1', [PASSING.code], { by: 'B', status: 'rejected', ruling: ruling('reject') }),
+    objection('B2', [PASSING.code], { by: 'B', status: 'accepted', ruling: ruling('accept') }),
+    objection('B5', [PASSING.code], { by: 'B', status: 'escalated', ruling: ruling('reject') }),
+    objection('B6', [PASSING.code], { by: 'B', status: 'escalated', ruling: ruling('accept') }),
+  ]);
+  assert.deepEqual(rebuttalProblems({ rebuttals: [entry('B1')] }, escalated), []);
+  assert.deepEqual(rebuttalProblems({ rebuttals: [entry('B1'), entry('B2')] }, escalated), []);
+  assert.deepEqual(rebuttalProblems({ rebuttals: [entry('B1'), entry('B5'), entry('B6')] }, escalated), [
+    "the answer names B5, B6, not B's objection ruled reject or accept, and not escalated, in the ledger",
+  ]);
+  assert.deepEqual(rebuttalProblems({ rebuttals: [] }, escalated), ["the answer has no entry for B1, B's objection rejected in the ledger"]);
 });
 
 test('quorum codex --mode rebut: a ledger that cannot be read or is off the schema is failed before Codex starts', async (t) => {
@@ -582,4 +602,84 @@ test('codexAnswer: an unknown mode, or rebut with no ledger, is failed, not thro
   assert.deepEqual(await codexAnswer({ ...args, mode: 'nope' }, deps), { status: 'failed', reason: '"nope" is not a mode: object or rebut' });
   assert.deepEqual(await codexAnswer({ ...args, mode: 'toString' }, deps), { status: 'failed', reason: '"toString" is not a mode: object or rebut' });
   assert.deepEqual(await codexAnswer({ ...args, mode: 'rebut' }, deps), { status: 'failed', reason: '--mode rebut needs a ledger' });
+});
+
+const SKILL = path.resolve(import.meta.dirname, '../plugins/aidrian/skills/quorum');
+
+// The field paths of `schema`, as the ledger reference writes them: `a.b` for a property, `a[]` for an array's items.
+// A schema node used in several places, such as the citation or the ruling, is listed at each place and expanded only
+// at its first, so the reference describes each shape once and points to it after.
+function fieldPaths(schema) {
+  const seen = new Set();
+  const paths = [];
+  const expand = (node, at) => {
+    if (seen.has(node)) return;
+    seen.add(node);
+    if (node.items) expand(node.items, `${at}[]`);
+    for (const [key, child] of Object.entries(node.properties ?? {})) {
+      const field = at ? `${at}.${key}` : key;
+      paths.push({ field, node: child });
+      expand(child, field);
+    }
+  };
+  expand(schema, '');
+  return paths;
+}
+
+// ledger.md § Fields: each bullet starts with a field path in backticks; its text runs to the next bullet.
+function documentedFields() {
+  const text = readFileSync(path.join(SKILL, 'references/ledger.md'), 'utf8');
+  const section = text.split('\n## Fields\n')[1].split('\n## ')[0];
+  const bullets = new Map();
+  let current = null;
+  for (const line of section.split('\n')) {
+    const bullet = /^\s*- `([^`]+)`/u.exec(line);
+    if (bullet) {
+      current = bullet[1];
+      assert.ok(!bullets.has(current), `ledger.md names ${current} twice`);
+      bullets.set(current, line);
+    } else if (current && line.trim()) bullets.set(current, `${bullets.get(current)} ${line}`);
+  }
+  return { text, bullets };
+}
+
+test('ledger.md names every field of LEDGER_SCHEMA and no other, its enum values both ways, null where the schema allows it, and keeps no schema copy', () => {
+  const { text, bullets } = documentedFields();
+  const schema = fieldPaths(LEDGER_SCHEMA);
+  assert.deepEqual([...bullets.keys()].sort(), schema.map((each) => each.field).sort());
+  for (const { field, node } of schema) {
+    const bullet = bullets.get(field);
+    const enumValues = node.enum ?? node.items?.enum;
+    if (enumValues) {
+      for (const value of enumValues) assert.ok(bullet.includes(`\`${value}\``), `ledger.md: ${field} does not name ${value}`);
+      // After the field path, every backticked word in an enum field's bullet is one of its values.
+      const named = [...bullet.matchAll(/`([^`]+)`/gu)].slice(1).map((match) => match[1]);
+      for (const value of named) assert.ok(enumValues.includes(value), `ledger.md: ${field} names ${value}, not in its enum`);
+    }
+    const nullable = [node.type].flat().includes('null');
+    assert.equal(bullet.includes('`null`'), nullable, `ledger.md: ${field} ${nullable ? 'does not say' : 'says'} \`null\``);
+  }
+  for (const name of ['LEDGER_SCHEMA', 'OBJECTIONS_SCHEMA', 'REBUTTALS_SCHEMA']) assert.ok(text.includes(`\`${name}\``), `ledger.md names ${name}`);
+  assert.doesNotMatch(text, /```json/u, 'ledger.md keeps no JSON copy of a schema');
+});
+
+
+test('the quorum skill names exactly the flags `aidrian quorum` takes, real --mode values, and every codex status with its exit code', async () => {
+  const flags = (text) => new Set([...text.matchAll(/(?<![\w-])--[a-z][a-z-]*/gu)].map((match) => match[0]));
+  const texts = Object.fromEntries(['SKILL.md', 'references/briefs.md', 'references/ledger.md'].map((file) => [file, readFileSync(path.join(SKILL, file), 'utf8')]));
+  const used = flags(Object.values(texts).join('\n'));
+  assert.deepEqual([...used].sort(), [...flags(commands.quorum.usage)].sort());
+  // Each --mode value the skill names is one the command takes: an unknown mode fails before Codex is looked for.
+  const modes = new Set([...Object.values(texts).join('\n').matchAll(/--mode ([a-z]+)/gu)].map((match) => match[1]));
+  assert.ok(modes.size, 'the skill names a --mode');
+  for (const mode of modes) {
+    const result = await codexAnswer({ plan: 'p', brief: 'b', out: 'o', root: '.', mode, ledger: 'l' }, { codex: () => ({ ok: false, reason: 'stub' }) });
+    assert.equal(result.status, 'unavailable', `--mode ${mode}: ${result.reason}`);
+  }
+  const skill = texts['SKILL.md'];
+  for (const [status, code] of Object.entries(CODEX_EXITS)) {
+    assert.ok(skill.includes(`\`${status}\``), `SKILL.md names the status ${status}`);
+    const exits = new RegExp(`\\b${code} on (?:\`\\w+\`(?:, | or |, or ))*\`${status}\``, 'u');
+    assert.match(skill.replace(/\s+/gu, ' '), exits, `SKILL.md: ${status} exits ${code}`);
+  }
 });

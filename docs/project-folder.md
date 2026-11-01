@@ -141,8 +141,9 @@ the orchestrator uses it to name each background agent's handoff file.
 `aidrian handoff` checks a handoff brief against the one it supersedes.
 `aidrian report` summarizes the [dispatch log](dispatch-log.md).
 
-A quorum ledger, `quorum/<plan-basename>-<plan-hash>.json`, records the objections two adversaries raised against a plan,
-the architect's ruling on each, and the Human's answers. `<plan-hash>` is `git hash-object` of the plan.
+A quorum ledger, `quorum/<name>-<plan-hash>.json`, records the objections two adversaries raised against a plan,
+the architect's ruling on each, and the Human's answers. `<name>` is the plan's file name without `.md`,
+or `<parent-folder>-plan` for a file named `plan.md`, and `<plan-hash>` is `git hash-object` of the plan.
 `lib/quorum.mjs` holds its schema, `LEDGER_SCHEMA`, and the schemas of Codex's answers, `OBJECTIONS_SCHEMA` and `REBUTTALS_SCHEMA`.
 Each objection, ruling, and rebuttal cites its evidence as `{kind, ref, quote}`. Two commands keep a ledger honest:
 
@@ -154,7 +155,8 @@ Each objection, ruling, and rebuttal cites its evidence as `{kind, ref, quote}`.
   may cite nothing; without `objection_id`, an entry is that objection's ledger `rebuttal`, whose `ruling` starts null.
   The answer must also fit LEDGER, which may live anywhere and is read and schema-checked before Codex starts:
   each id once, each one of B's objections ruled `reject` or `accept` (a partial accept's rebuttal covers the rejected
-  part), and an entry for every one of B's objections ruled `reject`. The reason names each id that breaks this.
+  part) and not `escalated`, since an escalated objection goes to the Human, and an entry for every one of B's objections
+  with status `rejected`. The reason names each id that breaks this.
   An answer off its schema or its ledger is `failed` and is not written. It prints one line, `{"status", "reason"}`, where status is
   `done`, `unavailable`, `timed_out`, `quota`, or `failed`, and exits 0 on `done`, 3 on `unavailable`, and 1 otherwise.
   Any other `--mode`, `--mode rebut` without `--ledger`, `--ledger` without it, or a missing flag

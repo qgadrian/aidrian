@@ -112,7 +112,8 @@ const RULING = Object.freeze({
   },
 });
 
-// The objection ledger, `<state>/quorum/<plan-basename>-<plan-hash>.json`.
+// The objection ledger, `<state>/quorum/<name>-<plan-hash>.json`: `<name>` is the plan's file name without `.md`, or
+// `<parent-folder>-plan` for a file named `plan.md`.
 export const LEDGER_SCHEMA = Object.freeze({
   type: 'object',
   additionalProperties: false,
@@ -194,19 +195,20 @@ function isType(value, type) {
 }
 
 // Why a rebuttals answer does not fit `ledger`, as one line per problem: an id named twice; an id that is not one of B's
-// objections ruled `reject` or `accept` (a partial accept's rebuttal covers its rejected part); or one of B's objections
-// ruled `reject` with no entry. [] when it fits.
+// objections ruled `reject` or `accept` (a partial accept's rebuttal covers its rejected part) and not `escalated`, since
+// an escalated objection goes to the Human and gets no rebuttal; or one of B's objections with status `rejected` and no
+// entry. [] when it fits.
 export function rebuttalProblems(answer, ledger) {
   const ids = answer.rebuttals.map((entry) => entry.objection_id);
-  const ruled = (decisions) => ledger.objections.filter((each) => each.by === 'B' && decisions.includes(each.ruling?.decision)).map((each) => each.id);
-  const open = new Set(ruled(['reject', 'accept']));
+  const answerable = ledger.objections.filter((each) => each.by === 'B' && ['reject', 'accept'].includes(each.ruling?.decision) && each.status !== 'escalated');
+  const open = new Set(answerable.map((each) => each.id));
   const twice = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
   const unknown = [...new Set(ids.filter((id) => !open.has(id)))];
-  const missing = ruled(['reject']).filter((id) => !ids.includes(id));
+  const missing = answerable.filter((each) => each.status === 'rejected' && !ids.includes(each.id)).map((each) => each.id);
   const problems = [];
   if (twice.length) problems.push(`the answer names ${twice.join(', ')} more than once`);
-  if (unknown.length) problems.push(`the answer names ${unknown.join(', ')}, not B's objection ruled reject or accept in the ledger`);
-  if (missing.length) problems.push(`the answer has no entry for ${missing.join(', ')}, B's objection ruled reject`);
+  if (unknown.length) problems.push(`the answer names ${unknown.join(', ')}, not B's objection ruled reject or accept, and not escalated, in the ledger`);
+  if (missing.length) problems.push(`the answer has no entry for ${missing.join(', ')}, B's objection rejected in the ledger`);
   return problems;
 }
 

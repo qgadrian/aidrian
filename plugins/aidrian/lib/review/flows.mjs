@@ -32,36 +32,165 @@ export function invariantsOf(flow, read) {
   return list.length ? { invariants: list, unspecified: false, problem: null } : { invariants: [UNSPECIFIED], unspecified: true, problem: `${flow.invariants} has no ## headings` };
 }
 
-// The most of a cited section a reviewer reads.
+// The most of a cited section a reviewer reads, and of the blocks a `focus` picks: the project chose those as the rule,
+// so they get more room before a cut.
 export const MAX_SOURCE = 4000;
+export const MAX_FOCUSED = 8000;
 
 // The section of a markdown doc under the heading whose slug is `anchor`: the heading and its body, up to the next
-// heading of the same or a higher level. Null when the doc has no such heading.
+// heading of the same or a higher level; `raw` is the body with its indentation kept, for blocksOf. Null when the doc
+// has no such heading.
 export function sectionOf(text, anchor) {
   const lines = String(text ?? '').split('\n');
   let start = -1;
   let level = 0;
+  let end = lines.length;
   for (const [i, line] of lines.entries()) {
     const heading = /^(#{1,6})\s+(.+?)\s*#*\s*$/u.exec(line);
     if (!heading) continue;
     if (start === -1 && slug(heading[2]) === anchor) {
       start = i;
       level = heading[1].length;
-    } else if (start !== -1 && heading[1].length <= level) return { heading: lines[start].replace(/^#+\s+/u, '').trim(), body: lines.slice(start + 1, i).join('\n').trim() };
+    } else if (start !== -1 && heading[1].length <= level) {
+      end = i;
+      break;
+    }
   }
-  return start === -1 ? null : { heading: lines[start].replace(/^#+\s+/u, '').trim(), body: lines.slice(start + 1).join('\n').trim() };
+  if (start === -1) return null;
+  const raw = lines.slice(start + 1, end).join('\n').replace(/^(?:[ \t]*\n)+/u, '').trimEnd();
+  return { heading: lines[start].replace(/^#+\s+/u, '').trim(), body: raw.trim(), raw };
+}
+
+// A fence line: its delimiter, and whether the line is the delimiter alone, which only a closing fence may be. An
+// opening fence may follow list markers, as in "- ```js"; such a line is never bare, so it never closes one, and `item`
+// is the content column of that list item (null for a fence on a line of its own).
+// CommonMark: https://spec.commonmark.org/0.31.2/#fenced-code-blocks
+const fenceOf = (line) => {
+  const found = /^(\s*)((?:(?:[-*+]|\d+[.)])\s+)*)(`{3,}|~{3,})(.*)$/u.exec(line);
+  // A backtick fence's info string has no backtick, so "```code``` stays literal" is inline code, not a fence.
+  if (!found || (found[3][0] === '`' && found[4].includes('`'))) return null;
+  return { char: found[3][0], length: found[3].length, bare: found[2] === '' && found[4].trim() === '', item: found[2] === '' ? null : found[1].length + found[2].length };
+};
+const closes = (fence, open) => fence?.bare && fence.char === open.char && fence.length >= open.length;
+
+// A line with the tabs of its indentation and list markers expanded to 4-column stops, so indentation is measured in
+// columns: a tab-indented nested bullet stays nested.
+const expandTabs = (line) => {
+  const prefix = /^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)*/u.exec(line)[0];
+  let out = '';
+  for (const char of prefix) out += char === '\t' ? ' '.repeat(4 - (out.length % 4)) : char;
+  return out + line.slice(prefix.length);
+};
+const indentOf = (line) => /^ */u.exec(line)[0].length;
+
+// The top-level blocks of a section body, in order: a sub-heading, a top-level list item with its nested lines, a
+// fenced block, or a paragraph. As in CommonMark, a line belongs to the list item above it when it is indented to that
+// item's content column or deeper; otherwise a line up to 3 spaces past the body's least indentation is top level. So
+// bullets split whether the section indents them all, or indents them under a plain paragraph. A fence stays inside
+// the block it starts in, and ends at a bare fence of its own character, at least as long, or, when it opened inside a
+// list item, where that item ends. Indentation counts tabs to 4-column stops. Blank lines are dropped from block edges.
+export function blocksOf(body) {
+  const lines = String(body ?? '').split('\n').map(expandTabs);
+  // The least indentation outside fences, from a first pass that matches delimiters only. Accepted residual: this pass
+  // does not end an unclosed fence where its list item ends, so a section can get too high a base, and a deeper bullet
+  // after such a fence becomes its own block.
+  const indents = [];
+  let scan = null;
+  for (const line of lines) {
+    const fence = fenceOf(line);
+    if (scan === null && line.trim()) indents.push(indentOf(line));
+    if (scan === null && fence) scan = fence;
+    else if (scan && closes(fence, scan)) scan = null;
+  }
+  const base = indents.length ? Math.min(...indents) : 0;
+  const blocks = [];
+  let current = null;
+  let column = null; // the content column of the list item the current block is, or null
+  let open = null; // the fence open now: its delimiter, and the content column of the item it opened in, or null
+  let closed = false; // the line before closed a fence
+  let blank = true;
+  for (const line of lines) {
+    const indent = indentOf(line);
+    if (open?.container != null && line.trim() && indent < open.container) open = null;
+    const inside = open !== null;
+    const fence = fenceOf(line);
+    const text = line.slice(Math.min(base, indent));
+    const item = /^( *)((?:[-*+]|\d+[.)]) +)\S/u.exec(line);
+    const top = !inside && line.trim() !== '' && indent - base <= 3 && (column === null || indent < column);
+    const starts = top && (/^#{1,6}\s/u.test(text.trimStart()) || item !== null || blank || fence !== null || closed);
+    if (starts || (!current && line.trim())) {
+      current = [];
+      blocks.push(current);
+      column = item ? item[1].length + item[2].length : null;
+    }
+    if (current) current.push(text);
+    closed = false;
+    if (!inside && fence) open = { ...fence, container: fence.item ?? (column !== null && indent >= column ? column : null) };
+    else if (inside && closes(fence, open)) {
+      open = null;
+      closed = true;
+    }
+    blank = line.trim() === '';
+  }
+  return blocks.map((each) => each.join('\n').replace(/^(?:[ \t]*\n)+/u, '').trimEnd()).filter((each) => each.trim());
+}
+
+// A block's first line in plain words, lowercase: the list marker, heading marks, and inline markup removed, and a
+// link, inline `[label](url)` or reference `[label][ref]`, reduced to its label.
+const plain = (text) => String(text).split('\n')[0].replace(/^\s*(?:#{1,6}|[-*+]|\d+[.)])\s+/u, '').replace(/!?\[([^\]]*)\](?:\([^)]*\)|\[[^\]]*\])?/gu, '$1').replace(/[`*_]/gu, '').replace(/\s+/gu, ' ').trim().toLowerCase();
+
+// The focus words of an invariant, as a list: `focus` is one string or a list of them.
+export const focusesOf = (invariant) => (invariant.focus === undefined ? [] : [invariant.focus].flat());
+
+// Whether a block starts with the focus words, whole words only: "Rule 1" starts "Rule 1: ..." but not "Rule 10".
+const startsWith = (block, focus) => {
+  const [text, words] = [plain(block), plain(focus)];
+  return words !== '' && text.startsWith(words) && !/[\p{L}\p{N}]/u.test(text[words.length] ?? '');
+};
+
+// The blocks of `section` that each focus starts, in section order, and the focuses no block starts.
+export function focusBlocks(section, focuses) {
+  const blocks = blocksOf(section.raw ?? section.body);
+  const missing = focuses.filter((focus) => !blocks.some((block) => startsWith(block, focus)));
+  return { blocks: blocks.filter((block) => focuses.some((focus) => startsWith(block, focus))), missing };
+}
+
+// What a reviewer reads of a cited section: the heading and its blocks (only the focused ones when the invariant has a
+// `focus` when every one matches), cut at a block boundary to the limit with a note naming every block it left out and where to read it. A
+// first block longer than the limit is cut inside it. Returns { source, length, limit }, `length` before any cut.
+export function sourceOf(section, invariant) {
+  // When any focus starts no block, such as after an edit of the doc, the reviewer reads the whole section: more than
+  // it needs, instead of part of the rule silently gone. `aidrian lint review` reports the focus.
+  const chosen = focusesOf(invariant).length ? focusBlocks(section, focusesOf(invariant)) : null;
+  const picked = chosen && !chosen.missing.length ? chosen.blocks : [];
+  const focuses = picked.length ? focusesOf(invariant) : [];
+  const limit = focuses.length ? MAX_FOCUSED : MAX_SOURCE;
+  const blocks = focuses.length ? picked : blocksOf(section.raw ?? section.body);
+  const full = [section.heading, ...blocks].join('\n\n');
+  if (full.length <= limit) return { source: full, length: full.length, limit };
+  let kept = section.heading;
+  let shown = 0;
+  while (shown < blocks.length && `${kept}\n\n${blocks[shown]}`.length <= limit) kept = `${kept}\n\n${blocks[shown++]}`;
+  if (shown === 0) {
+    kept = `${kept}\n\n${blocks[0]}`.slice(0, limit);
+    shown = 1;
+  }
+  const left = blocks.slice(shown).map((block) => `"${block.split('\n')[0].replace(/^\s*(?:[-*+]|\d+[.)])\s+/u, '').slice(0, 80)}"`);
+  const note = left.length ? `not shown: ${left.join(', ')}` : 'the rest of the block is not shown';
+  return { source: `${kept}\n[cut at ${limit} characters; ${note}; read ${invariant.cite}]`, length: full.length, limit };
 }
 
 // An invariant of a list with the doc section it cites as `source`, which the reviewer judges against: the text is
-// the question, the cited doc is the rule. With no text, the question comes from the cited heading.
+// the question, the cited doc is the rule. With no text, the question comes from the cited heading and focus.
 function withSource(invariant, read) {
   if (typeof invariant.cite !== 'string' || !invariant.cite.includes('#')) return invariant;
   const [file, anchor] = invariant.cite.split('#');
   const section = sectionOf(read(file), anchor);
-  const text = invariant.text ?? (section ? `Does the change keep "${section.heading}" as the cited section defines it?` : `Does the change keep ${invariant.cite} as it defines?`);
+  const focus = focusesOf(invariant);
+  const named = section ? (focus.length ? `${section.heading}: ${focus.join('; ')}` : section.heading) : null;
+  const text = invariant.text ?? (named ? `Does the change keep "${named}" as the cited section defines it?` : `Does the change keep ${invariant.cite} as it defines?`);
   if (!section) return { ...invariant, text };
-  const source = `${section.heading}\n\n${section.body}`;
-  return { ...invariant, text, source: source.length > MAX_SOURCE ? `${source.slice(0, MAX_SOURCE)}\n[cut at ${MAX_SOURCE} characters; read ${file}]` : source };
+  return { ...invariant, text, source: sourceOf(section, invariant).source };
 }
 
 // Whether a verdict's evidence names something real at `head`: `path:line` of a file that has that line, or

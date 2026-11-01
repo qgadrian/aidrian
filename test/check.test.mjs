@@ -37,6 +37,22 @@ test('check passes on a copy of the example consumer in its own repository', (t)
   assert.equal(stdout.split('\n').length, 4);
 });
 
+test('check fails, and session start warns, when the running plugin is older than the version config.json requires', (t) => {
+  const dir = exampleRepo(t);
+  const file = path.join(dir, '.aidrian/config.json');
+  const config = JSON.parse(readFileSync(file, 'utf8'));
+  writeFileSync(file, JSON.stringify({ ...config, requires: { aidrian: '999.0.0' } }));
+  const { status, stderr } = run(['check'], dir);
+  assert.equal(status, 1);
+  assert.match(stderr, /^this project requires aidrian 999\.0\.0 or later, and this session runs \d+\.\d+\.\d+ from \S+plugins\/aidrian: update the plugin, then start a new session$/mu);
+  const hook = spawnSync(process.execPath, [path.join(ROOT, 'plugins/aidrian/scripts/hook-session-start.mjs')], { input: JSON.stringify({ cwd: dir }), encoding: 'utf8', env: { ...process.env, XDG_STATE_HOME: XDG } });
+  assert.match(hook.stdout, /^Plugin too old: this project requires aidrian 999\.0\.0 or later/mu);
+  writeFileSync(file, JSON.stringify({ ...config, requires: { aidrian: '0.1.0' } }));
+  assert.equal(run(['check'], dir).status, 0, 'a floor at or below the running plugin passes');
+  writeFileSync(file, JSON.stringify({ ...config, requires: { aidrian: 'latest' } }));
+  assert.match(run(['check'], dir).stderr, /"requires\.aidrian" must be a plugin version such as "0\.17\.0", or null/u);
+});
+
 test('check warns past the knowledge budgets, and fails when the always docs pass twice theirs', (t) => {
   const dir = exampleRepo(t);
   const bytes = (doc) => statSync(path.join(dir, 'docs/knowledge', doc)).size;

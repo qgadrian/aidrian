@@ -112,7 +112,7 @@ of its invariants, with evidence, and the flow must be signed before the review 
 | --- | --- |
 | `files` | required: globs, or `re:<regex>` over the path; a changed file that can change behaviour triggers the flow |
 | `added` | regular expressions over the added lines of any file, for a use that lives outside the flow's folders |
-| `invariants` | a doc, whose `##` and `###` headings are the invariants, or a list of `{ id, text, cite? }` |
+| `invariants` | a doc, whose `##` and `###` headings are the invariants, or a list of `{ id, text, cite?, focus? }` |
 | `require` | the flow's reviewers; the code-reviewer agent by default |
 | `tests` | the flow's tests: deleting one stops the review until it is restored or the Human accepts it |
 | `checks` | check names that must be `SUCCESS` on the head; a skipped or missing one does not pass |
@@ -131,6 +131,25 @@ reaches its reviewer with that section as `source`: the heading and its text up 
 higher level, read from the base branch. The reviewer judges against the source; `text` is only the question, and
 without one the question comes from the heading. So the rule lives once, in the doc, and config cannot drift from it.
 A change to a cited doc triggers `harness-config`. `aidrian lint review` warns about a cited section with no text.
+
+A reviewer reads at most 4000 characters of a source. A longer section is cut between its top-level blocks (a list
+item with its nested lines, a paragraph, a sub-heading, a code fence), and a note names each block left out and the
+cite to read. When the rule is one or two blocks of a long section, `focus` sends only those: one string or a list,
+each the first words of a top-level block, matched as whole words, without case, markup, or link targets. Focused blocks get up to
+8000 characters, since the project chose them as the rule. When any focus starts no block, as after an edit of the doc,
+the reviewer gets the whole section instead, and `aidrian lint review` reports the focus.
+
+```json
+{ "id": "controls", "cite": "docs/product.md#core-product-invariants", "focus": "Settings controllability" }
+```
+
+A verdict says whether the change keeps the rule, not how the question is worded: `holds` is kept, `violated` is
+broken. Ask a question a yes answers with `holds`, such as "Does the change still ...?", and leave the rule in the doc.
+
+Every invariant compares the head with the base branch. When a later round reviews only the commits since an earlier
+head, the pass input still carries `flowBase`, the merge base, and the reviewer judges each invariant on
+`git diff <flowBase> <head>`: a narrowing an earlier push made counts, and one that undoes this pull request's own
+addition weakens nothing.
 
 ### Content and tracing
 
@@ -184,7 +203,10 @@ pull request. A change to any of these triggers the built-in `harness-config` fl
 flow's deleted test stops the review even when the change touches nothing else in the flow.
 
 `aidrian lint review` fails on a flow whose globs match no tracked file, an invariants doc that is missing or has no
-headings, and a cite to a heading that is not there. It warns past 16 flows, or 10 invariants in one flow. The budget
+headings, a cite to a heading that is not there, and a `focus` that starts no block of its section. It warns past 16
+flows, or 10 invariants in one flow; about a source past its limit, 4000 characters or 8000 with `focus`; about a question that asks
+whether the change breaks, removes, weakens, or bypasses something, so that yes would be the breach; and about a cited
+invariant's text past 200 characters, which restates the rule. The budget
 stands for how many passes a review dispatches (an agent reviews up to 3 flows per pass); a flow is a critical path,
 not every feature. The warning never blocks.
 

@@ -37,7 +37,7 @@ import { contentFlows } from './content.mjs';
 import { buildPlan, classify, detectFlows, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, pathPattern, validatePlan } from './plan.mjs';
 import { BUILT_IN, resolveEngine, reviewerMap, runExec, satisfies } from './reviewers.mjs';
 import { emptyState, isSummary, newer, readLocalState, stateFromComment, summaryBody, writeLocalState } from './state.mjs';
-import { attachMode, captureKeys, captureVisual, capturesBody, ghImage, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, visualInput, visualMatrix, visualRoutes } from './visual.mjs';
+import { attachMode, captureKeys, captureVisual, capturesBody, ghImage, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput, visualMatrix, visualRoutes } from './visual.mjs';
 
 export const EXIT = Object.freeze({
   dispatch: 0, running: 0, fix_required: 0, received: 0, none_needed: 0, human_required: 9,
@@ -527,7 +527,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     manifest = await captureVisual({
       project, pr: n, head, visual, entries: visualEntries, baseUrl: config.reviewVisual?.baseUrl ?? null, env: cleanEnv,
       // A base checkout only when a hook runs: a public capture on a set base URL needs none.
-      withBase: (use) => ((visual.preview && !config.reviewVisual?.baseUrl) || visual.variants.some((variant) => variant.account)
+      withBase: (use) => ((visual.preview && !config.reviewVisual?.baseUrl) || signedVariants(visual, visualEntries).length
         ? inBaseWorktree(root, baseTip, (tree) => use(async (command, input) => runHook(tree, command, input, cleanEnv)))
         : use(async () => { throw new Error('no hook runs here'); })),
       ...(captureSpawn ? { spawn: captureSpawn } : {}),

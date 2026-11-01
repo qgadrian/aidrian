@@ -90,6 +90,10 @@ export function visualMatrix(visual, routes) {
   return entries;
 }
 
+// The variants the capture signs in: those with an account that some entry uses. A variant every touched target
+// leaves out is never signed in, so its missing credentials cannot stop a capture that does not need it.
+export const signedVariants = (visual, entries) => visual.variants.filter((variant) => variant.account && entries.some((entry) => entry.variant === variant.id));
+
 export const captureDir = (project, pr, head) => path.join(stateDir(project), 'reviews', `pr-${pr}`, 'captures', head);
 
 // The manifest a capture wrote for `head`, or null.
@@ -165,9 +169,7 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
         storageStates[id] = file;
         return id;
       };
-      for (const variant of visual.variants) {
-        profiles[variant.id] = { url, bases: {}, auth: null, locales: {} };
-        if (!variant.account) continue;
+      for (const variant of signedVariants(visual, entries)) {
         const what = `review.visual.login for ${variant.id}`;
         let signedIn;
         try {

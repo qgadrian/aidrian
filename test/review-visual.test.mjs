@@ -100,7 +100,7 @@ test('captureVisual: no base URL, a missing Playwright, or a failed login is a s
   assert.match(refused.reason, /4 of 4 captures failed: net::ERR_CONNECTION_REFUSED/u);
   const recovered = await captureVisual({ project: p, pr: 1, head: 'f'.repeat(40), visual, entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base(async () => ''), spawn: fakeAdapter() });
   assert.equal(recovered.status, 'captured', 'a capture whose pages all failed runs again once the server is up');
-  const login = await captureVisual({ project: p, pr: 1, head: 'd'.repeat(40), visual: visualConfig(), entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base(async () => { throw new Error('bad password'); }) });
+  const login = await captureVisual({ project: p, pr: 1, head: 'd'.repeat(40), visual: visualConfig(), entries: visualMatrix(visualConfig(), R('/dashboard')), baseUrl: 'http://localhost:3000', env: {}, withBase: base(async () => { throw new Error('bad password'); }) });
   assert.equal(login.status, 'failed');
   assert.match(login.reason, /hospitality: bad password/u);
   const preview = await captureVisual({ project: p, pr: 1, head: 'e'.repeat(40), visual: { ...visual, preview: 'node scripts/preview.mjs' }, entries, baseUrl: null, env: {}, withBase: base(async () => 'https://pr-1.preview.example\n'), spawn: fakeAdapter() });
@@ -235,6 +235,15 @@ test('the login gets the locales, and may print a persona per locale that replac
   seen.length = 0;
   await captureVisual({ project: p, pr: 4, head: '6'.repeat(40), visual: clash, entries: visualMatrix(clash, R('/d')), baseUrl: 'http://localhost:3000', env: {}, withBase: base(clashHook), spawn: adapter });
   assert.deepEqual(seen[0].entries.map((job) => `${job.variant} ${job.locale} ${states[job.auth]}`), ['a en demo-a', 'a de a-de', 'a--de en demo-ade', 'a--de de demo-ade']);
+  // A variant no touched target captures is never signed in, so its missing credentials stop nothing.
+  const narrowed = visualConfig({ targets: [{ files: ['src/**'], routes: ['/d'], variants: ['appointments'] }], viewports: [360] });
+  const signedIn = [];
+  const only = await captureVisual({ project: p, pr: 4, head: '5'.repeat(40), visual: narrowed, entries: visualMatrix(narrowed, visualRoutes(narrowed, [{ file: 'src/a' }])), baseUrl: 'http://localhost:3000', env: {}, withBase: base(async (_command, input) => {
+    signedIn.push(input.variant);
+    if (input.variant === 'hospitality') throw new Error('no password for demo-h');
+    return JSON.stringify({ storageState: {} });
+  }), spawn: fakeAdapter() });
+  assert.deepEqual([only.status, signedIn], ['captured', ['appointments']]);
   const unknown = await captureVisual({ project: p, pr: 4, head: '7'.repeat(40), visual, entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base(async () => JSON.stringify({ storageState: {}, locales: { fr: { storageState: {} } } })) });
   assert.equal(unknown.status, 'failed');
   assert.match(unknown.reason, /locale fr: not in review\.visual\.locales/u);

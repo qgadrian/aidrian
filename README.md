@@ -1,7 +1,25 @@
 # aidrian harness
 
-One plugin, `aidrian`, gives Claude Code and Codex a team of agents, skills, and safety hooks.
-A project adds only its own rules, as Markdown docs, and a small `.aidrian/` folder that indexes them.
+###### what is this (disclaimer)
+
+* Claude Code and Codex plugin (for now)
+* A team of agents, skills, and safety hooks
+* Very opinionated, it might be extended or not
+* Vibe coded and maintained holistically
+
+###### what is this (concept)
+
+* Think this harness of a mini-team
+* Goal is to automate as much as possible (see below, read docs)
+* Very "product development" focus
+
+###### what is this (how it works)
+
+* You (your project) defines a set of rules (read the docs)
+  * a config to define harness behaviour
+  * a small `.aidrian/` folder that indexes them
+* agents/skills read your docs to know how they should work
+* think of `task -> (development -> review -> fix)+ -> submit`
 
 ## Concepts
 

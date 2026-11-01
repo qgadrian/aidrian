@@ -20,7 +20,7 @@ export const TERMS_VERSION = 1;
 // Files no rule reads, on any surface: binaries, lockfiles, and minified bundles. A file holding a NUL byte is binary too.
 export const NOT_TEXT = /\.(png|jpe?g|gif|webp|ico|woff2?|ttf|eot|otf|pdf|zip|gz|tar|tgz|mp[34]|wav|ogg)$|\.min\.[a-z]+$|(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|Cargo\.lock|Gemfile\.lock|poetry\.lock|composer\.lock)$/i;
 const SEVERITIES = ['block', 'warn'];
-const RULE_KEYS = ['id', 'paths', 'exclude', 'locale', 'severity', 'message', 'prose', 'code', 'terms'];
+const RULE_KEYS = ['id', 'paths', 'exclude', 'locale', 'severity', 'message', 'prose', 'compounds', 'code', 'terms'];
 // Scripts written without spaces between words: their terms match anywhere, not as whole words.
 const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 // A JSON string literal, and the colon after it when it is a key.
@@ -69,9 +69,10 @@ function ruleProblems(rule, locales) {
   if (rule.exclude !== undefined && !isTexts(rule.exclude)) problems.push('"exclude" must be a list of globs');
   if (rule.locale !== undefined && !isText(rule.locale)) problems.push('"locale" must be a non-empty string');
   if (rule.locale !== undefined && rule.paths === undefined && !isText(locales)) problems.push('"locale" needs the file\'s "locales"');
-  for (const key of ['prose', 'code']) if (rule[key] !== undefined && typeof rule[key] !== 'boolean') problems.push(`"${key}" must be true or false`);
+  for (const key of ['prose', 'compounds', 'code']) if (rule[key] !== undefined && typeof rule[key] !== 'boolean') problems.push(`"${key}" must be true or false`);
   if (rule.prose === true && rule.code === true) problems.push('"prose" and "code" cannot both be true');
   if ((rule.prose === true || rule.code === true) && rule.locale !== undefined) problems.push(`"${rule.prose === true ? 'prose' : 'code'}" does not go with "locale"`);
+  if (rule.compounds !== undefined && rule.prose !== true) problems.push('"compounds" goes only with "prose"');
   if (rule.code === true && rule.paths === undefined) problems.push('a "code" rule needs "paths": code names and prose words differ');
   if (rule.code === true && isObject(rule.terms)) {
     const seen = new Map();
@@ -94,7 +95,7 @@ function compile(rule, locales, termsFile) {
   const everywhere = rule.paths === undefined && rule.locale === undefined;
   const paths = rule.paths ?? (rule.locale !== undefined ? [locales.replaceAll('{locale}', rule.locale)] : ['**']);
   const mode = rule.code === true ? 'code' : rule.prose === true ? 'prose' : 'text';
-  const terms = Object.entries(rule.terms).map(([term, replacement]) => ({ term, replacement, pattern: termPattern(term, { compound: mode === 'prose' }) }));
+  const terms = Object.entries(rule.terms).map(([term, replacement]) => ({ term, replacement, pattern: termPattern(term, { compound: mode === 'prose' && rule.compounds !== true }) }));
   return {
     id: rule.id,
     severity: rule.severity ?? 'block',
@@ -118,7 +119,8 @@ function compile(rule, locales, termsFile) {
 
 // A term as a case-insensitive pattern: a whole word in spaced scripts, letters on both sides counting as part of the
 // word (`\b` would split at "ó"); anywhere in unspaced ones. `*` stands for further letters of the same word. With
-// `compound`, a word joined by `-` is part of a compound and no match: "you" in "show-your-work".
+// `compound`, a word joined by `-` is part of a compound and no match: "you" in "show-your-work". A `prose` rule passes
+// it unless the rule sets `compounds`, as one banning a name must catch "acme-approved".
 export function termPattern(term, { compound = false } = {}) {
   const escaped = term.normalize('NFC').replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replaceAll('\\*', '[\\p{L}\\p{N}]*');
   const edge = compound ? '\\p{L}\\p{N}_-' : '\\p{L}\\p{N}_';

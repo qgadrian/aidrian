@@ -242,6 +242,7 @@ its replacement. The file is JSON of its own, so a project can list hundreds of 
 | `rules[].severity` | `"block"`, the default, or `"warn"`. |
 | `rules[].message` | Shown with every hit. |
 | `rules[].prose` | `true`: read only a Markdown file's own prose (see below). |
+| `rules[].compounds` | `true`: a `prose` rule also matches a term inside a hyphen compound. Needs `prose`. |
 | `rules[].code` | `true`: match code names, whole, in any case style (see below). Needs `paths`. |
 | `rules[].terms` | Each banned term and what to write instead. |
 
@@ -257,7 +258,8 @@ rules; `exclude` takes out the rest.
 
 A `prose` rule reads what a Markdown file says in its own voice. It skips fenced code, blockquotes, lines with
 `<!-- lint-skip -->`, and, within a line, inline code, URLs, and "quoted" or “quoted” spans. A word joined by `-` is part
-of a compound, so `you` does not match `show-your-work`.
+of a compound, so `you` does not match `show-your-work`. A rule with `"compounds": true` matches inside a compound too,
+as a rule banning a name must catch `acme-approved`; the term is still a whole word, so `acme` never matches `acmeish`.
 On an agent write it reads the lines whose prose is new: a line moved out of a code block counts, a reordered line does
 not. When the hook cannot see the whole file, as with Codex's `apply_patch`, a `prose` hit only warns.
 

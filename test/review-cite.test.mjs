@@ -65,6 +65,8 @@ test('focus sends only the blocks it names, in section order, and names the ques
   assert.deepEqual(two.blocks.map((block) => block.split('\n')[0]), ['- Domain separation is strict:', '- Settings controllability is non-negotiable:']);
   assert.deepEqual(two.missing, ['Nope'], 'markup and case do not matter; a focus that starts no block is reported');
   assert.deepEqual(focusBlocks(section, ['Settings control']).missing, ['Settings control'], 'a focus ends on a whole word');
+  const linked = sectionOf('## Rules\n\n- [Refund cap](refunds.md): never exceeds the charge.\n- [No double booking][nd]: one slot, one booking.\n', 'rules');
+  assert.deepEqual(focusBlocks(linked, ['Refund cap', 'No double booking']).missing, [], 'a link matches by its label');
   const stale = sourceOf(section, { cite: 'product.md#core-product-invariants', focus: 'Gone rule' }).source;
   assert.match(stale, /^Core Product Invariants\n\n- Domain separation is strict:/u, 'a focus that matches nothing sends the whole section, not the heading alone');
   const partial = sourceOf(section, { cite: 'product.md#core-product-invariants', focus: ['Settings controllability', 'Gone rule'] }).source;

@@ -110,8 +110,9 @@ export function blocksOf(body) {
   return blocks.map((each) => each.join('\n').replace(/^(?:[ \t]*\n)+/u, '').trimEnd()).filter((each) => each.trim());
 }
 
-// A block's first line in plain words, lowercase: the list marker, heading marks, and inline markup removed.
-const plain = (text) => String(text).split('\n')[0].replace(/^\s*(?:#{1,6}|[-*+]|\d+[.)])\s+/u, '').replace(/[`*_]/gu, '').replace(/\s+/gu, ' ').trim().toLowerCase();
+// A block's first line in plain words, lowercase: the list marker, heading marks, and inline markup removed, and a
+// link, inline `[label](url)` or reference `[label][ref]`, reduced to its label.
+const plain = (text) => String(text).split('\n')[0].replace(/^\s*(?:#{1,6}|[-*+]|\d+[.)])\s+/u, '').replace(/!?\[([^\]]*)\](?:\([^)]*\)|\[[^\]]*\])?/gu, '$1').replace(/[`*_]/gu, '').replace(/\s+/gu, ' ').trim().toLowerCase();
 
 // The focus words of an invariant, as a list: `focus` is one string or a list of them.
 export const focusesOf = (invariant) => (invariant.focus === undefined ? [] : [invariant.focus].flat());

@@ -4,5 +4,7 @@
     "defaultBranch": "main",
     "worktrees": { "dir": ".worktrees" },
     "mainCheckout": { "guard": true }
-  }
+  },
+  "github": { "reviewRequest": "automatic" },
+  "review": { "engine": "pr-bot", "record": "local" }
 }

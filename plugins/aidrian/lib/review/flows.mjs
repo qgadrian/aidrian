@@ -64,12 +64,13 @@ export function sectionOf(text, anchor) {
 // A fence line: its delimiter, and whether the line is the delimiter alone, which only a closing fence may be. An
 // opening fence may follow list markers, as in "- ```js"; such a line is never bare, so it never closes one.
 // CommonMark: https://spec.commonmark.org/0.31.2/#fenced-code-blocks
-// `column` is where the delimiter starts: a line indented less ends the list item, and with it the fence.
+// `item` is the content column of the list item a fence opens on, as in "- ```js", or null: a line indented less ends
+// that item, and with it the fence. A fence on a line of its own runs until its closing delimiter.
 const fenceOf = (line) => {
   const found = /^(\s*)((?:(?:[-*+]|\d+[.)])\s+)*)(`{3,}|~{3,})(.*)$/u.exec(line);
   // A backtick fence's info string has no backtick, so "```code``` stays literal" is inline code, not a fence.
   if (!found || (found[3][0] === '`' && found[4].includes('`'))) return null;
-  return { char: found[3][0], length: found[3].length, bare: found[2] === '' && found[4].trim() === '', column: found[1].length + found[2].length };
+  return { char: found[3][0], length: found[3].length, bare: found[2] === '' && found[4].trim() === '', item: found[2] === '' ? null : found[1].length + found[2].length };
 };
 
 // A line with the tabs of its indentation and list markers expanded to 4-column stops, so indentation is measured in
@@ -98,7 +99,7 @@ export function blocksOf(body) {
   for (const line of lines) {
     const fence = fenceOf(line);
     // A fence left open inside a list item ends with the item, at a line indented less than the fence.
-    if (open && line.trim() && /^ */u.exec(line)[0].length < open.column) open = null;
+    if (open?.item != null && line.trim() && /^ */u.exec(line)[0].length < open.item) open = null;
     inFence.push(open !== null);
     opens.push(open === null && fence !== null);
     afterFence.push(closed);

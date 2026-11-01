@@ -115,6 +115,23 @@ test('a flow adds a local agent pass that must cite evidence for every invariant
   assert.equal(ran, 1);
 });
 
+test('a later round reviews the delta for bugs, but judges flow invariants from the merge base', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'], invariants: 'docs/flows/booking.md', require: ['agent:product-manager'] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => write('src/booking/book.js', 'export const book = 1;\n') });
+  const base = r.git('merge-base', 'main', 'HEAD');
+  const first = await r.step({ exec: clean });
+  const [pass] = first.dispatch;
+  assert.deepEqual([pass.context, pass.flowBase], ['full', undefined], 'the first round is already the whole change');
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'product-manager', findings: 1, fixed: 0, verdictsText: '[]' });
+  r.write('src/booking/book.js', 'export const book = 2;\n');
+  r.commit();
+  const second = await r.step({ exec: clean });
+  const again = second.dispatch.find((each) => each.pass === pass.pass);
+  assert.deepEqual([again.context, again.base, again.flowBase], ['delta', first.head, base]);
+  assert.match(again.brief, new RegExp(`judge every flow invariant on the whole change, \`git diff ${base} ${again.head}\``, 'u'));
+  assert.match(again.brief, /holds means the change keeps the rule/u, 'the verdict means the rule, whatever the question\'s wording');
+});
+
 test('a pull request cannot weaken the review it is under: a removed flow still runs, and the config change needs the Human', async (t) => {
   const flows = { booking: { files: ['src/booking/**'] } };
   const r = repo(t, { baseConfig: { version: 1, review: { flows } }, headConfig: { version: 1 }, change: (write) => write('src/booking/book.js', 'x\n') });
@@ -227,7 +244,16 @@ test('runExec: a project reviewer reads its input on stdin and prints findings; 
 test('sectionOf: a heading or a shell comment inside a fenced block is code, not a heading', () => {
   const doc = '# Doc\n\n## Deploy\nRun:\n\n```bash\n# build first\n## Fake\n```\n\nThen ship.\n\n## Next\nOther.\n';
   assert.equal(sectionOf(doc, 'fake'), null);
-  assert.deepEqual(sectionOf(doc, 'deploy'), { heading: 'Deploy', body: 'Run:\n\n```bash\n# build first\n## Fake\n```\n\nThen ship.' });
+  const body = 'Run:\n\n```bash\n# build first\n## Fake\n```\n\nThen ship.';
+  assert.deepEqual(sectionOf(doc, 'deploy'), { heading: 'Deploy', body, raw: body }, '`raw` keeps the fenced lines too');
+});
+
+test('sectionOf and invariantsOf: a fence opened after a list marker closes at its bare fence, and a heading after it is a heading', () => {
+  const doc = '# T\n\n## A\nSteps:\n\n- ```bash\n  # build\n  npm run build\n  ```\n\n## B\nOther.\n\n- ```md\n  ## Fake\n\n## C\nLast.\n';
+  assert.deepEqual(sectionOf(doc, 'a').raw, 'Steps:\n\n- ```bash\n  # build\n  npm run build\n  ```');
+  assert.deepEqual(sectionOf(doc, 'b').body, 'Other.\n\n- ```md\n  ## Fake', 'an unclosed fence in a list item ends where the item ends');
+  assert.equal(sectionOf(doc, 'fake'), null);
+  assert.deepEqual(invariantsOf({ invariants: 'x.md' }, () => doc).invariants.map((each) => each.id), ['a', 'b', 'c']);
 });
 
 test('invariantsOf: a heading inside a fenced block is not an invariant', () => {

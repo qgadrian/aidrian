@@ -249,7 +249,7 @@ function checkFlows(flows, bad) {
     }
     if (flow.signoff !== undefined && !SIGNOFFS.includes(flow.signoff)) problems.push(`"${at}.signoff" must be "reviewer" or "human"`);
     if (flow.invariants !== undefined && !isText(flow.invariants) && !invariantList(flow.invariants)) {
-      problems.push(`"${at}.invariants" must be a doc path or a list of { "id", "text", "cite"? }, where text may be left out when cite names a heading`);
+      problems.push(`"${at}.invariants" must be a doc path or a list of { "id", "text", "cite"?, "focus"? }, where text may be left out, and focus set, only when cite names a heading`);
     }
     if (flow.signoff === 'human' && flow.invariants === undefined) problems.push(`"${at}": a flow the Human signs off must state its invariants`);
     if (flow.content !== undefined) problems.push(...contentProblems(flow.content, `${at}.content`));
@@ -259,10 +259,13 @@ function checkFlows(flows, bad) {
   return kept;
 }
 
-// An invariant is { id, text, cite? }; with a cite to a heading (`doc.md#heading`), text is optional: the question
-// comes from the heading, and the reviewer judges against the cited section (flows.mjs withSource).
+// An invariant is { id, text, cite?, focus? }; with a cite to a heading (`doc.md#heading`), text is optional: the
+// question comes from the heading, and the reviewer judges against the cited section (flows.mjs withSource). `focus`,
+// one string or a list, narrows that section to the top-level blocks it starts, so it needs a cite to a heading.
+const citesHeading = (each) => isText(each.cite) && /#./u.test(each.cite);
+const focusOk = (each) => each.focus === undefined || (citesHeading(each) && (isText(each.focus) || someTexts(each.focus)));
 const invariantList = (value) =>
-  Array.isArray(value) && value.length > 0 && value.every((each) => isObject(each) && FLOW_ID.test(each.id ?? '') && (each.cite === undefined || isText(each.cite)) && (isText(each.text) || (each.text === undefined && isText(each.cite) && /#./u.test(each.cite))));
+  Array.isArray(value) && value.length > 0 && value.every((each) => isObject(each) && FLOW_ID.test(each.id ?? '') && (each.cite === undefined || isText(each.cite)) && (isText(each.text) || (each.text === undefined && citesHeading(each))) && focusOk(each));
 
 function checkReviewers(reviewers, bad) {
   if (!isObject(reviewers)) {

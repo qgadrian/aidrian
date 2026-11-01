@@ -35,7 +35,7 @@ import { isDirectory } from '../fs.mjs';
 import { dedupe, packageRoots } from './split.mjs';
 import { contentFlows } from './content.mjs';
 import { buildPlan, classify, detectFlows, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, pathPattern, validatePlan } from './plan.mjs';
-import { BUILT_IN, resolveEngine, reviewerMap, runExec, satisfies } from './reviewers.mjs';
+import { BUILT_IN, flowBaseBrief, resolveEngine, reviewerMap, runExec, satisfies, VERDICT_MEANING } from './reviewers.mjs';
 import { emptyState, isSummary, newer, readLocalState, stateFromComment, summaryBody, writeLocalState } from './state.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, ghImage, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput, visualMatrix, visualRoutes } from './visual.mjs';
 
@@ -586,6 +586,9 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     return {
       ...split,
       pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files, flows, priorFindings: prior?.list ?? [],
+      // An invariant is a claim about the whole change, so a delta pass still judges its flows from the merge base:
+      // judged on the delta, a narrowing an earlier push made reads as a weakening, and a new head hides a violation.
+      ...(flows.length && from !== base ? { flowBase: base } : {}),
       ...(checklist ? { checklist: { path: checklist, text: fileAt(root, baseTip, checklist) } } : {}),
       ...(manifest && isVisual(pass) ? { visual: visualInput(manifest, state.captures ?? {}, visualChecklist) } : {}),
     };
@@ -596,6 +599,8 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     const briefs = [
       input.checklist ? `Review the diff against the checklist in ${input.checklist.path} as well as for bugs.` : null,
       input.flows.some((flow) => (flow.invariants ?? []).some((invariant) => invariant.source)) ? 'Judge each invariant against its `source`, the section of the project doc it cites; `text` is only the question.' : null,
+      input.flows.length ? VERDICT_MEANING : null,
+      input.flowBase ? flowBaseBrief(input) : null,
       input.visual ? 'Review the captures in `visual` (open each `file`), with their measured facts, as well as the diff.' : null,
     ].filter(Boolean);
     return {

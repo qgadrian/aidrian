@@ -75,6 +75,7 @@ const SCHEMA = {
     },
   },
   agents: 'agents',
+  requires: { aidrian: 'versionOrNull' },
 };
 
 // Keys a format change renamed or moved, old name to new; a key inside a group is named with its group, "group.key".
@@ -99,6 +100,7 @@ const MODEL_CHOICES = {
   codex: { model: null, effort: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'persistent'] },
 };
 
+const SEMVER = /^\d+\.\d+\.\d+$/u;
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
 const isTexts = (value) => Array.isArray(value) && value.every(isText);
 // A regular expression a project writes as a string; `{types}` and `{issueKey}` are filled in before it compiles
@@ -141,6 +143,7 @@ const TYPES = {
   prFields: [(value) => Array.isArray(value) && value.every((f) => PR_FIELDS.includes(f)), `a list of ${PR_FIELDS.map((f) => `"${f}"`).join(', ')}`],
   handoffMode: [(value) => ['off', 'ask', 'auto'].includes(value), '"off", "ask", or "auto"'],
   readyMode: [(value) => ['ask', 'auto'].includes(value), '"ask" or "auto"'],
+  versionOrNull: [(value) => value === null || (typeof value === 'string' && SEMVER.test(value)), 'a plugin version such as "0.17.0", or null'],
 };
 
 // `state.dir: null` is the per-project folder under `$XDG_STATE_HOME` (lib/project.mjs). Task worktrees sit beside the
@@ -183,6 +186,8 @@ export const DEFAULTS = deepFreeze({
   lessons: { auto: true, maxOpen: 20, maxAgeDays: 14 },
   models: { claude: { agents: {} }, codex: { agents: {} } },
   names: { human: 'the Human', ai: null },
+  // The oldest plugin the project's config needs; null asks for none (versionFloorProblem).
+  requires: { aidrian: null },
   // What a commit and a pull request say about the agents that wrote them (lib/attribution.mjs); [] is off. `exclude`
   // names the agents a pull request's `Assisted-by:` lines leave out: by default the ones that only search and read.
   attribution: { commit: [], pullRequest: [], exclude: ['explorer', 'helper-scout', 'Explore', 'claude-code-guide', 'statusline-setup'] },
@@ -267,6 +272,25 @@ export function commandConfig(project, { exitCode = 1 } = {}) {
   const { config, errors } = loadConfig(project);
   if (!errors.length || !isFile(path.join(project.root, project.paths.config))) return config;
   throw Object.assign(new Error(errors.join('\n')), { code: CONFIG_ERROR, exitCode });
+}
+
+// The version of this plugin copy, from its manifest.
+export const pluginVersion = () => JSON.parse(readFileSync(path.join(import.meta.dirname, '../plugin.json'), 'utf8')).version;
+
+// Whether semver `a` is older than `b`; both are x.y.z.
+const older = (a, b) => {
+  const [x, y] = [a, b].map((each) => each.split('.').map(Number));
+  const at = x.findIndex((part, i) => part !== y[i]);
+  return at !== -1 && x[at] < y[at];
+};
+
+// The problem when this plugin copy is older than the version the project requires (`requires` in config.json), or null. It names the copy that
+// runs, because a session can load an older install than the one the project was set up with.
+export function versionFloorProblem(config, running = pluginVersion()) {
+  const { aidrian: floor } = config.requires ?? {};
+  if (!floor || !older(running, floor)) return null;
+  const root = path.resolve(import.meta.dirname, '..');
+  return `this project requires aidrian ${floor} or later, and this session runs ${running} from ${root}: update the plugin, then start a new session`;
 }
 
 // The error for a `version` other than VERSION, or null.

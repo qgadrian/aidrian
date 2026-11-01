@@ -163,23 +163,43 @@ const lastLine = (text) => text.trim().split('\n').filter(Boolean).at(-1) ?? '';
 
 // Runs one exec reviewer on one pass: resolves to { status: 'done', findings, verdicts, dropped } or
 // { status: 'failed' | 'quota' | 'timed_out', reason }. `env` must already be clean (run.mjs isolates it).
-export function runExec(reviewer, input, { root, env, spawnImpl = spawn }) {
+export async function runExec(reviewer, input, { root, env, spawnImpl = spawn }) {
+  const timeoutSec = reviewer.timeoutSec ?? 600;
+  const result = reviewer.builtIn === 'codex'
+    ? await runCodex({ root, env, schema: FINDINGS_SCHEMA, prompt: reviewPrompt(input), timeoutSec, spawnImpl })
+    : await runDetached({ argv: reviewer.command, stdinText: JSON.stringify(input), root, env, timeoutSec, spawnImpl, output: (stdout) => stdout });
+  if (result.status !== 'done') return result;
+  const clean = cleanOutput(result.raw);
+  return clean.valid ? { status: 'done', findings: clean.findings, verdicts: clean.verdicts, contracts: clean.contracts, cross_notes: clean.cross_notes, dropped: clean.dropped } : { status: 'failed', reason: clean.dropped[0] };
+}
+
+// Runs Codex once, read-only, held to `schema` (--output-schema), with `prompt` on stdin: resolves to
+// { status: 'done', raw }, the JSON Codex wrote, or { status: 'failed' | 'quota' | 'timed_out', reason }.
+// It owns a temporary folder for the schema and the answer, and removes it. `env` must already be clean (env.mjs isolate),
+// so a git hook's GIT_DIR cannot point Codex's git calls at another repository.
+export async function runCodex({ root, env, schema, prompt, timeoutSec = 600, spawnImpl = spawn }) {
   const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-review-'));
-  const out = path.join(dir, 'out.json');
-  let argv;
-  if (reviewer.builtIn === 'codex') {
-    const schema = path.join(dir, 'schema.json');
-    writeFileSync(schema, JSON.stringify(FINDINGS_SCHEMA));
-    argv = ['codex', 'exec', '--sandbox', 'read-only', '--ephemeral', '--cd', root, '--output-schema', schema, '-o', out, '-'];
-  } else argv = reviewer.command;
-  const stdinText = reviewer.builtIn === 'codex' ? reviewPrompt(input) : JSON.stringify(input);
+  try {
+    const out = path.join(dir, 'out.json');
+    const schemaFile = path.join(dir, 'schema.json');
+    writeFileSync(schemaFile, JSON.stringify(schema));
+    const argv = ['codex', 'exec', '--sandbox', 'read-only', '--ephemeral', '--cd', root, '--output-schema', schemaFile, '-o', out, '-'];
+    return await runDetached({ argv, stdinText: prompt, root, env, timeoutSec, spawnImpl, output: () => readFileSync(out, 'utf8') });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// Runs `argv` in its own process group with `stdinText` on stdin, and parses `output(stdout)` as JSON: resolves to
+// { status: 'done', raw } or { status: 'failed' | 'quota' | 'timed_out', reason }.
+function runDetached({ argv, stdinText, root, env, timeoutSec, spawnImpl, output }) {
   return new Promise((done) => {
     // Its own process group, so a timeout stops the reviewer and everything it started.
     const child = spawnImpl(argv[0], argv.slice(1), { cwd: root, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
     let stdout = '';
     let stderr = '';
     let timedOut = false;
-    const limit = (reviewer.timeoutSec ?? 600) * 1000;
+    const limit = timeoutSec * 1000;
     const kill = (signal) => {
       try {
         process.kill(-child.pid, signal);
@@ -208,14 +228,11 @@ export function runExec(reviewer, input, { root, env, spawnImpl = spawn }) {
       // Only a failed run can be a quota stop: a successful one logs its whole session to stderr, words included.
       if (code !== 0 && /usage limit|rate limit|quota/iu.test(stderr)) return finish({ status: 'quota', reason: lastLine(stderr) });
       if (code !== 0) return finish({ status: 'failed', reason: `exit ${code}: ${lastLine(stderr)}` });
-      let raw;
       try {
-        raw = JSON.parse(reviewer.builtIn === 'codex' ? readFileSync(out, 'utf8') : stdout);
+        return finish({ status: 'done', raw: JSON.parse(output(stdout)) });
       } catch {
         return finish({ status: 'failed', reason: 'the reviewer did not print JSON' });
       }
-      const clean = cleanOutput(raw);
-      finish(clean.valid ? { status: 'done', findings: clean.findings, verdicts: clean.verdicts, contracts: clean.contracts, cross_notes: clean.cross_notes, dropped: clean.dropped } : { status: 'failed', reason: clean.dropped[0] });
     });
     child.stdin.on('error', () => {});
     child.stdin.end(stdinText);
@@ -224,7 +241,6 @@ export function runExec(reviewer, input, { root, env, spawnImpl = spawn }) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      rmSync(dir, { recursive: true, force: true });
       done(result);
     }
   });

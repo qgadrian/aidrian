@@ -7,7 +7,7 @@ import test from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
-import { citationProblem, flowState, invariantsOf } from '../plugins/aidrian/lib/review/flows.mjs';
+import { citationProblem, flowState, invariantsOf, sectionOf } from '../plugins/aidrian/lib/review/flows.mjs';
 import { cleanOutput, resolveEngine, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { EXIT, recordPass, recordSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { readLocalState, stateFromComment } from '../plugins/aidrian/lib/review/state.mjs';
@@ -222,6 +222,17 @@ test('runExec: a project reviewer reads its input on stdin and prints findings; 
   assert.equal((await runExec(script("console.error('You hit your usage limit');process.exit(1)"), {}, { root: dir, env: process.env })).status, 'quota');
   assert.equal((await runExec({ ...script('setTimeout(()=>{}, 10000)'), timeoutSec: 1 }, {}, { root: dir, env: process.env })).status, 'timed_out');
   assert.equal(cleanOutput({ verdicts: [] }).valid, false);
+});
+
+test('sectionOf: a heading or a shell comment inside a fenced block is code, not a heading', () => {
+  const doc = '# Doc\n\n## Deploy\nRun:\n\n```bash\n# build first\n## Fake\n```\n\nThen ship.\n\n## Next\nOther.\n';
+  assert.equal(sectionOf(doc, 'fake'), null);
+  assert.deepEqual(sectionOf(doc, 'deploy'), { heading: 'Deploy', body: 'Run:\n\n```bash\n# build first\n## Fake\n```\n\nThen ship.' });
+});
+
+test('invariantsOf: a heading inside a fenced block is not an invariant', () => {
+  const read = () => '# T\n\n## Keep bookings\nA booking stays.\n\n```md\n## Fake\nnot a rule\n```\n';
+  assert.deepEqual(invariantsOf({ invariants: 'inv.md' }, read).invariants.map((each) => each.id), ['keep-bookings']);
 });
 
 test('invariantsOf and flowState: a doc gives one invariant per heading; a flow with none is unspecified', () => {

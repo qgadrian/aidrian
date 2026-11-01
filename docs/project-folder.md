@@ -110,7 +110,7 @@ Where no shell runs it, use `node <plugin folder>/lib/cli.mjs`, and `node <plugi
 
 ## Local state
 
-The plugin writes plans, session handoff briefs, agents' machine handoffs, review state, pull request body drafts, the lesson inbox,
+The plugin writes plans, session handoff briefs, agents' machine handoffs, review state, quorum ledgers, pull request body drafts, the lesson inbox,
 and the dispatch log on each machine. They live in one state folder per project, outside the repository, so git never sees them:
 
 ```text
@@ -119,6 +119,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── handoffs/             session handoff briefs, which the session-continue skill reads
 ├── dispatch/             machine handoffs that dispatched agents write for the orchestrator and the skills it runs
 ├── reviews/              review manifests, and the agents the specialist-review skill keeps warm
+├── quorum/               quorum ledgers, one per plan and plan hash
 ├── lessons/inbox.jsonl   the lesson inbox
 ├── tmp/                  pull request bodies and review comments that skills draft
 ├── dispatch-log.jsonl    the dispatch log
@@ -139,6 +140,25 @@ the orchestrator uses it to name each background agent's handoff file.
 `aidrian lesson` adds, lists, resolves, and counts lessons in the inbox ([lessons.md](lessons.md)).
 `aidrian handoff` checks a handoff brief against the one it supersedes.
 `aidrian report` summarizes the [dispatch log](dispatch-log.md).
+
+A quorum ledger, `quorum/<plan-basename>-<plan-hash>.json`, records the objections two adversaries raised against a plan,
+the architect's ruling on each, and the Human's answers. `<plan-hash>` is `git hash-object` of the plan.
+`lib/quorum.mjs` holds its schema, `LEDGER_SCHEMA`, and the schema of Codex's answer, `OBJECTIONS_SCHEMA`.
+Each objection, ruling, and rebuttal cites its evidence as `{kind, ref, quote}`. Two commands keep a ledger honest:
+
+- `aidrian quorum codex --plan PLAN --brief BRIEF --out FILE` runs Codex read-only on the brief and then the plan,
+  for at most 780 seconds, and writes its objections to FILE. It prints one line, `{"status", "reason"}`, where status is
+  `done`, `unavailable`, `timed_out`, `quota`, or `failed`, and exits 0 on `done`, 3 on `unavailable`, and 1 otherwise.
+- `aidrian quorum check LEDGER --plan PLAN` checks every citation. `doc` and `adr` cite `path#anchor`, and the quote
+  must be in that section; `code` cites `path:line`, and the quote must be in the file; `plan` cites `#anchor` in PLAN;
+  `absence` cites a path, and the quote must be in no regular file `git ls-files` lists there; a path with no tracked file fails.
+  An anchor matches a heading by its text or its slug, and a `#` line in a fenced code block is not a heading.
+  A quote is at most 200 characters, compared with whitespace collapsed.
+  An objection with no passing citation becomes `opinion`, and a ruling, or a rebuttal that rebuts, with none is named invalid.
+  A rebuttal that rebuts is also invalid when it cites nothing new: every passing citation of it is already cited by an
+  objection or its ruling, by kind, path, anchor, and quote. Other rebuttals do not count. It prints each problem and writes the ledger back.
+  It exits 1 on a schema error, a `complete` ledger with an objection still `pending` or ruled on with no `ruling`,
+  or a cited path outside the repository, and runs no command but `git ls-files`. PLAN and the ledger may live anywhere, such as this folder.
 
 ## Task worktrees
 

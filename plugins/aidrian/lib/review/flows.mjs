@@ -3,6 +3,7 @@
 
 import { isObject } from '../fs.mjs';
 import { runGit } from '../git.mjs';
+import { fencedLines } from '../markdown-sections.mjs';
 
 // The invariant a flow with none stated is held to. Lint and the summary mark such a flow "unspecified".
 export const UNSPECIFIED = Object.freeze({
@@ -10,7 +11,7 @@ export const UNSPECIFIED = Object.freeze({
   text: 'The change keeps this flow working as before: no entry point, user action, or guarantee of the flow is removed or weakened.',
 });
 
-const slug = (text) => text.toLowerCase().replace(/[`*_]/gu, '').replace(/[^a-z0-9]+/gu, '-').replace(/^-|-$/gu, '');
+export const slug = (text) => text.toLowerCase().replace(/[`*_]/gu, '').replace(/[^a-z0-9]+/gu, '-').replace(/^-|-$/gu, '');
 
 // The invariants of a flow. A list is used as written. A doc's invariants are its `##` and `###` headings, each with
 // the paragraph under it; `read(path)` returns the doc's text or null. Returns { invariants, unspecified, problem }.
@@ -21,7 +22,10 @@ export function invariantsOf(flow, read) {
   if (text === null) return { invariants: [UNSPECIFIED], unspecified: true, problem: `${flow.invariants} is missing` };
   const invariants = [];
   let current = null;
-  for (const line of text.split('\n')) {
+  // A `##` line in a fenced code block is code, not an invariant.
+  const fenced = fencedLines(text);
+  for (const [i, line] of text.split('\n').entries()) {
+    if (fenced[i]) continue;
     const heading = /^#{2,3}\s+(.+?)\s*$/u.exec(line);
     if (heading) {
       current = { id: slug(heading[1]), text: heading[1], cite: `${flow.invariants}#${slug(heading[1])}` };
@@ -36,13 +40,15 @@ export function invariantsOf(flow, read) {
 export const MAX_SOURCE = 4000;
 
 // The section of a markdown doc under the heading whose slug is `anchor`: the heading and its body, up to the next
-// heading of the same or a higher level. Null when the doc has no such heading.
+// heading of the same or a higher level. Null when the doc has no such heading. A `#` line in a fenced code block, such
+// as a shell comment, is code, not a heading: it neither ends a section nor matches the anchor.
 export function sectionOf(text, anchor) {
   const lines = String(text ?? '').split('\n');
+  const fenced = fencedLines(String(text ?? ''));
   let start = -1;
   let level = 0;
   for (const [i, line] of lines.entries()) {
-    const heading = /^(#{1,6})\s+(.+?)\s*#*\s*$/u.exec(line);
+    const heading = fenced[i] ? null : /^(#{1,6})\s+(.+?)\s*#*\s*$/u.exec(line);
     if (!heading) continue;
     if (start === -1 && slug(heading[2]) === anchor) {
       start = i;

@@ -50,12 +50,15 @@ To try a branch in a real session before it merges, install the plugin from your
 
 ## The harness on itself
 
-`.aidrian/knowledge/10-harness.json` indexes `docs/` as this repository's knowledge, with this page as the one `always` doc.
-A new `.md` file under `docs/` needs its entry there, or `npm run check` fails.
-Tag a doc only when an agent's task needs it whole, and keep tagged docs within the [budget](config.md#knowledge-budgets);
-`config.md` and `dispatch-log.md` are larger, so they stay untagged and search finds them.
+This page is the one `always` doc of this repository's knowledge: every agent and session here reads it.
+`.aidrian/knowledge/10-harness.json` indexes the rest of `docs/`; `AGENTS.md` points the main session at it.
 
-Sessions here run the installed release of the plugin, not the branch.
+- A new `.md` file under `docs/` needs its entry in that index, or `npm run check` fails.
+- Tag a doc only when every task of that tag needs it whole, within the [budget](config.md#knowledge-budgets).
+  The per-surface docs, such as `hooks.md`, `review.md`, and `config.md`, stay untagged: search finds the one a task touches.
+- A rule every change here must keep goes on this page, so it stays short.
+
+A session runs the plugin version installed on its machine, usually the latest release, never the branch it edits.
 To see a change to a hook, skill, or agent at work, install from the checkout ([Trying a branch](#trying-a-branch)).
 
 The plugin's own tools for this work:
@@ -63,9 +66,22 @@ The plugin's own tools for this work:
 - `worktree-new` starts a task; `worktree-cleanup` removes the worktrees whose pull request merged.
 - The `harness-mechanic` agent changes the plugin; `harness-librarian` changes `.aidrian/`.
 - `harness-health` ranks what to fix from the dispatch log, and `aidrian report` gives the detail.
-- `lesson-triage`, in a session opened for it, routes the inbox: `target: plugin` lessons become plugin fixes,
-  `target: project` lessons become changes to this repository's `.aidrian/` or docs.
+- `lesson-triage` routes the lesson inbox: `target: plugin` lessons become plugin fixes, `target: project` lessons
+  become changes to this repository's `.aidrian/` or docs. Only a person starts it, in a session opened for it.
 - `pr-write`, then `pr-review-loop`, to open and answer a pull request.
+
+## Rules for every change
+
+- Edit the cause in its source: `agents-src/`, `providers/`, or `agent-addons/` for agents, then `npm run build`.
+  Never edit `plugins/aidrian/agents/` or `plugins/aidrian/codex/agents/` by hand.
+- `plugins/aidrian/lib/` and its scripts use Node 22 built-ins only: they run from the installed plugin, with no `npm ci`.
+- A fix ships with a `node --test` case in `test/` that fails without it. Never weaken a test, check, or hook to pass.
+- What a script can check becomes a test or a check, not a sentence in a skill or agent.
+- A hook lets the action run when it cannot read its input: a hook never breaks a session ([hooks.md](hooks.md)).
+- Plugin text names no project, project path, person, or bare slash command; a project's rules live in its own `.aidrian/`.
+- A change to a surface updates that surface's doc in the same branch, and [agents-and-skills.md](agents-and-skills.md)
+  when an agent or skill is added, renamed, or removed.
+- A change under `plugins/aidrian/` bumps the version ([Versions](#versions)).
 
 ## Skill evals
 

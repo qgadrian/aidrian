@@ -4,7 +4,7 @@
   "always": ["contributing.md"],
   "docs": {
     "contributing.md": {
-      "summary": "Changing the plugin itself: worktrees, build and check, what the tests hold, version bumps, evals, and the harness tools to use here.",
+      "summary": "Changing the plugin: worktrees, build and check, the rules every change keeps, version bumps, evals, the harness tools here.",
       "tags": []
     },
     "architecture.md": {
@@ -21,19 +21,19 @@
     },
     "hooks.md": {
       "summary": "Every plugin hook: start lines, Bash rules, main-checkout guard, agent gates, terms, delivery check, overrides, commit messages.",
-      "tags": ["harness_engineering"]
+      "tags": []
     },
     "project-folder.md": {
       "summary": "The .aidrian/ contract: structure, location, versioning, init and check, lint, local state folder, task worktrees, local sources.",
-      "tags": ["orchestration"]
+      "tags": []
     },
     "review.md": {
       "summary": "aidrian pr review: review plans, splits, critical flows, visual review, reviewers, rounds, and the review record.",
-      "tags": ["review"]
+      "tags": []
     },
     "knowledge.md": {
       "summary": "Knowledge buckets: index file format, tags, shaping buckets, overrides, project agents, aidrian-knowledge commands, checks.",
-      "tags": []
+      "tags": ["harness_engineering"]
     },
     "lessons.md": {
       "summary": "The lesson inbox: event rows, lesson fields, aidrian lesson commands, outcomes, session-start nudge, automatic lessons.",

@@ -143,12 +143,22 @@ the orchestrator uses it to name each background agent's handoff file.
 
 A quorum ledger, `quorum/<plan-basename>-<plan-hash>.json`, records the objections two adversaries raised against a plan,
 the architect's ruling on each, and the Human's answers. `<plan-hash>` is `git hash-object` of the plan.
-`lib/quorum.mjs` holds its schema, `LEDGER_SCHEMA`, and the schema of Codex's answer, `OBJECTIONS_SCHEMA`.
+`lib/quorum.mjs` holds its schema, `LEDGER_SCHEMA`, and the schemas of Codex's answers, `OBJECTIONS_SCHEMA` and `REBUTTALS_SCHEMA`.
 Each objection, ruling, and rebuttal cites its evidence as `{kind, ref, quote}`. Two commands keep a ledger honest:
 
-- `aidrian quorum codex --plan PLAN --brief BRIEF --out FILE` runs Codex read-only on the brief and then the plan,
-  for at most 780 seconds, and writes its objections to FILE. It prints one line, `{"status", "reason"}`, where status is
+- `aidrian quorum codex --plan PLAN --brief BRIEF --out FILE [--mode object]` runs Codex read-only on the brief
+  and then the plan, for at most 780 seconds, and writes its answer to FILE. `--mode object`, the default, holds the answer
+  to `OBJECTIONS_SCHEMA`, Codex's objections.
+  `aidrian quorum codex --mode rebut --ledger LEDGER --plan PLAN --brief BRIEF --out FILE` holds it to `REBUTTALS_SCHEMA`:
+  at most 7 entries `{objection_id, verdict, claim, citations}`, where `verdict` is `rebut` or `concede` and a concession
+  may cite nothing; without `objection_id`, an entry is that objection's ledger `rebuttal`, whose `ruling` starts null.
+  The answer must also fit LEDGER, which may live anywhere and is read and schema-checked before Codex starts:
+  each id once, each one of B's objections ruled `reject` or `accept` (a partial accept's rebuttal covers the rejected
+  part), and an entry for every one of B's objections ruled `reject`. The reason names each id that breaks this.
+  An answer off its schema or its ledger is `failed` and is not written. It prints one line, `{"status", "reason"}`, where status is
   `done`, `unavailable`, `timed_out`, `quota`, or `failed`, and exits 0 on `done`, 3 on `unavailable`, and 1 otherwise.
+  Any other `--mode`, `--mode rebut` without `--ledger`, `--ledger` without it, or a missing flag
+  prints the usage error and exits 1 without starting Codex.
 - `aidrian quorum check LEDGER --plan PLAN` checks every citation. `doc` and `adr` cite `path#anchor`, and the quote
   must be in that section; `code` cites `path:line`, and the quote must be in the file; `plan` cites `#anchor` in PLAN;
   `absence` cites a path, and the quote must be in no regular file `git ls-files` lists there; a path with no tracked file fails.

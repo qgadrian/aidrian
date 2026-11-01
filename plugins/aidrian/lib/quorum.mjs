@@ -1,9 +1,11 @@
 // `aidrian quorum`: the deterministic part of the expert quorum, where two adversaries attack a plan with cited
 // objections and an architect rules on each one.
-//   codex   runs Codex as adversary B, held to OBJECTIONS_SCHEMA, and prints one { status, reason } line
+//   codex   runs Codex as adversary B, held to OBJECTIONS_SCHEMA (`--mode object`, the default) or, to answer the
+//           architect's rulings on its objections in a ledger, to REBUTTALS_SCHEMA and that ledger (`--mode rebut`),
+//           and prints one { status, reason } line
 //   check   checks every citation of a ledger against the repository and the plan, relabels an objection with no
 //           passing citation as `opinion`, and names each ruling or rebuttal with no passing citation
-// LEDGER_SCHEMA and OBJECTIONS_SCHEMA are the one source of truth for both files. `check` runs no command but
+// LEDGER_SCHEMA, OBJECTIONS_SCHEMA, and REBUTTALS_SCHEMA are the one source of truth for these files. `check` runs no command but
 // `git ls-files`, and never executes what a citation names.
 
 import { spawn } from 'node:child_process';
@@ -65,6 +67,40 @@ export const OBJECTIONS_SCHEMA = Object.freeze({
   },
 });
 
+export const VERDICTS = Object.freeze(['rebut', 'concede']);
+
+// What adversary B (Codex) answers to the architect's rulings: one rebuttal or concession per objection, named by its
+// ledger id, at most one per id (rebuttalProblems checks the ids). An entry without `objection_id` is the ledger's
+// `rebuttal` before its ruling, field for field. A concession may cite nothing.
+export const REBUTTALS_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  required: ['rebuttals'],
+  properties: {
+    rebuttals: {
+      type: 'array',
+      maxItems: MAX_OBJECTIONS,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['objection_id', 'verdict', 'claim', 'citations'],
+        properties: {
+          objection_id: { type: 'string' },
+          verdict: { type: 'string', enum: VERDICTS },
+          claim: { type: 'string' },
+          citations: CITATIONS,
+        },
+      },
+    },
+  },
+});
+
+// `aidrian quorum codex --mode`: the schema Codex's answer is held to, and the list the done line counts.
+const MODES = Object.freeze({
+  object: { schema: OBJECTIONS_SCHEMA, list: 'objections' },
+  rebut: { schema: REBUTTALS_SCHEMA, list: 'rebuttals' },
+});
+
 const RULING = Object.freeze({
   type: ['object', 'null'],
   additionalProperties: false,
@@ -107,7 +143,7 @@ export const LEDGER_SCHEMA = Object.freeze({
             additionalProperties: false,
             required: ['verdict', 'claim', 'citations', 'ruling'],
             properties: {
-              verdict: { type: 'string', enum: ['rebut', 'concede'] },
+              verdict: { type: 'string', enum: VERDICTS },
               claim: { type: 'string' },
               citations: CITATIONS,
               ruling: RULING,
@@ -128,7 +164,7 @@ export const LEDGER_SCHEMA = Object.freeze({
   },
 });
 
-// The problems of `value` against `schema`, for the subset of JSON Schema the two schemas above use: type (one or a
+// The problems of `value` against `schema`, for the subset of JSON Schema the schemas above use: type (one or a
 // list), enum, required, properties, additionalProperties: false, items, and maxItems. [] when it is valid.
 export function schemaProblems(value, schema, where = '$') {
   const types = [schema.type].flat().filter(Boolean);
@@ -155,6 +191,23 @@ function isType(value, type) {
   if (type === 'object') return isObject(value);
   if (type === 'integer') return Number.isInteger(value);
   return typeof value === type;
+}
+
+// Why a rebuttals answer does not fit `ledger`, as one line per problem: an id named twice; an id that is not one of B's
+// objections ruled `reject` or `accept` (a partial accept's rebuttal covers its rejected part); or one of B's objections
+// ruled `reject` with no entry. [] when it fits.
+export function rebuttalProblems(answer, ledger) {
+  const ids = answer.rebuttals.map((entry) => entry.objection_id);
+  const ruled = (decisions) => ledger.objections.filter((each) => each.by === 'B' && decisions.includes(each.ruling?.decision)).map((each) => each.id);
+  const open = new Set(ruled(['reject', 'accept']));
+  const twice = [...new Set(ids.filter((id, i) => ids.indexOf(id) !== i))];
+  const unknown = [...new Set(ids.filter((id) => !open.has(id)))];
+  const missing = ruled(['reject']).filter((id) => !ids.includes(id));
+  const problems = [];
+  if (twice.length) problems.push(`the answer names ${twice.join(', ')} more than once`);
+  if (unknown.length) problems.push(`the answer names ${unknown.join(', ')}, not B's objection ruled reject or accept in the ledger`);
+  if (missing.length) problems.push(`the answer has no entry for ${missing.join(', ')}, B's objection ruled reject`);
+  return problems;
 }
 
 // Whitespace runs as one space, ends trimmed: a quote matches across line breaks and indentation.
@@ -339,42 +392,58 @@ const fail = (problem) => {
   return 1;
 };
 
-// `aidrian quorum codex`: { status, reason, objections } where status is done, unavailable, failed, quota, or
-// timed_out. `deps` replaces Codex in tests: { spawnImpl, codex (codexAvailable), timeoutSec }.
-export async function codexObjections({ plan, brief, out, root }, { spawnImpl = spawn, codex = codexAvailable, timeoutSec = CODEX_TIMEOUT_SEC } = {}) {
+// `aidrian quorum codex`: { status, reason } where status is done, unavailable, failed, quota, or timed_out. `mode`
+// (a key of MODES) picks the schema; `rebut` also needs `ledger`, the ledger file the answer must fit. `deps` replaces
+// Codex in tests: { spawnImpl, codex (codexAvailable), timeoutSec }.
+export async function codexAnswer({ plan, brief, out, root, mode = 'object', ledger = null }, { spawnImpl = spawn, codex = codexAvailable, timeoutSec = CODEX_TIMEOUT_SEC } = {}) {
+  if (!Object.hasOwn(MODES, mode)) return { status: 'failed', reason: `"${mode}" is not a mode: ${Object.keys(MODES).join(' or ')}` };
+  if (mode === 'rebut' && !ledger) return { status: 'failed', reason: '--mode rebut needs a ledger' };
+  const { schema, list } = MODES[mode];
   const ready = codex();
   if (!ready.ok) return { status: 'unavailable', reason: ready.reason };
   // A file that cannot be read or written is a failed run, so the command still prints its one line.
   try {
+    // The ledger is read and checked before Codex starts, so a bad one costs no Codex run.
+    let rulings = null;
+    if (mode === 'rebut') {
+      rulings = JSON.parse(readFileSync(ledger, 'utf8'));
+      const invalid = schemaProblems(rulings, LEDGER_SCHEMA);
+      if (invalid.length) return { status: 'failed', reason: `the ledger does not follow the schema: ${invalid[0]}` };
+    }
     const prompt = `${readFileSync(brief, 'utf8').trimEnd()}\n\n${readFileSync(plan, 'utf8')}`;
-    const result = await runCodex({ root, env: isolate({ ...process.env }), schema: OBJECTIONS_SCHEMA, prompt, timeoutSec, spawnImpl });
+    const result = await runCodex({ root, env: isolate({ ...process.env }), schema, prompt, timeoutSec, spawnImpl });
     if (result.status !== 'done') return { status: result.status, reason: result.reason };
-    const problems = schemaProblems(result.raw, OBJECTIONS_SCHEMA);
+    const problems = schemaProblems(result.raw, schema);
     if (problems.length) return { status: 'failed', reason: `the answer does not follow the schema: ${problems[0]}` };
+    const misfits = rulings ? rebuttalProblems(result.raw, rulings) : [];
+    if (misfits.length) return { status: 'failed', reason: `the answer does not fit the ledger: ${misfits.join('; ')}` };
     mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
     writeFileSync(out, `${JSON.stringify(result.raw, null, 2)}\n`);
-    return { status: 'done', reason: `${result.raw.objections.length} objections written to ${out}` };
+    return { status: 'done', reason: `${result.raw[list].length} ${list} written to ${out}` };
   } catch (error) {
     return { status: 'failed', reason: error.message };
   }
 }
 
-const USAGE = 'codex --plan PLAN --brief BRIEF --out FILE | check LEDGER --plan PLAN';
+const USAGE = 'codex --plan PLAN --brief BRIEF --out FILE [--mode object] | codex --mode rebut --ledger LEDGER --plan PLAN --brief BRIEF --out FILE | check LEDGER --plan PLAN';
 
 export const commands = {
   quorum: {
     usage: USAGE,
-    about: 'run Codex as the quorum\'s second adversary and print one {status, reason} line, or check a ledger\'s citations against the repository and the plan',
+    about: 'run Codex as the quorum\'s second adversary, to object or to rebut, and print one {status, reason} line, or check a ledger\'s citations against the repository and the plan',
     async run(args, deps = {}) {
       const [action, ...rest] = args;
       // Git and Codex run without the variables a git hook sets, so they act on the repository of this folder.
       const env = isolate({ ...process.env });
       const root = checkoutTop(deps.cwd ?? process.cwd());
       if (action === 'codex') {
-        const { values } = parseArgs({ args: rest, options: { plan: { type: 'string' }, brief: { type: 'string' }, out: { type: 'string' } } });
+        const { values } = parseArgs({ args: rest, options: { plan: { type: 'string' }, brief: { type: 'string' }, out: { type: 'string' }, mode: { type: 'string', default: 'object' }, ledger: { type: 'string' } } });
         if (!values.plan || !values.brief || !values.out) return fail('codex needs --plan, --brief, and --out');
+        if (!Object.hasOwn(MODES, values.mode)) return fail(`codex --mode is ${Object.keys(MODES).join(' or ')}, not "${values.mode}"`);
+        if (values.mode === 'rebut' && !values.ledger) return fail('codex --mode rebut needs --ledger');
+        if (values.mode !== 'rebut' && values.ledger !== undefined) return fail('codex --ledger is only for --mode rebut');
         if (!root) return fail('run it inside a git repository');
-        const result = await codexObjections({ ...values, root }, deps);
+        const result = await codexAnswer({ ...values, root }, deps);
         (deps.print ?? console.log)(JSON.stringify({ status: result.status, reason: result.reason }));
         return result.status === 'done' ? 0 : result.status === 'unavailable' ? 3 : 1;
       }

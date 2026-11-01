@@ -7,7 +7,7 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
-import { CODEX_TIMEOUT_SEC, LEDGER_SCHEMA, OBJECTIONS_SCHEMA, commands, schemaProblems } from '../plugins/aidrian/lib/quorum.mjs';
+import { CODEX_TIMEOUT_SEC, LEDGER_SCHEMA, OBJECTIONS_SCHEMA, REBUTTALS_SCHEMA, codexAnswer, commands, schemaProblems } from '../plugins/aidrian/lib/quorum.mjs';
 import { slug } from '../plugins/aidrian/lib/review/flows.mjs';
 import { FINDINGS_SCHEMA, runCodex, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 
@@ -104,6 +104,7 @@ test('schemas: a full ledger and an objections answer pass; a missing field, an 
     if (schema.items) strict(schema.items);
   };
   strict(OBJECTIONS_SCHEMA);
+  strict(REBUTTALS_SCHEMA);
   strict(LEDGER_SCHEMA);
   strict(FINDINGS_SCHEMA);
   assert.deepEqual(OBJECTIONS_SCHEMA.properties.objections.items.properties.severity.enum, ['blocking', 'important', 'improvement']);
@@ -222,9 +223,23 @@ function codexRun(t, fake, { codex = () => ({ ok: true }) } = {}) {
   write(dir, 'plan.md', '# Plan\n\nDo it.\n');
   const printed = [];
   const out = path.join(dir, 'state/objections.json');
-  const run = (extra = {}, brief = path.join(dir, 'brief.md')) => commands.quorum.run(['codex', '--plan', path.join(dir, 'plan.md'), '--brief', brief, '--out', out], { spawnImpl: fake.spawnImpl, codex, print: (line) => printed.push(line), cwd: dir, ...extra });
-  return { dir, out, printed, run };
+  // A ledger outside the repository, as one in the state folder is: B1 rejected, B2 accepted (perhaps in part), B3
+  // escalated, B4 pending, and A1 rejected.
+  const ledgerFile = path.join(temp(t, 'aidrian-quorum-ledger-'), 'quorum/plan-abc.json');
+  write(path.dirname(ledgerFile), path.basename(ledgerFile), JSON.stringify(RULED));
+  const rebut = ['--mode', 'rebut', '--ledger', ledgerFile];
+  const run = (extra = {}, brief = path.join(dir, 'brief.md'), flags = []) => commands.quorum.run(['codex', '--plan', path.join(dir, 'plan.md'), '--brief', brief, '--out', out, ...flags], { spawnImpl: fake.spawnImpl, codex, print: (line) => printed.push(line), cwd: dir, ...extra });
+  return { dir, out, printed, run, ledgerFile, rebut };
 }
+
+const ruling = (decision) => ({ decision, change_or_reason: 'r', citations: [PASSING.adr] });
+const RULED = ledger([
+  objection('B1', [PASSING.code], { by: 'B', status: 'rejected', ruling: ruling('reject') }),
+  objection('B2', [PASSING.code], { by: 'B', status: 'accepted', ruling: ruling('accept') }),
+  objection('B3', [PASSING.code], { by: 'B', status: 'escalated', ruling: ruling('escalate') }),
+  objection('B4', [PASSING.code], { by: 'B' }),
+  objection('A1', [PASSING.code], { status: 'rejected', ruling: ruling('reject') }),
+]);
 
 const ANSWER = { objections: [{ severity: 'blocking', claim: 'breaks the rule', citations: [PASSING.adr] }] };
 
@@ -400,4 +415,171 @@ test('quorum codex: a brief that cannot be read is failed, with one line and exi
   assert.equal(line.status, 'failed');
   assert.match(line.reason, /ENOENT/u);
   assert.equal(fake.calls.length, 0);
+});
+
+const REBUTTALS = { rebuttals: [
+  { objection_id: 'B1', verdict: 'rebut', claim: 'the ruling misreads the rule', citations: [PASSING.docBySlug] },
+  { objection_id: 'B2', verdict: 'concede', claim: 'the ruling holds', citations: [] },
+] };
+
+test('REBUTTALS_SCHEMA: Codex-strict, a concession may cite nothing, and each entry fills a ledger rebuttal without loss', () => {
+  const entry = REBUTTALS_SCHEMA.properties.rebuttals.items;
+  assert.equal(REBUTTALS_SCHEMA.additionalProperties, false);
+  assert.deepEqual(REBUTTALS_SCHEMA.required, ['rebuttals']);
+  assert.equal(entry.additionalProperties, false);
+  assert.deepEqual([...entry.required].sort(), ['citations', 'claim', 'objection_id', 'verdict']);
+  assert.deepEqual(entry.properties.verdict.enum, ['rebut', 'concede']);
+  assert.deepEqual(entry.properties.citations.items.required, ['kind', 'ref', 'quote']);
+  assert.equal(entry.properties.citations.items.additionalProperties, false);
+  assert.deepEqual(schemaProblems(REBUTTALS, REBUTTALS_SCHEMA), []);
+  assert.deepEqual(schemaProblems({ rebuttals: [{ ...REBUTTALS.rebuttals[0], ruling: null }] }, REBUTTALS_SCHEMA), ['$.rebuttals[0].ruling is not a known field']);
+
+  // The ledger rebuttal is the entry without objection_id (which names the objection it goes on), plus a ruling.
+  const ledgerRebuttal = LEDGER_SCHEMA.properties.objections.items.properties.rebuttal;
+  const { objection_id: id, ...fields } = entry.properties;
+  const { ruling, ...ledgerFields } = ledgerRebuttal.properties;
+  assert.deepEqual(id, { type: 'string' });
+  assert.deepEqual(ledgerFields, fields, 'every field the entry carries, with the same schema');
+  assert.ok(ruling);
+  const objections = REBUTTALS.rebuttals.map(({ objection_id, ...rest }) => objection(objection_id, [PASSING.code], {
+    by: 'B',
+    status: 'rejected',
+    ruling: { decision: 'reject', change_or_reason: 'r', citations: [PASSING.adr] },
+    rebuttal: { ...rest, ruling: null },
+  }));
+  assert.deepEqual(schemaProblems(ledger(objections), LEDGER_SCHEMA), []);
+});
+
+test('quorum codex --mode rebut: a schema-valid answer is held to REBUTTALS_SCHEMA, written, and exits 0 with one line', async (t) => {
+  const fake = fakeCodex({ answer: REBUTTALS });
+  const r = codexRun(t, fake);
+  assert.equal(await r.run({}, undefined, r.rebut), 0);
+  assert.deepEqual(r.printed.map((line) => JSON.parse(line)), [{ status: 'done', reason: `2 rebuttals written to ${r.out}` }]);
+  assert.deepEqual(JSON.parse(readFileSync(r.out, 'utf8')), REBUTTALS);
+  assert.deepEqual(fake.calls[0].schema, REBUTTALS_SCHEMA);
+  assert.deepEqual(fake.calls[0].argv.slice(0, 4), ['exec', '--sandbox', 'read-only', '--ephemeral']);
+});
+
+test('quorum codex --mode rebut: an answer with no verdict, no objection_id, or in the objection shape is failed and not written', async (t) => {
+  const [rebut] = REBUTTALS.rebuttals;
+  const { verdict, ...noVerdict } = rebut;
+  const { objection_id, ...noId } = rebut;
+  for (const [answer, reason] of [
+    [{ rebuttals: [noVerdict] }, /\$\.rebuttals\[0\]\.verdict is missing/u],
+    [{ rebuttals: [noId] }, /\$\.rebuttals\[0\]\.objection_id is missing/u],
+    [ANSWER, /\$\.rebuttals is missing/u],
+  ]) {
+    const r = codexRun(t, fakeCodex({ answer }));
+    assert.equal(await r.run({}, undefined, r.rebut), 1);
+    assert.equal(r.printed.length, 1);
+    const line = JSON.parse(r.printed[0]);
+    assert.equal(line.status, 'failed');
+    assert.match(line.reason, /does not follow the schema/u);
+    assert.match(line.reason, reason);
+    assert.throws(() => readFileSync(r.out), /ENOENT/u, 'nothing written');
+  }
+});
+
+test('quorum codex --mode object is the default: the same schema, answer, and line as no --mode; a rebuttals answer fails it', async (t) => {
+  const results = [];
+  for (const flags of [[], ['--mode', 'object']]) {
+    const fake = fakeCodex({ answer: ANSWER });
+    const r = codexRun(t, fake);
+    assert.equal(await r.run({}, undefined, flags), 0);
+    assert.deepEqual(fake.calls[0].schema, OBJECTIONS_SCHEMA);
+    results.push({ line: JSON.parse(r.printed[0]), written: JSON.parse(readFileSync(r.out, 'utf8')), out: r.out });
+  }
+  for (const each of results) {
+    assert.deepEqual(each.line, { status: 'done', reason: `1 objections written to ${each.out}` });
+    assert.deepEqual(each.written, ANSWER);
+  }
+  const r = codexRun(t, fakeCodex({ answer: REBUTTALS }));
+  assert.equal(await r.run(), 1);
+  assert.match(JSON.parse(r.printed[0]).reason, /\$\.objections is missing/u);
+});
+
+test('quorum codex: an unknown --mode is a usage error: exit 1, no status line, and Codex never starts', async (t) => {
+  const errors = t.mock.method(console, 'error', () => {});
+  for (const mode of ['rebuttal', 'OBJECT', '']) {
+    const fake = fakeCodex({ answer: ANSWER });
+    let checked = 0;
+    const r = codexRun(t, fake, { codex: () => (checked++, { ok: true }) });
+    assert.equal(await r.run({}, undefined, ['--mode', mode]), 1, mode);
+    assert.deepEqual(r.printed, [], mode);
+    assert.equal(fake.calls.length, 0, mode);
+    assert.equal(checked, 0, 'stops before it looks for Codex');
+  }
+  assert.equal(errors.mock.callCount(), 3);
+  assert.match(errors.mock.calls[0].arguments[0], /^aidrian quorum: codex --mode is object or rebut, not "rebuttal"$/u);
+});
+
+test('quorum codex: --mode with no value is a parse error, as any bad flag is', async (t) => {
+  const r = codexRun(t, fakeCodex({ answer: ANSWER }));
+  await assert.rejects(r.run({}, undefined, ['--mode']), { code: 'ERR_PARSE_ARGS_INVALID_OPTION_VALUE' });
+  await assert.rejects(r.run({}, undefined, ['--nope']), { code: 'ERR_PARSE_ARGS_UNKNOWN_OPTION' });
+});
+
+test('quorum codex --mode rebut: an answer that does not fit the ledger is failed, names the ids, and is not written', async (t) => {
+  const entry = (objection_id, verdict = 'concede') => ({ objection_id, verdict, claim: 'c', citations: [] });
+  for (const [entries, reason] of [
+    [[entry('B1'), entry('B1', 'rebut')], /^the answer does not fit the ledger: the answer names B1 more than once$/u],
+    [[entry('B1'), entry('B9')], /: the answer names B9, not B's objection ruled reject or accept in the ledger$/u],
+    [[entry('B1'), entry('A1')], /: the answer names A1, not B's objection ruled reject or accept in the ledger$/u],
+    [[entry('B1'), entry('B3'), entry('B4')], /: the answer names B3, B4, not B's objection ruled reject or accept/u],
+    [[entry('B2')], /: the answer has no entry for B1, B's objection ruled reject$/u],
+    [[], /: the answer has no entry for B1/u],
+    [[entry('B1'), entry('B1'), entry('A1')], /names B1 more than once; the answer names A1, not/u],
+    [Array.from({ length: 8 }, (_, i) => entry(`B${i}`)), /^the answer does not follow the schema: \$\.rebuttals has 8 items, more than 7$/u],
+  ]) {
+    const r = codexRun(t, fakeCodex({ answer: { rebuttals: entries } }));
+    assert.equal(await r.run({}, undefined, r.rebut), 1, reason.source);
+    assert.equal(r.printed.length, 1);
+    const line = JSON.parse(r.printed[0]);
+    assert.equal(line.status, 'failed');
+    assert.match(line.reason, reason);
+    assert.throws(() => readFileSync(r.out), /ENOENT/u, 'nothing written');
+  }
+  // Only B1 is required: a partial accept (B2) may be answered or not.
+  const r = codexRun(t, fakeCodex({ answer: { rebuttals: [entry('B1', 'rebut')] } }));
+  assert.equal(await r.run({}, undefined, r.rebut), 0, r.printed[0]);
+});
+
+test('quorum codex --mode rebut: a ledger that cannot be read or is off the schema is failed before Codex starts', async (t) => {
+  for (const [text, reason] of [[null, /ENOENT/u], ['not json', /JSON/u], [JSON.stringify({ ...RULED, trigger: undefined, extra: 1 }), /^the ledger does not follow the schema: \$\.trigger is missing$/u]]) {
+    const fake = fakeCodex({ answer: REBUTTALS });
+    const r = codexRun(t, fake);
+    if (text === null) rmSync(r.ledgerFile);
+    else writeFileSync(r.ledgerFile, text);
+    assert.equal(await r.run({}, undefined, r.rebut), 1);
+    const line = JSON.parse(r.printed[0]);
+    assert.equal(line.status, 'failed');
+    assert.match(line.reason, reason);
+    assert.equal(fake.calls.length, 0);
+  }
+});
+
+test('quorum codex: --mode rebut without --ledger, or --ledger without it, is a usage error and Codex never starts', async (t) => {
+  const errors = t.mock.method(console, 'error', () => {});
+  for (const [flags, message] of [
+    [['--mode', 'rebut'], 'aidrian quorum: codex --mode rebut needs --ledger'],
+    [['--mode', 'rebut', '--ledger', ''], 'aidrian quorum: codex --mode rebut needs --ledger'],
+    [['--ledger', 'x.json'], 'aidrian quorum: codex --ledger is only for --mode rebut'],
+    [['--mode', 'object', '--ledger', 'x.json'], 'aidrian quorum: codex --ledger is only for --mode rebut'],
+  ]) {
+    const fake = fakeCodex({ answer: REBUTTALS });
+    const r = codexRun(t, fake);
+    assert.equal(await r.run({}, undefined, flags), 1, flags.join(' '));
+    assert.deepEqual(r.printed, []);
+    assert.equal(fake.calls.length, 0);
+    assert.equal(errors.mock.calls.at(-1).arguments[0], message);
+  }
+});
+
+test('codexAnswer: an unknown mode, or rebut with no ledger, is failed, not thrown, and Codex is never looked for', async (t) => {
+  const dir = temp(t, 'aidrian-quorum-guard-');
+  const deps = { spawnImpl: fakeCodex().spawnImpl, codex: () => assert.fail('looked for Codex') };
+  const args = { plan: 'p', brief: 'b', out: path.join(dir, 'o.json'), root: dir };
+  assert.deepEqual(await codexAnswer({ ...args, mode: 'nope' }, deps), { status: 'failed', reason: '"nope" is not a mode: object or rebut' });
+  assert.deepEqual(await codexAnswer({ ...args, mode: 'toString' }, deps), { status: 'failed', reason: '"toString" is not a mode: object or rebut' });
+  assert.deepEqual(await codexAnswer({ ...args, mode: 'rebut' }, deps), { status: 'failed', reason: '--mode rebut needs a ledger' });
 });

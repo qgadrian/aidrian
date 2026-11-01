@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { check, OVERRIDE_REASON, REQUEST_REASON } from '../plugins/aidrian/lib/rules/github/review-rounds.mjs';
+import { AUTOMATIC_REASON, check, OVERRIDE_REASON, REQUEST_REASON } from '../plugins/aidrian/lib/rules/github/review-rounds.mjs';
 
 // A git repository holding a project folder with `config`.
 function repo(t, config = { version: 1 }) {
@@ -58,4 +58,11 @@ test('without a review bot, or outside a project, the rule is off', (t) => {
   const bare = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-rounds-bare-')));
   t.after(() => rmSync(bare, { recursive: true, force: true }));
   assert.equal(check('AIDRIAN_ALLOW_EXTRA_ROUNDS=1 x', { cwd: bare, env: {} }), null);
+});
+
+test('with automatic review requests, a direct request is refused with a reason that says to wait instead', (t) => {
+  const { run } = repo(t, { version: 1, github: { reviewRequest: 'automatic' } });
+  assert.equal(run('gh pr comment 9 --body "@codex review"'), AUTOMATIC_REASON);
+  assert.match(AUTOMATIC_REASON, /posts nothing/u);
+  assert.equal(run('aidrian pr await-review 9 --request'), null);
 });

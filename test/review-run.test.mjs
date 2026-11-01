@@ -9,8 +9,8 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { citationProblem, flowState, invariantsOf } from '../plugins/aidrian/lib/review/flows.mjs';
 import { cleanOutput, resolveEngine, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
-import { EXIT, recordPass, recordSignoff, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
-import { stateFromComment } from '../plugins/aidrian/lib/review/state.mjs';
+import { EXIT, recordPass, recordSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
+import { readLocalState, stateFromComment } from '../plugins/aidrian/lib/review/state.mjs';
 
 // A repository with `main` (carrying `baseConfig`) and a `feat` branch made by `change(dir)`. Returns the helpers a
 // review step needs, with GitHub faked in memory.
@@ -139,6 +139,9 @@ test('reviewInForce: rules add up, flows and ignore lists come from the base, an
   const { review, changed } = reviewInForce(base, head);
   assert.deepEqual([review.rules, review.ignore, review.flows, review.planCommand], [base.rules, ['a'], base.flows, 'base']);
   assert.deepEqual(changed, ['rules', 'ignore', 'flows', 'planCommand']);
+  const engine = reviewInForce({ ...base, engine: 'pr-bot' }, { ...base, engine: 'self' });
+  assert.deepEqual([engine.review.engine, engine.changed], ['pr-bot', ['engine']], 'the base`s engine is in force; the head`s pick is a change to the review');
+  assert.equal(reviewInForce(null, { ...head, engine: 'self' }).review.engine, null, 'an engine the pull request adds runs once merged');
 });
 
 test('the round cap: the last round goes to the final stage, and a round past the cap posts nothing new', async (t) => {
@@ -186,6 +189,19 @@ test('resolveEngine: auto takes codex, then the bot, then self; an explicit engi
   assert.equal(resolveEngine({ ...base, github: { ...base.github, reviewer: null } }, { codex: no }).reviewer.name, 'self');
   assert.match(resolveEngine({ ...base, reviewEngine: 'codex-local' }, { codex: no }).problem, /not logged in/u);
   assert.match(resolveEngine({ ...base, reviewEngine: 'mine' }).problem, /not a built-in engine/u);
+});
+
+test('resolveEngine: the project`s engine is policy and wins over the machine`s, and says where it came from', () => {
+  const base = loadConfig({ root: '/nowhere', paths: { config: 'none.json', local: 'none' } }).config;
+  const pinned = (engine, local) => ({ ...base, review: { ...base.review, engine }, reviewEngine: local });
+  const ready = () => ({ ok: true });
+  const bot = resolveEngine(pinned('pr-bot', 'codex-local'), { codex: ready });
+  assert.equal(bot.reviewer.name, 'pr-bot', 'codex is ready and the machine asks for it, but the project decides');
+  assert.equal(bot.reason, 'review.engine: pr-bot (set by the project config)');
+  assert.equal(resolveEngine(pinned('auto', 'self'), { codex: ready }).reason, 'auto: codex is installed and logged in (set by the project config)');
+  assert.match(resolveEngine(pinned('mine', 'self')).problem, /^config\.json review\.engine "mine" is not a built-in engine/u);
+  assert.match(resolveEngine({ ...pinned('pr-bot', 'self'), github: { ...base.github, reviewer: null } }).problem, /^config\.json review\.engine is "pr-bot"/u);
+  assert.equal(resolveEngine(pinned(null, 'self')).reason, 'review.engine: self', 'unset: the machine`s engine, as before');
 });
 
 test('runExec: a project reviewer reads its input on stdin and prints findings; bad output is a failure, never a pass', async (t) => {
@@ -507,4 +523,29 @@ test('the gate marker sums the code-reviewer passes that count for the head, a c
   recordPass(r.project, { pr: 7, repo: 'o/r', pass: first.dispatch[0].pass, head: first.head, reviewer: 'code-reviewer', findings: 2, fixed: 2 });
   assert.equal((await r.step({ codex: off, awaitBot: bot })).status, 'fix_required');
   assert.match(markers[0].marker, /findings=2 fixed=2/u);
+});
+
+test('the project`s engine wins over this machine`s local one, and the bot stage passes on github.reviewRequest', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, github: { reviewRequest: 'automatic' }, review: { engine: 'pr-bot' } }, change: (write) => write('src/app.js', 'e\n') });
+  r.write('.aidrian.local.json', JSON.stringify({ review: { engine: 'codex-local' } }));
+  const asked = [];
+  const result = await r.step({ exec: async () => assert.fail('codex-local must not run'), awaitBot: async (opts) => (asked.push(opts.reviewRequest), { status: 'received', head_sha: opts.head, signal: { kind: 'thumbs_up' } }) });
+  assert.deepEqual([result.status, result.engine.name, asked], ['received', 'pr-bot', ['automatic']]);
+  assert.match(result.engine.reason, /set by the project config/u);
+});
+
+test('review.record "local": the record stays in the state folder, and nothing on the pull request is read, posted, or edited', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, review: { record: 'local' } }, change: (write) => write('src/app.js', 'l\n') });
+  const touched = [];
+  for (const call of ['comments', 'post', 'edit']) r.gh[call] = () => (touched.push(call), assert.fail(`gh ${call} must not run`));
+  const first = await r.step({ exec: async () => ({ status: 'done', findings: [finding], verdicts: [], dropped: [] }) });
+  assert.equal(first.status, 'fix_required');
+  assert.equal(first.summary_error, undefined);
+  r.write('src/app.js', 'm\n');
+  r.commit();
+  assert.equal((await r.step({ exec: clean })).status, 'received');
+  assert.deepEqual(touched, []);
+  assert.equal(readLocalState(r.project, 7).rounds.length, 2, 'the second step read the first one`s record from the state folder');
+  const config = loadConfig(projectAt(r.dir)).config;
+  assert.equal(remoteState('o/r', 7, { comments: () => assert.fail('the pull request is not read') }, config), null);
 });

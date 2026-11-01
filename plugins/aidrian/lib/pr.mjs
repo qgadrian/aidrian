@@ -18,9 +18,9 @@ const ACTIONS = {
   },
   signoff: async (args) => {
     const project = projectAt(process.cwd());
-    commandConfig(project);
+    const checked = commandConfig(project);
     try {
-      return await (await import('./review-gate.mjs')).runSignoff(args, project);
+      return await (await import('./review-gate.mjs')).runSignoff(args, project, checked);
     } catch (error) {
       console.error(`aidrian pr signoff: ${error.message}`);
       return 1;
@@ -30,9 +30,9 @@ const ACTIONS = {
   disposition: async (args) => (await import('./finding-disposition.mjs')).runDisposition(args),
   attest: async (args) => {
     const project = projectAt(process.cwd());
-    commandConfig(project);
+    const checked = commandConfig(project);
     try {
-      return await (await import('./review-gate.mjs')).runAttest(args, project);
+      return await (await import('./review-gate.mjs')).runAttest(args, project, checked);
     } catch (error) {
       console.error(`aidrian pr attest: ${error.message}`);
       return 1;

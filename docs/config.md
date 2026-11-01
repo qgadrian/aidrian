@@ -31,6 +31,7 @@ In a group such as `github`, set only the keys you change; the others keep their
   "github": {
     "requiredSections": ["Summary", "Tests run"],
     "reviewer": "chatgpt-codex-connector[bot]",
+    "reviewRequest": "comment",
     "maxReviewRounds": 3,
     "requiredChecks": [],
     "ignoreCancelledChecks": [],
@@ -47,7 +48,7 @@ In a group such as `github`, set only the keys you change; the others keep their
     },
     "reviewGate": { "enabled": false, "checklist": null }
   },
-  "review": { "rules": [], "ignore": ["<lockfiles, snapshots, generated, vendored, minified>"], "nonBehaviour": ["<docs and assets>"], "flows": {}, "planCommand": null, "reviewers": {} },
+  "review": { "engine": null, "record": "comment", "rules": [], "ignore": ["<lockfiles, snapshots, generated, vendored, minified>"], "nonBehaviour": ["<docs and assets>"], "flows": {}, "planCommand": null, "reviewers": {} },
   "docs": { "wrapLimit": 155 },
   "terms": { "file": null },
   "knowledge": { "budgets": { "alwaysBytes": 16384, "taggedDocBytes": 24576 } },
@@ -90,6 +91,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `state.dir` | The machine-local [state folder](project-folder.md#local-state); `null` is the one under `$XDG_STATE_HOME`. |
 | `github.requiredSections` | The `## ` sections every pull request body must have ([Bash rules](hooks.md#bash-rules)); `[]` checks none. |
 | `github.reviewer` | The login of the Codex review bot that `aidrian pr await-review` waits for. `null` or `"none"`: no bot ([below](#no-review-bot)). |
+| `github.reviewRequest` | How the review bot is asked: `"comment"` posts `@codex review` for each head; `"automatic"` posts nothing and waits for the connector's own reviews ([below](#automatic-review-requests)). |
 | `github.maxReviewRounds` | The review rounds a pull request may get, 3 by default: the review loop and `aidrian pr await-review --request` stop there. A `--max-rounds` above it runs only with `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, which the Human sets; a Bash rule refuses an agent command that sets it, and any bot request made outside `aidrian pr`. |
 | `github.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. |
 | `github.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
@@ -98,6 +100,8 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.pullRequest` | The project's [pull request contract](#pull-request-contract), beyond the required sections; off by default but for `sharedTempBodyFile`. |
 | `github.reviewGate.enabled` | `true` asks the review bot only once a review of the diff is on record: [Review gate](#review-gate). |
 | `github.reviewGate.checklist` | A file the reviewer reads the diff against, named in the gate's message; `null` names none. |
+| `review.engine` | The project's [review engine](review.md#the-engine); it wins over the machine's. `null` leaves the choice to each machine. |
+| `review.record` | Where the [review record](review.md#the-record) goes: `"comment"` also writes a summary comment on the pull request; `"local"` keeps it in the state folder only. |
 | `terms.file` | The [terms file](#terms) of banned terms and their replacements, relative to the project root; `null` turns the rule off. |
 | `docs.wrapLimit` | The longest line, in characters, allowed in a Markdown file an agent writes; `0` turns the check off. |
 | `knowledge.budgets.alwaysBytes` | The bytes all `always` knowledge docs may add up to: [Knowledge budgets](#knowledge-budgets). |
@@ -138,6 +142,16 @@ A project without the Codex review bot sets `"github": { "reviewer": null }`, or
 - `aidrian report reviews` and the Reviews line of `aidrian report health` say that no review bot is set.
 - The `orchestration` and `autopilot` skills then run the `pr-review` skill in every review round.
 
+### Automatic review requests
+
+With `"github": { "reviewRequest": "automatic" }`, the Codex connector reviews pull requests by its own settings:
+the Human turns on Automatic review, with a Review trigger, in the connector's Codex settings (Personal preferences).
+
+- `aidrian pr await-review`, with or without `--request`, and the bot stage of `aidrian pr review` post nothing.
+  They wait for the bot's review of the current head, under the same round cap.
+- A wait that ends with no review is `timed_out`, with a `hint` naming the connector settings to check. It never
+  falls back to posting a request, and the Bash rule refuses a request posted by hand.
+
 ## Pull request contract
 
 The pull request body rule ([hooks.md](hooks.md#bash-rules)) reads every `gh pr create` and `gh pr edit`.
@@ -175,8 +189,8 @@ In `neverValid`, a `<word>` stands for any one word, so `needs <specialist> over
 ## Review plan
 
 `review` decides how `aidrian pr review` reviews a pull request: its depth, its stages, the critical flows it holds
-to their invariants, and the reviewers a project adds. [review.md](review.md) describes every key. The machine's
-engine is not here: it is `review.engine` in `.aidrian.local.json`.
+to their invariants, and the reviewers a project adds. [review.md](review.md) describes every key. Each machine picks
+its engine in `.aidrian.local.json`, unless the project sets `review.engine` here.
 
 ## Review gate
 

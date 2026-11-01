@@ -30,6 +30,7 @@ const SCHEMA = {
   github: {
     requiredSections: 'texts',
     reviewer: 'textOrNull',
+    reviewRequest: 'reviewRequest',
     maxReviewRounds: 'positive',
     requiredChecks: 'texts',
     ignoreCancelledChecks: 'texts',
@@ -138,6 +139,7 @@ const TYPES = {
   commitFields: [(value) => Array.isArray(value) && value.every((f) => COMMIT_FIELDS.includes(f)), `a list of ${COMMIT_FIELDS.map((f) => `"${f}"`).join(', ')}`],
   prFields: [(value) => Array.isArray(value) && value.every((f) => PR_FIELDS.includes(f)), `a list of ${PR_FIELDS.map((f) => `"${f}"`).join(', ')}`],
   handoffMode: [(value) => ['off', 'ask', 'auto'].includes(value), '"off", "ask", or "auto"'],
+  reviewRequest: [(value) => ['comment', 'automatic'].includes(value), '"comment" or "automatic"'],
 };
 
 // `state.dir: null` is the per-project folder under `$XDG_STATE_HOME` (lib/project.mjs). Task worktrees sit beside the
@@ -146,6 +148,7 @@ const TYPES = {
 // may delete without asking (lib/worktree.mjs).
 // `names.ai: null` is the host's own name, which only the running hook knows. `github.reviewer: null`, or "none", which
 // loadConfig reads as null, runs no review bot: `aidrian pr await-review` then waits for nothing.
+// `github.reviewRequest: "automatic"` is a bot that reviews by its own settings: the harness posts no request for it.
 export const DEFAULTS = deepFreeze({
   git: {
     defaultBranch: 'main',
@@ -157,6 +160,7 @@ export const DEFAULTS = deepFreeze({
   github: {
     requiredSections: ['Summary', 'Tests run'],
     reviewer: 'chatgpt-codex-connector[bot]',
+    reviewRequest: 'comment',
     maxReviewRounds: 3,
     requiredChecks: [],
     ignoreCancelledChecks: [],
@@ -224,7 +228,7 @@ export function loadConfig(project) {
   for (const [key, local] of [['names', project.localNames], ['telemetry', project.localTelemetry]]) {
     if (local !== undefined) config[key] = merge({ [key]: SCHEMA[key] }, config, { [key]: local }, '', project.paths.local, errors)[key];
   }
-  // The machine's review engine lives only in the local file (lib/review/config.mjs).
+  // The machine's review engine, from the local file; config.json `review.engine`, when set, wins (lib/review/reviewers.mjs).
   config.reviewEngine = project.localReview === undefined ? 'auto' : checkLocalReview(project.localReview, project.paths.local, errors);
   if (project.localAgents !== undefined) config.agents = checkAgents(project.localAgents, project.paths.local, errors, config.agents, gateErrors);
   return { config: deepFreeze(config), errors, gateErrors, current: true };

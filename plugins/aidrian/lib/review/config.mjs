@@ -1,7 +1,8 @@
 // The `review` group of config.json, and `review.engine` of the local settings file: checked here, used by plan.mjs,
-// reviewers.mjs, and run.mjs. docs/review.md describes every key. A bad entry is an error and is left out, so the rest
-// still applies; a left-out rule or flow only makes the review ask for less than the project wrote, so the command
-// that plans a review refuses to run on a config with errors (config.mjs commandConfig).
+// reviewers.mjs, and run.mjs. The project's `review.engine`, when set, is policy: it wins over the machine's.
+// docs/review.md describes every key. A bad entry is an error and is left out, so the rest still applies; a left-out
+// rule or flow only makes the review ask for less than the project wrote, so the command that plans a review refuses
+// to run on a config with errors (config.mjs commandConfig).
 
 import { isObject } from '../fs.mjs';
 import { DEFAULT_IGNORE, DEFAULT_NON_BEHAVIOUR, DEPTHS, HARNESS_FLOW } from './plan.mjs';
@@ -10,10 +11,14 @@ import { SPLIT_DEFAULTS } from './split.mjs';
 export const ENGINES = Object.freeze(['auto', 'codex-local', 'pr-bot', 'self']);
 export const KINDS = Object.freeze(['exec', 'agent']);
 export const SIGNOFFS = Object.freeze(['reviewer', 'human']);
+// Where the review record goes: the state folder and one summary comment on the pull request, or the state folder only.
+export const RECORDS = Object.freeze(['comment', 'local']);
 const FLOW_ID = /^[a-z0-9][a-z0-9-]*$/u;
 const NAME = /^[\w.:-]+$/u;
 
 export const REVIEW_DEFAULTS = Object.freeze({
+  engine: null,
+  record: 'comment',
   rules: [],
   ignore: DEFAULT_IGNORE,
   nonBehaviour: DEFAULT_NON_BEHAVIOUR,
@@ -46,9 +51,14 @@ export function checkReview(value, file, errors) {
     bad('"review" must be an object');
     return out;
   }
-  for (const key of Object.keys(value)) {
-    if (key === 'engine') bad('"review.engine" is a machine setting: set it in the local settings file, not the project config');
-    else if (!Object.hasOwn(REVIEW_DEFAULTS, key)) bad(`unknown key "review.${key}"`);
+  for (const key of Object.keys(value)) if (!Object.hasOwn(REVIEW_DEFAULTS, key)) bad(`unknown key "review.${key}"`);
+  if (Object.hasOwn(value, 'engine')) {
+    if (value.engine === null || engineName(value.engine)) out.engine = value.engine;
+    else bad(ENGINE_PROBLEM);
+  }
+  if (Object.hasOwn(value, 'record')) {
+    if (RECORDS.includes(value.record)) out.record = value.record;
+    else bad('"review.record" must be "comment" or "local"');
   }
   for (const key of ['ignore', 'nonBehaviour']) {
     if (!Object.hasOwn(value, key)) continue;
@@ -186,10 +196,14 @@ export function checkLocalReview(value, file, errors) {
   }
   for (const key of Object.keys(value)) if (key !== 'engine') errors.push(`${file}: unknown key "review.${key}"; only "review.engine" is a machine setting`);
   if (value.engine === undefined) return 'auto';
-  if (isText(value.engine) && NAME.test(value.engine)) return value.engine;
-  errors.push(`${file}: "review.engine" must be ${ENGINES.map((each) => `"${each}"`).join(', ')}, or a reviewer of review.reviewers`);
+  if (engineName(value.engine)) return value.engine;
+  errors.push(`${file}: ${ENGINE_PROBLEM}`);
   return 'auto';
 }
+
+// An engine is a built-in or a reviewer the project defines; unknown names are checked when the engine resolves.
+const engineName = (value) => isText(value) && NAME.test(value);
+const ENGINE_PROBLEM = `"review.engine" must be ${ENGINES.map((each) => `"${each}"`).join(', ')}, or a reviewer of review.reviewers`;
 
 // `review.split`: slice size, parallel passes, and the most slices. Each is a whole number in a sane range.
 function checkSplit(split, bad) {

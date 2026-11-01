@@ -130,7 +130,7 @@ can remove the way into a flow.
 
 ### A pull request cannot weaken its own review
 
-The flows, rules, ignore lists, reviewers, plan command, and invariants docs in force are the **base branch's**. The
+The flows, rules, ignore lists, reviewers, engine, plan command, and invariants docs in force are the **base branch's**. The
 pull request's own config can only add flows, rules, and reviewers under new names; its changes to the rest, and a
 plan command it adds, take effect once they are merged. The plan command runs from a temporary checkout of the base,
 so editing its script changes nothing until the merge. A flow the pull request adds reads its invariants from the
@@ -145,7 +145,8 @@ critical path, not every feature.
 
 `signoff: "human"` adds `aidrian pr signoff <PR> --flow <id> --head <sha>`, run by the Human. It is an audit entry,
 not proof: an agent holds the same shell and the same GitHub token. Every sign-off and override is listed in the
-review summary on the pull request. For proof, protect the branch with a required review from a second account.
+review summary on the pull request, or only in the local record with `review.record: "local"`. For proof, protect
+the branch with a required review from a second account.
 
 ## Reviewers
 
@@ -186,6 +187,10 @@ A project adds its own in `review.reviewers`:
 review bot, else `self`, and the result says which and why. It is a machine setting because the same project runs on
 machines with and without Codex.
 
+A project that wants one engine everywhere sets `review.engine` in config.json, with the same values. It is policy:
+it wins over every machine's local setting, the result's reason says it came from the project config, and like the
+rest of the review config it is the base branch's. Unset, each machine picks its own.
+
 ## Rounds
 
 A round is one run of the plan on one head. The cap is `github.maxReviewRounds`, and raising it needs
@@ -198,7 +203,9 @@ the change does not touch carries forward.
 
 `--with-bot` adds the review bot as a last stage after this machine's engine. The bot is asked only once every
 earlier pass has a result, with the review gate's marker, under the plan's round cap; an answer for a commit other
-than the one under review counts for nothing. A flow's required checks are read for that commit too.
+than the one under review counts for nothing. A flow's required checks are read for that commit too. With
+`github.reviewRequest: "automatic"` ([config.md](config.md#automatic-review-requests)), the bot is never asked: the
+stage waits for the connector's own review of the commit, under the same cap.
 
 ## The plan command
 
@@ -214,3 +221,7 @@ The review config of the pull request is read from its head commit, so a step ru
 same review. Each step writes the review's record to the state folder and to one summary comment on the pull request, edited in
 place: the rounds, each pass's result per head, the verdicts, the sign-offs, and the overrides used. Another machine
 reads it from the comment. It is the reviewers' word, not proof, and it is all visible on the pull request.
+
+With `review.record: "local"` in config.json, the record is written to the state folder only: nothing is posted or
+edited on the pull request, and the record is read back from the state folder alone. Another machine then cannot
+see it or resume the review; it starts a record of its own.

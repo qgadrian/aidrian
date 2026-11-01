@@ -1,6 +1,7 @@
 // What happened in a pull request's review: the rounds, each pass's result per head, flow verdicts, the Human's
 // sign-offs, and the overrides used. It is kept in two places that agree: a file in the state folder, and one summary
 // comment on the pull request, edited in place, that carries the same record in a marker so another machine can read it.
+// With config.json `review.record: "local"` it is kept in the state folder only, and another machine cannot read it.
 //
 // The record is the reviewers' word, not proof: an agent with a shell can write it. What protects the review is that
 // every entry is visible in the pull request, overrides included.

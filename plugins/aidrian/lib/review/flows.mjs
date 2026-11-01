@@ -64,21 +64,31 @@ export function sectionOf(text, anchor) {
 // A fence line: its delimiter, and whether the line is the delimiter alone, which only a closing fence may be. An
 // opening fence may follow list markers, as in "- ```js"; such a line is never bare, so it never closes one.
 // CommonMark: https://spec.commonmark.org/0.31.2/#fenced-code-blocks
+// `column` is where the delimiter starts: a line indented less ends the list item, and with it the fence.
 const fenceOf = (line) => {
-  const found = /^\s*((?:(?:[-*+]|\d+[.)])\s+)*)(`{3,}|~{3,})(.*)$/u.exec(line);
+  const found = /^(\s*)((?:(?:[-*+]|\d+[.)])\s+)*)(`{3,}|~{3,})(.*)$/u.exec(line);
   // A backtick fence's info string has no backtick, so "```code``` stays literal" is inline code, not a fence.
-  if (!found || (found[2][0] === '`' && found[3].includes('`'))) return null;
-  return { char: found[2][0], length: found[2].length, bare: found[1] === '' && found[3].trim() === '' };
+  if (!found || (found[3][0] === '`' && found[4].includes('`'))) return null;
+  return { char: found[3][0], length: found[3].length, bare: found[2] === '' && found[4].trim() === '', column: found[1].length + found[2].length };
+};
+
+// A line with the tabs of its indentation and list markers expanded to 4-column stops, so indentation is measured in
+// columns: a tab-indented nested bullet stays nested.
+const expandTabs = (line) => {
+  const prefix = /^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)*/u.exec(line)[0];
+  let out = '';
+  for (const char of prefix) out += char === '\t' ? ' '.repeat(4 - (out.length % 4)) : char;
+  return out + line.slice(prefix.length);
 };
 
 // The top-level blocks of a section body, in order: a sub-heading, a top-level list item with its nested lines, a
 // fenced block, or a paragraph. As in CommonMark, a line belongs to the list item above it when it is indented to that
 // item's content column or deeper; otherwise a line up to 3 spaces past the body's least indentation (outside fences)
 // is top level. So bullets split whether the section indents them all, or indents them under a plain paragraph. A
-// fenced code block stays inside the block it starts in, and closes only on a bare fence of its own character, at least
-// as long. Blank lines are dropped from block edges.
+// fenced code block stays inside the block it starts in, and closes on a bare fence of its own character, at least as
+// long, or where its list item ends. Indentation counts tabs to 4-column stops. Blank lines are dropped from block edges.
 export function blocksOf(body) {
-  const lines = String(body ?? '').split('\n');
+  const lines = String(body ?? '').split('\n').map(expandTabs);
   // Per line: inside a fence (its closing line included), opening one, or the first line after one closes.
   const inFence = [];
   const opens = [];
@@ -87,6 +97,8 @@ export function blocksOf(body) {
   let closed = false;
   for (const line of lines) {
     const fence = fenceOf(line);
+    // A fence left open inside a list item ends with the item, at a line indented less than the fence.
+    if (open && line.trim() && /^ */u.exec(line)[0].length < open.column) open = null;
     inFence.push(open !== null);
     opens.push(open === null && fence !== null);
     afterFence.push(closed);

@@ -65,6 +65,14 @@ test('blocksOf takes the least indentation as top level, and a fence closes only
     const rules = [`${marker} \`\`\`code\`\`\` examples stay literal.`, `${marker} Refund cap: never exceeds the charge.`];
     assert.deepEqual(blocksOf(rules.join('\n')), rules, 'inline code of three backticks opens no fence');
   }
+  assert.deepEqual(blocksOf('- First: always refund.\n\t- Exception: no refund after use.\n- Second'), ['- First: always refund.\n    - Exception: no refund after use.', '- Second'], 'a tab-indented bullet stays nested');
+  for (const delimiter of ['```', '~~~']) {
+    for (const marker of ['-', '1.']) {
+      const open = `${marker} ${delimiter}js\n${' '.repeat(marker.length + 1)}example()`;
+      assert.deepEqual(blocksOf(`${open}\n${marker} Refund cap: never exceeds the charge.`), [open, `${marker} Refund cap: never exceeds the charge.`], 'an unclosed fence ends with its list item');
+    }
+  }
+  assert.deepEqual(blocksOf('```\nunclosed\n- not a rule'), ['```\nunclosed\n- not a rule'], 'an unclosed top-level fence runs to the end');
 });
 
 test('focus sends only the blocks it names, in section order, and names the question after them', () => {

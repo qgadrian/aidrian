@@ -256,6 +256,18 @@ test('only the repository root and the example name a file AGENTS.md or CLAUDE.m
   assert.deepEqual(named.filter((file) => !instructionFiles.includes(file)), []);
 });
 
+test('a skill that runs the pr-review-loop skill says when it marks the pull request ready', () => {
+  // pr-review-loop leaves marking ready to such a caller, so a caller without the step leaves a green pull request a draft.
+  const callers = [['autopilot', 'autopilot', 'references/phases.md'], ['orchestration', 'orchestrator', 'SKILL.md']];
+  const loop = readFileSync(path.join(PLUGIN, 'skills/pr-review-loop/SKILL.md'), 'utf8');
+  for (const [skill, name, file] of callers) {
+    assert.ok(loop.includes('`' + name + '`'), `pr-review-loop names the ${name} as a caller`);
+    const text = readFileSync(path.join(PLUGIN, 'skills', skill, file), 'utf8');
+    assert.match(text, /gh pr ready <n>/, `${skill} marks the pull request ready`);
+    assert.match(text, /github\.markReady/, `${skill} reads github.markReady`);
+  }
+});
+
 test('the local banned terms file stays out of git', () => {
   const ignored = spawnSync('git', ['check-ignore', '-q', '.banned-terms.local'], { cwd: ROOT });
   assert.equal(ignored.status, 0, '.banned-terms.local must be git-ignored');

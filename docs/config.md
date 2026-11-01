@@ -94,7 +94,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. |
 | `github.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
 | `github.conditionalChecks` | Parts of check names whose `SKIPPED` or `NEUTRAL` result is routine, such as a job a path filter turns off. |
-| `github.markReady` | Who marks a draft pull request ready. `"ask"`, the default: its author, or the review loop when the Human asks in the session. `"auto"`: the `pr-review-loop` and `autopilot` skills mark it ready once review signs off and `aidrian pr checks` says ready. Either way, nothing is pushed after it is marked ready, and nothing merges it. |
+| `github.markReady` | Who marks a draft pull request ready. `"ask"`, the default: its author, or the review loop when the Human asks in the session. `"auto"`: the `pr-review-loop` skill, or `autopilot` and the `orchestrator` when they run it, mark it ready once review signs off and `aidrian pr checks` says ready. Either way, nothing is pushed after it is marked ready, and nothing merges it. |
 | `github.titleIssuePrefix` | `true` writes pull request titles as `[<issue key>] type(scope): subject`, or `[NOISSUE] type: subject`; `false`, the default, writes a plain Conventional Commits title. |
 | `github.pullRequest` | The project's [pull request contract](#pull-request-contract), beyond the required sections; off by default but for `sharedTempBodyFile`. |
 | `github.reviewGate.enabled` | `true` asks the review bot only once a review of the diff is on record: [Review gate](#review-gate). |

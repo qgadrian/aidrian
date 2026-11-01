@@ -70,7 +70,7 @@ export function visualRoutes(visual, changes) {
 export function visualMatrix(visual, routes) {
   const locales = visual.locales.length ? visual.locales : [null];
   const variants = visual.variants.length ? visual.variants.map((variant) => variant.id) : ['default'];
-  const order = [null, ...locales];
+  const order = [null, ...visual.locales];
   const entries = [];
   for (const { route, base, pairs } of routes) {
     const id = base ? routeId(`${base}:${route}`) : routeId(route);

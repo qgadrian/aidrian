@@ -186,6 +186,8 @@ test('a target may narrow the locales and variants: [] locales is one default ca
     'hospitality default', 'hospitality en', 'hospitality de', 'appointments default', 'appointments en', 'appointments de',
   ], 'a default-locale target keeps its capture beside an unfiltered one');
   assert.deepEqual(visualRoutes(withAll, [{ file: 'b/1' }]), [{ route: '/x', base: null }], 'an unfiltered route carries no pairs');
+  const noLocales = visualConfig({ locales: undefined, targets: [{ files: ['a/**'], routes: ['/x'], variants: ['hospitality'] }] });
+  assert.deepEqual(visualMatrix({ ...noLocales, viewports: [360] }, visualRoutes(noLocales, [{ file: 'a/1' }])).map((entry) => `${entry.variant} ${entry.locale ?? 'default'}`), ['hospitality default'], 'a variant filter without configured locales captures once');
   const bad = [];
   checkReview({ visual: { platform: 'web', targets: [{ files: ['x/**'], routes: ['/'], locales: ['fr'], variants: ['nope'] }], viewports: [360], locales: ['en'], variants: [{ id: 'a' }] } }, 'config.json', bad);
   assert.match(bad.join('\n'), /targets\[0\]\.locales" must list tags from review\.visual\.locales/u);

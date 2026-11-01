@@ -7,7 +7,7 @@ import test from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
-import { citationProblem, flowState, invariantsOf, sectionOf } from '../plugins/aidrian/lib/review/flows.mjs';
+import { blocksOf, citationProblem, flowState, invariantsOf, sectionOf } from '../plugins/aidrian/lib/review/flows.mjs';
 import { cleanOutput, resolveEngine, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { EXIT, recordPass, recordSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { readLocalState, stateFromComment } from '../plugins/aidrian/lib/review/state.mjs';
@@ -254,6 +254,16 @@ test('sectionOf and invariantsOf: a fence opened after a list marker closes at i
   assert.deepEqual(sectionOf(doc, 'b').body, 'Other.\n\n- ```md\n  ## Fake', 'an unclosed fence in a list item ends where the item ends');
   assert.equal(sectionOf(doc, 'fake'), null);
   assert.deepEqual(invariantsOf({ invariants: 'x.md' }, () => doc).invariants.map((each) => each.id), ['a', 'b', 'c']);
+});
+
+test('sectionOf, invariantsOf, and blocksOf read a CRLF doc: a heading or a comment in a fence is still code', () => {
+  const doc = ['# T', '', '## A', 'Run:', '', '```bash', '# comment', '## Fake', '```', '', 'Then ship.', '', '## B', '', 'Other.', ''].join('\r\n');
+  const body = 'Run:\n\n```bash\n# comment\n## Fake\n```\n\nThen ship.';
+  assert.deepEqual(sectionOf(doc, 'a'), { heading: 'A', body, raw: body });
+  assert.equal(sectionOf(doc, 'fake'), null);
+  assert.equal(sectionOf(doc, 'b').raw, 'Other.', 'no CRLF blank line kept at the start of raw');
+  assert.deepEqual(invariantsOf({ invariants: 'x.md' }, () => doc).invariants.map((each) => each.id), ['a', 'b']);
+  assert.deepEqual(blocksOf(['Run:', '', '```bash', '# comment', '```', '', 'Then ship.'].join('\r\n')), ['Run:', '```bash\n# comment\n```', 'Then ship.']);
 });
 
 test('invariantsOf: a heading inside a fenced block is not an invariant', () => {

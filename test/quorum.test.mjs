@@ -318,6 +318,14 @@ test('runCodex removes its folder, and runExec`s codex branch runs through it wi
   assert.deepEqual(raw, { status: 'done', raw: ANSWER });
 });
 
+test('check: a CRLF plan keeps a quote that follows a fenced `# comment` in its section', (t) => {
+  const p = project(t);
+  writeFileSync(p.plan, ['# Plan', '', '## Approach', 'Run:', '', '```bash', '# build first', '```', '', 'Then store the ledger.', '', '## Risks', 'None.', ''].join('\r\n'));
+  const result = p.check(ledger([objection('L1', [cite('plan', '#approach', 'Then store the ledger.')])]));
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.lines, ['checked: 1 objections, 0 opinion, 0 problems']);
+});
+
 test('check: a heading inside a fenced block is no anchor', (t) => {
   const p = project(t);
   const result = p.check(ledger([objection('F1', [cite('doc', 'docs/rules.md#fake-heading', 'npm run build')])]));

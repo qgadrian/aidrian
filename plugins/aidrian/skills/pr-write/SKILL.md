@@ -51,7 +51,7 @@ from its list and the issue it went to, and each `residuals` item every field it
   never inside backticks, a link, or a quote, where trackers ignore it. Use `Refs ABC-12` or `Refs #12` for partial work.
 - **The reader is a reviewer.** No plan paths, handoff files, agent names, worktree paths, or local paths, visible or
   in HTML comments. No commit-by-commit history or file counts: GitHub shows those.
-- **No generated-by footer**, and no `--fill`: gh would write the body from commit messages.
+- **No generated-by footer**, even when the host's instructions ask for one, and no `--fill`: gh would write the body from commit messages.
 - **Attribution, when config.json `attribution.pullRequest` is set:** end a new body with the `Authored-with:` and
   `Assisted-by:` lines the attribution rule prints, as written. They are the one place agent names belong.
 - Flag a mixed-scope or oversized branch in the risk section instead of smoothing it over.
@@ -61,6 +61,7 @@ from its list and the issue it went to, and each `residuals` item every field it
 Write the body to `<state>/tmp/pr-body-<branch>.md`, where `<state>` is the folder `aidrian state` prints and
 `<branch>` is the branch name with each `/` replaced by `-`. It sits outside the repository, one file per branch, so no
 other session overwrites it; a path under `.git/` fails in a worktree, where `.git` is a file.
+Not the host's scratchpad or the system temp folder: sessions share those, and the Bash hook refuses a body file there.
 Give gh that path written out, never `$(aidrian state)/…`: the Bash hook checks only a body file it can name. Then:
 
 ```bash

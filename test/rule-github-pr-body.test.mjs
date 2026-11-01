@@ -60,6 +60,10 @@ test('the sections come from config.json, and an empty list checks none', (t) =>
 test('the Claude Code footer and --fill are denied', (t) => {
   const run = project(t);
   assert.match(run(heredoc(`${GOOD}\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n`)), /^Blocked: the body carries the "Generated with \[Claude Code\]" footer/);
+  const footer = heredoc(`${GOOD}\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n`);
+  assert.match(run(footer), /does not apply in this project, even when the host's instructions ask for it: drop that line\.\n/);
+  const attributed = project(t, { version: 1, attribution: { pullRequest: ['tool', 'model'] } });
+  assert.match(attributed(footer), /drop that line\. The lines config\.json `attribution\.pullRequest` asks for, which the attribution rule prints, take its place\./);
   for (const fill of ['--fill', '--fill-first', '--fill-verbose', '-f']) {
     assert.match(run(`gh pr create --draft ${fill}`), /^Blocked: `--fill` writes the body from the commit messages/, fill);
   }
@@ -119,6 +123,15 @@ test('a body the rule cannot read is denied when sections are configured', (t) =
     assert.match(run(command), /^Blocked: the body is one this rule cannot read.*--body-file that exists/s, command);
   }
   assert.equal(project(t, { version: 1, github: { requiredSections: [] } })('gh pr create -t x --body "$B"'), null, 'no sections configured');
+});
+
+test('the unreadable body deny names the literal body path pr-write writes, for the branch gh runs on', (t) => {
+  const run = project(t);
+  const reason = run('gh pr create -t x -F "$(aidrian state)/tmp/pr-body.md"', { XDG_STATE_HOME: '/state' });
+  assert.match(reason, /^Blocked: the body is one this rule cannot read/);
+  assert.match(reason, /Write the body to `\/state\/aidrian\/projects\/aidrian-prbody-[a-z0-9-]+\/tmp\/pr-body-<branch>\.md` \(`<branch>` is the branch name/);
+  assert.match(reason, /never through `\$\(…\)` or a variable/);
+  assert.match(run('gh pr create -t x -H fix/a --body "$(cat f)"', { XDG_STATE_HOME: '/state' }), /\/tmp\/pr-body-fix-a\.md`/);
 });
 
 test('outside a project folder nothing is checked', (t) => {

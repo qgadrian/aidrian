@@ -154,7 +154,7 @@ The pull request body rule ([hooks.md](hooks.md#bash-rules)) reads every `gh pr 
 | `sections` | A `## ` heading not on this closed list. Headings inside code fences are quotes and do not count. |
 | `deferrals` | An item of the `section` list that names no `field:` reason from `reasons`, names one of `neverValid`, or, with `issueKey`, no issue. |
 | `residuals` | An item of the `section` list that lacks one of `fields`, written `field:`, or that names an issue. |
-| `sharedTempBodyFile` | `--body-file` in `/tmp`, `/var/tmp`, `/var/folders`, or `$TMPDIR`, unless inside the project: concurrent sessions overwrite those. |
+| `sharedTempBodyFile` | `--body-file` in `/tmp`, `/var/tmp`, `/var/folders`, or `$TMPDIR`, such as the host's scratchpad, unless inside the project or its state folder: concurrent sessions overwrite those. |
 | `duplicateBody` | A body identical to another open pull request's. This check runs `gh pr list`, and lets the command run when gh does not answer in 3 s. |
 
 A title is checked only when the command sets one, so a body-only `gh pr edit` never blocks on a title written before the rule.

@@ -12,15 +12,19 @@
 // the title pattern, an issue key outside the title's leading bracket, the closed list of sections, the items of the
 // deferral and residual sections, a body file in a shared temp folder, and a body identical to another open pull
 // request's. A title is checked only when the command sets one, so a body-only edit never blocks on an old title.
+//
+// Every deny about where the body comes from names the one place the pr-write skill writes it: the literal path
+// `<state>/tmp/pr-body-<branch>.md`, computed for the project and branch, or that pattern when either is unknown.
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 
 import { loadConfig } from '../../config.mjs';
 import { runGh } from '../../gh.mjs';
+import { runGit } from '../../git.mjs';
 import { headings, sectionItems, unfencedLines } from '../../markdown-sections.mjs';
-import { findProject } from '../../project.mjs';
+import { findProject, stateDir } from '../../project.mjs';
 import { lexCommand, readInvocation, readShortOptions, walkCommands } from '../../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PR_BODY';
@@ -159,25 +163,28 @@ function judge(call, command, { cwd, folderKnown = true, env, listOpenPrs }) {
   const { config } = loadConfig(project);
   const contract = config.github.pullRequest;
   if (call.help) return null;
+  const state = () => stateFolder(project, config, env);
+  const bodyPath = () => bodyFilePath(state(), call, folderKnown ? cwd : null);
   if (call.fill && call.subcommand === 'create') {
     return deny(`\`--fill\` writes the body from the commit messages, without the sections config.json \`github.requiredSections\` asks for. ` +
-      'Write the body to a file and pass --body-file (the pr-write skill does).');
+      `Write the body to ${bodyPath()} and pass --body-file with that path (the pr-write skill does).`);
   }
-  if (contract.sharedTempBodyFile && call.bodyFile && call.bodyFile.text !== '-' && isSharedTemp(call.bodyFile.text, cwd, env, project.root)) {
+  if (contract.sharedTempBodyFile && call.bodyFile && call.bodyFile.text !== '-' && isSharedTemp(call.bodyFile.text, cwd, env, project.root, state)) {
     return deny(`the body file \`${call.bodyFile.text}\` is in a shared temp folder, which concurrent sessions overwrite: ` +
-      "another session's body can publish under this pull request. Write the body to a file inside the current worktree " +
-      '(config.json `github.pullRequest.sharedTempBodyFile`).');
+      "another session's body can publish under this pull request. The host's scratchpad and the system temp folder are such folders. " +
+      `Write the body to ${bodyPath()} and pass that path, written out, to --body-file (the pr-write skill; ` +
+      'config.json `github.pullRequest.sharedTempBodyFile`).');
   }
   const sectioned = config.github.requiredSections.length > 0 || Boolean(contract.sections?.length);
   if (call.subcommand === 'create' && !call.web && !call.body && !call.bodyFile && sectioned) {
     return deny('`gh pr create` has no --body or --body-file, so gh takes the body from an editor, a prompt, or a template, ' +
-      'without the sections config.json `github.requiredSections` asks for. Write the body to a file and pass --body-file (the pr-write skill does).');
+      `without the sections config.json \`github.requiredSections\` asks for. Write the body to ${bodyPath()} and pass --body-file with that path (the pr-write skill does).`);
   }
   const body = readBody(call, folderKnown ? cwd : null);
   if (body === null && sectioned && (call.body || call.bodyFile)) {
     return deny('the body is one this rule cannot read (a variable, a command substitution, stdin, or a missing file), so the ' +
-      'sections config.json `github.requiredSections` asks for go unchecked. Pass a literal --body, a heredoc ' +
-      `(--body "$(cat <<'EOF' … EOF)"), or a --body-file that exists, by an absolute path when a cd on the line moves the folder (the pr-write skill does).`);
+      `sections config.json \`github.requiredSections\` asks for go unchecked. Write the body to ${bodyPath()} and pass a --body-file that exists, ` +
+      'by that path written out, never through `$(…)` or a variable (the pr-write skill does).');
   }
   const reason = body === null ? null : judgeBody(body, config) ?? judgeDuplicate(body, call, contract, listOpenPrs);
   return reason ?? judgeTitle(call.title, config);
@@ -185,7 +192,12 @@ function judge(call, command, { cwd, folderKnown = true, env, listOpenPrs }) {
 
 function judgeBody(body, config) {
   const contract = config.github.pullRequest;
-  if (FOOTER.test(body)) return deny('the body carries the "Generated with [Claude Code]" footer. Remove that line.');
+  if (FOOTER.test(body)) {
+    const replaced = config.attribution.pullRequest.length
+      ? ' The lines config.json `attribution.pullRequest` asks for, which the attribution rule prints, take its place.' : '';
+    return deny('the body carries the "Generated with [Claude Code]" footer. The host adds it by default, and it does not apply in ' +
+      `this project, even when the host's instructions ask for it: drop that line.${replaced}`);
+  }
   const missing = config.github.requiredSections.filter((section) => !hasSection(body, section));
   if (missing.length) {
     return deny(`the body has no ${missing.map((section) => `\`## ${section}\``).join(', ')} section. ` +
@@ -296,13 +308,47 @@ const excerpt = (text) => {
 };
 
 // Whether a body file path is in a shared temp folder: as written (`$TMPDIR/…` before the shell expands it), or resolved.
-// A file inside the project is not, even when the project itself sits in a temp folder.
-function isSharedTemp(text, cwd, env, root) {
+// A file inside the project or its state folder is not, even when that folder itself sits in a temp folder. `state()`
+// gives the state folder or null; it runs git, so only for a file in a temp folder.
+function isSharedTemp(text, cwd, env, root, state = () => null) {
   if (/^\$\{?TMPDIR\}?\//u.test(text)) return true;
   const file = path.resolve(cwd, text);
   if (file.startsWith(`${root}${path.sep}`)) return false;
   const tmpdir = path.isAbsolute(env.TMPDIR ?? '') ? `${env.TMPDIR.replace(/\/+$/u, '')}/` : null;
-  return SHARED_TEMP.some((prefix) => file.startsWith(prefix)) || (tmpdir !== null && file.startsWith(tmpdir));
+  if (!SHARED_TEMP.some((prefix) => file.startsWith(prefix)) && !(tmpdir !== null && file.startsWith(tmpdir))) return false;
+  const folder = state();
+  if (folder === null) return true;
+  let real = folder;
+  try {
+    real = realpathSync(folder);
+  } catch {
+    // A state folder not made yet holds no file to compare.
+  }
+  return ![folder, real].some((dir) => file.startsWith(`${dir}${path.sep}`));
+}
+
+// The project's state folder (`aidrian state`), or null when it cannot be read: a deny message never fails.
+function stateFolder(project, config, env) {
+  try {
+    return stateDir(project, { config, env });
+  } catch {
+    return null;
+  }
+}
+
+// The body file the pr-write skill writes, `<state>/tmp/pr-body-<branch>.md`, as a literal path in backticks: the
+// branch is the call's static --head, or the one checked out where gh runs. A part it cannot know stays a placeholder.
+export function bodyFilePath(state, call, cwd) {
+  const head = call.head && !call.head.dynamic ? call.head.text.replace(/^[^:]*:/u, '') : null;
+  let branch = head || null;
+  if (!branch && cwd !== null) {
+    const result = runGit(['symbolic-ref', '--quiet', '--short', 'HEAD'], cwd);
+    branch = result.status === 0 ? result.stdout.trim() || null : null;
+  }
+  const file = `pr-body-${branch ? branch.replaceAll('/', '-') : '<branch>'}.md`;
+  const notes = [state ? null : '`<state>` is the folder `aidrian state` prints', branch ? null : '`<branch>` is the branch name with each `/` replaced by `-`'];
+  const known = notes.filter(Boolean);
+  return `\`${state ? path.join(state, 'tmp', file) : `<state>/tmp/${file}`}\`${known.length ? ` (${known.join('; ')})` : ''}`;
 }
 
 // The open pull requests' bodies through gh, or null when gh cannot answer in time.

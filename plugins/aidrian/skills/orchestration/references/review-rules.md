@@ -15,7 +15,7 @@ Before triage or any fix on a pull request's branch:
 
 ## A ready pull request
 
-A pull request that `autopilot` or the `orchestrator` marked ready in this run gets no more pushes:
+A pull request that `autopilot`, the `orchestrator`, or `pr-review-loop` marked ready in this run gets no more pushes:
 report the remaining items as follow-ups for a new pull request, and change nothing on its branch.
 Any other ready pull request is worked as a draft is, in a session the Human runs: a person's review usually lands on one.
 

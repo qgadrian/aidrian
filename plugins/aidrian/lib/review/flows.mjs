@@ -62,16 +62,16 @@ export function sectionOf(text, anchor) {
 }
 
 // A fence line: its delimiter, and whether the line is the delimiter alone, which only a closing fence may be. An
-// opening fence may follow list markers, as in "- ```js"; such a line is never bare, so it never closes one.
+// opening fence may follow list markers, as in "- ```js"; such a line is never bare, so it never closes one, and `item`
+// is the content column of that list item (null for a fence on a line of its own).
 // CommonMark: https://spec.commonmark.org/0.31.2/#fenced-code-blocks
-// `item` is the content column of the list item a fence opens on, as in "- ```js", or null: a line indented less ends
-// that item, and with it the fence. A fence on a line of its own runs until its closing delimiter.
 const fenceOf = (line) => {
   const found = /^(\s*)((?:(?:[-*+]|\d+[.)])\s+)*)(`{3,}|~{3,})(.*)$/u.exec(line);
   // A backtick fence's info string has no backtick, so "```code``` stays literal" is inline code, not a fence.
   if (!found || (found[3][0] === '`' && found[4].includes('`'))) return null;
   return { char: found[3][0], length: found[3].length, bare: found[2] === '' && found[4].trim() === '', item: found[2] === '' ? null : found[1].length + found[2].length };
 };
+const closes = (fence, open) => fence?.bare && fence.char === open.char && fence.length >= open.length;
 
 // A line with the tabs of its indentation and list markers expanded to 4-column stops, so indentation is measured in
 // columns: a tab-indented nested bullet stays nested.
@@ -81,55 +81,53 @@ const expandTabs = (line) => {
   for (const char of prefix) out += char === '\t' ? ' '.repeat(4 - (out.length % 4)) : char;
   return out + line.slice(prefix.length);
 };
+const indentOf = (line) => /^ */u.exec(line)[0].length;
 
 // The top-level blocks of a section body, in order: a sub-heading, a top-level list item with its nested lines, a
 // fenced block, or a paragraph. As in CommonMark, a line belongs to the list item above it when it is indented to that
-// item's content column or deeper; otherwise a line up to 3 spaces past the body's least indentation (outside fences)
-// is top level. So bullets split whether the section indents them all, or indents them under a plain paragraph. A
-// fenced code block stays inside the block it starts in, and closes on a bare fence of its own character, at least as
-// long, or where its list item ends. Indentation counts tabs to 4-column stops. Blank lines are dropped from block edges.
+// item's content column or deeper; otherwise a line up to 3 spaces past the body's least indentation is top level. So
+// bullets split whether the section indents them all, or indents them under a plain paragraph. A fence stays inside
+// the block it starts in, and ends at a bare fence of its own character, at least as long, or, when it opened inside a
+// list item, where that item ends. Indentation counts tabs to 4-column stops. Blank lines are dropped from block edges.
 export function blocksOf(body) {
   const lines = String(body ?? '').split('\n').map(expandTabs);
-  // Per line: inside a fence (its closing line included), opening one, or the first line after one closes.
-  const inFence = [];
-  const opens = [];
-  const afterFence = [];
-  let open = null;
-  let closed = false;
+  // The least indentation outside fences, from a first pass that matches delimiters only.
+  const indents = [];
+  let scan = null;
   for (const line of lines) {
     const fence = fenceOf(line);
-    // A fence left open inside a list item ends with the item, at a line indented less than the fence.
-    if (open?.item != null && line.trim() && /^ */u.exec(line)[0].length < open.item) open = null;
-    inFence.push(open !== null);
-    opens.push(open === null && fence !== null);
-    afterFence.push(closed);
-    closed = false;
-    if (open === null && fence) open = fence;
-    else if (open && fence?.bare && fence.char === open.char && fence.length >= open.length) {
-      open = null;
-      closed = true;
-    }
+    if (scan === null && line.trim()) indents.push(indentOf(line));
+    if (scan === null && fence) scan = fence;
+    else if (scan && closes(fence, scan)) scan = null;
   }
-  const indentOf = (line) => /^[ \t]*/u.exec(line)[0].length;
-  const indents = lines.filter((line, i) => !inFence[i] && line.trim()).map(indentOf);
   const base = indents.length ? Math.min(...indents) : 0;
   const blocks = [];
   let current = null;
-  // The content column of the list item the current block is, or null when it is not one.
-  let column = null;
+  let column = null; // the content column of the list item the current block is, or null
+  let open = null; // the fence open now: its delimiter, and the content column of the item it opened in, or null
+  let closed = false; // the line before closed a fence
   let blank = true;
-  for (const [i, line] of lines.entries()) {
+  for (const line of lines) {
     const indent = indentOf(line);
+    if (open?.container != null && line.trim() && indent < open.container) open = null;
+    const inside = open !== null;
+    const fence = fenceOf(line);
     const text = line.slice(Math.min(base, indent));
-    const item = /^([ \t]*)((?:[-*+]|\d+[.)])[ \t]+)\S/u.exec(line);
-    const top = !inFence[i] && line.trim() !== '' && indent - base <= 3 && (column === null || indent < column);
-    const starts = top && (/^#{1,6}\s/u.test(text.trimStart()) || item !== null || blank || opens[i] || afterFence[i]);
+    const item = /^( *)((?:[-*+]|\d+[.)]) +)\S/u.exec(line);
+    const top = !inside && line.trim() !== '' && indent - base <= 3 && (column === null || indent < column);
+    const starts = top && (/^#{1,6}\s/u.test(text.trimStart()) || item !== null || blank || fence !== null || closed);
     if (starts || (!current && line.trim())) {
       current = [];
       blocks.push(current);
       column = item ? item[1].length + item[2].length : null;
     }
     if (current) current.push(text);
+    closed = false;
+    if (!inside && fence) open = { ...fence, container: fence.item ?? (column !== null && indent >= column ? column : null) };
+    else if (inside && closes(fence, open)) {
+      open = null;
+      closed = true;
+    }
     blank = line.trim() === '';
   }
   return blocks.map((each) => each.join('\n').replace(/^(?:[ \t]*\n)+/u, '').trimEnd()).filter((each) => each.trim());

@@ -77,6 +77,13 @@ test('blocksOf takes the least indentation as top level, and a fence closes only
     const example = `  ${delimiter}\n- example\n${delimiter}`;
     assert.deepEqual(blocksOf(`${example}\n\n- Real rule: must hold.`), [example, '- Real rule: must hold.'], 'an indented top-level fence keeps its unindented content');
   }
+  for (const delimiter of ['```', '~~~']) {
+    for (const marker of ['-', '1.']) {
+      const pad = ' '.repeat(marker.length + 1);
+      const example = `${marker} Example:\n\n${pad}${delimiter}js\n${pad}example()`;
+      assert.deepEqual(blocksOf(`${example}\n${marker} Real rule: must hold.`), [example, `${marker} Real rule: must hold.`], 'a fence on an item\'s continuation line ends with the item');
+    }
+  }
 });
 
 test('focus sends only the blocks it names, in section order, and names the question after them', () => {

@@ -5,8 +5,8 @@ description: Stress-test a plan or design against the project's docs and code, a
 
 # challenge
 
-Question the user about the plan until both of you hold the same understanding of every part of it.
-Settle decisions in dependency order: resolve what a branch of the design rests on before the branch itself.
+Test the plan against the project's docs and code until every open decision has an answer the user confirmed.
+Ask about foundations first: a choice that others depend on is settled before the choices built on it.
 
 Before you start, follow the `knowledge` skill. Knowledge tags: `product_sensitive`, `docs`.
 Add the tags of each area the plan touches, such as `backend` or `testing`, when you reach it.

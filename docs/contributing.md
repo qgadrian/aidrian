@@ -20,7 +20,7 @@ npm run check    # what CI runs
 `npm run check` fails when:
 
 - a generated agent is stale, or edited by hand;
-- the example's project folder is invalid;
+- the example's project folder, or this repository's own, is invalid;
 - a test fails;
 - the plugin changed without a version bump ([Versions](#versions)).
 
@@ -47,6 +47,25 @@ When `claude` and `codex` are on your PATH, `test/hosts.test.mjs` also checks th
 
 To try a branch in a real session before it merges, install the plugin from your checkout:
 [Claude Code](providers/claude-code.md#from-a-local-checkout), [Codex](providers/codex.md#from-a-local-checkout).
+
+## The harness on itself
+
+`.aidrian/knowledge/10-harness.json` indexes `docs/` as this repository's knowledge, with this page as the one `always` doc.
+A new `.md` file under `docs/` needs its entry there, or `npm run check` fails.
+Tag a doc only when an agent's task needs it whole, and keep tagged docs within the [budget](config.md#knowledge-budgets);
+`config.md` and `dispatch-log.md` are larger, so they stay untagged and search finds them.
+
+Sessions here run the installed release of the plugin, not the branch.
+To see a change to a hook, skill, or agent at work, install from the checkout ([Trying a branch](#trying-a-branch)).
+
+The plugin's own tools for this work:
+
+- `worktree-new` starts a task; `worktree-cleanup` removes the worktrees whose pull request merged.
+- The `harness-mechanic` agent changes the plugin; `harness-librarian` changes `.aidrian/`.
+- `harness-health` ranks what to fix from the dispatch log, and `aidrian report` gives the detail.
+- `lesson-triage`, in a session opened for it, routes the inbox: `target: plugin` lessons become plugin fixes,
+  `target: project` lessons become changes to this repository's `.aidrian/` or docs.
+- `pr-write`, then `pr-review-loop`, to open and answer a pull request.
 
 ## Skill evals
 

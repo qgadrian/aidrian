@@ -1,6 +1,9 @@
 {
   "version": 1,
-  "git": { "defaultBranch": "main", "worktrees": { "dir": ".worktrees" }, "mainCheckout": { "guard": true } },
-  "review": { "engine": "pr-bot", "record": "local" },
-  "github": { "markReady": "auto" }
+  "git": {
+    "defaultBranch": "main",
+    "worktrees": { "dir": ".worktrees" },
+    "mainCheckout": { "guard": true }
+  },
+  "review": { "engine": "pr-bot", "record": "local" }
 }

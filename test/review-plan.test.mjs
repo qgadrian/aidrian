@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
-import { checkLocalReview, checkReview } from '../plugins/aidrian/lib/review/config.mjs';
-import { buildPlan, classify, detectFlows, evaluateRules, flowsInForce, HARNESS_FLOW, mergePlans, validatePlan } from '../plugins/aidrian/lib/review/plan.mjs';
+import { checkLocalReview, checkLocalVisual, checkReview, VISUAL_PER_ROUTE } from '../plugins/aidrian/lib/review/config.mjs';
+import { buildPlan, classify, detectFlows, evaluateRules, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, validatePlan } from '../plugins/aidrian/lib/review/plan.mjs';
 
 const change = (file, added = 10, removed = 0) => ({ file, added, removed, status: 'M' });
 const config = (review = {}, github = {}) => ({ ...DEFAULTS, github: { ...DEFAULTS.github, ...github }, review: { ...DEFAULTS.review, ...review } });
@@ -125,4 +125,72 @@ test('a path entry may be re:<regex>: rules, flows, and tests match it, and a ba
   const errors = [];
   checkReview({ flows: { bad: { files: ['re:(unclosed'] } }, rules: [{ when: { anyFiles: ['re:['] }, depth: 'split' }] }, 'c.json', errors);
   assert.equal(errors.length, 2);
+});
+
+test('mergePlans then mergeStages: a plan command pass for an agent folds into the built-in pass for it, and a shared flow keeps both files and reasons', () => {
+  const flows = { 'service-role': { files: ['src/admin/**'], require: ['agent:security-engineer'] } };
+  const builtIn = plan([change('src/admin/a.ts'), change('src/lib/b.ts')], { flows, rules: [{ when: { anyFiles: ['src/**'] }, require: ['agent:security-engineer'] }] }, { merge: false });
+  const project = {
+    depth: 'single',
+    reasons: ['service-role: the head content of src/lib/b.ts uses the client'],
+    flows: [{ id: 'service-role', files: ['src/lib/b.ts'], reasons: ['head content matches /x/ in src/lib/b.ts'] }],
+    stages: [{ name: 'local', passes: [{ id: 'flow:service-role:content:security-engineer', reviewer: 'security-engineer', kind: 'agent', flow: 'service-role', flows: ['service-role'], files: ['src/lib/b.ts'] }] }],
+  };
+  const merged = mergeStages(mergePlans(builtIn, project));
+  const security = merged.stages[0].passes.filter((pass) => pass.reviewer === 'security-engineer');
+  assert.equal(security.length, 1, 'security-engineer is dispatched once');
+  assert.deepEqual(security[0].flows, ['service-role']);
+  assert.equal(security[0].files, null, 'the plain required pass reads the whole change');
+  const flow = merged.flows.find((each) => each.id === 'service-role');
+  assert.deepEqual(flow.files, ['src/admin/a.ts', 'src/lib/b.ts']);
+  assert.ok(flow.reasons.some((reason) => reason === 'plan command: head content matches /x/ in src/lib/b.ts'), flow.reasons.join('; '));
+  assert.equal(merged.stages.flatMap((stage) => stage.passes).length, new Set(merged.stages.flatMap((stage) => stage.passes.map((pass) => pass.id))).size, 'pass ids stay unique');
+});
+
+test('a presentation-only edit, such as a class name change, triggers a UI flow by its path', () => {
+  const flows = { ui: { files: ['re:^src/app/.*\\.tsx$', 'src/components/**'], require: ['agent:designer', 'agent:ux-specialist'] } };
+  const sorted = classify([change('src/components/Button.tsx', 1, 1)]);
+  const touched = detectFlows(flows, { sorted, addedLines: { 'src/components/Button.tsx': ['  <button className="px-2 py-1">'] }, removedFiles: new Set(['src/components/Button.tsx']) });
+  assert.deepEqual(touched.map((flow) => [flow.id, flow.files]), [['ui', ['src/components/Button.tsx']]]);
+  const p = plan([change('src/components/Button.tsx', 1, 1)], { flows });
+  assert.deepEqual(p.stages[0].passes.map((pass) => pass.reviewer).sort(), ['designer', 'ux-specialist']);
+});
+
+test('checkReview: review.visual and a flow content block are checked, and a bad one is left out whole', () => {
+  const errors = [];
+  const visual = { platform: 'web', targets: [{ files: ['src/app/**'], routes: ['/dashboard', '/{locale}/book'] }], viewports: [360, 768, 1280], locales: ['en', 'de'], variants: [{ id: 'hospitality', account: 'demo-hospitality' }], login: 'node scripts/login.mjs' };
+  const content = { roots: ['src'], exclude: ['re:\\.test\\.ts$'], probes: ['\\badminClient\\b'], trace: { variables: ['adminClient', 'ctx.adminClient'], factories: ['get\\w*AdminClient\\s*\\('], params: ['client'], aliases: { '~/': 'src/' }, hops: 2 } };
+  const ok = checkReview({ visual, flows: { 'service-role': { files: ['src/admin/**'], content } } }, 'config.json', errors);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(ok.visual.reviewers, ['designer', 'ux-specialist']);
+  assert.equal(ok.visual.attach, null);
+  assert.deepEqual(ok.flows['service-role'].content, content);
+
+  const bad = [];
+  const out = checkReview({
+    visual: { ...visual, variants: [{ id: 'hospitality', account: 'demo', password: 'x' }], attach: 'always' },
+    flows: { x: { files: ['src/**'], content: { roots: ['/abs'], trace: { hops: 2 } } } },
+  }, 'config.json', bad);
+  assert.equal(out.visual, null);
+  assert.deepEqual(Object.keys(out.flows), []);
+  assert.match(bad.join('\n'), /never its secret/u);
+  assert.match(bad.join('\n'), /review\.visual\.attach/u);
+  assert.match(bad.join('\n'), /content\.roots/u);
+  assert.match(bad.join('\n'), /hops" 2 needs params/u);
+
+  const wide = [];
+  checkReview({ visual: { ...visual, viewports: [320, 360, 390, 414, 768, 1024, 1280, 1440], locales: ['en', 'de', 'el-GR', 'fr'], variants: [{ id: 'a' }, { id: 'b' }] } }, 'config.json', wide);
+  assert.match(wide.join('\n'), new RegExp(`64 images per route .* past ${VISUAL_PER_ROUTE}`, 'u'));
+  const noLogin = [];
+  checkReview({ visual: { ...visual, login: undefined } }, 'config.json', noLogin);
+  assert.match(noLogin.join('\n'), /review\.visual\.login/u);
+});
+
+test('checkLocalVisual: the base URL is a machine setting; anything else there is an error', () => {
+  assert.deepEqual(checkLocalVisual({ engine: 'self' }, 'local', []), { baseUrl: null });
+  assert.deepEqual(checkLocalVisual({ visual: { baseUrl: 'http://localhost:3000/' } }, 'local', []), { baseUrl: 'http://localhost:3000' });
+  const errors = [];
+  assert.deepEqual(checkLocalVisual({ visual: { baseUrl: 'ftp://x', token: 'y' } }, 'local', errors), { baseUrl: null });
+  assert.equal(errors.length, 1);
+  assert.equal(checkLocalReview({ engine: 'self', visual: { baseUrl: 'http://localhost:3000' } }, 'local', []), 'self');
 });

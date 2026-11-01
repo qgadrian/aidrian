@@ -20,19 +20,24 @@ import { existsSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { committedConfig } from '../config.mjs';
 import { runGh } from '../gh.mjs';
+import { roundCapProblem } from '../pr-await-review.mjs';
 import { runGit } from '../git.mjs';
 import { markerFor } from '../review-gate.mjs';
 import { isolate } from './env.mjs';
 import { changedFiles, diffLines, fileAt, isAncestor, isClean, mergeBase, resolve } from './diff.mjs';
 import { checkReview } from './config.mjs';
+import { parseFindings } from './findings.mjs';
 import { citationProblem, flowState, invariantsOf, parseVerdicts } from './flows.mjs';
 import { computeVerdict } from '../pr-checks.mjs';
 import { isDirectory } from '../fs.mjs';
 import { dedupe, packageRoots } from './split.mjs';
-import { buildPlan, classify, flowsInForce, HARNESS_FLOW, mergePlans, pathPattern, validatePlan } from './plan.mjs';
+import { contentFlows } from './content.mjs';
+import { buildPlan, classify, detectFlows, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, pathPattern, validatePlan } from './plan.mjs';
 import { BUILT_IN, resolveEngine, reviewerMap, runExec, satisfies } from './reviewers.mjs';
 import { emptyState, isSummary, newer, readLocalState, stateFromComment, summaryBody, writeLocalState } from './state.mjs';
+import { attachMode, captureKeys, captureVisual, capturesBody, ghImage, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, visualInput, visualMatrix, visualRoutes } from './visual.mjs';
 
 export const EXIT = Object.freeze({
   dispatch: 0, running: 0, fix_required: 0, received: 0, none_needed: 0, human_required: 9,
@@ -54,6 +59,8 @@ export const defaultGh = {
   comments: (repo, n) => JSON.parse(runGh(['api', `repos/${repo}/issues/${n}/comments`, '--paginate', '--slurp']) || '[]').flat(),
   post: (repo, n, body) => JSON.parse(runGh(['api', `repos/${repo}/issues/${n}/comments`, '--method', 'POST', '-f', `body=${body}`])),
   edit: (repo, id, body) => JSON.parse(runGh(['api', `repos/${repo}/issues/comments/${id}`, '--method', 'PATCH', '-f', `body=${body}`])),
+  visibility: (repo) => JSON.parse(runGh(['repo', 'view', repo, '--json', 'visibility'])).visibility,
+  image: ghImage,
   // The check runs of one commit, as `gh pr checks` rows: the evidence must be for the head under review.
   checks: (repo, sha) => JSON.parse(runGh(['api', `repos/${repo}/commits/${sha}/check-runs`, '--paginate', '--slurp']) || '[]')
     .flatMap((page) => page.check_runs ?? [])
@@ -65,11 +72,11 @@ export const defaultGh = {
 export function reviewInForce(baseReview, headReview) {
   if (!baseReview) {
     const pending = Object.fromEntries(Object.entries(headReview.reviewers).map(([name, reviewer]) => [name, { ...reviewer, pending: true }]));
-    return { review: { ...headReview, planCommand: null, reviewers: pending }, changed: ['planCommand', 'reviewers'].filter((key) => JSON.stringify(headReview[key]) !== JSON.stringify(key === 'planCommand' ? null : {})) };
+    return { review: { ...headReview, planCommand: null, visual: null, reviewers: pending }, changed: ['planCommand', 'reviewers', 'visual'].filter((key) => JSON.stringify(headReview[key] ?? null) !== JSON.stringify(key === 'reviewers' ? {} : null)) };
   }
   const changed = [];
-  for (const key of ['rules', 'ignore', 'nonBehaviour', 'flows', 'planCommand', 'reviewers', 'split']) {
-    if (JSON.stringify(baseReview[key]) !== JSON.stringify(headReview[key])) changed.push(key);
+  for (const key of ['rules', 'ignore', 'nonBehaviour', 'flows', 'planCommand', 'reviewers', 'split', 'visual']) {
+    if (JSON.stringify(baseReview[key] ?? null) !== JSON.stringify(headReview[key] ?? null)) changed.push(key);
   }
   return {
     review: {
@@ -82,6 +89,9 @@ export function reviewInForce(baseReview, headReview) {
       // The plan command and the reviewers a project defines are code: only the base branch's run. A head may add a
       // reviewer under a new name, never redefine one, and a plan command it adds runs once it is merged.
       planCommand: baseReview.planCommand,
+      // The visual capture's policy (what it attaches, where it signs in) and its hooks are the base branch's too, so
+      // a pull request cannot switch itself to attaching, or point the capture somewhere else.
+      visual: baseReview.visual ?? null,
       reviewers: {
         ...Object.fromEntries(Object.entries(headReview.reviewers).filter(([name]) => !Object.hasOwn(baseReview.reviewers, name)).map(([name, reviewer]) => [name, { ...reviewer, pending: true }])),
         ...baseReview.reviewers,
@@ -132,12 +142,22 @@ async function inBaseWorktree(root, baseTip, use) {
   }
 }
 
+// The part of a failed command's stderr worth showing: its last few non-empty lines, cut to a length, with anything
+// shaped like a token masked. A runtime's own last line (Node prints its version) would otherwise hide the cause.
+export function stderrTail(stderr, { lines = 6, chars = 800 } = {}) {
+  const kept = String(stderr ?? '').split('\n').map((line) => line.trimEnd()).filter((line) => line.trim() !== '').slice(-lines).join(' | ');
+  const masked = kept
+    .replace(/\b(?:gh[pousr]_|github_pat_|sk-|xox[abpr]-|AKIA)[A-Za-z0-9_-]{8,}/gu, '[redacted]')
+    .replace(/\b(?:eyJ[A-Za-z0-9_-]{10,}\.){2}[A-Za-z0-9_-]{10,}/gu, '[redacted]');
+  return masked.length > chars ? `...${masked.slice(-chars)}` : masked;
+}
+
 // A planCommand's plan: it reads { base, head, changes } on stdin and prints a plan. It runs in a worktree of the
 // base, with an env isolated like a reviewer's.
 function runPlanCommand(command, input, { root, env, baseTip }) {
   return inBaseWorktree(root, baseTip, (tree) => {
     const result = spawnSync('sh', ['-c', command], { cwd: tree, env, input: JSON.stringify(input), encoding: 'utf8', timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
-    if (result.status !== 0) throw new Error(`review.planCommand failed: ${(result.stderr || '').trim().split('\n').at(-1) || `exit ${result.status}`}`);
+    if (result.status !== 0) throw new Error(`review.planCommand failed: ${stderrTail(result.stderr) || (result.signal ? `killed by ${result.signal}` : `exit ${result.status}`)}`);
     let plan;
     try {
       plan = JSON.parse(result.stdout);
@@ -150,6 +170,14 @@ function runPlanCommand(command, input, { root, env, baseTip }) {
   });
 }
 
+// A review.visual hook (login, preview) run in the base checkout `tree`: `input` on stdin, stdout returned. A failure
+// throws with the tail of its stderr.
+function runHook(tree, command, input, env) {
+  const result = spawnSync('sh', ['-c', command], { cwd: tree, env, input: JSON.stringify(input), encoding: 'utf8', timeout: 120_000, maxBuffer: 16 * 1024 * 1024 });
+  if (result.status !== 0) throw new Error(stderrTail(result.stderr) || (result.signal ? `killed by ${result.signal}` : `exit ${result.status}`));
+  return result.stdout;
+}
+
 // The files tracked at `commit`.
 function trackedAt(root, commit) {
   const result = runGit(['ls-tree', '-r', '--name-only', '-z', commit], root, { timeout: 30_000, maxBuffer: 256 * 1024 * 1024 });
@@ -160,7 +188,7 @@ function trackedAt(root, commit) {
 const touches = (changes, files) => (files === null ? changes.length > 0 : changes.some((change) => files.includes(change.file)));
 
 // The whole step. `deps` replaces gh, the engine check, the reviewers, and the bot wait in tests.
-export async function reviewStep(opts, { project, config, env = process.env, gh = defaultGh, exec = runExec, awaitBot = null, codex } = {}) {
+export async function reviewStep(opts, { project, config, env = process.env, gh = defaultGh, exec = runExec, awaitBot = null, codex, captureSpawn } = {}) {
   const root = project.root;
   const cleanEnv = isolate({ ...env });
   const info = gh.pr(opts.pr);
@@ -171,6 +199,10 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   const baseTip = resolve(root, `origin/${info.baseRefName}`) ?? resolve(root, info.baseRefName);
   if (!baseTip) throw new Error(`the base branch ${info.baseRefName} is not in this checkout: git fetch first`);
   const base = mergeBase(root, baseTip, head);
+  // The round cap is the base branch's: an edit to the working copy's config, committed or not, cannot raise it.
+  const cap = committedConfig(project, baseTip).github.maxReviewRounds;
+  const capped = opts.maxRounds === undefined ? null : roundCapProblem(opts.maxRounds, cap, env);
+  if (capped) throw new Error(capped);
 
   // The config in force, and what in the change touches how the project is reviewed.
   // The head's review config is read from the head commit, not this checkout, which may be on another branch; only
@@ -183,8 +215,13 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   const changedPaths = new Set(changes.map((change) => change.file));
   const harnessChanged = [];
   if (changed.length && changedPaths.has(project.paths.config)) harnessChanged.push(project.paths.config);
-  for (const file of commandFiles(root, review.planCommand, baseTip)) if (changedPaths.has(file)) harnessChanged.push(file);
-  for (const flow of Object.values(baseReview?.flows ?? {})) if (typeof flow.invariants === 'string' && changedPaths.has(flow.invariants)) harnessChanged.push(flow.invariants);
+  for (const command of [review.planCommand, baseReview?.visual?.login, baseReview?.visual?.preview]) {
+    for (const file of commandFiles(root, command, baseTip)) if (changedPaths.has(file)) harnessChanged.push(file);
+  }
+  // A flow's invariants doc, and every doc an invariant cites, is part of how the project is reviewed: a change to
+  // one is the Human's to sign off.
+  const citedDocs = (flows) => Object.values(flows ?? {}).flatMap((flow) => (typeof flow.invariants === 'string' ? [flow.invariants] : Array.isArray(flow.invariants) ? flow.invariants.map((each) => each.cite?.split('#')[0]).filter(Boolean) : []));
+  for (const file of new Set(citedDocs(baseReview?.flows))) if (changedPaths.has(file)) harnessChanged.push(file);
   for (const reviewer of Object.values(baseReview?.reviewers ?? {})) {
     for (const file of commandFiles(root, (reviewer.command ?? []).join(' '), baseTip)) if (changedPaths.has(file)) harnessChanged.push(file);
   }
@@ -197,11 +234,15 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
 
   const engine = resolveEngine(effective, codex ? { codex } : {});
   if (engine.problem) return { status: 'unsatisfied', pr: n, repo, head, reason: engine.problem };
+  // Flows whose files the globs miss: a changed file whose whole head content, or whose callers, hand it the flow's
+  // privileged value (review.flows.<id>.content). A git failure stops the review rather than plan less.
+  const traced = contentFlows({ root, head, changes, addedLines, flows: review.flows });
   const planFor = (minDepth) => buildPlan({
-    head, base, changes, addedLines, removedFiles, config: effective, harnessChanged: [...new Set(harnessChanged)],
+    head, base, changes, addedLines, removedFiles, config: effective, harnessChanged: [...new Set(harnessChanged)], extraFlows: traced,
     roots: packageRoots(trackedAt(root, head)), halved: state.halved ?? {},
     engine: { name: engine.reviewer.name, kind: engine.reviewer.kind, stage: engine.reviewer.stage, agent: engine.reviewer.agent, builtIn: Boolean(BUILT_IN[engine.reviewer.name]) },
     minDepth,
+    merge: false,
   });
   let plan = planFor('none');
   if (review.planCommand) {
@@ -210,6 +251,8 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     if (project_.depth === 'split' && plan.depth !== 'split') plan = planFor('split');
     plan = mergePlans(plan, project_);
   }
+  // Agent passes merge per reviewer only now, after the plan command's passes joined, so one agent reads the diff once.
+  plan = mergeStages(plan);
   // --with-bot (the skill's --await-codex): the review bot runs as the last stage too, after this machine's engine.
   if (opts.withBot && plan.depth !== 'none' && config.github.reviewer !== null && !plan.stages.some((stage) => stage.passes.some((pass) => pass.reviewer === 'pr-bot'))) {
     plan.stages = [...plan.stages.filter((stage) => stage.name !== 'remote'), { name: 'remote', passes: [...(plan.stages.find((stage) => stage.name === 'remote')?.passes ?? []), { id: 'engine:pr-bot', reviewer: 'pr-bot', kind: 'remote', files: null, context: 'full' }] }];
@@ -225,6 +268,53 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     if (flow.id === HARNESS_FLOW) Object.assign(flow, { invariants: [HARNESS_INVARIANT], unspecified: false, signoff: 'human' });
     else Object.assign(flow, invariantsOf(review.flows[flow.id] ?? {}, readAt(baseReview?.flows?.[flow.id] ? baseTip : head)));
   }
+
+  // A Human sign-off on an earlier head still holds when that head is an ancestor of this one and the change since
+  // selects nothing of the flow, run through the same selection as the plan: its globs, added-line patterns, content
+  // tracing, plan command, tests, and invariants doc. Accepting a deleted test stays exact to the head.
+  const harnessFiles = new Set([project.paths.config, ...[review.planCommand, review.visual?.login, review.visual?.preview].flatMap((command) => commandFiles(root, command, baseTip))]);
+  for (const file of citedDocs(review.flows)) harnessFiles.add(file);
+  const reselected = new Map();
+  const selectedSince = async (from) => {
+    if (reselected.has(from)) return reselected.get(from);
+    const since = changedFiles(root, from, head);
+    const lines = diffLines(root, from, head);
+    const ids = new Set(detectFlows(review.flows, { sorted: classify(since, review), addedLines: lines.addedLines, removedFiles: lines.removedFiles }).map((flow) => flow.id));
+    for (const flow of contentFlows({ root, head, changes: since, addedLines: lines.addedLines, flows: review.flows })) ids.add(flow.id);
+    for (const [id, definition] of Object.entries(review.flows)) {
+      const tests = (definition.tests ?? []).map(pathPattern);
+      if (since.some((change) => tests.some((pattern) => pattern.test(change.file)) || citedDocs({ [id]: definition }).includes(change.file))) ids.add(id);
+    }
+    if (since.some((change) => harnessFiles.has(change.file))) ids.add(HARNESS_FLOW);
+    if (review.planCommand && since.length) {
+      const extra = await runPlanCommand(review.planCommand, { base: from, head, changes: since }, { root, env: cleanEnv, baseTip });
+      for (const flow of extra.flows ?? []) ids.add(flow.id);
+    }
+    reselected.set(from, ids);
+    return ids;
+  };
+  const keptSignoffs = new Set();
+  for (const flow of plan.flows) {
+    const signed = state.signoffs[flow.id]?.head;
+    if (flow.signoff !== 'human' || !signed) continue;
+    if (signed === head || (isAncestor(root, signed, head) && !(await selectedSince(signed)).has(flow.id))) keptSignoffs.add(flow.id);
+  }
+
+  // The visual capture: the routes the change touches, and their matrix. A matrix past the limit stops the review here,
+  // naming the routes, rather than capture part of it. The capture itself runs once per head, when a visual reviewer
+  // is dispatched.
+  const visual = review.visual;
+  const visualRoutesHere = visualRoutes(visual, changes);
+  let visualEntries = [];
+  if (visualRoutesHere.length) {
+    try {
+      visualEntries = visualMatrix(visual, visualRoutesHere);
+    } catch (error) {
+      return { status: 'too_large', pr: n, repo, head, reason: error.message };
+    }
+  }
+  let manifest = visual ? readManifest(project, n, head) : null;
+  const isVisual = (pass) => Boolean(visual) && visual.reviewers.includes(map[pass.reviewer]?.agent ?? pass.reviewer);
 
   const map = reviewerMap(effective);
   const passes = plan.stages.flatMap((stage) => stage.passes);
@@ -249,7 +339,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   if (answerless) return { status: 'unsatisfied', pr: n, repo, head, reason: `flow ${answerless.id} needs a reviewer that answers its invariants, and the review bot does not: run codex-local, or require an agent for the flow`, plan };
   if (!passes.length && !removedTests.length) return { status: 'none_needed', pr: n, repo, head, base, depth: plan.depth, engine: plan.engine, plan: { depth: plan.depth, reasons: plan.reasons, flows: [], stages: [] } };
 
-  const maxRounds = opts.maxRounds ?? config.github.maxReviewRounds;
+  const maxRounds = opts.maxRounds ?? cap;
 
   // A pass's result counts for this head when it is for this head, or for an earlier one the change since does not
   // touch and that left nothing open.
@@ -272,7 +362,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     const result = resultFor(pass);
     return (result?.verdicts ?? []).filter((verdict) => verdict.flow === flowId).map((verdict) => ({ ...verdict, at: result.head }));
   });
-  const flowStatus = (flow) => flowState(flow.invariants, verdictsFor(flow.id), (evidence) => citationProblem(evidence, { root, head }));
+  const flowStatus = (flow) => flowState(flow.invariants, verdictsFor(flow.id), (evidence) => citationProblem(evidence, { root, head, captures: captureKeys(manifest) }));
 
 
   // The stage the last round runs first: the last one that needs no earlier result, so never the review bot, which
@@ -387,6 +477,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
       const agents = pending.filter((pass) => map[pass.reviewer]?.kind === 'agent' || pass.kind === 'agent');
       if (agents.length) {
         recorded = true;
+        if (visualEntries.length && agents.some(isVisual) && manifest?.status !== 'captured') await captureAndAttach();
         // What each dispatched pass covers, so its attest records the same files.
         state.dispatched = { ...(state.dispatched ?? {}), ...Object.fromEntries(agents.map((pass) => [pass.id, { head, files: Array.isArray(pass.files) ? [...pass.files].sort() : null }])) };
         return finish('dispatch', { stage: stage.name, dispatch: agents.map((pass) => dispatchFor(pass, stage)) });
@@ -417,9 +508,45 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     if (verdict.verdict === 'pending') return finish('checks_pending', { checks: verdict.pending });
     if (verdict.verdict === 'failing') return finish(lastRound ? 'round_limit' : 'fix_required', { stage: 'evidence', checks_failing: [...verdict.failing, ...(verdict.unexpected_skips ?? [])] });
   }
-  const human = plan.flows.filter((flow) => flow.signoff === 'human' && state.signoffs[flow.id]?.head !== head);
+  const human = plan.flows.filter((flow) => flow.signoff === 'human' && !keptSignoffs.has(flow.id));
   if (human.length) return finish('human_required', { flows: human.map((flow) => flow.id), command: human.map((flow) => `aidrian pr signoff ${n} --flow ${flow.id} --head ${head}`) });
   return finish('received', {});
+
+  // Captures this head once, then attaches the images as the attach mode allows and writes the captures comment. The
+  // repository's visibility is read now, at upload time: a repository made public since the config was written stops
+  // uploading by itself. The mode and the visibility go in the review record, which the summary shows.
+  async function captureAndAttach() {
+    manifest = await captureVisual({
+      project, pr: n, head, visual, entries: visualEntries, baseUrl: config.reviewVisual?.baseUrl ?? null, env: cleanEnv,
+      // A base checkout only when a hook runs: a public capture on a set base URL needs none.
+      withBase: (use) => ((visual.preview && !config.reviewVisual?.baseUrl) || visual.variants.some((variant) => variant.account)
+        ? inBaseWorktree(root, baseTip, (tree) => use(async (command, input) => runHook(tree, command, input, cleanEnv)))
+        : use(async () => { throw new Error('no hook runs here'); })),
+      ...(captureSpawn ? { spawn: captureSpawn } : {}),
+    });
+    let visibility = null;
+    try {
+      visibility = gh.visibility(repo);
+    } catch {}
+    const mode = attachMode(visual, visibility);
+    let uploadError = null;
+    if (mode === 'auto' && manifest.status === 'captured') {
+      const up = uploadCaptures({ project, pr: n, manifest, uploaded: state.captures ?? {}, repo, image: gh.image ?? ghImage });
+      state.captures = keepUploaded(state.captures ?? {}, up.uploaded);
+      uploadError = up.error;
+    }
+    if (mode !== 'off') {
+      const body = capturesBody(manifest, state.captures ?? {}, { mode, visibility, error: uploadError });
+      try {
+        const known = comments.find((comment) => typeof comment.body === 'string' && comment.body.startsWith(VISUAL_MARKER));
+        if (known) gh.edit(repo, known.id, body);
+        else gh.post(repo, n, body);
+      } catch (error) {
+        uploadError = uploadError ?? `the captures comment was not written: ${error.message}`;
+      }
+    }
+    state.visual = { head, status: manifest.status, mode, visibility, captured: manifest.entries.filter((entry) => entry.sha256).length, of: manifest.entries.length, ...(manifest.reason ? { reason: manifest.reason } : {}), ...(uploadError ? { error: uploadError } : {}) };
+  }
 
   // The input every reviewer of a pass reads.
   function passInput(pass, stage) {
@@ -445,21 +572,31 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
         interfaceFiles: plan.interfaceFiles ?? [],
       } : {}),
     } : {};
+    const visualChecklist = visual?.checklist ? { path: visual.checklist, text: fileAt(root, baseTip, visual.checklist.split('#')[0]) } : null;
     return {
       ...split,
       pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files, flows, priorFindings: prior?.list ?? [],
       ...(checklist ? { checklist: { path: checklist, text: fileAt(root, baseTip, checklist) } } : {}),
+      ...(manifest && isVisual(pass) ? { visual: visualInput(manifest, state.captures ?? {}, visualChecklist) } : {}),
     };
   }
 
   function dispatchFor(pass, stage) {
     const input = passInput(pass, stage);
+    const briefs = [
+      input.checklist ? `Review the diff against the checklist in ${input.checklist.path} as well as for bugs.` : null,
+      input.flows.some((flow) => (flow.invariants ?? []).some((invariant) => invariant.source)) ? 'Judge each invariant against its `source`, the section of the project doc it cites; `text` is only the question.' : null,
+      input.visual ? 'Review the captures in `visual` (open each `file`), with their measured facts, as well as the diff.' : null,
+    ].filter(Boolean);
     return {
       pass: pass.id,
       agent: map[pass.reviewer]?.agent ?? pass.reviewer,
-      ...(input.checklist ? { brief: `Review the diff against the checklist in ${input.checklist.path} as well as for bugs.` } : {}),
+      ...(briefs.length ? { brief: briefs.join(' ') } : {}),
       ...input,
-      record: `aidrian pr attest ${n} --pass ${pass.id} --head ${head} --reviewer ${pass.reviewer} --findings <n> --fixed <n> [--accepted <n>]${input.flows.length ? ' --verdicts <file.json>' : ''}`,
+      // A visual reviewer reports its findings one by one, so the disposition table decides what blocks.
+      record: isVisual(pass)
+        ? `aidrian pr attest ${n} --pass ${pass.id} --head ${head} --reviewer ${pass.reviewer} --findings-file <findings.json>${input.flows.length ? ' --verdicts <file.json>' : ''}`
+        : `aidrian pr attest ${n} --pass ${pass.id} --head ${head} --reviewer ${pass.reviewer} --findings <n> --fixed <n> [--accepted <n>]${input.flows.length ? ' --verdicts <file.json>' : ''}`,
     };
   }
 
@@ -467,7 +604,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     const result = { status, pr: n, repo, head, base, depth: plan.depth, round: state.rounds.length, max_rounds: maxRounds, engine: plan.engine, ...extra };
     {
       writeLocalState(project, state);
-      const body = summaryBody(state, { ...plan, flows: plan.flows.map((flow) => ({ ...flow, signed: flowStatus(flow).signed })) }, status);
+      const body = summaryBody(state, { ...plan, flows: plan.flows.map((flow) => ({ ...flow, signed: flowStatus(flow).signed, humanSigned: keptSignoffs.has(flow.id) })) }, status);
       try {
         if (summary) gh.edit(repo, summary.id, body);
         else gh.post(repo, n, body);
@@ -496,7 +633,11 @@ export function remoteState(repo, pr, gh = defaultGh) {
 }
 
 // `aidrian pr attest <PR> --pass <id> ...`: one pass's result, for this head, into the review record.
-export function recordPass(project, { pr, repo, pass, head, reviewer, findings, fixed, accepted = 0, verdictsText = null, remote = null }) {
+// With `findingsText` (--findings-file), the counts come from the findings one by one, and the disposition table
+// decides which stay open (lib/review/findings.mjs).
+export function recordPass(project, { pr, repo, pass, head, reviewer, findings, fixed, accepted = 0, verdictsText = null, findingsText = null, remote = null }) {
+  const itemized = findingsText === null ? null : parseFindings(findingsText);
+  if (itemized) ({ findings, fixed, accepted } = itemized);
   if (fixed + accepted > findings) throw new Error('--fixed and --accepted together cannot exceed --findings');
   const verdicts = verdictsText === null ? [] : parseVerdicts(verdictsText);
   // An agent slice writes its report to the cross pass in the same file: { verdicts, contracts, cross_notes }.
@@ -509,7 +650,7 @@ export function recordPass(project, { pr, repo, pass, head, reviewer, findings, 
   const state = current(project, pr, repo, remote);
   const before = state.passes[pass];
   const files = state.dispatched?.[pass]?.files ?? null;
-  state.passes[pass] = { head, reviewer, files, findings, open: findings - fixed - accepted, verdicts, ...report, list: before?.head === head ? before.list : null };
+  state.passes[pass] = { head, reviewer, files, findings, open: findings - fixed - accepted, verdicts, ...report, list: itemized?.list ?? (before?.head === head ? before.list : null) };
   writeLocalState(project, state);
   return state.passes[pass];
 }
@@ -544,9 +685,6 @@ export async function runReview(args, config, project, deps = {}) {
     }
     if (opts.maxRounds !== undefined && !(Number.isInteger(opts.maxRounds) && opts.maxRounds >= 1)) throw new Error('--max-rounds must be an integer >= 1');
     if (opts.timeoutSec !== undefined && !(Number.isFinite(opts.timeoutSec) && opts.timeoutSec >= 0)) throw new Error('--timeout-sec must be >= 0');
-    const { roundCapProblem } = await import('../pr-await-review.mjs');
-    const capped = opts.maxRounds === undefined ? null : roundCapProblem(opts.maxRounds, config.github.maxReviewRounds, deps.env ?? process.env);
-    if (capped) throw new Error(capped);
     const result = await reviewStep(opts, { project, config, ...deps });
     if (result.status === 'round_limit') {
       const { recordSignal, roundLimitSignal } = await import('../lesson-signals.mjs');

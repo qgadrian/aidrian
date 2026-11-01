@@ -144,7 +144,9 @@ export function requirement(word) {
 
 // The built-in plan. `engine` is the machine's resolved reviewer: { name, kind, stage, independent }.
 // A local stage holds every required agent and flow pass; the engine's pass sits in its own stage after it.
-export function buildPlan({ head, base, changes, addedLines, removedFiles, config, engine, presentationOnly = [], extraFlows = [], harnessChanged = [], roots = new Set(), halved = {}, minDepth = 'none' }) {
+// `merge: false` leaves each stage's agent passes unmerged, for a caller that merges a plan command's plan in first and
+// then calls mergeStages, so one agent still reads the diff once.
+export function buildPlan({ head, base, changes, addedLines, removedFiles, config, engine, presentationOnly = [], extraFlows = [], harnessChanged = [], roots = new Set(), halved = {}, minDepth = 'none', merge = true }) {
   const review = config.review;
   const sorted = classify(changes, review);
   const files = [...sorted.behaviour, ...sorted.nonBehaviour];
@@ -154,8 +156,10 @@ export function buildPlan({ head, base, changes, addedLines, removedFiles, confi
   const flows = detectFlows(review.flows, { sorted, addedLines, removedFiles, presentationOnly });
   for (const extra of extraFlows) {
     const known = flows.find((flow) => flow.id === extra.id);
-    if (known) known.files = [...new Set([...known.files, ...extra.files])].sort();
-    else flows.push(extra);
+    if (known) {
+      known.files = [...new Set([...known.files, ...extra.files])].sort();
+      known.reasons = [...known.reasons, ...(extra.reasons ?? [])].slice(0, 25);
+    } else flows.push({ reasons: [], ...extra, files: [...extra.files].sort() });
   }
   if (harnessChanged.length) flows.push({ id: HARNESS_FLOW, files: harnessChanged, reasons: ['the review config, its plan command, or a flow invariants doc changed'] });
   if (flows.length && depth === 'none') depth = 'single';
@@ -197,7 +201,7 @@ export function buildPlan({ head, base, changes, addedLines, removedFiles, confi
       reasons.push(`split into ${slices.length} slices and a cross-cutting pass`);
     }
   }
-  const stages = STAGES.filter((stage) => passes[stage].length).map((stage) => ({ name: stage, passes: mergeAgentPasses(passes[stage]) }));
+  const stages = STAGES.filter((stage) => passes[stage].length).map((stage) => ({ name: stage, passes: merge ? mergeAgentPasses(passes[stage]) : passes[stage] }));
   return {
     head,
     base,
@@ -209,8 +213,13 @@ export function buildPlan({ head, base, changes, addedLines, removedFiles, confi
   };
 }
 
+// A plan's stages with each stage's agent passes merged (mergeAgentPasses): run after mergePlans, so a plan command's
+// pass for an agent folds into the built-in pass for the same agent.
+export const mergeStages = (plan) => ({ ...plan, stages: plan.stages.map((stage) => ({ ...stage, passes: mergeAgentPasses(stage.passes) })) });
+
 // One pass per agent and flow group: an agent reviews at most 3 flows in one dispatch, and its plain pass folds into
-// the first group, so the same agent does not read the same diff twice.
+// the first group, so the same agent does not read the same diff twice. A plan command's pass names its flows as
+// `flow` or `flows`; each flow counts on its own.
 function mergeAgentPasses(passes) {
   const byAgent = new Map();
   const others = [];
@@ -220,7 +229,9 @@ function mergeAgentPasses(passes) {
       continue;
     }
     const list = byAgent.get(pass.reviewer) ?? [];
-    list.push(pass);
+    if (pass.flow) list.push(pass);
+    else if (Array.isArray(pass.flows) && pass.flows.length) list.push(...pass.flows.map((flow) => ({ ...pass, flow })));
+    else list.push({ ...pass, flow: undefined });
     byAgent.set(pass.reviewer, list);
   }
   const merged = [];
@@ -231,13 +242,22 @@ function mergeAgentPasses(passes) {
       merged.push({ id: `agent:${agent}`, reviewer: agent, kind: 'agent', files: null, context: 'full', flows: [] });
       continue;
     }
-    for (let i = 0; i < flows.length; i += 3) {
-      const group = flows.slice(i, i + 3);
+    // The same flow from the built-in plan and a plan command is one flow: its files are the union.
+    const byFlow = new Map();
+    for (const pass of flows) {
+      const known = byFlow.get(pass.flow);
+      const files = !known || known.files === null || !Array.isArray(pass.files) ? (known ? null : pass.files ?? null) : [...known.files, ...pass.files];
+      byFlow.set(pass.flow, { flow: pass.flow, files });
+    }
+    const unique = [...byFlow.values()];
+    for (let i = 0; i < unique.length; i += 3) {
+      const group = unique.slice(i, i + 3);
+      const whole = (plain && i === 0) || group.some((pass) => !Array.isArray(pass.files));
       merged.push({
         id: `agent:${agent}:${group.map((pass) => pass.flow).join('+')}`,
         reviewer: agent,
         kind: 'agent',
-        files: plain && i === 0 ? null : [...new Set(group.flatMap((pass) => pass.files))].sort(),
+        files: whole ? null : [...new Set(group.flatMap((pass) => pass.files))].sort(),
         context: 'full',
         flows: group.map((pass) => pass.flow),
       });
@@ -290,8 +310,19 @@ export function mergePlans(builtIn, project) {
     if (target) target.passes.push(...missing);
     else stages.push({ name: stage.name, passes: missing });
   }
-  const flows = [...builtIn.flows];
-  for (const flow of project.flows ?? []) if (!flows.some((each) => each.id === flow.id)) flows.push({ signoff: 'reviewer', reasons: [], files: [], ...flow });
+  // A flow both plans name is one flow: the plan command's files and reasons join the built-in ones, and the built-in
+  // definition (its sign-off) stays.
+  const flows = builtIn.flows.map((flow) => ({ ...flow }));
+  for (const flow of project.flows ?? []) {
+    const known = flows.find((each) => each.id === flow.id);
+    const files = Array.isArray(flow.files) ? flow.files.filter((each) => typeof each === 'string') : [];
+    const reasons = Array.isArray(flow.reasons) ? flow.reasons.filter((each) => typeof each === 'string') : [];
+    if (!known) flows.push({ signoff: 'reviewer', ...flow, reasons, files });
+    else {
+      known.files = [...new Set([...(known.files ?? []), ...files])].sort();
+      known.reasons = [...(known.reasons ?? []), ...reasons.map((reason) => `plan command: ${reason}`)].slice(0, 25);
+    }
+  }
   const notes = shadowed.map((id) => `plan command: pass ${id} is built in and was kept as built`);
   const interfaceFiles = [...new Set([...(builtIn.interfaceFiles ?? []), ...(Array.isArray(project.interfaceFiles) ? project.interfaceFiles.filter((each) => typeof each === 'string') : [])])];
   return { ...builtIn, depth, interfaceFiles, stages: stages.filter((stage) => stage.passes.length), flows, reasons: [...builtIn.reasons, ...(project.reasons ?? []).map((reason) => `plan command: ${reason}`), ...notes] };

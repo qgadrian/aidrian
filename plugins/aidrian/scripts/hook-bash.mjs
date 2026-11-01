@@ -11,6 +11,7 @@ import * as gitHookBypass from '../lib/rules/git-hook-bypass.mjs';
 import * as prBody from '../lib/rules/github/pr-body.mjs';
 import * as reviewRequest from '../lib/rules/github/review-request.mjs';
 import * as reviewRounds from '../lib/rules/github/review-rounds.mjs';
+import * as reviewSignoff from '../lib/rules/review-signoff.mjs';
 import * as grepExitChain from '../lib/rules/grep-exit-chain.mjs';
 import * as mainCheckout from '../lib/rules/main-checkout.mjs';
 import * as processKill from '../lib/rules/process-kill.mjs';
@@ -25,6 +26,7 @@ const RULES = [
   ['pr-body', prBody],
   ['review-gate', reviewRequest],
   ['review-rounds', reviewRounds],
+  ['review-signoff', reviewSignoff],
   ['main-checkout', mainCheckout],
 ];
 

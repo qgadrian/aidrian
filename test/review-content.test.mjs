@@ -434,3 +434,11 @@ test('a git run that fails throws and names the command; it never reads as nothi
     assert.throws(() => run({ 'cat-file': failure }), /git cat-file --batch at HEAD failed/u, JSON.stringify(failure));
   }
 });
+
+test('a root of "." or "./src" reads the same files as "src": git names paths without a leading ./', (t) => {
+  const { root, head } = fixture(t, { [CTX_FILE]: ctxConsumer(''), 'src/other.ts': 'export const x = 1;\n' });
+  for (const roots of [['.'], ['./src'], ['src/'], ['./']]) {
+    const scoped = { [FLOW]: { ...flow, content: { ...flow.content, roots } } };
+    assert.deepEqual(contentFlows({ root, head, changes: [change(CTX_FILE)], flows: scoped }).map((each) => each.files), [[CTX_FILE]], JSON.stringify(roots));
+  }
+});

@@ -223,8 +223,10 @@ export const mergeStages = (plan) => ({ ...plan, stages: plan.stages.map((stage)
 function mergeAgentPasses(passes) {
   const byAgent = new Map();
   const others = [];
+  // A pass that waits for another, or that another waits for, keeps its id and its order: merging would rename it.
+  const awaited = new Set(passes.flatMap((pass) => pass.after ?? []));
   for (const pass of passes) {
-    if (pass.kind !== 'agent' || pass.engine || pass.role) {
+    if (pass.kind !== 'agent' || pass.engine || pass.role || pass.after?.length || awaited.has(pass.id)) {
       others.push(pass);
       continue;
     }

@@ -95,7 +95,7 @@ export function flowState(invariants, verdicts, check) {
   for (const invariant of invariants) {
     const mine = verdicts.filter((verdict) => verdict.invariant === invariant.id);
     if (mine.some((verdict) => verdict.verdict === 'violated')) open.push(invariant.id);
-    else if (!mine.some((verdict) => ['holds', 'not_affected'].includes(verdict.verdict) && check(verdict.evidence) === null)) unverified.push(invariant.id);
+    else if (!mine.some((verdict) => ['holds', 'not_affected'].includes(verdict.verdict) && check(verdict.evidence, verdict) === null)) unverified.push(invariant.id);
   }
   return { signed: open.length === 0 && unverified.length === 0, open, unverified };
 }

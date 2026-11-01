@@ -155,7 +155,11 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
       if (!bytes.subarray(0, PNG.length).equals(PNG)) return { ...entry, error: 'not a PNG' };
       return { ...entry, file, sha256: createHash('sha256').update(bytes).digest('hex'), facts: result.facts ?? {} };
     });
-    return write({ ...base, status: 'captured', baseUrl: prepared.fallback, entries: captured });
+    // Captured only when every image is: a matrix with a failed entry (a server that was down) runs again next time,
+    // and its good images still reach the reviewers and the upload.
+    const good = captured.filter((entry) => entry.sha256).length;
+    const status = good === captured.length ? 'captured' : good ? 'partial' : 'failed';
+    return write({ ...base, status, ...(status === 'captured' ? {} : { reason: `${captured.length - good} of ${captured.length} captures failed: ${captured.find((entry) => entry.error)?.error}` }), baseUrl: prepared.fallback, entries: captured });
   } catch (error) {
     return write({ ...base, status: 'failed', reason: error.message.split('\n')[0], entries: [] });
   } finally {

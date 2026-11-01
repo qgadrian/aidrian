@@ -37,7 +37,11 @@ const MAX_REASONS = 25;
 const MAX_BUFFER = 256 * 1024 * 1024;
 
 const regexes = (sources) => (sources ?? []).map((source) => new RegExp(source, 'u'));
-const rootsOf = (content) => (content.roots ?? []).map((root) => root.replace(/\/+$/u, '')).filter(Boolean);
+// The roots as git names paths: no leading `./`, no trailing `/`, and `.` (the whole repository) as ''.
+const rootsOf = (content) => [...new Set((content.roots ?? []).map((root) => root.replace(/^(?:\.\/)+/u, '').replace(/\/+$/u, '').replace(/^\.$/u, '')))];
+// A root as a git pathspec.
+const pathspec = (root) => root || '.';
+const under = (file, root) => root === '' || file.startsWith(`${root}/`);
 
 // A git run that did not finish with one of the `ok` exit codes: a spawn error, a signal, or another status.
 const gitFailed = (out, ok = [0]) => Boolean(out.error || out.signal || !ok.includes(out.status));
@@ -48,7 +52,7 @@ const gitProblem = (out) => out.error?.message ?? (out.signal ? `killed by ${out
 function headRepo({ root, head, roots, spawn }) {
   const options = { cwd: root, env: isolate({ ...process.env }), maxBuffer: MAX_BUFFER };
   const cache = new Map();
-  const listed = spawn('git', ['ls-tree', '-r', '--name-only', '-z', head, '--', ...roots], { ...options, encoding: 'utf8' });
+  const listed = spawn('git', ['ls-tree', '-r', '--name-only', '-z', head, '--', ...roots.map(pathspec)], { ...options, encoding: 'utf8' });
   if (gitFailed(listed)) throw new Error(`git ls-tree at ${head} failed: ${gitProblem(listed)}`);
   const tracked = new Set(listed.stdout.split('\0').filter(Boolean));
   const prefetch = (files) => {
@@ -85,7 +89,7 @@ function headRepo({ root, head, roots, spawn }) {
   const grep = (words, grepRoots, keep) => {
     if (!words.length) return [];
     const patterns = words.flatMap((word) => ['-e', word]);
-    const out = spawn('git', ['grep', '-l', '-F', ...patterns, head, '--', ...grepRoots], { ...options, encoding: 'utf8' });
+    const out = spawn('git', ['grep', '-l', '-F', ...patterns, head, '--', ...grepRoots.map(pathspec)], { ...options, encoding: 'utf8' });
     // Exit 1 is "no match"; a spawn error, a signal, or any other status is a grep that did not run.
     if (gitFailed(out, [0, 1])) throw new Error(`git grep at ${head} failed: ${gitProblem(out)}`);
     const files = out.stdout.split('\n').filter(Boolean).map((each) => each.slice(head.length + 1));
@@ -113,7 +117,7 @@ function flowSpec(id, flow) {
     probes,
     trace,
     named,
-    scanned: (file) => roots.some((root) => file.startsWith(`${root}/`)) && EXTENSIONS_RE.test(file) && !exclude.some((pattern) => pattern.test(file)),
+    scanned: (file) => roots.some((root) => under(file, root)) && EXTENSIONS_RE.test(file) && !exclude.some((pattern) => pattern.test(file)),
     // Whether the built-in plan already puts the file in the flow.
     builtIn: (file, lines) => named(file) || lines.some((line) => added.some((probe) => probe.test(line))),
     privileged: (file, text) => named(file) || matches(text),

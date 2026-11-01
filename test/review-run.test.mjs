@@ -588,6 +588,17 @@ test('the visual capture runs before the visual reviewers, attaches on a private
   const unknown = await r.step({ exec: clean });
   assert.deepEqual(unknown.flows, [{ flow: 'ui', violated: [], unverified: ['fit'] }], 'a capture key the manifest does not have is no evidence');
   assert.match(r.comments.find((c) => c.body.startsWith('<!-- aidrian-review-summary -->')).body, /visual capture of `[0-9a-f]{7}`: captured \(2 of 2\); attach \*\*auto\*\*, private repository/u);
+
+  // A clean pass whose verdict cites a capture carries forward over a push that touches nothing of it, and still
+  // counts on a machine without the images: the record holds the captured keys.
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'designer', findingsText: '[]', verdictsText: verdict('capture:dashboard-89347b--360--default--default') });
+  assert.equal((await r.step({ exec: clean })).status, 'received');
+  r.write('docs/notes.md', 'notes\n');
+  r.commit('docs only');
+  const { captureDir } = await import('../plugins/aidrian/lib/review/visual.mjs');
+  rmSync(captureDir(r.project, 7, first.head), { recursive: true, force: true });
+  const carried = await r.step({ exec: clean });
+  assert.equal(carried.status, 'received', 'the earlier head\'s capture evidence still holds');
 });
 
 test('an invariant that cites a doc section carries that section as its source, read from the base, and a change to the doc needs the Human', async (t) => {

@@ -93,6 +93,12 @@ test('captureVisual: no base URL, a missing Playwright, or a failed login is a s
   assert.equal(retried.status, 'captured', 'a capture that did not run is tried again on the same head');
   const missing = await captureVisual({ project: p, pr: 1, head: 'c'.repeat(40), visual, entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base(async () => ''), spawn: () => ({ status: 3, stdout: '', stderr: 'Playwright is not installed in this project\n' }) });
   assert.deepEqual([missing.status, missing.reason], ['unavailable', 'Playwright is not installed in this project']);
+  const down = (_node, _args, { input }) => ({ status: 0, stdout: JSON.stringify({ results: JSON.parse(input).entries.map((entry) => ({ key: entry.key, error: 'net::ERR_CONNECTION_REFUSED' })) }), stderr: '' });
+  const refused = await captureVisual({ project: p, pr: 1, head: 'f'.repeat(40), visual, entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base(async () => ''), spawn: down });
+  assert.equal(refused.status, 'failed');
+  assert.match(refused.reason, /4 of 4 captures failed: net::ERR_CONNECTION_REFUSED/u);
+  const recovered = await captureVisual({ project: p, pr: 1, head: 'f'.repeat(40), visual, entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base(async () => ''), spawn: fakeAdapter() });
+  assert.equal(recovered.status, 'captured', 'a capture whose pages all failed runs again once the server is up');
   const login = await captureVisual({ project: p, pr: 1, head: 'd'.repeat(40), visual: visualConfig(), entries, baseUrl: 'http://localhost:3000', env: {}, withBase: base(async () => { throw new Error('bad password'); }) });
   assert.equal(login.status, 'failed');
   assert.match(login.reason, /hospitality: bad password/u);

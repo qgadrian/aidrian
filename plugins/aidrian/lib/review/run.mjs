@@ -363,7 +363,10 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     const result = resultFor(pass);
     return (result?.verdicts ?? []).filter((verdict) => verdict.flow === flowId).map((verdict) => ({ ...verdict, at: result.head }));
   });
-  const flowStatus = (flow) => flowState(flow.invariants, verdictsFor(flow.id), (evidence) => citationProblem(evidence, { root, head, captures: captureKeys(manifest) }));
+  // A capture is evidence for the head it was taken of: a verdict carried forward from an earlier head cites that
+  // head's captures. The keys live in the review record too, so another machine without the images can check them.
+  const capturesOf = (at) => new Set([...(state.captured?.[at] ?? []), ...captureKeys(at === head ? manifest : readManifest(project, n, at))]);
+  const flowStatus = (flow) => flowState(flow.invariants, verdictsFor(flow.id), (evidence, verdict) => citationProblem(evidence, { root, head, captures: capturesOf(verdict?.at ?? head) }));
 
 
   // The stage the last round runs first: the last one that needs no earlier result, so never the review bot, which
@@ -531,7 +534,9 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     } catch {}
     const mode = attachMode(visual, visibility);
     let uploadError = null;
-    if (mode === 'auto' && manifest.status === 'captured') {
+    // The captured keys of the last few heads go in the review record, which the summary comment carries.
+    state.captured = Object.fromEntries([...Object.entries(state.captured ?? {}).filter(([at]) => at !== head), [head, [...captureKeys(manifest)]]].slice(-5));
+    if (mode === 'auto' && ['captured', 'partial'].includes(manifest.status)) {
       const up = uploadCaptures({ project, pr: n, manifest, uploaded: state.captures ?? {}, repo, image: gh.image ?? ghImage });
       state.captures = keepUploaded(state.captures ?? {}, up.uploaded);
       uploadError = up.error;

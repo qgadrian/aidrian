@@ -130,7 +130,7 @@ function contentProblems(content, at) {
   if (!isObject(content)) return [`"${at}" must be an object`];
   for (const key of Object.keys(content)) if (!['roots', 'exclude', 'probes', 'trace'].includes(key)) problems.push(`unknown key "${at}.${key}"`);
   if (!someTexts(content.roots) || content.roots.some((root) => root.startsWith('/') || root.includes('*') || root.split('/').includes('..'))) {
-    problems.push(`"${at}.roots" must be a non-empty list of folders, such as "src"`);
+    problems.push(`"${at}.roots" must be a non-empty list of folders in the repository, such as "src", or "." for all of it`);
   }
   if (content.exclude !== undefined) {
     if (!texts(content.exclude)) problems.push(`"${at}.exclude" must be a list of globs`);

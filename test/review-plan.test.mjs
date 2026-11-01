@@ -194,3 +194,14 @@ test('checkLocalVisual: the base URL is a machine setting; anything else there i
   assert.equal(errors.length, 1);
   assert.equal(checkLocalReview({ engine: 'self', visual: { baseUrl: 'http://localhost:3000' } }, 'local', []), 'self');
 });
+
+test('mergeStages keeps a plan command pass that another waits for, or that waits, under its own id and order', () => {
+  const merged = mergeStages({ stages: [{ name: 'local', passes: [
+    { id: 'pm-first', reviewer: 'product-manager', kind: 'agent', files: null },
+    { id: 'pm-then', reviewer: 'product-manager', kind: 'agent', files: null, after: ['pm-first'] },
+    { id: 'agent:code-reviewer', reviewer: 'code-reviewer', kind: 'agent', files: null },
+  ] }] });
+  const passes = merged.stages[0].passes;
+  assert.deepEqual(passes.map((pass) => pass.id).sort(), ['agent:code-reviewer', 'pm-first', 'pm-then']);
+  assert.deepEqual(passes.find((pass) => pass.id === 'pm-then').after, ['pm-first']);
+});

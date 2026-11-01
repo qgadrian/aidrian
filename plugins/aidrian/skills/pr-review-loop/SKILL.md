@@ -123,4 +123,4 @@ not applicable, accepted, and blocked rows, the residual risks, and whether the 
 On a draft, report convergence; the author marks it ready. Only when the Human asked for that in this session,
 or config.json `github.markReady` is `"auto"`, mark it ready yourself with `gh pr ready <n>`
 once the loop ended at sign-off and `aidrian pr checks <n>` says ready. Pending or failing: leave it a draft and say why.
-After `gh pr ready`, push nothing more.
+After `gh pr ready`, push nothing more. Run by `autopilot` or the `orchestrator`, never mark it ready: the caller does, after all its reviews.

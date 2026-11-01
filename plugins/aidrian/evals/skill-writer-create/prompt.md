@@ -1,7 +1,7 @@
 ---
 name: skill-writer-create
 max_turns: 25
-allowed_tools: [Read, Glob, Grep, Skill]
+allowed_tools: [Read, Glob, Grep, Skill, Bash]
 ---
 
 I keep explaining to the agent, every session, how we triage a flaky end-to-end test before retrying it.

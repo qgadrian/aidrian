@@ -51,11 +51,11 @@ To try a branch in a real session before it merges, install the plugin from your
 ## Skill evals
 
 `plugins/aidrian/evals/<case>/` holds behavior cases for skills, run with model calls, so not by `npm run check`.
-Each case's `scaffold.sh` clones the committed HEAD into the run's folder and removes the skill under test, so the
+Bash runs inside that temporary clone. Each case's `scaffold.sh` clones the committed HEAD into the run's folder and removes the skill under test, so the
 baseline run without the plugin cannot read it. Commit first, then, from `plugins/aidrian`:
 
 ```sh
-claude plugin eval . --scaffold --trust-plugin --no-publish --runs 1 --model <haiku|sonnet|opus>
+claude plugin eval . --scaffold --trust-plugin --no-publish --runs 1 --allow-tools Bash --model <haiku|sonnet|opus>
 ```
 
 A case earns its place when it passes with the plugin and fails without it. Results go to `evals/**/results/`, which git ignores.

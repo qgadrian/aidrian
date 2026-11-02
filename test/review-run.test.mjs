@@ -291,6 +291,9 @@ test('sectionOf, invariantsOf, and blocksOf: a thematic break is no list item, s
   }
   // A real item still opens a container: four spaces under "- " is a fence there.
   assert.equal(sectionOf(['## A', '- step', '', '    ```md', '    ## Fake', '    ```', '', '## B', 'b'].join('\n'), 'fake'), null);
+  // A thematic break is a block of its own in blocksOf, between the paragraphs around it.
+  assert.deepEqual(blocksOf('Rule 1: foo\n- - -\nRule 2: bar'), ['Rule 1: foo', '- - -', 'Rule 2: bar']);
+  assert.deepEqual(blocksOf('Rule 1: foo\r\n* * *\r\nRule 2: bar'), ['Rule 1: foo', '* * *', 'Rule 2: bar']);
   // A thematic break nested under an item is no item either: the ``` eight spaces in stays indented code.
   for (const eol of ['\n', '\r\n']) {
     const nested = ['## A', '- a', '', '    - - -', '', '        ```js', '        const x = 1;', '', '## B', 'Rule b.', ''].join(eol);

@@ -162,14 +162,16 @@ export function blocksOf(body) {
     const text = line.slice(Math.min(base, indent));
     const item = itemOf(line);
     const top = !inside && line.trim() !== '' && indent - base <= 3 && (column === null || indent < column);
-    const starts = top && (/^#{1,6}\s/u.test(text.trimStart()) || item !== null || blank || fence !== null || closed);
+    // A thematic break is a block of its own: it starts one, and the line after it starts the next.
+    const rule = top && THEMATIC_BREAK.test(line);
+    const starts = top && (/^#{1,6}\s/u.test(text.trimStart()) || item !== null || blank || fence !== null || closed || rule);
     if (starts || (!current && line.trim())) {
       current = [];
       blocks.push(current);
       column = item ? item[1].length + item[2].length : null;
     }
     if (current) current.push(text);
-    closed = false;
+    closed = rule;
     if (!inside && fence) open = { ...fence, container: fence.item ?? (column !== null && indent >= column ? column : null) };
     else if (inside && closes(fence, open)) {
       open = null;

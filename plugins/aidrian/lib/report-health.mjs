@@ -59,7 +59,8 @@ const shown = (percent, threshold) => {
 };
 
 // { thresholds, problems, signals }. `knowledge` is knowledgeOf's { indexed, always, tags }; `reviews` is reviewRounds'
-// result, or its { error }; `lessons` is the folded inbox.
+// result, or its { error }; `lessons` is the project's folded inbox, and `pluginLessons` the plugin's, when it is another
+// file: a problem whose lesson targets the plugin finds its lesson there.
 export function summarizeHealth(input) {
   const { config } = input;
   const { problems, signals } = judge(input);
@@ -94,10 +95,11 @@ function judge({ rows, sinceMs = 0, now = Date.now(), knowledge, reviews, lesson
 // changed, never on the failures that led to it. A resolution before the window predates every row, so the problem
 // stands as judged; the reviews cannot be split by time, so after a resolution inside the window they are `unavailable`.
 function sinceResolution(problems, input) {
-  const lessons = input.lessons ?? [];
-  const byId = new Map(lessons.map((lesson) => [lesson.id, lesson]));
+  const inboxes = { project: input.lessons ?? [], plugin: input.pluginLessons ?? input.lessons ?? [] };
   const later = new Map();
   for (const problem of problems) {
+    const lessons = inboxes[problem.lesson?.target === 'plugin' ? 'plugin' : 'project'];
+    const byId = new Map(lessons.map((lesson) => [lesson.id, lesson]));
     // The first lesson with the key holds it, or the lesson it was merged into.
     let holder = problem.lesson && lessons.find((lesson) => lesson.key === problem.lesson.key);
     for (let hops = 0; holder?.mergedInto && hops < 100; hops += 1) holder = byId.get(holder.mergedInto);

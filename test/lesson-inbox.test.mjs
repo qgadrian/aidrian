@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, writeSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
+import { DEFAULTS, pluginRepository } from '../plugins/aidrian/lib/config.mjs';
+import { appendRow } from '../plugins/aidrian/lib/jsonl.mjs';
 import { formatStats } from '../plugins/aidrian/lib/lesson-cli.mjs';
-import { fold, lessonStats, nudge, parseCapture, similarLessons, triageOrder } from '../plugins/aidrian/lib/lesson-inbox.mjs';
+import { fold, lessonStats, moveLessons, nudge, parseCapture, similarLessons, triageOrder } from '../plugins/aidrian/lib/lesson-inbox.mjs';
+import { pluginProjectId } from '../plugins/aidrian/lib/project.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
 const DAY = 86_400_000;
@@ -30,6 +32,22 @@ function setup(t) {
   return { base, repo, env, run, inbox, rows, json, add };
 }
 
+// Another checkout in the same state folder: `remote` is its origin, such as the plugin's own repository. Commands run in it
+// as in `setup`, and `inbox` is its own inbox.
+function checkout({ base, env }, name, remote) {
+  const repo = path.join(base, name);
+  spawnSync('git', ['init', '-q', '-b', 'main', repo]);
+  spawnSync('git', ['-C', repo, 'remote', 'add', 'origin', remote]);
+  const run = (args, input = '') => spawnSync(CLI, ['lesson', ...args], { cwd: repo, input, encoding: 'utf8', env });
+  const json = (args) => JSON.parse(run([...args, '--json']).stdout);
+  const add = (note, args = []) => run(['add', ...args], note).stdout.split('\n')[0];
+  const inbox = () => path.join(spawnSync(CLI, ['state'], { cwd: repo, encoding: 'utf8', env }).stdout.trim(), 'lessons/inbox.jsonl');
+  const id = path.basename(path.dirname(path.dirname(inbox())));
+  return { repo, run, json, add, inbox, id };
+}
+
+const readRowsOf = (file) => (existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : []);
+
 const lesson = (id, daysAgo, extra = {}) => ({ event: 'add', id, at: at(daysAgo), tier: 'P2', note: `lesson ${id}`, ...extra });
 const config = (lessons = {}) => ({ ...DEFAULTS, lessons: { ...DEFAULTS.lessons, ...lessons } });
 
@@ -39,12 +57,214 @@ test('parseCapture takes leading evidence lines, blank lines between them, then 
     evidence: ['a.mjs', 'https://x.test/?a=1&b=2'],
   });
   assert.deepEqual(parseCapture('\nevidence: not evidence after a blank first line'), { note: 'evidence: not evidence after a blank first line', evidence: [] });
+  assert.deepEqual(parseCapture('title: the short title\nevidence: a.mjs\n\nthe note\ntitle: kept in the note\n'), {
+    note: 'the note\ntitle: kept in the note', evidence: ['a.mjs'], title: 'the short title',
+  }, 'a leading title line is the title, in any order with the evidence lines');
 });
+
+test('add takes a leading title line as the title, never as part of the note', (t) => {
+  const { json, add } = setup(t);
+  add('title: plugin lessons never reach the plugin triage\nevidence: x.jsonl\nThe longer story.');
+  assert.deepEqual(json(['list']).map((row) => [row.title, row.note, row.evidence]), [['plugin lessons never reach the plugin triage', 'The longer story.', ['x.jsonl']]]);
+});
+
+test('a plugin lesson lands in the plugin\'s inbox, names its project, and the plugin\'s checkout lists it', (t) => {
+  const consumer = setup(t);
+  const plugin = checkout(consumer, 'plugin', pluginRepository());
+  const other = checkout(consumer, 'other', 'git@example.test:acme/other.git');
+  const notes = path.basename(path.dirname(path.dirname(consumer.inbox())));
+  assert.equal(plugin.id, pluginProjectId(), 'the plugin\'s checkout has the id its manifest gives, so every project finds its inbox');
+  const id = consumer.add('the worktree hook blocked a branch switch in a linked worktree', ['--target', 'plugin', '--kind', 'bug']);
+  const local = consumer.add('our docs miss the deploy step', ['--target', 'project']);
+  assert.deepEqual(consumer.rows().map((row) => row.id), [local], 'only the project lesson is in the project\'s inbox');
+  assert.deepEqual(readRowsOf(plugin.inbox()).map((row) => [row.id, row.target, row.project]), [[id, 'plugin', notes]]);
+  assert.deepEqual(consumer.json(['list']).map((row) => row.id), [local]);
+  assert.deepEqual(plugin.json(['list']).map((row) => [row.id, row.project]), [[id, notes]], 'the plugin\'s triage reads it');
+  assert.match(plugin.run(['list']).stdout, new RegExp(`^${id}  .*\\[P2 open plugin/bug from ${notes}\\]  the worktree hook`));
+  assert.match(plugin.run(['list', id]).stdout, new RegExp(`\\n {10}project: ${notes}\\n`));
+  assert.deepEqual(consumer.json(['list', '--target', 'plugin']).map((row) => row.id), [id], '--target plugin reads the plugin\'s inbox from any project');
+  // --same, the similar names, and a key all match against the plugin's inbox, where the lesson is.
+  assert.equal(consumer.run(['add', '--same', id], 'evidence: log.txt\nagain\n').stdout, `${id}\nSeen 2 times.\n`);
+  assert.deepEqual(readRowsOf(plugin.inbox()).at(-1).project, notes);
+  const similar = other.run(['add', '--target', 'plugin'], 'the worktree hook blocked a branch switch inside a linked worktree again').stdout;
+  assert.match(similar, new RegExp(`Similar lessons\\. .*\\n  ${id}  `), 'a lesson from another project is compared with the plugin\'s inbox');
+  const keyed = consumer.add('first', ['--target', 'plugin', '--key', 'hook-deny:x']);
+  assert.equal(other.run(['add', '--target', 'plugin', '--key', 'hook-deny:x'], 'second').stdout, `${keyed}\nSeen 2 times.\n`, 'one key is one lesson across projects');
+  assert.equal(consumer.run(['resolve', id, '--outcome', 'mechanism', '--link', 'abc1234']).stdout, `${id} -> mechanism\n`, 'an id resolves in the inbox that holds it');
+  assert.deepEqual(plugin.json(['list', id]).map((row) => [row.status, row.seen]), [['resolved', 2]]);
+  assert.equal(existsSync(other.inbox()), false, 'a project that only captured plugin lessons has no inbox of its own');
+});
+
+test('update moves a lesson whose target changes: into the plugin\'s inbox, and back to the project it came from', (t) => {
+  const consumer = setup(t);
+  const plugin = checkout(consumer, 'plugin', pluginRepository());
+  const notes = path.basename(path.dirname(path.dirname(consumer.inbox())));
+  const id = consumer.add('evidence: a.txt\nthe review agent missed a finding', ['--tier', 'P3']);
+  consumer.run(['add', '--same', id], 'again');
+  const moved = consumer.run(['update', id, '--target', 'plugin']);
+  assert.match(moved.stdout, new RegExp(`^${id}  .*\\[P3 open x2 plugin/- from ${notes}\\]  the review agent missed a finding\\nMoved to ${plugin.inbox()}\\n$`));
+  assert.deepEqual(consumer.json(['list']), []);
+  assert.deepEqual(plugin.json(['list']).map((row) => [row.id, row.seen, row.evidence, row.project, row.target]), [[id, 2, ['a.txt'], notes, 'plugin']]);
+  const back = plugin.run(['update', id, '--target', 'project']);
+  assert.match(back.stdout, new RegExp(`\\nMoved to ${consumer.inbox()}\\n$`));
+  assert.deepEqual(plugin.json(['list']), []);
+  assert.deepEqual(consumer.json(['list']).map((row) => [row.id, row.seen, row.target]), [[id, 2, 'project']]);
+  assert.doesNotMatch(consumer.run(['list']).stdout, / from /, 'back in its own project, it names no project of origin');
+  assert.match(consumer.run(['update', id, '--target', 'plugin']).stdout, /\nMoved to /, 'and into the plugin\'s inbox again');
+  assert.deepEqual(plugin.json(['list']).map((row) => [row.id, row.seen]), [[id, 2]]);
+});
+
+test('a project with state.dir gets its lesson back in that folder when the move runs from its checkout', (t) => {
+  const consumer = setup(t);
+  const plugin = checkout(consumer, 'plugin', pluginRepository());
+  const own = path.join(consumer.base, 'own-state');
+  mkdirSync(path.join(consumer.repo, '.aidrian'));
+  writeFileSync(path.join(consumer.repo, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: own } }));
+  assert.equal(consumer.inbox(), path.join(own, 'lessons/inbox.jsonl'));
+  const id = consumer.add('the planner skipped a step', ['--target', 'plugin']);
+  assert.deepEqual(plugin.json(['list']).map((row) => row.id), [id]);
+  const back = consumer.run(['update', id, '--target', 'project']);
+  assert.match(back.stdout, new RegExp(`\\nMoved to ${consumer.inbox()}\\n$`));
+  assert.deepEqual(consumer.json(['list']).map((row) => [row.id, row.target]), [[id, 'project']]);
+  assert.deepEqual(plugin.json(['list']), []);
+});
+
+test('only a new target moves a lesson; list shows a lesson once for two of its ids; a known key lands where its lesson is', (t) => {
+  const consumer = setup(t);
+  const plugin = checkout(consumer, 'plugin', pluginRepository());
+  // A plugin lesson an earlier version left in the project's own inbox: a new tier leaves it there.
+  appendRow(consumer.inbox(), { event: 'add', id: 'cccc0001', at: new Date().toISOString(), tier: 'P2', target: 'plugin', note: 'left behind', evidence: [] });
+  assert.doesNotMatch(consumer.run(['update', 'cccc0001', '--tier', 'P1']).stdout, /Moved to/);
+  assert.deepEqual(consumer.json(['list']).map((row) => [row.id, row.tier]), [['cccc0001', 'P1']]);
+  const kept = consumer.add('kept lesson about the review agent');
+  const dup = consumer.add('a duplicate of the review agent lesson');
+  consumer.run(['resolve', dup, '--outcome', 'merged', '--link', kept]);
+  assert.deepEqual(consumer.json(['list', kept, dup]).map((row) => row.id), [kept], 'a lesson and the one merged into it list once');
+  const keyed = plugin.add('blocked', ['--target', 'plugin', '--key', 'hook-deny:y']);
+  const before = readFileSync(consumer.inbox(), 'utf8');
+  assert.equal(consumer.run(['add', '--key', 'hook-deny:y'], 'blocked again').stdout, `${keyed}\nSeen 2 times.\n`, 'with no --target, the key finds the plugin\'s lesson');
+  assert.equal(readFileSync(consumer.inbox(), 'utf8'), before);
+});
+
+test('migrate moves every plugin lesson out of each project inbox, whole, and a second run changes nothing', (t) => {
+  const consumer = setup(t);
+  const plugin = checkout(consumer, 'plugin', pluginRepository());
+  const other = checkout(consumer, 'other', 'git@example.test:acme/other.git');
+  const notes = path.basename(path.dirname(path.dirname(consumer.inbox())));
+  const old = (daysAgo) => new Date(Date.now() - daysAgo * DAY).toISOString();
+  // Rows an earlier version wrote: plugin lessons in the project's own inbox.
+  const own = consumer.inbox();
+  const write = (row) => appendRow(own, row);
+  write({ event: 'add', id: 'aaaa0001', at: old(9), tier: 'P1', kind: 'bug', target: 'plugin', key: null, source: 'manual', note: 'plugin bug', evidence: ['e1'] });
+  write({ event: 'seen', id: 'aaaa0001', at: old(8), note: 'again', evidence: ['e2'] });
+  write({ event: 'add', id: 'aaaa0002', at: old(8), tier: 'P2', kind: null, target: 'project', key: null, source: 'manual', note: 'a duplicate, merged in', evidence: [] });
+  write({ event: 'resolve', id: 'aaaa0002', at: old(7), outcome: 'merged', link: 'aaaa0001' });
+  write({ event: 'resolve', id: 'aaaa0001', at: old(6), outcome: 'mechanism', link: 'abc1234', expect: 'no more' });
+  write({ event: 'add', id: 'aaaa0003', at: old(5), tier: 'P2', kind: 'gap', target: 'plugin', key: 'hook-deny:pr-body', source: 'auto', note: 'blocked', evidence: [] });
+  write({ event: 'add', id: 'aaaa0004', at: old(4), tier: 'P2', kind: 'gap', target: 'plugin', key: 'hook-deny:pr-body', source: 'auto', note: 'blocked', evidence: [] });
+  write({ event: 'add', id: 'aaaa0005', at: old(5), tier: 'P3', kind: null, target: 'project', key: null, source: 'manual', note: 'project lesson', evidence: [] });
+  write({ event: 'add', id: 'aaaa0006', at: old(5), tier: 'P3', kind: null, target: 'plugin', key: null, source: 'manual', note: 'plugin lesson merged into a project one', evidence: [] });
+  write({ event: 'resolve', id: 'aaaa0006', at: old(4), outcome: 'merged', link: 'aaaa0005' });
+  write({ event: 'add', id: 'aaaa0007', at: old(3), tier: 'P2', kind: null, target: null, key: null, source: 'manual', note: 'no target', evidence: [] });
+  write({ event: 'add', id: 'aaaa0008', at: old(3), tier: 'P2', kind: null, target: 'project', key: null, source: 'manual', note: 'retargeted', evidence: [] });
+  write({ event: 'update', id: 'aaaa0008', at: old(2), target: 'plugin' });
+  appendRow(other.inbox(), { event: 'add', id: 'bbbb0001', at: old(2), tier: 'P2', target: 'plugin', note: 'from the other project', evidence: [] });
+  // The plugin's inbox already holds the key of one of them.
+  const holder = plugin.add('blocked here too', ['--target', 'plugin', '--key', 'hook-deny:pr-body']);
+  const before = readFileSync(own, 'utf8');
+
+  const dry = consumer.run(['migrate', '--dry-run']);
+  assert.equal(dry.stdout.split('\n')[0], `Would move 4 plugin lessons to ${plugin.inbox()}`);
+  assert.match(dry.stdout, new RegExp(`\\n  ${notes}: aaaa0001, aaaa0003, aaaa0008\\n    aaaa0003 joins ${holder}, which holds its key there\\n  other-[0-9a-f]{8}: bbbb0001\\n$`));
+  assert.equal(readFileSync(own, 'utf8'), before, 'a dry run writes nothing');
+
+  const first = consumer.json(['migrate']);
+  assert.deepEqual([first.moved, first.projects.map((item) => [item.project, item.ids])], [4, [[notes, ['aaaa0001', 'aaaa0003', 'aaaa0008']], [other.id, ['bbbb0001']]]]);
+  assert.deepEqual(consumer.json(['list', '--all']).map((row) => row.id).sort(), ['aaaa0005', 'aaaa0007'], 'project lessons, and the one merged into one, stay');
+  assert.equal(consumer.json(['list', 'aaaa0006'])[0].id, 'aaaa0005');
+  const [fixed] = plugin.json(['list', 'aaaa0001']);
+  assert.deepEqual(
+    [fixed.id, fixed.seen, fixed.evidence, fixed.occurrences.map((item) => item.note), fixed.status, fixed.outcome, fixed.expect, fixed.merged, fixed.project],
+    ['aaaa0001', 3, ['e1'], ['again', 'a duplicate, merged in'], 'resolved', 'mechanism', 'no more', ['aaaa0002'], notes],
+  );
+  assert.equal(plugin.json(['list', 'aaaa0002'])[0].id, 'aaaa0001', 'the duplicate merged into it moved with it');
+  const [keyed] = plugin.json(['list', 'aaaa0003']);
+  assert.deepEqual([keyed.id, keyed.seen], [holder, 3], 'a key the plugin\'s inbox holds takes the moved lesson as seen again');
+  assert.deepEqual(plugin.json(['list', 'aaaa0008']).map((row) => [row.id, row.target, row.project]), [['aaaa0008', 'plugin', notes]]);
+  assert.deepEqual(plugin.json(['list', 'bbbb0001']).map((row) => row.project), [other.id]);
+
+  const files = () => [own, other.inbox(), plugin.inbox()].map((file) => readFileSync(file, 'utf8'));
+  const after = files();
+  assert.equal(consumer.run(['migrate']).stdout, `Moved 0 plugin lessons to ${plugin.inbox()}\n`);
+  assert.deepEqual(files(), after, 'a second run writes nothing');
+
+  // A move cut short after its copies and before its move rows copies nothing twice when it runs again.
+  // (aaaa0003 is left out: it joined the holder, so its rows there are rewritten as occurrences.)
+  const cut = path.join(consumer.base, 'cut.jsonl');
+  writeFileSync(cut, before);
+  const plugged = readFileSync(plugin.inbox(), 'utf8');
+  assert.deepEqual(moveLessons(cut, plugin.inbox(), ['aaaa0001', 'aaaa0003', 'aaaa0008'], { project: notes }), ['aaaa0001', 'aaaa0003', 'aaaa0008']);
+  assert.equal(readFileSync(plugin.inbox(), 'utf8'), plugged);
+});
+
+test('a project key never joins a lesson in the plugin\'s inbox, and a plugin-inbox lesson with no project stays there', (t) => {
+  const consumer = setup(t);
+  const plugin = checkout(consumer, 'plugin', pluginRepository());
+  // The plugin's checkout keeps its own project lessons in the plugin's inbox.
+  const theirs = plugin.add('their project lesson', ['--target', 'project', '--key', 'docs-gap']);
+  const mine = consumer.add('our project lesson', ['--target', 'project', '--key', 'docs-gap']);
+  assert.notEqual(mine, theirs);
+  assert.deepEqual(consumer.json(['list']).map((row) => [row.id, row.key]), [[mine, 'docs-gap']], 'it lands in the consumer\'s own inbox');
+  assert.deepEqual(plugin.json(['list', theirs]).map((row) => row.seen), [1]);
+  const untargeted = consumer.add('again, with no target', ['--key', 'docs-gap']);
+  assert.equal(untargeted, mine, 'with no target, the project\'s own lesson holds the key');
+  rmSync(consumer.inbox());
+  assert.notEqual(consumer.add('with no target and no lesson here', ['--key', 'docs-gap']), theirs, 'a project lesson in the plugin\'s inbox never holds it');
+  // A lesson in the plugin's inbox that names no project is the plugin repository's own: a move to `project` keeps it there.
+  appendRow(plugin.inbox(), { event: 'add', id: 'ffff0001', at: new Date().toISOString(), tier: 'P2', target: 'plugin', note: 'unstamped', evidence: [] });
+  const kept = consumer.run(['update', 'ffff0001', '--target', 'project']);
+  assert.doesNotMatch(kept.stdout, /Moved to/);
+  assert.deepEqual(plugin.json(['list', 'ffff0001']).map((row) => row.target), ['project']);
+  assert.deepEqual(consumer.json(['list']).map((row) => row.id).includes('ffff0001'), false);
+});
+
+test('a lesson that joins a holder by key brings only its occurrences: the holder keeps its labels and its fix', (t) => {
+  const { base } = setup(t);
+  const from = path.join(base, 'from.jsonl');
+  const to = path.join(base, 'to.jsonl');
+  const old = (daysAgo) => new Date(Date.now() - daysAgo * DAY).toISOString();
+  // The holder: added P3, raised to P2, then fixed, all after the moving lesson's own rows.
+  appendRow(to, { event: 'add', id: 'dddd0001', at: old(9), tier: 'P3', kind: 'gap', target: 'plugin', key: 'hook-deny:z', source: 'auto', note: 'held', evidence: [] });
+  appendRow(to, { event: 'update', id: 'dddd0001', at: old(3), tier: 'P2' });
+  appendRow(to, { event: 'resolve', id: 'dddd0001', at: old(2), outcome: 'mechanism', link: 'abc1234' });
+  // The moving lesson: P1 by its own update, rejected, with a duplicate merged into it; every row older than the fix.
+  appendRow(from, { event: 'add', id: 'eeee0001', at: old(8), tier: 'P3', kind: 'bug', target: 'plugin', key: 'hook-deny:z', source: 'auto', note: 'moving', evidence: ['e1'] });
+  appendRow(from, { event: 'seen', id: 'eeee0001', at: old(7), note: 'again', evidence: [] });
+  appendRow(from, { event: 'add', id: 'eeee0002', at: old(6), tier: 'P2', target: 'project', note: 'a duplicate', evidence: [] });
+  appendRow(from, { event: 'resolve', id: 'eeee0002', at: old(6), outcome: 'merged', link: 'eeee0001' });
+  appendRow(from, { event: 'update', id: 'eeee0001', at: old(5), tier: 'P1', kind: 'rule' });
+  appendRow(from, { event: 'resolve', id: 'eeee0001', at: old(4), outcome: 'rejected', link: 'noise' });
+  assert.deepEqual(moveLessons(from, to, ['eeee0001'], { project: 'notes-1' }), ['eeee0001']);
+  const { lessons: all, find } = fold(readRowsOf(to));
+  const holder = find('dddd0001');
+  assert.deepEqual(
+    [holder.tier, holder.kind, holder.status, holder.outcome, holder.reopened, holder.seen],
+    ['P2', 'gap', 'resolved', 'mechanism', 0, 4],
+    'the holder keeps its tier, kind, and fix, and counts the moved add, seen, and duplicate as occurrences',
+  );
+  assert.deepEqual([find('eeee0001').id, find('eeee0002').id], ['dddd0001', 'dddd0001'], 'the moved ids find the holder');
+  assert.deepEqual(all.map((lesson) => lesson.id), ['dddd0001'], 'no lesson of its own, open or merged, is left in the inbox');
+  assert.deepEqual(readRowsOf(to).slice(3).map((row) => [row.event, row.id, row.key]), [
+    ['add', 'eeee0001', 'hook-deny:z'], ['seen', 'eeee0001', undefined], ['add', 'eeee0002', 'hook-deny:z'],
+  ], 'no update or resolve row is copied');
+  assert.deepEqual(moveLessons(from, to, ['eeee0001']), [], 'a second move finds nothing to move');
+});
+
 
 test('add appends one add row with tier, kind, target, and where it was captured, and prints its id', (t) => {
   const { run, rows } = setup(t);
   const note = 'ran `git rev-parse` and $(false) with "$HOME" & saw: Error: ENOENT\nmore detail';
-  const added = run(['add', '--tier', 'P1', '--kind', 'bug', '--target', 'plugin'], `evidence: scripts/it's.mjs\n${note}\n`);
+  const added = run(['add', '--tier', 'P1', '--kind', 'bug', '--target', 'project'], `evidence: scripts/it's.mjs\n${note}\n`);
   assert.equal(added.status, 0, added.stderr);
   assert.match(added.stdout, /^[0-9a-f]{8}\n$/);
   assert.equal(run(['add'], 'second').status, 0);
@@ -52,7 +272,7 @@ test('add appends one add row with tier, kind, target, and where it was captured
   assert.deepEqual(
     { ...first, at: undefined, worktree: undefined },
     {
-      event: 'add', id: added.stdout.trim(), at: undefined, tier: 'P1', kind: 'bug', target: 'plugin', key: null, source: 'manual',
+      event: 'add', id: added.stdout.trim(), at: undefined, tier: 'P1', kind: 'bug', target: 'project', key: null, source: 'manual',
       note, evidence: ["scripts/it's.mjs"], session: 'session-1', agent: 'planner', branch: 'main', worktree: undefined,
     },
   );
@@ -63,7 +283,7 @@ test('add appends one add row with tier, kind, target, and where it was captured
 
 test('add refuses an empty note and a bad tier, kind, or target, and writes nothing', (t) => {
   const { run } = setup(t);
-  assert.deepEqual([run(['add'], 'evidence: x\n\n').status, run(['add'], 'evidence: x\n').stderr], [1, 'the lesson needs a note on stdin, after any "evidence: <ref>" lines\n']);
+  assert.deepEqual([run(['add'], 'evidence: x\n\n').status, run(['add'], 'evidence: x\n').stderr], [1, 'the lesson needs a note on stdin, after any "title:" or "evidence: <ref>" lines\n']);
   assert.equal(run(['add', '--tier', 'P0'], 'note').stderr, '--tier must be one of P1, P2, P3\n');
   assert.equal(run(['add', '--kind', 'harness'], 'note').stderr, '--kind must be one of bug, gap, improvement, rule\n');
   assert.equal(run(['add', '--target', 'other'], 'note').stderr, '--target must be one of plugin, project\n');
@@ -102,19 +322,19 @@ test('add names similar lessons and the command that merges into one; an unrelat
 test('list shows open lessons by tier then age, filters them, and shows one in full by id', (t) => {
   const { run, inbox, json, add } = setup(t);
   const old = add('old polish', ['--tier', 'P3', '--target', 'project', '--kind', 'improvement']);
-  const mid = add('costly retry', ['--target', 'plugin']);
+  const mid = add('costly retry', ['--kind', 'gap']);
   const urgent = add('lost a commit', ['--tier', 'P1', '--kind', 'bug']);
   appendFileSync(inbox(), '{"torn": \n{"no":"id"}\n');
   assert.deepEqual(json(['list']).map((row) => row.id), [urgent, mid, old]);
   assert.deepEqual(json(['list', '--tier', 'P3']).map((row) => row.id), [old]);
-  assert.deepEqual(json(['list', '--target', 'plugin']).map((row) => row.id), [mid]);
+  assert.deepEqual(json(['list', '--target', 'project']).map((row) => row.id), [old]);
   assert.deepEqual(json(['list', '--kind', 'bug']).map((row) => row.id), [urgent]);
   assert.deepEqual(json(['list', '--source', 'auto']), []);
   assert.deepEqual(json(['list', '--limit', '2']).map((row) => row.id), [urgent, mid]);
   run(['resolve', urgent, '--outcome', 'mechanism', '--link', 'abc1234']);
   assert.deepEqual(json(['list', '--status', 'resolved']).map((row) => row.id), [urgent]);
   assert.deepEqual(json(['list', '--all']).map((row) => row.id), [mid, old, urgent], 'open first');
-  assert.match(run(['list']).stdout, new RegExp(`^${mid}  \\d{4}-\\d\\d-\\d\\d  \\[P2 open plugin/-\\]  costly retry\\n${old}  .*\\[P3 open project/improvement\\]  old polish\\n$`));
+  assert.match(run(['list']).stdout, new RegExp(`^${mid}  \\d{4}-\\d\\d-\\d\\d  \\[P2 open -/gap\\]  costly retry\\n${old}  .*\\[P3 open project/improvement\\]  old polish\\n$`));
   const full = run(['list', urgent]).stdout;
   assert.match(full, new RegExp(`^${urgent}  .*\\[P1 resolved: mechanism -/bug\\]  lost a commit\\n {10}planner @ main, session session-1\\n {10}lost a commit\\n {10}mechanism \\d{4}-\\d\\d-\\d\\d: abc1234\\n$`));
   assert.equal(run(['list', 'ffffffff']).stderr, 'no lesson with id ffffffff\n');
@@ -252,8 +472,8 @@ test('rows the first version wrote, and a resolved row rewritten in place, still
 test('update changes a lesson\'s tier, kind, or target and nothing else', (t) => {
   const { run, json, add } = setup(t);
   const id = add('polish', ['--tier', 'P3']);
-  assert.match(run(['update', id, '--tier', 'P1', '--target', 'plugin']).stdout, new RegExp(`^${id}  .*\\[P1 open plugin/-\\]  polish\\n$`));
-  assert.deepEqual(json(['list']).map((row) => [row.tier, row.kind, row.target, row.seen]), [['P1', null, 'plugin', 1]]);
+  assert.match(run(['update', id, '--tier', 'P1', '--target', 'project']).stdout, new RegExp(`^${id}  .*\\[P1 open project/-\\]  polish\\n$`));
+  assert.deepEqual(json(['list']).map((row) => [row.tier, row.kind, row.target, row.seen]), [['P1', null, 'project', 1]]);
   assert.equal(run(['update', id]).stderr, 'update needs --tier, --kind, or --target\n');
   assert.equal(run(['update', 'ffffffff', '--tier', 'P1']).stderr, 'no lesson with id ffffffff\n');
   assert.equal(run(['update', id, '--kind', 'idea']).stderr, '--kind must be one of bug, gap, improvement, rule\n');

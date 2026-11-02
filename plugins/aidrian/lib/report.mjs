@@ -80,13 +80,16 @@ export const commands = {
         // Every other view's numbers, each against its threshold; the reviews are those merged in the same window.
         const { formatHealth, summarizeHealth } = await import('./report-health.mjs');
         const { ghAt, reviewRounds } = await import('./report-reviews.mjs');
-        const { inboxPath, lessons } = await import('./lesson-inbox.mjs');
+        const { inboxPath, lessons, pluginInboxPath } = await import('./lesson-inbox.mjs');
+        const own = inboxPath(project, config);
+        const plugin = pluginInboxPath() ?? own;
         const health = summarizeHealth({
           rows,
           sinceMs,
           knowledge: knowledgeOf(project, config),
           reviews: reviewRounds(prs, config.github.reviewer, ghAt(project.root), { sinceMs }),
-          lessons: lessons(inboxPath(project, config)),
+          lessons: lessons(own),
+          pluginLessons: plugin === own ? null : lessons(plugin),
           config,
         });
         const notes = coverageLines(cover, { hookDenies: true, sendBacks: true });

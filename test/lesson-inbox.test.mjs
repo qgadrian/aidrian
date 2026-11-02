@@ -349,7 +349,7 @@ test('a row another process appends while a move runs reaches the destination, n
   assert.deepEqual(readdirSync(path.dirname(from)).filter((name) => name.includes('.lock')).sort(), ['inbox.jsonl.lock.2', 'inbox.jsonl.lock.2.released'], 'the move took the lock after the writer and released it');
 });
 
-test('every writer of a lesson inbox waits for its lock: resolve, add --same, update, and the automatic signals', async (t) => {
+test('every lesson command that writes waits for the inbox lock: resolve, add --same, and update', async (t) => {
   const consumer = setup(t);
   const id = consumer.add('to resolve');
   const inbox = consumer.inbox();
@@ -367,18 +367,6 @@ test('every writer of a lesson inbox waits for its lock: resolve, add --same, up
     const events = consumer.rows().slice(-2).map((row) => [row.event, row.note ?? null]);
     assert.equal(events[0][1], 'held', `${args[0]} appends after the lock holder's row, not before it`);
   }
-  const holder = lockHolder(inbox, { event: 'seen', id, at: new Date().toISOString(), note: 'held', evidence: [] });
-  await holder.ready;
-  const signals = path.resolve(import.meta.dirname, '../plugins/aidrian/lib/lesson-signals.mjs');
-  const projects = path.resolve(import.meta.dirname, '../plugins/aidrian/lib/project.mjs');
-  const code = `const { recordSignal } = await import(${JSON.stringify(signals)});
-const { projectAt } = await import(${JSON.stringify(projects)});
-const row = recordSignal(projectAt(process.cwd()), { key: 'review-rounds:x', tier: 'P2', kind: 'gap', target: 'project', note: 'rounds', evidence: [] });
-process.exitCode = row ? 0 : 1;`;
-  const signal = new Promise((resolve) => spawn(process.execPath, ['--input-type=module', '-e', code], { cwd: consumer.repo, env: consumer.env, stdio: 'inherit' }).on('close', resolve));
-  await holder.done;
-  assert.equal(await signal, 0);
-  assert.deepEqual(consumer.rows().slice(-2).map((row) => row.note), ['held', 'rounds'], 'the signal appends after the lock holder\'s row');
 });
 
 test('a writer whose lock stays held fails with one line and writes nothing', (t) => {

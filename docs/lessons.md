@@ -44,8 +44,9 @@ signals, holds the lock of the inboxes it reads from that read to its append, so
 the move reads it, and goes with it, or after, where its writer finds the lesson in its new inbox.
 `update --target` takes the lock of the inbox the lesson moves to before it writes its `update` row, so a destination
 it cannot lock leaves nothing written.
-A writer waits up to 5 seconds for a lock; then the command fails with `is locked by another process`, naming the pid
-and the lock file, and writes nothing, and an automatic signal records nothing.
+A command waits up to 5 seconds for a lock; then it fails with `is locked by another process`, naming the pid and the
+lock file, and writes nothing. An automatic signal never waits, because hooks record it inside the host's hook timeout:
+while another process holds the lock, it records nothing, and for a repeated block the next block tries again.
 
 The lock is a numbered file beside the inbox, `inbox.jsonl.lock.<n>`, holding the holder's pid and host; the highest
 number is the lock, and `inbox.jsonl.lock.<n>.released` marks it free. A process takes it by creating the next number,

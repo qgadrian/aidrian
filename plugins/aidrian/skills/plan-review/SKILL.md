@@ -64,10 +64,10 @@ Both run before the critique, and their verdicts go into its brief as authoritat
 
 ## 3b. Quorum
 
-When a gate in step 3 ran, or the plan names a decision-record path or the `adr-writer` skill, run the `quorum` skill
-with the gate verdicts and the trigger. It asks its escalations one at a time. Its accepted objections, the Human's
-answers, and its Report's revision-history line go into step 4's brief as authoritative. Skip it when it is not installed.
-A step 5.4 re-critique never reruns it; a restart from step 5.1 does, under the new hash.
+When a gate in step 3 ran, or the plan names a decision-record path or the `adr-writer` skill, load the `quorum` skill
+and follow it, with the gate verdicts and the trigger. Its `references/ledger.md` § Under plan-review defines the
+triggers, its reruns, and the `blocked on quorum` stop that resumes here. Its accepted objections, the Human's answers,
+and its Report's revision-history line go into step 4's brief as authoritative. Skip it when it is not installed.
 
 ## 4. Critique
 
@@ -81,7 +81,7 @@ Then report, in this order, and stop:
 
 1. **Verdict**: `plan ready: no findings`, `findings: diff proposed`, `findings only`, or `blocked on <gate or evidence>`.
 2. **Plan**: path, `plan_kind` or free-form, `status`, and freshness against the issue.
-3. **Gates**: each verdict, or not applicable; the quorum Report's Ledger item, its trigger quoting the plan line, gate, or flag, or why it was skipped.
+3. **Gates**: each verdict, or not applicable; the quorum Report's Ledger item with its trigger, or why it was skipped.
 4. **Findings**: blocking, important, then improvements, each with its anchor.
 5. **Open questions** from the plan, word for word, then **escalations**: product or architecture decisions, scope growth, disputes.
 6. **Proposed diff** with its revision-history line, unless `--findings-only`.

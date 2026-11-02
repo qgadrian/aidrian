@@ -865,6 +865,11 @@ test('plan-review runs the quorum skill at step 3b, lists its flags in Inputs, a
   assert.ok(step, 'plan-review has a step 3b');
   assert.ok(review.indexOf('\n## 3. Gates\n') < review.indexOf('\n## 3b. Quorum\n') && review.indexOf('\n## 3b. Quorum\n') < review.indexOf('\n## 4. Critique\n'), 'step 3b sits between the gates and the critique');
   assert.match(step, /the `quorum` skill/u, 'step 3b names the quorum skill');
+  // A session that paraphrased the quorum ran it from memory and wrote no ledger: 3b loads the skill and follows it, and
+  // points to the section that defines its triggers and its blocked stop.
+  assert.match(step.replace(/\s+/gu, ' '), /load the `quorum` skill and follow it/u, 'step 3b loads the quorum skill');
+  assert.match(step.replace(/\s+/gu, ' '), /`references\/ledger\.md` § Under plan-review/u, 'step 3b points to ledger.md § Under plan-review');
+  assert.match(step, /`blocked on quorum`/u, 'step 3b names the blocked stop');
   // Settled answers hold across runs only when the applied plan's revision history records them: the quorum's Report
   // hands its revision-history line to the critique brief, and planning-agent's entry carries it word for word.
   const flat = (text) => text.replace(/\s+/gu, ' ');

@@ -5,6 +5,9 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { readPrCall } from './rules/github/pr-body.mjs';
+import { aidrianArgs, walkCommands } from './shell-lex.mjs';
+
 // USD per million tokens, matched by substring (or a RegExp) in this order (more specific first). List prices from
 // https://platform.claude.com/docs/en/about-claude/pricing, read 2026-10-28. `cacheRead` is the cache-hit multiplier
 // of the input rate where a model sets one below the standard 0.1x. Cache writes cost 1.25x (5 minutes) and 2x (1 hour).
@@ -171,10 +174,30 @@ export function filesRead(text, keep = () => true) {
   return [...read];
 }
 
-// A `gh pr create` (or its alias `gh pr new`) with --draft or -d, before the next command on the line.
-const DRAFT_PR = /\bgh\s+(?:(?:-R|--repo)[=\s]\S+\s+)?pr\s+(?:create|new)\b[^\n|;&]*?\s(?:--draft|-d)(?=\s|$)/u;
+// A draft pull request create and a review run are read from the commands a Bash call runs (shell-lex walkCommands),
+// never from its text, so a heredoc body, an `echo`, or a quoted grep pattern that names one is neither.
+// A draft create is `gh pr create` (or its alias `gh pr new`) with --draft or -d, as the pull request body rule reads it.
+const createsDraft = ({ segment }) => {
+  const call = readPrCall(segment);
+  return call?.subcommand === 'create' && call.draft;
+};
+
+// Whether a walked command runs a review: `aidrian pr review` or `aidrian pr await-review`, by any path to aidrian.
+function runsReview({ invocation }) {
+  const words = aidrianArgs(invocation);
+  return words?.[0]?.text === 'pr' && ['review', 'await-review'].includes(words[1]?.text);
+}
+
+// Whether any command a Bash command line runs passes `test`; a line the lexer cannot read runs none.
+const runs = (command, test) => {
+  try {
+    return walkCommands(command, null).some(test);
+  } catch {
+    return false;
+  }
+};
+
 // A review round's own steps: the pr-review-loop and pr-review skills, and the commands that run a review.
-const REVIEW_COMMAND = /\baidrian\s+pr\s+(?:review|await-review)\b/u;
 const REVIEW_SKILLS = new Set(['pr-review-loop', 'pr-review']);
 // A slash command as the host writes it into the user's turn. Only one that names this plugin's skill counts as a
 // skill run: the others are the host's own commands, such as clearing the conversation.
@@ -220,8 +243,8 @@ export function sessionActions(texts) {
       for (const block of content) {
         if (block?.type === 'tool_use' && block.name === 'Skill' && typeof block.input?.skill === 'string') skillRun(block.input.skill.replace(/^\//u, ''), block.id ?? line);
         if (block?.type === 'tool_use' && block.name === 'Bash' && typeof block.input?.command === 'string') {
-          if (REVIEW_COMMAND.test(block.input.command)) reviews.add(block.id ?? line);
-          if (DRAFT_PR.test(block.input.command) && block.id && !drafts.has(block.id)) drafts.set(block.id, false);
+          if (runs(block.input.command, runsReview)) reviews.add(block.id ?? line);
+          if (block.id && !drafts.has(block.id) && runs(block.input.command, createsDraft)) drafts.set(block.id, false);
         }
         if (block?.type === 'tool_result' && drafts.has(block.tool_use_id) && block.is_error !== true && PR_URL.test(resultText(block.content))) {
           drafts.set(block.tool_use_id, true);

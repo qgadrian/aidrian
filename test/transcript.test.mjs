@@ -90,6 +90,28 @@ test('sessionActions: the skills a session ran, the drafts it opened, and its re
   assert.deepEqual(sessionActions([]), { skills: [], drafts_opened: 0, review_runs: 0 });
 });
 
+test('sessionActions reads the commands a Bash call runs, not the text that names one', () => {
+  const call = (id, command) => usageLine(`m-${id}`, 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] });
+  const opened = (id, n) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: `https://github.com/acme/notes/pull/${n}` }] } });
+  const actions = (command) => {
+    const { drafts_opened, review_runs } = sessionActions([[call('c1', command), opened('c1', 30)].join('\n')]);
+    return { drafts_opened, review_runs };
+  };
+  assert.deepEqual(actions('gh pr create \\\n  --title x \\\n  --draft'), { drafts_opened: 1, review_runs: 0 }, 'a create continued over lines');
+  assert.deepEqual(actions('url=$(gh pr new -fd --base main)'), { drafts_opened: 1, review_runs: 0 }, 'a draft create in a substitution');
+  assert.deepEqual(actions('gh pr create --title "use --draft later" --body-file b.md'), { drafts_opened: 0, review_runs: 0 }, 'a title naming the flag');
+  assert.deepEqual(actions('gh pr create --title -d --body-file b.md'), { drafts_opened: 0, review_runs: 0 }, 'a title whose value is -d');
+  assert.deepEqual(actions('gh pr create --draft=false --title t'), { drafts_opened: 0, review_runs: 0 }, 'a draft flag turned off');
+  assert.deepEqual(actions('echo "next: gh pr create --draft --fill"'), { drafts_opened: 0, review_runs: 0 }, 'an echo of a draft create');
+  assert.deepEqual(actions('echo "aidrian pr review 12"'), { drafts_opened: 0, review_runs: 0 }, 'an echo of the review command');
+  assert.deepEqual(actions("cat > notes.md <<'EOF'\nNext: aidrian pr review 12 --with-bot\nEOF"), { drafts_opened: 0, review_runs: 0 }, 'a heredoc body');
+  assert.deepEqual(actions("grep -rn 'aidrian pr await-review' plugins"), { drafts_opened: 0, review_runs: 0 }, 'a quoted grep pattern');
+  assert.deepEqual(actions('cd /w && aidrian pr review 12 --with-bot'), { drafts_opened: 0, review_runs: 1 }, 'a review run after cd');
+  assert.deepEqual(actions('/opt/plugin/bin/aidrian pr await-review 12'), { drafts_opened: 0, review_runs: 1 }, 'aidrian by its path');
+  assert.deepEqual(actions('node /opt/plugin/lib/cli.mjs pr review 12'), { drafts_opened: 0, review_runs: 1 }, 'the cli run by node');
+  assert.deepEqual(actions('aidrian pr status 12'), { drafts_opened: 0, review_runs: 0 }, 'another pr subcommand');
+});
+
 test('filesRead lists each Read file_path once; subagentTranscripts finds a session`s subagent files', (t) => {
   const read = (file) => usageLine(file, 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', name: 'Read', input: { file_path: file } }] });
   const other = usageLine('x', 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', name: 'Bash', input: { command: 'cat /a.md' } }] });

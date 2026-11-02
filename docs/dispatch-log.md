@@ -67,6 +67,8 @@ A stop that ends with `delivered: missing`, such as that second one, has `sent_b
 A request found in both the main and a subagent transcript counts as the main conversation's.
 `skills`, `drafts_opened`, and `review_runs` cover the main conversation and its subagents, each call counted once by its id;
 they hold names and counts, never the command or its output.
+A draft create and a review run are read from the commands a Bash call runs, as the shell would split it:
+a continued line, `&&`, and a command substitution count, and an `echo`, a heredoc body, or a quoted pattern that names one does not.
 A session whose transcript holds no API usage writes no row.
 A resumed session that ends again writes another row over its whole transcript; the report counts the last one.
 

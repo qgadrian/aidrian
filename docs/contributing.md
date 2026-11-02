@@ -57,7 +57,9 @@ To try a branch in a real session before it merges, install the plugin from your
 `plugins/aidrian/evals/<case>/` holds behavior cases for skills, run with model calls, so not by `npm run check`.
 Bash runs inside that temporary clone. Each case's `scaffold.sh` clones the committed HEAD into the run's folder and removes the skill under test, so the
 baseline run without the plugin cannot read it. A case that needs a file HEAD lacks, such as the plan `plan-review-trigger`
-reviews, keeps it in its own folder, and its `scaffold.sh` copies it in. Commit first, then, from `plugins/aidrian`:
+reviews, keeps it in its own folder, and its `scaffold.sh` copies it in. A case about a consumer project, such as
+`harness-consultant-onboard`, builds the run folder from its own committed `fixture/` alone, and writes any `AGENTS.md`
+and `CLAUDE.md` it needs from `scaffold.sh`, never `fixture/`. Commit first, then, from `plugins/aidrian`:
 
 ```sh
 claude plugin eval . --scaffold --trust-plugin --no-publish --runs 1 --allow-tools Bash --model <haiku|sonnet|opus>

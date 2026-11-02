@@ -24,11 +24,12 @@ Also give the librarian:
 It follows its "A new project" procedure, in this order, skipping what holds:
 
 1. `aidrian init`; `aidrian-knowledge init <Q3 folder>` when the folder has `.md` files and no index,
-   then each doc's summary and tags.
+   then each doc's summary and tags. An index that exists gets the same pass for each doc whose summary is still the
+   drafted one (its first heading or file name) or that has no tags.
 2. Q4 team names to config.json `names`, a developer's own names to `.aidrian.local.json`, and Q2 no to
    config.json `github.reviewer: null`. No other config key.
 3. The `AGENTS.md` and `CLAUDE.md` lines; in Claude Code with Q6 yes, `.claude/settings.json`.
-4. Only when R2 was missing at step 1: the `knowledge-update` skill on the topics `working-agreement`, `testing`,
+4. On every onboarding, whatever R2 was: the `knowledge-update` skill on the topics `working-agreement`, `testing`,
    `architecture`, and `issue-tracker` when Q1 is not none. Each topic carries an area hint for the explorer brief:
    stack and build, tests, domain modules, existing docs.
    - A topic a real doc covers is never `generate`: that doc gets its summary and tags, and an `extend` only when the

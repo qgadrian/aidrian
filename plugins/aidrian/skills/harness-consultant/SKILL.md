@@ -10,9 +10,9 @@ Before you start, follow the `knowledge` skill.
 
 Take a project from no aidrian setup to a checked one in one session, or, on a set-up project, say what to fix.
 This skill asks its questions before any write, and shows the docs before they are written.
-It writes no project file itself: `harness-librarian` makes every write. It never commits, pushes, opens a pull request,
-or files an issue, in the project's tracker or the plugin's repository. It never sets `AIDRIAN_ALLOW_MAIN_WRITE`
-or adds a `git.mainCheckout.allowWrites` entry. No dispatch in this run passes a model or effort.
+It writes no project file itself: `harness-librarian` makes every setup write; in step 6, the owner the fix table names.
+It never commits, pushes, opens a pull request, or files an issue, in the project's tracker or the plugin's repository.
+It never sets `AIDRIAN_ALLOW_MAIN_WRITE` or adds a `git.mainCheckout.allowWrites` entry. No dispatch passes a model or effort.
 When a librarian dispatch returns `blocked`, such as a config guard denying a config write,
 print the exact config.json or `.aidrian.local.json` lines for the Human to add, and go on.
 
@@ -61,22 +61,23 @@ AskUserQuestion in Claude Code, one question in the reply in Codex. Skip a quest
 
 Dispatch `harness-librarian` once with the step 3 brief. It runs `aidrian init` and `aidrian-knowledge init`,
 writes config.json, `AGENTS.md`, `CLAUDE.md`, and the settings file, skipping what holds.
-Only when R2 was missing at step 1 does it run `knowledge-update` on the topics `working-agreement`, `testing`,
-`architecture`, and `issue-tracker` when Q1 is not none, and return the proposal as `needs_input`.
+Then it runs `knowledge-update` on the topics `working-agreement`, `testing`, `architecture`,
+and `issue-tracker` when Q1 is not none, and returns the proposal as `needs_input`.
 
-**Done when** the librarian returned its `pending_commit`, and the proposal when the topics ran.
+**Done when** the librarian returned its `pending_commit` and the proposal.
 
 ## 4. Approve, then dispatch 2: write and check
 
 Print the proposal under a line `Proposed docs:`, and offer: write as shown, change something, or cancel.
 When the request already approved it, print it and go on.
-Run dispatch 2 only when docs were approved or Q5 is yes; otherwise run `aidrian check` and `aidrian lint` here.
+Run dispatch 2 only when docs were approved or Q5 is yes.
 Continue the same librarian when the host keeps it, else dispatch it again, with the step 4 brief:
 it writes the docs, runs `aidrian check` and `aidrian lint` until both exit 0, writes `git.mainCheckout.guard: true`
 when Q5 is yes as the very last write, and runs `aidrian check` once more, read-only.
 When the checks cannot pass, it returns `blocked` naming what the Human must approve, and writes no guard.
+After the last dispatch, run `aidrian check` and `aidrian lint` here, read-only, for the report.
 
-**Done when** both commands exit 0, or their problems are in the report.
+**Done when** this session ran both commands after the last dispatch.
 
 ## 5. Report onboarding
 
@@ -86,9 +87,10 @@ In this order, printing each label in backticks as is, at the start of its own l
 2. Each answer applied, in write order, one line each: `<key>: <value>` (such as `github.reviewer: null`,
    `names: default`, `git.mainCheckout.guard: true` last), or `<file>: written`; in Codex, the install link.
 3. The line `Docs written:`, then each doc with its mode; the line `Docs skipped:`, then each with why. Either list empty: `none`.
-4. The `ok:` line of `aidrian check`, or its problems; the lines `aidrian lint` printed.
+4. Every line the step 4 `aidrian check` and `aidrian lint` printed, unchanged.
 5. `git status --porcelain`, and the commit to make:
-   `chore(aidrian): set up the project folder and first knowledge docs`.
+   `chore(aidrian): set up the project folder and first knowledge docs`. When the guard was written in the main checkout,
+   say the Human makes that commit from a terminal before creating any task worktree.
 
 **Done when** the report has all five parts.
 

@@ -3,7 +3,7 @@
 // the plugin manifest's repository, and the AGENTS.md lines of docs/adopting.md.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -109,4 +109,31 @@ test('the skill loads from a request in the Human`s words, and its report prints
   for (const label of ['Docs written:', 'Docs skipped:']) assert.ok(report.toLowerCase().includes(`the line \`${label.toLowerCase()}\``), label);
   const graders = read('plugins/aidrian/evals/harness-consultant-onboard/graders/written.md');
   assert.match(graders, /pattern: 'Docs written:'/u);
+});
+
+test('the report relays the check and lint lines this session ran, and every onboarding shapes the index', () => {
+  const skill = read('plugins/aidrian/skills/harness-consultant/SKILL.md');
+  const section = (from, to) => skill.slice(skill.indexOf(from), skill.indexOf(to));
+  // The librarian's brief returns only pending_commit, so the lines the report prints come from this session's own run.
+  assert.match(section('## 4.', '## 5.'), /After the last dispatch, run `aidrian check` and `aidrian lint` here, read-only/u);
+  assert.match(section('## 5.', '## 6.'), /Every line the step 4 `aidrian check` and `aidrian lint` printed, unchanged/u);
+  const lint = read('plugins/aidrian/evals/harness-consultant-onboard/graders/lint.md');
+  assert.match(lint, /paths: no personal paths/u, 'the onboard grader reads the lint paths line too');
+  // A bare index from a quick start still gets its summaries, tags, and always doc, and Q1 still reaches a doc.
+  const dispatches = read('plugins/aidrian/skills/harness-consultant/references/dispatches.md');
+  assert.doesNotMatch(section('## 3.', '## 4.'), /\bR2\b/u);
+  assert.doesNotMatch(dispatches, /Only when R2 was missing/u);
+  assert.match(dispatches, /An index that exists gets the same pass for each doc whose summary is still the\s+drafted one/u);
+});
+
+test('skill-writer names every plugin skill that sets user-invocable as its exception to disable-model-invocation', () => {
+  const writer = read('plugins/aidrian/skills/skill-writer/SKILL.md');
+  const step = writer.slice(writer.indexOf('## Step 4'), writer.indexOf('## Step 5'));
+  assert.match(step, /`user-invocable: true` instead/u);
+  const skills = path.join(PLUGIN, 'skills');
+  for (const name of readdirSync(skills)) {
+    const file = path.join(skills, name, 'SKILL.md');
+    if (!existsSync(file)) continue;
+    if (/^user-invocable: true$/mu.test(readFileSync(file, 'utf8'))) assert.ok(step.includes(`\`${name}\``), `${name} sets user-invocable`);
+  }
 });

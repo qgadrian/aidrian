@@ -1,33 +1,23 @@
 // The line-length check for Markdown files: one sentence per line reads well in every diff, and the limit
 // (config.json `docs.wrapLimit`) keeps a line on one screen. Text that wrapping would damage is never reported:
 // YAML frontmatter, fenced and indented code, table rows, and a line whose overflow is one unbreakable token, such as a URL.
+// Fenced code is what the shared detector in markdown-sections.mjs reads, so a fence opened after a list marker closes.
 
-const FENCE = /^(`{3,}|~{3,})(.*)$/;
+import { fencedLines } from './markdown-sections.mjs';
+
 const FRONTMATTER = /^---\s*$/;
 const FRONTMATTER_END = /^(?:---|\.\.\.)\s*$/;
-
-// Fence state after `line`: null outside a fence. A fence closes only on its own character, at least as long as the
-// opener, with nothing but spaces after it; so a ```` block can show a ``` line, and a ```js line inside a block is code.
-export function nextFenceState(fence, line) {
-  const match = FENCE.exec(String(line ?? '').trimStart());
-  if (!match) return fence;
-  if (fence === null) return { char: match[1][0], length: match[1].length };
-  if (match[1][0] !== fence.char || match[1].length < fence.length) return fence;
-  return /^[ \t]*\r?$/.test(match[2]) ? null : fence;
-}
 
 // The lines of a Markdown document longer than `limit`, as { line (1-based), length }.
 export function findWrapViolations(text, limit) {
   const violations = [];
   const lines = String(text ?? '').split('\n');
-  let fence = null;
+  const fenced = fencedLines(text ?? '');
   // A leading --- opens frontmatter only when a --- or ... closes it; otherwise it is a rule.
   const frontmatterEnd = FRONTMATTER.test(lines[0] ?? '') ? lines.findIndex((line, index) => index > 0 && FRONTMATTER_END.test(line)) : -1;
   for (const [index, line] of lines.entries()) {
     if (index <= frontmatterEnd) continue;
-    const wasInFence = fence !== null;
-    fence = nextFenceState(fence, line);
-    if (wasInFence || fence !== null) continue;
+    if (fenced[index]) continue;
     if (line.trimStart().startsWith('|') || line.startsWith('    ') || line.startsWith('\t')) continue;
     // Wrapping breaks only at whitespace, so a line whose longest token is over the limit cannot be fixed.
     if (line.length > limit && line.split(/\s+/).every((token) => token.length <= limit)) violations.push({ line: index + 1, length: line.length });

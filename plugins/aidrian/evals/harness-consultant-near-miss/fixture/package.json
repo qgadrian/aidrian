@@ -1,0 +1,11 @@
+{
+  "name": "pantry-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tracks what is in a kitchen pantry and what runs out soon.",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test src/"
+  }
+}

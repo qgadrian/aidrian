@@ -203,7 +203,8 @@ pull request. A change to any of these triggers the built-in `harness-config` fl
 flow's deleted test stops the review even when the change touches nothing else in the flow.
 
 `aidrian lint review` fails on a flow whose globs match no tracked file, an invariants doc that is missing or has no
-headings, a cite to a heading that is not there, and a `focus` that starts no block of its section. It warns past 16
+headings, a cite to a heading that is not there, and a `focus` that starts no block of its section. When `git ls-files`
+cannot run in the project, it fails with that alone, instead of reading every flow as matching nothing. It warns past 16
 flows, or 10 invariants in one flow; about a source past its limit, 4000 characters or 8000 with `focus`; about a question that asks
 whether the change breaks, removes, weakens, or bypasses something, so that yes would be the breach; and about a cited
 invariant's text past 200 characters, which restates the rule. The budget

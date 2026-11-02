@@ -969,3 +969,28 @@ test('extra rounds: a finding attested as fixed is not an open finding of its ro
   assert.deepEqual(capped.extension.history.map((round) => [round.open, round.findings.map((each) => each.title)]), [[2, ['Null refund total', 'Missing lock on save']], [1, ['Wrong currency rounding']]]);
   assert.deepEqual([capped.extension.signals.converging, capped.extension.signals.looping], [true, false]);
 });
+
+test('extra rounds: merging the base branch in between rounds is no fix, even in a file the pull request changes', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'] } };
+  const lines = (first) => `${[first, ...Array.from({ length: 9 }, (_, i) => `keep ${i}`)].join('\n')}\n`;
+  const r = repo(t, {
+    baseConfig: { version: 1, github: { maxReviewRounds: 2 }, review: { flows } },
+    baseFiles: { 'src/booking/a.js': lines('start') },
+    change: (write) => write('src/booking/a.js', lines('changed')),
+  });
+  const one = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: one.dispatch[0].pass, head: one.head, reviewer: 'code-reviewer', findings: 2, fixed: 0 });
+  assert.equal((await r.step({ exec: clean })).status, 'fix_required');
+  // The base gains 100 lines at the end of the same file, and the branch merges it in.
+  r.git('switch', '-q', 'main');
+  r.write('src/booking/a.js', `${lines('start')}${Array.from({ length: 100 }, (_, i) => `base ${i}`).join('\n')}\n`);
+  r.commit('base grows');
+  r.git('switch', '-q', 'feat');
+  r.git('merge', '-q', '--no-edit', 'main');
+  const two = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: two.dispatch[0].pass, head: two.head, reviewer: 'code-reviewer', findings: 1, fixed: 0 });
+  const capped = await r.step({ exec: clean });
+  assert.equal(capped.status, 'extension_check', JSON.stringify(capped.extension?.reasons));
+  assert.deepEqual(capped.extension.history.map((round) => round.fix?.added), [0, 0], 'the merge added nothing of the pull request`s own');
+  assert.equal(capped.extension.signals.bloating, false);
+});

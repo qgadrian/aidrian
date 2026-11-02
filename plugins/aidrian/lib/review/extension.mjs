@@ -17,7 +17,7 @@
 
 import { appendEvent, stamp } from '../dispatch-log.mjs';
 import { runGit } from '../git.mjs';
-import { changedFiles, mergeBase, resolve } from './diff.mjs';
+import { changedFiles, diffLines, mergeBase, resolve } from './diff.mjs';
 import { classify } from './plan.mjs';
 import { emptyState, isSummary, newer, publishState, readLocalState, stateFromComment, writeLocalState } from './state.mjs';
 
@@ -155,10 +155,13 @@ const attempt = (read) => {
   }
 };
 
-// The round history `signals` reads, from git: each round's fix (its head to the next round's, or to `head`), the
-// files and added lines of the pull request at its first round (merge base to that head), and its files now. Files
-// review.ignore lists count nowhere, and a fix counts only the pull request's own files, so merging the base branch in
-// is no bloat. A commit git cannot read leaves its part null.
+// The round history `signals` reads, from git: each round's fix, the files and added lines of the pull request at its
+// first round (merge base to that head), and its files now. A fix is how the pull request's own diff changed from one
+// round's head to the next round's, or to `head` for the last: each head's diff from its merge base with the base tip,
+// compared line by line per file. Lines the base branch gained are on neither side of either diff, so merging or
+// rebasing on the base is no fix and no bloat, even in a file the pull request changes too. `added` counts the lines
+// the later diff has that the earlier one did not; `removed` the reverse. Files review.ignore lists count nowhere. A
+// commit git cannot read leaves its part null.
 export function buildHistory({ root, rounds, baseTip, head, review = {} }) {
   const kept = (changes) => {
     const ignored = new Set(classify(changes, review).ignored);
@@ -170,16 +173,27 @@ export function buildHistory({ root, rounds, baseTip, head, review = {} }) {
   const now = at(head);
   const original = first && tip ? attempt(() => kept(changedFiles(root, mergeBase(root, tip, first), first))) : null;
   const current = now && tip ? attempt(() => kept(changedFiles(root, mergeBase(root, tip, now), now))) : null;
-  const scope = new Set([...(original ?? []), ...(current ?? [])].map((change) => change.file));
+  // The pull request's own added lines at one head, per file.
+  const own = new Map();
+  const ownAdded = (sha) => {
+    if (!own.has(sha)) {
+      own.set(sha, attempt(() => {
+        const { addedLines } = diffLines(root, mergeBase(root, tip, sha), sha);
+        const files = new Set(kept(Object.keys(addedLines).map((file) => ({ file }))).map((change) => change.file));
+        return Object.fromEntries(Object.entries(addedLines).filter(([file]) => files.has(file)));
+      }));
+    }
+    return own.get(sha);
+  };
   const out = rounds.map((round, index) => {
     const from = at(round.head);
     const to = at(rounds[index + 1]?.head ?? head);
     let fix = null;
-    if (from && to) {
-      fix = from === to ? { added: 0, removed: 0, files: [] } : attempt(() => {
-        const changes = kept(changedFiles(root, from, to)).filter((change) => scope.size === 0 || scope.has(change.file));
-        return { added: sum(changes), removed: changes.reduce((total, change) => total + (change.removed ?? 0), 0), files: changes.map((change) => change.file).slice(0, MAX_FILES) };
-      });
+    if (from && to && from === to) fix = { added: 0, removed: 0, files: [] };
+    else if (from && to && tip) {
+      const before = ownAdded(from);
+      const after = ownAdded(to);
+      if (before && after) fix = ownDelta(before, after);
     }
     return { ...round, fix };
   });
@@ -189,6 +203,28 @@ export function buildHistory({ root, rounds, baseTip, head, review = {} }) {
     originalAdded: original ? sum(original) : null,
     files: current ? current.map((change) => change.file) : null,
   };
+}
+
+// How a pull request's added lines changed between two heads, per file, as multisets of line text.
+export function ownDelta(before, after) {
+  let added = 0;
+  let removed = 0;
+  const files = [];
+  for (const file of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    const left = new Map();
+    for (const line of before[file] ?? []) left.set(line, (left.get(line) ?? 0) + 1);
+    let gained = 0;
+    for (const line of after[file] ?? []) {
+      const count = left.get(line) ?? 0;
+      if (count) left.set(line, count - 1);
+      else gained += 1;
+    }
+    const lost = [...left.values()].reduce((total, count) => total + count, 0);
+    if (gained || lost) files.push(file);
+    added += gained;
+    removed += lost;
+  }
+  return { added, removed, files: files.slice(0, MAX_FILES) };
 }
 
 // The review bot's rounds as a history: one round per bot review, oldest first, its findings the review's top-level

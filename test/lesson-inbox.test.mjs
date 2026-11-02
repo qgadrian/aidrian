@@ -658,7 +658,7 @@ test('update --triage - keeps what triage found on the lesson, stamped with when
   assert.equal(json(['list', id])[0].triage, null, 'a resolution clears it');
 });
 
-test('update --triage - fails with one line and writes nothing on a missing, malformed, or stamped record', (t) => {
+test('update --triage - fails with one line and writes nothing on a missing or malformed record', (t) => {
   const { run, inbox, add } = setup(t);
   const id = add('a lesson to triage');
   const before = readFileSync(inbox(), 'utf8');
@@ -667,7 +667,7 @@ test('update --triage - fails with one line and writes nothing on a missing, mal
     [['--triage', '-'], '[1]', '--triage - needs one JSON object on stdin'],
     [['--triage', '-'], 'Fix now', '--triage - needs one JSON object on stdin'],
     [['--triage', '-'], 'null', '--triage - needs one JSON object on stdin'],
-    ...['at', 'project', 'target'].map((key) => [['--triage', '-'], JSON.stringify({ ...TRIAGE, [key]: 'x' }), '--triage - takes only existing, proposed_end, owner, expect, verdict, reason']),
+    [['--triage', '-'], JSON.stringify({ ...TRIAGE, notes: 'x' }), '--triage - takes only existing, proposed_end, owner, expect, verdict, reason'],
     [['--triage', '-'], '{}', '--triage - needs existing, proposed_end, and owner'],
     [['--triage', '-'], JSON.stringify({ ...TRIAGE, owner: undefined }), '--triage - needs existing, proposed_end, and owner'],
     [['--triage', '-'], JSON.stringify({ ...TRIAGE, proposed_end: 'Later' }), '--triage - needs proposed_end to be one of Fix now, Issue, Merge, Reject'],
@@ -681,6 +681,23 @@ test('update --triage - fails with one line and writes nothing on a missing, mal
     assert.deepEqual([result.status, result.stderr], [1, `${message}\n`], input);
   }
   assert.equal(readFileSync(inbox(), 'utf8'), before, 'no row was appended');
+});
+
+test('update --triage - takes a record resent with its stamps, and stamps it afresh', (t) => {
+  const { run, json, add, inbox } = setup(t);
+  const here = path.basename(path.dirname(path.dirname(inbox())));
+  const id = add('a lesson to triage again', ['--target', 'project']);
+  const stale = { ...TRIAGE, at: '2020-01-01T00:00:00.000Z', project: 'notes-1', target: 'plugin' };
+  const written = run(['update', id, '--triage', '-', '--json'], JSON.stringify({ ...stale, verdict: 'declined', reason: 'the Human wants an issue' }));
+  assert.equal(written.status, 0, written.stderr);
+  const { triage } = JSON.parse(written.stdout);
+  assert.deepEqual({ ...triage, at: undefined }, { ...TRIAGE, verdict: 'declined', reason: 'the Human wants an issue', project: here, target: 'project', at: undefined });
+  assert.notEqual(triage.at, stale.at, 'the command stamps its own time');
+  // The record as list --json prints it goes back in whole.
+  const shown = json(['list'])[0].triage;
+  const resent = run(['update', id, '--triage', '-'], JSON.stringify({ ...shown, verdict: 'failed', reason: 'the route failed' }));
+  assert.equal(resent.status, 0, resent.stderr);
+  assert.deepEqual({ ...json(['list'])[0].triage, at: undefined }, { ...TRIAGE, verdict: 'failed', reason: 'the route failed', project: here, target: 'project', at: undefined });
 });
 
 test('the triage record is reused for 14 days, only in the project that wrote it, and a later occurrence clears it', (t) => {

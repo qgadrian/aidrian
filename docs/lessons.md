@@ -111,10 +111,10 @@ the note is the rest.
   goes to that project's folder in the state root, which a `state.dir` in its config.json moves away from.
   A new tier or kind alone moves nothing.
 - `update <id> --triage -` keeps what triage found on the lesson, so a later triage reuses it instead of searching again.
-  It reads one JSON object on stdin with only these keys. Three are required: `existing` (the docs, issues, or pull requests
+  It reads one JSON object on stdin with these keys. Three are required: `existing` (the docs, issues, or pull requests
   that already cover it), `proposed_end` (`Fix now`, `Issue`, `Merge`, or `Reject`), and `owner`. `expect`, `verdict`
   (`declined`, `failed`, or `null`), and `reason` are `null` when left out. The command adds `at`, `project`, and the lesson's
-  current `target`; a record that names them fails.
+  current `target`, over any the record carries, so a record resent from `list --json` passes; any other key fails.
   It takes no `--tier`, `--kind`, or `--target`, and each write replaces the record whole.
   `list --json` and `update --json` show the record for 14 days after its `at`, and only in the checkout of the project
   that wrote it; otherwise `triage` is `null`, and triage reads the lesson afresh.

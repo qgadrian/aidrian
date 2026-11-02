@@ -21,6 +21,8 @@ const SHOWN_OCCURRENCES = 5;
 // The command stamps `at`, `project`, and `target` itself.
 const TRIAGE_KEYS = ['existing', 'proposed_end', 'owner', 'expect', 'verdict', 'reason'];
 const TRIAGE_REQUIRED = TRIAGE_KEYS.slice(0, 3);
+// The fields the command stamps. A record resent from `list --json` carries them; the command's own stamps replace them.
+const TRIAGE_STAMPS = ['at', 'project', 'target'];
 const ENDS = ['Fix now', 'Issue', 'Merge', 'Reject'];
 const VERDICTS = ['declined', 'failed'];
 
@@ -261,7 +263,7 @@ function update({ values, ids, ...ctx }) {
     const home = destination(held);
     return withLocks([home?.file], () => {
       const at = new Date().toISOString();
-      // The record names the lesson's target as triage saw it, so a later change of target is visible on it.
+      // Stamps the target the triage saw, for the raw rows; fold() drops the record when the target changes.
       const fields = triage ? { triage: { ...triage, at, target: held.lesson.target } } : changes;
       appendRow(held.file, { event: 'update', id: held.lesson.id, at, ...fields, ...stampFor(held.file, ctx) });
       const moved = home ? moveLessons(held.file, home.file, [held.lesson.id], { project: home.project }).length > 0 : false;
@@ -376,7 +378,7 @@ function readTriage() {
     // Not JSON: the check below names what it needs.
   }
   if (typeof record !== 'object' || record === null || Array.isArray(record)) return { problem: '--triage - needs one JSON object on stdin' };
-  if (Object.keys(record).some((key) => !TRIAGE_KEYS.includes(key))) return { problem: `--triage - takes only ${TRIAGE_KEYS.join(', ')}` };
+  if (Object.keys(record).some((key) => !TRIAGE_KEYS.includes(key) && !TRIAGE_STAMPS.includes(key))) return { problem: `--triage - takes only ${TRIAGE_KEYS.join(', ')}` };
   if (TRIAGE_REQUIRED.some((key) => record[key] === undefined)) return { problem: '--triage - needs existing, proposed_end, and owner' };
   // Every record holds all six keys, so a reader never tells a missing one from a null one.
   const full = Object.fromEntries(TRIAGE_KEYS.map((key) => [key, record[key] ?? null]));

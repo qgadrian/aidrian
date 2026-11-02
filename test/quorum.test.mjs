@@ -613,6 +613,16 @@ test('check: a complete ledger whose ruling lost its evidence exits 1 and is not
   ]), status: 'complete', human_answers: [{ objection_id: 'A2', answer: 'accept it' }] });
   assert.equal(settled.status, 0, settled.stderr);
   assert.ok(settled.lines.includes('objection A1 ruling: invalid: the ruling has no passing citation'), settled.stdout);
+
+  // A valid partial accept escalated on its rejected part: the accepted part still stands, so its stale first ruling
+  // is refused even though the objection is escalated. An accept escalated whole (no rebuttal) is the Human's.
+  const partial = p.check({ ...ledger([
+    objection('B1', [PASSING.adr], { by: 'B', status: 'escalated', ruling: ruled('accept'), rebuttal: { verdict: 'rebut', claim: 'c', citations: [PASSING.fenced], ruling: ruled('reject', [PASSING.plan]) } }),
+  ]), status: 'complete' });
+  assert.equal(partial.status, 1, partial.stdout);
+  assert.match(partial.stderr, /objection B1 ruling: invalid: the ruling has no passing citation in a complete ledger$/mu);
+  const whole = p.check({ ...ledger([objection('B1', [PASSING.adr], { by: 'B', status: 'escalated', ruling: ruled('accept') })]), status: 'complete' });
+  assert.equal(whole.status, 0, whole.stderr);
 });
 
 test('check: a complete ledger with a rebuttal left unruled, a final ruling other than accept, or a status its decision does not give exits 1', (t) => {

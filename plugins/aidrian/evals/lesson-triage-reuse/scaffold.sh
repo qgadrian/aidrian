@@ -22,8 +22,9 @@ export XDG_STATE_HOME
 git add -A
 git -c user.name=eval -c user.email=eval@example.invalid commit -qm fixture
 id=$(plugins/aidrian/bin/aidrian lesson add --tier P2 --kind rule --target project <<'LESSON' | head -n 1
-title: Sessions forget the quartzwick rule for lesson titles
-Two sessions this week wrote lesson titles without the quartzwick prefix, and triage could not group them.
+title: quartzwick lessons name the session instead of the problem
+Triage could not tell three quartzwick lessons apart: each title said what the session was doing, such as
+"fixing the build", not what went wrong, so each one had to be read in full before it could be ranked.
 LESSON
 )
 plugins/aidrian/bin/aidrian lesson update "$id" --triage - <<'TRIAGE' >/dev/null

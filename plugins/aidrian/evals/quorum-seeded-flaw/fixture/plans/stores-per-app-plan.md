@@ -71,8 +71,8 @@ status: "pending"
 
 ## Risks
 
-- Checkout can save the same order twice when a caller retries, so the store ends up with duplicate orders.
-  S1 should add a table of saved order ids, checked before every save, to stop the duplicate.
+- A caller that retries checkout saves the same order twice, so the order store ends up holding two copies of that
+  order. The per-app store keeps this behaviour as it is today.
 
 ## Open questions
 

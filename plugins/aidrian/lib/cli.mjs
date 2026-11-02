@@ -3,6 +3,7 @@
 // code } }. Only the module of the command that runs is imported.
 
 import { CONFIG_ERROR } from './config.mjs';
+import { LOCKED } from './jsonl.mjs';
 import { usageLines, wrap } from './usage.mjs';
 
 const COMMANDS = {
@@ -35,6 +36,10 @@ try {
     // config.json has errors, so the command stopped before it acted (config.mjs commandConfig).
     console.error(error.message);
     process.exitCode = error.exitCode;
+  } else if (error.code === LOCKED) {
+    // Another process held a file's lock past the wait (jsonl.mjs withLocks): nothing was written.
+    console.error(error.message);
+    process.exitCode = 1;
   } else if (error.code?.startsWith('ERR_PARSE_ARGS')) {
     // node:util parseArgs throws these for an unknown option or a missing value.
     await fail(error.message);

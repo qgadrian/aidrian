@@ -37,7 +37,25 @@ The file is only ever appended to. Each row is one event on one lesson, and the 
 | `resolve` | `aidrian lesson resolve` | Closes the lesson with an outcome and a link. |
 | `move` | `aidrian lesson update --target`, `aidrian lesson migrate` | Takes the lesson out of this inbox, after its rows were copied to another. |
 
-No lock is needed: a row is one append, so rows from concurrent sessions never interleave, and nothing rewrites the file.
+A row is one append, so rows from concurrent sessions never interleave, and nothing rewrites the file.
+A move reads the inbox, copies the lesson's rows, then writes its `move` row, so it holds the lock of both inboxes
+from that read to its last row. Every writer that acts on what it read, `add`, `resolve`, `update`, and the automatic
+signals, holds the lock of the inboxes it reads from that read to its append, so a row for a moving lesson lands before
+the move reads it, and goes with it, or after, where its writer finds the lesson in its new inbox.
+`update --target` takes the lock of the inbox the lesson moves to before it writes its `update` row, so a destination
+it cannot lock leaves nothing written.
+A command waits up to 5 seconds for a lock; then it fails with `is locked by another process`, naming the pid and the
+lock file, and writes nothing. An automatic signal never waits, because hooks record it inside the host's hook timeout:
+while another process holds the lock, it records nothing, and for a repeated block the next block tries again.
+
+The lock is a numbered file beside the inbox, `inbox.jsonl.lock.<n>`, holding the holder's pid and host; the highest
+number is the lock, and `inbox.jsonl.lock.<n>.released` marks it free. A process takes it by creating the next number,
+which only one process can create, when the highest is released or abandoned. A lock held from this host is abandoned
+only when its pid no longer runs: a live holder keeps it however long it runs. One held from another host, or naming no
+pid, is abandoned after 10 minutes. No process deletes a lock it did not supersede, so two never hold it at once.
+An inbox is locked, and compared with another, by its real path, so a `state.dir` that reaches an inbox through a
+symlink is that inbox: one lock, and no move onto itself. Once the lock is idle, its last two files stay. A process that reuses the pid of a holder that died keeps that lock
+held; when no aidrian command is running, delete the lock files.
 A line that does not parse is skipped.
 An `add` row with a `key` may also carry `once`, naming the event it reports: a later row with the same key and `once`
 is that event observed again, and adds nothing.
@@ -97,6 +115,7 @@ the note is the rest.
   from each project folder in the state root, and from this project's inbox wherever `state.dir` puts it.
   It keeps each lesson's id, occurrences, evidence, status, and the lessons merged into it, and writes `project` on the copies.
   It never touches a lesson whose target is `project` or unset. A second run moves nothing; `--dry-run` only prints the list.
+  A run cut short and run again copies no row twice, and finishes each lesson it had started copying, whole.
   A moved lesson whose key a lesson in the plugin's inbox already holds joins that lesson, and the output says so:
   only its occurrences move, its `add` and `seen` rows and those of the lessons merged into it, and its ids find the holder.
   Its own updates and resolutions are dropped from the record: nothing lists them after the move, and the holder keeps

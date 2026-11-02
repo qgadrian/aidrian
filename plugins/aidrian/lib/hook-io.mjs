@@ -24,15 +24,18 @@ export function deny(reason) {
   process.exit(2);
 }
 
-// deny(reason), once lib/hook-deny.mjs has recorded the block of `rule` on the call in `input`; `options` go to its
-// recordBlock. A recorder that fails to load or to record still blocks.
+// deny(reason), with lib/hook-deny.mjs recording the block of `rule` on the call in `input`; `options` go to its
+// recordBlock. The reason is written first and the recording comes after, so nothing the recording does delays the
+// denial's text; the recording never waits on a lock either, so the exit stays well inside the host's hook timeout.
+// A recorder that fails to load or to record still blocks.
 export async function block(input, rule, reason, options) {
+  writeSync(2, `${reason}\n`);
   try {
     (await import('./hook-deny.mjs')).recordBlock(input, rule, reason, options);
   } catch {
     // Not recorded; the call is still blocked.
   }
-  deny(reason);
+  process.exit(2);
 }
 
 // Runs a hook body with the payload. An error lets the action run and prints nothing: a broken hook, or a payload

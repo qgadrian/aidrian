@@ -1,5 +1,5 @@
 // `aidrian lesson`: capture a lesson from stdin, then list, resolve, re-tier, or count the lessons in the inbox
-// (lesson-inbox.mjs), print the session-start line, and move the plugin lessons of every project on the machine to the
+// (lesson-inbox.mjs), keep what triage found on a lesson, print the session-start line, and move the plugin lessons of every project on the machine to the
 // plugin's inbox. A lesson for the plugin lands in the plugin's inbox; an id is looked up in the project's own inbox,
 // then in the plugin's. docs/lessons.md describes every subcommand.
 
@@ -10,13 +10,19 @@ import { parseArgs } from 'node:util';
 import { commandConfig } from './config.mjs';
 import { appendRow, readRows, realFile, withLocks } from './jsonl.mjs';
 import {
-  addRow, days, firstLine, fold, homeInbox, inboxPath, KINDS, lessons, lessonStats, moveLessons, nudge, oldestText, origin, OUTCOMES, parseCapture,
-  pluginInboxPath, projectInboxPath, similarLessons, TARGETS, TIERS, triageOrder,
+  addRow, ageDays, days, firstLine, fold, homeInbox, inboxPath, KINDS, lessons, lessonStats, moveLessons, nudge, oldestText, origin, OUTCOMES, parseCapture,
+  pluginInboxPath, projectInboxPath, similarLessons, TARGETS, TIERS, TRIAGE_FRESH_DAYS, triageOrder,
 } from './lesson-inbox.mjs';
 import { pluginProjectId, projectAt, projectId, stateRoot } from './project.mjs';
 import { usageLines } from './usage.mjs';
 
 const SHOWN_OCCURRENCES = 5;
+// What `update --triage -` reads on stdin: what triage found. The first three are required, the rest null when absent.
+// The command stamps `at`, `project`, and `target` itself.
+const TRIAGE_KEYS = ['existing', 'proposed_end', 'owner', 'expect', 'verdict', 'reason'];
+const TRIAGE_REQUIRED = TRIAGE_KEYS.slice(0, 3);
+const ENDS = ['Fix now', 'Issue', 'Merge', 'Reject'];
+const VERDICTS = ['declined', 'failed'];
 
 const OPTIONS = {
   project: { type: 'string' },
@@ -34,6 +40,7 @@ const OPTIONS = {
   link: { type: 'string' },
   expect: { type: 'string' },
   since: { type: 'string' },
+  triage: { type: 'string' },
   'dry-run': { type: 'boolean' },
 };
 
@@ -44,7 +51,7 @@ export const commands = {
     usage:
       `add [--tier ${TIERS.join('|')}] [--kind ${KINDS.join('|')}] [--target ${TARGETS.join('|')}] [--key KEY] [--same ID] ` +
       '| list [ID...] [--status open|resolved|all] [--tier T] [--kind K] [--target T] [--source auto|manual] [--limit N] [--json] ' +
-      `| resolve ID --outcome ${OUTCOMES.join('|')} --link REF|- [--expect TEXT] | update ID [--tier T] [--kind K] [--target T] ` +
+      `| resolve ID --outcome ${OUTCOMES.join('|')} --link REF|- [--expect TEXT] | update ID ([--tier T] [--kind K] [--target T] | --triage -) ` +
       '| stats [--since 30d] [--json] | nudge | migrate [--dry-run] [--json]',
     about: 'capture a lesson from stdin (leading "title:" and "evidence: <ref>" lines, then the note), list, resolve, re-tier, or count them',
     async run(args) {
@@ -102,7 +109,7 @@ function add({ values, ids, ...ctx }) {
       return lesson;
     });
     if (!found) return fail(`no lesson with id ${values.same}`);
-    return report(found.file, found.lesson.id, values.json, found.file === ctx.plugin);
+    return report(found.file, found.lesson.id, values.json, found.file === ctx.plugin, ctx);
   }
   if (!note) return fail('the lesson needs a note on stdin, after any "title:" or "evidence: <ref>" lines');
   const from = origin();
@@ -117,7 +124,7 @@ function add({ values, ids, ...ctx }) {
     appendRow(home.file, added);
     return { where: home, row: added };
   });
-  return report(where.file, row.id, values.json, where.file === ctx.plugin);
+  return report(where.file, row.id, values.json, where.file === ctx.plugin, ctx);
 }
 
 // Runs `write` holding the lock of the project's own inbox and the plugin's, the two that locate and keyHolder read, so
@@ -125,12 +132,12 @@ function add({ values, ids, ...ctx }) {
 const writing = (ctx, write) => withLocks([ctx.file, ctx.plugin], write);
 
 // Prints where a captured row landed: its lesson's id first, then how often it was seen and what it resembles.
-function report(file, id, json, fromPlugin) {
+function report(file, id, json, fromPlugin, ctx) {
   const { lessons: all, find } = fold(readRows(file).rows);
   const lesson = find(id);
   const similar = (similarLessons(all, [lesson]).get(lesson.id) ?? []).map(find);
   if (json) {
-    console.log(JSON.stringify({ ...view(lesson), similar: similar.map((other) => other.id) }));
+    console.log(JSON.stringify({ ...view(lesson, ctx), similar: similar.map((other) => other.id) }));
     return 0;
   }
   const lines = [lesson.id];
@@ -177,7 +184,8 @@ function list({ values, ids, ...ctx }) {
     if (file === ctx.plugin) for (const lesson of chosen) fromPlugin.add(lesson);
   }
   if (values.json) {
-    console.log(JSON.stringify(chosen.map((lesson) => ({ ...view(lesson), similar: similar.get(lesson.id) ?? [] }))));
+    const here = projectId(ctx.project);
+    console.log(JSON.stringify(chosen.map((lesson) => ({ ...view(lesson, { here }), similar: similar.get(lesson.id) ?? [] }))));
   } else if (!chosen.length) {
     console.log(`no ${status === 'all' ? '' : `${status} `}lessons in ${file}`);
   } else {
@@ -210,20 +218,29 @@ function resolve({ values, ids, ...ctx }) {
     return { file: found.file };
   });
   if (problem) return fail(problem);
-  if (values.json) console.log(JSON.stringify(view(fold(readRows(file).rows).find(id))));
+  if (values.json) console.log(JSON.stringify(view(fold(readRows(file).rows).find(id), ctx)));
   else console.log(`${id} -> ${values.outcome}`);
   return 0;
 }
 
 // A lesson whose target changes moves to the inbox homeInbox names for it: the plugin's for `plugin`, and for `project`
 // the inbox of the project it came from, which respects that project's `state.dir` when the command runs from there.
-// A tier or kind alone moves nothing.
+// A tier or kind alone moves nothing. `--triage -` records what triage found instead, and changes no label.
 function update({ values, ids, ...ctx }) {
   if (ids.length !== 1) return fail(ids.length ? `unexpected argument: ${ids[1]}` : 'update needs the lesson id');
   const problem = badLabel(values);
   if (problem) return fail(problem);
   const changes = Object.fromEntries(['tier', 'kind', 'target'].filter((name) => values[name] !== undefined).map((name) => [name, values[name]]));
-  if (!Object.keys(changes).length) return fail('update needs --tier, --kind, or --target');
+  let triage = null;
+  if (values.triage !== undefined) {
+    if (values.triage !== '-') return fail('--triage takes -: pipe the JSON record in on stdin');
+    if (Object.keys(changes).length) return fail('--triage - takes no --tier, --kind, or --target; change those in an update of their own');
+    const read = readTriage();
+    if (read.problem) return fail(read.problem);
+    triage = { ...read.record, project: projectId(ctx.project) };
+  } else if (!Object.keys(changes).length) {
+    return fail('update needs --tier, --kind, --target, or --triage -');
+  }
   // The inbox a target change moves the lesson `held` to, as homeInbox names it, or null when it stays.
   // A lesson in this project's own inbox came from this project, whatever its rows say; one in the plugin's inbox that
   // names no project is the plugin repository's own.
@@ -243,7 +260,10 @@ function update({ values, ids, ...ctx }) {
     if (!held) return { held };
     const home = destination(held);
     return withLocks([home?.file], () => {
-      appendRow(held.file, { event: 'update', id: held.lesson.id, at: new Date().toISOString(), ...changes, ...stampFor(held.file, ctx) });
+      const at = new Date().toISOString();
+      // The record names the lesson's target as triage saw it, so a later change of target is visible on it.
+      const fields = triage ? { triage: { ...triage, at, target: held.lesson.target } } : changes;
+      appendRow(held.file, { event: 'update', id: held.lesson.id, at, ...fields, ...stampFor(held.file, ctx) });
       const moved = home ? moveLessons(held.file, home.file, [held.lesson.id], { project: home.project }).length > 0 : false;
       return { held, moved, to: moved ? home.file : held.file };
     });
@@ -251,7 +271,7 @@ function update({ values, ids, ...ctx }) {
   if (!result.held) return fail(`no lesson with id ${ids[0]}`);
   const { held: { lesson }, moved, to } = result;
   const now = fold(readRows(to).rows).find(lesson.id);
-  if (values.json) console.log(JSON.stringify(view(now)));
+  if (values.json) console.log(JSON.stringify(view(now, ctx)));
   else console.log(`${summary(now, to === ctx.plugin)}${moved ? `\nMoved to ${to}` : ''}`);
   return 0;
 }
@@ -345,6 +365,33 @@ function migrate({ values, ids, file, plugin, project, config }) {
   return 0;
 }
 
+// The triage record on stdin: { record }, or { problem } when it is missing or malformed.
+function readTriage() {
+  const raw = readFileSync(0, 'utf8').trim();
+  if (!raw) return { problem: '--triage - read nothing from stdin; pipe the JSON record in' };
+  let record = null;
+  try {
+    record = JSON.parse(raw);
+  } catch {
+    // Not JSON: the check below names what it needs.
+  }
+  if (typeof record !== 'object' || record === null || Array.isArray(record)) return { problem: '--triage - needs one JSON object on stdin' };
+  if (Object.keys(record).some((key) => !TRIAGE_KEYS.includes(key))) return { problem: `--triage - takes only ${TRIAGE_KEYS.join(', ')}` };
+  if (TRIAGE_REQUIRED.some((key) => record[key] === undefined)) return { problem: '--triage - needs existing, proposed_end, and owner' };
+  // Every record holds all six keys, so a reader never tells a missing one from a null one.
+  const full = Object.fromEntries(TRIAGE_KEYS.map((key) => [key, record[key] ?? null]));
+  const textOrNull = (value) => value === null || typeof value === 'string';
+  const bad = [
+    ['existing', 'an array of strings', Array.isArray(full.existing) && full.existing.every((item) => typeof item === 'string')],
+    ['proposed_end', `one of ${ENDS.join(', ')}`, ENDS.includes(full.proposed_end)],
+    ['owner', 'a string', typeof full.owner === 'string'],
+    ['expect', 'a string or null', textOrNull(full.expect)],
+    ['verdict', `${VERDICTS.join(', ')}, or null`, full.verdict === null || VERDICTS.includes(full.verdict)],
+    ['reason', 'a string or null', textOrNull(full.reason)],
+  ].find(([, , ok]) => !ok);
+  return bad ? { problem: `--triage - needs ${bad[0]} to be ${bad[1]}` } : { record: full };
+}
+
 function badLabel(values) {
   if (values.tier !== undefined && !TIERS.includes(values.tier)) return `--tier must be one of ${TIERS.join(', ')}`;
   if (values.kind !== undefined && !KINDS.includes(values.kind)) return `--kind must be one of ${KINDS.join(', ')}`;
@@ -352,9 +399,13 @@ function badLabel(values) {
   return null;
 }
 
-// The lesson as `--json` prints it: the latest occurrences only; `seen` counts them all.
-function view(lesson) {
-  return { ...lesson, occurrences: lesson.occurrences.slice(-SHOWN_OCCURRENCES) };
+// The lesson as `--json` prints it: the latest occurrences only; `seen` counts them all. Its triage record only while it is
+// worth reusing: written in this checkout's project, `here` (projectId, computed from `project` when not given), less than
+// TRIAGE_FRESH_DAYS ago.
+function view(lesson, { here, project, now = Date.now() }) {
+  const { triage } = lesson;
+  const fresh = triage && ageDays(triage.at, now) < TRIAGE_FRESH_DAYS && triage.project === (here ?? projectId(project));
+  return { ...lesson, occurrences: lesson.occurrences.slice(-SHOWN_OCCURRENCES), triage: fresh ? triage : null };
 }
 
 // `fromPlugin`: the lesson was read from the plugin's inbox, so it names the project it came from.

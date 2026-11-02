@@ -5,8 +5,8 @@
 // the inbox; lesson-cli.mjs is the `aidrian lesson` command.
 //
 // The file is only ever appended to, so no session's write can drop another's. Each row is one event on one lesson:
-// `add` starts it, `seen` records it again, `update` changes its tier, kind, or target, `resolve` closes it, and `move`
-// takes it out of this inbox after its rows were copied to another (moveLessons).
+// `add` starts it, `seen` records it again, `update` changes its tier, kind, or target or records its triage, `resolve`
+// closes it, and `move` takes it out of this inbox after its rows were copied to another (moveLessons).
 // fold() replays the rows into the current state of every lesson. An `add` whose `key` an earlier lesson holds is that
 // lesson seen again, so automatic signals dedupe without reading the file first. One that also repeats an earlier row's
 // `once` is the same event observed again, and adds nothing.
@@ -38,6 +38,8 @@ const TITLE_CHARS = 120;
 // 20 lessons that had one.
 const SIMILAR = 0.18;
 const DAY_MS = 86_400_000;
+// How many days a lesson's triage record stays worth reusing: `--json` shows an older one as null.
+export const TRIAGE_FRESH_DAYS = 14;
 
 // The project's own inbox. `config` is the project's config when the caller has it; stateDir reads it otherwise.
 export function inboxPath(project, config) {
@@ -209,7 +211,10 @@ export function fold(rows) {
       const once = typeof row.key === 'string' && typeof row.once === 'string' && row.once ? `${row.key}\n${row.once}` : null;
       if (owner) {
         alias.set(row.id, owner.id);
-        if (!events.has(once)) addOccurrence(owner, occurrence(row));
+        if (!events.has(once)) {
+          addOccurrence(owner, occurrence(row));
+          staleTriage(owner, row);
+        }
         if (once) events.add(once);
       } else if (typeof row.note === 'string') {
         const lesson = newLesson(row);
@@ -219,10 +224,18 @@ export function fold(rows) {
       }
     } else if (event === 'seen') {
       const lesson = find(row.id);
-      if (lesson) addOccurrence(lesson, occurrence(row));
+      if (lesson) {
+        addOccurrence(lesson, occurrence(row));
+        staleTriage(lesson, row);
+      }
     } else if (event === 'update') {
       const lesson = find(row.id);
-      if (lesson) Object.assign(lesson, labels(row, lesson));
+      if (lesson) {
+        // A new target is another owner's call: the triage made for the old one no longer holds.
+        if (TARGETS.includes(row.target) && row.target !== lesson.target) lesson.triage = null;
+        Object.assign(lesson, labels(row, lesson));
+        if (isRecord(row.triage)) lesson.triage = row.triage;
+      }
     } else if (event === 'move') {
       const lesson = byId.get(row.id);
       if (lesson && !lesson.mergedInto) forget(lesson);
@@ -263,8 +276,16 @@ function newLesson(row) {
     resolvedAt: null,
     reopened: 0,
     resolutions: [],
+    triage: null,
   };
 }
+
+// An occurrence later than the lesson's triage record makes the record stale: triage reads the lesson again.
+function staleTriage(lesson, row) {
+  if (lesson.triage && typeof row.at === 'string' && !(row.at <= lesson.triage.at)) lesson.triage = null;
+}
+
+const isRecord = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 // The tier, kind, and target a row sets, each only when valid; `base` keeps the rest.
 function labels(row, base) {
@@ -305,14 +326,19 @@ function applyResolution(lesson, row, find, alias) {
       alias.set(lesson.id, target.id);
       lesson.mergedInto = target.id;
       target.merged.push(lesson.id);
-      addOccurrence(target, { id: lesson.id, at: lesson.at, note: lesson.note, evidence: lesson.evidence, session: lesson.session, agent: lesson.agent, seen: 1 });
+      // The merged lesson and its occurrences are occurrences of the target: any later than its triage record clears it.
+      const items = [{ id: lesson.id, at: lesson.at, note: lesson.note, evidence: lesson.evidence, session: lesson.session, agent: lesson.agent, seen: 1 }];
       // Moved, not copied: each occurrence lives on one lesson, so totals over every lesson count it once.
-      for (const item of lesson.occurrences.splice(0)) addOccurrence(target, item);
+      items.push(...lesson.occurrences.splice(0));
+      for (const item of items) {
+        addOccurrence(target, item);
+        staleTriage(target, item);
+      }
     }
   }
   const expect = typeof row.expect === 'string' && row.expect ? row.expect : null;
   lesson.resolutions.push({ at, outcome, link, expect, recurred: 0 });
-  Object.assign(lesson, { status: 'resolved', outcome, link, expect, resolvedAt: at });
+  Object.assign(lesson, { status: 'resolved', outcome, link, expect, resolvedAt: at, triage: null });
 }
 
 // For each lesson in `targets`, the ids of up to three others among `all` whose words match it, best first.
@@ -374,7 +400,7 @@ export function nudge(file, { command = 'aidrian', config, now = Date.now() } = 
     `the lesson-triage skill drains it in a session opened for it, and \`${command} lesson list\` shows the order.`;
 }
 
-const ageDays = (at, now) => Math.floor((now - Date.parse(at)) / DAY_MS);
+export const ageDays = (at, now) => Math.floor((now - Date.parse(at)) / DAY_MS);
 export const days = (n) => (n === 1 ? '1 day' : `${n} days`);
 export const oldestText = (n) => (n ? `the oldest ${days(n)} old` : 'the oldest from today');
 const tierCounts = (list) => TIERS.map((tier) => [tier, list.filter((lesson) => lesson.tier === tier).length]).filter(([, n]) => n).map(([tier, n]) => `${tier} ${n}`).join(', ');

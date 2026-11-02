@@ -33,7 +33,7 @@ The file is only ever appended to. Each row is one event on one lesson, and the 
 | --- | --- | --- |
 | `add` | `aidrian lesson add` | Starts a lesson. A row whose `key` an earlier lesson holds is that lesson seen again instead. |
 | `seen` | `aidrian lesson add --same <id>` | Records the lesson once more, with an optional note and evidence. |
-| `update` | `aidrian lesson update` | Changes the tier, kind, or target. |
+| `update` | `aidrian lesson update` | Changes the tier, kind, or target, or records the lesson's triage. |
 | `resolve` | `aidrian lesson resolve` | Closes the lesson with an outcome and a link. |
 | `move` | `aidrian lesson update --target`, `aidrian lesson migrate` | Takes the lesson out of this inbox, after its rows were copied to another. |
 
@@ -78,6 +78,7 @@ is that event observed again, and adds nothing.
 | `status`, `outcome`, `link`, `expect` | `open` or `resolved`; how it ended, where to, and for a fix, what number should move. |
 | `reopened`, `resolutions` | How many times a fix did not hold, and every resolution with the occurrences that came after it. |
 | `merged`, `mergedInto` | The lessons merged into this one, or the one this one was merged into. |
+| `triage` | What triage found, from `update --triage -`: `existing`, `proposed_end`, `owner`, `expect`, `verdict`, `reason`, and the `at`, `project`, and `target` the command stamps. `--json` shows it for 14 days, and only in the project that wrote it; `null` otherwise. A resolution, a new target, or an occurrence after its `at` clears it, including a lesson merged in, or its occurrences, from after that time. |
 
 ## Commands
 
@@ -109,6 +110,14 @@ the note is the rest.
   project it came from. Run that one from the project's checkout, or with `--project <dir>`: from anywhere else, the lesson
   goes to that project's folder in the state root, which a `state.dir` in its config.json moves away from.
   A new tier or kind alone moves nothing.
+- `update <id> --triage -` keeps what triage found on the lesson, so a later triage reuses it instead of searching again.
+  It reads one JSON object on stdin with only these keys. Three are required: `existing` (the docs, issues, or pull requests
+  that already cover it), `proposed_end` (`Fix now`, `Issue`, `Merge`, or `Reject`), and `owner`. `expect`, `verdict`
+  (`declined`, `failed`, or `null`), and `reason` are `null` when left out. The command adds `at`, `project`, and the lesson's
+  current `target`; a record that names them fails.
+  It takes no `--tier`, `--kind`, or `--target`, and each write replaces the record whole.
+  `list --json` and `update --json` show the record for 14 days after its `at`, and only in the checkout of the project
+  that wrote it; otherwise `triage` is `null`, and triage reads the lesson afresh.
 - `stats` counts what is open, what moved in the last `--since 30d`, and whether each fix since then held.
 - `nudge` prints the session-start line.
 - `migrate` moves every plugin lesson that an earlier version left in a project's inbox to the plugin's inbox:

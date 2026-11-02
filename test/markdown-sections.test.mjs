@@ -46,6 +46,12 @@ test('fencedLines: an unclosed fence runs to the end without throwing', () => {
   assert.deepEqual([...unfencedLines(body)], ['## Top']);
 });
 
+test('fencedLines: a fence at the inner item of a nested marker line ("- - item") is still a fence', () => {
+  const body = ['- - nested item', '', `      ${FENCE}js`, '    example', `    ${FENCE}`, '', '## Risks', '- none'].join('\n');
+  assert.deepEqual(fencedLines(body), [false, false, true, true, true, false, false, false]);
+  assert.deepEqual(headings(body), ['Risks']);
+});
+
 test('fencedLines: a line that opens with inline code is not a fence', () => {
   assert.deepEqual(fencedLines(`${FENCE}code${FENCE} stays literal\n## Next`), [false, false]);
 });

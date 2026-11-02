@@ -43,7 +43,8 @@ export function fencedIn(lines) {
     if (line.trim()) while (items.length && indent < items.at(-1)) items.pop();
     const container = items.at(-1) ?? 0;
     const item = itemOf(line);
-    if (item && indent - container <= 3) items.push(item[1].length + item[2].length);
+    // A line such as "- - nested" opens one item per marker: each marker's content column goes on the stack.
+    if (item && indent - container <= 3) for (const marker of line.matchAll(NESTED_MARKER)) items.push(marker.index + marker[0].length);
     const fence = fenceOf(line, container);
     open = fence && { ...fence, container: fence.item ?? container };
     return fence !== null;
@@ -64,6 +65,8 @@ export const indentOf = (line) => /^ */u.exec(line)[0].length;
 // an item but is not one (CommonMark), so it opens no container a later fence could be measured against.
 export const THEMATIC_BREAK = /^ *([-*_])(?: *\1){2,} *$/u;
 export const itemOf = (line) => (THEMATIC_BREAK.test(line) ? null : /^( *)((?:[-*+]|\d+[.)]) +)\S/u.exec(line));
+// Each list marker at the start of a line, the leading one and any nested after it, such as both in "- 1. step".
+const NESTED_MARKER = /(?<=^ *(?:(?:[-*+]|\d+[.)]) +)*)(?:[-*+]|\d+[.)]) +/gu;
 
 // For each line of a body, CRLF or LF, whether it is code, by fencedIn.
 export const fencedLines = (body) => fencedIn(String(body).split(/\r?\n/u));

@@ -266,6 +266,31 @@ test('sectionOf, invariantsOf, and blocksOf read a CRLF doc: a heading or a comm
   assert.deepEqual(blocksOf(['Run:', '', '```bash', '# comment', '```', '', 'Then ship.'].join('\r\n')), ['Run:', '```bash\n# comment\n```', 'Then ship.']);
 });
 
+test('sectionOf, invariantsOf, and blocksOf: a fence indented four spaces outside a list is indented code, not a fence', () => {
+  for (const eol of ['\n', '\r\n']) {
+    // The indented example never closes; read as a fence, it would hide ## B and its invariant.
+    const doc = ['# T', '', '## A', 'Example:', '', '    ```js', '    const x = 1;', '', '## B', 'Rule b.', ''].join(eol);
+    assert.equal(sectionOf(doc, 'b')?.body, 'Rule b.', JSON.stringify(eol));
+    assert.deepEqual(invariantsOf({ invariants: 'x.md' }, () => doc).invariants.map((each) => each.id), ['a', 'b'], JSON.stringify(eol));
+    assert.deepEqual(blocksOf(['Example:', '', '    ```js', '    x', '', 'After.'].join(eol)), ['Example:\n\n    ```js\n    x', 'After.'], JSON.stringify(eol));
+    // Three spaces is still a fence: its `##` line is code.
+    const three = ['# T', '', '## A', '   ```md', '## Fake', '   ```', '', '## B', 'Rule b.', ''].join(eol);
+    assert.equal(sectionOf(three, 'fake'), null, JSON.stringify(eol));
+    assert.deepEqual(invariantsOf({ invariants: 'x.md' }, () => three).invariants.map((each) => each.id), ['a', 'b']);
+  }
+});
+
+test('sectionOf, invariantsOf, and blocksOf: a fence indented to its list item`s content column is still a fence', () => {
+  for (const eol of ['\n', '\r\n']) {
+    // Four spaces under "- ", whose content column is 2, is 2 past the item: a fence. So is six under a nested item.
+    const doc = ['# T', '', '## A', '- Build:', '', '    ```bash', '    ## Fake', '    ```', '  - Nested:', '', '      ```md', '      ## Fake two', '      ```', '', '## B', 'Other.', ''].join(eol);
+    assert.equal(sectionOf(doc, 'fake'), null, JSON.stringify(eol));
+    assert.equal(sectionOf(doc, 'fake-two'), null, JSON.stringify(eol));
+    assert.deepEqual(invariantsOf({ invariants: 'x.md' }, () => doc).invariants.map((each) => each.id), ['a', 'b'], JSON.stringify(eol));
+    assert.deepEqual(blocksOf(['- Build:', '', '    ```bash', '    # build', '    ```', '', 'After.'].join(eol)), ['- Build:\n\n    ```bash\n    # build\n    ```', 'After.'], JSON.stringify(eol));
+  }
+});
+
 test('invariantsOf: a heading inside a fenced block is not an invariant', () => {
   const read = () => '# T\n\n## Keep bookings\nA booking stays.\n\n```md\n## Fake\nnot a rule\n```\n';
   assert.deepEqual(invariantsOf({ invariants: 'inv.md' }, read).invariants.map((each) => each.id), ['keep-bookings']);

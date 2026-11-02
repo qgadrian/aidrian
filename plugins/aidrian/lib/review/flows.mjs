@@ -71,11 +71,14 @@ export function sectionOf(text, anchor) {
 // A fence line: its delimiter, and whether the line is the delimiter alone, which only a closing fence may be. An
 // opening fence may follow list markers, as in "- ```js"; such a line is never bare, so it never closes one, and `item`
 // is the content column of that list item (null for a fence on a line of its own).
+// As in CommonMark, a fence is indented at most 3 columns past `container`, the column its container starts at: 0
+// outside a list item, the item's content column inside one. A line indented 4 or more past it is indented code.
 // CommonMark: https://spec.commonmark.org/0.31.2/#fenced-code-blocks
-const fenceOf = (line) => {
+const fenceOf = (line, container = 0) => {
   const found = /^(\s*)((?:(?:[-*+]|\d+[.)])\s+)*)(`{3,}|~{3,})(.*)$/u.exec(line);
   // A backtick fence's info string has no backtick, so "```code``` stays literal" is inline code, not a fence.
   if (!found || (found[3][0] === '`' && found[4].includes('`'))) return null;
+  if (found[1].length - container > 3) return null;
   return { char: found[3][0], length: found[3].length, bare: found[2] === '' && found[4].trim() === '', item: found[2] === '' ? null : found[1].length + found[2].length };
 };
 const closes = (fence, open) => fence?.bare && fence.char === open.char && fence.length >= open.length;
@@ -83,19 +86,27 @@ const closes = (fence, open) => fence?.bare && fence.char === open.char && fence
 // For each line, whether it is code: a fence line or a line inside a fenced block, by the delimiters blocksOf uses. A
 // fence may open after list markers, as in "- ```bash", and one that opened after them ends where that item ends, so the
 // bare fence that closes it never opens another. sectionOf and invariantsOf skip these lines as headings.
+// A fence counts only within 3 columns of its container: `items` holds the content columns of the list items a line
+// may sit in, innermost last, and a non-blank line indented less than an item's column ends that item.
 // Known limit: an unclosed fence on a line of its own runs to the end of the doc, even inside a list item, where
-// blocksOf ends it with the item.
+// blocksOf ends it with the item; and a lazy continuation line, indented less than its item, ends the item here.
 function fencedIn(lines) {
   let open = null;
+  const items = [];
   return lines.map((raw) => {
     const line = expandTabs(raw);
-    if (open?.item != null && line.trim() && indentOf(line) < open.item) open = null;
-    const fence = fenceOf(line);
+    const indent = indentOf(line);
+    if (open?.item != null && line.trim() && indent < open.item) open = null;
     if (open) {
-      if (closes(fence, open)) open = null;
+      if (closes(fenceOf(line, open.container), open)) open = null;
       return true;
     }
-    open = fence;
+    if (line.trim()) while (items.length && indent < items.at(-1)) items.pop();
+    const container = items.at(-1) ?? 0;
+    const item = /^( *)((?:[-*+]|\d+[.)]) +)\S/u.exec(line);
+    if (item && indent - container <= 3) items.push(item[1].length + item[2].length);
+    const fence = fenceOf(line, container);
+    open = fence && { ...fence, container: fence.item ?? container };
     return fence !== null;
   });
 }
@@ -121,15 +132,16 @@ export function blocksOf(body) {
   // The least indentation outside fences, from a first pass that matches delimiters only. Accepted residual: this pass
   // does not end an unclosed fence where its list item ends, so a section can get too high a base, and a deeper bullet
   // after such a fence becomes its own block.
-  const indents = [];
+  // A fence here counts within 3 columns of the least indentation so far.
+  let least = null;
   let scan = null;
   for (const line of lines) {
-    const fence = fenceOf(line);
-    if (scan === null && line.trim()) indents.push(indentOf(line));
+    if (scan === null && line.trim()) least = Math.min(least ?? Infinity, indentOf(line));
+    const fence = fenceOf(line, least ?? 0);
     if (scan === null && fence) scan = fence;
     else if (scan && closes(fence, scan)) scan = null;
   }
-  const base = indents.length ? Math.min(...indents) : 0;
+  const base = least ?? 0;
   const blocks = [];
   let current = null;
   let column = null; // the content column of the list item the current block is, or null
@@ -140,7 +152,8 @@ export function blocksOf(body) {
     const indent = indentOf(line);
     if (open?.container != null && line.trim() && indent < open.container) open = null;
     const inside = open !== null;
-    const fence = fenceOf(line);
+    // A fence's container: the list item the line sits in, else the body's least indentation.
+    const fence = fenceOf(line, inside ? (open.container ?? base) : column !== null && indent >= column ? column : base);
     const text = line.slice(Math.min(base, indent));
     const item = /^( *)((?:[-*+]|\d+[.)]) +)\S/u.exec(line);
     const top = !inside && line.trim() !== '' && indent - base <= 3 && (column === null || indent < column);

@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { aggregateUsage, estimateCostUsd, filesRead, partOf, priceFor, sessionActions, subagentTranscripts, sumTokens } from '../plugins/aidrian/lib/transcript.mjs';
+import { exitCodeFor } from '../plugins/aidrian/lib/pr-await-review.mjs';
+import { EXIT } from '../plugins/aidrian/lib/review/run.mjs';
+import {
+  aggregateUsage, estimateCostUsd, filesRead, partOf, priceFor, REVIEW_EXIT_CODES, sessionActions, subagentTranscripts, sumTokens,
+} from '../plugins/aidrian/lib/transcript.mjs';
 
 // One transcript line: an assistant message with usage, as Claude Code writes it.
 const usageLine = (id, model, usage, { ts = '2026-10-29T10:00:00Z', content = [] } = {}) =>
@@ -70,6 +74,7 @@ test('sessionActions: the skills a session ran, the drafts it opened, and its re
     typed('u1', '<command-message>aidrian:autopilot</command-message>\n<command-name>/aidrian:autopilot</command-name>\n<command-args>ABC-1</command-args>'),
     typed('u2', '<command-name>/clear</command-name>'),
     call('s1', 'Skill', { skill: 'aidrian:issue-implement' }),
+    result('s1', 'Launching skill: aidrian:issue-implement'),
     // A refused create, a create that is not a draft, and a draft create that opened #12.
     call('b1', 'Bash', { command: 'gh pr create --draft --title t --body-file b.md' }),
     result('b1', 'pr-body: the body has no ## Summary heading.', true),
@@ -83,11 +88,53 @@ test('sessionActions: the skills a session ran, the drafts it opened, and its re
   assert.deepEqual(sessionActions([main]), { skills: ['aidrian:autopilot', 'aidrian:issue-implement'], drafts_opened: 1, review_runs: 0 },
     'only the draft create that returned a pull request counts; the host`s own command is no skill');
   // A forked subagent repeats the main conversation's calls, then runs the review loop and its command.
-  const subagent = [main, call('s2', 'Skill', { skill: 'aidrian:pr-review-loop' }), call('b4', 'Bash', { command: 'aidrian pr review 12 --with-bot' })].join('\n');
+  const subagent = [main, call('s2', 'Skill', { skill: 'aidrian:pr-review-loop' }), result('s2', 'Launching skill: aidrian:pr-review-loop'),
+    call('b4', 'Bash', { command: 'aidrian pr review 12 --with-bot' }), result('b4', '{"status": "dispatch"}')].join('\n');
   assert.deepEqual(sessionActions([main, subagent]), {
     skills: ['aidrian:autopilot', 'aidrian:issue-implement', 'aidrian:pr-review-loop'], drafts_opened: 1, review_runs: 2,
   });
   assert.deepEqual(sessionActions([]), { skills: [], drafts_opened: 0, review_runs: 0 });
+});
+
+test('sessionActions counts a review run or a skill only by its result: a refused call, or one with no result, counts nowhere', () => {
+  const call = (id, name, input) => usageLine(`m-${id}`, 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', id, name, input }] });
+  const result = (id, content, isError = false) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, is_error: isError }] } });
+  // Every case opens draft #40 first, so an uncounted review leaves it unreviewed.
+  const draft = [call('d1', 'Bash', { command: 'gh pr create --draft --title t --body-file b.md' }), result('d1', 'https://github.com/acme/notes/pull/40')];
+  const actions = (...lines) => sessionActions([[...draft, ...lines].join('\n')]);
+  const review = { command: 'aidrian pr review 40 --with-bot' };
+  const loop = { skill: 'aidrian:pr-review-loop' };
+  const none = { skills: [], drafts_opened: 1, review_runs: 0 };
+
+  // Refused: by a hook, by the permissions, or interrupted before it ran. Claude Code writes each as an error result.
+  assert.deepEqual(actions(call('r1', 'Bash', review), result('r1', 'PreToolUse:Bash hook error: [review-gate]: blocked', true)), none, 'a review a hook refused');
+  assert.deepEqual(actions(call('r1', 'Bash', review), result('r1', 'Permission for this action has been denied.', true)), none, 'a review the permissions refused');
+  assert.deepEqual(actions(call('r1', 'Bash', review), result('r1', 'Exit code 1\naidrian pr review: unknown argument: --x', true)), none,
+    'a review command that failed before any step');
+  assert.deepEqual(actions(call('k1', 'Skill', loop), result('k1', 'Skill denied by a hook', true)), none, 'a refused Skill call runs no skill and no review');
+  assert.deepEqual(actions(call('k1', 'Skill', { skill: 'aidrian:autopilot' }), result('k1', 'denied', true)), none, 'a refused skill is not listed');
+
+  // Ran: a result that is not an error, or a review command that ended its step with one of its own non-zero exits.
+  assert.deepEqual(actions(call('r1', 'Bash', review), result('r1', '{"status": "dispatch"}')), { ...none, review_runs: 1 }, 'a review that ran');
+  assert.deepEqual(actions(call('r1', 'Bash', review), result('r1', 'Exit code 4\n{"status": "round_limit"}', true)), { ...none, review_runs: 1 },
+    'a review that ran and hit the round cap');
+  assert.deepEqual(actions(call('k1', 'Skill', loop), result('k1', 'Launching skill: aidrian:pr-review-loop')),
+    { skills: ['aidrian:pr-review-loop'], drafts_opened: 1, review_runs: 1 }, 'a review skill that ran');
+
+  // No result at all, as in a session cut off mid-call: nothing shows the call ran, so it counts nowhere, as a draft does not.
+  assert.deepEqual(actions(call('r1', 'Bash', review), call('k1', 'Skill', loop)), none, 'calls with no result');
+  assert.deepEqual(sessionActions([call('d2', 'Bash', { command: 'gh pr create --draft --fill' })]), { skills: [], drafts_opened: 0, review_runs: 0 },
+    'a draft create with no result');
+  // A slash command has no tool result: the host ran it before the turn, so it still counts.
+  const typed = JSON.stringify({ type: 'user', uuid: 'u1', message: { role: 'user', content: '<command-name>/aidrian:pr-review-loop</command-name>' } });
+  assert.deepEqual(actions(typed), { skills: ['aidrian:pr-review-loop'], drafts_opened: 1, review_runs: 1 }, 'a typed review skill');
+});
+
+test('REVIEW_EXIT_CODES are the non-zero exits of aidrian pr review and aidrian pr await-review', () => {
+  const source = readFileSync(new URL('../plugins/aidrian/lib/pr-await-review.mjs', import.meta.url), 'utf8');
+  const statuses = new Set([...source.matchAll(/'([a-z_]+)'/gu)].map((match) => match[1]));
+  const codes = new Set([...Object.values(EXIT), ...[...statuses].map(exitCodeFor)].filter((code) => code !== 0));
+  assert.deepEqual([...REVIEW_EXIT_CODES].sort(), [...codes].sort());
 });
 
 test('sessionActions reads the commands a Bash call runs, not the text that names one', () => {

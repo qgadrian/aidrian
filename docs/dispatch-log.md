@@ -60,15 +60,20 @@ A stop that ends with `delivered: missing`, such as that second one, has `sent_b
 | `main`, `subagents` | Each side's `tokens`, `cost_usd`, `requests`, `tool_requests` (requests that made a tool call), and `tool_calls`. |
 | `subagent_count` | How many subagent transcripts the session has. |
 | `docs_read` | The knowledge docs the main conversation opened, as on a `stop` row. Each subagent's reads are on its own `stop` row. |
-| `skills` | The skills the session ran, by the Skill tool or as a slash command that names one of this plugin's skills, such as `aidrian:autopilot`. |
+| `skills` | The skills the session ran, by a Skill call that succeeded or as a slash command that names one of this plugin's skills, such as `aidrian:autopilot`. |
 | `drafts_opened` | The `gh pr create --draft` calls whose result names a pull request URL, so a refused call does not count. |
-| `review_runs` | The runs of the `pr-review-loop` or `pr-review` skill, and of `aidrian pr review` or `aidrian pr await-review`. |
+| `review_runs` | The runs of the `pr-review-loop` or `pr-review` skill, and of `aidrian pr review` or `aidrian pr await-review`, read as `skills` and the next paragraph say. |
 
 A request found in both the main and a subagent transcript counts as the main conversation's.
 `skills`, `drafts_opened`, and `review_runs` cover the main conversation and its subagents, each call counted once by its id;
 they hold names and counts, never the command or its output.
 A draft create and a review run are read from the commands a Bash call runs, as the shell would split it:
 a continued line, `&&`, and a command substitution count, and an `echo`, a heredoc body, or a quoted pattern that names one does not.
+A tool call counts only by its result, matched by its id, because a hook or the permissions can refuse a call after it is written.
+A call whose result is an error, such as a refused one, counts nowhere, with one exception:
+a review command that ran and ended its step with one of its own non-zero exits, such as 4 for `round_limit`, is a review run.
+A call with no result, as in a session cut off mid-call, counts nowhere.
+A slash command has no tool result, because the host runs it before the turn, so it always counts.
 A session whose transcript holds no API usage writes no row.
 A resumed session that ends again writes another row over its whole transcript; the report counts the last one.
 

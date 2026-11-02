@@ -212,24 +212,44 @@ const isPluginSkill = (name) => {
   return pluginSkills.has(name.split(':').at(-1));
 };
 const PR_URL = /\/pull\/\d+/u;
+// The exit codes of a review command that finished a step: `aidrian pr review` (review/run.mjs EXIT) and
+// `aidrian pr await-review` (pr-await-review.mjs exitCodeFor) end a round that hit its cap, timed out, or needs the
+// Human with one of these, and Claude Code marks any non-zero exit as an error. Exit 1 is a command that failed before
+// any step. A test holds this set equal to the two commands' codes.
+export const REVIEW_EXIT_CODES = new Set([2, 3, 4, 5, 6, 7, 8, 9]);
+// Claude Code writes a Bash call the shell ran and that exited non-zero as `Exit code N` then its output; a call a hook
+// or the permissions refused, or one interrupted before it ran, has no such line.
+const EXIT_LINE = /^Exit code (\d+)/u;
 
 const resultText = (content) =>
   typeof content === 'string' ? content : Array.isArray(content) ? content.map((block) => (typeof block?.text === 'string' ? block.text : '')).join('\n') : '';
 
+// What a tool call does that sessionActions counts, or null: { skill, review, draft }.
+function actionOf(block) {
+  if (block.name === 'Skill' && typeof block.input?.skill === 'string') {
+    const skill = block.input.skill.replace(/^\//u, '');
+    return { skill, review: REVIEW_SKILLS.has(skill.split(':').at(-1)), draft: false };
+  }
+  if (block.name !== 'Bash' || typeof block.input?.command !== 'string') return null;
+  const review = runs(block.input.command, runsReview);
+  const draft = runs(block.input.command, createsDraft);
+  return review || draft ? { skill: null, review, draft } : null;
+}
+
 // What a session did that the health report judges, over its transcripts: { skills, drafts_opened, review_runs }.
-// `skills` are the names of the skills it ran, by the Skill tool or as a slash command naming this plugin's skill, sorted.
-// `drafts_opened` counts the draft pull request creates whose result names a pull request URL, so a refused one does
-// not count. `review_runs` counts the runs of a review skill and of `aidrian pr review` or `aidrian pr await-review`.
+// A tool call counts only by its result, matched by id, because a hook or the permissions can refuse it after the
+// call is written: a call with no id, or with no result, as in a session cut off mid-call, counts nowhere.
+// - `skills`, sorted, are the skills a Skill call ran, whose result is not an error, and the slash commands typed in the
+//   user's turn that name this plugin's skill. A slash command has no tool result: the host ran it before the turn.
+// - `drafts_opened` counts the draft pull request creates whose result is not an error and names a pull request URL.
+// - `review_runs` counts the review skills run, as `skills` reads them, and the Bash calls that run `aidrian pr review`
+//   or `aidrian pr await-review` whose result is not an error or exits with one of REVIEW_EXIT_CODES.
 // A call a forked subagent's transcript repeats counts once, by its id. Names and counts only: no command or output
 // leaves this function.
 export function sessionActions(texts) {
   const skills = new Set();
-  const drafts = new Map();
-  const reviews = new Set();
-  const skillRun = (name, key) => {
-    skills.add(name);
-    if (REVIEW_SKILLS.has(name.split(':').at(-1))) reviews.add(key);
-  };
+  const commandReviews = new Set();
+  const calls = new Map();
   for (const text of texts) {
     for (const line of text.split('\n')) {
       const entry = parseLine(line);
@@ -237,22 +257,35 @@ export function sessionActions(texts) {
       if (entry?.type === 'user') {
         const typed = typeof content === 'string' ? content
           : Array.isArray(content) ? content.filter((block) => block?.type === 'text').map((block) => block.text).join('\n') : '';
-        for (const match of typed.matchAll(COMMAND_NAME)) if (isPluginSkill(match[1])) skillRun(match[1], `command:${entry.uuid ?? line}`);
+        for (const match of typed.matchAll(COMMAND_NAME)) {
+          if (!isPluginSkill(match[1])) continue;
+          skills.add(match[1]);
+          if (REVIEW_SKILLS.has(match[1].split(':').at(-1))) commandReviews.add(entry.uuid ?? line);
+        }
       }
       if (!Array.isArray(content)) continue;
       for (const block of content) {
-        if (block?.type === 'tool_use' && block.name === 'Skill' && typeof block.input?.skill === 'string') skillRun(block.input.skill.replace(/^\//u, ''), block.id ?? line);
-        if (block?.type === 'tool_use' && block.name === 'Bash' && typeof block.input?.command === 'string') {
-          if (runs(block.input.command, runsReview)) reviews.add(block.id ?? line);
-          if (block.id && !drafts.has(block.id) && runs(block.input.command, createsDraft)) drafts.set(block.id, false);
+        if (block?.type === 'tool_use' && typeof block.id === 'string' && !calls.has(block.id)) {
+          const action = actionOf(block);
+          if (action) calls.set(block.id, { ...action, ran: false, opened: false });
         }
-        if (block?.type === 'tool_result' && drafts.has(block.tool_use_id) && block.is_error !== true && PR_URL.test(resultText(block.content))) {
-          drafts.set(block.tool_use_id, true);
-        }
+        const call = block?.type === 'tool_result' ? calls.get(block.tool_use_id) : undefined;
+        if (!call) continue;
+        const output = resultText(block.content);
+        if (block.is_error !== true) {
+          call.ran = true;
+          if (call.draft && PR_URL.test(output)) call.opened = true;
+        } else if (call.review && call.skill === null && REVIEW_EXIT_CODES.has(Number(EXIT_LINE.exec(output)?.[1]))) call.ran = true;
       }
     }
   }
-  return { skills: [...skills].sort(), drafts_opened: [...drafts.values()].filter(Boolean).length, review_runs: reviews.size };
+  const ran = [...calls.values()].filter((call) => call.ran);
+  for (const call of ran) if (call.skill) skills.add(call.skill);
+  return {
+    skills: [...skills].sort(),
+    drafts_opened: ran.filter((call) => call.opened).length,
+    review_runs: commandReviews.size + ran.filter((call) => call.review).length,
+  };
 }
 
 export function readText(file) {

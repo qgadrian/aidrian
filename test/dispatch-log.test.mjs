@@ -493,10 +493,10 @@ test('sessionRow records the skills, draft pull requests, and review runs of the
   });
   const result = (id, content) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] } });
   const main = path.join(base, 's2.jsonl');
-  writeFileSync(main, [call('k1', 'Skill', { skill: 'aidrian:plan-implement' }), call('g1', 'Bash', { command: 'gh pr create --draft --title t --body-file b.md' }),
-    result('g1', 'https://github.com/acme/notes/pull/3')].join('\n'));
+  writeFileSync(main, [call('k1', 'Skill', { skill: 'aidrian:plan-implement' }), result('k1', 'Launching skill: aidrian:plan-implement'),
+    call('g1', 'Bash', { command: 'gh pr create --draft --title t --body-file b.md' }), result('g1', 'https://github.com/acme/notes/pull/3')].join('\n'));
   mkdirSync(path.join(base, 's2/subagents'), { recursive: true });
-  writeFileSync(path.join(base, 's2/subagents/agent-a.jsonl'), call('r1', 'Bash', { command: 'aidrian pr await-review 3' }));
+  writeFileSync(path.join(base, 's2/subagents/agent-a.jsonl'), [call('r1', 'Bash', { command: 'aidrian pr await-review 3' }), result('r1', '{"status": "clean"}')].join('\n'));
   const row = sessionRow({ session_id: 's2', transcript_path: main }, findProject(dir), { env: { CLAUDE_CODE_AGENT: 'aidrian:orchestrator' }, now: NOW });
   assert.deepEqual([row.agent, row.skills, row.drafts_opened, row.review_runs], ['aidrian:orchestrator', ['aidrian:plan-implement'], 1, 1]);
   assert.doesNotMatch(JSON.stringify(row), /gh pr create|pull\/3/, 'the row holds no command and no output');

@@ -5,26 +5,29 @@
 // turns all of them off. Rows hold names, counts, paths, and ids; never a prompt, a command, or tool output.
 // A signal with target `plugin` lands in the plugin's inbox, as `aidrian lesson add --target plugin` does.
 
-import { appendFileSync, closeSync, openSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { appendFileSync, closeSync, mkdirSync, openSync, rmSync, statSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { loadConfig } from './config.mjs';
-import { appendRow } from './jsonl.mjs';
+import { appendRow, withLocks } from './jsonl.mjs';
 import { addRow, homeInbox } from './lesson-inbox.mjs';
 import { findProject } from './project.mjs';
 
 // One block is a guard doing its job; this many of the same rule in one session is an agent fighting it.
 export const REPEATED_DENIALS = 3;
 
-// Appends the signal's row and returns it; null when the project turned signals off or anything failed.
+// Appends the signal's row and returns it; null when the project turned signals off, the inbox's lock is held, or
+// anything failed. Hooks call this before they exit, under the host's hook timeout, so it never waits: the append runs
+// under the inbox's lock, so a lesson move never reads the inbox before this row and marks the lesson moved after it,
+// and when another process holds that lock, the signal is not recorded this time.
 export function recordSignal(project, signal, { config, now = new Date() } = {}) {
   try {
     const settings = config ?? loadConfig(project).config;
     if (!settings.lessons.auto) return null;
     const { file, project: from } = homeInbox(project, settings, { target: signal.target });
     const row = addRow({ ...signal, source: 'auto', now, ...(from ? { project: from } : {}) });
-    appendRow(file, row);
+    withLocks([file], () => appendRow(file, row), { waitMs: 0 });
     return row;
   } catch {
     return null;
@@ -86,8 +89,10 @@ export function roundLimitSignal({ repo, pr, maxRounds, rounds, session = null, 
 
 // A session id or rule name that may name a file.
 const FILE_NAME_PART = /^[\w-]+$/;
-// The temporary files of one session's block counts: `<prefix><session>.<rule>`, and `.recorded` after one that fired.
+// The temporary folder of one session's block counts, `<prefix><session>`, holds a `<rule>` file per rule and
+// `<rule>.recorded` after one that fired. One folder per session lets the session's end delete them by path alone.
 const DENIALS_PREFIX = 'aidrian-denials-';
+const denialsDir = (dir, session) => path.join(dir, `${DENIALS_PREFIX}${session}`);
 
 // Counts one block by `rule` for the hook payload's session, and records the signal once the count reaches
 // REPEATED_DENIALS, once per session and rule. Parallel subagents share their parent's session and may block at once,
@@ -97,7 +102,9 @@ export function noteDenial(input, rule, { dir = tmpdir(), env = process.env, now
   try {
     const session = input.session_id;
     if (typeof session !== 'string' || !FILE_NAME_PART.test(session) || !FILE_NAME_PART.test(rule)) return null;
-    const file = path.join(dir, `${DENIALS_PREFIX}${session}.${rule}`);
+    const folder = denialsDir(dir, session);
+    mkdirSync(folder, { recursive: true });
+    const file = path.join(folder, rule);
     appendFileSync(file, '.');
     if (statSync(file).size < REPEATED_DENIALS) return null;
     try {
@@ -108,19 +115,21 @@ export function noteDenial(input, rule, { dir = tmpdir(), env = process.env, now
     const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
     if (!project) return null;
     const agent = typeof input.agent_type === 'string' && input.agent_type ? input.agent_type : env.CLAUDE_CODE_AGENT || null;
-    return recordSignal(project, denialSignal({ rule, session, agent }), { now });
+    const row = recordSignal(project, denialSignal({ rule, session, agent }), { now });
+    // Not recorded, such as when the inbox's lock was held: the next block of the rule in this session tries again.
+    if (!row) unlinkSync(`${file}.recorded`);
+    return row;
   } catch {
     return null;
   }
 }
 
-// Deletes the block counts of `session`, when it ends. Never throws.
+// Deletes the block counts of `session`, when it ends, by path: the temporary folder can hold more than a hundred
+// thousand entries, and listing it would eat the session-end hook's time budget. Never throws.
 export function forgetDenials(session, { dir = tmpdir() } = {}) {
   if (typeof session !== 'string' || !FILE_NAME_PART.test(session)) return;
   try {
-    for (const name of readdirSync(dir)) {
-      if (name.startsWith(`${DENIALS_PREFIX}${session}.`)) unlinkSync(path.join(dir, name));
-    }
+    rmSync(denialsDir(dir, session), { recursive: true, force: true });
   } catch {
     // The temporary folder clears them in time.
   }

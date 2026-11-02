@@ -6,19 +6,17 @@
 // This file writes, rotates, and reads the log, and holds what more than one view needs to read its rows.
 // dispatch-rows.mjs builds the rows the hooks write; report.mjs is the `aidrian report` command, and report-*.mjs its views.
 
-import { closeSync, existsSync, openSync, renameSync, rmSync, statSync } from 'node:fs';
+import { existsSync, renameSync } from 'node:fs';
 import path from 'node:path';
 
 import { fileBytes } from './fs.mjs';
-import { appendRow, latestRows as latest, readRows } from './jsonl.mjs';
+import { appendRow, endedSessions, latestRows as latest, LOCKED, readRows, withLocks } from './jsonl.mjs';
 import { stateDir } from './project.mjs';
 
 // `config` is the project's config when the caller has it; stateDir reads it otherwise.
 export const logPath = (project, config) => path.join(stateDir(project, { config }), 'dispatch-log.jsonl');
 // The log's previous part, which rotation keeps beside it.
 const rotatedPath = (file) => file.replace(/\.jsonl$/u, '.1.jsonl');
-// A lock older than this was left by a process that died while rotating.
-const STALE_LOCK_MS = 60_000;
 
 // Appends `row`, unless `config.telemetry.enabled` is false. A log of `telemetry.maxMb` or more rotates first.
 export function appendEvent(project, config, row) {
@@ -29,32 +27,21 @@ export function appendEvent(project, config, row) {
 }
 
 // Moves a log of `maxBytes` or more to `dispatch-log.1.jsonl`, replacing the one there, and starts the new log with a
-// `rotate` row whose `dropped` says whether older rows were lost. One process rotates at a time: it holds a lock file it
-// created exclusively. A process that cannot create the lock appends to whichever log is there.
+// `rotate` row whose `dropped` says whether older rows were lost. One process rotates at a time, holding the log's lock
+// (jsonl.mjs withLocks); a process that finds it held appends to whichever log is there, without waiting.
 function rotate(file, maxBytes) {
   if ((fileBytes(file) ?? 0) < maxBytes) return;
-  const lock = `${file}.lock`;
-  let fd;
   try {
-    fd = openSync(lock, 'wx');
-  } catch {
-    try {
-      if (Date.now() - statSync(lock).mtimeMs > STALE_LOCK_MS) rmSync(lock, { force: true });
-    } catch {
-      // The lock went away: the process that held it is done.
-    }
-    return;
-  }
-  try {
-    // Another process may have rotated between the size check and the lock.
-    if ((fileBytes(file) ?? 0) < maxBytes) return;
-    const rotated = rotatedPath(file);
-    const dropped = existsSync(rotated);
-    renameSync(file, rotated);
-    appendRow(file, { event: 'rotate', ts: stamp(Date.now()), session_id: null, dropped });
-  } finally {
-    closeSync(fd);
-    rmSync(lock, { force: true });
+    withLocks([file], () => {
+      // Another process may have rotated between the size check and the lock.
+      if ((fileBytes(file) ?? 0) < maxBytes) return;
+      const rotated = rotatedPath(file);
+      const dropped = existsSync(rotated);
+      renameSync(file, rotated);
+      appendRow(file, { event: 'rotate', ts: stamp(Date.now()), session_id: null, dropped });
+    }, { waitMs: 0 });
+  } catch (error) {
+    if (error.code !== LOCKED) throw error;
   }
 }
 
@@ -94,7 +81,7 @@ export function sendBackStates(stops) {
 // older rows and the window starts before it; else null. A time telemetry was off leaves no rows, so no report can see it.
 export function coverage(rows, config, { sinceMs = 0 } = {}) {
   const fresh = rows.filter((row) => Date.parse(row.ts) >= sinceMs);
-  const counted = [...latest(fresh, 'stop', 'agent_id'), ...latest(fresh, 'session', 'session_id')];
+  const counted = [...latest(fresh, 'stop', 'agent_id'), ...endedSessions(fresh)];
   const sendBacks = sendBackStates(fresh.filter((row) => row.event === 'stop'));
   const oldest = rows.reduce((min, row) => Math.min(min, Date.parse(row.ts) || Infinity), Infinity);
   const lost = rows.some((row) => row.event === 'rotate' && row.dropped === true);

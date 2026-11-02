@@ -32,6 +32,8 @@ In a group such as `github`, set only the keys you change; the others keep their
     "requiredSections": ["Summary", "Tests run"],
     "reviewer": "chatgpt-codex-connector[bot]",
     "maxReviewRounds": 3,
+    "extraRounds": "ask",
+    "maxExtraRounds": 2,
     "requiredChecks": [],
     "ignoreCancelledChecks": [],
     "conditionalChecks": [],
@@ -93,7 +95,9 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `state.dir` | The machine-local [state folder](project-folder.md#local-state); `null` is the one under `$XDG_STATE_HOME`. |
 | `github.requiredSections` | The `## ` sections every pull request body must have ([Bash rules](hooks.md#bash-rules)); `[]` checks none. |
 | `github.reviewer` | The login of the Codex review bot that `aidrian pr await-review` waits for. `null` or `"none"`: no bot ([below](#no-review-bot)). |
-| `github.maxReviewRounds` | The review rounds a pull request may get, 3 by default: the review loop and `aidrian pr await-review --request` stop there. They read it from the pull request's base branch, so an edit to the working copy does not raise it. A `--max-rounds` above it runs only with `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, which the Human sets; a Bash rule refuses an agent command that sets it, and any bot request made outside `aidrian pr`. |
+| `github.maxReviewRounds` | The review rounds a pull request may get, 3 by default: the review loop and `aidrian pr await-review --request` stop there, unless `extraRounds` grants one more. They read it from the pull request's base branch, so an edit to the working copy does not raise it; `aidrian pr await-review` without `--request` posts nothing and reads no base branch. A `--max-rounds` above it runs only with `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, which the Human sets, and so does a higher cap an earlier bot request recorded in its comment; a Bash rule refuses an agent command that sets it, and any bot request made outside `aidrian pr`. |
+| `github.extraRounds` | What happens at that cap: [Extra rounds](review.md#extra-rounds). `"ask"`, the default: when the round history shows the review converging, a read-only judge decides whether one more round is worth it, and the Human approves it. `"auto"`: the judge's word grants it. `"off"`: the cap stops, as `round_limit`. Read from the base branch, like the cap. |
+| `github.maxExtraRounds` | The most extra rounds `extraRounds` may grant one pull request, 2 by default; a hard ceiling, read from the base branch. `0` grants none. |
 | `github.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. |
 | `github.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
 | `github.conditionalChecks` | Parts of check names whose `SKIPPED` or `NEUTRAL` result is routine, such as a job a path filter turns off. |

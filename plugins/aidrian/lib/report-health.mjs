@@ -1,14 +1,14 @@
-// `aidrian report health`: one page over the other views. Seven signals (the knowledge budget, doc reads, agents, review
-// rounds, hook denies, session cost, and the lesson inbox), each with its sample size and its threshold, mostly from
-// config.json `telemetry.health`; then the problems, worst first, each naming the row of the harness-health skill's fix
-// table that answers it. A signal with fewer than `minSample` samples says "not enough data" and is never a problem.
-// Every verdict compares unrounded numbers; only what the view prints is rounded. docs/dispatch-log.md#health describes
-// the view.
+// `aidrian report health`: one page over the other views. Eight signals (the knowledge budget, doc reads, agents, review
+// rounds, unreviewed drafts, hook denies, session cost, and the lesson inbox), each with its sample size and its
+// threshold, mostly from config.json `telemetry.health`; then the problems, worst first, each naming the row of the
+// harness-health skill's fix table that answers it. A signal with fewer than `minSample` samples says "not enough data"
+// and is never a problem. Every verdict compares unrounded numbers; only what the view prints is rounded.
+// docs/dispatch-log.md#health describes the view.
 
 import { summarize, summarizeDenies } from './report-agents.mjs';
 import { summarizeDocs } from './report-docs.mjs';
 import { NO_BOT } from './report-reviews.mjs';
-import { latestRows } from './jsonl.mjs';
+import { endedSessions } from './jsonl.mjs';
 import { lessonStats } from './lesson-inbox.mjs';
 import { deliverySignal, denialSignal, roundLimitSignal } from './lesson-signals.mjs';
 import { summarizeSessions } from './report-sessions.mjs';
@@ -17,6 +17,7 @@ import { summarizeSessions } from './report-sessions.mjs';
 // What blocks or loses work comes first, then what every session pays, then the cost of one agent, one rule, or one doc.
 export const FIXES = {
   'p1-lesson': 'lesson-triage',
+  'unreviewed-draft': 'review-loop',
   'always-budget': 'split-doc',
   'tagged-doc': 'split-doc',
   redispatch: 'agent-prompt',
@@ -40,7 +41,7 @@ const labels = ({ tier, kind, target, key }) => ({ tier, kind, target, key });
 // The signal that finds each kind of problem a lesson can hold.
 const SIGNAL_OF = {
   'always-budget': 'budget', 'tagged-doc': 'budget', redispatch: 'agents', 'sent-back': 'agents', 'review-rounds': 'reviews',
-  'late-findings': 'reviews', 'deny-hot-spot': 'denies', 'cost-rise': 'cost', 'top-doc': 'docs', 'never-read': 'docs',
+  'late-findings': 'reviews', 'unreviewed-draft': 'drafts', 'deny-hot-spot': 'denies', 'cost-rise': 'cost', 'top-doc': 'docs', 'never-read': 'docs',
 };
 
 const OK = 'ok';
@@ -82,6 +83,7 @@ function judge({ rows, sinceMs = 0, now = Date.now(), knowledge, reviews, lesson
     docs: docsSignal(rows, sinceMs, knowledge, limits, add),
     agents: agentsSignal(rows, sinceMs, limits, add),
     reviews: reviewsSignal(reviews, limits, add),
+    drafts: draftsSignal(rows, sinceMs, add),
     denies: deniesSignal(rows, sinceMs, limits, config.telemetry.hookDenies, add),
     cost: costSignal(rows, sinceMs, limits, add),
     lessons: lessonsSignal(lessons, sinceMs, now, config.lessons, add),
@@ -255,6 +257,35 @@ function reviewsSignal(reviews, { minSample, reviewRounds, lateFindingPercent },
   return { status: overall([rounds.status, late.status]), rounds, late };
 }
 
+// The sessions that ran the orchestrator or the autopilot skill and opened a draft pull request, and those of them that
+// ran no review round: both flows end in a review loop, so each such session skipped it. A count, not a rate, so no
+// minimum sample applies; a session row written before it recorded `drafts_opened` is left out. The orchestrator is the
+// session's --agent, or the dispatcher of one of its dispatches when it ran as a subagent.
+const ORCHESTRATOR = /(?:^|[:-])orchestrator$/u;
+const AUTOPILOT = /(?:^|:)autopilot$/u;
+const NAMED_SESSIONS = 3;
+
+function draftsSignal(rows, sinceMs, add) {
+  const inWindow = rows.filter((row) => Date.parse(row.ts) >= sinceMs);
+  const dispatched = new Set(inWindow.filter((row) => row.event === 'dispatch' && ORCHESTRATOR.test(row.dispatcher ?? '')).map((row) => row.session_id));
+  const flow = (row) => ORCHESTRATOR.test(row.agent ?? '') || dispatched.has(row.session_id) || (row.skills ?? []).some((name) => AUTOPILOT.test(name));
+  const sessions = endedSessions(inWindow).filter((row) => row.drafts_opened > 0 && flow(row));
+  const unreviewed = sessions.filter((row) => !row.review_runs).map((row) => row.session_id);
+  const sample = { n: sessions.length, of: 'orchestrator or autopilot sessions that opened a draft' };
+  const base = { sample, unreviewed };
+  if (!sessions.length) return { status: NOT_ENOUGH, ...base };
+  if (unreviewed.length) {
+    add('unreviewed-draft', {
+      value: unreviewed.length, threshold: 0, sample,
+      summary: `${unreviewed.length} of ${plural(sessions.length, 'orchestrator or autopilot session')} that opened a draft pull request ` +
+        `ran no review round: ${unreviewed.slice(0, NAMED_SESSIONS).join(', ')}` +
+        `${unreviewed.length > NAMED_SESSIONS ? `, and ${unreviewed.length - NAMED_SESSIONS} more` : ''}.`,
+      lesson: { tier: 'P2', kind: 'bug', target: 'plugin', key: 'health:unreviewed-draft' },
+    });
+  }
+  return { status: unreviewed.length ? PROBLEM : OK, ...base };
+}
+
 // The plugin's rules that blocked denyHotSpot calls or more, over the sessions the log saw in the window.
 function deniesSignal(rows, sinceMs, { minSample, denyHotSpot }, recorded, add) {
   if (!recorded) return { status: UNAVAILABLE, error: 'telemetry.hookDenies is off' };
@@ -281,7 +312,7 @@ function deniesSignal(rows, sinceMs, { minSample, denyHotSpot }, recorded, add) 
 // averages are compared unrounded: rounded to the cent, $0.014 against $0.016 reads as a 100% rise, and $0.004 as nothing.
 function costSignal(rows, sinceMs, { minSample, costRisePercent }, add) {
   const summary = summarizeSessions(rows, { sinceMs });
-  const ended = latestRows(rows.filter((row) => row.event === 'session' && Date.parse(row.ts) >= sinceMs), 'session', 'session_id')
+  const ended = endedSessions(rows.filter((row) => row.event === 'session' && Date.parse(row.ts) >= sinceMs))
     .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
   const half = Math.floor(ended.length / 2);
   const average = (list) => (list.length ? sumOf(list, (row) => row.cost_usd) / list.length : null);
@@ -354,7 +385,7 @@ export function formatHealth({ thresholds, problems, signals }, { file, since, s
     lines.push('Problems: none at these thresholds.');
   }
   lines.push(`Signals; n is the sample, and a signal under ${minSample} (telemetry.health.minSample) is not judged:`);
-  const { budget, docs, agents, reviews, denies, cost, lessons } = signals;
+  const { budget, docs, agents, reviews, drafts, denies, cost, lessons } = signals;
   const head = (name, signal) => `  ${name}: ${LABELS[signal.status]}`;
   lines.push(`${head('Knowledge budget', budget)}; always docs ${budget.always_bytes} of ${thresholds.budgets.alwaysBytes} bytes, ` +
     `${budget.oversized.length} of ${budget.sample.n} indexed docs tagged and over ${thresholds.budgets.taggedDocBytes} bytes`);
@@ -379,6 +410,9 @@ export function formatHealth({ thresholds, problems, signals }, { file, since, s
       : `${reviews.late.percent}% of late findings on a line already reviewed (n=${reviews.late.n}, threshold ${thresholds.health.lateFindingPercent}%)`;
     lines.push(`${head('Reviews', reviews)}; ${rounds}; ${late}${reviews.rounds.truncated ? `; only the last ${reviews.rounds.merged} merged, the --prs limit` : ''}`);
   }
+  lines.push(drafts.status === NOT_ENOUGH ? `${head('Drafts', drafts)}; no orchestrator or autopilot session opened a draft pull request`
+    : `${head('Drafts', drafts)}; ${plural(drafts.sample.n, 'orchestrator or autopilot session')} opened a draft pull request, ` +
+      `${drafts.unreviewed.length} with no review round`);
   if (denies.status === UNAVAILABLE) lines.push(`${head('Hook denies', denies)}; ${denies.error}`);
   else {
     const rules = denies.rules.map((rule) => `${rule.rule} ${rule.count}`).join(', ');

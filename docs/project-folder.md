@@ -120,7 +120,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── dispatch/             machine handoffs that dispatched agents write for the orchestrator and the skills it runs
 ├── reviews/              review manifests, and the agents the specialist-review skill keeps warm
 ├── quorum/               quorum ledgers, one per plan and plan hash
-├── lessons/inbox.jsonl   the lesson inbox
+├── lessons/inbox.jsonl   the lesson inbox, and its inbox.jsonl.lock.<n> lock files
 ├── tmp/                  pull request bodies and review comments that skills draft
 ├── dispatch-log.jsonl    the dispatch log
 └── dispatch-log.1.jsonl  its rotated part, once the log reaches config.json telemetry.maxMb
@@ -166,8 +166,7 @@ Each objection, ruling, and rebuttal cites its evidence as `{kind, ref, quote}`.
   must be in that section; `code` cites `path:line`, and the quote must be in the file; `plan` cites `#anchor` in PLAN;
   `absence` cites a path, and the quote must be in no regular file `git ls-files` lists there; a path with no tracked file fails.
   An anchor matches a heading by its text or its slug, and a `#` line in a fenced code block is not a heading.
-  As in CommonMark, a fence indented 4 or more spaces past its container (column 0, or a list item's content column)
-  is indented code, not a fence.
+  A fence counts at any indentation, and may open after a list marker, as in "- ```bash".
   A quote is at most 200 characters, compared with whitespace collapsed.
   A `pending` objection with no passing citation becomes `opinion`; one already ruled on keeps its status and is named.
   A ruling, or a rebuttal that rebuts, with no passing citation is named invalid.

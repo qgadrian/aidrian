@@ -1,9 +1,12 @@
 // Reads Claude Code transcripts (JSON Lines) for the dispatch log: token use per model, an estimated cost, the effort
-// and tool calls of each request, the subagent transcripts of a session, and which files an agent read. Counts, names,
-// and paths only; no message text leaves this file.
+// and tool calls of each request, the subagent transcripts of a session, which files an agent read, and the skills,
+// draft pull requests, and review runs of a session. Counts, names, and paths only; no message text leaves this file.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+
+import { readPrCall } from './rules/github/pr-body.mjs';
+import { aidrianArgs, walkCommands } from './shell-lex.mjs';
 
 // USD per million tokens, matched by substring (or a RegExp) in this order (more specific first). List prices from
 // https://platform.claude.com/docs/en/about-claude/pricing, read 2026-10-28. `cacheRead` is the cache-hit multiplier
@@ -169,6 +172,129 @@ export function filesRead(text, keep = () => true) {
     }
   }
   return [...read];
+}
+
+// A draft pull request create and a review run are read from the commands a Bash call runs (shell-lex walkCommands),
+// never from its text, so a heredoc body, an `echo`, or a quoted grep pattern that names one is neither.
+// A draft create is `gh pr create` (or its alias `gh pr new`) with --draft or -d, as the pull request body rule reads it.
+const createsDraft = ({ segment }) => {
+  const call = readPrCall(segment);
+  return call?.subcommand === 'create' && call.draft;
+};
+
+// Whether a walked command runs a review: `aidrian pr review` or `aidrian pr await-review`, by any path to aidrian.
+function runsReview({ invocation }) {
+  const words = aidrianArgs(invocation);
+  return words?.[0]?.text === 'pr' && ['review', 'await-review'].includes(words[1]?.text);
+}
+
+// Whether any command a Bash command line runs passes `test`; a line the lexer cannot read runs none.
+const runs = (command, test) => {
+  try {
+    return walkCommands(command, null).some(test);
+  } catch {
+    return false;
+  }
+};
+
+// A review round's own steps: the pr-review-loop and pr-review skills, and the commands that run a review.
+const REVIEW_SKILLS = new Set(['pr-review-loop', 'pr-review']);
+// A slash command as the host writes it into the user's turn. Only one that names this plugin's skill counts as a
+// skill run: the others are the host's own commands, such as clearing the conversation.
+const COMMAND_NAME = /<command-name>\/?([\w:.-]+)<\/command-name>/gu;
+let pluginSkills;
+const isPluginSkill = (name) => {
+  try {
+    pluginSkills ??= new Set(readdirSync(path.join(import.meta.dirname, '..', 'skills')));
+  } catch {
+    pluginSkills = new Set();
+  }
+  return pluginSkills.has(name.split(':').at(-1));
+};
+const PR_URL = /\/pull\/\d+/u;
+// What shows a review command ran: the one JSON object `aidrian pr review` and `aidrian pr await-review` print, which
+// opens with its `status`, one of these, and the pull request's `pr` (lib/review/run.mjs EXIT and `finish`,
+// lib/pr-await-review.mjs `result`; test/transcript.test.mjs holds the list to their source). An exit code cannot show
+// it: it is the whole line's, and `false && aidrian pr review 12` ends `Exit code 1` with no review run.
+export const REVIEW_OUTPUT_STATUSES = Object.freeze([
+  'dispatch', 'running', 'fix_required', 'received', 'none_needed', 'human_required', 'timed_out', 'checks_pending',
+  'blocked_quota', 'round_limit', 'unsatisfied', 'incomplete', 'stuck', 'too_large', 'already_present', 'no_reviewer',
+  'review_required', 'extension_check', 'extension_ask',
+]);
+const REVIEW_STATUS_SET = new Set(REVIEW_OUTPUT_STATUSES);
+const REVIEW_OUTPUT = /"status"\s*:\s*"([a-z_]+)"\s*,\s*"pr"\s*:\s*(?:\d+|null)\b/gu;
+// Whether a Bash call's result holds a review command's output. The command's own text is taken out first: a hook's
+// refusal or a permission denial quotes it, and a quoted command is no output.
+const printedReview = (output, command) =>
+  [...output.split(command).join('\n').matchAll(REVIEW_OUTPUT)].some((match) => REVIEW_STATUS_SET.has(match[1]));
+
+const resultText = (content) =>
+  typeof content === 'string' ? content : Array.isArray(content) ? content.map((block) => (typeof block?.text === 'string' ? block.text : '')).join('\n') : '';
+
+// What a tool call does that sessionActions counts, or null: { skill, review, draft }.
+function actionOf(block) {
+  if (block.name === 'Skill' && typeof block.input?.skill === 'string') {
+    const skill = block.input.skill.replace(/^\//u, '');
+    return { skill, review: REVIEW_SKILLS.has(skill.split(':').at(-1)), draft: false };
+  }
+  if (block.name !== 'Bash' || typeof block.input?.command !== 'string') return null;
+  const review = runs(block.input.command, runsReview);
+  const draft = runs(block.input.command, createsDraft);
+  return review || draft ? { skill: null, review, draft, command: block.input.command } : null;
+}
+
+// What a session did that the health report judges, over its transcripts: { skills, drafts_opened, review_runs }.
+// A tool call counts only by its result, matched by id, because a hook or the permissions can refuse it after the
+// call is written: a call with no id, or with no result, as in a session cut off mid-call, counts nowhere.
+// - `skills`, sorted, are the skills a Skill call ran, whose result is not an error, and the slash commands typed in the
+//   user's turn that name this plugin's skill. A slash command has no tool result: the host ran it before the turn.
+// - `drafts_opened` counts the draft pull request creates whose result is not an error and names a pull request URL.
+// - `review_runs` counts the review skills run, as `skills` reads them, and the Bash calls that run `aidrian pr review`
+//   or `aidrian pr await-review` whose result holds that command's JSON output, error or not: the exit is the whole
+//   line's, so `aidrian pr review 12; test -f x` can fail after a review ran and `false && aidrian pr review 12` with none.
+// A call a forked subagent's transcript repeats counts once, by its id. Names and counts only: no command or output
+// leaves this function.
+export function sessionActions(texts) {
+  const skills = new Set();
+  const commandReviews = new Set();
+  const calls = new Map();
+  for (const text of texts) {
+    for (const line of text.split('\n')) {
+      const entry = parseLine(line);
+      const content = entry?.message?.content;
+      if (entry?.type === 'user') {
+        const typed = typeof content === 'string' ? content
+          : Array.isArray(content) ? content.filter((block) => block?.type === 'text').map((block) => block.text).join('\n') : '';
+        for (const match of typed.matchAll(COMMAND_NAME)) {
+          if (!isPluginSkill(match[1])) continue;
+          skills.add(match[1]);
+          if (REVIEW_SKILLS.has(match[1].split(':').at(-1))) commandReviews.add(entry.uuid ?? line);
+        }
+      }
+      if (!Array.isArray(content)) continue;
+      for (const block of content) {
+        if (block?.type === 'tool_use' && typeof block.id === 'string' && !calls.has(block.id)) {
+          const action = actionOf(block);
+          if (action) calls.set(block.id, { ...action, ran: false, opened: false, reviewed: false });
+        }
+        const call = block?.type === 'tool_result' ? calls.get(block.tool_use_id) : undefined;
+        if (!call) continue;
+        const output = resultText(block.content);
+        if (block.is_error !== true) {
+          call.ran = true;
+          if (call.draft && PR_URL.test(output)) call.opened = true;
+        }
+        call.reviewed ||= call.review && (call.skill ? call.ran : printedReview(output, call.command));
+      }
+    }
+  }
+  const all = [...calls.values()];
+  for (const call of all) if (call.skill && call.ran) skills.add(call.skill);
+  return {
+    skills: [...skills].sort(),
+    drafts_opened: all.filter((call) => call.opened).length,
+    review_runs: commandReviews.size + all.filter((call) => call.reviewed).length,
+  };
 }
 
 export function readText(file) {

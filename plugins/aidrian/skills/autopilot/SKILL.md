@@ -75,10 +75,14 @@ Read `references/phases.md` at the start, and follow it.
    and the `pr-review` skill when the phase says so.
 4. Stop at sign-off, or at a bound.
 
+The engine ends at its draft, and these phases own what follows: the review loop runs once.
+The `orchestration` skill's § 3 rules apply inside phases 3 and 4, never as a second loop after them.
+
 ## Bounds
 
 - **Review rounds**: the `orchestration` skill § 3 stop rule, the one rule this run stops by, at most config.json
-  `github.maxReviewRounds` rounds as the review rules count them, unless the Human set another number at launch.
+  `github.maxReviewRounds` rounds as the review rules count them, unless the Human set another number at launch,
+  plus an extra round `github.extraRounds: "auto"` grants at the cap.
 - **No rare edge cases.** End the loop early once a review of the current head leaves every open finding `accepted_residual`,
   `acceptable_as_is`, or `drop_unless_cited` by `aidrian pr disposition`. Reply with the reason; resolve only the bot's threads.
   A round that pushed a fix has not reached that point: the next round reviews the new head.
@@ -108,7 +112,7 @@ by the names the start hook gives, never "you" or "I". In this order:
 
 1. **What shipped**: one or two lines, and the pull request link.
 2. **Checks**: verification and CI status, and the bot review state of each round:
-   `received`, `already_present`, `timed_out`, `blocked_quota`, `round_limit`, or `no_reviewer`.
+   `received`, `already_present`, `timed_out`, `blocked_quota`, `round_limit`, `extension_ask`, or `no_reviewer`.
 3. **Decisions for the Human**: each parked decision, with its options and the safest recommendation.
 4. **Left open**: findings closed as rare edge cases, each with its reason, findings still open at the cap,
    and fixes the last round pushed that no review has seen.

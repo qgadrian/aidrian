@@ -11,7 +11,7 @@ import { stamp } from './dispatch-log.mjs';
 import { fileBytes } from './fs.mjs';
 import { checkoutRoots } from './git.mjs';
 import { loadKnowledge } from './knowledge.mjs';
-import { aggregateUsage, estimateCostUsd, filesRead, partOf, readText, subagentTranscripts, sumTokens } from './transcript.mjs';
+import { aggregateUsage, estimateCostUsd, filesRead, partOf, readText, sessionActions, subagentTranscripts, sumTokens } from './transcript.mjs';
 
 const DESCRIPTION_CHARS = 80;
 // A hook_deny row's `reason`: the start of what the rule matched.
@@ -125,7 +125,8 @@ function ownRequests(input) {
 }
 
 // SessionEnd: the whole session's tokens and estimated cost, main conversation and subagents together and each apart,
-// the effort of the main conversation, and the knowledge docs it read; each subagent's own reads are on its `stop` row.
+// the effort of the main conversation, the knowledge docs it read (each subagent's own reads are on its `stop` row), and
+// the skills, draft pull requests, and review runs of the main conversation and its subagents (sessionActions).
 // `docReads` works as in stopRow.
 export function sessionRow(input, project, { env = process.env, now = Date.now(), docReads = true } = {}) {
   const main = typeof input.transcript_path === 'string' ? input.transcript_path : null;
@@ -136,9 +137,9 @@ export function sessionRow(input, project, { env = process.env, now = Date.now()
   const mainKeys = new Set(acc?.requests.keys());
   const effort = acc?.effort ?? null;
   const effortVaried = (acc?.efforts.size ?? 0) > 1;
-  for (const content of subagents.map(readText)) {
-    if (content) acc = aggregateUsage(content, acc);
-  }
+  const subagentTexts = subagents.map(readText).filter(Boolean);
+  for (const content of subagentTexts) acc = aggregateUsage(content, acc);
+  const actions = sessionActions([mainText, ...subagentTexts].filter(Boolean));
   const perModel = acc?.perModel ?? {};
   const minutes = acc?.firstTs && acc.lastTs ? Math.round((Date.parse(acc.lastTs) - Date.parse(acc.firstTs)) / 6000) / 10 : null;
   const tokensByModel = Object.fromEntries(Object.entries(perModel).map(([model, usage]) => [model, sumTokens({ [model]: usage })]));
@@ -162,6 +163,7 @@ export function sessionRow(input, project, { env = process.env, now = Date.now()
     subagents: side(partOf(acc, (key) => !mainKeys.has(key))),
     subagent_count: subagents.length,
     docs_read: !docReads ? null : mainText ? knowledgeDocsRead(filesRead(mainText), project) : [],
+    ...actions,
   };
 }
 

@@ -33,6 +33,8 @@ Act on `status`, then run it again, until it stops:
 | `fix_required` | triage `open`, `flows`, `tests_removed`, and `checks_failing` in step 3, fix, push |
 | `running`, `checks_pending`, `timed_out` | run it again; `incomplete` with `retry_recommended`: once more |
 | `received`, `none_needed` | go to step 2 for comments people or the bot left, then step 7 |
+| `extension_check` | run `dispatch[0]`, the judge, briefed with `extension`; record its verdict with its `record` |
+| `extension_ask` | ask the Human `question` with AskUserQuestion and `options`; record the answer with `record` |
 | `human_required`, `stuck`, `too_large`, `unsatisfied`, `round_limit`, `blocked_quota` | stop: report it and ask the Human |
 
 A flow pass answers every invariant it is given with a verdict and evidence: `path:line` at the head, or
@@ -124,4 +126,4 @@ On a draft, report convergence; the author marks it ready. Only when the Human a
 or config.json `github.markReady` is `"auto"`, mark it ready yourself with `gh pr ready <n>`
 once a review of the current head signed off with no blocked row, and `aidrian pr checks <n>` says ready.
 A fix pushed after that review sends the loop back to step 1 first. Pending or failing: leave it a draft and say why.
-After `gh pr ready`, push nothing more. Run by `autopilot` or the `orchestrator`, never mark it ready: the caller does, after all its reviews.
+After `gh pr ready`, push nothing more. Run as a step of another skill or agent, never mark it ready: that is the caller's step, after all its reviews.

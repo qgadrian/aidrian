@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync, writeSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -127,6 +127,27 @@ test('a project with state.dir gets its lesson back in that folder when the move
   assert.match(back.stdout, new RegExp(`\\nMoved to ${consumer.inbox()}\\n$`));
   assert.deepEqual(consumer.json(['list']).map((row) => [row.id, row.target]), [[id, 'project']]);
   assert.deepEqual(plugin.json(['list']), []);
+});
+
+test('a state.dir that reaches the plugin\'s inbox through a symlink is one inbox: add runs at once, update moves nothing', (t) => {
+  const consumer = setup(t);
+  const plugin = checkout(consumer, 'plugin', pluginRepository());
+  const real = path.dirname(path.dirname(plugin.inbox()));
+  mkdirSync(real, { recursive: true });
+  const link = path.join(consumer.base, 'plugin-state');
+  symlinkSync(real, link);
+  mkdirSync(path.join(plugin.repo, '.aidrian'));
+  writeFileSync(path.join(plugin.repo, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: link } }));
+  assert.equal(plugin.inbox(), path.join(link, 'lessons/inbox.jsonl'), 'its own inbox is the plugin\'s, spelled through the link');
+  const started = Date.now();
+  const added = plugin.run(['add', '--target', 'plugin'], 'a plugin lesson');
+  assert.deepEqual([added.status, added.stderr], [0, '']);
+  assert.ok(Date.now() - started < 3000, `add took ${Date.now() - started} ms`);
+  assert.deepEqual(readdirSync(path.join(real, 'lessons')).filter((name) => name.includes('.lock')).sort(), ['inbox.jsonl.lock.1', 'inbox.jsonl.lock.1.released'], 'one lock, taken once');
+  const id = plugin.add('a project lesson', ['--target', 'project']);
+  const moved = plugin.run(['update', id, '--target', 'plugin']);
+  assert.deepEqual([moved.status, /Moved to/.test(moved.stdout)], [0, false], 'the lesson is already in the inbox its target names');
+  assert.deepEqual(plugin.json(['list', id]).map((row) => [row.id, row.target]), [[id, 'plugin']], 'and it is still there');
 });
 
 test('only a new target moves a lesson; list shows a lesson once for two of its ids; a known key lands where its lesson is', (t) => {
@@ -260,6 +281,138 @@ test('a lesson that joins a holder by key brings only its occurrences: the holde
   assert.deepEqual(moveLessons(from, to, ['eeee0001']), [], 'a second move finds nothing to move');
 });
 
+
+// Another process that holds `file`'s lock (jsonl.mjs withLocks), as every inbox writer does from its read to its append:
+// it takes the lock, says so, waits `ms`, appends `row` to `file`, and lets the lock go. `ready` settles once it holds the
+// lock, `done` when it exits.
+function lockHolder(file, row, ms = 400) {
+  const jsonl = JSON.stringify(path.resolve(import.meta.dirname, '../plugins/aidrian/lib/jsonl.mjs'));
+  const code = `const { writeSync, appendFileSync } = await import('node:fs');
+const { withLocks } = await import(${jsonl});
+const [file, row] = process.argv.slice(1);
+withLocks([file], () => {
+  writeSync(1, 'locked\\n');
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${ms});
+  appendFileSync(file, row + '\\n');
+});`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code, file, JSON.stringify(row)], { stdio: ['ignore', 'pipe', 'inherit'] });
+  const done = new Promise((resolve) => child.on('close', resolve));
+  const ready = new Promise((resolve, reject) => {
+    child.stdout.once('data', resolve);
+    done.then((status) => reject(new Error(`the lock holder exited ${status} before it held the lock`)));
+  });
+  return { ready, done };
+}
+
+// Holds `file`'s lock for this test's process, which stays alive while a command waits on it: the lock's next
+// generation, naming this pid on this host. Returns that generation's file.
+function holdLock(file) {
+  mkdirSync(path.dirname(file), { recursive: true });
+  const numbers = readdirSync(path.dirname(file)).map((name) => name.startsWith(`${path.basename(file)}.lock.`) && /\.lock\.(\d+)$/u.exec(name)?.[1]).filter(Boolean).map(Number);
+  const name = `${file}.lock.${Math.max(0, ...numbers) + 1}`;
+  writeFileSync(name, `${JSON.stringify({ pid: process.pid, host: hostname(), nonce: 'test' })}\n`);
+  return name;
+}
+
+test('a move cut short after only a keyed lesson\'s add row resumes on the next run: the lesson arrives whole', (t) => {
+  const { base } = setup(t);
+  const from = path.join(base, 'notes-1/lessons/inbox.jsonl');
+  const to = path.join(base, 'plugin-1/lessons/inbox.jsonl');
+  const old = (daysAgo) => new Date(Date.now() - daysAgo * DAY).toISOString();
+  const added = { event: 'add', id: 'eeee0001', at: old(9), tier: 'P3', kind: 'bug', target: 'plugin', key: 'hook-deny:z', source: 'auto', note: 'moving', evidence: [] };
+  appendRow(from, added);
+  appendRow(from, { event: 'seen', id: 'eeee0001', at: old(8), note: 'again', evidence: [] });
+  appendRow(from, { event: 'update', id: 'eeee0001', at: old(7), tier: 'P1' });
+  appendRow(from, { event: 'resolve', id: 'eeee0001', at: old(6), outcome: 'mechanism', link: 'abc1234' });
+  // The first run copied the add row, as a move stamps it, and stopped.
+  appendRow(to, { ...added, project: 'notes-1' });
+  assert.deepEqual(moveLessons(from, to, ['eeee0001'], { project: 'notes-1' }), ['eeee0001']);
+  const moved = fold(readRowsOf(to)).find('eeee0001');
+  assert.deepEqual(
+    [moved.id, moved.tier, moved.seen, moved.status, moved.outcome, moved.link],
+    ['eeee0001', 'P1', 2, 'resolved', 'mechanism', 'abc1234'],
+    'its own seen, update, and resolve rows follow: a holder that is the lesson itself is no other lesson to join',
+  );
+  assert.deepEqual(readRowsOf(to).map((row) => row.event), ['add', 'seen', 'update', 'resolve'], 'nothing is copied twice');
+  assert.equal(fold(readRowsOf(from)).find('eeee0001'), null);
+});
+
+test('migrate after a move cut short names no lesson as joining itself, and moves the rest of it', (t) => {
+  const consumer = setup(t);
+  const plugin = checkout(consumer, 'plugin', pluginRepository());
+  const notes = path.basename(path.dirname(path.dirname(consumer.inbox())));
+  const old = (daysAgo) => new Date(Date.now() - daysAgo * DAY).toISOString();
+  const added = { event: 'add', id: 'aaaa0003', at: old(5), tier: 'P3', kind: 'gap', target: 'plugin', key: 'hook-deny:pr-body', source: 'auto', note: 'blocked', evidence: [] };
+  appendRow(consumer.inbox(), added);
+  appendRow(consumer.inbox(), { event: 'update', id: 'aaaa0003', at: old(4), tier: 'P1' });
+  appendRow(consumer.inbox(), { event: 'resolve', id: 'aaaa0003', at: old(3), outcome: 'rule', link: 'docs/x.md' });
+  appendRow(plugin.inbox(), { ...added, project: notes });
+  assert.doesNotMatch(consumer.run(['migrate', '--dry-run']).stdout, /joins/);
+  const moved = consumer.json(['migrate']);
+  assert.deepEqual(moved.projects.map((item) => [item.ids, item.joins]), [[['aaaa0003'], {}]]);
+  assert.deepEqual(plugin.json(['list', 'aaaa0003', '--all']).map((row) => [row.id, row.tier, row.status, row.outcome]), [['aaaa0003', 'P1', 'resolved', 'rule']]);
+  assert.deepEqual(consumer.json(['list', '--all']), []);
+});
+
+test('a row another process appends while a move runs reaches the destination, never only the inbox it left', async (t) => {
+  const { base } = setup(t);
+  const from = path.join(base, 'notes-1/lessons/inbox.jsonl');
+  const to = path.join(base, 'plugin-1/lessons/inbox.jsonl');
+  appendRow(from, { event: 'add', id: 'eeee0001', at: new Date().toISOString(), tier: 'P2', target: 'plugin', note: 'moving', evidence: [] });
+  // The writer read the lesson in `from` and holds the lock until its seen row is appended; the move starts meanwhile.
+  const writer = lockHolder(from, { event: 'seen', id: 'eeee0001', at: new Date().toISOString(), note: 'written during the move', evidence: [] });
+  await writer.ready;
+  assert.deepEqual(moveLessons(from, to, ['eeee0001']), ['eeee0001']);
+  await writer.done;
+  const moved = fold(readRowsOf(to)).find('eeee0001');
+  assert.deepEqual([moved?.seen, moved?.occurrences.map((item) => item.note)], [2, ['written during the move']]);
+  assert.equal(fold(readRowsOf(from)).find('eeee0001'), null);
+  assert.deepEqual(readdirSync(path.dirname(from)).filter((name) => name.includes('.lock')).sort(), ['inbox.jsonl.lock.2', 'inbox.jsonl.lock.2.released'], 'the move took the lock after the writer and released it');
+});
+
+test('every lesson command that writes waits for the inbox lock: resolve, add --same, and update', async (t) => {
+  const consumer = setup(t);
+  const id = consumer.add('to resolve');
+  const inbox = consumer.inbox();
+  const later = (args, input = '') => new Promise((resolve) => {
+    const child = spawn(CLI, ['lesson', ...args], { cwd: consumer.repo, env: consumer.env });
+    child.on('close', resolve);
+    child.stdin.end(input);
+  });
+  for (const [args, input] of [[['resolve', id, '--outcome', 'rejected', '--link', 'x']], [['add', '--same', id], 'again'], [['update', id, '--tier', 'P1']]]) {
+    const holder = lockHolder(inbox, { event: 'seen', id, at: new Date().toISOString(), note: 'held', evidence: [] });
+    await holder.ready;
+    const status = later(args, input);
+    await holder.done;
+    assert.equal(await status, 0);
+    const events = consumer.rows().slice(-2).map((row) => [row.event, row.note ?? null]);
+    assert.equal(events[0][1], 'held', `${args[0]} appends after the lock holder's row, not before it`);
+  }
+});
+
+test('a writer whose lock stays held fails with one line and writes nothing', (t) => {
+  const { run, add, inbox } = setup(t);
+  const id = add('to resolve');
+  const before = readFileSync(inbox(), 'utf8');
+  // This test's own process holds the lock and never lets it go while the command waits.
+  const lock = holdLock(inbox());
+  const resolved = run(['resolve', id, '--outcome', 'rejected', '--link', 'x']);
+  assert.deepEqual([resolved.status, resolved.stdout, resolved.stderr], [1, '', `${inbox()} is locked by another process (pid ${process.pid}, ${lock}); try again\n`]);
+  assert.equal(readFileSync(inbox(), 'utf8'), before);
+});
+
+test('update writes nothing when it cannot lock the inbox a new target moves the lesson to', (t) => {
+  const consumer = setup(t);
+  const plugin = checkout(consumer, 'plugin', pluginRepository());
+  const id = consumer.add('a plugin lesson', ['--target', 'plugin']);
+  const before = readFileSync(plugin.inbox(), 'utf8');
+  // The move back goes to the consumer's inbox, which the plugin's checkout neither reads nor writes otherwise.
+  const lock = holdLock(consumer.inbox());
+  const back = plugin.run(['update', id, '--target', 'project']);
+  assert.deepEqual([back.status, back.stdout, back.stderr], [1, '', `${consumer.inbox()} is locked by another process (pid ${process.pid}, ${lock}); try again\n`]);
+  assert.equal(readFileSync(plugin.inbox(), 'utf8'), before, 'no update row without its move');
+  assert.deepEqual(plugin.json(['list', id]).map((row) => row.target), ['plugin']);
+});
 
 test('add appends one add row with tier, kind, target, and where it was captured, and prints its id', (t) => {
   const { run, rows } = setup(t);

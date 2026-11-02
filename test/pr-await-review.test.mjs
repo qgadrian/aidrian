@@ -1069,7 +1069,7 @@ test('awaitReview: a push mid-wait past the limit ends with round_limit, not rec
   assert.equal(exitCodeFor(r.status), 4);
 });
 
-test('a raised limit is recorded in the request and kept by later runs', async () => {
+test('a raised limit is recorded in the request and kept by later runs only under the Human`s override', async () => {
   const rounds = (n) => Array.from({ length: n }, (_, i) => ({ id: i + 1, user: BOT, submitted_at: T(1), commit_id: 'aaa', state: 'COMMENTED' }));
   assert.ok(requestCommentBody('bbb', 15).includes('<!-- pr-await-review: max-rounds=15 -->'));
   assert.ok(!requestCommentBody('bbb', 3).includes('max-rounds'), 'the default is never recorded');
@@ -1078,10 +1078,15 @@ test('a raised limit is recorded in the request and kept by later runs', async (
   assert.equal(recordedMaxRounds([raised, quoted]), 15, 'a marker outside a request raises nothing');
   assert.equal(recordedMaxRounds([]), null);
 
-  // A bare --request (default 10) on a PR with 12 reviews and a recorded 15 still asks.
+  // Without the override, the cap the run was given holds: a recorded 15 raises nothing.
+  const held = fakeGh([{ reviews: rounds(12), issueComments: [raised] }], { head: 'bbb' });
+  const plain = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 60, intervalSec: 60 }, { gh: held, ...clock() });
+  assert.deepEqual([plain.status, held.posts.length], ['round_limit', 0]);
+
+  // A bare --request (default 10) on a PR with 12 reviews and a recorded 15 still asks, under the Human's override.
   const gh = fakeGh([{ reviews: rounds(12), issueComments: [raised] }], { head: 'bbb' });
   const c = clock();
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 60, intervalSec: 60 }, { gh, ...c });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, keepRecordedCap: true, timeoutSec: 60, intervalSec: 60 }, { gh, ...c });
   assert.equal(r.status, 'timed_out');
   assert.equal(gh.posts.length, 1);
   assert.ok(gh.posts[0].fields.body.includes('max-rounds=15'), 'the raised limit rides on every later request');
@@ -1104,6 +1109,8 @@ test('aidrian pr prints its usage for an unknown action, and await-review report
   assert.deepEqual([unknown.status, unknown.stderr], [1, [
     'usage: aidrian pr review [PR] [--with-bot] [--max-rounds N]',
     '       aidrian pr signoff PR --flow ID --head SHA',
+    '       aidrian pr extend PR',
+    '               (--verdict extend|stop --reason TEXT [--head SHA] | --human approve|deny)',
     '       aidrian pr await-review [PR] [--request] [--max-rounds N] [--head SHA]',
     '       aidrian pr attest PR --head SHA --reviewer WHO --findings N --fixed N [--note T]',
     '       aidrian pr attest PR --pass ID --head SHA --reviewer WHO',

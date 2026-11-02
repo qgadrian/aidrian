@@ -5,7 +5,7 @@ description: Load before the orchestrator's first editing dispatch. Worktrees, s
 
 # orchestration
 
-The `orchestrator` agent loads this skill before its first editing dispatch or pull request step, and follows it until the task closes.
+The `orchestrator` agent loads this skill before its first editing dispatch, pull request step, or finding to close, and follows it until the task closes.
 Each step is a dispatch, a skill, or a command: you still edit no file yourself.
 This plugin's agents named here, such as `integrator`, are spawned as `aidrian:<name>` in Claude Code and `aidrian-<name>` in Codex.
 
@@ -54,8 +54,9 @@ Never put a second agent on work the first may still be doing.
    the fix-pass cap, and the disposition actions that `pr-review-loop`, `pr-review-fix`, and `autopilot` share.
 6. **The stop rule.** Stop when a round's review of the current head yields no `fix_now` and `aidrian pr checks <n>`
    is not failing, or after config.json `github.maxReviewRounds` rounds
-   (default 3); `aidrian pr await-review` exit 4, `round_limit`, means that cap. At the cap, report the open `fix_now` findings
-   and ask the Human.
+   (default 3) and any extra round granted at the cap; `aidrian pr await-review` exit 4, `round_limit`, means that cap.
+   Exit 10, `extension_check`, or 11, `extension_ask`, is the check at the cap: handle it as `references/review-rules.md`
+   § A review round says. At the cap, report the open `fix_now` findings and ask the Human.
 7. **Ready.** Stopped by a clean round, not the cap, mark it ready with `gh pr ready <n>` when the Human asked for that
    or config.json `github.markReady` is `"auto"`, and `aidrian pr checks <n>` says ready; then push nothing more.
    Otherwise it stays a draft. Never merge.
@@ -63,6 +64,9 @@ Never put a second agent on work the first may still be doing.
 ## 4. Review findings
 
 - Check each finding's premise first, as `references/review-rules.md` § Verify the premise says.
+- **Security-sensitive findings**, on auth, tenant isolation, another user's data, public trust boundaries, server-side validation,
+  abuse, payment or webhook trust, or privileged access: only `security-engineer` closes or excludes one. Weak evidence goes to `explorer`.
+- "Disputed" closes nothing: escalate to the Human with the owning agent and the missing evidence.
 - Run each finding through `aidrian pr disposition` with the reviewer's severity, likelihood, affects, and cost.
   A finding missing an axis is handled as `references/review-rules.md` says for `needs_axis`.
 - `fix_now` goes to its owner, highest likelihood × impact first.

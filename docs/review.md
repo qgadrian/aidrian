@@ -350,8 +350,8 @@ rest of the review config it is the base branch's. Unset, each machine picks its
 ## Rounds
 
 A round is one run of the plan on one head. The cap is `github.maxReviewRounds` as the base branch commits it, so an
-edit to the working copy's config cannot raise it, and raising it needs `AIDRIAN_ALLOW_EXTRA_ROUNDS=1` in the Human's
-own shell. The `review-rounds` rule ([hooks.md](hooks.md#bash-rules)) refuses an
+edit to the working copy's config cannot raise it. At the cap, [extra rounds](#extra-rounds) may grant one more;
+raising the cap itself needs `AIDRIAN_ALLOW_EXTRA_ROUNDS=1` in the Human's own shell. The `review-rounds` rule ([hooks.md](hooks.md#bash-rules)) refuses an
 agent command that sets it, and a bot request posted any way but through `aidrian pr`. The last round runs the final stage first, so a pull request
 always gets its independent review before the cap, then lets the earlier stages finish on the same head; it passes
 when nothing is left to fix, and stops at the cap when a fix would need another head. A reviewer that fails or hits
@@ -361,6 +361,71 @@ the change does not touch carries forward.
 `--with-bot` adds the review bot as a last stage after this machine's engine. The bot is asked only once every
 earlier pass has a result, with the review gate's marker, under the plan's round cap; an answer for a commit other
 than the one under review counts for nothing. A flow's required checks are read for that commit too.
+
+### Extra rounds
+
+At the cap, more review is sometimes worth it: a real finding is left, and the rounds are shrinking. Often it is not:
+the same findings come back, the fixes grow the change, or the review wanders into other files. `github.extraRounds`
+decides, as the base branch commits it, with `github.maxExtraRounds` (2) as the ceiling ([config.md](config.md#keys)).
+It applies to `aidrian pr review` and to `aidrian pr await-review --request`, which count their own rounds.
+
+1. `"off"`, or the ceiling reached: `round_limit`, as before.
+2. **Signals.** The command reads the round history and computes four signals. Any red flag ends in `round_limit`, with
+   `extension.reasons`, and no judge runs:
+   - **converging**: the last round left fewer open findings than the round before. Equal or more is a red flag.
+   - **looping**: a finding comes back after a fix, in the same file within 3 lines, or under the same title (its words of
+     four letters or more, without markup, in any order).
+   - **drifting**: a finding after round 1 sits in a file the pull request did not change at its first round.
+   - **bloating**: the fixes since round 1 added more than 50% of the lines the pull request first added, and more
+     than 40 lines. A fix is how the pull request's own diff (each head against its merge base with the base branch)
+     changed between rounds, line by line per file, without `review.ignore` files. Lines the base branch gained are in
+     neither diff, so merging or rebasing on the base is no bloat, even in a file the pull request changes too.
+
+   A signal the history cannot read, such as looping when the reviewers recorded counts and no findings, is unknown,
+   not red. A history with no readable signal stops.
+3. **Judge.** Otherwise the status is `extension_check` (exit 10). It carries `extension`: each round's open findings,
+   with their files, lines, and titles, each fix's size, the pull request's files, its title and body, and the signals.
+   `dispatch` names a read-only `code-reviewer`, which answers whether the fixes deviate from the goal, loop, or
+   over-engineer, and whether the open findings are valid and at least medium, with evidence. It records its word:
+
+   ```sh
+   aidrian pr extend <PR> --verdict extend|stop --reason "<evidence>" [--head <sha>]
+   ```
+
+4. **Grant.** `stop` is `round_limit`. `extend` grants the round under `"auto"`. Under `"ask"` the status is
+   `extension_ask` (exit 11), with a `question` and `options` for the Human, and the session records the answer:
+
+   ```sh
+   aidrian pr extend <PR> --human approve|deny
+   ```
+
+A grant is exactly one round: the cap rises by one, and the next cap runs the check again. It adds to the cap in
+force, the base branch's or an explicit `--max-rounds`, in both commands; a `--max-rounds` above the base branch's cap
+still needs `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, grant or not.
+
+Every open decision is bound to the head its signals were read on: a check waiting for the judge or the Human, and a
+grant whose round has not opened yet. When the pull request moves, the next step reads the signals again on the new
+head. A new red flag stops it, a grant included, so a push after the verdict cannot carry a bloated fix into the extra
+round. Without one, a check waiting for the Human goes back to the judge, who has not seen the push, and a grant
+stands. `aidrian pr extend --human approve` and `--verdict` are refused once the pull request's head is not the one the
+check was for. A bot request on an extra round goes out only for the head its grant was read on: when the
+pull request moves between the reads, or during the wait, the command reads the grant again on the head it would ask
+about, and posts nothing when a red flag revokes it. A bot request records the raised cap in its comment, as a Human's `--max-rounds` does, but a later
+run counts that record only under `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`: otherwise the cap is the base branch's plus the
+grants still valid, so a revoked grant stays revoked. Each decision is an entry
+in [the record](#the-record), listed under **Extra rounds** in the summary comment, which `aidrian pr extend` and
+`aidrian pr await-review` write too, so another machine continues from the same checks and grants (with `review.record:
+"local"`, the state folder only). It is also a `review_extension` row in the
+[dispatch log](dispatch-log.md#review_extension-when-a-check-at-the-round-cap-decides), which `aidrian report reviews` counts.
+
+**Trust.** The `review-extend` rule ([hooks.md](hooks.md#bash-rules)) lets an agent's `--human approve` run only when
+the session's transcript holds the Human's answer to an AskUserQuestion that names the pull request (`#<PR>`) and the
+round it grants (`round <N>`), given after the judge's verdict, with the option that starts with "Approve". Claude Code
+writes that answer, not the agent. A host without such a transcript, such as Codex, leaves the approval to the Human,
+who runs the command in their own shell. `--human deny` always runs. The rest is the record's trust: the judge's
+verdict, like an attest, is the session's word, and an agent with a shell could write the state file directly. So the
+signals and the ceiling are computed by the command at every cap, a verdict cannot overrule a red flag, and under
+`"auto"` the most a false verdict buys is `github.maxExtraRounds` rounds, every one listed on the pull request.
 
 ## The plan command
 

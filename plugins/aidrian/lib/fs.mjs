@@ -43,7 +43,7 @@ export function isWithin(dir, file) {
 
 // `file` with every symlink resolved: the real path of its nearest existing part, then the parts that do not exist yet.
 // Null when that part is a broken symlink, whose target a write would create.
-function resolvedPath(file) {
+export function resolvedPath(file) {
   const tail = [];
   for (let current = path.resolve(file); ; current = path.dirname(current)) {
     try {

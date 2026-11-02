@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import { inboxPath, lessons, pluginInboxPath } from '../plugins/aidrian/lib/lesson-inbox.mjs';
-import { deliverySignal, denialSignal, noteDenial, recordSignal, REPEATED_DENIALS, roundLimitSignal } from '../plugins/aidrian/lib/lesson-signals.mjs';
+import { deliverySignal, denialSignal, forgetDenials, noteDenial, recordSignal, REPEATED_DENIALS, roundLimitSignal } from '../plugins/aidrian/lib/lesson-signals.mjs';
 import { projectAt, projectId } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -81,8 +81,8 @@ test('noteDenial records a lesson on the third block of one rule in one session,
   assert.equal(results[2].agent, 'aidrian:explorer');
   noteDenial(input('s1'), 'process-kill', { dir: temp });
   noteDenial(input('s2'), 'git-amend', { dir: temp });
-  const count = (name) => readFileSync(path.join(temp, `aidrian-denials-${name}`), 'utf8').length;
-  assert.deepEqual([count('s1.git-amend'), count('s1.process-kill'), count('s2.git-amend')], [4, 1, 1]);
+  const count = (session, rule) => readFileSync(path.join(temp, `aidrian-denials-${session}`, rule), 'utf8').length;
+  assert.deepEqual([count('s1', 'git-amend'), count('s1', 'process-kill'), count('s2', 'git-amend')], [4, 1, 1]);
   assert.equal(noteDenial(input('s1'), '../x', { dir: temp }), null, 'a rule name that is not a file name part counts nothing');
   assert.deepEqual(all().map((lesson) => [lesson.key, lesson.seen]), [['hook-deny:git-amend', 1]]);
   for (const session of [undefined, '../x', 'a b']) assert.equal(noteDenial({ session_id: session, cwd: dir }, 'git-amend', { dir: temp }), null);
@@ -99,7 +99,7 @@ test('blocks that land at the same time all count, and exactly one of them recor
     spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: 'ignore' }).on('exit', resolve);
   })));
   assert.deepEqual(exits, Array(blocks).fill(0));
-  assert.equal(readFileSync(path.join(temp, 'aidrian-denials-race.git-amend'), 'utf8').length, blocks);
+  assert.equal(readFileSync(path.join(temp, 'aidrian-denials-race', 'git-amend'), 'utf8').length, blocks);
   assert.deepEqual(all().map((lesson) => [lesson.key, lesson.seen]), [['hook-deny:git-amend', 1]]);
 });
 
@@ -108,10 +108,27 @@ test('the session-end hook deletes the session`s block counts and no other sessi
   for (let i = 0; i < REPEATED_DENIALS; i += 1) noteDenial({ session_id: 'ending', cwd: dir }, 'git-amend', { dir: temp });
   noteDenial({ session_id: 'ending', cwd: dir }, 'process-kill', { dir: temp });
   noteDenial({ session_id: 'ending-2', cwd: dir }, 'git-amend', { dir: temp });
-  const left = () => readdirSync(temp).filter((name) => name.startsWith('aidrian-denials-')).sort();
-  assert.deepEqual(left(), ['aidrian-denials-ending-2.git-amend', 'aidrian-denials-ending.git-amend', 'aidrian-denials-ending.git-amend.recorded', 'aidrian-denials-ending.process-kill']);
+  const left = () => readdirSync(temp).filter((name) => name.startsWith('aidrian-denials-'))
+    .flatMap((folder) => readdirSync(path.join(temp, folder)).map((name) => `${folder}/${name}`)).sort();
+  assert.deepEqual(left(), ['aidrian-denials-ending-2/git-amend', 'aidrian-denials-ending/git-amend', 'aidrian-denials-ending/git-amend.recorded', 'aidrian-denials-ending/process-kill']);
   assert.equal(hook('hook-session-end.mjs', { session_id: 'ending' }).status, 0);
-  assert.deepEqual(left(), ['aidrian-denials-ending-2.git-amend']);
+  assert.deepEqual(left(), ['aidrian-denials-ending-2/git-amend']);
+});
+
+test('forgetDenials deletes a session`s block counts without listing the temporary folder', { skip: process.platform === 'win32' }, (t) => {
+  const { dir, temp } = project(t);
+  const block = () => noteDenial({ session_id: 'ending', cwd: dir }, 'git-amend', { dir: temp });
+  for (let i = 1; i < REPEATED_DENIALS; i += 1) assert.equal(block(), null);
+  // A temporary folder that cannot be listed: the session's end must find its counts by path, since a listing of a
+  // real temporary folder with a hundred thousand entries eats the session-end hook's time budget.
+  chmodSync(temp, 0o300);
+  try {
+    forgetDenials('ending', { dir: temp });
+  } finally {
+    chmodSync(temp, 0o700);
+  }
+  // The count starts again: no block records a lesson before the REPEATED_DENIALS-th after the reset.
+  for (let i = 1; i < REPEATED_DENIALS; i += 1) assert.equal(block(), null);
 });
 
 test('the Bash hook still blocks every time, and the third block of a rule in a session becomes a lesson in the plugin\'s inbox', (t) => {
@@ -122,6 +139,41 @@ test('the Bash hook still blocks every time, and the third block of a rule in a 
   assert.deepEqual(plugin().map((lesson) => [lesson.key, lesson.target, lesson.session, lesson.project]), [['hook-deny:git-amend', 'plugin', 'bash-1', projectId(proj)]]);
   assert.deepEqual(all(), [], 'a plugin lesson never lands in the project\'s own inbox');
   assert.equal(hook('hook-bash.mjs', { ...amend, tool_input: { command: 'git status' } }).status, 0);
+});
+
+// Holds `file`'s lock for this test's process, alive while a hook or call runs: the lock's next generation
+// (jsonl.mjs withLocks), naming this pid on this host. Returns a function that releases it.
+function holdLock(file) {
+  mkdirSync(path.dirname(file), { recursive: true });
+  const numbers = readdirSync(path.dirname(file)).map((name) => name.startsWith(`${path.basename(file)}.lock.`) && /\.lock\.(\d+)$/u.exec(name)?.[1]).filter(Boolean).map(Number);
+  const name = `${file}.lock.${Math.max(0, ...numbers) + 1}`;
+  writeFileSync(name, `${JSON.stringify({ pid: process.pid, host: hostname(), nonce: 'test' })}\n`);
+  return () => writeFileSync(`${name}.released`, '');
+}
+
+test('a signal never waits for a held inbox lock: it returns at once and records nothing', (t) => {
+  const { proj, all } = project(t);
+  holdLock(inboxPath(proj));
+  const started = Date.now();
+  assert.equal(recordSignal(proj, deliverySignal({ agentType: 'Explore', missing: ['x.md'] })), null);
+  assert.ok(Date.now() - started < 1000, `it returned after ${Date.now() - started} ms`);
+  assert.deepEqual(all(), []);
+});
+
+test('a hook blocks at once while the inbox lock is held, and the next block records the lesson it skipped', (t) => {
+  const { plugin, hook } = project(t);
+  const amend = { tool_name: 'Bash', tool_input: { command: 'git commit --amend' }, session_id: 'locked-1' };
+  for (let i = 1; i < REPEATED_DENIALS; i += 1) assert.equal(hook('hook-bash.mjs', amend).status, 2);
+  const release = holdLock(pluginInboxPath());
+  const started = Date.now();
+  const third = hook('hook-bash.mjs', amend);
+  const took = Date.now() - started;
+  assert.deepEqual([third.status, third.stderr.startsWith('Blocked: ')], [2, true]);
+  assert.ok(took < 1500, `the third block took ${took} ms, inside the host's 5-second hook timeout`);
+  assert.deepEqual(plugin(), [], 'the lesson is not recorded while the lock is held');
+  release();
+  assert.equal(hook('hook-bash.mjs', amend).status, 2);
+  assert.deepEqual(plugin().map((lesson) => [lesson.key, lesson.session]), [['hook-deny:git-amend', 'locked-1']], 'the next block records it');
 });
 
 test('the write hook counts its main-checkout blocks the same way', (t) => {

@@ -67,11 +67,14 @@ export const commands = {
         return 1;
       }
       if (view === 'reviews') {
-        // The log plays no part: the pull requests are the last N merged, or those merged since --since when it is given.
-        const { formatReviews, ghAt, reviewRounds } = await import('./report-reviews.mjs');
+        // The pull requests are the last N merged, or those merged since --since when it is given. The log adds only the
+        // checks at the round cap, since --since (7d by default).
+        const { extensionSummary, formatExtensions, formatReviews, ghAt, reviewRounds } = await import('./report-reviews.mjs');
         const reviews = reviewRounds(prs, config.github.reviewer, ghAt(project.root), { sinceMs: values.since === undefined ? null : sinceMs });
+        const extensions = extensionSummary(readLog(project, config).rows, { sinceMs });
         const label = values.since ?? null;
-        console.log(values.json ? JSON.stringify({ since: label, prs, ...reviews }) : formatReviews(reviews, { since: label }));
+        const extra = formatExtensions(extensions, { since });
+        console.log(values.json ? JSON.stringify({ since: label, prs, ...reviews, extensions }) : [formatReviews(reviews, { since: label }), ...(extra ? [extra] : [])].join('\n'));
         return 0;
       }
       const { file, rotated, rows, skipped } = readLog(project, config);

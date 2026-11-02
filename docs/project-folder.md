@@ -166,7 +166,8 @@ Each objection, ruling, and rebuttal cites its evidence as `{kind, ref, quote}`.
   `absence` cites a path, and the quote must be in no regular file `git ls-files` lists there; a path with no tracked file fails.
   An anchor matches a heading by its text or its slug, and a `#` line in a fenced code block is not a heading.
   A quote is at most 200 characters, compared with whitespace collapsed.
-  An objection with no passing citation becomes `opinion`, and a ruling, or a rebuttal that rebuts, with none is named invalid.
+  A `pending` objection with no passing citation becomes `opinion`; one already ruled on keeps its status and is named.
+  A ruling, or a rebuttal that rebuts, with no passing citation is named invalid.
   A rebuttal that rebuts is also invalid when it cites nothing new: every passing citation of it is already cited by an
   objection or its ruling, by kind, path, anchor, and quote. Other rebuttals do not count. It prints each problem and writes the ledger back.
   It exits 1 on a schema error, a `complete` ledger with an objection still `pending` or ruled on with no `ruling`,

@@ -994,3 +994,13 @@ test('extra rounds: merging the base branch in between rounds is no fix, even in
   assert.deepEqual(capped.extension.history.map((round) => round.fix?.added), [0, 0], 'the merge added nothing of the pull request`s own');
   assert.equal(capped.extension.signals.bloating, false);
 });
+
+test('--with-bot: a request on an extra round is for the plan`s head only; for a moved head the step asks to run again', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', '9\n') });
+  const seen = [];
+  const awaitBot = async (opts) => (seen.push([opts.validHead, opts.grantFloor]), { status: 'head_moved', requested: false, head_sha: 'f'.repeat(40) });
+  const moved = await r.step({ exec: clean, awaitBot, env: {} }, { withBot: true });
+  assert.deepEqual([moved.status, moved.retry_recommended], ['incomplete', true]);
+  assert.match(moved.reason, /moved to fffffff before the request on an extra round/u);
+  assert.deepEqual(seen, [[moved.head, 3]], 'the grant floor is the cap without grants');
+});

@@ -406,7 +406,9 @@ grant whose round has not opened yet. When the pull request moves, the next step
 head. A new red flag stops it, a grant included, so a push after the verdict cannot carry a bloated fix into the extra
 round. Without one, a check waiting for the Human goes back to the judge, who has not seen the push, and a grant
 stands. `aidrian pr extend --human approve` and `--verdict` are refused once the pull request's head is not the one the
-check was for. A bot request records the raised cap in its comment, as a Human's `--max-rounds` does, but a later
+check was for. A bot request on an extra round goes out only for the head its grant was read on: when the
+pull request moves between the reads, or during the wait, the command reads the grant again on the head it would ask
+about, and posts nothing when a red flag revokes it. A bot request records the raised cap in its comment, as a Human's `--max-rounds` does, but a later
 run counts that record only under `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`: otherwise the cap is the base branch's plus the
 grants still valid, so a revoked grant stays revoked. Each decision is an entry
 in [the record](#the-record), listed under **Extra rounds** in the summary comment, which `aidrian pr extend` and

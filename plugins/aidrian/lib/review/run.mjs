@@ -482,7 +482,13 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
         const wait = awaitBot ?? (await import('../pr-await-review.mjs')).awaitReview;
         // The plan's cap (the base branch's, plus valid extra rounds) is the bot's too: a cap an earlier request recorded
         // counts only under the Human's override.
-        const bot = await wait({ pr: String(n), repo, head, request: true, reviewer: config.github.reviewer, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds, keepRecordedCap: env[ROUNDS_OVERRIDE] === '1' }, { gate });
+        // A request past the base branch's cap uses an extra round, granted on the signals of this head: the wait posts
+        // nothing for another head (head_moved), and the next step reads the grant again on it.
+        const bot = await wait({ pr: String(n), repo, head, request: true, reviewer: config.github.reviewer, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds, keepRecordedCap: env[ROUNDS_OVERRIDE] === '1', validHead: head, grantFloor: maxRounds - grantedRounds(state, 'plan', policy) }, { gate });
+        if (bot.status === 'head_moved') {
+          undoRound();
+          return finish('incomplete', { reason: `the pull request moved to ${String(bot.head_sha).slice(0, 7)} before the request on an extra round: run the step again, which reads the grant on the new head`, retry_recommended: true });
+        }
         if (bot.status === 'review_required') {
           undoRound();
           return finish('incomplete', { reason: bot.reason, retry_recommended: false });

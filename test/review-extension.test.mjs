@@ -364,6 +364,9 @@ function gitBot(t, config, { working = null } = {}) {
   const at = () => `2026-08-23T08:${String((minute += 1)).padStart(2, '0')}:00Z`;
   const issue = [];
   const requests = [];
+  // `beforePull(n)` runs before GitHub answers the n-th read of the pull request in a run: a push between two reads.
+  const hooks = {};
+  let pulls = 0;
   const findings = [[['src/a.js', 1, 'One'], ['src/a.js', 40, 'Two'], ['src/a.js', 120, 'Three']], [['src/a.js', 80, 'Four'], ['src/a.js', 160, 'Five']], [['src/a.js', 200, 'Six']]];
   const reviews = heads.map((sha, i) => ({ id: i + 1, user: { login: DEFAULT_REVIEWER }, submitted_at: at(), commit_id: sha, state: 'COMMENTED' }));
   const inline = findings.flatMap((each, i) => each.map(([file, line, title]) => ({ pull_request_review_id: i + 1, path: file, line, body: title })));
@@ -378,7 +381,11 @@ function gitBot(t, config, { working = null } = {}) {
         return comment;
       }
       if (method === 'PATCH') return (issue.find((comment) => comment.id === Number(p.split('/').at(-1))).body = fields.body);
-      if (p.endsWith('/pulls/42')) return { title: 'Cap refunds', body: 'goal', base: { ref: 'main' }, head: { sha: git('rev-parse', 'HEAD'), ref: 'feat', repo: { full_name: 'acme/notes' } } };
+      if (p.endsWith('/pulls/42')) {
+        pulls += 1;
+        hooks.beforePull?.(pulls);
+        return { title: 'Cap refunds', body: 'goal', base: { ref: 'main' }, head: { sha: git('rev-parse', 'HEAD'), ref: 'feat', repo: { full_name: 'acme/notes' } } };
+      }
       if (p.includes('/commits/')) return { commit: { committer: { date: at() } } };
       if (p.endsWith('/reviews')) return reviews;
       if (p.endsWith('/pulls/42/comments')) return inline;
@@ -388,12 +395,13 @@ function gitBot(t, config, { working = null } = {}) {
     },
   };
   const run = async (env = {}) => {
+    pulls = 0;
     let now = Date.parse('2026-08-23T09:00:00Z');
     const git_ = { pushedHead: () => null, behind: () => false };
     const code = await runAwaitReview(['42', '--request', '--timeout-sec', '0'], loadConfig(project).config, project, { gh, git: git_, env, now: () => now, sleep: async (s) => { now += s * 1000; } });
     return { code, out: JSON.parse(log.mock.calls.at(-1).arguments[0]) };
   };
-  return { project, run, requests, commit, fix };
+  return { project, run, requests, commit, fix, hooks };
 }
 
 test('await-review: a grant revoked by a bloated push stays revoked, whatever cap an earlier request recorded', async (t) => {
@@ -426,4 +434,28 @@ test('await-review: the signals read the base branch`s review.ignore, so a worki
   bot.commit(`${Array.from({ length: 60 }, (_, i) => `export const line${i} = ${i};`).join('\n')}\n`);
   const revoked = await bot.run();
   assert.deepEqual([revoked.out.status, revoked.out.extension.signals.bloating, revoked.out.extension.signals.evidence.bloating.original_added], ['round_limit', true, 1]);
+});
+
+test('await-review: a grant is used only for the head it was read on; a bloated push between the reads revokes it, and nothing is posted', async (t) => {
+  const grant = async (bot) => {
+    assert.equal((await bot.run()).out.status, 'extension_check');
+    const state = readLocalState(bot.project, 42);
+    recordVerdict(state, { verdict: 'extend', reason: 'src/a.js:200 is valid', current: bot.fix });
+    writeLocalState(bot.project, state);
+  };
+  const same = gitBot(t, { github: { extraRounds: 'auto' } });
+  await grant(same);
+  const asked = await same.run();
+  assert.deepEqual([asked.out.status, same.requests.length], ['timed_out', 1], 'on the head the grant was read on, the request goes out');
+
+  const raced = gitBot(t, { github: { extraRounds: 'auto' } });
+  await grant(raced);
+  // The first read (the base and the grant) sees the fix; the wait's own read sees a 60-line push made in between.
+  raced.hooks.beforePull = (n) => {
+    if (n === 2) raced.commit(`${Array.from({ length: 60 }, (_, i) => `export const line${i} = ${i};`).join('\n')}\n`);
+  };
+  const revoked = await raced.run();
+  assert.deepEqual([revoked.code, revoked.out.status, raced.requests.length], [4, 'round_limit', 0], 'no request on the bloated head');
+  assert.deepEqual([revoked.out.extension.by, revoked.out.extension.signals.bloating], ['mechanical', true]);
+  assert.equal(readLocalState(raced.project, 42).extensions[0].status, 'stopped', 'the grant is revoked');
 });

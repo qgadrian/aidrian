@@ -376,6 +376,9 @@ export const awaitReview = async (opts, { gh = defaultGh, git = localGit(), slee
       // at limit + 1 reviews; the bot exposes no per-trigger completion to reserve against.
       if (opts.keepRecordedCap) maxRounds = Math.max(maxRounds, recordedMaxRounds(s.issueComments) ?? 0);
       if (codexRounds(s.reviews, opts.reviewer) >= maxRounds) return 'round_limit';
+      // A request past `grantFloor` uses an extra round, granted on the signals of `validHead`: for any other head, post
+      // nothing and hand back `head_moved`, so the caller reads the signals on this head first (lib/review/extension.mjs).
+      if (opts.validHead && Number.isInteger(opts.grantFloor) && codexRounds(s.reviews, opts.reviewer) >= opts.grantFloor && !sameCommit(head ?? '', opts.validHead)) return 'head_moved';
       const beforePost = flooredInstant(now());
       const posted = gh.api(`repos/${repo}/issues/${n}/comments`, { method: 'POST', fields: { body: requestCommentBody(head, maxRounds, review.marker ?? null) } });
       requested = true;
@@ -415,7 +418,7 @@ export const awaitReview = async (opts, { gh = defaultGh, git = localGit(), slee
     };
   };
   const first = evaluate();
-  if (first === 'blocked_quota' || first === 'round_limit') return result(first);
+  if (first === 'blocked_quota' || first === 'round_limit' || first === 'head_moved') return result(first);
   if (first) return result('already_present');
   // The last sleep is clamped to the remaining budget, so the wait never overruns the shell's cap.
   for (;;) {
@@ -424,7 +427,7 @@ export const awaitReview = async (opts, { gh = defaultGh, git = localGit(), slee
     await sleep(Math.min(opts.intervalSec, Math.ceil(remainingMs / 1000)));
     s = snapshot(gh, repo, n);
     const verdict = evaluate();
-    if (verdict === 'blocked_quota' || verdict === 'round_limit') return result(verdict);
+    if (verdict === 'blocked_quota' || verdict === 'round_limit' || verdict === 'head_moved') return result(verdict);
     if (verdict) return result('received');
   }
   return result('timed_out');
@@ -509,9 +512,8 @@ async function botAtCap(result, { project, config, gh, base, record, policy, env
 
 // A decision still open for the bot (a check, or a grant whose round has not been asked for) when the pull request has
 // moved past the head it was made on: read again on the new head before the cap counts it. Returns whether it changed.
-async function botRevalidate({ project, config, gh, base, record, reviewer, env }) {
+async function botRevalidate({ project, config, gh, base, record, reviewer, env, head }) {
   const extension = await import('./review/extension.mjs');
-  const head = base.pr?.head?.sha ?? null;
   const open = (record.state.extensions ?? []).filter((entry) => entry.source === 'bot' && ['judging', 'asking', 'granted'].includes(entry.status));
   if (!head || !open.some((entry) => entry.head !== head)) return false;
   const round = codexRounds(gh.api(`repos/${base.repo}/pulls/${base.n}/reviews`, { paginate: true }) ?? [], reviewer);
@@ -539,14 +541,33 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     const { grantedRounds, policyOf } = await import('./review/extension.mjs');
     const policy = policyOf(base?.github ?? config.github);
     const record = base && opts.request && policy.mode !== 'off' ? await reviewRecord(project, config, gh, base.repo, base.n) : null;
-    const moved = record ? await botRevalidate({ project, config, gh, base, record, reviewer: opts.reviewer, env }) : false;
-    const granted = grantedRounds(record?.state, 'bot', policy);
-    if (!args.includes('--max-rounds')) opts.maxRounds = cap + granted;
+    // The extra rounds still valid on `head`: a decision made on another head is read again on it first.
+    let moved = false;
+    const allowFor = async (head) => {
+      if (record && (await botRevalidate({ project, config, gh, base, record, reviewer: opts.reviewer, env, head }))) moved = true;
+      const granted = grantedRounds(record?.state, 'bot', policy);
+      if (!args.includes('--max-rounds')) opts.maxRounds = cap + granted;
+      // A request past grantFloor uses a grant, and only for the head the grant was read on.
+      opts.grantFloor = opts.maxRounds - granted;
+      opts.validHead = granted > 0 ? head : null;
+      return granted;
+    };
+    const granted = await allowFor(base?.pr?.head?.sha ?? null);
     // A cap an earlier request recorded counts only under the Human's override, as a --max-rounds past the cap does.
     opts.keepRecordedCap = env[ROUNDS_OVERRIDE] === '1';
     const capped = roundCapProblem(opts.maxRounds, cap + granted, env);
     if (capped) throw new Error(capped);
     let result = await awaitReview(opts, { gate, ...deps });
+    // The pull request moved between the reads, or during the wait, before a request on a grant: read the grant again
+    // on the head the request would be for, then ask again. A few moves in a row end the run without a request.
+    for (let tries = 0; result.status === 'head_moved'; tries += 1) {
+      if (tries === 3) {
+        result = { ...result, status: 'timed_out', retry_recommended: true, reason: 'the pull request kept moving before a request on an extra round: run it again' };
+        break;
+      }
+      await allowFor(result.head_sha);
+      result = await awaitReview(opts, { gate, ...deps });
+    }
     if (result.status === 'round_limit' && record) result = await botAtCap(result, { project, config, gh, base, record, policy, env });
     else if (moved) await saveRecord(record, { project, config, gh, base, status: result.status });
     else if (result.status === 'round_limit' && base && policy.mode === 'off') result = { ...result, extension: { status: 'off', mode: 'off' } };

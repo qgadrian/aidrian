@@ -118,7 +118,8 @@ test('slug is exported from flows.mjs unchanged', () => {
 
 test('check: every citation kind passes; anchors by heading text and by slug; quotes compare with whitespace collapsed; plan and ledger outside the root', (t) => {
   const p = project(t);
-  const objections = Object.entries(PASSING).map(([id, citation]) => objection(id, [citation]));
+  // Ids as the ledger writes them: A1 to A7, then B1 on.
+  const objections = Object.values(PASSING).map((citation, i) => objection(i < 7 ? `A${i + 1}` : `B${i - 6}`, [citation]));
   const result = p.check(ledger(objections));
   assert.equal(result.stderr, '');
   assert.equal(result.status, 0);
@@ -129,31 +130,31 @@ test('check: every citation kind passes; anchors by heading text and by slug; qu
 test('check: each citation kind that fails is named with its reason, and an objection with none passing becomes opinion', (t) => {
   const p = project(t);
   const failing = [
-    objection('doc', [cite('doc', 'docs/rules.md#refunds', 'Two bookings never hold one slot.')]),
-    objection('docMissing', [cite('doc', 'docs/nope.md#x', 'y')]),
-    objection('adr', [cite('adr', 'docs/decisions/0001-store.md#context', 'one ledger per plan')]),
-    objection('code', [cite('code', 'src/app.js:1', 'export const app = 2;')]),
-    objection('codeRef', [cite('code', 'src/app.js', 'export const app = 1;')]),
-    objection('plan', [cite('plan', '#risks', 'Store the ledger')]),
-    objection('absence', [cite('absence', 'src', 'export function book')]),
-    objection('long', [cite('code', 'src/app.js:1', 'x'.repeat(201))]),
-    objection('mixed', [cite('code', 'src/app.js:1', 'nope'), PASSING.code]),
+    objection('A1', [cite('doc', 'docs/rules.md#refunds', 'Two bookings never hold one slot.')]),
+    objection('A2', [cite('doc', 'docs/nope.md#x', 'y')]),
+    objection('A3', [cite('adr', 'docs/decisions/0001-store.md#context', 'one ledger per plan')]),
+    objection('A4', [cite('code', 'src/app.js:1', 'export const app = 2;')]),
+    objection('A5', [cite('code', 'src/app.js', 'export const app = 1;')]),
+    objection('A6', [cite('plan', '#risks', 'Store the ledger')]),
+    objection('A7', [cite('absence', 'src', 'export function book')]),
+    objection('B1', [cite('code', 'src/app.js:1', 'x'.repeat(201))]),
+    objection('B2', [cite('code', 'src/app.js:1', 'nope'), PASSING.code]),
   ];
   const result = p.check(ledger(failing));
   assert.equal(result.status, 0, result.stderr);
   const statuses = Object.fromEntries(result.ledger.objections.map((each) => [each.id, each.status]));
-  assert.deepEqual(statuses, { doc: 'opinion', docMissing: 'opinion', adr: 'opinion', code: 'opinion', codeRef: 'opinion', plan: 'opinion', absence: 'opinion', long: 'opinion', mixed: 'pending' });
+  assert.deepEqual(statuses, { A1: 'opinion', A2: 'opinion', A3: 'opinion', A4: 'opinion', A5: 'opinion', A6: 'opinion', A7: 'opinion', B1: 'opinion', B2: 'pending' });
   const has = (pattern) => assert.ok(result.lines.some((line) => pattern.test(line)), `${pattern}\n${result.stdout}`);
-  has(/^objection doc\.citations\[0\] \(doc docs\/rules\.md#refunds\): docs\/rules\.md#refunds does not contain the quote$/u);
-  has(/^objection doc: relabeled opinion \(was pending\): no citation passes$/u);
-  has(/^objection docMissing\.citations\[0\] .*: docs\/nope\.md is missing$/u);
-  has(/^objection adr\.citations\[0\] .*: docs\/decisions\/0001-store\.md has no heading #context$/u);
-  has(/^objection code\.citations\[0\] .*: src\/app\.js does not contain the quote$/u);
-  has(/^objection codeRef\.citations\[0\] .*: "src\/app\.js" is not path:line$/u);
-  has(/^objection plan\.citations\[0\] .*: the plan#risks does not contain the quote$/u);
-  has(/^objection absence\.citations\[0\] .*: src\/app\.js contains the quote$/u);
-  has(/^objection long\.citations\[0\] .*: the quote is 201 characters, more than 200$/u);
-  assert.ok(!result.lines.some((line) => line.startsWith('objection mixed:')), 'one passing citation keeps the objection');
+  has(/^objection A1\.citations\[0\] \(doc docs\/rules\.md#refunds\): docs\/rules\.md#refunds does not contain the quote$/u);
+  has(/^objection A1: relabeled opinion \(was pending\): no citation passes$/u);
+  has(/^objection A2\.citations\[0\] .*: docs\/nope\.md is missing$/u);
+  has(/^objection A3\.citations\[0\] .*: docs\/decisions\/0001-store\.md has no heading #context$/u);
+  has(/^objection A4\.citations\[0\] .*: src\/app\.js does not contain the quote$/u);
+  has(/^objection A5\.citations\[0\] .*: "src\/app\.js" is not path:line$/u);
+  has(/^objection A6\.citations\[0\] .*: the plan#risks does not contain the quote$/u);
+  has(/^objection A7\.citations\[0\] .*: src\/app\.js contains the quote$/u);
+  has(/^objection B1\.citations\[0\] .*: the quote is 201 characters, more than 200$/u);
+  assert.ok(!result.lines.some((line) => line.startsWith('objection B2:')), 'one passing citation keeps the objection');
   assert.equal(result.lines.at(-1), `checked: 9 objections, 8 opinion, ${result.lines.length - 1} problems`);
 });
 
@@ -164,14 +165,14 @@ test('check: an objection already ruled on keeps its status when its citations s
   const stale = [cite('code', 'src/app.js:1', 'export const app = 2;')];
   const ruled = (decision) => ({ decision, change_or_reason: 'r', citations: [PASSING.adr] });
   const before = { ...ledger([
-    objection('K1', stale, { status: 'accepted', ruling: ruled('accept') }),
-    objection('K2', stale, { status: 'rejected', ruling: ruled('reject') }),
-    objection('K3', stale, { status: 'escalated', ruling: ruled('escalate') }),
-  ]), status: 'complete', human_answers: [{ objection_id: 'K1', answer: 'yes, change it' }] };
+    objection('A1', stale, { status: 'accepted', ruling: ruled('accept') }),
+    objection('A2', stale, { status: 'rejected', ruling: ruled('reject') }),
+    objection('A3', stale, { status: 'escalated', ruling: ruled('escalate') }),
+  ]), status: 'complete', human_answers: [{ objection_id: 'A1', answer: 'yes, change it' }] };
   const result = p.check(before);
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(result.ledger.objections.map((each) => each.status), ['accepted', 'rejected', 'escalated']);
-  for (const [id, status] of [['K1', 'accepted'], ['K2', 'rejected'], ['K3', 'escalated']]) {
+  for (const [id, status] of [['A1', 'accepted'], ['A2', 'rejected'], ['A3', 'escalated']]) {
     assert.ok(result.lines.includes(`objection ${id}: no citation passes; kept ${status}, since it was ruled on`), result.stdout);
   }
   assert.ok(!result.lines.some((line) => line.includes('relabeled')), result.stdout);
@@ -207,15 +208,15 @@ test('check: a ref path that leaves the root is one failed citation: a warning o
   symlinkSync(path.join(p.state, 'outside.md'), path.join(p.root, 'docs/link.md'));
   const escapes = [cite('doc', '../outside.md#a', 'secret'), cite('code', `${p.state}/outside.md:1`, 'secret'), cite('absence', '../', 'x'), cite('doc', 'docs/link.md#a', 'secret')];
   // Each escape beside a passing citation: the objection stands on the other one, and only the escape fails.
-  const result = p.check(ledger([...escapes.map((escape, i) => objection(`E${i}`, [escape])), objection('E9', [escapes[0], PASSING.code])]));
+  const result = p.check(ledger([...escapes.map((escape, i) => objection(`A${i + 1}`, [escape])), objection('A5', [escapes[0], PASSING.code])]));
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(result.ledger.objections.map((each) => each.status), ['opinion', 'opinion', 'opinion', 'opinion', 'pending'], 'written back');
   for (const [i, escape] of escapes.entries()) {
-    assert.ok(result.lines.some((line) => line.startsWith(`objection E${i}.citations[0] (${escape.kind} ${escape.ref}): `) && line.endsWith('is outside the repository root')), `${escape.ref}\n${result.stdout}`);
-    assert.match(result.stderr, new RegExp(`warning: objection E${i}\\.citations\\[0\\]: .* is outside the repository root, not read`, 'u'), escape.ref);
+    assert.ok(result.lines.some((line) => line.startsWith(`objection A${i + 1}.citations[0] (${escape.kind} ${escape.ref}): `) && line.endsWith('is outside the repository root')), `${escape.ref}\n${result.stdout}`);
+    assert.match(result.stderr, new RegExp(`warning: objection A${i + 1}\\.citations\\[0\\]: .* is outside the repository root, not read`, 'u'), escape.ref);
   }
-  assert.ok(result.lines.includes('objection E9.citations[0] (doc ../outside.md#a): ../outside.md is outside the repository root'), result.stdout);
-  assert.ok(!result.lines.some((line) => line.startsWith('objection E9:')), 'the passing citation keeps E9');
+  assert.ok(result.lines.includes('objection A5.citations[0] (doc ../outside.md#a): ../outside.md is outside the repository root'), result.stdout);
+  assert.ok(!result.lines.some((line) => line.startsWith('objection A5:')), 'the passing citation keeps A5');
 });
 
 test('check: a citation through a symlinked folder that points outside the root fails as an escape, for code, doc, and absence', (t) => {
@@ -226,11 +227,11 @@ test('check: a citation through a symlinked folder that points outside the root 
   symlinkSync(path.join(p.state, 'shared'), path.join(p.root, 'vendor'));
   p.git('add', 'vendor');
   const refs = [cite('code', 'vendor/lib.js:1', 'SHARED_NEEDLE'), cite('doc', 'vendor/notes.md#a', 'SHARED_NEEDLE'), cite('absence', 'vendor', 'NOT_THERE'), cite('absence', 'vendor/lib.js', 'NOT_THERE')];
-  const result = p.check(ledger(refs.map((citation, i) => objection(`V${i}`, [citation]))));
+  const result = p.check(ledger(refs.map((citation, i) => objection(`A${i + 1}`, [citation]))));
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(result.ledger.objections.map((each) => each.status), Array(refs.length).fill('opinion'));
   for (const [i, citation] of refs.entries()) {
-    assert.ok(result.lines.includes(`objection V${i}.citations[0] (${citation.kind} ${citation.ref}): ${citation.ref.replace(/[:#].*$/u, '')} is outside the repository root`), `${citation.ref}\n${result.stdout}`);
+    assert.ok(result.lines.includes(`objection A${i + 1}.citations[0] (${citation.kind} ${citation.ref}): ${citation.ref.replace(/[:#].*$/u, '')} is outside the repository root`), `${citation.ref}\n${result.stdout}`);
   }
   assert.equal(result.stderr.trim().split('\n').length, refs.length, result.stderr);
 });
@@ -241,16 +242,16 @@ test('check: an escape in a ruling or a rebuttal fails that citation and warns: 
   symlinkSync(p.state, path.join(p.root, 'state-link'));
   const out = cite('doc', 'state-link/outside.md#a', 'secret');
   const result = p.check(ledger([
-    objection('R1', [PASSING.code], { status: 'rejected', ruling: { decision: 'reject', change_or_reason: 'r', citations: [out] } }),
-    objection('R2', [PASSING.code], { status: 'rejected', ruling: { decision: 'reject', change_or_reason: 'r', citations: [PASSING.adr] }, rebuttal: { verdict: 'rebut', claim: 'c', citations: [cite('code', '../x.js:1', 'x')], ruling: { decision: 'reject', change_or_reason: 'r', citations: [out] } } }),
+    objection('A1', [PASSING.code], { status: 'rejected', ruling: { decision: 'reject', change_or_reason: 'r', citations: [out] } }),
+    objection('A2', [PASSING.code], { status: 'rejected', ruling: { decision: 'reject', change_or_reason: 'r', citations: [PASSING.adr] }, rebuttal: { verdict: 'rebut', claim: 'c', citations: [cite('code', '../x.js:1', 'x')], ruling: { decision: 'reject', change_or_reason: 'r', citations: [out] } } }),
   ]));
   assert.equal(result.status, 0, result.stderr);
   for (const line of [
-    'objection R1 ruling.citations[0] (doc state-link/outside.md#a): state-link/outside.md is outside the repository root',
-    'objection R1 ruling: invalid: the ruling has no passing citation',
-    'objection R2 rebuttal.citations[0] (code ../x.js:1): ../x.js is outside the repository root',
-    'objection R2 rebuttal: invalid: the rebuttal has no passing citation',
-    'objection R2 rebuttal ruling: invalid: the ruling has no passing citation',
+    'objection A1 ruling.citations[0] (doc state-link/outside.md#a): state-link/outside.md is outside the repository root',
+    'objection A1 ruling: invalid: the ruling has no passing citation',
+    'objection A2 rebuttal.citations[0] (code ../x.js:1): ../x.js is outside the repository root',
+    'objection A2 rebuttal: invalid: the rebuttal has no passing citation',
+    'objection A2 rebuttal ruling: invalid: the ruling has no passing citation',
   ]) assert.ok(result.lines.includes(line), `${line}\n${result.stdout}`);
   assert.equal(result.stderr.trim().split('\n').length, 3, result.stderr);
   assert.deepEqual(result.ledger.objections.map((each) => each.status), ['rejected', 'rejected']);
@@ -264,55 +265,55 @@ test('check: GIT_DIR and GIT_WORK_TREE pointing at another repository do not red
   write(other, 'src/other.js', 'nothing here\n');
   spawnSync('git', ['add', '-A'], { cwd: other });
   const env = { ...process.env, GIT_DIR: path.join(other, '.git'), GIT_WORK_TREE: other };
-  const result = p.check(ledger([objection('G1', [cite('absence', 'src', 'export function book')])]), { env });
+  const result = p.check(ledger([objection('A1', [cite('absence', 'src', 'export function book')])]), { env });
   assert.equal(result.status, 0, result.stderr);
-  assert.ok(result.lines.includes('objection G1.citations[0] (absence src): src/app.js contains the quote'), result.stdout);
+  assert.ok(result.lines.includes('objection A1.citations[0] (absence src): src/app.js contains the quote'), result.stdout);
 });
 
 test('check: absence never counts an ignored or untracked file: naming one is a path git tracks no file under', (t) => {
   const p = project(t);
   const result = p.check(ledger([
-    objection('U1', [cite('absence', 'src/secret.txt', 'other')]),
-    objection('U2', [cite('absence', 'src/untracked.js', 'other')]),
-    objection('U3', [PASSING.absence]),
+    objection('A1', [cite('absence', 'src/secret.txt', 'other')]),
+    objection('A2', [cite('absence', 'src/untracked.js', 'other')]),
+    objection('A3', [PASSING.absence]),
   ]));
   assert.equal(result.status, 0, result.stderr);
-  assert.ok(result.lines.includes('objection U1.citations[0] (absence src/secret.txt): git tracks no file under src/secret.txt'), result.stdout);
-  assert.ok(result.lines.includes('objection U2.citations[0] (absence src/untracked.js): git tracks no file under src/untracked.js'), result.stdout);
-  assert.ok(!result.lines.some((line) => line.startsWith('objection U3')), 'the needle only in ignored and untracked files is absent');
+  assert.ok(result.lines.includes('objection A1.citations[0] (absence src/secret.txt): git tracks no file under src/secret.txt'), result.stdout);
+  assert.ok(result.lines.includes('objection A2.citations[0] (absence src/untracked.js): git tracks no file under src/untracked.js'), result.stdout);
+  assert.ok(!result.lines.some((line) => line.startsWith('objection A3')), 'the needle only in ignored and untracked files is absent');
 });
 
 test('check: a ref with a NUL or another control character is not a relative path, and check does not crash', (t) => {
   const p = project(t);
   const refs = [cite('absence', 'src\u0000x', 'x'), cite('code', 'src/app.js\u0000:1', 'x'), cite('doc', 'docs/rules.md\n#refunds', 'x'), cite('absence', 'src\u007f', 'x')];
-  const result = p.check(ledger(refs.map((citation, i) => objection(`N${i}`, [citation]))));
+  const result = p.check(ledger(refs.map((citation, i) => objection(`A${i + 1}`, [citation]))));
   assert.equal(result.status, 0, result.stderr);
   assert.ok(!result.stdout.includes('\u0000'), 'no NUL reaches the output');
   for (const [i, shown] of ['src\\u0000x', 'src/app.js\\u0000:1', 'docs/rules.md\\u000a#refunds', 'src\\u007f'].entries()) {
-    assert.ok(result.lines.some((line) => line.startsWith(`objection N${i}.citations[0] (${refs[i].kind} ${shown}): "`) && line.endsWith('" is not a relative path')), `${shown}\n${result.stdout}`);
+    assert.ok(result.lines.some((line) => line.startsWith(`objection A${i + 1}.citations[0] (${refs[i].kind} ${shown}): "`) && line.endsWith('" is not a relative path')), `${shown}\n${result.stdout}`);
   }
   assert.deepEqual(result.ledger.objections.map((each) => each.status), Array(refs.length).fill('opinion'));
   // A ref malformed for its kind fails before the path check, and is printed escaped too.
   const malformed = p.check(ledger([
-    objection('W1', [cite('code', 'src\u0000x', 'x')]),
-    objection('W2', [cite('doc', 'docs/a.md\u001b[31mRED', 'x')]),
-    objection('W3', [cite('plan', 'Appr\u0000oach', 'x')]),
+    objection('A1', [cite('code', 'src\u0000x', 'x')]),
+    objection('A2', [cite('doc', 'docs/a.md\u001b[31mRED', 'x')]),
+    objection('A3', [cite('plan', 'Appr\u0000oach', 'x')]),
   ]));
   assert.equal(malformed.status, 0, malformed.stderr);
   // No raw control character, other than the line breaks between lines.
   assert.doesNotMatch(malformed.stdout.replaceAll('\n', ''), /[\u0000-\u001f\u007f]/u, 'no raw control character on stdout');
-  assert.ok(malformed.lines.includes('objection W1.citations[0] (code src\\u0000x): "src\\u0000x" is not path:line'), malformed.stdout);
-  assert.ok(malformed.lines.includes('objection W2.citations[0] (doc docs/a.md\\u001b[31mRED): "docs/a.md\\u001b[31mRED" is not path#anchor'), malformed.stdout);
-  assert.ok(malformed.lines.includes('objection W3.citations[0] (plan Appr\\u0000oach): "Appr\\u0000oach" is not #anchor'), malformed.stdout);
+  assert.ok(malformed.lines.includes('objection A1.citations[0] (code src\\u0000x): "src\\u0000x" is not path:line'), malformed.stdout);
+  assert.ok(malformed.lines.includes('objection A2.citations[0] (doc docs/a.md\\u001b[31mRED): "docs/a.md\\u001b[31mRED" is not path#anchor'), malformed.stdout);
+  assert.ok(malformed.lines.includes('objection A3.citations[0] (plan Appr\\u0000oach): "Appr\\u0000oach" is not #anchor'), malformed.stdout);
 });
 
 test('check: a code or doc citation to a FIFO fails as missing instead of hanging', { skip: process.platform === 'win32' }, (t) => {
   const p = project(t);
   for (const name of ['src/pipe.js', 'docs/pipe.md']) assert.equal(spawnSync('mkfifo', [path.join(p.root, name)]).status, 0);
-  const result = p.check(ledger([objection('Q1', [cite('code', 'src/pipe.js:1', 'x')]), objection('Q2', [cite('doc', 'docs/pipe.md#a', 'x')])]));
+  const result = p.check(ledger([objection('A1', [cite('code', 'src/pipe.js:1', 'x')]), objection('A2', [cite('doc', 'docs/pipe.md#a', 'x')])]));
   assert.equal(result.status, 0, result.stderr);
-  assert.ok(result.lines.includes('objection Q1.citations[0] (code src/pipe.js:1): src/pipe.js is missing'), result.stdout);
-  assert.ok(result.lines.includes('objection Q2.citations[0] (doc docs/pipe.md#a): docs/pipe.md is missing'), result.stdout);
+  assert.ok(result.lines.includes('objection A1.citations[0] (code src/pipe.js:1): src/pipe.js is missing'), result.stdout);
+  assert.ok(result.lines.includes('objection A2.citations[0] (doc docs/pipe.md#a): docs/pipe.md is missing'), result.stdout);
 });
 
 // A stand-in for `codex exec`: it records how it was started, writes `answer` where -o points, then exits with `code`
@@ -449,16 +450,16 @@ test('runCodex removes its folder, and runExec`s codex branch runs through it wi
 test('check: a CRLF plan keeps a quote that follows a fenced `# comment` in its section', (t) => {
   const p = project(t);
   writeFileSync(p.plan, ['# Plan', '', '## Approach', 'Run:', '', '```bash', '# build first', '```', '', 'Then store the ledger.', '', '## Risks', 'None.', ''].join('\r\n'));
-  const result = p.check(ledger([objection('L1', [cite('plan', '#approach', 'Then store the ledger.')])]));
+  const result = p.check(ledger([objection('A1', [cite('plan', '#approach', 'Then store the ledger.')])]));
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(result.lines, ['checked: 1 objections, 0 opinion, 0 problems']);
 });
 
 test('check: a heading inside a fenced block is no anchor', (t) => {
   const p = project(t);
-  const result = p.check(ledger([objection('F1', [cite('doc', 'docs/rules.md#fake-heading', 'npm run build')])]));
+  const result = p.check(ledger([objection('A1', [cite('doc', 'docs/rules.md#fake-heading', 'npm run build')])]));
   assert.equal(result.status, 0, result.stderr);
-  assert.ok(result.lines.includes('objection F1.citations[0] (doc docs/rules.md#fake-heading): docs/rules.md has no heading #fake-heading'), result.stdout);
+  assert.ok(result.lines.includes('objection A1.citations[0] (doc docs/rules.md#fake-heading): docs/rules.md has no heading #fake-heading'), result.stdout);
 });
 
 test('check: a rebuttal that re-cites the ledger cites nothing new; one with a new passing citation is valid', (t) => {
@@ -467,14 +468,14 @@ test('check: a rebuttal that re-cites the ledger cites nothing new; one with a n
   const ruled = { decision: 'reject', change_or_reason: 'r', citations: [PASSING.adr] };
   const result = p.check(ledger([
     // The same code citation at another line, spaced differently: the line and the spacing are not part of its identity.
-    objection('R1', [PASSING.code], { status: 'rejected', ruling: ruled, rebuttal: rebut([cite('code', './src/app.js:2', 'export  function book(slot)\n{')]) }),
-    objection('R2', [PASSING.code], { status: 'rejected', ruling: ruled, rebuttal: rebut([cite('adr', 'docs/decisions/0001-store.md#Decision', 'one ledger per plan')]) }),
-    objection('R3', [PASSING.code], { status: 'rejected', ruling: ruled, rebuttal: rebut([PASSING.adr, PASSING.plan]) }),
+    objection('A1', [PASSING.code], { status: 'rejected', ruling: ruled, rebuttal: rebut([cite('code', './src/app.js:2', 'export  function book(slot)\n{')]) }),
+    objection('A2', [PASSING.code], { status: 'rejected', ruling: ruled, rebuttal: rebut([cite('adr', 'docs/decisions/0001-store.md#Decision', 'one ledger per plan')]) }),
+    objection('A3', [PASSING.code], { status: 'rejected', ruling: ruled, rebuttal: rebut([PASSING.adr, PASSING.plan]) }),
   ]));
   assert.equal(result.status, 0, result.stderr);
-  assert.ok(result.lines.includes('objection R1 rebuttal: invalid: the rebuttal cites nothing new'), result.stdout);
-  assert.ok(result.lines.includes('objection R2 rebuttal: invalid: the rebuttal cites nothing new'), 'a ruling`s citation, by heading text');
-  assert.ok(!result.lines.some((line) => line.startsWith('objection R3')), result.stdout);
+  assert.ok(result.lines.includes('objection A1 rebuttal: invalid: the rebuttal cites nothing new'), result.stdout);
+  assert.ok(result.lines.includes('objection A2 rebuttal: invalid: the rebuttal cites nothing new'), 'a ruling`s citation, by heading text');
+  assert.ok(!result.lines.some((line) => line.startsWith('objection A3')), result.stdout);
 });
 
 test('check: two rebuttals that bring the same new evidence are both valid', (t) => {
@@ -482,8 +483,8 @@ test('check: two rebuttals that bring the same new evidence are both valid', (t)
   const ruled = { decision: 'reject', change_or_reason: 'r', citations: [PASSING.adr] };
   const rebuttal = { verdict: 'rebut', claim: 'c', citations: [PASSING.fenced], ruling: null };
   const result = p.check(ledger([
-    objection('T1', [PASSING.code], { status: 'rejected', ruling: ruled, rebuttal: structuredClone(rebuttal) }),
-    objection('T2', [PASSING.plan], { by: 'B', status: 'rejected', ruling: ruled, rebuttal: structuredClone(rebuttal) }),
+    objection('A1', [PASSING.code], { status: 'rejected', ruling: ruled, rebuttal: structuredClone(rebuttal) }),
+    objection('A2', [PASSING.plan], { by: 'B', status: 'rejected', ruling: ruled, rebuttal: structuredClone(rebuttal) }),
   ]));
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(result.lines, ['checked: 2 objections, 0 opinion, 0 problems']);
@@ -493,8 +494,8 @@ test('check: a complete ledger with an objection pending, or ruled on with no ru
   const p = project(t);
   const ruled = { decision: 'accept', change_or_reason: 'c', citations: [PASSING.adr] };
   for (const [objections, message] of [
-    [[objection('C1', [PASSING.code])], /objection C1 is pending in a complete ledger/u],
-    [[objection('C2', [PASSING.code], { status: 'accepted' })], /objection C2 is accepted with no ruling in a complete ledger/u],
+    [[objection('A1', [PASSING.code])], /objection A1 is pending in a complete ledger/u],
+    [[objection('A2', [PASSING.code], { status: 'accepted' })], /objection A2 is accepted with no ruling in a complete ledger/u],
   ]) {
     const before = { ...ledger(objections), status: 'complete' };
     const result = p.check(before);
@@ -502,7 +503,7 @@ test('check: a complete ledger with an objection pending, or ruled on with no ru
     assert.match(result.stderr, message);
     assert.deepEqual(result.ledger, before);
   }
-  const done = p.check({ ...ledger([objection('C3', [PASSING.code], { status: 'accepted', ruling: ruled }), objection('C4', [cite('code', 'src/app.js:1', 'nope')], { status: 'opinion' })]), status: 'complete' });
+  const done = p.check({ ...ledger([objection('A3', [PASSING.code], { status: 'accepted', ruling: ruled }), objection('A4', [cite('code', 'src/app.js:1', 'nope')], { status: 'opinion' })]), status: 'complete' });
   assert.equal(done.status, 0, done.stderr);
 });
 
@@ -513,14 +514,14 @@ test('check: a ledger whose same_model and same_model_reason disagree exits 1 an
     [true, '  ', /same_model is true, so same_model_reason must say why B ran as an agent/u],
     [false, 'failed: exit 2', /same_model is false, so same_model_reason must be null/u],
   ]) {
-    const before = { ...ledger([objection('S1', [PASSING.code])]), same_model, same_model_reason };
+    const before = { ...ledger([objection('A1', [PASSING.code])]), same_model, same_model_reason };
     const result = p.check(before);
     assert.equal(result.status, 1, `${same_model} ${same_model_reason}`);
     assert.match(result.stderr, message);
     assert.deepEqual(result.ledger, before, 'not written back');
   }
   for (const [same_model, same_model_reason] of [[true, 'unavailable: the codex CLI is not installed'], [false, null]]) {
-    const result = p.check({ ...ledger([objection('S1', [PASSING.code])]), same_model, same_model_reason });
+    const result = p.check({ ...ledger([objection('A1', [PASSING.code])]), same_model, same_model_reason });
     assert.equal(result.status, 0, result.stderr);
   }
 });
@@ -528,11 +529,11 @@ test('check: a ledger whose same_model and same_model_reason disagree exits 1 an
 test('check: a Human answer for an objection the ledger does not hold, or a second answer for one, exits 1 and is not written', (t) => {
   const p = project(t);
   const ruled = { decision: 'escalate', change_or_reason: 'both', citations: [PASSING.adr] };
-  const objections = [objection('H1', [PASSING.code], { status: 'accepted', ruling: ruled }), objection('H2', [PASSING.code], { status: 'rejected', ruling: ruled })];
+  const objections = [objection('A1', [PASSING.code], { status: 'accepted', ruling: ruled }), objection('A2', [PASSING.code], { status: 'rejected', ruling: ruled })];
   const answer = (objection_id) => ({ objection_id, answer: 'do it' });
   for (const [answers, messages] of [
-    [[answer('H1'), answer('H9')], [/human_answers names H9, not an objection in this ledger/u]],
-    [[answer('H1'), answer('H2'), answer('H1')], [/human_answers answers H1 more than once/u]],
+    [[answer('A1'), answer('A9')], [/human_answers names A9, not an objection in this ledger/u]],
+    [[answer('A1'), answer('A2'), answer('A1')], [/human_answers answers A1 more than once/u]],
     [[answer('X'), answer('X')], [/human_answers names X, not an objection/u, /human_answers answers X more than once/u]],
   ]) {
     for (const status of ['open', 'complete']) {
@@ -543,17 +544,31 @@ test('check: a Human answer for an objection the ledger does not hold, or a seco
       assert.deepEqual(result.ledger, before, 'not written back');
     }
   }
-  const good = p.check({ ...ledger(objections), status: 'complete', human_answers: [answer('H1'), answer('H2')] });
+  const good = p.check({ ...ledger(objections), status: 'complete', human_answers: [answer('A1'), answer('A2')] });
+  assert.equal(good.status, 0, good.stderr);
+});
+
+test('check: an objection id other than A1 to A7 or B1 to B7 exits 1, is printed escaped, and the ledger is not written', (t) => {
+  const p = project(t);
+  for (const id of ['A0', 'A8', 'C1', 'a1', 'A10', '', 'A1\nchecked: 0 objections, 0 opinion, 0 problems']) {
+    const before = ledger([objection(id, [PASSING.code])]);
+    const result = p.check(before);
+    assert.equal(result.status, 1, JSON.stringify(id));
+    assert.match(result.stderr, /: objection id ".*" is not A1 to A7 or B1 to B7$/mu, JSON.stringify(id));
+    assert.equal(result.stderr.trim().split('\n').length, 1, 'a newline in an id forges no line');
+    assert.deepEqual(result.ledger, before, 'not written back');
+  }
+  const good = p.check(ledger([objection('A7', [PASSING.code]), objection('B1', [PASSING.code], { by: 'B' })]));
   assert.equal(good.status, 0, good.stderr);
 });
 
 test('check: a ref that is not a relative path is a failed citation, not an escape', (t) => {
   const p = project(t);
   const refs = [cite('doc', 'docs\\rules.md#refunds', 'refund'), cite('doc', 'docs//rules.md#refunds', 'refund'), cite('doc', '#refunds', 'refund'), cite('code', ':3', 'x'), cite('absence', '', 'x'), cite('code', '.:1', 'x')];
-  const result = p.check(ledger(refs.map((citation, i) => objection(`M${i}`, [citation]))));
+  const result = p.check(ledger(refs.map((citation, i) => objection(`A${i + 1}`, [citation]))));
   assert.equal(result.status, 0, result.stderr);
   for (const [i, citation] of refs.entries()) {
-    assert.ok(result.lines.includes(`objection M${i}.citations[0] (${citation.kind} ${citation.ref}): "${citation.ref}" is not a relative path`), `${citation.ref}\n${result.stdout}`);
+    assert.ok(result.lines.includes(`objection A${i + 1}.citations[0] (${citation.kind} ${citation.ref}): "${citation.ref}" is not a relative path`), `${citation.ref}\n${result.stdout}`);
   }
 });
 
@@ -563,7 +578,7 @@ test('check: absence reads only regular tracked files: a tracked symlink to an o
   write(p.root, 'lib/real.js', 'export {};\n');
   symlinkSync(path.join(p.state, 'outside.txt'), path.join(p.root, 'lib/link.txt'));
   p.git('add', 'lib');
-  const result = p.check(ledger([objection('S1', [cite('absence', 'lib', 'NEEDLE_OUT')])]));
+  const result = p.check(ledger([objection('A1', [cite('absence', 'lib', 'NEEDLE_OUT')])]));
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(result.lines, ['checked: 1 objections, 0 opinion, 0 problems']);
 });
@@ -571,17 +586,17 @@ test('check: absence reads only regular tracked files: a tracked symlink to an o
 test('check: an absence path is a literal pathspec, a set GIT_ICASE_PATHSPECS does not break it, and a path with no tracked file fails', (t) => {
   const p = project(t);
   const result = p.check(ledger([
-    objection('P1', [cite('absence', ':(exclude)docs', 'export function book')]),
-    objection('P2', [cite('absence', 'nowhere', 'NEEDLE_9')]),
-    objection('P3', [cite('code', 'src/app.js:1', '')]),
-    objection('P4', [cite('code', 'src/app.js:1', '  \n\t ')]),
+    objection('A1', [cite('absence', ':(exclude)docs', 'export function book')]),
+    objection('A2', [cite('absence', 'nowhere', 'NEEDLE_9')]),
+    objection('A3', [cite('code', 'src/app.js:1', '')]),
+    objection('A4', [cite('code', 'src/app.js:1', '  \n\t ')]),
   ]));
   assert.equal(result.status, 0, result.stderr);
-  assert.ok(result.lines.includes('objection P1.citations[0] (absence :(exclude)docs): git tracks no file under :(exclude)docs'), result.stdout);
-  assert.ok(result.lines.includes('objection P2.citations[0] (absence nowhere): git tracks no file under nowhere'), result.stdout);
-  assert.ok(result.lines.some((line) => line.startsWith('objection P3.citations[0]') && line.endsWith(': the quote is empty')), result.stdout);
-  assert.ok(result.lines.some((line) => line.startsWith('objection P4.citations[0]') && line.endsWith(': the quote is empty')), result.stdout);
-  const icase = p.check(ledger([objection('I1', [PASSING.absence])]), { env: { ...process.env, GIT_ICASE_PATHSPECS: '1' } });
+  assert.ok(result.lines.includes('objection A1.citations[0] (absence :(exclude)docs): git tracks no file under :(exclude)docs'), result.stdout);
+  assert.ok(result.lines.includes('objection A2.citations[0] (absence nowhere): git tracks no file under nowhere'), result.stdout);
+  assert.ok(result.lines.some((line) => line.startsWith('objection A3.citations[0]') && line.endsWith(': the quote is empty')), result.stdout);
+  assert.ok(result.lines.some((line) => line.startsWith('objection A4.citations[0]') && line.endsWith(': the quote is empty')), result.stdout);
+  const icase = p.check(ledger([objection('A1', [PASSING.absence])]), { env: { ...process.env, GIT_ICASE_PATHSPECS: '1' } });
   assert.equal(icase.status, 0, icase.stderr);
   assert.deepEqual(icase.lines, ['checked: 1 objections, 0 opinion, 0 problems']);
 });

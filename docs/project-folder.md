@@ -173,8 +173,10 @@ Each objection, ruling, and rebuttal cites its evidence as `{kind, ref, quote}`.
   A ref path outside the repository, as `..`, an absolute path, or through a symlink, is a failed citation that it warns
   about on stderr; it never reads that file. A ref with a control character is not a relative path, and `doc` and
   `code` read only a regular file.
-  It exits 1 on a schema error, on `same_model` true with no `same_model_reason` or false with one, on a Human answer
-  for an objection the ledger does not hold or a second answer for one, or on a `complete` ledger with an objection still `pending` or ruled on with no `ruling`, and runs no command but `git ls-files`. PLAN and the ledger may live anywhere, such as this folder.
+  It exits 1 on a schema error, on an objection id other than `A1` to `A7` or `B1` to `B7`, on `same_model` true with
+  no `same_model_reason` or false with one, on a Human answer for an objection the ledger does not hold or a second
+  answer for one, or on a `complete` ledger with an objection still `pending` or ruled on with no `ruling`, and runs no
+  command but `git ls-files`. PLAN and the ledger may live anywhere, such as this folder.
 
 ## Task worktrees
 

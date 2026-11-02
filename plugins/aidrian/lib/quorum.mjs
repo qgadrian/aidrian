@@ -322,6 +322,14 @@ function citationKey(citation) {
   return [citation.kind, file, place.anchor === null ? '' : slug(place.anchor), collapse(citation.quote)].join('\0');
 }
 
+// The objection ids the coordinator writes: A1 to A7 for adversary A, B1 to B7 for B. check prints ids in its lines,
+// so any other id, as one holding a newline that would forge a line, stops the check.
+export const OBJECTION_ID = /^[AB][1-7]$/u;
+
+export function idProblems(ledger) {
+  return ledger.objections.filter((objection) => !OBJECTION_ID.test(objection.id)).map((objection) => `objection id "${shown(objection.id)}" is not A1 to A7 or B1 to B7`);
+}
+
 // Why `same_model` and `same_model_reason` disagree: a ledger records why B ran as an agent exactly when it did.
 export function sameModelProblems(ledger) {
   const reason = typeof ledger.same_model_reason === 'string' && ledger.same_model_reason.trim() !== '';
@@ -495,9 +503,11 @@ export const commands = {
         } catch (error) {
           return fail(error.message);
         }
-        // A schema error, a same-model record that disagrees with itself, a Human answer that fits no objection, or a
-        // complete ledger left unfinished stops the check before it writes anything.
+        // A schema error, an objection id outside A1 to B7, a same-model record that disagrees with itself, a Human answer
+        // that fits no objection, or a complete ledger left unfinished stops the check before it writes anything. The
+        // ids are checked before any line that prints one.
         const invalid = schemaProblems(ledger, LEDGER_SCHEMA);
+        if (!invalid.length) invalid.push(...idProblems(ledger));
         if (!invalid.length) invalid.push(...sameModelProblems(ledger), ...answerProblems(ledger), ...completeProblems(ledger));
         if (invalid.length) {
           for (const problem of invalid) console.error(`${file}: ${problem}`);

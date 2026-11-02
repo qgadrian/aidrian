@@ -33,7 +33,7 @@ schema. A test holds the list below to `LEDGER_SCHEMA`: a field added there and 
 - `trigger`: what started the run: the plan line or gate a calling skill names, as [Under plan-review](#under-plan-review)
   lists, or `the Human asked`.
 - `objections`: every objection both adversaries raised.
-  - `objections[].id`: `A1` to `A7` and `B1` to `B7`, in each adversary's own order.
+  - `objections[].id`: `A1` to `A7` and `B1` to `B7`, in each adversary's own order. `quorum check` refuses any other.
   - `objections[].by`: `A` or `B`.
   - `objections[].severity`: `blocking`, `important`, or `improvement`.
   - `objections[].claim`: the objection, in the adversary's words.

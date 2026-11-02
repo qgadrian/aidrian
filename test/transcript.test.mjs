@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { aggregateUsage, estimateCostUsd, filesRead, partOf, priceFor, subagentTranscripts, sumTokens } from '../plugins/aidrian/lib/transcript.mjs';
+import { aggregateUsage, estimateCostUsd, filesRead, partOf, priceFor, sessionActions, subagentTranscripts, sumTokens } from '../plugins/aidrian/lib/transcript.mjs';
 
 // One transcript line: an assistant message with usage, as Claude Code writes it.
 const usageLine = (id, model, usage, { ts = '2026-10-29T10:00:00Z', content = [] } = {}) =>
@@ -60,6 +60,34 @@ test('cost follows the price map: cache reads and writes at their multipliers, u
   };
   // 4 input + 20 output + 4 * 0.05 cache read + 4 * 1.25 + 4 * 2 cache writes.
   assert.deepEqual(estimateCostUsd(perModel), { total: 37.2, unknownModels: ['gpt-x'], byModel: { 'claude-opus-5-5': 37.2 } });
+});
+
+test('sessionActions: the skills a session ran, the drafts it opened, and its review runs, each call counted once', () => {
+  const call = (id, name, input) => usageLine(`m-${id}`, 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', id, name, input }] });
+  const result = (id, content, isError = false) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, is_error: isError }] } });
+  const typed = (uuid, text) => JSON.stringify({ type: 'user', uuid, message: { role: 'user', content: text } });
+  const main = [
+    typed('u1', '<command-message>aidrian:autopilot</command-message>\n<command-name>/aidrian:autopilot</command-name>\n<command-args>ABC-1</command-args>'),
+    typed('u2', '<command-name>/clear</command-name>'),
+    call('s1', 'Skill', { skill: 'aidrian:issue-implement' }),
+    // A refused create, a create that is not a draft, and a draft create that opened #12.
+    call('b1', 'Bash', { command: 'gh pr create --draft --title t --body-file b.md' }),
+    result('b1', 'pr-body: the body has no ## Summary heading.', true),
+    call('b2', 'Bash', { command: 'gh pr create --title t --body-file b.md' }),
+    result('b2', 'https://github.com/acme/notes/pull/11'),
+    call('b3', 'Bash', { command: 'cd /w && gh -R acme/notes pr create -d --base main --title t --body-file b.md' }),
+    result('b3', [{ type: 'text', text: 'https://github.com/acme/notes/pull/12' }]),
+    // A tool result that quotes a slash command is not one.
+    result('x1', '<command-name>/aidrian:pr-review-loop</command-name>'),
+  ].join('\n');
+  assert.deepEqual(sessionActions([main]), { skills: ['aidrian:autopilot', 'aidrian:issue-implement'], drafts_opened: 1, review_runs: 0 },
+    'only the draft create that returned a pull request counts; the host`s own command is no skill');
+  // A forked subagent repeats the main conversation's calls, then runs the review loop and its command.
+  const subagent = [main, call('s2', 'Skill', { skill: 'aidrian:pr-review-loop' }), call('b4', 'Bash', { command: 'aidrian pr review 12 --with-bot' })].join('\n');
+  assert.deepEqual(sessionActions([main, subagent]), {
+    skills: ['aidrian:autopilot', 'aidrian:issue-implement', 'aidrian:pr-review-loop'], drafts_opened: 1, review_runs: 2,
+  });
+  assert.deepEqual(sessionActions([]), { skills: [], drafts_opened: 0, review_runs: 0 });
 });
 
 test('filesRead lists each Read file_path once; subagentTranscripts finds a session`s subagent files', (t) => {

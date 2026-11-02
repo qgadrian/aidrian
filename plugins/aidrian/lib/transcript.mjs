@@ -1,6 +1,6 @@
 // Reads Claude Code transcripts (JSON Lines) for the dispatch log: token use per model, an estimated cost, the effort
-// and tool calls of each request, the subagent transcripts of a session, and which files an agent read. Counts, names,
-// and paths only; no message text leaves this file.
+// and tool calls of each request, the subagent transcripts of a session, which files an agent read, and the skills,
+// draft pull requests, and review runs of a session. Counts, names, and paths only; no message text leaves this file.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -169,6 +169,67 @@ export function filesRead(text, keep = () => true) {
     }
   }
   return [...read];
+}
+
+// A `gh pr create` (or its alias `gh pr new`) with --draft or -d, before the next command on the line.
+const DRAFT_PR = /\bgh\s+(?:(?:-R|--repo)[=\s]\S+\s+)?pr\s+(?:create|new)\b[^\n|;&]*?\s(?:--draft|-d)(?=\s|$)/u;
+// A review round's own steps: the pr-review-loop and pr-review skills, and the commands that run a review.
+const REVIEW_COMMAND = /\baidrian\s+pr\s+(?:review|await-review)\b/u;
+const REVIEW_SKILLS = new Set(['pr-review-loop', 'pr-review']);
+// A slash command as the host writes it into the user's turn. Only one that names this plugin's skill counts as a
+// skill run: the others are the host's own commands, such as clearing the conversation.
+const COMMAND_NAME = /<command-name>\/?([\w:.-]+)<\/command-name>/gu;
+let pluginSkills;
+const isPluginSkill = (name) => {
+  try {
+    pluginSkills ??= new Set(readdirSync(path.join(import.meta.dirname, '..', 'skills')));
+  } catch {
+    pluginSkills = new Set();
+  }
+  return pluginSkills.has(name.split(':').at(-1));
+};
+const PR_URL = /\/pull\/\d+/u;
+
+const resultText = (content) =>
+  typeof content === 'string' ? content : Array.isArray(content) ? content.map((block) => (typeof block?.text === 'string' ? block.text : '')).join('\n') : '';
+
+// What a session did that the health report judges, over its transcripts: { skills, drafts_opened, review_runs }.
+// `skills` are the names of the skills it ran, by the Skill tool or as a slash command naming this plugin's skill, sorted.
+// `drafts_opened` counts the draft pull request creates whose result names a pull request URL, so a refused one does
+// not count. `review_runs` counts the runs of a review skill and of `aidrian pr review` or `aidrian pr await-review`.
+// A call a forked subagent's transcript repeats counts once, by its id. Names and counts only: no command or output
+// leaves this function.
+export function sessionActions(texts) {
+  const skills = new Set();
+  const drafts = new Map();
+  const reviews = new Set();
+  const skillRun = (name, key) => {
+    skills.add(name);
+    if (REVIEW_SKILLS.has(name.split(':').at(-1))) reviews.add(key);
+  };
+  for (const text of texts) {
+    for (const line of text.split('\n')) {
+      const entry = parseLine(line);
+      const content = entry?.message?.content;
+      if (entry?.type === 'user') {
+        const typed = typeof content === 'string' ? content
+          : Array.isArray(content) ? content.filter((block) => block?.type === 'text').map((block) => block.text).join('\n') : '';
+        for (const match of typed.matchAll(COMMAND_NAME)) if (isPluginSkill(match[1])) skillRun(match[1], `command:${entry.uuid ?? line}`);
+      }
+      if (!Array.isArray(content)) continue;
+      for (const block of content) {
+        if (block?.type === 'tool_use' && block.name === 'Skill' && typeof block.input?.skill === 'string') skillRun(block.input.skill.replace(/^\//u, ''), block.id ?? line);
+        if (block?.type === 'tool_use' && block.name === 'Bash' && typeof block.input?.command === 'string') {
+          if (REVIEW_COMMAND.test(block.input.command)) reviews.add(block.id ?? line);
+          if (DRAFT_PR.test(block.input.command) && block.id && !drafts.has(block.id)) drafts.set(block.id, false);
+        }
+        if (block?.type === 'tool_result' && drafts.has(block.tool_use_id) && block.is_error !== true && PR_URL.test(resultText(block.content))) {
+          drafts.set(block.tool_use_id, true);
+        }
+      }
+    }
+  }
+  return { skills: [...skills].sort(), drafts_opened: [...drafts.values()].filter(Boolean).length, review_runs: reviews.size };
 }
 
 export function readText(file) {

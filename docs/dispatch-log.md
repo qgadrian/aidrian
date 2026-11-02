@@ -1,7 +1,8 @@
 # The dispatch log
 
 The dispatch log records which agents a session dispatched, what each cost, which knowledge docs it read,
-whether it delivered the files it said it wrote, what each session cost, and which of the plugin's rules blocked a tool call.
+whether it delivered the files it said it wrote, what each session cost and whether it reviewed the drafts it opened,
+and which of the plugin's rules blocked a tool call.
 `aidrian report` reads it, and `aidrian report health` judges what it read against thresholds.
 
 It is `dispatch-log.jsonl` in the [state folder](project-folder.md#local-state): one JSON object per line,
@@ -59,8 +60,13 @@ A stop that ends with `delivered: missing`, such as that second one, has `sent_b
 | `main`, `subagents` | Each side's `tokens`, `cost_usd`, `requests`, `tool_requests` (requests that made a tool call), and `tool_calls`. |
 | `subagent_count` | How many subagent transcripts the session has. |
 | `docs_read` | The knowledge docs the main conversation opened, as on a `stop` row. Each subagent's reads are on its own `stop` row. |
+| `skills` | The skills the session ran, by the Skill tool or as a slash command that names one of this plugin's skills, such as `aidrian:autopilot`. |
+| `drafts_opened` | The `gh pr create --draft` calls whose result names a pull request URL, so a refused call does not count. |
+| `review_runs` | The runs of the `pr-review-loop` or `pr-review` skill, and of `aidrian pr review` or `aidrian pr await-review`. |
 
 A request found in both the main and a subagent transcript counts as the main conversation's.
+`skills`, `drafts_opened`, and `review_runs` cover the main conversation and its subagents, each call counted once by its id;
+they hold names and counts, never the command or its output.
 A session whose transcript holds no API usage writes no row.
 A resumed session that ends again writes another row over its whole transcript; the report counts the last one.
 
@@ -294,6 +300,7 @@ Signals; n is the sample, and a signal under 5 (telemetry.health.minSample) is n
     aidrian:explorer: 25% re-dispatched (n=8), 0% sent back (n=8)
     aidrian:planning-agent: re-dispatched not enough data (n=2, needs 5), sent back not enough data (n=2, needs 5)
   Reviews: not enough data; rounds not enough data (n=0, needs 5 reviewed); late findings not enough data (n=0, needs 5 checked)
+  Drafts: ok; 3 orchestrator or autopilot sessions opened a draft pull request, 0 with no review round
   Hook denies: problem (n=10 sessions); 6 blocks: git-amend 6 (5 or more by one rule is a hot spot)
   Session cost: ok (n=5 sessions a half); 10 sessions, $22.50; $2.50 a session in the newer half against $2.00, up 25% (threshold 50%)
   Lessons: problem; 2 open, 1 P1, the oldest 6 days; 0 fixes in the window, 0 recurred
@@ -310,6 +317,9 @@ Each signal names its sample and is judged by config.json [`telemetry.health`](c
 - **Reviews**, over the reviewed pull requests merged in the window and the late findings checked: a problem when a pull request
   takes over `reviewRounds` rounds on average, or over `lateFindingPercent` of late findings sit on a line already reviewed.
   Fix: `round-cap`.
+- **Drafts**, over the sessions that opened a draft pull request and ran the `orchestrator`, as their `--agent` or as the
+  dispatcher of one of their dispatches, or the `autopilot` skill: a problem when one of them ran no review round.
+  Both flows end in a review loop, so such a session skipped it. The summary names up to three. Fix: `review-loop`.
 - **Hook denies**, over the sessions with a row in the window: a problem when one rule blocked `denyHotSpot` calls or more.
   Fix: `deny-rule`.
 - **Session cost**, over each half of the window's sessions, in the order they ended: a problem when the newer half costs
@@ -318,12 +328,13 @@ Each signal names its sample and is judged by config.json [`telemetry.health`](c
   or the inbox passes `lessons.maxOpen` or `lessons.maxAgeDays`. Fix: `lesson-triage`.
 
 - **not enough data**: the sample is under `telemetry.health.minSample`. Such a signal is never a problem, whatever its rate:
-  3 of 4 is not a trend. The knowledge budget and the lessons are sizes and counts, not rates, so no minimum applies;
-  the budget says not enough data only when nothing is indexed.
+  3 of 4 is not a trend. The knowledge budget, the drafts, and the lessons are sizes and counts, not rates, so no minimum applies;
+  the budget says not enough data only when nothing is indexed, and the drafts when no such session opened a draft.
+  A `session` row written before it recorded `drafts_opened` is left out of the drafts.
 - **unknown**: a run that named a missing file before `stop` rows recorded `sent_back`. The share sent back and its sample leave it out,
   the agent's line counts it as `N unknown`, and a `Partial:` line under the title counts them all.
 - **unavailable**: the reviews when `gh` cannot answer, and the hook denies while `telemetry.hookDenies` is off.
-- **Problems** are ranked by kind: a P1 lesson; the knowledge budget; an agent re-dispatched, then sent back;
+- **Problems** are ranked by kind: a P1 lesson; a draft no review round saw; the knowledge budget; an agent re-dispatched, then sent back;
   review rounds, then late findings; a hook-deny hot spot; a fix that recurred; rising cost; the doc with the most bytes read;
   tagged docs nobody read; the lesson backlog. Within a kind, the one furthest over its threshold comes first.
 - **Fix** names a row of the `harness-health` skill's fix table, which says what to do and who does it. A test holds the two lists equal.
@@ -347,6 +358,8 @@ would read as the threshold, and a cost under ten cents to two significant digit
   The hooks let any payload they cannot read pass: a transcript with no Claude Code usage writes no `session` row,
   and a stop payload without `stop_hook_active` is never sent back.
   The Bash rules and the agent gates also run in Codex, so its blocks write `hook_deny` rows there too.
+- **Drafts come from the Bash tool.** A draft opened another way, such as through an MCP tool, is not counted.
+  A session that hands its pull request to a fresh session before any review round is counted as unreviewed: the round ran elsewhere.
 - **Only the plugin's own blocks.** A block by Claude Code's permissions, or by another plugin's or the project's hook, writes no row.
 - **Costs are estimates** from list prices, read on the date in `lib/transcript.mjs`. A model missing from the price
   map counts as zero.

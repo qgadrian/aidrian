@@ -55,7 +55,7 @@ schema. A test holds the list below to `LEDGER_SCHEMA`: a field added there and 
     - `objections[].rebuttal.citations`: new evidence for a rebuttal; may be empty for a concession.
     - `objections[].rebuttal.ruling`: the architect's final ruling, in the same form as the first; `null` for a concession.
 - `human_answers`: the Human's answers to this run's escalations, and only those.
-  - `human_answers[].objection_id`: the objection in this ledger that the answer settles.
+  - `human_answers[].objection_id`: the objection in this ledger that the answer settles, at most one answer each.
   - `human_answers[].answer`: the Human's answer, word for word.
 
 ## Agent answers

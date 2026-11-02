@@ -444,6 +444,28 @@ test('check: a ledger whose same_model and same_model_reason disagree exits 1 an
   }
 });
 
+test('check: a Human answer for an objection the ledger does not hold, or a second answer for one, exits 1 and is not written', (t) => {
+  const p = project(t);
+  const ruled = { decision: 'escalate', change_or_reason: 'both', citations: [PASSING.adr] };
+  const objections = [objection('H1', [PASSING.code], { status: 'accepted', ruling: ruled }), objection('H2', [PASSING.code], { status: 'rejected', ruling: ruled })];
+  const answer = (objection_id) => ({ objection_id, answer: 'do it' });
+  for (const [answers, messages] of [
+    [[answer('H1'), answer('H9')], [/human_answers names H9, not an objection in this ledger/u]],
+    [[answer('H1'), answer('H2'), answer('H1')], [/human_answers answers H1 more than once/u]],
+    [[answer('X'), answer('X')], [/human_answers names X, not an objection/u, /human_answers answers X more than once/u]],
+  ]) {
+    for (const status of ['open', 'complete']) {
+      const before = { ...ledger(objections), status, human_answers: answers };
+      const result = p.check(before);
+      assert.equal(result.status, 1, `${status} ${answers.map((each) => each.objection_id)}`);
+      for (const message of messages) assert.match(result.stderr, message);
+      assert.deepEqual(result.ledger, before, 'not written back');
+    }
+  }
+  const good = p.check({ ...ledger(objections), status: 'complete', human_answers: [answer('H1'), answer('H2')] });
+  assert.equal(good.status, 0, good.stderr);
+});
+
 test('check: a ref that is not a relative path is a failed citation, not an escape', (t) => {
   const p = project(t);
   const refs = [cite('doc', 'docs\\rules.md#refunds', 'refund'), cite('doc', 'docs//rules.md#refunds', 'refund'), cite('doc', '#refunds', 'refund'), cite('code', ':3', 'x'), cite('absence', '', 'x'), cite('code', '.:1', 'x')];

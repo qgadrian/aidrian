@@ -325,6 +325,17 @@ export function sameModelProblems(ledger) {
   return [];
 }
 
+// Why the Human's answers do not fit the ledger: an answer for an objection the ledger does not hold, or two answers
+// for one objection.
+export function answerProblems(ledger) {
+  const known = new Set(ledger.objections.map((objection) => objection.id));
+  const ids = ledger.human_answers.map((answer) => answer.objection_id);
+  const problems = [];
+  for (const id of new Set(ids.filter((id) => !known.has(id)))) problems.push(`human_answers names ${id}, not an objection in this ledger`);
+  for (const id of new Set(ids.filter((id, i) => ids.indexOf(id) !== i))) problems.push(`human_answers answers ${id} more than once`);
+  return problems;
+}
+
 // The problems that make a `complete` ledger unfinished: an objection still pending, or one with a status that needs a
 // ruling and has none. [] for an `open` ledger.
 export function completeProblems(ledger) {
@@ -477,10 +488,10 @@ export const commands = {
         } catch (error) {
           return fail(error.message);
         }
-        // A schema error, a same-model record that disagrees with itself, or a complete ledger left unfinished stops the
-        // check before it writes anything.
+        // A schema error, a same-model record that disagrees with itself, a Human answer that fits no objection, or a
+        // complete ledger left unfinished stops the check before it writes anything.
         const invalid = schemaProblems(ledger, LEDGER_SCHEMA);
-        if (!invalid.length) invalid.push(...sameModelProblems(ledger), ...completeProblems(ledger));
+        if (!invalid.length) invalid.push(...sameModelProblems(ledger), ...answerProblems(ledger), ...completeProblems(ledger));
         if (invalid.length) {
           for (const problem of invalid) console.error(`${file}: ${problem}`);
           return 1;

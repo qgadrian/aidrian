@@ -61,6 +61,12 @@ test('fencedLines: a fence counts at any indentation, as the old detector did', 
   assert.deepEqual(fencedLines([`    ${FENCE}`, '## code', `    ${FENCE}`, '## Real'].join('\n')), [true, true, true, false]);
 });
 
+test('fencedLines: tabs after a list marker and in the body expand to 4-column stops', () => {
+  const body = ['## Testing', `-\t${FENCE}bash`, '\tnpm test', `\t${FENCE}`, '', '## Risks'].join('\n');
+  assert.deepEqual(fencedLines(body), [false, true, true, true, false, false]);
+  assert.deepEqual(headings(body), ['Testing', 'Risks']);
+});
+
 test('fencedLines: a line that opens with inline code is not a fence', () => {
   assert.deepEqual(fencedLines(`${FENCE}code${FENCE} stays literal\n## Next`), [false, false]);
 });

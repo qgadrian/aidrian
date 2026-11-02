@@ -3,7 +3,7 @@
 
 import { isObject } from '../fs.mjs';
 import { runGit } from '../git.mjs';
-import { closes, expandTabs, fencedIn, fenceOf, indentOf, itemOf, THEMATIC_BREAK } from '../markdown-sections.mjs';
+import { closes, expandTabs, fencedIn, fenceOf, indentOf } from '../markdown-sections.mjs';
 
 // The invariant a flow with none stated is held to. Lint and the summary mark such a flow "unspecified".
 export const UNSPECIFIED = Object.freeze({
@@ -68,6 +68,12 @@ export function sectionOf(text, anchor) {
   const raw = lines.slice(start + 1, end).join('\n').replace(/^(?:[ \t]*\n)+/u, '').trimEnd();
   return { heading: lines[start].replace(/^#+\s+/u, '').trim(), body: raw.trim(), raw };
 }
+
+// A list item's marker and the content column after it, or null: blocksOf groups a line under the item whose content
+// column it reaches, and ends a fence opened after a marker where that item ends. A thematic break such as `* * *` or
+// `- - -` looks like an item but is not one (CommonMark), so it is a block of its own.
+const THEMATIC_BREAK = /^ *([-*_])(?: *\1){2,} *$/u;
+const itemOf = (line) => (THEMATIC_BREAK.test(line) ? null : /^( *)((?:[-*+]|\d+[.)]) +)\S/u.exec(line));
 
 // The top-level blocks of a section body, in order: a sub-heading, a top-level list item with its nested lines, a
 // fenced block, or a paragraph. As in CommonMark, a line belongs to the list item above it when it is indented to that

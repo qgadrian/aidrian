@@ -50,10 +50,6 @@ export const expandTabs = (line) => {
 };
 export const indentOf = (line) => /^ */u.exec(line)[0].length;
 
-// A list item's marker and the content column after it, or null. A thematic break such as `* * *` or `- - -` looks like
-// an item but is not one (CommonMark), so it opens no container a later fence could be measured against.
-export const THEMATIC_BREAK = /^ *([-*_])(?: *\1){2,} *$/u;
-export const itemOf = (line) => (THEMATIC_BREAK.test(line) ? null : /^( *)((?:[-*+]|\d+[.)]) +)\S/u.exec(line));
 
 // For each line of a body, CRLF or LF, whether it is code, by fencedIn.
 export const fencedLines = (body) => fencedIn(String(body).split(/\r?\n/u));

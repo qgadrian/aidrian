@@ -288,13 +288,13 @@ test('sectionOf, invariantsOf, and blocksOf: a fence counts at any indentation, 
 
 test('sectionOf, invariantsOf, and blocksOf: a fence indented to its list item`s content column is still a fence', () => {
   for (const eol of ['\n', '\r\n']) {
-    // Four spaces under "- ", whose content column is 2, is 2 past the item: a fence. So is six under a nested item.
+    // A fence under a list item, at any indentation, is a fence: its `##` line is code.
     const doc = ['# T', '', '## A', '- Build:', '', '    ```bash', '    ## Fake', '    ```', '  - Nested:', '', '      ```md', '      ## Fake two', '      ```', '', '## B', 'Other.', ''].join(eol);
     assert.equal(sectionOf(doc, 'fake'), null, JSON.stringify(eol));
     assert.equal(sectionOf(doc, 'fake-two'), null, JSON.stringify(eol));
     assert.deepEqual(invariantsOf({ invariants: 'x.md' }, () => doc).invariants.map((each) => each.id), ['a', 'b'], JSON.stringify(eol));
     assert.deepEqual(blocksOf(['- Build:', '', '    ```bash', '    # build', '    ```', '', 'After.'].join(eol)), ['- Build:\n\n    ```bash\n    # build\n    ```', 'After.'], JSON.stringify(eol));
-    // The item's container is what makes these fences: measured from column 0, each would be indented code.
+    // A fence under an item still pairs with its closer, so the heading after it is a heading and blocksOf keeps it in the item.
     assert.equal(sectionOf(['## A', '- step', '', '    ```', '    code', '  ```', '## Real', 'r'].join(eol), 'real')?.body, 'r', JSON.stringify(eol));
     assert.deepEqual(blocksOf(['- step', '     ```', '     x', '     ```', 'Next.'].join(eol)), ['- step\n     ```\n     x\n     ```', 'Next.'], JSON.stringify(eol));
   }

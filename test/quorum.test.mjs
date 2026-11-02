@@ -191,21 +191,47 @@ test('check: a ruling, or a rebuttal that rebuts, with no passing citation is in
   assert.deepEqual(result.ledger.objections.map((each) => each.status), ['rejected', 'rejected']);
 });
 
-test('check: a schema error, or a ref path that leaves the root, exits 1 and leaves the ledger as it was', (t) => {
+test('check: a schema error exits 1 and leaves the ledger as it was', (t) => {
   const p = project(t);
   const bad = ledger([objection('A1', [{ ...PASSING.code, line: 3 }])]);
   const schema = p.check(bad);
   assert.equal(schema.status, 1);
   assert.match(schema.stderr, /\$\.objections\[0\]\.citations\[0\]\.line is not a known field/u);
+  assert.deepEqual(schema.ledger, bad, 'not written back');
+});
+
+test('check: a ref path that leaves the root is one failed citation: a warning on stderr, the ledger written, exit 0', (t) => {
+  const p = project(t);
   write(p.state, 'outside.md', '# Out\n\n## A\nsecret\n');
   symlinkSync(path.join(p.state, 'outside.md'), path.join(p.root, 'docs/link.md'));
-  for (const escape of [cite('doc', '../outside.md#a', 'secret'), cite('code', `${p.state}/outside.md:1`, 'secret'), cite('absence', '../', 'x'), cite('doc', 'docs/link.md#a', 'secret')]) {
-    const before = ledger([objection('A1', [escape])]);
-    const result = p.check(before);
-    assert.equal(result.status, 1, escape.ref);
-    assert.match(result.stderr, /is outside the repository root/u, escape.ref);
-    assert.deepEqual(result.ledger, before, 'not written back');
+  const escapes = [cite('doc', '../outside.md#a', 'secret'), cite('code', `${p.state}/outside.md:1`, 'secret'), cite('absence', '../', 'x'), cite('doc', 'docs/link.md#a', 'secret')];
+  // Each escape beside a passing citation: the objection stands on the other one, and only the escape fails.
+  const result = p.check(ledger([...escapes.map((escape, i) => objection(`E${i}`, [escape])), objection('E9', [escapes[0], PASSING.code])]));
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.ledger.objections.map((each) => each.status), ['opinion', 'opinion', 'opinion', 'opinion', 'pending'], 'written back');
+  for (const [i, escape] of escapes.entries()) {
+    assert.ok(result.lines.some((line) => line.startsWith(`objection E${i}.citations[0] (${escape.kind} ${escape.ref}): `) && line.endsWith('is outside the repository root')), `${escape.ref}\n${result.stdout}`);
+    assert.match(result.stderr, new RegExp(`warning: objection E${i}\\.citations\\[0\\]: .* is outside the repository root, not read`, 'u'), escape.ref);
   }
+  assert.ok(result.lines.includes('objection E9.citations[0] (doc ../outside.md#a): ../outside.md is outside the repository root'), result.stdout);
+  assert.ok(!result.lines.some((line) => line.startsWith('objection E9:')), 'the passing citation keeps E9');
+});
+
+test('check: a citation through a symlinked folder that points outside the root fails as an escape, for code, doc, and absence', (t) => {
+  const p = project(t);
+  // A symlinked shared folder, as a linked node_modules or config: its text never counts, for or against a claim.
+  write(p.state, 'shared/lib.js', 'export const SHARED_NEEDLE = 1;\n');
+  write(p.state, 'shared/notes.md', '# Notes\n\n## A\nSHARED_NEEDLE\n');
+  symlinkSync(path.join(p.state, 'shared'), path.join(p.root, 'vendor'));
+  p.git('add', 'vendor');
+  const refs = [cite('code', 'vendor/lib.js:1', 'SHARED_NEEDLE'), cite('doc', 'vendor/notes.md#a', 'SHARED_NEEDLE'), cite('absence', 'vendor', 'NOT_THERE'), cite('absence', 'vendor/lib.js', 'NOT_THERE')];
+  const result = p.check(ledger(refs.map((citation, i) => objection(`V${i}`, [citation]))));
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.ledger.objections.map((each) => each.status), Array(refs.length).fill('opinion'));
+  for (const [i, citation] of refs.entries()) {
+    assert.ok(result.lines.includes(`objection V${i}.citations[0] (${citation.kind} ${citation.ref}): ${citation.ref.replace(/[:#].*$/u, '')} is outside the repository root`), `${citation.ref}\n${result.stdout}`);
+  }
+  assert.equal(result.stderr.trim().split('\n').length, refs.length, result.stderr);
 });
 
 // A stand-in for `codex exec`: it records how it was started, writes `answer` where -o points, then exits with `code`

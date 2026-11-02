@@ -215,7 +215,8 @@ export function rebuttalProblems(answer, ledger) {
 // Whitespace runs as one space, ends trimmed: a quote matches across line breaks and indentation.
 export const collapse = (text) => String(text).replace(/\s+/gu, ' ').trim();
 
-// A citation's ref path that leaves the repository root: `..`, an absolute path, or a symlink out.
+// A citation's ref path that leaves the repository root: `..`, an absolute path, or a symlink out. checkLedger counts
+// it as one failed citation and warns: the outside file is never read, so failing the whole ledger would protect nothing.
 class Escape extends Error {}
 
 // Why one citation fails, or null when it passes. Throws Escape when its ref path leaves `root`.
@@ -328,7 +329,8 @@ export function completeProblems(ledger) {
 }
 
 // Checks a ledger in place: { ledger, problems, escapes }. `problems` lists each failed citation, relabel, and
-// invalid ruling or rebuttal with its reason; `escapes` lists each ref path outside the root, which fails the check.
+// invalid ruling or rebuttal with its reason; `escapes` lists each ref path outside the root, for a warning. An escape
+// is also a failed citation in `problems`.
 export function checkLedger(ledger, ctx) {
   const problems = [];
   const escapes = [];
@@ -340,7 +342,8 @@ export function checkLedger(ledger, ctx) {
       return problem === null;
     } catch (error) {
       if (!(error instanceof Escape)) throw error;
-      escapes.push(`${where}.citations[${i}]: ${error.message}`);
+      problems.push(`${where}.citations[${i}] (${citation.kind} ${citation.ref}): ${error.message}`);
+      escapes.push(`${where}.citations[${i}]: ${error.message}, not read`);
       return false;
     }
   });
@@ -474,10 +477,7 @@ export const commands = {
           return 1;
         }
         const { problems, escapes } = checkLedger(ledger, { root, plan, env, read: reader(root) });
-        if (escapes.length) {
-          for (const escape of escapes) console.error(`${file}: ${escape}`);
-          return 1;
-        }
+        for (const escape of escapes) console.error(`${file}: warning: ${escape}`);
         const print = deps.print ?? console.log;
         for (const problem of problems) print(problem);
         writeFileSync(file, `${JSON.stringify(ledger, null, 2)}\n`);

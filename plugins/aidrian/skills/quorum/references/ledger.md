@@ -70,8 +70,6 @@ ruling with its objection's id.
 - An entry missing a required field is dropped.
 - A citation that is not `{kind, ref, quote}` with a known kind is dropped; an objection left with none becomes an
   opinion at `quorum check`.
-- From every answer, Codex's included, drop a citation whose ref is absolute or climbs out of the root with `..`:
-  `quorum check` exits 1 on it.
 - Past 7 entries, keep the first 7.
 - Never edit a claim, a change, or a quote. The report names every entry and citation dropped.
 

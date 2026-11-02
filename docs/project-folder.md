@@ -170,8 +170,10 @@ Each objection, ruling, and rebuttal cites its evidence as `{kind, ref, quote}`.
   A ruling, or a rebuttal that rebuts, with no passing citation is named invalid.
   A rebuttal that rebuts is also invalid when it cites nothing new: every passing citation of it is already cited by an
   objection or its ruling, by kind, path, anchor, and quote. Other rebuttals do not count. It prints each problem and writes the ledger back.
-  It exits 1 on a schema error, a `complete` ledger with an objection still `pending` or ruled on with no `ruling`,
-  or a cited path outside the repository, and runs no command but `git ls-files`. PLAN and the ledger may live anywhere, such as this folder.
+  A ref path outside the repository, as `..`, an absolute path, or through a symlink, is a failed citation that it warns
+  about on stderr; it never reads that file.
+  It exits 1 on a schema error, or a `complete` ledger with an objection still `pending` or ruled on with no `ruling`,
+  and runs no command but `git ls-files`. PLAN and the ledger may live anywhere, such as this folder.
 
 ## Task worktrees
 

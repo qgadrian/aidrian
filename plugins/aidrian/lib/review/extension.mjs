@@ -19,7 +19,7 @@ import { appendEvent, stamp } from '../dispatch-log.mjs';
 import { runGit } from '../git.mjs';
 import { changedFiles, diffLines, mergeBase, resolve } from './diff.mjs';
 import { classify } from './plan.mjs';
-import { emptyState, isSummary, newer, publishState, readLocalState, stateFromComment, writeLocalState } from './state.mjs';
+import { emptyState, isSummary, newer, publishState, readLocalState, sameCommit, stateFromComment, writeLocalState } from './state.mjs';
 
 export const MODES = Object.freeze(['off', 'ask', 'auto']);
 // Fix commits that add more than this share of the lines the pull request first added are the change growing under
@@ -247,8 +247,12 @@ export function botRounds(reviews, reviewComments, reviewer) {
     });
 }
 
-// The question `extension_ask` asks, and the options. lib/rules/review-extend.mjs reads the Human's answer by these words.
-export const askQuestion = (pr, round) => `Pull request #${pr} reached its review-round cap. Grant one extra review round, round ${round}?`;
+// The question `extension_ask` asks, and the options, for `aidrian pr review` and `aidrian pr extend` alike.
+// lib/rules/review-extend.mjs reads the Human's answer by `#<PR>` and `round <N>`, so the question names no other
+// round: an answer to it would approve that round too. `unreviewed` is the entry's { head }, when no round reviewed it.
+export const askQuestion = (pr, round, unreviewed = null) => (unreviewed?.head
+  ? `Pull request #${pr} reached its review-round cap, and its fix head ${String(unreviewed.head).slice(0, 7)} is reviewed by no pass. Grant one extra review round, round ${round}, to review that fix?`
+  : `Pull request #${pr} reached its review-round cap. Grant one extra review round, round ${round}?`);
 export const askOptions = (round) => [`Approve round ${round}`, 'Deny'];
 
 const JUDGE_BRIEF =
@@ -257,8 +261,23 @@ const JUDGE_BRIEF =
   'and the code at the head. Answer each with evidence (path:line, round numbers): deviating, do the fixes stray from the ' +
   'goal; looping, do findings come back after their fix; over-engineering, do the fixes add more than the findings asked; ' +
   'and whether the open findings are valid and at least medium severity. Verdict `extend` only when none of the first three ' +
-  'holds and at least one open finding is valid and at least medium; otherwise `stop`. Record it with `record`, the reason ' +
-  'naming the evidence.';
+  'holds and at least one open finding is valid and at least medium; otherwise `stop`. ' +
+  'When `extension.unreviewed_head` is set, no round has reviewed the head: it is a fix pushed after the last round, which ' +
+  'reviewed `from`, and `fix` is its size. The last round\'s findings are what that fix answers, so against the head they ' +
+  'can look fixed; judge them as that round saw them, at `from`. Then `extend` means "review this fix": verdict `extend` ' +
+  'only when none of the first three holds, at least one of the last round\'s findings was valid and at least medium, and ' +
+  'the fix is small and answers it; otherwise `stop`. Record it with `record`, the reason naming the evidence.';
+
+// Whether the head at the cap is one no round reviewed: `last`, the last round ({ head, fix }), is on another head.
+// Notes it on the entry as { head, from }, or clears it, and returns { head, from, fix } for the judge, or null.
+function noteUnreviewed(entry, last, head) {
+  if (!head || !last?.head || sameCommit(last.head, head)) {
+    delete entry.unreviewed;
+    return null;
+  }
+  entry.unreviewed = { head, from: last.head };
+  return { head, from: last.head, fix: last.fix ?? null };
+}
 
 const trimRound = (round) => ({
   ...round,
@@ -270,8 +289,6 @@ const trimRound = (round) => ({
 const rowOf = (entry) => ({ event: 'review_extension', source: entry.source, round: entry.round, outcome: entry.status, by: entry.by ?? null, signals: redSignals(entry.signals) });
 const redSignals = (sig) => (sig ? ['converging', 'looping', 'drifting', 'bloating'].filter((name) => (name === 'converging' ? sig[name] === false : sig[name] === true)) : []);
 
-// Two spellings of one commit: equal, or one a prefix of the other, at least 7 hex long.
-const sameCommit = (a, b) => typeof a === 'string' && typeof b === 'string' && (a === b || (Math.min(a.length, b.length) >= 7 && (a.startsWith(b) || b.startsWith(a))));
 
 const compactSignals = (sig) => ({ converging: sig.converging, looping: sig.looping, drifting: sig.drifting, bloating: sig.bloating, unknown: sig.unknown, evidence: sig.evidence });
 // The decisions still open for a head: a check waiting for its judge or the Human, and a grant whose round has not
@@ -285,10 +302,12 @@ const PENDING = new Set(['judging', 'asking', 'granted']);
 export function revalidate({ state, source, round, head, history, log = () => {}, now = () => new Date().toISOString() }) {
   const entry = (state?.extensions ?? []).find((each) => each.source === source && each.round === round && PENDING.has(each.status));
   if (!entry || !head || sameCommit(entry.head, head)) return entry ?? null;
-  const sig = signals(history());
+  const read = history();
+  const sig = signals(read);
   const before = entry.head;
   entry.head = head;
   entry.signals = compactSignals(sig);
+  noteUnreviewed(entry, read.rounds?.at(-1), head);
   const decide = (status, by, reasons) => {
     Object.assign(entry, { status, by, reasons, decided_at: now() });
     log(rowOf(entry));
@@ -305,8 +324,11 @@ export function revalidate({ state, source, round, head, history, log = () => {}
 // The decision at the cap, written into `state` (an entry of `state.extensions` per source and round). Returns the
 // status and what it carries: round_limit with `extension` (off, the ceiling, the signals, the judge, or the Human
 // said stop), extension_check with the history and the judge's `dispatch`, or extension_ask with the question.
-// `history` is a function, called only when the signals need reading. `log(row)` gets each new decision.
-export function atCap({ state, source, round, head, policy, history: readHistory, pr, goal = null, command, log = () => {}, now = () => new Date().toISOString() }) {
+// `history` is a function, called only when the signals need reading. `lastReviewed`, when given, is a function that
+// returns the head of the last round without git work: the record's rounds, or the bot's last review; a stop that reads
+// no signals, the ceiling or one made on an earlier head, asks it whether the head now is one no round reviewed.
+// `log(row)` gets each new decision.
+export function atCap({ state, source, round, head, policy, history: readHistory, lastReviewed = null, pr, goal = null, command, log = () => {}, now = () => new Date().toISOString() }) {
   if (policy.mode === 'off') return { status: 'round_limit', extension: { status: 'off', mode: 'off' } };
   let cached = null;
   const history = () => (cached ??= readHistory());
@@ -328,13 +350,19 @@ export function atCap({ state, source, round, head, policy, history: readHistory
   // On "auto", a judge's extend needs no Human.
   if (entry.status === 'asking' && policy.mode === 'auto') decide('granted', 'judge', entry.reasons);
   let read = null;
+  let unreviewed = null;
   if (entry.status === 'new' || entry.status === 'judging') {
     read = history();
     const sig = signals(read);
     entry.head = head;
     entry.signals = compactSignals(sig);
+    unreviewed = noteUnreviewed(entry, read.rounds?.at(-1), head);
     if (sig.reasons.length) decide('stopped', 'mechanical', sig.reasons);
     else if (entry.status === 'new') decide('judging', null);
+  } else if (entry.status !== 'asking' && (entry.by === 'ceiling' ? lastReviewed : !sameCommit(entry.head, head))) {
+    // The ceiling, or a stop made on an earlier head and a push since: the stop stands, and the head it ends on may be
+    // one no round reviewed. The ceiling reads no signals, so it asks only `lastReviewed`.
+    noteUnreviewed(entry, { head: lastReviewed ? lastReviewed() : history().rounds?.at(-1)?.head }, head);
   }
   const summary = { round, status: entry.status, by: entry.by ?? null, reasons: entry.reasons ?? [], mode: policy.mode, extra_granted: granted, max_extra: policy.max, signals: entry.signals ?? null, ...(entry.judge ? { judge: entry.judge } : {}) };
   if (entry.status === 'judging') {
@@ -342,6 +370,7 @@ export function atCap({ state, source, round, head, policy, history: readHistory
       status: 'extension_check',
       extension: {
         ...summary,
+        ...(unreviewed ? { unreviewed_head: unreviewed } : {}),
         history: read.rounds.map(trimRound),
         files: read.files?.slice(0, MAX_FILES) ?? null,
         original_files: read.originalFiles?.slice(0, MAX_FILES) ?? null,
@@ -359,13 +388,14 @@ export function atCap({ state, source, round, head, policy, history: readHistory
     return {
       status: 'extension_ask',
       extension: summary,
-      question: askQuestion(pr, round + 1),
+      question: askQuestion(pr, round + 1, entry.unreviewed),
       options: askOptions(round + 1),
       record: `aidrian pr extend ${pr} --human approve|deny`,
       then: command,
     };
   }
-  return { status: 'round_limit', extension: summary };
+  // The cap stands on a head no round reviewed: said in the result, and in the summary comment's Extra rounds list.
+  return { status: 'round_limit', extension: summary, ...(sameCommit(entry.unreviewed?.head, head) ? { unreviewed_head: true } : {}) };
 }
 
 // The entry that waits for `status` ("judging" or "asking"): the latest one.
@@ -437,7 +467,7 @@ export function parseExtend(args) {
 function nextStep(entry, pr) {
   const again = entry.source === 'bot' ? `aidrian pr await-review ${pr} --request` : `aidrian pr review ${pr}`;
   if (entry.status === 'granted') return `round ${entry.round + 1} is granted: run ${again}`;
-  if (entry.status === 'asking') return `ask the Human "${askQuestion(pr, entry.round + 1)}" with the options ${askOptions(entry.round + 1).map((each) => `"${each}"`).join(' and ')}, then record the answer: aidrian pr extend ${pr} --human approve|deny`;
+  if (entry.status === 'asking') return `ask the Human "${askQuestion(pr, entry.round + 1, entry.unreviewed)}" with the options ${askOptions(entry.round + 1).map((each) => `"${each}"`).join(' and ')}, then record the answer: aidrian pr extend ${pr} --human approve|deny`;
   return 'the cap stands: report round_limit and the findings left open';
 }
 

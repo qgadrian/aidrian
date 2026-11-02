@@ -399,6 +399,21 @@ It applies to `aidrian pr review` and to `aidrian pr await-review --request`, wh
    aidrian pr extend <PR> --human approve|deny
    ```
 
+**A fix no round reviewed.** The cap often meets a fix pushed after the last round: `aidrian pr review` cannot open a
+round for it, and `aidrian pr await-review --request` reaches its cap only on a head the bot has not reviewed. Against
+the new code, the last round's findings read as fixed, so the question changes. When the last round of the history
+is on another head, `extension.unreviewed_head` carries `{ head, from, fix }`: the head, the last round's head, and
+the fix between them. The judge then decides whether the last round's findings were valid and at least medium, read at
+`from`, and the fix is small and answers them; `extend` means "review this fix". The red flags and
+`github.maxExtraRounds` still bound it, and nothing grants a round by itself. Under `"ask"` the `question` names the
+fix head, and keeps `#<PR>` and `round <N>` as the only pull request and round it names. When the cap still stands,
+`round_limit` carries `unreviewed_head: true`, and the summary comment's **Extra rounds** list says the fix head is
+reviewed by no pass, so the Human sees it before merging. A stop made earlier stands after a push too, and says the
+same of the new head. The ceiling reads no history: it compares the head with the last round's head alone, from the
+record's rounds or the bot's last review, and says the same. `"off"` reads nothing and does not say it. Once a later
+`aidrian pr review` round reviews that head, the line goes away; a bot round's line stays until the next check at the
+bot's cap.
+
 A grant is exactly one round: the cap rises by one, and the next cap runs the check again. It adds to the cap in
 force, the base branch's or an explicit `--max-rounds`, in both commands; a `--max-rounds` above the base branch's cap
 still needs `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, grant or not.

@@ -667,6 +667,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
       state, source: 'plan', round: state.rounds.length, head, policy, pr: n, goal: { title: info.title ?? null, body: info.body ?? null },
       command: `aidrian pr review ${n}`,
       history: planHistory,
+      lastReviewed: () => state.rounds.at(-1)?.head ?? null,
       log: extensionLog,
     });
     const { status, ...carried } = decision;

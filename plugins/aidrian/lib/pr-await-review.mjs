@@ -504,6 +504,15 @@ async function botAtCap(result, { project, config, gh, base, record, policy, env
     goal: { title: base.pr?.title ?? null, body: base.pr?.body ?? null },
     command: `aidrian pr await-review ${n} --request`,
     history: botHistory(extension, { project, config, gh, base, reviewer: result.reviewer, head: result.head_sha }),
+    // The head of the bot's last review: one read of its reviews, no git. A read that fails says nothing: the cap
+    // stands, and no head is named unreviewed.
+    lastReviewed: () => {
+      try {
+        return extension.botRounds(gh.api(`repos/${base.repo}/pulls/${base.n}/reviews`, { paginate: true }) ?? [], [], result.reviewer).at(-1)?.head ?? null;
+      } catch {
+        return null;
+      }
+    },
     log: extension.extensionLogger(project, config, { pr: n, repo: base.repo, env }),
   });
   const summaryError = await saveRecord(record, { project, config, gh, base, status: decision.status });

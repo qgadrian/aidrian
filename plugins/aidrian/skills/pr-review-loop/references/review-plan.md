@@ -63,16 +63,19 @@ the change does not touch.
   visual capture is past 200 images; `reason` names the routes.
 - `round_limit`: the round cap, `github.maxReviewRounds` as the base branch commits it. Its last round always runs
   the final stage. `extension` says why no extra round: `off`, the ceiling, the signals (`reasons` names each red flag),
-  the judge, or the Human.
+  the judge, or the Human. With `unreviewed_head: true`, the head is a fix no round reviewed: say so when reporting
+  the stop, so the Human does not merge it as reviewed.
 
 ## At the cap: extra rounds
 
 With `github.extraRounds` on, the cap first checks whether one more round is worth it.
 
 - `extension_check`: `extension` holds each round's open findings, each fix's size, the pull request's `files`, its
-  `goal`, and the `signals` that passed. Run `dispatch[0]` as its read-only `agent` with `brief` and `extension`.
-  It returns `extend` or `stop` with evidence; record it with `record`, its `--reason` naming that evidence. Then run
-  the step again. The session never writes a verdict the judge did not give.
+  `goal`, and the `signals` that passed. When the head is a fix no round reviewed, `extension.unreviewed_head` names
+  that `head`, the last reviewed head (`from`), and the `fix` between them.
+  Run `dispatch[0]` as its read-only `agent` with `brief` and `extension`. It returns `extend` or `stop` with
+  evidence; record it with `record`, its `--reason` naming that evidence. Then run the step again.
+  The session never writes a verdict the judge did not give.
 - `extension_ask`: the judge said extend, and the Human decides. Ask `question` with AskUserQuestion, with `options`
   as given, word for word. Record what the Human picked: `aidrian pr extend <n> --human approve` for the option that
   starts with "Approve", `--human deny` otherwise. The `review-extend` rule refuses an approval the Human did not give

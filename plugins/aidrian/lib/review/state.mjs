@@ -15,6 +15,9 @@ import { stateDir } from '../project.mjs';
 export const SUMMARY_MARKER = '<!-- aidrian-review-summary -->';
 const STATE = /<!--\s*aidrian-review-state:([A-Za-z0-9+/=]+)\s*-->/u;
 
+// Two spellings of one commit: equal, or one a prefix of the other, at least 7 hex long.
+export const sameCommit = (a, b) => typeof a === 'string' && typeof b === 'string' && (a === b || (Math.min(a.length, b.length) >= 7 && (a.startsWith(b) || b.startsWith(a))));
+
 export const emptyState = (pr, repo) => ({ version: 1, revision: 0, pr, repo, rounds: [], passes: {}, signoffs: {}, overrides: [], failures: {} });
 
 const file = (project, pr) => path.join(stateDir(project), 'reviews', `pr-${pr}-review.json`);
@@ -95,6 +98,8 @@ export function summaryBody(state, plan, status) {
 export const isSummary = (body) => typeof body === 'string' && body.startsWith(SUMMARY_MARKER);
 
 const EXTRA_HEADING = '**Extra rounds:**';
+// The decisions after which the cap stands.
+const STOPS = new Set(['stopped', 'denied']);
 
 // Every check at the round cap, and who decided it: the signals, the judge, the Human, or the ceiling. A blank line,
 // the heading, and one line per check; nothing when there is none.
@@ -106,7 +111,14 @@ function extensionLines(state) {
     const who = entry.by === 'human' ? `the Human (${entry.human?.by ?? 'unknown'}; an audit entry, not proof)` : entry.by ? `the ${entry.by === 'mechanical' ? 'signals' : entry.by}` : null;
     const reasons = (entry.reasons ?? []).slice(0, 3).map((reason) => String(reason).replace(/\s+/gu, ' ').slice(0, 300));
     const at = entry.head ? ` on \`${String(entry.head).slice(0, 7)}\`` : '';
-    lines.push(`- ${entry.source === 'bot' ? 'bot round' : 'round'} ${entry.round}${at}: ${entry.status}${who ? ` by ${who}` : ''}${reasons.length ? `: ${reasons.join('; ')}` : ''}`);
+    const round = `${entry.source === 'bot' ? 'bot round' : 'round'} ${entry.round}`;
+    lines.push(`- ${round}${at}: ${entry.status}${who ? ` by ${who}` : ''}${reasons.length ? `: ${reasons.join('; ')}` : ''}`);
+    // The cap stood on a fix no round reviewed: the Human sees it before merging. A plan round on that head since, after
+    // a later grant, reviewed it.
+    const reviewed = entry.source !== 'bot' && (state.rounds ?? []).some((each) => sameCommit(each.head, entry.unreviewed?.head));
+    if (entry.unreviewed?.head && STOPS.has(entry.status) && !reviewed) {
+      lines.push(`- fix head \`${String(entry.unreviewed.head).slice(0, 7)}\`, pushed after ${round} on \`${String(entry.unreviewed.from).slice(0, 7)}\`, is reviewed by no pass: the cap stopped the review before it`);
+    }
   }
   return lines;
 }

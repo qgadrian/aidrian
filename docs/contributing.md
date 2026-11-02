@@ -64,8 +64,8 @@ A routine case earns its place when it passes with the plugin and fails without 
 `quorum-seeded-flaw` is an end-to-end check, not a with-and-without case. Its prompt runs the `plan-review` skill on a
 plan that names a decision record, so step 3b starts the quorum. It runs with `--ablation none`, which the case file
 cannot set, and that makes its `tool_used` graders for `plan-review` and `quorum` part of the score. Its llm graders
-judge the final report for the seeded flaw and the bait. A flaw or bait on a money path makes a gate block the plan
-before the quorum, so both stay off money paths. One run takes about 20 minutes and costs about $7 with sonnet:
+judge only the last message, the one final report the prompt asks for, for the seeded flaw and the bait.
+A flaw or bait on a money path makes a gate block the plan before the quorum, so both stay off money paths. One run takes about 20 minutes and costs about $7 with sonnet:
 run the case on its own, before a release that changes either skill, and only when the Human approves the cost.
 
 ```sh

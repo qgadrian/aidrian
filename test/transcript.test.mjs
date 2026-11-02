@@ -1,13 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { exitCodeFor } from '../plugins/aidrian/lib/pr-await-review.mjs';
-import { EXIT } from '../plugins/aidrian/lib/review/run.mjs';
 import {
-  aggregateUsage, estimateCostUsd, filesRead, partOf, priceFor, REVIEW_EXIT_CODES, sessionActions, subagentTranscripts, sumTokens,
+  aggregateUsage, estimateCostUsd, filesRead, partOf, priceFor, sessionActions, subagentTranscripts, sumTokens,
 } from '../plugins/aidrian/lib/transcript.mjs';
 
 // One transcript line: an assistant message with usage, as Claude Code writes it.
@@ -106,18 +104,31 @@ test('sessionActions counts a review run or a skill only by its result: a refuse
   const loop = { skill: 'aidrian:pr-review-loop' };
   const none = { skills: [], drafts_opened: 1, review_runs: 0 };
 
-  // Refused: by a hook, by the permissions, or interrupted before it ran. Claude Code writes each as an error result.
-  assert.deepEqual(actions(call('r1', 'Bash', review), result('r1', 'PreToolUse:Bash hook error: [review-gate]: blocked', true)), none, 'a review a hook refused');
-  assert.deepEqual(actions(call('r1', 'Bash', review), result('r1', 'Permission for this action has been denied.', true)), none, 'a review the permissions refused');
-  assert.deepEqual(actions(call('r1', 'Bash', review), result('r1', 'Exit code 1\naidrian pr review: unknown argument: --x', true)), none,
-    'a review command that failed before any step');
-  assert.deepEqual(actions(call('k1', 'Skill', loop), result('k1', 'Skill denied by a hook', true)), none, 'a refused Skill call runs no skill and no review');
-  assert.deepEqual(actions(call('k1', 'Skill', { skill: 'aidrian:autopilot' }), result('k1', 'denied', true)), none, 'a refused skill is not listed');
+  // Refused, so it never ran. Claude Code writes each as an error result with no `Exit code N` line; the texts are its own.
+  const refusals = {
+    'a hook': 'PreToolUse:Bash hook error: [node "/p/scripts/hook-bash.mjs"]: Blocked: the body carries a footer.',
+    'a hook, by its own reason': 'Blocked: `git commit --amend` rewrites the branch tip.',
+    'the permissions': 'Permission to use Bash with command aidrian pr review 40 --with-bot has been denied.',
+    'the auto mode classifier': 'Permission for this action was denied by the Claude Code auto mode classifier. Reason: [Data Exfiltration].',
+    'the user': "The user doesn't want to proceed with this tool use. The tool use was rejected.",
+    'the tool': '<tool_use_error>InputValidationError: Bash failed</tool_use_error>',
+  };
+  for (const [by, text] of Object.entries(refusals)) {
+    assert.deepEqual(actions(call('r1', 'Bash', review), result('r1', text, true)), none, `a review refused by ${by}`);
+  }
+  assert.deepEqual(actions(call('k1', 'Skill', loop), result('k1', refusals['the auto mode classifier'], true)), none,
+    'a refused Skill call runs no skill and no review');
+  assert.deepEqual(actions(call('k1', 'Skill', { skill: 'aidrian:autopilot' }), result('k1', '<tool_use_error>Unknown skill: autopilot</tool_use_error>', true)),
+    none, 'a refused skill is not listed');
 
-  // Ran: a result that is not an error, or a review command that ended its step with one of its own non-zero exits.
+  // Ran: a result that is not an error, or one that starts `Exit code N`, whatever the exit and whichever command set it.
   assert.deepEqual(actions(call('r1', 'Bash', review), result('r1', '{"status": "dispatch"}')), { ...none, review_runs: 1 }, 'a review that ran');
   assert.deepEqual(actions(call('r1', 'Bash', review), result('r1', 'Exit code 4\n{"status": "round_limit"}', true)), { ...none, review_runs: 1 },
     'a review that ran and hit the round cap');
+  assert.deepEqual(actions(call('r1', 'Bash', review), result('r1', 'Exit code 1\naidrian pr review: unknown argument: --x', true)), { ...none, review_runs: 1 },
+    'a review command that ran and failed');
+  assert.deepEqual(actions(call('r1', 'Bash', { command: 'aidrian pr review 40; test -f optional.json' }), result('r1', 'Exit code 1\n{"status": "dispatch"}', true)),
+    { ...none, review_runs: 1 }, 'a review that ran in a line a later command failed');
   assert.deepEqual(actions(call('k1', 'Skill', loop), result('k1', 'Launching skill: aidrian:pr-review-loop')),
     { skills: ['aidrian:pr-review-loop'], drafts_opened: 1, review_runs: 1 }, 'a review skill that ran');
 
@@ -128,13 +139,6 @@ test('sessionActions counts a review run or a skill only by its result: a refuse
   // A slash command has no tool result: the host ran it before the turn, so it still counts.
   const typed = JSON.stringify({ type: 'user', uuid: 'u1', message: { role: 'user', content: '<command-name>/aidrian:pr-review-loop</command-name>' } });
   assert.deepEqual(actions(typed), { skills: ['aidrian:pr-review-loop'], drafts_opened: 1, review_runs: 1 }, 'a typed review skill');
-});
-
-test('REVIEW_EXIT_CODES are the non-zero exits of aidrian pr review and aidrian pr await-review', () => {
-  const source = readFileSync(new URL('../plugins/aidrian/lib/pr-await-review.mjs', import.meta.url), 'utf8');
-  const statuses = new Set([...source.matchAll(/'([a-z_]+)'/gu)].map((match) => match[1]));
-  const codes = new Set([...Object.values(EXIT), ...[...statuses].map(exitCodeFor)].filter((code) => code !== 0));
-  assert.deepEqual([...REVIEW_EXIT_CODES].sort(), [...codes].sort());
 });
 
 test('sessionActions reads the commands a Bash call runs, not the text that names one', () => {

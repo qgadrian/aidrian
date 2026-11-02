@@ -212,14 +212,12 @@ const isPluginSkill = (name) => {
   return pluginSkills.has(name.split(':').at(-1));
 };
 const PR_URL = /\/pull\/\d+/u;
-// The exit codes of a review command that finished a step: `aidrian pr review` (review/run.mjs EXIT) and
-// `aidrian pr await-review` (pr-await-review.mjs exitCodeFor) end a round that hit its cap, timed out, or needs the
-// Human with one of these, and Claude Code marks any non-zero exit as an error. Exit 1 is a command that failed before
-// any step. A test holds this set equal to the two commands' codes.
-export const REVIEW_EXIT_CODES = new Set([2, 3, 4, 5, 6, 7, 8, 9]);
-// Claude Code writes a Bash call the shell ran and that exited non-zero as `Exit code N` then its output; a call a hook
-// or the permissions refused, or one interrupted before it ran, has no such line.
-const EXIT_LINE = /^Exit code (\d+)/u;
+// Claude Code writes a Bash call the shell ran and that exited non-zero as an error result that starts `Exit code N`,
+// whatever the exit and whichever command in the line set it. Every other error result is a call that never ran: a
+// hook's refusal (`PreToolUse:Bash hook error: ...`, or a hook's own reason such as `Blocked: ...`), a permission
+// denial (`Permission to use Bash with command ... has been denied.`, `Permission for this action was denied ...`), the
+// user's rejection (`The user doesn't want to ...`), a `<tool_use_error>`, or a call the session lost.
+const RAN_AND_FAILED = /^Exit code \d+/u;
 
 const resultText = (content) =>
   typeof content === 'string' ? content : Array.isArray(content) ? content.map((block) => (typeof block?.text === 'string' ? block.text : '')).join('\n') : '';
@@ -243,7 +241,8 @@ function actionOf(block) {
 //   user's turn that name this plugin's skill. A slash command has no tool result: the host ran it before the turn.
 // - `drafts_opened` counts the draft pull request creates whose result is not an error and names a pull request URL.
 // - `review_runs` counts the review skills run, as `skills` reads them, and the Bash calls that run `aidrian pr review`
-//   or `aidrian pr await-review` whose result is not an error or exits with one of REVIEW_EXIT_CODES.
+//   or `aidrian pr await-review` that ran: the result is not an error, or starts `Exit code N`, since the exit is the
+//   whole line's, as in `aidrian pr review 12; test -f x`, and a review command ends a capped round non-zero too.
 // A call a forked subagent's transcript repeats counts once, by its id. Names and counts only: no command or output
 // leaves this function.
 export function sessionActions(texts) {
@@ -275,7 +274,7 @@ export function sessionActions(texts) {
         if (block.is_error !== true) {
           call.ran = true;
           if (call.draft && PR_URL.test(output)) call.opened = true;
-        } else if (call.review && call.skill === null && REVIEW_EXIT_CODES.has(Number(EXIT_LINE.exec(output)?.[1]))) call.ran = true;
+        } else if (call.review && call.skill === null && RAN_AND_FAILED.test(output)) call.ran = true;
       }
     }
   }

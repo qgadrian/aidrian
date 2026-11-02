@@ -70,8 +70,9 @@ they hold names and counts, never the command or its output.
 A draft create and a review run are read from the commands a Bash call runs, as the shell would split it:
 a continued line, `&&`, and a command substitution count, and an `echo`, a heredoc body, or a quoted pattern that names one does not.
 A tool call counts only by its result, matched by its id, because a hook or the permissions can refuse a call after it is written.
-A call whose result is an error, such as a refused one, counts nowhere, with one exception:
-a review command that ran and ended its step with one of its own non-zero exits, such as 4 for `round_limit`, is a review run.
+A call whose result is an error counts nowhere, with one exception: a review command whose error result starts `Exit code N` ran,
+whatever the exit and whichever command in the line set it, as in `aidrian pr review 12; test -f x`, so it is a review run.
+Every other error result is a call that never ran, such as a hook's refusal, a permission denial, or the user's rejection.
 A call with no result, as in a session cut off mid-call, counts nowhere.
 A slash command has no tool result, because the host runs it before the turn, so it always counts.
 A session whose transcript holds no API usage writes no row.

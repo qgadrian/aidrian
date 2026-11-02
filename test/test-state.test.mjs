@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -33,4 +35,17 @@ test('the test setup keeps the variables that are not the session`s, an override
     env: { ...process.env, GIT_EDITOR: 'true' },
   });
   assert.equal(run.stdout, 'true');
+});
+
+test('the test setup keeps the temporary files of a run in its own folder, and deletes that folder when the run ends', (t) => {
+  const outer = mkdtempSync(path.join(tmpdir(), 'aidrian-test-state-probe-'));
+  t.after(() => rmSync(outer, { recursive: true, force: true }));
+  const probe = "import('node:fs').then(({ mkdtempSync }) => process.stdout.write(mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'aidrian-denials-'))))";
+  const run = spawnSync(process.execPath, ['--import', SETUP, '-e', probe], {
+    encoding: 'utf8',
+    env: { ...process.env, AIDRIAN_TEST_STATE: '', TMPDIR: outer },
+  });
+  assert.equal(run.status, 0, run.stderr);
+  assert.ok(run.stdout.startsWith(outer), run.stdout);
+  assert.deepEqual(readdirSync(outer), []);
 });

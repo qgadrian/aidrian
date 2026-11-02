@@ -51,6 +51,10 @@ Claude Code runs every hook in [`hooks.json`](../../plugins/aidrian/hooks/hooks.
 There is nothing to trust or turn on.
 [hooks.md](../hooks.md) lists each hook; the ones marked Claude Code run only here.
 
+Claude Code cancels a SessionEnd hook that runs longer than a short budget as it exits, and reports `Hook cancelled`.
+The session-end hook only deletes the session's temporary files itself, and hands the [`session` row](../dispatch-log.md#session-when-a-session-ends)
+to a detached worker, so a long session's transcripts never hold up the exit.
+
 ## Models and effort
 
 A hook adds the project's `models.claude` choice to each Agent tool call, from the next call on.

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, cpSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -12,6 +12,7 @@ import { formatReport, summarize } from '../plugins/aidrian/lib/report-agents.mj
 import { formatDocs, summarizeDocs } from '../plugins/aidrian/lib/report-docs.mjs';
 import { parseSince } from '../plugins/aidrian/lib/report.mjs';
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
+import { endedSessions } from '../plugins/aidrian/lib/jsonl.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -39,9 +40,19 @@ function project(t) {
       return [];
     }
   };
-  const hook = (script, input) => spawnSync(process.execPath, [path.join(SCRIPTS, script)], { input: JSON.stringify(input), encoding: 'utf8', env });
-  return { base, dir, env, state, log, hook };
+  const hook = (script, input, options = {}) => spawnSync(process.execPath, [path.join(SCRIPTS, script)], { input: JSON.stringify(input), encoding: 'utf8', env, ...options });
+  // The session-end hook hands the session row to a detached worker: wait for it, so the worker has finished before
+  // the test's folder is removed. `rows` is how many rows the log holds once it has.
+  const logged = async (rows) => {
+    for (const deadline = Date.now() + 15_000; log().length < rows; await sleep(25)) {
+      if (Date.now() > deadline) assert.fail(`the log never reached ${rows} rows: ${JSON.stringify(log())}`);
+    }
+    return log();
+  };
+  return { base, dir, env, state, log, hook, logged };
 }
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 test('a dispatch row keeps names, counts, and a short description, and never the prompt', () => {
   const row = dispatchRow(
@@ -82,8 +93,8 @@ test('claimedPaths reads only the lines that present a file as delivered', () =>
   assert.deepEqual(claimedPaths(message), ['docs/new.md', 'out/plan.json', '/abs/handoff.json']);
 });
 
-test('the hooks write dispatch, stop, and session rows inside a project, and nothing outside one', (t) => {
-  const { base, dir, log, hook } = project(t);
+test('the hooks write dispatch, stop, and session rows inside a project, and nothing outside one', async (t) => {
+  const { base, dir, log, hook, logged } = project(t);
   const transcript = path.join(base, 's1.jsonl');
   const agent = path.join(base, 's1/subagents/agent-a1.jsonl');
   mkdirSync(path.dirname(agent), { recursive: true });
@@ -101,10 +112,11 @@ test('the hooks write dispatch, stop, and session rows inside a project, and not
   assert.equal(hook('hook-agent-post.mjs', { session_id: 's1', cwd: dir, tool_name: 'Agent', tool_input: { subagent_type: 'Explore', description: 'Find tests' }, tool_response: { status: 'completed', agentId: 'a1', totalDurationMs: 1000 } }).status, 0);
   const stop = hook('hook-subagent-stop.mjs', { session_id: 's1', cwd: dir, agent_id: 'a1', agent_type: 'Explore', agent_transcript_path: agent, last_assistant_message: 'Done; nothing written.', stop_hook_active: false });
   assert.deepEqual([stop.status, stop.stderr], [0, '']);
+  assert.equal(hook('session-row.mjs', { session_id: 's2', cwd: dir, transcript_path: path.join(base, 'empty.jsonl') }).status, 0);
+  assert.equal(log().length, 2, 'no usage: no row');
   assert.equal(hook('hook-session-end.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript, reason: 'exit' }).status, 0);
-  assert.equal(hook('hook-session-end.mjs', { session_id: 's2', cwd: dir, transcript_path: path.join(base, 'empty.jsonl') }).status, 0, 'no usage: no row');
 
-  const rows = log();
+  const rows = await logged(3);
   assert.deepEqual(rows.map((row) => row.event), ['dispatch', 'stop', 'session']);
   assert.deepEqual(rows[1].tokens, { input: 10 + 10, output: 10, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0 });
   const testing = 'docs/knowledge/engineering/testing.md';
@@ -154,19 +166,59 @@ test('telemetry.enabled false: the hooks write no rows, and the delivery check s
   const sent = hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'a1', last_assistant_message: 'Wrote out/handoff.json.', stop_hook_active: false });
   assert.deepEqual([sent.status, sent.stderr.startsWith('Your report names `out/handoff.json`')], [2, true]);
   assert.equal(hook('hook-session-end.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript }).status, 0);
+  assert.equal(hook('session-row.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript }).status, 0, 'the worker checks too');
   assert.deepEqual(log(), []);
 });
 
-test('telemetry.docReads false: stop and session rows record docs_read null, and the rest as before', (t) => {
-  const { base, dir, log, hook } = project(t);
+test('telemetry.docReads false: stop and session rows record docs_read null, and the rest as before', async (t) => {
+  const { base, dir, hook, logged } = project(t);
   setTelemetry(dir, { docReads: false });
   const transcript = path.join(base, 's1.jsonl');
   const doc = path.join(dir, 'docs/knowledge/engineering/testing.md');
   writeFileSync(transcript, JSON.stringify({ type: 'assistant', message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 10, output_tokens: 1 }, content: [{ type: 'tool_use', name: 'Read', input: { file_path: doc } }] } }));
   hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'a1', agent_type: 'Explore', agent_transcript_path: transcript, last_assistant_message: 'Done.', stop_hook_active: false });
   hook('hook-session-end.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript });
-  const rows = log();
+  const rows = await logged(2);
   assert.deepEqual(rows.map((row) => [row.event, row.docs_read, row.tokens?.input ?? row.tokens_by_model['claude-opus-5-5'].input]), [['stop', null, 10], ['session', null, 10]]);
+});
+
+test('the session-end hook exits while its worker still reads the transcript, and the row lands once the worker finishes', { skip: process.platform === 'win32' }, async (t) => {
+  const { base, dir, log, hook, logged } = project(t);
+  // A FIFO the test has not written yet: reading it blocks until the test writes, however fast the machine parses.
+  // Before the worker, the hook read the transcript itself, so it could not exit before the test wrote it.
+  const transcript = path.join(base, 's1.jsonl');
+  assert.equal(spawnSync('mkfifo', [transcript]).status, 0);
+  const ended = hook('hook-session-end.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript, reason: 'exit' }, { timeout: 10_000 });
+  assert.deepEqual([ended.status, ended.signal], [0, null], 'the hook exited without waiting for the transcript');
+  assert.deepEqual(log(), []);
+  let fifo;
+  for (const deadline = Date.now() + 15_000; fifo === undefined; await sleep(25)) {
+    try {
+      fifo = openSync(transcript, constants.O_WRONLY | constants.O_NONBLOCK);
+    } catch (error) {
+      if (error.code !== 'ENXIO' || Date.now() > deadline) throw error; // ENXIO: the worker has not opened it yet.
+    }
+  }
+  writeSync(fifo, usageLine('m1', 'claude-opus-5-5', { input_tokens: 10, output_tokens: 1 }));
+  closeSync(fifo);
+  const [row] = await logged(1);
+  assert.deepEqual([row.event, row.session_id, row.reason, row.models], ['session', 's1', 'exit', ['claude-opus-5-5']]);
+});
+
+test('the session row is stamped with the time the session ended, which the hook hands its worker', (t) => {
+  const { base, dir, log, hook } = project(t);
+  const transcript = path.join(base, 's1.jsonl');
+  writeFileSync(transcript, usageLine('m1', 'claude-opus-5-5', { input_tokens: 10, output_tokens: 1 }));
+  assert.equal(hook('session-row.mjs', { session_id: 's1', cwd: dir, transcript_path: transcript, ended_at: NOW }).status, 0);
+  assert.equal(log()[0].ts, new Date(NOW).toISOString());
+});
+
+test('a session that ended twice counts the row that ended last, even when it was appended first', () => {
+  const session = (ts, cost) => ({ event: 'session', ts, session_id: 's1', models: ['claude-opus-5-5'], cost_usd: cost });
+  const rows = [session('2026-10-29T11:00:00.000Z', 2), session('2026-10-29T10:00:00.000Z', 1), { ...session('2026-10-29T09:00:00.000Z', 5), session_id: 's2' }];
+  assert.deepEqual(endedSessions(rows).map((row) => [row.session_id, row.cost_usd]), [['s1', 2], ['s2', 5]]);
+  assert.deepEqual(endedSessions([session('x', 1), session('x', 2)]).map((row) => row.cost_usd), [2], 'unreadable times: the later append');
+  assert.equal(summarize(rows).sessions.cost_usd, 7, 'the report sums the rows that ended last');
 });
 
 test('a log of telemetry.maxMb rotates into dispatch-log.1.jsonl, a rotate row says whether rows were lost, and reports read both', async (t) => {
@@ -512,8 +564,8 @@ test('sessionRow records the skills, draft pull requests, and review runs of the
   assert.doesNotMatch(JSON.stringify(row), /gh pr create|pull\/3|await-review|received/, 'the row holds no command and no output');
 });
 
-test('a request a forked subagent`s transcript repeats from its parent counts once, on the parent`s row: its Read and its tokens', (t) => {
-  const { base, dir, log, hook } = project(t);
+test('a request a forked subagent`s transcript repeats from its parent counts once, on the parent`s row: its Read and its tokens', async (t) => {
+  const { base, dir, hook, logged } = project(t);
   const main = path.join(base, 's1.jsonl');
   const subagents = path.join(base, 's1/subagents');
   mkdirSync(subagents, { recursive: true });
@@ -530,7 +582,7 @@ test('a request a forked subagent`s transcript repeats from its parent counts on
   }
   assert.equal(hook('hook-session-end.mjs', { session_id: 's1', cwd: dir, transcript_path: main }).status, 0);
 
-  const rows = log();
+  const rows = await logged(3);
   const one = { input: 10, output: 5, cache_read: 0, cache_write: 0, cache_write_5m: 0, cache_write_1h: 0 };
   assert.deepEqual(rows.map((row) => [row.agent_id ?? 'main', row.docs_read.map((doc) => doc.path), row.tokens ?? row.main.tokens]), [
     ['a2', [sharing], one],

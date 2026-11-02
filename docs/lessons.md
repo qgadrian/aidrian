@@ -19,8 +19,9 @@ A checkout of that repository has the same id, so its `aidrian lesson list` hold
 and the `lesson-triage` skill run there sees them all. Every row in it names the project it came from in `project`.
 
 This holds for every way a lesson is written: `aidrian lesson add --target plugin`, `--same` and `--key` on a plugin lesson,
-and the [automatic lessons](#automatic-lessons) whose target is `plugin`. The similar lessons that `add` names, `--same`,
-and `--key` all match against the inbox the lesson lands in, so a key is one lesson across projects.
+and the [automatic lessons](#automatic-lessons) whose target is `plugin`. The similar lessons that `add` names match against
+the inbox the lesson lands in. `--same <id>` and `--key <key>` find the lesson in the project's inbox first, then in the
+plugin's, and record it there, so a key is one lesson across projects.
 A lesson whose target is unset or `project` stays in the project's own inbox.
 The plugin's inbox is always in the state root: a `state.dir` in the plugin repository's config.json does not move it.
 
@@ -76,22 +77,30 @@ the note is the rest.
 - `add` prints the lesson's id. When other lessons look like the same problem, it names up to three and the command that
   merges the new one into one of them. It compares words, weighting the ones that are rare in the inbox.
 - `add --same <id>` records a known lesson again. `--key <key>` does the same for any row with that key, so a script can
-  report one problem many times and keep one lesson.
+  report one problem many times and keep one lesson. A key no lesson holds yet starts one where `--target` sends it.
 - `list` shows the project's open lessons in triage order: tier, then age. `--status resolved|all`, `--tier`, `--kind`,
   `--source`, and `--limit N` narrow it; `--target project` too, and `--target plugin` reads the plugin's inbox instead.
   `list <id>` shows one lesson in full. `--json` adds `similar`, the ids of up to three lessons that look like the same problem.
+  A lesson read from the plugin's inbox shows `from <project>`, the project it came from.
 - `resolve <id> --outcome <outcome> --link <ref>` closes a lesson; `--link -` reads the link from stdin.
   `--expect '<what should move, and the command that reads it>'` records how to check a fix later.
 - `update <id> --tier P1` changes the tier, kind, or target, such as when triage disagrees with the capture.
   A new target moves the lesson, whole: `plugin` to the plugin's inbox, and `project` out of it, back to the inbox of the
-  project it came from.
+  project it came from. Run that one from the project's checkout, or with `--project <dir>`: from anywhere else, the lesson
+  goes to that project's folder in the state root, which a `state.dir` in its config.json moves away from.
+  A new tier or kind alone moves nothing.
 - `stats` counts what is open, what moved in the last `--since 30d`, and whether each fix since then held.
 - `nudge` prints the session-start line.
 - `migrate` moves every plugin lesson that an earlier version left in a project's inbox to the plugin's inbox:
   from each project folder in the state root, and from this project's inbox wherever `state.dir` puts it.
   It keeps each lesson's id, occurrences, evidence, status, and the lessons merged into it, and writes `project` on the copies.
-  A moved lesson whose key a lesson in the plugin's inbox already holds becomes that lesson seen again, and the output says so.
   It never touches a lesson whose target is `project` or unset. A second run moves nothing; `--dry-run` only prints the list.
+  A moved lesson whose key a lesson in the plugin's inbox already holds joins that lesson, and the output says so:
+  only its occurrences move, its `add` and `seen` rows and those of the lessons merged into it, and its ids find the holder.
+  Its own updates and resolutions stay behind, so the holder keeps its tier, kind, target, and status.
+  An occurrence dated after the holder's fix reopens it, as any occurrence does.
+  Upgrade the plugin on every host of the machine before you run it: an older copy reads no `move` row, so it still lists the
+  moved lessons in the project's inbox, and it files new plugin lessons there; run `migrate` again after one did.
 
 `resolve`, `update`, `list <id>`, and `add --same` look an id up in the project's inbox, then in the plugin's.
 Every command takes `--project <dir>`, so one checkout can read another project's inbox.

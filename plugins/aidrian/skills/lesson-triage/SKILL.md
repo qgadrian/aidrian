@@ -55,7 +55,8 @@ An issue that already covers the lesson is its `issue` outcome, linked to it. A 
 ## 3. Decide
 
 Fix a wrong label first: `aidrian lesson update <id> --tier P1 --target plugin`.
-A new target moves the lesson: `plugin` to the plugin's inbox, `project` back to the inbox of the project it came from.
+A new target moves the lesson: `plugin` to the plugin's inbox, `project` back to the inbox of the project it came from;
+run a move back from that project's checkout, or with `--project <dir>`, so its config.json `state.dir` holds.
 Then pick one end per lesson:
 
 | End | When | Owner | Outcome |

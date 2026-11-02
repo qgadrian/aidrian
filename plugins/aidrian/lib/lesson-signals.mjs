@@ -11,7 +11,7 @@ import path from 'node:path';
 
 import { loadConfig } from './config.mjs';
 import { appendRow } from './jsonl.mjs';
-import { addRow, inboxFor } from './lesson-inbox.mjs';
+import { addRow, homeInbox } from './lesson-inbox.mjs';
 import { findProject } from './project.mjs';
 
 // One block is a guard doing its job; this many of the same rule in one session is an agent fighting it.
@@ -22,7 +22,7 @@ export function recordSignal(project, signal, { config, now = new Date() } = {})
   try {
     const settings = config ?? loadConfig(project).config;
     if (!settings.lessons.auto) return null;
-    const { file, project: from } = inboxFor(project, settings, signal.target);
+    const { file, project: from } = homeInbox(project, settings, { target: signal.target });
     const row = addRow({ ...signal, source: 'auto', now, ...(from ? { project: from } : {}) });
     appendRow(file, row);
     return row;

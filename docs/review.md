@@ -394,7 +394,14 @@ It applies to `aidrian pr review` and to `aidrian pr await-review --request`, wh
    aidrian pr extend <PR> --human approve|deny
    ```
 
-A grant is exactly one round: the cap rises by one, and the next cap runs the check again. Each decision is an entry
+A grant is exactly one round: the cap rises by one, and the next cap runs the check again.
+
+Every open decision is bound to the head its signals were read on: a check waiting for the judge or the Human, and a
+grant whose round has not opened yet. When the pull request moves, the next step reads the signals again on the new
+head. A new red flag stops it, a grant included, so a push after the verdict cannot carry a bloated fix into the extra
+round. Without one, a check waiting for the Human goes back to the judge, who has not seen the push, and a grant
+stands. `aidrian pr extend --human approve` and `--verdict` are refused once the pull request's head is not the one the
+check was for. Each decision is an entry
 in [the record](#the-record), listed under **Extra rounds** in the summary comment, and a `review_extension` row in the
 [dispatch log](dispatch-log.md#review_extension-when-a-check-at-the-round-cap-decides), which `aidrian report reviews` counts.
 

@@ -10,9 +10,9 @@ import { DEFAULT_REVIEWER, exitCodeFor, runAwaitReview } from '../plugins/aidria
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { extensionSummary, formatExtensions } from '../plugins/aidrian/lib/report-reviews.mjs';
 import {
-  atCap, BLOAT_MIN_LINES, botRounds, findingTitle, grantedRounds, normalizeTitle, parseExtend, recordHuman, recordVerdict, signals,
+  atCap, BLOAT_MIN_LINES, botRounds, findingTitle, grantedRounds, normalizeTitle, parseExtend, recordHuman, recordVerdict, revalidate, runExtend, signals,
 } from '../plugins/aidrian/lib/review/extension.mjs';
-import { emptyState, readLocalState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { emptyState, readLocalState, stateFromComment, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { approved, check, transcriptAnswers } from '../plugins/aidrian/lib/rules/review-extend.mjs';
 
 const finding = (file, line, title) => ({ file, line, title });
@@ -192,7 +192,9 @@ test('transcriptAnswers reads only the host`s AskUserQuestion results', () => {
   assert.equal(approved([{ question: 'Q #1 round 20?', answer: 'Approve', at: null }], { pr: 1, round: 2 }), false);
 });
 
-// The bot's rounds at the cap of 3, as `aidrian pr await-review --request` reads them: `comments` per review.
+// The bot's rounds at the cap of 3, as `aidrian pr await-review --request` reads them: `comments` per review. The pull
+// request's conversation comments live in `issue` across runs, as on GitHub, so a summary comment one run writes is the
+// record the next run, or another machine, reads.
 function botProject(t, config = {}) {
   const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-botcap-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));
@@ -201,39 +203,55 @@ function botProject(t, config = {}) {
   const project = projectAt(base);
   const log = t.mock.method(console, 'log', () => {});
   const T = (m) => `2026-08-23T07:${String(m).padStart(2, '0')}:00Z`;
-  const run = (comments, { reviews = comments.length } = {}) => {
+  const issue = [];
+  const post = (body) => (issue.push({ id: issue.length + 1, user: { login: 'someone' }, created_at: T(20), body }), issue.at(-1));
+  const edit = (id, body) => (issue.find((comment) => comment.id === id).body = body);
+  let head = 'zzz';
+  const run = (comments, { reviews = comments.length, at = 'zzz' } = {}) => {
+    head = at;
     const list = Array.from({ length: reviews }, (_, i) => ({ id: i + 1, user: { login: DEFAULT_REVIEWER }, submitted_at: T(i + 1), commit_id: `c${i}`, state: 'COMMENTED' }));
     const inline = comments.flatMap((each, i) => each.map(([file, line, title]) => ({ pull_request_review_id: i + 1, path: file, line, body: title })));
-    const posts = [];
+    const requests = [];
     const gh = {
-      posts,
       repo: () => 'acme/notes',
       currentPr: () => ({ number: 42 }),
       api: (p, { method, fields } = {}) => {
-        if (method === 'POST') return (posts.push(fields), {});
-        if (p.endsWith('/pulls/42')) return { title: 'Cap refunds', body: 'Refunds never exceed the charge.', head: { sha: 'zzz', ref: 'feat', repo: { full_name: 'acme/notes' } } };
+        if (method === 'POST' && fields.body.startsWith('@codex review')) return (requests.push(fields), {});
+        if (method === 'POST' && p.endsWith('/issues/42/comments')) return post(fields.body);
+        if (method === 'PATCH' && /\/issues\/comments\/\d+$/u.test(p)) return edit(Number(p.split('/').at(-1)), fields.body);
+        if (p.endsWith('/pulls/42')) return { title: 'Cap refunds', body: 'Refunds never exceed the charge.', head: { sha: head, ref: 'feat', repo: { full_name: 'acme/notes' } } };
         if (p.includes('/commits/')) return { commit: { committer: { date: T(1) } } };
         if (p.endsWith('/reviews')) return list;
         if (p.endsWith('/pulls/42/comments')) return inline;
-        if (p.endsWith('/issues/42/comments')) return [];
+        if (p.endsWith('/issues/42/comments')) return issue;
         if (p.endsWith('/reactions')) return [];
         throw new Error(`unexpected gh path ${p}`);
       },
     };
     let t0 = Date.parse(T(30));
-    return runAwaitReview(['42', '--request', '--timeout-sec', '0'], loadConfig(project).config, project, { gh, now: () => t0, sleep: async (s) => { t0 += s * 1000; } }).then((code) => ({ code, out: JSON.parse(log.mock.calls.at(-1).arguments[0]), posts }));
+    return runAwaitReview(['42', '--request', '--timeout-sec', '0'], loadConfig(project).config, project, { gh, now: () => t0, sleep: async (s) => { t0 += s * 1000; } }).then((code) => ({ code, out: JSON.parse(log.mock.calls.at(-1).arguments[0]), requests }));
   };
-  return { project, run };
+  // `aidrian pr extend` as the CLI runs it, with the review step's gh over the same comments.
+  const extend = (args) => runExtend(['42', ...args], project, loadConfig(project).config, {
+    repo: 'acme/notes', env: {},
+    gh: { pr: () => ({ headRefOid: head }), comments: () => issue, post: (_repo, _n, body) => post(body), edit: (_repo, id, body) => edit(id, body) },
+  });
+  // Another machine: this one's state folder is gone, and only the pull request's comments remain.
+  const forget = () => rmSync(path.join(base, 'state'), { recursive: true, force: true });
+  // A push GitHub reports before any command runs on it.
+  const move = (at) => { head = at; };
+  return { project, run, extend, forget, move, issue };
 }
+
+const converging = [[['a.js', 1, 'One'], ['b.js', 5, 'Two'], ['c.js', 9, 'Three']], [['d.js', 1, 'Four'], ['e.js', 2, 'Five']], [['f.js', 3, 'Six']]];
 
 test('await-review --request at the cap: converging bot rounds get the judge, and a Human-approved round asks the bot once more', async (t) => {
   const { project, run } = botProject(t);
-  const converging = [[['a.js', 1, 'One'], ['b.js', 5, 'Two'], ['c.js', 9, 'Three']], [['d.js', 1, 'Four'], ['e.js', 2, 'Five']], [['f.js', 3, 'Six']]];
   const check1 = await run(converging);
   assert.deepEqual([check1.code, check1.out.status, exitCodeFor('extension_check')], [10, 'extension_check', 10]);
   assert.deepEqual(check1.out.extension.history.map((each) => each.open), [3, 2, 1]);
   assert.deepEqual(check1.out.extension.goal, { title: 'Cap refunds', body: 'Refunds never exceed the charge.' });
-  assert.equal(check1.posts.length, 0, 'nothing is posted at the cap');
+  assert.equal(check1.requests.length, 0, 'no review is requested at the cap');
 
   const state = readLocalState(project, 42);
   recordVerdict(state, { verdict: 'extend', reason: 'f.js:3 is a valid high finding' });
@@ -242,12 +260,26 @@ test('await-review --request at the cap: converging bot rounds get the judge, an
   assert.deepEqual([ask.code, ask.out.status, ask.out.question], [11, 'extension_ask', 'Pull request #42 reached its review-round cap. Grant one extra review round, round 4?']);
 
   const asked = readLocalState(project, 42);
-  recordHuman(asked, { answer: 'approve', by: 'Tester' });
+  recordHuman(asked, { answer: 'approve', by: 'Tester', current: 'zzz' });
   writeLocalState(project, asked);
   const granted = await run(converging);
   assert.equal(granted.out.status, 'timed_out', 'the fourth round is asked for');
-  assert.equal(granted.posts.length, 1);
-  assert.match(granted.posts[0].body, /max-rounds=4/u);
+  assert.equal(granted.requests.length, 1);
+  assert.match(granted.requests[0].body, /max-rounds=4/u);
+});
+
+test('await-review at the cap: a push after the judge`s verdict sends the check back to the judge, and a stale approval is refused', async (t) => {
+  const bot = botProject(t);
+  await bot.run(converging);
+  await bot.extend(['--verdict', 'extend', '--reason', 'valid']);
+  assert.equal((await bot.run(converging)).out.status, 'extension_ask');
+  const moved = await bot.run(converging, { at: 'b1b1b1b1' });
+  assert.deepEqual([moved.out.status, moved.out.extension.status], ['extension_check', 'judging'], 'the judge has not seen b1b1b1b1');
+  assert.match(moved.out.dispatch[0].record, /--head b1b1b1b1$/u);
+  await bot.extend(['--verdict', 'extend', '--reason', 'still valid', '--head', 'b1b1b1b1']);
+  bot.move('c2c2c2c2');
+  await assert.rejects(bot.extend(['--human', 'approve']), /the check was for b1b1b1b, and the pull request is at c2c2c2c now/u);
+  assert.equal(await bot.extend(['--human', 'deny']), 0, 'a deny needs no head');
 });
 
 test('await-review --request at the cap: bot rounds that do not shrink stop, as round_limit', async (t) => {

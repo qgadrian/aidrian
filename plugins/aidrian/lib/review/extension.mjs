@@ -19,7 +19,7 @@ import { appendEvent, stamp } from '../dispatch-log.mjs';
 import { runGit } from '../git.mjs';
 import { changedFiles, mergeBase, resolve } from './diff.mjs';
 import { classify } from './plan.mjs';
-import { emptyState, newer, readLocalState, writeLocalState } from './state.mjs';
+import { emptyState, isSummary, newer, readLocalState, stateFromComment, writeLocalState } from './state.mjs';
 
 export const MODES = Object.freeze(['off', 'ask', 'auto']);
 // Fix commits that add more than this share of the lines the pull request first added are the change growing under
@@ -228,12 +228,46 @@ const trimRound = (round) => ({
 const rowOf = (entry) => ({ event: 'review_extension', source: entry.source, round: entry.round, outcome: entry.status, by: entry.by ?? null, signals: redSignals(entry.signals) });
 const redSignals = (sig) => (sig ? ['converging', 'looping', 'drifting', 'bloating'].filter((name) => (name === 'converging' ? sig[name] === false : sig[name] === true)) : []);
 
+// Two spellings of one commit: equal, or one a prefix of the other, at least 7 hex long.
+const sameCommit = (a, b) => typeof a === 'string' && typeof b === 'string' && (a === b || (Math.min(a.length, b.length) >= 7 && (a.startsWith(b) || b.startsWith(a))));
+
+const compactSignals = (sig) => ({ converging: sig.converging, looping: sig.looping, drifting: sig.drifting, bloating: sig.bloating, unknown: sig.unknown, evidence: sig.evidence });
+// The decisions still open for a head: a check waiting for its judge or the Human, and a grant whose round has not
+// opened yet. Each is bound to the head its signals were read on.
+const PENDING = new Set(['judging', 'asking', 'granted']);
+
+// A pending decision whose head is not `head` any more is re-read on the new head: a push after the judge's verdict
+// can grow the fixes past the bloat limit, and the verdict and any approval were for the head before. A new red flag
+// stops it, a grant included. A check waiting for the Human goes back to the judge, who has not seen the push; a
+// grant without a red flag stands, as one round for the fix it was given for. Returns the entry, or null.
+export function revalidate({ state, source, round, head, history, log = () => {}, now = () => new Date().toISOString() }) {
+  const entry = (state?.extensions ?? []).find((each) => each.source === source && each.round === round && PENDING.has(each.status));
+  if (!entry || !head || sameCommit(entry.head, head)) return entry ?? null;
+  const sig = signals(history());
+  const before = entry.head;
+  entry.head = head;
+  entry.signals = compactSignals(sig);
+  const decide = (status, by, reasons) => {
+    Object.assign(entry, { status, by, reasons, decided_at: now() });
+    log(rowOf(entry));
+  };
+  if (sig.reasons.length) decide('stopped', 'mechanical', [...sig.reasons, `read again on ${String(head).slice(0, 7)}, pushed after the decision on ${String(before).slice(0, 7)}`]);
+  else if (entry.status === 'asking') {
+    entry.stale_judge = entry.judge;
+    delete entry.judge;
+    decide('judging', null, []);
+  }
+  return entry;
+}
+
 // The decision at the cap, written into `state` (an entry of `state.extensions` per source and round). Returns the
 // status and what it carries: round_limit with `extension` (off, the ceiling, the signals, the judge, or the Human
 // said stop), extension_check with the history and the judge's `dispatch`, or extension_ask with the question.
 // `history` is a function, called only when the signals need reading. `log(row)` gets each new decision.
-export function atCap({ state, source, round, head, policy, history, pr, goal = null, command, log = () => {}, now = () => new Date().toISOString() }) {
+export function atCap({ state, source, round, head, policy, history: readHistory, pr, goal = null, command, log = () => {}, now = () => new Date().toISOString() }) {
   if (policy.mode === 'off') return { status: 'round_limit', extension: { status: 'off', mode: 'off' } };
+  let cached = null;
+  const history = () => (cached ??= readHistory());
   const granted = grantedRounds(state, source, policy);
   state.extensions ??= [];
   let entry = state.extensions.find((each) => each.source === source && each.round === round);
@@ -241,7 +275,8 @@ export function atCap({ state, source, round, head, policy, history, pr, goal = 
     Object.assign(entry, { status, by, reasons, decided_at: now() });
     log(rowOf(entry));
   };
-  if (!entry) {
+  if (entry) revalidate({ state, source, round, head, history, log, now });
+  else {
     entry = { source, round, head, at: now(), mode: policy.mode, max: policy.max, granted_before: granted, status: 'new', by: null, reasons: [] };
     state.extensions.push(entry);
     if (granted >= policy.max) decide('stopped', 'ceiling', [`${plural(granted, 'extra round')} granted already, and github.maxExtraRounds is ${policy.max}`]);
@@ -255,7 +290,7 @@ export function atCap({ state, source, round, head, policy, history, pr, goal = 
     read = history();
     const sig = signals(read);
     entry.head = head;
-    entry.signals = { converging: sig.converging, looping: sig.looping, drifting: sig.drifting, bloating: sig.bloating, unknown: sig.unknown, evidence: sig.evidence };
+    entry.signals = compactSignals(sig);
     if (sig.reasons.length) decide('stopped', 'mechanical', sig.reasons);
     else if (entry.status === 'new') decide('judging', null);
   }
@@ -291,17 +326,23 @@ export function atCap({ state, source, round, head, policy, history, pr, goal = 
   return { status: 'round_limit', extension: summary };
 }
 
-// Two spellings of one commit: equal, or one a prefix of the other, at least 7 hex long.
-const sameCommit = (a, b) => typeof a === 'string' && typeof b === 'string' && (a === b || (Math.min(a.length, b.length) >= 7 && (a.startsWith(b) || b.startsWith(a))));
-
 // The entry that waits for `status` ("judging" or "asking"): the latest one.
 export const waiting = (state, status) => (state?.extensions ?? []).filter((entry) => entry.status === status).at(-1) ?? null;
 
+// A decision is for the head its signals were read on: refused when the pull request has moved since.
+function sameHead(entry, current) {
+  if (current !== undefined && current !== null && !sameCommit(current, entry.head)) {
+    throw new Error(`the check was for ${String(entry.head).slice(0, 7)}, and the pull request is at ${String(current).slice(0, 7)} now: run the review step again, which reads the signals on the new head`);
+  }
+}
+
 // The judge's verdict into `state`: stop ends the check; extend grants on "auto" and asks the Human on "ask".
-export function recordVerdict(state, { verdict, reason, head = null, at = new Date().toISOString() }) {
+// `current` is the pull request's head now, when known.
+export function recordVerdict(state, { verdict, reason, head = null, current = null, at = new Date().toISOString() }) {
   const entry = waiting(state, 'judging');
   if (!entry) throw new Error('no extension check waits for a verdict: run the review step at the cap first');
   if (head !== null && !sameCommit(head, entry.head)) throw new Error(`the check was for ${String(entry.head).slice(0, 7)}, not ${head.slice(0, 7)}: run the review step again`);
+  sameHead(entry, current);
   entry.judge = { verdict, reason, head: entry.head, at };
   if (verdict === 'stop') Object.assign(entry, { status: 'stopped', by: 'judge', reasons: [reason], decided_at: at });
   else if (entry.mode === 'auto') Object.assign(entry, { status: 'granted', by: 'judge', reasons: [reason], decided_at: at });
@@ -309,10 +350,15 @@ export function recordVerdict(state, { verdict, reason, head = null, at = new Da
   return entry;
 }
 
-// The Human's answer into `state`.
-export function recordHuman(state, { answer, by, session = null, at = new Date().toISOString() }) {
+// The Human's answer into `state`. An approval needs `current`, the pull request's head now, to be the head the judge
+// ruled on: a push since may have raised a red flag the approval would skip. A deny needs no head.
+export function recordHuman(state, { answer, by, session = null, current, at = new Date().toISOString() }) {
   const entry = waiting(state, 'asking');
   if (!entry) throw new Error('no extension waits for the Human: a judge must first record --verdict extend under github.extraRounds "ask"');
+  if (answer === 'approve') {
+    if (!current) throw new Error('the pull request\'s head could not be read, so the approval cannot be tied to the head the judge ruled on: try again');
+    sameHead(entry, current);
+  }
   entry.human = { answer, by, at, session };
   Object.assign(entry, { status: answer === 'approve' ? 'granted' : 'denied', by: 'human', decided_at: at });
   return entry;
@@ -353,25 +399,40 @@ function nextStep(entry, pr) {
   return 'the cap stands: report round_limit and the findings left open';
 }
 
-// The CLI body. `deps.remote` replaces the pull request's summary comment and `deps.repo` the origin, in tests.
+// The CLI body. It reads the record from this machine's state folder and, unless config.json `review.record` is
+// "local", the pull request's summary comment. `deps.gh` replaces the review step's gh (pr, comments, post, edit) and `deps.repo` the origin, in tests.
 export async function runExtend(args, project, config, deps = {}) {
   const opts = parseExtend(args);
   const { originRepo } = await import('../review-gate.mjs');
+  const gh = deps.gh ?? (await import('./run.mjs')).defaultGh;
   const repo = deps.repo ?? originRepo(project);
-  const remote = deps.remote !== undefined ? deps.remote : (await import('./run.mjs')).remoteState(repo, opts.pr, undefined, config);
+  const onPr = config.review.record !== 'local';
+  let comments = [];
+  if (onPr) {
+    try {
+      comments = gh.comments(repo, opts.pr);
+    } catch {}
+  }
+  const remote = stateFromComment(comments.filter((comment) => isSummary(comment.body)).at(-1)?.body, opts.pr);
   const state = newer(readLocalState(project, opts.pr), remote) ?? emptyState(opts.pr, repo);
   const env = deps.env ?? process.env;
+  // The pull request's head now: a decision is for the head its signals were read on.
+  let current = null;
+  try {
+    current = gh.pr(String(opts.pr)).headRefOid ?? null;
+  } catch {}
   let entry;
-  if (opts.verdict) entry = recordVerdict(state, { verdict: opts.verdict, reason: opts.reason, head: opts.head });
+  if (opts.verdict) entry = recordVerdict(state, { verdict: opts.verdict, reason: opts.reason, head: opts.head, current });
   else {
     const by = runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown';
-    entry = recordHuman(state, { answer: opts.human, by, session: env.CLAUDE_CODE_SESSION_ID || null });
+    entry = recordHuman(state, { answer: opts.human, by, session: env.CLAUDE_CODE_SESSION_ID || null, current });
   }
   writeLocalState(project, state);
+  const summaryError = null;
   try {
     appendEvent(project, config, { ...rowOf(entry), ts: stamp(Date.now()), session_id: env.CLAUDE_CODE_SESSION_ID || null, pr: opts.pr, repo });
   } catch {}
-  console.log(JSON.stringify({ status: 'recorded', pr: opts.pr, extension: { source: entry.source, round: entry.round, status: entry.status, by: entry.by, reasons: entry.reasons }, next: nextStep(entry, opts.pr) }, null, 2));
+  console.log(JSON.stringify({ status: 'recorded', pr: opts.pr, extension: { source: entry.source, round: entry.round, head: entry.head, status: entry.status, by: entry.by, reasons: entry.reasons }, next: nextStep(entry, opts.pr), ...(summaryError ? { summary_error: summaryError } : {}) }, null, 2));
   return 0;
 }
 

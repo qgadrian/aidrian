@@ -451,38 +451,67 @@ function committedBase(project, opts, gh, config) {
   return { github: committedConfig(project, tip).github, repo, n, baseTip: tip, pr };
 }
 
-// The pull request's review record: the newer of this machine's and its summary comment's (lib/review/state.mjs).
+// The pull request's review record: the newer of this machine's and its summary comment's (lib/review/state.mjs),
+// with `comments`, the pull request's comments as read, for the write back.
 async function reviewRecord(project, config, gh, repo, n) {
   const { emptyState, isSummary, newer, readLocalState, stateFromComment } = await import('./review/state.mjs');
-  let remote = null;
+  let comments = [];
   if (config.review.record !== 'local') {
     try {
-      const comments = gh.api(`repos/${repo}/issues/${n}/comments`, { paginate: true }) ?? [];
-      remote = stateFromComment(comments.filter((comment) => isSummary(comment.body)).at(-1)?.body, Number(n));
+      comments = gh.api(`repos/${repo}/issues/${n}/comments`, { paginate: true }) ?? [];
     } catch {}
   }
-  return newer(readLocalState(project, Number(n)), remote) ?? emptyState(Number(n), repo);
+  const remote = stateFromComment(comments.filter((comment) => isSummary(comment.body)).at(-1)?.body, Number(n));
+  return { state: newer(readLocalState(project, Number(n)), remote) ?? emptyState(Number(n), repo), comments };
 }
 
-// The check at the cap for the bot's rounds: its reviews and their inline comments are the history.
-async function botAtCap(result, { project, config, gh, base, state, policy, env }) {
-  const extension = await import('./review/extension.mjs');
+// Writes the record to the state folder.
+async function saveRecord(record, { project }) {
   const { writeLocalState } = await import('./review/state.mjs');
+  writeLocalState(project, record.state);
+  return null;
+}
+
+// The bot's rounds as the history the signals read: its reviews and their inline comments, up to `head`.
+function botHistory(extension, { project, config, gh, base, reviewer, head }) {
+  return () => {
+    const reviews = gh.api(`repos/${base.repo}/pulls/${base.n}/reviews`, { paginate: true }) ?? [];
+    const comments = gh.api(`repos/${base.repo}/pulls/${base.n}/comments`, { paginate: true }) ?? [];
+    return extension.buildHistory({ root: project.root, rounds: extension.botRounds(reviews, comments, reviewer), baseTip: base.baseTip, head, review: config.review });
+  };
+}
+
+// The check at the cap for the bot's rounds.
+async function botAtCap(result, { project, config, gh, base, record, policy, env }) {
+  const extension = await import('./review/extension.mjs');
   const n = Number(base.n);
   const decision = extension.atCap({
-    state, source: 'bot', round: result.codex_rounds, head: result.head_sha, policy, pr: n,
+    state: record.state, source: 'bot', round: result.codex_rounds, head: result.head_sha, policy, pr: n,
     goal: { title: base.pr?.title ?? null, body: base.pr?.body ?? null },
     command: `aidrian pr await-review ${n} --request`,
-    history: () => {
-      const reviews = gh.api(`repos/${base.repo}/pulls/${n}/reviews`, { paginate: true }) ?? [];
-      const comments = gh.api(`repos/${base.repo}/pulls/${n}/comments`, { paginate: true }) ?? [];
-      const rounds = extension.botRounds(reviews, comments, result.reviewer);
-      return extension.buildHistory({ root: project.root, rounds, baseTip: base.baseTip, head: result.head_sha, review: config.review });
-    },
+    history: botHistory(extension, { project, config, gh, base, reviewer: result.reviewer, head: result.head_sha }),
     log: extension.extensionLogger(project, config, { pr: n, repo: base.repo, env }),
   });
-  writeLocalState(project, state);
-  return { ...result, ...decision };
+  const summaryError = await saveRecord(record, { project, config, gh, base, status: decision.status });
+  return { ...result, ...decision, ...(summaryError ? { summary_error: summaryError } : {}) };
+}
+
+// A decision still open for the bot (a check, or a grant whose round has not been asked for) when the pull request has
+// moved past the head it was made on: read again on the new head before the cap counts it. Returns whether it changed.
+async function botRevalidate({ project, config, gh, base, record, reviewer, env }) {
+  const extension = await import('./review/extension.mjs');
+  const head = base.pr?.head?.sha ?? null;
+  const open = (record.state.extensions ?? []).filter((entry) => entry.source === 'bot' && ['judging', 'asking', 'granted'].includes(entry.status));
+  if (!head || !open.some((entry) => entry.head !== head)) return false;
+  const round = codexRounds(gh.api(`repos/${base.repo}/pulls/${base.n}/reviews`, { paginate: true }) ?? [], reviewer);
+  const entry = open.find((each) => each.round === round);
+  if (!entry || entry.head === head) return false;
+  extension.revalidate({
+    state: record.state, source: 'bot', round, head,
+    history: botHistory(extension, { project, config, gh, base, reviewer, head }),
+    log: extension.extensionLogger(project, config, { pr: Number(base.n), repo: base.repo, env }),
+  });
+  return true;
 }
 
 // The CLI body: prints the result JSON and returns its exit code; a usage or gh error prints one line and returns 1.
@@ -498,13 +527,15 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     // Each extra round the base branch's github.extraRounds granted the bot raises the cap by one.
     const { grantedRounds, policyOf } = await import('./review/extension.mjs');
     const policy = policyOf(base?.github ?? config.github);
-    const state = base && opts.request && policy.mode !== 'off' ? await reviewRecord(project, config, gh, base.repo, base.n) : null;
-    const granted = grantedRounds(state, 'bot', policy);
+    const record = base && opts.request && policy.mode !== 'off' ? await reviewRecord(project, config, gh, base.repo, base.n) : null;
+    const moved = record ? await botRevalidate({ project, config, gh, base, record, reviewer: opts.reviewer, env }) : false;
+    const granted = grantedRounds(record?.state, 'bot', policy);
     if (!args.includes('--max-rounds')) opts.maxRounds = cap + granted;
     const capped = roundCapProblem(opts.maxRounds, cap + granted, env);
     if (capped) throw new Error(capped);
     let result = await awaitReview(opts, { gate, ...deps });
-    if (result.status === 'round_limit' && state) result = await botAtCap(result, { project, config, gh, base, state, policy, env });
+    if (result.status === 'round_limit' && record) result = await botAtCap(result, { project, config, gh, base, record, policy, env });
+    else if (moved) await saveRecord(record, { project, config, gh, base, status: result.status });
     else if (result.status === 'round_limit' && base && policy.mode === 'off') result = { ...result, extension: { status: 'off', mode: 'off' } };
     if (result.status === 'review_required') console.error(result.reason);
     if (result.status === 'round_limit' && project) {

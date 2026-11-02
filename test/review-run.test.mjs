@@ -723,7 +723,7 @@ async function toTheCap(t, github, { first = 2, second = 1 } = {}) {
 async function extend(t, r, args) {
   const log = t.mock.method(console, 'log', () => {});
   try {
-    const code = await runExtend(['7', ...args], r.project, loadConfig(r.project).config, { repo: 'o/r', remote: null, env: {} });
+    const code = await runExtend(['7', ...args], r.project, loadConfig(r.project).config, { repo: 'o/r', gh: r.gh, env: {} });
     return { code, out: JSON.parse(log.mock.calls.at(-1).arguments[0]) };
   } finally {
     log.mock.restore();
@@ -810,4 +810,38 @@ test('extra rounds: github.maxExtraRounds is a hard ceiling, and the check repea
   assert.equal(again.round, 3);
   assert.deepEqual([again.status, again.extension.by, again.extension.round], ['round_limit', 'ceiling', 3]);
   assert.match(again.extension.reasons[0], /1 extra round granted already, and github\.maxExtraRounds is 1/u);
+});
+
+// A fix that grows the change past the bloat limit: 60 new lines, against the one line the pull request first added.
+const bloat = (r) => {
+  r.write('src/booking/a.js', `${Array.from({ length: 60 }, (_, i) => `line ${i}`).join('\n')}\n`);
+  return r.commit('a large fix');
+};
+
+test('extra rounds: a push after the judge`s extend is read again; a new red flag stops it, and a stale approval is refused', async (t) => {
+  const { r, capped } = await toTheCap(t, {});
+  await extend(t, r, ['--verdict', 'extend', '--reason', 'valid', '--head', capped.head]);
+  assert.equal((await r.step({ exec: clean })).status, 'extension_ask');
+  const pushed = bloat(r);
+  await assert.rejects(extend(t, r, ['--human', 'approve']), new RegExp(`the check was for ${capped.head.slice(0, 7)}, and the pull request is at ${pushed.slice(0, 7)} now`, 'u'));
+  const stopped = await r.step({ exec: clean });
+  assert.deepEqual([stopped.status, stopped.extension.status, stopped.extension.by, stopped.extension.signals.bloating], ['round_limit', 'stopped', 'mechanical', true]);
+  assert.match(stopped.extension.reasons.at(-1), new RegExp(`read again on ${pushed.slice(0, 7)}, pushed after the decision on ${capped.head.slice(0, 7)}`, 'u'));
+
+  const clean2 = await toTheCap(t, {});
+  await extend(t, clean2.r, ['--verdict', 'extend', '--reason', 'valid']);
+  clean2.r.write('src/booking/a.js', '3\n');
+  const small = clean2.r.commit('a small fix');
+  const back = await clean2.r.step({ exec: clean });
+  assert.deepEqual([back.status, back.extension.status], ['extension_check', 'judging'], 'the judge has not seen the push');
+  assert.match(back.dispatch[0].record, new RegExp(`--head ${small}$`, 'u'));
+});
+
+test('extra rounds: a grant whose round has not opened is revoked when the next head raises a red flag', async (t) => {
+  const { r } = await toTheCap(t, { extraRounds: 'auto' });
+  await extend(t, r, ['--verdict', 'extend', '--reason', 'valid']);
+  assert.equal((await r.step({ exec: clean })).max_rounds, 3, 'granted');
+  bloat(r);
+  const revoked = await r.step({ exec: clean });
+  assert.deepEqual([revoked.status, revoked.max_rounds, revoked.round, revoked.extension.by], ['round_limit', 2, 2, 'mechanical'], 'round 3 never opens');
 });

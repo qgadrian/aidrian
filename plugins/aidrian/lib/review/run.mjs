@@ -38,7 +38,7 @@ import { dedupe, packageRoots } from './split.mjs';
 import { contentFlows } from './content.mjs';
 import { buildPlan, classify, detectFlows, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, pathPattern, validatePlan } from './plan.mjs';
 import { BUILT_IN, flowBaseBrief, resolveEngine, reviewerMap, runExec, satisfies, VERDICT_MEANING } from './reviewers.mjs';
-import { atCap, buildHistory, extensionLogger, grantedRounds, policyOf } from './extension.mjs';
+import { atCap, buildHistory, extensionLogger, grantedRounds, policyOf, revalidate } from './extension.mjs';
 import { emptyState, isSummary, newer, readLocalState, stateFromComment, summaryBody, writeLocalState } from './state.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, ghImage, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput, visualMatrix, visualRoutes } from './visual.mjs';
 
@@ -351,7 +351,11 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   if (answerless) return { status: 'unsatisfied', pr: n, repo, head, reason: `flow ${answerless.id} needs a reviewer that answers its invariants, and the review bot does not: run codex-local, or require an agent for the flow`, plan };
   if (!passes.length && !removedTests.length) return { status: 'none_needed', pr: n, repo, head, base, depth: plan.depth, engine: plan.engine, plan: { depth: plan.depth, reasons: plan.reasons, flows: [], stages: [] } };
 
-  // Each extra round the base branch's policy grants (lib/review/extension.mjs) raises the cap by one.
+  // Each extra round the base branch's policy grants (lib/review/extension.mjs) raises the cap by one. A decision still
+  // open at the cap (a check, or a grant whose round has not opened) is read again when the head has moved since.
+  const planHistory = () => buildHistory({ root, rounds: state.rounds.map((round, i) => ({ round: i + 1, head: round.head, open: round.open ?? null, findings: round.findings ?? null })), baseTip, head, review });
+  const extensionLog = extensionLogger(project, config, { pr: n, repo, env });
+  if (policy.mode !== 'off') revalidate({ state, source: 'plan', round: state.rounds.length, head, history: planHistory, log: extensionLog });
   const maxRounds = (opts.maxRounds ?? cap) + grantedRounds(state, 'plan', policy);
 
   // A pass's result counts for this head when it is for this head, or for an earlier one the change since does not
@@ -647,8 +651,8 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     const decision = atCap({
       state, source: 'plan', round: state.rounds.length, head, policy, pr: n, goal: { title: info.title ?? null, body: info.body ?? null },
       command: `aidrian pr review ${n}`,
-      history: () => buildHistory({ root, rounds: state.rounds.map((round, i) => ({ round: i + 1, head: round.head, open: round.open ?? null, findings: round.findings ?? null })), baseTip, head, review }),
-      log: extensionLogger(project, config, { pr: n, repo, env }),
+      history: planHistory,
+      log: extensionLog,
     });
     const { status, ...carried } = decision;
     return finish(status, { ...extra, ...carried });

@@ -65,8 +65,8 @@ Both run before the critique, and their verdicts go into its brief as authoritat
 ## 3b. Quorum
 
 When a gate in step 3 ran, or the plan names a decision-record path or the `adr-writer` skill, run the `quorum` skill
-with the gate verdicts and the trigger. It asks its escalations one at a time. Its accepted objections and the Human's
-answers go into step 4's brief as authoritative, like gate verdicts. Skip it when the skill is not installed.
+with the gate verdicts and the trigger. It asks its escalations one at a time. Its accepted objections, the Human's
+answers, and its Report's revision-history line go into step 4's brief as authoritative. Skip it when it is not installed.
 A step 5.4 re-critique never reruns it; a restart from step 5.1 does, under the new hash.
 
 ## 4. Critique

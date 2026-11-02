@@ -755,6 +755,14 @@ test('plan-review runs the quorum skill at step 3b, lists its flags in Inputs, a
   assert.ok(step, 'plan-review has a step 3b');
   assert.ok(review.indexOf('\n## 3. Gates\n') < review.indexOf('\n## 3b. Quorum\n') && review.indexOf('\n## 3b. Quorum\n') < review.indexOf('\n## 4. Critique\n'), 'step 3b sits between the gates and the critique');
   assert.match(step, /the `quorum` skill/u, 'step 3b names the quorum skill');
+  // Settled answers hold across runs only when the applied plan's revision history records them: the quorum's Report
+  // hands its revision-history line to the critique brief, and planning-agent's entry carries it word for word.
+  const flat = (text) => text.replace(/\s+/gu, ' ');
+  assert.match(flat(step), /revision-history line go into step 4's brief/u, 'step 3b passes the Report`s revision-history line to the critique');
+  assert.match(flat(readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8')), /\*\*Revision-history line\*\*: the objection ids to apply and each Human answer/u, 'the quorum Report has the line');
+  const lens = readFileSync(path.join(path.dirname(PLAN_REVIEW), 'references/review-lens.md'), 'utf8');
+  const entry = flat(lens.split('- `revision_history_entry`:')[1].split('\n- `')[0]);
+  assert.match(entry, /the quorum Report's revision-history line, the entry includes it: its objection ids, and each Human answer word for word/u, 'planning-agent`s revision_history_entry carries the quorum line');
   const ledger = readFileSync(path.join(SKILL, 'references/ledger.md'), 'utf8');
   assert.match(ledger, /\n## Under plan-review\n/u, 'ledger.md has § Under plan-review');
   assert.match(ledger, /\[Under plan-review\]\(#under-plan-review\)/u, 'ledger.md links its plan-review section');

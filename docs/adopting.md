@@ -2,6 +2,9 @@
 
 The README's [Quick start](../README.md#quick-start) creates the project folder and a first knowledge index.
 This page finishes the setup.
+The [`harness-consultant` skill](../plugins/aidrian/skills/harness-consultant/SKILL.md) is the guided route:
+it does the Quick start's first step and this page in one session. It asks its questions before writing,
+shows the docs before writing them, and prints the commit to make.
 [`examples/consumer`](../examples/consumer) is a complete example; copy it as a start.
 Its `.aidrian/`, `.claude/settings.json`, `AGENTS.md`, and `CLAUDE.md` are the harness's part.
 Its `src/` and `package.json` are a stand-in app; use your own.

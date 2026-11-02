@@ -120,7 +120,8 @@ For Codex, see [Running aidrian](docs/providers/codex.md#running-aidrian).
    In Codex, ask the session for the `aidrian-orchestrator` agent by name.
 
 [Adopting in a project](docs/adopting.md) finishes the setup: tags, `always` docs, `AGENTS.md`, and the team's install.
-Or run the `harness-consultant` skill in a session (`/aidrian:harness-consultant` in Claude Code): it does step 1 and that page
+Or ask a session to set the project up for aidrian, which loads the `harness-consultant` skill
+(`/aidrian:harness-consultant` in Claude Code runs it by name): it does step 1 and that page
 in one session. It asks its questions before writing, shows the docs before writing them, and prints the commit for step 2.
 On a set-up project, it says what to fix.
 

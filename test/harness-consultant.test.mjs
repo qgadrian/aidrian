@@ -96,3 +96,17 @@ test('the AGENTS.md lines are the adopting page step 2 lines, and CLAUDE.md hold
   assert.equal(agents.body, adopting[0].body);
   assert.equal(claude.body, '@AGENTS.md');
 });
+
+test('the skill loads from a request in the Human`s words, and its report prints the labels the onboarding eval reads', () => {
+  const skill = read('plugins/aidrian/skills/harness-consultant/SKILL.md');
+  const [, head] = skill.match(/^---\n([\s\S]*?)\n---\n/u);
+  // "Set this project up for aidrian" must reach the skill: disable-model-invocation would leave it to the slash command.
+  assert.doesNotMatch(head, /^disable-model-invocation:/mu);
+  // A request for one knowledge doc is the near miss the description hands to knowledge-update.
+  assert.match(head, /^description: .*\bknowledge-update\b/mu);
+  const report = skill.slice(skill.indexOf('## 5. Report onboarding'), skill.indexOf('## 6.'));
+  assert.match(report, /never bold, rename, or merge it/u);
+  for (const label of ['Docs written:', 'Docs skipped:']) assert.ok(report.toLowerCase().includes(`the line \`${label.toLowerCase()}\``), label);
+  const graders = read('plugins/aidrian/evals/harness-consultant-onboard/graders/written.md');
+  assert.match(graders, /pattern: 'Docs written:'/u);
+});

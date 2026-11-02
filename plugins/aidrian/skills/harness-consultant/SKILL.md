@@ -1,7 +1,7 @@
 ---
 name: harness-consultant
-description: Set up aidrian in a project in one guided session, or check a set-up project and say what to fix. Asks first; shows docs before writing.
-disable-model-invocation: true
+description: Set up aidrian in a project in one guided session, or check a set-up project and say what to fix. One knowledge doc alone is knowledge-update.
+user-invocable: true
 ---
 
 # harness-consultant
@@ -80,12 +80,12 @@ When the checks cannot pass, it returns `blocked` naming what the Human must app
 
 ## 5. Report onboarding
 
-In this order:
+In this order, printing each label in backticks as is, at the start of its own line: never bold, rename, or merge it.
 
 1. The five items after the run, one line each: `R1 ok` ... `R5 ok`, or `missing` with the fix.
 2. Each answer applied, in write order, one line each: `<key>: <value>` (such as `github.reviewer: null`,
    `names: default`, `git.mainCheckout.guard: true` last), or `<file>: written`; in Codex, the install link.
-3. `Docs written:` each doc with its mode; `Docs skipped:` each with why.
+3. The line `Docs written:`, then each doc with its mode; the line `Docs skipped:`, then each with why. Either list empty: `none`.
 4. The `ok:` line of `aidrian check`, or its problems; the lines `aidrian lint` printed.
 5. `git status --porcelain`, and the commit to make:
    `chore(aidrian): set up the project folder and first knowledge docs`.

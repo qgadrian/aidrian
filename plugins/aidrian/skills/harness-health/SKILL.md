@@ -25,7 +25,7 @@ and `--project <dir>` reads another project than the current folder. The output 
   `sample`, its `n` and what it counts; `summary`, one sentence with the numbers; `fix`, a row of the table in step 3;
   `lesson`, the labels for a lesson, or null when the problem is a lesson already;
   and `resolved` and `since_resolution`, null unless a resolved lesson holds `lesson.key` (step 4).
-- `signals`: the knowledge budget, doc reads, agents, reviews, hook denies, session cost, and lessons,
+- `signals`: the knowledge budget, doc reads, agents, reviews, unreviewed drafts, hook denies, session cost, and lessons,
   each with its `status` (`ok`, `problem`, `not_enough_data`, or `unavailable`) and its sample.
 - `thresholds`: the limits used. `thresholds.health.minSample` is the smallest sample a signal is judged on;
   config.json `telemetry.health` sets them.
@@ -58,6 +58,7 @@ Agents are named as `aidrian:<name>` in Claude Code and `aidrian-<name>` in Code
 | `agent-prompt` | An agent re-dispatched, or sent back by the delivery check, too often | `harness-mechanic` reviews that agent's prompt when it is a plugin agent (`lesson.target` is `plugin`); a project's own agent goes to the agent that owns its file. |
 | `deny-rule` | One of the plugin's rules blocking again and again | Check the rule against what the agents tried, which `aidrian report` shows as its most frequent match: reword the rule's message or the blocked agent's instructions, or capture a lesson. |
 | `round-cap` | Many review rounds a pull request, or late findings on lines the bot had already reviewed | Check the review-round cap, config.json `github.maxReviewRounds`, which the `orchestration` and `autopilot` skills read. |
+| `review-loop` | An orchestrator or autopilot session that opened a draft pull request and ran no review round | `harness-mechanic` checks what runs after the implementing skill's draft: the `orchestrator` routing and the `autopilot` phases. A project's own orchestrator goes to the agent that owns its file. |
 | `cost` | The cost a session rising | Name the costly sessions with `aidrian report sessions`, with their main conversation against subagent split, and capture a lesson. |
 
 ## 4. Capture lessons

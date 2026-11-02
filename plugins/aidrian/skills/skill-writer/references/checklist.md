@@ -25,6 +25,8 @@ Testing is in `SKILL.md` Step 7's Done when.
 - [ ] Every fact was checked against the code, a schema, or a command run, not memory.
 - [ ] Each tool or CLI the skill needs is named, with what to do when it is missing.
 - [ ] An MCP tool is named by its server and tool, or by the role a shared reference gives it.
+- [ ] The skill ends at its own output and never names who continues: no "run by X, then" or "under X, continue with".
+  The caller's text names the next step. A next step in the skill's report is output for its reader.
 
 ## Structure
 

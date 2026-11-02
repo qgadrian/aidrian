@@ -75,6 +75,9 @@ Read `references/phases.md` at the start, and follow it.
    and the `pr-review` skill when the phase says so.
 4. Stop at sign-off, or at a bound.
 
+The engine ends at its draft, and these phases own what follows: the review loop runs once.
+The `orchestration` skill's § 3 rules apply inside phases 3 and 4, never as a second loop after them.
+
 ## Bounds
 
 - **Review rounds**: the `orchestration` skill § 3 stop rule, the one rule this run stops by, at most config.json

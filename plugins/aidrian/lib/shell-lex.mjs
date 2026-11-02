@@ -603,6 +603,19 @@ export function readsShellInput(invocation) {
   return true;
 }
 
+// Programs that run a script, and the script paths that are aidrian: the plugin's cli.mjs, or its bin/aidrian.
+const SCRIPT_RUNNERS = new Set(['node', 'nodejs', 'bun']);
+const AIDRIAN_SCRIPT = /(?:^|\/)(?:cli\.mjs|aidrian)$/u;
+
+// The words after the program that make an aidrian command, from readInvocation's { program, args }, or null when the
+// invocation is not aidrian: run as `aidrian` by any path, or as a node script that is the plugin's cli.mjs or bin/aidrian.
+export function aidrianArgs({ program, args }) {
+  if (program === 'aidrian') return args;
+  if (!SCRIPT_RUNNERS.has(program)) return null;
+  const script = args.findIndex((token) => !token.text.startsWith('-'));
+  return script !== -1 && AIDRIAN_SCRIPT.test(args[script].text) ? args.slice(script + 1) : null;
+}
+
 // Git global options that take the next token as their value.
 export const GIT_VALUE_GLOBALS = new Set(['-C', '-c', '--config-env', '--git-dir', '--work-tree', '--namespace', '--exec-path']);
 

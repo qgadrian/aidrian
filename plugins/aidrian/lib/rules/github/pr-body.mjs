@@ -83,7 +83,7 @@ export function readPrCalls(line) {
   return calls;
 }
 
-// { subcommand, fill, body, bodyFile, title, repo, target, head, base, dryRun } for a `gh [-R repo] pr create|edit …` segment, else null.
+// { subcommand, fill, draft, body, bodyFile, title, repo, target, head, base, dryRun } for a `gh [-R repo] pr create|edit …` segment, else null.
 // Later flags win, as in gh. `title`, `repo`, `head`, and `base` are tokens; `target` is the first positional (the pull request an edit
 // names).
 export function readPrCall(segment) {
@@ -104,7 +104,7 @@ export function readPrCall(segment) {
   // `gh pr new` is gh's built-in alias for `gh pr create`.
   if (words[1] === 'new') words[1] = 'create';
   if (words[0] !== 'pr' || !['create', 'edit'].includes(words[1])) return null;
-  const call = { subcommand: words[1], fill: false, web: false, help, body: null, bodyFile: null, title: null, repo, target: null, head: null, base: null, dryRun: false };
+  const call = { subcommand: words[1], fill: false, draft: false, web: false, help, body: null, bodyFile: null, title: null, repo, target: null, head: null, base: null, dryRun: false };
   for (; i < args.length; i += 1) {
     const { text, dynamic } = args[i];
     // After `--` every word is a positional: no flag, but still the pull request an edit names.
@@ -124,6 +124,7 @@ export function readPrCall(segment) {
       // --fill is refused unless it is statically off; --web and --help exempt only when statically on.
       if (options.includes('-f') && !(last === '-f' && explicit && isFalse(explicit[2], dynamic))) call.fill = true;
       if (options.includes('-w')) call.web = on('-w');
+      if (options.includes('-d')) call.draft = on('-d');
       if (options.includes('-h')) call.help = on('-h');
       if (!value) continue;
       [flag, inline] = [value.option, value.attached?.replace(/^=/u, '') ?? null];
@@ -131,6 +132,7 @@ export function readPrCall(segment) {
     const value = () => (inline !== null ? { text: inline, dynamic } : args[++i] ?? null);
     if (FILL.has(flag)) call.fill = true;
     else if (flag === '--web') call.web = isTrue(inline, dynamic);
+    else if (flag === '--draft') call.draft = isTrue(inline, dynamic);
     else if (flag === '--dry-run') call.dryRun = isTrue(inline, dynamic);
     else if (flag === '--help') call.help = isTrue(inline, dynamic);
     else if (flag === '--body' || flag === '-b') [call.body, call.bodyFile] = [value(), null];

@@ -84,7 +84,7 @@ then the issue's agent action plan, then the critical-flow and security gates, t
 - A plan request: `planning-agent`. Never rewrite its plan.
 - An issue to implement: run the `issue-implement` skill, so its tracker guards and In Progress move hold;
   a reviewed local plan with no issue: the `plan-implement` skill.
-  On its `done: draft pull request opened`, continue with the `orchestration` skill § 3 step 4 to its stop rule.
+  When its report names an opened draft, continue with the `orchestration` skill § 3 from step 4 to its end.
 - Product behavior may change: `product-manager` (invariants and outcomes, never schema), then `architect`, then the implementer.
   When the docs do not settle it: `explorer`, then `product-manager`, then the Human with its `decision_options`.
 - Shape unclear: `architect`. Codepath unclear: `explorer`. Why the code is this way: `github-archaeologist`.

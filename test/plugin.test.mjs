@@ -275,16 +275,28 @@ test('an implementing skill ends at its draft, and the orchestrator owns what fo
   const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
   const orchestrator = read('agents-src/coordination/orchestrator.md');
   assert.match(orchestrator, /its gates win, and its end is a step of your task, not the task's end/);
-  assert.match(orchestrator, /`plan-implement` skill\. On its `done: draft pull request opened`, continue with the `orchestration` skill § 3 step 4 to its stop rule\./);
+  assert.match(orchestrator, /`plan-implement` skill\. When its report names an opened draft, continue with the `orchestration` skill § 3 from step 4 to its end\./);
 
   const close = readFileSync(path.join(PLUGIN, 'skills/issue-implement/steps/phases-5-8-close.md'), 'utf8');
-  const report = close.slice(close.indexOf('## Phase 8'));
-  assert.match(report, /ends at the draft, its integration review, and the report; the caller owns what follows\./);
-  assert.match(report.replace(/\s+/g, ' '), /The `orchestrator` continues with the `orchestration` skill § 3 step 4/);
-  assert.equal(close.match(/ends at (the|a) draft/g).length, 1, 'the skill states its end once, in phase 8');
+  const report = close.slice(close.indexOf('## Phase 8')).replace(/\s+/g, ' ');
+  assert.match(report, /This skill ends at the draft, its integration review, and the report: the skill's result, not the session's last message\. The caller owns what follows\./);
+  assert.doesNotMatch(report, /orchestrator/, 'phase 8 names no caller: the caller owns what follows');
+  assert.equal((close.match(/ends at (the|a) draft/g) ?? []).length, 1, 'the skill states its end once, in phase 8');
+  assert.equal((report.match(/ends at (the|a) draft/g) ?? []).length, 1, 'that one statement is in phase 8');
   assert.doesNotMatch(close, /Under the `orchestrator`/, 'the skill states no caller-conditional continuation');
   assert.doesNotMatch(read('skills/issue-implement/references/hard-rules.md'), /run ends at a draft/);
-  assert.match(read('skills/orchestration/SKILL.md'), /the implementing skill already opened it; step 4 follows either way/);
+
+  // The orchestrator keys on the skill's verdicts, so they stay pinned.
+  const skill = readFileSync(path.join(PLUGIN, 'skills/issue-implement/SKILL.md'), 'utf8');
+  const output = skill.slice(skill.indexOf('## Output'));
+  assert.match(output, /`done: draft pull request opened`/);
+  assert.match(output, /`partial: review left findings open`/);
+
+  const orchestration = read('skills/orchestration/SKILL.md');
+  assert.match(orchestration, /Open a draft with the `pr-write` skill, unless the implementing skill already opened it: its integration review was step 3\./);
+  const prSection = orchestration.slice(orchestration.indexOf('## 3. The pull request'));
+  const step4 = prSection.match(/ 4\. (.*?) 5\. /)?.[1] ?? '';
+  assert.match(step4, /`pr-review-loop`/, '§ 3 step 4, where the orchestrator continues, runs the review loop');
 });
 
 test('the local banned terms file stays out of git', () => {

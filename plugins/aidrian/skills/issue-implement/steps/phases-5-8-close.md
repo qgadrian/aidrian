@@ -59,5 +59,4 @@ A failed write goes in the report; it never fails a finished implementation.
 
 Write the report the skill's output section defines.
 
-This skill ends at the draft, its integration review, and the report; the caller owns what follows.
-The `orchestrator` continues with the `orchestration` skill § 3 step 4, and a calling skill by its own steps; run by the Human, it stops here.
+This skill ends at the draft, its integration review, and the report: the skill's result, not the session's last message. The caller owns what follows.

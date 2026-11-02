@@ -6,7 +6,7 @@ import path from 'node:path';
 
 import { docsRead } from './dispatch-log.mjs';
 import { fileBytes } from './fs.mjs';
-import { latestRows as latest } from './jsonl.mjs';
+import { endedSessions, latestRows as latest } from './jsonl.mjs';
 import { checkBudgets, indexRows, loadKnowledge } from './knowledge.mjs';
 
 // `aidrian report docs` lists the docs with the most bytes read, and the docs with the most readers.
@@ -21,7 +21,7 @@ const NEVER_READ = 20;
 // that recorded doc reads. With `indexed`, the index's docs as { path, bytes }, `never_read` lists those nobody read.
 export function summarizeDocs(rows, { sinceMs = 0, indexed } = {}) {
   const fresh = rows.filter((row) => Date.parse(row.ts) >= sinceMs);
-  const counted = new Set([...latest(fresh, 'stop', 'agent_id'), ...latest(fresh, 'session', 'session_id')]);
+  const counted = new Set([...latest(fresh, 'stop', 'agent_id'), ...endedSessions(fresh)]);
   const byPath = new Map();
   let recorded = 0;
   for (const row of fresh.filter((each) => counted.has(each))) {

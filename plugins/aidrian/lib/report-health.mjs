@@ -8,7 +8,7 @@
 import { summarize, summarizeDenies } from './report-agents.mjs';
 import { summarizeDocs } from './report-docs.mjs';
 import { NO_BOT } from './report-reviews.mjs';
-import { latestRows } from './jsonl.mjs';
+import { endedSessions } from './jsonl.mjs';
 import { lessonStats } from './lesson-inbox.mjs';
 import { deliverySignal, denialSignal, roundLimitSignal } from './lesson-signals.mjs';
 import { summarizeSessions } from './report-sessions.mjs';
@@ -269,7 +269,7 @@ function draftsSignal(rows, sinceMs, add) {
   const inWindow = rows.filter((row) => Date.parse(row.ts) >= sinceMs);
   const dispatched = new Set(inWindow.filter((row) => row.event === 'dispatch' && ORCHESTRATOR.test(row.dispatcher ?? '')).map((row) => row.session_id));
   const flow = (row) => ORCHESTRATOR.test(row.agent ?? '') || dispatched.has(row.session_id) || (row.skills ?? []).some((name) => AUTOPILOT.test(name));
-  const sessions = latestRows(inWindow, 'session', 'session_id').filter((row) => row.drafts_opened > 0 && flow(row));
+  const sessions = endedSessions(inWindow).filter((row) => row.drafts_opened > 0 && flow(row));
   const unreviewed = sessions.filter((row) => !row.review_runs).map((row) => row.session_id);
   const sample = { n: sessions.length, of: 'orchestrator or autopilot sessions that opened a draft' };
   const base = { sample, unreviewed };
@@ -312,7 +312,7 @@ function deniesSignal(rows, sinceMs, { minSample, denyHotSpot }, recorded, add) 
 // averages are compared unrounded: rounded to the cent, $0.014 against $0.016 reads as a 100% rise, and $0.004 as nothing.
 function costSignal(rows, sinceMs, { minSample, costRisePercent }, add) {
   const summary = summarizeSessions(rows, { sinceMs });
-  const ended = latestRows(rows.filter((row) => row.event === 'session' && Date.parse(row.ts) >= sinceMs), 'session', 'session_id')
+  const ended = endedSessions(rows.filter((row) => row.event === 'session' && Date.parse(row.ts) >= sinceMs))
     .sort((a, b) => Date.parse(a.ts) - Date.parse(b.ts));
   const half = Math.floor(ended.length / 2);
   const average = (list) => (list.length ? sumOf(list, (row) => row.cost_usd) / list.length : null);

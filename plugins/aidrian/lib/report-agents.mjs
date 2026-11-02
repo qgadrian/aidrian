@@ -2,7 +2,7 @@
 // dispatch log, then the blocks by the plugin's own rules. docs/dispatch-log.md describes the view.
 
 import { docsRead, sendBackStates } from './dispatch-log.mjs';
-import { latestRows as latest } from './jsonl.mjs';
+import { endedSessions, latestRows as latest } from './jsonl.mjs';
 import { REPEATED_DENIALS } from './lesson-signals.mjs';
 
 const median = (values) => {
@@ -24,7 +24,7 @@ export function summarize(rows, { sinceMs = 0 } = {}) {
   const fresh = rows.filter((row) => Date.parse(row.ts) >= sinceMs && ['dispatch', 'stop', 'session'].includes(row.event));
   const dispatches = fresh.filter((row) => row.event === 'dispatch');
   const stops = latest(fresh, 'stop', 'agent_id');
-  const sessions = latest(fresh, 'session', 'session_id');
+  const sessions = endedSessions(fresh);
   const dispatched = new Set(dispatches.map((row) => row.agent_id).filter(Boolean));
   const sentBack = sendBackStates(fresh.filter((row) => row.event === 'stop'));
   const types = [...new Set([...dispatches, ...stops].map((row) => row.agent_type))].sort();

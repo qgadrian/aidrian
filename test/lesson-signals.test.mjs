@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import { inboxPath, lessons, pluginInboxPath } from '../plugins/aidrian/lib/lesson-inbox.mjs';
-import { deliverySignal, denialSignal, noteDenial, recordSignal, REPEATED_DENIALS, roundLimitSignal } from '../plugins/aidrian/lib/lesson-signals.mjs';
+import { deliverySignal, denialSignal, forgetDenials, noteDenial, recordSignal, REPEATED_DENIALS, roundLimitSignal } from '../plugins/aidrian/lib/lesson-signals.mjs';
 import { projectAt, projectId } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -81,8 +81,8 @@ test('noteDenial records a lesson on the third block of one rule in one session,
   assert.equal(results[2].agent, 'aidrian:explorer');
   noteDenial(input('s1'), 'process-kill', { dir: temp });
   noteDenial(input('s2'), 'git-amend', { dir: temp });
-  const count = (name) => readFileSync(path.join(temp, `aidrian-denials-${name}`), 'utf8').length;
-  assert.deepEqual([count('s1.git-amend'), count('s1.process-kill'), count('s2.git-amend')], [4, 1, 1]);
+  const count = (session, rule) => readFileSync(path.join(temp, `aidrian-denials-${session}`, rule), 'utf8').length;
+  assert.deepEqual([count('s1', 'git-amend'), count('s1', 'process-kill'), count('s2', 'git-amend')], [4, 1, 1]);
   assert.equal(noteDenial(input('s1'), '../x', { dir: temp }), null, 'a rule name that is not a file name part counts nothing');
   assert.deepEqual(all().map((lesson) => [lesson.key, lesson.seen]), [['hook-deny:git-amend', 1]]);
   for (const session of [undefined, '../x', 'a b']) assert.equal(noteDenial({ session_id: session, cwd: dir }, 'git-amend', { dir: temp }), null);
@@ -99,7 +99,7 @@ test('blocks that land at the same time all count, and exactly one of them recor
     spawn(process.execPath, ['--input-type=module', '-e', script], { stdio: 'ignore' }).on('exit', resolve);
   })));
   assert.deepEqual(exits, Array(blocks).fill(0));
-  assert.equal(readFileSync(path.join(temp, 'aidrian-denials-race.git-amend'), 'utf8').length, blocks);
+  assert.equal(readFileSync(path.join(temp, 'aidrian-denials-race', 'git-amend'), 'utf8').length, blocks);
   assert.deepEqual(all().map((lesson) => [lesson.key, lesson.seen]), [['hook-deny:git-amend', 1]]);
 });
 
@@ -108,10 +108,27 @@ test('the session-end hook deletes the session`s block counts and no other sessi
   for (let i = 0; i < REPEATED_DENIALS; i += 1) noteDenial({ session_id: 'ending', cwd: dir }, 'git-amend', { dir: temp });
   noteDenial({ session_id: 'ending', cwd: dir }, 'process-kill', { dir: temp });
   noteDenial({ session_id: 'ending-2', cwd: dir }, 'git-amend', { dir: temp });
-  const left = () => readdirSync(temp).filter((name) => name.startsWith('aidrian-denials-')).sort();
-  assert.deepEqual(left(), ['aidrian-denials-ending-2.git-amend', 'aidrian-denials-ending.git-amend', 'aidrian-denials-ending.git-amend.recorded', 'aidrian-denials-ending.process-kill']);
+  const left = () => readdirSync(temp).filter((name) => name.startsWith('aidrian-denials-'))
+    .flatMap((folder) => readdirSync(path.join(temp, folder)).map((name) => `${folder}/${name}`)).sort();
+  assert.deepEqual(left(), ['aidrian-denials-ending-2/git-amend', 'aidrian-denials-ending/git-amend', 'aidrian-denials-ending/git-amend.recorded', 'aidrian-denials-ending/process-kill']);
   assert.equal(hook('hook-session-end.mjs', { session_id: 'ending' }).status, 0);
-  assert.deepEqual(left(), ['aidrian-denials-ending-2.git-amend']);
+  assert.deepEqual(left(), ['aidrian-denials-ending-2/git-amend']);
+});
+
+test('forgetDenials deletes a session`s block counts without listing the temporary folder', { skip: process.platform === 'win32' }, (t) => {
+  const { dir, temp } = project(t);
+  const block = () => noteDenial({ session_id: 'ending', cwd: dir }, 'git-amend', { dir: temp });
+  for (let i = 1; i < REPEATED_DENIALS; i += 1) assert.equal(block(), null);
+  // A temporary folder that cannot be listed: the session's end must find its counts by path, since a listing of a
+  // real temporary folder with a hundred thousand entries eats the session-end hook's time budget.
+  chmodSync(temp, 0o300);
+  try {
+    forgetDenials('ending', { dir: temp });
+  } finally {
+    chmodSync(temp, 0o700);
+  }
+  // The count starts again: no block records a lesson before the REPEATED_DENIALS-th after the reset.
+  for (let i = 1; i < REPEATED_DENIALS; i += 1) assert.equal(block(), null);
 });
 
 test('the Bash hook still blocks every time, and the third block of a rule in a session becomes a lesson in the plugin\'s inbox', (t) => {

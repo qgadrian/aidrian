@@ -10,7 +10,7 @@ import { existsSync, renameSync } from 'node:fs';
 import path from 'node:path';
 
 import { fileBytes } from './fs.mjs';
-import { appendRow, latestRows as latest, LOCKED, readRows, withLocks } from './jsonl.mjs';
+import { appendRow, endedSessions, latestRows as latest, LOCKED, readRows, withLocks } from './jsonl.mjs';
 import { stateDir } from './project.mjs';
 
 // `config` is the project's config when the caller has it; stateDir reads it otherwise.
@@ -81,7 +81,7 @@ export function sendBackStates(stops) {
 // older rows and the window starts before it; else null. A time telemetry was off leaves no rows, so no report can see it.
 export function coverage(rows, config, { sinceMs = 0 } = {}) {
   const fresh = rows.filter((row) => Date.parse(row.ts) >= sinceMs);
-  const counted = [...latest(fresh, 'stop', 'agent_id'), ...latest(fresh, 'session', 'session_id')];
+  const counted = [...latest(fresh, 'stop', 'agent_id'), ...endedSessions(fresh)];
   const sendBacks = sendBackStates(fresh.filter((row) => row.event === 'stop'));
   const oldest = rows.reduce((min, row) => Math.min(min, Date.parse(row.ts) || Infinity), Infinity);
   const lost = rows.some((row) => row.event === 'rotate' && row.dropped === true);

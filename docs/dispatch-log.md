@@ -364,4 +364,6 @@ would read as the threshold, and a cost under ten cents to two significant digit
 - **No "read, not cited" count.** Agents follow a doc without naming it, and a handoff that lists `loaded_docs` names
   every doc it read, so whether the last message names a doc says nothing about whether the doc was used.
 - **One lock, for rotation only.** Rows from concurrent processes never interleave, because each is one append.
-  Only rotation renames the log, one process at a time, while it holds `dispatch-log.jsonl.lock`; nothing rewrites a row.
+  Only rotation renames the log, one process at a time, while it holds the log's lock, `dispatch-log.jsonl.lock.<n>`,
+  the same lock as the [lesson inbox's](lessons.md); a process that finds it held appends without rotating, and never
+  waits. Nothing rewrites a row.

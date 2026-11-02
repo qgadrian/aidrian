@@ -222,22 +222,35 @@ function update({ values, ids, ...ctx }) {
   if (problem) return fail(problem);
   const changes = Object.fromEntries(['tier', 'kind', 'target'].filter((name) => values[name] !== undefined).map((name) => [name, values[name]]));
   if (!Object.keys(changes).length) return fail('update needs --tier, --kind, or --target');
-  const found = writing(ctx, () => {
-    const held = locate(ids[0], ctx);
-    if (held) appendRow(held.file, { event: 'update', id: held.lesson.id, at: new Date().toISOString(), ...changes, ...stampFor(held.file, ctx) });
-    return held;
-  });
-  if (!found) return fail(`no lesson with id ${ids[0]}`);
-  const { file, lesson } = found;
+  // The inbox a target change moves the lesson `held` to, as homeInbox names it, or null when it stays.
   // A lesson in this project's own inbox came from this project, whatever its rows say; one in the plugin's inbox that
   // names no project is the plugin repository's own.
-  const from = file === ctx.plugin ? lesson.project ?? pluginProjectId() : null;
-  const home = changes.target ? homeInbox(ctx.project, ctx.config, { target: changes.target, from }) : null;
-  const to = home && home.file !== file ? home.file : file;
-  const moved = to !== file && moveLessons(file, to, [lesson.id], { project: home.project }).length > 0;
-  const now = fold(readRows(moved ? to : file).rows).find(lesson.id);
+  const destination = (held) => {
+    if (!held || !changes.target) return null;
+    const from = held.file === ctx.plugin ? held.lesson.project ?? pluginProjectId() : null;
+    const home = homeInbox(ctx.project, ctx.config, { target: changes.target, from });
+    return home.file === held.file ? null : home;
+  };
+  // The update row and the move are one write: it holds the locks of the inboxes it reads and of the destination from
+  // its read to the move's last row, so a destination it cannot lock leaves nothing written. The destination depends on
+  // what the read finds, so a first read names the locks to take in order; should the read under them name another,
+  // that lock is taken too before anything is written.
+  const guess = destination(locate(ids[0], ctx));
+  const result = withLocks([ctx.file, ctx.plugin, guess?.file], () => {
+    const held = locate(ids[0], ctx);
+    if (!held) return { held };
+    const home = destination(held);
+    return withLocks([home?.file], () => {
+      appendRow(held.file, { event: 'update', id: held.lesson.id, at: new Date().toISOString(), ...changes, ...stampFor(held.file, ctx) });
+      const moved = home ? moveLessons(held.file, home.file, [held.lesson.id], { project: home.project }).length > 0 : false;
+      return { held, moved, to: moved ? home.file : held.file };
+    });
+  });
+  if (!result.held) return fail(`no lesson with id ${ids[0]}`);
+  const { held: { lesson }, moved, to } = result;
+  const now = fold(readRows(to).rows).find(lesson.id);
   if (values.json) console.log(JSON.stringify(view(now)));
-  else console.log(`${summary(now, (moved ? to : file) === ctx.plugin)}${moved ? `\nMoved to ${to}` : ''}`);
+  else console.log(`${summary(now, to === ctx.plugin)}${moved ? `\nMoved to ${to}` : ''}`);
   return 0;
 }
 

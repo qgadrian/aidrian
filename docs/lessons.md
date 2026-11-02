@@ -38,12 +38,22 @@ The file is only ever appended to. Each row is one event on one lesson, and the 
 | `move` | `aidrian lesson update --target`, `aidrian lesson migrate` | Takes the lesson out of this inbox, after its rows were copied to another. |
 
 A row is one append, so rows from concurrent sessions never interleave, and nothing rewrites the file.
-A move reads the inbox, copies the lesson's rows, then writes its `move` row, so it holds `inbox.jsonl.lock` in both
-inboxes from that read to its last row. Every writer that acts on what it read, `add`, `resolve`, `update`, and the
-automatic signals, holds the lock of the inboxes it reads from that read to its append, so a row for a moving lesson
-lands before the move reads it, and goes with it, or after, where its writer finds the lesson in its new inbox.
-A writer waits up to 5 seconds for a lock; then the command fails with `is locked by another process` and writes
-nothing, and an automatic signal records nothing. A lock whose process is gone, or older than 30 seconds, is removed.
+A move reads the inbox, copies the lesson's rows, then writes its `move` row, so it holds the lock of both inboxes
+from that read to its last row. Every writer that acts on what it read, `add`, `resolve`, `update`, and the automatic
+signals, holds the lock of the inboxes it reads from that read to its append, so a row for a moving lesson lands before
+the move reads it, and goes with it, or after, where its writer finds the lesson in its new inbox.
+`update --target` takes the lock of the inbox the lesson moves to before it writes its `update` row, so a destination
+it cannot lock leaves nothing written.
+A writer waits up to 5 seconds for a lock; then the command fails with `is locked by another process`, naming the pid
+and the lock file, and writes nothing, and an automatic signal records nothing.
+
+The lock is a numbered file beside the inbox, `inbox.jsonl.lock.<n>`, holding the holder's pid and host; the highest
+number is the lock, and `inbox.jsonl.lock.<n>.released` marks it free. A process takes it by creating the next number,
+which only one process can create, when the highest is released or abandoned. A lock held from this host is abandoned
+only when its pid no longer runs: a live holder keeps it however long it runs. One held from another host, or naming no
+pid, is abandoned after 10 minutes. No process deletes a lock it did not supersede, so two never hold it at once.
+Once the lock is idle, its last two files stay. A process that reuses the pid of a holder that died keeps that lock
+held; when no aidrian command is running, delete the lock files.
 A line that does not parse is skipped.
 An `add` row with a `key` may also carry `once`, naming the event it reports: a later row with the same key and `once`
 is that event observed again, and adds nothing.

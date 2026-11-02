@@ -1,7 +1,8 @@
 // JSON Lines files for project state, such as the lesson inbox and the dispatch log: one JSON object per line.
 
 import { randomBytes } from 'node:crypto';
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, writeSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { hostname } from 'node:os';
 import path from 'node:path';
 
 // Appends one row. A single write in append mode: rows from concurrent processes never interleave.
@@ -30,71 +31,124 @@ function endsCut(file) {
 // How long a writer waits for a lock another process holds, and how often it looks again.
 const LOCK_WAIT_MS = 5_000;
 const LOCK_POLL_MS = 10;
-// A lock older than this is stale whoever holds it: no holder keeps one for more than a moment.
-const STALE_LOCK_MS = 30_000;
+// A lock whose holder cannot be checked, held from another host or naming no pid, is abandoned after this long.
+// A holder on this host is checked by its pid instead, and keeps its lock however long it lives.
+const UNCHECKED_LOCK_MS = 10 * 60_000;
 // The code of the error withLocks throws when a lock stays held.
 export const LOCKED = 'ELOCKED';
-// The files this process holds the lock of, so a holder that locks one again runs at once.
-const held = new Set();
+// The files this process holds the lock of, each with its generation, so a holder that locks one again runs at once.
+const held = new Map();
 
 // Runs `fn` holding the lock of every file in `files`, then releases them, and returns what `fn` returns. Appending needs
 // no lock; a writer whose rows depend on what it read in the file, such as a lesson move, takes it from the read to its
-// last append, so no other such writer appends in between. The lock is `<file>.lock`, created exclusively, holding the
-// holder's pid and a token. Locks are taken in path order, so two holders of the same files never wait on each other.
-// A lock whose holder is gone, or older than STALE_LOCK_MS, is removed. Throws when a lock stays held `waitMs`.
+// last append, so no other such writer appends in between. Locks are taken in path order, so two holders of the same
+// files never wait on each other. Throws an error with code LOCKED when a lock stays held `waitMs`.
+//
+// A lock is a numbered generation, `<file>.lock.<n>`: the highest number on disk is the lock's state. Its file holds the
+// holder's pid, host, and a nonce; `<file>.lock.<n>.released` marks it released. A process takes the lock by creating
+// generation n + 1 with an exclusive create, when generation n is released, missing, or abandoned: its holder is a pid
+// on this host that no longer runs, or it cannot be checked and is older than UNCHECKED_LOCK_MS. Of all the processes
+// that judged generation n free, only one creates n + 1, so taking over an abandoned lock is as safe as taking a free one,
+// and no process ever deletes a lock it did not supersede. A process whose view was out of date may create a lower
+// number than one already on disk; it sees the higher one, deletes its own, and looks again. The holder of generation n
+// deletes the generations below it, so two files stay once the lock is idle.
 export function withLocks(files, fn, { waitMs = LOCK_WAIT_MS } = {}) {
   const mine = [...new Set(files.filter(Boolean))].sort().filter((file) => !held.has(file));
   const taken = [];
   try {
-    for (const file of mine) taken.push(lock(file, waitMs));
+    for (const file of mine) {
+      held.set(file, lock(file, waitMs));
+      taken.push(file);
+    }
     return fn();
   } finally {
-    for (const { file, token } of taken.reverse()) {
+    for (const file of taken.reverse()) {
+      create(releasedName(file, held.get(file)), '');
       held.delete(file);
-      if (readText(`${file}.lock`) === token) rmSync(`${file}.lock`, { force: true });
     }
   }
 }
 
+const lockName = (file, generation) => `${file}.lock.${generation}`;
+const releasedName = (file, generation) => `${lockName(file, generation)}.released`;
+
+// Every lock file of `file` on disk, as { name, generation, released }.
+function lockFiles(file) {
+  const base = path.basename(file).replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const pattern = new RegExp(`^${base}\\.lock\\.(\\d+)(\\.released)?$`, 'u');
+  let names;
+  try {
+    names = readdirSync(path.dirname(file));
+  } catch {
+    names = [];
+  }
+  return names.map((name) => [name, pattern.exec(name)]).filter(([, match]) => match).map(([name, match]) => ({ name, generation: Number(match[1]), released: Boolean(match[2]) }));
+}
+
+const newest = (file) => Math.max(0, ...lockFiles(file).filter((item) => !item.released).map((item) => item.generation));
+
 function lock(file, waitMs) {
-  const name = `${file}.lock`;
-  mkdirSync(path.dirname(name), { recursive: true });
-  const token = `${process.pid} ${randomBytes(6).toString('hex')}\n`;
+  mkdirSync(path.dirname(file), { recursive: true });
+  const token = `${JSON.stringify({ pid: process.pid, host: hostname(), nonce: randomBytes(6).toString('hex') })}\n`;
   const deadline = Date.now() + waitMs;
   for (;;) {
-    try {
-      const fd = openSync(name, 'wx');
-      try {
-        writeSync(fd, token);
-      } finally {
-        closeSync(fd);
+    const top = newest(file);
+    const holder = top ? holderOf(file, top) : null;
+    if (!holder) {
+      const generation = top + 1;
+      if (create(lockName(file, generation), token)) {
+        if (newest(file) === generation) {
+          sweep(file, generation);
+          return generation;
+        }
+        // A newer generation exists: this process read an old state. Its own file is not the lock.
+        rmSync(lockName(file, generation), { force: true });
       }
-      held.add(file);
-      return { file, token };
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
+      if (Date.now() < deadline) continue;
     }
-    const holder = readText(name);
-    // The lock went away between the two calls: take it now.
-    if (holder === null) continue;
-    if (stale(name, holder)) {
-      // Removed only while it still holds what was judged stale, so a lock another waiter just took survives.
-      if (readText(name) === holder) rmSync(name, { force: true });
-      continue;
+    if (Date.now() >= deadline) {
+      const who = holder ? ` (pid ${holder.pid ?? 'unknown'}${holder.host && holder.host !== hostname() ? ` on ${holder.host}` : ''}, ${lockName(file, top)})` : '';
+      throw Object.assign(new Error(`${file} is locked by another process${who}; try again`), { code: LOCKED });
     }
-    if (Date.now() >= deadline) throw Object.assign(new Error(`${file} is locked by another process (${name}); try again`), { code: LOCKED });
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, LOCK_POLL_MS);
   }
 }
 
-// A lock whose holder process is gone, or that is older than STALE_LOCK_MS.
-function stale(name, holder) {
-  const pid = Number.parseInt(holder, 10);
-  if (pid > 0 && !alive(pid)) return true;
+// The holder of generation `generation`, as { pid, host }, or null when that generation no longer holds the lock:
+// released, gone, or abandoned.
+function holderOf(file, generation) {
+  const name = lockName(file, generation);
+  if (existsSync(releasedName(file, generation))) return null;
+  const text = readText(name);
+  if (text === null) return null;
+  let holder = {};
   try {
-    return Date.now() - statSync(name).mtimeMs > STALE_LOCK_MS;
+    holder = JSON.parse(text);
   } catch {
+    // Being written, or not a lock this code wrote: only its age can tell.
+  }
+  const pid = Number.isInteger(holder?.pid) && holder.pid > 0 ? holder.pid : null;
+  if (pid && holder.host === hostname()) return alive(pid) ? { pid, host: holder.host } : null;
+  try {
+    return Date.now() - statSync(name).mtimeMs > UNCHECKED_LOCK_MS ? null : { pid, host: typeof holder?.host === 'string' ? holder.host : null };
+  } catch {
+    return null;
+  }
+}
+
+// Deletes the lock files below `generation`, which no process holds any more.
+function sweep(file, generation) {
+  for (const item of lockFiles(file)) if (item.generation < generation) rmSync(path.join(path.dirname(file), item.name), { force: true });
+}
+
+// Creates `name` holding `text`, or returns false when it exists.
+function create(name, text) {
+  try {
+    writeFileSync(name, text, { flag: 'wx' });
     return true;
+  } catch (error) {
+    if (error.code === 'EEXIST') return false;
+    throw error;
   }
 }
 

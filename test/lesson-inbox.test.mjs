@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, rmSync, writeFileSync, writeSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -261,25 +261,36 @@ test('a lesson that joins a holder by key brings only its occurrences: the holde
 });
 
 
-// Another process that holds `file`'s lock, as every inbox writer does from its read to its append: it takes the lock,
-// says so, waits `ms`, appends `row` to `file`, and lets the lock go. `ready` settles once it holds the lock, `done` when
-// it exits. Raw fs calls, so it speaks the lock's file protocol and nothing else.
+// Another process that holds `file`'s lock (jsonl.mjs withLocks), as every inbox writer does from its read to its append:
+// it takes the lock, says so, waits `ms`, appends `row` to `file`, and lets the lock go. `ready` settles once it holds the
+// lock, `done` when it exits.
 function lockHolder(file, row, ms = 400) {
-  const code = `const fs = require('node:fs');
-const lock = process.argv[1] + '.lock';
-fs.writeFileSync(lock, process.pid + ' holder\\n', { flag: 'wx' });
-console.log('locked');
-setTimeout(() => {
-  fs.appendFileSync(process.argv[1], process.argv[2] + '\\n');
-  fs.rmSync(lock);
-}, ${ms});`;
-  const child = spawn(process.execPath, ['-e', code, file, JSON.stringify(row)], { stdio: ['ignore', 'pipe', 'inherit'] });
+  const jsonl = JSON.stringify(path.resolve(import.meta.dirname, '../plugins/aidrian/lib/jsonl.mjs'));
+  const code = `const { writeSync, appendFileSync } = await import('node:fs');
+const { withLocks } = await import(${jsonl});
+const [file, row] = process.argv.slice(1);
+withLocks([file], () => {
+  writeSync(1, 'locked\\n');
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${ms});
+  appendFileSync(file, row + '\\n');
+});`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code, file, JSON.stringify(row)], { stdio: ['ignore', 'pipe', 'inherit'] });
   const done = new Promise((resolve) => child.on('close', resolve));
   const ready = new Promise((resolve, reject) => {
     child.stdout.once('data', resolve);
     done.then((status) => reject(new Error(`the lock holder exited ${status} before it held the lock`)));
   });
   return { ready, done };
+}
+
+// Holds `file`'s lock for this test's process, which stays alive while a command waits on it: the lock's next
+// generation, naming this pid on this host. Returns that generation's file.
+function holdLock(file) {
+  mkdirSync(path.dirname(file), { recursive: true });
+  const numbers = readdirSync(path.dirname(file)).map((name) => name.startsWith(`${path.basename(file)}.lock.`) && /\.lock\.(\d+)$/u.exec(name)?.[1]).filter(Boolean).map(Number);
+  const name = `${file}.lock.${Math.max(0, ...numbers) + 1}`;
+  writeFileSync(name, `${JSON.stringify({ pid: process.pid, host: hostname(), nonce: 'test' })}\n`);
+  return name;
 }
 
 test('a move cut short after only a keyed lesson\'s add row resumes on the next run: the lesson arrives whole', (t) => {
@@ -335,7 +346,7 @@ test('a row another process appends while a move runs reaches the destination, n
   const moved = fold(readRowsOf(to)).find('eeee0001');
   assert.deepEqual([moved?.seen, moved?.occurrences.map((item) => item.note)], [2, ['written during the move']]);
   assert.equal(fold(readRowsOf(from)).find('eeee0001'), null);
-  assert.equal(existsSync(`${from}.lock`), false);
+  assert.deepEqual(readdirSync(path.dirname(from)).filter((name) => name.includes('.lock')).sort(), ['inbox.jsonl.lock.2', 'inbox.jsonl.lock.2.released'], 'the move took the lock after the writer and released it');
 });
 
 test('every writer of a lesson inbox waits for its lock: resolve, add --same, update, and the automatic signals', async (t) => {
@@ -375,10 +386,23 @@ test('a writer whose lock stays held fails with one line and writes nothing', (t
   const id = add('to resolve');
   const before = readFileSync(inbox(), 'utf8');
   // This test's own process holds the lock and never lets it go while the command waits.
-  writeFileSync(`${inbox()}.lock`, `${process.pid} held\n`);
+  const lock = holdLock(inbox());
   const resolved = run(['resolve', id, '--outcome', 'rejected', '--link', 'x']);
-  assert.deepEqual([resolved.status, resolved.stdout, resolved.stderr], [1, '', `${inbox()} is locked by another process (${inbox()}.lock); try again\n`]);
+  assert.deepEqual([resolved.status, resolved.stdout, resolved.stderr], [1, '', `${inbox()} is locked by another process (pid ${process.pid}, ${lock}); try again\n`]);
   assert.equal(readFileSync(inbox(), 'utf8'), before);
+});
+
+test('update writes nothing when it cannot lock the inbox a new target moves the lesson to', (t) => {
+  const consumer = setup(t);
+  const plugin = checkout(consumer, 'plugin', pluginRepository());
+  const id = consumer.add('a plugin lesson', ['--target', 'plugin']);
+  const before = readFileSync(plugin.inbox(), 'utf8');
+  // The move back goes to the consumer's inbox, which the plugin's checkout neither reads nor writes otherwise.
+  const lock = holdLock(consumer.inbox());
+  const back = plugin.run(['update', id, '--target', 'project']);
+  assert.deepEqual([back.status, back.stdout, back.stderr], [1, '', `${consumer.inbox()} is locked by another process (pid ${process.pid}, ${lock}); try again\n`]);
+  assert.equal(readFileSync(plugin.inbox(), 'utf8'), before, 'no update row without its move');
+  assert.deepEqual(plugin.json(['list', id]).map((row) => row.target), ['plugin']);
 });
 
 test('add appends one add row with tier, kind, target, and where it was captured, and prints its id', (t) => {

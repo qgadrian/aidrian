@@ -113,5 +113,5 @@ Claude Code runs each skill as `/aidrian:<skill>`. In Codex, ask for it by name.
 | `lesson` | Captures a session lesson into the inbox. |
 | `lesson-triage` | Routes each open lesson to a fix. |
 | `harness-health` | Explains the top problems in `aidrian report health`. |
-| `harness-consultant` | Sets up a project in one guided session through `harness-librarian`; on a set-up project, runs `harness-health`. |
+| `harness-setup` | Sets up a project in one guided session through `harness-librarian`; on a set-up project, runs `harness-health`. |
 | `skill-writer` | Creates, updates, audits, renames, or retires a skill. |

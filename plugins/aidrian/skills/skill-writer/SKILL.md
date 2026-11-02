@@ -68,8 +68,6 @@ The description is how the model picks the skill, in every session.
 - `name` equals the folder name.
 - A skill only the Human runs, which no agent preloads and no other skill invokes, gets `disable-model-invocation: true`.
   Claude Code hides it from the model; Codex ignores the field, so its description still counts toward the listing.
-  Except: a skill a request in the user's own words must start sets `user-invocable: true` instead, as `design-import`
-  and `harness-consultant` do, and its description names the near miss.
 
 **Done when** the description fits the limit and a reader can tell from it alone when the skill applies.
 

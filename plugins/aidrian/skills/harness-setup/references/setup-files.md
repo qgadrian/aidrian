@@ -1,6 +1,6 @@
 # Setup files
 
-The text `harness-librarian` writes into a project during the `harness-consultant` skill's setup, and how to fill it.
+The text `harness-librarian` writes into a project during the `harness-setup` skill's setup, and how to fill it.
 `<plugin root>` is the absolute plugin root the dispatch brief gives.
 
 ## AGENTS.md and CLAUDE.md

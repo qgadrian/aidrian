@@ -1,6 +1,6 @@
 # Librarian dispatches
 
-The `harness-librarian` briefs of the `harness-consultant` skill: the R4 brief of step 1, and the briefs of steps 3 and 4.
+The `harness-librarian` briefs of the `harness-setup` skill: the R4 brief of step 1, and the briefs of steps 3 and 4.
 No brief passes a model or effort. Every brief gives the librarian:
 
 - the absolute path of the checkout;
@@ -25,7 +25,7 @@ It follows its "A new project" procedure, in this order, skipping what holds:
 
 1. `aidrian init`; `aidrian-knowledge init <Q3 folder>` when the folder has `.md` files and no index,
    then each doc's summary and tags. An index that exists gets the same pass for each doc whose summary is still the
-   drafted one (its first heading or file name) or that has no tags.
+   drafted one (its first heading and first sentence, or its file name) or that has no tags.
 2. Q4 team names to config.json `names`, a developer's own names to `.aidrian.local.json`, and Q2 no to
    config.json `github.reviewer: null`. No other config key.
 3. The `AGENTS.md` and `CLAUDE.md` lines; in Claude Code with Q6 yes, `.claude/settings.json`.

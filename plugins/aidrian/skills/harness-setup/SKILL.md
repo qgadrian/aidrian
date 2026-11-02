@@ -1,10 +1,10 @@
 ---
-name: harness-consultant
-description: Set up aidrian in a project in one guided session, or check a set-up project and say what to fix. One knowledge doc alone is knowledge-update.
-user-invocable: true
+name: harness-setup
+description: Set up aidrian in a project in one guided session, or check a set-up project and say what to fix. Asks first; shows docs before writing.
+disable-model-invocation: true
 ---
 
-# harness-consultant
+# harness-setup
 
 Before you start, follow the `knowledge` skill.
 
@@ -94,7 +94,7 @@ In this order, printing each label in backticks as is, at the start of its own l
 
 **Done when** the report has all five parts.
 
-## 6. Consultant mode
+## 6. Check a set-up project
 
 Load and follow the `harness-health` skill, and relay its report.
 A `not_enough_data` or `unavailable` signal is reported as such, never offered as a fix.

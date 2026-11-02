@@ -1,9 +1,9 @@
-// The harness-consultant skill hands harness-librarian the text it writes into a project from
+// The harness-setup skill hands harness-librarian the text it writes into a project from
 // references/setup-files.md. These cases hold that text to the files it copies: the example project's team install,
 // the plugin manifest's repository, and the AGENTS.md lines of docs/adopting.md.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -13,7 +13,7 @@ import { closes, expandTabs, fenceOf, headingOf, indentOf } from '../plugins/aid
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const PLUGIN = path.join(ROOT, 'plugins/aidrian');
-const SETUP = 'plugins/aidrian/skills/harness-consultant/references/setup-files.md';
+const SETUP = 'plugins/aidrian/skills/harness-setup/references/setup-files.md';
 const read = (rel) => readFileSync(path.join(ROOT, rel), 'utf8');
 const json = (rel) => JSON.parse(read(rel));
 
@@ -97,43 +97,41 @@ test('the AGENTS.md lines are the adopting page step 2 lines, and CLAUDE.md hold
   assert.equal(claude.body, '@AGENTS.md');
 });
 
-test('the skill loads from a request in the Human`s words, and its report prints the labels the onboarding eval reads', () => {
-  const skill = read('plugins/aidrian/skills/harness-consultant/SKILL.md');
+test('only the Human runs the skill, and its report prints the labels the onboarding eval reads', () => {
+  const skill = read('plugins/aidrian/skills/harness-setup/SKILL.md');
   const [, head] = skill.match(/^---\n([\s\S]*?)\n---\n/u);
-  // "Set this project up for aidrian" must reach the skill: disable-model-invocation would leave it to the slash command.
-  assert.doesNotMatch(head, /^disable-model-invocation:/mu);
-  // A request for one knowledge doc is the near miss the description hands to knowledge-update.
-  assert.match(head, /^description: .*\bknowledge-update\b/mu);
+  // The skill writes a project's setup: the Human starts it by name, never the model from a request in other words.
+  assert.match(head, /^disable-model-invocation: true$/mu);
+  assert.doesNotMatch(head, /^user-invocable:/mu);
+  // A slash command never calls the Skill tool, so no eval case grades on it.
+  for (const name of ['harness-setup-onboard', 'harness-setup-rerun']) {
+    const prompt = read(`plugins/aidrian/evals/${name}/prompt.md`).split(/^---\n/mu)[2];
+    assert.match(prompt.trimStart(), /^\/aidrian:harness-setup\b/u, `${name} starts with the slash command`);
+    const graders = path.join(PLUGIN, 'evals', name, 'graders');
+    for (const file of readdirSync(graders)) {
+      assert.doesNotMatch(readFileSync(path.join(graders, file), 'utf8'), /^tool: Skill$/mu, `${name}/graders/${file}`);
+    }
+  }
   const report = skill.slice(skill.indexOf('## 5. Report onboarding'), skill.indexOf('## 6.'));
   assert.match(report, /never bold, rename, or merge it/u);
   for (const label of ['Docs written:', 'Docs skipped:']) assert.ok(report.toLowerCase().includes(`the line \`${label.toLowerCase()}\``), label);
-  const graders = read('plugins/aidrian/evals/harness-consultant-onboard/graders/written.md');
+  const graders = read('plugins/aidrian/evals/harness-setup-onboard/graders/written.md');
   assert.match(graders, /pattern: 'Docs written:'/u);
 });
 
 test('the report relays the check and lint lines this session ran, and every onboarding shapes the index', () => {
-  const skill = read('plugins/aidrian/skills/harness-consultant/SKILL.md');
+  const skill = read('plugins/aidrian/skills/harness-setup/SKILL.md');
   const section = (from, to) => skill.slice(skill.indexOf(from), skill.indexOf(to));
   // The librarian's brief returns only pending_commit, so the lines the report prints come from this session's own run.
   assert.match(section('## 4.', '## 5.'), /After the last dispatch, run `aidrian check` and `aidrian lint` here, read-only/u);
   assert.match(section('## 5.', '## 6.'), /Every line the step 4 `aidrian check` and `aidrian lint` printed, unchanged/u);
-  const lint = read('plugins/aidrian/evals/harness-consultant-onboard/graders/lint.md');
+  const lint = read('plugins/aidrian/evals/harness-setup-onboard/graders/lint.md');
   assert.match(lint, /paths: no personal paths/u, 'the onboard grader reads the lint paths line too');
   // A bare index from a quick start still gets its summaries, tags, and always doc, and Q1 still reaches a doc.
-  const dispatches = read('plugins/aidrian/skills/harness-consultant/references/dispatches.md');
+  const dispatches = read('plugins/aidrian/skills/harness-setup/references/dispatches.md');
   assert.doesNotMatch(section('## 3.', '## 4.'), /\bR2\b/u);
   assert.doesNotMatch(dispatches, /Only when R2 was missing/u);
   assert.match(dispatches, /An index that exists gets the same pass for each doc whose summary is still the\s+drafted one/u);
-});
-
-test('skill-writer names every plugin skill that sets user-invocable as its exception to disable-model-invocation', () => {
-  const writer = read('plugins/aidrian/skills/skill-writer/SKILL.md');
-  const step = writer.slice(writer.indexOf('## Step 4'), writer.indexOf('## Step 5'));
-  assert.match(step, /`user-invocable: true` instead/u);
-  const skills = path.join(PLUGIN, 'skills');
-  for (const name of readdirSync(skills)) {
-    const file = path.join(skills, name, 'SKILL.md');
-    if (!existsSync(file)) continue;
-    if (/^user-invocable: true$/mu.test(readFileSync(file, 'utf8'))) assert.ok(step.includes(`\`${name}\``), `${name} sets user-invocable`);
-  }
+  // aidrian-knowledge init drafts a summary from the first heading and first sentence, or the file name.
+  assert.match(dispatches, /drafted one \(its first heading and first sentence, or its file name\)/u);
 });

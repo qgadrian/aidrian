@@ -872,8 +872,9 @@ test('the quorum skill says what check does to an objection with no passing cita
   const skill = readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8').replace(/\s+/gu, ' ');
   assert.match(skill, /A `pending` objection with no passing citation becomes `opinion`/u);
   assert.doesNotMatch(skill, /- An objection with no passing citation becomes `opinion`/u, 'no unconditional relabel rule');
-  // A reused complete ledger reports what check kept, so an accepted objection whose evidence moved is not lost silently.
-  assert.match(skill, /is reused: skip the rounds, and report from it, with each objection `check` printed as kept in the Ledger item/u);
+  // A reused complete ledger reports every line check printed, so an accepted objection whose evidence or ruling no
+  // longer passes is not handed on silently as authoritative.
+  assert.match(skill, /is reused: skip the rounds, and report from it, with every line `check` printed in the Ledger item/u);
 });
 
 test('plan-review runs the quorum skill at step 3b, lists its flags in Inputs, and ledger.md says how it runs there', () => {

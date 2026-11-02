@@ -868,6 +868,14 @@ test('the quorum skill names exactly the flags `aidrian quorum` takes, real --mo
   }
 });
 
+test('the quorum skill says what check does to an objection with no passing citation: only a pending one becomes an opinion', () => {
+  const skill = readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8').replace(/\s+/gu, ' ');
+  assert.match(skill, /A `pending` objection with no passing citation becomes `opinion`/u);
+  assert.doesNotMatch(skill, /- An objection with no passing citation becomes `opinion`/u, 'no unconditional relabel rule');
+  // A reused complete ledger reports what check kept, so an accepted objection whose evidence moved is not lost silently.
+  assert.match(skill, /is reused: skip the rounds, and report from it, with each objection `check` printed as kept in the Ledger item/u);
+});
+
 test('plan-review runs the quorum skill at step 3b, lists its flags in Inputs, and ledger.md says how it runs there', () => {
   // A plan-review that forgets the step, or a ledger.md that drops its section, leaves the quorum's plan use undescribed.
   const review = readFileSync(PLAN_REVIEW, 'utf8');

@@ -55,7 +55,7 @@ Every objection, ruling, and rebuttal cites at least one `{kind, ref, quote}`: `
 each with the ref form the briefs' Evidence block gives, and a verbatim quote of at most 200 characters.
 `quorum check` proves a quote exists, not that it supports the claim: the architect opens the cited files.
 
-- An objection with no passing citation becomes `opinion`: never ruled on, never accepted, and named only in the report's footnote.
+- A `pending` objection with no passing citation becomes `opinion`: never ruled on or accepted, and only in the report's footnote.
 - A ruling `check` names invalid, and a backed objection the architect left without one, go back to the architect once.
   Invalid again, the objection escalates; still without a ruling, stop with `blocked`.
 - A rebuttal `check` names invalid (no passing citation, or nothing new) escalates its objection.
@@ -65,13 +65,14 @@ When `quorum check` still exits 1, stop with `blocked`, quoting what it printed.
 
 ## Ledger
 
-`<state>/quorum/<name>-<plan-hash>.json`: `<state>` is what `aidrian state` prints, `<name>` the plan's file name
-without `.md` (`<parent-folder>-plan` for a `plan.md`), and `<plan-hash>` is `git hash-object <plan>`.
+`<state>/quorum/<name>-<plan-hash>.json`, where `<state>` is what `aidrian state` prints and `<plan-hash>` is
+`git hash-object <plan>`.
 [references/ledger.md](references/ledger.md) gives every field and what each round writes: read it before writing the ledger.
 
 Before round 1:
 
-- A `complete` ledger at this hash for which `quorum check` exits 0 is reused: skip the rounds, and report from it.
+- A `complete` ledger at this hash for which `quorum check` exits 0 is reused: skip the rounds, and report from it,
+  with each objection `check` printed as kept in the Ledger item.
 - An `open` ledger at this hash is discarded, and the run starts over.
 - Every other `complete` ledger whose `plan` is this plan's absolute path gives its Human answers to every brief as
   settled, as ledger.md § Settled answers says. They are never copied into the new ledger.

@@ -101,8 +101,8 @@ the note is the rest.
   only its occurrences move, its `add` and `seen` rows and those of the lessons merged into it, and its ids find the holder.
   Its own updates and resolutions are dropped from the record: nothing lists them after the move, and the holder keeps
   its tier, kind, target, and status. An occurrence dated after the holder's fix reopens it, as any occurrence does.
-  Run `migrate --dry-run` first to read which lessons join which, and resolve or merge one by hand before the move
-  when its own resolution matters.
+  Run `migrate --dry-run` first to read which lessons join which. A joining lesson's resolution never moves,
+  even one written just before the move: when it matters, record it on the holder after the move with `aidrian lesson resolve`.
   Upgrade the plugin on every host of the machine before you run it: an older copy reads no `move` row, so it still lists the
   moved lessons in the project's inbox, and it files new plugin lessons there; run `migrate` again after one did.
 

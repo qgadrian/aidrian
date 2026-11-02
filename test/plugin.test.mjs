@@ -269,6 +269,24 @@ test('a skill that runs the pr-review-loop skill says when it marks the pull req
   }
 });
 
+test('an implementing skill ends at its draft, and the orchestrator owns what follows', () => {
+  // A continuation clause buried mid-phase in issue-implement lost to the skill's own terminal signals,
+  // and an orchestrator session stopped at the draft instead of running the review loop.
+  const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
+  const orchestrator = read('agents-src/coordination/orchestrator.md');
+  assert.match(orchestrator, /its gates win, and its end is a step of your task, not the task's end/);
+  assert.match(orchestrator, /`plan-implement` skill\. On its `done: draft pull request opened`, continue with the `orchestration` skill § 3 step 4 to its stop rule\./);
+
+  const close = readFileSync(path.join(PLUGIN, 'skills/issue-implement/steps/phases-5-8-close.md'), 'utf8');
+  const report = close.slice(close.indexOf('## Phase 8'));
+  assert.match(report, /ends at the draft, its integration review, and the report; the caller owns what follows\./);
+  assert.match(report.replace(/\s+/g, ' '), /The `orchestrator` continues with the `orchestration` skill § 3 step 4/);
+  assert.equal(close.match(/ends at (the|a) draft/g).length, 1, 'the skill states its end once, in phase 8');
+  assert.doesNotMatch(close, /Under the `orchestrator`/, 'the skill states no caller-conditional continuation');
+  assert.doesNotMatch(read('skills/issue-implement/references/hard-rules.md'), /run ends at a draft/);
+  assert.match(read('skills/orchestration/SKILL.md'), /the implementing skill already opened it; step 4 follows either way/);
+});
+
 test('the local banned terms file stays out of git', () => {
   const ignored = spawnSync('git', ['check-ignore', '-q', '.banned-terms.local'], { cwd: ROOT });
   assert.equal(ignored.status, 0, '.banned-terms.local must be git-ignored');

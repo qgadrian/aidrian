@@ -39,7 +39,7 @@ Note each in the report under decided alone.
 ## Every step
 
 - **The tracker stays read-only**, except the writes § Tracker writes lists. Never close the issue.
-- **No merge.** The run ends at a draft. Only the Human starts a merge, with the `pr-merge-when-green` skill.
+- **No merge.** This skill leaves a draft, and its caller owns what follows (phase 8). Only the Human starts a merge, with the `pr-merge-when-green` skill.
 - **No hook bypass**: no `--no-verify`, `HUSKY=0`, or empty `core.hooksPath`. A failing hook is fixed at its cause, or the run stops.
 - **No invention.** Never make up an acceptance criterion id, a path, a function, a label, or issue context.
 - **No silent product or architecture call.** Stop and ask once, with every open question together.

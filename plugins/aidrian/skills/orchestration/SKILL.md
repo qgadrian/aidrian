@@ -43,7 +43,7 @@ Never put a second agent on work the first may still be doing.
 
 1. Once every slice is committed and pushed, confirm with `git ls-remote --heads origin <branch>` that the remote has the last commit.
    A missing commit goes back to the agent that made it. Never force-push.
-2. Open a draft with the `pr-write` skill.
+2. Open a draft with the `pr-write` skill, or the implementing skill already opened it; step 4 follows either way.
 3. With more than one slice, run the `pr-review` skill on the assembled branch: it rechecks earlier slices' stubs and
    defaults against the later slices. Its findings go through the `pr-review-fix` skill and § 4.
 4. After each push, run the `pr-review-loop` skill, with `--await-codex` unless the review bot is out, as step 5 says.

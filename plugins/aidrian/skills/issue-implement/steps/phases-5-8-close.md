@@ -45,9 +45,6 @@ The review itself commits nothing. Set the slice's `status: complete`, with the 
 When git tracks the plan, `planning-agent` makes that edit under the `orchestrator`, and `doc-updater` commits it alone
 with a `docs` subject and pushes it: the only commit no slice owns.
 
-This run ends at the draft and its integration review. Under the `orchestrator`, it goes on with the `orchestration` skill § 3 step 4;
-otherwise the rest of that review loop runs when the Human or the calling skill asks for it.
-
 **Estimate correction.** Only when phase 4 recorded a re-size, after the pull request opens, make two tracker writes,
 with the tools the `knowledge` skill's `references/tracker.md` maps:
 
@@ -61,3 +58,6 @@ A failed write goes in the report; it never fails a finished implementation.
 ## Phase 8: report
 
 Write the report the skill's output section defines.
+
+This skill ends at the draft, its integration review, and the report; the caller owns what follows.
+The `orchestrator` continues with the `orchestration` skill § 3 step 4, and a calling skill by its own steps; run by the Human, it stops here.

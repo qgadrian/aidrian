@@ -10,7 +10,7 @@ import { unpushedMainLine } from '../plugins/aidrian/lib/main-commits.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 
 // `aidrian pre-commit`, run against temporary repositories. Each one is made with `git init` under mkdtemp and driven
-// with `git -C`. Only the GIT_DIR test sets GIT_DIR, to a temporary repository's own git folder; no test sets
+// with `git -C`. Only the GIT_DIR tests set GIT_DIR, to a temporary repository's own git folder; no test sets
 // GIT_WORK_TREE.
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
@@ -435,6 +435,51 @@ test('a commit routed through GIT_DIR or --git-dir from a folder outside the rep
   const viaWorktree = gitRun(outside, ['commit', '--allow-empty', '-q', '-m', 'test: in the worktree'], { GIT_DIR: path.join(dir, '.git', 'worktrees', 'task') });
   assert.deepEqual([viaWorktree.status, viaWorktree.stderr], [0, '']);
   assert.equal(git('log', '-1', '--format=%s', 'task'), 'test: in the worktree\n');
+});
+
+// This repository's own .githooks, installed by absolute path as `make hooks` does: git then finds them whatever the
+// commit's work tree, and each hook finds its script beside itself, not in that work tree.
+test("this repository's hooks, by absolute core.hooksPath, refuse a GIT_DIR commit from a sibling folder; a worktree's commit and a push run", (t) => {
+  const { dir, git } = repo(t);
+  git('config', 'core.hooksPath', path.join(ROOT, '.githooks'));
+  const before = git('rev-parse', 'HEAD');
+  const sibling = tempDir(t);
+
+  const viaEnv = gitRun(sibling, ['commit', '--allow-empty', '-q', '-m', 'test: via GIT_DIR'], { GIT_DIR: path.join(dir, '.git') });
+  assert.equal(viaEnv.status, 1, viaEnv.stderr);
+  assert.match(viaEnv.stderr, MAIN, 'the commit guard ran, not a missing script');
+  const viaOption = gitRun(sibling, ['--git-dir', path.join(dir, '.git'), 'commit', '--allow-empty', '-q', '-m', 'test: via --git-dir']);
+  assert.equal(viaOption.status, 1, viaOption.stderr);
+  assert.match(viaOption.stderr, MAIN);
+  assert.equal(git('rev-parse', 'HEAD'), before, 'no commit landed on main');
+
+  // A worktree's git folder: pre-commit passes, and commit-msg finds its script too.
+  worktree(dir, git);
+  const viaWorktree = gitRun(sibling, ['commit', '--allow-empty', '-q', '-m', 'test: in the worktree'], { GIT_DIR: path.join(dir, '.git', 'worktrees', 'task') });
+  assert.deepEqual([viaWorktree.status, viaWorktree.stderr], [0, '']);
+  assert.equal(git('log', '-1', '--format=%s', 'task'), 'test: in the worktree\n');
+  // pre-push finds its script the same way.
+  const origin = tempDir(t);
+  gitIn(origin)('init', '-q', '--bare', '-b', 'main');
+  git('remote', 'add', 'origin', origin);
+  const push = gitRun(sibling, ['push', '-q', 'origin', 'task'], { GIT_DIR: path.join(dir, '.git') });
+  assert.deepEqual([push.status, push.stderr], [0, '']);
+});
+
+test("make hooks sets core.hooksPath to the main checkout's absolute .githooks, run there or in a worktree", (t) => {
+  if (spawnSync('make', ['--version']).status !== 0) return t.skip('make is not installed');
+  const { dir, git } = repo(t);
+  const { tree } = worktree(dir, git);
+  const env = { ...process.env };
+  delete env.GIT_DIR;
+  delete env.GIT_WORK_TREE;
+  // core.hooksPath is shared by every worktree: one inside a worktree would stop every hook once that worktree goes.
+  for (const at of [dir, tree]) {
+    git('config', 'core.hooksPath', 'unset-by-the-test');
+    const make = spawnSync('make', ['-s', '-C', at, '-f', path.join(ROOT, 'Makefile'), 'hooks'], { encoding: 'utf8', env });
+    assert.equal(make.status, 0, make.stderr);
+    assert.equal(git('config', '--get', 'core.hooksPath'), `${path.join(dir, '.githooks')}\n`, `run in ${at}`);
+  }
 });
 
 // unpushedMainLine, against the same temporary repositories with a bare origin, made with `git init --bare` under

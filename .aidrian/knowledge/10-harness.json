@@ -24,7 +24,7 @@
       "tags": ["docs"]
     },
     "hooks.md": {
-      "summary": "Plugin hooks and Bash rules: pr-body, main-checkout, review-gate, review-rounds, process-kill, git-amend, terms, agent gates, commit messages.",
+      "summary": "Hooks, Bash rules: pr-body, main-checkout start lines, commit guard (aidrian pre-commit), commit messages, review gate and rounds, kill, amend, terms, gates.",
       "tags": []
     },
     "project-folder.md": {

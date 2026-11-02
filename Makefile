@@ -23,6 +23,6 @@ check:
 codex-agents:
 	node plugins/aidrian/codex/install-agents.mjs $(if $(TARGET),--target "$$TARGET")
 
-## Install the git hooks: banned terms out of commit messages and branch names, and the commit guard (docs/hooks.md).
+## Install the main checkout's git hooks by absolute path, from any checkout: banned terms, and the commit guard (docs/hooks.md).
 hooks:
-	git config core.hooksPath .githooks
+	common="$$(git rev-parse --path-format=absolute --git-common-dir)" && git config core.hooksPath "$$(dirname "$$common")/.githooks"

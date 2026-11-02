@@ -92,7 +92,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Review rounds, when a review bot is set | Setting `AIDRIAN_ALLOW_EXTRA_ROUNDS`, and asking the bot for a review outside `aidrian pr`, which counts rounds first ([config.md](config.md#review-gate)) | none |
 | Review sign-off | `aidrian pr signoff`, which records the Human's sign-off of a flow under their name ([review.md](review.md#sign-off-by-the-human)) | none: the Human runs it in their own shell |
 | Extra round approval | `aidrian pr extend <PR> --human approve` without the Human's answer in the session ([review.md](review.md#extra-rounds)) | none: the Human answers, or runs it in their own shell |
-| Main checkout, when turned on | A shell write to a tracked file in the main checkout, and, after a `cd` it cannot trust, a relative write or a git call that may change the main checkout | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
+| Main checkout, when turned on | A shell write to a tracked file in the main checkout; a git call there that makes a commit or moves the branch; after a `cd` it cannot trust, a relative write or a git call that may change the main checkout; and a relative write that lands there only if a `cd` inside it fails ([After a cd](#after-a-cd)) | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
 
 What each rule matches:
 
@@ -126,10 +126,15 @@ What each rule matches:
   machine's review record, as when the record came from another machine, the approval is refused.
   An answer the rule cannot read, such as `--human "$X"`, counts as approve; a pull request it cannot read is refused.
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
-  `touch`, `mkdir`, and `rsync` (sources too under `--remove-source-files`); and a branch switch or `git add -A` there.
+  `touch`, `mkdir`, and `rsync` (sources too under `--remove-source-files`); a branch switch or `git add -A` there;
+  and there `git commit`, `commit-tree`, `cherry-pick`, `revert`, `rebase`, `am` (all but `--abort` and `--quit`),
+  `merge` and `pull` but a `--ff-only` toward the default branch's upstream, and a `git reset` of anything but named
+  files ([Main checkout](#main-checkout)).
   After a `cd`, `pushd`, or `popd` that leaves the repository's checkouts, names a missing folder, or names one it cannot
   read (`cd "$S"`, `cd ~/x`, `cd -`), also a relative write, a glob included, and any git call but a read, such as
-  `git init` or `git commit`, that would act on the main checkout if that `cd` failed ([Main checkout](#main-checkout)).
+  `git init` or `git commit`, that would act on the main checkout if that `cd` failed.
+  After a `cd` inside the main checkout, a relative write that lands there only if that `cd` fails, such as
+  `cd build && echo x > a.txt` ([After a cd](#after-a-cd)).
 
 Each rule is a file in `plugins/aidrian/lib/rules/`; a rule that reads only `gh` commands, such as the pull request body rule, is in `rules/github/`.
 Each block is recorded: [Recorded blocks](#recorded-blocks).
@@ -177,10 +182,24 @@ Several sessions can share the main checkout, so the rule also keeps its git sta
 through, whatever the spelling:
 
 - `git add` of named files only: no folder, glob, `-A`, `-u`, or other option but `-v`, `-f`, `-N`, and `-p`.
-- `git commit` without `-a` or `--all`, and with no word that expands (`"$MSG"`, `"$(…)"`), which could become `-a`.
-  The commit itself is then refused by the [commit guard](#commit-guard), where the project installs it.
 - `git switch` and `git checkout` only back to `git.defaultBranch`; `git checkout -- <path>`, `git checkout <path>`, and
   `git checkout <commit> <path>` restore files and pass.
+- `git merge --ff-only` and `git pull --ff-only` toward the default branch's upstream only, which make no commit and
+  bring in nothing that is not on origin: `git merge --ff-only` with no operand or with `origin/<defaultBranch>`,
+  `@{u}`, `@{upstream}`, or `FETCH_HEAD`, and `git pull --ff-only` with no operand or with `origin <defaultBranch>`.
+  Any other operand, `.` included, is blocked: `git merge --ff-only feature` moves main onto commits origin lacks.
+  No other option passes but `-q`, `-v`, `--stat`, `-n` or `--no-stat`, `--progress` or `--no-progress`, and, for pull,
+  `--no-rebase`.
+- `git reset` of named files only, read as `git add` is, which unstages them: `git reset <file>`,
+  `git reset -- <file>`, and `git reset <commit> <file>`. A mode (`--hard`, `--soft`, `--mixed`, `--keep`, `--merge`),
+  a lone commit (`git reset HEAD~1`), a bare `git reset`, a folder, a glob, pathspec magic (`git reset .`,
+  `git reset :/`), and `--pathspec-from-file` unstage other sessions' work or move the branch, and are blocked.
+- `--abort` or `--quit` alone, for `merge`, `rebase`, `cherry-pick`, `revert`, and `am`: that is how a stray operation
+  is cleaned up. `--continue` and `--skip` make commits, and are blocked.
+- Never `git commit` or `commit-tree`, nor `cherry-pick`, `revert`, `rebase`, or `am` but to abort: each makes commits
+  on the branch every session shares. The rule blocks them whether or not the project installed the [commit guard](#commit-guard),
+  which refuses a commit the rule cannot read, such as the Human's own.
+- A word that may expand (`"$MSG"`, `"$(…)"`, `{a,b}`) makes none of these plainly safe.
 
 The rule follows `env -C`, `git -C`, `--work-tree`, and `--git-dir`, so a call from a worktree into the main checkout
 is blocked and one into a worktree passes. Anything blocked here belongs in a task worktree.
@@ -405,6 +424,8 @@ The project is the one at the hook's folder. A commit routed through `GIT_DIR` o
 repository runs the hook in that folder: there the project is the one in the main checkout git names, the folder that
 holds the common git folder, and that repository is judged. So when git finds the hook through the git folder
 (`.git/hooks`, or an absolute `core.hooksPath`), such a commit on the main checkout is refused too.
+A hook script that finds the plugin through `git rev-parse --show-toplevel` finds it in that outside folder and fails;
+name the plugin by an absolute path, or by one relative to the script (`"$(dirname "$0")/…"`), as below.
 
 The override is `AIDRIAN_ALLOW_MAIN_COMMIT=1`, per command in the Human's own terminal,
 `AIDRIAN_ALLOW_MAIN_COMMIT=1 git commit …`, and never exported before a session ([Overrides](#overrides)).
@@ -414,11 +435,16 @@ or sets `AIDRIAN_ALLOW_MAIN_COMMIT=1` in the job's env, a line the Human writes 
 
 It does not cover the commits that run neither hook: `cherry-pick`, `rebase`, `revert`, `am`, `pull --rebase`,
 `stash`, and `commit-tree`; nor a fast-forward merge or pull, which makes no commit.
+From agents, the [main-checkout](#main-checkout) Bash rule blocks each of these in the main checkout but `stash`
+and the fast-forward ones.
 `--no-verify` and a `core.hooksPath` override skip it; from agents the [git hook bypass](#bash-rules) rule denies both.
-A relative `core.hooksPath`, such as `.githooks` or husky's `.husky/_`, is read against the commit's work tree,
-so a commit routed through `GIT_DIR` or `--git-dir` from another folder runs no hook at all.
+It does not cover a relative install either: a relative `core.hooksPath`, such as `.githooks` or husky's `.husky/_`,
+is read against the commit's work tree, so a commit routed through `GIT_DIR` or `--git-dir` from another folder runs
+no hook at all.
 
-To install it, add the line to each hook, with the plugin folder as in [commit messages](#commit-messages):
+To install it, put the lines in `.git/hooks`, or in a folder an absolute `core.hooksPath` names
+(`git config core.hooksPath "$PWD/.githooks"`, run once per clone by the Human in the main checkout).
+Use the plugin folder as in [commit messages](#commit-messages):
 
 ```sh
 # .git/hooks/pre-commit, or the pre-commit file in the folder core.hooksPath names
@@ -429,4 +455,7 @@ node path/to/aidrian-harness/plugins/aidrian/lib/cli.mjs pre-commit
 node path/to/aidrian-harness/plugins/aidrian/lib/cli.mjs pre-commit
 ```
 
-A project without these lines gets the [main-checkout](#main-checkout) Bash rule only, which reads command text.
+husky sets the relative `.husky/_` again on each install, so under husky the guard runs for no commit whose work tree
+is elsewhere. This repository's `make hooks` sets its own `.githooks` by absolute path.
+A project without these lines still gets the [main-checkout](#main-checkout) Bash rule, which reads command text:
+it blocks an agent's commit in the main checkout, but not the Human's.

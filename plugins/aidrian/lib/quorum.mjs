@@ -326,8 +326,12 @@ function citationKey(citation) {
 // so any other id, as one holding a newline that would forge a line, stops the check.
 export const OBJECTION_ID = /^[AB][1-7]$/u;
 
+// A repeated id is refused too: a Human answer, a rebuttal, or a ruling names its objection by id alone.
 export function idProblems(ledger) {
-  return ledger.objections.filter((objection) => !OBJECTION_ID.test(objection.id)).map((objection) => `objection id "${shown(objection.id)}" is not A1 to A7 or B1 to B7`);
+  const ids = ledger.objections.map((objection) => objection.id);
+  const bad = ids.filter((id) => !OBJECTION_ID.test(id)).map((id) => `objection id "${shown(id)}" is not A1 to A7 or B1 to B7`);
+  const twice = [...new Set(ids.filter((id, i) => OBJECTION_ID.test(id) && ids.indexOf(id) !== i))].map((id) => `objection id ${id} is used more than once`);
+  return [...bad, ...twice];
 }
 
 // Why `same_model` and `same_model_reason` disagree: a ledger records why B ran as an agent exactly when it did.

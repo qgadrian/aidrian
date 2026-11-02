@@ -175,8 +175,8 @@ Each objection, ruling, and rebuttal cites its evidence as `{kind, ref, quote}`.
   A ref path outside the repository, as `..`, an absolute path, or through a symlink, is a failed citation that it warns
   about on stderr; it never reads that file. A ref with a control character is not a relative path, and `doc` and
   `code` read only a regular file.
-  It exits 1 on a schema error, on an objection id other than `A1` to `A7` or `B1` to `B7`, on `same_model` true with
-  no `same_model_reason` or false with one, on a Human answer for an objection the ledger does not hold or a second
+  It exits 1 on a schema error, on an objection id other than `A1` to `A7` or `B1` to `B7` or one used twice, on
+  `same_model` true with no `same_model_reason` or false with one, on a Human answer for an objection the ledger does not hold or a second
   answer for one, or on a `complete` ledger with an objection still `pending` or ruled on with no `ruling`. On an
   objection the Human did not settle (not `escalated`, not answered), a `complete` ledger also fails on a rebuttal with
   no final ruling, a final ruling other than `accept`, a status its final decision does not give, a `rejected`

@@ -560,6 +560,18 @@ test('check: an objection id other than A1 to A7 or B1 to B7 exits 1, is printed
   }
   const good = p.check(ledger([objection('A7', [PASSING.code]), objection('B1', [PASSING.code], { by: 'B' })]));
   assert.equal(good.status, 0, good.stderr);
+  // Two objections under one id: one Human answer would settle both, so the ledger stops before answers are read.
+  const ruled = { decision: 'reject', change_or_reason: 'r', citations: [cite('code', 'src/app.js:1', 'gone')] };
+  for (const status of ['open', 'complete']) {
+    const twice = { ...ledger([
+      objection('A1', [PASSING.code], { status: 'accepted', ruling: { ...ruled, decision: 'accept', citations: [PASSING.adr] } }),
+      objection('A1', [PASSING.code], { status: 'accepted', ruling: ruled }),
+    ]), status, human_answers: [{ objection_id: 'A1', answer: 'yes' }] };
+    const result = p.check(twice);
+    assert.equal(result.status, 1, status);
+    assert.match(result.stderr, /: objection id A1 is used more than once$/mu, status);
+    assert.deepEqual(result.ledger, twice, 'not written back');
+  }
 });
 
 test('check: a complete ledger whose ruling lost its evidence exits 1 and is not written; the same ledger open exits 0 and flags it', (t) => {

@@ -48,7 +48,7 @@ test('git groups the git keys, and the old top-level keys are unknown', (t) => {
   assert.deepEqual(nested.config.git, {
     defaultBranch: 'trunk',
     worktrees: { ...DEFAULTS.git.worktrees, dir: '../wt' },
-    mainCheckout: { guard: true, allowWrites: [] },
+    mainCheckout: { guard: true, allowWrites: [], commits: null },
     commits: { types: ['feat'] },
   });
   for (const key of Object.keys(DEFAULTS.git)) {
@@ -88,6 +88,14 @@ test('github.markReady: "ask" by default, "auto" lets the review loop mark a gre
   assert.match(loadConfig(project(t, { version: 1, github: { markReady: true } })).errors[0], /"github\.markReady" must be "ask" or "auto"$/);
 });
 
+test('git.mainCheckout.commits: null by default, and "block", "warn", or "allow" load as set', (t) => {
+  assert.equal(DEFAULTS.git.mainCheckout.commits, null);
+  for (const commits of ['block', 'warn', 'allow', null]) {
+    const { config, errors } = loadConfig(project(t, { version: 1, git: { mainCheckout: { commits } } }));
+    assert.deepEqual([errors, config.git.mainCheckout.commits], [[], commits], String(commits));
+  }
+});
+
 test('github.titleIssuePrefix: off by default, so pull request titles are plain Conventional Commits', (t) => {
   assert.equal(DEFAULTS.github.titleIssuePrefix, false);
   const { config, errors } = loadConfig(project(t, { version: 1, github: { titleIssuePrefix: true } }));
@@ -117,6 +125,7 @@ const errorCases = [
   ['negative number', { version: 1, docs: { wrapLimit: -1 } }, /"docs\.wrapLimit" must be a whole number, 0 or more$/],
   ['zero where a positive number is needed', { version: 1, github: { maxReviewRounds: 0 } }, /"github\.maxReviewRounds" must be a whole number above 0$/],
   ['string for a boolean', { version: 1, git: { mainCheckout: { guard: 'no' } } }, /"git\.mainCheckout\.guard" must be true or false$/],
+  ['main-checkout commit mode outside its list', { version: 1, git: { mainCheckout: { commits: 'deny' } } }, /"git\.mainCheckout\.commits" must be "block", "warn", "allow", or null$/],
   ['empty string', { version: 1, git: { defaultBranch: ' ' } }, /"git\.defaultBranch" must be a non-empty string$/],
   ['handoff mode outside its list', { version: 1, session: { handoff: 'always' } }, /"session\.handoff" must be "off", "ask", or "auto"$/],
   ['review record outside its list', { version: 1, review: { record: 'pr' } }, /"review\.record" must be "comment" or "local"$/],

@@ -20,7 +20,7 @@ export const NO_REVIEWER = 'none';
 const GIT_SCHEMA = {
   defaultBranch: 'text',
   worktrees: { dir: 'text', bootstrap: 'textOrNull', disposable: 'folderNames' },
-  mainCheckout: { guard: 'boolean', allowWrites: 'texts' },
+  mainCheckout: { guard: 'boolean', allowWrites: 'texts', commits: 'commitModeOrNull' },
   commits: { types: 'someTexts' },
 };
 
@@ -143,11 +143,13 @@ const TYPES = {
   prFields: [(value) => Array.isArray(value) && value.every((f) => PR_FIELDS.includes(f)), `a list of ${PR_FIELDS.map((f) => `"${f}"`).join(', ')}`],
   handoffMode: [(value) => ['off', 'ask', 'auto'].includes(value), '"off", "ask", or "auto"'],
   readyMode: [(value) => ['ask', 'auto'].includes(value), '"ask" or "auto"'],
+  commitModeOrNull: [(value) => value === null || ['block', 'warn', 'allow'].includes(value), '"block", "warn", "allow", or null'],
   versionOrNull: [(value) => value === null || (typeof value === 'string' && SEMVER.test(value)), 'a plugin version such as "0.17.0", or null'],
 };
 
 // `state.dir: null` is the per-project folder under `$XDG_STATE_HOME` (lib/project.mjs). Task worktrees sit beside the
 // repository's files, where editors and agents expect them; the guard is off until a project opts in.
+// `git.mainCheckout.commits: null` follows the guard: "block" when it is on, "allow" when it is off (lib/main-commits.mjs).
 // `git.worktrees.disposable` names the folders of installed packages, build output, and caches, which a worktree cleanup
 // may delete without asking (lib/worktree.mjs).
 // `names.ai: null` is the host's own name, which only the running hook knows. `github.reviewer: null`, or "none", which
@@ -156,7 +158,7 @@ export const DEFAULTS = deepFreeze({
   git: {
     defaultBranch: 'main',
     worktrees: { dir: '.worktrees', bootstrap: null, disposable: ['node_modules', 'dist', 'build', '.next', '.cache', 'coverage', '.turbo'] },
-    mainCheckout: { guard: false, allowWrites: [] },
+    mainCheckout: { guard: false, allowWrites: [], commits: null },
     commits: { types: ['build', 'chore', 'ci', 'docs', 'feat', 'fix', 'perf', 'refactor', 'revert', 'style', 'test'] },
   },
   state: { dir: null },

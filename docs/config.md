@@ -24,7 +24,7 @@ In a group such as `github`, set only the keys you change; the others keep their
       "bootstrap": null,
       "disposable": ["node_modules", "dist", "build", ".next", ".cache", "coverage", ".turbo"]
     },
-    "mainCheckout": { "guard": false, "allowWrites": [] },
+    "mainCheckout": { "guard": false, "allowWrites": [], "commits": null },
     "commits": { "types": ["build", "chore", "ci", "docs", "feat", "fix", "perf", "refactor", "revert", "style", "test"] }
   },
   "state": { "dir": null },
@@ -88,6 +88,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `git.worktrees.disposable` | Folder names, at any depth, whose git-ignored files a cleanup removes without asking. `[]` asks for any ignored file. |
 | `git.mainCheckout.guard` | `true` blocks agent edits to tracked files in the main checkout, so task work happens in worktrees. Off by default. |
 | `git.mainCheckout.allowWrites` | Tracked paths agents may still edit in the main checkout, as globs with `*` and `**`. Ignored paths are always allowed. |
+| `git.mainCheckout.commits` | What a commit in the main checkout gets. `"block"` refuses the commit and prints why; `"warn"` prints the same lines, each prefixed `warning:`, and lets the commit through; `"allow"` checks nothing. `null`, the default, follows the guard: `"block"` when `git.mainCheckout.guard` is `true`, `"allow"` when it is off. |
 | `git.commits.types` | The Conventional Commits types a commit subject may use; at least one. |
 | `state.dir` | The machine-local [state folder](project-folder.md#local-state); `null` is the one under `$XDG_STATE_HOME`. |
 | `github.requiredSections` | The `## ` sections every pull request body must have ([Bash rules](hooks.md#bash-rules)); `[]` checks none. |

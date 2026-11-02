@@ -9,11 +9,11 @@
 // `git ls-files`, and never executes what a citation names.
 
 import { spawn } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { insidePath, isObject, linksOutside } from './fs.mjs';
+import { insidePath, isFile, isObject, linksOutside } from './fs.mjs';
 import { runGit } from './git.mjs';
 import { isolate } from './review/env.mjs';
 import { sectionOf, slug } from './review/flows.mjs';
@@ -406,7 +406,7 @@ export function checkLedger(ledger, ctx) {
 // Reads a file under the root, or null when it is missing or not a regular file: a FIFO or a device would hang the read.
 const reader = (root) => (file) => {
   try {
-    if (!statSync(path.join(root, file)).isFile()) return null;
+    if (!isFile(path.join(root, file))) return null;
     return readFileSync(path.join(root, file), 'utf8');
   } catch {
     return null;

@@ -16,13 +16,14 @@ and `security` docs for the surfaces that need a security pass.
 ## Inputs
 
 ```text
-[<plan path> | <issue key or URL>] [--findings-only] [--apply] [--extended]
+[<plan path> | <issue key or URL>] [--findings-only] [--apply] [--extended] [--quorum | --no-quorum]
 ```
 
 - A plan path: absolute or from the repository root. An issue key or URL: the plan for that issue, found as step 1 says.
 - `--findings-only`: critique without a proposed diff.
 - `--apply`: the Human approves the diff this session proposed earlier; go to step 5. Valid only as step 5 says.
 - `--extended`: allow one refinement pass more than step 6 does.
+- `--quorum`: run step 3b on any plan. `--no-quorum`: skip it.
 
 **stop** ends the run with a report; **stop and ask** adds one question only the Human can answer.
 
@@ -61,6 +62,13 @@ Both run before the critique, and their verdicts go into its brief as authoritat
   untrusted content, privileged access, or a surface the project's `security` knowledge lists: `security-engineer` first.
   Its verdict and required invariants bind the critique; no critique finding drops them.
 
+## 3b. Quorum
+
+When a gate in step 3 ran, or the plan names a decision-record path or the `adr-writer` skill, load the `quorum` skill
+and follow it, with the gate verdicts and the trigger. Its `references/ledger.md` § Under plan-review defines the
+triggers, its reruns, and the `blocked on quorum` stop that resumes here. Its accepted objections, the Human's answers,
+and its Report's revision-history line go into step 4's brief as authoritative. Skip it when it is not installed.
+
 ## 4. Critique
 
 Dispatch `planning-agent` alone, in the foreground. Its brief carries the plan path, the gate verdicts, the flags,
@@ -73,7 +81,7 @@ Then report, in this order, and stop:
 
 1. **Verdict**: `plan ready: no findings`, `findings: diff proposed`, `findings only`, or `blocked on <gate or evidence>`.
 2. **Plan**: path, `plan_kind` or free-form, `status`, and freshness against the issue.
-3. **Gates**: each verdict, or not applicable.
+3. **Gates**: each verdict, or not applicable; the quorum Report's Ledger item with its trigger, or why it was skipped.
 4. **Findings**: blocking, important, then improvements, each with its anchor.
 5. **Open questions** from the plan, word for word, then **escalations**: product or architecture decisions, scope growth, disputes.
 6. **Proposed diff** with its revision-history line, unless `--findings-only`.

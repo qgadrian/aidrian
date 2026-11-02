@@ -16,6 +16,7 @@ const COMMANDS = {
   worktree: './worktree.mjs',
   pr: './pr.mjs',
   review: './review/bench.mjs',
+  quorum: './quorum.mjs',
   report: './report.mjs',
 };
 

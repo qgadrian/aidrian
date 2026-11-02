@@ -1,0 +1,1020 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { PassThrough } from 'node:stream';
+import test from 'node:test';
+
+import { CODEX_TIMEOUT_SEC, LEDGER_SCHEMA, OBJECTIONS_SCHEMA, REBUTTALS_SCHEMA, codexAnswer, commands, rebuttalProblems, schemaProblems } from '../plugins/aidrian/lib/quorum.mjs';
+import { slug } from '../plugins/aidrian/lib/review/flows.mjs';
+import { FINDINGS_SCHEMA, runCodex, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
+
+const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
+
+const temp = (t, prefix) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), prefix)));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+};
+
+const write = (root, file, text) => {
+  mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+  writeFileSync(path.join(root, file), text);
+};
+
+// A temporary repository with a knowledge doc, a decision record, code, and a needle only in an ignored file and an
+// untracked file; the plan and the ledger live in a state folder outside it.
+function project(t) {
+  const root = temp(t, 'aidrian-quorum-');
+  const state = temp(t, 'aidrian-quorum-state-');
+  const git = (...args) => {
+    const r = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(r.stderr);
+  };
+  git('init', '-q', '-b', 'main');
+  write(root, 'docs/rules.md', '# Rules\n\n## No `Double` Booking\nTwo bookings never\n    hold one slot.\n\n## Refunds\nA refund never exceeds the charge.\n\n## Deploy\nRun it:\n\n```bash\n# build first\nnpm run build\n## Fake heading\n```\n\nThen ship the build.\n');
+  write(root, 'docs/decisions/0001-store.md', '# 1. Store\n\n## Decision\nWe keep one ledger per plan.\n');
+  write(root, 'src/app.js', `export const app = 1;\nexport function book(slot) {\n  return slot;\n}\n// ${'q'.repeat(200)}\n`);
+  write(root, '.gitignore', 'secret.txt\n');
+  git('add', '-A');
+  write(root, 'src/secret.txt', 'NEEDLE_9 lives here\n');
+  write(root, 'src/untracked.js', 'NEEDLE_9 too\n');
+  const plan = path.join(state, 'plans/my-plan.md');
+  write(state, 'plans/my-plan.md', '# Plan\n\n## Approach\nStore the ledger\nunder the state folder.\n\n## Risks\nNone listed.\n');
+  const ledgerFile = path.join(state, 'quorum/my-plan-abc.json');
+  const check = (ledger, { env = process.env } = {}) => {
+    write(state, 'quorum/my-plan-abc.json', JSON.stringify(ledger));
+    const r = spawnSync(CLI, ['quorum', 'check', ledgerFile, '--plan', plan], { cwd: path.join(root, 'src'), encoding: 'utf8', env, timeout: 30_000 });
+    assert.equal(r.error, undefined, 'check finished');
+    return { ...r, ledger: JSON.parse(readFileSync(ledgerFile, 'utf8')), lines: r.stdout.trim().split('\n') };
+  };
+  return { root, state, plan, check, git };
+}
+
+const cite = (kind, ref, quote) => ({ kind, ref, quote });
+const objection = (id, citations, extra = {}) => ({ id, by: 'A', severity: 'important', claim: `claim ${id}`, citations, status: 'pending', ruling: null, rebuttal: null, ...extra });
+const ledger = (objections) => ({ status: 'open', plan: 'my-plan.md', plan_hash: 'abc', same_model: false, same_model_reason: null, trigger: 'critical flow gate', objections, human_answers: [] });
+
+const PASSING = {
+  docBySlug: cite('doc', 'docs/rules.md#no-double-booking', 'Two bookings never hold one slot.'),
+  docByText: cite('doc', 'docs/rules.md#No `Double` Booking', 'never   hold\none slot'),
+  adr: cite('adr', 'docs/decisions/0001-store.md#decision', 'one ledger per plan'),
+  code: cite('code', 'src/app.js:99', 'export function book(slot) {'),
+  plan: cite('plan', '#Approach', 'Store the ledger under the state folder.'),
+  absence: cite('absence', 'src', 'NEEDLE_9'),
+  // The quote follows a fenced block whose `# build first` and `## Fake heading` lines are code, not headings.
+  fenced: cite('doc', 'docs/rules.md#deploy', 'Then ship the build.'),
+  exact: cite('code', 'src/app.js:5', 'q'.repeat(200)),
+  wholeRepo: cite('absence', '.', 'NEEDLE_9'),
+};
+
+test('schemas: a full ledger and an objections answer pass; a missing field, an extra field, a bad enum, or too many fail', () => {
+  const good = ledger([objection('A1', [PASSING.code], {
+    status: 'rejected',
+    ruling: { decision: 'reject', change_or_reason: 'r', citations: [PASSING.adr] },
+    rebuttal: { verdict: 'rebut', claim: 'c', citations: [PASSING.plan], ruling: null },
+  })]);
+  good.human_answers.push({ objection_id: 'A1', answer: 'keep it' });
+  assert.deepEqual(schemaProblems(good, LEDGER_SCHEMA), []);
+  const answer = { objections: [{ severity: 'blocking', claim: 'x', citations: [PASSING.docBySlug] }] };
+  assert.deepEqual(schemaProblems(answer, OBJECTIONS_SCHEMA), []);
+
+  const extra = structuredClone(good);
+  extra.objections[0].citations[0].line = 3;
+  assert.deepEqual(schemaProblems(extra, LEDGER_SCHEMA), ['$.objections[0].citations[0].line is not a known field']);
+  const missing = structuredClone(good);
+  delete missing.objections[0].citations[0].quote;
+  delete missing.trigger;
+  assert.deepEqual(schemaProblems(missing, LEDGER_SCHEMA), ['$.trigger is missing', '$.objections[0].citations[0].quote is missing']);
+  const badEnum = structuredClone(good);
+  badEnum.objections[0].severity = 'nit';
+  badEnum.objections[0].rebuttal.verdict = 'maybe';
+  assert.equal(schemaProblems(badEnum, LEDGER_SCHEMA).length, 2);
+  assert.match(schemaProblems({ objections: Array(8).fill(answer.objections[0]) }, OBJECTIONS_SCHEMA)[0], /has 8 items, more than 7/u);
+  assert.deepEqual(schemaProblems({ objections: Array(7).fill(answer.objections[0]) }, OBJECTIONS_SCHEMA), [], 'exactly 7 objections pass');
+
+  // Codex holds its answer strictly: every property required and none other, as FINDINGS_SCHEMA does.
+  const strict = (schema) => {
+    if (schema.properties) {
+      assert.equal(schema.additionalProperties, false);
+      assert.deepEqual([...schema.required].sort(), Object.keys(schema.properties).sort());
+      Object.values(schema.properties).forEach(strict);
+    }
+    if (schema.items) strict(schema.items);
+  };
+  strict(OBJECTIONS_SCHEMA);
+  strict(REBUTTALS_SCHEMA);
+  strict(LEDGER_SCHEMA);
+  strict(FINDINGS_SCHEMA);
+  assert.deepEqual(OBJECTIONS_SCHEMA.properties.objections.items.properties.severity.enum, ['blocking', 'important', 'improvement']);
+});
+
+test('slug is exported from flows.mjs unchanged', () => {
+  assert.equal(slug('No `Double` Booking'), 'no-double-booking');
+  assert.equal(slug('no-double-booking'), 'no-double-booking');
+});
+
+test('check: every citation kind passes; anchors by heading text and by slug; quotes compare with whitespace collapsed; plan and ledger outside the root', (t) => {
+  const p = project(t);
+  // Ids as the ledger writes them: A1 to A7, then B1 on.
+  const objections = Object.values(PASSING).map((citation, i) => objection(i < 7 ? `A${i + 1}` : `B${i - 6}`, [citation]));
+  const result = p.check(ledger(objections));
+  assert.equal(result.stderr, '');
+  assert.equal(result.status, 0);
+  assert.deepEqual(result.lines, [`checked: ${objections.length} objections, 0 opinion, 0 problems`]);
+  assert.deepEqual(result.ledger.objections.map((each) => each.status), Array(objections.length).fill('pending'));
+});
+
+test('check: each citation kind that fails is named with its reason, and an objection with none passing becomes opinion', (t) => {
+  const p = project(t);
+  const failing = [
+    objection('A1', [cite('doc', 'docs/rules.md#refunds', 'Two bookings never hold one slot.')]),
+    objection('A2', [cite('doc', 'docs/nope.md#x', 'y')]),
+    objection('A3', [cite('adr', 'docs/decisions/0001-store.md#context', 'one ledger per plan')]),
+    objection('A4', [cite('code', 'src/app.js:1', 'export const app = 2;')]),
+    objection('A5', [cite('code', 'src/app.js', 'export const app = 1;')]),
+    objection('A6', [cite('plan', '#risks', 'Store the ledger')]),
+    objection('A7', [cite('absence', 'src', 'export function book')]),
+    objection('B1', [cite('code', 'src/app.js:1', 'x'.repeat(201))]),
+    objection('B2', [cite('code', 'src/app.js:1', 'nope'), PASSING.code]),
+  ];
+  const result = p.check(ledger(failing));
+  assert.equal(result.status, 0, result.stderr);
+  const statuses = Object.fromEntries(result.ledger.objections.map((each) => [each.id, each.status]));
+  assert.deepEqual(statuses, { A1: 'opinion', A2: 'opinion', A3: 'opinion', A4: 'opinion', A5: 'opinion', A6: 'opinion', A7: 'opinion', B1: 'opinion', B2: 'pending' });
+  const has = (pattern) => assert.ok(result.lines.some((line) => pattern.test(line)), `${pattern}\n${result.stdout}`);
+  has(/^objection A1\.citations\[0\] \(doc docs\/rules\.md#refunds\): docs\/rules\.md#refunds does not contain the quote$/u);
+  has(/^objection A1: relabeled opinion \(was pending\): no citation passes$/u);
+  has(/^objection A2\.citations\[0\] .*: docs\/nope\.md is missing$/u);
+  has(/^objection A3\.citations\[0\] .*: docs\/decisions\/0001-store\.md has no heading #context$/u);
+  has(/^objection A4\.citations\[0\] .*: src\/app\.js does not contain the quote$/u);
+  has(/^objection A5\.citations\[0\] .*: "src\/app\.js" is not path:line$/u);
+  has(/^objection A6\.citations\[0\] .*: the plan#risks does not contain the quote$/u);
+  has(/^objection A7\.citations\[0\] .*: src\/app\.js contains the quote$/u);
+  has(/^objection B1\.citations\[0\] .*: the quote is 201 characters, more than 200$/u);
+  assert.ok(!result.lines.some((line) => line.startsWith('objection B2:')), 'one passing citation keeps the objection');
+  assert.equal(result.lines.at(-1), `checked: 9 objections, 8 opinion, ${result.lines.length - 1} problems`);
+});
+
+test('check: an objection already ruled on keeps its status when its citations stop passing, and is named', (t) => {
+  const p = project(t);
+  // A complete ledger at this hash is reused when check exits 0: the cited code changed since, and an accepted objection,
+  // one the Human answered, must not drop to an opinion and out of the report.
+  const stale = [cite('code', 'src/app.js:1', 'export const app = 2;')];
+  const ruled = (decision) => ({ decision, change_or_reason: 'r', citations: [PASSING.adr] });
+  const before = { ...ledger([
+    objection('A1', stale, { status: 'accepted', ruling: ruled('accept') }),
+    objection('A2', stale, { status: 'rejected', ruling: ruled('reject'), rebuttal: { verdict: 'concede', claim: 'ok', citations: [], ruling: null } }),
+    objection('A3', stale, { status: 'escalated', ruling: ruled('escalate') }),
+  ]), status: 'complete', human_answers: [{ objection_id: 'A1', answer: 'yes, change it' }] };
+  const result = p.check(before);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.ledger.objections.map((each) => each.status), ['accepted', 'rejected', 'escalated']);
+  for (const [id, status] of [['A1', 'accepted'], ['A2', 'rejected'], ['A3', 'escalated']]) {
+    assert.ok(result.lines.includes(`objection ${id}: no citation passes; kept ${status}, since it was ruled on`), result.stdout);
+  }
+  assert.ok(!result.lines.some((line) => line.includes('relabeled')), result.stdout);
+  assert.equal(result.lines.at(-1), 'checked: 3 objections, 0 opinion, 6 problems');
+});
+
+test('check: a ruling, or a rebuttal that rebuts, with no passing citation is invalid; a concession needs none', (t) => {
+  const p = project(t);
+  const noProof = [cite('code', 'src/app.js:1', 'not there')];
+  const result = p.check(ledger([
+    objection('A1', [PASSING.code], { status: 'rejected', ruling: { decision: 'reject', change_or_reason: 'r', citations: noProof }, rebuttal: { verdict: 'rebut', claim: 'c', citations: [], ruling: { decision: 'reject', change_or_reason: 'r', citations: [PASSING.adr] } } }),
+    objection('A2', [PASSING.code], { status: 'rejected', ruling: { decision: 'reject', change_or_reason: 'r', citations: [PASSING.plan] }, rebuttal: { verdict: 'concede', claim: 'ok', citations: [], ruling: null } }),
+  ]));
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.lines.includes('objection A1 ruling: invalid: the ruling has no passing citation'), result.stdout);
+  assert.ok(result.lines.includes('objection A1 rebuttal: invalid: the rebuttal has no passing citation'), result.stdout);
+  assert.ok(!result.lines.some((line) => line.startsWith('objection A2')), result.stdout);
+  assert.deepEqual(result.ledger.objections.map((each) => each.status), ['rejected', 'rejected']);
+});
+
+test('check: a schema error exits 1 and leaves the ledger as it was', (t) => {
+  const p = project(t);
+  const bad = ledger([objection('A1', [{ ...PASSING.code, line: 3 }])]);
+  const schema = p.check(bad);
+  assert.equal(schema.status, 1);
+  assert.match(schema.stderr, /\$\.objections\[0\]\.citations\[0\]\.line is not a known field/u);
+  assert.deepEqual(schema.ledger, bad, 'not written back');
+});
+
+test('check: a ref path that leaves the root is one failed citation: a warning on stderr, the ledger written, exit 0', (t) => {
+  const p = project(t);
+  write(p.state, 'outside.md', '# Out\n\n## A\nsecret\n');
+  symlinkSync(path.join(p.state, 'outside.md'), path.join(p.root, 'docs/link.md'));
+  const escapes = [cite('doc', '../outside.md#a', 'secret'), cite('code', `${p.state}/outside.md:1`, 'secret'), cite('absence', '../', 'x'), cite('doc', 'docs/link.md#a', 'secret')];
+  // Each escape beside a passing citation: the objection stands on the other one, and only the escape fails.
+  const result = p.check(ledger([...escapes.map((escape, i) => objection(`A${i + 1}`, [escape])), objection('A5', [escapes[0], PASSING.code])]));
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.ledger.objections.map((each) => each.status), ['opinion', 'opinion', 'opinion', 'opinion', 'pending'], 'written back');
+  for (const [i, escape] of escapes.entries()) {
+    assert.ok(result.lines.some((line) => line.startsWith(`objection A${i + 1}.citations[0] (${escape.kind} ${escape.ref}): `) && line.endsWith('is outside the repository root')), `${escape.ref}\n${result.stdout}`);
+    assert.match(result.stderr, new RegExp(`warning: objection A${i + 1}\\.citations\\[0\\]: .* is outside the repository root, not read`, 'u'), escape.ref);
+  }
+  assert.ok(result.lines.includes('objection A5.citations[0] (doc ../outside.md#a): ../outside.md is outside the repository root'), result.stdout);
+  assert.ok(!result.lines.some((line) => line.startsWith('objection A5:')), 'the passing citation keeps A5');
+});
+
+test('check: a citation through a symlinked folder that points outside the root fails as an escape, for code, doc, and absence', (t) => {
+  const p = project(t);
+  // A symlinked shared folder, as a linked node_modules or config: its text never counts, for or against a claim.
+  write(p.state, 'shared/lib.js', 'export const SHARED_NEEDLE = 1;\n');
+  write(p.state, 'shared/notes.md', '# Notes\n\n## A\nSHARED_NEEDLE\n');
+  symlinkSync(path.join(p.state, 'shared'), path.join(p.root, 'vendor'));
+  p.git('add', 'vendor');
+  const refs = [cite('code', 'vendor/lib.js:1', 'SHARED_NEEDLE'), cite('doc', 'vendor/notes.md#a', 'SHARED_NEEDLE'), cite('absence', 'vendor', 'NOT_THERE'), cite('absence', 'vendor/lib.js', 'NOT_THERE')];
+  const result = p.check(ledger(refs.map((citation, i) => objection(`A${i + 1}`, [citation]))));
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.ledger.objections.map((each) => each.status), Array(refs.length).fill('opinion'));
+  for (const [i, citation] of refs.entries()) {
+    assert.ok(result.lines.includes(`objection A${i + 1}.citations[0] (${citation.kind} ${citation.ref}): ${citation.ref.replace(/[:#].*$/u, '')} is outside the repository root`), `${citation.ref}\n${result.stdout}`);
+  }
+  assert.equal(result.stderr.trim().split('\n').length, refs.length, result.stderr);
+});
+
+test('check: an escape in a ruling or a rebuttal fails that citation and warns: the ruling or rebuttal is invalid, exit 0', (t) => {
+  const p = project(t);
+  write(p.state, 'outside.md', '# Out\n\n## A\nsecret\n');
+  symlinkSync(p.state, path.join(p.root, 'state-link'));
+  const out = cite('doc', 'state-link/outside.md#a', 'secret');
+  const result = p.check(ledger([
+    objection('A1', [PASSING.code], { status: 'rejected', ruling: { decision: 'reject', change_or_reason: 'r', citations: [out] } }),
+    objection('A2', [PASSING.code], { status: 'rejected', ruling: { decision: 'reject', change_or_reason: 'r', citations: [PASSING.adr] }, rebuttal: { verdict: 'rebut', claim: 'c', citations: [cite('code', '../x.js:1', 'x')], ruling: { decision: 'reject', change_or_reason: 'r', citations: [out] } } }),
+  ]));
+  assert.equal(result.status, 0, result.stderr);
+  for (const line of [
+    'objection A1 ruling.citations[0] (doc state-link/outside.md#a): state-link/outside.md is outside the repository root',
+    'objection A1 ruling: invalid: the ruling has no passing citation',
+    'objection A2 rebuttal.citations[0] (code ../x.js:1): ../x.js is outside the repository root',
+    'objection A2 rebuttal: invalid: the rebuttal has no passing citation',
+    'objection A2 rebuttal ruling: invalid: the ruling has no passing citation',
+  ]) assert.ok(result.lines.includes(line), `${line}\n${result.stdout}`);
+  assert.equal(result.stderr.trim().split('\n').length, 3, result.stderr);
+  assert.deepEqual(result.ledger.objections.map((each) => each.status), ['rejected', 'rejected']);
+});
+
+test('check: GIT_DIR and GIT_WORK_TREE pointing at another repository do not redirect absence: it lists the root`s files', (t) => {
+  const p = project(t);
+  // Another temporary repository, whose tracked files do not hold the quote that the root's src/app.js holds.
+  const other = temp(t, 'aidrian-quorum-other-');
+  spawnSync('git', ['init', '-q', other]);
+  write(other, 'src/other.js', 'nothing here\n');
+  spawnSync('git', ['add', '-A'], { cwd: other });
+  const env = { ...process.env, GIT_DIR: path.join(other, '.git'), GIT_WORK_TREE: other };
+  const result = p.check(ledger([objection('A1', [cite('absence', 'src', 'export function book')])]), { env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.lines.includes('objection A1.citations[0] (absence src): src/app.js contains the quote'), result.stdout);
+});
+
+test('check: absence never counts an ignored or untracked file: naming one is a path git tracks no file under', (t) => {
+  const p = project(t);
+  const result = p.check(ledger([
+    objection('A1', [cite('absence', 'src/secret.txt', 'other')]),
+    objection('A2', [cite('absence', 'src/untracked.js', 'other')]),
+    objection('A3', [PASSING.absence]),
+  ]));
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.lines.includes('objection A1.citations[0] (absence src/secret.txt): git tracks no file under src/secret.txt'), result.stdout);
+  assert.ok(result.lines.includes('objection A2.citations[0] (absence src/untracked.js): git tracks no file under src/untracked.js'), result.stdout);
+  assert.ok(!result.lines.some((line) => line.startsWith('objection A3')), 'the needle only in ignored and untracked files is absent');
+});
+
+test('check: a ref with a NUL or another control character is not a relative path, and check does not crash', (t) => {
+  const p = project(t);
+  const refs = [cite('absence', 'src\u0000x', 'x'), cite('code', 'src/app.js\u0000:1', 'x'), cite('doc', 'docs/rules.md\n#refunds', 'x'), cite('absence', 'src\u007f', 'x')];
+  const result = p.check(ledger(refs.map((citation, i) => objection(`A${i + 1}`, [citation]))));
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!result.stdout.includes('\u0000'), 'no NUL reaches the output');
+  for (const [i, shown] of ['src\\u0000x', 'src/app.js\\u0000:1', 'docs/rules.md\\u000a#refunds', 'src\\u007f'].entries()) {
+    assert.ok(result.lines.some((line) => line.startsWith(`objection A${i + 1}.citations[0] (${refs[i].kind} ${shown}): "`) && line.endsWith('" is not a relative path')), `${shown}\n${result.stdout}`);
+  }
+  assert.deepEqual(result.ledger.objections.map((each) => each.status), Array(refs.length).fill('opinion'));
+  // A ref malformed for its kind fails before the path check, and is printed escaped too.
+  const malformed = p.check(ledger([
+    objection('A1', [cite('code', 'src\u0000x', 'x')]),
+    objection('A2', [cite('doc', 'docs/a.md\u001b[31mRED', 'x')]),
+    objection('A3', [cite('plan', 'Appr\u0000oach', 'x')]),
+  ]));
+  assert.equal(malformed.status, 0, malformed.stderr);
+  // No raw control character, other than the line breaks between lines.
+  assert.doesNotMatch(malformed.stdout.replaceAll('\n', ''), /[\u0000-\u001f\u007f]/u, 'no raw control character on stdout');
+  assert.ok(malformed.lines.includes('objection A1.citations[0] (code src\\u0000x): "src\\u0000x" is not path:line'), malformed.stdout);
+  assert.ok(malformed.lines.includes('objection A2.citations[0] (doc docs/a.md\\u001b[31mRED): "docs/a.md\\u001b[31mRED" is not path#anchor'), malformed.stdout);
+  assert.ok(malformed.lines.includes('objection A3.citations[0] (plan Appr\\u0000oach): "Appr\\u0000oach" is not #anchor'), malformed.stdout);
+});
+
+test('check: a code or doc citation to a FIFO fails as missing instead of hanging', { skip: process.platform === 'win32' }, (t) => {
+  const p = project(t);
+  for (const name of ['src/pipe.js', 'docs/pipe.md']) assert.equal(spawnSync('mkfifo', [path.join(p.root, name)]).status, 0);
+  const result = p.check(ledger([objection('A1', [cite('code', 'src/pipe.js:1', 'x')]), objection('A2', [cite('doc', 'docs/pipe.md#a', 'x')])]));
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.lines.includes('objection A1.citations[0] (code src/pipe.js:1): src/pipe.js is missing'), result.stdout);
+  assert.ok(result.lines.includes('objection A2.citations[0] (doc docs/pipe.md#a): docs/pipe.md is missing'), result.stdout);
+});
+
+// A stand-in for `codex exec`: it records how it was started, writes `answer` where -o points, then exits with `code`
+// after printing `stderr`. With `hang`, it never answers.
+function fakeCodex({ code = 0, stderr = '', answer, hang = false } = {}) {
+  const calls = [];
+  const spawnImpl = (command, argv, options) => {
+    const child = new EventEmitter();
+    child.signals = [];
+    child.kill = (signal) => child.signals.push(signal);
+    child.unref = () => {};
+    child.stdin = new PassThrough();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    let input = '';
+    child.stdin.on('data', (chunk) => (input += chunk));
+    child.stdin.on('end', () => {
+      const at = (flag) => argv[argv.indexOf(flag) + 1];
+      calls.push({ command, argv, options, input, schema: JSON.parse(readFileSync(at('--output-schema'), 'utf8')), child });
+      if (hang) return;
+      if (answer !== undefined) writeFileSync(at('-o'), typeof answer === 'string' ? answer : JSON.stringify(answer));
+      child.stderr.end(stderr);
+      child.stdout.end();
+      setImmediate(() => child.emit('close', code));
+    });
+    return child;
+  };
+  return { spawnImpl, calls };
+}
+
+function codexRun(t, fake, { codex = () => ({ ok: true }) } = {}) {
+  const dir = temp(t, 'aidrian-quorum-codex-');
+  // A repository of its own as the folder the command runs in, so the test reads nothing of this checkout.
+  spawnSync('git', ['init', '-q', dir]);
+  write(dir, 'brief.md', 'You are adversary B.\n\n');
+  write(dir, 'plan.md', '# Plan\n\nDo it.\n');
+  const printed = [];
+  const out = path.join(dir, 'state/objections.json');
+  // A ledger outside the repository, as one in the state folder is: B1 rejected, B2 accepted (perhaps in part), B3
+  // escalated, B4 pending, and A1 rejected.
+  const ledgerFile = path.join(temp(t, 'aidrian-quorum-ledger-'), 'quorum/plan-abc.json');
+  write(path.dirname(ledgerFile), path.basename(ledgerFile), JSON.stringify(RULED));
+  const rebut = ['--mode', 'rebut', '--ledger', ledgerFile];
+  const run = (extra = {}, brief = path.join(dir, 'brief.md'), flags = []) => commands.quorum.run(['codex', '--plan', path.join(dir, 'plan.md'), '--brief', brief, '--out', out, ...flags], { spawnImpl: fake.spawnImpl, codex, print: (line) => printed.push(line), cwd: dir, ...extra });
+  return { dir, out, printed, run, ledgerFile, rebut };
+}
+
+const ruling = (decision) => ({ decision, change_or_reason: 'r', citations: [PASSING.adr] });
+const RULED = ledger([
+  objection('B1', [PASSING.code], { by: 'B', status: 'rejected', ruling: ruling('reject') }),
+  objection('B2', [PASSING.code], { by: 'B', status: 'accepted', ruling: ruling('accept') }),
+  objection('B3', [PASSING.code], { by: 'B', status: 'escalated', ruling: ruling('escalate') }),
+  objection('B4', [PASSING.code], { by: 'B' }),
+  objection('A1', [PASSING.code], { status: 'rejected', ruling: ruling('reject') }),
+]);
+
+const ANSWER = { objections: [{ severity: 'blocking', claim: 'breaks the rule', citations: [PASSING.adr] }] };
+
+// The statuses `aidrian quorum codex` prints, and the exit code of each: the codex tests and the SKILL.md test below read them here.
+const CODEX_EXITS = { done: 0, unavailable: 3, timed_out: 1, quota: 1, failed: 1 };
+
+test('quorum codex: done writes the objections, prints one line, and exits 0; Codex runs read-only, isolated, on the brief then the plan', async (t) => {
+  const fake = fakeCodex({ answer: ANSWER });
+  const r = codexRun(t, fake);
+  process.env.CLAUDE_CODE_SESSION_ID = 'quorum-test';
+  t.after(() => delete process.env.CLAUDE_CODE_SESSION_ID);
+  assert.equal(await r.run(), CODEX_EXITS.done);
+  assert.deepEqual(r.printed.map((line) => Object.keys(JSON.parse(line))), [['status', 'reason']]);
+  assert.equal(JSON.parse(r.printed[0]).status, 'done');
+  assert.deepEqual(JSON.parse(readFileSync(r.out, 'utf8')), ANSWER);
+  const [call] = fake.calls;
+  assert.equal(call.command, 'codex');
+  assert.deepEqual(call.argv.slice(0, 4), ['exec', '--sandbox', 'read-only', '--ephemeral']);
+  assert.deepEqual(call.schema, OBJECTIONS_SCHEMA);
+  assert.equal(call.input, 'You are adversary B.\n\n# Plan\n\nDo it.\n');
+  assert.equal(call.options.detached, true);
+  assert.equal(call.options.env.CLAUDE_CODE_SESSION_ID, undefined, 'the env is isolated');
+});
+
+test('quorum codex: unavailable exits 3 without starting Codex', async (t) => {
+  const fake = fakeCodex();
+  const r = codexRun(t, fake, { codex: () => ({ ok: false, reason: 'the codex CLI is not installed' }) });
+  assert.equal(await r.run(), CODEX_EXITS.unavailable);
+  assert.deepEqual(r.printed.map((line) => JSON.parse(line)), [{ status: 'unavailable', reason: 'the codex CLI is not installed' }]);
+  assert.equal(fake.calls.length, 0);
+});
+
+test('quorum codex: quota and failed exit 1, and an answer off the schema is failed', async (t) => {
+  for (const [fake, status, reason] of [
+    [fakeCodex({ code: 1, stderr: 'working\nYou hit your usage limit\n' }), 'quota', /usage limit/u],
+    [fakeCodex({ code: 2, stderr: 'boom\n' }), 'failed', /^exit 2: boom$/u],
+    [fakeCodex({ answer: 'not json' }), 'failed', /did not print JSON/u],
+    [fakeCodex({ answer: { objections: [{ severity: 'nit', claim: 'x', citations: [] }] } }), 'failed', /does not follow the schema/u],
+  ]) {
+    const r = codexRun(t, fake);
+    assert.equal(await r.run(), CODEX_EXITS[status], status);
+    const line = JSON.parse(r.printed[0]);
+    assert.equal(r.printed.length, 1);
+    assert.equal(line.status, status);
+    assert.match(line.reason, reason);
+  }
+});
+
+test('quorum codex: timed_out after 780 s, with SIGTERM then SIGKILL, exits 1', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const fake = fakeCodex({ hang: true });
+  const r = codexRun(t, fake);
+  const exit = r.run();
+  await new Promise((resolve) => setImmediate(resolve));
+  const child = fake.calls[0].child;
+  t.mock.timers.tick(CODEX_TIMEOUT_SEC * 1000 - 1);
+  assert.deepEqual(child.signals, []);
+  t.mock.timers.tick(1);
+  assert.deepEqual(child.signals, ['SIGTERM']);
+  t.mock.timers.tick(5000);
+  assert.deepEqual(child.signals, ['SIGTERM', 'SIGKILL']);
+  t.mock.timers.tick(2000);
+  assert.equal(await exit, CODEX_EXITS.timed_out);
+  assert.deepEqual(r.printed.map((line) => JSON.parse(line)), [{ status: 'timed_out', reason: 'no answer in 780 s' }]);
+});
+
+test('runCodex removes its folder, and runExec`s codex branch runs through it with the findings schema', async (t) => {
+  const fake = fakeCodex({ answer: { findings: [], verdicts: [], contracts: [], cross_notes: [] } });
+  const dir = temp(t, 'aidrian-quorum-exec-');
+  const result = await runExec({ name: 'codex-local', kind: 'exec', builtIn: 'codex', timeoutSec: 780 }, { base: 'a', head: 'b', flows: [], files: null }, { root: dir, env: {}, spawnImpl: fake.spawnImpl });
+  assert.equal(result.status, 'done');
+  assert.deepEqual(fake.calls[0].schema, FINDINGS_SCHEMA);
+  const schemaFile = fake.calls[0].argv[fake.calls[0].argv.indexOf('--output-schema') + 1];
+  assert.throws(() => readFileSync(schemaFile), /ENOENT/u, 'the temporary folder is gone');
+  const raw = await runCodex({ root: dir, env: {}, schema: OBJECTIONS_SCHEMA, prompt: 'p', timeoutSec: 5, spawnImpl: fakeCodex({ answer: ANSWER }).spawnImpl });
+  assert.deepEqual(raw, { status: 'done', raw: ANSWER });
+});
+
+test('check: a CRLF plan keeps a quote that follows a fenced `# comment` in its section', (t) => {
+  const p = project(t);
+  writeFileSync(p.plan, ['# Plan', '', '## Approach', 'Run:', '', '```bash', '# build first', '```', '', 'Then store the ledger.', '', '## Risks', 'None.', ''].join('\r\n'));
+  const result = p.check(ledger([objection('A1', [cite('plan', '#approach', 'Then store the ledger.')])]));
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.lines, ['checked: 1 objections, 0 opinion, 0 problems']);
+});
+
+test('check: a heading inside a fenced block is no anchor', (t) => {
+  const p = project(t);
+  const result = p.check(ledger([objection('A1', [cite('doc', 'docs/rules.md#fake-heading', 'npm run build')])]));
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.lines.includes('objection A1.citations[0] (doc docs/rules.md#fake-heading): docs/rules.md has no heading #fake-heading'), result.stdout);
+});
+
+test('check: a rebuttal that re-cites the ledger cites nothing new; one with a new passing citation is valid', (t) => {
+  const p = project(t);
+  const rebut = (citations) => ({ verdict: 'rebut', claim: 'c', citations, ruling: null });
+  const ruled = { decision: 'reject', change_or_reason: 'r', citations: [PASSING.adr] };
+  const result = p.check(ledger([
+    // The same code citation at another line, spaced differently: the line and the spacing are not part of its identity.
+    objection('A1', [PASSING.code], { status: 'rejected', ruling: ruled, rebuttal: rebut([cite('code', './src/app.js:2', 'export  function book(slot)\n{')]) }),
+    objection('A2', [PASSING.code], { status: 'rejected', ruling: ruled, rebuttal: rebut([cite('adr', 'docs/decisions/0001-store.md#Decision', 'one ledger per plan')]) }),
+    objection('A3', [PASSING.code], { status: 'rejected', ruling: ruled, rebuttal: rebut([PASSING.adr, PASSING.plan]) }),
+  ]));
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.lines.includes('objection A1 rebuttal: invalid: the rebuttal cites nothing new'), result.stdout);
+  assert.ok(result.lines.includes('objection A2 rebuttal: invalid: the rebuttal cites nothing new'), 'a ruling`s citation, by heading text');
+  assert.ok(!result.lines.some((line) => line.startsWith('objection A3')), result.stdout);
+});
+
+test('check: two rebuttals that bring the same new evidence are both valid', (t) => {
+  const p = project(t);
+  const ruled = { decision: 'reject', change_or_reason: 'r', citations: [PASSING.adr] };
+  const rebuttal = { verdict: 'rebut', claim: 'c', citations: [PASSING.fenced], ruling: null };
+  const result = p.check(ledger([
+    objection('A1', [PASSING.code], { status: 'rejected', ruling: ruled, rebuttal: structuredClone(rebuttal) }),
+    objection('A2', [PASSING.plan], { by: 'B', status: 'rejected', ruling: ruled, rebuttal: structuredClone(rebuttal) }),
+  ]));
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.lines, ['checked: 2 objections, 0 opinion, 0 problems']);
+});
+
+test('check: a complete ledger with an objection pending, or ruled on with no ruling, exits 1 and is not written', (t) => {
+  const p = project(t);
+  const ruled = { decision: 'accept', change_or_reason: 'c', citations: [PASSING.adr] };
+  for (const [objections, message] of [
+    [[objection('A1', [PASSING.code])], /objection A1 is pending in a complete ledger/u],
+    [[objection('A2', [PASSING.code], { status: 'accepted' })], /objection A2 is accepted with no ruling in a complete ledger/u],
+  ]) {
+    const before = { ...ledger(objections), status: 'complete' };
+    const result = p.check(before);
+    assert.equal(result.status, 1, message.source);
+    assert.match(result.stderr, message);
+    assert.deepEqual(result.ledger, before);
+  }
+  const done = p.check({ ...ledger([objection('A3', [PASSING.code], { status: 'accepted', ruling: ruled }), objection('A4', [cite('code', 'src/app.js:1', 'nope')], { status: 'opinion' })]), status: 'complete' });
+  assert.equal(done.status, 0, done.stderr);
+});
+
+test('check: a ledger whose same_model and same_model_reason disagree exits 1 and is not written', (t) => {
+  const p = project(t);
+  for (const [same_model, same_model_reason, message] of [
+    [true, null, /same_model is true, so same_model_reason must say why B ran as an agent/u],
+    [true, '  ', /same_model is true, so same_model_reason must say why B ran as an agent/u],
+    [false, 'failed: exit 2', /same_model is false, so same_model_reason must be null/u],
+  ]) {
+    const before = { ...ledger([objection('A1', [PASSING.code])]), same_model, same_model_reason };
+    const result = p.check(before);
+    assert.equal(result.status, 1, `${same_model} ${same_model_reason}`);
+    assert.match(result.stderr, message);
+    assert.deepEqual(result.ledger, before, 'not written back');
+  }
+  for (const [same_model, same_model_reason] of [[true, 'unavailable: the codex CLI is not installed'], [false, null]]) {
+    const result = p.check({ ...ledger([objection('A1', [PASSING.code])]), same_model, same_model_reason });
+    assert.equal(result.status, 0, result.stderr);
+  }
+});
+
+test('check: a Human answer for an objection the ledger does not hold, or a second answer for one, exits 1 and is not written', (t) => {
+  const p = project(t);
+  const ruled = { decision: 'escalate', change_or_reason: 'both', citations: [PASSING.adr] };
+  const objections = [objection('A1', [PASSING.code], { status: 'accepted', ruling: ruled }), objection('A2', [PASSING.code], { status: 'rejected', ruling: ruled })];
+  const answer = (objection_id) => ({ objection_id, answer: 'do it' });
+  for (const [answers, messages] of [
+    [[answer('A1'), answer('A9')], [/human_answers names A9, not an objection in this ledger/u]],
+    [[answer('A1'), answer('A2'), answer('A1')], [/human_answers answers A1 more than once/u]],
+    [[answer('X'), answer('X')], [/human_answers names X, not an objection/u, /human_answers answers X more than once/u]],
+  ]) {
+    for (const status of ['open', 'complete']) {
+      const before = { ...ledger(objections), status, human_answers: answers };
+      const result = p.check(before);
+      assert.equal(result.status, 1, `${status} ${answers.map((each) => each.objection_id)}`);
+      for (const message of messages) assert.match(result.stderr, message);
+      assert.deepEqual(result.ledger, before, 'not written back');
+    }
+  }
+  const good = p.check({ ...ledger(objections), status: 'complete', human_answers: [answer('A1'), answer('A2')] });
+  assert.equal(good.status, 0, good.stderr);
+});
+
+test('check: an objection id other than A1 to A7 or B1 to B7 exits 1, is printed escaped, and the ledger is not written', (t) => {
+  const p = project(t);
+  for (const id of ['A0', 'A8', 'C1', 'a1', 'A10', '', 'A1\nchecked: 0 objections, 0 opinion, 0 problems']) {
+    const before = ledger([objection(id, [PASSING.code])]);
+    const result = p.check(before);
+    assert.equal(result.status, 1, JSON.stringify(id));
+    assert.match(result.stderr, /: objection id ".*" is not A1 to A7 or B1 to B7$/mu, JSON.stringify(id));
+    assert.equal(result.stderr.trim().split('\n').length, 1, 'a newline in an id forges no line');
+    assert.deepEqual(result.ledger, before, 'not written back');
+  }
+  const good = p.check(ledger([objection('A7', [PASSING.code]), objection('B1', [PASSING.code], { by: 'B' })]));
+  assert.equal(good.status, 0, good.stderr);
+  // Two objections under one id: one Human answer would settle both, so the ledger stops before answers are read.
+  const ruled = { decision: 'reject', change_or_reason: 'r', citations: [cite('code', 'src/app.js:1', 'gone')] };
+  for (const status of ['open', 'complete']) {
+    const twice = { ...ledger([
+      objection('A1', [PASSING.code], { status: 'accepted', ruling: { ...ruled, decision: 'accept', citations: [PASSING.adr] } }),
+      objection('A1', [PASSING.code], { status: 'accepted', ruling: ruled }),
+    ]), status, human_answers: [{ objection_id: 'A1', answer: 'yes' }] };
+    const result = p.check(twice);
+    assert.equal(result.status, 1, status);
+    assert.match(result.stderr, /: objection id A1 is used more than once$/mu, status);
+    assert.deepEqual(result.ledger, twice, 'not written back');
+  }
+});
+
+test('check: a complete ledger whose ruling lost its evidence exits 1 and is not written; the same ledger open exits 0 and flags it', (t) => {
+  const p = project(t);
+  // The ruling cites code; then the code changes and the plan does not, so a reused ledger would treat a stale ruling as settled.
+  const evidence = cite('code', 'src/app.js:2', 'export function book(slot) {');
+  const ruled = (decision, citations = [evidence]) => ({ decision, change_or_reason: 'r', citations });
+  const objections = () => [objection('A1', [PASSING.adr], { status: 'accepted', ruling: ruled('accept') })];
+  const before = p.check({ ...ledger(objections()), status: 'complete' });
+  assert.equal(before.status, 0, before.stderr);
+  write(p.root, 'src/app.js', 'export const app = 1;\nexport function reserve(slot) {\n  return slot;\n}\n');
+
+  const complete = { ...ledger(objections()), status: 'complete' };
+  const refused = p.check(complete);
+  assert.equal(refused.status, 1, refused.stdout);
+  assert.match(refused.stderr, /objection A1 ruling: invalid: the ruling has no passing citation in a complete ledger$/mu);
+  assert.deepEqual(refused.ledger, complete, 'not written back');
+
+  const open = p.check(ledger(objections()));
+  assert.equal(open.status, 0, open.stderr);
+  assert.ok(open.lines.includes('objection A1 ruling: invalid: the ruling has no passing citation'), open.stdout);
+
+  // An invalid rebuttal, or an invalid final ruling on one, is stale the same way.
+  // A rebuttal the architect accepted at the final ruling: the objection is accepted.
+  const rebutted = (rebuttal) => ({ ...ledger([objection('B1', [PASSING.adr], { by: 'B', status: 'accepted', ruling: ruled('reject', [PASSING.plan]), rebuttal })]), status: 'complete' });
+  for (const [entry, line] of [
+    [{ verdict: 'rebut', claim: 'c', citations: [evidence], ruling: ruled('accept', [PASSING.fenced]) }, /objection B1 rebuttal: invalid: the rebuttal has no passing citation in a complete ledger$/mu],
+    [{ verdict: 'rebut', claim: 'c', citations: [PASSING.fenced], ruling: ruled('accept') }, /objection B1 rebuttal ruling: invalid: the ruling has no passing citation in a complete ledger$/mu],
+  ]) {
+    const result = p.check(rebutted(entry));
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stderr, line);
+  }
+
+  // The Human settled these: an escalated objection keeps its invalid ruling, and an answered one stands on the answer.
+  const settled = p.check({ ...ledger([
+    objection('A1', [PASSING.adr], { status: 'escalated', ruling: ruled('reject') }),
+    objection('A2', [PASSING.adr], { status: 'accepted', ruling: ruled('escalate') }),
+  ]), status: 'complete', human_answers: [{ objection_id: 'A2', answer: 'accept it' }] });
+  assert.equal(settled.status, 0, settled.stderr);
+  assert.ok(settled.lines.includes('objection A1 ruling: invalid: the ruling has no passing citation'), settled.stdout);
+
+  // A valid partial accept escalated on its rejected part: the accepted part still stands, so its stale first ruling
+  // is refused even though the objection is escalated. An accept escalated whole (no rebuttal) is the Human's.
+  const partial = p.check({ ...ledger([
+    objection('B1', [PASSING.adr], { by: 'B', status: 'escalated', ruling: ruled('accept'), rebuttal: { verdict: 'rebut', claim: 'c', citations: [PASSING.fenced], ruling: ruled('reject', [PASSING.plan]) } }),
+  ]), status: 'complete' });
+  assert.equal(partial.status, 1, partial.stdout);
+  assert.match(partial.stderr, /objection B1 ruling: invalid: the ruling has no passing citation in a complete ledger$/mu);
+  const whole = p.check({ ...ledger([objection('B1', [PASSING.adr], { by: 'B', status: 'escalated', ruling: ruled('accept') })]), status: 'complete' });
+  assert.equal(whole.status, 0, whole.stderr);
+});
+
+test('check: a complete ledger with a rebuttal left unruled, a final ruling other than accept, or a status its decision does not give exits 1', (t) => {
+  const p = project(t);
+  const ruled = (decision) => ({ decision, change_or_reason: 'r', citations: [PASSING.adr] });
+  const rebut = (final) => ({ verdict: 'rebut', claim: 'c', citations: [PASSING.fenced], ruling: final });
+  const concede = { verdict: 'concede', claim: 'ok', citations: [], ruling: null };
+  for (const [fields, message] of [
+    [{ status: 'rejected', ruling: ruled('reject'), rebuttal: rebut(null) }, /objection B1 has a rebuttal with no final ruling in a complete ledger/u],
+    [{ status: 'rejected', ruling: ruled('reject'), rebuttal: rebut(ruled('reject')) }, /objection B1 has a final ruling of reject but is rejected, not escalated, in a complete ledger/u],
+    [{ status: 'accepted', ruling: ruled('reject'), rebuttal: rebut(ruled('escalate')) }, /objection B1 has a final ruling of escalate but is accepted, not escalated/u],
+    [{ status: 'rejected', ruling: ruled('reject'), rebuttal: rebut(ruled('accept')) }, /objection B1 is rejected, but its final decision makes it accepted, in a complete ledger/u],
+    [{ status: 'accepted', ruling: ruled('reject') }, /objection B1 is accepted, but its final decision makes it rejected/u],
+    [{ status: 'rejected', ruling: ruled('escalate') }, /objection B1 is rejected, but its final decision makes it escalated/u],
+    [{ status: 'accepted', ruling: ruled('reject'), rebuttal: concede }, /objection B1 is accepted, but its final decision makes it rejected/u],
+    // A rejection never answered: the rebuttal round was skipped, so it should have escalated.
+    [{ status: 'rejected', ruling: ruled('reject') }, /objection B1 is rejected with no rebuttal or concession in a complete ledger/u],
+  ]) {
+    const before = { ...ledger([objection('B1', [PASSING.code], { by: 'B', ...fields })]), status: 'complete' };
+    const result = p.check(before);
+    assert.equal(result.status, 1, message.source);
+    assert.match(result.stderr, message);
+    assert.deepEqual(result.ledger, before, 'not written back');
+    // The same ledger still open is mid-run: no complete-ledger problem.
+    assert.equal(p.check({ ...before, status: 'open' }).status, 0, message.source);
+  }
+  // Finished ledgers pass: a rebuttal accepted at the final ruling, a concession that keeps the first ruling, an
+  // escalated rebuttal, and an unruled rebuttal or a mismatched status that the Human's answer settled.
+  const good = p.check({ ...ledger([
+    objection('B1', [PASSING.code], { by: 'B', status: 'accepted', ruling: ruled('reject'), rebuttal: rebut(ruled('accept')) }),
+    objection('B2', [PASSING.code], { by: 'B', status: 'rejected', ruling: ruled('reject'), rebuttal: concede }),
+    objection('B3', [PASSING.code], { by: 'B', status: 'escalated', ruling: ruled('reject'), rebuttal: rebut(ruled('reject')) }),
+    objection('B4', [PASSING.code], { by: 'B', status: 'escalated', ruling: ruled('reject'), rebuttal: rebut(null) }),
+    objection('B5', [PASSING.code], { by: 'B', status: 'rejected', ruling: ruled('reject'), rebuttal: rebut(ruled('reject')) }),
+    objection('A1', [PASSING.code], { status: 'accepted', ruling: ruled('escalate') }),
+  ]), status: 'complete', human_answers: [{ objection_id: 'B5', answer: 'keep it out' }, { objection_id: 'A1', answer: 'do it' }] });
+  assert.equal(good.status, 0, good.stderr);
+});
+
+test('check: a ref that is not a relative path is a failed citation, not an escape', (t) => {
+  const p = project(t);
+  const refs = [cite('doc', 'docs\\rules.md#refunds', 'refund'), cite('doc', 'docs//rules.md#refunds', 'refund'), cite('doc', '#refunds', 'refund'), cite('code', ':3', 'x'), cite('absence', '', 'x'), cite('code', '.:1', 'x')];
+  const result = p.check(ledger(refs.map((citation, i) => objection(`A${i + 1}`, [citation]))));
+  assert.equal(result.status, 0, result.stderr);
+  for (const [i, citation] of refs.entries()) {
+    assert.ok(result.lines.includes(`objection A${i + 1}.citations[0] (${citation.kind} ${citation.ref}): "${citation.ref}" is not a relative path`), `${citation.ref}\n${result.stdout}`);
+  }
+});
+
+test('check: absence reads only regular tracked files: a tracked symlink to an outside file with the needle passes', (t) => {
+  const p = project(t);
+  write(p.state, 'outside.txt', 'NEEDLE_OUT\n');
+  write(p.root, 'lib/real.js', 'export {};\n');
+  symlinkSync(path.join(p.state, 'outside.txt'), path.join(p.root, 'lib/link.txt'));
+  p.git('add', 'lib');
+  const result = p.check(ledger([objection('A1', [cite('absence', 'lib', 'NEEDLE_OUT')])]));
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.lines, ['checked: 1 objections, 0 opinion, 0 problems']);
+});
+
+test('check: an absence path is a literal pathspec, a set GIT_ICASE_PATHSPECS does not break it, and a path with no tracked file fails', (t) => {
+  const p = project(t);
+  const result = p.check(ledger([
+    objection('A1', [cite('absence', ':(exclude)docs', 'export function book')]),
+    objection('A2', [cite('absence', 'nowhere', 'NEEDLE_9')]),
+    objection('A3', [cite('code', 'src/app.js:1', '')]),
+    objection('A4', [cite('code', 'src/app.js:1', '  \n\t ')]),
+  ]));
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.lines.includes('objection A1.citations[0] (absence :(exclude)docs): git tracks no file under :(exclude)docs'), result.stdout);
+  assert.ok(result.lines.includes('objection A2.citations[0] (absence nowhere): git tracks no file under nowhere'), result.stdout);
+  assert.ok(result.lines.some((line) => line.startsWith('objection A3.citations[0]') && line.endsWith(': the quote is empty')), result.stdout);
+  assert.ok(result.lines.some((line) => line.startsWith('objection A4.citations[0]') && line.endsWith(': the quote is empty')), result.stdout);
+  const icase = p.check(ledger([objection('A1', [PASSING.absence])]), { env: { ...process.env, GIT_ICASE_PATHSPECS: '1' } });
+  assert.equal(icase.status, 0, icase.stderr);
+  assert.deepEqual(icase.lines, ['checked: 1 objections, 0 opinion, 0 problems']);
+});
+
+test('quorum codex: a brief that cannot be read is failed, with one line and exit 1', async (t) => {
+  const fake = fakeCodex({ answer: ANSWER });
+  const r = codexRun(t, fake);
+  assert.equal(await r.run({}, path.join(r.dir, 'missing.md')), 1);
+  assert.equal(r.printed.length, 1);
+  const line = JSON.parse(r.printed[0]);
+  assert.equal(line.status, 'failed');
+  assert.match(line.reason, /ENOENT/u);
+  assert.equal(fake.calls.length, 0);
+});
+
+const REBUTTALS = { rebuttals: [
+  { objection_id: 'B1', verdict: 'rebut', claim: 'the ruling misreads the rule', citations: [PASSING.docBySlug] },
+  { objection_id: 'B2', verdict: 'concede', claim: 'the ruling holds', citations: [] },
+] };
+
+test('REBUTTALS_SCHEMA: Codex-strict, a concession may cite nothing, and each entry fills a ledger rebuttal without loss', () => {
+  const entry = REBUTTALS_SCHEMA.properties.rebuttals.items;
+  assert.equal(REBUTTALS_SCHEMA.additionalProperties, false);
+  assert.deepEqual(REBUTTALS_SCHEMA.required, ['rebuttals']);
+  assert.equal(entry.additionalProperties, false);
+  assert.deepEqual([...entry.required].sort(), ['citations', 'claim', 'objection_id', 'verdict']);
+  assert.deepEqual(entry.properties.verdict.enum, ['rebut', 'concede']);
+  assert.deepEqual(entry.properties.citations.items.required, ['kind', 'ref', 'quote']);
+  assert.equal(entry.properties.citations.items.additionalProperties, false);
+  assert.deepEqual(schemaProblems(REBUTTALS, REBUTTALS_SCHEMA), []);
+  assert.deepEqual(schemaProblems({ rebuttals: [{ ...REBUTTALS.rebuttals[0], ruling: null }] }, REBUTTALS_SCHEMA), ['$.rebuttals[0].ruling is not a known field']);
+
+  // The ledger rebuttal is the entry without objection_id (which names the objection it goes on), plus a ruling.
+  const ledgerRebuttal = LEDGER_SCHEMA.properties.objections.items.properties.rebuttal;
+  const { objection_id: id, ...fields } = entry.properties;
+  const { ruling, ...ledgerFields } = ledgerRebuttal.properties;
+  assert.deepEqual(id, { type: 'string' });
+  assert.deepEqual(ledgerFields, fields, 'every field the entry carries, with the same schema');
+  assert.ok(ruling);
+  const objections = REBUTTALS.rebuttals.map(({ objection_id, ...rest }) => objection(objection_id, [PASSING.code], {
+    by: 'B',
+    status: 'rejected',
+    ruling: { decision: 'reject', change_or_reason: 'r', citations: [PASSING.adr] },
+    rebuttal: { ...rest, ruling: null },
+  }));
+  assert.deepEqual(schemaProblems(ledger(objections), LEDGER_SCHEMA), []);
+});
+
+test('quorum codex --mode rebut: a schema-valid answer is held to REBUTTALS_SCHEMA, written, and exits 0 with one line', async (t) => {
+  const fake = fakeCodex({ answer: REBUTTALS });
+  const r = codexRun(t, fake);
+  assert.equal(await r.run({}, undefined, r.rebut), 0);
+  assert.deepEqual(r.printed.map((line) => JSON.parse(line)), [{ status: 'done', reason: `2 rebuttals written to ${r.out}` }]);
+  assert.deepEqual(JSON.parse(readFileSync(r.out, 'utf8')), REBUTTALS);
+  assert.deepEqual(fake.calls[0].schema, REBUTTALS_SCHEMA);
+  assert.deepEqual(fake.calls[0].argv.slice(0, 4), ['exec', '--sandbox', 'read-only', '--ephemeral']);
+});
+
+test('quorum codex --mode rebut: an answer with no verdict, no objection_id, or in the objection shape is failed and not written', async (t) => {
+  const [rebut] = REBUTTALS.rebuttals;
+  const { verdict, ...noVerdict } = rebut;
+  const { objection_id, ...noId } = rebut;
+  for (const [answer, reason] of [
+    [{ rebuttals: [noVerdict] }, /\$\.rebuttals\[0\]\.verdict is missing/u],
+    [{ rebuttals: [noId] }, /\$\.rebuttals\[0\]\.objection_id is missing/u],
+    [ANSWER, /\$\.rebuttals is missing/u],
+  ]) {
+    const r = codexRun(t, fakeCodex({ answer }));
+    assert.equal(await r.run({}, undefined, r.rebut), 1);
+    assert.equal(r.printed.length, 1);
+    const line = JSON.parse(r.printed[0]);
+    assert.equal(line.status, 'failed');
+    assert.match(line.reason, /does not follow the schema/u);
+    assert.match(line.reason, reason);
+    assert.throws(() => readFileSync(r.out), /ENOENT/u, 'nothing written');
+  }
+});
+
+test('quorum codex --mode object is the default: the same schema, answer, and line as no --mode; a rebuttals answer fails it', async (t) => {
+  const results = [];
+  for (const flags of [[], ['--mode', 'object']]) {
+    const fake = fakeCodex({ answer: ANSWER });
+    const r = codexRun(t, fake);
+    assert.equal(await r.run({}, undefined, flags), 0);
+    assert.deepEqual(fake.calls[0].schema, OBJECTIONS_SCHEMA);
+    results.push({ line: JSON.parse(r.printed[0]), written: JSON.parse(readFileSync(r.out, 'utf8')), out: r.out });
+  }
+  for (const each of results) {
+    assert.deepEqual(each.line, { status: 'done', reason: `1 objections written to ${each.out}` });
+    assert.deepEqual(each.written, ANSWER);
+  }
+  const r = codexRun(t, fakeCodex({ answer: REBUTTALS }));
+  assert.equal(await r.run(), 1);
+  assert.match(JSON.parse(r.printed[0]).reason, /\$\.objections is missing/u);
+});
+
+test('quorum codex: an unknown --mode is a usage error: exit 1, no status line, and Codex never starts', async (t) => {
+  const errors = t.mock.method(console, 'error', () => {});
+  for (const mode of ['rebuttal', 'OBJECT', '']) {
+    const fake = fakeCodex({ answer: ANSWER });
+    let checked = 0;
+    const r = codexRun(t, fake, { codex: () => (checked++, { ok: true }) });
+    assert.equal(await r.run({}, undefined, ['--mode', mode]), 1, mode);
+    assert.deepEqual(r.printed, [], mode);
+    assert.equal(fake.calls.length, 0, mode);
+    assert.equal(checked, 0, 'stops before it looks for Codex');
+  }
+  assert.equal(errors.mock.callCount(), 3);
+  assert.match(errors.mock.calls[0].arguments[0], /^aidrian quorum: codex --mode is object or rebut, not "rebuttal"$/u);
+});
+
+test('quorum codex: --mode with no value is a parse error, as any bad flag is', async (t) => {
+  const r = codexRun(t, fakeCodex({ answer: ANSWER }));
+  await assert.rejects(r.run({}, undefined, ['--mode']), { code: 'ERR_PARSE_ARGS_INVALID_OPTION_VALUE' });
+  await assert.rejects(r.run({}, undefined, ['--nope']), { code: 'ERR_PARSE_ARGS_UNKNOWN_OPTION' });
+});
+
+test('quorum codex --mode rebut: an answer that does not fit the ledger is failed, names the ids, and is not written', async (t) => {
+  const entry = (objection_id, verdict = 'concede') => ({ objection_id, verdict, claim: 'c', citations: [] });
+  for (const [entries, reason] of [
+    [[entry('B1'), entry('B1', 'rebut')], /^the answer does not fit the ledger: the answer names B1 more than once$/u],
+    [[entry('B1'), entry('B9')], /: the answer names B9, not B's objection ruled reject or accept, and not escalated, in the ledger$/u],
+    [[entry('B1'), entry('A1')], /: the answer names A1, not B's objection ruled reject or accept, and not escalated, in the ledger$/u],
+    [[entry('B1'), entry('B3'), entry('B4')], /: the answer names B3, B4, not B's objection ruled reject or accept, and not escalated/u],
+    [[entry('B2')], /: the answer has no entry for B1, B's objection rejected in the ledger$/u],
+    [[], /: the answer has no entry for B1/u],
+    [[entry('B1'), entry('B1'), entry('A1')], /names B1 more than once; the answer names A1, not/u],
+    [Array.from({ length: 8 }, (_, i) => entry(`B${i}`)), /^the answer does not follow the schema: \$\.rebuttals has 8 items, more than 7$/u],
+  ]) {
+    const r = codexRun(t, fakeCodex({ answer: { rebuttals: entries } }));
+    assert.equal(await r.run({}, undefined, r.rebut), 1, reason.source);
+    assert.equal(r.printed.length, 1);
+    const line = JSON.parse(r.printed[0]);
+    assert.equal(line.status, 'failed');
+    assert.match(line.reason, reason);
+    assert.throws(() => readFileSync(r.out), /ENOENT/u, 'nothing written');
+  }
+  // Only B1 is required: a partial accept (B2) may be answered or not.
+  const r = codexRun(t, fakeCodex({ answer: { rebuttals: [entry('B1', 'rebut')] } }));
+  assert.equal(await r.run({}, undefined, r.rebut), 0, r.printed[0]);
+});
+
+test('rebuttalProblems: an escalated B objection gets no rebuttal, even when its ruling is reject; only a rejected one needs an entry', () => {
+  const entry = (objection_id) => ({ objection_id, verdict: 'concede', claim: 'c', citations: [] });
+  // B5 was ruled reject, but its ruling was invalid twice, so it escalated: it goes to the Human, not to a rebuttal.
+  const escalated = ledger([
+    objection('B1', [PASSING.code], { by: 'B', status: 'rejected', ruling: ruling('reject') }),
+    objection('B2', [PASSING.code], { by: 'B', status: 'accepted', ruling: ruling('accept') }),
+    objection('B5', [PASSING.code], { by: 'B', status: 'escalated', ruling: ruling('reject') }),
+    objection('B6', [PASSING.code], { by: 'B', status: 'escalated', ruling: ruling('accept') }),
+  ]);
+  assert.deepEqual(rebuttalProblems({ rebuttals: [entry('B1')] }, escalated), []);
+  assert.deepEqual(rebuttalProblems({ rebuttals: [entry('B1'), entry('B2')] }, escalated), []);
+  assert.deepEqual(rebuttalProblems({ rebuttals: [entry('B1'), entry('B5'), entry('B6')] }, escalated), [
+    "the answer names B5, B6, not B's objection ruled reject or accept, and not escalated, in the ledger",
+  ]);
+  assert.deepEqual(rebuttalProblems({ rebuttals: [] }, escalated), ["the answer has no entry for B1, B's objection rejected in the ledger"]);
+});
+
+test('quorum codex --mode rebut: a ledger that cannot be read or is off the schema is failed before Codex starts', async (t) => {
+  for (const [text, reason] of [[null, /ENOENT/u], ['not json', /JSON/u], [JSON.stringify({ ...RULED, trigger: undefined, extra: 1 }), /^the ledger does not follow the schema: \$\.trigger is missing$/u]]) {
+    const fake = fakeCodex({ answer: REBUTTALS });
+    const r = codexRun(t, fake);
+    if (text === null) rmSync(r.ledgerFile);
+    else writeFileSync(r.ledgerFile, text);
+    assert.equal(await r.run({}, undefined, r.rebut), 1);
+    const line = JSON.parse(r.printed[0]);
+    assert.equal(line.status, 'failed');
+    assert.match(line.reason, reason);
+    assert.equal(fake.calls.length, 0);
+  }
+});
+
+test('quorum codex: --mode rebut without --ledger, or --ledger without it, is a usage error and Codex never starts', async (t) => {
+  const errors = t.mock.method(console, 'error', () => {});
+  for (const [flags, message] of [
+    [['--mode', 'rebut'], 'aidrian quorum: codex --mode rebut needs --ledger'],
+    [['--mode', 'rebut', '--ledger', ''], 'aidrian quorum: codex --mode rebut needs --ledger'],
+    [['--ledger', 'x.json'], 'aidrian quorum: codex --ledger is only for --mode rebut'],
+    [['--mode', 'object', '--ledger', 'x.json'], 'aidrian quorum: codex --ledger is only for --mode rebut'],
+  ]) {
+    const fake = fakeCodex({ answer: REBUTTALS });
+    const r = codexRun(t, fake);
+    assert.equal(await r.run({}, undefined, flags), 1, flags.join(' '));
+    assert.deepEqual(r.printed, []);
+    assert.equal(fake.calls.length, 0);
+    assert.equal(errors.mock.calls.at(-1).arguments[0], message);
+  }
+});
+
+test('codexAnswer: an unknown mode, or rebut with no ledger, is failed, not thrown, and Codex is never looked for', async (t) => {
+  const dir = temp(t, 'aidrian-quorum-guard-');
+  const deps = { spawnImpl: fakeCodex().spawnImpl, codex: () => assert.fail('looked for Codex') };
+  const args = { plan: 'p', brief: 'b', out: path.join(dir, 'o.json'), root: dir };
+  assert.deepEqual(await codexAnswer({ ...args, mode: 'nope' }, deps), { status: 'failed', reason: '"nope" is not a mode: object or rebut' });
+  assert.deepEqual(await codexAnswer({ ...args, mode: 'toString' }, deps), { status: 'failed', reason: '"toString" is not a mode: object or rebut' });
+  assert.deepEqual(await codexAnswer({ ...args, mode: 'rebut' }, deps), { status: 'failed', reason: '--mode rebut needs a ledger' });
+});
+
+const SKILL = path.resolve(import.meta.dirname, '../plugins/aidrian/skills/quorum');
+const PLAN_REVIEW = path.resolve(import.meta.dirname, '../plugins/aidrian/skills/plan-review/SKILL.md');
+
+// The field paths of `schema`, as the ledger reference writes them: `a.b` for a property, `a[]` for an array's items.
+// A schema node used in several places, such as the citation or the ruling, is listed at each place and expanded only
+// at its first, so the reference describes each shape once and points to it after.
+function fieldPaths(schema) {
+  const seen = new Set();
+  const paths = [];
+  const expand = (node, at) => {
+    if (seen.has(node)) return;
+    seen.add(node);
+    if (node.items) expand(node.items, `${at}[]`);
+    for (const [key, child] of Object.entries(node.properties ?? {})) {
+      const field = at ? `${at}.${key}` : key;
+      paths.push({ field, node: child });
+      expand(child, field);
+    }
+  };
+  expand(schema, '');
+  return paths;
+}
+
+// ledger.md § Fields: each bullet starts with a field path in backticks; its text runs to the next bullet.
+function documentedFields() {
+  const text = readFileSync(path.join(SKILL, 'references/ledger.md'), 'utf8');
+  const section = text.split('\n## Fields\n')[1].split('\n## ')[0];
+  const bullets = new Map();
+  let current = null;
+  for (const line of section.split('\n')) {
+    const bullet = /^\s*- `([^`]+)`/u.exec(line);
+    if (bullet) {
+      current = bullet[1];
+      assert.ok(!bullets.has(current), `ledger.md names ${current} twice`);
+      bullets.set(current, line);
+    } else if (current && line.trim()) bullets.set(current, `${bullets.get(current)} ${line}`);
+  }
+  return { text, bullets };
+}
+
+test('ledger.md names every field of LEDGER_SCHEMA and no other, its enum values both ways, null where the schema allows it, and keeps no schema copy', () => {
+  const { text, bullets } = documentedFields();
+  const schema = fieldPaths(LEDGER_SCHEMA);
+  assert.deepEqual([...bullets.keys()].sort(), schema.map((each) => each.field).sort());
+  for (const { field, node } of schema) {
+    const bullet = bullets.get(field);
+    const enumValues = node.enum ?? node.items?.enum;
+    if (enumValues) {
+      for (const value of enumValues) assert.ok(bullet.includes(`\`${value}\``), `ledger.md: ${field} does not name ${value}`);
+      // After the field path, every backticked word in an enum field's bullet is one of its values.
+      const named = [...bullet.matchAll(/`([^`]+)`/gu)].slice(1).map((match) => match[1]);
+      for (const value of named) assert.ok(enumValues.includes(value), `ledger.md: ${field} names ${value}, not in its enum`);
+    }
+    const nullable = [node.type].flat().includes('null');
+    assert.equal(bullet.includes('`null`'), nullable, `ledger.md: ${field} ${nullable ? 'does not say' : 'says'} \`null\``);
+  }
+  for (const name of ['LEDGER_SCHEMA', 'OBJECTIONS_SCHEMA', 'REBUTTALS_SCHEMA']) assert.ok(text.includes(`\`${name}\``), `ledger.md names ${name}`);
+  assert.doesNotMatch(text, /```json/u, 'ledger.md keeps no JSON copy of a schema');
+});
+
+
+test('the quorum skill names exactly the flags `aidrian quorum` takes, real --mode values, and every codex status with its exit code', async () => {
+  const flags = (text) => new Set([...text.matchAll(/(?<![\w-])--[a-z][a-z-]*/gu)].map((match) => match[0]));
+  const texts = Object.fromEntries(['SKILL.md', 'references/briefs.md', 'references/ledger.md'].map((file) => [file, readFileSync(path.join(SKILL, file), 'utf8')]));
+  const all = Object.values(texts).join('\n');
+  const usage = flags(commands.quorum.usage);
+  // A line that runs `aidrian quorum` names exactly the flags it takes.
+  const onCommand = flags(all.split('\n').filter((line) => line.includes('aidrian quorum')).join('\n'));
+  assert.deepEqual([...onCommand].sort(), [...usage].sort());
+  // Any other flag is one of the command's, or one the calling plan-review skill lists in its Inputs.
+  const callerInputs = flags(readFileSync(PLAN_REVIEW, 'utf8').split('\n## Inputs\n')[1].split('\n## ')[0]);
+  for (const flag of flags(all)) assert.ok(usage.has(flag) || callerInputs.has(flag), `the quorum skill names ${flag}, which neither aidrian quorum nor plan-review's Inputs takes`);
+  // Each --mode value the skill names is one the command takes: an unknown mode fails before Codex is looked for.
+  const modes = new Set([...Object.values(texts).join('\n').matchAll(/--mode ([a-z]+)/gu)].map((match) => match[1]));
+  assert.ok(modes.size, 'the skill names a --mode');
+  for (const mode of modes) {
+    const result = await codexAnswer({ plan: 'p', brief: 'b', out: 'o', root: '.', mode, ledger: 'l' }, { codex: () => ({ ok: false, reason: 'stub' }) });
+    assert.equal(result.status, 'unavailable', `--mode ${mode}: ${result.reason}`);
+  }
+  const skill = texts['SKILL.md'];
+  for (const [status, code] of Object.entries(CODEX_EXITS)) {
+    assert.ok(skill.includes(`\`${status}\``), `SKILL.md names the status ${status}`);
+    const exits = new RegExp(`\\b${code} on (?:\`\\w+\`(?:, | or |, or ))*\`${status}\``, 'u');
+    assert.match(skill.replace(/\s+/gu, ' '), exits, `SKILL.md: ${status} exits ${code}`);
+  }
+});
+
+test('the quorum skill says what check does to an objection with no passing citation: only a pending one becomes an opinion', () => {
+  const skill = readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8').replace(/\s+/gu, ' ');
+  assert.match(skill, /A `pending` objection with no passing citation becomes `opinion`/u);
+  assert.doesNotMatch(skill, /- An objection with no passing citation becomes `opinion`/u, 'no unconditional relabel rule');
+  // A reused complete ledger reports every line check printed, so an accepted objection whose evidence or ruling no
+  // longer passes is not handed on silently as authoritative.
+  assert.match(skill, /is reused: skip the rounds, and report from it, with every line `check` printed in the Ledger item/u);
+});
+
+test('plan-review runs the quorum skill at step 3b, lists its flags in Inputs, and ledger.md says how it runs there', () => {
+  // A plan-review that forgets the step, or a ledger.md that drops its section, leaves the quorum's plan use undescribed.
+  const review = readFileSync(PLAN_REVIEW, 'utf8');
+  const inputs = review.split('\n## Inputs\n')[1].split('\n## ')[0];
+  for (const flag of ['--quorum', '--no-quorum']) assert.match(inputs, new RegExp(`\`${flag}\``, 'u'), `plan-review's Inputs lists ${flag}`);
+  const step = review.split('\n## 3b. Quorum\n')[1]?.split('\n## ')[0];
+  assert.ok(step, 'plan-review has a step 3b');
+  assert.ok(review.indexOf('\n## 3. Gates\n') < review.indexOf('\n## 3b. Quorum\n') && review.indexOf('\n## 3b. Quorum\n') < review.indexOf('\n## 4. Critique\n'), 'step 3b sits between the gates and the critique');
+  assert.match(step, /the `quorum` skill/u, 'step 3b names the quorum skill');
+  // A session that paraphrased the quorum ran it from memory and wrote no ledger: 3b loads the skill and follows it, and
+  // points to the section that defines its triggers and its blocked stop.
+  assert.match(step.replace(/\s+/gu, ' '), /load the `quorum` skill and follow it/u, 'step 3b loads the quorum skill');
+  assert.match(step.replace(/\s+/gu, ' '), /`references\/ledger\.md` § Under plan-review/u, 'step 3b points to ledger.md § Under plan-review');
+  assert.match(step, /`blocked on quorum`/u, 'step 3b names the blocked stop');
+  // Settled answers hold across runs only when the applied plan's revision history records them: the quorum's Report
+  // hands its revision-history line to the critique brief, and planning-agent's entry carries it word for word.
+  const flat = (text) => text.replace(/\s+/gu, ' ');
+  assert.match(flat(step), /revision-history line go into step 4's brief/u, 'step 3b passes the Report`s revision-history line to the critique');
+  assert.match(flat(readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8')), /\*\*Revision-history line\*\*: the objection ids to apply and each Human answer/u, 'the quorum Report has the line');
+  const lens = readFileSync(path.join(path.dirname(PLAN_REVIEW), 'references/review-lens.md'), 'utf8');
+  const entry = flat(lens.split('- `revision_history_entry`:')[1].split('\n- `')[0]);
+  assert.match(entry, /the quorum Report's revision-history line, the entry includes it: its objection ids, and each Human answer word for word/u, 'planning-agent`s revision_history_entry carries the quorum line');
+  const ledger = readFileSync(path.join(SKILL, 'references/ledger.md'), 'utf8');
+  assert.match(ledger, /\n## Under plan-review\n/u, 'ledger.md has § Under plan-review');
+  assert.match(ledger, /\[Under plan-review\]\(#under-plan-review\)/u, 'ledger.md links its plan-review section');
+});

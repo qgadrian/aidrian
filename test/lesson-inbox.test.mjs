@@ -627,9 +627,136 @@ test('update changes a lesson\'s tier, kind, or target and nothing else', (t) =>
   const id = add('polish', ['--tier', 'P3']);
   assert.match(run(['update', id, '--tier', 'P1', '--target', 'project']).stdout, new RegExp(`^${id}  .*\\[P1 open project/-\\]  polish\\n$`));
   assert.deepEqual(json(['list']).map((row) => [row.tier, row.kind, row.target, row.seen]), [['P1', null, 'project', 1]]);
-  assert.equal(run(['update', id]).stderr, 'update needs --tier, --kind, or --target\n');
+  assert.equal(run(['update', id]).stderr, 'update needs --tier, --kind, --target, or --triage -\n');
   assert.equal(run(['update', 'ffffffff', '--tier', 'P1']).stderr, 'no lesson with id ffffffff\n');
   assert.equal(run(['update', id, '--kind', 'idea']).stderr, '--kind must be one of bug, gap, improvement, rule\n');
+});
+
+const TRIAGE = { existing: ['docs/lessons.md', 'owner/repo#12'], proposed_end: 'Fix now', owner: 'harness-librarian', expect: 'no new occurrence', verdict: null, reason: null };
+
+test('update --triage - keeps what triage found on the lesson, stamped with when, where, and the target it had', (t) => {
+  const { run, rows, json, add, inbox } = setup(t);
+  const here = path.basename(path.dirname(path.dirname(inbox())));
+  const id = add('the planner re-reads every doc', ['--target', 'project']);
+  const before = Date.now();
+  const written = run(['update', id, '--triage', '-', '--json'], JSON.stringify(TRIAGE));
+  assert.equal(written.status, 0, written.stderr);
+  const { triage } = JSON.parse(written.stdout);
+  assert.deepEqual({ ...triage, at: undefined }, { ...TRIAGE, project: here, target: 'project', at: undefined });
+  assert.ok(Date.parse(triage.at) >= before - 1000, 'the command stamps the time of the row');
+  assert.deepEqual(rows().at(-1), { event: 'update', id, at: triage.at, triage });
+  assert.deepEqual(json(['list']).map((lesson) => lesson.triage), [triage], 'list --json shows the record');
+  assert.deepEqual(json(['list', id]).map((lesson) => [lesson.tier, lesson.target]), [['P2', 'project']], 'it changes no label');
+  // A second write replaces the record whole.
+  run(['update', id, '--triage', '-'], JSON.stringify({ ...TRIAGE, verdict: 'declined', reason: 'the Human wants an issue' }));
+  assert.deepEqual({ ...json(['list'])[0].triage, at: undefined }, { ...TRIAGE, verdict: 'declined', reason: 'the Human wants an issue', project: here, target: 'project', at: undefined });
+  run(['update', id, '--triage', '-'], JSON.stringify({ existing: [], proposed_end: 'Issue', owner: 'planner' }));
+  assert.deepEqual({ ...json(['list'])[0].triage, at: undefined }, {
+    existing: [], proposed_end: 'Issue', owner: 'planner', expect: null, verdict: null, reason: null, project: here, target: 'project', at: undefined,
+  }, 'each write replaces the record whole, and an absent expect, verdict, or reason is null');
+  run(['resolve', id, '--outcome', 'rejected', '--link', 'noise']);
+  assert.equal(json(['list', id])[0].triage, null, 'a resolution clears it');
+});
+
+test('update --triage - fails with one line and writes nothing on a missing or malformed record', (t) => {
+  const { run, inbox, add } = setup(t);
+  const id = add('a lesson to triage');
+  const before = readFileSync(inbox(), 'utf8');
+  const failures = [
+    [['--triage', '-'], ' \n', '--triage - read nothing from stdin; pipe the JSON record in'],
+    [['--triage', '-'], '[1]', '--triage - needs one JSON object on stdin'],
+    [['--triage', '-'], 'Fix now', '--triage - needs one JSON object on stdin'],
+    [['--triage', '-'], 'null', '--triage - needs one JSON object on stdin'],
+    [['--triage', '-'], JSON.stringify({ ...TRIAGE, notes: 'x' }), '--triage - takes only existing, proposed_end, owner, expect, verdict, reason'],
+    [['--triage', '-'], '{}', '--triage - needs existing, proposed_end, and owner'],
+    [['--triage', '-'], JSON.stringify({ ...TRIAGE, owner: undefined }), '--triage - needs existing, proposed_end, and owner'],
+    [['--triage', '-'], JSON.stringify({ ...TRIAGE, proposed_end: 'Later' }), '--triage - needs proposed_end to be one of Fix now, Issue, Merge, Reject'],
+    [['--triage', '-'], JSON.stringify({ ...TRIAGE, verdict: 'approved' }), '--triage - needs verdict to be declined, failed, or null'],
+    [['--triage', '-'], JSON.stringify({ ...TRIAGE, existing: 'x' }), '--triage - needs existing to be an array of strings'],
+    [['--triage', '-', '--tier', 'P1'], JSON.stringify(TRIAGE), '--triage - takes no --tier, --kind, or --target; change those in an update of their own'],
+    [['--triage', 'record.json'], JSON.stringify(TRIAGE), '--triage takes -: pipe the JSON record in on stdin'],
+  ];
+  for (const [args, input, message] of failures) {
+    const result = run(['update', id, ...args], input);
+    assert.deepEqual([result.status, result.stderr], [1, `${message}\n`], input);
+  }
+  assert.equal(readFileSync(inbox(), 'utf8'), before, 'no row was appended');
+});
+
+test('update --triage - takes a record resent with its stamps, and stamps it afresh', (t) => {
+  const { run, json, add, inbox } = setup(t);
+  const here = path.basename(path.dirname(path.dirname(inbox())));
+  const id = add('a lesson to triage again', ['--target', 'project']);
+  const stale = { ...TRIAGE, at: '2020-01-01T00:00:00.000Z', project: 'notes-1', target: 'plugin' };
+  const written = run(['update', id, '--triage', '-', '--json'], JSON.stringify({ ...stale, verdict: 'declined', reason: 'the Human wants an issue' }));
+  assert.equal(written.status, 0, written.stderr);
+  const { triage } = JSON.parse(written.stdout);
+  assert.deepEqual({ ...triage, at: undefined }, { ...TRIAGE, verdict: 'declined', reason: 'the Human wants an issue', project: here, target: 'project', at: undefined });
+  assert.notEqual(triage.at, stale.at, 'the command stamps its own time');
+  // The record as list --json prints it goes back in whole.
+  const shown = json(['list'])[0].triage;
+  const resent = run(['update', id, '--triage', '-'], JSON.stringify({ ...shown, verdict: 'failed', reason: 'the route failed' }));
+  assert.equal(resent.status, 0, resent.stderr);
+  assert.deepEqual({ ...json(['list'])[0].triage, at: undefined }, { ...TRIAGE, verdict: 'failed', reason: 'the route failed', project: here, target: 'project', at: undefined });
+});
+
+test('the triage record is reused for 14 days, only in the project that wrote it, and a later occurrence clears it', (t) => {
+  const { run, json, add, inbox } = setup(t);
+  const here = path.basename(path.dirname(path.dirname(inbox())));
+  const ago = (days) => new Date(Date.now() - days * DAY).toISOString();
+  const record = (days, project = here) => ({ ...TRIAGE, at: ago(days), project, target: null });
+  const id = add('a lesson triaged before');
+  const fresh = record(13);
+  appendRow(inbox(), { event: 'update', id, at: fresh.at, triage: fresh });
+  assert.deepEqual(json(['list'])[0].triage, fresh, 'at 13 days it is shown');
+  appendRow(inbox(), { event: 'update', id, at: ago(15), triage: record(15) });
+  assert.equal(json(['list'])[0].triage, null, 'at 15 days it is not');
+  appendRow(inbox(), { event: 'update', id, at: ago(1), triage: record(1, 'other-12345678') });
+  assert.equal(json(['list'])[0].triage, null, 'nor one written in another project');
+  run(['update', id, '--triage', '-'], JSON.stringify(TRIAGE));
+  assert.notEqual(json(['list'])[0].triage, null);
+  run(['add', '--same', id], 'it happened again');
+  assert.equal(json(['list'])[0].triage, null, 'an occurrence after the record clears it');
+});
+
+test('fold clears the triage record on a resolution, a new target, and an occurrence later than it, and nothing else', () => {
+  const record = (days) => ({ ...TRIAGE, at: at(days), project: 'notes-1', target: null });
+  const triage = (rows) => fold(rows).find('aaaa0001').triage;
+  const base = [lesson('aaaa0001', 9, { key: 'k' }), { event: 'update', id: 'aaaa0001', at: at(5), triage: record(5) }];
+  assert.deepEqual(triage(base), record(5));
+  assert.deepEqual(triage([...base, { event: 'seen', id: 'aaaa0001', at: at(6) }]), record(5), 'an occurrence older than the record keeps it');
+  assert.deepEqual(triage([...base, { event: 'update', id: 'aaaa0001', at: at(4), tier: 'P1' }]), record(5), 'a new tier keeps it');
+  assert.equal(triage([...base, { event: 'seen', id: 'aaaa0001', at: at(4) }]), null, 'a later seen row clears it');
+  assert.equal(triage([...base, lesson('aaaa0002', 4, { key: 'k' })]), null, 'a later keyed add that joins it clears it');
+  assert.equal(triage([...base, { event: 'update', id: 'aaaa0001', at: at(4), target: 'plugin' }]), null, 'a new target clears it');
+  const targeted = [lesson('aaaa0001', 9, { target: 'plugin' }), { event: 'update', id: 'aaaa0001', at: at(5), triage: { ...record(5), target: 'plugin' } }];
+  assert.deepEqual(triage([...targeted, { event: 'update', id: 'aaaa0001', at: at(4), target: 'plugin' }]), { ...record(5), target: 'plugin' }, 'the same target keeps it');
+  const merged = (daysAgo) => [...base, lesson('aaaa0003', daysAgo), { event: 'resolve', id: 'aaaa0003', at: at(3), outcome: 'merged', link: 'aaaa0001' }];
+  assert.equal(triage(merged(4)), null, 'a lesson merged in that happened after the record clears it');
+  assert.deepEqual(triage(merged(7)), record(5), 'one that happened before it keeps it');
+  const mergedSeen = [...merged(7).slice(0, 3), { event: 'seen', id: 'aaaa0003', at: at(4) }, merged(7)[3]];
+  assert.equal(triage(mergedSeen), null, 'and so does a later occurrence of the lesson merged in');
+  assert.equal(triage([...base, { event: 'resolve', id: 'aaaa0001', at: at(4), outcome: 'issue', link: '#1' }]), null, 'a resolution clears it');
+  const resolved = [lesson('aaaa0001', 9), { event: 'resolve', id: 'aaaa0001', at: at(8), outcome: 'issue', link: '#1' }, { event: 'update', id: 'aaaa0001', at: at(5), triage: record(5) }];
+  assert.equal(triage([...resolved, { event: 'seen', id: 'aaaa0001', at: at(4) }]), null, 'resolved or not');
+});
+
+test('a move carries no triage record: a whole move clears it by its new target, and a lesson joining by key brings none', (t) => {
+  const consumer = setup(t);
+  const plugin = checkout(consumer, 'plugin', pluginRepository());
+  const id = consumer.add('a lesson triaged in its project');
+  consumer.run(['update', id, '--triage', '-'], JSON.stringify(TRIAGE));
+  consumer.run(['update', id, '--target', 'plugin']);
+  assert.deepEqual(readRowsOf(plugin.inbox()).filter((row) => row.triage).length, 1, 'the record row moves with the lesson');
+  assert.equal(fold(readRowsOf(plugin.inbox())).find(id).triage, null, 'but the new target cleared it');
+  const from = path.join(consumer.base, 'from.jsonl');
+  const to = path.join(consumer.base, 'to.jsonl');
+  const old = (days) => new Date(Date.now() - days * DAY).toISOString();
+  appendRow(to, { event: 'add', id: 'dddd0001', at: old(9), tier: 'P2', target: 'plugin', key: 'k', note: 'held', evidence: [] });
+  appendRow(from, { event: 'add', id: 'eeee0001', at: old(8), tier: 'P2', target: 'plugin', key: 'k', note: 'moving', evidence: [] });
+  appendRow(from, { event: 'update', id: 'eeee0001', at: old(1), triage: { ...TRIAGE, at: old(1), project: 'notes-1', target: 'plugin' } });
+  assert.deepEqual(moveLessons(from, to, ['eeee0001']), ['eeee0001']);
+  assert.equal(fold(readRowsOf(to)).find('dddd0001').triage, null, 'the holder gets no record from the lesson that joined it');
 });
 
 test('similarLessons names the duplicate, not a lesson that only shares common words', () => {

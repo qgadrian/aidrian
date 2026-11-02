@@ -120,7 +120,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── dispatch/             machine handoffs that dispatched agents write for the orchestrator and the skills it runs
 ├── reviews/              review manifests, and the agents the specialist-review skill keeps warm
 ├── quorum/               quorum ledgers, one per plan and plan hash
-├── lessons/inbox.jsonl   the lesson inbox
+├── lessons/inbox.jsonl   the lesson inbox, and inbox.jsonl.lock while a lesson moves or a writer reads it
 ├── tmp/                  pull request bodies and review comments that skills draft
 ├── dispatch-log.jsonl    the dispatch log
 └── dispatch-log.1.jsonl  its rotated part, once the log reaches config.json telemetry.maxMb

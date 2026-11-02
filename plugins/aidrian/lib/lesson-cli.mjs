@@ -8,7 +8,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { commandConfig } from './config.mjs';
-import { appendRow, readRows } from './jsonl.mjs';
+import { appendRow, readRows, withLocks } from './jsonl.mjs';
 import {
   addRow, days, firstLine, fold, homeInbox, inboxPath, KINDS, lessons, lessonStats, moveLessons, nudge, oldestText, origin, OUTCOMES, parseCapture,
   pluginInboxPath, projectInboxPath, similarLessons, TARGETS, TIERS, triageOrder,
@@ -93,22 +93,34 @@ function add({ values, ids, ...ctx }) {
     if (['tier', 'kind', 'target', 'key'].some((name) => values[name] !== undefined)) {
       return fail('--same records the lesson again and takes no --tier, --kind, --target, or --key; change those with `aidrian lesson update`');
     }
-    const found = locate(values.same, ctx);
+    const where = origin();
+    const found = writing(ctx, () => {
+      const lesson = locate(values.same, ctx);
+      if (lesson) appendRow(lesson.file, { event: 'seen', id: lesson.lesson.id, at: new Date().toISOString(), note, evidence, ...where, ...stampFor(lesson.file, ctx) });
+      return lesson;
+    });
     if (!found) return fail(`no lesson with id ${values.same}`);
-    appendRow(found.file, { event: 'seen', id: found.lesson.id, at: new Date().toISOString(), note, evidence, ...origin(), ...stampFor(found.file, ctx) });
     return report(found.file, found.lesson.id, values.json, found.file === ctx.plugin);
   }
   if (!note) return fail('the lesson needs a note on stdin, after any "title:" or "evidence: <ref>" lines');
+  const from = origin();
   // A known key lands where its lesson is, as --same does; anything else where its target belongs.
-  const held = values.key === undefined ? null : keyHolder(values.key, values.target, ctx);
-  const where = held ? { file: held, project: stampFor(held, ctx).project ?? null } : homeInbox(ctx.project, ctx.config, { target: values.target });
-  const row = addRow({
-    note, evidence, title, tier: values.tier ?? 'P2', kind: values.kind ?? null, target: values.target ?? null, key: values.key ?? null, ...origin(),
-    ...(where.project ? { project: where.project } : {}),
+  const { where, row } = writing(ctx, () => {
+    const held = values.key === undefined ? null : keyHolder(values.key, values.target, ctx);
+    const home = held ? { file: held, project: stampFor(held, ctx).project ?? null } : homeInbox(ctx.project, ctx.config, { target: values.target });
+    const added = addRow({
+      note, evidence, title, tier: values.tier ?? 'P2', kind: values.kind ?? null, target: values.target ?? null, key: values.key ?? null, ...from,
+      ...(home.project ? { project: home.project } : {}),
+    });
+    appendRow(home.file, added);
+    return { where: home, row: added };
   });
-  appendRow(where.file, row);
   return report(where.file, row.id, values.json, where.file === ctx.plugin);
 }
+
+// Runs `write` holding the lock of the project's own inbox and the plugin's, the two that locate and keyHolder read, so
+// no lesson move between them runs while it reads and appends (moveLessons).
+const writing = (ctx, write) => withLocks([ctx.file, ctx.plugin], write);
 
 // Prints where a captured row landed: its lesson's id first, then how often it was seen and what it resembles.
 function report(file, id, json, fromPlugin) {
@@ -179,20 +191,23 @@ function resolve({ values, ids, ...ctx }) {
   const link = values.link === '-' ? readFileSync(0, 'utf8').trim() : values.link?.trim();
   if (values.link === '-' && !link) return fail('--link - read nothing from stdin; pipe the link in or pass --link <ref>');
   if (!link) return fail('resolve needs --link: the commit, pull request, issue, lesson id, or reason it ends in');
-  const found = locate(id, ctx);
-  const lesson = found?.all.find((each) => each.id === id && each.status === 'open');
-  if (!lesson) return fail(`no open lesson with id ${id}`);
-  const { file, find } = found;
-  if (values.outcome === 'merged') {
-    const target = find(link);
-    if (!target) {
-      const elsewhere = locate(link, ctx);
-      return fail(elsewhere ? `${link} is in another inbox (${elsewhere.file}); a lesson merges only into one in its own inbox` : `merged needs --link to name a lesson; no lesson with id ${link}`);
+  const { problem, file } = writing(ctx, () => {
+    const found = locate(id, ctx);
+    const lesson = found?.all.find((each) => each.id === id && each.status === 'open');
+    if (!lesson) return { problem: `no open lesson with id ${id}` };
+    const { find } = found;
+    if (values.outcome === 'merged') {
+      const target = find(link);
+      if (!target) {
+        const elsewhere = locate(link, ctx);
+        return { problem: elsewhere ? `${link} is in another inbox (${elsewhere.file}); a lesson merges only into one in its own inbox` : `merged needs --link to name a lesson; no lesson with id ${link}` };
+      }
+      if (target === lesson) return { problem: 'a lesson cannot be merged into itself' };
     }
-    if (target === lesson) return fail('a lesson cannot be merged into itself');
-  }
-  const row = { event: 'resolve', id, at: new Date().toISOString(), outcome: values.outcome, link, ...(values.expect ? { expect: values.expect } : {}), ...stampFor(file, ctx) };
-  appendRow(file, row);
+    appendRow(found.file, { event: 'resolve', id, at: new Date().toISOString(), outcome: values.outcome, link, ...(values.expect ? { expect: values.expect } : {}), ...stampFor(found.file, ctx) });
+    return { file: found.file };
+  });
+  if (problem) return fail(problem);
   if (values.json) console.log(JSON.stringify(view(fold(readRows(file).rows).find(id))));
   else console.log(`${id} -> ${values.outcome}`);
   return 0;
@@ -207,10 +222,13 @@ function update({ values, ids, ...ctx }) {
   if (problem) return fail(problem);
   const changes = Object.fromEntries(['tier', 'kind', 'target'].filter((name) => values[name] !== undefined).map((name) => [name, values[name]]));
   if (!Object.keys(changes).length) return fail('update needs --tier, --kind, or --target');
-  const found = locate(ids[0], ctx);
+  const found = writing(ctx, () => {
+    const held = locate(ids[0], ctx);
+    if (held) appendRow(held.file, { event: 'update', id: held.lesson.id, at: new Date().toISOString(), ...changes, ...stampFor(held.file, ctx) });
+    return held;
+  });
   if (!found) return fail(`no lesson with id ${ids[0]}`);
   const { file, lesson } = found;
-  appendRow(file, { event: 'update', id: lesson.id, at: new Date().toISOString(), ...changes, ...stampFor(file, ctx) });
   // A lesson in this project's own inbox came from this project, whatever its rows say; one in the plugin's inbox that
   // names no project is the plugin repository's own.
   const from = file === ctx.plugin ? lesson.project ?? pluginProjectId() : null;
@@ -287,11 +305,13 @@ function migrate({ values, ids, file, plugin, project, config }) {
   const keys = new Map(lessons(plugin).filter((lesson) => lesson.key && !lesson.mergedInto).map((lesson) => [lesson.key, lesson.id]));
   const moves = [];
   for (const [inbox, from] of sources) {
-    const chosen = lessons(inbox).filter((lesson) => !lesson.mergedInto && lesson.target === 'plugin');
+    const { lessons: all, find } = fold(readRows(inbox).rows);
+    const chosen = all.filter((lesson) => !lesson.mergedInto && lesson.target === 'plugin');
     if (!chosen.length) continue;
+    // A lesson whose key holder there is itself, its rows copied by a move cut short, joins nothing (moveLessons).
+    const joins = Object.fromEntries(chosen.filter((lesson) => keys.has(lesson.key) && find(keys.get(lesson.key))?.id !== lesson.id).map((lesson) => [lesson.id, keys.get(lesson.key)]));
     const home = homeInbox(project, config, { target: 'plugin', from });
     const ids = values['dry-run'] ? chosen.map((lesson) => lesson.id) : moveLessons(inbox, home.file, chosen.map((lesson) => lesson.id), { project: home.project });
-    const joins = Object.fromEntries(chosen.filter((lesson) => keys.has(lesson.key)).map((lesson) => [lesson.id, keys.get(lesson.key)]));
     for (const lesson of chosen) if (lesson.key && !keys.has(lesson.key)) keys.set(lesson.key, lesson.id);
     moves.push({ project: from, inbox, ids, joins });
   }

@@ -1,6 +1,7 @@
 // JSON Lines files for project state, such as the lesson inbox and the dispatch log: one JSON object per line.
 
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, writeSync } from 'node:fs';
 import path from 'node:path';
 
 // Appends one row. A single write in append mode: rows from concurrent processes never interleave.
@@ -25,6 +26,94 @@ function endsCut(file) {
     if (fd !== undefined) closeSync(fd);
   }
 }
+
+// How long a writer waits for a lock another process holds, and how often it looks again.
+const LOCK_WAIT_MS = 5_000;
+const LOCK_POLL_MS = 10;
+// A lock older than this is stale whoever holds it: no holder keeps one for more than a moment.
+const STALE_LOCK_MS = 30_000;
+// The code of the error withLocks throws when a lock stays held.
+export const LOCKED = 'ELOCKED';
+// The files this process holds the lock of, so a holder that locks one again runs at once.
+const held = new Set();
+
+// Runs `fn` holding the lock of every file in `files`, then releases them, and returns what `fn` returns. Appending needs
+// no lock; a writer whose rows depend on what it read in the file, such as a lesson move, takes it from the read to its
+// last append, so no other such writer appends in between. The lock is `<file>.lock`, created exclusively, holding the
+// holder's pid and a token. Locks are taken in path order, so two holders of the same files never wait on each other.
+// A lock whose holder is gone, or older than STALE_LOCK_MS, is removed. Throws when a lock stays held `waitMs`.
+export function withLocks(files, fn, { waitMs = LOCK_WAIT_MS } = {}) {
+  const mine = [...new Set(files.filter(Boolean))].sort().filter((file) => !held.has(file));
+  const taken = [];
+  try {
+    for (const file of mine) taken.push(lock(file, waitMs));
+    return fn();
+  } finally {
+    for (const { file, token } of taken.reverse()) {
+      held.delete(file);
+      if (readText(`${file}.lock`) === token) rmSync(`${file}.lock`, { force: true });
+    }
+  }
+}
+
+function lock(file, waitMs) {
+  const name = `${file}.lock`;
+  mkdirSync(path.dirname(name), { recursive: true });
+  const token = `${process.pid} ${randomBytes(6).toString('hex')}\n`;
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    try {
+      const fd = openSync(name, 'wx');
+      try {
+        writeSync(fd, token);
+      } finally {
+        closeSync(fd);
+      }
+      held.add(file);
+      return { file, token };
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    }
+    const holder = readText(name);
+    // The lock went away between the two calls: take it now.
+    if (holder === null) continue;
+    if (stale(name, holder)) {
+      // Removed only while it still holds what was judged stale, so a lock another waiter just took survives.
+      if (readText(name) === holder) rmSync(name, { force: true });
+      continue;
+    }
+    if (Date.now() >= deadline) throw Object.assign(new Error(`${file} is locked by another process (${name}); try again`), { code: LOCKED });
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, LOCK_POLL_MS);
+  }
+}
+
+// A lock whose holder process is gone, or that is older than STALE_LOCK_MS.
+function stale(name, holder) {
+  const pid = Number.parseInt(holder, 10);
+  if (pid > 0 && !alive(pid)) return true;
+  try {
+    return Date.now() - statSync(name).mtimeMs > STALE_LOCK_MS;
+  } catch {
+    return true;
+  }
+}
+
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+}
+
+const readText = (file) => {
+  try {
+    return readFileSync(file, 'utf8');
+  } catch {
+    return null;
+  }
+};
 
 // The rows of `event` with the last one per `key` value, in first-seen order; a row without the key is kept as it is.
 // For a row its writer may repeat, such as a stop row after its agent was sent back, or a session that ended twice.

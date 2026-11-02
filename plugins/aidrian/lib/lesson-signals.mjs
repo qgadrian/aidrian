@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { loadConfig } from './config.mjs';
-import { appendRow } from './jsonl.mjs';
+import { appendRow, withLocks } from './jsonl.mjs';
 import { addRow, homeInbox } from './lesson-inbox.mjs';
 import { findProject } from './project.mjs';
 
@@ -24,7 +24,8 @@ export function recordSignal(project, signal, { config, now = new Date() } = {})
     if (!settings.lessons.auto) return null;
     const { file, project: from } = homeInbox(project, settings, { target: signal.target });
     const row = addRow({ ...signal, source: 'auto', now, ...(from ? { project: from } : {}) });
-    appendRow(file, row);
+    // Under the inbox's lock, so a lesson move never reads the inbox before this row and marks the lesson moved after it.
+    withLocks([file], () => appendRow(file, row));
     return row;
   } catch {
     return null;

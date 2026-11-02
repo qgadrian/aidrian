@@ -98,8 +98,9 @@ again: its objection escalates with the earlier answer as the recommended answer
   Still `pending`, stop with `blocked`: a complete ledger cannot hold it.
 - **After round 3.** Answers come only for objections `rejected` or partly accepted; an `escalated` objection gets no
   rebuttal. For each answered id, write `rebuttal` with the answer's `verdict`, `claim`, and `citations`, and
-  `ruling: null`. Drop an entry for any id the brief did not list. An A answer that names an id twice, or leaves a
-  `rejected` objection unanswered, is an invalid rebuttal for those ids. Run `quorum check`: a rebuttal it names invalid
+  `ruling: null`. Drop an entry for any id the brief did not list. An agent's answer, A's or B's from `product-manager`,
+  that names an id twice, or leaves one of its own `rejected` objections unanswered, is an invalid rebuttal for those ids;
+  `aidrian quorum codex` holds Codex's answer to the same rules. Run `quorum check`: a rebuttal it names invalid
   makes its objection `escalated`, with no final ruling. A concession keeps the status of the first ruling.
   When one dispatch is left and both A and B have objections to answer, neither runs, and those objections become `escalated`.
 - **After the final ruling.** Copy it into `rebuttal.ruling`, and run `quorum check`. `accept` makes the objection

@@ -349,13 +349,27 @@ export function answerProblems(ledger) {
   return problems;
 }
 
+// The status each decision gives an objection.
+const DECIDED = Object.freeze({ accept: 'accepted', reject: 'rejected', escalate: 'escalated' });
+
 // The problems that make a `complete` ledger unfinished: an objection still pending, or one with a status that needs a
-// ruling and has none. [] for an `open` ledger.
+// ruling and has none. For an objection the Human did not settle (not `escalated`, not answered), also: a rebuttal that
+// rebuts with no final ruling, a final ruling other than `accept` (any other escalates), or a status that is not the
+// one its final decision gives (the final ruling's; else the first ruling's, which a concession keeps). [] for an
+// `open` ledger.
 export function completeProblems(ledger) {
   if (ledger.status !== 'complete') return [];
+  const answered = new Set(ledger.human_answers.map((answer) => answer.objection_id));
   return ledger.objections.flatMap((objection) => {
-    if (objection.status === 'pending') return [`objection ${objection.id} is pending in a complete ledger`];
-    if (objection.status !== 'opinion' && objection.ruling === null) return [`objection ${objection.id} is ${objection.status} with no ruling in a complete ledger`];
+    const where = `objection ${objection.id}`;
+    if (objection.status === 'pending') return [`${where} is pending in a complete ledger`];
+    if (objection.status !== 'opinion' && objection.ruling === null) return [`${where} is ${objection.status} with no ruling in a complete ledger`];
+    if (objection.status === 'opinion' || objection.status === 'escalated' || answered.has(objection.id)) return [];
+    const { rebuttal } = objection;
+    if (rebuttal?.verdict === 'rebut' && rebuttal.ruling === null) return [`${where} has a rebuttal with no final ruling in a complete ledger`];
+    if (rebuttal?.ruling && rebuttal.ruling.decision !== 'accept') return [`${where} has a final ruling of ${rebuttal.ruling.decision} but is ${objection.status}, not escalated, in a complete ledger`];
+    const decided = DECIDED[(rebuttal?.ruling ?? objection.ruling).decision];
+    if (objection.status !== decided) return [`${where} is ${objection.status}, but its final decision makes it ${decided}, in a complete ledger`];
     return [];
   });
 }

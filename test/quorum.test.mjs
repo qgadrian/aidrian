@@ -583,10 +583,11 @@ test('check: a complete ledger whose ruling lost its evidence exits 1 and is not
   assert.ok(open.lines.includes('objection A1 ruling: invalid: the ruling has no passing citation'), open.stdout);
 
   // An invalid rebuttal, or an invalid final ruling on one, is stale the same way.
-  const rebutted = (rebuttal) => ({ ...ledger([objection('B1', [PASSING.adr], { by: 'B', status: 'rejected', ruling: ruled('reject', [PASSING.plan]), rebuttal })]), status: 'complete' });
+  // A rebuttal the architect accepted at the final ruling: the objection is accepted.
+  const rebutted = (rebuttal) => ({ ...ledger([objection('B1', [PASSING.adr], { by: 'B', status: 'accepted', ruling: ruled('reject', [PASSING.plan]), rebuttal })]), status: 'complete' });
   for (const [entry, line] of [
-    [{ verdict: 'rebut', claim: 'c', citations: [evidence], ruling: ruled('reject', [PASSING.fenced]) }, /objection B1 rebuttal: invalid: the rebuttal has no passing citation in a complete ledger$/mu],
-    [{ verdict: 'rebut', claim: 'c', citations: [PASSING.fenced], ruling: ruled('reject') }, /objection B1 rebuttal ruling: invalid: the ruling has no passing citation in a complete ledger$/mu],
+    [{ verdict: 'rebut', claim: 'c', citations: [evidence], ruling: ruled('accept', [PASSING.fenced]) }, /objection B1 rebuttal: invalid: the rebuttal has no passing citation in a complete ledger$/mu],
+    [{ verdict: 'rebut', claim: 'c', citations: [PASSING.fenced], ruling: ruled('accept') }, /objection B1 rebuttal ruling: invalid: the ruling has no passing citation in a complete ledger$/mu],
   ]) {
     const result = p.check(rebutted(entry));
     assert.equal(result.status, 1, result.stdout);
@@ -600,6 +601,41 @@ test('check: a complete ledger whose ruling lost its evidence exits 1 and is not
   ]), status: 'complete', human_answers: [{ objection_id: 'A2', answer: 'accept it' }] });
   assert.equal(settled.status, 0, settled.stderr);
   assert.ok(settled.lines.includes('objection A1 ruling: invalid: the ruling has no passing citation'), settled.stdout);
+});
+
+test('check: a complete ledger with a rebuttal left unruled, a final ruling other than accept, or a status its decision does not give exits 1', (t) => {
+  const p = project(t);
+  const ruled = (decision) => ({ decision, change_or_reason: 'r', citations: [PASSING.adr] });
+  const rebut = (final) => ({ verdict: 'rebut', claim: 'c', citations: [PASSING.fenced], ruling: final });
+  const concede = { verdict: 'concede', claim: 'ok', citations: [], ruling: null };
+  for (const [fields, message] of [
+    [{ status: 'rejected', ruling: ruled('reject'), rebuttal: rebut(null) }, /objection B1 has a rebuttal with no final ruling in a complete ledger/u],
+    [{ status: 'rejected', ruling: ruled('reject'), rebuttal: rebut(ruled('reject')) }, /objection B1 has a final ruling of reject but is rejected, not escalated, in a complete ledger/u],
+    [{ status: 'accepted', ruling: ruled('reject'), rebuttal: rebut(ruled('escalate')) }, /objection B1 has a final ruling of escalate but is accepted, not escalated/u],
+    [{ status: 'rejected', ruling: ruled('reject'), rebuttal: rebut(ruled('accept')) }, /objection B1 is rejected, but its final decision makes it accepted, in a complete ledger/u],
+    [{ status: 'accepted', ruling: ruled('reject') }, /objection B1 is accepted, but its final decision makes it rejected/u],
+    [{ status: 'rejected', ruling: ruled('escalate') }, /objection B1 is rejected, but its final decision makes it escalated/u],
+    [{ status: 'accepted', ruling: ruled('reject'), rebuttal: concede }, /objection B1 is accepted, but its final decision makes it rejected/u],
+  ]) {
+    const before = { ...ledger([objection('B1', [PASSING.code], { by: 'B', ...fields })]), status: 'complete' };
+    const result = p.check(before);
+    assert.equal(result.status, 1, message.source);
+    assert.match(result.stderr, message);
+    assert.deepEqual(result.ledger, before, 'not written back');
+    // The same ledger still open is mid-run: no complete-ledger problem.
+    assert.equal(p.check({ ...before, status: 'open' }).status, 0, message.source);
+  }
+  // Finished ledgers pass: a rebuttal accepted at the final ruling, a concession that keeps the first ruling, an
+  // escalated rebuttal, and an unruled rebuttal or a mismatched status that the Human's answer settled.
+  const good = p.check({ ...ledger([
+    objection('B1', [PASSING.code], { by: 'B', status: 'accepted', ruling: ruled('reject'), rebuttal: rebut(ruled('accept')) }),
+    objection('B2', [PASSING.code], { by: 'B', status: 'rejected', ruling: ruled('reject'), rebuttal: concede }),
+    objection('B3', [PASSING.code], { by: 'B', status: 'escalated', ruling: ruled('reject'), rebuttal: rebut(ruled('reject')) }),
+    objection('B4', [PASSING.code], { by: 'B', status: 'escalated', ruling: ruled('reject'), rebuttal: rebut(null) }),
+    objection('B5', [PASSING.code], { by: 'B', status: 'rejected', ruling: ruled('reject'), rebuttal: rebut(ruled('reject')) }),
+    objection('A1', [PASSING.code], { status: 'accepted', ruling: ruled('escalate') }),
+  ]), status: 'complete', human_answers: [{ objection_id: 'B5', answer: 'keep it out' }, { objection_id: 'A1', answer: 'do it' }] });
+  assert.equal(good.status, 0, good.stderr);
 });
 
 test('check: a ref that is not a relative path is a failed citation, not an escape', (t) => {

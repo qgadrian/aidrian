@@ -47,7 +47,10 @@ export function lintReview(project, config) {
   const problems = [];
   const warnings = [];
   const { flows, reviewers } = config.review;
-  const tracked = runGit(['ls-files', '-z'], project.root, { timeout: 30_000, maxBuffer: 256 * 1024 * 1024 }).stdout.split('\0').filter(Boolean);
+  // A git that cannot start, or a folder it does not track, lists no file; that is not every flow matching nothing.
+  const listed = runGit(['ls-files', '-z'], project.root, { timeout: 30_000, maxBuffer: 256 * 1024 * 1024 });
+  if (listed.status !== 0) return { problems: [`git ls-files failed in ${project.root}`], warnings, summary: '' };
+  const tracked = listed.stdout.split('\0').filter(Boolean);
   const ids = Object.keys(flows);
   if (ids.length > FLOW_BUDGET) warnings.push(`${ids.length} flows is past ${FLOW_BUDGET}: name the critical ones, not every feature`);
   for (const [id, flow] of Object.entries(flows)) {

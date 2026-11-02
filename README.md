@@ -120,6 +120,10 @@ For Codex, see [Running aidrian](docs/providers/codex.md#running-aidrian).
    In Codex, ask the session for the `aidrian-orchestrator` agent by name.
 
 [Adopting in a project](docs/adopting.md) finishes the setup: tags, `always` docs, `AGENTS.md`, and the team's install.
+Or the Human runs the `harness-setup` skill, `/aidrian:harness-setup` in Claude Code (in Codex, by name):
+it does step 1 and that page in one session. It asks its questions before writing, shows the docs before writing them,
+and prints the commit for step 2.
+On a set-up project, it says what to fix.
 
 ## What is in the plugin
 
@@ -162,7 +166,7 @@ Run `aidrian` or `aidrian-knowledge` with no arguments to list every subcommand 
 - **Build**: backend, frontend, and docs agents, and the skills that build an issue or a plan to a draft pull request.
 - **Pull requests and review**: `code-reviewer`, `security-engineer`, and the skills that write, review, and fix pull requests.
 - **Product, design, support, and growth**: agents for product rules, UI and UX, support answers, and marketing.
-- **Harness**: `harness-librarian`, and the skills that load and update the project's knowledge and lessons.
+- **Harness**: `harness-librarian`, and the skills that set up the project and load and update its knowledge and lessons.
 
 Claude Code names an agent `aidrian:<agent>` and runs a skill as `/aidrian:<skill>`.
 Codex names an agent `aidrian-<agent>`; ask for a skill by name.

@@ -15,8 +15,8 @@ Before you start, follow the `knowledge` skill. Knowledge tags: `harness_enginee
 - A project's skills: the folder its `harness_engineering` knowledge names, else `.claude/skills/<name>/SKILL.md`.
   When that knowledge names a generator or a mirror for another host, run it after every edit.
 - `aidrian lint skills <skills-folder>` reads the folder that holds the skill folders (`plugins/aidrian/skills`;
-  with no argument, `.claude/skills`). Its summary must count this skill: `0 skills` means the wrong folder, not a pass.
-- The lint fails a `SKILL.md` at 8,000 bytes, where Codex cuts it, and warns above 7,500; this plugin's tests fail above 7,500.
+  with no argument, `.claude/skills`). `0 skills` in its summary means the wrong folder, not a pass.
+- The lint fails a `SKILL.md` at 8,000 bytes, where Codex cuts it; it warns, and this plugin's tests fail, above 7,500.
 - The `description` is one line of at most 160 characters (config.json `skills.descriptionChars`),
   and all names and descriptions together fit in `skills.listingBytes`: both hosts list them in every session.
 
@@ -52,7 +52,7 @@ Save them where the next audit finds them: the project's eval folder, or in this
 
 1. Read the description of every skill that could overlap: in the session's listing, this plugin, and the project.
    Run `aidrian-knowledge search <words>` for a doc that already owns the behavior.
-2. Extend an existing skill when the trigger and the audience match. Create one only for a request users really make.
+2. Extend an existing skill when the trigger and the audience match. Create one only for a request users make.
    Decline when the need is a one-off prompt: stop, and report the sentence below.
 3. Create only: name it in kebab-case by its action or role (`pr-write`, `adr-writer`), unused in the plugin or the project.
 
@@ -60,14 +60,14 @@ Save them where the next audit finds them: the project's eval folder, or in this
 
 ## Step 4: Write the frontmatter
 
-The description is how the model picks the skill, and it sits in every session's context.
+The description is how the model picks the skill, in every session.
 
 - Say what the skill does and when to use it, in the words a user would type, never as "I" or "you".
   This plugin's descriptions start with the verb ("Create ...").
 - Name each mode the skill serves once, in the word a user types; no synonyms.
 - `name` equals the folder name.
 - A skill only the Human runs, which no agent preloads and no other skill invokes, gets `disable-model-invocation: true`.
-  Claude Code then hides it from the model; Codex ignores the field, so its description still counts toward the listing.
+  Claude Code hides it from the model; Codex ignores the field, so its description still counts toward the listing.
 
 **Done when** the description fits the limit and a reader can tell from it alone when the skill applies.
 
@@ -90,7 +90,7 @@ Write to [references/checklist.md](references/checklist.md) § Content. Then:
 
 Write placeholders as `<name>`. A path that differs per worktree comes from `git rev-parse`, never a guess.
 
-**Done when** every step has a check, every support file is linked with when to read it, and you hold the list of commands run.
+**Done when** every step has a check, every support file is linked with when to read it, and you hold the commands run.
 
 ## Step 6: Review against the checklist
 

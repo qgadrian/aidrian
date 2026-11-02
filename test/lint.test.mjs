@@ -247,3 +247,19 @@ test('aidrian lint review: dead flow globs, a missing invariants doc, and a bad 
     '',
   ].join('\n'));
 });
+
+test('aidrian lint review reports a git that cannot start, or a folder git does not track, instead of throwing', (t) => {
+  const dir = tempDir(t);
+  mkdirSync(path.join(dir, '.aidrian'));
+  mkdirSync(path.join(dir, 'src'));
+  writeFileSync(path.join(dir, 'src/a.js'), '');
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, review: { flows: { core: { files: ['src/**'] } } } }));
+  // A PATH with no git on it, and node run by its own path, so git cannot start.
+  const noGit = tempDir(t);
+  const run = (env) => spawnSync(process.execPath, [path.join(ROOT, 'plugins/aidrian/lib/cli.mjs'), 'lint', 'review', '--project', dir], { encoding: 'utf8', env: { ...process.env, ...env } });
+  const missing = run({ PATH: noGit });
+  assert.deepEqual([missing.status, missing.stderr], [1, `review: git ls-files failed in ${dir}\n`]);
+  // Not a git repository: git starts but fails, which must not read as every flow matching no tracked file.
+  const outside = run({ GIT_CEILING_DIRECTORIES: path.dirname(dir) });
+  assert.deepEqual([outside.status, outside.stderr], [1, `review: git ls-files failed in ${dir}\n`]);
+});

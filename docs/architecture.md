@@ -26,7 +26,8 @@ plugins/aidrian/
     ├── agents/aidrian-*.toml       generated Codex roles; never edit
     └── install-agents.mjs          copies those roles into $CODEX_HOME/agents (~/.codex/agents by default)
 scripts/build.mjs                   generates the flat agents/ and codex/agents from agents-src/ and providers/
-scripts/version.mjs                 raises the plugin version (npm run bump) and checks it
+scripts/version.mjs                 checks a branch keeps the version, and raises it on release
+.github/workflows/release.yml       releases the plugin after each merge to main
 examples/consumer/                  a small project that uses the plugin
 docs/                               one page per surface; docs/providers/ has one page per host
 test/                               node --test suites

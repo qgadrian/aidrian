@@ -22,7 +22,8 @@ How to build, check, and release a change is in [contributing.md](contributing.m
 - Plugin text names no project, project path, person, or bare slash command; a project's rules live in its own `.aidrian/`.
 - A change to a surface updates that surface's doc in the same branch, and [agents-and-skills.md](agents-and-skills.md)
   when an agent or skill is added, renamed, or removed.
-- A change under `plugins/aidrian/` bumps the version ([Versions](contributing.md#versions)).
+- A pull request never changes the version: the release workflow raises it on main after the merge, at the level
+  the pull request's Conventional Commit title calls for ([Versions](contributing.md#versions)).
 - `npm run check` passes before a push.
 
 ## This repository's knowledge

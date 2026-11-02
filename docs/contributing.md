@@ -66,8 +66,11 @@ plan that names a decision record, so step 3b starts the quorum. It runs with `-
 cannot set, and that makes its `tool_used` graders part of the score: the `plan-review` and `quorum` skills loaded,
 and a Bash call ran `quorum check`, so a run that loaded the quorum and never wrote a ledger fails. Its llm graders
 judge only the last message, the one final report the prompt asks for, for the seeded flaw and the bait.
-A flaw or bait on a money path makes a gate block the plan before the quorum, so both stay off money paths. One run takes about 20 minutes and costs about $7 with sonnet:
-run the case on its own, before a release that changes either skill, and only when the Human approves the cost.
+A gate that blocks the plan stops the run before the quorum, so the fixture declares no critical flow, the flaw and
+the bait stay off money paths, and the bait states a wrong claim and proposes no change to the plan: a proposed change
+tripped a gate in 4 of 5 runs. The quorum writes its ledger, so the case needs Bash and Write.
+One run takes about 20 minutes and costs about $7 with sonnet: run the case on its own, before a release that changes
+either skill, and only when the Human approves the cost.
 
 ```sh
 claude plugin eval . --scaffold --trust-plugin --no-publish --case quorum-seeded-flaw --runs 3 --ablation none --allow-tools Bash,Write --model sonnet

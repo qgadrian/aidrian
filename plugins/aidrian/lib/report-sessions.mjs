@@ -1,7 +1,7 @@
 // `aidrian report sessions`: what sessions cost, split between the main conversation and its subagents, and per day,
 // model, and effort, from the dispatch log's `session` rows. docs/dispatch-log.md#sessions describes the view.
 
-import { latestRows } from './jsonl.mjs';
+import { endedSessions } from './jsonl.mjs';
 
 // The view lists this many sessions, most costly first.
 const TOP_SESSIONS = 5;
@@ -30,7 +30,7 @@ const noSide = () => ({ tokens: noTokens(), cost_usd: 0, requests: 0, tool_reque
 // subagent, cache-write, and per-model figures leave them out.
 export function summarizeSessions(rows, { sinceMs = 0 } = {}) {
   const ended = rows.filter((row) => row.event === 'session' && Date.parse(row.ts) >= sinceMs);
-  const sessions = latestRows(ended, 'session', 'session_id');
+  const sessions = endedSessions(ended);
   const split = sessions.filter((row) => row.main && row.subagents);
   const main = split.reduce((sum, row) => addSide(sum, row.main), noSide());
   const subagents = split.reduce((sum, row) => addSide(sum, row.subagents), noSide());

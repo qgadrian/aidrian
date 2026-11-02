@@ -7,8 +7,8 @@ and which of the plugin's rules blocked a tool call.
 
 It is `dispatch-log.jsonl` in the [state folder](project-folder.md#local-state): one JSON object per line,
 on this machine only, shared by every worktree of the repository.
-Three Claude Code hooks append the dispatch, stop, and session rows, and the plugin's blocking hooks append a `hook_deny` row,
-only inside a project folder, and only while config.json `telemetry.enabled` is on:
+Three Claude Code hooks append the dispatch, stop, and session rows, the last through a worker
+(see [`session`](#session-when-a-session-ends)), and the plugin's blocking hooks append a `hook_deny` row, only inside a project folder, and only while config.json `telemetry.enabled` is on:
 [config.md](config.md#telemetry) has the switches.
 A row holds names, counts, durations, costs, and file paths. It never holds a prompt, a command, or tool output.
 
@@ -78,7 +78,11 @@ and `false && aidrian pr review 12` fails with none. The command's own text, whi
 A call with no result, as in a session cut off mid-call, counts nowhere.
 A slash command has no tool result, because the host runs it before the turn, so it always counts.
 A session whose transcript holds no API usage writes no row.
-A resumed session that ends again writes another row over its whole transcript; the report counts the last one.
+A resumed session that ends again writes another row over its whole transcript; the report counts the one that ended last.
+The session-end hook does not write the row itself: it hands the payload to a detached worker, `session-row.mjs`, and exits,
+because Claude Code cancels a SessionEnd hook after a short time and reading a long session's transcripts takes longer.
+The worker writes the row after the session has closed, with `ts` set to when the session ended, so two rows of one session
+can land out of order and still count the right one.
 
 ### `hook_deny`: when one of the plugin's rules blocks a tool call
 

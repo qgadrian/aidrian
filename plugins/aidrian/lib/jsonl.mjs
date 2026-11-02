@@ -186,6 +186,20 @@ const readText = (file) => {
 export const latestRows = (rows, event, key) =>
   [...new Map(rows.filter((row) => row.event === event).map((row) => [row[key] ?? Symbol(event), row])).values()];
 
+// The `session` rows with the one that ended last per session_id, in first-seen order. A session's row is written by a
+// detached worker after the session closes, so a resumed session that ends again can have its rows appended out of
+// order; `ts` is when the session ended. On equal or unreadable times, the row appended later wins.
+export const endedSessions = (rows) => {
+  const last = new Map();
+  for (const row of rows) {
+    if (row.event !== 'session') continue;
+    const key = row.session_id ?? Symbol('session');
+    const seen = last.get(key);
+    if (!seen || !(Date.parse(row.ts) < Date.parse(seen.ts))) last.set(key, row);
+  }
+  return [...last.values()];
+};
+
 // Returns { rows, skipped }: every line that holds a JSON object, and how many lines did not. A missing file has none.
 export function readRows(file) {
   const rows = [];

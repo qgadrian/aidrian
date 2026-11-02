@@ -12,9 +12,10 @@ const FRONTMATTER_END = /^(?:---|\.\.\.)\s*$/;
 export function findWrapViolations(text, limit) {
   const violations = [];
   const lines = String(text ?? '').split('\n');
-  const fenced = fencedLines(text ?? '');
   // A leading --- opens frontmatter only when a --- or ... closes it; otherwise it is a rule.
   const frontmatterEnd = FRONTMATTER.test(lines[0] ?? '') ? lines.findIndex((line, index) => index > 0 && FRONTMATTER_END.test(line)) : -1;
+  // Fences are read after the frontmatter, so a fence-like YAML value opens none; blank lines keep the line numbers.
+  const fenced = fencedLines(lines.map((line, index) => (index <= frontmatterEnd ? '' : line)).join('\n'));
   for (const [index, line] of lines.entries()) {
     if (index <= frontmatterEnd) continue;
     if (fenced[index]) continue;

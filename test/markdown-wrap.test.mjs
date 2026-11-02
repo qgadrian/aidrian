@@ -32,6 +32,9 @@ test('fences close only on their own delimiter, never on an info-string line', (
 test('a fence opened after a list marker closes on its indented fence, so the lines after it are checked', () => {
   assert.deepEqual(lines(['- ```bash', '  npm test', '  ```', '', long(200)].join('\n')), [5]);
   assert.deepEqual(lines(['- ```bash', `  ${long(200)}`, '  ```', '', long(200)].join('\r\n')), [5], 'CRLF, and the code line is skipped');
+  for (const delimiter of ['```', '~~~']) {
+    assert.deepEqual(lines(['---', 'example: |', `  ${delimiter}`, '---', long(200)].join('\n')), [5], `a ${delimiter} in frontmatter opens no fence`);
+  }
 });
 
 test('frontmatter, tables, indented code, and an unbreakable token are skipped', () => {

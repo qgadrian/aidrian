@@ -334,7 +334,7 @@ Each signal names its sample and is judged by config.json [`telemetry.health`](c
   Fix: `deny-rule`.
 - **Session cost**, over each half of the window's sessions, in the order they ended: a problem when the newer half costs
   over `costRisePercent` more a session than the older half. Fix: `cost`.
-- **Lessons**, over the open lessons: a problem when a P1 is open, a fix resolved in the window recurred,
+- **Lessons**, over the open lessons in the project's inbox: a problem when a P1 is open, a fix resolved in the window recurred,
   or the inbox passes `lessons.maxOpen` or `lessons.maxAgeDays`. Fix: `lesson-triage`.
 
 - **not enough data**: the sample is under `telemetry.health.minSample`. Such a signal is never a problem, whatever its rate:
@@ -354,7 +354,8 @@ Each signal names its sample and is judged by config.json [`telemetry.health`](c
 `sample` (`n` and what it counts), `summary`, `lesson` (the `tier`, `kind`, `target`, and `key` for `aidrian lesson add`,
 or `null` when the problem is a lesson already), `resolved`, and `since_resolution`; `signals`, every signal with its `status`
 (`ok`, `problem`, `not_enough_data`, or `unavailable`) and its numbers; `thresholds`; and `coverage`, as the other views print it.
-When a resolved lesson holds the problem's `lesson.key`, `resolved` names it (`id`, `at`, `outcome`) and `since_resolution`
+When a resolved lesson holds the problem's `lesson.key`, in the [plugin's inbox](lessons.md#the-plugins-inbox) when its
+`lesson.target` is `plugin` and in the project's otherwise, `resolved` names it (`id`, `at`, `outcome`) and `since_resolution`
 judges the same problem on the rows dated after that resolution alone, as `n` and `status`: the window can hold the failures
 that led to the fix, which say nothing about whether it held. A resolution before the window leaves the problem as judged,
 and the reviews cannot be split by time, so after a resolution inside the window they are `unavailable`. Both are `null`

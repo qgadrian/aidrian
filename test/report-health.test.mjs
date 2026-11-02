@@ -261,6 +261,16 @@ test('summarizeHealth judges a problem whose lesson was resolved again on the ro
   // A lesson seen again after its fix is open, which the skill skips: it reports no resolution.
   const reopened = health(newer(2, 2), inbox(24 * 5, [{ event: 'seen', id: 'bbbb0000', at: at(24), note: 'blocked again' }]));
   assert.deepEqual(reopened.problems.find((item) => item.kind === 'deny-hot-spot').resolved, null);
+  // A plugin lesson lives in the plugin's inbox: a problem whose lesson targets the plugin finds it there, and the
+  // review rounds, a project lesson, in the project's own.
+  const all = inbox(24 * 5);
+  const split = (lessons, pluginLessons) => summarizeHealth({
+    rows: [...older, ...newer(2, 2)], sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: REVIEWS, lessons, pluginLessons, config: configWith(),
+  });
+  const ownOnly = all.filter((lesson) => lesson.key === 'review-rounds');
+  assert.deepEqual(verdicts(split(ownOnly, all.filter((lesson) => lesson.key !== 'review-rounds'))), verdicts(recheck));
+  const resolvedIds = ({ problems }) => Object.fromEntries(problems.filter((item) => item.lesson).map((item) => [item.kind, item.resolved?.id ?? null]));
+  assert.deepEqual(resolvedIds(split(all, [])), { 'sent-back': null, 'review-rounds': 'bbbb0002', 'deny-hot-spot': null }, 'a plugin problem never reads the project\'s inbox');
 });
 
 test('summarizeHealth flags a draft that an orchestrator or autopilot session opened and no review round in that session saw', () => {

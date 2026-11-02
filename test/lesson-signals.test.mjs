@@ -6,9 +6,9 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
-import { inboxPath, lessons } from '../plugins/aidrian/lib/lesson-inbox.mjs';
+import { inboxPath, lessons, pluginInboxPath } from '../plugins/aidrian/lib/lesson-inbox.mjs';
 import { deliverySignal, denialSignal, noteDenial, recordSignal, REPEATED_DENIALS, roundLimitSignal } from '../plugins/aidrian/lib/lesson-signals.mjs';
-import { projectAt } from '../plugins/aidrian/lib/project.mjs';
+import { projectAt, projectId } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SCRIPTS = path.join(ROOT, 'plugins/aidrian/scripts');
@@ -30,9 +30,11 @@ function project(t, config = { version: 1 }) {
   process.env.XDG_STATE_HOME = env.XDG_STATE_HOME;
   t.after(() => (saved === undefined ? delete process.env.XDG_STATE_HOME : (process.env.XDG_STATE_HOME = saved)));
   const proj = projectAt(dir);
+  // The project's own inbox, and the plugin's, where a signal for the plugin lands.
   const all = () => lessons(inboxPath(proj));
+  const plugin = () => lessons(pluginInboxPath());
   const hook = (script, input) => spawnSync(process.execPath, [path.join(SCRIPTS, script)], { input: JSON.stringify({ cwd: dir, ...input }), encoding: 'utf8', env });
-  return { dir, temp, proj, all, hook };
+  return { dir, temp, proj, all, plugin, hook };
 }
 
 test('each signal names its key, tier, and target; a plugin agent is the plugin\'s to fix', () => {
@@ -54,7 +56,7 @@ test('each signal names its key, tier, and target; a plugin agent is the plugin\
 });
 
 test('a signal dedupes by its key, reopens a fix it recurs after, and stays off when the project turns signals off', (t) => {
-  const { proj, all } = project(t);
+  const { proj, plugin: all } = project(t);
   const signal = denialSignal({ rule: 'git-amend', session: 's1' });
   const first = recordSignal(proj, signal, { now: new Date(Date.now() - 60_000) });
   assert.equal(first.source, 'auto');
@@ -72,7 +74,7 @@ test('a signal dedupes by its key, reopens a fix it recurs after, and stays off 
 });
 
 test('noteDenial records a lesson on the third block of one rule in one session, once', (t) => {
-  const { dir, temp, all } = project(t);
+  const { dir, temp, plugin: all } = project(t);
   const input = (session) => ({ session_id: session, cwd: dir, agent_type: 'aidrian:explorer' });
   const results = Array.from({ length: REPEATED_DENIALS + 1 }, () => noteDenial(input('s1'), 'git-amend', { dir: temp }));
   assert.deepEqual(results.map(Boolean), [false, false, true, false]);
@@ -89,7 +91,7 @@ test('noteDenial records a lesson on the third block of one rule in one session,
 });
 
 test('blocks that land at the same time all count, and exactly one of them records the lesson', async (t) => {
-  const { dir, temp, all } = project(t);
+  const { dir, temp, plugin: all } = project(t);
   const blocks = 12;
   const script = `import { noteDenial } from ${JSON.stringify(path.join(ROOT, 'plugins/aidrian/lib/lesson-signals.mjs'))};\n`
     + `noteDenial({ session_id: 'race', cwd: ${JSON.stringify(dir)}, agent_type: 'aidrian:explorer' }, 'git-amend', { dir: ${JSON.stringify(temp)} });\n`;
@@ -112,17 +114,18 @@ test('the session-end hook deletes the session`s block counts and no other sessi
   assert.deepEqual(left(), ['aidrian-denials-ending-2.git-amend']);
 });
 
-test('the Bash hook still blocks every time, and the third block of a rule in a session becomes a lesson', (t) => {
-  const { all, hook } = project(t);
+test('the Bash hook still blocks every time, and the third block of a rule in a session becomes a lesson in the plugin\'s inbox', (t) => {
+  const { proj, all, plugin, hook } = project(t);
   const amend = { tool_name: 'Bash', tool_input: { command: 'git commit --amend' }, session_id: 'bash-1' };
   const statuses = Array.from({ length: REPEATED_DENIALS }, () => hook('hook-bash.mjs', amend).status);
   assert.deepEqual(statuses, Array(REPEATED_DENIALS).fill(2));
-  assert.deepEqual(all().map((lesson) => [lesson.key, lesson.target, lesson.session]), [['hook-deny:git-amend', 'plugin', 'bash-1']]);
+  assert.deepEqual(plugin().map((lesson) => [lesson.key, lesson.target, lesson.session, lesson.project]), [['hook-deny:git-amend', 'plugin', 'bash-1', projectId(proj)]]);
+  assert.deepEqual(all(), [], 'a plugin lesson never lands in the project\'s own inbox');
   assert.equal(hook('hook-bash.mjs', { ...amend, tool_input: { command: 'git status' } }).status, 0);
 });
 
 test('the write hook counts its main-checkout blocks the same way', (t) => {
-  const { dir, all, hook } = project(t, { version: 1, git: { mainCheckout: { guard: true } } });
+  const { dir, plugin: all, hook } = project(t, { version: 1, git: { mainCheckout: { guard: true } } });
   writeFileSync(path.join(dir, 'app.js'), '');
   spawnSync('git', ['-C', dir, 'add', 'app.js']);
   const edit = { tool_name: 'Edit', tool_input: { file_path: path.join(dir, 'app.js') }, session_id: 'write-1' };
@@ -131,7 +134,7 @@ test('the write hook counts its main-checkout blocks the same way', (t) => {
 });
 
 test('a delivery-check send-back becomes a lesson for that agent type; the second stop adds nothing', (t) => {
-  const { all, hook } = project(t);
+  const { all, plugin, hook } = project(t);
   const stop = (agentType, active) =>
     hook('hook-subagent-stop.mjs', { session_id: 's1', agent_id: 'a1', agent_type: agentType, last_assistant_message: 'Wrote out/handoff.json.', stop_hook_active: active });
   assert.equal(stop('planner', false).status, 2);
@@ -139,12 +142,13 @@ test('a delivery-check send-back becomes a lesson for that agent type; the secon
   assert.equal(stop('planner', false).status, 2);
   assert.equal(stop('aidrian:planning-agent', false).status, 2);
   assert.deepEqual(
-    all().map((lesson) => [lesson.key, lesson.target, lesson.seen, lesson.evidence]),
+    [...all(), ...plugin()].map((lesson) => [lesson.key, lesson.target, lesson.seen, lesson.evidence, lesson.project !== null]),
     [
-      ['delivery-check:planner', 'project', 2, ['dispatch log: agent a1']],
-      ['delivery-check:aidrian:planning-agent', 'plugin', 1, ['dispatch log: agent a1']],
+      ['delivery-check:planner', 'project', 2, ['dispatch log: agent a1'], false],
+      ['delivery-check:aidrian:planning-agent', 'plugin', 1, ['dispatch log: agent a1'], true],
     ],
   );
+  assert.deepEqual(plugin().map((lesson) => lesson.key), ['delivery-check:aidrian:planning-agent'], 'the plugin agent\'s lesson is in the plugin\'s inbox');
 });
 
 test('with telemetry off, a send-back is still a lesson, and it names no dispatch log row', (t) => {
@@ -154,9 +158,10 @@ test('with telemetry off, a send-back is still a lesson, and it names no dispatc
 });
 
 test('signals write nothing with lessons.auto off, and the hooks still block', (t) => {
-  const { proj, all, hook } = project(t, { version: 1, lessons: { auto: false } });
+  const { proj, all, plugin, hook } = project(t, { version: 1, lessons: { auto: false } });
   for (let i = 0; i < REPEATED_DENIALS; i += 1) assert.equal(hook('hook-bash.mjs', { tool_name: 'Bash', tool_input: { command: 'git commit --amend' }, session_id: 'off' }).status, 2);
   assert.equal(hook('hook-subagent-stop.mjs', { agent_id: 'a1', agent_type: 'planner', last_assistant_message: 'Wrote out/x.json.', stop_hook_active: false }).status, 2);
-  assert.deepEqual(all(), []);
+  assert.deepEqual([all(), plugin()], [[], []]);
   assert.equal(existsSync(inboxPath(proj)), false);
+  assert.equal(existsSync(pluginInboxPath()), false);
 });

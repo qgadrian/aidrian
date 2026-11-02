@@ -9,7 +9,7 @@ import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-import { loadConfig } from './config.mjs';
+import { loadConfig, pluginRepository } from './config.mjs';
 import { insidePath, isDirectory, isFile, isWithin, readJson } from './fs.mjs';
 import { checkoutRoots, mainRoot, runGit } from './git.mjs';
 
@@ -218,9 +218,25 @@ export function projectId(project) {
   const repository = (status === 0 && normalizeRemote(stdout)) || realPath(repoRoot(project));
   const prefix = runGit(['rev-parse', '--show-prefix'], project.root);
   const below = prefix.status === 0 ? prefix.stdout.replace(/\/?\n$/u, '') : '';
+  return repositoryId(repository, below);
+}
+
+// The id of the project at `below` (empty at the root) in the repository `repository`, a normalized remote or a path.
+function repositoryId(repository, below = '') {
   const key = below ? `${repository}\0${below}` : repository;
   const slug = path.posix.basename(repository).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
   return `${slug}-${createHash('sha256').update(key).digest('hex').slice(0, 8)}`;
+}
+
+// The project id of the plugin's own repository, the `repository` in its manifest: what projectId gives in any clone of
+// it, so every project on a machine finds the plugin's state folder without a checkout. Null when the manifest names none.
+let pluginId;
+export function pluginProjectId() {
+  if (pluginId === undefined) {
+    const repository = pluginRepository();
+    pluginId = repository ? repositoryId(normalizeRemote(repository)) : null;
+  }
+  return pluginId;
 }
 
 // One spelling per remote: `git@host:owner/repo.git`, `ssh://git@host:22/owner/repo`, and `https://host/owner/repo/`

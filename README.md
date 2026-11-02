@@ -142,6 +142,7 @@ Run `aidrian` or `aidrian-knowledge` with no arguments to list every subcommand 
 | `aidrian commit-msg` | Checks a commit message. | [Commit messages](docs/hooks.md#commit-messages) |
 | `aidrian lesson` | Keeps the lesson inbox. | [Lessons](docs/lessons.md#commands) |
 | `aidrian handoff` | Checks a session handoff brief. | [`session-handoff`](plugins/aidrian/skills/session-handoff/SKILL.md) |
+| `aidrian quorum` | Runs Codex against a plan, and checks a quorum ledger's citations. | [Local state](docs/project-folder.md#local-state) |
 | `aidrian report` | Shows what each agent type cost and read. | [The report](docs/dispatch-log.md#the-report) |
 | `aidrian report docs` | Lists the knowledge docs agents read. | [Doc reads](docs/dispatch-log.md#doc-reads) |
 | `aidrian report sessions` | Shows what each session cost. | [Sessions](docs/dispatch-log.md#sessions) |

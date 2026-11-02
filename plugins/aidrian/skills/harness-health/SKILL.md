@@ -64,7 +64,8 @@ Agents are named as `aidrian:<name>` in Claude Code and `aidrian-<name>` in Code
 ## 4. Capture lessons
 
 Offer the Human a lesson for each of the top three problems whose `lesson` is not null, and capture only those accepted.
-First run `aidrian lesson list --json`: skip a problem whose `lesson.key` an open lesson already holds.
+First run `aidrian lesson list --json` and `aidrian lesson list --target plugin --json`, which reads the plugin's inbox:
+skip a problem whose `lesson.key` an open lesson already holds.
 
 A problem whose `resolved` is set has a fixed lesson with that key, and its window can hold the failures that led to the fix.
 Its `since_resolution` judges the same problem on the evidence dated after `resolved.at` alone, by its `status`:

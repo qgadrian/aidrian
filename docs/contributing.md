@@ -20,7 +20,7 @@ npm run check    # what CI runs
 - a generated agent is stale, or edited by hand;
 - the example's project folder, or this repository's own, is invalid;
 - a test fails;
-- the plugin changed without a version bump ([Versions](#versions)).
+- the branch changes the plugin version ([Versions](#versions)).
 
 ## What the tests hold
 
@@ -60,22 +60,42 @@ A case earns its place when it passes with the plugin and fails without it. Resu
 
 ## Versions
 
-Users receive a change only after the version changes.
-A branch that changes anything under `plugins/aidrian/` raises the version before it merges:
+Users receive a change only after the version changes on main: both hosts install from main and cache by version.
+A version change is a release, and only the release workflow, `.github/workflows/release.yml`, makes one.
 
-```sh
-npm run bump           # 0.3.0 -> 0.3.1, for a fix
-npm run bump minor     # 0.3.0 -> 0.4.0, for a new feature
-npm run bump major     # 0.3.0 -> 1.0.0, for a change a project must adapt to
-```
+A pull request never changes the version, so two open pull requests never conflict on it.
+`npm run check` fails when the version files disagree, and when the branch holds a version other than its merge base
+with `origin/main` in any of them. Main may release while a branch is open: the branch takes the new version when it
+merges main, and need not before. Without `origin/main`, or on `main` itself, that comparison is skipped.
 
-`npm run bump` writes the new version to every file that carries it: both plugin manifests, `package.json`, and `package-lock.json`.
-`npm run check` fails when those files disagree, and when the branch changes `plugins/aidrian/` without a version above `origin/main`'s.
-Changes only to docs, tests, examples, or `scripts/` need no bump: they live outside the plugin.
-Without `origin/main`, or on `main` itself, the comparison with main is skipped.
+After each merge to main, the workflow runs `node scripts/version.mjs release`. It counts the commits since the latest
+`v*` tag that change `plugins/aidrian/`; with none, it releases nothing. Otherwise it raises the version in every file
+that carries it, runs `npm run check`, commits `chore(release): aidrian vX.Y.Z`, tags `vX.Y.Z`, pushes both at once,
+and publishes the release notes.
 
-Two open branches that both bump the version conflict on the version lines.
-To resolve the conflict, take main's version in every conflicted file, then run `npm run bump` again with the same level.
+The commit subjects pick the level. Main takes squash merges, so each subject is a pull request's title, and the
+`PR title` workflow fails a title that is not a Conventional Commit subject, such as `fix(hooks): let a hook pass`.
+
+| Subject | Level | Example |
+| --- | --- | --- |
+| A `!` before the colon | major | `feat(config)!: rename the review keys` |
+| `feat` | minor | `feat(review): cite focus` |
+| Any other type, or no Conventional Commit at all | patch | `fix(pr-body): name the allowed path` |
+
+The highest level among the subjects wins. While the version is `0.x`, a breaking change raises minor:
+`1.0.0`, and any major release, comes only from running the workflow by hand with `level` set to `major`.
+The same input forces any level, and releases even when no plugin commit is waiting.
+
+When a project's `requires.aidrian` should name a new version ([Plugin version](config.md#plugin-version)),
+raise it after that release ships, in a later pull request: before the release, no plugin satisfies it.
+
+To try a change in a local install, `npm run bump` raises the version in the working tree (`minor` or `major` as an
+argument; patch by default), so the host sees a new version. Set it back before you commit: `npm run check` fails until
+you do.
+
+The release counts from the latest `v*` tag, and fails when that tag is missing or is not the version in the files.
+A repository that starts releasing this way tags the commit that set the current version once, by hand:
+`git tag vX.Y.Z <commit> && git push origin vX.Y.Z`.
 
 ## Not included
 

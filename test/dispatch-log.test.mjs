@@ -496,10 +496,10 @@ test('sessionRow records the skills, draft pull requests, and review runs of the
   writeFileSync(main, [call('k1', 'Skill', { skill: 'aidrian:plan-implement' }), result('k1', 'Launching skill: aidrian:plan-implement'),
     call('g1', 'Bash', { command: 'gh pr create --draft --title t --body-file b.md' }), result('g1', 'https://github.com/acme/notes/pull/3')].join('\n'));
   mkdirSync(path.join(base, 's2/subagents'), { recursive: true });
-  writeFileSync(path.join(base, 's2/subagents/agent-a.jsonl'), [call('r1', 'Bash', { command: 'aidrian pr await-review 3' }), result('r1', '{"status": "clean"}')].join('\n'));
+  writeFileSync(path.join(base, 's2/subagents/agent-a.jsonl'), [call('r1', 'Bash', { command: 'aidrian pr await-review 3' }), result('r1', '{\n  "status": "received",\n  "pr": 3\n}')].join('\n'));
   const row = sessionRow({ session_id: 's2', transcript_path: main }, findProject(dir), { env: { CLAUDE_CODE_AGENT: 'aidrian:orchestrator' }, now: NOW });
   assert.deepEqual([row.agent, row.skills, row.drafts_opened, row.review_runs], ['aidrian:orchestrator', ['aidrian:plan-implement'], 1, 1]);
-  assert.doesNotMatch(JSON.stringify(row), /gh pr create|pull\/3/, 'the row holds no command and no output');
+  assert.doesNotMatch(JSON.stringify(row), /gh pr create|pull\/3|await-review|received/, 'the row holds no command and no output');
 });
 
 test('a request a forked subagent`s transcript repeats from its parent counts once, on the parent`s row: its Read and its tokens', (t) => {

@@ -212,12 +212,21 @@ const isPluginSkill = (name) => {
   return pluginSkills.has(name.split(':').at(-1));
 };
 const PR_URL = /\/pull\/\d+/u;
-// Claude Code writes a Bash call the shell ran and that exited non-zero as an error result that starts `Exit code N`,
-// whatever the exit and whichever command in the line set it. Every other error result is a call that never ran: a
-// hook's refusal (`PreToolUse:Bash hook error: ...`, or a hook's own reason such as `Blocked: ...`), a permission
-// denial (`Permission to use Bash with command ... has been denied.`, `Permission for this action was denied ...`), the
-// user's rejection (`The user doesn't want to ...`), a `<tool_use_error>`, or a call the session lost.
-const RAN_AND_FAILED = /^Exit code \d+/u;
+// What shows a review command ran: the one JSON object `aidrian pr review` and `aidrian pr await-review` print, which
+// opens with its `status`, one of these, and the pull request's `pr` (lib/review/run.mjs EXIT and `finish`,
+// lib/pr-await-review.mjs `result`; test/transcript.test.mjs holds the list to their source). An exit code cannot show
+// it: it is the whole line's, and `false && aidrian pr review 12` ends `Exit code 1` with no review run.
+export const REVIEW_OUTPUT_STATUSES = Object.freeze([
+  'dispatch', 'running', 'fix_required', 'received', 'none_needed', 'human_required', 'timed_out', 'checks_pending',
+  'blocked_quota', 'round_limit', 'unsatisfied', 'incomplete', 'stuck', 'too_large', 'already_present', 'no_reviewer',
+  'review_required',
+]);
+const REVIEW_STATUS_SET = new Set(REVIEW_OUTPUT_STATUSES);
+const REVIEW_OUTPUT = /"status"\s*:\s*"([a-z_]+)"\s*,\s*"pr"\s*:\s*(?:\d+|null)\b/gu;
+// Whether a Bash call's result holds a review command's output. The command's own text is taken out first: a hook's
+// refusal or a permission denial quotes it, and a quoted command is no output.
+const printedReview = (output, command) =>
+  [...output.split(command).join('\n').matchAll(REVIEW_OUTPUT)].some((match) => REVIEW_STATUS_SET.has(match[1]));
 
 const resultText = (content) =>
   typeof content === 'string' ? content : Array.isArray(content) ? content.map((block) => (typeof block?.text === 'string' ? block.text : '')).join('\n') : '';
@@ -231,7 +240,7 @@ function actionOf(block) {
   if (block.name !== 'Bash' || typeof block.input?.command !== 'string') return null;
   const review = runs(block.input.command, runsReview);
   const draft = runs(block.input.command, createsDraft);
-  return review || draft ? { skill: null, review, draft } : null;
+  return review || draft ? { skill: null, review, draft, command: block.input.command } : null;
 }
 
 // What a session did that the health report judges, over its transcripts: { skills, drafts_opened, review_runs }.
@@ -241,8 +250,8 @@ function actionOf(block) {
 //   user's turn that name this plugin's skill. A slash command has no tool result: the host ran it before the turn.
 // - `drafts_opened` counts the draft pull request creates whose result is not an error and names a pull request URL.
 // - `review_runs` counts the review skills run, as `skills` reads them, and the Bash calls that run `aidrian pr review`
-//   or `aidrian pr await-review` that ran: the result is not an error, or starts `Exit code N`, since the exit is the
-//   whole line's, as in `aidrian pr review 12; test -f x`, and a review command ends a capped round non-zero too.
+//   or `aidrian pr await-review` whose result holds that command's JSON output, error or not: the exit is the whole
+//   line's, so `aidrian pr review 12; test -f x` can fail after a review ran and `false && aidrian pr review 12` with none.
 // A call a forked subagent's transcript repeats counts once, by its id. Names and counts only: no command or output
 // leaves this function.
 export function sessionActions(texts) {
@@ -266,7 +275,7 @@ export function sessionActions(texts) {
       for (const block of content) {
         if (block?.type === 'tool_use' && typeof block.id === 'string' && !calls.has(block.id)) {
           const action = actionOf(block);
-          if (action) calls.set(block.id, { ...action, ran: false, opened: false });
+          if (action) calls.set(block.id, { ...action, ran: false, opened: false, reviewed: false });
         }
         const call = block?.type === 'tool_result' ? calls.get(block.tool_use_id) : undefined;
         if (!call) continue;
@@ -274,16 +283,17 @@ export function sessionActions(texts) {
         if (block.is_error !== true) {
           call.ran = true;
           if (call.draft && PR_URL.test(output)) call.opened = true;
-        } else if (call.review && call.skill === null && RAN_AND_FAILED.test(output)) call.ran = true;
+        }
+        call.reviewed ||= call.review && (call.skill ? call.ran : printedReview(output, call.command));
       }
     }
   }
-  const ran = [...calls.values()].filter((call) => call.ran);
-  for (const call of ran) if (call.skill) skills.add(call.skill);
+  const all = [...calls.values()];
+  for (const call of all) if (call.skill && call.ran) skills.add(call.skill);
   return {
     skills: [...skills].sort(),
-    drafts_opened: ran.filter((call) => call.opened).length,
-    review_runs: commandReviews.size + ran.filter((call) => call.review).length,
+    drafts_opened: all.filter((call) => call.opened).length,
+    review_runs: commandReviews.size + all.filter((call) => call.reviewed).length,
   };
 }
 

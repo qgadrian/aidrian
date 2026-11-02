@@ -4,8 +4,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { readFileSync } from 'node:fs';
+
+import { awaitReview } from '../plugins/aidrian/lib/pr-await-review.mjs';
+import { EXIT } from '../plugins/aidrian/lib/review/run.mjs';
 import {
-  aggregateUsage, estimateCostUsd, filesRead, partOf, priceFor, sessionActions, subagentTranscripts, sumTokens,
+  aggregateUsage, estimateCostUsd, filesRead, partOf, priceFor, REVIEW_OUTPUT_STATUSES, sessionActions, subagentTranscripts, sumTokens,
 } from '../plugins/aidrian/lib/transcript.mjs';
 
 // One transcript line: an assistant message with usage, as Claude Code writes it.
@@ -87,7 +91,7 @@ test('sessionActions: the skills a session ran, the drafts it opened, and its re
     'only the draft create that returned a pull request counts; the host`s own command is no skill');
   // A forked subagent repeats the main conversation's calls, then runs the review loop and its command.
   const subagent = [main, call('s2', 'Skill', { skill: 'aidrian:pr-review-loop' }), result('s2', 'Launching skill: aidrian:pr-review-loop'),
-    call('b4', 'Bash', { command: 'aidrian pr review 12 --with-bot' }), result('b4', '{"status": "dispatch"}')].join('\n');
+    call('b4', 'Bash', { command: 'aidrian pr review 12 --with-bot' }), result('b4', '{\n  "status": "dispatch",\n  "pr": 12\n}')].join('\n');
   assert.deepEqual(sessionActions([main, subagent]), {
     skills: ['aidrian:autopilot', 'aidrian:issue-implement', 'aidrian:pr-review-loop'], drafts_opened: 1, review_runs: 2,
   });
@@ -121,14 +125,29 @@ test('sessionActions counts a review run or a skill only by its result: a refuse
   assert.deepEqual(actions(call('k1', 'Skill', { skill: 'aidrian:autopilot' }), result('k1', '<tool_use_error>Unknown skill: autopilot</tool_use_error>', true)),
     none, 'a refused skill is not listed');
 
-  // Ran: a result that is not an error, or one that starts `Exit code N`, whatever the exit and whichever command set it.
-  assert.deepEqual(actions(call('r1', 'Bash', review), result('r1', '{"status": "dispatch"}')), { ...none, review_runs: 1 }, 'a review that ran');
-  assert.deepEqual(actions(call('r1', 'Bash', review), result('r1', 'Exit code 4\n{"status": "round_limit"}', true)), { ...none, review_runs: 1 },
+  // Ran: the result holds the JSON object the review command prints, whatever the exit and whichever command set it.
+  const printed = (status) => JSON.stringify({ status, pr: 40, repo: 'acme/notes', head: 'abc1234' }, null, 2);
+  assert.deepEqual(actions(call('r1', 'Bash', review), result('r1', printed('received'))), { ...none, review_runs: 1 }, 'a review that ran');
+  assert.deepEqual(actions(call('r1', 'Bash', review), result('r1', `Exit code 4\n${printed('round_limit')}`, true)), { ...none, review_runs: 1 },
     'a review that ran and hit the round cap');
-  assert.deepEqual(actions(call('r1', 'Bash', review), result('r1', 'Exit code 1\naidrian pr review: unknown argument: --x', true)), { ...none, review_runs: 1 },
-    'a review command that ran and failed');
-  assert.deepEqual(actions(call('r1', 'Bash', { command: 'aidrian pr review 40; test -f optional.json' }), result('r1', 'Exit code 1\n{"status": "dispatch"}', true)),
+  assert.deepEqual(actions(call('r1', 'Bash', { command: 'aidrian pr review 40; test -f optional.json' }), result('r1', `Exit code 1\n${printed('dispatch')}`, true)),
     { ...none, review_runs: 1 }, 'a review that ran in a line a later command failed');
+  assert.deepEqual(actions(call('r1', 'Bash', { command: 'aidrian pr await-review 40' }), result('r1', '{"status":"no_reviewer","pr":null}')),
+    { ...none, review_runs: 1 }, 'compact JSON, and a pull request the command did not resolve');
+
+  // Not run: an exit code belongs to the whole line, so without the review's own output nothing shows a review ran.
+  for (const [command, text, why] of [
+    ['false && aidrian pr review 40', 'Exit code 1', 'a step before it failed'],
+    ['cd /missing && aidrian pr review 40', 'Exit code 1\n(eval):cd:1: no such file or directory: /missing', 'a cd before it failed'],
+    ['aidrian pr review 40 --x', 'Exit code 1\naidrian pr review: unknown argument: --x', 'the command refused its arguments'],
+    ['aidrian pr review 40 | head -1', '{', 'the output was cut before the status'],
+    ['aidrian pr review 40', `Exit code 1\n${JSON.stringify({ status: 'merged', pr: 40 })}`, 'a status neither command prints'],
+  ]) assert.deepEqual(actions(call('r1', 'Bash', { command }), result('r1', text, true)), none, `no review ran: ${why}`);
+  const quoting = `echo '${printed('received')}' > /dev/null; aidrian pr review 40`;
+  assert.deepEqual(actions(call('r1', 'Bash', { command: quoting }), result('r1', `Permission to use Bash with command ${quoting} has been denied.`, true)), none,
+    'a refusal that quotes a command holding the JSON');
+  assert.deepEqual(sessionActions([[...draft, call('r1', 'Bash', { command: `echo '{"status":"received","pr":1}'` }), result('r1', '{"status":"received","pr":1}')].join('\n')]), none,
+    'the JSON printed by a line that runs no review command');
   assert.deepEqual(actions(call('k1', 'Skill', loop), result('k1', 'Launching skill: aidrian:pr-review-loop')),
     { skills: ['aidrian:pr-review-loop'], drafts_opened: 1, review_runs: 1 }, 'a review skill that ran');
 
@@ -141,9 +160,35 @@ test('sessionActions counts a review run or a skill only by its result: a refuse
   assert.deepEqual(actions(typed), { skills: ['aidrian:pr-review-loop'], drafts_opened: 1, review_runs: 1 }, 'a typed review skill');
 });
 
+test('the statuses a review run is read by are every status aidrian pr review and aidrian pr await-review print, status then pr', async () => {
+  const lib = new URL('../plugins/aidrian/lib/', import.meta.url);
+  const literals = (text) => [...text.matchAll(/'([a-z_]+)'/gu)].map((match) => match[1]);
+  const statuses = (source, builder) => [
+    ...[...source.matchAll(/\{ status: '([a-z_]+)', pr:/gu)].map((match) => match[1]),
+    ...[...source.matchAll(new RegExp(`\\b${builder}\\(([^,)]*)`, 'gu'))].flatMap((match) => literals(match[1])),
+  ];
+  const run = readFileSync(new URL('review/run.mjs', lib), 'utf8');
+  const wait = readFileSync(new URL('pr-await-review.mjs', lib), 'utf8');
+  // Every object either command prints puts `status` first and `pr` next, which is what the reader matches.
+  assert.match(run, /const result = \{ status, pr: n,/u, 'aidrian pr review builds its result status, then pr');
+  assert.match(wait, /return \{\n\s+status,\n\s+pr: Number\(n\),/u, 'aidrian pr await-review builds its result status, then pr');
+  const exitCodes = [...wait.matchAll(/if \(status === '([a-z_]+)'\) return \d+;/gu)].map((match) => match[1]);
+  const printed = new Set([...Object.keys(EXIT), ...statuses(run, 'finish'), ...statuses(wait, 'result'), ...exitCodes]);
+  assert.deepEqual([...REVIEW_OUTPUT_STATUSES].sort(), [...printed].sort());
+
+  // The real output of one of them reads as a run.
+  const output = JSON.stringify(await awaitReview({ pr: '40', reviewer: null }, { git: {} }), null, 2);
+  const line = (entry) => JSON.stringify(entry);
+  const transcript = [
+    line({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'w1', name: 'Bash', input: { command: 'aidrian pr await-review 40' } }] } }),
+    line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'w1', content: output }] } }),
+  ].join('\n');
+  assert.equal(sessionActions([transcript]).review_runs, 1);
+});
+
 test('sessionActions reads the commands a Bash call runs, not the text that names one', () => {
   const call = (id, command) => usageLine(`m-${id}`, 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', id, name: 'Bash', input: { command } }] });
-  const opened = (id, n) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: `https://github.com/acme/notes/pull/${n}` }] } });
+  const opened = (id, n) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: `https://github.com/acme/notes/pull/${n}\n{\n  "status": "received",\n  "pr": ${n}\n}` }] } });
   const actions = (command) => {
     const { drafts_opened, review_runs } = sessionActions([[call('c1', command), opened('c1', 30)].join('\n')]);
     return { drafts_opened, review_runs };

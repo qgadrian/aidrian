@@ -3,6 +3,7 @@
 The lesson inbox turns what goes wrong in sessions into fixes.
 An agent captures a lesson with one command and goes back to its task.
 Later, a session opened for the `lesson-triage` skill routes each lesson to one end: a fix, an issue, a merge, or a rejection.
+`lesson-triage --peek` prints the ranked inbox without loading knowledge or searching; `--limit N` sizes the batch.
 A lesson that comes back after its fix reopens, so a fix that did not hold is visible.
 
 ## The inbox
@@ -112,11 +113,11 @@ the note is the rest.
   A new tier or kind alone moves nothing.
 - `update <id> --triage -` keeps what triage found on the lesson, so a later triage reuses it instead of searching again.
   It reads one JSON object on stdin with these keys. Three are required: `existing` (the docs, issues, or pull requests
-  that already cover it), `proposed_end` (`Fix now`, `Issue`, `Merge`, or `Reject`), and `owner`. `expect`, `verdict`
+  that already cover it, or for a rule the doc it goes into), `proposed_end` (`Fix now`, `Issue`, `Merge`, or `Reject`), and `owner`. `expect`, `verdict`
   (`declined`, `failed`, or `null`), and `reason` are `null` when left out. The command adds `at`, `project`, and the lesson's
   current `target`, over any the record carries, so a record resent from `list --json` passes; any other key fails.
   It takes no `--tier`, `--kind`, or `--target`, and each write replaces the record whole.
-  `list --json` and `update --json` show the record for 14 days after its `at`, and only in the checkout of the project
+  `list --json` and `update --json` show the record for 14 days after its `at`, and only in the project
   that wrote it; otherwise `triage` is `null`, and triage reads the lesson afresh.
 - `stats` counts what is open, what moved in the last `--since 30d`, and whether each fix since then held.
 - `nudge` prints the session-start line.

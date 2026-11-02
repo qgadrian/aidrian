@@ -55,9 +55,9 @@ never a pasted command, path, or error text. Single-quote the words on every com
 
 An issue that already covers the lesson is its `issue` outcome, linked to it. A partial match extends that issue; it never opens a sibling.
 
-A row whose `triage` is not `null` was searched in this checkout within 14 days: reuse it without `aidrian-knowledge search`
+A row whose `triage` is not `null` was searched in this project within 14 days: reuse it without `aidrian-knowledge search`
 or `git grep`. Before the table, read whether each issue or pull request in `existing` is open, closed, or merged.
-When its `proposed_end` is an `Issue` not yet filed, run the tracker search and `gh pr list` again. A `triage: null` row is searched in full.
+When its end, kept or new, is an `Issue` not yet filed, run the tracker search and `gh pr list` again. A `triage: null` row is searched in full.
 
 ## 3. Decide
 
@@ -74,7 +74,7 @@ Then pick one end per lesson:
 | Reject | Specific to one session, already fixed, or not worth its cost | the reason | `rejected` |
 
 - Prefer a mechanism: a script, check, or hook catches it every time. Before you choose `rule`, say why it cannot be a mechanism.
-- A rule goes into the knowledge doc that owns the topic; find it with `aidrian-knowledge search` and read it before you name it.
+- A rule goes into the knowledge doc that owns the topic: a reused row names it in `existing`; else find it with `aidrian-knowledge search`. Read it before you name it.
   A rule that no doc owns becomes an issue to write that doc, never a new doc from here.
   It names no session specifics: no paths touched this session, no ticket keys, no one-off error text.
 - `harness-mechanic` works only in a checkout of the plugin's repository, the `repository` in the plugin's `plugin.json`.
@@ -83,8 +83,7 @@ Then pick one end per lesson:
   for a lesson with no number, "no new occurrence" is enough.
 - Never fan one lesson out into several outcomes; mention a second surface in the summary.
 
-Before the table, record the triage of each lesson searched in full or given a new end;
-the record stores research and routes nothing, so it needs no approval:
+Before the table, record the triage of each lesson searched in full or given a new end, a rule's doc in `existing`:
 
 ```bash
 aidrian lesson update <id> --triage - <<'TRIAGE'

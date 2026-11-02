@@ -15,7 +15,7 @@ import { readFileSync } from 'node:fs';
 import { findProject } from '../project.mjs';
 import { readLocalState } from '../review/state.mjs';
 import { commandLines, lexCommand, readInvocation } from '../shell-lex.mjs';
-import { aidrianArgs } from './review-signoff.mjs';
+import { aidrianArgs } from '../shell-lex.mjs';
 
 export const reason = (pr, round) =>
   'Blocked: `aidrian pr extend --human approve` records the Human\'s approval of an extra review round, and this session ' +

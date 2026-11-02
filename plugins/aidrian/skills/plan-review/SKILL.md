@@ -1,13 +1,13 @@
 ---
 name: plan-review
-description: Review a local plan before implementation. planning-agent proposes a diff; the Human approves it.
+description: Review a local plan before anyone implements it. Use when asked to review a plan file. planning-agent proposes a diff; the Human approves it.
 ---
 
 # plan-review
 
 Run one critique-and-refine pass over a plan before anyone implements it.
 This session coordinates: it finds the plan, runs the gates, has `planning-agent` critique the plan and propose a diff,
-and has `planning-agent` apply the diff only after the Human approves it.
+and apply it only after the Human approves it.
 It never critiques or rewrites the plan itself, and never commits it.
 
 Before you start, follow the `knowledge` skill. Load your `product_sensitive` docs for the flows the project declares critical,
@@ -53,7 +53,7 @@ or the `issue-plan` skill for an issue. Never build a plan from the conversation
 
 ## 3. Gates
 
-Both run before the critique, and their verdicts go into its brief as authoritative.
+Both run before the critique; their verdicts go into its brief as authoritative.
 
 - **Critical flow.** The plan's goal, scope, approach, affected surfaces, or slice files touch a flow the project's
   `product_sensitive` knowledge declares critical (the whole text, for a free-form plan): `product-manager` first.

@@ -20,7 +20,12 @@ aidrian lesson list --json --limit 10
 
 `stats` gives the open count by tier and the recent fixes. The list is the batch, already in triage order: tier, then age.
 Each row has `id`, `title`, `note`, `tier`, `kind`, `target`, `evidence`, `seen`, the last `occurrences`, `similar`,
-`session`, and `agent`. Read the evidence before you decide anything.
+`session`, `agent`, and `project`. Read the evidence before you decide anything.
+
+Every project files its `target: plugin` lessons in the plugin's inbox, the inbox of the plugin's own repository.
+In a checkout of that repository, the list holds them all, and `project` names the project each came from;
+anywhere else, the list holds this project's lessons, and `aidrian lesson list --target plugin` reads the plugin's.
+A lesson's session, worktree, and evidence belong to its `project`.
 
 - `reopened` above 0 means a fix did not hold: read its `resolutions` before anything else.
 - `source: auto` is a lesson the plugin recorded itself; its `key` names the signal, such as `delivery-check:<agent>`.
@@ -50,6 +55,7 @@ An issue that already covers the lesson is its `issue` outcome, linked to it. A 
 ## 3. Decide
 
 Fix a wrong label first: `aidrian lesson update <id> --tier P1 --target plugin`.
+A new target moves the lesson: `plugin` to the plugin's inbox, `project` back to the inbox of the project it came from.
 Then pick one end per lesson:
 
 | End | When | Owner | Outcome |

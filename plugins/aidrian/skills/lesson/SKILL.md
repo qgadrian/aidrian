@@ -24,6 +24,7 @@ LESSON
 
 Everything travels on stdin through a quoted heredoc, so `$(...)`, backticks, `$VAR`, quotes, and `&` in it are never expanded.
 Leading `evidence:` lines are evidence, zero or more; the note is everything after them. Only the options go on the command line.
+A leading `title: <text>` line sets the title, for a note whose first line is not one.
 
 - **note**: from the request; if there is none, ask the user one question. Never guess it.
   The first line is the title triage reads first: one sentence that names the problem.
@@ -47,6 +48,8 @@ When `add` names similar lessons and one of them is clearly the same problem, me
 When none clearly is, leave it; triage decides.
 
 The inbox is `lessons/inbox.jsonl` in the folder `aidrian state` prints: outside the repository, shared by every worktree.
+A `--target plugin` lesson goes to the plugin's own inbox instead, where the plugin's triage reads it, with this project's name.
+The command routes it; `--same` and the similar names it prints already look there.
 When `aidrian` is not on your PATH, run it from the folder that holds the `aidrian-knowledge` the start hook names.
 
 ## Rules

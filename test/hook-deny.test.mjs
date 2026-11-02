@@ -7,7 +7,7 @@ import test from 'node:test';
 
 import { denyRow } from '../plugins/aidrian/lib/dispatch-rows.mjs';
 import { firstSentence } from '../plugins/aidrian/lib/hook-deny.mjs';
-import { inboxPath, lessons } from '../plugins/aidrian/lib/lesson-inbox.mjs';
+import { inboxPath, lessons, pluginInboxPath } from '../plugins/aidrian/lib/lesson-inbox.mjs';
 import { REPEATED_DENIALS } from '../plugins/aidrian/lib/lesson-signals.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { REASON as HOOK_BYPASS } from '../plugins/aidrian/lib/rules/git-hook-bypass.mjs';
@@ -40,11 +40,12 @@ function project(t, config = { version: 1 }) {
       return [];
     }
   };
-  const inbox = () => {
+  // The project's own inbox, or with `plugin` the plugin's, where a lesson for the plugin lands.
+  const inbox = (plugin = false) => {
     const saved = process.env.XDG_STATE_HOME;
     process.env.XDG_STATE_HOME = env.XDG_STATE_HOME;
     try {
-      return lessons(inboxPath(projectAt(dir)));
+      return lessons(plugin ? pluginInboxPath() : inboxPath(projectAt(dir)));
     } finally {
       if (saved === undefined) delete process.env.XDG_STATE_HOME;
       else process.env.XDG_STATE_HOME = saved;
@@ -83,7 +84,7 @@ test('telemetry.hookDenies false, or telemetry off: no row, the hooks still bloc
     const statuses = Array.from({ length: REPEATED_DENIALS }, () => hook('hook-bash.mjs', bash('git commit --amend')).status);
     assert.deepEqual(statuses, Array(REPEATED_DENIALS).fill(2), JSON.stringify(telemetry));
     assert.deepEqual(rows(), [], JSON.stringify(telemetry));
-    assert.deepEqual(inbox().map((lesson) => [lesson.key, lesson.target]), [['hook-deny:git-amend', 'plugin']], JSON.stringify(telemetry));
+    assert.deepEqual(inbox(true).map((lesson) => [lesson.key, lesson.target]), [['hook-deny:git-amend', 'plugin']], JSON.stringify(telemetry));
   }
 });
 

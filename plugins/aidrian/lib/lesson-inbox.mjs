@@ -1,10 +1,12 @@
 // The lesson inbox: a JSON Lines log in the state folder (lessons/inbox.jsonl), shared by every worktree and clone of the
-// repository. Capturing a lesson is one command, cheap enough to run the moment something goes wrong; deciding what it
+// repository. A lesson whose target is `plugin` lands in the plugin's inbox instead: the inbox of the plugin's own
+// repository on this machine, where its triage reads it, with the project it came from on its rows. Capturing a lesson is one command, cheap enough to run the moment something goes wrong; deciding what it
 // becomes is the lesson-triage skill's job, later. docs/lessons.md describes the whole loop. This file reads and folds
 // the inbox; lesson-cli.mjs is the `aidrian lesson` command.
 //
 // The file is only ever appended to, so no session's write can drop another's. Each row is one event on one lesson:
-// `add` starts it, `seen` records it again, `update` changes its tier, kind, or target, and `resolve` closes it.
+// `add` starts it, `seen` records it again, `update` changes its tier, kind, or target, `resolve` closes it, and `move`
+// takes it out of this inbox after its rows were copied to another (moveLessons).
 // fold() replays the rows into the current state of every lesson. An `add` whose `key` an earlier lesson holds is that
 // lesson seen again, so automatic signals dedupe without reading the file first. One that also repeats an earlier row's
 // `once` is the same event observed again, and adds nothing.
@@ -13,8 +15,8 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 
 import { runGit } from './git.mjs';
-import { readRows } from './jsonl.mjs';
-import { stateDir } from './project.mjs';
+import { appendRow, readRows } from './jsonl.mjs';
+import { pluginProjectId, projectId, stateDir, stateRoot } from './project.mjs';
 
 // P1 blocks or loses work, P2 costs time or tokens, P3 is polish.
 export const TIERS = ['P1', 'P2', 'P3'];
@@ -37,22 +39,42 @@ const TITLE_CHARS = 120;
 const SIMILAR = 0.18;
 const DAY_MS = 86_400_000;
 
-// `config` is the project's config when the caller has it; stateDir reads it otherwise.
+// The project's own inbox. `config` is the project's config when the caller has it; stateDir reads it otherwise.
 export function inboxPath(project, config) {
   return path.join(stateDir(project, { config }), 'lessons', 'inbox.jsonl');
 }
 
-// Leading `evidence: <ref>` lines (blank lines between them allowed), then the note, verbatim.
+// The inbox of the project `id` in the default state root, or null without an id.
+export const projectInboxPath = (id, env = process.env) => (id ? path.join(stateRoot(env), 'projects', id, 'lessons', 'inbox.jsonl') : null);
+
+// The plugin's inbox: the inbox of the plugin's own repository (its manifest's `repository`) in the default state root,
+// so a project's plugin lessons reach the plugin's triage from any project on the machine. Null when the manifest names
+// no repository; plugin lessons then stay in each project's own inbox.
+export const pluginInboxPath = (env = process.env) => projectInboxPath(pluginProjectId(), env);
+
+// Where a row with `target` lands: { file, project }. `project` is the id of the project it comes from, stamped on every
+// row written to the plugin's inbox so triage there knows its origin; null for a row in any other inbox.
+// The plugin's own checkout, whose inbox is the plugin's inbox, stamps its rows there too.
+export function inboxFor(project, config, target, env = process.env) {
+  const plugin = pluginInboxPath(env);
+  const file = target === 'plugin' && plugin ? plugin : inboxPath(project, config);
+  return { file, project: file === plugin ? projectId(project) : null };
+}
+
+// Leading `title: <text>` and `evidence: <ref>` lines, in any order, blank lines between them allowed; then the note,
+// verbatim. A title is for a note whose first line is not one.
 export function parseCapture(raw) {
   const lines = raw.split('\n');
   const evidence = [];
+  let title = null;
   let index = 0;
   for (; index < lines.length; index += 1) {
-    const match = /^evidence:\s*(.*\S)\s*$/u.exec(lines[index]);
-    if (match) evidence.push(match[1]);
-    else if (lines[index].trim() !== '' || evidence.length === 0) break;
+    const match = /^(evidence|title):\s*(.*\S)\s*$/u.exec(lines[index]);
+    if (match?.[1] === 'evidence') evidence.push(match[2]);
+    else if (match) title = match[2];
+    else if (lines[index].trim() !== '' || (evidence.length === 0 && title === null)) break;
   }
-  return { note: lines.slice(index).join('\n').trim(), evidence };
+  return { note: lines.slice(index).join('\n').trim(), evidence, ...(title ? { title } : {}) };
 }
 
 // Where a row was written from: the session, the agent, the branch, and the worktree, so triage can find the context.
@@ -77,6 +99,36 @@ export function addRow({ note, evidence = [], tier = 'P2', kind = null, target =
 
 export const newId = () => randomBytes(4).toString('hex');
 
+// Moves the lessons `ids` from the inbox `from` to the inbox `to`: copies every row that belongs to each, the rows of the
+// ids keyed or merged into it included, in their order, then appends a `move` row for each to `from`, which takes it out
+// of that inbox. `project` is stamped on each copied row that names none. A row a lesson in `to` already holds is not
+// copied again, so a move cut short and run again copies nothing twice; a lesson moved out of `to` earlier holds none
+// there, so it moves back whole. In `to`, a lesson whose key a lesson there already holds becomes that lesson seen
+// again, as any keyed row does. Returns the ids moved.
+export function moveLessons(from, to, ids, { project = null, now = new Date() } = {}) {
+  if (from === to || !ids.length) return [];
+  const { rows } = readRows(from);
+  const { find } = fold(rows);
+  const moving = new Set(ids.filter((id) => find(id)?.id === id));
+  const there = readRows(to).rows;
+  const held = fold(there).find;
+  const present = new Set(there.filter((row) => row.event !== 'move' && typeof row.id === 'string' && held(row.id)).map((row) => JSON.stringify(row)));
+  // A lesson that left this inbox before and came back holds its rows twice: before its last `move` row, and as the
+  // copies after it. Only the copies are its current rows.
+  const lastMove = new Map(rows.map((row, index) => [row, index]).filter(([row]) => row.event === 'move').map(([row, index]) => [row.id, index]));
+  rows.forEach((row, index) => {
+    const owner = typeof row.id === 'string' && row.event !== 'move' ? find(row.id)?.id : null;
+    if (!moving.has(owner) || index < (lastMove.get(owner) ?? -1)) return;
+    const copy = JSON.stringify(project && !row.project ? { ...row, project } : row);
+    if (present.has(copy)) return;
+    appendRow(to, JSON.parse(copy));
+    present.add(copy);
+  });
+  const into = path.basename(path.dirname(path.dirname(to)));
+  for (const id of moving) appendRow(from, { event: 'move', id, at: now.toISOString(), to: into });
+  return [...moving];
+}
+
 // Every lesson in capture order, as fold() leaves it.
 export function lessons(file) {
   return fold(readRows(file).rows).lessons;
@@ -95,6 +147,20 @@ export function fold(rows) {
     let current = id;
     for (let hops = 0; alias.has(current) && hops < 100; hops += 1) current = alias.get(current);
     return byId.get(current) ?? null;
+  };
+  // A moved lesson leaves this inbox whole: every id that leads to it, the lessons merged into it, their keys, and their
+  // events, so its rows copied back later start it again.
+  const forget = (lesson) => {
+    const members = [...alias.keys()].filter((id) => find(id) === lesson);
+    for (const gone of [lesson, ...members.map((id) => byId.get(id)).filter(Boolean)]) {
+      if (gone.key && byKey.get(gone.key) === gone.id) byKey.delete(gone.key);
+      if (gone.key) for (const item of events) if (item.startsWith(`${gone.key}\n`)) events.delete(item);
+    }
+    for (const id of members) {
+      alias.delete(id);
+      byId.delete(id);
+    }
+    byId.delete(lesson.id);
   };
   for (const row of rows) {
     if (typeof row.id !== 'string' || row.id === '') continue;
@@ -118,6 +184,9 @@ export function fold(rows) {
     } else if (event === 'update') {
       const lesson = find(row.id);
       if (lesson) Object.assign(lesson, labels(row, lesson));
+    } else if (event === 'move') {
+      const lesson = byId.get(row.id);
+      if (lesson && !lesson.mergedInto) forget(lesson);
     }
     if (event === 'resolve' || (row.event === undefined && row.status === 'resolved')) {
       const lesson = byId.get(row.id);
@@ -142,6 +211,7 @@ function newLesson(row) {
     agent: row.agent ?? row.role ?? null,
     branch: row.branch ?? null,
     worktree: row.worktree ?? null,
+    project: typeof row.project === 'string' && row.project ? row.project : null,
     status: 'open',
     seen: 1,
     lastAt: row.at ?? null,
@@ -168,7 +238,7 @@ function labels(row, base) {
 
 function occurrence(row) {
   const note = typeof row.note === 'string' ? row.note.trim() : '';
-  return { id: row.id, at: row.at ?? null, note: note || null, evidence: texts(row.evidence), session: row.session ?? null, agent: row.agent ?? null };
+  return { id: row.id, at: row.at ?? null, note: note || null, evidence: texts(row.evidence), session: row.session ?? null, agent: row.agent ?? null, project: row.project ?? null };
 }
 
 // One more occurrence. Every occurrence after the latest resolution counts against it, including those after it reopened

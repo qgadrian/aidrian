@@ -3,6 +3,7 @@
 // a signal dedupes itself and one recurring after a fix reopens it. Each signal fires only on an event that is rare by
 // construction, and none ever changes what the hook or command that saw it does. config.json `lessons.auto: false`
 // turns all of them off. Rows hold names, counts, paths, and ids; never a prompt, a command, or tool output.
+// A signal with target `plugin` lands in the plugin's inbox, as `aidrian lesson add --target plugin` does.
 
 import { appendFileSync, closeSync, openSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -10,7 +11,7 @@ import path from 'node:path';
 
 import { loadConfig } from './config.mjs';
 import { appendRow } from './jsonl.mjs';
-import { addRow, inboxPath } from './lesson-inbox.mjs';
+import { addRow, inboxFor } from './lesson-inbox.mjs';
 import { findProject } from './project.mjs';
 
 // One block is a guard doing its job; this many of the same rule in one session is an agent fighting it.
@@ -21,8 +22,9 @@ export function recordSignal(project, signal, { config, now = new Date() } = {})
   try {
     const settings = config ?? loadConfig(project).config;
     if (!settings.lessons.auto) return null;
-    const row = addRow({ ...signal, source: 'auto', now });
-    appendRow(inboxPath(project, settings), row);
+    const { file, project: from } = inboxFor(project, settings, signal.target);
+    const row = addRow({ ...signal, source: 'auto', now, ...(from ? { project: from } : {}) });
+    appendRow(file, row);
     return row;
   } catch {
     return null;

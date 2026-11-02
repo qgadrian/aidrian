@@ -474,3 +474,30 @@ test('await-review: a grant adds to an explicit --max-rounds as to the base cap,
   assert.deepEqual([asked.out.status, bot.requests.length], ['timed_out', 1], 'the granted fourth round is asked for');
   assert.match(bot.requests[0].body, /max-rounds=4/u);
 });
+
+test('await-review without --request reads GitHub alone: no base branch in the checkout is needed; a request still needs it', async (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-nobase-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  execFileSync('git', ['init', '-q', '-b', 'feat'], { cwd: dir });
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' } }));
+  const project = projectAt(dir);
+  const gh = {
+    repo: () => 'acme/notes',
+    currentPr: () => ({ number: 42 }),
+    api: (p, { method } = {}) => {
+      if (method) throw new Error('nothing is posted');
+      if (p.endsWith('/pulls/42')) return { base: { ref: 'main' }, head: { sha: 'abc1234', ref: 'feat', repo: { full_name: 'acme/notes' } } };
+      if (p.includes('/commits/')) return { commit: { committer: { date: '2026-08-23T07:01:00Z' } } };
+      if (/\/(reviews|comments|reactions)$/u.test(p)) return [];
+      throw new Error(`unexpected gh path ${p}`);
+    },
+  };
+  const log = t.mock.method(console, 'log', () => {});
+  const error = t.mock.method(console, 'error', () => {});
+  const deps = { gh, git: { pushedHead: () => null, behind: () => false }, now: () => 0, sleep: async () => {} };
+  assert.equal(await runAwaitReview(['42', '--timeout-sec', '0'], loadConfig(project).config, project, deps), 2);
+  assert.equal(JSON.parse(log.mock.calls.at(-1).arguments[0]).status, 'timed_out');
+  assert.equal(await runAwaitReview(['42', '--request', '--timeout-sec', '0'], loadConfig(project).config, project, deps), 1);
+  assert.match(error.mock.calls.at(-1).arguments[0], /the base branch main is not in this checkout: git fetch first/u);
+});

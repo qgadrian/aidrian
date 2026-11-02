@@ -535,7 +535,9 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     const opts = parseArgs(args, { reviewer: config.github.reviewer, maxRounds: config.github.maxReviewRounds });
     const gh = deps.gh ?? defaultGh;
     const env = deps.env ?? process.env;
-    const base = project && opts.reviewer !== null ? committedBase(project, opts, gh, config) : null;
+    // The base branch's policy decides only what a request may do: the round cap, and the check at it. A wait that posts
+    // nothing reads GitHub alone, so it needs no base branch in this checkout.
+    const base = project && opts.reviewer !== null && opts.request ? committedBase(project, opts, gh, config) : null;
     const cap = (base?.github ?? config.github).maxReviewRounds;
     // Each extra round the base branch's github.extraRounds granted the bot raises the cap by one.
     const { grantedRounds, policyOf, roundCap } = await import('./review/extension.mjs');

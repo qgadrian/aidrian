@@ -7,4 +7,5 @@ The order and payment backend of a small online shop. Customers pay by card, by 
 - `src/orders.js` keeps the orders.
 
 Product rules live in `docs/knowledge/product/`, indexed in `.aidrian/knowledge/`.
+Decision records live in `docs/adr/`.
 Plans for upcoming work live in `plans/`. Run the tests with `npm test`.

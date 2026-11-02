@@ -291,6 +291,12 @@ test('sectionOf, invariantsOf, and blocksOf: a thematic break is no list item, s
   }
   // A real item still opens a container: four spaces under "- " is a fence there.
   assert.equal(sectionOf(['## A', '- step', '', '    ```md', '    ## Fake', '    ```', '', '## B', 'b'].join('\n'), 'fake'), null);
+  // A thematic break nested under an item is no item either: the ``` eight spaces in stays indented code.
+  for (const eol of ['\n', '\r\n']) {
+    const nested = ['## A', '- a', '', '    - - -', '', '        ```js', '        const x = 1;', '', '## B', 'Rule b.', ''].join(eol);
+    assert.equal(sectionOf(nested, 'b')?.body, 'Rule b.', JSON.stringify(eol));
+    assert.deepEqual(invariantsOf({ invariants: 'x.md' }, () => nested).invariants.map((each) => each.id), ['a', 'b']);
+  }
 });
 
 test('sectionOf, invariantsOf, and blocksOf: a fence indented to its list item`s content column is still a fence', () => {

@@ -123,7 +123,7 @@ const indentOf = (line) => /^ */u.exec(line)[0].length;
 
 // A list item's marker and the content column after it, or null. A thematic break such as `* * *` or `- - -` looks like
 // an item but is not one (CommonMark), so it opens no container a later fence could be measured against.
-const THEMATIC_BREAK = /^ {0,3}([-*_])(?: *\1){2,} *$/u;
+const THEMATIC_BREAK = /^ *([-*_])(?: *\1){2,} *$/u;
 const itemOf = (line) => (THEMATIC_BREAK.test(line) ? null : /^( *)((?:[-*+]|\d+[.)]) +)\S/u.exec(line));
 
 // The top-level blocks of a section body, in order: a sub-heading, a top-level list item with its nested lines, a

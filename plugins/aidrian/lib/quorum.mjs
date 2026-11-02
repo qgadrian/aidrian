@@ -362,11 +362,12 @@ export function checkLedger(ledger, ctx) {
   const passing = (list, where) => list.filter((citation, i) => {
     try {
       const problem = citationProblem(citation, ctx);
-      if (problem) problems.push(`${where}.citations[${i}] (${citation.kind} ${shown(citation.ref)}): ${problem}`);
+      // The whole line goes through `shown`: a problem built from a malformed ref (`is not path:line`) quotes it raw.
+      if (problem) problems.push(shown(`${where}.citations[${i}] (${citation.kind} ${citation.ref}): ${problem}`));
       return problem === null;
     } catch (error) {
       if (!(error instanceof Escape)) throw error;
-      problems.push(`${where}.citations[${i}] (${citation.kind} ${shown(citation.ref)}): ${error.message}`);
+      problems.push(shown(`${where}.citations[${i}] (${citation.kind} ${citation.ref}): ${error.message}`));
       escapes.push(`${where}.citations[${i}]: ${error.message}, not read`);
       return false;
     }

@@ -292,6 +292,18 @@ test('check: a ref with a NUL or another control character is not a relative pat
     assert.ok(result.lines.some((line) => line.startsWith(`objection N${i}.citations[0] (${refs[i].kind} ${shown}): "`) && line.endsWith('" is not a relative path')), `${shown}\n${result.stdout}`);
   }
   assert.deepEqual(result.ledger.objections.map((each) => each.status), Array(refs.length).fill('opinion'));
+  // A ref malformed for its kind fails before the path check, and is printed escaped too.
+  const malformed = p.check(ledger([
+    objection('W1', [cite('code', 'src\u0000x', 'x')]),
+    objection('W2', [cite('doc', 'docs/a.md\u001b[31mRED', 'x')]),
+    objection('W3', [cite('plan', 'Appr\u0000oach', 'x')]),
+  ]));
+  assert.equal(malformed.status, 0, malformed.stderr);
+  // No raw control character, other than the line breaks between lines.
+  assert.doesNotMatch(malformed.stdout.replaceAll('\n', ''), /[\u0000-\u001f\u007f]/u, 'no raw control character on stdout');
+  assert.ok(malformed.lines.includes('objection W1.citations[0] (code src\\u0000x): "src\\u0000x" is not path:line'), malformed.stdout);
+  assert.ok(malformed.lines.includes('objection W2.citations[0] (doc docs/a.md\\u001b[31mRED): "docs/a.md\\u001b[31mRED" is not path#anchor'), malformed.stdout);
+  assert.ok(malformed.lines.includes('objection W3.citations[0] (plan Appr\\u0000oach): "Appr\\u0000oach" is not #anchor'), malformed.stdout);
 });
 
 test('check: a code or doc citation to a FIFO fails as missing instead of hanging', { skip: process.platform === 'win32' }, (t) => {

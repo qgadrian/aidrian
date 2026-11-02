@@ -6,9 +6,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { parse as parseToml } from 'smol-toml';
 import { parse } from 'yaml';
 
-import { CLAUDE_AGENTS, GROUPS, NEUTRAL, agentSettings, compareGenerated, providerNames, readAgents, readProviders, renderAgents } from '../scripts/build.mjs';
+import { CLAUDE_AGENTS, CODEX_AGENTS, GROUPS, NEUTRAL, PREFIX, agentSettings, compareGenerated, providerNames, readAgents, readProviders, renderAgents } from '../scripts/build.mjs';
 
 // A scratch plugin: agents-src/, providers/, agent-addons/, and a knowledge skill.
 // A source keyed by a bare name goes in the build group; a key such as review/reader names its group.
@@ -254,5 +255,25 @@ test('build reads <agent>.<provider>.md add-ons into that provider\'s agent, and
     writeFileSync(path.join(addonsDir, file), 'text\n');
     assert.throws(agents, message, file);
     rmSync(path.join(addonsDir, file));
+  }
+});
+
+test('both builders, on both hosts, stage their edits before a whole-file tool and restore only its files, never the whole worktree', () => {
+  const flat = (text) => text.replace(/\s+/g, ' ');
+  for (const name of ['frontend-developer', 'backend-developer']) {
+    const built = {
+      claude: readFileSync(path.join(CLAUDE_AGENTS, `${name}.md`), 'utf8'),
+      codex: parseToml(readFileSync(path.join(CODEX_AGENTS, `${PREFIX}${name}.toml`), 'utf8')).developer_instructions,
+    };
+    for (const [host, text] of Object.entries(built)) {
+      const body = flat(text);
+      const where = `${host} ${name}`;
+      assert.match(body, /runs only through the command the project's knowledge names, and only on the files the task changed/, where);
+      assert.match(body, /A generator also runs through its named command, and may rewrite the output files it owns/, `${where}: generators keep their outputs`);
+      assert.match(body, /Before running either, `git add -- <paths>` your own edits\. Then `git diff` shows only what the tool changed/, where);
+      assert.match(body, /outside a generator's own outputs, `git restore -- <paths>` those files and do not run it again/, where);
+      assert.match(body, /Never reset or re-apply the whole worktree\./, where);
+      assert.doesNotMatch(body, /only a generator produced/, `${where}: the old bare generator line is gone`);
+    }
   }
 });

@@ -70,6 +70,12 @@ Add `sign_off` when the dispatch asks for one, as the `knowledge` skill's handof
 - At the end, record `git status --porcelain` and `git log -1 --oneline` in `artifacts`.
   When the dispatch says not to commit, list each changed file under `pending_commit`; that is not a `dirty_handoff`.
   When it asked for a commit, list each uncommitted change with its reason; one without a reason is a `dirty_handoff`.
-  A diff that only a generator produced is noise: revert it; never commit it alone.
+- A formatter, or another tool that rewrites whole files, runs only through the command the project's knowledge names,
+  and only on the files the task changed. When knowledge names none, edit the lines the task needs and leave the rest.
+  A generator also runs through its named command, and may rewrite the output files it owns.
+- Before running either, `git add -- <paths>` your own edits. Then `git diff` shows only what the tool changed;
+  when it rewrote lines the task did not touch, outside a generator's own outputs, `git restore -- <paths>` those files
+  and do not run it again. Never reset or re-apply the whole worktree.
+- A tool's diff with no source change of the task behind it is noise: revert it; never commit it alone.
 
 When another agent dispatched you, return the machine handoff from the `knowledge` skill.

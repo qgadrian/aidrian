@@ -43,8 +43,14 @@ export function fencedIn(lines) {
     if (line.trim()) while (items.length && indent < items.at(-1)) items.pop();
     const container = items.at(-1) ?? 0;
     const item = itemOf(line);
-    // A line such as "- - nested" opens one item per marker: each marker's content column goes on the stack.
-    if (item && indent - container <= 3) for (const marker of line.matchAll(NESTED_MARKER)) items.push(marker.index + marker[0].length);
+    // A line such as "- - nested" opens one item per marker: each marker's content column goes on the stack. A thematic
+    // break after a marker, as in "- * * *", is that item's content, not more markers.
+    if (item && indent - container <= 3) {
+      for (const marker of line.matchAll(NESTED_MARKER)) {
+        if (marker.index > item[1].length && THEMATIC_BREAK.test(line.slice(marker.index))) break;
+        items.push(marker.index + marker[0].length);
+      }
+    }
     const fence = fenceOf(line, container);
     open = fence && { ...fence, container: fence.item ?? container };
     return fence !== null;

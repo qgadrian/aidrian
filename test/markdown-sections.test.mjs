@@ -52,6 +52,11 @@ test('fencedLines: a fence at the inner item of a nested marker line ("- - item"
   assert.deepEqual(headings(body), ['Risks']);
 });
 
+test('fencedLines: a thematic break after a marker ("- * * *") opens no nested items', () => {
+  const body = ['- * * *', '', `      ${FENCE}js`, '      example', '', '## Risks', '- none'].join('\n');
+  assert.deepEqual(headings(body), ['Risks']);
+});
+
 test('fencedLines: a line that opens with inline code is not a fence', () => {
   assert.deepEqual(fencedLines(`${FENCE}code${FENCE} stays literal\n## Next`), [false, false]);
 });

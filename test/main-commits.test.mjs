@@ -1,33 +1,17 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { DEFAULTS, loadConfig } from '../plugins/aidrian/lib/config.mjs';
-import { commitMode, unpushedMainLine } from '../plugins/aidrian/lib/main-commits.mjs';
+import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { unpushedMainLine } from '../plugins/aidrian/lib/main-commits.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 
-const config = (mainCheckout) => ({ ...DEFAULTS, git: { ...DEFAULTS.git, mainCheckout: { ...DEFAULTS.git.mainCheckout, ...mainCheckout } } });
-
-test('commitMode: null follows the guard, block when it is on and allow when it is off', () => {
-  assert.equal(DEFAULTS.git.mainCheckout.commits, null);
-  assert.equal(commitMode(DEFAULTS), 'allow', 'a fresh project, guard off, is never blocked');
-  assert.equal(commitMode(config({ guard: true, commits: null })), 'block');
-  assert.equal(commitMode(config({ guard: false, commits: null })), 'allow');
-});
-
-test('commitMode: an explicit value wins over the guard', () => {
-  for (const guard of [true, false]) {
-    for (const commits of ['block', 'warn', 'allow']) {
-      assert.equal(commitMode(config({ guard, commits })), commits, `guard ${guard}, commits ${commits}`);
-    }
-  }
-});
-
 // `aidrian pre-commit`, run against temporary repositories. Each one is made with `git init` under mkdtemp and driven
-// with `git -C`; no test sets GIT_DIR or GIT_WORK_TREE.
+// with `git -C`. Only the GIT_DIR test sets GIT_DIR, to a temporary repository's own git folder; no test sets
+// GIT_WORK_TREE.
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
 const CLI_MJS = path.join(ROOT, 'plugins/aidrian/lib/cli.mjs');
@@ -72,13 +56,37 @@ function worktree(dir, git, name = 'task') {
   return { tree, git: gitIn(tree) };
 }
 
+// The environment of these runs: the tests' own, without an override the shell running them may hold.
+const testEnv = (env = {}) => {
+  const merged = { ...process.env, ...env };
+  if (!Object.hasOwn(env, 'AIDRIAN_ALLOW_MAIN_COMMIT')) delete merged.AIDRIAN_ALLOW_MAIN_COMMIT;
+  return merged;
+};
+
 const preCommit = (cwd, env = {}, args = []) => {
-  const { status, stdout, stderr } = spawnSync(CLI, ['pre-commit', ...args], { cwd, encoding: 'utf8', env: { ...process.env, ...env }, maxBuffer: Infinity });
+  const { status, stdout, stderr } = spawnSync(CLI, ['pre-commit', ...args], { cwd, encoding: 'utf8', env: testEnv(env), maxBuffer: Infinity });
   return { status, stdout, stderr };
 };
 
+// git as a commit runs it, with the hooks it finds, and its exit status left to the test.
+const gitRun = (cwd, args, env = {}) =>
+  spawnSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8', env: testEnv(env) });
+
+// `aidrian pre-commit` as the pre-commit and pre-merge-commit hooks of `hooksDir`, or of a temporary folder that
+// `git` points core.hooksPath at.
+function installHooks(t, git, hooksDir = null) {
+  const hooks = hooksDir ?? tempDir(t);
+  mkdirSync(hooks, { recursive: true });
+  for (const name of ['pre-commit', 'pre-merge-commit']) {
+    writeFileSync(path.join(hooks, name), `#!/bin/sh\nexec node "${CLI_MJS}" pre-commit\n`);
+    chmodSync(path.join(hooks, name), 0o755);
+  }
+  if (hooksDir === null) git('config', 'core.hooksPath', hooks);
+}
+
 const MAIN = /aidrian worktree new <branch>/;
-const OVERRIDE_LINE = /AIDRIAN_ALLOW_MAIN_COMMIT=1, which the Human sets in their own shell; agents never set it/;
+const OVERRIDE_LINE =
+  /the override is per command, in the Human's own terminal: AIDRIAN_ALLOW_MAIN_COMMIT=1 git commit …; never exported before a session, and agents never set it/;
 
 test('pre-commit refuses a commit in the main checkout, naming aidrian worktree new and the override', (t) => {
   const { dir } = repo(t);
@@ -101,34 +109,90 @@ test('pre-commit passes the same commit from a linked worktree, and in a main ch
   assert.deepEqual(preCommit(fresh), { status: 0, stdout: '', stderr: '' }, 'no worktree exists before the first commit');
 });
 
-test('pre-commit in warn mode prints the same lines, each prefixed warning:, and exits 0', (t) => {
-  const { dir } = repo(t, { version: 1, git: { mainCheckout: { guard: true, commits: 'warn' } } });
-  const warned = preCommit(dir, {}, ['--project', dir]);
-  writeConfig(dir, { version: 1, git: { mainCheckout: { guard: true, commits: 'block' } } });
-  const blocked = preCommit(dir);
-  assert.deepEqual([warned.status, blocked.status], [0, 1]);
-  assert.match(warned.stderr, MAIN);
-  const lines = warned.stderr.trimEnd().split('\n');
-  assert.ok(lines.every((line) => line.startsWith('warning: ')), warned.stderr);
-  assert.deepEqual(lines.map((line) => line.slice('warning: '.length)), blocked.stderr.trimEnd().split('\n'));
+test('pre-commit refuses in a main checkout on an orphan branch: an unborn HEAD is a first commit only with no refs', (t) => {
+  const { dir, git } = repo(t);
+  git('checkout', '-q', '--orphan', 'fresh');
+  const { status, stderr } = preCommit(dir);
+  assert.equal(status, 1);
+  assert.match(stderr, MAIN);
 });
 
-test('pre-commit passes in allow mode, with the guard off, with no project folder, and with a config.json that does not parse', (t) => {
-  for (const config of [
-    { version: 1, git: { mainCheckout: { guard: true, commits: 'allow' } } },
-    { version: 1, git: { mainCheckout: { guard: false } } },
-    { version: 1 },
-    null,
-    '{ "version": 1, "git": { "mainCheckout": { "guard": true ',
-  ]) {
+test('pre-commit refuses after git switch --orphan, which empties the working tree: the config committed on a branch counts', (t) => {
+  const { dir, git } = repo(t);
+  git('switch', '-q', '--orphan', 'fresh');
+  assert.equal(existsSync(path.join(dir, '.aidrian/config.json')), false, 'the orphan switch removed config.json');
+  const { status, stderr } = preCommit(dir);
+  assert.equal(status, 1);
+  assert.match(stderr, MAIN);
+
+  const off = repo(t, { version: 1, git: { mainCheckout: { guard: false } } });
+  off.git('switch', '-q', '--orphan', 'fresh');
+  assert.deepEqual(preCommit(off.dir), { status: 0, stdout: '', stderr: '' }, 'the committed guard is off');
+  const none = repo(t, null);
+  none.git('switch', '-q', '--orphan', 'fresh');
+  assert.deepEqual(preCommit(none.dir), { status: 0, stdout: '', stderr: '' }, 'no branch has a config.json');
+});
+
+test('pre-commit after an orphan switch reads the default branch, origin/HEAD first, not the branch that sorts first', (t) => {
+  const bare = (git) => {
+    git('switch', '-q', '--orphan', 'a-bare');
+    git('commit', '-q', '--allow-empty', '-m', 'no config here');
+  };
+  const { dir, git } = repo(t);
+  bare(git);
+  git('switch', '-q', 'main');
+  git('switch', '-q', '--orphan', 'fresh');
+  const local = preCommit(dir);
+  assert.equal(local.status, 1, 'main holds the config, though a-bare sorts first');
+  assert.match(local.stderr, MAIN);
+
+  const other = repo(t);
+  other.git('branch', '-q', '-m', 'main', 'trunk');
+  const origin = tempDir(t);
+  gitIn(origin)('init', '-q', '--bare', '-b', 'trunk');
+  other.git('remote', 'add', 'origin', origin);
+  other.git('push', '-q', 'origin', 'trunk');
+  other.git('remote', 'set-head', 'origin', 'trunk');
+  bare(other.git);
+  other.git('switch', '-q', '--orphan', 'fresh');
+  const remote = preCommit(other.dir);
+  assert.equal(remote.status, 1, 'origin/HEAD holds the config, with no local main');
+  assert.match(remote.stderr, MAIN);
+});
+
+test('pre-commit passes on a main with no config.json, though a branch that sorts first turns the guard on', (t) => {
+  const { dir, git } = repo(t, null);
+  git('switch', '-q', '-c', 'chore/adopt-aidrian');
+  writeConfig(dir, GUARD_ON);
+  git('add', '.aidrian/config.json');
+  git('commit', '-q', '-m', 'adopt aidrian');
+  git('switch', '-q', 'main');
+  assert.equal(existsSync(path.join(dir, '.aidrian/config.json')), false);
+  assert.deepEqual(preCommit(dir), { status: 0, stdout: '', stderr: '' });
+});
+
+test('pre-commit passes with the guard off and with no project folder', (t) => {
+  for (const config of [{ version: 1, git: { mainCheckout: { guard: false } } }, { version: 1 }, null]) {
     const { dir } = repo(t, config);
     assert.deepEqual(preCommit(dir), { status: 0, stdout: '', stderr: '' }, JSON.stringify(config));
   }
 });
 
-test('pre-commit: an invalid commits value keeps null, which follows the guard', (t) => {
-  const { dir } = repo(t, { version: 1, git: { mainCheckout: { guard: true, commits: 'sometimes' } } });
-  assert.equal(preCommit(dir).status, 1);
+test('pre-commit passes, with one stderr line, when config.json is there but does not load', (t) => {
+  for (const config of ['{ "version": 1, "git": { "mainCheckout": { "guard": true ', { version: 99, git: { mainCheckout: { guard: true } } }]) {
+    const { dir } = repo(t, config);
+    assert.deepEqual(preCommit(dir), { status: 0, stdout: '', stderr: 'aidrian pre-commit: config.json unreadable; not checked\n' }, JSON.stringify(config));
+  }
+});
+
+test('pre-commit: a leftover commits key is an unknown key, and the guard alone still refuses', (t) => {
+  for (const commits of ['allow', 'warn']) {
+    const { dir } = repo(t, { version: 1, git: { mainCheckout: { guard: true, commits } } });
+    const { status, stderr } = preCommit(dir);
+    assert.equal(status, 1, commits);
+    assert.match(stderr, MAIN, commits);
+    assert.doesNotMatch(stderr, /^warning:/m, commits);
+  }
 });
 
 test('pre-commit passes with AIDRIAN_ALLOW_MAIN_COMMIT=1 only, and refuses with CI=true like any other commit', (t) => {
@@ -151,8 +215,8 @@ test('pre-commit refuses a newly force-added ignored file in a worktree too, nam
   treeGit('add', '-f', 'logs', 'kept.md');
   const { status, stderr } = preCommit(tree);
   assert.equal(status, 1);
-  assert.match(stderr, /git rm --cached logs\/run\.log\n/);
-  assert.match(stderr, /git rm --cached 'logs\/my notes\.log'\n/, 'a path with a space is quoted for the shell');
+  assert.match(stderr, /git rm --cached logs\/run\.log, unless another branch already tracks it; then ask the Human\n/);
+  assert.match(stderr, /git rm --cached 'logs\/my notes\.log', unless another branch already tracks it; then ask the Human\n/, 'a path with a space is quoted for the shell');
   assert.doesNotMatch(stderr, /kept\.md/);
   assert.doesNotMatch(stderr, MAIN, 'a worktree is not the main checkout');
   assert.match(stderr, OVERRIDE_LINE);
@@ -166,7 +230,7 @@ test('pre-commit refuses a git mv of a tracked file into an ignored folder, even
   treeGit('mv', 'README.md', 'logs/README.md');
   const { status, stderr } = preCommit(tree);
   assert.equal(status, 1);
-  assert.match(stderr, /git rm --cached logs\/README\.md\n/);
+  assert.match(stderr, /git rm --cached logs\/README\.md, unless another branch already tracks it; then ask the Human\n/);
 });
 
 test('pre-commit passes a change to a file tracked before a later .gitignore matched it', (t) => {
@@ -189,7 +253,7 @@ test('pre-commit refuses a gitlink added under an ignored .worktrees/ through th
   treeGit('update-index', '--add', '--cacheinfo', `160000,${head},.worktrees/other`);
   const { status, stderr } = preCommit(tree);
   assert.equal(status, 1);
-  assert.match(stderr, /git rm --cached \.worktrees\/other\n/);
+  assert.match(stderr, /git rm --cached \.worktrees\/other, unless another branch already tracks it; then ask the Human\n/);
   assert.doesNotMatch(stderr, MAIN);
 });
 
@@ -237,13 +301,8 @@ test('pre-commit reads more than 1 MiB of added paths: a large git add -f of an 
 
 test('git runs pre-commit for a commit and pre-merge-commit for a non-fast-forward merge: both refuse in the main checkout', (t) => {
   const { dir, git } = repo(t);
-  const hooks = tempDir(t);
-  for (const name of ['pre-commit', 'pre-merge-commit']) {
-    writeFileSync(path.join(hooks, name), `#!/bin/sh\nexec node "${CLI_MJS}" pre-commit\n`);
-    chmodSync(path.join(hooks, name), 0o755);
-  }
-  git('config', 'core.hooksPath', hooks);
-  const commit = (cwd, ...args) => spawnSync('git', ['-C', cwd, '-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' });
+  installHooks(t, git);
+  const commit = (cwd, ...args) => gitRun(cwd, args);
   const before = git('rev-parse', 'HEAD');
 
   const refused = commit(dir, 'commit', '--allow-empty', '-q', '-m', 'test: in main');
@@ -266,7 +325,7 @@ test('git runs pre-commit for a commit and pre-merge-commit for a non-fast-forwa
   assert.deepEqual(treeGit('show', '--name-only', '--format=', 'HEAD').split('\n').filter(Boolean), ['side.md']);
   const full = commit(tree, 'commit', '-q', '-m', 'test: with the log');
   assert.equal(full.status, 1);
-  assert.match(full.stderr, /git rm --cached logs\/run\.log\n/);
+  assert.match(full.stderr, /git rm --cached logs\/run\.log, unless another branch already tracks it; then ask the Human\n/);
   assert.doesNotMatch(full.stderr, MAIN);
   treeGit('rm', '-q', '--cached', 'logs/run.log');
 
@@ -274,6 +333,108 @@ test('git runs pre-commit for a commit and pre-merge-commit for a non-fast-forwa
   assert.notEqual(merge.status, 0);
   assert.match(merge.stderr, MAIN);
   assert.equal(git('rev-parse', 'HEAD'), before, 'no merge commit landed');
+});
+
+// The merge test's main holds a force-added ignored file, as a tracked .env.example is.
+test('a merge that brings in a git-ignored file its other parent tracks passes through the real hooks; a fresh git add -f still refuses', (t) => {
+  const { dir, git } = repo(t);
+  const { tree, git: treeGit } = worktree(dir, git);
+  treeGit('commit', '-q', '--allow-empty', '-m', 'task work');
+  mkdirSync(path.join(dir, 'logs'));
+  writeFileSync(path.join(dir, 'logs/keep.log'), 'tracked on main\n');
+  git('add', '-f', 'logs/keep.log');
+  git('commit', '-q', '-m', 'keep a log on main');
+  installHooks(t, git);
+
+  const merge = gitRun(tree, ['merge', '--no-ff', '--no-edit', 'main']);
+  assert.deepEqual([merge.status, merge.stderr], [0, ''], 'pre-merge-commit reads the parent git merge names');
+  assert.equal(treeGit('rev-list', '--count', '--merges', 'HEAD^..HEAD').trim(), '1', 'the merge commit landed');
+  assert.equal(treeGit('ls-files', 'logs/keep.log'), 'logs/keep.log\n');
+
+  writeFileSync(path.join(tree, 'logs/new.log'), 'x\n');
+  treeGit('add', '-f', 'logs/new.log');
+  const fresh = gitRun(tree, ['commit', '-q', '-m', 'test: a new log']);
+  assert.equal(fresh.status, 1);
+  assert.match(fresh.stderr, /git rm --cached logs\/new\.log, unless another branch already tracks it; then ask the Human\n/);
+  assert.doesNotMatch(fresh.stderr, /keep\.log/, 'a path a parent tracks is never advised away');
+});
+
+test('pre-commit, while a merge waits for its commit: a path MERGE_HEAD tracks passes, and one no parent tracks refuses', (t) => {
+  const { dir, git } = repo(t);
+  const { tree, git: treeGit } = worktree(dir, git);
+  treeGit('commit', '-q', '--allow-empty', '-m', 'task work');
+  mkdirSync(path.join(dir, 'logs'));
+  writeFileSync(path.join(dir, 'logs/keep.log'), 'tracked on main\n');
+  git('add', '-f', 'logs/keep.log');
+  git('commit', '-q', '-m', 'keep a log on main');
+
+  treeGit('merge', '-q', '--no-ff', '--no-commit', 'main');
+  assert.deepEqual(preCommit(tree), { status: 0, stdout: '', stderr: '' });
+  writeFileSync(path.join(tree, 'logs/new.log'), 'x\n');
+  treeGit('add', '-f', 'logs/new.log');
+  const { status, stderr } = preCommit(tree);
+  assert.equal(status, 1);
+  assert.match(stderr, /git rm --cached logs\/new\.log, unless another branch already tracks it; then ask the Human\n/);
+  assert.doesNotMatch(stderr, /keep\.log/);
+});
+
+test('pre-commit: a GITHEAD_ name for an ancestor of HEAD that tracked the path exempts nothing', (t) => {
+  const { dir, git } = repo(t);
+  const { tree, git: treeGit } = worktree(dir, git);
+  mkdirSync(path.join(tree, 'logs'));
+  writeFileSync(path.join(tree, 'logs/old.log'), 'x\n');
+  treeGit('add', '-f', 'logs/old.log');
+  treeGit('commit', '-q', '-m', 'track a log');
+  const tracked = treeGit('rev-parse', 'HEAD').trim();
+  treeGit('rm', '-q', '--cached', 'logs/old.log');
+  treeGit('commit', '-q', '-m', 'drop it');
+  treeGit('add', '-f', 'logs/old.log');
+  const { status, stderr } = preCommit(tree, { [`GITHEAD_${tracked}`]: 'old' });
+  assert.equal(status, 1);
+  assert.match(stderr, /git rm --cached logs\/old\.log, unless another branch already tracks it; then ask the Human\n/);
+});
+
+test('pre-commit refuses an ignored file a squash merge or a path restore brings in, leaving that case to the Human', (t) => {
+  const { dir, git } = repo(t);
+  const { tree, git: treeGit } = worktree(dir, git);
+  treeGit('commit', '-q', '--allow-empty', '-m', 'task work');
+  mkdirSync(path.join(dir, 'logs'));
+  writeFileSync(path.join(dir, 'logs/keep.log'), 'tracked on main\n');
+  git('add', '-f', 'logs/keep.log');
+  git('commit', '-q', '-m', 'keep a log on main');
+  const ADVICE = /logs\/keep\.log is git-ignored but newly staged; unstage it with git rm --cached logs\/keep\.log, unless another branch already tracks it; then ask the Human\n/;
+
+  treeGit('merge', '-q', '--squash', 'main');
+  const squash = preCommit(tree);
+  assert.equal(squash.status, 1);
+  assert.match(squash.stderr, ADVICE);
+  treeGit('reset', '-q', '--hard');
+
+  treeGit('checkout', 'main', '--', 'logs/keep.log');
+  const restore = preCommit(tree);
+  assert.equal(restore.status, 1);
+  assert.match(restore.stderr, ADVICE);
+});
+
+test('a commit routed through GIT_DIR or --git-dir from a folder outside the repository is judged by that repository', (t) => {
+  const { dir, git } = repo(t);
+  installHooks(t, git, path.join(dir, '.git', 'hooks'));
+  const before = git('rev-parse', 'HEAD');
+  const outside = tempDir(t);
+
+  const viaEnv = gitRun(outside, ['commit', '--allow-empty', '-q', '-m', 'test: via GIT_DIR'], { GIT_DIR: path.join(dir, '.git') });
+  assert.equal(viaEnv.status, 1, viaEnv.stderr);
+  assert.match(viaEnv.stderr, MAIN);
+  const viaOption = gitRun(outside, ['--git-dir', path.join(dir, '.git'), 'commit', '--allow-empty', '-q', '-m', 'test: via --git-dir']);
+  assert.equal(viaOption.status, 1, viaOption.stderr);
+  assert.match(viaOption.stderr, MAIN);
+  assert.equal(git('rev-parse', 'HEAD'), before, 'no commit landed on main');
+
+  // A linked worktree's own git folder commits to its branch, which the guard lets through.
+  worktree(dir, git);
+  const viaWorktree = gitRun(outside, ['commit', '--allow-empty', '-q', '-m', 'test: in the worktree'], { GIT_DIR: path.join(dir, '.git', 'worktrees', 'task') });
+  assert.deepEqual([viaWorktree.status, viaWorktree.stderr], [0, '']);
+  assert.equal(git('log', '-1', '--format=%s', 'task'), 'test: in the worktree\n');
 });
 
 // unpushedMainLine, against the same temporary repositories with a bare origin, made with `git init --bare` under
@@ -318,17 +479,14 @@ test('unpushedMainLine: no origin/main ref gives no unpushed line, and only that
   assert.deepEqual(startLines(dir), [OFF('side')], 'the failed rev-list drops its own line only');
 });
 
-test('unpushedMainLine: allow mode gives no line, whatever the main checkout holds', (t) => {
-  for (const config of [{ version: 1, git: { mainCheckout: { guard: true, commits: 'allow' } } }, { version: 1 }]) {
+test('unpushedMainLine: the guard off gives no line, whatever the main checkout holds', (t) => {
+  for (const config of [{ version: 1, git: { mainCheckout: { guard: false } } }, { version: 1 }]) {
     const { dir, git } = withOrigin(t, config);
     git('commit', '-q', '--allow-empty', '-m', 'stray');
     writeFileSync(path.join(dir, 'README.md'), '# changed\n');
     git('switch', '-q', '-c', 'side');
     assert.deepEqual(startLines(dir), [], JSON.stringify(config));
   }
-  const { dir, git } = withOrigin(t, { version: 1, git: { mainCheckout: { commits: 'warn' } } });
-  git('commit', '-q', '--allow-empty', '-m', 'stray');
-  assert.deepEqual(startLines(dir), [AHEAD(1)], 'warn mode warns too');
 });
 
 test('unpushedMainLine: off main names the branch, a detached HEAD gets its own line, and a changed tracked file names git status', (t) => {

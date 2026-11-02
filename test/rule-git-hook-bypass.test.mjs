@@ -160,8 +160,9 @@ test('reads the commands a shell runs from `sh -c` and from a heredoc fed to it'
   allow("cat <<'EOF'\nexport AIDRIAN_ALLOW_MAIN_COMMIT=1\nEOF");
 });
 
-test('the override reason names the variable and that only the Human sets it', () => {
+test('the override reason names the variable, that only the Human sets it, and that it is per command, never exported', () => {
   assert.equal(OVERRIDE, 'AIDRIAN_ALLOW_MAIN_COMMIT');
-  assert.match(OVERRIDE_REASON, /AIDRIAN_ALLOW_MAIN_COMMIT/);
-  assert.match(OVERRIDE_REASON, /only the Human sets it/);
+  assert.match(OVERRIDE_REASON, /only the Human sets it, per command in their own terminal \(AIDRIAN_ALLOW_MAIN_COMMIT=1 git commit …\)/);
+  assert.match(OVERRIDE_REASON, /never exported before a session/);
+  assert.doesNotMatch(OVERRIDE_REASON, /before the session starts/, 'a variable set before the session reaches every agent command');
 });

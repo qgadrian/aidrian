@@ -23,9 +23,11 @@ const LINE = (command) =>
 const NAMES = (ai, human = 'the Human') => `Names: call the human "${human}" and yourself "${ai}"; never "you"/"me".`;
 
 // Without CLAUDECODE=1, which Claude Code sets for its hooks, the host is Codex. `CLAUDECODE: '1'` makes it Claude Code.
-function hook({ input = '{}', args = [], cwd = ROOT, PATH = WITHOUT_BIN, XDG_STATE_HOME = XDG, CLAUDECODE } = {}) {
-  const env = { ...process.env, PATH, XDG_STATE_HOME, CLAUDECODE };
+// AIDRIAN_ALLOW_MAIN_COMMIT is unset unless a test passes it, whatever the shell running the tests holds.
+function hook({ input = '{}', args = [], cwd = ROOT, PATH = WITHOUT_BIN, XDG_STATE_HOME = XDG, CLAUDECODE, AIDRIAN_ALLOW_MAIN_COMMIT } = {}) {
+  const env = { ...process.env, PATH, XDG_STATE_HOME, CLAUDECODE, AIDRIAN_ALLOW_MAIN_COMMIT };
   if (CLAUDECODE === undefined) delete env.CLAUDECODE;
+  if (AIDRIAN_ALLOW_MAIN_COMMIT === undefined) delete env.AIDRIAN_ALLOW_MAIN_COMMIT;
   return spawnSync(process.execPath, [HOOK, ...args], { input, cwd, encoding: 'utf8', env });
 }
 
@@ -195,7 +197,7 @@ test('the main checkout off main, detached, or with changed tracked files gets i
   assert.deepEqual(after(hook({ input }).stdout), [CHANGED]);
 });
 
-test('no main-checkout line in a subagent, in allow mode, or without an origin/main ref', (t) => {
+test('no main-checkout line in a subagent, with the guard off, or without an origin/main ref', (t) => {
   const { dir, git } = gitRepo(t);
   git('commit', '-q', '--allow-empty', '-m', 'stray');
   git('switch', '-q', '-c', 'side');
@@ -204,13 +206,31 @@ test('no main-checkout line in a subagent, in allow mode, or without an origin/m
   assert.equal(additionalContext.split('\n').length, 2);
   assert.doesNotMatch(additionalContext, /main checkout|Local main/);
 
-  const allowed = gitRepo(t, { version: 1, git: { mainCheckout: { guard: true, commits: 'allow' } } });
-  allowed.git('commit', '-q', '--allow-empty', '-m', 'stray');
-  allowed.git('switch', '-q', '-c', 'side');
-  assert.deepEqual(after(hook({ input: JSON.stringify({ cwd: allowed.dir }) }).stdout), []);
+  const off = gitRepo(t, { version: 1, git: { mainCheckout: { guard: false } } });
+  off.git('commit', '-q', '--allow-empty', '-m', 'stray');
+  off.git('switch', '-q', '-c', 'side');
+  assert.deepEqual(after(hook({ input: JSON.stringify({ cwd: off.dir }) }).stdout), []);
 
   git('remote', 'remove', 'origin');
   assert.deepEqual(after(hook({ input }).stdout), [OFF], 'no origin/main drops only the unpushed line');
+});
+
+const INHERITED =
+  'AIDRIAN_ALLOW_MAIN_COMMIT is set in this session, so the commit guard lets every commit through. ' +
+  'Tell the Human: restart the session without it, and use it per command in their own terminal.';
+
+test('a main session that inherits AIDRIAN_ALLOW_MAIN_COMMIT=1 hears so while the guard is on, before the main-checkout lines', (t) => {
+  const { dir, git } = gitRepo(t);
+  git('commit', '-q', '--allow-empty', '-m', 'stray');
+  const input = JSON.stringify({ cwd: dir });
+  assert.deepEqual(after(hook({ input, AIDRIAN_ALLOW_MAIN_COMMIT: '1' }).stdout), [INHERITED, AHEAD]);
+  assert.deepEqual(after(hook({ input }).stdout), [AHEAD], 'unset: no line');
+  assert.deepEqual(after(hook({ input, AIDRIAN_ALLOW_MAIN_COMMIT: '0' }).stdout), [AHEAD], 'only 1 lets commits through');
+  const { additionalContext } = JSON.parse(hook({ input, args: ['--subagent'], AIDRIAN_ALLOW_MAIN_COMMIT: '1' }).stdout).hookSpecificOutput;
+  assert.doesNotMatch(additionalContext, /AIDRIAN_ALLOW_MAIN_COMMIT/, 'the main session only');
+
+  const off = gitRepo(t, { version: 1, git: { mainCheckout: { guard: false } } });
+  assert.deepEqual(after(hook({ input: JSON.stringify({ cwd: off.dir }), AIDRIAN_ALLOW_MAIN_COMMIT: '1' }).stdout), [], 'guard off: nothing to let through');
 });
 
 test('a git that hangs costs the main-checkout lines it stops and nothing else: the hook exits 0 inside its time', (t) => {

@@ -37,11 +37,13 @@ At the start of every session and subagent, the hook prints:
 - one line with the [names](config.md#names) for the human and the AI;
 - in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons.
 
-Last, in the main session only and while `git.mainCheckout.commits` is not `"allow"` ([commit guard](#commit-guard)),
-up to three lines about the main checkout, wherever the session started, with `<db>` the `git.defaultBranch`:
+Last, in the main session only and while `git.mainCheckout.guard` is on ([commit guard](#commit-guard)),
+a line when the session inherited the commit guard's override, then up to three lines about the main checkout,
+wherever the session started, with `<db>` the `git.defaultBranch`:
 
 | Prints when | Line |
 | --- | --- |
+| The session's environment has `AIDRIAN_ALLOW_MAIN_COMMIT=1` | `AIDRIAN_ALLOW_MAIN_COMMIT is set in this session, so the commit guard lets every commit through. Tell the Human: restart the session without it, and use it per command in their own terminal.` |
 | Local `<db>` has commits that `origin/<db>` does not | `Local <db> has N commit(s) not on origin/<db>; only worktrees commit here. Inspect: git log origin/<db>..<db>` |
 | The main checkout is on another branch | `The main checkout is on <branch>, not <db>; only worktrees change branch. Switch back: git switch <db>` |
 | The main checkout's HEAD is detached | `The main checkout's HEAD is detached, not on <db>. Switch back: git switch <db>` |
@@ -57,7 +59,7 @@ that line alone, and a git that hangs past the timeout drops its own line and th
 | --- | --- |
 | Agent gates | Off unless config.json or `.aidrian.local.json` sets `agents` |
 | Main-checkout rule | Off unless config.json sets `"git": { "mainCheckout": { "guard": true } }` |
-| [Commit guard](#commit-guard), and its [start lines](#start-lines) | `"git": { "mainCheckout": { "commits": "allow" } }`; with `commits` unset, off while the guard is off |
+| [Commit guard](#commit-guard), and its [start lines](#start-lines) | Off unless config.json sets `"git": { "mainCheckout": { "guard": true } }`, the main-checkout rule's switch |
 | Markdown line length | `"docs": { "wrapLimit": 0 }` |
 | Pull request body sections | `"github": { "requiredSections": [] }`; the footer and `--fill` checks stay |
 | Pull request contract | Off unless config.json sets `github.pullRequest`, but for `"sharedTempBodyFile": false` |
@@ -70,7 +72,7 @@ that line alone, and a git that hangs past the timeout drops its own line and th
 | A Bash rule, once | Its override variable, set by a person: [Overrides](#overrides) |
 
 The knowledge, names, and lessons start lines have no switch; they act only inside a project folder.
-The main-checkout start lines follow the commit guard's mode, so they are off with it.
+The main-checkout start lines follow the commit guard, so they are off with it.
 [config.md](config.md#telemetry) lists the other `telemetry` keys.
 The Agent hook changes only what config.json or `.aidrian.local.json` sets in `models.claude`.
 The compaction checklist steps aside whenever instructions are typed after `/compact`.
@@ -347,10 +349,16 @@ It reads Claude Code transcripts only: a transcript with no Claude Code usage, o
 
 ## Overrides
 
-An override is for a human: set it in your own shell before you start the session.
-Agents must never set one.
-`AIDRIAN_ALLOW_MAIN_COMMIT=1` lets a commit through the [commit guard](#commit-guard), in that shell only;
-the [git hook bypass](#bash-rules) rule denies an agent's command that sets it.
+An override is for a human, and agents must never set one.
+A Bash rule's override is read by the hook, which runs in the session's environment,
+so the Human sets it in their own shell before they start the session.
+
+`AIDRIAN_ALLOW_MAIN_COMMIT=1` is different: git runs the [commit guard](#commit-guard) inside the commit, so it reads the
+commit's own environment. The Human puts it in front of one command in their own terminal,
+`AIDRIAN_ALLOW_MAIN_COMMIT=1 git commit …`, and never exports it before a session:
+every agent command in that session would inherit it, and the guard would let each commit through with no signal.
+A main session that starts with it set says so in its [start lines](#start-lines).
+The [git hook bypass](#bash-rules) rule denies an agent's command that sets it.
 
 ## Commit messages
 
@@ -369,21 +377,37 @@ or the folder the host installed: [Claude Code](providers/claude-code.md#running
 `aidrian pre-commit [--project DIR]` runs from a project's `pre-commit` and `pre-merge-commit` git hooks.
 It is a git hook, not a plugin hook, so it has no row in the table of plugin hooks at the top of this page,
 as [commit messages](#commit-messages) have none.
-It acts on config.json `git.mainCheckout.commits` ([config.md](config.md)), which by default follows `git.mainCheckout.guard`.
+It is on while config.json `git.mainCheckout.guard` is `true` ([config.md](config.md)), and checks nothing while it is off.
 It refuses two commits:
 
 - **A commit in the main checkout**, which several sessions share. The message names `aidrian worktree new <branch>`.
-  A repository's first commit passes: no worktree exists before it.
+  A repository's first commit passes, as no worktree exists before it: an unborn HEAD in a repository with no branch
+  or tag. An orphan branch in a repository with history is still refused.
 - **A commit that newly stages a git-ignored file**, in any checkout: each path the commit adds that `.gitignore`
-  matches, such as a `git add -f` or a `git mv` into an ignored folder. The message names `git rm --cached <path>`.
+  matches, such as a `git add -f` or a `git mv` into an ignored folder. The message names `git rm --cached <path>`,
+  unless another branch already tracks the path; then the agent asks the Human.
   A gitlink under an ignored worktrees folder is one. A file tracked before a later `.gitignore` matched it passes.
+  So does a merge that brings in an ignored file the other parent already tracks, such as a force-added `.env.example`
+  on main: a path counts only when no parent tracks it. The parents are `MERGE_HEAD` while a merge waits for its commit,
+  and the `GITHEAD_<oid>` names `git merge` sets for `pre-merge-commit`, which runs before `MERGE_HEAD` is written;
+  a parent that is HEAD or one of its ancestors brings nothing in, and is dropped.
+  A squash merge or a path restored from another branch (`git checkout <branch> -- <path>`) counts as a fresh add.
 
-`"block"` refuses the commit, `"warn"` prints the same lines, each prefixed `warning:`, and lets it through,
-and `"allow"` checks nothing. A check whose input git cannot give, such as an index it cannot read, finds nothing
-and prints one line naming what it could not read; what the other check found still counts.
-A missing or broken config.json gives the defaults, so the guard is off.
+The message names each problem and the override, and the commit is refused. A check whose input git cannot give,
+such as an index it cannot read, finds nothing and prints one line naming what it could not read; what the other check
+found still counts. A missing config.json gives the defaults, so the guard is off, except with HEAD unborn in a
+repository that has branches: `git switch --orphan` empties the working tree, config.json with it, so the guard reads
+the config.json committed on `origin/HEAD`, else on the local `main`, else on the first branch that holds one.
+One that is there but does not load,
+as when it does not parse, prints `aidrian pre-commit: config.json unreadable; not checked` and lets the commit run.
 
-The override is `AIDRIAN_ALLOW_MAIN_COMMIT=1`, which the Human sets in their own shell ([Overrides](#overrides)).
+The project is the one at the hook's folder. A commit routed through `GIT_DIR` or `--git-dir` from a folder outside the
+repository runs the hook in that folder: there the project is the one in the main checkout git names, the folder that
+holds the common git folder, and that repository is judged. So when git finds the hook through the git folder
+(`.git/hooks`, or an absolute `core.hooksPath`), such a commit on the main checkout is refused too.
+
+The override is `AIDRIAN_ALLOW_MAIN_COMMIT=1`, per command in the Human's own terminal,
+`AIDRIAN_ALLOW_MAIN_COMMIT=1 git commit …`, and never exported before a session ([Overrides](#overrides)).
 CI is not exempt: the command does not read `CI`, which any agent or child process could set.
 A CI job that commits in its own checkout either runs without the project's git hooks installed,
 or sets `AIDRIAN_ALLOW_MAIN_COMMIT=1` in the job's env, a line the Human writes in the workflow file; agents never set it.
@@ -391,6 +415,8 @@ or sets `AIDRIAN_ALLOW_MAIN_COMMIT=1` in the job's env, a line the Human writes 
 It does not cover the commits that run neither hook: `cherry-pick`, `rebase`, `revert`, `am`, `pull --rebase`,
 `stash`, and `commit-tree`; nor a fast-forward merge or pull, which makes no commit.
 `--no-verify` and a `core.hooksPath` override skip it; from agents the [git hook bypass](#bash-rules) rule denies both.
+A relative `core.hooksPath`, such as `.githooks` or husky's `.husky/_`, is read against the commit's work tree,
+so a commit routed through `GIT_DIR` or `--git-dir` from another folder runs no hook at all.
 
 To install it, add the line to each hook, with the plugin folder as in [commit messages](#commit-messages):
 

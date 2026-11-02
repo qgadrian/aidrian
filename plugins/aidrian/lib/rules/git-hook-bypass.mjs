@@ -3,7 +3,8 @@
 // override (`-c`, `--config-env`, or GIT_CONFIG_PARAMETERS / GIT_CONFIG_KEY_<n> in its environment), or a
 // `HUSKY=0|false|` assignment; and a `git config` that writes or unsets core.hooksPath. Reading the setting stays allowed.
 // It also denies any command that sets AIDRIAN_ALLOW_MAIN_COMMIT, the commit guard's override, inline (`VAR=1 cmd`),
-// through env, or with export, declare, typeset, local, or readonly: the Human sets it in their own shell, never an agent.
+// through env, or with export, declare, typeset, local, or readonly: the Human puts it in front of one command in their
+// own terminal, never an agent.
 // Every command the line runs is judged as the command line is: a command substitution that runs, a `sh -c` body, and a
 // heredoc or here-string fed to a shell (walkCommands). There is no override: a project that wants an exception changes
 // its hooks, not this rule.
@@ -26,9 +27,9 @@ export const REASON =
   'to your change, report it and wait for instructions. There is no agent-side override for this rule.';
 
 export const OVERRIDE_REASON =
-  `Blocked: ${OVERRIDE} lets a commit through the commit guard, and only the Human sets it, in their own shell before ` +
-  'the session starts. Fix what aidrian pre-commit named: commit in a task worktree, or unstage the git-ignored file ' +
-  'it lists, or ask the Human.';
+  `Blocked: ${OVERRIDE} lets a commit through the commit guard, and only the Human sets it, per command in their own ` +
+  `terminal (${OVERRIDE}=1 git commit …), never exported before a session. Fix what aidrian pre-commit named: commit ` +
+  'in a task worktree, or unstage the git-ignored file it lists, or ask the Human.';
 
 // The deny reason for `command`, or null.
 export function check(command) {

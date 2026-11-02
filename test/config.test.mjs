@@ -48,7 +48,7 @@ test('git groups the git keys, and the old top-level keys are unknown', (t) => {
   assert.deepEqual(nested.config.git, {
     defaultBranch: 'trunk',
     worktrees: { ...DEFAULTS.git.worktrees, dir: '../wt' },
-    mainCheckout: { guard: true, allowWrites: [], commits: null },
+    mainCheckout: { guard: true, allowWrites: [] },
     commits: { types: ['feat'] },
   });
   for (const key of Object.keys(DEFAULTS.git)) {
@@ -88,12 +88,11 @@ test('github.markReady: "ask" by default, "auto" lets the review loop mark a gre
   assert.match(loadConfig(project(t, { version: 1, github: { markReady: true } })).errors[0], /"github\.markReady" must be "ask" or "auto"$/);
 });
 
-test('git.mainCheckout.commits: null by default, and "block", "warn", or "allow" load as set', (t) => {
-  assert.equal(DEFAULTS.git.mainCheckout.commits, null);
-  for (const commits of ['block', 'warn', 'allow', null]) {
-    const { config, errors } = loadConfig(project(t, { version: 1, git: { mainCheckout: { commits } } }));
-    assert.deepEqual([errors, config.git.mainCheckout.commits], [[], commits], String(commits));
-  }
+test('git.mainCheckout has no commits key: the guard alone turns the commit guard on, and a leftover commits is unknown', (t) => {
+  assert.deepEqual(Object.keys(DEFAULTS.git.mainCheckout), ['guard', 'allowWrites']);
+  const { config, errors } = loadConfig(project(t, { version: 1, git: { mainCheckout: { guard: true, commits: 'warn' } } }));
+  assert.deepEqual(errors, ['.aidrian/config.json: unknown key "git.mainCheckout.commits"']);
+  assert.deepEqual(config.git.mainCheckout, { guard: true, allowWrites: [] });
 });
 
 test('github.titleIssuePrefix: off by default, so pull request titles are plain Conventional Commits', (t) => {
@@ -128,7 +127,6 @@ const errorCases = [
   ['a negative extra rounds ceiling', { version: 1, github: { maxExtraRounds: -1 } }, /"github\.maxExtraRounds" must be a whole number, 0 or more$/],
   ['a fractional extra rounds ceiling', { version: 1, github: { maxExtraRounds: 1.5 } }, /"github\.maxExtraRounds" must be a whole number, 0 or more$/],
   ['string for a boolean', { version: 1, git: { mainCheckout: { guard: 'no' } } }, /"git\.mainCheckout\.guard" must be true or false$/],
-  ['main-checkout commit mode outside its list', { version: 1, git: { mainCheckout: { commits: 'deny' } } }, /"git\.mainCheckout\.commits" must be "block", "warn", "allow", or null$/],
   ['empty string', { version: 1, git: { defaultBranch: ' ' } }, /"git\.defaultBranch" must be a non-empty string$/],
   ['handoff mode outside its list', { version: 1, session: { handoff: 'always' } }, /"session\.handoff" must be "off", "ask", or "auto"$/],
   ['review record outside its list', { version: 1, review: { record: 'pr' } }, /"review\.record" must be "comment" or "local"$/],

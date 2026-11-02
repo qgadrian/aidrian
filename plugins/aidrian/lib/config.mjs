@@ -32,6 +32,8 @@ const SCHEMA = {
     requiredSections: 'texts',
     reviewer: 'textOrNull',
     maxReviewRounds: 'positive',
+    extraRounds: 'extraMode',
+    maxExtraRounds: 'zeroOrMore',
     requiredChecks: 'texts',
     ignoreCancelledChecks: 'texts',
     conditionalChecks: 'texts',
@@ -143,6 +145,7 @@ const TYPES = {
   prFields: [(value) => Array.isArray(value) && value.every((f) => PR_FIELDS.includes(f)), `a list of ${PR_FIELDS.map((f) => `"${f}"`).join(', ')}`],
   handoffMode: [(value) => ['off', 'ask', 'auto'].includes(value), '"off", "ask", or "auto"'],
   readyMode: [(value) => ['ask', 'auto'].includes(value), '"ask" or "auto"'],
+  extraMode: [(value) => ['off', 'ask', 'auto'].includes(value), '"off", "ask", or "auto"'],
   versionOrNull: [(value) => value === null || (typeof value === 'string' && SEMVER.test(value)), 'a plugin version such as "0.17.0", or null'],
 };
 
@@ -164,6 +167,10 @@ export const DEFAULTS = deepFreeze({
     requiredSections: ['Summary', 'Tests run'],
     reviewer: 'chatgpt-codex-connector[bot]',
     maxReviewRounds: 3,
+    // What happens at that cap (lib/review/extension.mjs): "ask" checks whether one more round is warranted and asks
+    // the Human; "auto" grants it on the judge's word; "off" stops. maxExtraRounds is the hard ceiling on grants.
+    extraRounds: 'ask',
+    maxExtraRounds: 2,
     requiredChecks: [],
     ignoreCancelledChecks: [],
     conditionalChecks: [],

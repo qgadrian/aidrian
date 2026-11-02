@@ -59,6 +59,11 @@ The bot count is another number: `codex_rounds` in the `aidrian pr await-review`
 including any before this run. `aidrian pr await-review` holds that count to the same cap and reports `round_limit` (exit 4)
 there, which can arrive before the round count reaches it. Only `--round` of `aidrian pr disposition` takes `codex_rounds`.
 
+At the cap, with config.json `github.extraRounds` on, `aidrian pr await-review --request` and `aidrian pr review` may
+return `extension_check` (exit 10) or `extension_ask` (exit 11) instead of `round_limit`. Run the judge the status
+dispatches, or ask the Human its question, as the `pr-review-loop` skill's `references/review-plan.md`
+§ At the cap says. A granted round raises the cap by one, for one round; the next cap checks again.
+
 ## Disputes in an unattended run
 
 A disputed finding in an unattended run is parked as a Decision for the Human, with both positions. It is never fixed.

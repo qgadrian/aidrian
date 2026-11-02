@@ -219,7 +219,7 @@ const PR_URL = /\/pull\/\d+/u;
 export const REVIEW_OUTPUT_STATUSES = Object.freeze([
   'dispatch', 'running', 'fix_required', 'received', 'none_needed', 'human_required', 'timed_out', 'checks_pending',
   'blocked_quota', 'round_limit', 'unsatisfied', 'incomplete', 'stuck', 'too_large', 'already_present', 'no_reviewer',
-  'review_required',
+  'review_required', 'extension_check', 'extension_ask',
 ]);
 const REVIEW_STATUS_SET = new Set(REVIEW_OUTPUT_STATUSES);
 const REVIEW_OUTPUT = /"status"\s*:\s*"([a-z_]+)"\s*,\s*"pr"\s*:\s*(?:\d+|null)\b/gu;

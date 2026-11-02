@@ -8,7 +8,9 @@ and which of the plugin's rules blocked a tool call.
 It is `dispatch-log.jsonl` in the [state folder](project-folder.md#local-state): one JSON object per line,
 on this machine only, shared by every worktree of the repository.
 Three Claude Code hooks append the dispatch, stop, and session rows, the last through a worker
-(see [`session`](#session-when-a-session-ends)), and the plugin's blocking hooks append a `hook_deny` row, only inside a project folder, and only while config.json `telemetry.enabled` is on:
+(see [`session`](#session-when-a-session-ends)), the plugin's blocking hooks append a `hook_deny` row,
+and the review commands append a `review_extension` row,
+only inside a project folder, and only while config.json `telemetry.enabled` is on:
 [config.md](config.md#telemetry) has the switches.
 A row holds names, counts, durations, costs, and file paths. It never holds a prompt, a command, or tool output.
 
@@ -104,6 +106,22 @@ The `reason` is:
 - never a parenthesized absolute path, such as the main checkout's folder, which is left out.
 
 The row never holds the command. Its `reason` can name the file a write rule matched, as the message the agent reads does.
+
+### `review_extension`: when a check at the round cap decides
+
+`aidrian pr review`, `aidrian pr await-review --request`, and `aidrian pr extend` write one row per decision of an
+[extra-rounds check](review.md#extra-rounds): the check starts, the signals stop it, the judge rules, or the Human answers.
+
+| Field | Meaning |
+| --- | --- |
+| `ts`, `session_id` | When, and in which session. |
+| `repo`, `pr` | The pull request. |
+| `source`, `round` | `plan` for `aidrian pr review`'s rounds, `bot` for the review bot's; the round at the cap. |
+| `outcome` | `judging`, `asking`, `granted`, `denied`, or `stopped`. |
+| `by` | Who decided: `mechanical` (the signals), `judge`, `human`, `ceiling`, or `null` while judging. |
+| `signals` | The signals that raised a red flag: `converging`, `looping`, `drifting`, `bloating`. |
+
+The judge's reason stays in the review record, not the row.
 
 ### `rotate`: when the log rotates
 
@@ -223,7 +241,7 @@ and blocks from before this plugin logged `hook_deny` rows are not in the log ei
 
 ### Reviews
 
-`aidrian report reviews` reads the last 20 merged pull requests through `gh`, not the log, and shows how the review bot,
+`aidrian report reviews` reads the last 20 merged pull requests through `gh`, and the log only for its extra-rounds line, and shows how the review bot,
 config.json `github.reviewer`, did on them. `gh` runs in the project's folder, so `--project` reads that project's repository.
 
 ```console
@@ -243,6 +261,9 @@ Most rounds: #4 6, #1 2
   a line it does not add since was there. A finding is not checked when it is on the whole file or on a deleted line,
   when the branch was rebased or force-pushed between the two reviews, when gh cannot read the compare, or when the compare is too large.
 - **Most rounds**: up to five pull requests, most rounds first.
+- **Extra rounds**: from the log's `review_extension` rows since `--since` (7d by default), each pull request's check at
+  the cap counted once, by its last decision: stopped by the signals (with each red flag), by the judge, or at the ceiling;
+  granted, and how many by the Human; denied; or still waiting. The line is left out when no check ran.
 
 `--prs N` sets how many merged pull requests to read. `--since` keeps those merged since then, at most N, and says so when N cut the list short;
 without `--since` the view takes the last N, whatever their age. `--json` prints `rounds`, every pull request with its findings per round,

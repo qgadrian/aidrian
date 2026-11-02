@@ -33,6 +33,8 @@ Act on `status`, then run it again, until it stops:
 | `fix_required` | triage `open`, `flows`, `tests_removed`, and `checks_failing` in step 3, fix, push |
 | `running`, `checks_pending`, `timed_out` | run it again; `incomplete` with `retry_recommended`: once more |
 | `received`, `none_needed` | go to step 2 for comments people or the bot left, then step 7 |
+| `extension_check` | run `dispatch[0]`, the judge, briefed with `extension`; record its verdict with its `record` |
+| `extension_ask` | ask the Human `question` with AskUserQuestion and `options`; record the answer with `record` |
 | `human_required`, `stuck`, `too_large`, `unsatisfied`, `round_limit`, `blocked_quota` | stop: report it and ask the Human |
 
 A flow pass answers every invariant it is given with a verdict and evidence: `path:line` at the head, or

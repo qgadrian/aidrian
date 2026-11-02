@@ -644,13 +644,18 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   function noteFindings(extra) {
     const round = state.rounds.at(-1);
     if (!round || round.head !== head || !(Array.isArray(extra.open) || Array.isArray(extra.flows))) return;
-    const lists = (extra.open ?? []).map((each) => each.findings);
     const violated = (extra.flows ?? []).flatMap((flow) => (flow.violated ?? []).map((id) => ({ title: `flow ${flow.flow}: invariant ${id} violated`, file: null, line: null, severity: null })));
-    round.open = (extra.open ?? []).reduce((total, each) => total + (each.open ?? 0), 0) + violated.length;
-    // Only what still blocks: an itemized list (attest --findings-file) keeps its fixed and accepted findings too, and a
-    // fixed finding read as open would come back as a loop in the next round.
-    round.findings = lists.every(Array.isArray)
-      ? [...lists.flat().filter(blocks).map((each) => ({ title: each.title ?? null, file: each.file ?? null, line: Number.isInteger(each.line) ? each.line : null, severity: each.severity ?? null })), ...violated].slice(0, 50)
+    const passes = extra.open ?? [];
+    // Only what still blocks: an itemized list (attest --findings-file, an exec reviewer) keeps its fixed and accepted
+    // findings too, and a fixed finding read as open would come back as a loop in the next round. A mistake that a
+    // slice and the cross-cutting pass both report is one finding, as findings_merged lists it. A pass recorded with
+    // counts only adds its count.
+    const itemized = passes.filter((each) => Array.isArray(each.findings));
+    const merged = dedupe(itemized.map((each) => [each.pass, each.findings.filter(blocks)]));
+    const counted = passes.filter((each) => !Array.isArray(each.findings)).reduce((total, each) => total + (each.open ?? 0), 0);
+    round.open = merged.length + counted + violated.length;
+    round.findings = itemized.length === passes.length
+      ? [...merged.map((each) => ({ title: each.title ?? null, file: each.file ?? null, line: Number.isInteger(each.line) ? each.line : null, severity: each.severity ?? null })), ...violated].slice(0, 50)
       : null;
   }
 

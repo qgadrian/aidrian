@@ -51,7 +51,7 @@ test('dedupe: one finding per mistake across passes, at its highest severity', (
 });
 
 // A repository whose feat branch changes files in four folders, with a split rule.
-function repo(t, review = {}) {
+function repo(t, review = {}, github = {}) {
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-split-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const git = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' }).stdout.trim();
@@ -62,7 +62,7 @@ function repo(t, review = {}) {
   git('init', '-q', '-b', 'main');
   git('config', 'user.email', 't@example.com');
   git('config', 'user.name', 'T');
-  write('.aidrian/config.json', JSON.stringify({ version: 1, review: { rules: [{ when: { lines: { over: 1 } }, depth: 'split' }], split: { sliceLines: 100, parallel: 2, maxSlices: 8 }, ...review } }));
+  write('.aidrian/config.json', JSON.stringify({ version: 1, github, review: { rules: [{ when: { lines: { over: 1 } }, depth: 'split' }], split: { sliceLines: 100, parallel: 2, maxSlices: 8 }, ...review } }));
   for (const d of ['a', 'b', 'c', 'd']) write(`src/${d}/x.js`, '0\n');
   git('add', '-A');
   git('commit', '-q', '-m', 'base');
@@ -225,4 +225,30 @@ test('a plan command that raises the depth to split gets slices and a cross pass
   const project = projectAt(dir);
   const result = await reviewStep({ pr: '4' }, { project, config: loadConfig(project).config, gh, codex: () => ({ ok: true }), exec: async () => ({ status: 'done', findings: [], verdicts: [], contracts: [], cross_notes: [], dropped: [] }) });
   assert.deepEqual(result.plan.stages[0].passes.map((id) => id.split(':')[0]), ['slice', 'slice', 'cross']);
+});
+
+test('extra rounds: a mistake a slice and the cross pass both report is one open finding of its round', async (t) => {
+  const r = repo(t, { split: { sliceLines: 100, parallel: 8, maxSlices: 8 } }, { maxReviewRounds: 2 });
+  const at = (line, title) => ({ file: 'src/a/x.js', line, title, body: 'b', severity: 'high' });
+  let round = 1;
+  const exec = async (_reviewer, input) => {
+    const slice = input.role === 'slice' && input.files[0] === 'src/a/x.js';
+    const findings = round === 1
+      ? (slice ? [at(1, 'Null refund total'), at(40, 'Missing lock on save'), at(80, 'Wrong currency rounding')] : [])
+      : slice ? [at(120, 'Stale cache entry'), at(160, 'Unbounded retry loop')] : input.role === 'cross' ? [at(120, 'Stale cache entry')] : [];
+    return { status: 'done', findings, verdicts: [], contracts: [], cross_notes: [], dropped: [] };
+  };
+  const settle = async () => {
+    let result = await r.step(exec);
+    while (result.status === 'running') result = await r.step(exec);
+    return result;
+  };
+  assert.equal((await settle()).status, 'fix_required');
+  round = 2;
+  r.write('src/a/x.js', 'fixed\n');
+  r.commit();
+  const capped = await settle();
+  assert.equal(capped.status, 'extension_check', JSON.stringify(capped.extension?.reasons));
+  assert.deepEqual(capped.extension.history.map((each) => [each.open, each.findings.length]), [[3, 3], [2, 2]], 'the cross pass`s copy is not a third finding');
+  assert.equal(capped.extension.signals.converging, true);
 });

@@ -561,6 +561,11 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     await allowFor(base?.pr?.head?.sha ?? null);
     // A cap an earlier request recorded counts only under the Human's override, as a --max-rounds past the cap does.
     opts.keepRecordedCap = env[ROUNDS_OVERRIDE] === '1';
+    // One deadline for the whole command: a retry after head_moved waits only for what is left of --timeout-sec, so the
+    // command still ends inside the shell call it was given.
+    const clock = deps.now ?? (() => Date.now());
+    const started = clock();
+    const budget = opts.timeoutSec;
     let result = await awaitReview(opts, { gate, ...deps });
     // The pull request moved between the reads, or during the wait, before a request on a grant: read the grant again
     // on the head the request would be for, then ask again. A few moves in a row end the run without a request.
@@ -570,8 +575,10 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
         break;
       }
       await allowFor(result.head_sha);
+      opts.timeoutSec = Math.max(0, budget - (clock() - started) / 1000);
       result = await awaitReview(opts, { gate, ...deps });
     }
+    result = { ...result, waited_sec: Math.round((clock() - started) / 1000) };
     if (result.status === 'round_limit' && record) result = await botAtCap(result, { project, config, gh, base, record, policy, env });
     else if (moved) await saveRecord(record, { project, config, gh, base, status: result.status });
     else if (result.status === 'round_limit' && base && policy.mode === 'off') result = { ...result, extension: { status: 'off', mode: 'off' } };

@@ -396,10 +396,11 @@ function gitBot(t, config, { working = null } = {}) {
   };
   const run = async (env = {}, args = []) => {
     pulls = 0;
-    let now = Date.parse('2026-08-23T09:00:00Z');
+    const start = Date.parse('2026-08-23T09:00:00Z');
+    let now = start;
     const git_ = { pushedHead: () => null, behind: () => false };
     const code = await runAwaitReview(['42', '--request', '--timeout-sec', '0', ...args], loadConfig(project).config, project, { gh, git: git_, env, now: () => now, sleep: async (s) => { now += s * 1000; } });
-    return { code, out: code === 1 ? null : JSON.parse(log.mock.calls.at(-1).arguments[0]) };
+    return { code, out: code === 1 ? null : JSON.parse(log.mock.calls.at(-1).arguments[0]), elapsed: (now - start) / 1000 };
   };
   return { project, run, requests, commit, fix, hooks };
 }
@@ -500,4 +501,21 @@ test('await-review without --request reads GitHub alone: no base branch in the c
   assert.equal(JSON.parse(log.mock.calls.at(-1).arguments[0]).status, 'timed_out');
   assert.equal(await runAwaitReview(['42', '--request', '--timeout-sec', '0'], loadConfig(project).config, project, deps), 1);
   assert.match(error.mock.calls.at(-1).arguments[0], /the base branch main is not in this checkout: git fetch first/u);
+});
+
+test('await-review: a retry after the head moved waits only for what is left of --timeout-sec, and reports the whole wait', async (t) => {
+  const bot = gitBot(t, { github: { extraRounds: 'auto' } });
+  assert.equal((await bot.run()).out.status, 'extension_check');
+  const state = readLocalState(bot.project, 42);
+  recordVerdict(state, { verdict: 'extend', reason: 'src/a.js:200 is valid', current: bot.fix });
+  writeLocalState(bot.project, state);
+  // The request for the fix goes out; a small push lands during the first poll, before any review.
+  bot.hooks.beforePull = (n) => {
+    if (n === 3) bot.commit('export const a = 5;\n');
+  };
+  const waited = await bot.run({}, ['--timeout-sec', '10', '--interval-sec', '5']);
+  assert.equal(bot.requests.length, 2, 'the grant held on the new head, which is asked about once');
+  assert.equal(waited.out.status, 'timed_out');
+  assert.ok(waited.elapsed <= 10, `the whole command waited ${waited.elapsed} s of its 10`);
+  assert.equal(waited.out.waited_sec, waited.elapsed, 'waited_sec counts every wait of the command');
 });

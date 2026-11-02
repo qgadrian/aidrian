@@ -523,6 +523,20 @@ export function readInvocation(segment, depth = 0) {
   return { program: program.split('/').pop() ?? '', args: usable.slice(index + 1), negated, chdir, environment };
 }
 
+// The builtins that set or export a shell variable named in their arguments.
+const DECLARERS = new Set(['export', 'declare', 'typeset', 'local', 'readonly']);
+
+// Whether readInvocation's { program, args, environment } sets the variable `name`: a prefix assignment or env gives it
+// a value (an unset does not), or export, declare, typeset, local, or readonly names it, bare or as `name=value`, also
+// when `builtin` runs it. A quoted argument of any other program, or a comment, sets nothing.
+export function assignsVariable({ program, args = [], environment = [] }, name) {
+  if (environment.some((change) => change.name === name && change.value !== null)) return true;
+  let words = args;
+  if (program === 'builtin' && DECLARERS.has(args[0]?.text)) words = args.slice(1);
+  else if (!DECLARERS.has(program)) return false;
+  return words.some((token) => token.text === name || token.text.startsWith(`${name}=`));
+}
+
 // sudo's environment reset after one of its option words: none for -E or a bare --preserve-env, which keep it all;
 // --preserve-env=LIST adds the names it lists to `keep`, and a list the rule cannot read keeps none.
 function afterPreserve(reset, { text, dynamic }, option) {

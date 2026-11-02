@@ -12,6 +12,7 @@ const LEAKED = {
   CLAUDE_CODE_AGENT: 'orchestrator',
   CLAUDE_CODE_SESSION_ID: 'session-1',
   AIDRIAN_ALLOW_GIT_AMEND: '1',
+  AIDRIAN_ALLOW_MAIN_COMMIT: '1',
   GIT_DIR: '/nonexistent/.git',
   GIT_WORK_TREE: '/nonexistent',
   GIT_INDEX_FILE: '/nonexistent/.git/index',

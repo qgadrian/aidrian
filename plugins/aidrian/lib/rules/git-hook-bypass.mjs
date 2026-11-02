@@ -2,10 +2,14 @@
 // or a prefix git takes for it (`--no-veri`), `-n` on commit (alone or in a bundle such as `-an`), a core.hooksPath
 // override (`-c`, `--config-env`, or GIT_CONFIG_PARAMETERS / GIT_CONFIG_KEY_<n> in its environment), or a
 // `HUSKY=0|false|` assignment; and a `git config` that writes or unsets core.hooksPath. Reading the setting stays allowed.
-// A command substitution that runs is judged as the command line is. There is no override: a project that wants an
-// exception changes its hooks, not this rule.
+// It also denies any command that sets AIDRIAN_ALLOW_MAIN_COMMIT, the commit guard's override, inline (`VAR=1 cmd`),
+// through env, or with export, declare, typeset, local, or readonly: the Human sets it in their own shell, never an agent.
+// Every command the line runs is judged as the command line is: a command substitution that runs, a `sh -c` body, and a
+// heredoc or here-string fed to a shell (walkCommands). There is no override: a project that wants an exception changes
+// its hooks, not this rule.
 
-import { commandLines, isLongOption, lexCommand, readGit } from '../shell-lex.mjs';
+import { OVERRIDE } from '../main-commits.mjs';
+import { assignsVariable, isLongOption, readGit, walkCommands } from '../shell-lex.mjs';
 
 // The subcommands that run a hook. `-n` means --no-verify on commit only: it is --dry-run on push and --no-stat on merge.
 const HOOK_RUNNING = new Set(['commit', 'push', 'merge']);
@@ -21,9 +25,15 @@ export const REASON =
   'Blocked: this skips a git hook. A failing hook is a verdict, not a flake: fix the cause, and if the failure is unrelated ' +
   'to your change, report it and wait for instructions. There is no agent-side override for this rule.';
 
+export const OVERRIDE_REASON =
+  `Blocked: ${OVERRIDE} lets a commit through the commit guard, and only the Human sets it, in their own shell before ` +
+  'the session starts. Fix what aidrian pre-commit named: commit in a task worktree, or unstage the git-ignored file ' +
+  'it lists, or ask the Human.';
+
 // The deny reason for `command`, or null.
 export function check(command) {
-  for (const segment of commandLines(command).flatMap((line) => lexCommand(line))) {
+  for (const { segment, invocation } of walkCommands(command, null)) {
+    if (assignsVariable(invocation, OVERRIDE)) return OVERRIDE_REASON;
     const git = readGit(segment);
     if (git?.subcommand === 'config' && writesHooksPath(git.rest)) return REASON;
     if (!git || !HOOK_RUNNING.has(git.subcommand)) continue;

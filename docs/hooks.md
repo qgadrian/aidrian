@@ -64,7 +64,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 
 | Rule | Blocks | Override |
 | --- | --- | --- |
-| Git hook bypass | Skipping or turning off git hooks | none |
+| Git hook bypass | Skipping or turning off git hooks, and setting `AIDRIAN_ALLOW_MAIN_COMMIT`, the [commit guard](#commit-guard)'s override | none |
 | Git amend | `git commit --amend` | `AIDRIAN_ALLOW_GIT_AMEND=1` |
 | Kill by name | Killing processes by name | `AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME=1` |
 | Command-line listing | Listing the command lines of other processes | `AIDRIAN_ALLOW_PROCESS_ARGS_LISTING=1` |
@@ -80,7 +80,10 @@ What each rule matches:
 
 - Git hook bypass: `--no-verify` on commit, push, or merge; `-n` on commit; `HUSKY=0`;
   core.hooksPath set in any letter case through `-c`, `--config-env`, `GIT_CONFIG_PARAMETERS`, or `GIT_CONFIG_KEY_<n>`;
-  and `git config` writing or unsetting core.hooksPath.
+  `git config` writing or unsetting core.hooksPath;
+  and any command that sets `AIDRIAN_ALLOW_MAIN_COMMIT`, inline (`VAR=1 cmd`), through `env`, or with `export`, `declare`,
+  `typeset`, `local`, or `readonly`. The name in a quoted argument or a comment passes, and so does `env -u`.
+  This rule reads `sh -c` bodies and heredocs or here-strings fed to a shell, as well as command substitutions.
 - Kill by name: `pkill`, `killall`, `pgrep --signal`, `kill` fed by `pgrep` or `ps`, and `kill -- -1`. `kill <pid>` stays allowed.
 - Command-line listing: `pgrep -fl`, `pgrep -a`, and `ps` without a format free of `args`, `command`, and `cmd`.
 - Counting grep in `&&`: such as `grep -c x log && npm test`.
@@ -108,7 +111,7 @@ It sees through `sudo`, `env`, `timeout`, `command`, `rtk`, and similar wrappers
 A long option it blocks also matches the shorter prefixes the program accepts, such as `--no-veri` for `--no-verify`,
 `--am` for `--amend`, and `--cou` for grep's `--count`.
 Every rule also reads the command substitutions that run: `$(…)`, backticks, `<(…)`, and those in a heredoc that expands.
-The process rules also read `sh -c`, `eval`, and `xargs`.
+The process rules also read `sh -c`, `eval`, and `xargs`; the git hook bypass rule reads `sh -c` and a heredoc or here-string fed to a shell.
 A command reached only through a script or an interpreter such as `python -c` is out of their sight.
 
 ## Recorded blocks
@@ -272,7 +275,8 @@ It reads Claude Code transcripts only: a transcript with no Claude Code usage, o
 
 An override is for a human: set it in your own shell before you start the session.
 Agents must never set one.
-`AIDRIAN_ALLOW_MAIN_COMMIT=1` lets a commit through the [commit guard](#commit-guard), in that shell only.
+`AIDRIAN_ALLOW_MAIN_COMMIT=1` lets a commit through the [commit guard](#commit-guard), in that shell only;
+the [git hook bypass](#bash-rules) rule denies an agent's command that sets it.
 
 ## Commit messages
 

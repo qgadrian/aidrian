@@ -67,7 +67,7 @@ When `quorum check` still exits 1, stop with `blocked`, quoting what it printed.
 
 `<state>/quorum/<name>-<plan-hash>.json`, where `<state>` is what `aidrian state` prints and `<plan-hash>` is
 `git hash-object <plan>`.
-[references/ledger.md](references/ledger.md) gives every field and what each round writes: read it before writing the ledger.
+[references/ledger.md](references/ledger.md) gives every field and what each round writes: read it before round 1.
 
 Before round 1:
 

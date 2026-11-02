@@ -5,8 +5,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
-import { commitMode } from '../plugins/aidrian/lib/main-commits.mjs';
+import { DEFAULTS, loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import { commitMode, unpushedMainLine } from '../plugins/aidrian/lib/main-commits.mjs';
+import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 
 const config = (mainCheckout) => ({ ...DEFAULTS, git: { ...DEFAULTS.git, mainCheckout: { ...DEFAULTS.git.mainCheckout, ...mainCheckout } } });
 
@@ -273,4 +274,119 @@ test('git runs pre-commit for a commit and pre-merge-commit for a non-fast-forwa
   assert.notEqual(merge.status, 0);
   assert.match(merge.stderr, MAIN);
   assert.equal(git('rev-parse', 'HEAD'), before, 'no merge commit landed');
+});
+
+// unpushedMainLine, against the same temporary repositories with a bare origin, made with `git init --bare` under
+// mkdtemp and filled with `git -C … push`.
+const AHEAD = (count) =>
+  `Local main has ${count} commit${count === 1 ? '' : 's'} not on origin/main; only worktrees commit here. Inspect: git log origin/main..main`;
+const OFF = (branch) => `The main checkout is on ${branch}, not main; only worktrees change branch. Switch back: git switch main`;
+const DETACHED = "The main checkout's HEAD is detached, not on main. Switch back: git switch main";
+const CHANGED = 'The main checkout has changed tracked files; task work belongs in a worktree. Inspect: git status';
+
+function withOrigin(t, config = GUARD_ON) {
+  const { dir, git } = repo(t, config);
+  const origin = tempDir(t);
+  gitIn(origin)('init', '-q', '--bare', '-b', 'main');
+  git('remote', 'add', 'origin', origin);
+  git('push', '-q', 'origin', 'main');
+  return { dir, git };
+}
+
+const startLines = (cwd) => {
+  const project = projectAt(cwd);
+  return unpushedMainLine(project, loadConfig(project).config);
+};
+
+test('unpushedMainLine: local main one commit ahead of origin/main gives the line with its count; even gives none', (t) => {
+  const { dir, git } = withOrigin(t);
+  assert.deepEqual(startLines(dir), [], 'even with origin');
+  git('commit', '-q', '--allow-empty', '-m', 'stray');
+  assert.deepEqual(startLines(dir), [AHEAD(1)]);
+  git('commit', '-q', '--allow-empty', '-m', 'another');
+  assert.deepEqual(startLines(dir), [AHEAD(2)]);
+  const { tree } = worktree(dir, git);
+  assert.deepEqual(startLines(tree), [AHEAD(2)], 'a session in a worktree reads the main checkout');
+  git('push', '-q', 'origin', 'main');
+  assert.deepEqual(startLines(dir), []);
+});
+
+test('unpushedMainLine: no origin/main ref gives no unpushed line, and only that line is dropped', (t) => {
+  const { dir, git } = repo(t);
+  assert.deepEqual(startLines(dir), []);
+  git('switch', '-q', '-c', 'side');
+  assert.deepEqual(startLines(dir), [OFF('side')], 'the failed rev-list drops its own line only');
+});
+
+test('unpushedMainLine: allow mode gives no line, whatever the main checkout holds', (t) => {
+  for (const config of [{ version: 1, git: { mainCheckout: { guard: true, commits: 'allow' } } }, { version: 1 }]) {
+    const { dir, git } = withOrigin(t, config);
+    git('commit', '-q', '--allow-empty', '-m', 'stray');
+    writeFileSync(path.join(dir, 'README.md'), '# changed\n');
+    git('switch', '-q', '-c', 'side');
+    assert.deepEqual(startLines(dir), [], JSON.stringify(config));
+  }
+  const { dir, git } = withOrigin(t, { version: 1, git: { mainCheckout: { commits: 'warn' } } });
+  git('commit', '-q', '--allow-empty', '-m', 'stray');
+  assert.deepEqual(startLines(dir), [AHEAD(1)], 'warn mode warns too');
+});
+
+test('unpushedMainLine: off main names the branch, a detached HEAD gets its own line, and a changed tracked file names git status', (t) => {
+  const { dir, git } = withOrigin(t);
+  git('switch', '-q', '-c', 'feature/x');
+  assert.deepEqual(startLines(dir), [OFF('feature/x')]);
+  git('switch', '-q', '--detach', 'main');
+  assert.deepEqual(startLines(dir), [DETACHED]);
+  git('switch', '-q', 'main');
+  writeFileSync(path.join(dir, 'README.md'), '# changed\n');
+  assert.deepEqual(startLines(dir), [CHANGED]);
+  git('add', 'README.md');
+  assert.deepEqual(startLines(dir), [CHANGED], 'a staged change counts too');
+  git('commit', '-q', '-m', 'stray');
+  git('switch', '-q', '-c', 'side');
+  writeFileSync(path.join(dir, 'README.md'), '# again\n');
+  assert.deepEqual(startLines(dir), [AHEAD(1), OFF('side'), CHANGED], 'all three, in order');
+});
+
+test('unpushedMainLine: a clean checkout on main gives no line, and an untracked file alone gives none', (t) => {
+  const { dir } = withOrigin(t);
+  assert.deepEqual(startLines(dir), []);
+  writeFileSync(path.join(dir, 'notes.md'), 'scratch\n');
+  assert.deepEqual(startLines(dir), []);
+});
+
+test('unpushedMainLine: the default branch comes from git.defaultBranch, and no checkout gives no line', (t) => {
+  const { dir, git } = withOrigin(t, { version: 1, git: { defaultBranch: 'trunk', mainCheckout: { guard: true } } });
+  git('branch', '-q', '-m', 'main', 'trunk');
+  git('push', '-q', 'origin', 'trunk');
+  git('commit', '-q', '--allow-empty', '-m', 'stray');
+  assert.deepEqual(startLines(dir), [
+    'Local trunk has 1 commit not on origin/trunk; only worktrees commit here. Inspect: git log origin/trunk..trunk',
+  ]);
+
+  const outside = tempDir(t);
+  writeConfig(outside, GUARD_ON);
+  const project = projectAt(outside);
+  const env = process.env.GIT_CEILING_DIRECTORIES;
+  process.env.GIT_CEILING_DIRECTORIES = path.dirname(outside);
+  t.after(() => (env === undefined ? delete process.env.GIT_CEILING_DIRECTORIES : (process.env.GIT_CEILING_DIRECTORIES = env)));
+  assert.deepEqual(unpushedMainLine(project, loadConfig(project).config), []);
+});
+
+test('unpushedMainLine: a tag named main does not make main read as another branch', (t) => {
+  const { dir, git } = withOrigin(t);
+  git('tag', 'main');
+  assert.deepEqual(startLines(dir), []);
+  git('switch', '-q', '-c', 'side');
+  assert.deepEqual(startLines(dir), [OFF('side')]);
+});
+
+test('unpushedMainLine: a status git cannot read drops only the changed-files line', (t) => {
+  const { dir, git } = withOrigin(t);
+  git('commit', '-q', '--allow-empty', '-m', 'stray');
+  git('switch', '-q', '-c', 'side');
+  writeFileSync(path.join(dir, 'README.md'), '# changed\n');
+  // An index git cannot parse, inside the temporary repository: only the status read uses it.
+  writeFileSync(path.join(dir, '.git', 'index'), 'not an index\n');
+  assert.deepEqual(startLines(dir), [AHEAD(1), OFF('side')]);
 });

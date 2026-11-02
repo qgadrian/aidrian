@@ -37,13 +37,27 @@ At the start of every session and subagent, the hook prints:
 - one line with the [names](config.md#names) for the human and the AI;
 - in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons.
 
+Last, in the main session only and while `git.mainCheckout.commits` is not `"allow"` ([commit guard](#commit-guard)),
+up to three lines about the main checkout, wherever the session started, with `<db>` the `git.defaultBranch`:
+
+| Prints when | Line |
+| --- | --- |
+| Local `<db>` has commits that `origin/<db>` does not | `Local <db> has N commit(s) not on origin/<db>; only worktrees commit here. Inspect: git log origin/<db>..<db>` |
+| The main checkout is on another branch | `The main checkout is on <branch>, not <db>; only worktrees change branch. Switch back: git switch <db>` |
+| The main checkout's HEAD is detached | `The main checkout's HEAD is detached, not on <db>. Switch back: git switch <db>` |
+| The main checkout has changed tracked files, staged or not | `The main checkout has changed tracked files; task work belongs in a worktree. Inspect: git status` |
+
+They compare local refs only, with no fetch, so a stale `origin/<db>` can count commits that are already pushed.
+An untracked file alone prints nothing. Each line is one git call: a missing `origin/<db>` or a failing git drops
+that line alone, and a git that hangs past the timeout drops its own line and the ones after it.
+
 ## Turning hooks off
 
 | Hook | Off with |
 | --- | --- |
 | Agent gates | Off unless config.json or `.aidrian.local.json` sets `agents` |
 | Main-checkout rule | Off unless config.json sets `"git": { "mainCheckout": { "guard": true } }` |
-| [Commit guard](#commit-guard) | `"git": { "mainCheckout": { "commits": "allow" } }`; with `commits` unset, off while the guard is off |
+| [Commit guard](#commit-guard), and its [start lines](#start-lines) | `"git": { "mainCheckout": { "commits": "allow" } }`; with `commits` unset, off while the guard is off |
 | Markdown line length | `"docs": { "wrapLimit": 0 }` |
 | Pull request body sections | `"github": { "requiredSections": [] }`; the footer and `--fill` checks stay |
 | Pull request contract | Off unless config.json sets `github.pullRequest`, but for `"sharedTempBodyFile": false` |
@@ -55,7 +69,8 @@ At the start of every session and subagent, the hook prints:
 | Automatic lessons from the stop hook and the blocking rules | `"lessons": { "auto": false }` |
 | A Bash rule, once | Its override variable, set by a person: [Overrides](#overrides) |
 
-The start lines have no switch; they act only inside a project folder.
+The knowledge, names, and lessons start lines have no switch; they act only inside a project folder.
+The main-checkout start lines follow the commit guard's mode, so they are off with it.
 [config.md](config.md#telemetry) lists the other `telemetry` keys.
 The Agent hook changes only what config.json or `.aidrian.local.json` sets in `models.claude`.
 The compaction checklist steps aside whenever instructions are typed after `/compact`.

@@ -1,8 +1,10 @@
 // SessionStart and SubagentStart hook: one line that tells the agent which knowledge docs to read now and how to find
 // the rest, one line with the names to call the human and the AI, and, for the main session only, a last line when the
 // lesson inbox holds open lessons, which escalates when the inbox needs triage, and a line when the plugin copy running
-// is older than the version the project requires (`requires` in config.json). SessionStart adds plain stdout to the context; SubagentStart (`--subagent`) needs it
-// wrapped in JSON. Prints nothing outside a project.
+// is older than the version the project requires (`requires` in config.json). Last, in the main session while main
+// checkout commits are not allowed, up to three lines about the main checkout (lib/main-commits.mjs): local commits not
+// on origin, a branch other than the default or a detached HEAD, and changed tracked files. SessionStart adds plain
+// stdout to the context; SubagentStart (`--subagent`) needs it wrapped in JSON. Prints nothing outside a project.
 // At SessionStart it also saves the project's agent gates for the session (lib/gate-snapshot.mjs), which the gate hook
 // holds every subagent to until the session ends.
 
@@ -13,6 +15,7 @@ import { saveGateSnapshot } from '../lib/gate-snapshot.mjs';
 import { runHook } from '../lib/hook-io.mjs';
 import { indexRows, loadKnowledge } from '../lib/knowledge.mjs';
 import { inboxPath, nudge } from '../lib/lesson-inbox.mjs';
+import { unpushedMainLine } from '../lib/main-commits.mjs';
 import { findProject } from '../lib/project.mjs';
 
 const BIN = path.resolve(import.meta.dirname, '../bin');
@@ -44,6 +47,7 @@ await runHook((input) => {
     if (floor) console.log(`Plugin too old: ${floor}. Its hooks and commands may reject this project's config until then.`);
     const lessons = nudge(inboxPath(project, config), { command: binCommand('aidrian'), config });
     if (lessons) console.log(lessons);
+    for (const warning of unpushedMainLine(project, config)) console.log(warning);
   }
 });
 

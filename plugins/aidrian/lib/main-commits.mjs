@@ -1,13 +1,14 @@
 // What a commit in the main checkout gets: config.json `git.mainCheckout.commits`, "block", "warn", or "allow", and
-// `aidrian pre-commit`, which a project's pre-commit and pre-merge-commit git hooks run to enforce it.
-// docs/config.md lists the key; docs/hooks.md § Commit guard describes the command.
+// `aidrian pre-commit`, which a project's pre-commit and pre-merge-commit git hooks run to enforce it, and the session
+// start lines that warn about commits and changes already in the main checkout.
+// docs/config.md lists the key; docs/hooks.md § Commit guard describes the command, § Start lines the warnings.
 // No dependencies: this file runs from the installed plugin, which has no node_modules.
 
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { loadConfig } from './config.mjs';
-import { checkoutRoots, runGit } from './git.mjs';
+import { checkoutRoots, mainRoot, runGit } from './git.mjs';
 import { projectAt } from './project.mjs';
 
 // The override, which the Human sets in their own shell; agents never set it.
@@ -18,6 +19,47 @@ export function commitMode(config) {
   const { commits, guard } = config.git.mainCheckout;
   if (commits !== null) return commits;
   return guard ? 'block' : 'allow';
+}
+
+// The session-start warnings about the main checkout of `project`'s repository, zero to three lines: local
+// <defaultBranch> ahead of origin/<defaultBranch>, the checkout on another branch or a detached HEAD, and changed
+// tracked files. Local refs only, with no fetch. None in allow mode, or when git finds no checkout. Each line is one
+// git call through runGit: a missing ref or a failing git drops that line alone, and a git stopped by the timeout drops
+// its own line and, as runGit then stops waiting, the lines after it.
+export function unpushedMainLine(project, config) {
+  if (commitMode(config) === 'allow') return [];
+  const main = mainRoot(project.root);
+  if (main === null) return [];
+  const branch = config.git.defaultBranch;
+  const lines = [];
+
+  const ahead = runGit(['rev-list', '--count', `refs/remotes/origin/${branch}..refs/heads/${branch}`, '--'], main);
+  const count = ahead.status === 0 ? Number.parseInt(ahead.stdout, 10) : 0;
+  if (count > 0) {
+    lines.push(
+      `Local ${branch} has ${count} commit${count === 1 ? '' : 's'} not on origin/${branch}; only worktrees commit here. ` +
+        `Inspect: git log origin/${branch}..${branch}`,
+    );
+  }
+
+  // Exit 1 with no output is a detached HEAD; any other failure is git not answering. The full ref, not --short, which
+  // prints heads/<db> when a tag shares the branch's name.
+  const head = runGit(['symbolic-ref', '-q', 'HEAD'], main);
+  const current = head.stdout?.trim();
+  if (head.status === 0 && current && current !== `refs/heads/${branch}`) {
+    const name = current.startsWith('refs/heads/') ? current.slice('refs/heads/'.length) : current;
+    lines.push(`The main checkout is on ${name}, not ${branch}; only worktrees change branch. Switch back: git switch ${branch}`);
+  } else if (head.status === 1 && !current) {
+    lines.push(`The main checkout's HEAD is detached, not on ${branch}. Switch back: git switch ${branch}`);
+  }
+
+  // --no-optional-locks: the main checkout is shared, so reading its status never takes the index lock. No output cap:
+  // a long status must not read as git not answering.
+  const status = runGit(['--no-optional-locks', 'status', '--porcelain', '--untracked-files=no'], main, { maxBuffer: Infinity });
+  if (status.status === 0 && status.stdout.trim()) {
+    lines.push('The main checkout has changed tracked files; task work belongs in a worktree. Inspect: git status');
+  }
+  return lines;
 }
 
 export const commands = {

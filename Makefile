@@ -23,6 +23,6 @@ check:
 codex-agents:
 	node plugins/aidrian/codex/install-agents.mjs $(if $(TARGET),--target "$$TARGET")
 
-## Install the git hooks that keep the private words of .banned-terms.local out of commit messages and branch names.
+## Install the git hooks: banned terms out of commit messages and branch names, and the commit guard (docs/hooks.md).
 hooks:
 	git config core.hooksPath .githooks

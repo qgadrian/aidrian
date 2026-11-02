@@ -43,6 +43,7 @@ At the start of every session and subagent, the hook prints:
 | --- | --- |
 | Agent gates | Off unless config.json or `.aidrian.local.json` sets `agents` |
 | Main-checkout rule | Off unless config.json sets `"git": { "mainCheckout": { "guard": true } }` |
+| [Commit guard](#commit-guard) | `"git": { "mainCheckout": { "commits": "allow" } }`; with `commits` unset, off while the guard is off |
 | Markdown line length | `"docs": { "wrapLimit": 0 }` |
 | Pull request body sections | `"github": { "requiredSections": [] }`; the footer and `--fill` checks stay |
 | Pull request contract | Off unless config.json sets `github.pullRequest`, but for `"sharedTempBodyFile": false` |
@@ -146,6 +147,7 @@ through, whatever the spelling:
 
 - `git add` of named files only: no folder, glob, `-A`, `-u`, or other option but `-v`, `-f`, `-N`, and `-p`.
 - `git commit` without `-a` or `--all`, and with no word that expands (`"$MSG"`, `"$(…)"`), which could become `-a`.
+  The commit itself is then refused by the [commit guard](#commit-guard), where the project installs it.
 - `git switch` and `git checkout` only back to `git.defaultBranch`; `git checkout -- <path>`, `git checkout <path>`, and
   `git checkout <commit> <path>` restore files and pass.
 
@@ -270,6 +272,7 @@ It reads Claude Code transcripts only: a transcript with no Claude Code usage, o
 
 An override is for a human: set it in your own shell before you start the session.
 Agents must never set one.
+`AIDRIAN_ALLOW_MAIN_COMMIT=1` lets a commit through the [commit guard](#commit-guard), in that shell only.
 
 ## Commit messages
 
@@ -282,3 +285,44 @@ node path/to/aidrian-harness/plugins/aidrian/lib/cli.mjs commit-msg --file "$1"
 
 `path/to/aidrian-harness/plugins/aidrian` stands for the plugin folder: `plugins/aidrian` in a clone of the plugin's repository,
 or the folder the host installed: [Claude Code](providers/claude-code.md#running-aidrian), [Codex](providers/codex.md#running-aidrian).
+
+## Commit guard
+
+`aidrian pre-commit [--project DIR]` runs from a project's `pre-commit` and `pre-merge-commit` git hooks.
+It is a git hook, not a plugin hook, so it has no row in the table of plugin hooks at the top of this page,
+as [commit messages](#commit-messages) have none.
+It acts on config.json `git.mainCheckout.commits` ([config.md](config.md)), which by default follows `git.mainCheckout.guard`.
+It refuses two commits:
+
+- **A commit in the main checkout**, which several sessions share. The message names `aidrian worktree new <branch>`.
+  A repository's first commit passes: no worktree exists before it.
+- **A commit that newly stages a git-ignored file**, in any checkout: each path the commit adds that `.gitignore`
+  matches, such as a `git add -f` or a `git mv` into an ignored folder. The message names `git rm --cached <path>`.
+  A gitlink under an ignored worktrees folder is one. A file tracked before a later `.gitignore` matched it passes.
+
+`"block"` refuses the commit, `"warn"` prints the same lines, each prefixed `warning:`, and lets it through,
+and `"allow"` checks nothing. A check whose input git cannot give, such as an index it cannot read, finds nothing
+and prints one line naming what it could not read; what the other check found still counts.
+A missing or broken config.json gives the defaults, so the guard is off.
+
+The override is `AIDRIAN_ALLOW_MAIN_COMMIT=1`, which the Human sets in their own shell ([Overrides](#overrides)).
+CI is not exempt: the command does not read `CI`, which any agent or child process could set.
+A CI job that commits in its own checkout either runs without the project's git hooks installed,
+or sets `AIDRIAN_ALLOW_MAIN_COMMIT=1` in the job's env, a line the Human writes in the workflow file; agents never set it.
+
+It does not cover the commits that run neither hook: `cherry-pick`, `rebase`, `revert`, `am`, `pull --rebase`,
+`stash`, and `commit-tree`; nor a fast-forward merge or pull, which makes no commit.
+`--no-verify` and a `core.hooksPath` override skip it; from agents the [git hook bypass](#bash-rules) rule denies both.
+
+To install it, add the line to each hook, with the plugin folder as in [commit messages](#commit-messages):
+
+```sh
+# .git/hooks/pre-commit, or the pre-commit file in the folder core.hooksPath names
+node path/to/aidrian-harness/plugins/aidrian/lib/cli.mjs pre-commit
+# .git/hooks/pre-merge-commit, which a non-fast-forward git merge runs instead of pre-commit
+node path/to/aidrian-harness/plugins/aidrian/lib/cli.mjs pre-commit
+# .husky/pre-commit and .husky/pre-merge-commit, in a project that uses husky
+node path/to/aidrian-harness/plugins/aidrian/lib/cli.mjs pre-commit
+```
+
+A project without these lines gets the [main-checkout](#main-checkout) Bash rule only, which reads command text.

@@ -9,11 +9,14 @@ Read [working-agreement.md](working-agreement.md) first: the rules every change 
 
 ```sh
 npm ci
+git config core.hooksPath .githooks   # once per clone: the hooks in .githooks/
 npm run build    # after editing plugins/aidrian/agents-src/<group>/, providers/, or agent-addons/
 npm run check    # what CI runs
 ```
 
 `make` lists the same tasks.
+The hooks in `.githooks/` keep the private words of `.banned-terms.local` out of commit messages and branch names,
+and refuse a commit in the main checkout or one that newly stages a git-ignored file ([Commit guard](hooks.md#commit-guard)).
 
 `npm run check` fails when:
 

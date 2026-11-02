@@ -8,6 +8,7 @@ How to build, check, and release a change is in [contributing.md](contributing.m
 - Work in a task worktree, `aidrian worktree new <branch>`, never in the main checkout.
   Several sessions share that folder, so the [main-checkout guard](hooks.md#main-checkout) blocks edits there,
   branch switches away from `main`, and `git add -A` or `git commit -a`.
+  The [commit guard](hooks.md#commit-guard) refuses a commit in the main checkout too.
 - A session runs the plugin version installed on its machine, never the branch it edits.
   To see a change to a hook, skill, or agent at work, [try the branch](contributing.md#trying-a-branch).
 

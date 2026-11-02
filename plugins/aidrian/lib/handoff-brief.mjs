@@ -12,7 +12,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { commandConfig } from './config.mjs';
-import { findWrapViolations, nextFenceState } from './markdown-wrap.mjs';
+import { findWrapViolations } from './markdown-wrap.mjs';
 import { projectAt } from './project.mjs';
 import { usageLines } from './usage.mjs';
 
@@ -56,6 +56,18 @@ export const commands = {
 function problem(message) {
   console.error(message);
   return 2;
+}
+
+const FENCE = /^(`{3,}|~{3,})(.*)$/;
+
+// Fence state after `line`: null outside a fence. A fence closes only on its own character, at least as long as the
+// opener, with nothing but spaces after it; so a ```` block can show a ``` line, and a ```js line inside a block is code.
+function nextFenceState(fence, line) {
+  const match = FENCE.exec(String(line ?? '').trimStart());
+  if (!match) return fence;
+  if (fence === null) return { char: match[1][0], length: match[1].length };
+  if (match[1][0] !== fence.char || match[1].length < fence.length) return fence;
+  return /^[ \t]*\r?$/.test(match[2]) ? null : fence;
 }
 
 // `<dir>/.prior/<name>`: where `snapshot` keeps the brief an overwrite destroys.

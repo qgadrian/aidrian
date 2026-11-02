@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -9,12 +9,16 @@ import { snapshotPath } from '../plugins/aidrian/lib/gate-snapshot.mjs';
 import { GIT_TIMEOUT_MS } from '../plugins/aidrian/lib/git.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-const EXAMPLE = path.join(ROOT, 'examples/consumer');
 const BIN = path.join(ROOT, 'plugins/aidrian/bin');
 const HOOK = path.join(ROOT, 'plugins/aidrian/scripts/hook-session-start.mjs');
 // An empty state folder, so a developer's own lesson inbox never reaches these tests.
 const XDG = mkdtempSync(path.join(tmpdir(), 'aidrian-start-state-'));
 test.after(() => rmSync(XDG, { recursive: true, force: true }));
+// The example project, copied outside any repository: in this repository it sits in whatever checkout runs the suite,
+// and in a main checkout, as CI's is, its guard adds the main-checkout lines. Those have their own tests below.
+const EXAMPLE = path.join(mkdtempSync(path.join(tmpdir(), 'aidrian-start-example-')), 'consumer');
+cpSync(path.join(ROOT, 'examples/consumer'), EXAMPLE, { recursive: true });
+test.after(() => rmSync(path.dirname(EXAMPLE), { recursive: true, force: true }));
 
 const WITHOUT_BIN = (process.env.PATH ?? '').split(path.delimiter).filter((dir) => dir !== BIN).join(path.delimiter);
 const LINE = (command) =>

@@ -16,7 +16,10 @@ function bashHook(input, env = {}) {
   return spawnSync(process.execPath, [HOOK], { input, encoding: 'utf8', env: { ...process.env, ...env } });
 }
 
-const bash = (command) => JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd: process.cwd() });
+const bash = (command, cwd = process.cwd()) => JSON.stringify({ tool_name: 'Bash', tool_input: { command }, cwd });
+// A folder outside any repository, so a commit there meets no main-checkout guard, whatever checkout runs the suite.
+const OUTSIDE = mkdtempSync(path.join(tmpdir(), 'aidrian-bash-'));
+after(() => rmSync(OUTSIDE, { recursive: true, force: true }));
 
 test('a command a rule objects to exits 2 with that rule`s reason on stderr', () => {
   const { status, stdout, stderr } = bashHook(bash('git commit --amend'));
@@ -45,7 +48,8 @@ test('the pull request body rule is wired, inside a project folder', () => {
 
 test('an allowed command, another tool, and any unreadable stdin exit 0 silently', () => {
   for (const input of [
-    bash('git commit -m "fix: x"'),
+    bash('git log -1 --oneline'),
+    bash('git commit -m "fix: x"', OUTSIDE),
     JSON.stringify({ tool_name: 'Edit', tool_input: { command: 'git commit --amend' } }),
     JSON.stringify({ tool_name: 'Bash' }),
     JSON.stringify({ tool_name: 'Bash', tool_input: { command: 42 } }),

@@ -311,6 +311,9 @@ Every reviewer is an entry in one map. The built-ins:
 | `self` | agent | local | the code-reviewer agent; never the author |
 | `pr-bot` | remote | remote | `github.reviewer`, as `aidrian pr await-review` waits for it |
 
+`codex-local`'s Codex run also serves plans: the `quorum` skill runs it as a plan's adversary, and the `plan-review`
+skill runs the quorum on high-stakes plans ([quorum ledgers](project-folder.md#local-state)).
+
 A project adds its own in `review.reviewers`:
 
 ```json

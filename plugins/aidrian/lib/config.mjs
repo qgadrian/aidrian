@@ -281,8 +281,16 @@ export function commandConfig(project, { exitCode = 1 } = {}) {
   throw Object.assign(new Error(errors.join('\n')), { code: CONFIG_ERROR, exitCode });
 }
 
+const manifest = () => JSON.parse(readFileSync(path.join(import.meta.dirname, '../plugin.json'), 'utf8'));
+
 // The version of this plugin copy, from its manifest.
-export const pluginVersion = () => JSON.parse(readFileSync(path.join(import.meta.dirname, '../plugin.json'), 'utf8')).version;
+export const pluginVersion = () => manifest().version;
+
+// The repository the plugin's manifest names, such as `https://github.com/<owner>/<repo>`, or null.
+export const pluginRepository = () => {
+  const { repository } = manifest();
+  return typeof repository === 'string' && repository.trim() ? repository.trim() : null;
+};
 
 // Whether semver `a` is older than `b`; both are x.y.z.
 const older = (a, b) => {
@@ -309,8 +317,7 @@ export function versionProblem(file, version) {
 
 // The migration notes in the repository the plugin's manifest names, so a fork links to its own.
 function migratingUrl() {
-  const { repository } = JSON.parse(readFileSync(path.join(import.meta.dirname, '../plugin.json'), 'utf8'));
-  return `${repository}/blob/main/docs/project-folder.md#migrating`;
+  return `${pluginRepository()}/blob/main/docs/project-folder.md#migrating`;
 }
 
 function merge(schema, defaults, values, prefix, file, errors, gateErrors = []) {

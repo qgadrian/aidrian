@@ -5,15 +5,36 @@
 //
 // The record is the reviewers' word, not proof: an agent with a shell can write it. What protects the review is that
 // every entry is visible in the pull request, overrides included.
+//
+// The comment carries the record brotli-compressed under `aidrian-review-state-br:`; the older plain-base64 marker is
+// still read. A write by this release leaves one record; a write by an older one keeps the compressed marker and adds a
+// plain one, so a reader takes the newer of every record a body holds. When even the compressed record would push the comment past
+// BODY_LIMIT (GitHub refuses a comment over 65,536 characters), the comment holds `aidrian-review-state-held:<revision>`
+// instead: the record stays on the machine that wrote it, and another machine with an older record waits for it
+// (readRecord) rather than start over.
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
 
 import { isObject } from '../fs.mjs';
 import { stateDir } from '../project.mjs';
+import { splitPasses } from './split.mjs';
 
 export const SUMMARY_MARKER = '<!-- aidrian-review-summary -->';
 const STATE = /<!--\s*aidrian-review-state:([A-Za-z0-9+/=]+)\s*-->/u;
+const STATE_BR = /<!--\s*aidrian-review-state-br:([A-Za-z0-9+/=]+)\s*-->/u;
+const HELD = /<!--\s*aidrian-review-state-held:(\d+)\s*-->/u;
+// The longest summary comment written with its record; past it the record is held. Under GitHub's 65,536.
+export const BODY_LIMIT = 60_000;
+export const HELD_LINE = '_Record kept locally; too large for a comment. Another machine waits for the one that wrote it._';
+// A decoded record larger than this is not a review record.
+const MAX_RECORD = 32 * 1024 * 1024;
+// The longest free text, such as a reason, the visible summary shows.
+const CLIP = 300;
+// The most plan reasons the visible summary lists, as a flow keeps at most 25.
+const MAX_REASONS = 25;
+export const clip = (text) => String(text).replace(/\s+/gu, ' ').slice(0, CLIP);
 
 // Two spellings of one commit: equal, or one a prefix of the other, at least 7 hex long.
 export const sameCommit = (a, b) => typeof a === 'string' && typeof b === 'string' && (a === b || (Math.min(a.length, b.length) >= 7 && (a.startsWith(b) || b.startsWith(a))));
@@ -44,16 +65,48 @@ export function writeLocalState(project, state) {
   writeFileSync(target, `${JSON.stringify(state, null, 2)}\n`);
 }
 
-// The record a summary comment carries, or null.
-export function stateFromComment(body, pr) {
-  const match = typeof body === 'string' ? STATE.exec(body) : null;
-  if (!match) return null;
+// One record marker's record, or null.
+function decode(data, compressed, pr) {
   try {
-    const state = JSON.parse(Buffer.from(match[1], 'base64').toString('utf8'));
+    const bytes = Buffer.from(data, 'base64');
+    const state = JSON.parse(compressed ? brotliDecompressSync(bytes, { maxOutputLength: MAX_RECORD }).toString('utf8') : bytes.toString('utf8'));
     return wellFormed(state, pr) ? { failures: {}, overrides: [], ...state } : null;
   } catch {
     return null;
   }
+}
+
+// The record a summary comment carries, or null: the newer of every record marker in it, compressed or plain. An older
+// release's write keeps this release's compressed marker and appends its own plain one, so a body can hold both.
+export function stateFromComment(body, pr) {
+  if (typeof body !== 'string') return null;
+  let found = null;
+  for (const [pattern, compressed] of [[STATE_BR, true], [STATE, false]]) {
+    for (const match of body.matchAll(new RegExp(pattern.source, 'gu'))) found = newer(found, decode(match[1], compressed, pr));
+  }
+  return found;
+}
+
+// The revision a held summary comment names, or null when it is not held.
+export function heldRevision(body) {
+  const match = typeof body === 'string' ? HELD.exec(body) : null;
+  return match ? Number(match[1]) : null;
+}
+
+// What a machine without the held record is told: the review step returns it as `incomplete`, and `aidrian pr extend`
+// and `aidrian pr await-review` fail with it.
+export const heldMessage = (pr, revision) => `the review record of #${pr} is at revision ${revision} on the machine that wrote it, too large for the pull request's comment: continue the review on that machine, or wait until its next write fits the comment again. If that machine is gone, the Human deletes the review summary comment of #${pr}; the review then restarts from this machine's record, or from round 1 with none`;
+
+// The record to build on: { state }, the newer of this machine's and the one the pull request's summary comment
+// carries (an empty one when neither exists), or { held: revision } when the comment holds a record this machine's is
+// older than. `comments` are the pull request's comments as read; [] under `review.record: "local"`.
+export function readRecord(project, pr, comments, repo) {
+  const body = (comments ?? []).filter((comment) => isSummary(comment.body)).at(-1)?.body;
+  const local = readLocalState(project, pr);
+  const remote = stateFromComment(body, pr);
+  const held = remote ? null : heldRevision(body);
+  if (held !== null && (local?.revision ?? 0) < held) return { held };
+  return { state: newer(local, remote) ?? emptyState(pr, repo) };
 }
 
 // The newer of two records: the higher revision, which every write raises, then the later write. Every write first
@@ -71,8 +124,9 @@ export function summaryBody(state, plan, status) {
   const lines = [SUMMARY_MARKER, `### Review: ${status}`, ''];
   if (plan) {
     lines.push(`Head \`${plan.head.slice(0, 7)}\`, depth **${plan.depth}**, round ${state.rounds.length}.`);
-    if (plan.reasons.length) lines.push('', ...plan.reasons.map((reason) => `- ${reason}`));
-    if (plan.engine) lines.push(`- engine: ${plan.engine.name} (${plan.engine.reason})`);
+    if (plan.reasons.length) lines.push('', ...plan.reasons.slice(0, MAX_REASONS).map((reason) => `- ${clip(reason)}`));
+    if (plan.reasons.length > MAX_REASONS) lines.push(`- and ${plan.reasons.length - MAX_REASONS} more`);
+    if (plan.engine) lines.push(`- engine: ${plan.engine.name} (${clip(plan.engine.reason)})`);
   }
   const passes = Object.entries(state.passes);
   if (passes.length) {
@@ -86,14 +140,24 @@ export function summaryBody(state, plan, status) {
   }
   if (state.visual) {
     const visual = state.visual;
-    lines.push('', `- visual capture of \`${String(visual.head).slice(0, 7)}\`: ${visual.status}${visual.status === 'captured' ? ` (${visual.captured} of ${visual.of})` : visual.reason ? ` (${visual.reason})` : ''}; attach **${visual.mode}**${visual.visibility ? `, ${String(visual.visibility).toLowerCase()} repository` : ', visibility unknown'}${visual.error ? `; ${visual.error}` : ''}`);
+    lines.push('', `- visual capture of \`${String(visual.head).slice(0, 7)}\`: ${visual.status}${visual.status === 'captured' ? ` (${visual.captured} of ${visual.of})` : visual.reason ? ` (${clip(visual.reason)})` : ''}; attach **${visual.mode}**${visual.visibility ? `, ${String(visual.visibility).toLowerCase()} repository` : ', visibility unknown'}${visual.error ? `; ${clip(visual.error)}` : ''}`);
   }
   lines.push(...extensionLines(state));
-  if (state.overrides.length) lines.push('', '**Overrides used:**', ...state.overrides.map((each) => `- ${each}`));
+  if (state.overrides.length) lines.push('', '**Overrides used:**', ...state.overrides.map((each) => `- ${clip(each)}`));
   lines.push('', 'A citation shows the cited line exists, not that it proves the invariant; the independent reviewer challenges each one.');
-  lines.push(`<!-- aidrian-review-state:${Buffer.from(JSON.stringify(state)).toString('base64')} -->`);
-  return lines.join('\n');
+  return withRecord(lines, state);
 }
+
+// The one way a summary comment ends: the visible `lines`, then the record's marker, or, when that would pass
+// BODY_LIMIT, the held line and the held marker with the record's revision.
+function withRecord(lines, state) {
+  const record = `<!-- aidrian-review-state-br:${brotliCompressSync(Buffer.from(JSON.stringify(state))).toString('base64')} -->`;
+  const body = [...lines, record].join('\n');
+  if (body.length <= BODY_LIMIT) return body;
+  return [...lines, HELD_LINE, `<!-- aidrian-review-state-held:${state.revision ?? 0} -->`].join('\n');
+}
+
+const RECORD_LINE = (line) => STATE.test(line) || STATE_BR.test(line) || HELD.test(line) || line === HELD_LINE;
 
 export const isSummary = (body) => typeof body === 'string' && body.startsWith(SUMMARY_MARKER);
 
@@ -109,7 +173,7 @@ function extensionLines(state) {
   const lines = ['', EXTRA_HEADING];
   for (const entry of extensions) {
     const who = entry.by === 'human' ? `the Human (${entry.human?.by ?? 'unknown'}; an audit entry, not proof)` : entry.by ? `the ${entry.by === 'mechanical' ? 'signals' : entry.by}` : null;
-    const reasons = (entry.reasons ?? []).slice(0, 3).map((reason) => String(reason).replace(/\s+/gu, ' ').slice(0, 300));
+    const reasons = (entry.reasons ?? []).slice(0, 3).map(clip);
     const at = entry.head ? ` on \`${String(entry.head).slice(0, 7)}\`` : '';
     const round = `${entry.source === 'bot' ? 'bot round' : 'round'} ${entry.round}`;
     lines.push(`- ${round}${at}: ${entry.status}${who ? ` by ${who}` : ''}${reasons.length ? `: ${reasons.join('; ')}` : ''}`);
@@ -129,7 +193,7 @@ export function refreshSummary(body, state) {
   const kept = [];
   const lines = String(body).split('\n');
   for (let i = 0; i < lines.length; i += 1) {
-    if (STATE.test(lines[i])) continue;
+    if (RECORD_LINE(lines[i])) continue;
     if (lines[i] === EXTRA_HEADING) {
       if (kept.at(-1) === '') kept.pop();
       while (lines[i + 1]?.startsWith('- ')) i += 1;
@@ -141,7 +205,7 @@ export function refreshSummary(body, state) {
   const at = kept.findIndex((line) => line === '**Overrides used:**' || line.startsWith('A citation shows'));
   const before = at === -1 ? kept : kept.slice(0, at > 0 && kept[at - 1] === '' ? at - 1 : at);
   const after = at === -1 ? [] : kept.slice(before.length);
-  return [...before, ...extra, ...after, `<!-- aidrian-review-state:${Buffer.from(JSON.stringify(state)).toString('base64')} -->`].join('\n');
+  return withRecord([...before, ...extra, ...after], state);
 }
 
 // Writes `state`, already written to the state folder, to the pull request's summary comment, as the review step does,
@@ -156,4 +220,22 @@ export function publishState(state, io, status) {
   } catch (error) {
     return error.message;
   }
+}
+
+// The record's `passes` without the slice results no slice of the head can count again: for each reviewer with
+// `slice:<reviewer>:` results, the live slices are the ones `splitPasses` makes for it from the plan's `slices` and the
+// record's halved slices, and a result whose id is not live, or whose files differ from the live slice's, goes. Cross
+// passes, every other pass, and every pass of the current plan (`keep`, its pass ids, such as a plan command's own
+// partitions) stay; each round's open findings stay on its round entry. With no `slices` (the plan is not split),
+// nothing goes.
+export function prunePasses(state, slices, keep = new Set()) {
+  if (!Array.isArray(slices)) return state;
+  const live = new Map();
+  for (const [id, result] of Object.entries(state.passes)) {
+    const reviewer = /^slice:(.+):[0-9a-f]{10}(?:\.[ab])?$/u.exec(id)?.[1];
+    if (!reviewer || keep.has(id)) continue;
+    if (!live.has(reviewer)) live.set(reviewer, new Map(splitPasses(reviewer, slices, { halved: state.halved ?? {} }).filter((pass) => pass.role === 'slice').map((pass) => [pass.id, JSON.stringify([...pass.files].sort())])));
+    if (live.get(reviewer).get(id) !== JSON.stringify(result.files ?? null)) delete state.passes[id];
+  }
+  return state;
 }

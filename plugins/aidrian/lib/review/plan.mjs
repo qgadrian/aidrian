@@ -1,9 +1,10 @@
 // The review plan: what a pull request's review must cover, decided from its diff and the project's `review` config.
 // docs/review.md describes the concepts; this file owns the rules.
 //
-// A plan is { head, base, depth, reasons, flows, stages }. `stages` run in order; the passes inside a stage run in
-// parallel. The built-in evaluator below makes one, and a project's `review.planCommand` may make one instead: both go
-// through validatePlan, and the executor (lib/review/run.mjs) never knows which made it.
+// A plan is { head, base, depth, reasons, flows, stages }, plus `slices`, the head's slices, at depth split. `stages`
+// run in order; the passes inside a stage run in parallel. The built-in evaluator below makes one, and a project's
+// `review.planCommand` may make one instead: both go through validatePlan, and the executor (lib/review/run.mjs) never
+// knows which made it.
 //
 // Everything merges upward. Rules raise the depth and add reviewers; flows add passes; a planCommand, the head's
 // config, and an agent can only add. Nothing here lowers what the base branch's config asks for.
@@ -186,6 +187,10 @@ export function buildPlan({ head, base, changes, addedLines, removedFiles, confi
     else if (engine.kind === 'agent') passes[engine.stage].push({ id: `engine:${engine.name}`, reviewer: engine.name, kind: 'agent', engine: true, files: null, context: 'full' });
     else passes[engine.stage].push({ id: `engine:${engine.name}`, reviewer: engine.name, kind: engine.kind, files: null, context: 'full' });
   }
+  // The head's slices at depth split, whatever the engine: the record keeps only the slice results of these slices
+  // (state.mjs prunePasses), so a slice packing a fix replaced does not ride in the summary comment forever.
+  const reviewed = changes.filter((change) => sorted.behaviour.includes(change.file) || sorted.nonBehaviour.includes(change.file));
+  const slices = depth === 'split' ? partition(reviewed, roots, { ...SPLIT_DEFAULTS, ...review.split }) : null;
   // A split review: the engine's one pass becomes a pass per slice and a cross-cutting pass after them. The review
   // bot reviews the whole pull request in one go, so it cannot split.
   if (depth === 'split' && engine) {
@@ -194,8 +199,6 @@ export function buildPlan({ head, base, changes, addedLines, removedFiles, confi
     const id = engine.kind === 'agent' && engine.builtIn ? `agent:${engine.agent}` : `engine:${engine.name}`;
     if (engine.kind === 'remote') reasons.push('split: the review bot reviews the whole pull request in one pass');
     else {
-      const reviewed = changes.filter((change) => sorted.behaviour.includes(change.file) || sorted.nonBehaviour.includes(change.file));
-      const slices = partition(reviewed, roots, { ...SPLIT_DEFAULTS, ...review.split });
       passes[stage] = passes[stage].filter((pass) => pass.id !== id);
       passes[stage].push(...splitPasses(reviewer, slices, { kind: engine.kind, halved }));
       reasons.push(`split into ${slices.length} slices and a cross-cutting pass`);
@@ -210,6 +213,7 @@ export function buildPlan({ head, base, changes, addedLines, removedFiles, confi
     require: [...require],
     flows: flows.map((flow) => ({ ...flow, signoff: review.flows[flow.id]?.signoff ?? (flow.id === HARNESS_FLOW ? 'human' : 'reviewer') })),
     stages,
+    ...(slices ? { slices } : {}),
   };
 }
 

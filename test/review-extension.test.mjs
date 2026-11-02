@@ -12,7 +12,7 @@ import { extensionSummary, formatExtensions } from '../plugins/aidrian/lib/repor
 import {
   atCap, BLOAT_MIN_LINES, botRounds, findingTitle, grantedRounds, normalizeTitle, parseExtend, recordHuman, recordVerdict, revalidate, runExtend, signals,
 } from '../plugins/aidrian/lib/review/extension.mjs';
-import { emptyState, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { approved, check, transcriptAnswers } from '../plugins/aidrian/lib/rules/review-extend.mjs';
 
 const finding = (file, line, title) => ({ file, line, title });
@@ -353,6 +353,29 @@ test('await-review at the cap: the checks, verdicts, and approvals reach the sum
   bot.forget();
   const granted = await bot.run(converging);
   assert.deepEqual([granted.out.status, granted.requests.length], ['timed_out', 1], 'the grant came back from the pull request');
+});
+
+test('a held summary comment: aidrian pr extend and await-review fail on a machine without the record, and the writer goes on', async (t) => {
+  const bot = botProject(t);
+  assert.equal((await bot.run(converging)).out.status, 'extension_check');
+  const written = readLocalState(bot.project, 42);
+  bot.issue[0].body = bot.issue[0].body.replace(/<!-- aidrian-review-state-br:[^>]*-->/u, `${HELD_LINE}\n<!-- aidrian-review-state-held:${written.revision} -->`);
+  const held = bot.issue[0].body;
+  bot.forget();
+  const message = new RegExp(`the review record of #42 is at revision ${written.revision} on the machine that wrote it`, 'u');
+  await assert.rejects(bot.extend(['--verdict', 'extend', '--reason', 'f.js:3 is a valid high finding']), message);
+  const errors = t.mock.method(console, 'error', () => {});
+  const awaited = await bot.run(converging);
+  errors.mock.restore();
+  assert.equal(awaited.code, 1);
+  assert.match(errors.mock.calls.at(-1).arguments[0], message);
+  assert.equal(bot.issue[0].body, held, 'neither command edits the comment');
+  assert.equal(readLocalState(bot.project, 42), null, 'nor starts a record over it');
+
+  writeLocalState(bot.project, { ...written, revision: written.revision - 1 });
+  assert.equal(await bot.extend(['--verdict', 'extend', '--reason', 'f.js:3 is a valid high finding']), 0, 'the writer goes on');
+  assert.equal(heldRevision(bot.issue[0].body), null);
+  assert.equal(stateFromComment(bot.issue[0].body, 42).extensions[0].status, 'asking');
 });
 
 test('await-review at the cap: a push after the judge`s verdict sends the check back to the judge, and a stale approval is refused', async (t) => {

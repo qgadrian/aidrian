@@ -74,6 +74,17 @@ test('buildPlan: an agent reviews at most 3 flows per pass; a self engine merges
   ]]);
 });
 
+test('buildPlan: a split plan exposes the head`s slices for every engine, the review bot included; a plan that is not split has none', () => {
+  const changes = ['a', 'b'].map((id) => change(`src/${id}/x.js`, 60));
+  const review = { rules: [{ when: { lines: { over: 1 } }, depth: 'split' }], split: { sliceLines: 50 } };
+  const local = plan(changes, review);
+  assert.deepEqual(local.slices.map((slice) => [slice.key, slice.files]), [['src/a', ['src/a/x.js']], ['src/b', ['src/b/x.js']]]);
+  const bot = plan(changes, review, { engine: { name: 'pr-bot', kind: 'remote', stage: 'remote' } });
+  assert.deepEqual(bot.slices, local.slices, 'the bot cannot split, and the record still learns the slices');
+  assert.equal(plan(changes, review, { engine: null }).slices.length, 2);
+  assert.equal(plan(changes, {}).slices, undefined);
+});
+
 test('buildPlan: a change to how the project is reviewed adds the harness-config flow, which the Human signs off', () => {
   const p = plan([change('.aidrian/config.json')], {}, { harnessChanged: ['.aidrian/config.json'] });
   assert.deepEqual(p.flows.map((flow) => [flow.id, flow.signoff]), [[HARNESS_FLOW, 'human']]);

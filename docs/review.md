@@ -459,6 +459,35 @@ same review. Each step writes the review's record to the state folder and to one
 place: the rounds, each pass's result per head, the verdicts, the sign-offs, and the overrides used. Another machine
 reads it from the comment. It is the reviewers' word, not proof, and it is all visible on the pull request.
 
+The comment carries the record brotli-compressed, in base64, in one `<!-- aidrian-review-state-br:... -->` marker.
+The older plain `<!-- aidrian-review-state:... -->` marker is still read. A reader takes the newer of every record
+marker a comment holds, compressed or plain, and a write by this release leaves exactly one: an older release's write
+keeps the compressed marker and appends a plain one, so a comment it touched can hold both until the next write here.
+
+- **Size.** GitHub refuses a comment past 65,536 characters. Each split review step keeps only the slice results of
+  the head's own [split](#split) packing: for each reviewer with slice results in the record, the slices `review.split`
+  and the record's halved slices make from the head's diff. A slice result of a packing an earlier fix replaced can
+  never count again, so it leaves the record; the live packing's results, its halves, cross passes, and every other
+  pass stay, and each round keeps its open findings for the [check at the cap](#extra-rounds). A pass of the current
+  plan always stays, whatever its id. Free text the visible summary shows, such as a capture's failure reason, a plan reason, or
+  an override, is cut at 300 characters, and the summary lists at most 25 plan reasons.
+- **Held.** When a summary with its record would still pass 60,000 characters, the comment keeps the visible summary
+  and holds the record back: the line "Record kept locally; too large for a comment" and a
+  `<!-- aidrian-review-state-held:<revision> -->` marker with the record's revision. This is the one case where the
+  comment carries no record on purpose. On a machine whose record is missing or older than that revision,
+  `aidrian pr review` returns `incomplete` with `retry_recommended: false`; `aidrian pr extend`, `aidrian pr attest
+  --pass`, `aidrian pr signoff`, and, when `github.extraRounds` is not off, `aidrian pr await-review --request` fail
+  with the same reason. None of them starts a new record over the held one. The machine that wrote it goes on, and
+  its next write that fits puts the record back in the comment, without the held line. If that machine is gone, the
+  Human deletes the review summary comment: the review then restarts from the record of the machine that runs it next,
+  or from round 1 when it has none.
+- **Minimum version.** Every machine that runs `aidrian pr review`, `pr extend`, or `pr await-review` on a pull
+  request whose summary carries the compressed or held marker needs an aidrian release after 0.22.1. An older one
+  cannot read either marker: it reads no record from the comment and goes on from its own, as under `review.record:
+  "local"`. Its `aidrian pr review` rewrites the comment with that record alone, in the plain marker; its
+  `aidrian pr extend` and `aidrian pr await-review` keep the compressed marker and append a plain one, and a reader
+  here then takes the newer of the two.
+
 With `review.record: "local"` in config.json, the record is written to the state folder only: nothing is posted or
 edited on the pull request, the visual captures comment included, and the record is read back from the state folder alone. Another machine then cannot
 see it or resume the review; it starts a record of its own.

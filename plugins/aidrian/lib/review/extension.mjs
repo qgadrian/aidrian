@@ -19,7 +19,7 @@ import { appendEvent, stamp } from '../dispatch-log.mjs';
 import { runGit } from '../git.mjs';
 import { changedFiles, diffLines, mergeBase, resolve } from './diff.mjs';
 import { classify } from './plan.mjs';
-import { emptyState, isSummary, newer, publishState, readLocalState, sameCommit, stateFromComment, writeLocalState } from './state.mjs';
+import { heldMessage, publishState, readRecord, sameCommit, writeLocalState } from './state.mjs';
 
 export const MODES = Object.freeze(['off', 'ask', 'auto']);
 // Fix commits that add more than this share of the lines the pull request first added are the change growing under
@@ -486,8 +486,9 @@ export async function runExtend(args, project, config, deps = {}) {
       comments = gh.comments(repo, opts.pr);
     } catch {}
   }
-  const remote = stateFromComment(comments.filter((comment) => isSummary(comment.body)).at(-1)?.body, opts.pr);
-  const state = newer(readLocalState(project, opts.pr), remote) ?? emptyState(opts.pr, repo);
+  const record = readRecord(project, opts.pr, comments, repo);
+  if (record.held !== undefined) throw new Error(heldMessage(opts.pr, record.held));
+  const { state } = record;
   const env = deps.env ?? process.env;
   // The pull request's head now: a decision is for the head its signals were read on.
   let current = null;

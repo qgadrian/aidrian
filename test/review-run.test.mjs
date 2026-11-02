@@ -952,3 +952,20 @@ test('--with-bot: the bot is held to the plan`s cap; a cap an earlier request re
   await other.step({ exec: clean, awaitBot, env: { AIDRIAN_ALLOW_EXTRA_ROUNDS: '1' } }, { withBot: true });
   assert.deepEqual(seen, [[3, false], [3, true]]);
 });
+
+test('extra rounds: a finding attested as fixed is not an open finding of its round, so it never reads as a loop', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'] } };
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 2 }, review: { flows } }, change: (write) => write('src/booking/a.js', '1\n') });
+  const item = (title, line, state) => ({ title, file: 'src/booking/a.js', line, severity: 'high', likelihood: 'routine', affects: 'users', state });
+  const one = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: one.dispatch[0].pass, head: one.head, reviewer: 'code-reviewer', findingsText: JSON.stringify([item('Null refund total', 10, 'open'), item('Missing lock on save', 60, 'open')]) });
+  assert.equal((await r.step({ exec: clean })).status, 'fix_required');
+  r.write('src/booking/a.js', '2\n');
+  r.commit();
+  const two = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: two.dispatch[0].pass, head: two.head, reviewer: 'code-reviewer', findingsText: JSON.stringify([item('Null refund total', 10, 'fixed'), item('Wrong currency rounding', 120, 'open')]) });
+  const capped = await r.step({ exec: clean });
+  assert.equal(capped.status, 'extension_check', JSON.stringify(capped.extension?.reasons));
+  assert.deepEqual(capped.extension.history.map((round) => [round.open, round.findings.map((each) => each.title)]), [[2, ['Null refund total', 'Missing lock on save']], [1, ['Wrong currency rounding']]]);
+  assert.deepEqual([capped.extension.signals.converging, capped.extension.signals.looping], [true, false]);
+});

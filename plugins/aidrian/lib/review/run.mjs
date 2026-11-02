@@ -30,7 +30,7 @@ import { markerFor } from '../review-gate.mjs';
 import { isolate } from './env.mjs';
 import { changedFiles, diffLines, fileAt, isAncestor, isClean, mergeBase, resolve } from './diff.mjs';
 import { checkReview } from './config.mjs';
-import { parseFindings } from './findings.mjs';
+import { blocks, parseFindings } from './findings.mjs';
 import { citationProblem, flowState, invariantsOf, parseVerdicts } from './flows.mjs';
 import { computeVerdict } from '../pr-checks.mjs';
 import { isDirectory } from '../fs.mjs';
@@ -641,8 +641,10 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     const lists = (extra.open ?? []).map((each) => each.findings);
     const violated = (extra.flows ?? []).flatMap((flow) => (flow.violated ?? []).map((id) => ({ title: `flow ${flow.flow}: invariant ${id} violated`, file: null, line: null, severity: null })));
     round.open = (extra.open ?? []).reduce((total, each) => total + (each.open ?? 0), 0) + violated.length;
+    // Only what still blocks: an itemized list (attest --findings-file) keeps its fixed and accepted findings too, and a
+    // fixed finding read as open would come back as a loop in the next round.
     round.findings = lists.every(Array.isArray)
-      ? [...lists.flat().map((each) => ({ title: each.title ?? null, file: each.file ?? null, line: Number.isInteger(each.line) ? each.line : null, severity: each.severity ?? null })), ...violated].slice(0, 50)
+      ? [...lists.flat().filter(blocks).map((each) => ({ title: each.title ?? null, file: each.file ?? null, line: Number.isInteger(each.line) ? each.line : null, severity: each.severity ?? null })), ...violated].slice(0, 50)
       : null;
   }
 

@@ -336,7 +336,7 @@ test('aidrian report reviews counts each check at the cap once, by its last deci
 
 // A git repository whose `main` commits `config`, and a `feat` branch of three commits, one per bot review, and a
 // fix after the third, as `aidrian pr await-review --request` sees it. Requests the run posts join the conversation, as on GitHub.
-function gitBot(t, config) {
+function gitBot(t, config, { working = null } = {}) {
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-gitbot-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
@@ -356,6 +356,8 @@ function gitBot(t, config) {
   const commit = (text) => (write('src/a.js', text), git('commit', '-q', '-am', 'change'), git('rev-parse', 'HEAD'));
   const heads = [commit('export const a = 1;\n'), commit('export const a = 2;\n'), commit('export const a = 3;\n')];
   const fix = commit('export const a = 4;\n');
+  // An uncommitted edit of the working copy's config: the base branch's config is the one in force.
+  if (working) write('.aidrian/config.json', JSON.stringify({ version: 1, state: { dir: 'state' }, ...working }));
   const project = projectAt(dir);
   const log = t.mock.method(console, 'log', () => {});
   let minute = 0;
@@ -412,4 +414,16 @@ test('await-review: a grant revoked by a bloated push stays revoked, whatever ca
 
   const human = await bot.run({ AIDRIAN_ALLOW_EXTRA_ROUNDS: '1' });
   assert.deepEqual([human.out.status, bot.requests.length], ['timed_out', 2], 'the Human`s override still keeps a recorded cap');
+});
+
+test('await-review: the signals read the base branch`s review.ignore, so a working-copy edit cannot hide a bloated fix', async (t) => {
+  const bot = gitBot(t, { github: { extraRounds: 'auto' } }, { working: { github: { extraRounds: 'auto' }, review: { ignore: ['src/**'] } } });
+  assert.equal((await bot.run()).out.status, 'extension_check');
+  const state = readLocalState(bot.project, 42);
+  recordVerdict(state, { verdict: 'extend', reason: 'src/a.js:200 is valid', current: bot.fix });
+  writeLocalState(bot.project, state);
+  assert.equal((await bot.run()).out.status, 'timed_out', 'the extra round is asked for');
+  bot.commit(`${Array.from({ length: 60 }, (_, i) => `export const line${i} = ${i};`).join('\n')}\n`);
+  const revoked = await bot.run();
+  assert.deepEqual([revoked.out.status, revoked.out.extension.signals.bloating, revoked.out.extension.signals.evidence.bloating.original_added], ['round_limit', true, 1]);
 });

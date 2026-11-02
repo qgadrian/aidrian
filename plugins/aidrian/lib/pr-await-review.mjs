@@ -440,18 +440,20 @@ async function reviewGate(project, config) {
   };
 }
 
-// The `github` config as the pull request's base branch commits it, so an edit to the working copy's config cannot
-// raise the round cap or loosen what happens at it: { github, repo, n, baseTip, pr }. GitHub always names the base;
-// a response without one keeps the loaded config, with no base tip.
+// The `github` and `review` config as the pull request's base branch commits it, so an edit to the working copy's
+// config cannot raise the round cap, loosen what happens at it, or hide files from the extra-rounds signals through
+// review.ignore, as `aidrian pr review` reads them: { github, review, repo, n, baseTip, pr }. GitHub always names the
+// base; a response without one keeps the loaded config, with no base tip.
 function committedBase(project, opts, gh, config) {
   const repo = opts.repo ?? gh.repo();
   const n = opts.pr ?? String(gh.currentPr().number);
   const pr = gh.api(`repos/${repo}/pulls/${n}`);
   const ref = pr?.base?.ref;
-  if (typeof ref !== 'string' || ref === '') return { github: config.github, repo, n, baseTip: null, pr };
+  if (typeof ref !== 'string' || ref === '') return { github: config.github, review: config.review, repo, n, baseTip: null, pr };
   const tip = [`origin/${ref}`, ref].map((each) => runGit(['rev-parse', '--verify', '--quiet', `${each}^{commit}`], project.root)).find((r) => r.status === 0)?.stdout.trim();
   if (!tip) throw new Error(`the base branch ${ref} is not in this checkout: git fetch first`);
-  return { github: committedConfig(project, tip).github, repo, n, baseTip: tip, pr };
+  const committed = committedConfig(project, tip);
+  return { github: committed.github, review: committed.review, repo, n, baseTip: tip, pr };
 }
 
 // The pull request's review record: the newer of this machine's and its summary comment's (lib/review/state.mjs),
@@ -482,11 +484,11 @@ async function saveRecord(record, { project, config, gh, base, status }) {
 }
 
 // The bot's rounds as the history the signals read: its reviews and their inline comments, up to `head`.
-function botHistory(extension, { project, config, gh, base, reviewer, head }) {
+function botHistory(extension, { project, gh, base, reviewer, head }) {
   return () => {
     const reviews = gh.api(`repos/${base.repo}/pulls/${base.n}/reviews`, { paginate: true }) ?? [];
     const comments = gh.api(`repos/${base.repo}/pulls/${base.n}/comments`, { paginate: true }) ?? [];
-    return extension.buildHistory({ root: project.root, rounds: extension.botRounds(reviews, comments, reviewer), baseTip: base.baseTip, head, review: config.review });
+    return extension.buildHistory({ root: project.root, rounds: extension.botRounds(reviews, comments, reviewer), baseTip: base.baseTip, head, review: base.review });
   };
 }
 

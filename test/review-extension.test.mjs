@@ -12,7 +12,7 @@ import { extensionSummary, formatExtensions } from '../plugins/aidrian/lib/repor
 import {
   atCap, BLOAT_MIN_LINES, botRounds, findingTitle, grantedRounds, normalizeTitle, parseExtend, recordHuman, recordVerdict, revalidate, runExtend, signals,
 } from '../plugins/aidrian/lib/review/extension.mjs';
-import { emptyState, readLocalState, stateFromComment, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { approved, check, transcriptAnswers } from '../plugins/aidrian/lib/rules/review-extend.mjs';
 
 const finding = (file, line, title) => ({ file, line, title });
@@ -111,6 +111,68 @@ test('atCap: the judge`s verdict and the Human`s answer move one entry, and only
   assert.deepEqual(rows, [{ event: 'review_extension', source: 'plan', round: 2, outcome: 'judging', by: null, signals: [] }]);
 });
 
+test('atCap on a head no round reviewed: the judge is told, the question names the fix, and a stop says so', () => {
+  const fix = { added: 3, removed: 1, files: ['a.js'] };
+  const history = () => ({ ...passing(), rounds: [round(1, 'a', [finding('a.js', 1, 'one'), finding('a.js', 50, 'two')]), round(2, 'b', [finding('a.js', 90, 'three')], fix)] });
+  const reviewed = atCap({ state: emptyState(7, 'o/r'), source: 'plan', round: 2, head: 'b', policy: { mode: 'ask', max: 2 }, history, pr: 7 });
+  assert.equal(reviewed.status, 'extension_check');
+  assert.ok(!('unreviewed_head' in reviewed.extension), 'the last round reviewed this head');
+
+  const state = emptyState(7, 'o/r');
+  const check = atCap({ state, source: 'plan', round: 2, head: 'c0ffee1234', policy: { mode: 'ask', max: 2 }, history, pr: 7 });
+  assert.equal(check.status, 'extension_check');
+  assert.deepEqual(check.extension.unreviewed_head, { head: 'c0ffee1234', from: 'b', fix });
+  assert.deepEqual(state.extensions[0].unreviewed, { head: 'c0ffee1234', from: 'b' });
+  assert.match(check.dispatch[0].brief, /`extension\.unreviewed_head`/u);
+
+  recordVerdict(state, { verdict: 'extend', reason: 'a.js:90 was a valid high finding; the fix is small' });
+  const ask = atCap({ state, source: 'plan', round: 2, head: 'c0ffee1234', policy: { mode: 'ask', max: 2 }, history, pr: 7 });
+  assert.equal(ask.status, 'extension_ask');
+  assert.match(ask.question, /fix head c0ffee1 is reviewed by no pass/u);
+  assert.equal((ask.question.match(/round \d/gu) ?? []).length, 1, 'the question names one round, the one it grants');
+  const answer = JSON.stringify({ type: 'user', timestamp: 't', toolUseResult: { answers: { [ask.question]: ask.options[0] } } });
+  assert.equal(approved(transcriptAnswers(answer), { pr: 7, round: 3 }), true, 'the review-extend rule still reads the approval');
+  assert.equal(approved(transcriptAnswers(answer), { pr: 7, round: 2 }), false);
+
+  recordHuman(state, { answer: 'deny', by: 'Tester' });
+  const denied = atCap({ state, source: 'plan', round: 2, head: 'c0ffee1234', policy: { mode: 'ask', max: 2 }, history, pr: 7 });
+  assert.deepEqual([denied.status, denied.unreviewed_head], ['round_limit', true]);
+  assert.match(summaryBody(state, null, 'round_limit'), /- round 2 on `c0ffee1`: denied[^\n]*\n- fix head `c0ffee1`, pushed after round 2 on `b`, is reviewed by no pass/u);
+});
+
+test('revalidate: a push that bloats an open decision stops it, and the stop names the fix as unreviewed', () => {
+  const bloated = () => ({ ...passing(), rounds: [round(1, 'a', [finding('a.js', 1, 'one'), finding('a.js', 50, 'two')]), round(2, 'b', [finding('a.js', 90, 'three')], { added: 100, removed: 0, files: ['a.js'] })] });
+  for (const status of ['asking', 'granted']) {
+    const state = emptyState(7, 'o/r');
+    state.extensions = [{ source: 'plan', round: 2, head: 'b', status, by: 'judge', reasons: ['valid'], mode: 'auto', max: 2 }];
+    const stopped = atCap({ state, source: 'plan', round: 2, head: 'c0ffee1234', policy: { mode: 'ask', max: 2 }, history: bloated, pr: 7 });
+    assert.deepEqual([stopped.status, stopped.extension.by, stopped.extension.signals.bloating, stopped.unreviewed_head], ['round_limit', 'mechanical', true, true], status);
+    assert.match(summaryBody(state, null, 'round_limit'), /- round 2 on `c0ffee1`: stopped by the signals[^\n]*\n- fix head `c0ffee1`, pushed after round 2 on `b`, is reviewed by no pass/u, status);
+  }
+});
+
+test('atCap at the ceiling: no history is read, and lastReviewed alone says the head is a fix no round reviewed', () => {
+  const unread = () => assert.fail('the history is not read');
+  const atCeiling = (lastReviewed, head = 'c0ffee1234') => {
+    const state = emptyState(7, 'o/r');
+    state.extensions = [{ source: 'plan', round: 2, status: 'granted', by: 'judge' }];
+    return [state, atCap({ state, source: 'plan', round: 3, head, policy: { mode: 'auto', max: 1 }, history: unread, lastReviewed, pr: 7 })];
+  };
+  const [state, fix] = atCeiling(() => 'b');
+  assert.deepEqual([fix.status, fix.extension.by, fix.unreviewed_head], ['round_limit', 'ceiling', true]);
+  assert.match(summaryBody(state, null, 'round_limit'), /- round 3 on `c0ffee1`: stopped by the ceiling[^\n]*\n- fix head `c0ffee1`, pushed after round 3 on `b`, is reviewed by no pass/u);
+  const [, same] = atCeiling(() => 'c0ffee1234');
+  assert.deepEqual([same.status, 'unreviewed_head' in same], ['round_limit', false], 'the last round reviewed this head');
+});
+
+test('the summary: a fix head a plan round reviewed since is not listed as unreviewed', () => {
+  const state = emptyState(7, 'o/r');
+  state.extensions = [{ source: 'plan', round: 2, head: 'c0ffee1234', status: 'stopped', by: 'judge', reasons: ['nit'], unreviewed: { head: 'c0ffee1234', from: 'b' } }];
+  assert.match(summaryBody(state, null, 'round_limit'), /is reviewed by no pass/u);
+  state.rounds = [{ head: 'a' }, { head: 'b' }, { head: 'c0ffee1234' }];
+  assert.doesNotMatch(summaryBody(state, null, 'round_limit'), /is reviewed by no pass/u);
+});
+
 test('aidrian pr extend: its arguments are checked before anything is recorded', () => {
   assert.deepEqual(parseExtend(['#12', '--verdict', 'extend', '--reason', ' a.js:3 is real ', '--head', 'abc1234']), { pr: 12, verdict: 'extend', reason: 'a.js:3 is real', head: 'abc1234', human: null });
   assert.deepEqual(parseExtend(['12', '--human', 'deny']), { pr: 12, verdict: null, reason: null, head: null, human: 'deny' });
@@ -207,8 +269,10 @@ function botProject(t, config = {}) {
   const post = (body) => (issue.push({ id: issue.length + 1, user: { login: 'someone' }, created_at: T(20), body }), issue.at(-1));
   const edit = (id, body) => (issue.find((comment) => comment.id === id).body = body);
   let head = 'zzz';
-  const run = (comments, { reviews = comments.length, at = 'zzz' } = {}) => {
+  // `failRead`: the read of the bot's reviews, counted from 1 in this run, that fails as GitHub would.
+  const run = (comments, { reviews = comments.length, at = 'zzz', failRead = null } = {}) => {
     head = at;
+    let reviewReads = 0;
     const list = Array.from({ length: reviews }, (_, i) => ({ id: i + 1, user: { login: DEFAULT_REVIEWER }, submitted_at: T(i + 1), commit_id: `c${i}`, state: 'COMMENTED' }));
     const inline = comments.flatMap((each, i) => each.map(([file, line, title]) => ({ pull_request_review_id: i + 1, path: file, line, body: title })));
     const requests = [];
@@ -221,7 +285,11 @@ function botProject(t, config = {}) {
         if (method === 'PATCH' && /\/issues\/comments\/\d+$/u.test(p)) return edit(Number(p.split('/').at(-1)), fields.body);
         if (p.endsWith('/pulls/42')) return { title: 'Cap refunds', body: 'Refunds never exceed the charge.', head: { sha: head, ref: 'feat', repo: { full_name: 'acme/notes' } } };
         if (p.includes('/commits/')) return { commit: { committer: { date: T(1) } } };
-        if (p.endsWith('/reviews')) return list;
+        if (p.endsWith('/reviews')) {
+          reviewReads += 1;
+          if (reviewReads === failRead) throw new Error('HTTP 502: GitHub is unavailable');
+          return list;
+        }
         if (p.endsWith('/pulls/42/comments')) return inline;
         if (p.endsWith('/issues/42/comments')) return issue;
         if (p.endsWith('/reactions')) return [];
@@ -229,7 +297,7 @@ function botProject(t, config = {}) {
       },
     };
     let t0 = Date.parse(T(30));
-    return runAwaitReview(['42', '--request', '--timeout-sec', '0'], loadConfig(project).config, project, { gh, now: () => t0, sleep: async (s) => { t0 += s * 1000; } }).then((code) => ({ code, out: JSON.parse(log.mock.calls.at(-1).arguments[0]), requests }));
+    return runAwaitReview(['42', '--request', '--timeout-sec', '0'], loadConfig(project).config, project, { gh, now: () => t0, sleep: async (s) => { t0 += s * 1000; } }).then((code) => ({ code, out: JSON.parse(log.mock.calls.at(-1).arguments[0]), requests, reviewReads }));
   };
   // `aidrian pr extend` as the CLI runs it, with the review step's gh over the same comments.
   const extend = (args) => runExtend(['42', ...args], project, loadConfig(project).config, {
@@ -257,7 +325,7 @@ test('await-review --request at the cap: converging bot rounds get the judge, an
   recordVerdict(state, { verdict: 'extend', reason: 'f.js:3 is a valid high finding' });
   writeLocalState(project, state);
   const ask = await run(converging);
-  assert.deepEqual([ask.code, ask.out.status, ask.out.question], [11, 'extension_ask', 'Pull request #42 reached its review-round cap. Grant one extra review round, round 4?']);
+  assert.deepEqual([ask.code, ask.out.status, ask.out.question], [11, 'extension_ask', 'Pull request #42 reached its review-round cap, and its fix head zzz is reviewed by no pass. Grant one extra review round, round 4, to review that fix?']);
 
   const asked = readLocalState(project, 42);
   recordHuman(asked, { answer: 'approve', by: 'Tester', current: 'zzz' });
@@ -287,6 +355,29 @@ test('await-review at the cap: the checks, verdicts, and approvals reach the sum
   assert.deepEqual([granted.out.status, granted.requests.length], ['timed_out', 1], 'the grant came back from the pull request');
 });
 
+test('a held summary comment: aidrian pr extend and await-review fail on a machine without the record, and the writer goes on', async (t) => {
+  const bot = botProject(t);
+  assert.equal((await bot.run(converging)).out.status, 'extension_check');
+  const written = readLocalState(bot.project, 42);
+  bot.issue[0].body = bot.issue[0].body.replace(/<!-- aidrian-review-state-br:[^>]*-->/u, `${HELD_LINE}\n<!-- aidrian-review-state-held:${written.revision} -->`);
+  const held = bot.issue[0].body;
+  bot.forget();
+  const message = new RegExp(`the review record of #42 is at revision ${written.revision} on the machine that wrote it`, 'u');
+  await assert.rejects(bot.extend(['--verdict', 'extend', '--reason', 'f.js:3 is a valid high finding']), message);
+  const errors = t.mock.method(console, 'error', () => {});
+  const awaited = await bot.run(converging);
+  errors.mock.restore();
+  assert.equal(awaited.code, 1);
+  assert.match(errors.mock.calls.at(-1).arguments[0], message);
+  assert.equal(bot.issue[0].body, held, 'neither command edits the comment');
+  assert.equal(readLocalState(bot.project, 42), null, 'nor starts a record over it');
+
+  writeLocalState(bot.project, { ...written, revision: written.revision - 1 });
+  assert.equal(await bot.extend(['--verdict', 'extend', '--reason', 'f.js:3 is a valid high finding']), 0, 'the writer goes on');
+  assert.equal(heldRevision(bot.issue[0].body), null);
+  assert.equal(stateFromComment(bot.issue[0].body, 42).extensions[0].status, 'asking');
+});
+
 test('await-review at the cap: a push after the judge`s verdict sends the check back to the judge, and a stale approval is refused', async (t) => {
   const bot = botProject(t);
   await bot.run(converging);
@@ -299,6 +390,42 @@ test('await-review at the cap: a push after the judge`s verdict sends the check 
   bot.move('c2c2c2c2');
   await assert.rejects(bot.extend(['--human', 'approve']), /the check was for b1b1b1b, and the pull request is at c2c2c2c now/u);
   assert.equal(await bot.extend(['--human', 'deny']), 0, 'a deny needs no head');
+});
+
+test('await-review --request at the cap: a head the bot has not reviewed reaches the judge as such, and a stop says so', async (t) => {
+  const bot = botProject(t);
+  const check = await bot.run(converging);
+  assert.equal(check.out.status, 'extension_check');
+  assert.deepEqual([check.out.extension.unreviewed_head.head, check.out.extension.unreviewed_head.from], ['zzz', 'c2'], 'from is the bot`s last reviewed head');
+  const verdict = await bot.extend(['--verdict', 'stop', '--reason', 'f.js:3 is a nit']);
+  assert.equal(verdict, 0);
+  const stopped = await bot.run(converging);
+  assert.deepEqual([stopped.code, stopped.out.status, stopped.out.unreviewed_head], [4, 'round_limit', true]);
+  assert.match(bot.issue[0].body, /- bot round 3 on `zzz`: stopped by the judge: f\.js:3 is a nit\n- fix head `zzz`, pushed after bot round 3 on `c2`, is reviewed by no pass/u);
+});
+
+test('await-review --request at the bot`s ceiling: the bot`s last review names the head as unreviewed, and a failed read names nothing', async (t) => {
+  const bot = botProject(t, { github: { maxExtraRounds: 0 } });
+  const capped = await bot.run(converging);
+  assert.deepEqual([capped.code, capped.out.status, capped.out.extension.by, capped.out.unreviewed_head], [4, 'round_limit', 'ceiling', true]);
+  assert.match(bot.issue[0].body, /- bot round 3 on `zzz`: stopped by the ceiling[^\n]*\n- fix head `zzz`, pushed after bot round 3 on `c2`, is reviewed by no pass/u);
+
+  // The last read of the reviews in that run was the ceiling's: the same run with that read failing still stops.
+  const down = botProject(t, { github: { maxExtraRounds: 0 } });
+  const failed = await down.run(converging, { failRead: capped.reviewReads });
+  assert.deepEqual([failed.code, failed.out.status, failed.out.extension.by, 'unreviewed_head' in failed.out], [4, 'round_limit', 'ceiling', false]);
+  assert.equal(readLocalState(down.project, 42).extensions[0].unreviewed, undefined);
+  assert.doesNotMatch(down.issue[0].body, /is reviewed by no pass/u);
+});
+
+test('await-review --request at the cap: a push after the judge`s stop is named as unreviewed, from the bot`s last review', async (t) => {
+  const bot = botProject(t);
+  assert.equal((await bot.run(converging)).out.status, 'extension_check');
+  await bot.extend(['--verdict', 'stop', '--reason', 'f.js:3 is a nit']);
+  const pushed = await bot.run(converging, { at: 'yyy' });
+  assert.deepEqual([pushed.code, pushed.out.status, pushed.out.extension.by, pushed.out.unreviewed_head], [4, 'round_limit', 'judge', true]);
+  assert.deepEqual(readLocalState(bot.project, 42).extensions[0].unreviewed, { head: 'yyy', from: 'c2' });
+  assert.match(bot.issue[0].body, /- fix head `yyy`, pushed after bot round 3 on `c2`, is reviewed by no pass/u);
 });
 
 test('await-review --request at the cap: bot rounds that do not shrink stop, as round_limit', async (t) => {

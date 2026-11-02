@@ -10,7 +10,7 @@ import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { blocksOf, citationProblem, flowState, invariantsOf, sectionOf } from '../plugins/aidrian/lib/review/flows.mjs';
 import { cleanOutput, resolveEngine, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { EXIT, recordPass, recordSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
-import { readLocalState, stateFromComment } from '../plugins/aidrian/lib/review/state.mjs';
+import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 
 // A repository with `main` (carrying `baseConfig`) and a `feat` branch made by `change(dir)`. Returns the helpers a
@@ -476,10 +476,56 @@ test('deleting only an ignored flow test, with nothing else to review, still sto
 test('a pass recorded on a stale local copy builds on the pull request`s newer record', async (t) => {
   const r = repo(t, { change: (write) => write('src/app.js', 'q\n') });
   const remote = { version: 1, revision: 9, updatedAt: '2026-10-31T00:00:00.000Z', pr: 7, repo: 'o/r', rounds: [{ head: 'x' }], passes: { other: { head: 'x', open: 2 } }, signoffs: {}, overrides: [], failures: {} };
-  recordPass(r.project, { pr: 7, repo: 'o/r', pass: 'mine', head: 'h', reviewer: 'r', findings: 0, fixed: 0, remote });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: 'mine', head: 'h', reviewer: 'r', findings: 0, fixed: 0, remote: [{ id: 1, body: summaryBody(remote, null, 'x') }] });
   const { readLocalState } = await import('../plugins/aidrian/lib/review/state.mjs');
   const state = readLocalState(r.project, 7);
   assert.deepEqual([state.revision, Object.keys(state.passes).sort(), state.passes.other.open], [10, ['mine', 'other'], 2]);
+});
+
+// The summary comment as the machine that wrote it leaves it when its record is too large: the held marker in place
+// of the record.
+const holdComment = (body, revision) => body.replace(/<!-- aidrian-review-state-br:[^>]*-->/u, `${HELD_LINE}\n<!-- aidrian-review-state-held:${revision} -->`);
+
+test('a held summary comment: a machine without that record gets incomplete and edits nothing; the writer goes on', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'held\n') });
+  const exec = async () => ({ status: 'done', findings: [finding], verdicts: [], dropped: [] });
+  assert.equal((await r.step({ exec })).status, 'fix_required');
+  const written = readLocalState(r.project, 7);
+  r.comments[0].body = holdComment(r.comments[0].body, written.revision);
+  const held = r.comments[0].body;
+  rmSync(path.join(stateDir(r.project), 'reviews'), { recursive: true, force: true });
+
+  const other = await r.step({ exec: () => assert.fail('no reviewer runs') });
+  assert.deepEqual([other.status, other.retry_recommended, other.held], ['incomplete', false, written.revision]);
+  assert.match(other.reason, new RegExp(`at revision ${written.revision} on the machine that wrote it`, 'u'));
+  assert.equal(r.comments[0].body, held, 'the comment is not edited');
+  assert.equal(readLocalState(r.project, 7), null, 'no record is started over the held one');
+  assert.throws(() => recordPass(r.project, { pr: 7, repo: 'o/r', pass: 'engine:codex-local', head: other.head, reviewer: 'codex-local', findings: 0, fixed: 0, remote: remoteState('o/r', 7, r.gh) }), /on the machine that wrote it/u);
+  assert.throws(() => recordSignoff(r.project, { pr: 7, repo: 'o/r', flow: 'f', head: other.head, by: 'T', remote: remoteState('o/r', 7, r.gh) }), /on the machine that wrote it/u);
+
+  // A held marker at revision 0 (no write makes one) is no record to wait for: attest starts this machine's own.
+  const zero = [{ id: 1, body: r.comments[0].body.replace(/aidrian-review-state-held:\d+/u, 'aidrian-review-state-held:0') }];
+  assert.equal(recordPass(r.project, { pr: 7, repo: 'o/r', pass: 'p', head: other.head, reviewer: 'r', findings: 0, fixed: 0, remote: zero }).open, 0);
+  rmSync(path.join(stateDir(r.project), 'reviews'), { recursive: true, force: true });
+
+  // The writer: its record is the held one, so it goes on, and the record fits the comment again.
+  writeLocalState(r.project, { ...written, revision: written.revision - 1 });
+  const writer = await r.step({ exec });
+  assert.equal(writer.status, 'fix_required');
+  assert.equal(heldRevision(r.comments[0].body), null);
+  assert.equal(stateFromComment(r.comments[0].body, 7).revision, written.revision + 1);
+});
+
+test('a split review step drops the slice results of a packing the head no longer makes', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, review: { rules: [{ when: { lines: { over: 1 } }, depth: 'split' }] } }, change: (write) => (write('src/a/x.js', '1\n'), write('src/b/x.js', '2\n')) });
+  const stale = { head: 'old', reviewer: 'codex-local', files: ['src/gone.js'], findings: 4, open: 4, list: [] };
+  writeLocalState(r.project, { ...emptyState(7, 'o/r'), passes: { 'slice:codex-local:0123456789': stale, 'engine:codex-local': { head: 'old', files: null, findings: 0, open: 0 } } });
+  const result = await r.step({ exec: clean });
+  assert.equal(result.status, 'running');
+  const passes = Object.keys(stateFromComment(r.comments[0].body, 7).passes);
+  assert.ok(!passes.includes('slice:codex-local:0123456789'), 'the stale slice is gone');
+  assert.ok(passes.includes('engine:codex-local'), 'a pass that is not a slice stays');
+  assert.equal(passes.filter((id) => id.startsWith('slice:codex-local:')).length, 2, 'the live slices are kept');
 });
 
 test('runExec: a grandchild in its own process group that holds the pipes does not keep the step waiting', async (t) => {
@@ -769,8 +815,9 @@ test('a sign-off of harness-config does not survive a push that changes a projec
 });
 
 // Two rounds to the cap of 2 on a booking flow: round 1 leaves `first` findings open, round 2 leaves `second`. Returns
-// the repository and the step at the cap.
-async function toTheCap(t, github, { first = 2, second = 1 } = {}) {
+// the repository and the step at the cap. With `fixFirst`, a fix is pushed after round 2 and before the step, so the
+// cap meets a head no round reviewed.
+async function toTheCap(t, github, { first = 2, second = 1, fixFirst = false } = {}) {
   const flows = { booking: { files: ['src/booking/**'] } };
   const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 2, ...github }, review: { flows } }, change: (write) => write('src/booking/a.js', '1\n') });
   const one = await r.step({ exec: clean });
@@ -780,7 +827,11 @@ async function toTheCap(t, github, { first = 2, second = 1 } = {}) {
   r.commit();
   const two = await r.step({ exec: clean });
   recordPass(r.project, { pr: 7, repo: 'o/r', pass: two.dispatch[0].pass, head: two.head, reviewer: 'code-reviewer', findings: second, fixed: 0 });
-  return { r, capped: await r.step({ exec: clean }), pass: two.dispatch[0].pass };
+  if (fixFirst) {
+    r.write('src/booking/a.js', '3\n');
+    r.commit('the fix of round 2');
+  }
+  return { r, capped: await r.step({ exec: clean }), pass: two.dispatch[0].pass, last: two.head };
 }
 
 // `aidrian pr extend` as the CLI runs it, its printed JSON returned.
@@ -824,6 +875,75 @@ test('extra rounds "ask": a converging review at the cap dispatches the judge, t
   const state = readLocalState(r.project, 7);
   assert.deepEqual(state.extensions.map((entry) => [entry.round, entry.status, entry.by, entry.human?.by]), [[2, 'granted', 'human', 'Tester']]);
   assert.match(r.comments[0].body, /\*\*Extra rounds:\*\*\n- round 2 on `[0-9a-f]{7}`: granted by the Human \(Tester; an audit entry, not proof\)/u);
+});
+
+test('extra rounds: a fix pushed past the cap reaches the judge as unreviewed, and a stop says so on the pull request', async (t) => {
+  const { r, capped, last } = await toTheCap(t, {}, { fixFirst: true });
+  assert.equal(capped.status, 'extension_check', JSON.stringify(capped.extension?.reasons));
+  assert.deepEqual(capped.extension.unreviewed_head, { head: capped.head, from: last, fix: { added: 1, removed: 1, files: ['src/booking/a.js'] } });
+  assert.deepEqual(readLocalState(r.project, 7).extensions[0].unreviewed, { head: capped.head, from: last });
+  await extend(t, r, ['--verdict', 'stop', '--reason', 'the finding was low severity']);
+  const stopped = await r.step({ exec: clean });
+  assert.deepEqual([stopped.status, stopped.unreviewed_head], ['round_limit', true]);
+  assert.match(r.comments[0].body, new RegExp(`- fix head \`${capped.head.slice(0, 7)}\`, pushed after round 2 on \`${last.slice(0, 7)}\`, is reviewed by no pass`, 'u'));
+});
+
+test('extra rounds: a fix pushed after the judge`s stop keeps the stop, and the result names the fix as unreviewed', async (t) => {
+  const { r, capped } = await toTheCap(t, {});
+  await extend(t, r, ['--verdict', 'stop', '--reason', 'the finding is a nit']);
+  const before = await r.step({ exec: clean });
+  assert.deepEqual([before.status, 'unreviewed_head' in before], ['round_limit', false], 'round 2 reviewed the head the stop was for');
+  r.write('src/booking/a.js', '3\n');
+  const pushed = r.commit('a fix after the stop');
+  const after = await r.step({ exec: clean });
+  assert.deepEqual([after.status, after.extension.by, after.unreviewed_head], ['round_limit', 'judge', true]);
+  assert.match(r.comments[0].body, new RegExp(`- round 2 on \`${capped.head.slice(0, 7)}\`: stopped by the judge: the finding is a nit\\n- fix head \`${pushed.slice(0, 7)}\`, pushed after round 2 on \`${capped.head.slice(0, 7)}\`, is reviewed by no pass`, 'u'));
+});
+
+test('extra rounds "ask" on an unreviewed fix: the question names the fix, aidrian pr extend prints the same, and a grant reviews it', async (t) => {
+  const { r, capped } = await toTheCap(t, {}, { fixFirst: true });
+  const verdict = await extend(t, r, ['--verdict', 'extend', '--reason', 'src/booking/a.js:1 was a valid high finding; the fix is one line', '--head', capped.head]);
+  const ask = await r.step({ exec: clean });
+  assert.equal(ask.status, 'extension_ask');
+  assert.equal(ask.question, `Pull request #7 reached its review-round cap, and its fix head ${capped.head.slice(0, 7)} is reviewed by no pass. Grant one extra review round, round 3, to review that fix?`);
+  assert.ok(verdict.out.next.includes(`"${ask.question}"`), 'the verdict`s next step asks the same question');
+  assert.doesNotMatch(r.comments[0].body, /is reviewed by no pass/u, 'a check waiting for the Human is no stop');
+  await extend(t, r, ['--human', 'approve']);
+  const three = await r.step({ exec: clean });
+  assert.deepEqual([three.status, three.round, three.max_rounds, three.head], ['dispatch', 3, 3, capped.head], 'round 3 reviews the fix');
+  assert.doesNotMatch(r.comments[0].body, /is reviewed by no pass/u, 'a granted round is no stop');
+});
+
+test('extra rounds: at the ceiling, a fix pushed after the last round is named as unreviewed', async (t) => {
+  const { r } = await toTheCap(t, { extraRounds: 'auto', maxExtraRounds: 1 });
+  await extend(t, r, ['--verdict', 'extend', '--reason', 'valid high finding']);
+  r.write('src/booking/a.js', '3\n');
+  r.commit();
+  const three = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: three.dispatch[0].pass, head: three.head, reviewer: 'code-reviewer', findings: 1, fixed: 0 });
+  const ceiling = await r.step({ exec: clean });
+  assert.deepEqual([ceiling.status, ceiling.extension.by, 'unreviewed_head' in ceiling], ['round_limit', 'ceiling', false], 'round 3 reviewed this head');
+  r.write('src/booking/a.js', '4\n');
+  const pushed = r.commit('a fix past the ceiling');
+  const after = await r.step({ exec: clean });
+  assert.deepEqual([after.status, after.extension.by, after.unreviewed_head], ['round_limit', 'ceiling', true]);
+  assert.match(r.comments[0].body, new RegExp(`- round 3 on \`${three.head.slice(0, 7)}\`: stopped by the ceiling[^\\n]*\\n- fix head \`${pushed.slice(0, 7)}\`, pushed after round 3 on \`${three.head.slice(0, 7)}\`, is reviewed by no pass`, 'u'));
+});
+
+test('extra rounds: a last round that opens on a new head and reaches the cap in the same run is no unreviewed head', async (t) => {
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 2 } }, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  const item = (line, title) => ({ file: 'src/app.js', line, title, body: 'x', severity: 'high' });
+  const found = [[item(1, 'Null refund total'), item(40, 'Missing lock on save')], [item(80, 'Wrong currency rounding')]];
+  let call = 0;
+  const exec = async () => ({ status: 'done', findings: found[call++], verdicts: [], dropped: [] });
+  assert.equal((await r.step({ exec })).status, 'fix_required');
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit();
+  const capped = await r.step({ exec });
+  assert.deepEqual([call, capped.round], [2, 2], 'round 2 opened and ran its reviewer in this run');
+  assert.equal(capped.status, 'extension_check', JSON.stringify(capped.extension?.reasons));
+  assert.ok(!('unreviewed_head' in capped.extension), 'round 2 reviewed this head');
+  assert.equal(readLocalState(r.project, 7).extensions[0].unreviewed, undefined);
 });
 
 test('extra rounds "auto": the judge`s extend grants the round without the Human', async (t) => {

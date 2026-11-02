@@ -462,15 +462,16 @@ function committedBase(project, opts, gh, config) {
 // The pull request's review record: the newer of this machine's and its summary comment's (lib/review/state.mjs),
 // with `comments`, the pull request's comments as read, for the write back.
 async function reviewRecord(project, config, gh, repo, n) {
-  const { emptyState, isSummary, newer, readLocalState, stateFromComment } = await import('./review/state.mjs');
+  const { heldMessage, readRecord } = await import('./review/state.mjs');
   let comments = [];
   if (config.review.record !== 'local') {
     try {
       comments = gh.api(`repos/${repo}/issues/${n}/comments`, { paginate: true }) ?? [];
     } catch {}
   }
-  const remote = stateFromComment(comments.filter((comment) => isSummary(comment.body)).at(-1)?.body, Number(n));
-  return { state: newer(readLocalState(project, Number(n)), remote) ?? emptyState(Number(n), repo), comments };
+  const record = readRecord(project, Number(n), comments, repo);
+  if (record.held !== undefined) throw new Error(heldMessage(Number(n), record.held));
+  return { state: record.state, comments };
 }
 
 // Writes the record where the review step does: the state folder and, unless config.json `review.record` is "local",
@@ -504,6 +505,15 @@ async function botAtCap(result, { project, config, gh, base, record, policy, env
     goal: { title: base.pr?.title ?? null, body: base.pr?.body ?? null },
     command: `aidrian pr await-review ${n} --request`,
     history: botHistory(extension, { project, config, gh, base, reviewer: result.reviewer, head: result.head_sha }),
+    // The head of the bot's last review: one read of its reviews, no git. A read that fails says nothing: the cap
+    // stands, and no head is named unreviewed.
+    lastReviewed: () => {
+      try {
+        return extension.botRounds(gh.api(`repos/${base.repo}/pulls/${base.n}/reviews`, { paginate: true }) ?? [], [], result.reviewer).at(-1)?.head ?? null;
+      } catch {
+        return null;
+      }
+    },
     log: extension.extensionLogger(project, config, { pr: n, repo: base.repo, env }),
   });
   const summaryError = await saveRecord(record, { project, config, gh, base, status: decision.status });

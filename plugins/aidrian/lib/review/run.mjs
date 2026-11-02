@@ -39,7 +39,7 @@ import { contentFlows } from './content.mjs';
 import { buildPlan, classify, detectFlows, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, pathPattern, validatePlan } from './plan.mjs';
 import { BUILT_IN, flowBaseBrief, resolveEngine, reviewerMap, runExec, satisfies, VERDICT_MEANING } from './reviewers.mjs';
 import { atCap, buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
-import { emptyState, isSummary, newer, readLocalState, stateFromComment, summaryBody, writeLocalState } from './state.mjs';
+import { heldMessage, isSummary, prunePasses, readRecord, summaryBody, writeLocalState } from './state.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, ghImage, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput, visualMatrix, visualRoutes } from './visual.mjs';
 
 export const EXIT = Object.freeze({
@@ -237,11 +237,14 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   const { addedLines, removedFiles } = diffLines(root, base, head);
 
   // The record so far: the newer of this machine's and the pull request's. With config.json `review.record: "local"`
-  // the pull request is never read or written: the record is this machine's state folder only.
+  // the pull request is never read or written: the record is this machine's state folder only. A comment that holds
+  // a record newer than this machine's stops the step before it writes anything: starting over would replace it.
   const onPr = config.review.record !== 'local';
   const comments = onPr ? gh.comments(repo, n) : [];
   const summary = comments.filter((comment) => isSummary(comment.body)).at(-1) ?? null;
-  let state = newer(readLocalState(project, n), stateFromComment(summary?.body, n)) ?? emptyState(n, repo);
+  const record = readRecord(project, n, comments, repo);
+  if (record.held !== undefined) return { status: 'incomplete', pr: n, repo, head, reason: heldMessage(n, record.held), held: record.held, retry_recommended: false };
+  let state = record.state;
 
   const engine = resolveEngine(effective, codex ? { codex } : {});
   if (engine.problem) return { status: 'unsatisfied', pr: n, repo, head, reason: engine.problem };
@@ -667,6 +670,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
       state, source: 'plan', round: state.rounds.length, head, policy, pr: n, goal: { title: info.title ?? null, body: info.body ?? null },
       command: `aidrian pr review ${n}`,
       history: planHistory,
+      lastReviewed: () => state.rounds.at(-1)?.head ?? null,
       log: extensionLog,
     });
     const { status, ...carried } = decision;
@@ -676,6 +680,9 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   function finish(status, extra) {
     noteFindings(extra);
     const result = { status, pr: n, repo, head, base, depth: plan.depth, round: state.rounds.length, max_rounds: maxRounds, engine: plan.engine, ...extra };
+    // Slice results of packings this head no longer makes count for nothing again: they leave the record. A pass of
+    // this plan always stays.
+    prunePasses(state, plan.slices, new Set(plan.stages.flatMap((stage) => stage.passes.map((pass) => pass.id))));
     writeLocalState(project, state);
     if (onPr) {
       const body = summaryBody(state, { ...plan, flows: plan.flows.map((flow) => ({ ...flow, signed: flowStatus(flow).signed, humanSigned: keptSignoffs.has(flow.id) })) }, status);
@@ -691,18 +698,22 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   }
 }
 
-// The record to change: the newer of this machine's and the pull request's (`remote`, from its summary comment), so
-// a write never builds on a stale copy.
+// The record to change, as readRecord gives it: the newer of this machine's and the one in the pull request's
+// comments (`remote`, as remoteState read them), so a write never builds on a stale copy. A held comment newer than
+// this machine's record is refused, never started over.
 function current(project, pr, repo, remote) {
-  return newer(readLocalState(project, pr), remote) ?? emptyState(pr, repo);
+  const record = readRecord(project, pr, remote ?? [], repo);
+  if (record.held !== undefined) throw new Error(heldMessage(pr, record.held));
+  return record.state;
 }
 
-// The record the pull request's summary comment carries, or null when it cannot be read (offline: the local record).
-// With config.json `review.record: "local"` there is no summary comment, and the pull request is not read.
+// The pull request's comments, where its summary comment carries the record, or null when they cannot be read
+// (offline: the local record). With config.json `review.record: "local"` there is no summary comment, and the pull
+// request is not read.
 export function remoteState(repo, pr, gh = defaultGh, config = null) {
   if (config?.review.record === 'local') return null;
   try {
-    return stateFromComment(gh.comments(repo, pr).filter((comment) => isSummary(comment.body)).at(-1)?.body, pr);
+    return gh.comments(repo, pr);
   } catch {
     return null;
   }

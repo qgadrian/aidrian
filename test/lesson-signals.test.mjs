@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
@@ -122,6 +122,41 @@ test('the Bash hook still blocks every time, and the third block of a rule in a 
   assert.deepEqual(plugin().map((lesson) => [lesson.key, lesson.target, lesson.session, lesson.project]), [['hook-deny:git-amend', 'plugin', 'bash-1', projectId(proj)]]);
   assert.deepEqual(all(), [], 'a plugin lesson never lands in the project\'s own inbox');
   assert.equal(hook('hook-bash.mjs', { ...amend, tool_input: { command: 'git status' } }).status, 0);
+});
+
+// Holds `file`'s lock for this test's process, alive while a hook or call runs: the lock's next generation
+// (jsonl.mjs withLocks), naming this pid on this host. Returns a function that releases it.
+function holdLock(file) {
+  mkdirSync(path.dirname(file), { recursive: true });
+  const numbers = readdirSync(path.dirname(file)).map((name) => name.startsWith(`${path.basename(file)}.lock.`) && /\.lock\.(\d+)$/u.exec(name)?.[1]).filter(Boolean).map(Number);
+  const name = `${file}.lock.${Math.max(0, ...numbers) + 1}`;
+  writeFileSync(name, `${JSON.stringify({ pid: process.pid, host: hostname(), nonce: 'test' })}\n`);
+  return () => writeFileSync(`${name}.released`, '');
+}
+
+test('a signal never waits for a held inbox lock: it returns at once and records nothing', (t) => {
+  const { proj, all } = project(t);
+  holdLock(inboxPath(proj));
+  const started = Date.now();
+  assert.equal(recordSignal(proj, deliverySignal({ agentType: 'Explore', missing: ['x.md'] })), null);
+  assert.ok(Date.now() - started < 1000, `it returned after ${Date.now() - started} ms`);
+  assert.deepEqual(all(), []);
+});
+
+test('a hook blocks at once while the inbox lock is held, and the next block records the lesson it skipped', (t) => {
+  const { plugin, hook } = project(t);
+  const amend = { tool_name: 'Bash', tool_input: { command: 'git commit --amend' }, session_id: 'locked-1' };
+  for (let i = 1; i < REPEATED_DENIALS; i += 1) assert.equal(hook('hook-bash.mjs', amend).status, 2);
+  const release = holdLock(pluginInboxPath());
+  const started = Date.now();
+  const third = hook('hook-bash.mjs', amend);
+  const took = Date.now() - started;
+  assert.deepEqual([third.status, third.stderr.startsWith('Blocked: ')], [2, true]);
+  assert.ok(took < 1500, `the third block took ${took} ms, inside the host's 5-second hook timeout`);
+  assert.deepEqual(plugin(), [], 'the lesson is not recorded while the lock is held');
+  release();
+  assert.equal(hook('hook-bash.mjs', amend).status, 2);
+  assert.deepEqual(plugin().map((lesson) => [lesson.key, lesson.session]), [['hook-deny:git-amend', 'locked-1']], 'the next block records it');
 });
 
 test('the write hook counts its main-checkout blocks the same way', (t) => {

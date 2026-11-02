@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -15,6 +15,8 @@ import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
+// The lock files beside `file` (jsonl.mjs withLocks), sorted.
+const lockFiles = (file) => readdirSync(path.dirname(file)).filter((name) => name.startsWith(`${path.basename(file)}.lock`)).sort();
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
 const SCRIPTS = path.join(ROOT, 'plugins/aidrian/scripts');
 const NOW = Date.parse('2026-10-29T12:00:00Z');
@@ -167,7 +169,7 @@ test('telemetry.docReads false: stop and session rows record docs_read null, and
   assert.deepEqual(rows.map((row) => [row.event, row.docs_read, row.tokens?.input ?? row.tokens_by_model['claude-opus-5-5'].input]), [['stop', null, 10], ['session', null, 10]]);
 });
 
-test('a log of telemetry.maxMb rotates into dispatch-log.1.jsonl, a rotate row says whether rows were lost, and reports read both', (t) => {
+test('a log of telemetry.maxMb rotates into dispatch-log.1.jsonl, a rotate row says whether rows were lost, and reports read both', async (t) => {
   const { dir, env, state, log, hook } = project(t);
   setTelemetry(dir, { maxMb: 1 });
   const file = path.join(state(), 'dispatch-log.jsonl');
@@ -185,19 +187,26 @@ test('a log of telemetry.maxMb rotates into dispatch-log.1.jsonl, a rotate row s
   writeFileSync(file, big('older'), { flag: 'a' });
   dispatch('a3');
   assert.deepEqual(log().map((row) => [row.event, row.dropped ?? row.agent_id]), [['rotate', true], ['dispatch', 'a3']]);
-  assert.equal(statSync(`${file}.lock`, { throwIfNoEntry: false }), undefined, 'the lock is gone');
+  assert.deepEqual(lockFiles(file), ['dispatch-log.jsonl.lock.2', 'dispatch-log.jsonl.lock.2.released'], 'the lock is released');
   const json = JSON.parse(spawnSync(CLI, ['report', '--json'], { cwd: dir, env, encoding: 'utf8' }).stdout);
   assert.deepEqual(json.agents.map((agent) => [agent.agent_type, agent.dispatches]), [['Explore', 4]], 'a1, a2, and older from the rotated part; a3 from the log');
 
-  // Another process holds the lock: append without rotating. A lock older than a minute is cleared for the next row.
+  // Another process holds the lock: append without rotating, and without waiting. Once that process is gone, the next
+  // row takes the lock over and rotates.
   writeFileSync(file, big('busy'));
-  writeFileSync(`${file}.lock`, '');
+  const holder = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60_000)']);
+  t.after(() => holder.kill());
+  const lock = `${file}.lock.3`;
+  writeFileSync(lock, `${JSON.stringify({ pid: holder.pid, host: hostname(), nonce: 'test' })}\n`);
+  const started = Date.now();
   dispatch('a4');
+  assert.ok(Date.now() - started < 4000, 'the hook did not wait for the lock');
   assert.deepEqual(log().map((row) => row.agent_id), ['busy', 'a4']);
-  utimesSync(`${file}.lock`, new Date(Date.now() - 120_000), new Date(Date.now() - 120_000));
+  holder.kill();
+  await new Promise((resolve) => holder.on('exit', resolve));
   dispatch('a5');
-  dispatch('a6');
-  assert.deepEqual(log().map((row) => row.event === 'rotate' || row.agent_id), [true, 'a6']);
+  assert.deepEqual(log().map((row) => row.event === 'rotate' || row.agent_id), [true, 'a5']);
+  assert.deepEqual(lockFiles(file), ['dispatch-log.jsonl.lock.4', 'dispatch-log.jsonl.lock.4.released']);
 });
 
 test('processes that append to a full log at once rotate it once and lose no row', async (t) => {
@@ -228,7 +237,8 @@ for (let i = 0; i < 50; i++) appendEvent(project, config, { event: 'dispatch', t
   assert.equal(all.find((row) => row.event === 'rotate').dropped, false);
   assert.deepEqual(all.filter((row) => row.agent_id === 'old').length, 1);
   for (const name of names) assert.equal(all.filter((row) => row.agent_id?.startsWith(`${name}-`)).length, 50, name);
-  assert.equal(statSync(`${file}.lock`, { throwIfNoEntry: false }), undefined, 'the lock is gone');
+  assert.equal(lockFiles(file).filter((name) => !name.endsWith('.released')).length, 1, 'one generation of the lock is left, released');
+  assert.ok(lockFiles(file).at(-1).endsWith('.released'));
 });
 
 test('every dispatch-log hook exits 0 silently on a payload it cannot read', () => {

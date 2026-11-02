@@ -15,7 +15,7 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 
 import { runGit } from './git.mjs';
-import { appendRow, readRows } from './jsonl.mjs';
+import { appendRow, readRows, realFile, sameFile, withLocks } from './jsonl.mjs';
 import { pluginProjectId, projectId, stateDir, stateRoot } from './project.mjs';
 
 // P1 blocks or loses work, P2 costs time or tokens, P3 is polish.
@@ -58,7 +58,8 @@ export const pluginInboxPath = (env = process.env) => projectInboxPath(pluginPro
 // its own inbox, wherever its config.json `state.dir` puts it; another project's is found in the state root, so a move
 // back to it respects its `state.dir` only when it runs from that project. `project` is the id to stamp on rows written
 // to the plugin's inbox, so triage there knows where each came from; null for any other inbox. The plugin's own
-// checkout, whose inbox is the plugin's inbox, stamps its rows there too.
+// checkout, whose inbox is the plugin's inbox, stamps its rows there too. `file` is a real path (realFile), so two
+// spellings of one inbox, such as a `state.dir` through a symlink, compare equal.
 export function homeInbox(project, config, { target = null, from = null } = {}, env = process.env) {
   const plugin = pluginInboxPath(env);
   const here = projectId(project);
@@ -67,7 +68,8 @@ export function homeInbox(project, config, { target = null, from = null } = {}, 
   if (target === 'plugin' && plugin) file = plugin;
   else if (origin === here) file = inboxPath(project, config);
   else file = projectInboxPath(origin, env);
-  return { file, project: file === plugin ? origin : null };
+  file = realFile(file);
+  return { file, project: plugin && file === realFile(plugin) ? origin : null };
 }
 
 // Leading `title: <text>` and `evidence: <ref>` lines, in any order, blank lines between them allowed; then the note,
@@ -113,42 +115,57 @@ export const newId = () => randomBytes(4).toString('hex');
 // of that inbox. `project` is stamped on each copied row that names none. A row a lesson in `to` already holds is not
 // copied again, so a move cut short and run again copies nothing twice; a lesson moved out of `to` earlier holds none
 // there, so it moves back whole.
+// The move holds the lock of both inboxes (withLocks) from its first read to its last `move` row, and so does every
+// writer of a lesson inbox from the read its row depends on to its append: a row for a moving lesson lands before the
+// move reads `from`, and travels with it, or after the move, where its writer finds the lesson in `to`.
 // A lesson whose key a lesson in `to` already holds joins that lesson: only its occurrences go, its `add` rows (each
 // carrying the key, so they land on the holder) and its `seen` rows. Its own updates and resolutions stay behind, so the
 // holder keeps its labels and status; an occurrence dated after the holder's fix reopens it, as any occurrence does.
+// A holder that is the moving lesson itself, its rows copied by a move cut short, is no other lesson: the move resumes
+// and copies the rest.
 // Returns the ids moved.
 export function moveLessons(from, to, ids, { project = null, now = new Date() } = {}) {
-  if (from === to || !ids.length) return [];
-  const { rows } = readRows(from);
-  const { find } = fold(rows);
-  const moving = new Set(ids.filter((id) => find(id)?.id === id));
-  const there = readRows(to).rows;
-  const { lessons: thereLessons, find: held } = fold(there);
-  const present = new Set(there.filter((row) => row.event !== 'move' && typeof row.id === 'string' && held(row.id)).map((row) => JSON.stringify(row)));
-  // The key of each moving lesson that a live lesson in `to` already holds.
-  const heldKeys = new Set(thereLessons.filter((lesson) => lesson.key && !lesson.mergedInto).map((lesson) => lesson.key));
-  const joining = new Map([...moving].map((id) => find(id)).filter((lesson) => lesson.key && heldKeys.has(lesson.key)).map((lesson) => [lesson.id, lesson.key]));
-  // A lesson that left this inbox before and came back holds its rows twice: before its last `move` row, and as the
-  // copies after it. Only the copies are its current rows.
-  const started = new Set();
-  const lastMove = new Map(rows.map((row, index) => [row, index]).filter(([row]) => row.event === 'move').map(([row, index]) => [row.id, index]));
-  rows.forEach((row, index) => {
-    const owner = typeof row.id === 'string' && row.event !== 'move' ? find(row.id)?.id : null;
-    if (!moving.has(owner) || index < (lastMove.get(owner) ?? -1)) return;
-    // A first-version row with no `event` is its id's `add` when it is the first row of that id, and a resolution after.
-    const event = row.event ?? (started.has(row.id) ? 'resolve' : 'add');
-    started.add(row.id);
-    const key = joining.get(owner);
-    if (key && event !== 'add' && event !== 'seen') return;
-    const joined = key && event === 'add' ? { ...row, event, key, status: undefined } : row;
-    const copy = JSON.stringify(project && !joined.project ? { ...joined, project } : joined);
-    if (present.has(copy)) return;
-    appendRow(to, JSON.parse(copy));
-    present.add(copy);
+  // One inbox under two spellings is no move: its `move` rows would take the lessons out of the only inbox they are in.
+  if (sameFile(from, to) || !ids.length) return [];
+  return withLocks([from, to], () => {
+    const { rows } = readRows(from);
+    const { find } = fold(rows);
+    const moving = new Set(ids.filter((id) => find(id)?.id === id));
+    const there = readRows(to).rows;
+    const { lessons: thereLessons, find: held } = fold(there);
+    const present = new Set(there.filter((row) => row.event !== 'move' && typeof row.id === 'string' && held(row.id)).map((row) => JSON.stringify(row)));
+    const joining = new Map([...moving].map((id) => find(id)).map((lesson) => [lesson.id, joinedKey(lesson, thereLessons, find)]).filter(([, key]) => key));
+    // A lesson that left this inbox before and came back holds its rows twice: before its last `move` row, and as the
+    // copies after it. Only the copies are its current rows.
+    const started = new Set();
+    const lastMove = new Map(rows.map((row, index) => [row, index]).filter(([row]) => row.event === 'move').map(([row, index]) => [row.id, index]));
+    rows.forEach((row, index) => {
+      const owner = typeof row.id === 'string' && row.event !== 'move' ? find(row.id)?.id : null;
+      if (!moving.has(owner) || index < (lastMove.get(owner) ?? -1)) return;
+      // A first-version row with no `event` is its id's `add` when it is the first row of that id, and a resolution after.
+      const event = row.event ?? (started.has(row.id) ? 'resolve' : 'add');
+      started.add(row.id);
+      const key = joining.get(owner);
+      if (key && event !== 'add' && event !== 'seen') return;
+      const joined = key && event === 'add' ? { ...row, event, key, status: undefined } : row;
+      const copy = JSON.stringify(project && !joined.project ? { ...joined, project } : joined);
+      if (present.has(copy)) return;
+      appendRow(to, JSON.parse(copy));
+      present.add(copy);
+    });
+    const into = path.basename(path.dirname(path.dirname(to)));
+    for (const id of moving) appendRow(from, { event: 'move', id, at: now.toISOString(), to: into });
+    return [...moving];
   });
-  const into = path.basename(path.dirname(path.dirname(to)));
-  for (const id of moving) appendRow(from, { event: 'move', id, at: now.toISOString(), to: into });
-  return [...moving];
+}
+
+// The key by which `lesson`, from an inbox whose fold gives `find`, joins a live lesson among `held`, the lessons of
+// another inbox; null when none there holds its key, or the one that does is this lesson itself: an id that leads to it
+// here, copied there by a move cut short.
+function joinedKey(lesson, held, find) {
+  if (!lesson.key) return null;
+  const holder = held.find((other) => other.key === lesson.key && !other.mergedInto);
+  return holder && find(holder.id)?.id !== lesson.id ? lesson.key : null;
 }
 
 // Every lesson in capture order, as fold() leaves it.

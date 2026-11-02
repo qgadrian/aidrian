@@ -113,7 +113,8 @@ A command reached only through a script or an interpreter such as `python -c` is
 ## Recorded blocks
 
 Every block by a Bash rule, the main-checkout rule, an [agent gate](#agent-gates), or the config guard is recorded twice,
-in `plugins/aidrian/lib/hook-deny.mjs`, before the hook exits 2:
+in `plugins/aidrian/lib/hook-deny.mjs`, after the hook writes its reason and before it exits 2.
+Neither record waits on a lock, so a block stays well inside the host's 5-second hook timeout:
 
 - A `hook_deny` row in the [dispatch log](dispatch-log.md#hook_deny-when-one-of-the-plugins-rules-blocks-a-tool-call):
   the rule, the tool, the agent, and what the rule matched, never the command.

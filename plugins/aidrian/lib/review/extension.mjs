@@ -47,6 +47,12 @@ export function grantedRounds(state, source, policy) {
   return Math.min(granted.length, policy.max);
 }
 
+// The round cap in force, the same for `aidrian pr review` and `aidrian pr await-review`: the baseline (an explicit
+// --max-rounds, which the caller has checked against the base branch's cap and the Human's override, else that cap)
+// plus the extra rounds still valid. `grantFloor` is the baseline: a round past it uses a grant, and a request for it is
+// bound to the head the grant was read on.
+export const roundCap = ({ baseline, granted }) => ({ maxRounds: baseline + granted, grantFloor: baseline });
+
 // A finding's title as words: no markup, badges, links, or case, words of four letters or more, sorted. Two titles that
 // differ only in wording order or markup are the same title.
 export function normalizeTitle(title) {

@@ -538,25 +538,27 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     const base = project && opts.reviewer !== null ? committedBase(project, opts, gh, config) : null;
     const cap = (base?.github ?? config.github).maxReviewRounds;
     // Each extra round the base branch's github.extraRounds granted the bot raises the cap by one.
-    const { grantedRounds, policyOf } = await import('./review/extension.mjs');
+    const { grantedRounds, policyOf, roundCap } = await import('./review/extension.mjs');
     const policy = policyOf(base?.github ?? config.github);
     const record = base && opts.request && policy.mode !== 'off' ? await reviewRecord(project, config, gh, base.repo, base.n) : null;
+    // The baseline: an explicit --max-rounds, held to the base branch's cap unless the Human set the override, else that
+    // cap. Grants add to it either way, as in `aidrian pr review`.
+    const baseline = args.includes('--max-rounds') ? opts.maxRounds : cap;
+    const capped = roundCapProblem(baseline, cap, env);
+    if (capped) throw new Error(capped);
     // The extra rounds still valid on `head`: a decision made on another head is read again on it first.
     let moved = false;
     const allowFor = async (head) => {
       if (record && (await botRevalidate({ project, config, gh, base, record, reviewer: opts.reviewer, env, head }))) moved = true;
       const granted = grantedRounds(record?.state, 'bot', policy);
-      if (!args.includes('--max-rounds')) opts.maxRounds = cap + granted;
       // A request past grantFloor uses a grant, and only for the head the grant was read on.
-      opts.grantFloor = opts.maxRounds - granted;
+      ({ maxRounds: opts.maxRounds, grantFloor: opts.grantFloor } = roundCap({ baseline, granted }));
       opts.validHead = granted > 0 ? head : null;
       return granted;
     };
-    const granted = await allowFor(base?.pr?.head?.sha ?? null);
+    await allowFor(base?.pr?.head?.sha ?? null);
     // A cap an earlier request recorded counts only under the Human's override, as a --max-rounds past the cap does.
     opts.keepRecordedCap = env[ROUNDS_OVERRIDE] === '1';
-    const capped = roundCapProblem(opts.maxRounds, cap + granted, env);
-    if (capped) throw new Error(capped);
     let result = await awaitReview(opts, { gate, ...deps });
     // The pull request moved between the reads, or during the wait, before a request on a grant: read the grant again
     // on the head the request would be for, then ask again. A few moves in a row end the run without a request.

@@ -394,12 +394,12 @@ function gitBot(t, config, { working = null } = {}) {
       throw new Error(`unexpected gh path ${p}`);
     },
   };
-  const run = async (env = {}) => {
+  const run = async (env = {}, args = []) => {
     pulls = 0;
     let now = Date.parse('2026-08-23T09:00:00Z');
     const git_ = { pushedHead: () => null, behind: () => false };
-    const code = await runAwaitReview(['42', '--request', '--timeout-sec', '0'], loadConfig(project).config, project, { gh, git: git_, env, now: () => now, sleep: async (s) => { now += s * 1000; } });
-    return { code, out: JSON.parse(log.mock.calls.at(-1).arguments[0]) };
+    const code = await runAwaitReview(['42', '--request', '--timeout-sec', '0', ...args], loadConfig(project).config, project, { gh, git: git_, env, now: () => now, sleep: async (s) => { now += s * 1000; } });
+    return { code, out: code === 1 ? null : JSON.parse(log.mock.calls.at(-1).arguments[0]) };
   };
   return { project, run, requests, commit, fix, hooks };
 }
@@ -458,4 +458,19 @@ test('await-review: a grant is used only for the head it was read on; a bloated 
   assert.deepEqual([revoked.code, revoked.out.status, raced.requests.length], [4, 'round_limit', 0], 'no request on the bloated head');
   assert.deepEqual([revoked.out.extension.by, revoked.out.extension.signals.bloating], ['mechanical', true]);
   assert.equal(readLocalState(raced.project, 42).extensions[0].status, 'stopped', 'the grant is revoked');
+});
+
+test('await-review: a grant adds to an explicit --max-rounds as to the base cap, and an explicit raise still needs the override', async (t) => {
+  const bot = gitBot(t, { github: { extraRounds: 'auto' } });
+  assert.equal((await bot.run({}, ['--max-rounds', '3'])).out.status, 'extension_check');
+  const state = readLocalState(bot.project, 42);
+  recordVerdict(state, { verdict: 'extend', reason: 'src/a.js:200 is valid', current: bot.fix });
+  writeLocalState(bot.project, state);
+  const error = t.mock.method(console, 'error', () => {});
+  const raised = await bot.run({}, ['--max-rounds', '4']);
+  assert.deepEqual([raised.code, bot.requests.length], [1, 0], 'a --max-rounds past the base cap is the Human`s, grant or not');
+  assert.match(error.mock.calls.at(-1).arguments[0], /--max-rounds 4 goes past config\.json github\.maxReviewRounds \(3\)/u);
+  const asked = await bot.run({}, ['--max-rounds', '3']);
+  assert.deepEqual([asked.out.status, bot.requests.length], ['timed_out', 1], 'the granted fourth round is asked for');
+  assert.match(bot.requests[0].body, /max-rounds=4/u);
 });

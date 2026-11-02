@@ -399,7 +399,9 @@ It applies to `aidrian pr review` and to `aidrian pr await-review --request`, wh
    aidrian pr extend <PR> --human approve|deny
    ```
 
-A grant is exactly one round: the cap rises by one, and the next cap runs the check again.
+A grant is exactly one round: the cap rises by one, and the next cap runs the check again. It adds to the cap in
+force, the base branch's or an explicit `--max-rounds`, in both commands; a `--max-rounds` above the base branch's cap
+still needs `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, grant or not.
 
 Every open decision is bound to the head its signals were read on: a check waiting for the judge or the Human, and a
 grant whose round has not opened yet. When the pull request moves, the next step reads the signals again on the new

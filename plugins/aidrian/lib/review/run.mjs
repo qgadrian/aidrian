@@ -38,7 +38,7 @@ import { dedupe, packageRoots } from './split.mjs';
 import { contentFlows } from './content.mjs';
 import { buildPlan, classify, detectFlows, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, pathPattern, validatePlan } from './plan.mjs';
 import { BUILT_IN, flowBaseBrief, resolveEngine, reviewerMap, runExec, satisfies, VERDICT_MEANING } from './reviewers.mjs';
-import { atCap, buildHistory, extensionLogger, grantedRounds, policyOf, revalidate } from './extension.mjs';
+import { atCap, buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
 import { emptyState, isSummary, newer, readLocalState, stateFromComment, summaryBody, writeLocalState } from './state.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, ghImage, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput, visualMatrix, visualRoutes } from './visual.mjs';
 
@@ -356,7 +356,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   const planHistory = () => buildHistory({ root, rounds: state.rounds.map((round, i) => ({ round: i + 1, head: round.head, open: round.open ?? null, findings: round.findings ?? null })), baseTip, head, review });
   const extensionLog = extensionLogger(project, config, { pr: n, repo, env });
   if (policy.mode !== 'off') revalidate({ state, source: 'plan', round: state.rounds.length, head, history: planHistory, log: extensionLog });
-  const maxRounds = (opts.maxRounds ?? cap) + grantedRounds(state, 'plan', policy);
+  const { maxRounds, grantFloor } = roundCap({ baseline: opts.maxRounds ?? cap, granted: grantedRounds(state, 'plan', policy) });
 
   // A pass's result counts for this head when it is for this head, or for an earlier one the change since does not
   // touch and that left nothing open.
@@ -484,7 +484,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
         // counts only under the Human's override.
         // A request past the base branch's cap uses an extra round, granted on the signals of this head: the wait posts
         // nothing for another head (head_moved), and the next step reads the grant again on it.
-        const bot = await wait({ pr: String(n), repo, head, request: true, reviewer: config.github.reviewer, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds, keepRecordedCap: env[ROUNDS_OVERRIDE] === '1', validHead: head, grantFloor: maxRounds - grantedRounds(state, 'plan', policy) }, { gate });
+        const bot = await wait({ pr: String(n), repo, head, request: true, reviewer: config.github.reviewer, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds, keepRecordedCap: env[ROUNDS_OVERRIDE] === '1', validHead: head, grantFloor }, { gate });
         if (bot.status === 'head_moved') {
           undoRound();
           return finish('incomplete', { reason: `the pull request moved to ${String(bot.head_sha).slice(0, 7)} before the request on an extra round: run the step again, which reads the grant on the new head`, retry_recommended: true });

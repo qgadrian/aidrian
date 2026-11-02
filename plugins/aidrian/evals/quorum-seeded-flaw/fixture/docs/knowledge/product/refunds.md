@@ -1,11 +1,6 @@
 # Refunds
 
-How Corner Shop gives money back. Any change to these rules needs the product owner.
-
-## Critical flows
-
-- **Refunds**: every path that gives a customer money back, from support or from the customer.
-  A change to this flow goes through product review before anyone builds it.
+How Corner Shop gives money back.
 
 ## Store credit stays credit
 

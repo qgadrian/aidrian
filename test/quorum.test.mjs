@@ -425,6 +425,25 @@ test('check: a complete ledger with an objection pending, or ruled on with no ru
   assert.equal(done.status, 0, done.stderr);
 });
 
+test('check: a ledger whose same_model and same_model_reason disagree exits 1 and is not written', (t) => {
+  const p = project(t);
+  for (const [same_model, same_model_reason, message] of [
+    [true, null, /same_model is true, so same_model_reason must say why B ran as an agent/u],
+    [true, '  ', /same_model is true, so same_model_reason must say why B ran as an agent/u],
+    [false, 'failed: exit 2', /same_model is false, so same_model_reason must be null/u],
+  ]) {
+    const before = { ...ledger([objection('S1', [PASSING.code])]), same_model, same_model_reason };
+    const result = p.check(before);
+    assert.equal(result.status, 1, `${same_model} ${same_model_reason}`);
+    assert.match(result.stderr, message);
+    assert.deepEqual(result.ledger, before, 'not written back');
+  }
+  for (const [same_model, same_model_reason] of [[true, 'unavailable: the codex CLI is not installed'], [false, null]]) {
+    const result = p.check({ ...ledger([objection('S1', [PASSING.code])]), same_model, same_model_reason });
+    assert.equal(result.status, 0, result.stderr);
+  }
+});
+
 test('check: a ref that is not a relative path is a failed citation, not an escape', (t) => {
   const p = project(t);
   const refs = [cite('doc', 'docs\\rules.md#refunds', 'refund'), cite('doc', 'docs//rules.md#refunds', 'refund'), cite('doc', '#refunds', 'refund'), cite('code', ':3', 'x'), cite('absence', '', 'x'), cite('code', '.:1', 'x')];

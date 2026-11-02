@@ -317,6 +317,14 @@ function citationKey(citation) {
   return [citation.kind, file, place.anchor === null ? '' : slug(place.anchor), collapse(citation.quote)].join('\0');
 }
 
+// Why `same_model` and `same_model_reason` disagree: a ledger records why B ran as an agent exactly when it did.
+export function sameModelProblems(ledger) {
+  const reason = typeof ledger.same_model_reason === 'string' && ledger.same_model_reason.trim() !== '';
+  if (ledger.same_model && !reason) return ['same_model is true, so same_model_reason must say why B ran as an agent'];
+  if (!ledger.same_model && ledger.same_model_reason !== null) return ['same_model is false, so same_model_reason must be null'];
+  return [];
+}
+
 // The problems that make a `complete` ledger unfinished: an objection still pending, or one with a status that needs a
 // ruling and has none. [] for an `open` ledger.
 export function completeProblems(ledger) {
@@ -469,9 +477,10 @@ export const commands = {
         } catch (error) {
           return fail(error.message);
         }
-        // A schema error, or a complete ledger left unfinished, stops the check before it writes anything.
+        // A schema error, a same-model record that disagrees with itself, or a complete ledger left unfinished stops the
+        // check before it writes anything.
         const invalid = schemaProblems(ledger, LEDGER_SCHEMA);
-        if (!invalid.length) invalid.push(...completeProblems(ledger));
+        if (!invalid.length) invalid.push(...sameModelProblems(ledger), ...completeProblems(ledger));
         if (invalid.length) {
           for (const problem of invalid) console.error(`${file}: ${problem}`);
           return 1;

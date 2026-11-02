@@ -8,7 +8,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { commandConfig } from './config.mjs';
-import { appendRow, readRows, withLocks } from './jsonl.mjs';
+import { appendRow, readRows, realFile, withLocks } from './jsonl.mjs';
 import {
   addRow, days, firstLine, fold, homeInbox, inboxPath, KINDS, lessons, lessonStats, moveLessons, nudge, oldestText, origin, OUTCOMES, parseCapture,
   pluginInboxPath, projectInboxPath, similarLessons, TARGETS, TIERS, triageOrder,
@@ -53,8 +53,10 @@ export const commands = {
       if (!Object.hasOwn(ACTIONS, action ?? '')) return fail(usageLines('lesson', commands.lesson.usage, 'usage: ').join('\n'));
       const project = projectAt(path.resolve(values.project ?? '.'));
       const config = commandConfig(project);
-      const file = inboxPath(project, config);
-      return ACTIONS[action]({ values, ids, file, plugin: pluginInboxPath() ?? file, project, config });
+      // Real paths, as homeInbox returns, so one inbox is one string here whatever symlinks its folder goes through.
+      const file = realFile(inboxPath(project, config));
+      const plugin = pluginInboxPath();
+      return ACTIONS[action]({ values, ids, file, plugin: plugin ? realFile(plugin) : file, project, config });
     },
   },
 };
@@ -311,7 +313,7 @@ function migrate({ values, ids, file, plugin, project, config }) {
   const sources = new Map();
   const root = path.join(stateRoot(), 'projects');
   for (const id of existsSync(root) ? readdirSync(root).sort() : []) {
-    const inbox = projectInboxPath(id);
+    const inbox = realFile(projectInboxPath(id));
     if (inbox !== plugin && existsSync(inbox)) sources.set(inbox, id);
   }
   if (file !== plugin && existsSync(file) && !sources.has(file)) sources.set(file, projectId(project));

@@ -15,7 +15,7 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 
 import { runGit } from './git.mjs';
-import { appendRow, readRows, withLocks } from './jsonl.mjs';
+import { appendRow, readRows, realFile, sameFile, withLocks } from './jsonl.mjs';
 import { pluginProjectId, projectId, stateDir, stateRoot } from './project.mjs';
 
 // P1 blocks or loses work, P2 costs time or tokens, P3 is polish.
@@ -58,7 +58,8 @@ export const pluginInboxPath = (env = process.env) => projectInboxPath(pluginPro
 // its own inbox, wherever its config.json `state.dir` puts it; another project's is found in the state root, so a move
 // back to it respects its `state.dir` only when it runs from that project. `project` is the id to stamp on rows written
 // to the plugin's inbox, so triage there knows where each came from; null for any other inbox. The plugin's own
-// checkout, whose inbox is the plugin's inbox, stamps its rows there too.
+// checkout, whose inbox is the plugin's inbox, stamps its rows there too. `file` is a real path (realFile), so two
+// spellings of one inbox, such as a `state.dir` through a symlink, compare equal.
 export function homeInbox(project, config, { target = null, from = null } = {}, env = process.env) {
   const plugin = pluginInboxPath(env);
   const here = projectId(project);
@@ -67,7 +68,8 @@ export function homeInbox(project, config, { target = null, from = null } = {}, 
   if (target === 'plugin' && plugin) file = plugin;
   else if (origin === here) file = inboxPath(project, config);
   else file = projectInboxPath(origin, env);
-  return { file, project: file === plugin ? origin : null };
+  file = realFile(file);
+  return { file, project: plugin && file === realFile(plugin) ? origin : null };
 }
 
 // Leading `title: <text>` and `evidence: <ref>` lines, in any order, blank lines between them allowed; then the note,
@@ -123,7 +125,8 @@ export const newId = () => randomBytes(4).toString('hex');
 // and copies the rest.
 // Returns the ids moved.
 export function moveLessons(from, to, ids, { project = null, now = new Date() } = {}) {
-  if (from === to || !ids.length) return [];
+  // One inbox under two spellings is no move: its `move` rows would take the lessons out of the only inbox they are in.
+  if (sameFile(from, to) || !ids.length) return [];
   return withLocks([from, to], () => {
     const { rows } = readRows(from);
     const { find } = fold(rows);

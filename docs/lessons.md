@@ -53,7 +53,8 @@ number is the lock, and `inbox.jsonl.lock.<n>.released` marks it free. A process
 which only one process can create, when the highest is released or abandoned. A lock held from this host is abandoned
 only when its pid no longer runs: a live holder keeps it however long it runs. One held from another host, or naming no
 pid, is abandoned after 10 minutes. No process deletes a lock it did not supersede, so two never hold it at once.
-Once the lock is idle, its last two files stay. A process that reuses the pid of a holder that died keeps that lock
+An inbox is locked, and compared with another, by its real path, so a `state.dir` that reaches an inbox through a
+symlink is that inbox: one lock, and no move onto itself. Once the lock is idle, its last two files stay. A process that reuses the pid of a holder that died keeps that lock
 held; when no aidrian command is running, delete the lock files.
 A line that does not parse is skipped.
 An `add` row with a `key` may also carry `once`, naming the event it reports: a later row with the same key and `once`

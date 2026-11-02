@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -127,6 +127,27 @@ test('a project with state.dir gets its lesson back in that folder when the move
   assert.match(back.stdout, new RegExp(`\\nMoved to ${consumer.inbox()}\\n$`));
   assert.deepEqual(consumer.json(['list']).map((row) => [row.id, row.target]), [[id, 'project']]);
   assert.deepEqual(plugin.json(['list']), []);
+});
+
+test('a state.dir that reaches the plugin\'s inbox through a symlink is one inbox: add runs at once, update moves nothing', (t) => {
+  const consumer = setup(t);
+  const plugin = checkout(consumer, 'plugin', pluginRepository());
+  const real = path.dirname(path.dirname(plugin.inbox()));
+  mkdirSync(real, { recursive: true });
+  const link = path.join(consumer.base, 'plugin-state');
+  symlinkSync(real, link);
+  mkdirSync(path.join(plugin.repo, '.aidrian'));
+  writeFileSync(path.join(plugin.repo, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: link } }));
+  assert.equal(plugin.inbox(), path.join(link, 'lessons/inbox.jsonl'), 'its own inbox is the plugin\'s, spelled through the link');
+  const started = Date.now();
+  const added = plugin.run(['add', '--target', 'plugin'], 'a plugin lesson');
+  assert.deepEqual([added.status, added.stderr], [0, '']);
+  assert.ok(Date.now() - started < 3000, `add took ${Date.now() - started} ms`);
+  assert.deepEqual(readdirSync(path.join(real, 'lessons')).filter((name) => name.includes('.lock')).sort(), ['inbox.jsonl.lock.1', 'inbox.jsonl.lock.1.released'], 'one lock, taken once');
+  const id = plugin.add('a project lesson', ['--target', 'project']);
+  const moved = plugin.run(['update', id, '--target', 'plugin']);
+  assert.deepEqual([moved.status, /Moved to/.test(moved.stdout)], [0, false], 'the lesson is already in the inbox its target names');
+  assert.deepEqual(plugin.json(['list', id]).map((row) => [row.id, row.target]), [[id, 'plugin']], 'and it is still there');
 });
 
 test('only a new target moves a lesson; list shows a lesson once for two of its ids; a known key lands where its lesson is', (t) => {

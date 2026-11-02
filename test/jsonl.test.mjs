@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
 
-import { appendRow, LOCKED, readRows, withLocks } from '../plugins/aidrian/lib/jsonl.mjs';
+import { appendRow, LOCKED, readRows, realFile, withLocks } from '../plugins/aidrian/lib/jsonl.mjs';
 
 function tempFile(t) {
   const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-jsonl-'));
@@ -103,7 +103,7 @@ test('withLocks takes over a lock whose holder on this host is gone, and gives u
   const name = planted(file, { pid: process.pid });
   const before = readFileSync(name, 'utf8');
   const started = Date.now();
-  assert.throws(() => withLocks([file], () => 'never', { waitMs: 100 }), (error) => error.code === LOCKED && error.message === `${file} is locked by another process (pid ${process.pid}, ${name}); try again`);
+  assert.throws(() => withLocks([file], () => 'never', { waitMs: 100 }), (error) => error.code === LOCKED && error.message === `${realFile(file)} is locked by another process (pid ${process.pid}, ${realFile(name)}); try again`);
   assert.ok(Date.now() - started >= 100);
   assert.deepEqual([lockFiles(file), readFileSync(name, 'utf8')], [['log.jsonl.lock.1'], before], 'a lock it never took is left alone');
 });
@@ -150,4 +150,21 @@ withLocks([${JSON.stringify(file)}], () => {
       assert.deepEqual([lines[i].split(' ')[0], lines[i + 1]], ['in', lines[i].replace('in', 'out')], `round ${round + 1}, line ${i + 1}: one holder at a time`);
     }
   }
+});
+
+test('withLocks locks a file by its real path: two spellings through a symlinked folder are one lock, taken once', (t) => {
+  const file = tempFile(t);
+  mkdirSync(path.dirname(file), { recursive: true });
+  const link = path.join(path.dirname(path.dirname(file)), 'linked');
+  symlinkSync(path.dirname(file), link);
+  const spelled = path.join(link, path.basename(file));
+  const started = Date.now();
+  const inside = withLocks([file, spelled], () => withLocks([spelled], () => [held(file), lockFiles(file)]), { waitMs: 2000 });
+  assert.ok(Date.now() - started < 1000, `it took ${Date.now() - started} ms`);
+  assert.deepEqual(inside, [true, ['log.jsonl.lock.1']], 'one generation, held');
+  assert.equal(held(file), false);
+  // A folder that does not exist yet, below the symlink: still one lock, in the real folder.
+  const deeper = path.join(path.dirname(file), 'new/log.jsonl');
+  assert.deepEqual(withLocks([deeper, path.join(link, 'new/log.jsonl')], () => lockFiles(deeper), { waitMs: 2000 }), ['log.jsonl.lock.1']);
+  assert.equal(realFile(path.join(link, 'new/log.jsonl')), realFile(deeper));
 });

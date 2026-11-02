@@ -5,6 +5,8 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync
 import { hostname } from 'node:os';
 import path from 'node:path';
 
+import { resolvedPath } from './fs.mjs';
+
 // Appends one row. A single write in append mode: rows from concurrent processes never interleave.
 // A write cut short leaves the file without its last newline; the next row then starts on a line of its own, so the
 // damage stays on the cut line and the new row still reads back. Two appenders that both see the cut add a blank line.
@@ -52,8 +54,11 @@ const held = new Map();
 // and no process ever deletes a lock it did not supersede. A process whose view was out of date may create a lower
 // number than one already on disk; it sees the higher one, deletes its own, and looks again. The holder of generation n
 // deletes the generations below it, so two files stay once the lock is idle.
+//
+// Each file is locked by its real path (realFile), so two spellings of one file, such as through a symlinked folder,
+// are one lock: taken once, in one place in the order, and held already when one spelling is locked inside the other.
 export function withLocks(files, fn, { waitMs = LOCK_WAIT_MS } = {}) {
-  const mine = [...new Set(files.filter(Boolean))].sort().filter((file) => !held.has(file));
+  const mine = [...new Set(files.filter(Boolean).map(realFile))].sort().filter((file) => !held.has(file));
   const taken = [];
   try {
     for (const file of mine) {
@@ -68,6 +73,13 @@ export function withLocks(files, fn, { waitMs = LOCK_WAIT_MS } = {}) {
     }
   }
 }
+
+// `file` as an absolute path with every symlink resolved (fs.mjs resolvedPath): two spellings of one file give one path.
+// A path through a broken symlink stays as given.
+export const realFile = (file) => resolvedPath(file) ?? path.resolve(file);
+
+// Whether `a` and `b` name one file, however each is spelled.
+export const sameFile = (a, b) => realFile(a) === realFile(b);
 
 const lockName = (file, generation) => `${file}.lock.${generation}`;
 const releasedName = (file, generation) => `${lockName(file, generation)}.released`;

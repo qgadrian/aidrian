@@ -3,6 +3,7 @@
 
 import { isObject } from '../fs.mjs';
 import { runGit } from '../git.mjs';
+import { closes, expandTabs, fencedIn, fenceOf, indentOf } from '../markdown-sections.mjs';
 
 // The invariant a flow with none stated is held to. Lint and the summary mark such a flow "unspecified".
 export const UNSPECIFIED = Object.freeze({
@@ -68,61 +69,9 @@ export function sectionOf(text, anchor) {
   return { heading: lines[start].replace(/^#+\s+/u, '').trim(), body: raw.trim(), raw };
 }
 
-// A fence line: its delimiter, and whether the line is the delimiter alone, which only a closing fence may be. An
-// opening fence may follow list markers, as in "- ```js"; such a line is never bare, so it never closes one, and `item`
-// is the content column of that list item (null for a fence on a line of its own).
-// As in CommonMark, a fence is indented at most 3 columns past `container`, the column its container starts at: 0
-// outside a list item, the item's content column inside one. A line indented 4 or more past it is indented code.
-// CommonMark: https://spec.commonmark.org/0.31.2/#fenced-code-blocks
-const fenceOf = (line, container = 0) => {
-  const found = /^(\s*)((?:(?:[-*+]|\d+[.)])\s+)*)(`{3,}|~{3,})(.*)$/u.exec(line);
-  // A backtick fence's info string has no backtick, so "```code``` stays literal" is inline code, not a fence.
-  if (!found || (found[3][0] === '`' && found[4].includes('`'))) return null;
-  if (found[1].length - container > 3) return null;
-  return { char: found[3][0], length: found[3].length, bare: found[2] === '' && found[4].trim() === '', item: found[2] === '' ? null : found[1].length + found[2].length };
-};
-const closes = (fence, open) => fence?.bare && fence.char === open.char && fence.length >= open.length;
-
-// For each line, whether it is code: a fence line or a line inside a fenced block, by the delimiters blocksOf uses. A
-// fence may open after list markers, as in "- ```bash", and one that opened after them ends where that item ends, so the
-// bare fence that closes it never opens another. sectionOf and invariantsOf skip these lines as headings.
-// A fence counts only within 3 columns of its container: `items` holds the content columns of the list items a line
-// may sit in, innermost last, and a non-blank line indented less than an item's column ends that item.
-// Known limit: an unclosed fence on a line of its own runs to the end of the doc, even inside a list item, where
-// blocksOf ends it with the item; and a lazy continuation line, indented less than its item, ends the item here.
-function fencedIn(lines) {
-  let open = null;
-  const items = [];
-  return lines.map((raw) => {
-    const line = expandTabs(raw);
-    const indent = indentOf(line);
-    if (open?.item != null && line.trim() && indent < open.item) open = null;
-    if (open) {
-      if (closes(fenceOf(line, open.container), open)) open = null;
-      return true;
-    }
-    if (line.trim()) while (items.length && indent < items.at(-1)) items.pop();
-    const container = items.at(-1) ?? 0;
-    const item = itemOf(line);
-    if (item && indent - container <= 3) items.push(item[1].length + item[2].length);
-    const fence = fenceOf(line, container);
-    open = fence && { ...fence, container: fence.item ?? container };
-    return fence !== null;
-  });
-}
-
-// A line with the tabs of its indentation and list markers expanded to 4-column stops, so indentation is measured in
-// columns: a tab-indented nested bullet stays nested.
-const expandTabs = (line) => {
-  const prefix = /^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)*/u.exec(line)[0];
-  let out = '';
-  for (const char of prefix) out += char === '\t' ? ' '.repeat(4 - (out.length % 4)) : char;
-  return out + line.slice(prefix.length);
-};
-const indentOf = (line) => /^ */u.exec(line)[0].length;
-
-// A list item's marker and the content column after it, or null. A thematic break such as `* * *` or `- - -` looks like
-// an item but is not one (CommonMark), so it opens no container a later fence could be measured against.
+// A list item's marker and the content column after it, or null: blocksOf groups a line under the item whose content
+// column it reaches, and ends a fence opened after a marker where that item ends. A thematic break such as `* * *` or
+// `- - -` looks like an item but is not one (CommonMark), so it is a block of its own.
 const THEMATIC_BREAK = /^ *([-*_])(?: *\1){2,} *$/u;
 const itemOf = (line) => (THEMATIC_BREAK.test(line) ? null : /^( *)((?:[-*+]|\d+[.)]) +)\S/u.exec(line));
 
@@ -137,12 +86,11 @@ export function blocksOf(body) {
   // The least indentation outside fences, from a first pass that matches delimiters only. Accepted residual: this pass
   // does not end an unclosed fence where its list item ends, so a section can get too high a base, and a deeper bullet
   // after such a fence becomes its own block.
-  // A fence here counts within 3 columns of the least indentation so far.
   let least = null;
   let scan = null;
   for (const line of lines) {
     if (scan === null && line.trim()) least = Math.min(least ?? Infinity, indentOf(line));
-    const fence = fenceOf(line, least ?? 0);
+    const fence = fenceOf(line);
     if (scan === null && fence) scan = fence;
     else if (scan && closes(fence, scan)) scan = null;
   }
@@ -157,8 +105,7 @@ export function blocksOf(body) {
     const indent = indentOf(line);
     if (open?.container != null && line.trim() && indent < open.container) open = null;
     const inside = open !== null;
-    // A fence's container: the list item the line sits in, else the body's least indentation.
-    const fence = fenceOf(line, inside ? (open.container ?? base) : column !== null && indent >= column ? column : base);
+    const fence = fenceOf(line);
     const text = line.slice(Math.min(base, indent));
     const item = itemOf(line);
     const top = !inside && line.trim() !== '' && indent - base <= 3 && (column === null || indent < column);

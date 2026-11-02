@@ -862,3 +862,13 @@ test('extra rounds: aidrian pr extend writes the summary comment, so another mac
   rmSync(local);
   assert.deepEqual([(await r.step({ exec: clean })).max_rounds], [3], 'so did the approval');
 });
+
+test('--with-bot: the bot is held to the plan`s cap; a cap an earlier request recorded counts only under the Human`s override', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', '9\n') });
+  const seen = [];
+  const awaitBot = async (opts) => (seen.push([opts.maxRounds, opts.keepRecordedCap]), { status: 'received', requested: true, signal: { kind: 'thumbs_up' } });
+  await r.step({ exec: clean, awaitBot, env: {} }, { withBot: true });
+  const other = repo(t, { change: (write) => write('src/app.js', '8\n') });
+  await other.step({ exec: clean, awaitBot, env: { AIDRIAN_ALLOW_EXTRA_ROUNDS: '1' } }, { withBot: true });
+  assert.deepEqual(seen, [[3, false], [3, true]]);
+});

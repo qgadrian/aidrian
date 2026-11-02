@@ -24,7 +24,7 @@ import path from 'node:path';
 
 import { committedConfig } from '../config.mjs';
 import { runGh } from '../gh.mjs';
-import { roundCapProblem } from '../pr-await-review.mjs';
+import { roundCapProblem, ROUNDS_OVERRIDE } from '../pr-await-review.mjs';
 import { runGit } from '../git.mjs';
 import { markerFor } from '../review-gate.mjs';
 import { isolate } from './env.mjs';
@@ -480,7 +480,9 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
           return { marker: markerFor({ pr: n, repo, head, reviewer: 'code-reviewer', findings, fixed: findings - open }) };
         };
         const wait = awaitBot ?? (await import('../pr-await-review.mjs')).awaitReview;
-        const bot = await wait({ pr: String(n), repo, head, request: true, reviewer: config.github.reviewer, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds }, { gate });
+        // The plan's cap (the base branch's, plus valid extra rounds) is the bot's too: a cap an earlier request recorded
+        // counts only under the Human's override.
+        const bot = await wait({ pr: String(n), repo, head, request: true, reviewer: config.github.reviewer, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds, keepRecordedCap: env[ROUNDS_OVERRIDE] === '1' }, { gate });
         if (bot.status === 'review_required') {
           undoRound();
           return finish('incomplete', { reason: bot.reason, retry_recommended: false });

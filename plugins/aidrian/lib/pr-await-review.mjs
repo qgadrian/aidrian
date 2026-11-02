@@ -22,7 +22,10 @@
 //   6. With --request: at --max-rounds bot reviews (config.json `github.maxReviewRounds`) post nothing and end with
 //      `round_limit`; a long run of rounds is a design problem more review will not fix. Raising --max-rounds past
 //      the config value is the Human's call: it needs ROUNDS_OVERRIDE set in their own shell (roundCapProblem), whatever
-//      reviews the pull request. A raised limit is recorded in the request comment, and later runs keep the highest one.
+//      reviews the pull request. A raised limit is recorded in the request comment; a later run keeps the highest one
+//      only while the Human's override is set in its own environment too (`keepRecordedCap`). Without it, the cap the
+//      run was given (the base branch's, plus the extra rounds still valid) is the cap: a marker an extra round wrote
+//      never brings back a grant revoked since.
 //
 //   8. At that cap, with config.json `github.extraRounds` other than "off" on the base branch: the check at the cap
 //      (lib/review/extension.mjs) reads the bot's rounds and may end with `extension_check` (a judge to dispatch) or
@@ -371,7 +374,7 @@ export const awaitReview = async (opts, { gh = defaultGh, git = localGit(), slee
     if (opts.request && (!signal || stale) && requestedForHead !== head) {
       // Accepted residual: a push while a request is in flight at limit - 1 posts one more, so a pull request can end
       // at limit + 1 reviews; the bot exposes no per-trigger completion to reserve against.
-      maxRounds = Math.max(maxRounds, recordedMaxRounds(s.issueComments) ?? 0);
+      if (opts.keepRecordedCap) maxRounds = Math.max(maxRounds, recordedMaxRounds(s.issueComments) ?? 0);
       if (codexRounds(s.reviews, opts.reviewer) >= maxRounds) return 'round_limit';
       const beforePost = flooredInstant(now());
       const posted = gh.api(`repos/${repo}/issues/${n}/comments`, { method: 'POST', fields: { body: requestCommentBody(head, maxRounds, review.marker ?? null) } });
@@ -537,6 +540,8 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     const moved = record ? await botRevalidate({ project, config, gh, base, record, reviewer: opts.reviewer, env }) : false;
     const granted = grantedRounds(record?.state, 'bot', policy);
     if (!args.includes('--max-rounds')) opts.maxRounds = cap + granted;
+    // A cap an earlier request recorded counts only under the Human's override, as a --max-rounds past the cap does.
+    opts.keepRecordedCap = env[ROUNDS_OVERRIDE] === '1';
     const capped = roundCapProblem(opts.maxRounds, cap + granted, env);
     if (capped) throw new Error(capped);
     let result = await awaitReview(opts, { gate, ...deps });

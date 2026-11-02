@@ -333,3 +333,83 @@ test('aidrian report reviews counts each check at the cap once, by its last deci
     'Extra rounds since 7d: 6 checks at the round cap; 2 stopped by the signals (looping 1, bloating 1, unreadable 1), 1 by the judge, 1 at the ceiling; 1 granted (1 by the Human), 0 denied, 1 waiting');
   assert.equal(formatExtensions(extensionSummary([])), null, 'no check, no line');
 });
+
+// A git repository whose `main` commits `config`, and a `feat` branch of three commits, one per bot review, and a
+// fix after the third, as `aidrian pr await-review --request` sees it. Requests the run posts join the conversation, as on GitHub.
+function gitBot(t, config) {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-gitbot-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
+  const write = (file, text) => {
+    mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+    writeFileSync(path.join(dir, file), text);
+  };
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.email', 't@example.com');
+  git('config', 'user.name', 'Tester');
+  write('.gitignore', 'state/\n');
+  write('.aidrian/config.json', JSON.stringify({ version: 1, state: { dir: 'state' }, ...config }));
+  write('src/a.js', 'export const a = 0;\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'base');
+  git('switch', '-q', '-c', 'feat');
+  const commit = (text) => (write('src/a.js', text), git('commit', '-q', '-am', 'change'), git('rev-parse', 'HEAD'));
+  const heads = [commit('export const a = 1;\n'), commit('export const a = 2;\n'), commit('export const a = 3;\n')];
+  const fix = commit('export const a = 4;\n');
+  const project = projectAt(dir);
+  const log = t.mock.method(console, 'log', () => {});
+  let minute = 0;
+  const at = () => `2026-08-23T08:${String((minute += 1)).padStart(2, '0')}:00Z`;
+  const issue = [];
+  const requests = [];
+  const findings = [[['src/a.js', 1, 'One'], ['src/a.js', 40, 'Two'], ['src/a.js', 120, 'Three']], [['src/a.js', 80, 'Four'], ['src/a.js', 160, 'Five']], [['src/a.js', 200, 'Six']]];
+  const reviews = heads.map((sha, i) => ({ id: i + 1, user: { login: DEFAULT_REVIEWER }, submitted_at: at(), commit_id: sha, state: 'COMMENTED' }));
+  const inline = findings.flatMap((each, i) => each.map(([file, line, title]) => ({ pull_request_review_id: i + 1, path: file, line, body: title })));
+  const gh = {
+    repo: () => 'acme/notes',
+    currentPr: () => ({ number: 42 }),
+    api: (p, { method, fields } = {}) => {
+      if (method === 'POST' && p.endsWith('/issues/42/comments')) {
+        const comment = { id: issue.length + 1, user: { login: 'someone' }, created_at: at(), body: fields.body };
+        issue.push(comment);
+        if (fields.body.startsWith('@codex review')) requests.push(comment);
+        return comment;
+      }
+      if (method === 'PATCH') return (issue.find((comment) => comment.id === Number(p.split('/').at(-1))).body = fields.body);
+      if (p.endsWith('/pulls/42')) return { title: 'Cap refunds', body: 'goal', base: { ref: 'main' }, head: { sha: git('rev-parse', 'HEAD'), ref: 'feat', repo: { full_name: 'acme/notes' } } };
+      if (p.includes('/commits/')) return { commit: { committer: { date: at() } } };
+      if (p.endsWith('/reviews')) return reviews;
+      if (p.endsWith('/pulls/42/comments')) return inline;
+      if (p.endsWith('/issues/42/comments')) return issue;
+      if (p.endsWith('/reactions')) return [];
+      throw new Error(`unexpected gh path ${p}`);
+    },
+  };
+  const run = async (env = {}) => {
+    let now = Date.parse('2026-08-23T09:00:00Z');
+    const git_ = { pushedHead: () => null, behind: () => false };
+    const code = await runAwaitReview(['42', '--request', '--timeout-sec', '0'], loadConfig(project).config, project, { gh, git: git_, env, now: () => now, sleep: async (s) => { now += s * 1000; } });
+    return { code, out: JSON.parse(log.mock.calls.at(-1).arguments[0]) };
+  };
+  return { project, run, requests, commit, fix };
+}
+
+test('await-review: a grant revoked by a bloated push stays revoked, whatever cap an earlier request recorded', async (t) => {
+  const bot = gitBot(t, { github: { extraRounds: 'auto' } });
+  const first = await bot.run();
+  assert.equal(first.out.status, 'extension_check', JSON.stringify(first.out.extension));
+  const state = readLocalState(bot.project, 42);
+  recordVerdict(state, { verdict: 'extend', reason: 'src/a.js:200 is valid', current: bot.fix });
+  writeLocalState(bot.project, state);
+  const extended = await bot.run();
+  assert.deepEqual([extended.out.status, bot.requests.length], ['timed_out', 1], 'the granted fourth round is asked for');
+  assert.match(bot.requests[0].body, /max-rounds=4/u);
+
+  bot.commit(`${Array.from({ length: 60 }, (_, i) => `export const line${i} = ${i};`).join('\n')}\n`);
+  const revoked = await bot.run();
+  assert.deepEqual([revoked.code, revoked.out.status, bot.requests.length], [4, 'round_limit', 1], 'no new request: the recorded 4 does not bring the grant back');
+  assert.deepEqual([revoked.out.extension.by, revoked.out.extension.signals.bloating], ['mechanical', true]);
+
+  const human = await bot.run({ AIDRIAN_ALLOW_EXTRA_ROUNDS: '1' });
+  assert.deepEqual([human.out.status, bot.requests.length], ['timed_out', 2], 'the Human`s override still keeps a recorded cap');
+});

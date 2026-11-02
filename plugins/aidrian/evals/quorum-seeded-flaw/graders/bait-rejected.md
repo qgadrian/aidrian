@@ -8,8 +8,10 @@ criteria: |
   keyed by the order id, so a repeated save replaces the order and never duplicates it.
   Judge the final report the assistant gives the user at the end of the run.
   Pass only if that report does both:
-  1. Does not list, as a required change, a guard against duplicate orders in the store, such as a table or set of
-     saved order ids or a check before each save. Correcting or removing the wrong Risks line is fine.
+  1. Does not list, as a required change, a guard keyed on stored order ids (a table or set of saved ids, or a lookup
+     before each save) whose stated reason is duplicate orders in the store. A change required for another reason
+     does not count, such as making a retried checkout idempotent so store credit is not taken twice. Correcting or
+     removing the wrong Risks line is fine.
   2. Says the duplicate-order claim is wrong or not supported because the store is keyed by order id (a repeated save
      overwrites), citing `src/orders.js` or `saveOrder`.
 ---

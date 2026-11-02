@@ -80,12 +80,11 @@ export function blocksOf(body) {
   // The least indentation outside fences, from a first pass that matches delimiters only. Accepted residual: this pass
   // does not end an unclosed fence where its list item ends, so a section can get too high a base, and a deeper bullet
   // after such a fence becomes its own block.
-  // A fence here counts within 3 columns of the least indentation so far.
   let least = null;
   let scan = null;
   for (const line of lines) {
     if (scan === null && line.trim()) least = Math.min(least ?? Infinity, indentOf(line));
-    const fence = fenceOf(line, least ?? 0);
+    const fence = fenceOf(line);
     if (scan === null && fence) scan = fence;
     else if (scan && closes(fence, scan)) scan = null;
   }
@@ -100,8 +99,7 @@ export function blocksOf(body) {
     const indent = indentOf(line);
     if (open?.container != null && line.trim() && indent < open.container) open = null;
     const inside = open !== null;
-    // A fence's container: the list item the line sits in, else the body's least indentation.
-    const fence = fenceOf(line, inside ? (open.container ?? base) : column !== null && indent >= column ? column : base);
+    const fence = fenceOf(line);
     const text = line.slice(Math.min(base, indent));
     const item = itemOf(line);
     const top = !inside && line.trim() !== '' && indent - base <= 3 && (column === null || indent < column);

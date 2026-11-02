@@ -52,9 +52,13 @@ test('fencedLines: a fence at the inner item of a nested marker line ("- - item"
   assert.deepEqual(headings(body), ['Risks']);
 });
 
-test('fencedLines: a thematic break after a marker ("- * * *") opens no nested items', () => {
-  const body = ['- * * *', '', `      ${FENCE}js`, '      example', '', '## Risks', '- none'].join('\n');
-  assert.deepEqual(headings(body), ['Risks']);
+test('fencedLines: a marker-only list line, then a fence four spaces in that closes two spaces in', () => {
+  const body = ['## Testing', '-', `    ${FENCE}bash`, '  npm test', `  ${FENCE}`, '', '## Risks'].join('\n');
+  assert.deepEqual(headings(body), ['Testing', 'Risks']);
+});
+
+test('fencedLines: a fence counts at any indentation, as the old detector did', () => {
+  assert.deepEqual(fencedLines([`    ${FENCE}`, '## code', `    ${FENCE}`, '## Real'].join('\n')), [true, true, true, false]);
 });
 
 test('fencedLines: a line that opens with inline code is not a fence', () => {

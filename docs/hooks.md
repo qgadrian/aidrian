@@ -89,7 +89,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Review gate, when turned on | Asking the review bot before a review is on record ([config.md](config.md#review-gate)) | `AIDRIAN_ALLOW_UNREVIEWED_REQUEST=1` |
 | Review rounds, when a review bot is set | Setting `AIDRIAN_ALLOW_EXTRA_ROUNDS`, and asking the bot for a review outside `aidrian pr`, which counts rounds first ([config.md](config.md#review-gate)) | none |
 | Review sign-off | `aidrian pr signoff`, which records the Human's sign-off of a flow under their name ([review.md](review.md#sign-off-by-the-human)) | none: the Human runs it in their own shell |
-| Main checkout, when turned on | A shell write to a tracked file in the main checkout | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
+| Main checkout, when turned on | A shell write to a tracked file in the main checkout, and, after a `cd` it cannot trust, a relative write or a git call that may change the main checkout | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
 
 What each rule matches:
 
@@ -118,6 +118,9 @@ What each rule matches:
   Human runs it with `!`; if a host routes `!` through the hooks too, the Human runs it from another terminal.
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
   `touch`, `mkdir`, and `rsync` (sources too under `--remove-source-files`); and a branch switch or `git add -A` there.
+  After a `cd`, `pushd`, or `popd` that leaves the repository's checkouts, names a missing folder, or names one it cannot
+  read (`cd "$S"`, `cd ~/x`, `cd -`), also a relative write, a glob included, and any git call but a read, such as
+  `git init` or `git commit`, that would act on the main checkout if that `cd` failed ([Main checkout](#main-checkout)).
 
 Each rule is a file in `plugins/aidrian/lib/rules/`; a rule that reads only `gh` commands, such as the pull request body rule, is in `rules/github/`.
 Each block is recorded: [Recorded blocks](#recorded-blocks).
@@ -172,6 +175,54 @@ through, whatever the spelling:
 The rule follows `env -C`, `git -C`, `--work-tree`, and `--git-dir`, so a call from a worktree into the main checkout
 is blocked and one into a worktree passes. Anything blocked here belongs in a task worktree.
 Like the Bash rules, it reads the command's text: it stops accidents, not someone set on getting around it.
+
+### After a cd
+
+A `cd` can fail and still return 0: a shell alias or function for `cd` can. The shell then stays in the main checkout,
+and what follows runs there. So from a session in a guarded main checkout, the rule reads each `cd`, `pushd`, and
+`popd` on the command line, `builtin cd` included, its folder taken past one `--` (`cd -- X` names `X`), and sorts it:
+
+- **Into a linked worktree** of the same repository, a folder that exists: trusted. Nothing after it is judged, as
+  before; this is the documented `cd <worktree> && …` workflow.
+- **Inside the main checkout**, a folder that exists (`cd src`, `cd .`): trusted. The shell is in the main checkout
+  whether the `cd` works or not, so what follows is judged by the rules above, at the folders before and after it.
+  A write that reaches the main checkout only when the `cd` fails, such as `cd build && echo x > a.txt` into the
+  ignored `build/`, is blocked with a reason that names that `cd`. So is a relative glob after it (`cd build && rm -rf *`),
+  which fails closed: if the `cd` fails, it runs at the folder before it.
+- **Any other `cd`**: untrusted. It leaves the repository's checkouts (`cd /tmp`, `cd ..` above the root), names a
+  folder that does not exist (`cd wt/typo`), or names one the rule cannot read (`cd "$S"`, `cd`, `cd -`, `popd`,
+  `cd ~/x`). For the rest of the line, a second `cd` included, what follows is judged against the folders before it:
+  - a relative write, as the rules above judge it there, and a relative glob (`rm -rf *`), which is blocked outright;
+  - the same inside `sh -c` and `bash -c`, and, for the git calls below, in a heredoc or here-string fed to a shell:
+    such a shell starts where its command runs;
+  - a git call that may change the repository, when its folder is a guarded main checkout. Its folder is resolved
+    through `-C`, `env -C`, `--git-dir`, and `--work-tree` from the folders before the `cd`, so `git -C /tmp/x init`
+    passes and `git -C src commit` does not. Reads pass: `status`, `log`, `diff`, `show`, `rev-parse`, `ls-files`,
+    `ls-tree`, `ls-remote`, `cat-file`, `rev-list`, `describe`, `blame`, `grep`, `shortlog`, `name-rev`,
+    `for-each-ref`, `show-ref`, `check-ignore`, `check-attr`, `merge-base`, `count-objects`, `var`, `version`, `help`,
+    and `fsck`; `branch` and `tag` with no operand, `worktree list`, `stash list` and `stash show`, `config --get`,
+    `config get`, and `config --list`, and `remote` alone, `-v`, `show`, and `get-url`. Every other subcommand,
+    an unknown one included, counts as a change.
+  - a git call whose subcommand an expansion hides (`git "$sub"`, `git $opts commit`).
+
+A `builtin cd` skips a shell alias or function, so it fails loudly, but it can still fail, as on a missing folder: it is
+sorted the same, and its reason says only that it may fail.
+
+The reason names the `cd` and the way out: name the folder in each command, with an absolute path,
+`git -C <absolute folder>`, or `env -C <absolute folder>`. From a worktree or a project with the guard off, nothing
+changes, and `AIDRIAN_ALLOW_MAIN_WRITE=1` lifts this with the rest of the rule.
+
+What it does not stop:
+
+- A trusted `cd` into an existing worktree that fails still runs what follows in the main checkout: tracked-file
+  writes, `git init`, `git branch`, `git checkout -b`, `git worktree add`, and fast-forward merges land there.
+  Only a commit is refused, by the [commit guard](#commit-guard) where the project installs it.
+- After an untrusted `cd`, a git folder held in an expansion (`git -C "$PWD"`, `git -C "$(pwd)"`, `--git-dir="$D"`)
+  is not read, although after a failed `cd` it may name the main checkout.
+- A write reached only through a heredoc fed to a shell is not read, with or without a `cd`.
+
+From a guarded main checkout, `cd <other repository> && git pull` is blocked as well; `git -C <other repository> pull`
+is the way.
 
 ## Agent gates
 

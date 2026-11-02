@@ -380,3 +380,125 @@ test('in the main checkout, only named files are staged and only the default bra
   const off = fixture(t, { version: 1 }).repo;
   assert.equal(check('git add -A', { cwd: off, env: ENV }), null, 'the guard is off');
 });
+
+// A `cd` that a shell alias or function turns into a no-op can fail and still return 0, so what follows it runs in the
+// main checkout. A `cd` the rule cannot trust is judged as if it failed.
+const CD_LEAD = /after a cd that leaves the repository, or that this rule cannot read\./;
+const firstOf = (reason) => reason.split(/\n|(?<=\.)\s/u)[0];
+
+test('after a cd that leaves the repository, or that the rule cannot read, the main checkout is still guarded', (t) => {
+  const { base, repo } = fixture(t);
+  const bash = (command, cwd = repo) => check(command, { cwd, env: ENV });
+  // [command, the cd the reason names, the write it names (or null for a git call)]
+  for (const [command, cd, name] of [
+    ['cd /tmp && echo x > a.txt', 'cd /tmp', 'a.txt'],
+    ['S=/tmp/x; cd "$S"; rm -rf gx; mkdir gx', 'cd "$S"', 'gx'],
+    ["cd /tmp/x || exit 1; printf 'dist/\\n' > .gitignore", 'cd /tmp/x', '.gitignore'],
+    ['cd "$S" && git init -q -b main repo', 'cd "$S"', null],
+    ['cd /tmp && git commit -m init', 'cd /tmp', null],
+    ['pushd /tmp && git worktree add ../wt feature', 'pushd /tmp', null],
+    ['cd && git branch x', 'cd', null],
+    ['cd - && git checkout -b x', 'cd -', null],
+    ['cd ~/x && git merge t2', 'cd ~/x', null],
+    ['cd .. && git tag v0', 'cd ..', null],
+    ['popd; git stash', 'popd', null],
+    ["cd /tmp && bash -c 'git init'", 'cd /tmp', null],
+    ["cd /tmp && bash <<< 'git commit -m x'", 'cd /tmp', null],
+    ['cd /tmp && git config user.name t', 'cd /tmp', null],
+    ['cd -- "$S"; mkdir gx', 'cd "$S"', 'gx'],
+    ['cd -- /tmp/x && git init -q -b main repo', 'cd /tmp/x', null],
+    ['cd wt/typo && git checkout -b x', 'cd wt/typo', null],
+    ['cd src/missing && echo x > a.txt', 'cd src/missing', 'a.txt'],
+    ['cd "$S" && rm -rf *', 'cd "$S"', '*'],
+    ['cd /tmp/x; rm -f ./*.js', 'cd /tmp/x', './*.js'],
+    ['cd /tmp/x && bash -c \'printf "dist/\\n" > .gitignore\'', 'cd /tmp/x', '.gitignore'],
+    ['cd /tmp && git -C src commit -m x', 'cd /tmp', null],
+    [`cd /tmp && git -C ${repo} branch x`, 'cd /tmp', null],
+    ['cd /tmp && git "$sub" -q', 'cd /tmp', null],
+    ['cd "$S"; cd gx; git init', 'cd "$S"', null],
+    // The folder of a git call or a write resolves from the folders before the cd.
+    ['cd /tmp && git --git-dir=.git commit -m x', 'cd /tmp', null],
+    ['cd /tmp && git --work-tree=. add x', 'cd /tmp', null],
+    ['cd /tmp && env -C src git commit -m x', 'cd /tmp', null],
+    ['cd /tmp && GIT_DIR=.git git commit -m x', 'cd /tmp', null],
+    ['cd src && cd /tmp && echo x > a.txt', 'cd /tmp', 'a.txt'],
+    // `builtin cd` skips a shell function or alias, but its folder is judged the same.
+    ['builtin cd /tmp && git init', 'builtin cd /tmp', null],
+    ["bash -c 'builtin cd /tmp && git init'", 'builtin cd /tmp', null],
+    ["cd '$x' && git init", "cd '$x'", null],
+    ["cd '$S' && git init", "cd '$S'", null],
+    ["cd 'my dir' && git init", "cd 'my dir'", null],
+  ]) {
+    const reason = bash(command) ?? '';
+    const first = firstOf(reason);
+    assert.match(first, CD_LEAD, command);
+    assert.doesNotMatch(first, /(?:^|[\s(`'])\/\S/u, `no machine path in the first sentence: ${command}`);
+    if (name) assert.ok(first.includes(`this command writes '${name}' after a cd`), `${command}: ${first}`);
+    else assert.match(first, /^Blocked: `git[^`]*` .*runs after a cd/, command);
+    assert.ok(reason.includes(`The cd is \`${cd}\`;`), `${command} names \`${cd}\`: ${reason}`);
+    assert.ok(reason.includes(`the main checkout (${repo})`), command);
+    assert.ok(reason.includes('`git -C <absolute folder>`') && reason.includes('`env -C <absolute folder>`'), command);
+    assert.ok(reason.includes('aidrian worktree new <branch>') && reason.includes('AIDRIAN_ALLOW_MAIN_WRITE=1'), command);
+  }
+
+  // A cd inside the main checkout leaves the shell there whether it works or not: today's rules judge what follows.
+  assert.match(bash('cd src && echo x > app.js') ?? '', /^Blocked: this command writes 'src\/app\.js', a tracked file in the main checkout/);
+  assert.match(bash('cd . && git checkout -b x') ?? '', /^Blocked: `git checkout` moves the folder every session shares to another branch, in the main checkout/);
+  assert.match(bash('cd src && git add -A') ?? '', /^Blocked: `git add` of anything but named files can stage other sessions' work, in the main checkout/);
+  // A file the write reaches only when a cd inside the main checkout fails names that cd: here into the ignored build/.
+  mkdirSync(path.join(repo, 'build'));
+  const failed = bash('cd build && echo x > a.txt') ?? '';
+  assert.match(failed, /^Blocked: this command writes 'a\.txt' in the main checkout if a cd before it fails\. The cd is `cd build`;/);
+  assert.doesNotMatch(firstOf(failed), /(?:^|[\s(`'])\/\S/u, 'no machine path in the first sentence');
+  assert.ok(failed.includes(`the main checkout (${repo})`) && failed.includes('`git -C <absolute folder>`'));
+  // A glob after a cd inside the main checkout fails closed at the folders before it: if the cd fails, `rm -rf *` runs
+  // at the root.
+  for (const [command, name, cd] of [['cd build && rm -rf *', '*', 'cd build'], ['cd src && rm -f ./*.js', './*.js', 'cd src']]) {
+    const glob = bash(command) ?? '';
+    assert.ok(glob.startsWith(`Blocked: this command writes '${name}' in the main checkout if a cd before it fails. The cd is \`${cd}\`;`), `${command}: ${glob}`);
+    assert.doesNotMatch(firstOf(glob), /(?:^|[\s(`'])\/\S/u, command);
+  }
+  // `builtin cd` skips an alias or function: the reason says only that the cd may fail.
+  const builtin = bash('builtin cd /tmp && git init') ?? '';
+  assert.ok(builtin.includes(`The cd is \`builtin cd /tmp\`; if it fails, the call acts on the main checkout (${repo}).\n`), builtin);
+  assert.ok(!builtin.includes('alias'), 'no alias is blamed for a builtin cd');
+  assert.ok((bash('cd /tmp && git init') ?? '').includes('a shell alias or function for cd can fail and still return 0'));
+
+  for (const command of [
+    'cd /tmp && git status', 'cd /tmp && git log --oneline', 'cd /tmp && git branch', 'cd /tmp && git worktree list',
+    'cd /tmp && git stash list', 'cd /tmp && git config --get user.name', 'cd /tmp && git remote -v', 'cd /tmp && npm test',
+    'cd /tmp && echo x > /tmp/a.txt', 'cd "$S" && git -C "$S" init -q', 'cd /tmp && git -C /tmp/x init -q',
+    'cd /tmp && env -C /tmp/x git init -q', 'cd "$S" && echo x > "$S/a.txt"', 'cd wt/task && git add -A',
+    `cd ${path.join(base, 'beside')} && echo x > src/app.js`, 'cd wt/task && cd /tmp && git init', 'x=$(cd /tmp); git status',
+    'builtin cd wt/task && git add -A', "bash -c 'builtin cd wt/task && git add -A'", `builtin cd ${path.join(base, 'beside')} && git add -A`,
+    // A residual: a git folder held in an expansion is not read after an untrusted cd.
+    'cd /tmp && git --git-dir="$D" commit -m x',
+  ]) {
+    assert.equal(bash(command), null, command);
+  }
+
+  // From a worktree, with the guard off, and with the override, nothing changes.
+  const worktree = path.join(repo, 'wt/task');
+  for (const command of ['cd /tmp && git init', 'cd "$S" && echo x > a.txt']) {
+    assert.equal(bash(command, worktree), null, `from a worktree: ${command}`);
+    assert.equal(check(command, { cwd: repo, env: { AIDRIAN_ALLOW_MAIN_WRITE: '1' } }), null, `the override: ${command}`);
+  }
+  const off = fixture(t, { version: 1 }).repo;
+  for (const command of ['cd /tmp && git init', 'cd "$S" && echo x > a.txt']) assert.equal(check(command, { cwd: off, env: ENV }), null, `the guard off: ${command}`);
+});
+
+test('a cd reads its folder past --, and followCd keeps the folder before it', () => {
+  const files = bashWrites('cd -- build && echo x > a.txt', '/repo', { followCd: true }).flatMap((write) => write.files);
+  assert.ok(files.includes('/repo/build/a.txt'), JSON.stringify(files));
+  assert.ok(files.includes('/repo/a.txt'), 'a cd that may fail leaves the shell where it was');
+});
+
+test('the Bash hook blocks a commit after a cd that leaves the repository', (t) => {
+  const { repo } = fixture(t);
+  const run = spawnSync(process.execPath, [path.join(SCRIPTS, 'hook-bash.mjs')], {
+    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'cd /tmp && git commit -m init' }, cwd: repo }),
+    encoding: 'utf8',
+  });
+  assert.equal(run.status, 2, run.stderr);
+  assert.match(run.stderr, /^Blocked: `git commit` runs after a cd that leaves the repository, or that this rule cannot read\. The cd is `cd \/tmp`/);
+});

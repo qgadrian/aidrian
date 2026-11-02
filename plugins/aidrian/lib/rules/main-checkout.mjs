@@ -13,7 +13,7 @@
 // guard off, matched by `git.mainCheckout.allowWrites`, or git-ignored. When git cannot tell, a tool write is denied to be
 // safe and a Bash command runs: a command line is never as certain as a file path.
 
-import { existsSync, lstatSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { globPattern } from '../fs.mjs';
@@ -21,7 +21,7 @@ import { globPattern } from '../fs.mjs';
 import { loadConfig } from '../config.mjs';
 import { checkoutRoots, isIgnored, runGit } from '../git.mjs';
 import { findProject, worktreesDir } from '../project.mjs';
-import { inlineShellCommand, isLongOption, lexInputs, lexSteps, readGit, readInvocation, readShortOptions, readsShellInput, SUBSTITUTION_DEPTH_LIMIT } from '../shell-lex.mjs';
+import { GIT_VALUE_GLOBALS, inlineShellCommand, isLongOption, lexInputs, lexSteps, readGit, readInvocation, readShortOptions, readsShellInput, SUBSTITUTION_DEPTH_LIMIT } from '../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_MAIN_WRITE';
 
@@ -101,15 +101,160 @@ const COPIERS = new Set(['cp', 'ln', 'install']);
 // An rsync operand naming another host: `host:path`, `user@host:path`, `host::module`, or `rsync://host/module`.
 const REMOTE = /^[^/]*:/u;
 
-// Bash: the deny reason for `command`, or null. A command with no certain target never runs git.
+// Bash: the deny reason for `command`, or null. git runs only for a write target or a git call in a guarded project,
+// and for each folder a `cd` names from a guarded main checkout.
 export function check(command, { cwd = process.cwd(), env = process.env } = {}) {
   if (env[OVERRIDE] === '1') return null;
-  return decide(bashTargets(command, cwd), cwd, false, 'this command writes') ?? gitStateDenial(command, cwd);
+  return decide(bashTargets(command, cwd), cwd, false, 'this command writes') ?? afterCdDenial(command, cwd) ?? gitStateDenial(command, cwd);
+}
+
+// A `cd` can fail and still return 0, as a shell alias or function for cd can: the shell then stays where it was. From
+// a guarded main checkout, a `cd`, `pushd`, or `popd` is trusted only when it names folders that exist, each in a
+// checkout of the same repository. Into a linked worktree, nothing after it is judged, as before; inside the main
+// checkout, the shell is there whether it works or not, so what follows is judged at the folders before and after it.
+// Any other `cd` is untrusted: what follows is judged against the folders before it, for the rest of the line.
+
+// Whether `dir` is a folder, through links.
+const isDirectory = (dir) => {
+  try {
+    return statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+// checkoutRoots, read once per folder per hook run.
+const rootsCache = new Map();
+function rootsOf(dir) {
+  if (!rootsCache.has(dir)) rootsCache.set(dir, checkoutRoots(dir));
+  return rootsCache.get(dir);
+}
+
+// The guarded main checkouts the folders `dirs` are in, by their canonical root.
+function mainsOf(dirs) {
+  const mains = new Set();
+  for (const dir of dirs) {
+    const main = guardedMain(dir);
+    if (main) mains.add(canonical(main.roots.main));
+  }
+  return mains;
+}
+
+// How the directory change `change` ({ program, to }) moves a shell that may be in any of `from`, when one of them is
+// a guarded main checkout in `mains`: { kind: 'worktree' }, { kind: 'main', dests }, or { kind: 'untrusted' }.
+function trustOf(change, from, mains) {
+  const { program, to } = change;
+  if (program === 'popd' || !to || to.dynamic || to.text.startsWith('~')) return { kind: 'untrusted' };
+  const dests = path.isAbsolute(to.text) ? [to.text] : from.map((dir) => path.resolve(dir, to.text));
+  if (!dests.length) return { kind: 'untrusted' };
+  let inMain = false;
+  for (const dest of dests) {
+    const roots = isDirectory(dest) ? rootsOf(dest) : null;
+    if (!roots || !mains.has(canonical(roots.main))) return { kind: 'untrusted' };
+    if (canonical(roots.current) === canonical(roots.main)) inMain = true;
+  }
+  return inMain ? { kind: 'main', dests } : { kind: 'worktree' };
+}
+
+// The directory change an invocation makes, as { program, args }, or null: a `cd`, `pushd`, or `popd`, also behind
+// `builtin`, which skips a shell function or alias of that name.
+function directoryChange(invocation) {
+  if (CHANGES_DIRECTORY.has(invocation.program)) return invocation;
+  const [first, ...args] = invocation.args ?? [];
+  if (invocation.program !== 'builtin' || !first || first.dynamic || !CHANGES_DIRECTORY.has(first.text)) return null;
+  return { ...invocation, program: first.text, args, builtin: true };
+}
+
+// The directory change `{ program, args }` (from directoryChange), as bashWrites records it: { from, to, program,
+// shown }, `shown` the change as the deny reason names it.
+function cdChange({ program, args, builtin = false }, from) {
+  const to = program === 'popd' ? null : operand(args);
+  const word = to ?? args.find((token) => !token.dynamic && /^(?:-|[+-]\d+)$/u.test(token.text));
+  const name = builtin ? `builtin ${program}` : program;
+  if (!word || word.text === '') return { from, to, program, shown: name };
+  // The lexer drops quotes: a quoted expansion, or a literal word with a shell metacharacter in it, is shown quoted again.
+  let text = word.text;
+  if (word.dynamic && !word.splits && /[$`]/u.test(text)) text = `"${text}"`;
+  else if (!word.dynamic && /[\s$`'"\\]/u.test(text)) text = text.includes("'") ? `"${text.replace(/["$`\\]/gu, '\\$&')}"` : `'${text}'`;
+  return { from, to, program, shown: `${name} ${text}` };
+}
+
+// Where a target after the changes `cds` is judged, or null when it is not: { at, cd, last }, `at` the folders the
+// shell may be in, `cd` the untrusted change shown, or null after changes inside the main checkout only, and `last`
+// the last of those, as { shown, dests }.
+function afterChanges(cds) {
+  const mains = mainsOf(cds[0].from);
+  if (!mains.size) return null;
+  let at = cds[0].from;
+  let last = null;
+  for (const change of cds) {
+    const trust = trustOf(change, at, mains);
+    if (trust.kind === 'untrusted') return { at, cd: change.shown, last };
+    if (trust.kind === 'worktree') return null;
+    at = [...new Set([...trust.dests, ...at])];
+    last = { shown: change.shown, dests: trust.dests };
+  }
+  return { at, cd: null, last };
+}
+
+const WAY_OUT = 'Name the folder in each command instead: an absolute path, `git -C <absolute folder>`, or `env -C <absolute folder>`.';
+// Why a cd may fail unseen: a shell alias or function for cd can fail and still return 0. `builtin cd` skips those and
+// fails loudly, but it can still fail, as on a missing folder.
+const mayFail = (cd, acts, root) =>
+  `if it fails, ${acts} the main checkout (${root})${cd.startsWith('builtin ') ? '.' : ': a shell alias or function for cd can fail and still return 0.'}`;
+const cdLead = (subject, acts, cd, root) =>
+  `Blocked: ${subject} after a cd that leaves the repository, or that this rule cannot read. The cd is \`${cd}\`; ` +
+  `${mayFail(cd, acts, root)}\n${WAY_OUT}`;
+// A write the main checkout gets only when a `cd` inside it fails, such as `cd build && echo x > a.txt`.
+const failedCdLead = (name, cd, root) =>
+  `Blocked: this command writes '${name}' in the main checkout if a cd before it fails. The cd is \`${cd}\`; ` +
+  `${mayFail(cd, 'the write lands in', root)}\n${WAY_OUT}`;
+
+// The relative writes after a directory change, judged where the shell may still be: the deny reason, or null.
+function afterCdDenial(command, cwd) {
+  for (const write of bashWrites(command, cwd, { shells: true, globs: true })) {
+    if (!write.cds.length || path.isAbsolute(write.text)) continue;
+    const walk = afterChanges(write.cds);
+    // A wrapper's `env -C` or git's `-C` after the change moves the target; one that may expand leaves it alone.
+    if (!walk || write.via.some((token) => token.dynamic)) continue;
+    const through = (dir) => write.via.reduce((at, token) => path.resolve(at, token.text), dir);
+    const dirs = walk.at.map(through);
+    if (write.glob) {
+      // A glob fails closed, as it may match a tracked file: after an untrusted cd, at the folders before it; after cds
+      // inside the main checkout, at the folders the shell is in only when the last one fails.
+      if (walk.cd) {
+        const main = dirs.map((dir) => guardedMain(dir)).find(Boolean);
+        if (main) return reason(cdLead(`this command writes '${write.text}'`, 'the write lands in', walk.cd, main.roots.main), main.project, main.config);
+      } else {
+        const main = walk.at.filter((dir) => !walk.last.dests.includes(dir)).map((dir) => guardedMain(through(dir))).find(Boolean);
+        if (main) return reason(failedCdLead(write.text, walk.last.shown, main.roots.main), main.project, main.config);
+      }
+      continue;
+    }
+    const files = (list) => list.map((dir) => path.resolve(through(dir), write.text));
+    const verb = 'this command writes';
+    if (walk.cd) {
+      const denial = decide(files(walk.at), cwd, false, verb, (root) => cdLead(`${verb} '${write.text}'`, 'the write lands in', walk.cd, root));
+      if (denial) return denial;
+      continue;
+    }
+    // Inside the main checkout, a file where the last cd leads is judged as today; one the write reaches only when a
+    // cd fails names that cd.
+    const reached = walk.at.filter((dir) => walk.last.dests.includes(dir));
+    const denial =
+      decide(files(reached), cwd, false, verb) ??
+      decide(files(walk.at.filter((dir) => !reached.includes(dir))), cwd, false, verb, (root) => failedCdLead(write.text, walk.last.shown, root));
+    if (denial) return denial;
+  }
+  return null;
 }
 
 // The git calls that change the main checkout's state for every session in it, as { what, folders, target }: `folders`
-// every folder the call may act on, after a wrapper's `env -C`, git's own `-C`, and `--work-tree` or `--git-dir`.
-// Substitutions that run are read too; a call after a `cd` is skipped, as its folder is not certain.
+// every folder the call may act on, after a wrapper's `env -C`, git's own `-C`, and `--work-tree` or `--git-dir`, and
+// `cd` the untrusted directory change before it, if any. Substitutions that run are read too. After a `cd` into a
+// linked worktree a call is skipped; after a `cd` inside the main checkout it is judged at the folders before and after
+// it; after a `cd` this rule cannot trust, every call that may change the repository is a change when its folder,
+// resolved from the folders before the `cd`, is a guarded main checkout.
 //
 // Like every Bash rule, it reads shell text, so it guards against accidents, not intent. Accepted residuals: a bracket
 // glob that names a branch or `--all` (`topi[c]`), shell arguments after `bash -c` shaped like assignments, and quoted
@@ -146,82 +291,170 @@ const expands = (token) => token.dynamic || /\{[^{}]*(?:,|\.\.)[^{}]*\}/u.test(t
 // `inherited` holds the GIT_* assignments in force: set before an inline shell, or by an earlier `export` or bare
 // assignment on the same command line.
 const GIT_ASSIGNMENT = /^GIT_[A-Z_]+=/u;
-function gitStateChanges(command, cwd, depth = 0, inherited = []) {
+// The state of the shell a line runs in, for gitStateChanges: { folders }, where it may be, at the start and after a
+// `cd` inside the main checkout; { skipped: true } after a `cd` into a linked worktree or from a folder no guarded main
+// checkout holds, where nothing is judged; or { strict: { cd, from } } after a `cd` this rule cannot trust, `from` the
+// folders before it.
+const SKIPPED = Object.freeze({ skipped: true });
+
+// The state after the directory change `invocation`. Untrusted stays so for the rest of the line.
+function stateAfterCd(state, invocation) {
+  if (!state.folders) return state;
+  const mains = mainsOf(state.folders);
+  if (!mains.size) return SKIPPED;
+  const change = cdChange(invocation, state.folders);
+  const trust = trustOf(change, state.folders, mains);
+  if (trust.kind === 'worktree') return SKIPPED;
+  if (trust.kind === 'main') return { folders: [...new Set([...trust.dests, ...state.folders])] };
+  return { strict: { cd: change.shown, from: state.folders } };
+}
+
+// The state a command with a wrapper's directory change `chdir` runs in, or null when the folder may expand.
+function stateIn(state, chdir) {
+  if (state.skipped || !chdir) return state;
+  if (chdir.dynamic) return null;
+  if (state.folders) return { folders: state.folders.map((dir) => path.resolve(dir, chdir.text)) };
+  if (path.isAbsolute(chdir.text)) return { folders: [chdir.text] };
+  return { strict: { ...state.strict, from: state.strict.from.map((dir) => path.resolve(dir, chdir.text)) } };
+}
+
+// git subcommands that change nothing, and the read forms of others, which run after an untrusted `cd`. Every other
+// call, an unknown subcommand included, counts as a change there: blocked by mistake, never missed.
+const READ_ONLY_GIT = new Set([
+  'status', 'log', 'diff', 'show', 'rev-parse', 'ls-files', 'ls-tree', 'ls-remote', 'cat-file', 'rev-list', 'describe',
+  'blame', 'grep', 'shortlog', 'name-rev', 'for-each-ref', 'show-ref', 'check-ignore', 'check-attr', 'merge-base',
+  'count-objects', 'var', 'version', 'help', 'fsck',
+]);
+function readsOnly({ subcommand, rest }) {
+  if (READ_ONLY_GIT.has(subcommand)) return true;
+  const words = rest.map(({ text }) => text);
+  const operands = words.filter((word) => !word.startsWith('-'));
+  if (subcommand === 'branch' || subcommand === 'tag') return operands.length === 0;
+  if (subcommand === 'worktree') return operands[0] === 'list';
+  if (subcommand === 'stash') return operands[0] === 'list' || operands[0] === 'show';
+  if (subcommand === 'config') return operands[0] === 'get' || words.some((word) => word.startsWith('--get') || word === '-l' || word === '--list');
+  if (subcommand === 'remote') return operands.length === 0 || ['show', 'get-url'].includes(operands[0]);
+  return false;
+}
+
+// The changes a git segment makes after an untrusted `cd`, judged at the folders before it: any call that is not
+// read-only and whose folder is a guarded main checkout, and a call whose subcommand an expansion hides.
+function strictChanges(invocation, call, { cd, from }, scope) {
+  if (!call) {
+    if (invocation.program !== 'git') return [];
+    const { args } = invocation;
+    for (let i = 0; i < args.length; i += 1) {
+      const { text, dynamic } = args[i];
+      // A dynamic word that starts with `-`, such as `--git-dir="$D"`, is a folder that may expand: left alone.
+      if (dynamic) return text.startsWith('-') ? [] : [{ what: '`git` with a subcommand this rule cannot read', folders: from, target: null, cd }];
+      if (GIT_VALUE_GLOBALS.has(text)) i += 1;
+      else if (!text.startsWith('-')) return [];
+    }
+    return [];
+  }
+  if (readsOnly(call)) return [];
+  const folders = [];
+  for (const at of from) {
+    const each = gitFolders(call.globals, invocation.chdir, at, scope);
+    if (each === null) return [];
+    folders.push(...each);
+  }
+  const unique = [...new Set(folders)];
+  return unique.some((folder) => guardedMain(folder)) ? [{ what: `\`git ${call.subcommand}\``, folders: unique, target: null, cd }] : [];
+}
+
+function gitStateChanges(command, state, depth = 0, inherited = []) {
   const found = [];
-  let known = true;
   const env = [...inherited];
   // A shell reading its input runs a heredoc or here-string body as commands, where that shell runs.
   if (depth < SUBSTITUTION_DEPTH_LIMIT) {
     const { segments, inputs } = lexInputs(command);
     const lineEnv = [...inherited];
-    let here = true;
+    let here = state;
     segments.forEach((segment, i) => {
       const invocation = readInvocation(segment);
-      // After a `cd` the shell's folder is not certain, as in the main pass.
-      if (CHANGES_DIRECTORY.has(invocation.program)) here = false;
-      if (!here) return;
+      // A directory change moves the shell as in the main pass.
+      const change = directoryChange(invocation);
+      if (change) here = stateAfterCd(here, change);
+      if (here.skipped) return;
       const own = assignmentsOf(segment, invocation);
       if (invocation.program === 'export' || (own.length && !invocation.program)) lineEnv.push(...own);
-      if (!inputs[i].length || !readsShellInput(invocation) || invocation.chdir?.dynamic) return;
-      const where = invocation.chdir ? path.resolve(cwd, invocation.chdir.text) : cwd;
-      for (const body of inputs[i]) found.push(...gitStateChanges(body, where, depth + 1, [...lineEnv, ...own]));
+      if (!inputs[i].length || !readsShellInput(invocation)) return;
+      const where = stateIn(here, invocation.chdir);
+      if (where) for (const body of inputs[i]) found.push(...gitStateChanges(body, where, depth + 1, [...lineEnv, ...own]));
     });
   }
+  let now = state;
   for (const { segment, substitutions } of lexSteps(command)) {
-    if (known && depth < SUBSTITUTION_DEPTH_LIMIT) for (const body of substitutions) found.push(...gitStateChanges(body, cwd, depth + 1, env));
+    if (!now.skipped && depth < SUBSTITUTION_DEPTH_LIMIT) for (const body of substitutions) found.push(...gitStateChanges(body, now, depth + 1, env));
     const invocation = readInvocation(segment);
-    const assignments = assignmentsOf(segment, invocation, readGit(segment));
+    const call = readGit(segment);
+    const assignments = assignmentsOf(segment, invocation, call);
     // `export GIT_DIR=…` or a bare `GIT_DIR=…` lasts for the rest of the line.
     if (invocation.program === 'export' || (assignments.length && !invocation.program)) env.push(...assignments);
-    if (CHANGES_DIRECTORY.has(invocation.program)) known = false;
+    const change = directoryChange(invocation);
+    if (change) now = stateAfterCd(now, change);
+    if (now.skipped) continue;
     // `sh -c`, `bash -c`, `flock … -c`, and a heredoc fed to a shell run their command where the invocation runs.
-    const inner = known && depth < SUBSTITUTION_DEPTH_LIMIT ? inlineShellCommand(invocation) : null;
-    if (inner !== null && !invocation.chdir?.dynamic) found.push(...gitStateChanges(inner, invocation.chdir ? path.resolve(cwd, invocation.chdir.text) : cwd, depth + 1, [...env, ...assignments]));
-    const call = known ? readGit(segment) : null;
-    if (!call || !['add', 'commit', 'switch', 'checkout'].includes(call.subcommand)) continue;
+    const inner = depth < SUBSTITUTION_DEPTH_LIMIT ? inlineShellCommand(invocation) : null;
+    const where = inner === null ? null : stateIn(now, invocation.chdir);
+    if (where) found.push(...gitStateChanges(inner, where, depth + 1, [...env, ...assignments]));
     const scope = [...env, ...assignments];
-    const folders = gitFolders(call.globals, invocation.chdir, cwd, scope);
-    // Nothing below costs a git call unless one of the folders is a guarded main checkout.
-    if (folders === null || !folders.some((folder) => guardedMain(folder))) continue;
-    // A global option that changes how paths match or which repository is read makes nothing plainly safe.
-    const plainGlobals = call.globals.every(({ text }, i) => SAFE_GLOBALS.test(text) || (call.globals[i - 1] && ['-C', '--git-dir', '--work-tree'].includes(call.globals[i - 1].text)));
-    const gitEnv = scope.some(({ text }) => GIT_ASSIGNMENT.test(text));
-    const words = call.rest.map((token) => token.text);
-    const dashes = words.indexOf('--');
-    const before = dashes === -1 ? words : words.slice(0, dashes);
-    const after = dashes === -1 ? [] : words.slice(dashes + 1);
-    const options = before.filter((word) => word.startsWith('-') && word.length > 1);
-    const operands = before.filter((word) => !(word.startsWith('-') && word.length > 1));
-    const at = folders[0];
-    // --work-tree or --git-dir points git at a repository this hook does not read words in: only a commit without -a
-    // is plainly safe there.
-    if ((folders.length > 1 || !plainGlobals || gitEnv) && (call.subcommand !== 'commit' || commitsAll(call.rest) || gitEnv)) {
-      found.push({ what: `\`git ${call.subcommand}\` with another repository, work tree, or pathspec option can change the shared checkout`, folders, target: null });
+    if (now.strict) {
+      found.push(...strictChanges(invocation, call, now.strict, scope));
       continue;
     }
-    if (call.subcommand === 'add') {
-      const named = (word) => !/[*?[\]:]/u.test(word) && !isFolder(path.resolve(at, word)) && tracksAtMostItself(at, word);
-      const dynamic = call.rest.some(expands);
-      if (dynamic || !options.every((option) => ADD_SAFE.has(option)) || ![...operands, ...after].every(named) || ![...operands, ...after].length) {
-        found.push({ what: '`git add` of anything but named files can stage other sessions\' work', folders });
-      }
-    } else if (call.subcommand === 'commit') {
-      if (commitsAll(call.rest)) found.push({ what: '`git commit -a` commits every change in the folder, other sessions\' work included', folders });
-    } else if (call.rest.some(expands)) {
-      // A word that may expand can name any branch or option: a checkout or switch with one is not plainly safe.
-      found.push({ what: `\`git ${call.subcommand}\` with a word that may expand can move the folder every session shares`, folders, target: null });
-    } else if (call.subcommand === 'switch') {
-      const back = options.length === 0 && operands.length === 1 && !after.length;
-      found.push({ what: '`git switch` moves the folder every session shares to another branch', folders, target: back ? operands[0] : null });
-    } else {
-      const restore = options.length === 0 && (dashes !== -1 ? after.length > 0 : operands.length > 1 || (operands.length === 1 && !switchesTo(at, operands[0])));
-      if (!restore) {
-        const back = options.length === 0 && operands.length === 1 && dashes === -1;
-        found.push({ what: '`git checkout` moves the folder every session shares to another branch', folders, target: back ? operands[0] : null });
-      }
+    if (!call || !['add', 'commit', 'switch', 'checkout'].includes(call.subcommand)) continue;
+    for (const cwd of now.folders) {
+      const change = knownChange(call, invocation, cwd, scope);
+      if (change) found.push(change);
     }
   }
   return found;
+}
+
+// Today's judgement of one add, commit, switch, or checkout run at `cwd`: the change it makes, or null.
+function knownChange(call, invocation, cwd, scope) {
+  const folders = gitFolders(call.globals, invocation.chdir, cwd, scope);
+  // Nothing below costs a git call unless one of the folders is a guarded main checkout.
+  if (folders === null || !folders.some((folder) => guardedMain(folder))) return null;
+  // A global option that changes how paths match or which repository is read makes nothing plainly safe.
+  const plainGlobals = call.globals.every(({ text }, i) => SAFE_GLOBALS.test(text) || (call.globals[i - 1] && ['-C', '--git-dir', '--work-tree'].includes(call.globals[i - 1].text)));
+  const gitEnv = scope.some(({ text }) => GIT_ASSIGNMENT.test(text));
+  const words = call.rest.map((token) => token.text);
+  const dashes = words.indexOf('--');
+  const before = dashes === -1 ? words : words.slice(0, dashes);
+  const after = dashes === -1 ? [] : words.slice(dashes + 1);
+  const options = before.filter((word) => word.startsWith('-') && word.length > 1);
+  const operands = before.filter((word) => !(word.startsWith('-') && word.length > 1));
+  const at = folders[0];
+  // --work-tree or --git-dir points git at a repository this hook does not read words in: only a commit without -a
+  // is plainly safe there.
+  if ((folders.length > 1 || !plainGlobals || gitEnv) && (call.subcommand !== 'commit' || commitsAll(call.rest) || gitEnv)) {
+    return { what: `\`git ${call.subcommand}\` with another repository, work tree, or pathspec option can change the shared checkout`, folders, target: null };
+  }
+  if (call.subcommand === 'add') {
+    const named = (word) => !/[*?[\]:]/u.test(word) && !isFolder(path.resolve(at, word)) && tracksAtMostItself(at, word);
+    const dynamic = call.rest.some(expands);
+    if (dynamic || !options.every((option) => ADD_SAFE.has(option)) || ![...operands, ...after].every(named) || ![...operands, ...after].length) {
+      return { what: '`git add` of anything but named files can stage other sessions\' work', folders };
+    }
+  } else if (call.subcommand === 'commit') {
+    if (commitsAll(call.rest)) return { what: '`git commit -a` commits every change in the folder, other sessions\' work included', folders };
+  } else if (call.rest.some(expands)) {
+    // A word that may expand can name any branch or option: a checkout or switch with one is not plainly safe.
+    return { what: `\`git ${call.subcommand}\` with a word that may expand can move the folder every session shares`, folders, target: null };
+  } else if (call.subcommand === 'switch') {
+    const back = options.length === 0 && operands.length === 1 && !after.length;
+    return { what: '`git switch` moves the folder every session shares to another branch', folders, target: back ? operands[0] : null };
+  } else {
+    const restore = options.length === 0 && (dashes !== -1 ? after.length > 0 : operands.length > 1 || (operands.length === 1 && !switchesTo(at, operands[0])));
+    if (!restore) {
+      const back = options.length === 0 && operands.length === 1 && dashes === -1;
+      return { what: '`git checkout` moves the folder every session shares to another branch', folders, target: back ? operands[0] : null };
+    }
+  }
+  return null;
 }
 
 // The folders a git call may act on: where it runs (a wrapper's `env -C`, then each `-C`), and its `--work-tree` and
@@ -348,11 +581,12 @@ function guardedMain(at) {
 // The deny reason for a git call that changes the main checkout's state, or null. Moving back to the default branch
 // is allowed: it is where the main checkout belongs.
 function gitStateDenial(command, cwd) {
-  for (const change of gitStateChanges(command, cwd)) {
+  for (const change of gitStateChanges(command, { folders: [cwd] })) {
     for (const at of change.folders) {
       const main = guardedMain(at);
       if (!main) continue;
       const { project, config, roots } = main;
+      if (change.cd) return reason(cdLead(`${change.what} runs`, 'the call acts on', change.cd, roots.main), project, config);
       if (change.target && change.target === config.git.defaultBranch) continue;
       return reason(`Blocked: ${change.what}, in the main checkout (${roots.main}).`, project, config);
     }
@@ -389,6 +623,10 @@ const FOLDERS_LIMIT = 16;
 // target with a glob, which bashTargets drops, as { text, files: [], dirs, unsure, glob: true }, `dirs` the folders it
 // is relative to; `restores` counts git
 // checkout -- and git restore as writes.
+// Every record also has `cds`, the directory changes before it on its line, inline shells' callers included, each
+// { from, to, program, shown }: `from` the folders before the change, `to` its folder token (null for none, `-`, `+N`,
+// or `popd`), and `shown` the change as a deny reason names it; and `via`, the folder tokens of each `env -C` or git
+// `-C` that moved the target after the last of them, in order.
 // By default a `cd` makes the shell's folder unknown, as bashTargets reads it. `followCd` follows each `cd` to a named
 // folder, and, since a `cd` that fails leaves the shell where it was, keeps the folders before it as well. `shells` also
 // reads the command line of each `sh -c` or `bash -c`, which, like a substitution, starts where its command runs.
@@ -404,26 +642,36 @@ export function bashWrites(command, cwd, { followCd = false, shells = false, res
       const invocation = readInvocation(segment);
       const { program, args, chdir } = invocation;
       // A wrapper's directory change moves the command's own paths, never the shell's redirections above.
-      const own = chdir === null ? place : moved(place, chdir);
+      const own = chdir === null ? place : within(place, chdir);
       if (WRITERS.has(program)) for (const token of written(program, args)) targets.push({ token, place: own });
       else if (program === 'git') targets.push(...gitWritten(segment, own, restores));
       const inner = shells && depth < SUBSTITUTION_DEPTH_LIMIT ? inlineShellCommand(invocation) : null;
       if (inner !== null) visit(inner, own, depth + 1);
-      if (CHANGES_DIRECTORY.has(program)) place = followCd ? moved(place, program === 'popd' ? null : operand(args), true) : UNKNOWN;
+      const directory = directoryChange(invocation);
+      if (directory) {
+        const change = cdChange(directory, place.dirs);
+        place = { ...(followCd ? moved(place, change.to, true) : UNKNOWN), cds: [...place.cds, change], via: [] };
+      }
     }
   };
-  visit(command, { dirs: [cwd], unsure: false }, 0);
+  visit(command, { dirs: [cwd], unsure: false, cds: [], via: [] }, 0);
   return targets
     .filter(({ token }) => (!token.dynamic || (globs && !/[$`]/u.test(token.text))) && token.text !== '')
-    .map(({ token: { text, dynamic }, place }) => {
-      if (dynamic) return { text, files: [], dirs: place.dirs, unsure: place.unsure, glob: true };
-      if (path.isAbsolute(text)) return { text, files: [text], unsure: false };
-      return { text, files: place.dirs.map((dir) => path.resolve(dir, text)), unsure: place.unsure };
+    .map(({ token: { text, dynamic }, place: { dirs, unsure, cds, via } }) => {
+      if (dynamic) return { text, files: [], dirs, unsure, glob: true, cds, via };
+      if (path.isAbsolute(text)) return { text, files: [text], unsure: false, cds, via };
+      return { text, files: dirs.map((dir) => path.resolve(dir, text)), unsure, cds, via };
     });
 }
 
 // The shell's folder once a `cd` may have moved it anywhere: no folder is certain.
 const UNKNOWN = Object.freeze({ dirs: [], unsure: true });
+
+// Where a command runs after a wrapper's `env -C` or git's `-C` to the token `to`: the shell's own directory changes
+// stay, and `via` records the move after the last of them.
+function within(place, to) {
+  return { ...moved(place, to), cds: place.cds, via: [...place.via, to ?? { text: '', dynamic: true }] };
+}
 
 // Where the shell can be after a directory change to the token `to` from `place`: { dirs, unsure }. A missing or
 // dynamic `to` reaches an unknown folder. `mayFail` keeps the folders before the change too.
@@ -438,10 +686,14 @@ function moved(place, to, mayFail = false) {
   return { dirs: dirs.slice(0, FOLDERS_LIMIT), unsure };
 }
 
-// The folder a `cd` or `pushd` names: its first word that is not an option. Null when no word names one: none, which is
-// the home folder, `-`, the previous folder, or `+1`, a place on the directory stack.
+// The folder a `cd` or `pushd` names: its first word that is not an option, past one `--` that ends the options. Null
+// when no word names one: none, which is the home folder, `-`, the previous folder, or `+1`, a place on the directory
+// stack.
 function operand(args) {
-  const to = args.find((token) => token.dynamic || !/^-[LPe@]+$/u.test(token.text));
+  let i = 0;
+  while (args[i] && !args[i].dynamic && /^-[LPe@]+$/u.test(args[i].text)) i += 1;
+  if (args[i] && !args[i].dynamic && args[i].text === '--') i += 1;
+  const to = args[i];
   return to && (to.dynamic || !/^(?:-|[+-]\d+)$/u.test(to.text)) ? to : null;
 }
 
@@ -453,7 +705,7 @@ function gitWritten(segment, place, restores) {
   let at = place;
   call.globals.forEach((token, i) => {
     const value = call.globals[i + 1];
-    if (token.text === '-C' && value) at = moved(at, value);
+    if (token.text === '-C' && value) at = within(at, value);
   });
   let { rest } = call;
   // git checkout writes paths only after `--`; before it a word may be a branch. git restore --staged alone writes the index.
@@ -574,7 +826,8 @@ function targetDirectory(args) {
   return null;
 }
 
-function decide(targets, cwd, failSafe, verb) {
+// `leadFor(root)`, when given, writes the reason's first line in place of today's.
+function decide(targets, cwd, failSafe, verb, leadFor = null) {
   for (const target of targets) {
     const file = canonical(path.resolve(cwd, target));
     const folder = existingFolder(path.dirname(file));
@@ -590,8 +843,9 @@ function decide(targets, cwd, failSafe, verb) {
     if (config.git.mainCheckout.allowWrites.some((glob) => globPattern(glob).test(rel.split(path.sep).join('/')))) continue;
     const ignored = isIgnored(root, rel || '.');
     if (ignored === true || (ignored === null && !failSafe)) continue;
-    const lead =
-      ignored === null
+    const lead = leadFor
+      ? leadFor(root)
+      : ignored === null
         ? `Blocked: git could not tell whether '${rel}' is tracked in the main checkout (${root}), so ${verb} nothing to be safe.`
         : `Blocked: ${verb} '${rel}', a tracked file in the main checkout (${root}).`;
     return reason(lead, project, config);

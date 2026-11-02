@@ -62,4 +62,19 @@ the change does not touch.
 - `stuck`: a reviewer failed 3 times on this head. `too_large`: the change is past what one review covers, or its
   visual capture is past 200 images; `reason` names the routes.
 - `round_limit`: the round cap, `github.maxReviewRounds` as the base branch commits it. Its last round always runs
-  the final stage.
+  the final stage. `extension` says why no extra round: `off`, the ceiling, the signals (`reasons` names each red flag),
+  the judge, or the Human.
+
+## At the cap: extra rounds
+
+With `github.extraRounds` on, the cap first checks whether one more round is worth it.
+
+- `extension_check`: `extension` holds each round's open findings, each fix's size, the pull request's `files`, its
+  `goal`, and the `signals` that passed. Run `dispatch[0]` as its read-only `agent` with `brief` and `extension`.
+  It returns `extend` or `stop` with evidence; record it with `record`, its `--reason` naming that evidence. Then run
+  the step again. The session never writes a verdict the judge did not give.
+- `extension_ask`: the judge said extend, and the Human decides. Ask `question` with AskUserQuestion, with `options`
+  as given, word for word. Record what the Human picked: `aidrian pr extend <n> --human approve` for the option that
+  starts with "Approve", `--human deny` otherwise. The `review-extend` rule refuses an approval the Human did not give
+  in this session. Under `autopilot`, nobody is there to ask: park it as a Decision for the Human.
+- A grant is one round: the step then returns `fix_required` for the same head. At the next cap the check runs again.

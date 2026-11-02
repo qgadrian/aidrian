@@ -258,11 +258,12 @@ test('only the repository root and the example name a file AGENTS.md or CLAUDE.m
 
 test('a skill that runs the pr-review-loop skill says when it marks the pull request ready', () => {
   // pr-review-loop leaves marking ready to such a caller, so a caller without the step leaves a green pull request a draft.
-  const callers = [['autopilot', 'autopilot', 'references/phases.md'], ['orchestration', 'orchestrator', 'SKILL.md']];
+  const callers = [['autopilot', 'references/phases.md'], ['orchestration', 'SKILL.md']];
   const loop = readFileSync(path.join(PLUGIN, 'skills/pr-review-loop/SKILL.md'), 'utf8');
   assert.match(loop, /review of the current head signed off/, 'the loop marks ready only after the current head is reviewed');
-  for (const [skill, name, file] of callers) {
-    assert.ok(loop.includes('`' + name + '`'), `pr-review-loop names the ${name} as a caller`);
+  assert.match(loop.replace(/\s+/g, ' '), /Run as a step of another skill or agent, never mark it ready: that is the caller's step, after all its reviews\./,
+    'the loop leaves ready to any caller, without naming one');
+  for (const [skill, file] of callers) {
     const text = readFileSync(path.join(PLUGIN, 'skills', skill, file), 'utf8');
     assert.match(text, /gh pr ready <n>/, `${skill} marks the pull request ready`);
     assert.match(text, /github\.markReady/, `${skill} reads github.markReady`);
@@ -325,6 +326,25 @@ test('the security-sensitive finding rules live in the orchestration skill § 4,
   assert.match(findings, /\*\*Security-sensitive findings\*\*, on auth, tenant isolation, another user's data, public trust boundaries, server-side validation, abuse, payment or webhook trust, or privileged access: only `security-engineer` closes or excludes one\. Weak evidence goes to `explorer`\./);
   assert.match(findings, /"Disputed" closes nothing: escalate to the Human with the owning agent and the missing evidence\./);
   assert.match(skill, /before its first editing dispatch, pull request step, or finding to close/);
+});
+
+test('a skill ends at its own output: no sentence names a caller to say what follows it', () => {
+  // A continuation clause in the called skill loses to its own end, and the caller's next step never runs. The
+  // orchestration skill is written for the orchestrator itself, so it is the caller's text.
+  const walk = (dir) => readdirSync(dir, { withFileTypes: true })
+    .flatMap((entry) => (entry.isDirectory() ? walk(path.join(dir, entry.name)) : entry.name.endsWith('.md') ? [path.join(dir, entry.name)] : []));
+  const skills = path.join(PLUGIN, 'skills');
+  const caller = /`(?:autopilot|orchestrator)`/;
+  const continuation = /\b(?:the caller|continues?|then run|next step|what follows)\b/i;
+  const found = walk(skills).filter((file) => !path.relative(skills, file).startsWith('orchestration/')).flatMap((file) =>
+    readFileSync(file, 'utf8').replace(/\s+/g, ' ').split(/(?<=\.)\s+/)
+      .filter((sentence) => caller.test(sentence) && continuation.test(sentence))
+      .map((sentence) => `${path.relative(skills, file)}: ${sentence}`));
+  assert.deepEqual(found, []);
+  const checklist = readFileSync(path.join(PLUGIN, 'skills/skill-writer/references/checklist.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(checklist, /The skill ends at its own output and never names who continues/);
+  assert.match(readFileSync(path.join(ROOT, 'docs/architecture.md'), 'utf8').replace(/\s+/g, ' '),
+    /a skill ends at its own output and never names who continues; the caller's text names the next step\./);
 });
 
 test('the local banned terms file stays out of git', () => {

@@ -71,8 +71,8 @@ status: "pending"
 
 ## Risks
 
-- A caller that retries checkout saves the same order twice, so the order store ends up holding two copies of that
-  order. The per-app store keeps this behaviour as it is today.
+- Saving an order whose id the store already holds adds a second copy of it, so one order can appear twice in the
+  store. The per-app store keeps this behaviour as it is today.
 
 ## Open questions
 

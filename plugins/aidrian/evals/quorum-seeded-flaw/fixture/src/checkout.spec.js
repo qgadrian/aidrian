@@ -15,3 +15,13 @@ test('store credit pays first and the card pays the rest', () => {
   assert.equal(customer.creditCents, 0);
   assert.equal(providerCalls().at(-1).cents, 2500);
 });
+
+test('a retried order takes no store credit and no charge again', () => {
+  const customer = { id: 'c2', creditCents: 1500 };
+  const first = placeOrder({ id: 'o2', customer, totalCents: 1000 });
+  const calls = providerCalls().length;
+  const again = placeOrder({ id: 'o2', customer, totalCents: 1000 });
+  assert.equal(again, first);
+  assert.equal(customer.creditCents, 500);
+  assert.equal(providerCalls().length, calls);
+});

@@ -82,12 +82,13 @@ Add `sign_off` when the dispatch asks for one, as the `knowledge` skill's handof
 
 - Let git hooks run. If one fails, fix the cause or stop and report; never bypass it.
 - When you commit or push, list the exact git commands in `commands_run` and add `not_bypassed`, or `hook_failed`, to `compliance`.
-- A tool that rewrites whole files, such as a formatter or a generator, runs only through the command the project's knowledge names,
+- A formatter, or another tool that rewrites whole files, runs only through the command the project's knowledge names,
   and only on the files the task changed. When knowledge names none, edit the lines the task needs and leave the rest.
-- Before running one, `git add -- <paths>` your own edits. Then `git diff` shows only what the tool changed;
-  when it rewrote lines the task did not touch, `git restore -- <paths>` those files and do not run it again.
-  Never reset or re-apply the whole worktree.
-- A diff that only such a tool produced is noise: revert it; never commit it alone.
+  A generator also runs through its named command, and may rewrite the output files it owns.
+- Before running either, `git add -- <paths>` your own edits. Then `git diff` shows only what the tool changed;
+  when it rewrote lines the task did not touch, outside a generator's own outputs, `git restore -- <paths>` those files
+  and do not run it again. Never reset or re-apply the whole worktree.
+- A tool's diff with no source change of the task behind it is noise: revert it; never commit it alone.
   A generator that rewrites output on every run is a bug to report.
 
 ## End-of-work checklist

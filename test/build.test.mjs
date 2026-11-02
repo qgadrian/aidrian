@@ -269,8 +269,9 @@ test('both builders, on both hosts, stage their edits before a whole-file tool a
       const body = flat(text);
       const where = `${host} ${name}`;
       assert.match(body, /runs only through the command the project's knowledge names, and only on the files the task changed/, where);
-      assert.match(body, /Before running one, `git add -- <paths>` your own edits\. Then `git diff` shows only what the tool changed/, where);
-      assert.match(body, /`git restore -- <paths>` those files and do not run it again/, where);
+      assert.match(body, /A generator also runs through its named command, and may rewrite the output files it owns/, `${where}: generators keep their outputs`);
+      assert.match(body, /Before running either, `git add -- <paths>` your own edits\. Then `git diff` shows only what the tool changed/, where);
+      assert.match(body, /outside a generator's own outputs, `git restore -- <paths>` those files and do not run it again/, where);
       assert.match(body, /Never reset or re-apply the whole worktree\./, where);
       assert.doesNotMatch(body, /only a generator produced/, `${where}: the old bare generator line is gone`);
     }

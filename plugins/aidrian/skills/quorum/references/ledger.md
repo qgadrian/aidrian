@@ -109,7 +109,8 @@ again: its objection escalates with the earlier answer as the recommended answer
 - **After the Human.** Add each answer to `human_answers`. The objection becomes `accepted` or `rejected` as the answer
   says; a valid partial accept stays `accepted`, with its rejected part settled by the answer. A deferred
   escalation stays `escalated`. Then write `status: complete`, and run `quorum check`: it exits 1 on a complete ledger
-  that still holds a `pending` objection, or a ruled status with no `ruling`.
+  that still holds a `pending` objection, a ruled status with no `ruling`, or an invalid ruling or rebuttal on an
+  objection the Human did not settle (not `escalated`, not answered), as when cited code changed after the run.
 
 ## Under plan-review
 

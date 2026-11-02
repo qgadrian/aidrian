@@ -73,7 +73,7 @@ Before round 1:
 
 - A `complete` ledger at this hash for which `quorum check` exits 0 is reused: skip the rounds, and report from it,
   with every line `check` printed in the Ledger item.
-- An `open` ledger at this hash is discarded, and the run starts over.
+- An `open` ledger at this hash, or a `complete` one whose check exits 1, is discarded, and the run starts over.
 - Every other `complete` ledger whose `plan` is this plan's absolute path gives its Human answers to every brief as
   settled, as ledger.md § Settled answers says. They are never copied into the new ledger.
 

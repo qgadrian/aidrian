@@ -360,7 +360,8 @@ export function completeProblems(ledger) {
   });
 }
 
-// Checks a ledger in place: { ledger, problems, escapes }. `problems` lists each failed citation, relabel, and
+// Checks a ledger in place: { ledger, problems, escapes, stale }. `stale` lists each invalid ruling or rebuttal of a
+// complete ledger on an objection the Human did not settle. `problems` lists each failed citation, relabel, and
 // invalid ruling or rebuttal with its reason; `escapes` lists each ref path outside the root, for a warning. An escape
 // is also a failed citation in `problems`.
 export function checkLedger(ledger, ctx) {
@@ -380,8 +381,17 @@ export function checkLedger(ledger, ctx) {
       return false;
     }
   });
-  const ruling = (value, where) => {
-    if (value && !passing(value.citations, where).length) problems.push(`${where}: invalid: the ruling has no passing citation`);
+  // In a `complete` ledger, an invalid ruling or rebuttal on an objection the Human did not settle (not `escalated`, no
+  // answer) is stale: its evidence changed after the ledger was finished, so reusing it would skip the retry or the
+  // escalation it now needs. Those lines go to `stale` as well, and `check` refuses the ledger.
+  const answered = new Set(ledger.human_answers.map((answer) => answer.objection_id));
+  const stale = [];
+  const invalid = (objection, line) => {
+    problems.push(line);
+    if (ledger.status === 'complete' && objection.status !== 'escalated' && !answered.has(objection.id)) stale.push(line);
+  };
+  const ruling = (objection, value, where) => {
+    if (value && !passing(value.citations, where).length) invalid(objection, `${where}: invalid: the ruling has no passing citation`);
   };
   // What a rebuttal must add to: what the ledger held before the rebuttal round, every objection's citations and every
   // first ruling's. Rebuttals and their rulings are left out, so two rebuttals that bring the same new evidence are both new.
@@ -396,19 +406,19 @@ export function checkLedger(ledger, ctx) {
         objection.status = 'opinion';
       } else problems.push(`${where}: no citation passes; kept ${objection.status}, since it was ruled on`);
     }
-    ruling(objection.ruling, `${where} ruling`);
+    ruling(objection, objection.ruling, `${where} ruling`);
     const rebuttal = objection.rebuttal;
     if (rebuttal) {
       // A concession needs no citation; a rebuttal needs a passing one the ledger does not already hold.
       const proof = passing(rebuttal.citations, `${where} rebuttal`);
       if (rebuttal.verdict === 'rebut') {
-        if (!proof.length) problems.push(`${where} rebuttal: invalid: the rebuttal has no passing citation`);
-        else if (proof.every((citation) => cited.has(citationKey(citation)))) problems.push(`${where} rebuttal: invalid: the rebuttal cites nothing new`);
+        if (!proof.length) invalid(objection, `${where} rebuttal: invalid: the rebuttal has no passing citation`);
+        else if (proof.every((citation) => cited.has(citationKey(citation)))) invalid(objection, `${where} rebuttal: invalid: the rebuttal cites nothing new`);
       }
-      ruling(rebuttal.ruling, `${where} rebuttal ruling`);
+      ruling(objection, rebuttal.ruling, `${where} rebuttal ruling`);
     }
   }
-  return { ledger, problems, escapes };
+  return { ledger, problems, escapes, stale };
 }
 
 // Reads a file under the root, or null when it is missing or not a regular file: a FIFO or a device would hang the read.
@@ -513,8 +523,13 @@ export const commands = {
           for (const problem of invalid) console.error(`${file}: ${problem}`);
           return 1;
         }
-        const { problems, escapes } = checkLedger(ledger, { root, plan, env, read: reader(root) });
+        const { problems, escapes, stale } = checkLedger(ledger, { root, plan, env, read: reader(root) });
         for (const escape of escapes) console.error(`${file}: warning: ${escape}`);
+        // A complete ledger whose rulings lost their evidence is not settled any more: exit 1, unwritten, so it is not reused.
+        if (stale.length) {
+          for (const line of stale) console.error(`${file}: ${line} in a complete ledger`);
+          return 1;
+        }
         const print = deps.print ?? console.log;
         for (const problem of problems) print(problem);
         writeFileSync(file, `${JSON.stringify(ledger, null, 2)}\n`);

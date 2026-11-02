@@ -562,6 +562,46 @@ test('check: an objection id other than A1 to A7 or B1 to B7 exits 1, is printed
   assert.equal(good.status, 0, good.stderr);
 });
 
+test('check: a complete ledger whose ruling lost its evidence exits 1 and is not written; the same ledger open exits 0 and flags it', (t) => {
+  const p = project(t);
+  // The ruling cites code; then the code changes and the plan does not, so a reused ledger would treat a stale ruling as settled.
+  const evidence = cite('code', 'src/app.js:2', 'export function book(slot) {');
+  const ruled = (decision, citations = [evidence]) => ({ decision, change_or_reason: 'r', citations });
+  const objections = () => [objection('A1', [PASSING.adr], { status: 'accepted', ruling: ruled('accept') })];
+  const before = p.check({ ...ledger(objections()), status: 'complete' });
+  assert.equal(before.status, 0, before.stderr);
+  write(p.root, 'src/app.js', 'export const app = 1;\nexport function reserve(slot) {\n  return slot;\n}\n');
+
+  const complete = { ...ledger(objections()), status: 'complete' };
+  const refused = p.check(complete);
+  assert.equal(refused.status, 1, refused.stdout);
+  assert.match(refused.stderr, /objection A1 ruling: invalid: the ruling has no passing citation in a complete ledger$/mu);
+  assert.deepEqual(refused.ledger, complete, 'not written back');
+
+  const open = p.check(ledger(objections()));
+  assert.equal(open.status, 0, open.stderr);
+  assert.ok(open.lines.includes('objection A1 ruling: invalid: the ruling has no passing citation'), open.stdout);
+
+  // An invalid rebuttal, or an invalid final ruling on one, is stale the same way.
+  const rebutted = (rebuttal) => ({ ...ledger([objection('B1', [PASSING.adr], { by: 'B', status: 'rejected', ruling: ruled('reject', [PASSING.plan]), rebuttal })]), status: 'complete' });
+  for (const [entry, line] of [
+    [{ verdict: 'rebut', claim: 'c', citations: [evidence], ruling: ruled('reject', [PASSING.fenced]) }, /objection B1 rebuttal: invalid: the rebuttal has no passing citation in a complete ledger$/mu],
+    [{ verdict: 'rebut', claim: 'c', citations: [PASSING.fenced], ruling: ruled('reject') }, /objection B1 rebuttal ruling: invalid: the ruling has no passing citation in a complete ledger$/mu],
+  ]) {
+    const result = p.check(rebutted(entry));
+    assert.equal(result.status, 1, result.stdout);
+    assert.match(result.stderr, line);
+  }
+
+  // The Human settled these: an escalated objection keeps its invalid ruling, and an answered one stands on the answer.
+  const settled = p.check({ ...ledger([
+    objection('A1', [PASSING.adr], { status: 'escalated', ruling: ruled('reject') }),
+    objection('A2', [PASSING.adr], { status: 'accepted', ruling: ruled('escalate') }),
+  ]), status: 'complete', human_answers: [{ objection_id: 'A2', answer: 'accept it' }] });
+  assert.equal(settled.status, 0, settled.stderr);
+  assert.ok(settled.lines.includes('objection A1 ruling: invalid: the ruling has no passing citation'), settled.stdout);
+});
+
 test('check: a ref that is not a relative path is a failed citation, not an escape', (t) => {
   const p = project(t);
   const refs = [cite('doc', 'docs\\rules.md#refunds', 'refund'), cite('doc', 'docs//rules.md#refunds', 'refund'), cite('doc', '#refunds', 'refund'), cite('code', ':3', 'x'), cite('absence', '', 'x'), cite('code', '.:1', 'x')];

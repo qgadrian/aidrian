@@ -47,7 +47,9 @@ Read `references/manifest.md`, then the manifest `<state>/reviews/pr-<n>.json`, 
   Unattended or under the `orchestrator`, ask nothing: reuse that round's findings.
 - Its `head_sha` is an ancestor of the current head (`git merge-base --is-ancestor`): steps 4 and 5 plan for the files changed
   since then, `git diff --name-only <its head_sha> <head_sha>`, and each agent of an earlier round also gets back its `fix_now`
-  findings that are `open` or `fixed`, to confirm.
+  findings that are `open` or `fixed`, to confirm. Only the agents with such findings run, plus `code-reviewer`.
+  A new finding there counts when it is high or critical, or a regression the new commits introduced;
+  the rest goes in the report as follow-ups, not in the manifest.
 - Otherwise, after a rebase or a force push, review the whole pull request and match the old findings by file and summary.
   Unless the Human asked for a full review, first tell them the changed-file count and how many agents step 4 would dispatch,
   and ask whether to review it whole or only the paths they name. Unattended or under the `orchestrator`, review it whole.

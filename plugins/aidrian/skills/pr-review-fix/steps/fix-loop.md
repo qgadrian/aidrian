@@ -33,7 +33,12 @@ On a corrective pass, add: `The review of the first fix said: <the reviewer's wo
 
 Send the agent that raised the finding (its `specialist`; `security-engineer` for a security finding) the finding verbatim,
 the diff of the slice's files (`git diff -- <paths>`), and one question: is it fixed, not fixed, or fixed but broken elsewhere?
-Ask for evidence with the answer.
+Ask for evidence with the answer. Scope the review to the finding and what the fix changed:
+"broken elsewhere" means a regression this diff introduced, never an edge case the code had before the fix.
+Ask the reviewer to list anything else it notices as a follow-up, with no verdict.
+
+- Follow-ups never start a corrective pass. Each one becomes a new finding for the next `pr-review` round,
+  or a new issue through `agent-issue-writer`. The report lists them.
 
 - Fixed: go to step 4.
 - Not fixed, or broken elsewhere, after the first pass: run a corrective pass from step 1.

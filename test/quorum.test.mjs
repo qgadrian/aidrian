@@ -46,7 +46,8 @@ function project(t) {
   const ledgerFile = path.join(state, 'quorum/my-plan-abc.json');
   const check = (ledger, { env = process.env } = {}) => {
     write(state, 'quorum/my-plan-abc.json', JSON.stringify(ledger));
-    const r = spawnSync(CLI, ['quorum', 'check', ledgerFile, '--plan', plan], { cwd: path.join(root, 'src'), encoding: 'utf8', env });
+    const r = spawnSync(CLI, ['quorum', 'check', ledgerFile, '--plan', plan], { cwd: path.join(root, 'src'), encoding: 'utf8', env, timeout: 30_000 });
+    assert.equal(r.error, undefined, 'check finished');
     return { ...r, ledger: JSON.parse(readFileSync(ledgerFile, 'utf8')), lines: r.stdout.trim().split('\n') };
   };
   return { root, state, plan, check, git };
@@ -232,6 +233,74 @@ test('check: a citation through a symlinked folder that points outside the root 
     assert.ok(result.lines.includes(`objection V${i}.citations[0] (${citation.kind} ${citation.ref}): ${citation.ref.replace(/[:#].*$/u, '')} is outside the repository root`), `${citation.ref}\n${result.stdout}`);
   }
   assert.equal(result.stderr.trim().split('\n').length, refs.length, result.stderr);
+});
+
+test('check: an escape in a ruling or a rebuttal fails that citation and warns: the ruling or rebuttal is invalid, exit 0', (t) => {
+  const p = project(t);
+  write(p.state, 'outside.md', '# Out\n\n## A\nsecret\n');
+  symlinkSync(p.state, path.join(p.root, 'state-link'));
+  const out = cite('doc', 'state-link/outside.md#a', 'secret');
+  const result = p.check(ledger([
+    objection('R1', [PASSING.code], { status: 'rejected', ruling: { decision: 'reject', change_or_reason: 'r', citations: [out] } }),
+    objection('R2', [PASSING.code], { status: 'rejected', ruling: { decision: 'reject', change_or_reason: 'r', citations: [PASSING.adr] }, rebuttal: { verdict: 'rebut', claim: 'c', citations: [cite('code', '../x.js:1', 'x')], ruling: { decision: 'reject', change_or_reason: 'r', citations: [out] } } }),
+  ]));
+  assert.equal(result.status, 0, result.stderr);
+  for (const line of [
+    'objection R1 ruling.citations[0] (doc state-link/outside.md#a): state-link/outside.md is outside the repository root',
+    'objection R1 ruling: invalid: the ruling has no passing citation',
+    'objection R2 rebuttal.citations[0] (code ../x.js:1): ../x.js is outside the repository root',
+    'objection R2 rebuttal: invalid: the rebuttal has no passing citation',
+    'objection R2 rebuttal ruling: invalid: the ruling has no passing citation',
+  ]) assert.ok(result.lines.includes(line), `${line}\n${result.stdout}`);
+  assert.equal(result.stderr.trim().split('\n').length, 3, result.stderr);
+  assert.deepEqual(result.ledger.objections.map((each) => each.status), ['rejected', 'rejected']);
+});
+
+test('check: GIT_DIR and GIT_WORK_TREE pointing at another repository do not redirect absence: it lists the root`s files', (t) => {
+  const p = project(t);
+  // Another temporary repository, whose tracked files do not hold the quote that the root's src/app.js holds.
+  const other = temp(t, 'aidrian-quorum-other-');
+  spawnSync('git', ['init', '-q', other]);
+  write(other, 'src/other.js', 'nothing here\n');
+  spawnSync('git', ['add', '-A'], { cwd: other });
+  const env = { ...process.env, GIT_DIR: path.join(other, '.git'), GIT_WORK_TREE: other };
+  const result = p.check(ledger([objection('G1', [cite('absence', 'src', 'export function book')])]), { env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.lines.includes('objection G1.citations[0] (absence src): src/app.js contains the quote'), result.stdout);
+});
+
+test('check: absence never counts an ignored or untracked file: naming one is a path git tracks no file under', (t) => {
+  const p = project(t);
+  const result = p.check(ledger([
+    objection('U1', [cite('absence', 'src/secret.txt', 'other')]),
+    objection('U2', [cite('absence', 'src/untracked.js', 'other')]),
+    objection('U3', [PASSING.absence]),
+  ]));
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.lines.includes('objection U1.citations[0] (absence src/secret.txt): git tracks no file under src/secret.txt'), result.stdout);
+  assert.ok(result.lines.includes('objection U2.citations[0] (absence src/untracked.js): git tracks no file under src/untracked.js'), result.stdout);
+  assert.ok(!result.lines.some((line) => line.startsWith('objection U3')), 'the needle only in ignored and untracked files is absent');
+});
+
+test('check: a ref with a NUL or another control character is not a relative path, and check does not crash', (t) => {
+  const p = project(t);
+  const refs = [cite('absence', 'src\u0000x', 'x'), cite('code', 'src/app.js\u0000:1', 'x'), cite('doc', 'docs/rules.md\n#refunds', 'x'), cite('absence', 'src\u007f', 'x')];
+  const result = p.check(ledger(refs.map((citation, i) => objection(`N${i}`, [citation]))));
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!result.stdout.includes('\u0000'), 'no NUL reaches the output');
+  for (const [i, shown] of ['src\\u0000x', 'src/app.js\\u0000:1', 'docs/rules.md\\u000a#refunds', 'src\\u007f'].entries()) {
+    assert.ok(result.lines.some((line) => line.startsWith(`objection N${i}.citations[0] (${refs[i].kind} ${shown}): "`) && line.endsWith('" is not a relative path')), `${shown}\n${result.stdout}`);
+  }
+  assert.deepEqual(result.ledger.objections.map((each) => each.status), Array(refs.length).fill('opinion'));
+});
+
+test('check: a code or doc citation to a FIFO fails as missing instead of hanging', { skip: process.platform === 'win32' }, (t) => {
+  const p = project(t);
+  for (const name of ['src/pipe.js', 'docs/pipe.md']) assert.equal(spawnSync('mkfifo', [path.join(p.root, name)]).status, 0);
+  const result = p.check(ledger([objection('Q1', [cite('code', 'src/pipe.js:1', 'x')]), objection('Q2', [cite('doc', 'docs/pipe.md#a', 'x')])]));
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.lines.includes('objection Q1.citations[0] (code src/pipe.js:1): src/pipe.js is missing'), result.stdout);
+  assert.ok(result.lines.includes('objection Q2.citations[0] (doc docs/pipe.md#a): docs/pipe.md is missing'), result.stdout);
 });
 
 // A stand-in for `codex exec`: it records how it was started, writes `answer` where -o points, then exits with `code`

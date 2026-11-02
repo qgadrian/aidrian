@@ -9,7 +9,7 @@
 // `git ls-files`, and never executes what a citation names.
 
 import { spawn } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
@@ -215,6 +215,10 @@ export function rebuttalProblems(answer, ledger) {
 // Whitespace runs as one space, ends trimmed: a quote matches across line breaks and indentation.
 export const collapse = (text) => String(text).replace(/\s+/gu, ' ').trim();
 
+// A control character, which no ref path holds; `shown` prints one as \uXXXX, so a NUL in a ref never reaches the output.
+const CONTROL = /[\u0000-\u001f\u007f]/u;
+const shown = (text) => String(text).replace(new RegExp(CONTROL.source, 'gu'), (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`);
+
 // A citation's ref path that leaves the repository root: `..`, an absolute path, or a symlink out. checkLedger counts
 // it as one failed citation and warns: the outside file is never read, so failing the whole ledger would protect nothing.
 class Escape extends Error {}
@@ -276,10 +280,11 @@ function refParts({ kind, ref }) {
 }
 
 // `rel`, a path relative to the root, as { path } inside it, or { problem } when it is not a relative path: empty, with
-// an empty part (`a//b`), or with a backslash. Throws Escape when it leaves the root, as text (`..`, an absolute path) or
-// through a symlink. `folder` allows `.`, the whole repository.
+// an empty part (`a//b`), a backslash, or a control character (a NUL would crash the git and file calls). Throws Escape
+// when it leaves the root, as text (`..`, an absolute path) or through a symlink. `folder` allows `.`, the whole repository.
 function inside(root, rel, ref, folder = false) {
-  const notRelative = { problem: `"${ref}" is not a relative path` };
+  const notRelative = { problem: `"${shown(ref)}" is not a relative path` };
+  if (CONTROL.test(rel)) return notRelative;
   if (path.isAbsolute(rel)) throw new Escape(`${rel} is outside the repository root`);
   if (rel.includes('\\') || rel.replace(/\/+$/u, '').split('/').includes('')) return notRelative;
   const normal = path.posix.normalize(rel).replace(/\/+$/u, '');
@@ -357,11 +362,11 @@ export function checkLedger(ledger, ctx) {
   const passing = (list, where) => list.filter((citation, i) => {
     try {
       const problem = citationProblem(citation, ctx);
-      if (problem) problems.push(`${where}.citations[${i}] (${citation.kind} ${citation.ref}): ${problem}`);
+      if (problem) problems.push(`${where}.citations[${i}] (${citation.kind} ${shown(citation.ref)}): ${problem}`);
       return problem === null;
     } catch (error) {
       if (!(error instanceof Escape)) throw error;
-      problems.push(`${where}.citations[${i}] (${citation.kind} ${citation.ref}): ${error.message}`);
+      problems.push(`${where}.citations[${i}] (${citation.kind} ${shown(citation.ref)}): ${error.message}`);
       escapes.push(`${where}.citations[${i}]: ${error.message}, not read`);
       return false;
     }
@@ -397,9 +402,10 @@ export function checkLedger(ledger, ctx) {
   return { ledger, problems, escapes };
 }
 
-// Reads a file under the root, or null when it is missing or not a file.
+// Reads a file under the root, or null when it is missing or not a regular file: a FIFO or a device would hang the read.
 const reader = (root) => (file) => {
   try {
+    if (!statSync(path.join(root, file)).isFile()) return null;
     return readFileSync(path.join(root, file), 'utf8');
   } catch {
     return null;

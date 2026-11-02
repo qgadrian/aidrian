@@ -86,6 +86,13 @@ Add `sign_off` when the dispatch asks for one, as the `knowledge` skill's handof
 
 - Let git hooks run. If one fails, fix the cause or stop and report; never bypass it.
 - When you commit or push, list the exact git commands in `commands_run` and add `not_bypassed`, or `hook_failed`, to `compliance`.
+- A tool that rewrites whole files, such as a formatter or a generator, runs only through the command the project's knowledge names,
+  and only on the files the task changed. When knowledge names none, edit the lines the task needs and leave the rest.
+- Before running one, `git add -- <paths>` your own edits. Then `git diff` shows only what the tool changed;
+  when it rewrote lines the task did not touch, `git restore -- <paths>` those files and do not run it again.
+  Never reset or re-apply the whole worktree.
+- A diff that only such a tool produced is noise: revert it; never commit it alone.
+  A generator that rewrites output on every run is a bug to report.
 
 ## End-of-work checklist
 
@@ -99,5 +106,4 @@ Record each command in `commands_run` and its output, labelled, in `artifacts`:
 
 `pending_commit` is not a `dirty_handoff`. When the dispatch asked for a commit, a non-empty working tree with no deferred-files entry
 is a `dirty_handoff`: say so, so the dispatcher routes the work back.
-A diff that only a generator produced is noise: revert it; never commit it alone. A generator that rewrites output on every run is a bug to report.
 """

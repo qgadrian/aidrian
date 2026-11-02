@@ -280,6 +280,19 @@ test('sectionOf, invariantsOf, and blocksOf: a fence indented four spaces outsid
   }
 });
 
+test('sectionOf, invariantsOf, and blocksOf: a thematic break is no list item, so a four-space ``` after it stays indented code', () => {
+  for (const rule of ['* * *', '- - -', '***', '_ _ _']) {
+    for (const eol of ['\n', '\r\n']) {
+      const doc = ['# T', '', '## A', 'Text.', '', rule, '', '    ```js', '    const x = 1;', '', '## B', 'Rule b.', ''].join(eol);
+      assert.equal(sectionOf(doc, 'b')?.body, 'Rule b.', `${rule} ${JSON.stringify(eol)}`);
+      assert.deepEqual(invariantsOf({ invariants: 'x.md' }, () => doc).invariants.map((each) => each.id), ['a', 'b'], rule);
+      assert.deepEqual(blocksOf([rule, '', '    ```js', '    x', '', 'After.'].join(eol)).at(-1), 'After.', rule);
+    }
+  }
+  // A real item still opens a container: four spaces under "- " is a fence there.
+  assert.equal(sectionOf(['## A', '- step', '', '    ```md', '    ## Fake', '    ```', '', '## B', 'b'].join('\n'), 'fake'), null);
+});
+
 test('sectionOf, invariantsOf, and blocksOf: a fence indented to its list item`s content column is still a fence', () => {
   for (const eol of ['\n', '\r\n']) {
     // Four spaces under "- ", whose content column is 2, is 2 past the item: a fence. So is six under a nested item.

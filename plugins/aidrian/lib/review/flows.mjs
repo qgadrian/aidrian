@@ -103,7 +103,7 @@ function fencedIn(lines) {
     }
     if (line.trim()) while (items.length && indent < items.at(-1)) items.pop();
     const container = items.at(-1) ?? 0;
-    const item = /^( *)((?:[-*+]|\d+[.)]) +)\S/u.exec(line);
+    const item = itemOf(line);
     if (item && indent - container <= 3) items.push(item[1].length + item[2].length);
     const fence = fenceOf(line, container);
     open = fence && { ...fence, container: fence.item ?? container };
@@ -120,6 +120,11 @@ const expandTabs = (line) => {
   return out + line.slice(prefix.length);
 };
 const indentOf = (line) => /^ */u.exec(line)[0].length;
+
+// A list item's marker and the content column after it, or null. A thematic break such as `* * *` or `- - -` looks like
+// an item but is not one (CommonMark), so it opens no container a later fence could be measured against.
+const THEMATIC_BREAK = /^ {0,3}([-*_])(?: *\1){2,} *$/u;
+const itemOf = (line) => (THEMATIC_BREAK.test(line) ? null : /^( *)((?:[-*+]|\d+[.)]) +)\S/u.exec(line));
 
 // The top-level blocks of a section body, in order: a sub-heading, a top-level list item with its nested lines, a
 // fenced block, or a paragraph. As in CommonMark, a line belongs to the list item above it when it is indented to that
@@ -155,7 +160,7 @@ export function blocksOf(body) {
     // A fence's container: the list item the line sits in, else the body's least indentation.
     const fence = fenceOf(line, inside ? (open.container ?? base) : column !== null && indent >= column ? column : base);
     const text = line.slice(Math.min(base, indent));
-    const item = /^( *)((?:[-*+]|\d+[.)]) +)\S/u.exec(line);
+    const item = itemOf(line);
     const top = !inside && line.trim() !== '' && indent - base <= 3 && (column === null || indent < column);
     const starts = top && (/^#{1,6}\s/u.test(text.trimStart()) || item !== null || blank || fence !== null || closed);
     if (starts || (!current && line.trim())) {

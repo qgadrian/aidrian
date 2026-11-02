@@ -4,24 +4,13 @@
 // Claude Code prompt, or another terminal). It denies `aidrian pr signoff` run as `aidrian`, or as a node script that
 // is the plugin's cli.mjs or bin/aidrian, also inside a command substitution that runs; anything it cannot read runs.
 
-import { commandLines, lexCommand, readInvocation } from '../shell-lex.mjs';
+import { aidrianArgs, commandLines, lexCommand, readInvocation } from '../shell-lex.mjs';
 import { findProject } from '../project.mjs';
 
 export const REASON =
   'Blocked: `aidrian pr signoff` is the Human\'s sign-off, recorded under their name, and only the Human runs it. ' +
   'Stop at human_required, show the Human the command the review step printed, and ask them to run it in their own ' +
   'shell (`!` in the prompt, or another terminal).';
-
-const NODES = new Set(['node', 'nodejs', 'bun']);
-const isCli = (text) => /(?:^|\/)(?:cli\.mjs|aidrian)$/u.test(text);
-
-// The words after the program that make the aidrian command, or null when the invocation is not aidrian.
-export function aidrianArgs({ program, args }) {
-  if (program === 'aidrian') return args;
-  if (!NODES.has(program)) return null;
-  const script = args.findIndex((token) => !token.text.startsWith('-'));
-  return script !== -1 && isCli(args[script].text) ? args.slice(script + 1) : null;
-}
 
 // The deny reason for `command`, or null. On only inside a project.
 export function check(command, { cwd = process.cwd() } = {}) {

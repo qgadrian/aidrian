@@ -24,7 +24,7 @@ see [Recorded blocks](#recorded-blocks).
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
 | The main session ends a turn | The [session-length reminder](#session-length) | Claude Code | once |
 | A subagent stops | A `stop` row, then the [delivery check](#delivery-check) | Claude Code | once |
-| A session ends | A `session` row with its tokens and estimated cost | Claude Code | no |
+| A session ends | A `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code | no |
 
 The Bash rules run in the order of their table, in one process.
 A file edit is an Edit, Write, or NotebookEdit call, or Codex's `apply_patch`.

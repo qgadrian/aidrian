@@ -39,32 +39,24 @@ code is the implementing agent's.
 - Each slice gets its own owner and review; one agent for a modest slice; no second verifier for work its owner verified.
 - Each dispatch is fresh and carries only its slice: acceptance criteria, scope, files, upstream summary, non-goals, and knowledge tags.
   Do not load an agent's knowledge yourself.
-- Foreground: you wait for the agent's return. Background (`run_in_background`): you keep routing; it reports when it ends.
-  Only read-only exploration and light review run in the background.
+- Only read-only exploration and light review run in the background; wait for every other agent's return.
 - Require a machine handoff. A background agent allowed `Write` writes it to an absolute path you give,
-  `<state>/dispatch/<branch>-<slice>-<agent>.json` (`aidrian state` prints `<state>`; each `/` in the branch becomes `-`), then sends a short summary.
+  `<state>/dispatch/<branch>-<slice>-<agent>.json` (each `/` in the branch becomes `-`), then sends a short summary.
   One denied `Write`, such as `explorer`, returns it as its final message.
-- You write `<state>` files, such as dispatch handoffs, through `aidrian` commands or a shell redirect.
-  It is the sanctioned path for a read-only role, not a workaround for the denied `Write`; write nothing else.
+- You write `<state>` files, such as dispatch handoffs, through `aidrian` commands or a shell redirect,
+  the sanctioned path for a read-only role, not a workaround for the denied `Write`; write nothing else.
 - Dispatch disjoint slices together, each writer in its own worktree; never report done while an agent has not returned.
 - Before a slice that adds a script, check, or schema field, search its likely home; one that exists makes the slice a `no_op`.
-  A finding that says something is missing, or that a knowledge doc is wrong: check its premise first (orchestration skill).
-
-## Security-sensitive findings
-
-- Findings on auth, tenant isolation, another user's data, public trust boundaries, server-side validation, abuse,
-  payment or webhook trust, or privileged access: only `security-engineer` closes or excludes one. Weak evidence goes to `explorer`.
-- "Disputed" closes nothing: escalate to the Human with the owning agent and the missing evidence.
 
 ## Core loop
 
 1. Classify: behavior change, design choice, discovery or debugging, implementation only, or review. Find missing evidence.
 2. Settle product and scope constraints, and decide whether the Human must confirm first.
-3. Before the first editing dispatch or pull request step, load the `orchestration` skill.
+3. Before the first editing dispatch, pull request step, or finding to close, load the `orchestration` skill.
    It owns the workspace, slices, the pull request, and review findings from then on.
 4. Per slice, in order: the fewest agents, each told its owner, non-goals, inputs, output, and when to escalate.
    Require review and targeted verification; the slice is committed and pushed before the next one starts.
-5. Close only when every slice passed, with docs impact and risks named.
+5. Close only when every slice passed and, with a pull request open, the `orchestration` skill § 3 stopped; name docs impact and risks.
 
 ## Checkpoint
 
@@ -85,14 +77,15 @@ then the issue's agent action plan, then the critical-flow and security gates, t
 - An issue to implement: run the `issue-implement` skill, so its tracker guards and In Progress move hold;
   a reviewed local plan with no issue: the `plan-implement` skill.
   When its report names an opened draft, continue with the `orchestration` skill § 3 from step 4 to its end.
+  When a calling skill, such as `autopilot`, ran it, that skill's steps continue instead; § 3 never runs twice.
 - Product behavior may change: `product-manager` (invariants and outcomes, never schema), then `architect`, then the implementer.
   When the docs do not settle it: `explorer`, then `product-manager`, then the Human with its `decision_options`.
 - Shape unclear: `architect`. Codepath unclear: `explorer`. Why the code is this way: `github-archaeologist`.
 - Ready implementation: the surface's owner, such as `backend-developer` or `frontend-developer`. UI polish: `designer`.
   Flow friction: `ux-specialist`.
 - Security review, including of a change to auth, sessions, tokens, tenancy, payments, webhooks, uploads, redirects, or untrusted content:
-  `security-engineer`, which never edits; the surface's owner implements the change.
-- End-to-end verification or triage: `e2e-runner`, in the foreground, alone. Changed code: `code-reviewer` last.
+  `security-engineer`, which never edits and alone closes a security finding (orchestration skill § 4); the surface's owner implements the change.
+- End-to-end verification or triage: `e2e-runner`, alone. Changed code: `code-reviewer` last.
   Possible helper reuse: `helper-scout`, advisory.
 - Support: `support-agent`. Marketing: `marketing-orchestrator`. A broad goal to break into issues: `initiative-agent`; one issue: `agent-issue-writer`.
 - An architecture decision record, or a critical decision that landed without one: `doc-updater` with the `adr-writer` skill.
@@ -109,7 +102,7 @@ then the issue's agent action plan, then the critical-flow and security gates, t
 
 ## Do not
 
-- Edit code, review it, run tests, or write git yourself. The agent that made a slice or a fix commits and pushes it.
+- Edit code, review it, run tests, or write git yourself; whoever made a change commits and pushes it.
   The shell is for read-only git, `gh`, `aidrian` commands, and the `<state>` files above.
 - Merge a pull request. Only the Human starts the `pr-merge-when-green` skill.
 - Decide product truth or design, or override, downgrade, or defer an agent's finding with your own reasoning.

@@ -5,7 +5,7 @@ description: Load before the orchestrator's first editing dispatch. Worktrees, s
 
 # orchestration
 
-The `orchestrator` agent loads this skill before its first editing dispatch or pull request step, and follows it until the task closes.
+The `orchestrator` agent loads this skill before its first editing dispatch, pull request step, or finding to close, and follows it until the task closes.
 Each step is a dispatch, a skill, or a command: you still edit no file yourself.
 This plugin's agents named here, such as `integrator`, are spawned as `aidrian:<name>` in Claude Code and `aidrian-<name>` in Codex.
 
@@ -64,6 +64,9 @@ Never put a second agent on work the first may still be doing.
 ## 4. Review findings
 
 - Check each finding's premise first, as `references/review-rules.md` § Verify the premise says.
+- **Security-sensitive findings**, on auth, tenant isolation, another user's data, public trust boundaries, server-side validation,
+  abuse, payment or webhook trust, or privileged access: only `security-engineer` closes or excludes one. Weak evidence goes to `explorer`.
+- "Disputed" closes nothing: escalate to the Human with the owning agent and the missing evidence.
 - Run each finding through `aidrian pr disposition` with the reviewer's severity, likelihood, affects, and cost.
   A finding missing an axis is handled as `references/review-rules.md` says for `needs_axis`.
 - `fix_now` goes to its owner, highest likelihood × impact first.

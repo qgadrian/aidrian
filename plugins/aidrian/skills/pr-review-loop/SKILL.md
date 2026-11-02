@@ -126,4 +126,4 @@ On a draft, report convergence; the author marks it ready. Only when the Human a
 or config.json `github.markReady` is `"auto"`, mark it ready yourself with `gh pr ready <n>`
 once a review of the current head signed off with no blocked row, and `aidrian pr checks <n>` says ready.
 A fix pushed after that review sends the loop back to step 1 first. Pending or failing: leave it a draft and say why.
-After `gh pr ready`, push nothing more. Run by `autopilot` or the `orchestrator`, never mark it ready: the caller does, after all its reviews.
+After `gh pr ready`, push nothing more. Run as a step of another skill or agent, never mark it ready: that is the caller's step, after all its reviews.

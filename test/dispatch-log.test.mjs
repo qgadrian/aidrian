@@ -482,6 +482,24 @@ test('sessionRow splits main and subagents, with effort, cost per model, cache w
     cost_usd: 4.5, requests: 1, tool_requests: 1, tool_calls: 1,
   });
   assert.equal(row.cost_usd, 16.52);
+  assert.deepEqual([row.skills, row.drafts_opened, row.review_runs], [[], 0, 0], 'no skill, draft, or review call');
+});
+
+test('sessionRow records the skills, draft pull requests, and review runs of the main conversation and its subagents', (t) => {
+  const { base, dir } = project(t);
+  const call = (id, name, input) => JSON.stringify({
+    type: 'assistant', timestamp: '2026-10-29T10:00:00Z',
+    message: { id: `m-${id}`, model: 'claude-opus-5-5', usage: { input_tokens: 1 }, content: [{ type: 'tool_use', id, name, input }] },
+  });
+  const result = (id, content) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] } });
+  const main = path.join(base, 's2.jsonl');
+  writeFileSync(main, [call('k1', 'Skill', { skill: 'aidrian:plan-implement' }), result('k1', 'Launching skill: aidrian:plan-implement'),
+    call('g1', 'Bash', { command: 'gh pr create --draft --title t --body-file b.md' }), result('g1', 'https://github.com/acme/notes/pull/3')].join('\n'));
+  mkdirSync(path.join(base, 's2/subagents'), { recursive: true });
+  writeFileSync(path.join(base, 's2/subagents/agent-a.jsonl'), [call('r1', 'Bash', { command: 'aidrian pr await-review 3' }), result('r1', '{\n  "status": "received",\n  "pr": 3\n}')].join('\n'));
+  const row = sessionRow({ session_id: 's2', transcript_path: main }, findProject(dir), { env: { CLAUDE_CODE_AGENT: 'aidrian:orchestrator' }, now: NOW });
+  assert.deepEqual([row.agent, row.skills, row.drafts_opened, row.review_runs], ['aidrian:orchestrator', ['aidrian:plan-implement'], 1, 1]);
+  assert.doesNotMatch(JSON.stringify(row), /gh pr create|pull\/3|await-review|received/, 'the row holds no command and no output');
 });
 
 test('a request a forked subagent`s transcript repeats from its parent counts once, on the parent`s row: its Read and its tokens', (t) => {

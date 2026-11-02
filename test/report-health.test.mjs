@@ -118,7 +118,8 @@ test('summarizeHealth ranks the problems worst first, each with its value, thres
 test('summarizeHealth: each signal carries its sample, and a part under minSample is not enough data, never a problem', () => {
   const { signals } = mixed();
   assert.deepEqual(Object.fromEntries(Object.entries(signals).map(([name, signal]) => [name, signal.status])), {
-    budget: 'problem', docs: 'problem', agents: 'problem', reviews: 'problem', denies: 'problem', cost: 'problem', lessons: 'problem',
+    budget: 'problem', docs: 'problem', agents: 'problem', reviews: 'problem', drafts: 'not_enough_data', denies: 'problem', cost: 'problem',
+    lessons: 'problem',
   });
   assert.deepEqual(signals.agents.agents.map((agent) => [agent.agent_type, agent.redispatch, agent.sent_back]), [
     ['Explore', { n: 3, percent: 0, status: 'not_enough_data' }, { n: 3, percent: 0, status: 'not_enough_data', unknown: 0 }],
@@ -137,8 +138,8 @@ test('summarizeHealth: every signal says not enough data, or unavailable, with n
   const health = summarizeHealth({ rows: [], sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: { reviewer: 'bot', error: 'gh: not found' }, config: configWith() });
   assert.deepEqual(health.problems, []);
   assert.deepEqual(Object.fromEntries(Object.entries(health.signals).map(([name, signal]) => [name, signal.status])), {
-    budget: 'not_enough_data', docs: 'not_enough_data', agents: 'not_enough_data', reviews: 'unavailable', denies: 'not_enough_data',
-    cost: 'not_enough_data', lessons: 'ok',
+    budget: 'not_enough_data', docs: 'not_enough_data', agents: 'not_enough_data', reviews: 'unavailable', drafts: 'not_enough_data',
+    denies: 'not_enough_data', cost: 'not_enough_data', lessons: 'ok',
   });
   assert.equal(health.signals.reviews.error, 'gh: not found');
   assert.match(formatHealth(health, { file: 'log', since: '30d' }), /Reviews: unavailable; gh could not read the pull requests/);
@@ -272,6 +273,49 @@ test('summarizeHealth judges a problem whose lesson was resolved again on the ro
   assert.deepEqual(resolvedIds(split(all, [])), { 'sent-back': null, 'review-rounds': 'bbbb0002', 'deny-hot-spot': null }, 'a plugin problem never reads the project\'s inbox');
 });
 
+test('summarizeHealth flags a draft that an orchestrator or autopilot session opened and no review round in that session saw', () => {
+  const session = (id, fields, hoursAgo = 24) => ({ event: 'session', ts: at(hoursAgo), session_id: id, cost_usd: 1, docs_read: [], ...fields });
+  const draft = { drafts_opened: 1, review_runs: 0, skills: [] };
+  const rows = [
+    // Hits: the orchestrator as the session's agent; the autopilot skill run as a slash command; the orchestrator as a subagent.
+    session('o1', { ...draft, agent: 'aidrian:orchestrator' }),
+    session('a1', { ...draft, agent: null, skills: ['aidrian:autopilot', 'aidrian:issue-implement'] }),
+    session('d1', { ...draft, agent: null }),
+    { event: 'dispatch', ts: at(25), session_id: 'd1', dispatcher: 'aidrian:orchestrator', agent_type: 'aidrian:explorer', description: 'map' },
+    // No hit: an orchestrator session that ran a review round after its draft.
+    session('o2', { ...draft, agent: 'aidrian:orchestrator', review_runs: 2, skills: ['aidrian:pr-review-loop'] }),
+    // Not flagged: a session the Human ran, without the orchestrator or autopilot, that opened a draft and ran no review.
+    session('h1', { ...draft, agent: null, skills: ['aidrian:pr-write'] }),
+    // Left out: an orchestrator session that opened no draft, and one logged before session rows recorded drafts.
+    session('o3', { agent: 'aidrian:orchestrator', drafts_opened: 0, review_runs: 0, skills: [] }),
+    session('o4', { agent: 'aidrian:orchestrator' }),
+    // Left out: older than the window.
+    session('o5', { ...draft, agent: 'aidrian:orchestrator' }, 24 * 40),
+  ];
+  const health = (list) => summarizeHealth({ rows: list, sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: null, lessons: [], config: configWith() });
+  const hit = health(rows);
+  assert.deepEqual(hit.signals.drafts, {
+    status: 'problem', sample: { n: 4, of: 'orchestrator or autopilot sessions that opened a draft' }, unreviewed: ['o1', 'a1', 'd1'],
+  });
+  const [problem] = hit.problems.filter((item) => item.kind === 'unreviewed-draft');
+  assert.deepEqual([problem.value, problem.threshold, problem.fix, problem.subject], [3, 0, 'review-loop', null]);
+  assert.equal(problem.summary, '3 of 4 orchestrator or autopilot sessions that opened a draft pull request ran no review round: o1, a1, d1.');
+  assert.deepEqual(problem.lesson, { tier: 'P2', kind: 'bug', target: 'plugin', key: 'health:unreviewed-draft' });
+  assert.match(formatHealth(hit, { file: 'f', since: '30d', skipped: 0 }),
+    /\n {2}Drafts: problem; 4 orchestrator or autopilot sessions opened a draft pull request, 3 with no review round\n/);
+
+  // The review round present: ok, and the Human's own session is never in the sample.
+  const reviewed = health(rows.filter((row) => !['o1', 'a1', 'd1'].includes(row.session_id)));
+  assert.deepEqual([reviewed.signals.drafts.status, reviewed.signals.drafts.sample.n, reviewed.problems], ['ok', 1, []]);
+  const human = health(rows.filter((row) => row.session_id === 'h1'));
+  assert.deepEqual([human.signals.drafts.status, human.signals.drafts.sample.n, human.problems], ['not_enough_data', 0, []]);
+  // A resumed session counts at its last end: a review round in the resumed part clears it.
+  const resumed = health([session('o1', { ...draft, agent: 'aidrian:orchestrator' }, 30), session('o1', { ...draft, agent: 'aidrian:orchestrator', review_runs: 1 })]);
+  assert.deepEqual([resumed.signals.drafts.status, resumed.problems], ['ok', []]);
+  // It ranks right after a P1 lesson: a skipped review loop ships what no review saw.
+  assert.equal(Object.keys(FIXES)[1], 'unreviewed-draft');
+});
+
 test('summarizeHealth: telemetry.health thresholds move the verdicts; hook denies off leave that signal unavailable', () => {
   const loose = mixed({ redispatchPercent: 50, sentBackPercent: 25, reviewRounds: 4, denyHotSpot: 7, costRisePercent: 200, topDocPercent: 95 });
   assert.deepEqual(loose.problems.map((item) => item.kind), ['p1-lesson', 'always-budget', 'tagged-doc', 'fix-recurred', 'never-read', 'lesson-backlog']);
@@ -309,6 +353,7 @@ test('formatHealth prints the problems worst first, then each signal with its sa
     '    aidrian:explorer: 40% re-dispatched (n=10), 20% sent back (n=10)',
     '    code-reviewer: 0% re-dispatched (n=6), 0% sent back (n=6)',
     '  Reviews: problem; 3.5 rounds a pull request (n=6 reviewed, threshold 3); late findings not enough data (n=2, needs 5 checked)',
+    '  Drafts: not enough data; no orchestrator or autopilot session opened a draft pull request',
     '  Hook denies: problem (n=12 sessions); 7 blocks: git-amend 6, process-kill 1 (5 or more by one rule is a hot spot)',
     '  Session cost: problem (n=6 sessions a half); 12 sessions, $19.00; $2.17 a session in the newer half against $1.00, up 117% (threshold 50%)',
     '  Lessons: problem; 3 open, 1 P1, the oldest 20 days; 1 fix in the window, 1 recurred',
@@ -325,6 +370,7 @@ test('formatHealth with no data says so on every signal', () => {
     '  Doc reads: not enough data (n=0, needs 5 rows); 0 indexed docs never read, 0 of them tagged',
     '  Agents: not enough data; no dispatches (thresholds: 20% re-dispatched, 10% sent back)',
     '  Reviews: unavailable; gh could not read the pull requests: no GitHub remote, or gh is missing or not signed in (--json has its error)',
+    '  Drafts: not enough data; no orchestrator or autopilot session opened a draft pull request',
     '  Hook denies: not enough data (n=0, needs 5 sessions); 0 blocks (5 or more by one rule is a hot spot)',
     '  Session cost: not enough data (n=0, needs 5 sessions a half); 0 sessions, $0.00',
     '  Lessons: ok; 0 open, 0 P1; 0 fixes in the window, 0 recurred',
@@ -380,6 +426,6 @@ test('aidrian report health prints the page since 30d, --json all of it, takes -
   assert.deepEqual(Object.keys(json), ['file', 'rotated', 'since', 'skipped', 'coverage', 'thresholds', 'problems', 'signals']);
   assert.equal(json.coverage.runs_without_send_back, 1);
   assert.equal(json.since, '7d');
-  assert.deepEqual(Object.keys(json.signals), ['budget', 'docs', 'agents', 'reviews', 'denies', 'cost', 'lessons']);
+  assert.deepEqual(Object.keys(json.signals), ['budget', 'docs', 'agents', 'reviews', 'drafts', 'denies', 'cost', 'lessons']);
   assert.equal(json.signals.reviews.rounds.n, 0);
 });

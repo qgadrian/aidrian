@@ -258,11 +258,12 @@ test('only the repository root and the example name a file AGENTS.md or CLAUDE.m
 
 test('a skill that runs the pr-review-loop skill says when it marks the pull request ready', () => {
   // pr-review-loop leaves marking ready to such a caller, so a caller without the step leaves a green pull request a draft.
-  const callers = [['autopilot', 'autopilot', 'references/phases.md'], ['orchestration', 'orchestrator', 'SKILL.md']];
+  const callers = [['autopilot', 'references/phases.md'], ['orchestration', 'SKILL.md']];
   const loop = readFileSync(path.join(PLUGIN, 'skills/pr-review-loop/SKILL.md'), 'utf8');
   assert.match(loop, /review of the current head signed off/, 'the loop marks ready only after the current head is reviewed');
-  for (const [skill, name, file] of callers) {
-    assert.ok(loop.includes('`' + name + '`'), `pr-review-loop names the ${name} as a caller`);
+  assert.match(loop.replace(/\s+/g, ' '), /Run as a step of another skill or agent, never mark it ready: that is the caller's step, after all its reviews\./,
+    'the loop leaves ready to any caller, without naming one');
+  for (const [skill, file] of callers) {
     const text = readFileSync(path.join(PLUGIN, 'skills', skill, file), 'utf8');
     assert.match(text, /gh pr ready <n>/, `${skill} marks the pull request ready`);
     assert.match(text, /github\.markReady/, `${skill} reads github.markReady`);
@@ -276,6 +277,8 @@ test('an implementing skill ends at its draft, and the orchestrator owns what fo
   const orchestrator = read('agents-src/coordination/orchestrator.md');
   assert.match(orchestrator, /its gates win, and its end is a step of your task, not the task's end/);
   assert.match(orchestrator, /`plan-implement` skill\. When its report names an opened draft, continue with the `orchestration` skill § 3 from step 4 to its end\./);
+  assert.match(orchestrator, /5\. Close only when every slice passed and, with a pull request open, the `orchestration` skill § 3 stopped;/,
+    'the orchestrator closes only after the review loop stopped');
 
   const close = readFileSync(path.join(PLUGIN, 'skills/issue-implement/steps/phases-5-8-close.md'), 'utf8');
   const report = close.slice(close.indexOf('## Phase 8')).replace(/\s+/g, ' ');
@@ -297,6 +300,51 @@ test('an implementing skill ends at its draft, and the orchestrator owns what fo
   const prSection = orchestration.slice(orchestration.indexOf('## 3. The pull request'));
   const step4 = prSection.match(/ 4\. (.*?) 5\. /)?.[1] ?? '';
   assert.match(step4, /`pr-review-loop`/, '§ 3 step 4, where the orchestrator continues, runs the review loop');
+});
+
+test('a calling skill such as autopilot owns what follows the implementing skill, so the review loop runs once', () => {
+  // In an orchestrator session that runs autopilot, both the orchestrator's continuation and autopilot's phases would run the loop.
+  const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
+  const orchestrator = read('agents-src/coordination/orchestrator.md');
+  const routing = orchestrator.slice(orchestrator.indexOf('## Routing'));
+  assert.match(routing, /When a calling skill, such as `autopilot`, ran it, that skill's steps continue instead; § 3 never runs twice\./);
+  assert.equal((orchestrator.match(/a calling skill/g) ?? []).length, 1, 'the orchestrator states the caller rule once');
+  const autopilot = read('skills/autopilot/SKILL.md');
+  assert.match(autopilot, /The engine ends at its draft, and these phases own what follows: the review loop runs once\./);
+  assert.match(autopilot, /The `orchestration` skill's § 3 rules apply inside phases 3 and 4, never as a second loop after them\./);
+});
+
+test('the security-sensitive finding rules live in the orchestration skill § 4, which the orchestrator loads before any finding', () => {
+  // The orchestrator agent file is held to 9,000 bytes; the finding rules moved to the skill that owns review findings.
+  const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
+  const orchestrator = read('agents-src/coordination/orchestrator.md');
+  assert.doesNotMatch(orchestrator, /## Security-sensitive findings/);
+  assert.match(orchestrator, /3\. Before the first editing dispatch, pull request step, or finding to close, load the `orchestration` skill\./);
+  assert.match(orchestrator, /`security-engineer`, which never edits and alone closes a security finding \(orchestration skill § 4\)/);
+  const skill = read('skills/orchestration/SKILL.md');
+  const findings = skill.slice(skill.indexOf('## 4. Review findings'));
+  assert.match(findings, /\*\*Security-sensitive findings\*\*, on auth, tenant isolation, another user's data, public trust boundaries, server-side validation, abuse, payment or webhook trust, or privileged access: only `security-engineer` closes or excludes one\. Weak evidence goes to `explorer`\./);
+  assert.match(findings, /"Disputed" closes nothing: escalate to the Human with the owning agent and the missing evidence\./);
+  assert.match(skill, /before its first editing dispatch, pull request step, or finding to close/);
+});
+
+test('a skill ends at its own output: no sentence names a caller to say what follows it', () => {
+  // A continuation clause in the called skill loses to its own end, and the caller's next step never runs. The
+  // orchestration skill is written for the orchestrator itself, so it is the caller's text.
+  const walk = (dir) => readdirSync(dir, { withFileTypes: true })
+    .flatMap((entry) => (entry.isDirectory() ? walk(path.join(dir, entry.name)) : entry.name.endsWith('.md') ? [path.join(dir, entry.name)] : []));
+  const skills = path.join(PLUGIN, 'skills');
+  const caller = /`(?:autopilot|orchestrator)`/;
+  const continuation = /\b(?:the caller|continues?|then run|next step|what follows)\b/i;
+  const found = walk(skills).filter((file) => !path.relative(skills, file).startsWith('orchestration/')).flatMap((file) =>
+    readFileSync(file, 'utf8').replace(/\s+/g, ' ').split(/(?<=\.)\s+/)
+      .filter((sentence) => caller.test(sentence) && continuation.test(sentence))
+      .map((sentence) => `${path.relative(skills, file)}: ${sentence}`));
+  assert.deepEqual(found, []);
+  const checklist = readFileSync(path.join(PLUGIN, 'skills/skill-writer/references/checklist.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(checklist, /The skill ends at its own output and never names who continues/);
+  assert.match(readFileSync(path.join(ROOT, 'docs/architecture.md'), 'utf8').replace(/\s+/g, ' '),
+    /a skill ends at its own output and never names who continues; the caller's text names the next step\./);
 });
 
 test('the local banned terms file stays out of git', () => {

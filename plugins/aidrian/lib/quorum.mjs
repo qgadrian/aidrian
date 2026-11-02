@@ -355,7 +355,8 @@ const DECIDED = Object.freeze({ accept: 'accepted', reject: 'rejected', escalate
 // The problems that make a `complete` ledger unfinished: an objection still pending, or one with a status that needs a
 // ruling and has none. For an objection the Human did not settle (not `escalated`, not answered), also: a rebuttal that
 // rebuts with no final ruling, a final ruling other than `accept` (any other escalates), or a status that is not the
-// one its final decision gives (the final ruling's; else the first ruling's, which a concession keeps). [] for an
+// one its final decision gives (the final ruling's; else the first ruling's, which a concession keeps), or a rejection
+// with no rebuttal or concession, which escalates instead. [] for an
 // `open` ledger.
 export function completeProblems(ledger) {
   if (ledger.status !== 'complete') return [];
@@ -370,6 +371,8 @@ export function completeProblems(ledger) {
     if (rebuttal?.ruling && rebuttal.ruling.decision !== 'accept') return [`${where} has a final ruling of ${rebuttal.ruling.decision} but is ${objection.status}, not escalated, in a complete ledger`];
     const decided = DECIDED[(rebuttal?.ruling ?? objection.ruling).decision];
     if (objection.status !== decided) return [`${where} is ${objection.status}, but its final decision makes it ${decided}, in a complete ledger`];
+    // A rejection stands only once its adversary conceded or lost the final ruling: one never answered escalates.
+    if (objection.status === 'rejected' && rebuttal === null) return [`${where} is rejected with no rebuttal or concession in a complete ledger`];
     return [];
   });
 }

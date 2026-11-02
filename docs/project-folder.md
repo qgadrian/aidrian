@@ -179,8 +179,10 @@ Each objection, ruling, and rebuttal cites its evidence as `{kind, ref, quote}`.
   no `same_model_reason` or false with one, on a Human answer for an objection the ledger does not hold or a second
   answer for one, or on a `complete` ledger with an objection still `pending` or ruled on with no `ruling`. On an
   objection the Human did not settle (not `escalated`, not answered), a `complete` ledger also fails on a rebuttal with
-  no final ruling, a final ruling other than `accept`, a status its final decision does not give, or an invalid ruling
-  or rebuttal, as after cited code changed; such a ledger is not written back, so it is not reused. It runs no command but `git ls-files`. PLAN and the ledger may live anywhere, such as this folder.
+  no final ruling, a final ruling other than `accept`, a status its final decision does not give, a `rejected`
+  objection with no rebuttal or concession, or an invalid ruling or rebuttal, as after cited code changed; such a
+  ledger is not written back, so it is not reused. It runs no command but `git ls-files`. PLAN and the ledger may
+  live anywhere, such as this folder.
 
 ## Task worktrees
 

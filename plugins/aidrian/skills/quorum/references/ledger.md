@@ -111,7 +111,8 @@ again: its objection escalates with the earlier answer as the recommended answer
   escalation stays `escalated`. Then write `status: complete`, and run `quorum check`: it exits 1 on a complete ledger
   that still holds a `pending` objection, or a ruled status with no `ruling`. On an objection the Human did not settle
   (not `escalated`, not answered), it also exits 1 on a rebuttal with no final ruling, a final ruling other than
-  `accept`, a status its final decision does not give, or an invalid ruling or rebuttal, as when cited code changed.
+  `accept`, a status its final decision does not give, a `rejected` objection with no rebuttal or concession, or an
+  invalid ruling or rebuttal, as when cited code changed.
 
 ## Under plan-review
 

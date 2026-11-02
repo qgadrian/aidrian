@@ -166,7 +166,7 @@ test('check: an objection already ruled on keeps its status when its citations s
   const ruled = (decision) => ({ decision, change_or_reason: 'r', citations: [PASSING.adr] });
   const before = { ...ledger([
     objection('A1', stale, { status: 'accepted', ruling: ruled('accept') }),
-    objection('A2', stale, { status: 'rejected', ruling: ruled('reject') }),
+    objection('A2', stale, { status: 'rejected', ruling: ruled('reject'), rebuttal: { verdict: 'concede', claim: 'ok', citations: [], ruling: null } }),
     objection('A3', stale, { status: 'escalated', ruling: ruled('escalate') }),
   ]), status: 'complete', human_answers: [{ objection_id: 'A1', answer: 'yes, change it' }] };
   const result = p.check(before);
@@ -616,6 +616,8 @@ test('check: a complete ledger with a rebuttal left unruled, a final ruling othe
     [{ status: 'accepted', ruling: ruled('reject') }, /objection B1 is accepted, but its final decision makes it rejected/u],
     [{ status: 'rejected', ruling: ruled('escalate') }, /objection B1 is rejected, but its final decision makes it escalated/u],
     [{ status: 'accepted', ruling: ruled('reject'), rebuttal: concede }, /objection B1 is accepted, but its final decision makes it rejected/u],
+    // A rejection never answered: the rebuttal round was skipped, so it should have escalated.
+    [{ status: 'rejected', ruling: ruled('reject') }, /objection B1 is rejected with no rebuttal or concession in a complete ledger/u],
   ]) {
     const before = { ...ledger([objection('B1', [PASSING.code], { by: 'B', ...fields })]), status: 'complete' };
     const result = p.check(before);

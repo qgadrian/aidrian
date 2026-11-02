@@ -5,5 +5,6 @@
     "worktrees": { "dir": ".worktrees" },
     "mainCheckout": { "guard": true }
   },
+  "github": { "extraRounds": "auto" },
   "review": { "engine": "codex-local", "record": "local" }
 }

@@ -72,7 +72,7 @@ When `quorum check` still exits 1, stop with `blocked`, quoting what it printed.
 Before round 1:
 
 - A `complete` ledger at this hash for which `quorum check` exits 0 is reused: skip the rounds, and report from it,
-  with every line `check` printed in the Ledger item: a kept objection, or an invalid ruling or rebuttal.
+  with every line `check` printed in the Ledger item.
 - An `open` ledger at this hash is discarded, and the run starts over.
 - Every other `complete` ledger whose `plan` is this plan's absolute path gives its Human answers to every brief as
   settled, as ledger.md § Settled answers says. They are never copied into the new ledger.

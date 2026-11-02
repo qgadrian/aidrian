@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { check, REASON } from '../plugins/aidrian/lib/rules/git-hook-bypass.mjs';
+import { OVERRIDE } from '../plugins/aidrian/lib/main-commits.mjs';
+import { check, OVERRIDE_REASON, REASON } from '../plugins/aidrian/lib/rules/git-hook-bypass.mjs';
 
 const deny = (command) => assert.equal(check(command), REASON, `expected deny: ${command}`);
 const allow = (command) => assert.equal(check(command), null, `expected allow: ${command}`);
@@ -126,4 +127,42 @@ test('allows ordinary git work and fails open on what it cannot read', () => {
 test('the reason offers no override', () => {
   assert.match(REASON, /no agent-side override/);
   assert.doesNotMatch(REASON, /AIDRIAN_ALLOW/);
+});
+
+test('denies setting the main-commit override, in any command and inside a substitution that runs', () => {
+  const denyOverride = (command) => assert.equal(check(command), OVERRIDE_REASON, `expected the override deny: ${command}`);
+  denyOverride('AIDRIAN_ALLOW_MAIN_COMMIT=1 git commit -m x');
+  denyOverride('env AIDRIAN_ALLOW_MAIN_COMMIT=1 git commit -m x');
+  denyOverride('export AIDRIAN_ALLOW_MAIN_COMMIT=1');
+  denyOverride('export AIDRIAN_ALLOW_MAIN_COMMIT=1 && git commit -m x');
+  denyOverride('declare -x AIDRIAN_ALLOW_MAIN_COMMIT=1; git merge origin/main');
+  denyOverride('AIDRIAN_ALLOW_MAIN_COMMIT=1 npm run release');
+  denyOverride('cd /tmp/x && rtk env AIDRIAN_ALLOW_MAIN_COMMIT=1 git commit -m x');
+  denyOverride('out=$(AIDRIAN_ALLOW_MAIN_COMMIT=1 git commit -m x)');
+  denyOverride('echo "$(export AIDRIAN_ALLOW_MAIN_COMMIT=1)"');
+  allow('git commit -m "AIDRIAN_ALLOW_MAIN_COMMIT=1 is the Human\'s override"');
+  allow("echo 'export AIDRIAN_ALLOW_MAIN_COMMIT=1'");
+  allow('git commit -m x # AIDRIAN_ALLOW_MAIN_COMMIT=1');
+  allow('env -u AIDRIAN_ALLOW_MAIN_COMMIT git commit -m x');
+  allow('unset AIDRIAN_ALLOW_MAIN_COMMIT');
+  allow('AIDRIAN_ALLOW_MAIN_COMMITS=1 git commit -m x');
+});
+
+test('reads the commands a shell runs from `sh -c` and from a heredoc fed to it', () => {
+  const denyOverride = (command) => assert.equal(check(command), OVERRIDE_REASON, `expected the override deny: ${command}`);
+  denyOverride("bash -c 'AIDRIAN_ALLOW_MAIN_COMMIT=1 git commit -m x'");
+  denyOverride('sh -c "export AIDRIAN_ALLOW_MAIN_COMMIT=1; git commit -m x"');
+  denyOverride("bash <<'EOF'\nexport AIDRIAN_ALLOW_MAIN_COMMIT=1\ngit commit -m x\nEOF");
+  denyOverride("bash <<< 'export AIDRIAN_ALLOW_MAIN_COMMIT=1'");
+  denyOverride("sh -c 'builtin local AIDRIAN_ALLOW_MAIN_COMMIT=1'");
+  deny("bash -c 'git commit --no-verify -m x'");
+  allow("bash -c 'echo AIDRIAN_ALLOW_MAIN_COMMIT=1'");
+  allow("cat <<'EOF'\nexport AIDRIAN_ALLOW_MAIN_COMMIT=1\nEOF");
+});
+
+test('the override reason names the variable, that only the Human sets it, and that it is per command, never exported', () => {
+  assert.equal(OVERRIDE, 'AIDRIAN_ALLOW_MAIN_COMMIT');
+  assert.match(OVERRIDE_REASON, /only the Human sets it, per command in their own terminal \(AIDRIAN_ALLOW_MAIN_COMMIT=1 git commit …\)/);
+  assert.match(OVERRIDE_REASON, /never exported before a session/);
+  assert.doesNotMatch(OVERRIDE_REASON, /before the session starts/, 'a variable set before the session reaches every agent command');
 });

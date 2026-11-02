@@ -9,11 +9,17 @@ Read [working-agreement.md](working-agreement.md) first: the rules every change 
 
 ```sh
 npm ci
+make hooks       # once per clone, run by the Human in the main checkout: the hooks in .githooks/
 npm run build    # after editing plugins/aidrian/agents-src/<group>/, providers/, or agent-addons/
 npm run check    # what CI runs
 ```
 
 `make` lists the same tasks.
+The hooks in `.githooks/` keep the private words of `.banned-terms.local` out of commit messages and branch names,
+and refuse a commit in the main checkout or one that newly stages a git-ignored file ([Commit guard](hooks.md#commit-guard)).
+`make hooks` sets `core.hooksPath` to the main checkout's `.githooks` by absolute path, so git runs them for a commit
+made through `GIT_DIR` or `--git-dir` from another folder too, and every worktree runs the main checkout's copy.
+A clone set up with the earlier relative `.githooks` reruns `make hooks`. Agents are denied setting `core.hooksPath`.
 
 `npm run check` fails when:
 

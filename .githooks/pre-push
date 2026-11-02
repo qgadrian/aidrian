@@ -1,2 +1,3 @@
 #!/bin/sh
-exec node "$(git rev-parse --show-toplevel)/scripts/banned-terms.mjs" pre-push "$1"
+# Found beside this script, not through the work tree, as in pre-commit.
+exec node "$(dirname "$0")/../scripts/banned-terms.mjs" pre-push "$1"

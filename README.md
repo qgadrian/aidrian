@@ -140,6 +140,7 @@ Run `aidrian` or `aidrian-knowledge` with no arguments to list every subcommand 
 | `aidrian pr checks` | Gives a one-line verdict on the checks. | [`pr-merge-when-green`](plugins/aidrian/skills/pr-merge-when-green/SKILL.md) |
 | `aidrian pr disposition` | Decides what to do with one review finding. | [`pr-review`](plugins/aidrian/skills/pr-review/SKILL.md) |
 | `aidrian commit-msg` | Checks a commit message. | [Commit messages](docs/hooks.md#commit-messages) |
+| `aidrian pre-commit` | Refuses a commit in the main checkout, or one that newly stages a git-ignored file, while `git.mainCheckout.guard` is on. | [Commit guard](docs/hooks.md#commit-guard) |
 | `aidrian lesson` | Keeps the lesson inbox. | [Lessons](docs/lessons.md#commands) |
 | `aidrian handoff` | Checks a session handoff brief. | [`session-handoff`](plugins/aidrian/skills/session-handoff/SKILL.md) |
 | `aidrian quorum` | Runs Codex against a plan, and checks a quorum ledger's citations. | [Local state](docs/project-folder.md#local-state) |

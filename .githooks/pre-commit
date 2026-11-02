@@ -1,0 +1,4 @@
+#!/bin/sh
+# Found beside this script, not through the work tree: a commit made with GIT_DIR or --work-tree from another folder
+# has that folder as its work tree.
+exec node "$(dirname "$0")/../plugins/aidrian/lib/cli.mjs" pre-commit

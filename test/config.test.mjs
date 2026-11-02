@@ -88,6 +88,13 @@ test('github.markReady: "ask" by default, "auto" lets the review loop mark a gre
   assert.match(loadConfig(project(t, { version: 1, github: { markReady: true } })).errors[0], /"github\.markReady" must be "ask" or "auto"$/);
 });
 
+test('git.mainCheckout has no commits key: the guard alone turns the commit guard on, and a leftover commits is unknown', (t) => {
+  assert.deepEqual(Object.keys(DEFAULTS.git.mainCheckout), ['guard', 'allowWrites']);
+  const { config, errors } = loadConfig(project(t, { version: 1, git: { mainCheckout: { guard: true, commits: 'warn' } } }));
+  assert.deepEqual(errors, ['.aidrian/config.json: unknown key "git.mainCheckout.commits"']);
+  assert.deepEqual(config.git.mainCheckout, { guard: true, allowWrites: [] });
+});
+
 test('github.titleIssuePrefix: off by default, so pull request titles are plain Conventional Commits', (t) => {
   assert.equal(DEFAULTS.github.titleIssuePrefix, false);
   const { config, errors } = loadConfig(project(t, { version: 1, github: { titleIssuePrefix: true } }));

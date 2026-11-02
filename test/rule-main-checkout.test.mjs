@@ -315,8 +315,7 @@ test('in the main checkout, only named files are staged and only the default bra
   }
   assert.match(denied('git add ..', path.join(repo, 'src')) ?? '', /main checkout/, 'a parent folder');
   for (const command of [
-    'git add src/app.js', 'git add -v src/app.js gone.txt', 'git commit -m x', 'git commit -mrelease', 'git commit -uall -m x',
-    'git commit -Sabc123 -m x', "git commit -m 'GIT_DIR=docs'", 'git switch main', 'git checkout main', 'git checkout src/app.js', 'git checkout -- src/app.js',
+    'git add src/app.js', 'git add -v src/app.js gone.txt', 'git switch main', 'git checkout main', 'git checkout src/app.js', 'git checkout -- src/app.js',
     'git checkout gone.txt', 'git checkout task -- src/app.js', 'git checkout HEAD src/app.js', 'git status', 'git pull --ff-only',
   ]) {
     assert.equal(denied(command), null, command);
@@ -352,7 +351,6 @@ test('in the main checkout, only named files are staged and only the default bra
   for (const command of ['git commit -m "$MESSAGE"', 'git commit -m"$MSG"', 'set -- m -a; git commit -m"$@"', 'git commit -m "${args[@]}"']) {
     assert.match(denied(command) ?? '', /main checkout/, `a commit word that expands: ${command}`);
   }
-  assert.equal(denied('git commit -m "a literal message"'), null);
   assert.match(denied("bash <<'EOF'\ngit add -A\nEOF") ?? '', /main checkout/, 'a heredoc fed to a shell');
   assert.match(denied("bash <<< 'git checkout task'") ?? '', /main checkout/, 'a here-string');
   for (const command of ['MSG="m -a"; git commit -m$MSG', 'git commit --message=$MSG', 'git commit -m $MSG']) {
@@ -379,4 +377,218 @@ test('in the main checkout, only named files are staged and only the default bra
   assert.equal(denied('git add src/app.js'), null, 'one deleted file by name');
   const off = fixture(t, { version: 1 }).repo;
   assert.equal(check('git add -A', { cwd: off, env: ENV }), null, 'the guard is off');
+});
+
+test('in the main checkout, a git call that makes a commit or moves the branch is denied, naming it and the worktree command', (t) => {
+  const { repo, base } = fixture(t);
+  const beside = path.join(base, 'beside');
+  const outside = path.join(base, 'outside');
+  mkdirSync(outside);
+  // A second commit, so HEAD~1 names one.
+  execFileSync('git', ['-C', repo, '-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', 'second']);
+  const at = (command, cwd = repo, env = ENV) => check(command, { cwd, env });
+  // [command, the subcommand the reason names]
+  const deniedForms = [
+    ['git commit -m x', 'commit'], ['git commit -mrelease', 'commit'], ['git commit -uall -m x', 'commit'],
+    ['git commit -Sabc123 -m x', 'commit'], ["git commit -m 'GIT_DIR=docs'", 'commit'], ['git commit -m "a literal message"', 'commit'],
+    ['git commit --amend --no-edit', 'commit'], ['git commit-tree HEAD^{tree} -m x', 'commit-tree'],
+    ['git merge task', 'merge'], ['git merge --no-ff task', 'merge'], ['git merge --squash task', 'merge'], ['git merge --ff task', 'merge'],
+    ['git merge --ff-only --no-ff task', 'merge'], ['git merge --ff-only -m x task', 'merge'], ['git merge --continue', 'merge'],
+    // A fast-forward toward anything but the default branch's upstream moves main onto commits that are not on origin.
+    ['git merge --ff-only task', 'merge'], ['git merge --ff-only fix/x', 'merge'], ['git merge --ff-only origin/task', 'merge'],
+    ['git merge --ff-only main', 'merge'], ['git merge --ff-only origin/main task', 'merge'], ['git merge --ff-only task@{u}', 'merge'],
+    ['git merge --ff-only -- origin/main', 'merge'],
+    ['git pull --ff-only . task', 'pull'], ['git pull --ff-only origin task', 'pull'], ['git pull --ff-only origin', 'pull'],
+    ['git pull --ff-only fork main', 'pull'], ['git pull --ff-only origin main task', 'pull'], ['git pull --ff-only origin main:main', 'pull'],
+    ['git cherry-pick task', 'cherry-pick'], ['git revert HEAD', 'revert'], ['git rebase task', 'rebase'],
+    ['git rebase --onto task HEAD~1', 'rebase'], ['git am patch.mbox', 'am'],
+    // Only --abort and --quit on their own end an operation without a commit.
+    ['git rebase --continue', 'rebase'], ['git rebase --skip', 'rebase'], ['git cherry-pick --continue', 'cherry-pick'],
+    ['git cherry-pick --skip', 'cherry-pick'], ['git revert --continue', 'revert'], ['git am --continue', 'am'], ['git am --skip', 'am'],
+    ['git rebase --abort task', 'rebase'], ['git merge --abort --no-ff', 'merge'], ['git commit --abort', 'commit'],
+    ['git pull', 'pull'], ['git pull --rebase', 'pull'], ['git pull --ff-only --rebase', 'pull'], ['git pull --no-ff origin main', 'pull'],
+    ['git reset --hard', 'reset'], ['git reset --hard HEAD~1', 'reset'], ['git reset --soft HEAD~1', 'reset'],
+    ['git reset --mixed HEAD~1', 'reset'], ['git reset --mixed', 'reset'], ['git reset --keep task', 'reset'], ['git reset --merge', 'reset'],
+    ['git reset HEAD~1', 'reset'], ['git reset task', 'reset'], ['git reset task --', 'reset'], ['git reset', 'reset'], ['git reset --', 'reset'],
+    ['git reset "$REF"', 'reset'], ['git merge --ff-only "$BRANCH"', 'merge'],
+    // A reset unstages only named files: a folder, a glob, or pathspec magic unstages other sessions' work.
+    ['git reset .', 'reset'], ['git reset -q :/', 'reset'], ['git reset -- .', 'reset'], ['git reset src', 'reset'], ['git reset HEAD src', 'reset'],
+    ["git reset '*.js'", 'reset'], ['git reset -- :/src', 'reset'], ['git reset HEAD -- .', 'reset'], ['git reset --pathspec-from-file=list', 'reset'],
+    ['git reset src/app.js HEAD -- src/app.js', 'reset'],
+    ['git -C src commit -m x', 'commit'], [`env -C ${repo} git rebase task`, 'rebase'], ["bash -c 'git commit -m x'", 'commit'],
+    ['cd src && git commit -m x', 'commit'],
+  ];
+  for (const [command, subcommand] of deniedForms) {
+    const reason = at(command) ?? '';
+    assert.ok(reason.startsWith(`Blocked: \`git ${subcommand}\` `), `${command}: ${reason}`);
+    assert.ok(reason.includes(`on the branch every session shares, in the main checkout (${repo}).`), `${command}: ${reason}`);
+    assert.ok(reason.includes('`aidrian worktree new <branch>`'), command);
+  }
+  // Routed into the main checkout from a worktree or from outside the repository.
+  for (const [command, cwd] of [
+    [`git -C ${repo} commit -m x`, beside], [`git --git-dir=${repo}/.git --work-tree=${repo} commit -m x`, beside],
+    [`GIT_DIR=${repo}/.git git commit --allow-empty -m x`, outside], [`git --git-dir=${repo}/.git reset --hard HEAD~1`, outside],
+    [`git -C ${repo} merge task`, beside], [`git --git-dir=${repo}/.git pull --ff-only`, outside],
+    [`git -C ${repo} merge --ff-only fix/x`, beside], [`git -C ${repo} merge --ff-only task`, beside], [`git -C ${repo} pull --ff-only . task`, beside],
+    [`git -C ${repo} reset .`, beside], [`git -C ${repo} rebase --continue`, beside],
+  ]) {
+    assert.match(at(command, cwd) ?? '', /^Blocked: `git (?:commit|reset|merge|pull|rebase)` .* in the main checkout/, `${command} from ${cwd}`);
+  }
+  // Through `git -C <main>` from a worktree, the safe forms run as they do in the main checkout.
+  for (const command of [
+    `git -C ${repo} merge --ff-only origin/main`, `git -C ${repo} pull --ff-only origin main`, `git -C ${repo} merge --abort`,
+    `git -C ${repo} reset src/app.js`,
+  ]) {
+    assert.equal(at(command, beside), null, `${command} from a worktree`);
+  }
+
+  writeFileSync(path.join(repo, 'src/app.js'), 'export const a = 1;\n');
+  const allowedForms = [
+    'git switch main', 'git checkout main', 'git pull --ff-only', 'git pull --ff-only origin main', 'git pull -q --ff-only',
+    'git pull --ff-only --no-rebase', 'git merge --ff-only', 'git merge --ff-only origin/main', 'git merge --ff-only -q origin/main',
+    'git merge --ff-only @{u}', 'git merge --ff-only @{upstream}', 'git merge --ff-only FETCH_HEAD', 'git fetch', 'git fetch origin',
+    'git merge --abort', 'git merge --quit', 'git rebase --abort', 'git rebase --quit', 'git cherry-pick --abort', 'git cherry-pick --quit',
+    'git revert --abort', 'git revert --quit', 'git am --abort', 'git am --quit',
+    'git status', 'git log --oneline', 'git diff HEAD~1', 'git reset src/app.js', 'git reset -- src/app.js', 'git reset HEAD src/app.js',
+    'git reset HEAD -- src/app.js', 'git reset -q -- src/app.js', 'git reset gone.txt', 'git -C src reset app.js',
+  ];
+  for (const command of allowedForms) assert.equal(at(command), null, command);
+
+  // From a worktree every form runs, and so does a call routed into one; with the guard off, or the override, too.
+  const worktree = path.join(repo, 'wt/task');
+  const off = fixture(t, { version: 1 }).repo;
+  const disabled = fixture(t, { version: 1, git: { mainCheckout: { guard: false } } }).repo;
+  for (const command of [...deniedForms.map(([command]) => command), ...allowedForms]) {
+    if (command.includes(repo) || command.startsWith('cd ')) continue;
+    assert.equal(at(command, worktree), null, `from a worktree: ${command}`);
+    assert.equal(at(command, beside), null, `from a worktree beside it: ${command}`);
+    assert.equal(at(command, off), null, `the guard off by default: ${command}`);
+    assert.equal(at(command, disabled), null, `the guard off: ${command}`);
+    assert.equal(at(command, repo, { AIDRIAN_ALLOW_MAIN_WRITE: '1' }), null, `the override: ${command}`);
+  }
+  assert.equal(at(`git -C ${beside} commit -m x`), null, 'git -C into a worktree');
+  assert.equal(at(`git -C ${beside} reset --hard HEAD~1`), null);
+  assert.equal(at('cd wt/task && git rebase main'), null, 'after a cd into a worktree');
+});
+
+// A `cd` that a shell alias or function turns into a no-op can fail and still return 0, so what follows it runs in the
+// main checkout. A `cd` the rule cannot trust is judged as if it failed.
+const CD_LEAD = /after a cd that leaves the repository, or that this rule cannot read\./;
+const firstOf = (reason) => reason.split(/\n|(?<=\.)\s/u)[0];
+
+test('after a cd that leaves the repository, or that the rule cannot read, the main checkout is still guarded', (t) => {
+  const { base, repo } = fixture(t);
+  const bash = (command, cwd = repo) => check(command, { cwd, env: ENV });
+  // [command, the cd the reason names, the write it names (or null for a git call)]
+  for (const [command, cd, name] of [
+    ['cd /tmp && echo x > a.txt', 'cd /tmp', 'a.txt'],
+    ['S=/tmp/x; cd "$S"; rm -rf gx; mkdir gx', 'cd "$S"', 'gx'],
+    ["cd /tmp/x || exit 1; printf 'dist/\\n' > .gitignore", 'cd /tmp/x', '.gitignore'],
+    ['cd "$S" && git init -q -b main repo', 'cd "$S"', null],
+    ['cd /tmp && git commit -m init', 'cd /tmp', null],
+    ['pushd /tmp && git worktree add ../wt feature', 'pushd /tmp', null],
+    ['cd && git branch x', 'cd', null],
+    ['cd - && git checkout -b x', 'cd -', null],
+    ['cd ~/x && git merge t2', 'cd ~/x', null],
+    ['cd .. && git tag v0', 'cd ..', null],
+    ['popd; git stash', 'popd', null],
+    ["cd /tmp && bash -c 'git init'", 'cd /tmp', null],
+    ["cd /tmp && bash <<< 'git commit -m x'", 'cd /tmp', null],
+    ['cd /tmp && git config user.name t', 'cd /tmp', null],
+    ['cd -- "$S"; mkdir gx', 'cd "$S"', 'gx'],
+    ['cd -- /tmp/x && git init -q -b main repo', 'cd /tmp/x', null],
+    ['cd wt/typo && git checkout -b x', 'cd wt/typo', null],
+    ['cd src/missing && echo x > a.txt', 'cd src/missing', 'a.txt'],
+    ['cd "$S" && rm -rf *', 'cd "$S"', '*'],
+    ['cd /tmp/x; rm -f ./*.js', 'cd /tmp/x', './*.js'],
+    ['cd /tmp/x && bash -c \'printf "dist/\\n" > .gitignore\'', 'cd /tmp/x', '.gitignore'],
+    ['cd /tmp && git -C src commit -m x', 'cd /tmp', null],
+    [`cd /tmp && git -C ${repo} branch x`, 'cd /tmp', null],
+    ['cd /tmp && git "$sub" -q', 'cd /tmp', null],
+    ['cd "$S"; cd gx; git init', 'cd "$S"', null],
+    // The folder of a git call or a write resolves from the folders before the cd.
+    ['cd /tmp && git --git-dir=.git commit -m x', 'cd /tmp', null],
+    ['cd /tmp && git --work-tree=. add x', 'cd /tmp', null],
+    ['cd /tmp && env -C src git commit -m x', 'cd /tmp', null],
+    ['cd /tmp && GIT_DIR=.git git commit -m x', 'cd /tmp', null],
+    ['cd src && cd /tmp && echo x > a.txt', 'cd /tmp', 'a.txt'],
+    // `builtin cd` skips a shell function or alias, but its folder is judged the same.
+    ['builtin cd /tmp && git init', 'builtin cd /tmp', null],
+    ["bash -c 'builtin cd /tmp && git init'", 'builtin cd /tmp', null],
+    ["cd '$x' && git init", "cd '$x'", null],
+    ["cd '$S' && git init", "cd '$S'", null],
+    ["cd 'my dir' && git init", "cd 'my dir'", null],
+  ]) {
+    const reason = bash(command) ?? '';
+    const first = firstOf(reason);
+    assert.match(first, CD_LEAD, command);
+    assert.doesNotMatch(first, /(?:^|[\s(`'])\/\S/u, `no machine path in the first sentence: ${command}`);
+    if (name) assert.ok(first.includes(`this command writes '${name}' after a cd`), `${command}: ${first}`);
+    else assert.match(first, /^Blocked: `git[^`]*` .*runs after a cd/, command);
+    assert.ok(reason.includes(`The cd is \`${cd}\`;`), `${command} names \`${cd}\`: ${reason}`);
+    assert.ok(reason.includes(`the main checkout (${repo})`), command);
+    assert.ok(reason.includes('`git -C <absolute folder>`') && reason.includes('`env -C <absolute folder>`'), command);
+    assert.ok(reason.includes('aidrian worktree new <branch>') && reason.includes('AIDRIAN_ALLOW_MAIN_WRITE=1'), command);
+  }
+
+  // A cd inside the main checkout leaves the shell there whether it works or not: today's rules judge what follows.
+  assert.match(bash('cd src && echo x > app.js') ?? '', /^Blocked: this command writes 'src\/app\.js', a tracked file in the main checkout/);
+  assert.match(bash('cd . && git checkout -b x') ?? '', /^Blocked: `git checkout` moves the folder every session shares to another branch, in the main checkout/);
+  assert.match(bash('cd src && git add -A') ?? '', /^Blocked: `git add` of anything but named files can stage other sessions' work, in the main checkout/);
+  // A file the write reaches only when a cd inside the main checkout fails names that cd: here into the ignored build/.
+  mkdirSync(path.join(repo, 'build'));
+  const failed = bash('cd build && echo x > a.txt') ?? '';
+  assert.match(failed, /^Blocked: this command writes 'a\.txt' in the main checkout if a cd before it fails\. The cd is `cd build`;/);
+  assert.doesNotMatch(firstOf(failed), /(?:^|[\s(`'])\/\S/u, 'no machine path in the first sentence');
+  assert.ok(failed.includes(`the main checkout (${repo})`) && failed.includes('`git -C <absolute folder>`'));
+  // A glob after a cd inside the main checkout fails closed at the folders before it: if the cd fails, `rm -rf *` runs
+  // at the root.
+  for (const [command, name, cd] of [['cd build && rm -rf *', '*', 'cd build'], ['cd src && rm -f ./*.js', './*.js', 'cd src']]) {
+    const glob = bash(command) ?? '';
+    assert.ok(glob.startsWith(`Blocked: this command writes '${name}' in the main checkout if a cd before it fails. The cd is \`${cd}\`;`), `${command}: ${glob}`);
+    assert.doesNotMatch(firstOf(glob), /(?:^|[\s(`'])\/\S/u, command);
+  }
+  // `builtin cd` skips an alias or function: the reason says only that the cd may fail.
+  const builtin = bash('builtin cd /tmp && git init') ?? '';
+  assert.ok(builtin.includes(`The cd is \`builtin cd /tmp\`; if it fails, the call acts on the main checkout (${repo}).\n`), builtin);
+  assert.ok(!builtin.includes('alias'), 'no alias is blamed for a builtin cd');
+  assert.ok((bash('cd /tmp && git init') ?? '').includes('a shell alias or function for cd can fail and still return 0'));
+
+  for (const command of [
+    'cd /tmp && git status', 'cd /tmp && git log --oneline', 'cd /tmp && git branch', 'cd /tmp && git worktree list',
+    'cd /tmp && git stash list', 'cd /tmp && git config --get user.name', 'cd /tmp && git remote -v', 'cd /tmp && npm test',
+    'cd /tmp && echo x > /tmp/a.txt', 'cd "$S" && git -C "$S" init -q', 'cd /tmp && git -C /tmp/x init -q',
+    'cd /tmp && env -C /tmp/x git init -q', 'cd "$S" && echo x > "$S/a.txt"', 'cd wt/task && git add -A',
+    `cd ${path.join(base, 'beside')} && echo x > src/app.js`, 'cd wt/task && cd /tmp && git init', 'x=$(cd /tmp); git status',
+    'builtin cd wt/task && git add -A', "bash -c 'builtin cd wt/task && git add -A'", `builtin cd ${path.join(base, 'beside')} && git add -A`,
+    // A residual: a git folder held in an expansion is not read after an untrusted cd.
+    'cd /tmp && git --git-dir="$D" commit -m x',
+  ]) {
+    assert.equal(bash(command), null, command);
+  }
+
+  // From a worktree, with the guard off, and with the override, nothing changes.
+  const worktree = path.join(repo, 'wt/task');
+  for (const command of ['cd /tmp && git init', 'cd "$S" && echo x > a.txt']) {
+    assert.equal(bash(command, worktree), null, `from a worktree: ${command}`);
+    assert.equal(check(command, { cwd: repo, env: { AIDRIAN_ALLOW_MAIN_WRITE: '1' } }), null, `the override: ${command}`);
+  }
+  const off = fixture(t, { version: 1 }).repo;
+  for (const command of ['cd /tmp && git init', 'cd "$S" && echo x > a.txt']) assert.equal(check(command, { cwd: off, env: ENV }), null, `the guard off: ${command}`);
+});
+
+test('a cd reads its folder past --, and followCd keeps the folder before it', () => {
+  const files = bashWrites('cd -- build && echo x > a.txt', '/repo', { followCd: true }).flatMap((write) => write.files);
+  assert.ok(files.includes('/repo/build/a.txt'), JSON.stringify(files));
+  assert.ok(files.includes('/repo/a.txt'), 'a cd that may fail leaves the shell where it was');
+});
+
+test('the Bash hook blocks a commit after a cd that leaves the repository', (t) => {
+  const { repo } = fixture(t);
+  const run = spawnSync(process.execPath, [path.join(SCRIPTS, 'hook-bash.mjs')], {
+    input: JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'cd /tmp && git commit -m init' }, cwd: repo }),
+    encoding: 'utf8',
+  });
+  assert.equal(run.status, 2, run.stderr);
+  assert.match(run.stderr, /^Blocked: `git commit` runs after a cd that leaves the repository, or that this rule cannot read\. The cd is `cd \/tmp`/);
 });

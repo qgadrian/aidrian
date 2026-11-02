@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { commandLines, lexCommand, lexInputs, lexPipeline, lexSteps, lexSubstitutions, readGit, readInvocation, readShortOptions } from '../plugins/aidrian/lib/shell-lex.mjs';
+import { assignsVariable, commandLines, lexCommand, lexInputs, lexPipeline, lexSteps, lexSubstitutions, readGit, readInvocation, readShortOptions } from '../plugins/aidrian/lib/shell-lex.mjs';
 
 const texts = (line) => lexCommand(line).map((segment) => segment.map((token) => token.text));
 const programOf = (line) => readInvocation(lexCommand(line)[0]).program;
@@ -260,4 +260,19 @@ test('readInvocation lists the environment changes of assignments and env, in or
   assert.deepEqual(changes('G=4 exec -a c gh'), ['G=4']);
   assert.deepEqual(changes('G=4 sudo -u x H=5 gh'), ['G=4', 'clear', 'H=5']);
   assert.deepEqual(changes('G=4 sudo -E gh'), ['G=4']);
+});
+
+test('assignsVariable: a prefix assignment, env, or a declaring builtin sets the name; an unset, a quote, or a comment does not', () => {
+  const sets = (line) => assignsVariable(readInvocation(lexCommand(line)[0]), 'NAME');
+  for (const line of ['NAME=1 cmd', 'env NAME=1 cmd', 'export NAME=1', 'export NAME', 'declare -x NAME=1', 'typeset NAME=1', 'readonly NAME=1',
+    'NAME= cmd', 'NAME="$V" cmd', 'export A=1 NAME=2', 'sudo NAME=1 cmd', '(NAME=1 git commit -m x)',
+    'local NAME=1', 'builtin export NAME=1']) {
+    assert.equal(sets(line), true, `expected set: ${line}`);
+  }
+  for (const line of ['env -u NAME cmd', 'echo "NAME=1"', "printf '%s' 'export NAME=1'", 'echo hi # NAME=1 cmd', 'OTHER_NAME=1 cmd',
+    'NAME_X=1 cmd', 'export OTHER_NAME=1', 'export NAMES', 'unset NAME', 'git commit -m "export NAME=1"',
+    'builtin echo NAME=1', 'builtin export OTHER_NAME=1']) {
+    assert.equal(sets(line), false, `expected not set: ${line}`);
+  }
+  assert.equal(assignsVariable({ program: 'export' }, 'NAME'), false, 'an invocation without args or environment reads as none');
 });

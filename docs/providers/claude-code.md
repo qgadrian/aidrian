@@ -28,6 +28,7 @@ claude plugin marketplace add /path/to/aidrian-harness
 
 Claude Code caches the plugin by version.
 A change arrives only after `npm run bump` in the checkout, then the two [update](#update) commands.
+Set the version back before you commit: a pull request never changes it ([Versions](../contributing.md#versions)).
 
 ## Running aidrian
 

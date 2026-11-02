@@ -101,8 +101,8 @@ Fix or remove each sentence that fails an item.
 
 ## Step 7: Run the checks and the cases
 
-1. Run the lint. In this plugin's repository, `npm run bump` first, keep the skill's row in `docs/agents-and-skills.md`
-   in step with its description, then `npm run check`. Run any generator the project names.
+1. Run the lint. In this plugin's repository, keep the skill's row in `docs/agents-and-skills.md` in step with its
+   description, then `npm run check`. Run any generator the project names.
 2. Run each case in a fresh session, never a fork of this one, on each model that runs the skill,
    as [references/running-cases.md](references/running-cases.md) says; read it before the first run.
 3. Fix what failed, and repeat from 1.

@@ -11,7 +11,7 @@ help:
 build:
 	node scripts/build.mjs
 
-## Raise the plugin version in every file that carries it. LEVEL=minor or LEVEL=major; patch by default.
+## Raise the plugin version locally, to try a change in an install; never commit it. LEVEL=minor or LEVEL=major.
 bump:
 	node scripts/version.mjs $(LEVEL)
 

@@ -127,7 +127,8 @@ trigger, the first of these that holds:
 Ask every escalation, one at a time, before `plan-review`'s critique starts. The Report goes back to `plan-review`,
 not to a separate dispatch: its accepted objections, with each plan change, the Human's answers, and its
 revision-history line go into `planning-agent`'s critique brief as authoritative, like gate verdicts, so they land in
-the diff the Human approves. That diff takes the Report's revision-history line as its own.
+the diff the Human approves. That diff's `revision_history_entry` includes the Report's revision-history line, as
+`plan-review`'s review lens says.
 Rejected objections and opinions are context there, never findings to apply. A deferred escalation goes into the
 critique's open questions.
 When this skill stops with `blocked`, `plan-review` stops with `blocked on quorum`, naming the ledger and what

@@ -4,11 +4,11 @@
   "always": ["working-agreement.md"],
   "docs": {
     "working-agreement.md": {
-      "summary": "Rules every change here keeps: worktrees, generated agents, tests, hooks failing open, docs, version bumps, the knowledge index.",
+      "summary": "Rules every change here keeps: worktrees, generated agents, tests, hooks failing open, docs, the version left to the release, the knowledge index.",
       "tags": []
     },
     "contributing.md": {
-      "summary": "Building and checking the plugin: npm run build and check, what the tests hold, trying a branch, skill evals, version bumps.",
+      "summary": "Building and checking the plugin: npm run build and check, what the tests hold, trying a branch, skill evals, releases and versions.",
       "tags": ["harness_engineering", "docs"]
     },
     "architecture.md": {

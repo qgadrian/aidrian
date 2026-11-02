@@ -1,0 +1,37 @@
+name: PR title
+
+# A pull request is squashed into one commit whose subject is its title, and the release reads that subject's type
+# to pick the level. So the title must be a Conventional Commit subject.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Conventional Commit title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Lint the title
+        env:
+          # Through the environment, never in the script text: the title is text anyone opening a pull request writes.
+          TITLE: ${{ github.event.pull_request.title }}
+        run: node scripts/version.mjs lint-title "$TITLE"

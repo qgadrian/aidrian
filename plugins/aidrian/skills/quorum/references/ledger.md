@@ -91,7 +91,8 @@ again: its objection escalates with the earlier answer as the recommended answer
 
 - **After round 1.** Write each objection with its id, `by`, the adversary's fields, `status: pending`, and `ruling`
   and `rebuttal` `null`. Write `status: open` and `human_answers: []`. Run `quorum check`: an objection with no passing
-  citation becomes `opinion`, and the architect never rules on it.
+  citation becomes `opinion`, and the architect never rules on it. Only a `pending` objection is relabeled: one already
+  ruled on keeps its status when its citations stop passing, and `quorum check` names it.
 - **After round 2.** Copy each ruling into `ruling`, and set `status`: `accept` to `accepted`, `reject` to `rejected`,
   `escalate` to `escalated`. Run `quorum check`. The rulings it names invalid, and the backed objections still
   `pending`, go back to the architect once. Invalid again, the objection becomes `escalated`, keeping the ruling.

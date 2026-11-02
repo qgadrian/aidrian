@@ -3,8 +3,8 @@
 //   codex   runs Codex as adversary B, held to OBJECTIONS_SCHEMA (`--mode object`, the default) or, to answer the
 //           architect's rulings on its objections in a ledger, to REBUTTALS_SCHEMA and that ledger (`--mode rebut`),
 //           and prints one { status, reason } line
-//   check   checks every citation of a ledger against the repository and the plan, relabels an objection with no
-//           passing citation as `opinion`, and names each ruling or rebuttal with no passing citation
+//   check   checks every citation of a ledger against the repository and the plan, relabels a `pending` objection
+//           with no passing citation as `opinion`, and names each ruling or rebuttal with no passing citation
 // LEDGER_SCHEMA, OBJECTIONS_SCHEMA, and REBUTTALS_SCHEMA are the one source of truth for these files. `check` runs no command but
 // `git ls-files`, and never executes what a citation names.
 
@@ -352,9 +352,13 @@ export function checkLedger(ledger, ctx) {
   const cited = new Set(ledger.objections.flatMap((objection) => [...objection.citations, ...(objection.ruling?.citations ?? [])]).map(citationKey));
   for (const objection of ledger.objections) {
     const where = `objection ${objection.id}`;
+    // Only a `pending` objection becomes an opinion. One the architect or the Human already ruled on keeps its status
+    // when its citations stop passing, as after the cited code changed, and is named: a reused ledger never loses it.
     if (!passing(objection.citations, where).length && objection.status !== 'opinion') {
-      problems.push(`${where}: relabeled opinion (was ${objection.status}): no citation passes`);
-      objection.status = 'opinion';
+      if (objection.status === 'pending') {
+        problems.push(`${where}: relabeled opinion (was pending): no citation passes`);
+        objection.status = 'opinion';
+      } else problems.push(`${where}: no citation passes; kept ${objection.status}, since it was ruled on`);
     }
     ruling(objection.ruling, `${where} ruling`);
     const rebuttal = objection.rebuttal;

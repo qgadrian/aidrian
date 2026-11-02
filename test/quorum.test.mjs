@@ -128,7 +128,7 @@ test('check: every citation kind passes; anchors by heading text and by slug; qu
 test('check: each citation kind that fails is named with its reason, and an objection with none passing becomes opinion', (t) => {
   const p = project(t);
   const failing = [
-    objection('doc', [cite('doc', 'docs/rules.md#refunds', 'Two bookings never hold one slot.')], { status: 'accepted' }),
+    objection('doc', [cite('doc', 'docs/rules.md#refunds', 'Two bookings never hold one slot.')]),
     objection('docMissing', [cite('doc', 'docs/nope.md#x', 'y')]),
     objection('adr', [cite('adr', 'docs/decisions/0001-store.md#context', 'one ledger per plan')]),
     objection('code', [cite('code', 'src/app.js:1', 'export const app = 2;')]),
@@ -144,7 +144,7 @@ test('check: each citation kind that fails is named with its reason, and an obje
   assert.deepEqual(statuses, { doc: 'opinion', docMissing: 'opinion', adr: 'opinion', code: 'opinion', codeRef: 'opinion', plan: 'opinion', absence: 'opinion', long: 'opinion', mixed: 'pending' });
   const has = (pattern) => assert.ok(result.lines.some((line) => pattern.test(line)), `${pattern}\n${result.stdout}`);
   has(/^objection doc\.citations\[0\] \(doc docs\/rules\.md#refunds\): docs\/rules\.md#refunds does not contain the quote$/u);
-  has(/^objection doc: relabeled opinion \(was accepted\): no citation passes$/u);
+  has(/^objection doc: relabeled opinion \(was pending\): no citation passes$/u);
   has(/^objection docMissing\.citations\[0\] .*: docs\/nope\.md is missing$/u);
   has(/^objection adr\.citations\[0\] .*: docs\/decisions\/0001-store\.md has no heading #context$/u);
   has(/^objection code\.citations\[0\] .*: src\/app\.js does not contain the quote$/u);
@@ -154,6 +154,27 @@ test('check: each citation kind that fails is named with its reason, and an obje
   has(/^objection long\.citations\[0\] .*: the quote is 201 characters, more than 200$/u);
   assert.ok(!result.lines.some((line) => line.startsWith('objection mixed:')), 'one passing citation keeps the objection');
   assert.equal(result.lines.at(-1), `checked: 9 objections, 8 opinion, ${result.lines.length - 1} problems`);
+});
+
+test('check: an objection already ruled on keeps its status when its citations stop passing, and is named', (t) => {
+  const p = project(t);
+  // A complete ledger at this hash is reused when check exits 0: the cited code changed since, and an accepted objection,
+  // one the Human answered, must not drop to an opinion and out of the report.
+  const stale = [cite('code', 'src/app.js:1', 'export const app = 2;')];
+  const ruled = (decision) => ({ decision, change_or_reason: 'r', citations: [PASSING.adr] });
+  const before = { ...ledger([
+    objection('K1', stale, { status: 'accepted', ruling: ruled('accept') }),
+    objection('K2', stale, { status: 'rejected', ruling: ruled('reject') }),
+    objection('K3', stale, { status: 'escalated', ruling: ruled('escalate') }),
+  ]), status: 'complete', human_answers: [{ objection_id: 'K1', answer: 'yes, change it' }] };
+  const result = p.check(before);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.ledger.objections.map((each) => each.status), ['accepted', 'rejected', 'escalated']);
+  for (const [id, status] of [['K1', 'accepted'], ['K2', 'rejected'], ['K3', 'escalated']]) {
+    assert.ok(result.lines.includes(`objection ${id}: no citation passes; kept ${status}, since it was ruled on`), result.stdout);
+  }
+  assert.ok(!result.lines.some((line) => line.includes('relabeled')), result.stdout);
+  assert.equal(result.lines.at(-1), 'checked: 3 objections, 0 opinion, 6 problems');
 });
 
 test('check: a ruling, or a rebuttal that rebuts, with no passing citation is invalid; a concession needs none', (t) => {

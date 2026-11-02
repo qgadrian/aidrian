@@ -226,3 +226,42 @@ export function formatReviews(result, { since = null } = {}) {
   if (top.length) lines.push(`Most rounds: ${top.map((row) => `#${row.number} ${row.rounds}`).join(', ')}`);
   return lines.join('\n');
 }
+
+// The checks at the review-round cap (lib/review/extension.mjs), from the dispatch log's `review_extension` rows written
+// since `sinceMs`. Each pull request's round counts once, by its last decision: { checks, stopped_by_signals, signals,
+// stopped_by_judge, stopped_by_ceiling, granted, granted_by_human, denied, waiting }. `signals` counts the red flags of
+// the signal stops; `unreadable` is a stop whose history held no signal.
+export function extensionSummary(rows, { sinceMs = 0 } = {}) {
+  const last = new Map();
+  for (const row of rows ?? []) {
+    if (row?.event !== 'review_extension' || !(Date.parse(row.ts) >= sinceMs)) continue;
+    last.set(`${row.repo}#${row.pr}:${row.source}:${row.round}`, row);
+  }
+  const decided = [...last.values()];
+  const count = (keep) => decided.filter(keep).length;
+  const signals = {};
+  for (const row of decided.filter((each) => each.outcome === 'stopped' && each.by === 'mechanical')) {
+    for (const name of row.signals?.length ? row.signals : ['unreadable']) signals[name] = (signals[name] ?? 0) + 1;
+  }
+  return {
+    checks: decided.length,
+    stopped_by_signals: count((row) => row.outcome === 'stopped' && row.by === 'mechanical'),
+    signals,
+    stopped_by_judge: count((row) => row.outcome === 'stopped' && row.by === 'judge'),
+    stopped_by_ceiling: count((row) => row.outcome === 'stopped' && row.by === 'ceiling'),
+    granted: count((row) => row.outcome === 'granted'),
+    granted_by_human: count((row) => row.outcome === 'granted' && row.by === 'human'),
+    denied: count((row) => row.outcome === 'denied'),
+    waiting: count((row) => row.outcome === 'judging' || row.outcome === 'asking'),
+  };
+}
+
+// The extra-rounds line of the reviews view, or null when no check ran in the window.
+export function formatExtensions(summary, { since = null } = {}) {
+  if (!summary?.checks) return null;
+  const flags = Object.entries(summary.signals).map(([name, count]) => `${name} ${count}`).join(', ');
+  return `Extra rounds${since ? ` since ${since}` : ''}: ${plural(summary.checks, 'check')} at the round cap; ` +
+    `${summary.stopped_by_signals} stopped by the signals${flags ? ` (${flags})` : ''}, ${summary.stopped_by_judge} by the judge, ` +
+    `${summary.stopped_by_ceiling} at the ceiling; ${summary.granted} granted (${summary.granted_by_human} by the Human), ` +
+    `${summary.denied} denied, ${summary.waiting} waiting`;
+}

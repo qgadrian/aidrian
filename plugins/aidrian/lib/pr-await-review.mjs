@@ -24,8 +24,13 @@
 //      the config value is the Human's call: it needs ROUNDS_OVERRIDE set in their own shell (roundCapProblem), whatever
 //      reviews the pull request. A raised limit is recorded in the request comment, and later runs keep the highest one.
 //
+//   8. At that cap, with config.json `github.extraRounds` other than "off" on the base branch: the check at the cap
+//      (lib/review/extension.mjs) reads the bot's rounds and may end with `extension_check` (a judge to dispatch) or
+//      `extension_ask` (the Human to ask) instead of `round_limit`. Each round it grants raises the cap by one.
+//
 // stdout: one JSON object. Exit 0 received | already_present | no_reviewer, 2 timed_out (re-run once without --request
-// when `retry_recommended` is true), 3 blocked_quota, 4 round_limit, 5 review_required, 1 error. Read-only except the
+// when `retry_recommended` is true), 3 blocked_quota, 4 round_limit, 5 review_required, 10 extension_check,
+// 11 extension_ask, 1 error. Read-only except the
 // --request comment and,
 // at round_limit, a lesson in the local lesson inbox (lib/lesson-signals.mjs). With no review bot (config.json
 // `github.reviewer` null or "none", or `--reviewer none`) it ends at once as `no_reviewer`: it runs no gh, posts nothing,
@@ -103,6 +108,8 @@ export const exitCodeFor = (status) => {
   if (status === 'blocked_quota') return 3;
   if (status === 'round_limit') return 4;
   if (status === 'review_required') return 5;
+  if (status === 'extension_check') return 10;
+  if (status === 'extension_ask') return 11;
   return 0;
 };
 
@@ -430,16 +437,52 @@ async function reviewGate(project, config) {
   };
 }
 
-// The round cap as the pull request's base branch commits it, so an edit to the working copy's config cannot raise it.
-// GitHub always names the base; a response without one keeps the loaded config's cap.
-function committedCap(project, opts, gh, config) {
+// The `github` config as the pull request's base branch commits it, so an edit to the working copy's config cannot
+// raise the round cap or loosen what happens at it: { github, repo, n, baseTip, pr }. GitHub always names the base;
+// a response without one keeps the loaded config, with no base tip.
+function committedBase(project, opts, gh, config) {
   const repo = opts.repo ?? gh.repo();
   const n = opts.pr ?? String(gh.currentPr().number);
-  const ref = gh.api(`repos/${repo}/pulls/${n}`)?.base?.ref;
-  if (typeof ref !== 'string' || ref === '') return config.github.maxReviewRounds;
+  const pr = gh.api(`repos/${repo}/pulls/${n}`);
+  const ref = pr?.base?.ref;
+  if (typeof ref !== 'string' || ref === '') return { github: config.github, repo, n, baseTip: null, pr };
   const tip = [`origin/${ref}`, ref].map((each) => runGit(['rev-parse', '--verify', '--quiet', `${each}^{commit}`], project.root)).find((r) => r.status === 0)?.stdout.trim();
   if (!tip) throw new Error(`the base branch ${ref} is not in this checkout: git fetch first`);
-  return committedConfig(project, tip).github.maxReviewRounds;
+  return { github: committedConfig(project, tip).github, repo, n, baseTip: tip, pr };
+}
+
+// The pull request's review record: the newer of this machine's and its summary comment's (lib/review/state.mjs).
+async function reviewRecord(project, config, gh, repo, n) {
+  const { emptyState, isSummary, newer, readLocalState, stateFromComment } = await import('./review/state.mjs');
+  let remote = null;
+  if (config.review.record !== 'local') {
+    try {
+      const comments = gh.api(`repos/${repo}/issues/${n}/comments`, { paginate: true }) ?? [];
+      remote = stateFromComment(comments.filter((comment) => isSummary(comment.body)).at(-1)?.body, Number(n));
+    } catch {}
+  }
+  return newer(readLocalState(project, Number(n)), remote) ?? emptyState(Number(n), repo);
+}
+
+// The check at the cap for the bot's rounds: its reviews and their inline comments are the history.
+async function botAtCap(result, { project, config, gh, base, state, policy, env }) {
+  const extension = await import('./review/extension.mjs');
+  const { writeLocalState } = await import('./review/state.mjs');
+  const n = Number(base.n);
+  const decision = extension.atCap({
+    state, source: 'bot', round: result.codex_rounds, head: result.head_sha, policy, pr: n,
+    goal: { title: base.pr?.title ?? null, body: base.pr?.body ?? null },
+    command: `aidrian pr await-review ${n} --request`,
+    history: () => {
+      const reviews = gh.api(`repos/${base.repo}/pulls/${n}/reviews`, { paginate: true }) ?? [];
+      const comments = gh.api(`repos/${base.repo}/pulls/${n}/comments`, { paginate: true }) ?? [];
+      const rounds = extension.botRounds(reviews, comments, result.reviewer);
+      return extension.buildHistory({ root: project.root, rounds, baseTip: base.baseTip, head: result.head_sha, review: config.review });
+    },
+    log: extension.extensionLogger(project, config, { pr: n, repo: base.repo, env }),
+  });
+  writeLocalState(project, state);
+  return { ...result, ...decision };
 }
 
 // The CLI body: prints the result JSON and returns its exit code; a usage or gh error prints one line and returns 1.
@@ -448,11 +491,21 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
   try {
     const gate = project && config.github.reviewGate.enabled ? await reviewGate(project, config) : null;
     const opts = parseArgs(args, { reviewer: config.github.reviewer, maxRounds: config.github.maxReviewRounds });
-    const cap = project && opts.reviewer !== null ? committedCap(project, opts, deps.gh ?? defaultGh, config) : config.github.maxReviewRounds;
-    if (!args.includes('--max-rounds')) opts.maxRounds = cap;
-    const capped = roundCapProblem(opts.maxRounds, cap, deps.env ?? process.env);
+    const gh = deps.gh ?? defaultGh;
+    const env = deps.env ?? process.env;
+    const base = project && opts.reviewer !== null ? committedBase(project, opts, gh, config) : null;
+    const cap = (base?.github ?? config.github).maxReviewRounds;
+    // Each extra round the base branch's github.extraRounds granted the bot raises the cap by one.
+    const { grantedRounds, policyOf } = await import('./review/extension.mjs');
+    const policy = policyOf(base?.github ?? config.github);
+    const state = base && opts.request && policy.mode !== 'off' ? await reviewRecord(project, config, gh, base.repo, base.n) : null;
+    const granted = grantedRounds(state, 'bot', policy);
+    if (!args.includes('--max-rounds')) opts.maxRounds = cap + granted;
+    const capped = roundCapProblem(opts.maxRounds, cap + granted, env);
     if (capped) throw new Error(capped);
-    const result = await awaitReview(opts, { gate, ...deps });
+    let result = await awaitReview(opts, { gate, ...deps });
+    if (result.status === 'round_limit' && state) result = await botAtCap(result, { project, config, gh, base, state, policy, env });
+    else if (result.status === 'round_limit' && base && policy.mode === 'off') result = { ...result, extension: { status: 'off', mode: 'off' } };
     if (result.status === 'review_required') console.error(result.reason);
     if (result.status === 'round_limit' && project) {
       const { recordSignal, roundLimitSignal } = await import('./lesson-signals.mjs');

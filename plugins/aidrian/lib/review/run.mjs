@@ -12,6 +12,8 @@
 //   too_large       the change is past what one review covers; the Human decides how to split it
 //   checks_pending  a flow's required checks have not all finished on this head: call again later
 //   timed_out, blocked_quota, round_limit   as `aidrian pr await-review`
+//   extension_check  at the round cap: run the listed judge, then record its verdict with `aidrian pr extend`
+//   extension_ask    the judge says one more round; ask the Human, then `aidrian pr extend <PR> --human approve|deny`
 //
 // docs/review.md describes the plan, the stages, and the record.
 
@@ -36,12 +38,14 @@ import { dedupe, packageRoots } from './split.mjs';
 import { contentFlows } from './content.mjs';
 import { buildPlan, classify, detectFlows, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, pathPattern, validatePlan } from './plan.mjs';
 import { BUILT_IN, flowBaseBrief, resolveEngine, reviewerMap, runExec, satisfies, VERDICT_MEANING } from './reviewers.mjs';
+import { atCap, buildHistory, extensionLogger, grantedRounds, policyOf } from './extension.mjs';
 import { emptyState, isSummary, newer, readLocalState, stateFromComment, summaryBody, writeLocalState } from './state.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, ghImage, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput, visualMatrix, visualRoutes } from './visual.mjs';
 
 export const EXIT = Object.freeze({
   dispatch: 0, running: 0, fix_required: 0, received: 0, none_needed: 0, human_required: 9,
   timed_out: 2, checks_pending: 2, blocked_quota: 3, round_limit: 4, unsatisfied: 6, incomplete: 7, stuck: 8, too_large: 8,
+  extension_check: 10, extension_ask: 11,
 });
 export const MAX_ATTEMPTS = 3;
 // The folders of installed dependencies linked into a base worktree.
@@ -54,7 +58,7 @@ const HARNESS_INVARIANT = Object.freeze({
 });
 
 export const defaultGh = {
-  pr: (ref) => JSON.parse(runGh(['pr', 'view', ...(ref ? [String(ref)] : []), '--json', 'number,headRefOid,baseRefName,url'])),
+  pr: (ref) => JSON.parse(runGh(['pr', 'view', ...(ref ? [String(ref)] : []), '--json', 'number,headRefOid,baseRefName,url,title,body'])),
   repo: () => JSON.parse(runGh(['repo', 'view', '--json', 'nameWithOwner'])).nameWithOwner,
   comments: (repo, n) => JSON.parse(runGh(['api', `repos/${repo}/issues/${n}/comments`, '--paginate', '--slurp']) || '[]').flat(),
   post: (repo, n, body) => JSON.parse(runGh(['api', `repos/${repo}/issues/${n}/comments`, '--method', 'POST', '-f', `body=${body}`])),
@@ -201,8 +205,11 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   const baseTip = resolve(root, `origin/${info.baseRefName}`) ?? resolve(root, info.baseRefName);
   if (!baseTip) throw new Error(`the base branch ${info.baseRefName} is not in this checkout: git fetch first`);
   const base = mergeBase(root, baseTip, head);
-  // The round cap is the base branch's: an edit to the working copy's config, committed or not, cannot raise it.
-  const cap = committedConfig(project, baseTip).github.maxReviewRounds;
+  // The round cap is the base branch's: an edit to the working copy's config, committed or not, cannot raise it. So is
+  // what happens at it: github.extraRounds and its ceiling, github.maxExtraRounds.
+  const committed = committedConfig(project, baseTip);
+  const cap = committed.github.maxReviewRounds;
+  const policy = policyOf(committed.github);
   const capped = opts.maxRounds === undefined ? null : roundCapProblem(opts.maxRounds, cap, env);
   if (capped) throw new Error(capped);
 
@@ -344,7 +351,8 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   if (answerless) return { status: 'unsatisfied', pr: n, repo, head, reason: `flow ${answerless.id} needs a reviewer that answers its invariants, and the review bot does not: run codex-local, or require an agent for the flow`, plan };
   if (!passes.length && !removedTests.length) return { status: 'none_needed', pr: n, repo, head, base, depth: plan.depth, engine: plan.engine, plan: { depth: plan.depth, reasons: plan.reasons, flows: [], stages: [] } };
 
-  const maxRounds = opts.maxRounds ?? cap;
+  // Each extra round the base branch's policy grants (lib/review/extension.mjs) raises the cap by one.
+  const maxRounds = (opts.maxRounds ?? cap) + grantedRounds(state, 'plan', policy);
 
   // A pass's result counts for this head when it is for this head, or for an earlier one the change since does not
   // touch and that left nothing open.
@@ -379,8 +387,9 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   const current = state.rounds.at(-1);
   const newRound = current?.head !== head;
   // The last round runs the final stage first, so an independent review always happens before the cap. A round that
-  // started as the last one stays the last one on every later call for the same head.
-  const lastRound = newRound ? state.rounds.length + 1 === maxRounds : Boolean(current?.final);
+  // started as the last one stays the last one on every later call for the same head, unless an extra round was
+  // granted since: then a fix may have a new head again.
+  const lastRound = newRound ? state.rounds.length + 1 === maxRounds : Boolean(current?.final) && state.rounds.length >= maxRounds;
   const roundsBefore = state.rounds.length;
   let opened = !newRound;
   let recorded = false;
@@ -405,7 +414,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     const pending = unfinished.filter((pass) => (pass.after ?? []).every((id) => resultFor(stage.passes.find((each) => each.id === id) ?? { id })));
     if (unfinished.length && !pending.length) return finish('incomplete', { reason: `${unfinished.map((pass) => pass.id).join(', ')} wait for passes that cannot finish`, retry_recommended: false });
     if (pending.length) {
-      if (openRound() === 'round_limit') return finish('round_limit', { max_rounds: maxRounds });
+      if (openRound() === 'round_limit') return capReached({ max_rounds: maxRounds });
       // At most `parallel` local reviewers per step: each runs up to its time limit, and a step must end inside one
       // shell call. The rest run on the next step, which `running` asks for.
       const ready = pending.filter((pass) => map[pass.reviewer]?.kind === 'exec');
@@ -474,7 +483,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
         }
         if (bot.status === 'timed_out' || bot.status === 'blocked_quota' || bot.status === 'round_limit') {
           if (!bot.requested) undoRound();
-          return finish(bot.status, { bot });
+          return bot.status === 'round_limit' ? capReached({ bot }) : finish(bot.status, { bot });
         }
         // A push during the wait: the bot's answer is for another commit, so it counts for nothing here.
         if (bot.head_sha && bot.head_sha !== head) return finish('incomplete', { reason: `the pull request moved to ${String(bot.head_sha).slice(0, 7)} during the wait: run the step again`, retry_recommended: true });
@@ -496,7 +505,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     const unsigned = plan.flows.filter((flow) => stage.passes.some((pass) => (pass.flows ?? []).includes(flow.id))).map((flow) => [flow, flowStatus(flow)]).filter(([, status]) => !status.signed);
     if (open.length || unsigned.length) {
       // A fix needs a new head, and in the last round there is none left: that is the cap, with the work named.
-      return finish(lastRound ? 'round_limit' : 'fix_required', {
+      return (lastRound ? capReached : (extra) => finish('fix_required', extra))({
         stage: stage.name,
         open: open.map(([pass, result]) => ({ pass: pass.id, reviewer: pass.reviewer, head: result.head, open: result.open, findings: result.list ?? null })),
         // One entry per mistake when slices and the cross pass report the same one.
@@ -508,13 +517,16 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   // Evidence beyond the reviewers: no flow test deleted without the Human's word, and the required checks of the
   // flows the change touches passed on this head.
   const unaccepted = removedTests.filter((each) => state.signoffs[each.flow]?.head !== head);
-  if (unaccepted.length) return finish(lastRound ? 'round_limit' : 'fix_required', { stage: 'evidence', tests_removed: unaccepted });
+  if (unaccepted.length) return lastRound ? capReached({ stage: 'evidence', tests_removed: unaccepted }) : finish('fix_required', { stage: 'evidence', tests_removed: unaccepted });
   const wanted = [...new Set(plan.flows.flatMap((flow) => review.flows[flow.id]?.checks ?? []))];
   if (wanted.length) {
     const rows = gh.checks(repo, head).filter((row) => wanted.some((part) => row.name.includes(part)));
     const verdict = computeVerdict(rows, { requiredChecks: wanted });
     if (verdict.verdict === 'pending') return finish('checks_pending', { checks: verdict.pending });
-    if (verdict.verdict === 'failing') return finish(lastRound ? 'round_limit' : 'fix_required', { stage: 'evidence', checks_failing: [...verdict.failing, ...(verdict.unexpected_skips ?? [])] });
+    if (verdict.verdict === 'failing') {
+      const extra = { stage: 'evidence', checks_failing: [...verdict.failing, ...(verdict.unexpected_skips ?? [])] };
+      return lastRound ? capReached(extra) : finish('fix_required', extra);
+    }
   }
   const human = plan.flows.filter((flow) => flow.signoff === 'human' && !keptSignoffs.has(flow.id));
   if (human.length) return finish('human_required', { flows: human.map((flow) => flow.id), command: human.map((flow) => `aidrian pr signoff ${n} --flow ${flow.id} --head ${head}`) });
@@ -615,7 +627,35 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     };
   }
 
+  // The current round's open findings, kept on its entry in the record, so the check at the cap can read each round's
+  // findings after the passes have moved on to later heads.
+  function noteFindings(extra) {
+    const round = state.rounds.at(-1);
+    if (!round || round.head !== head || !(Array.isArray(extra.open) || Array.isArray(extra.flows))) return;
+    const lists = (extra.open ?? []).map((each) => each.findings);
+    const violated = (extra.flows ?? []).flatMap((flow) => (flow.violated ?? []).map((id) => ({ title: `flow ${flow.flow}: invariant ${id} violated`, file: null, line: null, severity: null })));
+    round.open = (extra.open ?? []).reduce((total, each) => total + (each.open ?? 0), 0) + violated.length;
+    round.findings = lists.every(Array.isArray)
+      ? [...lists.flat().map((each) => ({ title: each.title ?? null, file: each.file ?? null, line: Number.isInteger(each.line) ? each.line : null, severity: each.severity ?? null })), ...violated].slice(0, 50)
+      : null;
+  }
+
+  // The round cap: round_limit, unless the base branch's github.extraRounds lets the check at the cap run
+  // (lib/review/extension.mjs), which may return extension_check or extension_ask instead.
+  function capReached(extra) {
+    noteFindings(extra);
+    const decision = atCap({
+      state, source: 'plan', round: state.rounds.length, head, policy, pr: n, goal: { title: info.title ?? null, body: info.body ?? null },
+      command: `aidrian pr review ${n}`,
+      history: () => buildHistory({ root, rounds: state.rounds.map((round, i) => ({ round: i + 1, head: round.head, open: round.open ?? null, findings: round.findings ?? null })), baseTip, head, review }),
+      log: extensionLogger(project, config, { pr: n, repo, env }),
+    });
+    const { status, ...carried } = decision;
+    return finish(status, { ...extra, ...carried });
+  }
+
   function finish(status, extra) {
+    noteFindings(extra);
     const result = { status, pr: n, repo, head, base, depth: plan.depth, round: state.rounds.length, max_rounds: maxRounds, engine: plan.engine, ...extra };
     writeLocalState(project, state);
     if (onPr) {

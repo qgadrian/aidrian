@@ -16,7 +16,7 @@ const NODES = new Set(['node', 'nodejs', 'bun']);
 const isCli = (text) => /(?:^|\/)(?:cli\.mjs|aidrian)$/u.test(text);
 
 // The words after the program that make the aidrian command, or null when the invocation is not aidrian.
-function aidrianArgs({ program, args }) {
+export function aidrianArgs({ program, args }) {
   if (program === 'aidrian') return args;
   if (!NODES.has(program)) return null;
   const script = args.findIndex((token) => !token.text.startsWith('-'));

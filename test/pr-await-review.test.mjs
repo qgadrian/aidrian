@@ -1104,6 +1104,8 @@ test('aidrian pr prints its usage for an unknown action, and await-review report
   assert.deepEqual([unknown.status, unknown.stderr], [1, [
     'usage: aidrian pr review [PR] [--with-bot] [--max-rounds N]',
     '       aidrian pr signoff PR --flow ID --head SHA',
+    '       aidrian pr extend PR',
+    '               (--verdict extend|stop --reason TEXT [--head SHA] | --human approve|deny)',
     '       aidrian pr await-review [PR] [--request] [--max-rounds N] [--head SHA]',
     '       aidrian pr attest PR --head SHA --reviewer WHO --findings N --fixed N [--note T]',
     '       aidrian pr attest PR --pass ID --head SHA --reviewer WHO',

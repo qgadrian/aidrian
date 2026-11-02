@@ -85,6 +85,16 @@ export function summaryBody(state, plan, status) {
     const visual = state.visual;
     lines.push('', `- visual capture of \`${String(visual.head).slice(0, 7)}\`: ${visual.status}${visual.status === 'captured' ? ` (${visual.captured} of ${visual.of})` : visual.reason ? ` (${visual.reason})` : ''}; attach **${visual.mode}**${visual.visibility ? `, ${String(visual.visibility).toLowerCase()} repository` : ', visibility unknown'}${visual.error ? `; ${visual.error}` : ''}`);
   }
+  // Every check at the round cap, and who decided it: the signals, the judge, the Human, or the ceiling.
+  const extensions = (state.extensions ?? []).filter((entry) => entry.status !== 'new');
+  if (extensions.length) {
+    lines.push('', '**Extra rounds:**');
+    for (const entry of extensions) {
+      const who = entry.by === 'human' ? `the Human (${entry.human?.by ?? 'unknown'}; an audit entry, not proof)` : entry.by ? `the ${entry.by === 'mechanical' ? 'signals' : entry.by}` : null;
+      const reasons = (entry.reasons ?? []).slice(0, 3).map((reason) => String(reason).replace(/\s+/gu, ' ').slice(0, 300));
+      lines.push(`- ${entry.source === 'bot' ? 'bot round' : 'round'} ${entry.round}: ${entry.status}${who ? ` by ${who}` : ''}${reasons.length ? `: ${reasons.join('; ')}` : ''}`);
+    }
+  }
   if (state.overrides.length) lines.push('', '**Overrides used:**', ...state.overrides.map((each) => `- ${each}`));
   lines.push('', 'A citation shows the cited line exists, not that it proves the invariant; the independent reviewer challenges each one.');
   lines.push(`<!-- aidrian-review-state:${Buffer.from(JSON.stringify(state)).toString('base64')} -->`);

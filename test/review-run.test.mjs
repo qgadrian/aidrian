@@ -11,6 +11,7 @@ import { citationProblem, flowState, invariantsOf } from '../plugins/aidrian/lib
 import { cleanOutput, resolveEngine, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { EXIT, recordPass, recordSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { readLocalState, stateFromComment } from '../plugins/aidrian/lib/review/state.mjs';
+import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 
 // A repository with `main` (carrying `baseConfig`) and a `feat` branch made by `change(dir)`. Returns the helpers a
 // review step needs, with GitHub faked in memory.
@@ -161,9 +162,9 @@ test('reviewInForce: rules add up, flows and ignore lists come from the base, an
   assert.equal(reviewInForce(null, { ...head, engine: 'self' }).review.engine, null, 'an engine the pull request adds runs once merged');
 });
 
-test('the round cap: the last round goes to the final stage, and a round past the cap posts nothing new', async (t) => {
+test('the round cap with extraRounds off: the last round goes to the final stage, and a round past the cap posts nothing new', async (t) => {
   const flows = { booking: { files: ['src/booking/**'] } };
-  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 2 }, review: { flows } }, change: (write) => write('src/booking/a.js', '1\n') });
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 2, extraRounds: 'off' }, review: { flows } }, change: (write) => write('src/booking/a.js', '1\n') });
   const first = await r.step({ exec: clean });
   assert.equal(first.status, 'dispatch');
   recordPass(r.project, { pr: 7, repo: 'o/r', pass: first.dispatch[0].pass, head: first.head, reviewer: 'code-reviewer', findings: 2, fixed: 0 });
@@ -701,4 +702,112 @@ test('a sign-off of harness-config does not survive a push that changes a projec
   r.write('scripts/review-lint.sh', '#!/bin/sh\necho \'{"findings":[]}\' # v3\n');
   r.commit('change the reviewer again');
   assert.equal((await settle()).status, 'human_required', 'the reviewer script changed since the sign-off');
+});
+
+// Two rounds to the cap of 2 on a booking flow: round 1 leaves `first` findings open, round 2 leaves `second`. Returns
+// the repository and the step at the cap.
+async function toTheCap(t, github, { first = 2, second = 1 } = {}) {
+  const flows = { booking: { files: ['src/booking/**'] } };
+  const r = repo(t, { baseConfig: { version: 1, github: { maxReviewRounds: 2, ...github }, review: { flows } }, change: (write) => write('src/booking/a.js', '1\n') });
+  const one = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: one.dispatch[0].pass, head: one.head, reviewer: 'code-reviewer', findings: first, fixed: 0 });
+  assert.equal((await r.step({ exec: clean })).status, 'fix_required');
+  r.write('src/booking/a.js', '2\n');
+  r.commit();
+  const two = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: two.dispatch[0].pass, head: two.head, reviewer: 'code-reviewer', findings: second, fixed: 0 });
+  return { r, capped: await r.step({ exec: clean }), pass: two.dispatch[0].pass };
+}
+
+// `aidrian pr extend` as the CLI runs it, its printed JSON returned.
+async function extend(t, r, args) {
+  const log = t.mock.method(console, 'log', () => {});
+  try {
+    const code = await runExtend(['7', ...args], r.project, loadConfig(r.project).config, { repo: 'o/r', remote: null, env: {} });
+    return { code, out: JSON.parse(log.mock.calls.at(-1).arguments[0]) };
+  } finally {
+    log.mock.restore();
+  }
+}
+
+test('extra rounds "ask": a converging review at the cap dispatches the judge, then asks the Human, and a grant is one round', async (t) => {
+  const { r, capped } = await toTheCap(t, {});
+  assert.equal(capped.status, 'extension_check');
+  assert.equal(EXIT.extension_check, 10);
+  assert.deepEqual(capped.dispatch.map((each) => [each.pass, each.agent]), [['extension-judge', 'code-reviewer']]);
+  assert.match(capped.dispatch[0].record, new RegExp(`aidrian pr extend 7 --verdict extend\\|stop --reason "<evidence>" --head ${capped.head}`));
+  assert.deepEqual(capped.extension.history.map((round) => [round.round, round.open]), [[1, 2], [2, 1]], 'each round keeps its open findings');
+  assert.deepEqual([capped.extension.signals.converging, capped.extension.mode, capped.extension.max_extra], [true, 'ask', 2]);
+  assert.deepEqual(capped.extension.files, ['src/booking/a.js']);
+  assert.equal(capped.open[0].open, 1, 'the work left is still named');
+
+  const verdict = await extend(t, r, ['--verdict', 'extend', '--reason', 'src/booking/a.js:1 is a real high-severity bug', '--head', capped.head]);
+  assert.deepEqual([verdict.code, verdict.out.extension.status], [0, 'asking']);
+  const ask = await r.step({ exec: clean });
+  assert.equal(ask.status, 'extension_ask');
+  assert.equal(EXIT.extension_ask, 11);
+  assert.equal(ask.question, 'Pull request #7 reached its review-round cap. Grant one extra review round, round 3?');
+  assert.deepEqual(ask.options, ['Approve round 3', 'Deny']);
+  assert.equal(ask.max_rounds, 2, 'asking grants nothing yet');
+
+  await extend(t, r, ['--human', 'approve']);
+  const granted = await r.step({ exec: clean });
+  assert.deepEqual([granted.status, granted.max_rounds], ['fix_required', 3], 'the granted round lets a fix take a new head');
+  r.write('src/booking/a.js', '3\n');
+  r.commit();
+  const three = await r.step({ exec: clean });
+  assert.deepEqual([three.status, three.round, three.max_rounds], ['dispatch', 3, 3]);
+  const state = readLocalState(r.project, 7);
+  assert.deepEqual(state.extensions.map((entry) => [entry.round, entry.status, entry.by, entry.human?.by]), [[2, 'granted', 'human', 'Tester']]);
+  assert.match(r.comments[0].body, /\*\*Extra rounds:\*\*\n- round 2: granted by the Human \(Tester; an audit entry, not proof\)/u);
+});
+
+test('extra rounds "auto": the judge`s extend grants the round without the Human', async (t) => {
+  const { r, capped } = await toTheCap(t, { extraRounds: 'auto' });
+  assert.equal(capped.status, 'extension_check');
+  const verdict = await extend(t, r, ['--verdict', 'extend', '--reason', 'valid medium finding at src/booking/a.js:1']);
+  assert.equal(verdict.out.extension.status, 'granted');
+  assert.match(verdict.out.next, /round 3 is granted: run aidrian pr review 7/u);
+  assert.deepEqual([(await r.step({ exec: clean })).status], ['fix_required']);
+});
+
+test('extra rounds: the judge`s stop, the signals, and "off" each leave round_limit, with the reason', async (t) => {
+  const judged = await toTheCap(t, {});
+  await extend(t, judged.r, ['--verdict', 'stop', '--reason', 'the fixes over-engineer the refund path']);
+  const stopped = await judged.r.step({ exec: clean });
+  assert.deepEqual([stopped.status, stopped.extension.status, stopped.extension.by, stopped.extension.reasons], ['round_limit', 'stopped', 'judge', ['the fixes over-engineer the refund path']]);
+
+  const flat = await toTheCap(t, {}, { first: 1, second: 1 });
+  assert.equal(flat.capped.status, 'round_limit', 'not converging stops before any judge');
+  assert.deepEqual([flat.capped.extension.by, flat.capped.extension.signals.converging], ['mechanical', false]);
+  assert.match(flat.capped.extension.reasons[0], /^not converging: round 2 left 1 open finding, round 1 left 1/u);
+  assert.ok(!('dispatch' in flat.capped), 'no judge is dispatched');
+  await assert.rejects(extend(t, flat.r, ['--verdict', 'extend', '--reason', 'x']), /no extension check waits for a verdict/u, 'a verdict cannot overrule the signals');
+  assert.equal((await flat.r.step({ exec: clean })).status, 'round_limit', 'the decision holds on every later step');
+
+  const off = await toTheCap(t, { extraRounds: 'off' });
+  assert.deepEqual([off.capped.status, off.capped.extension], ['round_limit', { status: 'off', mode: 'off' }]);
+});
+
+test('extra rounds: the policy is the base branch`s, so a working-copy edit cannot turn it on or raise the ceiling', async (t) => {
+  const { r, capped } = await toTheCap(t, { extraRounds: 'off' });
+  assert.equal(capped.status, 'round_limit');
+  r.write('.aidrian/config.json', JSON.stringify({ version: 1, github: { maxReviewRounds: 2, extraRounds: 'auto', maxExtraRounds: 9 } }));
+  const again = await r.step({ exec: clean });
+  assert.deepEqual([again.status, again.extension.status], ['round_limit', 'off']);
+});
+
+test('extra rounds: github.maxExtraRounds is a hard ceiling, and the check repeats at each new cap', async (t) => {
+  const { r, capped } = await toTheCap(t, { extraRounds: 'auto', maxExtraRounds: 1 });
+  assert.equal(capped.status, 'extension_check');
+  await extend(t, r, ['--verdict', 'extend', '--reason', 'valid high finding']);
+  assert.equal((await r.step({ exec: clean })).status, 'fix_required');
+  r.write('src/booking/a.js', '3\n');
+  r.commit();
+  const three = await r.step({ exec: clean });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: three.dispatch[0].pass, head: three.head, reviewer: 'code-reviewer', findings: 0, fixed: 0 });
+  const again = await r.step({ exec: clean });
+  assert.equal(again.round, 3);
+  assert.deepEqual([again.status, again.extension.by, again.extension.round], ['round_limit', 'ceiling', 3]);
+  assert.match(again.extension.reasons[0], /1 extra round granted already, and github\.maxExtraRounds is 1/u);
 });

@@ -2,7 +2,7 @@
 name: quorum-seeded-flaw
 max_turns: 150
 timeout_seconds: 3600
-allowed_tools: [Read, Glob, Grep, Skill, Bash, Agent]
+allowed_tools: [Read, Glob, Grep, Skill, Bash, Agent, Write]
 ---
 
 Run the plan-review skill on plans/stores-per-app-plan.md with --findings-only, so nothing is applied: we build it

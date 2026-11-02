@@ -70,7 +70,7 @@ A flaw or bait on a money path makes a gate block the plan before the quorum, so
 run the case on its own, before a release that changes either skill, and only when the Human approves the cost.
 
 ```sh
-claude plugin eval . --scaffold --trust-plugin --no-publish --case quorum-seeded-flaw --runs 3 --ablation none --allow-tools Bash --model sonnet
+claude plugin eval . --scaffold --trust-plugin --no-publish --case quorum-seeded-flaw --runs 3 --ablation none --allow-tools Bash,Write --model sonnet
 ```
 
 ## Versions

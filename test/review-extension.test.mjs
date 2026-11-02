@@ -268,6 +268,25 @@ test('await-review --request at the cap: converging bot rounds get the judge, an
   assert.match(granted.requests[0].body, /max-rounds=4/u);
 });
 
+test('await-review at the cap: the checks, verdicts, and approvals reach the summary comment, so another machine continues', async (t) => {
+  const bot = botProject(t);
+  assert.equal((await bot.run(converging)).out.status, 'extension_check');
+  const [summary] = bot.issue;
+  assert.equal(stateFromComment(summary.body, 42).extensions[0].status, 'judging', 'the check is on the pull request');
+  assert.match(summary.body, /\*\*Extra rounds:\*\*\n- bot round 3 on `zzz`: judging/u);
+  bot.forget();
+  assert.equal(await bot.extend(['--verdict', 'extend', '--reason', 'f.js:3 is a valid high finding']), 0);
+  assert.equal(bot.issue.length, 1, 'the one summary comment, edited in place');
+  assert.equal(stateFromComment(bot.issue[0].body, 42).extensions[0].status, 'asking');
+  bot.forget();
+  assert.equal((await bot.run(converging)).out.status, 'extension_ask', 'the verdict came back from the pull request');
+  bot.forget();
+  assert.equal(await bot.extend(['--human', 'approve']), 0);
+  bot.forget();
+  const granted = await bot.run(converging);
+  assert.deepEqual([granted.out.status, granted.requests.length], ['timed_out', 1], 'the grant came back from the pull request');
+});
+
 test('await-review at the cap: a push after the judge`s verdict sends the check back to the judge, and a stale approval is refused', async (t) => {
   const bot = botProject(t);
   await bot.run(converging);

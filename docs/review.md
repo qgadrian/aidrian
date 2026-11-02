@@ -402,7 +402,9 @@ head. A new red flag stops it, a grant included, so a push after the verdict can
 round. Without one, a check waiting for the Human goes back to the judge, who has not seen the push, and a grant
 stands. `aidrian pr extend --human approve` and `--verdict` are refused once the pull request's head is not the one the
 check was for. Each decision is an entry
-in [the record](#the-record), listed under **Extra rounds** in the summary comment, and a `review_extension` row in the
+in [the record](#the-record), listed under **Extra rounds** in the summary comment, which `aidrian pr extend` and
+`aidrian pr await-review` write too, so another machine continues from the same checks and grants (with `review.record:
+"local"`, the state folder only). It is also a `review_extension` row in the
 [dispatch log](dispatch-log.md#review_extension-when-a-check-at-the-round-cap-decides), which `aidrian report reviews` counts.
 
 **Trust.** The `review-extend` rule ([hooks.md](hooks.md#bash-rules)) lets an agent's `--human approve` run only when

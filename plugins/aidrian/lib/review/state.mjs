@@ -85,16 +85,7 @@ export function summaryBody(state, plan, status) {
     const visual = state.visual;
     lines.push('', `- visual capture of \`${String(visual.head).slice(0, 7)}\`: ${visual.status}${visual.status === 'captured' ? ` (${visual.captured} of ${visual.of})` : visual.reason ? ` (${visual.reason})` : ''}; attach **${visual.mode}**${visual.visibility ? `, ${String(visual.visibility).toLowerCase()} repository` : ', visibility unknown'}${visual.error ? `; ${visual.error}` : ''}`);
   }
-  // Every check at the round cap, and who decided it: the signals, the judge, the Human, or the ceiling.
-  const extensions = (state.extensions ?? []).filter((entry) => entry.status !== 'new');
-  if (extensions.length) {
-    lines.push('', '**Extra rounds:**');
-    for (const entry of extensions) {
-      const who = entry.by === 'human' ? `the Human (${entry.human?.by ?? 'unknown'}; an audit entry, not proof)` : entry.by ? `the ${entry.by === 'mechanical' ? 'signals' : entry.by}` : null;
-      const reasons = (entry.reasons ?? []).slice(0, 3).map((reason) => String(reason).replace(/\s+/gu, ' ').slice(0, 300));
-      lines.push(`- ${entry.source === 'bot' ? 'bot round' : 'round'} ${entry.round}: ${entry.status}${who ? ` by ${who}` : ''}${reasons.length ? `: ${reasons.join('; ')}` : ''}`);
-    }
-  }
+  lines.push(...extensionLines(state));
   if (state.overrides.length) lines.push('', '**Overrides used:**', ...state.overrides.map((each) => `- ${each}`));
   lines.push('', 'A citation shows the cited line exists, not that it proves the invariant; the independent reviewer challenges each one.');
   lines.push(`<!-- aidrian-review-state:${Buffer.from(JSON.stringify(state)).toString('base64')} -->`);
@@ -102,3 +93,55 @@ export function summaryBody(state, plan, status) {
 }
 
 export const isSummary = (body) => typeof body === 'string' && body.startsWith(SUMMARY_MARKER);
+
+const EXTRA_HEADING = '**Extra rounds:**';
+
+// Every check at the round cap, and who decided it: the signals, the judge, the Human, or the ceiling. A blank line,
+// the heading, and one line per check; nothing when there is none.
+function extensionLines(state) {
+  const extensions = (state.extensions ?? []).filter((entry) => entry.status !== 'new');
+  if (!extensions.length) return [];
+  const lines = ['', EXTRA_HEADING];
+  for (const entry of extensions) {
+    const who = entry.by === 'human' ? `the Human (${entry.human?.by ?? 'unknown'}; an audit entry, not proof)` : entry.by ? `the ${entry.by === 'mechanical' ? 'signals' : entry.by}` : null;
+    const reasons = (entry.reasons ?? []).slice(0, 3).map((reason) => String(reason).replace(/\s+/gu, ' ').slice(0, 300));
+    const at = entry.head ? ` on \`${String(entry.head).slice(0, 7)}\`` : '';
+    lines.push(`- ${entry.source === 'bot' ? 'bot round' : 'round'} ${entry.round}${at}: ${entry.status}${who ? ` by ${who}` : ''}${reasons.length ? `: ${reasons.join('; ')}` : ''}`);
+  }
+  return lines;
+}
+
+// A summary comment's text with `state` in place of the record it carried, and its Extra rounds list rewritten from
+// it; the rest, which only the review step can write, is kept as it was.
+export function refreshSummary(body, state) {
+  const kept = [];
+  const lines = String(body).split('\n');
+  for (let i = 0; i < lines.length; i += 1) {
+    if (STATE.test(lines[i])) continue;
+    if (lines[i] === EXTRA_HEADING) {
+      if (kept.at(-1) === '') kept.pop();
+      while (lines[i + 1]?.startsWith('- ')) i += 1;
+      continue;
+    }
+    kept.push(lines[i]);
+  }
+  const extra = extensionLines(state);
+  const at = kept.findIndex((line) => line === '**Overrides used:**' || line.startsWith('A citation shows'));
+  const before = at === -1 ? kept : kept.slice(0, at > 0 && kept[at - 1] === '' ? at - 1 : at);
+  const after = at === -1 ? [] : kept.slice(before.length);
+  return [...before, ...extra, ...after, `<!-- aidrian-review-state:${Buffer.from(JSON.stringify(state)).toString('base64')} -->`].join('\n');
+}
+
+// Writes `state`, already written to the state folder, to the pull request's summary comment, as the review step does,
+// so another machine reads the same record. `io` is { comments(), post(body), edit(id, body) }. With no summary
+// comment yet, it posts one under `status`. Returns the error message, or null.
+export function publishState(state, io, status) {
+  try {
+    const summary = io.comments().filter((comment) => isSummary(comment.body)).at(-1) ?? null;
+    if (summary) io.edit(summary.id, refreshSummary(summary.body, state));
+    else io.post(summaryBody(state, null, status));
+    return null;
+  } catch (error) {
+    return error.message;
+  }
+}

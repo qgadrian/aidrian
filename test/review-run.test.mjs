@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
-import { projectAt } from '../plugins/aidrian/lib/project.mjs';
+import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { citationProblem, flowState, invariantsOf } from '../plugins/aidrian/lib/review/flows.mjs';
 import { cleanOutput, resolveEngine, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { EXIT, recordPass, recordSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
@@ -759,7 +759,7 @@ test('extra rounds "ask": a converging review at the cap dispatches the judge, t
   assert.deepEqual([three.status, three.round, three.max_rounds], ['dispatch', 3, 3]);
   const state = readLocalState(r.project, 7);
   assert.deepEqual(state.extensions.map((entry) => [entry.round, entry.status, entry.by, entry.human?.by]), [[2, 'granted', 'human', 'Tester']]);
-  assert.match(r.comments[0].body, /\*\*Extra rounds:\*\*\n- round 2: granted by the Human \(Tester; an audit entry, not proof\)/u);
+  assert.match(r.comments[0].body, /\*\*Extra rounds:\*\*\n- round 2 on `[0-9a-f]{7}`: granted by the Human \(Tester; an audit entry, not proof\)/u);
 });
 
 test('extra rounds "auto": the judge`s extend grants the round without the Human', async (t) => {
@@ -844,4 +844,21 @@ test('extra rounds: a grant whose round has not opened is revoked when the next 
   bloat(r);
   const revoked = await r.step({ exec: clean });
   assert.deepEqual([revoked.status, revoked.max_rounds, revoked.round, revoked.extension.by], ['round_limit', 2, 2, 'mechanical'], 'round 3 never opens');
+});
+
+test('extra rounds: aidrian pr extend writes the summary comment, so another machine continues from it', async (t) => {
+  const { r, capped } = await toTheCap(t, {});
+  assert.equal(capped.status, 'extension_check');
+  const local = path.join(stateDir(r.project), 'reviews', 'pr-7-review.json');
+  rmSync(local);
+  await extend(t, r, ['--verdict', 'extend', '--reason', 'valid', '--head', capped.head]);
+  assert.equal(r.comments.length, 1, 'the one summary comment, edited in place');
+  assert.equal(stateFromComment(r.comments[0].body, 7).extensions[0].status, 'asking');
+  assert.match(r.comments[0].body, /### Review: extension_check[\s\S]*- round 2 on `[0-9a-f]{7}`: asking by the judge: valid/u, 'the review step`s text stays; the list follows the record');
+  rmSync(local);
+  assert.equal((await r.step({ exec: clean })).status, 'extension_ask', 'the verdict came back from the pull request');
+  rmSync(local);
+  await extend(t, r, ['--human', 'approve']);
+  rmSync(local);
+  assert.deepEqual([(await r.step({ exec: clean })).max_rounds], [3], 'so did the approval');
 });

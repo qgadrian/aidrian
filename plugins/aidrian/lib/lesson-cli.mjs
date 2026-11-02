@@ -72,12 +72,16 @@ function locate(id, { file, plugin }) {
 // The project id stamped on a row written to `inbox`: rows in the plugin's inbox name the project they came from.
 const stampFor = (inbox, ctx) => (inbox === ctx.plugin ? { project: projectId(ctx.project) } : {});
 
-// The inbox whose live lesson holds `key`, the project's own first, then the plugin's, or null.
-function keyHolder(key, { file, plugin }) {
-  for (const inbox of new Set([file, plugin])) {
-    if (lessons(inbox).some((lesson) => lesson.key === key && !lesson.mergedInto)) return inbox;
-  }
-  return null;
+// The inbox whose live lesson holds `key`, or null: the project's own first, then the plugin's, which holds a key for
+// this lesson only when it is a plugin lesson, by `--target plugin` or, with no target, by the holder's own target.
+// A project lesson never joins a lesson in the plugin's inbox: in the plugin's own checkout that inbox holds its project
+// lessons too.
+function keyHolder(key, target, { file, plugin }) {
+  const holder = (inbox) => lessons(inbox).find((lesson) => lesson.key === key && !lesson.mergedInto);
+  if (holder(file)) return file;
+  if (plugin === file || (target ?? 'plugin') !== 'plugin') return null;
+  const there = holder(plugin);
+  return there && (target === 'plugin' || there.target === 'plugin') ? plugin : null;
 }
 
 function add({ values, ids, ...ctx }) {
@@ -96,7 +100,7 @@ function add({ values, ids, ...ctx }) {
   }
   if (!note) return fail('the lesson needs a note on stdin, after any "title:" or "evidence: <ref>" lines');
   // A known key lands where its lesson is, as --same does; anything else where its target belongs.
-  const held = values.key === undefined ? null : keyHolder(values.key, ctx);
+  const held = values.key === undefined ? null : keyHolder(values.key, values.target, ctx);
   const where = held ? { file: held, project: stampFor(held, ctx).project ?? null } : homeInbox(ctx.project, ctx.config, { target: values.target });
   const row = addRow({
     note, evidence, title, tier: values.tier ?? 'P2', kind: values.kind ?? null, target: values.target ?? null, key: values.key ?? null, ...origin(),
@@ -207,8 +211,10 @@ function update({ values, ids, ...ctx }) {
   if (!found) return fail(`no lesson with id ${ids[0]}`);
   const { file, lesson } = found;
   appendRow(file, { event: 'update', id: lesson.id, at: new Date().toISOString(), ...changes, ...stampFor(file, ctx) });
-  // A lesson in this project's own inbox came from this project, whatever its rows say.
-  const home = changes.target ? homeInbox(ctx.project, ctx.config, { target: changes.target, from: file === ctx.plugin ? lesson.project : null }) : null;
+  // A lesson in this project's own inbox came from this project, whatever its rows say; one in the plugin's inbox that
+  // names no project is the plugin repository's own.
+  const from = file === ctx.plugin ? lesson.project ?? pluginProjectId() : null;
+  const home = changes.target ? homeInbox(ctx.project, ctx.config, { target: changes.target, from }) : null;
   const to = home && home.file !== file ? home.file : file;
   const moved = to !== file && moveLessons(file, to, [lesson.id], { project: home.project }).length > 0;
   const now = fold(readRows(moved ? to : file).rows).find(lesson.id);

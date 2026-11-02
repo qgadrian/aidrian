@@ -20,8 +20,10 @@ and the `lesson-triage` skill run there sees them all. Every row in it names the
 
 This holds for every way a lesson is written: `aidrian lesson add --target plugin`, `--same` and `--key` on a plugin lesson,
 and the [automatic lessons](#automatic-lessons) whose target is `plugin`. The similar lessons that `add` names match against
-the inbox the lesson lands in. `--same <id>` and `--key <key>` find the lesson in the project's inbox first, then in the
-plugin's, and record it there, so a key is one lesson across projects.
+the inbox the lesson lands in. `--same <id>` finds the lesson in the project's inbox first, then in the plugin's, and
+records it there. `--key <key>` looks in the project's inbox first too, and in the plugin's only for a plugin lesson:
+with `--target plugin`, or with no target when the lesson there that holds the key has `target: plugin`.
+So a plugin key is one lesson across projects, and a project key never leaves the project's inbox.
 A lesson whose target is unset or `project` stays in the project's own inbox.
 The plugin's inbox is always in the state root: a `state.dir` in the plugin repository's config.json does not move it.
 
@@ -97,8 +99,10 @@ the note is the rest.
   It never touches a lesson whose target is `project` or unset. A second run moves nothing; `--dry-run` only prints the list.
   A moved lesson whose key a lesson in the plugin's inbox already holds joins that lesson, and the output says so:
   only its occurrences move, its `add` and `seen` rows and those of the lessons merged into it, and its ids find the holder.
-  Its own updates and resolutions stay behind, so the holder keeps its tier, kind, target, and status.
-  An occurrence dated after the holder's fix reopens it, as any occurrence does.
+  Its own updates and resolutions are dropped from the record: nothing lists them after the move, and the holder keeps
+  its tier, kind, target, and status. An occurrence dated after the holder's fix reopens it, as any occurrence does.
+  Run `migrate --dry-run` first to read which lessons join which, and resolve or merge one by hand before the move
+  when its own resolution matters.
   Upgrade the plugin on every host of the machine before you run it: an older copy reads no `move` row, so it still lists the
   moved lessons in the project's inbox, and it files new plugin lessons there; run `migrate` again after one did.
 

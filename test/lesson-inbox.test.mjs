@@ -207,6 +207,27 @@ test('migrate moves every plugin lesson out of each project inbox, whole, and a 
   assert.equal(readFileSync(plugin.inbox(), 'utf8'), plugged);
 });
 
+test('a project key never joins a lesson in the plugin\'s inbox, and a plugin-inbox lesson with no project stays there', (t) => {
+  const consumer = setup(t);
+  const plugin = checkout(consumer, 'plugin', pluginRepository());
+  // The plugin's checkout keeps its own project lessons in the plugin's inbox.
+  const theirs = plugin.add('their project lesson', ['--target', 'project', '--key', 'docs-gap']);
+  const mine = consumer.add('our project lesson', ['--target', 'project', '--key', 'docs-gap']);
+  assert.notEqual(mine, theirs);
+  assert.deepEqual(consumer.json(['list']).map((row) => [row.id, row.key]), [[mine, 'docs-gap']], 'it lands in the consumer\'s own inbox');
+  assert.deepEqual(plugin.json(['list', theirs]).map((row) => row.seen), [1]);
+  const untargeted = consumer.add('again, with no target', ['--key', 'docs-gap']);
+  assert.equal(untargeted, mine, 'with no target, the project\'s own lesson holds the key');
+  rmSync(consumer.inbox());
+  assert.notEqual(consumer.add('with no target and no lesson here', ['--key', 'docs-gap']), theirs, 'a project lesson in the plugin\'s inbox never holds it');
+  // A lesson in the plugin's inbox that names no project is the plugin repository's own: a move to `project` keeps it there.
+  appendRow(plugin.inbox(), { event: 'add', id: 'ffff0001', at: new Date().toISOString(), tier: 'P2', target: 'plugin', note: 'unstamped', evidence: [] });
+  const kept = consumer.run(['update', 'ffff0001', '--target', 'project']);
+  assert.doesNotMatch(kept.stdout, /Moved to/);
+  assert.deepEqual(plugin.json(['list', 'ffff0001']).map((row) => row.target), ['project']);
+  assert.deepEqual(consumer.json(['list']).map((row) => row.id).includes('ffff0001'), false);
+});
+
 test('a lesson that joins a holder by key brings only its occurrences: the holder keeps its labels and its fix', (t) => {
   const { base } = setup(t);
   const from = path.join(base, 'from.jsonl');

@@ -50,31 +50,13 @@ To try a branch in a real session before it merges, install the plugin from your
 
 `plugins/aidrian/evals/<case>/` holds behavior cases for skills, run with model calls, so not by `npm run check`.
 Bash runs inside that temporary clone. Each case's `scaffold.sh` clones the committed HEAD into the run's folder and removes the skill under test, so the
-baseline run without the plugin cannot read it. A case with a `fixture/` folder copies that small project into the
-run's folder instead, so the fixture is the run root.
-`Agent` in a case's `allowed_tools` lets it dispatch subagents. A subagent started in the background is waited for before the run ends.
-Commit first, then, from `plugins/aidrian`, run the routine cases:
+baseline run without the plugin cannot read it. Commit first, then, from `plugins/aidrian`:
 
 ```sh
-claude plugin eval . --scaffold --trust-plugin --no-publish --case 'skill-writer-*' --runs 1 --allow-tools Bash --model <haiku|sonnet|opus>
+claude plugin eval . --scaffold --trust-plugin --no-publish --runs 1 --allow-tools Bash --model <haiku|sonnet|opus>
 ```
 
-A routine case earns its place when it passes with the plugin and fails without it. Results go to `evals/**/results/`, which git ignores.
-
-`quorum-seeded-flaw` is an end-to-end check, not a with-and-without case. Its prompt runs the `plan-review` skill on a
-plan that names a decision record, so step 3b starts the quorum. It runs with `--ablation none`, which the case file
-cannot set, and that makes its `tool_used` graders part of the score: the `plan-review` and `quorum` skills loaded,
-and a Bash call ran `quorum check`, so a run that loaded the quorum and never wrote a ledger fails. Its llm graders
-judge only the last message, the one final report the prompt asks for, for the seeded flaw and the bait.
-A gate that blocks the plan stops the run before the quorum, so the fixture declares no critical flow, the flaw and
-the bait stay off money paths, and the bait states a wrong claim and proposes no change to the plan: a proposed change
-tripped a gate in 4 of 5 runs. The quorum writes its ledger, so the case needs Bash and Write.
-One run takes about 20 minutes and costs about $7 with sonnet: run the case on its own, before a release that changes
-either skill, and only when the Human approves the cost.
-
-```sh
-claude plugin eval . --scaffold --trust-plugin --no-publish --case quorum-seeded-flaw --runs 3 --ablation none --allow-tools Bash,Write --model sonnet
-```
+A case earns its place when it passes with the plugin and fails without it. Results go to `evals/**/results/`, which git ignores.
 
 ## Versions
 

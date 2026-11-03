@@ -100,6 +100,8 @@ function collectSubstitutions(command, from, to, limit, into) {
 // substitution that would run: unquoted, in double quotes, `<(…)` and `>(…)`, and in a heredoc whose delimiter is
 // unquoted. Single-quoted text, comments, and quoted heredoc bodies hold none. A heredoc body is data, never commands.
 // `ends[i]` counts the substitutions found up to the end of `segments[i]`: those of segment i run as part of it.
+// `spans[i]` is [start, end), where segment i sits in `command` without its separator, for a rule that quotes it back.
+// A token holding an unquoted `$(…)` or backtick body is `substituted`: its `text` keeps a bare `$` or nothing of it.
 function lexSegments(command) {
   const segments = [];
   const separators = [];
@@ -111,6 +113,10 @@ function lexSegments(command) {
   let tokens = [];
   let current = null;
   const pendingHeredocs = [];
+  const spans = [];
+  let segmentStart = null;
+  // The newline whose heredoc bodies end the segment: where that segment's span ends.
+  let heredocAt = null;
 
   const start = () => {
     if (!current) current = { text: '', dynamic: false };
@@ -120,22 +126,29 @@ function lexSegments(command) {
     if (current) tokens.push(current);
     current = null;
   };
-  const endSegment = (separator = null) => {
+  const endSegment = (separator = null, at = heredocAt ?? command.length) => {
     endToken();
     if (tokens.length > 0) {
+      let end = at;
+      while (end > segmentStart && /\s/u.test(command[end - 1])) end -= 1;
       segments.push(tokens);
       separators.push(separator);
       ends.push(substitutions.length);
+      spans.push([segmentStart, end]);
     } else if (separator !== null && separators.length > 0 && separator !== CONTINUATION) {
       // An empty run between two operators: the later one replaces the earlier. A newline never does: after `&&`,
       // `||`, or `|` it continues the line, and after `&` or `;` the segment already ended the way it ended.
       separators[separators.length - 1] = separator;
     }
     tokens = [];
+    segmentStart = null;
+    heredocAt = null;
   };
 
   for (let i = 0; i < command.length; i += 1) {
     const ch = command[i];
+    if (segmentStart === null && !/[\s;&|]/u.test(ch)) segmentStart = i;
+    if (ch === '\n' && pendingHeredocs.length > 0) heredocAt = i;
 
     if (ch === '\n' && pendingHeredocs.length > 0) {
       // Skip the body lines up to the delimiter line, then lex on.
@@ -169,12 +182,14 @@ function lexSegments(command) {
     }
 
     if (ch === "'" || ch === '"') {
-      // Nothing escapes inside single quotes; inside double quotes `\"` does not close the string.
+      // Nothing escapes inside single quotes; inside double quotes `\"` does not close the string. There a backslash
+      // escapes only `$`, a backtick, `"`, `\`, and a newline; before any other character, as in grep's `\|`, it stays.
       let j = i + 1;
       let body = '';
       while (j < command.length && command[j] !== ch) {
         if (ch === '"' && command[j] === '\\' && j + 1 < command.length) {
-          body += command[j + 1];
+          const next = command[j + 1];
+          if (next !== '\n') body += '$`"\\'.includes(next) ? next : `\\${next}`;
           j += 2;
           continue;
         }
@@ -197,6 +212,7 @@ function lexSegments(command) {
       const token = start();
       token.dynamic = true;
       token.splits = true;
+      token.substituted = true;
       if (ch === '`') {
         const closing = command.indexOf('`', i + 1);
         if (closing !== -1) substitutions.push(command.slice(i + 1, closing));
@@ -233,6 +249,7 @@ function lexSegments(command) {
         continue;
       }
       let separator = ch;
+      const at = i;
       if ((ch === '|' || ch === '&') && command[i + 1] === ch) {
         separator += ch;
         i += 1;
@@ -240,7 +257,7 @@ function lexSegments(command) {
         separator = '|&'; // bash's `2>&1 |`: one pipeline operator
         i += 1;
       }
-      endSegment(separator);
+      endSegment(separator, at);
       continue;
     }
 
@@ -302,13 +319,13 @@ function lexSegments(command) {
   }
 
   endSegment();
-  return { segments, separators, substitutions, ends, heredocs };
+  return { segments, separators, substitutions, ends, heredocs, spans };
 }
 
-// The segments and the operator that ended each one.
+// The segments, the operator that ended each one, and where each sits in `command` (`spans`).
 export function lexPipeline(command) {
-  const { segments, separators } = lexSegments(command);
-  return { segments, separators };
+  const { segments, separators, spans } = lexSegments(command);
+  return { segments, separators, spans };
 }
 
 // The body of every command substitution that would run, each a command line of its own. A nested `$( … $(…) )` is
@@ -746,4 +763,39 @@ function folderAfter(here, { program, args }) {
   } catch {
     return reached;
   }
+}
+
+// A token written back as a shell word that reads as the same word, for a deny reason that hands back a command to run:
+// bare when it is plain, in double quotes when it expands a variable, in single quotes otherwise. null when the lexer
+// kept too little to write it back: an unquoted `$(…)` or backtick body.
+const PLAIN_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/u;
+export function shellWord({ text, dynamic, substituted }) {
+  if (substituted) return null;
+  if (dynamic && /[$`]/u.test(text)) return `"${text.replace(/["\\]/gu, (ch) => `\\${ch}`)}"`;
+  if (dynamic || PLAIN_WORD.test(text)) return text;
+  return `'${text.replaceAll("'", () => "'\\''")}'`;
+}
+
+// A segment's redirections written back, each as its fd, operator, and target, such as `2>/dev/null` or `2>&1`.
+export function shellRedirections(segment) {
+  const out = [];
+  for (let i = 0; i < segment.length; i += 1) {
+    const token = segment[i];
+    if (!token.operator) continue;
+    const target = segment[i + 1];
+    const operator = `${token.fd ?? ''}${token.text}`;
+    if (target?.fdDup) out.push(`${operator}${target.text}`);
+    else if (target) out.push(`${operator}${shellWord(target) ?? target.text}`);
+    i += 1;
+  }
+  return out;
+}
+
+// `text` cut to a window around [start, end) when it is longer than `limit`, with `…` where it was cut.
+export function excerpt(text, start, end, limit = 600) {
+  if (text.length <= limit) return text;
+  const margin = Math.max(40, Math.floor((limit - (end - start)) / 2));
+  const from = Math.max(0, start - margin);
+  const to = Math.min(text.length, end + margin);
+  return `${from > 0 ? '…' : ''}${text.slice(from, to)}${to < text.length ? '…' : ''}`;
 }

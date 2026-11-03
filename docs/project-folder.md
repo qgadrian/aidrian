@@ -188,6 +188,7 @@ and none of the rules below that need `mode`. `check` never adds the field. Two 
 - `aidrian quorum check LEDGER --plan PLAN` checks every citation. `doc` and `adr` cite `path#anchor`, and the quote
   must be in that section; `code` cites `path:line`, and the quote must be in the file; `plan` cites `#anchor` in PLAN;
   `absence` cites a path, and the quote must be in no regular file `git ls-files` lists there; a path with no tracked file fails.
+  When `git ls-files` itself fails, the citation fails with git's exit code and its last stderr line.
   An anchor matches a heading by its text or its slug, and a `#` line in a fenced code block is not a heading.
   A fence counts at any indentation, and may open after a list marker, as in "- ```bash".
   A quote is at most 200 characters, compared with whitespace collapsed.

@@ -446,7 +446,12 @@ export function citationProblem(citation, ctx) {
   const env = { ...ctx.env };
   for (const key of PATHSPEC_VARS) delete env[key];
   const listed = runGit(['--literal-pathspecs', 'ls-files', '-z', '--', file.path], ctx.root, { timeout: 30_000, env, maxBuffer: 64 * 1024 * 1024 });
-  if (listed.status !== 0) return `git ls-files failed on ${file.path}`;
+  if (listed.status !== 0) {
+    // git's exit code (or why it never ran) and its last stderr line, so a sandbox or a broken git is named, not guessed.
+    const exit = listed.status ?? listed.error?.code ?? listed.signal;
+    const last = shown(String(listed.stderr ?? '').trim().split('\n').at(-1).trim()).slice(0, MAX_QUOTE);
+    return `git ls-files failed on ${file.path} (exit ${exit}${last ? `: ${last}` : ''})`;
+  }
   const files = listed.stdout.split('\0').filter(Boolean);
   if (!files.length) return `git tracks no file under ${file.path}`;
   const hit = files.find((each) => {

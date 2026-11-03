@@ -325,6 +325,19 @@ test('check: GIT_DIR and GIT_WORK_TREE pointing at another repository do not red
   assert.ok(result.lines.includes('objection A1.citations[0] (absence src): src/app.js contains the quote'), result.stdout);
 });
 
+test('check: when git ls-files fails, the absence problem names git`s exit code and its last stderr line', (t) => {
+  const p = project(t);
+  // A git on PATH that fails `ls-files` as a sandboxed git does, and runs the real git for every other call.
+  const real = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  const bin = temp(t, 'aidrian-quorum-bin-');
+  write(bin, 'git', `#!/bin/sh\ncase " $* " in *" ls-files "*) echo "warning: first line" >&2; echo "fatal: cannot write cache" >&2; exit 128;; esac\nexec '${real}' "$@"\n`);
+  spawnSync('chmod', ['+x', path.join(bin, 'git')]);
+  const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+  const result = p.check(ledger([objection('A1', [cite('absence', 'src', 'NEEDLE_9')]), objection('A2', [PASSING.code])]), { env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.lines.includes('objection A1.citations[0] (absence src): git ls-files failed on src (exit 128: fatal: cannot write cache)'), result.stdout);
+});
+
 test('check: absence never counts an ignored or untracked file: naming one is a path git tracks no file under', (t) => {
   const p = project(t);
   const result = p.check(ledger([

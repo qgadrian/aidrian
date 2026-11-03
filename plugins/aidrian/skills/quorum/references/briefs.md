@@ -2,6 +2,8 @@
 
 What every brief of every mode pastes. Each mode file holds its own briefs, and names the parts below where they go.
 Fill every `<placeholder>`, and paste the Evidence block where a brief says `<evidence>`.
+A brief is its mode file's text with these filled, and nothing more: none of your own suspected objections, findings,
+or hints, which would anchor the side that reads them.
 
 ## Shared parts
 

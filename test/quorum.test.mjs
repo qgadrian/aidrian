@@ -1396,6 +1396,28 @@ test('plan-review runs the quorum skill at step 3b, lists its flags in Inputs, a
   assert.match(ledger, /\[Under plan-review\]\(#under-plan-review\)/u, 'ledger.md links its plan-review section');
 });
 
+test('plan-review gate briefs carry the plan, the trigger, and the knowledge, and none of the coordinator`s own findings', () => {
+  // A coordinator that wrote its suspected findings into each gate's brief anchored the gates on them, so they did not
+  // review the plan on their own (the 2026-11-02 quorum eval traces). Step 3 says what a gate brief holds and must not.
+  const flat = (text) => text.replace(/\s+/gu, ' ');
+  const review = readFileSync(PLAN_REVIEW, 'utf8');
+  const gates = flat(review.split('\n## 3. Gates\n')[1].split('\n## ')[0]);
+  assert.match(gates, /their verdicts go into its brief as authoritative/u, 'gate verdicts still bind the critique');
+  assert.match(gates, /A gate's brief carries the plan path, the trigger \(the plan lines and the flow or surface they touch\), and the knowledge docs to check against\./u, 'step 3 says what a gate brief carries');
+  assert.match(gates, /It carries nothing of your own: no suspected findings, risks, or hints\./u, 'step 3 keeps the coordinator`s findings out of gate briefs');
+  const never = flat(review.split('\n## Do not\n')[1]);
+  assert.match(never, /Critique, rewrite, or restyle the plan yourself, in a report or in any brief/u, 'Do not covers every brief');
+  // Step 5's items moved to steps/apply.md to keep SKILL.md under its size limit: the re-hash before an apply stays.
+  const apply = flat(review.split('\n## 5. Apply\n')[1].split('\n## ')[0]);
+  assert.match(apply, /read \[steps\/apply\.md\]\(steps\/apply\.md\) and follow its steps 5\.1 to 5\.4/u, 'step 5 points to its items');
+  const items = flat(readFileSync(path.join(path.dirname(PLAN_REVIEW), 'steps/apply.md'), 'utf8'));
+  assert.match(items, /1\. Hash the plan again\. When it changed since step 2, say so and start again at step 2/u, 'apply re-hashes first');
+  assert.match(items, /4\. Read the plan again/u, 'apply keeps step 5.4');
+  // The quorum's briefs are its mode files' text, filled, with nothing the coordinator suspects added.
+  const briefs = flat(readFileSync(path.join(SKILL, 'references/briefs.md'), 'utf8'));
+  assert.match(briefs, /A brief is its mode file's text with these filled, and nothing more: none of your own suspected objections, findings, or hints/u, 'quorum briefs carry no coordinator findings');
+});
+
 // Plan mode: a ledger that carries `mode` is held to the plan-mode briefs' rules; one without it keeps the rules it was
 // written under, and `check` never adds the field.
 

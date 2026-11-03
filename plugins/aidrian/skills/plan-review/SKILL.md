@@ -54,6 +54,8 @@ or the `issue-plan` skill for an issue. Never build a plan from the conversation
 ## 3. Gates
 
 Both run before the critique; their verdicts go into its brief as authoritative.
+A gate's brief carries the plan path, the trigger (the plan lines and the flow or surface they touch), and the knowledge
+docs to check against. It carries nothing of your own: no suspected findings, risks, or hints. The gate reviews the plan unanchored.
 
 - **Critical flow.** The plan's goal, scope, approach, affected surfaces, or slice files touch a flow the project's
   `product_sensitive` knowledge declares critical (the whole text, for a free-form plan): `product-manager` first.
@@ -91,13 +93,7 @@ Then report, in this order, and stop:
 
 Only on the Human's explicit `apply` in this session, after step 4 in this same session: it needs step 2's hash and step 4's diff.
 `--apply` without both: refuse, and say to rerun without `--apply`.
-
-1. Hash the plan again. When it changed since step 2, say so and start again at step 2:
-   the changed plan gets a new hash, and the gates judge its new text before the next critique.
-2. Dispatch `planning-agent` with the plan path, the approved findings, the approved diff with the Human's edits,
-   and the revision-history line. It writes the same file.
-3. It keeps `issue_id`, `issue_ref`, and `workspace_decision` unless an approved finding changes them; report any such change first.
-4. Read the plan again: a schema plan passes the lens's schema checks, and `status` matches reality.
+Then read [steps/apply.md](steps/apply.md) and follow its steps 5.1 to 5.4.
 
 ## 6. Cap
 
@@ -116,7 +112,7 @@ design imports included. A changed design-import plan is a file change the repor
 
 ## Do not
 
-- Critique, rewrite, or restyle the plan yourself, or prefer your structure to the author's when both are valid.
+- Critique, rewrite, or restyle the plan yourself, in a report or in any brief, or prefer your structure to the author's when both are valid.
 - Apply a change without the Human's approval in this session, or a scope-growing change without its own approval.
 - Skip a gate, or loop past the cap.
 - Hand work an agent can do to the Human as a follow-up.

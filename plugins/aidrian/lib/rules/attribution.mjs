@@ -21,7 +21,7 @@ import { runGit } from '../git.mjs';
 import { findProject } from '../project.mjs';
 import { isLongOption, lexCommand, readGit, walkCommands } from '../shell-lex.mjs';
 import { readText } from '../transcript.mjs';
-import { readBody, readPrCall, readPrCalls, unchangedHeredoc } from './github/pr-body.mjs';
+import { lineWrites, namedFd, readBody, stdinBody, readPrCall, readPrCalls, unchangedHeredoc } from './github/pr-body.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_UNATTRIBUTED';
 
@@ -85,12 +85,12 @@ export function check(command, { cwd = process.cwd(), env = process.env, input, 
     const missing = expected.filter((trailer) => !carried.has(trailer));
     if (missing.length) return commitReason(expected, missing);
   }
-  for (const { call, dir } of prCreates) {
+  for (const { call, dir, written } of prCreates) {
     const found = settings(dir);
     const prFields = found?.config.attribution.pullRequest ?? [];
     if (!prFields.length) continue;
     const { project, config } = found;
-    const body = readBody(call, dir);
+    const body = readBody(call, dir, written);
     if (body === null) {
       return hint('the attribution rule cannot read this pull request body (a variable, a command substitution, stdin, a missing ' +
         `file, or none), so it cannot check its attribution. Pass a literal --body, a heredoc (--body "$(cat <<'EOF' … EOF)"), ` +
@@ -111,7 +111,8 @@ export function check(command, { cwd = process.cwd(), env = process.env, input, 
   return null;
 }
 
-// The command's commits, as { messages, trailers, cleanup, dir, config }, and its `gh pr create` calls, as { call, dir },
+// The command's commits, as { messages, trailers, cleanup, dir, config }, and its `gh pr create` calls, as
+// { call, dir, written }, `written` the files the line wrote before the call (pr-body `lineWrites`),
 // in the order they run, with the folder each runs in from shell-lex `walkCommands`: substitutions, `sh -c`, and scripts
 // fed to a shell included, and a folder it cannot know as null, where a relative file is not read. A help or dry-run
 // commit writes nothing and is left out.
@@ -123,7 +124,9 @@ function readCalls(command, cwd) {
     if (!lines.has(line)) lines.set(line, { heredocs: [...line.matchAll(MESSAGE_HEREDOC)].map(unchangedHeredoc), pending: [], prCalls: [] });
     return lines.get(line);
   };
-  for (const { segment, folder, line } of walkCommands(command, cwd)) {
+  const writes = lineWrites(command);
+  for (const entry of walkCommands(command, cwd)) {
+    const { segment, folder, line } = entry;
     const git = readGit(segment);
     if (git?.subcommand === 'commit') {
       // `git -c key=value` holds for this commit only, so the rule's own git calls take it too.
@@ -139,8 +142,16 @@ function readCalls(command, cwd) {
       // The same line text can run again, as two identical `sh -c` bodies do: a spent queue starts over.
       if (!here.prCalls.length) here.prCalls = readPrCalls(line);
       const call = here.prCalls.shift();
-      if (call?.subcommand === 'create' && !call.help && !call.web && !call.dryRun) prCreates.push({ call, dir: folder });
+      if (call?.subcommand === 'create' && !call.help && !call.web && !call.dryRun) {
+        // The body file as the line wrote it so far, and the heredoc fed to `--body-file -`, as the pull request body rule reads them.
+        call.stdin = stdinBody(entry);
+        call.namedFd = namedFd(entry.segment);
+        call.bodyFile = writes.token(call.bodyFile, entry);
+        prCreates.push({ call, dir: folder, written: new Map(writes.files) });
+      }
     }
+    // Every command, a gh call too, may write a body file a later gh call reads.
+    writes.note(entry);
   }
   // The n-th commit whose message is a command substitution takes its line's n-th message heredoc, and only when the
   // counts match: one commit's heredoc never stands in for another's. A message part the rule cannot read may end the

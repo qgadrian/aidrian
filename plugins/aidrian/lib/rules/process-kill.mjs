@@ -7,33 +7,49 @@
 //
 // Command-line listings: no `pgrep -fl`, `pgrep -a`, or `ps` without an explicit format free of argument columns.
 // On macOS a process that sets its own title shows its environment as arguments, so secrets would reach the transcript.
+// A listing whose output reaches only `/dev/null` or a counter (`wc`, `grep -c`, `grep -q`) prints none of it, so it runs,
+// but only when the listing is on the command line itself or in a substitution of it, never inside `sh -c`, `eval`,
+// `env -S`, or xargs, and only through programs whose every word this rule reads.
+//
+// Each deny names the command to run instead, built from the one it saw: `pgrep -fl x` and `ps aux | grep x` become
+// `pgrep -d, -f x | xargs -r ps -o pid=,…,comm= -p`, a `ps` format trades its argument columns for `comm`, and a
+// `pkill` or `killall` the `pgrep` that lists what it would stop.
 //
 // Both look through wrappers, `case` arms, subshells, `sh -c`, `eval`, `env -S`, xargs, and the substitutions that run.
 // A lexer cannot see into a script or an interpreter (`python -c`), so this guards against accidents, not intent.
 
-import { inlineShellCommand, isLongOption, lexCommand, lexSubstitutions } from '../shell-lex.mjs';
+import {
+  excerpt, inlineShellCommand, isLongOption, lexCommand, lexPipeline, lexSubstitutions, readInvocation, readShortOptions,
+  shellRedirections, shellWord,
+} from '../shell-lex.mjs';
+import { asksForCount, asksForQuiet, GREP_PROGRAMS, GREP_VALUE_FLAGS, hasNamedFd, startsOrEndsGroup } from './grep-exit-chain.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME';
 export const LISTING_OVERRIDE = 'AIDRIAN_ALLOW_PROCESS_ARGS_LISTING';
 
 const REASON =
   'Blocked: stopping processes by name (`pkill`, `killall`, `kill $(pgrep …)`, `… | xargs kill`) also stops ' +
-  "other sessions' builds and git hooks that run the same programs. " +
+  "other sessions' builds and git hooks that run the same programs.\n" +
   'Stop only what you own: `kill <pid>` for a pid your session started or recorded, or `kill -- -<pgid>` for a ' +
   `process group you created. To override for an explicit, user-confirmed reason, set ${OVERRIDE}=1 in your own shell ` +
   "before starting the session (agents must never set it on the user's behalf).";
 
+const LISTING_LEAD = 'Blocked: this process listing prints full command lines.';
 const LISTING_REASON =
-  'Blocked: this process listing prints full command lines. On macOS a process that sets its own title shows its ' +
+  'On macOS a process that sets its own title shows its ' +
   'inherited environment as arguments, so secrets would land in the transcript. List pids and names only: ' +
   '`ps -o pid=,ppid=,pcpu=,rss=,etime=,comm=` (add `-p <pid>` or `-e`), `pgrep <pattern>`, `pgrep -f <pattern>` ' +
-  `(pids only), or \`pgrep -l <pattern>\` without \`-f\`. To override for an explicit, user-confirmed reason, set ` +
+  `(pids only), or \`pgrep -l <pattern>\` without \`-f\`; a count (\`| wc -l\`, \`| grep -c\`) or \`>/dev/null\` runs as it is. ` +
+  `To override for an explicit, user-confirmed reason, set ` +
   `${LISTING_OVERRIDE}=1 in your own shell before starting the session (agents must never set it on the user's behalf).`;
 
 // The deny reason for `command`, or null: the kill rule first, then the listing rule. Each override opens its own rule.
 export function check(command, { env = process.env } = {}) {
-  if (env[OVERRIDE] !== '1' && killsByName(command)) return REASON;
-  if (env[LISTING_OVERRIDE] !== '1' && printsProcessArguments(command)) return LISTING_REASON;
+  if (env[OVERRIDE] !== '1' && killsByName(command)) return killReason(command);
+  if (env[LISTING_OVERRIDE] !== '1') {
+    const found = findListing(command);
+    if (found) return listingReason(command, found);
+  }
   return null;
 }
 
@@ -194,9 +210,14 @@ function readCommand(segment) {
   for (let i = 0; i < segment.length; i += 1) {
     if (segment[i].operator && segment[i + 1] && !segment[i + 1].fdDup) targets.add(segment[i + 1]);
   }
-  const words = segment.filter((token) => !token.operator && !token.fdDup && !targets.has(token));
+  // A named descriptor (`{x}>f`) stays a word, as a quoted `'{x}'` is one: the rules read it as they did before the
+  // lexer kept descriptors, so dropping it can open neither rule.
+  const words = segment.flatMap((token) => {
+    if (token.operator) return hasNamedFd([token]) ? [{ text: token.fd, dynamic: false, namedFd: true }] : [];
+    return token.fdDup || targets.has(token) ? [] : [token];
+  });
   let index = 0;
-  while (index < words.length && ASSIGNMENT.test(words[index].text)) index += 1;
+  while (index < words.length && (words[index].namedFd || ASSIGNMENT.test(words[index].text))) index += 1;
   return { program: (words[index]?.text ?? '').split('/').pop() ?? '', args: words.slice(index + 1) };
 }
 
@@ -206,6 +227,7 @@ function afterPrefixOptions(prefix, args, nested) {
   let i = 0;
   while (args[i]) {
     const token = args[i];
+    if (token.namedFd) { i += 1; continue; }
     if (token.dynamic) break;
     if (token.text === '--') return i + 1;
     // The env -S string is more env argv, options included, so it is judged as `env <string>`.
@@ -278,6 +300,7 @@ const XARGS_VALUE_FLAGS = new Set(['-n', '--max-args', '-I', '-P', '--max-procs'
 function xargsInvocation(args) {
   for (let i = 0; i < args.length; i += 1) {
     const token = args[i];
+    if (token.namedFd) continue;
     if (token.dynamic) return null;
     if (XARGS_VALUE_FLAGS.has(token.text)) {
       i += 1;
@@ -358,27 +381,441 @@ function killsByName(command, depth = 0, outerListsByName = false) {
   return lexSubstitutions(command).some((body) => killsByName(body, depth + 1, listsByName));
 }
 
-function invocationPrintsArguments(invocation, depth) {
-  if (depth > MAX_DEPTH) return false;
+// The listing rule. A finding is { line, segments, separators, spans, index, exact }: the command line, its lexed
+// pipeline, and the segment that lists; `exact` when `line` is the command itself or a substitution in it, so a
+// replacement can be written back into the command. Through `sh -c`, `eval`, `env -S`, or xargs it is not.
+function findListing(command, depth = 0, exact = true) {
+  if (depth > MAX_DEPTH) return null;
+  const { segments, separators, spans } = lexPipeline(command);
+  for (let i = 0; i < segments.length; i += 1) {
+    const found = invocationListing(readCommand(segments[i]), depth);
+    if (!found) continue;
+    // Only a listing this line runs itself may pass on where its output goes: in a nested shell, the redirections of
+    // the line that carries it say nothing about the listing's own.
+    if (found === 'direct' && exact && outputDiscarded(segments, separators, i)) continue;
+    if (found === 'direct' || found === 'indirect') {
+      return { line: command, segments, separators, spans, index: i, exact: exact && found === 'direct' };
+    }
+    if (found) return found;
+  }
+  for (const body of lexSubstitutions(command)) {
+    const found = findListing(body, depth + 1, exact);
+    if (found) return found;
+  }
+  return null;
+}
+
+// 'direct' when this invocation is a listing that prints arguments, 'indirect' when xargs runs one, a finding from a
+// command string it runs, or null.
+function invocationListing(invocation, depth) {
+  if (depth > MAX_DEPTH) return null;
   const { program, args, nested } = unwrapPrefixes(invocation);
-  if (nested.some((text) => printsProcessArguments(text, depth + 1))) return true;
+  for (const text of nested) {
+    const found = findListing(text, depth + 1, false);
+    if (found) return found;
+  }
   const inline = inlineShellCommand({ program, args });
-  if (inline !== null && printsProcessArguments(inline, depth + 1)) return true;
-  if (program === 'eval' && args.length > 0 && printsProcessArguments(joined(args), depth + 1)) return true;
+  const inner = inline === null ? null : findListing(inline, depth + 1, false);
+  if (inner) return inner;
+  if (program === 'eval' && args.length > 0) {
+    const found = findListing(joined(args), depth + 1, false);
+    if (found) return found;
+  }
   if (program === 'xargs') {
     const child = xargsInvocation(args);
-    return child ? invocationPrintsArguments(child, depth + 1) : false;
+    return child && invocationListing(child, depth + 1) ? 'indirect' : null;
   }
-  if (program === 'pgrep') return pgrepPrintsArguments(args);
-  if (program === 'ps') return psPrintsArguments(args);
+  if (program === 'pgrep') return pgrepPrintsArguments(args) ? 'direct' : null;
+  if (program === 'ps') return psPrintsArguments(args) ? 'direct' : null;
+  return null;
+}
+
+// Where a segment's standard output goes: 'null' for /dev/null, 'elsewhere' for a file or another descriptor, or
+// 'inherited' when no redirection moves it. The last redirection of fd 1 wins; `&>` moves it too.
+function stdoutTarget(segment) {
+  let target = 'inherited';
+  for (let i = 0; i < segment.length; i += 1) {
+    const token = segment[i];
+    if (!token.operator || token.operator === '<') continue;
+    if (token.text !== '&>' && token.text !== '&>>' && token.fd !== undefined && token.fd !== '1') continue;
+    const next = segment[i + 1];
+    if (!next) continue;
+    target = !next.fdDup && !next.dynamic && next.text === '/dev/null' ? 'null' : 'elsewhere';
+  }
+  return target;
+}
+
+// Programs that pass on only what they read, so a listing piped through them ends where they end, with the short
+// options of each that take a value. A word that is neither an option nor its value is an operand, which may name a
+// file to read or write in place of the pipe (`uniq - /dev/stderr`), so it fails the pass, as a long option does, and
+// so does sort's `-o`. grep alone takes one operand, its pattern, when no `-e` or `-f` gives one.
+const PASS_THROUGH = new Map([
+  ...[...GREP_PROGRAMS].map((program) => [program, GREP_VALUE_FLAGS]),
+  ['head', new Set(['-n', '-c'])],
+  ['tail', new Set(['-n', '-c'])],
+  ['cut', new Set(['-b', '-c', '-d', '-f'])],
+  ['sort', new Set(['-k', '-t', '-S'])],
+  ['uniq', new Set(['-f', '-s', '-w'])],
+]);
+const PIPES = new Set(['|', '|&']);
+
+function passesThrough({ program, args }) {
+  const valueFlags = PASS_THROUGH.get(program);
+  if (!valueFlags) return false;
+  let operands = 0;
+  let patternGiven = false;
+  // A word that may expand, an option's value included, can split into an operand or an `-o` (`sort -k $OPTS`).
+  if (args.some((token) => token.dynamic)) return false;
+  for (let i = 0; i < args.length; i += 1) {
+    const { text } = args[i];
+    if (text.startsWith('--')) return false;
+    if (!text.startsWith('-') || text === '-') {
+      operands += 1;
+      continue;
+    }
+    const { options, value } = readShortOptions(text, valueFlags);
+    if (program === 'sort' && options.includes('-o')) return false;
+    if (options.includes('-e') || options.includes('-f')) patternGiven ||= GREP_PROGRAMS.has(program);
+    if (value?.attached === null) i += 1;
+  }
+  return operands === 0 || (GREP_PROGRAMS.has(program) && !patternGiven && operands === 1);
+}
+
+// Whether segment `i`'s output can reach no transcript: it goes to /dev/null, or down a pipe through pass-through
+// programs into a counter that prints only a number (`wc`, `grep -c`) or nothing (`grep -q`).
+function outputDiscarded(segments, separators, i) {
+  for (let j = i; j < segments.length; j += 1) {
+    if (hasNamedFd(segments[j])) return false;
+    if (j > i) {
+      const { program, args } = readInvocation(segments[j]);
+      if (program === 'wc') return true;
+      if (GREP_PROGRAMS.has(program) && (asksForCount(args) || asksForQuiet(args))) return true;
+      if (!passesThrough({ program, args })) return false;
+    }
+    const target = stdoutTarget(segments[j]);
+    if (target !== 'inherited') return target === 'null';
+    if (!PIPES.has(separators[j])) return false;
+  }
   return false;
 }
 
-// The listing rule.
-function printsProcessArguments(command, depth = 0) {
-  if (depth > MAX_DEPTH) return false;
-  if (lexCommand(command).some((segment) => invocationPrintsArguments(readCommand(segment), depth))) return true;
-  return lexSubstitutions(command).some((body) => printsProcessArguments(body, depth + 1));
+// What a replacement prints for each process, by the form it replaces. `=` keeps a header off, as grep would.
+const PGREP_FIELDS = 'pid=,ppid=,etime=,comm=';
+const PS_DEFAULT_FIELDS = 'pid,ppid,pcpu,rss,etime,comm';
+const pidsThrough = (fields) => `xargs -r ps -o ${fields} -p`;
+
+// The words of `tokens`, or null when one cannot be written back.
+function words(tokens) {
+  const out = tokens.map(shellWord);
+  return out.includes(null) ? null : out;
+}
+
+// `pgrep` without the options that print the command line: `-l`, `-a`, `--list-full`, and `--list-name`.
+function pgrepWithoutListing(args) {
+  const kept = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const token = args[i];
+    const { text, dynamic } = token;
+    if (dynamic || text === '--' || !text.startsWith('-')) {
+      kept.push(token);
+      continue;
+    }
+    if (text.startsWith('--')) {
+      const name = text.slice(2).split('=')[0];
+      if (name.length < 6 || !('list-full'.startsWith(name) || 'list-name'.startsWith(name))) kept.push(token);
+      continue;
+    }
+    let letters = '';
+    let takesNext = false;
+    for (let j = 1; j < text.length; j += 1) {
+      if (PGREP_VALUE_LETTERS.has(text[j])) {
+        letters += text.slice(j);
+        takesNext = j === text.length - 1;
+        break;
+      }
+      if (text[j] !== 'l' && text[j] !== 'a') letters += text[j];
+    }
+    if (letters) kept.push({ text: `-${letters}`, dynamic: false });
+    if (takesNext && args[i + 1]) {
+      kept.push(args[i + 1]);
+      i += 1;
+    }
+  }
+  return kept;
+}
+
+// The replacement for a `pgrep` that prints command lines. Before `&&` or `||` it lists pids only, so its exit status,
+// 1 when nothing matches, stays the one the chain reads.
+function pgrepReplacement(args, separator) {
+  const kept = words(pgrepWithoutListing(args));
+  if (!kept) return null;
+  const pgrep = `pgrep ${kept.join(' ')}`.trimEnd();
+  if (separator === '&&' || separator === '||' || args.some((token) => /^-[a-zA-Z]*d/u.test(token.text))) return pgrep;
+  return `pgrep -d, ${kept.join(' ')} | ${pidsThrough(PGREP_FIELDS)}`;
+}
+
+// `ps` format keys without the argument columns: `args`, `command`, and `cmd` become `comm`, and an AIX descriptor its
+// keyword (`%a` is args, so `comm`). `=header` and `:width` stay with their key.
+const AIX_KEYS = { '%a': 'comm', '%c': 'comm', '%p': 'pid', '%P': 'ppid', '%C': 'pcpu', '%z': 'vsz', '%t': 'etime', '%u': 'user', '%U': 'ruser', '%g': 'group', '%G': 'rgroup', '%n': 'nice', '%x': 'time', '%y': 'tty', '%r': 'pgid' };
+function safeFields(format) {
+  const keys = [];
+  for (const key of format.split(/[,\s]+/u).filter(Boolean)) {
+    const name = key.split('=')[0].split(':')[0];
+    let safe = key;
+    if (PS_ARGUMENT_KEYS.has(name)) safe = `comm${key.slice(name.length)}`;
+    else if (name.includes('%') && !PS_PERCENT_KEYWORDS.has(name)) safe = AIX_KEYS[name] ?? null;
+    if (safe !== null && !keys.includes(safe)) keys.push(safe);
+  }
+  return keys.join(',');
+}
+
+// Selection letters kept from a cluster: all processes, without a terminal, and the sort orders. `-e` is everyone in
+// procps and on macOS; a bare `e` (BSD) adds the environment, so it goes.
+const PS_KEPT_LETTERS = new Set(['A', 'a', 'x', 'r', 'm']);
+const PS_VALUE_SELECTORS = new Set(['p', 'q', 't', 'U', 'G', 'g']);
+const PS_KEPT_LONG = new Set(['--pid', '--quick-pid', '--ppid', '--sort']);
+
+// The `ps` that prints what `args` asks for, minus the command lines: { flags, selectors, fields }, or null when an
+// argument cannot be read. `flags` are the kept letters, `selectors` the options that pick processes by a value, and
+// `fields` the format, null when `args` named none.
+function psParts(args) {
+  let flags = '';
+  const selectors = [];
+  let fields = null;
+  const addFields = (format) => {
+    const safe = safeFields(format);
+    fields = fields ? `${fields},${safe}` : safe;
+  };
+  for (let i = 0; i < args.length; i += 1) {
+    const { text, dynamic } = args[i];
+    if (dynamic) return null;
+    if (text === '--format' || text.startsWith('--format=')) {
+      const value = text === '--format' ? args[(i += 1)] : { text: text.slice('--format='.length), dynamic: false };
+      if (!value || value.dynamic) return null;
+      addFields(value.text);
+      continue;
+    }
+    const long = /^(--[a-z-]+)(=.*)?$/u.exec(text);
+    if (long) {
+      if (!PS_KEPT_LONG.has(long[1])) continue;
+      const value = long[2] === undefined ? args[(i += 1)] : null;
+      if (value?.dynamic === true && shellWord(value) === null) return null;
+      selectors.push(value ? `${long[1]} ${shellWord(value)}` : text);
+      continue;
+    }
+    const dashed = text.startsWith('-');
+    let letters = '';
+    for (let j = dashed ? 1 : 0; j < text.length; j += 1) {
+      const letter = text[j];
+      if (letter === 'o' || letter === 'O' || PS_VALUE_SELECTORS.has(letter)) {
+        const attached = text.slice(j + 1);
+        const value = attached === '' ? args[(i += 1)] : { text: attached, dynamic: false };
+        if (!value) return null;
+        if (letter === 'o') {
+          if (value.dynamic) return null;
+          addFields(value.text);
+        } else if (letter === 'O') {
+          if (value.dynamic) return null;
+          addFields(`pid,${value.text},comm`);
+        } else {
+          const word = shellWord(value);
+          if (word === null) return null;
+          selectors.push(`-${letter} ${word}`);
+        }
+        break;
+      }
+      if (PS_KEPT_LETTERS.has(letter) || (dashed && letter === 'e')) letters += letter;
+    }
+    for (const letter of letters) if (!flags.includes(letter)) flags += letter;
+  }
+  return { flags, selectors: [...new Set(selectors)], fields };
+}
+
+function psReplacement(args) {
+  const parts = psParts(args);
+  if (!parts) return null;
+  return ['ps', ...(parts.flags ? [`-${parts.flags}`] : []), ...parts.selectors, '-o', parts.fields || PS_DEFAULT_FIELDS].join(' ');
+}
+
+// A grep's pattern as an extended regular expression for `pgrep -f`, with `-i` when it ignores case; null for a grep
+// that inverts, matches fixed strings or whole words or lines, or has no readable pattern.
+function grepAsPgrep({ program, args }) {
+  if (!GREP_PROGRAMS.has(program)) return null;
+  let extended = program === 'egrep' || program === 'rg' || program === 'ripgrep';
+  let ignoreCase = false;
+  const patterns = [];
+  let operands = 0;
+  for (let i = 0; i < args.length; i += 1) {
+    const { text, dynamic } = args[i];
+    if (dynamic) return null;
+    if (text === '-e' || text === '--regexp') {
+      const value = args[(i += 1)];
+      if (!value || value.dynamic) return null;
+      patterns.push(value.text);
+      continue;
+    }
+    if (text.startsWith('--regexp=')) {
+      patterns.push(text.slice('--regexp='.length));
+      continue;
+    }
+    if (text === '--extended-regexp') extended = true;
+    else if (text === '--ignore-case') ignoreCase = true;
+    else if (text.startsWith('--')) return null;
+    else if (/^-[A-Za-z]+$/u.test(text)) {
+      for (const letter of text.slice(1)) {
+        if (letter === 'E') extended = true;
+        else if (letter === 'i') ignoreCase = true;
+        else if (letter !== 'n' && letter !== 's') return null;
+      }
+    } else {
+      operands += 1;
+      if (patterns.length === 0 && operands === 1) patterns.push(text);
+      else return null;
+    }
+  }
+  if (patterns.length === 0) return null;
+  const regex = patterns.map((pattern) => (extended ? pattern : basicToExtended(pattern))).join('|');
+  return { pattern: regex, ignoreCase };
+}
+
+// A basic regular expression rewritten as an extended one: `\|`, `\(`, `\)`, `\+`, `\?`, `\{`, `\}` lose the backslash,
+// and the same characters bare gain one.
+function basicToExtended(pattern) {
+  let out = '';
+  for (let i = 0; i < pattern.length; i += 1) {
+    const ch = pattern[i];
+    if (ch === '\\' && i + 1 < pattern.length) {
+      const next = pattern[i + 1];
+      out += '|()+?{}'.includes(next) ? next : `\\${next}`;
+      i += 1;
+    } else out += '|()+?{}'.includes(ch) ? `\\${ch}` : ch;
+  }
+  return out;
+}
+
+// `grep -v grep` and its kin, which only hide the grep itself from a `ps` listing: pgrep never lists itself.
+function hidesGrep({ program, args }) {
+  if (!GREP_PROGRAMS.has(program)) return false;
+  const operands = args.filter((token) => !token.text.startsWith('-'));
+  return args.some((token) => /^-[A-Za-z]*v[A-Za-z]*$/u.test(token.text)) && operands.length === 1 && /grep/u.test(operands[0].text);
+}
+
+// The replacement for the listing segment of `found`: { first, last, text }, the segments it replaces and what to run
+// in their place, or null when none can be built.
+function listingReplacement({ segments, separators, index }) {
+  const { program, args } = unwrapPrefixes(readCommand(segments[index]));
+  if (program === 'pgrep') {
+    const text = pgrepReplacement(args, separators[index]);
+    return text && { first: index, last: index, text };
+  }
+  // `ps … | grep <pattern>` is `pgrep -f <pattern>`, which matches the same command lines without printing them.
+  if (PIPES.has(separators[index]) && segments[index + 1]) {
+    const grep = grepAsPgrep(readInvocation(segments[index + 1]));
+    const parts = grep && psParts(args);
+    if (grep && parts && parts.selectors.length === 0) {
+      let last = index + 1;
+      while (PIPES.has(separators[last]) && segments[last + 1] && hidesGrep(readInvocation(segments[last + 1]))) last += 1;
+      const pattern = shellWord({ text: grep.pattern, dynamic: false });
+      const pgrep = `pgrep${grep.ignoreCase ? ' -i' : ''}`;
+      const chained = separators[last] === '&&' || separators[last] === '||';
+      const fields = (parts.fields || PS_DEFAULT_FIELDS).split(',').map((key) => (key.includes('=') ? key : `${key}=`)).join(',');
+      const text = chained ? `${pgrep} -f ${pattern}` : `${pgrep} -d, -f ${pattern} | ${pidsThrough(fields)}`;
+      return { first: index, last, text };
+    }
+  }
+  const text = psReplacement(args);
+  return text && { first: index, last: index, text };
+}
+
+// The text to run in place of segments [first, last] of `line`: the wrappers and assignments before the listing, the
+// replacement, and the redirections of the last segment.
+// null when a word before it cannot be written back, or when the segments start with a shell word (`if`, `!`) or open
+// or close a group (`(ps aux`, `aux)`, a `case` arm), which a replacement could unbalance.
+function replacementSegment(segments, { first, last, text }) {
+  if (segments.slice(first, last + 1).some((segment) => startsOrEndsGroup(segment) || hasNamedFd(segment))) return null;
+  const segment = segments[first];
+  const all = segment.filter((token, i) => !token.operator && !token.fdDup && !(i > 0 && segment[i - 1].operator));
+  const { args } = unwrapPrefixes(readCommand(segment));
+  const at = args.length > 0 ? all.indexOf(args[0]) - 1 : all.length - 1;
+  if (args.length > 0 && at < 0) return null;
+  const prefix = all.slice(0, Math.max(0, at)).map(shellWord);
+  if (prefix.includes(null)) return null;
+  return [...prefix, text, ...shellRedirections(segments[last])].join(' ');
+}
+
+// The replacement for `found` in `command`: { text, original, fixed, from }, where `fixed` is `command` with it in place
+// when it can be written back (`exact`) and null otherwise; null when no replacement can be built.
+function listingFix(command, found) {
+  const replacement = listingReplacement(found);
+  if (!replacement) return null;
+  const { line, segments, spans, exact } = found;
+  const text = replacementSegment(segments, replacement);
+  if (text === null) return null;
+  const from = spans[replacement.first][0];
+  const to = spans[replacement.last][1];
+  // A substitution's body is placed by its text, so only a body that occurs once is surely the one that runs.
+  const at = line === command ? 0 : command.indexOf(line);
+  const placed = at !== -1 && (line === command || command.lastIndexOf(line) === at);
+  const fixed = exact && placed ? `${command.slice(0, at + from)}${text}${command.slice(at + to)}` : null;
+  return { text, original: line.slice(from, to), fixed, from: at + from };
+}
+
+// The listing reason, the command to run instead first: the whole line with every listing replaced when each one can
+// be, or else the one replacement for the listing it saw.
+const FIX_LIMIT = 20;
+function listingReason(command, found) {
+  const first = listingFix(command, found);
+  if (!first) return `${LISTING_LEAD} ${LISTING_REASON}`;
+  let fixed = first.fixed;
+  for (let n = 0; fixed !== null && n < FIX_LIMIT; n += 1) {
+    const next = findListing(fixed);
+    if (!next) break;
+    fixed = listingFix(fixed, next)?.fixed ?? null;
+  }
+  if (fixed === null || findListing(fixed)) return `${LISTING_LEAD} Run \`${first.text}\` in place of \`${first.original}\`.\n\n${LISTING_REASON}`;
+  return `${LISTING_LEAD} Run this instead:\n\n  ${excerpt(fixed, first.from, first.from + first.text.length)}\n\n${LISTING_REASON}`;
+}
+
+// Signals as pkill and killall take them: `-9`, `-KILL`, `-SIGTERM`. A one-letter capital is an option, such as `-P`.
+const SIGNAL_OPTION = /^-(?:\d+|(?:SIG)?[A-Z]{2,}\d*)$/u;
+
+// The pgrep that lists what a pkill would signal, or null.
+function pkillAsPgrep(args) {
+  const kept = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const { text, dynamic } = args[i];
+    if (!dynamic && SIGNAL_OPTION.test(text)) continue;
+    if (!dynamic && isLongOption(text, '--signal', '--si')) {
+      if (!text.includes('=')) i += 1;
+      continue;
+    }
+    kept.push(args[i]);
+  }
+  const written = words(pgrepWithoutListing(kept));
+  return written && written.length > 0 ? `pgrep ${written.join(' ')}` : null;
+}
+
+// The pgrep that lists what a killall of plain names would signal, or null for any other killall.
+function killallAsPgrep(args) {
+  const names = [];
+  for (const token of args) {
+    if (token.dynamic) return null;
+    if (SIGNAL_OPTION.test(token.text)) continue;
+    if (token.text.startsWith('-')) return null;
+    names.push(token.text);
+  }
+  if (names.length === 0) return null;
+  return `pgrep -x ${shellWord({ text: names.join('|'), dynamic: false })}`;
+}
+
+// The kill reason, with the listing to read first when the command is a plain pkill or killall.
+function killReason(command) {
+  for (const segment of lexCommand(command)) {
+    const { program, args } = unwrapPrefixes(readCommand(segment));
+    const listing = program === 'pkill' ? pkillAsPgrep(args) : program === 'killall' ? killallAsPgrep(args) : null;
+    if (listing) return REASON.replace('\n', `\nList the pids first with \`${listing}\`, then \`kill <pid>\` only those this session started.\n`);
+  }
+  return REASON;
 }
 
 const joined = (args) => args.map((token) => token.text).join(' ');

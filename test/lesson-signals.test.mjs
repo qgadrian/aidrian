@@ -203,6 +203,100 @@ test('a delivery-check send-back becomes a lesson for that agent type; the secon
   assert.deepEqual(plugin().map((lesson) => lesson.key), ['delivery-check:aidrian:planning-agent'], 'the plugin agent\'s lesson is in the plugin\'s inbox');
 });
 
+// A subagent transcript in Claude Code's shape: a background push and a resumed reviewer, each with the text result and the
+// structured `toolUseResult` that names its id, as the stalled fix agents' transcripts held them.
+function childTranscript(dir) {
+  const call = (id, toolId, name, input) =>
+    JSON.stringify({ type: 'assistant', message: { id, model: 'claude-opus-5-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'tool_use', id: toolId, name, input }] } });
+  const result = (toolId, text, toolUseResult) =>
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content: [{ type: 'text', text }] }] }, toolUseResult });
+  const file = path.join(dir, 'agent-a1.jsonl');
+  writeFileSync(file, [
+    call('m1', 't1', 'Bash', { command: 'git push -u origin fix/x', run_in_background: true }),
+    result('t1', 'Command running in background with ID: bmnjbq03x. Output is being written to: /tmp/tasks/bmnjbq03x.output', { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bmnjbq03x' }),
+    call('m2', 't2', 'SendMessage', { to: 'a51c8e798c62f1139', message: 'Review the delta, please.' }),
+    result('t2', '{"success":true,"message":"Resuming agent a51c8e7","resumedAgentId":"a51c8e798c62f1139"}', { success: true, message: 'Resuming agent a51c8e7', resumedAgentId: 'a51c8e798c62f1139' }),
+  ].join('\n'));
+  return file;
+}
+
+// Claude Code's `background_tasks`: the whole session's in-flight tasks, the subagent's own and others'.
+const SESSION_TASKS = [
+  { id: 'bmnjbq03x', type: 'shell', status: 'running', description: 'Push the branch', command: 'git push -u origin fix/x' },
+  { id: 'a51c8e798c62f1139', type: 'subagent', status: 'running', description: 'Delta review', agent_type: 'general-purpose' },
+  { id: 'bother0001', type: 'shell', status: 'running', description: 'Another agent\'s dev server', command: 'npm run dev' },
+  { id: 'afix-1475', type: 'teammate', status: 'running', description: 'A peer teammate' },
+];
+
+test('a subagent that stops with a background task it started still running is sent back once to wait; ending anyway is a plugin lesson', (t) => {
+  const { dir, all, plugin, hook } = project(t);
+  const transcript = childTranscript(dir);
+  const stop = (active, tasks = SESSION_TASKS) => hook('hook-subagent-stop.mjs', {
+    session_id: 's1', agent_id: 'a1', agent_type: 'fix-1027', agent_transcript_path: transcript, last_assistant_message: 'Waiting for the push.',
+    stop_hook_active: active, background_tasks: tasks,
+  });
+  const sent = stop(false);
+  assert.equal(sent.status, 2);
+  assert.match(sent.stderr, /^You started background work that is still running: `bmnjbq03x` \(shell: Push the branch\), `a51c8e798c62f1139` \(subagent: Delta review\)\. /);
+  assert.match(sent.stderr, /Wait for it in the foreground before you end the turn/);
+  assert.doesNotMatch(sent.stderr, /bother0001|afix-1475/, 'a task another agent started, and a peer teammate, are not its children');
+  assert.deepEqual([...all(), ...plugin()], [], 'the send-back is the check working, not a lesson');
+
+  assert.equal(stop(true).status, 0, 'the second stop always ends');
+  assert.deepEqual(
+    plugin().map((lesson) => [lesson.key, lesson.target, lesson.seen, lesson.evidence]),
+    [['idle-with-children:fix-1027', 'plugin', 1, ['background task bmnjbq03x', 'background task a51c8e798c62f1139', 'dispatch log: agent a1']]],
+  );
+  assert.deepEqual(all(), [], 'the lesson is the plugin\'s, in the plugin\'s inbox');
+
+  assert.equal(stop(false, SESSION_TASKS.slice(2)).status, 0, 'only others\' tasks still run');
+  assert.equal(stop(false, [{ ...SESSION_TASKS[0], status: 'completed' }]).status, 0, 'its task ended');
+  assert.equal(stop(false, []).status, 0);
+  assert.equal(stop(true, []).status, 0);
+  assert.equal(hook('hook-subagent-stop.mjs', { agent_id: 'a1', agent_type: 'fix-1027', agent_transcript_path: transcript, background_tasks: SESSION_TASKS }).status, 0, 'no stop_hook_active field: never sent back');
+  assert.equal(hook('hook-subagent-stop.mjs', { agent_id: 'a1', agent_type: 'fix-1027', stop_hook_active: false, background_tasks: SESSION_TASKS }).status, 0, 'no transcript: no task is its own');
+  assert.equal(plugin()[0].seen, 1, 'a stop with nothing of its own running adds no occurrence');
+});
+
+test('a subagent that reads, waits on, messages, or quotes the launch of another agent\'s running task is not sent back for it', (t) => {
+  const { dir, all, plugin, hook } = project(t);
+  const call = (id, toolId, name, input) =>
+    JSON.stringify({ type: 'assistant', message: { id, model: 'claude-opus-5-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'tool_use', id: toolId, name, input }] } });
+  const result = (toolId, text, toolUseResult) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content: text }] }, toolUseResult });
+  const transcript = path.join(dir, 'agent-a2.jsonl');
+  writeFileSync(transcript, [
+    call('m1', 't1', 'Bash', { command: 'tail -5 /tmp/tasks/bother0001.output' }),
+    result('t1', 'listening on :3000'),
+    call('m2', 't2', 'Bash', { command: 'until ! pgrep -f "git push"; do sleep 5; done', timeout: 600000 }),
+    result('t2', 'push of bmnjbq03x done'),
+    call('m3', 't3', 'SendMessage', { to: 'a51c8e798c62f1139', message: 'Is the review done?' }),
+    result('t3', '{"success":true,"message":"Message sent to a51c8e798c62f1139\'s inbox"}', { success: true, message: 'Message sent to a51c8e798c62f1139\'s inbox' }),
+    // A foreground command whose output is a saved launch line, and a foreground agent whose report quotes an agentId line.
+    call('m4', 't4', 'Bash', { command: 'cat saved-result.txt' }),
+    result('t4', 'Command running in background with ID: bmnjbq03x. Output is being written to: /tmp/tasks/bmnjbq03x.output', { stdout: 'Command running in background with ID: bmnjbq03x.', stderr: '', interrupted: false }),
+    call('m5', 't5', 'Agent', { description: 'Summarize the stall', prompt: 'Summarize it.' }),
+    result('t5', 'The reviewer was launched as:\nagentId: a51c8e798c62f1139\nand never handed back.\n\nagentId: asum00001 (use SendMessage to continue this agent)', { status: 'completed', agentId: 'asum00001', content: [] }),
+  ].join('\n'));
+  for (const active of [false, true]) {
+    const stop = hook('hook-subagent-stop.mjs', {
+      session_id: 's1', agent_id: 'a2', agent_type: 'checker', agent_transcript_path: transcript, last_assistant_message: 'Checked the others.',
+      stop_hook_active: active, background_tasks: SESSION_TASKS,
+    });
+    assert.deepEqual([stop.status, stop.stderr], [0, ''], `stop_hook_active ${active}`);
+  }
+  assert.deepEqual([...all(), ...plugin()], [], 'no false lesson');
+});
+
+test('a stop that names a missing file and leaves a task running is sent back once with both reasons', (t) => {
+  const { dir, hook } = project(t);
+  const sent = hook('hook-subagent-stop.mjs', {
+    session_id: 's1', agent_id: 'a1', agent_type: 'planner', agent_transcript_path: childTranscript(dir), last_assistant_message: 'Wrote out/handoff.json.',
+    stop_hook_active: false, background_tasks: SESSION_TASKS.slice(0, 1),
+  });
+  assert.equal(sent.status, 2);
+  assert.match(sent.stderr, /^Your report names `out\/handoff\.json`, which does not exist\..*\n\nYou started background work that is still running: `bmnjbq03x`/su);
+});
+
 test('with telemetry off, a send-back is still a lesson, and it names no dispatch log row', (t) => {
   const { all, hook } = project(t, { version: 1, telemetry: { enabled: false } });
   assert.equal(hook('hook-subagent-stop.mjs', { session_id: 's1', agent_id: 'a1', agent_type: 'planner', last_assistant_message: 'Wrote out/x.json.', stop_hook_active: false }).status, 2);

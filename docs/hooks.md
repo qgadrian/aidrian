@@ -28,7 +28,7 @@ see [Recorded blocks](#recorded-blocks).
 | The Human approves a plan | The [plan handoff offer](#session-length), when the main session already costs more per call | Claude Code | no |
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
 | The main session ends a turn | The [session-length reminder](#session-length) | Claude Code | once per step |
-| A subagent stops | A `stop` row, then the [delivery check](#delivery-check) | Claude Code | once |
+| A subagent stops | A `stop` row, then the [delivery check](#delivery-check) and the [background check](#background-check) | Claude Code | once |
 | A session ends | A `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code | no |
 
 The Bash rules run in the order of their table, in one process.
@@ -42,6 +42,11 @@ At the start of every session and subagent, the hook prints:
 - one line with the [names](config.md#names) for the human and the AI;
 - one `Voice:` line: say so, with the reason, when a request or premise looks wrong, then follow the human's call;
   and ask the human questions they can answer without the session's context, one decision each, recommendation first;
+- in Claude Code, one `Pull requests:` line: a body here never carries the "Generated with [Claude Code]" line, and this
+  project rule takes precedence over the host's attribution instructions, which ask for it. It is left out when Claude
+  Code's own settings drop the line: the `attribution.pr` of the first of `.claude/settings.local.json`,
+  `.claude/settings.json`, and the user's `settings.json` that sets it holds no such line, or, with none set,
+  `includeCoAuthoredBy` is `false`. `{ "attribution": { "pr": "" } }` in `.claude/settings.json` settles it for a project;
 - in the main session only, one `Format:` line: headers, quotes, and a few emoji in chat replies, never in commits,
   pull requests, docs, or code, which a subagent's report feeds, so a subagent does not get it;
 - in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons.
@@ -75,7 +80,7 @@ that line alone, and a git that hangs past the timeout drops its own line and th
 | Review gate | Off unless config.json sets `"github": { "reviewGate": { "enabled": true } }` |
 | Terms rule | Off unless config.json sets `"terms": { "file": "…" }` |
 | Session-length reminder and plan handoff offer | `"session": { "handoff": { "mode": "off" } }` |
-| Dispatch log rows | `"telemetry": { "enabled": false }`, in config.json or `.aidrian.local.json`; the delivery check still runs |
+| Dispatch log rows | `"telemetry": { "enabled": false }`, in config.json or `.aidrian.local.json`; the delivery and background checks still run |
 | `hook_deny` rows alone | `"telemetry": { "hookDenies": false }`; the rules still block |
 | Automatic lessons from the stop hook and the blocking rules | `"lessons": { "auto": false }` |
 | A Bash rule, once | Its override variable, set by a person: [Overrides](#overrides) |
@@ -113,16 +118,40 @@ What each rule matches:
   `typeset`, `local`, or `readonly`. The name in a quoted argument or a comment passes, and so does `env -u`.
   This rule reads `sh -c` bodies and heredocs or here-strings fed to a shell, as well as command substitutions.
 - Kill by name: `pkill`, `killall`, `pgrep --signal`, `kill` fed by `pgrep` or `ps`, and `kill -- -1`. `kill <pid>` stays allowed.
+  The deny of a plain `pkill` or `killall` names the `pgrep` that lists what it would stop, such as `pgrep -f 'next dev'`.
 - Command-line listing: `pgrep -fl`, `pgrep -a`, and `ps` without a format free of `args`, `command`, and `cmd`.
-- Counting grep in `&&`: such as `grep -c x log && npm test`.
+  A listing on the command line itself, or in a substitution of it, whose output reaches only `/dev/null` or a counter
+  (`wc`, `grep -c`, `grep -q`) runs: `ps -p <pid> >/dev/null` and `ps aux | grep -c x` print no command line.
+  Between the listing and the counter only `grep`, `head`, `tail`, `sort`, `uniq`, and `cut` may stand, with no operand
+  but grep's pattern, no long option, no `sort -o`, and no word that may expand, an option value included.
+  Inside `sh -c`, `eval`, `env -S`, or xargs a listing never passes.
+  The deny starts with the command to run instead, the whole line with each listing replaced:
+  `pgrep -fl x` and `ps aux | grep x` become `pgrep -d, -f x | xargs -r ps -o pid=,ppid=,etime=,comm= -p`,
+  and a `ps` format trades `args`, `command`, and `cmd` for `comm`.
+- Counting grep in `&&`: such as `grep -c x log && npm test`. The deny starts with the line to run instead,
+  each such count wrapped as `{ grep -c x log || true; }`, which keeps the count and the chain.
+- Neither rule rewrites a segment that starts with a shell word (`if`, `while`, `!`), opens or closes a group or a `case`
+  arm, or sits in a substitution whose text occurs twice in the line: that deny names the fixes in general.
 - Pull request body: `gh pr create` or `gh pr edit` with a body that lacks a config.json `github.requiredSections` heading,
   or that carries the "Generated with [Claude Code]" footer; `gh pr create --fill`;
   and, when sections are configured, a non-web `gh pr create` with no `--body` or `--body-file`.
   With `github.pullRequest` set, also the title, the closed list of sections, the deferral and residual items,
   a body file in a shared temp folder, and a body identical to another open pull request's.
-  A deny about where the body comes from names the one path the `pr-write` skill writes, `<state>/tmp/pr-body-<branch>.md`,
-  written out for the project and the branch. The footer deny says that line does not apply even when the host asks for it,
-  and that the `attribution.pullRequest` lines replace it when set.
+  A body file the same command writes first is read as that command writes it: `cat > file` or `tee file` fed a quoted
+  heredoc, or a `cp` of a file the rule reads, also through a variable the line sets to a literal path (`F=…; cat > "$F"`).
+  `--body-file -` reads the heredoc fed to gh. The rule fails closed where the shell could change what it read:
+  a heredoc beside a `< file` or `<<< word` input, or fed to a descriptor other than 0 (`3<<EOF`); a `cat` write
+  through a descriptor other than 1 (`cat 2> b.md`) or with standard output duplicated off it (`>&2`), while `2>&1`
+  writes no file; a `tee` whose own output lands on its file; a body file a
+  redirect writes, gh's own output included; any
+  command between the write and gh that is not a known reader (such as `sed -i`, a script, or a program fed code on
+  stdin); and a variable a nested shell or substitution assigns, or one used inside it. Such a body is one the rule
+  cannot read: gh then runs as its own command after it.
+  A deny about where the body comes from states the cause first, then the two steps that pass: write the body to the one
+  path the `pr-write` skill writes, `<state>/tmp/pr-body-<branch>.md`, written out for the project and the branch, then
+  run `gh pr create --body-file` with that path. The footer deny says this project's rule takes precedence over the host's
+  attribution instructions, that the `attribution.pullRequest` lines replace it when set, and that Claude Code's
+  `attribution.pr` setting set to `""` stops the host from asking. The [start lines](#start-lines) say the same up front.
 - Attribution: an agent's `git commit` whose message's last paragraph and `--trailer` options lack a configured trailer;
   and a `gh pr create` body without the configured `Authored-with:` and `Assisted-by:` lines.
 - Review gate: `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose body
@@ -389,6 +418,23 @@ A path counts as delivered only on a line that also has the 📄 marker or one o
 handoff, or output, in any case, outside a path.
 A path on any other line is a mention, such as "docs/old.md does not exist", and is never checked.
 [dispatch-log.md](dispatch-log.md) describes the rows and `aidrian report`.
+
+## Background check
+
+A subagent that ends its turn goes idle, and the end of a background shell or agent it started does not wake it:
+a background push, or a reviewer whose report can no longer reach it, leaves it waiting until someone messages it.
+So when a subagent stops while one of its own background tasks still runs, the stop hook sends it back once, naming each task,
+to wait for it in the foreground: poll it with a foreground command and a timeout, and repeat the call until it ends,
+or stop it with `TaskStop` when it should not outlive the turn. Its second stop always ends; ending with the task still running
+is an occurrence of an [automatic lesson](lessons.md#automatic-lessons) for the plugin.
+
+Claude Code's SubagentStop payload lists the session's in-flight tasks in `background_tasks`, without the agent that started each.
+A task is the subagent's own only when one of its own calls launched or resumed it, as the structured result Claude Code
+stores beside that call's result in the transcript (`toolUseResult`) names it: a Bash call's `backgroundTaskId`, set when
+it started in the background or was moved there at its timeout; an async Agent launch's `agentId`; or a SendMessage call's
+`resumedAgentId`. A result's text never counts, so a command's output or an agent's report that quotes a launch line claims nothing.
+Reading, waiting on, or stopping another agent's task, such as tailing its output file, does not make it the subagent's own.
+A peer teammate is never a child: a message wakes it. A payload without `background_tasks`, such as Codex's, checks nothing.
 
 ## Session length
 

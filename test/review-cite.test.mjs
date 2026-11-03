@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { DEFAULTS, versionFloorProblem } from '../plugins/aidrian/lib/config.mjs';
 import { checkReview } from '../plugins/aidrian/lib/review/config.mjs';
-import { blocksOf, focusBlocks, invariantsOf, MAX_FOCUSED, MAX_SOURCE, sectionOf, sourceOf } from '../plugins/aidrian/lib/review/flows.mjs';
+import { anchor, blocksOf, focusBlocks, invariantsOf, MAX_FOCUSED, MAX_SOURCE, sectionOf, sourceOf } from '../plugins/aidrian/lib/review/flows.mjs';
 import { questionWarnings } from '../plugins/aidrian/lib/review/lint.mjs';
 import { reviewPrompt } from '../plugins/aidrian/lib/review/reviewers.mjs';
 
@@ -169,4 +169,51 @@ test('sectionOf finds a heading with punctuation by the anchor GitHub gives it',
   const doc = "## The plugin's tools for this work\n\nworktree-new starts a task.\n\n## Read config.json first\n\nIt holds the rules.\n";
   assert.match(sectionOf(doc, 'the-plugins-tools-for-this-work')?.body ?? '', /worktree-new/u);
   assert.match(sectionOf(doc, 'read-configjson-first')?.body ?? '', /the rules/u);
+});
+
+test('anchor is the anchor GitHub makes, and sectionOf finds a heading by it, by a slug, or by a hand-written form', () => {
+  assert.equal(anchor('`hook_deny`: when a rule blocks'), 'hook_deny-when-a-rule-blocks');
+  assert.equal(anchor('A - B'), 'a---b');
+  assert.equal(anchor('Keep _this_ and **that**'), 'keep-this-and-that');
+  assert.equal(anchor("The plugin's [tools](x.md)"), 'the-plugins-tools');
+  const doc = '## `hook_deny`: when a rule blocks\n\nThe log row.\n\n## A - B\n\nBoth.\n';
+  for (const ref of ['hook_deny-when-a-rule-blocks', 'hookdeny-when-a-rule-blocks']) assert.match(sectionOf(doc, ref)?.body ?? '', /log row/u, ref);
+  for (const ref of ['a---b', 'a-b']) assert.match(sectionOf(doc, ref)?.body ?? '', /Both/u, ref);
+});
+
+test('a flow doc cites each invariant by its GitHub anchor, and a list cite copied from GitHub finds its section', () => {
+  const doc = '## `hook_deny`: when a rule blocks\n\nThe row is written.\n';
+  const read = (file) => (file === 'docs/log.md' ? doc : null);
+  const fromDoc = invariantsOf({ invariants: 'docs/log.md' }, read);
+  assert.equal(fromDoc.invariants[0].cite, 'docs/log.md#hook_deny-when-a-rule-blocks');
+  const fromList = invariantsOf({ invariants: [{ id: 'row', cite: 'docs/log.md#hook_deny-when-a-rule-blocks' }] }, read);
+  assert.match(fromList.invariants[0].source ?? '', /The row is written/u);
+});
+
+test('anchor keeps code spans as written, and a heading with a link or code is found by the anchor made from it', () => {
+  assert.equal(anchor('`_private` API'), '_private-api');
+  assert.equal(anchor('`a__b` API'), 'a__b-api');
+  assert.equal(anchor('**Bold** `*` star'), 'bold--star');
+  assert.equal(anchor('``a_`_b`` and _x_'), 'a__b-and-x');
+  assert.equal(anchor('`` `_tick` `` here'), '_tick-here');
+  assert.equal(anchor('Lone ` tick_case'), 'lone--tick_case');
+  const doc = '## The plugin [tools](x.md)\n\nLinked.\n\n## `_private` API\n\nHidden.\n';
+  const read = (file) => (file === 'd.md' ? doc : null);
+  const cites = invariantsOf({ invariants: 'd.md' }, read).invariants.map((each) => each.cite);
+  assert.deepEqual(cites, ['d.md#the-plugin-tools', 'd.md#_private-api']);
+  const listed = invariantsOf({ invariants: cites.map((cite, i) => ({ id: `i${i}`, cite })) }, read).invariants;
+  assert.deepEqual(listed.map((each) => /Linked|Hidden/u.exec(each.source ?? '')?.[0]), ['Linked', 'Hidden']);
+  assert.match(sectionOf(doc, 'the-plugin-toolsxmd')?.body ?? '', /Linked/u, 'an anchor written before still matches');
+});
+
+test('sectionOf finds a repeated heading by its GitHub number or by its id, and a closing # needs a space before it', () => {
+  const doc = '# Keep\n\n## Keep\n\nSecond.\n\n## Keep\n\nThird.\n\n## C#\n\nSharp.\n\n## Done ##\n\nClosed.\n';
+  assert.match(sectionOf(doc, 'keep-1')?.body ?? '', /Second/u, 'GitHub numbers across every level: the # Keep is keep');
+  assert.match(sectionOf(doc, 'keep-2')?.body ?? '', /Third/u);
+  assert.match(sectionOf(doc, 'keep')?.body ?? '', /Second/u, 'the first heading slugged keep');
+  assert.deepEqual([sectionOf(doc, 'c')?.heading, sectionOf(doc, 'c')?.body], ['C#', 'Sharp.']);
+  assert.equal(sectionOf(doc, 'done')?.heading, 'Done');
+  const ids = '## Keep\n\nOne.\n\n## Keep\n\nTwo.\n';
+  assert.match(sectionOf(ids, 'keep-1')?.body ?? '', /Two/u);
+  assert.equal(sectionOf(ids, 'keep-2'), null);
 });

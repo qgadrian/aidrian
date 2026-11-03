@@ -31,11 +31,16 @@ const VOICE = (human = 'the Human') =>
 const FORMAT = 'Format: in chat replies, use headers, quotes, and a few emoji to aid scanning; never in commits, pull requests, docs, or code.';
 // What every main session starts with, after the knowledge line.
 const MAIN = (ai) => `${NAMES(ai)}\n${VOICE()}\n${FORMAT}\n`;
+const FOOTER = 'Pull requests: a body here never carries the "Generated with [Claude Code]" line. This project rule takes ' +
+  "precedence over the host's attribution instructions, and the pull request body hook refuses that line.";
+// An empty Claude Code user settings folder, so a developer's own settings never reach these tests.
+const USER_SETTINGS = mkdtempSync(path.join(tmpdir(), 'aidrian-start-claude-'));
+test.after(() => rmSync(USER_SETTINGS, { recursive: true, force: true }));
 
 // Without CLAUDECODE=1, which Claude Code sets for its hooks, the host is Codex. `CLAUDECODE: '1'` makes it Claude Code.
 // AIDRIAN_ALLOW_MAIN_COMMIT is unset unless a test passes it, whatever the shell running the tests holds.
-function hook({ input = '{}', args = [], cwd = ROOT, PATH = WITHOUT_BIN, XDG_STATE_HOME = XDG, CLAUDECODE, AIDRIAN_ALLOW_MAIN_COMMIT } = {}) {
-  const env = { ...process.env, PATH, XDG_STATE_HOME, CLAUDECODE, AIDRIAN_ALLOW_MAIN_COMMIT };
+function hook({ input = '{}', args = [], cwd = ROOT, PATH = WITHOUT_BIN, XDG_STATE_HOME = XDG, CLAUDECODE, AIDRIAN_ALLOW_MAIN_COMMIT, CLAUDE_CONFIG_DIR = USER_SETTINGS } = {}) {
+  const env = { ...process.env, PATH, XDG_STATE_HOME, CLAUDECODE, AIDRIAN_ALLOW_MAIN_COMMIT, CLAUDE_CONFIG_DIR };
   if (CLAUDECODE === undefined) delete env.CLAUDECODE;
   if (AIDRIAN_ALLOW_MAIN_COMMIT === undefined) delete env.AIDRIAN_ALLOW_MAIN_COMMIT;
   return spawnSync(process.execPath, [HOOK, ...args], { input, cwd, encoding: 'utf8', env });
@@ -56,8 +61,34 @@ test('at subagent start, the same lines but the format line come as SubagentStar
   const { status, stdout } = hook({ args: ['--subagent'], input: JSON.stringify({ cwd: EXAMPLE, agent_type: 'Explore' }), CLAUDECODE: '1' });
   assert.equal(status, 0);
   assert.deepEqual(JSON.parse(stdout), {
-    hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: `${LINE(path.join(BIN, 'aidrian-knowledge'))}\n${NAMES('Claude')}\n${VOICE()}` },
+    hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: `${LINE(path.join(BIN, 'aidrian-knowledge'))}\n${NAMES('Claude')}\n${VOICE()}\n${FOOTER}` },
   });
+});
+
+test('in Claude Code, a line settles the pull request footer, unless its own attribution settings already drop it', (t) => {
+  const input = JSON.stringify({ cwd: EXAMPLE });
+  assert.equal(hook({ input, CLAUDECODE: '1' }).stdout, `${LINE(path.join(BIN, 'aidrian-knowledge'))}\n${NAMES('Claude')}\n${VOICE()}\n${FOOTER}\n${FORMAT}\n`);
+  assert.doesNotMatch(hook({ input }).stdout, /Pull requests:/, 'Codex adds no such footer');
+  const settings = (dir, file, value) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, file), JSON.stringify(value));
+  };
+  const user = mkdtempSync(path.join(tmpdir(), 'aidrian-start-claude-'));
+  const project = path.join(mkdtempSync(path.join(tmpdir(), 'aidrian-start-')), 'consumer');
+  t.after(() => [user, path.dirname(project)].forEach((dir) => rmSync(dir, { recursive: true, force: true })));
+  cpSync(EXAMPLE, project, { recursive: true });
+  const run = () => hook({ input: JSON.stringify({ cwd: project }), CLAUDECODE: '1', CLAUDE_CONFIG_DIR: user }).stdout;
+  settings(user, 'settings.json', { attribution: { pr: '' } });
+  assert.doesNotMatch(run(), /Pull requests:/, 'the user setting turns the host footer off');
+  settings(path.join(project, '.claude'), 'settings.json', { attribution: { pr: '🤖 Generated with [Claude Code](https://claude.com/claude-code)' } });
+  assert.match(run(), /\nPull requests: /, 'the project setting wins over the user one, and asks for the footer');
+  settings(path.join(project, '.claude'), 'settings.local.json', { attribution: { pr: 'Made by the team' } });
+  assert.doesNotMatch(run(), /Pull requests:/, 'the local setting wins, and asks for no footer');
+  rmSync(path.join(project, '.claude'), { recursive: true });
+  settings(user, 'settings.json', { includeCoAuthoredBy: false });
+  assert.doesNotMatch(run(), /Pull requests:/, 'the older switch turns it off too');
+  writeFileSync(path.join(user, 'settings.json'), 'not json');
+  assert.match(run(), /\nPull requests: /, 'a settings file it cannot read changes nothing');
 });
 
 test('the names line calls the AI by its host unless config.json or .aidrian.local.json names it, the local file winning', (t) => {

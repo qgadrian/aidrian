@@ -49,6 +49,7 @@ Integration is single-writer serial: land one slice branch at a time, in the loc
 3. Continue to the next slice branch in locked order.
 4. Once every slice has landed, push the task branch and check `git ls-remote --heads origin <task_branch>` shows `task_branch_head`.
    A rejected push: return `blocked` with the rejection; never retry with force.
+   Run the push in the foreground with a timeout, repeated until it ends: once you end your turn, nothing wakes you when a background push finishes.
 
 ## Conflict routing
 

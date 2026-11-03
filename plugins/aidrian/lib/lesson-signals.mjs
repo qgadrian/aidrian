@@ -50,6 +50,25 @@ export function deliverySignal({ agentType, agentId = null, session = null, miss
   };
 }
 
+// A subagent ended its turn while a background shell or agent it started still ran, after the stop hook had already sent
+// it back once to wait: it went idle, and the task's completion will not wake it. The rule and the hook are the plugin's.
+export function idleChildrenSignal({ agentType, agentId = null, session = null, children }) {
+  const kinds = [...new Set(children.map((child) => child.type))].join(', ');
+  return {
+    key: `idle-with-children:${agentType}`,
+    tier: 'P2',
+    kind: 'gap',
+    target: 'plugin',
+    title: `${agentType} went idle while a background task it started still ran`,
+    note:
+      `${agentType} ended its turn with ${children.length} background ${kinds} task${children.length === 1 ? '' : 's'} still running, ` +
+      'after the stop hook sent it back once to wait in the foreground. Nothing wakes it when the task ends.',
+    evidence: [...children.map((child) => `background task ${child.id}`), ...(agentId ? [`dispatch log: agent ${agentId}`] : [])],
+    session,
+    agent: agentType,
+  };
+}
+
 // The rule whose patterns the project writes, config.json `agents`: a block that keeps recurring is the project's to fix.
 const PROJECT_RULES = new Set(['agent-gates']);
 

@@ -32,6 +32,13 @@ A background agent that stays silent may be waiting on a permission prompt that 
 Before you dispatch the same work again, read what it has done so far, and ask the Human whether a prompt is waiting.
 Never put a second agent on work the first may still be doing.
 
+An idle notice is not a result: before you act on one, check the branch and pull request yourself,
+with `git ls-remote --heads origin <branch>` and `gh pr view <n>`.
+An agent that ends its turn while a command or agent it started in the background still runs goes idle, and nothing wakes it.
+So every brief to an agent that pushes, waits on CI, or starts a reviewer says to wait in the foreground:
+the push or CI wait as a foreground command with a timeout, repeated until it ends, and the reviewer in the foreground.
+The stop hook sends a subagent back once when it stops with one still running.
+
 ## 2. Parallel slices
 
 - Slices run in parallel only when their files are disjoint and they share no generated file, such as a lockfile.
@@ -51,7 +58,7 @@ Never put a second agent on work the first may still be doing.
    In these skills, route each fix to its owner by § 4, even where a skill says the session fixes it itself.
    The fixing agent commits and pushes; you run the `git ls-remote` check and post the replies.
 5. **The bot is out** and **a review round** are defined once, in `references/review-rules.md`, with the branch preflight,
-   the fix-pass cap, and the disposition actions that `pr-review-loop`, `pr-review-fix`, and `autopilot` share.
+   the fix-pass cap, proportion, and the disposition actions that `pr-review-loop`, `pr-review-fix`, and `autopilot` share.
 6. **The stop rule.** Stop when a round's review of the current head yields no `fix_now` and `aidrian pr checks <n>`
    is not failing, or after config.json `github.maxReviewRounds` rounds
    (default 3) and any extra round granted at the cap; `aidrian pr await-review` exit 4, `round_limit`, means that cap.

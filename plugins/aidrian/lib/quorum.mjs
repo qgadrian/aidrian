@@ -24,7 +24,7 @@ import { insidePath, isFile, isObject, linksOutside } from './fs.mjs';
 import { runGit } from './git.mjs';
 import { projectAt } from './project.mjs';
 import { isolate } from './review/env.mjs';
-import { sectionOf, slug } from './review/flows.mjs';
+import { anchor as anchorOf, sectionOf, slug } from './review/flows.mjs';
 import { codexAvailable, runCodex } from './review/reviewers.mjs';
 
 export const CITATION_KINDS = Object.freeze(['doc', 'adr', 'code', 'plan', 'absence']);
@@ -519,9 +519,9 @@ function readRegular(root, file) {
 
 // Why `quote` is not in the section of `text` under `anchor`, matched by heading text or slug; null when it is.
 function inSection(text, anchor, quote, name) {
-  const section = sectionOf(text, slug(anchor));
-  if (!section) return `${name} has no heading #${slug(anchor)}`;
-  return collapse(`${section.heading}\n${section.body}`).includes(quote) ? null : `${name}#${slug(anchor)} does not contain the quote`;
+  const section = sectionOf(text, anchor);
+  if (!section) return `${name} has no heading #${anchor}`;
+  return collapse(`${section.heading}\n${section.body}`).includes(quote) ? null : `${name}#${anchorOf(section.heading)} does not contain the quote`;
 }
 
 // The identity of a citation, for telling whether a rebuttal cites anything new: kind, the normalized path, the

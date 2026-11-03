@@ -11,10 +11,53 @@ export const UNSPECIFIED = Object.freeze({
   text: 'The change keeps this flow working as before: no entry point, user action, or guarantee of the flow is removed or weakened.',
 });
 
-// A heading's anchor as GitHub makes it: punctuation is dropped, not turned into a hyphen, so `config.json` and
-// `plugin's` stay one word. Unlike GitHub, `_` is dropped and runs of spaces and hyphens collapse to one hyphen, which
-// both sides of a comparison share.
+// The key two anchors are compared by: GitHub's anchor with `_` dropped and runs of spaces and hyphens collapsed, so
+// an anchor written by hand, copied from GitHub, or made by `anchor` finds its heading. Never shown as a link.
 export const slug = (text) => text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, '').replace(/[\s-]+/gu, '-').replace(/^-|-$/gu, '');
+
+// A heading's text as GitHub renders it: a link or image is its text, a code span its content as written, and
+// emphasis outside code loses its `*` and `_` delimiters; `_` inside a word, or inside code, stays.
+const EMPHASIS = /(^|[^\p{L}\p{N}])[*_]+|[*_]+(?=[^\p{L}\p{N}]|$)/gu;
+// A code span opens with a run of backticks and closes at the next run of the same length; an unmatched run is text.
+export const rendered = (text) => String(text).replace(/!?\[([^\]]*)\]\([^)]*\)/gu, '$1')
+  .replace(/(`+)(?!`)([\s\S]*?[^`])\1(?!`)|[^`]+|`+/gu, (part, ticks, code) => (ticks
+    ? (/^ .*[^ ].* $/su.test(code) ? code.slice(1, -1) : code)
+    : part.replace(EMPHASIS, '$1').replace(/\*/gu, '')));
+
+// A heading's anchor exactly as GitHub makes it, for a link people follow: the rendered text, lowercased, with
+// punctuation dropped, `_` kept, and each space a hyphen. `headingsOf` adds the `-1` suffix of a repeated heading.
+export const anchor = (text) => rendered(text).trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/gu, '-');
+
+// An ATX heading: its `#` run and its text. A closing `#` run counts only after a space, so `## C#` keeps its `#`.
+const HEADING = /^(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/u;
+
+// The headings of a markdown doc outside fenced code, in order: { line, level, text, anchor, slug, nth }. `anchor` is
+// GitHub's, with `-1`, `-2` on a repeat as GitHub numbers them, across every level; `nth` counts earlier headings
+// with the same slug, so `x-1` also finds the second `X` when GitHub's anchors would not.
+export function headingsOf(lines) {
+  const fenced = fencedIn(lines);
+  const seen = new Map();
+  const taken = new Set();
+  const nths = new Map();
+  const headings = [];
+  for (const [i, line] of lines.entries()) {
+    const match = fenced[i] ? null : HEADING.exec(line);
+    if (!match || !match[2]) continue;
+    const base = anchor(match[2]);
+    let unique = base;
+    let n = seen.get(base) ?? 0;
+    while (taken.has(unique)) {
+      n += 1;
+      unique = `${base}-${n}`;
+    }
+    seen.set(base, n);
+    taken.add(unique);
+    const key = slug(match[2]);
+    headings.push({ line: i, level: match[1].length, text: match[2], anchor: unique, slug: key, nth: nths.get(key) ?? 0 });
+    nths.set(key, (nths.get(key) ?? 0) + 1);
+  }
+  return headings;
+}
 
 // The invariants of a flow. A list is used as written. A doc's invariants are its `##` and `###` headings, each with
 // the paragraph under it; `read(path)` returns the doc's text or null. Returns { invariants, unspecified, problem }.
@@ -23,21 +66,26 @@ export function invariantsOf(flow, read) {
   if (typeof flow.invariants !== 'string') return { invariants: [UNSPECIFIED], unspecified: true, problem: null };
   const text = read(flow.invariants);
   if (text === null) return { invariants: [UNSPECIFIED], unspecified: true, problem: `${flow.invariants} is missing` };
-  const invariants = [];
-  let current = null;
-  // A `##` line in a fenced code block is code, not an invariant.
+  // A `##` line in a fenced code block is code, not an invariant. A repeated heading is its own invariant, with its own
+  // id and anchor, `-1` on the second: one verdict never signs off two rules. `repeated` lists each with its ids.
   const lines = text.split(/\r?\n/u);
+  const headings = headingsOf(lines);
   const fenced = fencedIn(lines);
-  for (const [i, line] of lines.entries()) {
-    if (fenced[i]) continue;
-    const heading = /^#{2,3}\s+(.+?)\s*$/u.exec(line);
-    if (heading) {
-      current = { id: slug(heading[1]), text: heading[1], cite: `${flow.invariants}#${slug(heading[1])}` };
-      invariants.push(current);
-    } else if (current && line.trim() && current.body === undefined) current.body = line.trim();
+  const ids = new Set();
+  const byText = new Map();
+  const invariants = [];
+  for (const [h, heading] of headings.entries()) {
+    if (heading.level < 2 || heading.level > 3) continue;
+    let id = heading.nth ? `${heading.slug}-${heading.nth}` : heading.slug;
+    for (let n = 1; ids.has(id); n += 1) id = `${heading.slug}-${heading.nth + n}`;
+    ids.add(id);
+    byText.set(heading.text, [...(byText.get(heading.text) ?? []), id]);
+    const until = headings[h + 1]?.line ?? lines.length;
+    const body = lines.slice(heading.line + 1, until).filter((_, j) => !fenced[heading.line + 1 + j]).map((line) => line.trim()).find(Boolean);
+    invariants.push({ id, text: body ? `${heading.text}: ${body}` : heading.text, cite: `${flow.invariants}#${heading.anchor}` });
   }
-  const list = invariants.map(({ body, ...rest }) => ({ ...rest, text: body ? `${rest.text}: ${body}` : rest.text }));
-  return list.length ? { invariants: list, unspecified: false, problem: null } : { invariants: [UNSPECIFIED], unspecified: true, problem: `${flow.invariants} has no ## headings` };
+  if (!invariants.length) return { invariants: [UNSPECIFIED], unspecified: true, problem: `${flow.invariants} has no ## headings` };
+  return { invariants, unspecified: false, problem: null, repeated: [...byText].filter(([, each]) => each.length > 1).map(([heading, each]) => ({ heading, ids: each })) };
 }
 
 // The most of a cited section a reviewer reads, and of the blocks a `focus` picks: the project chose those as the rule,
@@ -45,31 +93,27 @@ export function invariantsOf(flow, read) {
 export const MAX_SOURCE = 4000;
 export const MAX_FOCUSED = 8000;
 
-// The section of a markdown doc under the heading whose slug is `anchor`: the heading and its body, up to the next
+// The section of a markdown doc under the heading `anchor` names, compared by slug: the heading and its body, up to the next
 // heading of the same or a higher level; `raw` is the body with its indentation kept, for blocksOf. Null when the doc
 // has no such heading. A `#` line in a fenced code block, such as a shell comment, is code, not a heading: it neither
 // ends a section nor matches the anchor.
 export function sectionOf(text, anchor) {
+  const wanted = String(anchor ?? '');
+  const key = slug(wanted);
   // CRLF or LF: a `\r` left on a line would hide its fence, and `raw` is rejoined with LF.
   const lines = String(text ?? '').split(/\r?\n/u);
-  const fenced = fencedIn(lines);
-  let start = -1;
-  let level = 0;
-  let end = lines.length;
-  for (const [i, line] of lines.entries()) {
-    const heading = fenced[i] ? null : /^(#{1,6})\s+(.+?)\s*#*\s*$/u.exec(line);
-    if (!heading) continue;
-    if (start === -1 && slug(heading[2]) === anchor) {
-      start = i;
-      level = heading[1].length;
-    } else if (start !== -1 && heading[1].length <= level) {
-      end = i;
-      break;
-    }
-  }
-  if (start === -1) return null;
+  const headings = headingsOf(lines);
+  // GitHub's exact anchor first, a repeat's `-1` included; then the first heading whose rendered or raw text slugs to
+  // the anchor, which keeps anchors written by hand or before matching; then `x-1` as the second heading slugged `x`.
+  const repeat = /^(.+)-(\d+)$/u.exec(key);
+  const found = headings.find((heading) => heading.anchor === wanted.toLowerCase())
+    ?? headings.find((heading) => slug(rendered(heading.text)) === key || heading.slug === key)
+    ?? (repeat ? headings.find((heading) => heading.slug === repeat[1] && heading.nth === Number(repeat[2])) : undefined);
+  if (!found) return null;
+  const start = found.line;
+  const end = headings.find((heading) => heading.line > start && heading.level <= found.level)?.line ?? lines.length;
   const raw = lines.slice(start + 1, end).join('\n').replace(/^(?:[ \t]*\n)+/u, '').trimEnd();
-  return { heading: lines[start].replace(/^#+\s+/u, '').trim(), body: raw.trim(), raw };
+  return { heading: found.text, body: raw.trim(), raw };
 }
 
 // A list item's marker and the content column after it, or null: blocksOf groups a line under the item whose content

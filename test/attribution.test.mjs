@@ -120,6 +120,24 @@ test('a heredoc counts only for the commit or pull request that holds it', (t) =
   assert.equal(run(`gh api user && ${pr('\nAuthored-with: Claude Code\n')}`), null, 'another gh call first');
 });
 
+test('the PR rule reads a body file the same command writes first, and the heredoc fed to --body-file -', (t) => {
+  const { run } = setup(t, { pullRequest: ['tool'] });
+  const body = (lines) => `## Summary\nx\n${lines}`;
+  const signed = body('\nAuthored-with: Claude Code\n');
+  assert.equal(run(`cat > b.md <<'EOF'\n${signed}EOF\ngh pr create -t x --body-file b.md`), null);
+  assert.match(run(`cat > b.md <<'EOF'\n${body('')}EOF\ngh pr create -t x --body-file b.md`) ?? '', /Blocked/, 'and checks it');
+  assert.equal(run(`gh pr create -t x --body-file - <<'EOF'\n${signed}EOF`), null);
+  assert.match(run(`gh pr create -t x --body-file b.md && cat > b.md <<'EOF'\n${signed}EOF`) ?? '', /cannot read/, 'a write after gh');
+  assert.match(run(`cat > b.md <<'EOF'\n${signed}EOF\ngh pr view 3 --json body -q .body > b.md; gh pr create -t x --body-file b.md`) ?? '', /cannot read/, 'a gh call rewrites it');
+  assert.match(run(`cat > b.md <<'EOF'\n${signed}EOF\ngh pr create -t y --body-file b.md > b.md; gh pr create -t x --body-file b.md`) ?? '', /cannot read/, 'a checked gh call writes over it');
+  assert.match(run(`gh pr create -t x --body-file - <<'EOF' < other.md\n${signed}EOF`) ?? '', /cannot read/, 'a competing input');
+  assert.match(run(`gh pr create -t x --body-file - 3<<'EOF'\n${signed}EOF`) ?? '', /cannot read/, 'a heredoc on another descriptor');
+  assert.match(run(`cat 2> b.md <<'EOF'\n${signed}EOF\ngh pr create -t x --body-file b.md`) ?? '', /cannot read/, 'cat writes stderr to the file');
+  assert.match(run(`tee b.md 3<<'EOF'\n${signed}EOF\ngh pr create -t x --body-file b.md`) ?? '', /cannot read/, 'tee reads no heredoc');
+  assert.equal(run(`cat 1> b.md 0<<'EOF'\n${signed}EOF\ngh pr create -t x --body-file b.md`), null, 'stdin and stdout by number');
+  assert.match(run(`F=x.md; cat > $F <<'EOF'\n${signed}EOF\nsh -c 'F=y.md'; gh pr create -t x --body-file "$F"`) ?? '', /cannot read/, 'a nested assignment');
+});
+
 test('a -F file is read where the commit runs: git -C, cd, and an unknown folder', (t) => {
   const { dir, run } = setup(t, { commit: ['agent'] });
   mkdirSync(path.join(dir, 'sub'));

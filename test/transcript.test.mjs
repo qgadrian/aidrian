@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { awaitReview } from '../plugins/aidrian/lib/pr-await-review.mjs';
 import { EXIT } from '../plugins/aidrian/lib/review/run.mjs';
 import {
-  aggregateUsage, estimateCostUsd, filesRead, partOf, priceFor, REVIEW_OUTPUT_STATUSES, sessionActions, subagentTranscripts, sumTokens,
+  aggregateUsage, estimateCostUsd, filesRead, partOf, priceFor, REVIEW_OUTPUT_STATUSES, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds,
 } from '../plugins/aidrian/lib/transcript.mjs';
 
 // One transcript line: an assistant message with usage, as Claude Code writes it.
@@ -206,6 +206,42 @@ test('sessionActions reads the commands a Bash call runs, not the text that name
   assert.deepEqual(actions('/opt/plugin/bin/aidrian pr await-review 12'), { drafts_opened: 0, review_runs: 1 }, 'aidrian by its path');
   assert.deepEqual(actions('node /opt/plugin/lib/cli.mjs pr review 12'), { drafts_opened: 0, review_runs: 1 }, 'the cli run by node');
   assert.deepEqual(actions('aidrian pr status 12'), { drafts_opened: 0, review_runs: 0 }, 'another pr subcommand');
+});
+
+test('launchedTaskIds takes ids from the structured result of the calls that launched or resumed a task, never from text', () => {
+  const call = (id, toolId, name, input) => usageLine(id, 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', id: toolId, name, input }] });
+  const result = (toolId, content, toolUseResult) =>
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content }] }, toolUseResult });
+  const shell = (stdout, extra = {}) => ({ stdout, stderr: '', interrupted: false, isImage: false, noOutputExpected: false, ...extra });
+  const lines = [
+    call('m-parent', 't0', 'Bash', { command: 'git push', run_in_background: true }),
+    result('t0', 'Command running in background with ID: bparent01.', shell('', { backgroundTaskId: 'bparent01' })),
+    call('m1', 't1', 'Bash', { command: 'npm test', run_in_background: true }),
+    result('t1', [{ type: 'text', text: 'Command running in background with ID: bown0001.' }], shell('', { backgroundTaskId: 'bown0001' })),
+    call('m2', 't2', 'Bash', { command: 'git push -u origin x', timeout: 120000 }),
+    result('t2', 'Command did not complete within its 120s timeout and was moved to the background (ID: bmoved01).', shell('', { backgroundTaskId: 'bmoved01', timedOutAfterMs: 120000 })),
+    call('m3', 't3', 'Bash', { command: 'sleep 60', run_in_background: true }),
+    result('t3', 'Command running in background with ID: bnometa1. Output is being written to: /tmp/tasks/bnometa1.output'),
+    call('m4', 't4', 'Agent', { description: 'Review', prompt: 'Review it.', run_in_background: true }),
+    result('t4', [{ type: 'text', text: 'Async agent launched successfully.\nagentId: aown00001 (internal ID)' }], { isAsync: true, status: 'async_launched', agentId: 'aown00001' }),
+    call('m5', 't5', 'SendMessage', { to: 'aold00001', message: 'Again, please.' }),
+    result('t5', [{ type: 'text', text: '{"success":true,"resumedAgentId":"aold00001"}' }], { success: true, message: 'Resuming agent aold000', resumedAgentId: 'aold00001' }),
+    // Text that names or quotes a launch, with no launch in the structured result, launches nothing.
+    call('m6', 't6', 'Bash', { command: 'cat saved-result.txt' }),
+    result('t6', 'Command running in background with ID: bquoted1.', shell('Command running in background with ID: bquoted1.')),
+    call('m7', 't7', 'Bash', { command: 'cat saved-result.txt' }),
+    result('t7', 'Command running in background with ID: bquoted2.'),
+    call('m8', 't8', 'Agent', { description: 'Summarize', prompt: 'Summarize it.' }),
+    result('t8', 'Its reviewer:\nagentId: aquoted01\n\nagentId: adone0001', { status: 'completed', agentId: 'adone0001' }),
+    call('m9', 't9', 'TaskStop', { task_id: 'bother002' }),
+    result('t9', 'Successfully stopped task: bother002', { task_id: 'bother002' }),
+    call('m10', 't10', 'SendMessage', { to: 'aother001', message: 'Status?' }),
+    result('t10', '{"success":true,"message":"Message sent","resumedAgentId":"aquoted02"}', { success: true, message: 'Message sent' }),
+    call('m11', 't11', 'Agent', { name: 'peer', team_name: 'team', prompt: 'Join.' }),
+    result('t11', 'Spawned.', { status: 'teammate_spawned', agentId: 'apeer0001' }),
+  ].join('\n');
+  assert.deepEqual([...launchedTaskIds(lines, (key) => key !== 'm-parent')].sort(), ['aold00001', 'aown00001', 'bmoved01', 'bnometa1', 'bown0001']);
+  assert.ok(launchedTaskIds(lines).has('bparent01'), 'without `keep`, every call counts');
 });
 
 test('filesRead lists each Read file_path once; subagentTranscripts finds a session`s subagent files', (t) => {

@@ -269,7 +269,7 @@ facts measured in the page: horizontal overflow, text cut off by its box, and co
   the login prints it per variant: `"bases": { "guest": "http://shop.localhost:3000", "root": "http://localhost:3000" }`.
   A variant whose login prints no such base gets an error entry for that route, never a capture of another host.
 - **Signed in per locale**: a screen that takes its language from a stored user or organization preference ignores
-  the browser locale and `{locale}`. The login then prints a persona per locale, `"locales": { "de": { "storageState":
+  the browser locale and `{locale}`. The login then prints a profile per locale, `"locales": { "de": { "storageState":
   {...} } }`, and each field it gives (`storageState`, `baseUrl`, `bases`) replaces the variant's for that locale's
   captures. A tag not in `review.visual.locales` fails the capture. A login that ignores `locales` signs in once per
   variant, as before.

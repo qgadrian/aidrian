@@ -503,11 +503,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
         // A push during the wait: the bot's answer is for another commit, so it counts for nothing here.
         if (bot.head_sha && bot.head_sha !== head) return finish('incomplete', { reason: `the pull request moved to ${String(bot.head_sha).slice(0, 7)} during the wait: run the step again`, retry_recommended: true });
         const open = bot.signal?.kind === 'thumbs_up' ? 0 : Math.max(1, bot.signal?.line_comments ?? 0);
-        state.passes[remote.id] = { head, reviewer: remote.reviewer, findings: open, open, bot: { kind: bot.signal?.kind ?? null, review_id: bot.signal?.review_id ?? null } };
-        // The bot answered this head: a review the Human asked for (`aidrian pr request`) is no longer owed, recorded
-        // while the wait ran included.
-        state.pending = mergePending(readLocalState(project, n)?.pending, state.pending);
-        answerPending(state, 'request', { head, by: remote.reviewer });
+        state.passes[remote.id] = { head, reviewer: remote.reviewer, findings: open, open, bot: { kind: bot.signal?.kind ?? null, review_id: bot.signal?.review_id ?? null, at: bot.signal?.at ?? new Date().toISOString() } };
         recorded = true;
       }
       const agents = pending.filter((pass) => map[pass.reviewer]?.kind === 'agent' || pass.kind === 'agent');
@@ -690,7 +686,17 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     return result;
   }
 
+  // Every bot answer that counts for this head, fresh or reused, answers the reviews the Human asked for
+  // (`aidrian pr request`), recorded while the step ran included. A reused answer counts with its own head and time.
+  function answerRequests() {
+    const answers = passes.filter((pass) => map[pass.reviewer]?.kind === 'remote').map(resultFor).filter((result) => result?.bot);
+    if (!answers.length) return;
+    state.pending = mergePending(readLocalState(project, n)?.pending, state.pending);
+    for (const result of answers) answerPending(state, 'request', { head: result.head, at: result.bot.at ?? null, current: head, by: result.reviewer });
+  }
+
   function finish(status, extra) {
+    answerRequests();
     noteFindings(extra);
     const result = { status, pr: n, repo, head, base, depth: plan.depth, round: state.rounds.length, max_rounds: maxRounds, engine: plan.engine, ...extra };
     // Slice results of packings this head no longer makes count for nothing again: they leave the record. A pass of

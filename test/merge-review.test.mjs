@@ -11,7 +11,7 @@ import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { runAttest } from '../plugins/aidrian/lib/review-gate.mjs';
 import { reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { markRequestsSent, recordPending, runRequest } from '../plugins/aidrian/lib/review/pending.mjs';
-import { emptyState, noteOutcome, readLocalState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { answerPending, emptyState, noteOutcome, readLocalState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { check, checkMcp, readMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 import { lexCommand, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
 
@@ -258,8 +258,14 @@ test('attest and a finished review step answer a gate review; an open step does 
   const quiet = { log: console.log, error: console.error };
   console.log = console.error = () => {};
   t.after(() => Object.assign(console, quiet));
-  assert.equal(runRequest(['5', '--kind', 'review'], r.project, { viewPr: () => ({ headRefOid: HEAD }) }), 0);
-  assert.match(r.run(`gh pr merge 5 --match-head-commit ${HEAD}`) ?? '', /no result on record/u);
+  assert.equal(runRequest(['5', '--kind', 'review'], r.project, { viewPr: () => ({ headRefOid: r.commit }) }), 0);
+  assert.match(r.run(`gh pr merge 5 --match-head-commit ${r.commit}`) ?? '', /no result on record/u);
+  writeFileSync(path.join(r.dir, 'b.txt'), 'b\n');
+  r.git('add', 'b.txt');
+  r.git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'b');
+  const other = r.git('rev-parse', 'HEAD');
+  assert.equal(await runAttest(['5', '--head', other, '--reviewer', 'code-reviewer', '--findings', '0', '--fixed', '0'], r.project), 0);
+  assert.deepEqual(marks(r.project, 5), [['review', false, false]], 'a review of another commit does not answer it');
   assert.equal(await runAttest(['5', '--head', r.commit, '--reviewer', 'code-reviewer', '--findings', '0', '--fixed', '0'], r.project), 0);
   assert.deepEqual(marks(r.project, 5), [['review', false, true]]);
   recordPending(r.project, { pr: 6, repo: 'acme/notes', kind: 'review', head: HEAD, by: 't' });
@@ -359,4 +365,49 @@ test('aidrian pr review --with-bot: the bot`s answer answers the requests, one r
   assert.equal(result.status, 'received');
   assert.deepEqual(marks(f.project, 9), [['request', false, true], ['request', false, true]]);
   assert.equal(r.run(`gh pr merge 9 --match-head-commit ${f.head}`), null);
+});
+
+const OLD = 'fedcba9876543210fedcba9876543210fedcba98';
+
+test('an answer counts for its own head, or for an earlier head`s request when it is for the current head and came later', () => {
+  const entry = (head, at) => ({ kind: 'request', head, at, by: 't' });
+  const answered = (pending, answer) => {
+    const state = { pending };
+    answerPending(state, 'request', { by: 'bot', ...answer });
+    return state.pending.map((each) => Boolean(each.answered));
+  };
+  const at = '2026-11-03T14:30:00.000Z';
+  assert.deepEqual(answered([entry(NEXT, '2026-11-03T14:00:00.000Z')], { head: HEAD, at, current: NEXT }), [false], 'an answer for A never answers a request for B');
+  assert.deepEqual(answered([entry(HEAD, '2026-11-03T14:00:00.000Z')], { head: NEXT, at, current: NEXT }), [true], 'B is current and answered after the request for A');
+  assert.deepEqual(answered([entry(HEAD, '2026-11-03T15:00:00.000Z')], { head: NEXT, at, current: NEXT }), [false], 'an answer from before the request');
+  assert.deepEqual(answered([entry(HEAD, '2026-11-03T14:00:00.000Z')], { head: NEXT, at, current: OLD }), [false], 'B is no longer the current head');
+  assert.deepEqual(answered([entry(HEAD, '2026-11-03T15:00:00.000Z')], { head: HEAD, at: null }), [true], 'its own head, whenever');
+  assert.deepEqual(answered([entry(HEAD, '2026-11-03T14:00:00.000Z')], { head: NEXT, at: null, current: NEXT }), [false], 'a time unknown counts only for its own head');
+});
+
+test('await-review answers only the requests its answer covers', async (t) => {
+  const r = repo(t, { github: { reviewer: REVIEWER } });
+  const quiet = { log: console.log, error: console.error };
+  console.log = console.error = () => {};
+  t.after(() => Object.assign(console, quiet));
+  // The bot answered HEAD, the current head, at 14:30: a request for an older head made before it is answered; one for
+  // another head made after it is not.
+  r.record(5, (state) => state.pending.push(
+    { kind: 'request', head: OLD, at: '2026-11-03T14:00:00.000Z', by: 't' },
+    { kind: 'request', head: NEXT, at: '2026-11-03T15:00:00.000Z', by: 't' },
+  ));
+  assert.equal(await runAwaitReview(['5', '--timeout-sec', '0'], loadConfig(r.project).config, r.project, { gh: botGh(1) }), 0);
+  assert.deepEqual(marks(r.project, 5), [['request', false, true], ['request', false, false]]);
+});
+
+test('a bot answer the step reuses answers a request made after it', async (t) => {
+  const r = repo(t, { github: { reviewer: REVIEWER } });
+  const f = feature(r);
+  let asked = 0;
+  const awaitBot = async () => (asked += 1, { status: 'received', requested: true, head_sha: f.head, signal: { kind: 'thumbs_up', at: '2026-11-03T14:30:00Z' } });
+  assert.equal((await f.step({ exec: clean, awaitBot }, { withBot: true })).status, 'received');
+  recordPending(f.project, { pr: 9, repo: 'acme/notes', kind: 'request', head: f.head, by: 't' });
+  assert.equal((await f.step({ exec: clean, awaitBot }, { withBot: true })).status, 'received');
+  assert.equal(asked, 1, 'the second step reuses the answer');
+  assert.deepEqual(marks(f.project, 9), [['request', false, true]]);
 });

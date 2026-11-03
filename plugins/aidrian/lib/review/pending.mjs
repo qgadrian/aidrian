@@ -34,11 +34,11 @@ export function markRequestsSent(project, pr, head) {
   return open.length;
 }
 
-// Marks the entries of `kind` owed on `pr` answered: the bot answered (`request`), or the gate review's result is on
-// record (`review`). Returns how many it marked.
-export function answerOwed(project, pr, kind, { head = null, by }) {
+// Marks the entries of `kind` owed on `pr` that `answer` ({ head, at, current, by }, as answerPending reads it) answers:
+// the bot's answer (`request`), or the gate review's recorded result (`review`). Returns 1 when it marked any.
+export function answerOwed(project, pr, kind, answer) {
   const state = readLocalState(project, pr);
-  if (!state || !answerPending(state, kind, { head, by })) return 0;
+  if (!state || !answerPending(state, kind, answer)) return 0;
   writeLocalState(project, state);
   return 1;
 }

@@ -600,7 +600,8 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     if (project && Number.isInteger(result.pr)) {
       const { answerOwed, markRequestsSent } = await import('./review/pending.mjs');
       if (result.requested) markRequestsSent(project, result.pr, result.head_sha ?? null);
-      if (ANSWERED.has(result.status)) answerOwed(project, result.pr, 'request', { head: result.head_sha ?? null, by: result.reviewer ?? 'bot' });
+      // The answer is for the head the wait read, which is the pull request's current head.
+      if (ANSWERED.has(result.status) && result.head_sha) answerOwed(project, result.pr, 'request', { head: result.head_sha, at: result.signal?.at ?? null, current: result.head_sha, by: result.reviewer ?? 'bot' });
     }
     if (result.status === 'round_limit' && project) {
       const { recordSignal, roundLimitSignal } = await import('./lesson-signals.mjs');

@@ -2,8 +2,8 @@
 // citation with no `#anchor`, is cited whole; `doc.md#section` cites only that section, so an edit elsewhere in the doc
 // leaves how the project is reviewed as it was.
 
-import { changedRanges, fileAt } from './diff.mjs';
-import { sectionRange } from './flows.mjs';
+import { fileAt } from './diff.mjs';
+import { sectionOf } from './flows.mjs';
 
 const WHOLE = null;
 
@@ -28,11 +28,9 @@ export function citedDocs(flows) {
   return docs;
 }
 
-const overlaps = (ranges, section) => ranges.some(([first, last]) => first <= section.end && last >= section.start + 1);
-
 // The cited docs among `changedPaths` whose cited part the change from `from` to `to` touches. A section counts as
-// touched when a changed line falls inside it on either side, or when its heading is missing on either side: a
-// renamed or removed heading changes what the citation points at.
+// touched when its heading or text differs between the two sides, or its heading is missing on either side: an edit
+// inside it, a heading inserted into it or removed after it, and a renamed heading all change what the citation reads.
 export function touchedCitations(root, from, to, flows, changedPaths) {
   const touched = [];
   for (const [file, anchors] of citedDocs(flows)) {
@@ -47,11 +45,10 @@ export function touchedCitations(root, from, to, flows, changedPaths) {
       touched.push(file);
       continue;
     }
-    const ranges = changedRanges(root, from, to, file);
     const hit = [...anchors].some((anchor) => {
-      const old = sectionRange(before, anchor);
-      const now = sectionRange(after, anchor);
-      return !old || !now || overlaps(ranges.old, old) || overlaps(ranges.new, now);
+      const old = sectionOf(before, anchor);
+      const now = sectionOf(after, anchor);
+      return !old || !now || old.heading !== now.heading || old.raw !== now.raw;
     });
     if (hit) touched.push(file);
   }

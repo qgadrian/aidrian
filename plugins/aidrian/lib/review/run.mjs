@@ -419,7 +419,7 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
 
   const verdictsFor = (flowId) => passes.filter((pass) => (pass.flows ?? []).includes(flowId)).flatMap((pass) => {
     const result = resultFor(pass);
-    return (result?.verdicts ?? []).filter((verdict) => verdict.flow === flowId).map((verdict) => ({ ...verdict, at: result.head }));
+    return (result?.verdicts ?? []).filter((verdict) => verdict.flow === flowId).map((verdict) => ({ ...verdict, at: result.head, reviewer: pass.reviewer }));
   });
   // A capture is evidence for the head it was taken of: a verdict carried forward from an earlier head cites that
   // head's captures. The keys live in the review record too, so another machine without the images can check them.

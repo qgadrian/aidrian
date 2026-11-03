@@ -54,19 +54,6 @@ export function diffLines(root, from, to, files = null) {
   return { addedLines, removedFiles };
 }
 
-// The lines one file's diff touches between two commits, 1-based and inclusive: `old` on the `from` side, `new` on
-// the `to` side, one [first, last] per hunk side that has lines.
-export function changedRanges(root, from, to, file) {
-  const text = git(root, ['diff', '--unified=0', '--no-color', '--no-renames', '--no-ext-diff', '--no-textconv', from, to, '--', file]);
-  const ranges = { old: [], new: [] };
-  for (const match of text.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gmu)) {
-    const [oldStart, oldCount, newStart, newCount] = [match[1], match[2] ?? '1', match[3], match[4] ?? '1'].map(Number);
-    if (oldCount) ranges.old.push([oldStart, oldStart + oldCount - 1]);
-    if (newCount) ranges.new.push([newStart, newStart + newCount - 1]);
-  }
-  return ranges;
-}
-
 // The text of `file` at `commit`, or null when it is not there.
 export function fileAt(root, commit, file) {
   const result = runGit(['show', `${commit}:${file}`], root, TIMEOUT);

@@ -132,8 +132,9 @@ reaches its reviewer with that section as `source`: the heading and its text up 
 higher level, read from the base branch. The anchor may be copied from GitHub, as the heading's link gives it.
 The reviewer judges against the source; `text` is only the question, and
 without one the question comes from the heading. So the rule lives once, in the doc, and config cannot drift from it.
-A change to a cited section triggers `harness-config`: a changed line inside the section on either side, or its
-heading renamed or removed. An edit elsewhere in the doc does not. An invariants doc, or a `cite` with no `#anchor`, is
+A change to a cited section triggers `harness-config`: its heading or text differs between the base and the head,
+or its heading is gone, which covers a heading inserted into it or removed after it. An edit elsewhere in the doc
+does not. A dispute needs a `holds` or `not_affected` from a reviewer that gave no `violated` verdict of its own. An invariants doc, or a `cite` with no `#anchor`, is
 cited whole, so any change to it triggers the flow. `aidrian lint review` warns about a cited section with no text.
 
 A reviewer reads at most 4000 characters of a source. A longer section is cut between its top-level blocks (a list

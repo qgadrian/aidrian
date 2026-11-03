@@ -321,6 +321,14 @@ test('invariantsOf and flowState: a doc gives one invariant per heading; a flow 
   assert.deepEqual(state, { signed: false, open: ['b'], unverified: ['c'], disputed: [] });
 });
 
+test('flowState: a dispute needs a holds from a reviewer that gave no violated verdict of its own', () => {
+  const ok = () => null;
+  const one = flowState([{ id: 'a' }], [{ invariant: 'a', verdict: 'violated', evidence: 'x', reviewer: 'codex' }, { invariant: 'a', verdict: 'holds', evidence: 'x', reviewer: 'codex' }], ok, new Set(['a']));
+  assert.deepEqual(one, { signed: false, open: ['a'], unverified: [], disputed: [] }, 'one reviewer contradicting itself is no dispute, and an overrule does nothing');
+  const two = flowState([{ id: 'a' }], [{ invariant: 'a', verdict: 'violated', evidence: 'x', reviewer: 'codex' }, { invariant: 'a', verdict: 'holds', evidence: 'x', reviewer: 'security-engineer' }], ok, new Set(['a']));
+  assert.deepEqual(two, { signed: true, open: [], unverified: [], disputed: ['a'] });
+});
+
 test('citationProblem: a path:line must exist at the head, a test:<name> must appear in a file', (t) => {
   const r = repo(t, { change: (write) => write('src/app.test.js', "test('books a slot', () => {});\n") });
   const head = r.git('rev-parse', 'HEAD');
@@ -845,6 +853,12 @@ test('an edit to a cited doc outside the cited section needs no Human; inside it
   assert.ok(inside.includes('harness-config'), 'the cited section changed');
   const renamed = await plan('# Booking\n\n## No overlapping booking\nTwo bookings never hold one slot.\n\n## Refund cap\nA refund never exceeds the charge.\n');
   assert.ok(renamed.includes('harness-config'), 'the cited heading is gone');
+  const split = await plan('# Booking\n\n## No double booking\n\n## Split\nTwo bookings never hold one slot.\n\n## Refund cap\nA refund never exceeds the charge.\n');
+  assert.ok(split.includes('harness-config'), 'a heading inserted inside the cited section moves its text out, though no line of it changed');
+  const tail = await plan('# Booking\n\n## No double booking\nTwo bookings never hold one slot.\n\n## Split\n\n## Refund cap\nA refund never exceeds the charge.\n');
+  assert.ok(!tail.includes('harness-config'), 'a heading added after all of its text leaves the cited text as it was');
+  const merged = await plan('# Booking\n\n## No double booking\nTwo bookings never hold one slot.\n\nA refund never exceeds the charge.\n');
+  assert.ok(merged.includes('harness-config'), 'the next heading removed: the cited section now runs on');
 });
 
 test('a flow whose invariants doc is cited whole still needs the Human for any edit to it', async (t) => {

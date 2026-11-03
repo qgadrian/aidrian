@@ -267,20 +267,23 @@ export function citationProblem(evidence, { root, head, captures = new Set() }) 
 
 // The sign-off state of one flow from its verdicts: { signed, open, unverified, disputed } where `open` lists the
 // invariants a verdict says are violated, and `unverified` those with no valid holds or not_affected verdict. A verdict
-// that fails its citation counts as cannot_verify. `disputed` lists the violated invariants another verdict answers
-// holds or not_affected with valid evidence: reviewers disagree, and the Human may overrule the violated side on that
-// head (`overruled`, a set of invariant ids). An overruled invariant then passes on the other side's evidence, never
-// on the Human's word alone.
+// that fails its citation counts as cannot_verify. `disputed` lists the violated invariants another reviewer, one that
+// gave no violated verdict of its own, answers holds or not_affected with valid evidence: reviewers disagree, and the
+// Human may overrule the violated side on that head (`overruled`, a set of invariant ids). An overruled invariant then
+// passes on the other reviewer's evidence, never on the Human's word alone. A verdict names its reviewer in `reviewer`.
 export function flowState(invariants, verdicts, check, overruled = new Set()) {
   const open = [];
   const unverified = [];
   const disputed = [];
   for (const invariant of invariants) {
     const mine = verdicts.filter((verdict) => verdict.invariant === invariant.id);
-    const violated = mine.some((verdict) => verdict.verdict === 'violated');
-    const backed = mine.some((verdict) => ['holds', 'not_affected'].includes(verdict.verdict) && check(verdict.evidence, verdict) === null);
-    if (violated && backed) disputed.push(invariant.id);
-    if (violated && !(backed && overruled.has(invariant.id))) open.push(invariant.id);
+    const violators = new Set(mine.filter((verdict) => verdict.verdict === 'violated').map((verdict) => verdict.reviewer));
+    const backers = mine.filter((verdict) => ['holds', 'not_affected'].includes(verdict.verdict) && check(verdict.evidence, verdict) === null);
+    const violated = violators.size > 0;
+    const backed = backers.length > 0;
+    const other = backers.some((verdict) => !violators.has(verdict.reviewer));
+    if (violated && other) disputed.push(invariant.id);
+    if (violated && !(other && overruled.has(invariant.id))) open.push(invariant.id);
     else if (!backed) unverified.push(invariant.id);
   }
   return { signed: open.length === 0 && unverified.length === 0, open, unverified, disputed };

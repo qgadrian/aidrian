@@ -122,6 +122,8 @@ function lexSegments(command) {
     if (!current) current = { text: '', dynamic: false };
     return current;
   };
+  // Tokens a quote or a backslash wrote any of: `'2'>` and `\{x\}>` pass an argument, so their text is never a descriptor.
+  const quoted = new WeakSet();
   const endToken = () => {
     if (current) tokens.push(current);
     current = null;
@@ -198,6 +200,7 @@ function lexSegments(command) {
       }
       const token = start();
       token.text += body;
+      quoted.add(token);
       if (ch === '"' && /[$`]/u.test(body)) {
         token.dynamic = true;
         collectSubstitutions(command, i + 1, j, command.length, substitutions);
@@ -228,7 +231,10 @@ function lexSegments(command) {
 
     if (ch === '\\') {
       if (i + 1 < command.length) {
-        if (command[i + 1] !== '\n') start().text += command[i + 1];
+        if (command[i + 1] !== '\n') {
+          start().text += command[i + 1];
+          quoted.add(current);
+        }
         i += 1;
       }
       continue;
@@ -263,8 +269,10 @@ function lexSegments(command) {
 
     if (ch === '>' || ch === '<') {
       if (command[i + 1] === '(') substitutions.push(command.slice(i + 2, closingParen(command, i + 1, command.length)));
-      // A bare fd prefix (`2>`, or bash's named `{x}>`) belongs to the operator, not to a filename.
-      const fd = current && (/^\d+$/u.test(current.text) || /^\{[A-Za-z_]\w*\}$/u.test(current.text)) ? current.text : null;
+      // A bare fd prefix (`2>`, or bash's named `{x}>`) written right against it belongs to the operator, not to a
+      // filename; a quoted one is an argument.
+      const bare = current && !quoted.has(current);
+      const fd = bare && (/^\d+$/u.test(current.text) || /^\{[A-Za-z_]\w*\}$/u.test(current.text)) ? current.text : null;
       if (current && fd === null) endToken();
       else current = null;
       const named = fd === null ? {} : { fd };

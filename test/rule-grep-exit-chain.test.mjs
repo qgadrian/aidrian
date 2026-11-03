@@ -366,6 +366,9 @@ test('a named descriptor, or a quoted word that looks like one, counts as a coun
   assert.equal(decide("grep '{x}'>f -c && y"), 'deny');
   assert.equal(decide('grep x {fd}>f && y'), 'deny', 'fails closed on a real named descriptor too');
   assert.equal(decide('grep x 2>f && y'), 'allow', 'a numbered one is read as before');
+  assert.equal(decide("grep -e '2'>f -c x && y"), 'deny', "a quoted '2' is the -e pattern, so -c counts");
+  assert.equal(decide('grep -e "2">f -c x && y'), 'deny');
+  assert.equal(decide('grep -e \\2>f -c x && y'), 'deny');
 });
 
 test('asksForQuiet reads -q, a bundle with q, --quiet, and --silent', () => {

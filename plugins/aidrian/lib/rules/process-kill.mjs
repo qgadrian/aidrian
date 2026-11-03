@@ -22,7 +22,7 @@ import {
   excerpt, inlineShellCommand, isLongOption, lexCommand, lexPipeline, lexSubstitutions, readInvocation, readShortOptions,
   shellRedirections, shellWord,
 } from '../shell-lex.mjs';
-import { asksForCount, asksForQuiet, GREP_PROGRAMS, GREP_VALUE_FLAGS, hasNamedFd, startsOrEndsGroup } from './grep-exit-chain.mjs';
+import { asksForCount, asksForQuiet, GREP_PROGRAMS, GREP_VALUE_FLAGS, startsOrEndsGroup } from './grep-exit-chain.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME';
 export const LISTING_OVERRIDE = 'AIDRIAN_ALLOW_PROCESS_ARGS_LISTING';
@@ -210,14 +210,9 @@ function readCommand(segment) {
   for (let i = 0; i < segment.length; i += 1) {
     if (segment[i].operator && segment[i + 1] && !segment[i + 1].fdDup) targets.add(segment[i + 1]);
   }
-  // A named descriptor (`{x}>f`) stays a word, as a quoted `'{x}'` is one: the rules read it as they did before the
-  // lexer kept descriptors, so dropping it can open neither rule.
-  const words = segment.flatMap((token) => {
-    if (token.operator) return hasNamedFd([token]) ? [{ text: token.fd, dynamic: false, namedFd: true }] : [];
-    return token.fdDup || targets.has(token) ? [] : [token];
-  });
+  const words = segment.filter((token) => !token.operator && !token.fdDup && !targets.has(token));
   let index = 0;
-  while (index < words.length && (words[index].namedFd || ASSIGNMENT.test(words[index].text))) index += 1;
+  while (index < words.length && ASSIGNMENT.test(words[index].text)) index += 1;
   return { program: (words[index]?.text ?? '').split('/').pop() ?? '', args: words.slice(index + 1) };
 }
 
@@ -227,7 +222,6 @@ function afterPrefixOptions(prefix, args, nested) {
   let i = 0;
   while (args[i]) {
     const token = args[i];
-    if (token.namedFd) { i += 1; continue; }
     if (token.dynamic) break;
     if (token.text === '--') return i + 1;
     // The env -S string is more env argv, options included, so it is judged as `env <string>`.
@@ -300,7 +294,6 @@ const XARGS_VALUE_FLAGS = new Set(['-n', '--max-args', '-I', '-P', '--max-procs'
 function xargsInvocation(args) {
   for (let i = 0; i < args.length; i += 1) {
     const token = args[i];
-    if (token.namedFd) continue;
     if (token.dynamic) return null;
     if (XARGS_VALUE_FLAGS.has(token.text)) {
       i += 1;
@@ -485,7 +478,6 @@ function passesThrough({ program, args }) {
 // programs into a counter that prints only a number (`wc`, `grep -c`) or nothing (`grep -q`).
 function outputDiscarded(segments, separators, i) {
   for (let j = i; j < segments.length; j += 1) {
-    if (hasNamedFd(segments[j])) return false;
     if (j > i) {
       const { program, args } = readInvocation(segments[j]);
       if (program === 'wc') return true;
@@ -732,7 +724,7 @@ function listingReplacement({ segments, separators, index }) {
 // null when a word before it cannot be written back, or when the segments start with a shell word (`if`, `!`) or open
 // or close a group (`(ps aux`, `aux)`, a `case` arm), which a replacement could unbalance.
 function replacementSegment(segments, { first, last, text }) {
-  if (segments.slice(first, last + 1).some((segment) => startsOrEndsGroup(segment) || hasNamedFd(segment))) return null;
+  if (segments.slice(first, last + 1).some(startsOrEndsGroup)) return null;
   const segment = segments[first];
   const all = segment.filter((token, i) => !token.operator && !token.fdDup && !(i > 0 && segment[i - 1].operator));
   const { args } = unwrapPrefixes(readCommand(segment));

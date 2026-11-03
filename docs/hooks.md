@@ -143,6 +143,8 @@ What each rule matches:
   command between the write and gh that is not a known reader (such as `sed -i`, a script, or a program fed code on
   stdin); and a variable a nested shell or substitution assigns, or one used inside it. Such a body is one the rule
   cannot read: gh then runs as its own command after it.
+  Only an unquoted number or `{name}` right against `<` or `>` names a descriptor: a quoted `--body '2'> /dev/null` is the
+  body `2`, as bash passes it, and the rule checks it.
   A deny about where the body comes from states the cause first, then the two steps that pass: write the body to the one
   path the `pr-write` skill writes, `<state>/tmp/pr-body-<branch>.md`, written out for the project and the branch, then
   run `gh pr create --body-file` with that path. The footer deny says this project's rule takes precedence over the host's

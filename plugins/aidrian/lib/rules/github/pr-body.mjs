@@ -130,10 +130,13 @@ export function lineWrites(top) {
     const redirects = segment.flatMap((each, i) => (each.operator && each.operator !== '<' ? [[each, segment[i + 1]]] : []));
     let target = null;
     let text = null;
-    if (program === 'cat' && args.every((arg) => arg.text === '-') && redirects.length === 1 && redirects[0][0].operator === '>') {
+    // Only standard output writes the file: `cat 2> b.md` leaves it empty.
+    if (program === 'cat' && args.every((arg) => arg.text === '-') && redirects.length === 1 && redirects[0][0].operator === '>' && [undefined, '1'].includes(redirects[0][0].fd)) {
       [target, text] = [at(redirects[0][1]), stdinBody(entry)];
     } else if (program === 'tee' && args.length === 1 && !args[0].text.startsWith('-')) {
-      [target, text] = [at(args[0]), stdinBody(entry)];
+      target = at(args[0]);
+      // A redirect of its own output onto the same file races the write: what lands there is unknown.
+      text = target !== null && redirects.some(([, each]) => at(each) === target) ? null : stdinBody(entry);
     } else if (program === 'cp' && !redirects.length) {
       const operands = args.filter((arg) => !/^-[fpv]+$/u.test(arg.text));
       const source = operands.length === 2 && !operands[0].text.startsWith('-') ? at(operands[0]) : null;
@@ -179,8 +182,10 @@ function isReader({ program, args }) {
   return false;
 }
 
-// The body of a command's one heredoc as bash passes it (unchangedHeredoc), or null: none, several, or one bash expands.
-const onlyHeredoc = (heredocs) => (heredocs.length === 1 && (!heredocs[0].expands || !/[$`\\]/u.test(heredocs[0].body)) ? heredocs[0].body : null);
+// The body of a command's one heredoc on its standard input, as bash passes it (unchangedHeredoc), or null: none,
+// several, one bash expands, or one fed to another descriptor (`3<<EOF`), which the command does not read as its input.
+const onlyHeredoc = (heredocs) => (heredocs.length === 1 && [undefined, '0'].includes(heredocs[0].fd) &&
+  (!heredocs[0].expands || !/[$`\\]/u.test(heredocs[0].body)) ? heredocs[0].body : null);
 
 // The body of the one heredoc fed to a command's input, for a walkCommands entry, or null. An input redirect beside it,
 // `< file` or `<<< word`, may replace it, so the input is one this rule cannot know.

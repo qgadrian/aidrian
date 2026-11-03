@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { assignsVariable, commandLines, lexCommand, lexInputs, lexPipeline, lexSteps, lexSubstitutions, readGit, readInvocation, readShortOptions } from '../plugins/aidrian/lib/shell-lex.mjs';
+import { assignsVariable, commandLines, lexCommand, lexInputs, lexPipeline, lexSteps, lexSubstitutions, readGit, readInvocation, readShortOptions, walkCommands } from '../plugins/aidrian/lib/shell-lex.mjs';
 
 const texts = (line) => lexCommand(line).map((segment) => segment.map((token) => token.text));
 const programOf = (line) => readInvocation(lexCommand(line)[0]).program;
@@ -52,6 +52,16 @@ test('redirections: an fd prefix belongs to the operator, and 2>&1 is a descript
   assert.deepEqual(segment.map((token) => token.text), ['node', 'build.mjs', '>', '&1', '>', 'out.txt']);
   assert.equal(segment[3].fdDup, true);
   assert.deepEqual(argsOf('node build.mjs 2>&1 > out.txt'), ['build.mjs']);
+});
+
+test('a redirection keeps the descriptor it names, numbered or named, and a heredoc the one it feeds', () => {
+  const [segment] = lexCommand('cat 2> err.txt {log}>> log.txt > out.txt 0<<<x');
+  assert.deepEqual(segment.map(({ text, fd }) => [text, fd]), [['cat', undefined], ['>', '2'], ['err.txt', undefined], ['>>', '{log}'],
+    ['log.txt', undefined], ['>', undefined], ['out.txt', undefined], ['<<<', '0'], ['x', undefined]]);
+  assert.deepEqual(argsOf('cat {log}> log.txt'), [], 'a named descriptor is not an argument');
+  const [entry] = walkCommands("gh pr create -F - 3<<'EOF'\nbody\nEOF", '/work');
+  assert.deepEqual(entry.heredocs, [{ body: 'body\n', expands: false, fd: '3' }]);
+  assert.deepEqual(walkCommands("cat <<'EOF'\nbody\nEOF", '/work')[0].heredocs, [{ body: 'body\n', expands: false }], 'none written, none kept');
 });
 
 test('a heredoc body is data; the lines after it are commands', () => {

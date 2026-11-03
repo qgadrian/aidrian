@@ -190,6 +190,38 @@ test('a heredoc that another input or a later command can replace is never trust
   assert.equal(run(`${write('b.md')}git -C . push -q origin HEAD 2>&1 | tail -2; ${create('b.md')}`), null, 'git push and a reader leave it');
 });
 
+test('a redirection that names a descriptor is read as bash runs it, failing closed on any but stdin or stdout', (t) => {
+  const run = project(t, { version: 1 }, { 'bad.md': 'no sections\n' });
+  const create = (file) => `gh pr create --draft --title x --body-file ${file}`;
+  for (const [command, why] of [
+    [`gh pr create -t x -F - 3<<'EOF'\n${GOOD}EOF`, 'gh reads stdin, the heredoc feeds fd 3'],
+    [`gh pr create -t x -F - {fd}<<'EOF'\n${GOOD}EOF`, 'a named descriptor'],
+    [`gh pr create -t x -F - <<'EOF' 3<<'END'\n${GOOD}EOF\nx\nEND`, 'two heredocs'],
+    [`gh pr create -t x -F - 0<&3 <<'EOF'\n${GOOD}EOF`, 'stdin moved from another descriptor'],
+    [`cat 2> b.md <<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'cat writes stderr to the file, which stays empty'],
+    [`cat 3> b.md <<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'a higher descriptor'],
+    [`cat > b.md 3<<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'cat reads no heredoc on stdin'],
+    [`cat 1>> b.md <<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'an append with fd 1'],
+    [`cat &>> b.md <<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'an append of both streams'],
+    [`cat 2>&1 > b.md <<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'a second redirect'],
+    [`tee b.md 4<<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'tee reads no heredoc on stdin'],
+    [`tee b.md > b.md <<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'tee with its own output on the same file'],
+    [`cat <<'EOF' |& tee b.md\n${GOOD}EOF\n${create('b.md')}`, 'tee fed through a pipe'],
+  ]) {
+    assert.match(run(command) ?? '', /^Blocked: the body is one this rule cannot read/, why);
+  }
+  for (const [command, why] of [
+    [`gh pr create -t x -F - 0<<'EOF'\n${GOOD}EOF`, 'fd 0 is stdin'],
+    [`cat 1> b.md <<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'fd 1 is stdout'],
+    [`cat >| b.md 0<<'EOF'\n${GOOD}EOF\n${create('b.md')}`, '>| past noclobber'],
+    [`cat &> b.md <<'EOF'\n${GOOD}EOF\n${create('b.md')}`, '&> writes stdout and an empty stderr'],
+    [`cat >& b.md <<'EOF'\n${GOOD}EOF\n${create('b.md')}`, '>& file is &>'],
+    [`tee b.md 2>/dev/null 0<<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'tee with stderr elsewhere'],
+  ]) {
+    assert.equal(run(command), null, why);
+  }
+});
+
 test('a variable a nested shell or substitution assigns is dropped, and a nested command resolves none', (t) => {
   const run = project(t, { version: 1 }, { 'bad.md': 'no sections\n', 'good.md': GOOD });
   assert.equal(run('F=good.md; gh pr create -t x -F "$F"'), null);

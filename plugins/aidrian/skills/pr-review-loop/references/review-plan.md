@@ -81,3 +81,13 @@ With `github.extraRounds` on, the cap first checks whether one more round is wor
   starts with "Approve", `--human deny` otherwise. The `review-extend` rule refuses an approval the Human did not give
   in this session. Under `autopilot`, nobody is there to ask: park it as a Decision for the Human.
 - A grant is one round: the step then returns `fix_required` for the same head. At the next cap the check runs again.
+
+## Owed reviews
+
+- The Human asks for a bot review: run `aidrian pr request <n>` at once, before any review the project requires first.
+  `aidrian pr await-review <n> --request` sends it and marks it sent.
+- Before dispatching the review the review gate needs outside `aidrian pr review`, run
+  `aidrian pr request <n> --kind review`; `aidrian pr attest` clears it.
+- Until then, and until `aidrian pr review` returns `received` or `none_needed` for the head, the merge guard hook
+  refuses every merge of the pull request. A later instruction, a merge command included, does not cancel a request
+  the Human made: ask the Human which one stands.

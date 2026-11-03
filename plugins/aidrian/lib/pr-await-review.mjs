@@ -593,6 +593,10 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     else if (moved) await saveRecord(record, { project, config, gh, base, status: result.status });
     else if (result.status === 'round_limit' && base && policy.mode === 'off') result = { ...result, extension: { status: 'off', mode: 'off' } };
     if (result.status === 'review_required') console.error(result.reason);
+    // The bot review the Human asked for (`aidrian pr request`) is sent once this run posted it, or the bot answered the head.
+    if (project && Number.isInteger(result.pr) && (result.requested || result.status === 'covered')) {
+      (await import('./review/pending.mjs')).markRequestsSent(project, result.pr, result.head_sha ?? null);
+    }
     if (result.status === 'round_limit' && project) {
       const { recordSignal, roundLimitSignal } = await import('./lesson-signals.mjs');
       const where = { session: process.env.CLAUDE_CODE_SESSION_ID || null, agent: process.env.CLAUDE_CODE_AGENT || null };

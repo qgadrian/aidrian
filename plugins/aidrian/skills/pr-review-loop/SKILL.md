@@ -17,6 +17,7 @@ and `product_sensitive` docs when a comment touches what users see, money, or da
 - Run the branch preflight of the `orchestration` skill's `references/review-rules.md`.
   Its § A ready pull request says when a ready pull request stops after the triage in step 3.
   Its other sections define the fix-pass cap, the disposition actions, when the bot is out, and a review round.
+- When the Human asks for a bot review, run `aidrian pr request <n>` at once (`references/review-plan.md` § Owed reviews).
 
 ## 1. Run the review plan
 
@@ -43,7 +44,7 @@ With `--await-codex`, run `aidrian pr review <n> --with-bot`: the review bot the
 
 ## 2. Collect every review surface
 
-Paginate everything; review threads often pass one page.
+Paginate everything.
 
 ```bash
 gh api --paginate repos/{owner}/{repo}/pulls/<n>/comments    # inline comments

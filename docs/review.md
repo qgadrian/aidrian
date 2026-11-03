@@ -489,6 +489,16 @@ keeps the compressed marker and appends a plain one, so a comment it touched can
   `aidrian pr extend` and `aidrian pr await-review` keep the compressed marker and append a plain one, and a reader
   here then takes the newer of the two.
 
+- **Outcome.** Every return of the step writes its status to this machine's record as `outcome`: `{ status, head, at,
+  reason }`. The early returns, `none_needed`, `unsatisfied`, and `too_large`, write it to the state folder only and
+  post nothing; a `held` return writes nothing. The [merge guard](hooks.md#merge-guard) reads it.
+- **Owed reviews.** `pending` lists the reviews the pull request still owes, each `{ kind, head, at, by }`.
+  `aidrian pr request <PR>` records a bot review the Human asked for, the moment they ask, before any review the project
+  requires first; `aidrian pr await-review --request` marks it `sent` once it posts it, or once the bot answered the
+  head. `aidrian pr request <PR> --kind review` records a review-gate review as dispatched; `aidrian pr attest <PR>`,
+  or a step that returns `received` or `none_needed`, clears it. Without `--head <sha>`, `request` reads the head with gh.
+  Both live in the state folder: another machine does not see them.
+
 With `review.record: "local"` in config.json, the record is written to the state folder only: nothing is posted or
 edited on the pull request, the visual captures comment included, and the record is read back from the state folder alone. Another machine then cannot
 see it or resume the review; it starts a record of its own.

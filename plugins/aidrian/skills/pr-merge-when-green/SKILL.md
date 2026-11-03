@@ -26,6 +26,9 @@ pending or skipped. This skill waits for all of them.
 3. Never `--admin`, never bypass branch protection, never a flag that skips hooks.
 4. Never push, least of all to the default branch. Apart from the one `gh pr merge`, every command here only reads.
 5. A failing verdict ends the run: report it. Never rerun checks, and never merge around one.
+6. This skill does not cancel an earlier request of the Human's, such as a bot review still to send: when two instructions
+   conflict, ask. Step 1 runs on every invocation; an earlier watch's verdict never counts.
+   The merge guard hook refuses a merge while a review is open or a requested one was never sent: report its reason.
 
 ## Project setup
 

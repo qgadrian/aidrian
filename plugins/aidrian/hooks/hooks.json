@@ -75,7 +75,7 @@
         ]
       },
       {
-        "matcher": "mcp__github__add_issue_comment|mcp__github__add_reply_to_pull_request_comment|mcp__github__pull_request_review_write",
+        "matcher": "mcp__github__add_issue_comment|mcp__github__add_reply_to_pull_request_comment|mcp__github__pull_request_review_write|mcp__github__merge_pull_request",
         "hooks": [
           {
             "type": "command",

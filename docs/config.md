@@ -216,6 +216,10 @@ and repository also passes, so a new session or machine need not review again.
 
 `checklist` names a file the reviewer reads the diff against; the gate's message names it.
 
+Whether the gate is on or off, a review the Human asked for is recorded with `aidrian pr request <PR>` the moment they
+ask, and a gate review being dispatched with `aidrian pr request <PR> --kind review`
+([owed reviews](review.md#the-record)). The [merge guard](hooks.md#merge-guard) refuses a merge while either is owed.
+
 ## Terms
 
 `"terms": { "file": ".aidrian/terms.json" }` turns on the terms rule: a project's vocabulary, as banned terms each with

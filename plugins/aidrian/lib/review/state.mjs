@@ -39,7 +39,25 @@ export const clip = (text) => String(text).replace(/\s+/gu, ' ').slice(0, CLIP);
 // Two spellings of one commit: equal, or one a prefix of the other, at least 7 hex long.
 export const sameCommit = (a, b) => typeof a === 'string' && typeof b === 'string' && (a === b || (Math.min(a.length, b.length) >= 7 && (a.startsWith(b) || b.startsWith(a))));
 
-export const emptyState = (pr, repo) => ({ version: 1, revision: 0, pr, repo, rounds: [], passes: {}, signoffs: {}, overrides: [], failures: {} });
+// `outcome` is the review step's last return, { status, head, at, reason? }, which the merge guard reads
+// (lib/rules/github/merge-review.mjs). `pending` holds the reviews still owed: { kind: 'request' | 'review', head, at,
+// by, sent? }. A `request` is a bot review the Human asked for (`aidrian pr request`), sent when
+// `aidrian pr await-review --request` posts it; a `review` is a gate review dispatched and not yet recorded, cleared
+// by `aidrian pr attest` or a finished review step.
+export const emptyState = (pr, repo) => ({ version: 1, revision: 0, pr, repo, rounds: [], passes: {}, signoffs: {}, overrides: [], failures: {}, outcome: null, pending: [] });
+
+// The review step's statuses after which nothing is left to review on that head.
+export const FINISHED = new Set(['received', 'none_needed']);
+
+// Notes the review step's return on `state`: its outcome, and, once finished, no gate review still owed.
+export function noteOutcome(state, { status, head, reason }) {
+  state.outcome = { status, head, at: new Date().toISOString(), ...(reason ? { reason: clip(reason) } : {}) };
+  if (FINISHED.has(status)) state.pending = (state.pending ?? []).filter((entry) => entry.kind !== 'review');
+  return state;
+}
+
+// The reviews still owed on `state`: its pending entries not sent.
+export const owed = (state) => (Array.isArray(state?.pending) ? state.pending : []).filter((entry) => !entry?.sent);
 
 const file = (project, pr) => path.join(stateDir(project), 'reviews', `pr-${pr}-review.json`);
 
@@ -50,7 +68,7 @@ function wellFormed(state, pr) {
 export function readLocalState(project, pr) {
   try {
     const state = JSON.parse(readFileSync(file(project, pr), 'utf8'));
-    return wellFormed(state, pr) ? { failures: {}, overrides: [], ...state } : null;
+    return wellFormed(state, pr) ? { failures: {}, overrides: [], outcome: null, pending: [], ...state } : null;
   } catch {
     return null;
   }
@@ -70,7 +88,7 @@ function decode(data, compressed, pr) {
   try {
     const bytes = Buffer.from(data, 'base64');
     const state = JSON.parse(compressed ? brotliDecompressSync(bytes, { maxOutputLength: MAX_RECORD }).toString('utf8') : bytes.toString('utf8'));
-    return wellFormed(state, pr) ? { failures: {}, overrides: [], ...state } : null;
+    return wellFormed(state, pr) ? { failures: {}, overrides: [], outcome: null, pending: [], ...state } : null;
   } catch {
     return null;
   }

@@ -39,7 +39,7 @@ import { contentFlows } from './content.mjs';
 import { buildPlan, classify, detectFlows, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, pathPattern, validatePlan } from './plan.mjs';
 import { BUILT_IN, flowBaseBrief, resolveEngine, reviewerMap, runExec, satisfies, VERDICT_MEANING } from './reviewers.mjs';
 import { atCap, buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
-import { heldMessage, isSummary, prunePasses, readRecord, summaryBody, writeLocalState } from './state.mjs';
+import { heldMessage, isSummary, noteOutcome, prunePasses, readRecord, summaryBody, writeLocalState } from './state.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, ghImage, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput, visualMatrix, visualRoutes } from './visual.mjs';
 
 export const EXIT = Object.freeze({
@@ -247,7 +247,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   let state = record.state;
 
   const engine = resolveEngine(effective, codex ? { codex } : {});
-  if (engine.problem) return { status: 'unsatisfied', pr: n, repo, head, reason: engine.problem };
+  if (engine.problem) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: engine.problem });
   // Flows whose files the globs miss: a changed file whose whole head content, or whose callers, hand it the flow's
   // privileged value (review.flows.<id>.content). A git failure stops the review rather than plan less.
   const traced = contentFlows({ root, head, changes, addedLines, flows: review.flows });
@@ -273,7 +273,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   }
   plan.engine = { name: engine.reviewer.name, reason: engine.reason };
   const { lines } = classify(changes, review);
-  if (plan.depth !== 'none' && lines > MAX_LINES) return { status: 'too_large', pr: n, repo, head, lines, reason: `${lines} changed lines is past ${MAX_LINES}: split the pull request` };
+  if (plan.depth !== 'none' && lines > MAX_LINES) return settle({ status: 'too_large', pr: n, repo, head, lines, reason: `${lines} changed lines is past ${MAX_LINES}: split the pull request` });
 
   // The flows' invariants: a flow the base defines reads its doc from the base, so the change under review cannot
   // rewrite it; a flow the change adds reads it from the head, the only place it exists.
@@ -325,7 +325,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     try {
       visualEntries = visualMatrix(visual, visualRoutesHere);
     } catch (error) {
-      return { status: 'too_large', pr: n, repo, head, reason: error.message };
+      return settle({ status: 'too_large', pr: n, repo, head, reason: error.message });
     }
   }
   let manifest = visual ? readManifest(project, n, head) : null;
@@ -335,13 +335,13 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   const passes = plan.stages.flatMap((stage) => stage.passes);
   // A pass nobody can run would never finish and never block: refuse the plan instead.
   const orphan = passes.find((pass) => pass.kind !== 'agent' && !map[pass.reviewer]);
-  if (orphan) return { status: 'unsatisfied', pr: n, repo, head, reason: `pass ${orphan.id} names reviewer "${orphan.reviewer}", which is not an agent pass or a reviewer of review.reviewers`, plan };
+  if (orphan) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `pass ${orphan.id} names reviewer "${orphan.reviewer}", which is not an agent pass or a reviewer of review.reviewers`, plan });
   // Every pass after the local stage answers for every flow: a violated from any reviewer blocks the flow, and a flow
   // only the independent model reviews is signed by it. The review bot gives no verdicts, so a flow needs another
   // pass that can answer for it.
   for (const stage of plan.stages) if (stage.name !== 'local') for (const pass of stage.passes) pass.flows = plan.flows.map((flow) => flow.id);
   for (const word of plan.require) {
-    if (!satisfies(word, passes, map)) return { status: 'unsatisfied', pr: n, repo, head, reason: `the plan requires ${word}, and the engine here is ${engine.reviewer.name} (${engine.reason})`, plan };
+    if (!satisfies(word, passes, map)) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `the plan requires ${word}, and the engine here is ${engine.reviewer.name} (${engine.reason})`, plan });
   }
   // A flow's deleted test stops the review whatever else the change does, even when nothing else needs a review.
   const removedTests = [];
@@ -351,8 +351,8 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     if (gone.length) removedTests.push({ flow: id, deleted: gone, accept: `aidrian pr signoff ${n} --flow ${id} --head ${head}` });
   }
   const answerless = plan.flows.find((flow) => !passes.some((pass) => (pass.flows ?? []).includes(flow.id) && map[pass.reviewer]?.kind !== 'remote'));
-  if (answerless) return { status: 'unsatisfied', pr: n, repo, head, reason: `flow ${answerless.id} needs a reviewer that answers its invariants, and the review bot does not: run codex-local, or require an agent for the flow`, plan };
-  if (!passes.length && !removedTests.length) return { status: 'none_needed', pr: n, repo, head, base, depth: plan.depth, engine: plan.engine, plan: { depth: plan.depth, reasons: plan.reasons, flows: [], stages: [] } };
+  if (answerless) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `flow ${answerless.id} needs a reviewer that answers its invariants, and the review bot does not: run codex-local, or require an agent for the flow`, plan });
+  if (!passes.length && !removedTests.length) return settle({ status: 'none_needed', pr: n, repo, head, base, depth: plan.depth, engine: plan.engine, plan: { depth: plan.depth, reasons: plan.reasons, flows: [], stages: [] } });
 
   // Each extra round the base branch's policy grants (lib/review/extension.mjs) raises the cap by one. A decision still
   // open at the cap (a check, or a grant whose round has not opened) is read again when the head has moved since.
@@ -677,13 +677,22 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     return finish(status, { ...extra, ...carried });
   }
 
+  // The one writer of every return after the record is read, but `held`, which must write nothing: the step's outcome
+  // goes into this machine's record, for the merge guard (lib/rules/github/merge-review.mjs). Only `finish` also
+  // publishes the record to the pull request.
+  function settle(result) {
+    noteOutcome(state, result);
+    writeLocalState(project, state);
+    return result;
+  }
+
   function finish(status, extra) {
     noteFindings(extra);
     const result = { status, pr: n, repo, head, base, depth: plan.depth, round: state.rounds.length, max_rounds: maxRounds, engine: plan.engine, ...extra };
     // Slice results of packings this head no longer makes count for nothing again: they leave the record. A pass of
     // this plan always stays.
     prunePasses(state, plan.slices, new Set(plan.stages.flatMap((stage) => stage.passes.map((pass) => pass.id))));
-    writeLocalState(project, state);
+    settle(result);
     if (onPr) {
       const body = summaryBody(state, { ...plan, flows: plan.flows.map((flow) => ({ ...flow, signed: flowStatus(flow).signed, humanSigned: keptSignoffs.has(flow.id) })) }, status);
       try {

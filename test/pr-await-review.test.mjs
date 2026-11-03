@@ -1112,6 +1112,7 @@ test('aidrian pr prints its usage for an unknown action, and await-review report
     '       aidrian pr extend PR',
     '               (--verdict extend|stop --reason TEXT [--head SHA] | --human approve|deny)',
     '       aidrian pr await-review [PR] [--request] [--max-rounds N] [--head SHA]',
+    '       aidrian pr request PR [--kind request|review] [--head SHA]',
     '       aidrian pr attest PR --head SHA --reviewer WHO --findings N --fixed N [--note T]',
     '       aidrian pr attest PR --pass ID --head SHA --reviewer WHO',
     '               (--findings N --fixed N [--accepted N] | --findings-file FILE) [--verdicts FILE]',

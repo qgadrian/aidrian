@@ -93,8 +93,8 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
 // - any other command that writes to a file (a redirect), or that names it and is not a known reader (such as `sed -i`
 //   or a script), as null: the file then holds what that command made of it, which the rule never guesses at. One that
 //   writes to, or names, a word this rule cannot resolve could be any file, so every file the line wrote turns null.
-// `overwrites(entry, file)` says whether the command redirects any output, on any descriptor, onto `file`: bash
-// truncates it before the command reads it.
+// `overwrites(entry, file)` says whether the command redirects any output, on any descriptor, onto `file`, or onto a
+// target it cannot resolve (`"$OUT"`): bash truncates it before the command reads it.
 // The pull request body rule and the attribution rule both read a body file through it.
 export function lineWrites(top) {
   const files = new Map();
@@ -118,7 +118,7 @@ export function lineWrites(top) {
   const outputs = (segment) => segment.flatMap((each, i) => (each.operator && each.operator !== '<' && !segment[i + 1]?.fdDup ? [[each, segment[i + 1]]] : []));
   const overwrites = (entry, file) => {
     const body = file ? fileOf(file, entry) : null;
-    return body !== null && outputs(entry.segment).some(([, each]) => fileOf(each, entry) === body);
+    return body !== null && outputs(entry.segment).some(([, each]) => [null, body].includes(fileOf(each, entry)));
   };
   const note = (entry) => {
     const { segment, invocation, folder, heredocs = [] } = entry;

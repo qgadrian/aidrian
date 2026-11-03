@@ -240,6 +240,7 @@ test('a gh call that redirects any output onto its own body file has a body this
   for (const redirect of ['> good.md', '>> good.md', '2>good.md', '{fd}>good.md']) {
     assert.match(run(`gh pr create -t x -F good.md ${redirect}`) ?? '', /^Blocked: the body is one this rule cannot read/, redirect);
   }
+  assert.match(run('gh pr create -t x -F good.md {fd}>"$OUT"') ?? '', /^Blocked: the body is one this rule cannot read/, 'a target it cannot resolve');
   assert.equal(run('gh pr create -t x -F good.md > out.log 2>&1'), null, 'a redirect onto another file');
   assert.equal(run('gh pr create -t x -F good.md 2>/dev/null'), null);
 });

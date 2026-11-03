@@ -503,7 +503,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
         // A push during the wait: the bot's answer is for another commit, so it counts for nothing here.
         if (bot.head_sha && bot.head_sha !== head) return finish('incomplete', { reason: `the pull request moved to ${String(bot.head_sha).slice(0, 7)} during the wait: run the step again`, retry_recommended: true });
         const open = bot.signal?.kind === 'thumbs_up' ? 0 : Math.max(1, bot.signal?.line_comments ?? 0);
-        state.passes[remote.id] = { head, reviewer: remote.reviewer, findings: open, open, bot: { kind: bot.signal?.kind ?? null, review_id: bot.signal?.review_id ?? null, at: bot.signal?.at ?? new Date().toISOString() } };
+        state.passes[remote.id] = { head, reviewer: remote.reviewer, findings: open, open, bot: { kind: bot.signal?.kind ?? null, review_id: bot.signal?.review_id ?? null } };
         recorded = true;
       }
       const agents = pending.filter((pass) => map[pass.reviewer]?.kind === 'agent' || pass.kind === 'agent');
@@ -681,18 +681,18 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   // goes into this machine's record, for the merge guard (lib/rules/github/merge-review.mjs). Only `finish` also
   // publishes the record to the pull request.
   function settle(result) {
-    noteOutcome(state, result);
+    noteOutcome(state, result, (a, b) => isAncestor(root, a, b));
     writeLocalState(project, state);
     return result;
   }
 
   // Every bot answer that counts for this head, fresh or reused, answers the reviews the Human asked for
-  // (`aidrian pr request`), recorded while the step ran included. A reused answer counts with its own head and time.
+  // (`aidrian pr request`), recorded while the step ran included. A reused answer counts with its own head.
   function answerRequests() {
     const answers = passes.filter((pass) => map[pass.reviewer]?.kind === 'remote').map(resultFor).filter((result) => result?.bot);
     if (!answers.length) return;
     state.pending = mergePending(readLocalState(project, n)?.pending, state.pending);
-    for (const result of answers) answerPending(state, 'request', { head: result.head, at: result.bot.at ?? null, current: head, by: result.reviewer });
+    for (const result of answers) answerPending(state, 'request', { head: result.head, by: result.reviewer, isAncestor: (a, b) => isAncestor(root, a, b) });
   }
 
   function finish(status, extra) {

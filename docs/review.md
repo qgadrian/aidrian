@@ -497,9 +497,10 @@ keeps the compressed marker and appends a plain one, so a comment it touched can
   before any review the project requires first. `aidrian pr await-review` marks it `sent` when it posts the request, and
   `answered` when the bot's answer arrives (`received`) or is already there (`already_present`), as
   `aidrian pr review --with-bot` does whenever its bot stage holds an answer, a reused one included. A request sent
-  is still owed. An answer counts for a request made for its own head, or, when it is for the current head and came
-  after the request, for one made for an earlier head a push replaced; an answer for an older head never answers a
-  newer head's request. A gate review is answered only by an attest of its own head, or a finished step.
+  is still owed. An answer counts for a request made for its own head, or for an earlier head it descends from
+  (`git merge-base --is-ancestor`); time plays no part, so a late answer for an older head never answers a newer head's
+  request. When git cannot tell, as for a commit this checkout lacks, only the exact head counts. A gate review is
+  answered the same way, by an attest or a finished step.
   `aidrian pr request <PR> --kind review` records a review-gate review as dispatched; `aidrian pr attest <PR>`, or a
   step that returns `received` or `none_needed`, answers it. Without `--head <sha>`, `request` reads the head with gh.
   An entry is only ever marked, never removed, and every write of the record merges in the entries and marks on disk,

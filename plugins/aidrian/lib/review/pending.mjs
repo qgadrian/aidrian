@@ -8,6 +8,7 @@
 import { ghJson } from '../gh.mjs';
 import { runGit } from '../git.mjs';
 import { originRepo, prNumber } from '../review-gate.mjs';
+import { isAncestor } from './diff.mjs';
 import { answerPending, emptyState, readLocalState, writeLocalState } from './state.mjs';
 
 const SHA = /^[0-9a-f]{7,40}$/iu;
@@ -34,11 +35,11 @@ export function markRequestsSent(project, pr, head) {
   return open.length;
 }
 
-// Marks the entries of `kind` owed on `pr` that `answer` ({ head, at, current, by }, as answerPending reads it) answers:
-// the bot's answer (`request`), or the gate review's recorded result (`review`). Returns 1 when it marked any.
-export function answerOwed(project, pr, kind, answer) {
+// Marks the entries of `kind` owed on `pr` that an answer for `head` answers (answerPending), reading ancestry in this
+// checkout: the bot's answer (`request`), or the gate review's recorded result (`review`). Returns 1 when it marked any.
+export function answerOwed(project, pr, kind, { head, by, isAncestor: ancestor = (a, b) => isAncestor(project.root, a, b) }) {
   const state = readLocalState(project, pr);
-  if (!state || !answerPending(state, kind, answer)) return 0;
+  if (!state || !answerPending(state, kind, { head, by, isAncestor: ancestor })) return 0;
   writeLocalState(project, state);
   return 1;
 }

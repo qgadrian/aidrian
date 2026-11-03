@@ -52,21 +52,23 @@ export const FINISHED = new Set(['received', 'none_needed']);
 
 const pendingOf = (state) => (Array.isArray(state?.pending) ? state.pending.filter(isObject) : []);
 
-// Marks the owed entries of `kind` on `state` answered by `by`'s answer for `head`, given at `at`. An answer counts for
-// an entry made for that head; or, when `head` is the pull request's `current` head and the answer came at or after
-// the entry, for one made for an earlier head a push replaced. An answer for an older head never answers a newer
-// head's entry. `at` null is a time unknown: only the entry's own head counts. Returns how many it marked.
-export function answerPending(state, kind, { head, at = new Date().toISOString(), current = null, by }) {
-  const later = (entry) => current !== null && sameCommit(head, current) && Date.parse(at ?? '') >= Date.parse(entry.at ?? '');
-  const open = pendingOf(state).filter((entry) => entry.kind === kind && !entry.answered && (sameCommit(entry.head, head) || later(entry)));
-  for (const entry of open) entry.answered = { at: at ?? new Date().toISOString(), head, by };
+// Marks the owed entries of `kind` on `state` answered by `by`'s answer for `head`. An answer counts for an entry made
+// for that head, or for an earlier head that `head` descends from: `isAncestor(a, b)`, git's `merge-base
+// --is-ancestor`, the test seam. Time plays no part, so a late answer for an older head never answers a newer head's
+// entry. When git cannot tell (an unknown commit, no repository), only the entry's own head counts. Returns how many
+// it marked.
+export function answerPending(state, kind, { head, by, isAncestor = () => false }) {
+  const covers = (entry) => sameCommit(entry.head, head) || (typeof entry.head === 'string' && typeof head === 'string' && isAncestor(entry.head, head));
+  const open = pendingOf(state).filter((entry) => entry.kind === kind && !entry.answered && covers(entry));
+  for (const entry of open) entry.answered = { at: new Date().toISOString(), head, by };
   return open.length;
 }
 
-// Notes the review step's return on `state`: its outcome, and, once finished, every gate review owed answered.
-export function noteOutcome(state, { status, head, reason }) {
+// Notes the review step's return on `state`: its outcome, and, once finished, every gate review owed on that head or
+// an earlier one it descends from answered.
+export function noteOutcome(state, { status, head, reason }, isAncestor = () => false) {
   state.outcome = { status, head, at: new Date().toISOString(), ...(reason ? { reason: clip(reason) } : {}) };
-  if (FINISHED.has(status)) answerPending(state, 'review', { head, current: head, by: status });
+  if (FINISHED.has(status)) answerPending(state, 'review', { head, by: status, isAncestor });
   return state;
 }
 

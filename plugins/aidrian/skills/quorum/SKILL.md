@@ -40,14 +40,15 @@ When a file's name is not the `<slug>-<h7>.md` its content gives, copy it to tha
 
 ## Roles
 
-Pick each owner by the agent rule in the `knowledge` skill. The mode file names each role, its agent, and its brief.
-[references/briefs.md](references/briefs.md) holds the parts every brief pastes: read it before the first dispatch,
-and fill each placeholder.
+Before round 1, run `aidrian quorum roles <mode>`; use the roles, fallbacks, judge, and caps it prints;
+the mode file's named values are the defaults. Pick each owner by the agent rule in the `knowledge` skill.
+The mode file gives each role's brief; [references/briefs.md](references/briefs.md) holds the parts every brief
+pastes: read it before the first dispatch, and fill each placeholder.
 
-A Codex role runs through `aidrian quorum codex`. On the Codex host, or once a `codex` call exits non-zero, it and
-every later run of that role go to the fallback agent the mode file names, with the same brief.
-`same_model` records whether two of the arguing sides ran on one model, as ledger.md says for each mode.
-The judge, `architect`, rules and never votes to agree.
+A Codex role runs through `aidrian quorum codex`. On the Codex host, or once a `codex` call exits non-zero, that run and
+every later run of the role go to the fallback agent `roles` names, with the same brief.
+`same_model` records whether two arguing sides ran on one model, as ledger.md says.
+The judge rules and never votes to agree.
 
 ## Commands
 
@@ -103,7 +104,7 @@ Before round 1:
 - In plan mode, every other `complete` plan ledger whose `plan` is this input's absolute path gives its Human answers to
   every brief as settled, as ledger.md § Settled answers says. They are never copied into the new ledger.
 
-The mode file sets the dispatch cap. Every agent dispatch and Codex run counts, retries and fallbacks included.
+`roles` prints the dispatch cap. Every agent dispatch and Codex run counts, retries and fallbacks included.
 Whatever the cap leaves open escalates to the Human.
 No compromise: a dispute the evidence does not settle escalates with every position, never split down the middle.
 

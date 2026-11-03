@@ -9,6 +9,7 @@ import test from 'node:test';
 
 import { CASE_SCHEMA, CODEX_TIMEOUT_SEC, CROSS_SCHEMA, DECIDE_LEDGER_SCHEMA, DECIDE_REBUTTAL_SCHEMA, GROUNDS, LEDGER_SCHEMA, LEDGER_SCHEMAS, MAX_MODE_OBJECTIONS, MAX_OBJECTIONS, OBJECTIONS_SCHEMA, REBUTTALS_SCHEMA, codexAnswer, commands, governingWinner, modeOf, rebuttalProblems, schemaProblems } from '../plugins/aidrian/lib/quorum.mjs';
 import { slug } from '../plugins/aidrian/lib/review/flows.mjs';
+import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import { FINDINGS_SCHEMA, runCodex, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 
 const CLI = path.resolve(import.meta.dirname, '../plugins/aidrian/bin/aidrian');
@@ -1114,6 +1115,17 @@ test('the quorum skill says what check does to an objection with no passing cita
   assert.match(skill, /is reused: skip the rounds, and report from it, with every line `check` printed in the Ledger item/u);
 });
 
+// The coordinator reads this run's roles, fallbacks, judge, and caps from `aidrian quorum roles`, never from config.json,
+// and a Codex role's fallback is sticky: the trigger, the run it covers, and the same brief.
+test('the quorum skill runs `aidrian quorum roles` before round 1, and keeps the fallback trigger rule in § Roles', () => {
+  const raw = readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8');
+  const roles = raw.split('\n## Roles\n')[1].split('\n## ')[0].replace(/\s+/gu, ' ');
+  assert.ok(roles.includes("Before round 1, run `aidrian quorum roles <mode>`; use the roles, fallbacks, judge, and caps it prints; the mode file's named values are the defaults."), 'the roles line');
+  assert.ok(roles.includes('A Codex role runs through `aidrian quorum codex`. On the Codex host, or once a `codex` call exits non-zero, that run and every later run of the role go to the fallback agent `roles` names, with the same brief.'), 'the fallback trigger rule');
+  assert.ok(raw.replace(/\s+/gu, ' ').includes('`roles` prints the dispatch cap. Every agent dispatch and Codex run counts, retries and fallbacks included.'), 'the cap comes from roles');
+  assert.doesNotMatch(raw, /`architect`/u, 'SKILL.md names no judge agent: roles names it');
+});
+
 // Eight complete plan ledgers showed an architect that accepted 56 of A's 56 objections at first ruling, and 19
 // concessions that cited nothing: the plan-mode briefs give the judge a reject path and hold it to its verdicts.
 test('the plan mode file holds the judge\'s reject path, its verdicts, the moderation lines, and the proportionality pass', () => {
@@ -1132,15 +1144,25 @@ test('the plan mode file holds the judge\'s reject path, its verdicts, the moder
   assert.match(plan, /## Proportionality pass/u, 'the proportionality brief');
   assert.match(plan, /\*\*Proportionality pass\*\*/u, 'the proportionality round');
   assert.match(plan, /\*\*Merge\*\*/u, 'the merge round');
-  assert.match(plan, /The cap is 8 dispatches: one is reserved for the proportionality pass, and no other dispatch may spend it/u, 'the cap');
+  assert.ok(plan.includes(`The cap is the \`maxDispatches\` that \`roles\` prints, ${DEFAULTS.quorum.plan.maxDispatches} by default: one is reserved for the proportionality pass, and no other dispatch may spend it.`), 'the cap');
+  // The ruling brief carries this run's cap, and each brief this run's objection count, as placeholders the
+  // coordinator fills from `roles`.
+  assert.ok(plan.includes('fill `<max_objections>` with this run\'s `maxObjections` and `<cap>` with its `maxDispatches`, both from `roles`.'), 'the placeholders');
+  assert.ok(plan.includes('The run is capped at <cap> dispatches, so a ruling may get no second chance.'), 'the ruling brief\'s cap');
+  assert.doesNotMatch(plan, /capped at \d+ dispatches/u, 'no hard-coded cap in a brief');
+  assert.equal(plan.match(/Return at most <max_objections> entries, one per objection id/gu)?.length, 2, 'both rebuttal briefs take the configured count');
+  assert.doesNotMatch(plan, /Return at most \d+ (?:objections|entries)/u, 'no hard-coded objection count in a brief');
+  assert.ok(plan.includes('- **Runners**: write `runners` with the ledger. `A` is `agent`; `B` is `codex` while every run of B went to Codex, and `agent` once one did not, since the fallback sticks. After the rounds it holds each adversary\'s final runner, and `same_model` matches it'), 'the runners line');
   assert.match(plan, /When the pass returns no usable answer, write `proportionality: \{flagged: \[\], failed: true\}`, with no retry, and the report says the pass failed/u, 'a failed pass');
   assert.match(plan, /appends its citations to the survivor's `citations`, so the architect's `tested` covers them/u, 'a merge moves its evidence to the survivor');
   assert.doesNotMatch(plan, /also cited by/u, 'no separate merged-citation line');
-  assert.match(plan, new RegExp(`at most ${MAX_MODE_OBJECTIONS} objections, each \`blocking\` or \`important\``, 'u'), 'each adversary returns at most MAX_MODE_OBJECTIONS objections');
+  assert.equal(DEFAULTS.quorum.plan.maxObjections, MAX_MODE_OBJECTIONS, 'the default is the ceiling');
+  assert.ok(plan.includes(`at most \`maxObjections\` objections (default ${DEFAULTS.quorum.plan.maxObjections}), each \`blocking\` or \`important\``), 'each adversary returns at most maxObjections objections');
+  assert.ok(plan.includes('the first `maxObjections` objections per adversary'), 'the coordinator keeps the configured count');
   // Codex's objections answer is held to OBJECTIONS_SCHEMA, MAX_OBJECTIONS entries, improvements included.
   for (const brief of ['A: it will break', 'B: the wrong thing, or too much']) {
     const text = raw.split(`\n## ${brief}\n`)[1].split('\n## ')[0].replace(/\s+/gu, ' ');
-    assert.match(text, new RegExp(`Return at most ${MAX_MODE_OBJECTIONS} objections, each blocking or important`, 'u'), `${brief}: the objection cap`);
+    assert.ok(text.includes('Return at most <max_objections> objections, each blocking or important'), `${brief}: the objection cap`);
     assert.ok(text.includes(`At most ${MAX_OBJECTIONS} entries in all.`), `${brief}: the entry cap`);
     // ledger.md § Agent answers reads low as improvement, so the brief says it too.
     assert.ok(text.includes('(critical and high are read as blocking, medium as important, low as improvement)'), `${brief}: the severity words`);
@@ -1171,6 +1193,10 @@ test('the decide mode file holds the runners, the swap, the cap, every Codex mod
   assert.match(decide, /The cap is `3N \+ 2 \+ C` dispatches for N positions, where C counts the positions whose `runner` starts as `codex`\./u, 'the cap formula');
   assert.ok(decide.includes('With the default runners that is 9 for two, 12 for three, and 16 for four.'), 'the cap numbers');
   assert.match(decide, /starts with an odd hex digit[^.]*, the runners swap/u, 'the claim swap');
+  assert.ok(decide.includes('- **The swap**: only when `swap` is `true`.'), 'the swap follows the config');
+  assert.ok(decide.includes("`aidrian quorum roles decide` prints this run's roles, fallbacks, judge, swap, and caps: `odd` holds `A` and `C`, and `even` holds `B` and `D`. The values below are the defaults."), 'the roles line');
+  assert.ok(decide.includes("This run's cap is the `caps` entry `roles` prints for its position count."), 'this run\'s cap');
+  assert.ok(decide.includes("`<cap>` with this run's cap, from `roles`."), 'the cap placeholder');
   assert.match(decide, /`same_model` is `true` exactly when two positions share a runner/u, 'same_model in decide mode');
   // The briefs: argue one side, cite or label, beat the losing citation, test everything, concede with evidence.
   assert.match(decide, /Argue your position only/u, 'the case brief');
@@ -1202,7 +1228,7 @@ test('the decide mode file holds the runners, the swap, the cap, every Codex mod
     "When any ruling escalates, first or final, the Human's answer decides the question, and the governing winner is only the evidence's side of it.",
     "When any ruling escalates, `escalated` with the Human's answer, or `deferred` with the recommended answer.",
     "Question text becomes a file by one rule: the Human's text goes word for word into `## Context`. A yes/no question becomes a `## Claim`. Named alternatives become the options, `### A:` to `### D:`. With none named and no yes/no question, ask the Human for the options or the claim before writing the file.",
-    "the judge (`architect`, on the host's model)",
+    "the judge (its agent, `architect` by default, on the host's model)",
     'Such a position cannot win, on the first ruling or the final one: rule for another position, or escalate.',
     '`<settled>` is always `none` in decide mode',
   ]) assert.ok(decide.includes(sentence), `decide.md: ${sentence}`);
@@ -2122,6 +2148,40 @@ test('quorum roles: with no quorum config, each mode prints today\'s roles, judg
     judge: { agent: 'architect' },
     caps: { 2: 9, 3: 12, 4: 16 },
   });
+});
+
+// The mode files name today's values as the defaults: each is what `roles` prints with no quorum config, so the text
+// and DEFAULTS.quorum cannot drift apart.
+test('quorum roles: the defaults the mode files name are the values roles prints with no quorum config', (t) => {
+  const dir = temp(t, 'aidrian-quorum-roles-');
+  const texts = skillTexts();
+  const flat = (file) => texts[file].replace(/\s+/gu, ' ');
+  const plan = roles(dir, 'plan').out;
+  const planText = flat('modes/plan.md');
+  assert.equal(plan.roles.A.provider, 'agent');
+  assert.equal(plan.roles.B.provider, 'codex');
+  for (const sentence of [
+    `- **A, "it will break"**: \`${plan.roles.A.agent}\`. A always runs as a host agent.`,
+    `Codex, through \`aidrian quorum codex\`; its agent fallback is \`${plan.roles.B.fallback}\`.`,
+    `- **Architect**: \`${plan.judge.agent}\`.`,
+    `at most \`maxObjections\` objections (default ${plan.caps.maxObjections})`,
+    `${plan.caps.maxDispatches} by default`,
+  ]) assert.ok(planText.includes(sentence), `plan.md: ${sentence}`);
+  const decide = roles(dir, 'decide').out;
+  const decideText = flat('modes/decide.md');
+  assert.equal(decide.roles.odd.provider, 'agent');
+  assert.equal(decide.roles.even.provider, 'codex');
+  assert.equal(decide.swap, true);
+  const words = { 2: 'two', 3: 'three', 4: 'four' };
+  for (const sentence of [
+    `\`A\` and \`C\` run as \`${decide.roles.odd.agent}\`.`,
+    `\`B\` and \`D\` run on Codex through \`aidrian quorum codex\`; their fallback agent is \`${decide.roles.even.fallback}\`.`,
+    `- **Judge**: \`${decide.judge.agent}\`.`,
+    `the judge (its agent, \`${decide.judge.agent}\` by default, on the host's model)`,
+    // The swap gives A even's role and B odd's: with the defaults, A on Codex with even's fallback, B as odd's agent.
+    `\`A\` takes \`even\`'s provider, agent, and fallback, and \`B\` takes \`odd\`'s; by default, \`A\` runs on Codex, with \`${decide.roles.even.fallback}\` as its fallback, and \`B\` runs as \`${decide.roles.odd.agent}\`.`,
+    `With the default runners that is ${decide.caps[2]} for ${words[2]}, ${decide.caps[3]} for ${words[3]}, and ${decide.caps[4]} for ${words[4]}.`,
+  ]) assert.ok(decideText.includes(sentence), `decide.md: ${sentence}`);
 });
 
 test('quorum roles: a config sets the roles, judge, swap, and caps it prints; A stays a host agent; a bad mode exits 1', (t) => {

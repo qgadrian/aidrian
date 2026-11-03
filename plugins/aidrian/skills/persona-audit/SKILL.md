@@ -32,8 +32,9 @@ Name both parties as the start hook's `Names:` line does; outside a persona's qu
 1. `aidrian-knowledge index` prints each doc's path and tags. Each doc whose tags include `personas` is a persona,
    except `product-access`; the persona id is its file name without `.md`.
    None: stop, and point the Human to [references/persona-template.md](references/persona-template.md). Never invent a persona.
-2. `aidrian lint personas`. A persona that fails it is skipped, with the lint's line in the report: a doc without
-   a `Success:` line per task cannot be judged. Without the command, hold each doc to the template's sections.
+2. `aidrian lint personas`. A persona with a lint problem is skipped, with the lint's line in the report: a doc without
+   a `Success:` line per task cannot be judged. A lint warning skips nothing: carry its line into `## Persona doc gaps`
+   for the author. Without the command, hold each doc to the template's sections.
 3. Read only the chosen personas, each whole, and `product-access` when it exists
    ([references/product-access-template.md](references/product-access-template.md) shows its shape).
 4. Scale: before walking more than one persona's whole product, list each persona and its task count, and ask the

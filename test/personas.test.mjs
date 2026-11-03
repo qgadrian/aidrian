@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { tagWarnings } from '../plugins/aidrian/lib/knowledge.mjs';
-import { parsePersona, personaProblems } from '../plugins/aidrian/lib/personas.mjs';
+import { parsePersona, personaProblems, personaWarnings } from '../plugins/aidrian/lib/personas.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
@@ -72,8 +72,14 @@ const lint = (dir) => spawnSync(CLI, ['lint', 'personas', '--project', dir], { e
 test('a persona doc is read by its sections and its tasks, each with or without a Success: line', () => {
   const { sections, tasks } = parsePersona(PERSONA);
   assert.deepEqual(Object.keys(sections), ['Who', 'Goals', 'Tasks', 'Cares about', 'Does not care about', 'Context']);
-  assert.deepEqual(tasks, [{ title: 'Mark a dish ready', success: true }, { title: 'Read a ticket', success: true }]);
+  assert.deepEqual(tasks, [
+    { title: 'Mark a dish ready', success: true, outcome: "the dish shows as ready on the waiter's screen within five seconds." },
+    { title: 'Read a ticket', success: true, outcome: 'every dish and its notes fit on one screen.' },
+  ]);
   assert.deepEqual(personaProblems(PERSONA), []);
+  assert.deepEqual(personaWarnings(PERSONA), [], 'an apostrophe is no quote');
+  const none = parsePersona(PERSONA.replace('Success: the dish', 'Then the dish')).tasks[0];
+  assert.deepEqual([none.success, none.outcome], [false, null]);
 });
 
 test('a missing or empty section, a task with no Success: line, and Tasks with no task are problems', () => {
@@ -96,6 +102,53 @@ test('a missing or empty section, a task with no Success: line, and Tasks with n
   assert.deepEqual(personaProblems(emptyTasks), ['"## Tasks" is empty'], 'an empty Tasks is one problem, not two');
 });
 
+const WARN = "write the outcome in the persona's words, not the product's text";
+
+test('a Success: paragraph that quotes the product warns, naming the task and the first quoted span', () => {
+  const quoted = PERSONA.replace('the dish shows as ready', 'the dish shows "Ready" and then "Served"');
+  assert.deepEqual(personaWarnings(quoted), [`task "Mark a dish ready": Success: quotes "Ready"; ${WARN}`]);
+  assert.deepEqual(personaProblems(quoted), [], 'a warning is no problem');
+
+  const wrapped = PERSONA.replace("on the waiter's screen within", "on the waiter's\nscreen under “Ready” within");
+  assert.equal(parsePersona(wrapped).tasks[0].outcome, "the dish shows as ready on the waiter's screen under “Ready” within five seconds.");
+  assert.deepEqual(personaWarnings(wrapped), [`task "Mark a dish ready": Success: quotes “Ready”; ${WARN}`], 'a wrapped line belongs to the paragraph');
+
+  const item = PERSONA.replace('every dish and its notes', 'every dish and `notes.count`');
+  assert.deepEqual(personaWarnings(item), [`task "Read a ticket": Success: quotes \`notes.count\`; ${WARN}`], 'a list item and a backticked span');
+
+  const second = PERSONA.replace('- **Success:** every dish and its notes fit on one screen.', '- Success: every dish fits on one screen.\n- Success: the notes show under "Notes".');
+  assert.equal(parsePersona(second).tasks[1].outcome, 'every dish fits on one screen. the notes show under "Notes".');
+  assert.deepEqual(personaWarnings(second), [`task "Read a ticket": Success: quotes "Notes"; ${WARN}`], 'a later Success: line counts too');
+
+  const single = PERSONA.replace('the dish shows as ready', "the dish shows 'Ready'");
+  assert.deepEqual(personaWarnings(single), [], 'single quotes do not count');
+});
+
+test('a quote outside the Success: paragraph does not warn', () => {
+  const description = PERSONA.replace('The cook taps the dish', 'The cook taps "Ready" on the dish');
+  assert.deepEqual(personaWarnings(description), [], 'the task description is not the outcome');
+  const after = PERSONA.replace('within five seconds.\n', 'within five seconds.\n\nThe button says "Ready".\n');
+  assert.deepEqual(personaWarnings(after), [], 'a blank line ends the paragraph');
+  const list = PERSONA.replace('fit on one screen.\n', 'fit on one screen.\n- The header says "Table 4".\n');
+  assert.deepEqual(personaWarnings(list), [], 'the next list item ends the paragraph');
+  const fenced = PERSONA.replace('within five seconds.\n', 'within five seconds.\n```\n"Ready"\n```\n');
+  assert.equal(parsePersona(fenced).tasks[0].outcome, "the dish shows as ready on the waiter's screen within five seconds.");
+  assert.deepEqual(personaWarnings(fenced), [], 'a fence ends the paragraph');
+  const heading = PERSONA.replace('fit on one screen.\n', 'fit on one screen.\n#### Notes "x"\n');
+  assert.equal(parsePersona(heading).tasks[1].outcome, 'every dish and its notes fit on one screen.');
+});
+
+test('two tasks with one title are one problem naming the title', () => {
+  const twice = PERSONA.replace('### Read a ticket', '### Mark a dish ready').replace('## Cares about', '### Mark a dish ready\n\nSuccess: the dish is gone from the list.\n\n## Cares about');
+  assert.deepEqual(personaProblems(twice), ['3 tasks are titled "Mark a dish ready": --task and the report key on the title']);
+});
+
+test('a section beyond the contract is neither a problem nor a warning', () => {
+  const extra = `${PERSONA}\n## Open questions\n\n- Do cooks share one phone?\n`;
+  assert.ok(Object.hasOwn(parsePersona(extra).sections, 'Open questions'));
+  assert.deepEqual([personaProblems(extra), personaWarnings(extra)], [[], []]);
+});
+
 test('a CRLF persona doc passes, and a heading inside a code fence is no section', () => {
   assert.deepEqual(personaProblems(PERSONA.replaceAll('\n', '\r\n')), []);
   const fencedContext = PERSONA.replace(/## Context[\s\S]*$/, '').replace('- Reports.\n', '- Reports.\n\n```markdown\n## Context\n\nPhone.\n```\n');
@@ -114,6 +167,20 @@ test('aidrian lint personas names the doc and the task, exempts product-access, 
 
   const none = lint(project(t, {}));
   assert.deepEqual([none.status, none.stdout], [0, 'personas: no docs tagged personas\n']);
+});
+
+test('aidrian lint personas prints a warning on stderr and still passes, and fails two tasks with one title', (t) => {
+  const quoted = PERSONA.replace('the dish shows as ready', 'the dish shows "Ready"');
+  const warned = lint(project(t, { 'cook.md': quoted }));
+  assert.deepEqual([warned.status, warned.stdout, warned.stderr], [
+    0,
+    'personas: 1 personas, 2 tasks, each with a Success: line\n',
+    `personas: warning: personas/cook.md: task "Mark a dish ready": Success: quotes "Ready"; ${WARN}\n`,
+  ]);
+
+  const twice = PERSONA.replace('### Read a ticket', '### Mark a dish ready');
+  const failed = lint(project(t, { 'cook.md': twice }));
+  assert.deepEqual([failed.status, failed.stderr], [1, 'personas: personas/cook.md: 2 tasks are titled "Mark a dish ready": --task and the report key on the title\n']);
 });
 
 test('aidrian lint personas fails a persona id two docs share, two product-access docs, and the id all', (t) => {
@@ -153,6 +220,7 @@ test('personas is a tag the plugin knows, so aidrian check does not warn on it',
 test('the persona template the persona-audit skill ships passes the lint, Voice and Evidence included', () => {
   const template = readFileSync(path.join(ROOT, 'plugins/aidrian/skills/persona-audit/references/persona-template.md'), 'utf8');
   assert.deepEqual(personaProblems(template), []);
+  assert.deepEqual(personaWarnings(template), []);
   const { sections, tasks } = parsePersona(template);
   assert.ok(Object.hasOwn(sections, 'Voice') && Object.hasOwn(sections, 'Evidence'));
   assert.ok(tasks.length >= 2 && tasks.every((task) => task.success));

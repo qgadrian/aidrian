@@ -10,7 +10,8 @@
 //           --staged reads what the index holds, --rule <id> runs one rule. `code` rules are left to the project's
 //           linter. Off while config.json `terms.file` is null
 //   review  the review config's flows and reviewers point at real files and stay within budget (review/lint.mjs)
-//   personas  every knowledge doc tagged `personas` has the persona sections and a Success: line per task (personas.mjs)
+//   personas  every knowledge doc tagged `personas` has the persona sections, a Success: line per task, and no two
+//           tasks with one title; a quoted span in a Success: paragraph warns (personas.mjs)
 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';

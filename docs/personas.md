@@ -23,8 +23,12 @@ it runs every persona. It has these `## ` sections:
 | `Evidence` | no | Where the persona comes from: interviews, support tickets, data. |
 
 `aidrian lint personas` checks every doc tagged `personas`: each required section is present and not empty, `Tasks`
-has at least one `### <task>`, every task has a `Success:` line with an outcome after it, no two docs share an id
-(two `product-access` docs included), and no doc is named `all.md`. It names each doc by its path as the bucket gives it:
+has at least one `### <task>`, every task has a `Success:` line with an outcome after it, no two tasks of a doc share a
+title (`--task` and the report name a task by its title), no two docs share an id (two `product-access` docs included),
+and no doc is named `all.md`. It warns, and still passes, when a task's `Success:` paragraph holds a span in double
+quotes, straight or typographic, or in backticks, which reads as the product's text: an outcome is written in the
+persona's words, so it holds when the copy changes or another language shows. A run carries each warning into the report's `## Persona doc gaps`.
+It names each doc by its path as the bucket gives it:
 relative to the project, or absolute for a doc from a [local source](project-folder.md#local-knowledge-sources).
 A project with no personas passes. The skill ships a template that passes it:
 [persona-template.md](../plugins/aidrian/skills/persona-audit/references/persona-template.md).

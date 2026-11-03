@@ -44,9 +44,9 @@ test('both modes let the agent judge the handoff not worth it and say nothing; a
     assert.match(reason, /^This session is long: 250 model calls\./);
     assert.match(reason, /Judge first whether a handoff is worth it\. It is not when the task is done/);
     assert.match(reason, /subagent or background job is still running/);
-    assert.match(reason, /the user already said to finish here/);
+    assert.match(reason, /the user already said to finish here or that they are not watching/);
     assert.match(reason, /end this turn without mentioning this reminder/);
-    assert.match(reason, /which comes back once the session doubles/);
+    assert.match(reason, /which comes back once the session reaches twice these limits/);
   }
   const ask = handoffReason('ask', ['250 model calls']);
   assert.match(ask, /hand off now, or keep going\?/);
@@ -157,6 +157,9 @@ test('an approved plan in a long session offers a handoff before the build; a sh
   // Three calls and 6k tokens: half of maxCalls 6 is reached, the full limit is not.
   assert.match(run({ maxCalls: 6 }), /^The plan is approved, and this session already carries 3 model calls\..*hand off now, or build here\?/s);
   assert.match(run({ handoff: 'auto', maxTokens: 12000 }), /6k tokens of context.*run the session-handoff skill/s);
+  // Both modes skip the offer when the Human said to finish here or is away, as the Stop reminder does.
+  assert.match(run({ maxCalls: 6 }), /Skip the question when the rest takes a few calls, or when the user already said to finish here or that they are not watching\./);
+  assert.match(run({ handoff: 'auto', maxCalls: 6 }), /Build here instead when the rest takes a few calls, or when the user already said to finish here/);
   assert.equal(run({ maxCalls: 8, maxTokens: 0, maxHours: 0 }), '', 'under half of every limit');
   assert.equal(run({ handoff: 'off', maxCalls: 1 }), '');
   assert.equal(run({ maxCalls: 1 }, { agent_id: 'sub' }), '', 'a subagent');

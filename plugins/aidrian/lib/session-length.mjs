@@ -45,12 +45,15 @@ export function scaledLimits({ maxTokens, maxCalls, maxHours }, fired) {
   return { maxTokens: maxTokens * factor, maxCalls: maxCalls * factor, maxHours: maxHours * factor };
 }
 
+// What the user said that makes a handoff not worth it: a fresh session needs someone to start it.
+const USER_SAID = 'the user already said to finish here or that they are not watching';
+
 // When a handoff costs more than it saves, and what the agent does then: nothing. The agent judges these; the hook cannot
 // see them.
 const NOT_WORTH_IT = 'Judge first whether a handoff is worth it. It is not when the task is done or a few calls finish it, ' +
   'when a subagent or background job is still running and its result comes back to this session, ' +
-  'or when the user already said to finish here: then end this turn without mentioning this reminder, ' +
-  'which comes back once the session doubles in size. ';
+  `or when ${USER_SAID}: then end this turn without mentioning this reminder, ` +
+  'which comes back once the session reaches twice these limits. ';
 
 // The message that sends the agent back for one more turn, in `ask` or `auto` mode. Doing nothing is a valid answer.
 export function handoffReason(mode, over) {
@@ -77,8 +80,8 @@ export function planApprovedContext(mode, length, limits) {
     'Building in a fresh session that reads the plan costs less per turn, and now no worktree, branch, or running agent needs a brief. ';
   if (mode === 'auto') {
     return `${head}Before the first build step, run the session-handoff skill to write the brief, then tell the user its path and that ` +
-      'the session-continue skill resumes it. Build here instead only when the rest takes a few calls.';
+      `the session-continue skill resumes it. Build here instead when the rest takes a few calls, or when ${USER_SAID}.`;
   }
   return `${head}Before the first build step, ask the user one short question: hand off now, or build here? ` +
-    'Skip the question only when the rest takes a few calls.';
+    `Skip the question when the rest takes a few calls, or when ${USER_SAID}.`;
 }

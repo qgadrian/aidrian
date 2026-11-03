@@ -374,6 +374,7 @@ for that agent type.
 A path counts as delivered only on a line that also has the 📄 marker or one of the words wrote, written, created, saved,
 handoff, or output, in any case, outside a path.
 A path on any other line is a mention, such as "docs/old.md does not exist", and is never checked.
+A path shortened with `...` exists nowhere, so it is sent back too: the `orchestrator` names each path in full.
 [dispatch-log.md](dispatch-log.md) describes the rows and `aidrian report`.
 
 ## Background check

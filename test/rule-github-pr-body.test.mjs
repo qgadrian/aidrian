@@ -234,6 +234,12 @@ test('a redirection that names a descriptor is read as bash runs it, failing clo
   }
 });
 
+test('a redirection naming a {x} descriptor leaves the arguments unknown, so the body is unreadable', (t) => {
+  const run = project(t);
+  assert.match(run("gh pr edit 57 --body '{fd}'> /dev/null") ?? '', /^Blocked: the body is one this rule cannot read/, 'single-quoted, bash passes it as the body');
+  assert.match(run('gh pr edit 57 --body "{fd}"> /dev/null') ?? '', /^Blocked: the body is one this rule cannot read/, 'double-quoted');
+});
+
 test('a variable a nested shell or substitution assigns is dropped, and a nested command resolves none', (t) => {
   const run = project(t, { version: 1 }, { 'bad.md': 'no sections\n', 'good.md': GOOD });
   assert.equal(run('F=good.md; gh pr create -t x -F "$F"'), null);

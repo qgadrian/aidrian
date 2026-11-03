@@ -69,6 +69,7 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
     const call = pending.get(line).shift();
     if (call) {
       call.stdin = stdinBody(entry);
+      call.namedFd = namedFd(entry.segment);
       call.bodyFile = writes.token(call.bodyFile, entry);
       const reason = judge(call, line, { cwd: folder ?? cwd, folderKnown: folder !== null, env, written: writes.files, listOpenPrs: folder === null || folder === cwd ? listOpenPrs : openPrBodies(folder) });
       if (reason) return reason;
@@ -151,6 +152,7 @@ export function lineWrites(top) {
     const unknown = () => {
       for (const known of files.keys()) files.set(known, null);
     };
+    if (namedFd(segment)) unknown();
     // A command that is neither a known reader nor one of the writes above may change any file: a script, `sed -i`, or
     // a program fed its own code on stdin.
     if (target === null && !isReader(invocation)) {
@@ -190,6 +192,10 @@ function isReader({ program, args }) {
 // several, one bash expands, or one fed to another descriptor (`3<<EOF`), which the command does not read as its input.
 const onlyHeredoc = (heredocs) => (heredocs.length === 1 && [undefined, '0'].includes(heredocs[0].fd) &&
   (!heredocs[0].expands || !/[$`\\]/u.test(heredocs[0].body)) ? heredocs[0].body : null);
+
+// Whether a segment has a redirection naming a `{x}` descriptor. The lexer reads a quoted `'{x}'>` as one too, where bash
+// passes the word as an argument, so the command's arguments are not known.
+export const namedFd = (segment) => segment.some((each) => each.fd?.startsWith('{'));
 
 // The body of the one heredoc fed to a command's input, for a walkCommands entry, or null. An input redirect beside it,
 // `< file` or `<<< word`, may replace it, so the input is one this rule cannot know.
@@ -329,7 +335,7 @@ function judge(call, command, { cwd, folderKnown = true, env, written = new Map(
       `${steps()} The body needs the sections config.json \`github.requiredSections\` asks for.`);
   }
   const body = readBody(call, folderKnown ? cwd : null, written);
-  if (body === null && sectioned && (call.body || call.bodyFile)) {
+  if (body === null && sectioned && (call.body || call.bodyFile || call.namedFd)) {
     return deny('the body is one this rule cannot read: a variable, a command substitution, stdin without a heredoc, or a file that ' +
       `does not exist yet. ${steps()} A file that another command on this line edits, such as \`sed -i\` or a script, counts as ` +
       'not there yet: run gh as its own command after it. Never pass the path through `$(…)` or a variable, or the sections ' +
@@ -526,6 +532,7 @@ function openPrBodies(cwd) {
 // file reads. A dynamic --body reads the heredoc readPrCalls gave the call, `--body-file -` the heredoc check gave it as
 // `stdin`, and a file the line wrote earlier the text `written` (lineWrites) holds for it.
 export function readBody(call, cwd, written = new Map()) {
+  if (call.namedFd) return null;
   if (call.body) return call.body.dynamic ? call.heredoc ?? null : call.body.text;
   if (!call.bodyFile || call.bodyFile.dynamic) return null;
   if (call.bodyFile.text === '-') return call.stdin ?? null;

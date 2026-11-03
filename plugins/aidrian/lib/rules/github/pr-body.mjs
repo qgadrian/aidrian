@@ -57,7 +57,7 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
   // cannot know, the project is the session's and a relative body file is unreadable. Each call takes its own heredoc
   // from readPrCalls on its line.
   const pending = new Map();
-  const writes = lineWrites();
+  const writes = lineWrites(command);
   for (const entry of walkCommands(command, cwd)) {
     const { segment, folder, line } = entry;
     if (!readPrCall(segment)) {
@@ -67,31 +67,38 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
     // The same line text can run again, as two identical `sh -c` bodies do: a spent queue starts over.
     if (!pending.get(line)?.length) pending.set(line, readPrCalls(line));
     const call = pending.get(line).shift();
-    if (!call) continue;
-    call.stdin = stdinBody(entry);
-    call.bodyFile = writes.token(call.bodyFile);
-    const reason = judge(call, line, { cwd: folder ?? cwd, folderKnown: folder !== null, env, written: writes.files, listOpenPrs: folder === null || folder === cwd ? listOpenPrs : openPrBodies(folder) });
-    if (reason) return reason;
+    if (call) {
+      call.stdin = stdinBody(entry);
+      call.bodyFile = writes.token(call.bodyFile, entry);
+      const reason = judge(call, line, { cwd: folder ?? cwd, folderKnown: folder !== null, env, written: writes.files, listOpenPrs: folder === null || folder === cwd ? listOpenPrs : openPrBodies(folder) });
+      if (reason) return reason;
+    }
+    // Its own output can rewrite a body file a later gh call reads: `gh pr create … > b.md`.
+    writes.note(entry);
   }
   return null;
 }
 
-// What a command line sets up before a later command on it runs, as { files, token, note }. `files` maps each absolute
-// path the line writes to the text it then holds, or to null when a command changes it in a way this rule cannot know.
-// `token(t)` gives a dynamic token whose whole value is a variable the line set to a literal, `$F` or `${S}/tmp/b.md`,
-// as the static token bash would see. `note(entry)` takes each walkCommands entry in the order it runs, other than the
-// gh call itself, and records:
-// - `NAME=value` and `export NAME=value` with a literal value (or one this rule expands), for `token`;
-// - `cat > file` or `tee file` fed one heredoc that bash passes unchanged, and `cp [-fpv] source file`, whose source
-//   this rule reads or the line wrote, as that text;
+// What the command line `top` sets up before a later command on it runs, as { files, token, note }. `files` maps each
+// absolute path the line writes to the text it then holds, or to null when a command changes it in a way this rule
+// cannot know. `token(t, entry)` gives a dynamic token whose whole value is a variable the top line set to a literal,
+// `$F` or `${S}/tmp/b.md`, as the static token bash would see. `note(entry)` takes each walkCommands entry in the order
+// it runs, a gh call after its own check, and records:
+// - `NAME=value` and `export NAME=value` on the top line with a literal value (or one this rule expands), for `token`.
+//   A nested shell or substitution has a scope of its own, so it resolves no variable, and one it assigns is dropped:
+//   the top line's value may then no longer hold;
+// - `cat > file` or `tee file` fed one heredoc that bash passes unchanged, and no other input, and `cp [-fpv] source
+//   file`, whose source this rule reads or the line wrote, as that text;
 // - any other command that writes to a file (a redirect), or that names it and is not a known reader (such as `sed -i`
-//   or a script), as null: the file then holds what that command made of it, which the rule never guesses at.
+//   or a script), as null: the file then holds what that command made of it, which the rule never guesses at. One that
+//   writes to, or names, a word this rule cannot resolve could be any file, so every file the line wrote turns null.
 // The pull request body rule and the attribution rule both read a body file through it.
-export function lineWrites() {
+export function lineWrites(top) {
   const files = new Map();
   const vars = new Map();
-  const token = (each) => {
-    if (!each?.dynamic) return each ?? null;
+  const nested = (entry) => entry?.line !== undefined && entry.line !== top;
+  const token = (each, entry) => {
+    if (!each?.dynamic || nested(entry)) return each ?? null;
     const match = /^\$(?:(\w+)|\{(\w+)\})(\/[^$`*?\\]*)?$/u.exec(each.text);
     const value = match ? vars.get(match[1] ?? match[2]) : undefined;
     return value === undefined ? each : { text: `${value}${match[3] ?? ''}`, dynamic: false };
@@ -101,20 +108,22 @@ export function lineWrites() {
     if (known && !known.dynamic) vars.set(name, known.text);
     else vars.delete(name);
   };
-  const note = ({ segment, invocation, folder, heredocs = [] }) => {
+  const note = (entry) => {
+    const { segment, invocation, folder, heredocs = [] } = entry;
     const at = (each) => {
-      const known = token(each);
+      const known = token(each, entry);
       return known && !known.dynamic && known.text && known.text !== '-' ? resolveIn(folder, known.text) : null;
     };
     const { program, args, environment = [] } = invocation;
+    const set = nested(entry) ? (name) => vars.delete(name) : assign;
     if (program === '') {
-      for (const { name, value } of environment) if (name) assign(name, value ?? null);
+      for (const { name, value } of environment) if (name) set(name, value ?? null);
       return;
     }
     if (program === 'export') {
       for (const arg of args) {
         const split = /^(\w+)=(.*)$/su.exec(arg.text);
-        if (split) assign(split[1], { text: split[2], dynamic: arg.dynamic });
+        if (split) set(split[1], { text: split[2], dynamic: arg.dynamic });
       }
       return;
     }
@@ -122,9 +131,9 @@ export function lineWrites() {
     let target = null;
     let text = null;
     if (program === 'cat' && args.every((arg) => arg.text === '-') && redirects.length === 1 && redirects[0][0].operator === '>') {
-      [target, text] = [at(redirects[0][1]), onlyHeredoc(heredocs)];
+      [target, text] = [at(redirects[0][1]), stdinBody(entry)];
     } else if (program === 'tee' && args.length === 1 && !args[0].text.startsWith('-')) {
-      [target, text] = [at(args[0]), onlyHeredoc(heredocs)];
+      [target, text] = [at(args[0]), stdinBody(entry)];
     } else if (program === 'cp' && !redirects.length) {
       const operands = args.filter((arg) => !/^-[fpv]+$/u.test(arg.text));
       const source = operands.length === 2 && !operands[0].text.startsWith('-') ? at(operands[0]) : null;
@@ -132,26 +141,50 @@ export function lineWrites() {
       if (target !== null && isDirectory(target)) target = null;
       else if (target !== null) text = files.has(source) ? files.get(source) : readText(source);
     }
-    const written = new Set(redirects.map(([, each]) => each));
-    for (const each of segment) {
-      const file = each.operator || each.fdDup ? null : at(each);
-      if (file !== null && (written.has(each) || !READERS.has(program))) files.set(file, null);
+    const unknown = () => {
+      for (const known of files.keys()) files.set(known, null);
+    };
+    // A command that is neither a known reader nor one of the writes above may change any file: a script, `sed -i`, or
+    // a program fed its own code on stdin.
+    if (target === null && !isReader(invocation)) {
+      unknown();
+      // A file it names on disk is one it may change too.
+      for (const each of segment) {
+        const file = each.operator || each.fdDup ? null : at(each);
+        if (file !== null) files.set(file, null);
+      }
+    }
+    for (const [, each] of redirects) {
+      const file = at(each);
+      if (file !== null) files.set(file, null);
+      else unknown();
     }
     if (target !== null) files.set(target, text);
   };
   return { files, token, note };
 }
 
-// Programs that read the files they name and change none, so naming the body file before gh leaves it as it was.
-// A redirect from one of them still writes its target.
+// Programs that change no existing file, so running one before gh leaves a body file the line wrote as it was. A
+// redirect from one of them still writes its target. git and gh count only for subcommands that write no work file.
 const READERS = new Set(['cat', 'grep', 'egrep', 'fgrep', 'rg', 'head', 'tail', 'wc', 'ls', 'test', '[', 'diff', 'cmp', 'dirname',
-  'basename', 'realpath', 'readlink', 'stat', 'file', 'echo', 'printf', 'mkdir', 'git', 'gh']);
+  'basename', 'realpath', 'readlink', 'stat', 'file', 'echo', 'printf', 'mkdir', 'true', 'false', ':', 'pwd', 'sleep', 'jq']);
+const GIT_READERS = new Set(['push', 'fetch', 'log', 'status', 'diff', 'show', 'rev-parse', 'add', 'commit', 'branch', 'remote', 'ls-files', 'rev-list']);
+const GH_WRITERS = new Set(['download', 'clone', 'checkout']);
+
+function isReader({ program, args }) {
+  if (READERS.has(program)) return true;
+  const words = args.filter((arg, i) => !arg.text.startsWith('-') && !['-C', '-c'].includes(args[i - 1]?.text)).map((arg) => arg.text);
+  if (program === 'git') return GIT_READERS.has(words[0]);
+  if (program === 'gh') return !words.some((word) => GH_WRITERS.has(word));
+  return false;
+}
 
 // The body of a command's one heredoc as bash passes it (unchangedHeredoc), or null: none, several, or one bash expands.
 const onlyHeredoc = (heredocs) => (heredocs.length === 1 && (!heredocs[0].expands || !/[$`\\]/u.test(heredocs[0].body)) ? heredocs[0].body : null);
 
-// The body of the one heredoc fed to a gh call's input, for a walkCommands entry.
-export const stdinBody = ({ heredocs = [] }) => onlyHeredoc(heredocs);
+// The body of the one heredoc fed to a command's input, for a walkCommands entry, or null. An input redirect beside it,
+// `< file` or `<<< word`, may replace it, so the input is one this rule cannot know.
+export const stdinBody = ({ segment = [], heredocs = [] }) => (segment.some((each) => each.operator === '<') ? null : onlyHeredoc(heredocs));
 
 const resolveIn = (folder, file) => (path.isAbsolute(file) ? path.resolve(file) : folder === null ? null : path.resolve(folder, file));
 

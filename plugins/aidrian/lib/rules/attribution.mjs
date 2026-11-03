@@ -124,7 +124,7 @@ function readCalls(command, cwd) {
     if (!lines.has(line)) lines.set(line, { heredocs: [...line.matchAll(MESSAGE_HEREDOC)].map(unchangedHeredoc), pending: [], prCalls: [] });
     return lines.get(line);
   };
-  const writes = lineWrites();
+  const writes = lineWrites(command);
   for (const entry of walkCommands(command, cwd)) {
     const { segment, folder, line } = entry;
     const git = readGit(segment);
@@ -145,10 +145,12 @@ function readCalls(command, cwd) {
       if (call?.subcommand === 'create' && !call.help && !call.web && !call.dryRun) {
         // The body file as the line wrote it so far, and the heredoc fed to `--body-file -`, as the pull request body rule reads them.
         call.stdin = stdinBody(entry);
-        call.bodyFile = writes.token(call.bodyFile);
+        call.bodyFile = writes.token(call.bodyFile, entry);
         prCreates.push({ call, dir: folder, written: new Map(writes.files) });
       }
-    } else writes.note(entry);
+    }
+    // Every command, a gh call too, may write a body file a later gh call reads.
+    writes.note(entry);
   }
   // The n-th commit whose message is a command substitution takes its line's n-th message heredoc, and only when the
   // counts match: one commit's heredoc never stands in for another's. A message part the rule cannot read may end the

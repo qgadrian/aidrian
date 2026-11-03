@@ -123,8 +123,11 @@ What each rule matches:
   a body file in a shared temp folder, and a body identical to another open pull request's.
   A body file the same command writes first is read as that command writes it: `cat > file` or `tee file` fed a quoted
   heredoc, or a `cp` of a file the rule reads, also through a variable the line sets to a literal path (`F=…; cat > "$F"`).
-  `--body-file -` reads the heredoc fed to gh. A body file that another command on the line changes first, such as
-  `sed -i`, a script, or a redirect, is one the rule cannot read: gh then runs as its own command after it.
+  `--body-file -` reads the heredoc fed to gh. The rule fails closed where the shell could change what it read:
+  a heredoc beside a `< file` or `<<< word` input; a body file a redirect writes, gh's own output included; any
+  command between the write and gh that is not a known reader (such as `sed -i`, a script, or a program fed code on
+  stdin); and a variable a nested shell or substitution assigns, or one used inside it. Such a body is one the rule
+  cannot read: gh then runs as its own command after it.
   A deny about where the body comes from states the cause first, then the two steps that pass: write the body to the one
   path the `pr-write` skill writes, `<state>/tmp/pr-body-<branch>.md`, written out for the project and the branch, then
   run `gh pr create --body-file` with that path. The footer deny says this project's rule takes precedence over the host's

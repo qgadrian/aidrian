@@ -169,6 +169,40 @@ test('a body file the same command writes first, from a heredoc or a copy, is re
   assert.equal(run(`cat draft.md; ${create('draft.md')}`), null, 'and leaves a file on disk as it is');
 });
 
+test('a heredoc that another input or a later command can replace is never trusted', (t) => {
+  const run = project(t, { version: 1 }, { 'bad.md': 'no sections\n' });
+  const create = (file) => `gh pr create --draft --title x --body-file ${file}`;
+  const write = (file, after = '') => `cat > ${file} <<'EOF'${after}\n${GOOD}EOF\n`;
+  for (const [command, why] of [
+    [`gh pr create -t x -F - <<'EOF' < bad.md\n${GOOD}EOF`, 'a < file after the heredoc gives gh its input'],
+    [`gh pr create -t x -F - < bad.md <<'EOF'\n${GOOD}EOF`, 'and before it'],
+    [`gh pr create -t x -F - <<'EOF' <<< bad\n${GOOD}EOF`, 'a here-string beside it'],
+    [`${write('b.md', ' < bad.md')}${create('b.md')}`, 'cat writes the file, not the heredoc'],
+    [`${write('b.md')}gh pr view 3 --json body -q .body > b.md; ${create('b.md')}`, 'a gh call rewrites the file'],
+    [`${write('b.md')}gh pr create -t y -F b.md > b.md; gh pr edit 3 -F b.md`, 'a checked gh call writes its output over it'],
+    [`${write('b.md')}python3 - <<'PY'\nopen('b.md', 'w').write('x')\nPY\n${create('b.md')}`, 'a script fed on stdin'],
+    [`${write('b.md')}npm run fmt; ${create('b.md')}`, 'any program that is not a known reader'],
+    [`${write('b.md')}git checkout -- .; ${create('b.md')}`, 'a git subcommand that writes work files'],
+    [`${write('b.md')}echo x > "$OUT"; ${create('b.md')}`, 'a redirect to a file the rule cannot name'],
+  ]) {
+    assert.match(run(command) ?? '', /^Blocked: the body is one this rule cannot read/, why);
+  }
+  assert.equal(run(`${write('b.md')}git -C . push -q origin HEAD 2>&1 | tail -2; ${create('b.md')}`), null, 'git push and a reader leave it');
+});
+
+test('a variable a nested shell or substitution assigns is dropped, and a nested command resolves none', (t) => {
+  const run = project(t, { version: 1 }, { 'bad.md': 'no sections\n', 'good.md': GOOD });
+  assert.equal(run('F=good.md; gh pr create -t x -F "$F"'), null);
+  for (const [command, why] of [
+    [`F=bad.md; sh -c 'F=good.md'; gh pr create -t x -F "$F"`, 'sh -c sets its own F'],
+    ['F=bad.md; x=$(F=good.md; echo); gh pr create -t x -F "$F"', 'a substitution sets its own F'],
+    [`F=good.md; bash -c 'export F=bad.md'; gh pr create -t x -F "$F"`, 'an export inside a nested shell'],
+    [`F=good.md; sh -c 'gh pr create -t x -F "$F"'`, 'the nested shell does not see the outer F'],
+  ]) {
+    assert.match(run(command) ?? '', /^Blocked: the body is one this rule cannot read/, why);
+  }
+});
+
 test('a variable the line sets to a literal path names the body file', (t) => {
   const run = project(t, { version: 1 }, { 'draft.md': GOOD });
   const create = (file) => `gh pr create --draft --title x --body-file ${file}`;

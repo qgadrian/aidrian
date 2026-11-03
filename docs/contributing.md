@@ -40,7 +40,8 @@ A clone set up with the earlier relative `.githooks` reruns `make hooks`. Agents
   The owner's GitHub name appears only where a user installs: the README, the example's settings, and the manifests.
 - Every agent and skill description fits in 160 characters. Both hosts load all of them into every session.
 - Every `SKILL.md` fits in 7,500 bytes, because Codex cuts it at 8,000.
-  A longer skill moves detail into `references/` files that `SKILL.md` names, with when to read each.
+  A longer skill moves detail into `references/` files that `SKILL.md` names, with when to read each,
+  and a skill with several modes keeps each mode in `modes/<mode>.md`, read once the mode is selected.
 
 When `claude` and `codex` are on your PATH, `test/hosts.test.mjs` also checks the real hosts. Neither check runs a model.
 

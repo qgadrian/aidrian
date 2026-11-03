@@ -1,0 +1,53 @@
+{
+  "mode": "plan",
+  "status": "open",
+  "plan": "__PLAN__",
+  "plan_hash": "__HASH__",
+  "same_model": false,
+  "same_model_reason": null,
+  "trigger": "the Human asked",
+  "objections": [
+    {
+      "id": "A1",
+      "by": "A",
+      "severity": "important",
+      "claim": "The plan does not say where the age filter runs against --limit. The list command cuts its result to --limit, so a filter applied after the cut would show fewer lessons than the reader asked for.",
+      "citations": [
+        { "kind": "code", "ref": "plugins/aidrian/lib/lesson-cli.mjs:184", "quote": ".slice(0, limit);" },
+        { "kind": "code", "ref": "plugins/aidrian/lib/lesson-cli.mjs:161", "quote": "--limit takes a whole number above 0" }
+      ],
+      "status": "pending",
+      "ruling": null,
+      "rebuttal": null
+    },
+    {
+      "id": "A2",
+      "by": "A",
+      "severity": "important",
+      "claim": "The plan adds an option to `aidrian lesson list` but names no doc change. docs/lessons.md lists every option that narrows `list`, and the working agreement says a change to a surface updates that surface's doc in the same branch, so the plan as written ships `--since` with a doc that leaves it out.",
+      "citations": [
+        { "kind": "doc", "ref": "docs/working-agreement.md#rules-for-every-change", "quote": "A change to a surface updates that surface's doc in the same branch" },
+        { "kind": "doc", "ref": "docs/lessons.md#commands", "quote": "`--source`, and `--limit N` narrow it" },
+        { "kind": "plan", "ref": "#approach", "quote": "Add `[--since 30d]` to the `list` usage line." }
+      ],
+      "status": "pending",
+      "ruling": null,
+      "rebuttal": null
+    },
+    {
+      "id": "B1",
+      "by": "B",
+      "severity": "important",
+      "claim": "Reusing parseSince ties the lesson commands to the report module, which list would load only for its duration parser. Instead, extract a new lib/duration.mjs module with its own parser and tests, and move report, lesson stats, and lesson list onto it before adding --since.",
+      "citations": [
+        { "kind": "code", "ref": "plugins/aidrian/lib/lesson-cli.mjs:284", "quote": "const { parseSince } = await import('./report.mjs');" }
+      ],
+      "status": "pending",
+      "ruling": null,
+      "rebuttal": null
+    }
+  ],
+  "notes": [],
+  "human_answers": [],
+  "proportionality": null
+}

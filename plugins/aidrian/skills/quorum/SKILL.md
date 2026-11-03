@@ -1,39 +1,53 @@
 ---
 name: quorum
-description: Run an expert quorum on a high-stakes plan, where two adversaries raise cited objections and an architect rules on each, into a ledger.
+description: Run an expert quorum on a high-stakes plan, or on options or a claim to decide, where sides argue with cited evidence and an architect rules, into a ledger.
 ---
 
 # quorum
 
-Two adversaries attack a plan, and an architect rules on each objection, all with cited evidence.
-The output is an objection ledger, not a consensus.
+Experts argue over the input with cited evidence, and an architect rules. The output is a ledger, not a consensus.
 This session coordinates: it dispatches, writes the ledger, runs the checks, and asks the Human.
-It never rules, never edits the plan, and never commits.
+It never rules, never edits the input, and never commits.
 
 Before you start, follow the `knowledge` skill. Knowledge tags: `product_sensitive`, `docs`.
 
 ## Inputs
 
 ```text
-<plan path>
+[plan | decide] <plan path | question path | question text>
 ```
 
-Any plan; without a path, find it as the `plan-review` skill's step 1 does. A calling skill also passes the gate
-verdicts and the trigger, the plan line or gate that started the run; run by the Human, the trigger is `the Human asked`.
+The mode is a leading keyword, never a flag. The first row that holds picks it:
+
+| Input | Mode |
+| --- | --- |
+| The keyword | that mode |
+| A file with YAML frontmatter holding `plan_kind`, a file under `<state>/plans/`, the plan `plan-review` passes, or no path | `plan` |
+| A file under `<state>/quorum/questions/`, or text that is not a path | `decide` |
+| Anything else | stop and ask which mode |
+
+With no path, find the plan as the `plan-review` skill's step 1 does.
+Read `modes/<mode>.md` once the mode is selected, and only that one.
+The mode files: [modes/plan.md](modes/plan.md) and [modes/decide.md](modes/decide.md).
+A calling skill also passes the gate verdicts and the trigger, the plan line or gate that started the run;
+run by the Human, the trigger is `the Human asked`.
+
+In decide mode, the input is a question file, and `<plan>` in every command and brief means it.
+The file is `<state>/quorum/questions/<slug>-<h7>.md`, shaped and named as the decide mode file § Question file says.
+Before round 1, write question text to that path by that section's rule, and show the Human the path.
+Never overwrite a question file. An edited question file is a new question, and inherits no earlier answer.
+When a file's name is not the `<slug>-<h7>.md` its content gives, copy it to that path, and run from the copy.
 
 ## Roles
 
-Pick each owner by the agent rule in the `knowledge` skill.
-[references/briefs.md](references/briefs.md) holds every brief: read it before the first dispatch, and fill each placeholder.
+Pick each owner by the agent rule in the `knowledge` skill. The mode file names each role, its agent, and its brief.
+[references/briefs.md](references/briefs.md) holds the parts every brief pastes: read it before the first dispatch,
+and fill each placeholder.
 
-- **A, "it will break"**: `code-reviewer`.
-- **B, "it is the wrong thing, or too much"**: Codex, through `aidrian quorum codex`. On the Codex host, or once a
-  `codex` call exits non-zero, this and every later B run of the quorum go to `product-manager` with the same brief.
-- **Adjudicator**: `architect`. It rules on each objection and never votes to agree.
-
-When any B run was an agent, the ledger records `same_model: true` and why, as ledger.md § Fields says.
-
-Each adversary returns at most 7 objections, ranked `blocking`, `important`, or `improvement`.
+A Codex role runs through `aidrian quorum codex`. On the Codex host, or once a `codex` call exits non-zero, it and
+every later run of that role go to the fallback agent the mode file names, with the same brief.
+`same_model` records whether two of the arguing sides ran on one model, as ledger.md says for each mode.
+The judge, `architect`, rules and never votes to agree.
 
 ## Commands
 
@@ -51,22 +65,34 @@ aidrian quorum check <ledger> --plan <plan>
 
 ## Evidence rule
 
-Every objection, ruling, and rebuttal cites at least one `{kind, ref, quote}`: `doc`, `adr`, `code`, `plan`, or `absence`,
+Every objection, case, cross point, ruling, and rebuttal cites at least one `{kind, ref, quote}`: `doc`, `adr`, `code`, `plan`, or `absence`,
 each with the ref form the briefs' Evidence block gives, and a verbatim quote of at most 200 characters.
-`quorum check` proves a quote exists, not that it supports the claim: the architect opens the cited files.
+`quorum check` proves a quote exists, not that it supports the claim: the judge opens the cited files.
 
+- Each statement of fact carries its own citation; one its author cannot cite goes on its own line as `inference: <statement>`.
+- Where a knowledge doc or decision record covers the point, prefer a `doc` or `adr` citation.
+- The judge gives each citation it rules on a verdict in `tested`, and each `inference:` line one in `inferences`.
+  A citation marked `supports: false` stays in the ledger and leaves the report's evidence.
+- A concession cites the evidence of the ruling it accepts.
 - A `pending` objection with no passing citation becomes `opinion`: never ruled on or accepted, and only in the report's footnote.
-- A ruling `check` names invalid, and a backed objection the architect left without one, go back to the architect once.
-  Invalid again, the objection escalates; still without a ruling, stop with `blocked`.
-- A rebuttal `check` names invalid (no passing citation, or nothing new) escalates its objection.
+- A ruling `check` names invalid goes back to the judge once. A second invalid ruling follows ledger.md § Filling it
+  in plan mode, and the mode file's rounds in decide mode.
 
 Hold every agent's answer to its schema before writing it, as [references/ledger.md](references/ledger.md) § Agent answers says.
 When `quorum check` still exits 1, stop with `blocked`, quoting what it printed.
 
+## Moderator
+
+The judge also moderates: it keeps the run on the input's goal. In plan mode, a rejection names its ground: `covered`,
+`implementation`, `settled`, `off-goal`, `disproportionate`, or `speculative`. An accept states its `Cost:` beside the
+risk it `Removes:`, and the judge prefers the smallest change that removes the cited risk.
+Decide mode moderates by the Moderation line of decide.md's ruling brief.
+Moderation governs scope and proportion, never which side wins.
+
 ## Ledger
 
 `<state>/quorum/<name>-<plan-hash>.json`, where `<state>` is what `aidrian state` prints and `<plan-hash>` is
-`git hash-object <plan>`.
+`git hash-object <plan>`. It records the mode in `mode`.
 [references/ledger.md](references/ledger.md) gives every field and what each round writes: read it before round 1.
 
 Before round 1:
@@ -74,57 +100,28 @@ Before round 1:
 - A `complete` ledger at this hash for which `quorum check` exits 0 is reused: skip the rounds, and report from it,
   with every line `check` printed in the Ledger item.
 - An `open` ledger at this hash, or a `complete` one whose check exits 1, is discarded, and the run starts over.
-- Every other `complete` ledger whose `plan` is this plan's absolute path gives its Human answers to every brief as
-  settled, as ledger.md § Settled answers says. They are never copied into the new ledger.
+- In plan mode, every other `complete` plan ledger whose `plan` is this input's absolute path gives its Human answers to
+  every brief as settled, as ledger.md § Settled answers says. They are never copied into the new ledger.
 
-## Rounds
-
-The cap is 7 dispatches. Every agent dispatch and Codex run counts, retries and fallbacks included.
+The mode file sets the dispatch cap. Every agent dispatch and Codex run counts, retries and fallbacks included.
 Whatever the cap leaves open escalates to the Human.
-
-1. **Objections.** A and B in parallel, each with the plan, the gate verdicts, and its brief.
-2. **Rulings.** Write the ledger with `status: open`, run `quorum check`, then the architect rules on each backed objection:
-   - `accept`: the required plan change, in words. When only part holds, it accepts that part with a precise change
-     and names the rest in a `Rejected part:` line.
-   - `reject`: the counter-evidence.
-   - `escalate`: a product or lasting architecture trade-off only the Human can settle, with both positions,
-     a recommended answer, and the one reason that decides it.
-
-   Record the rulings, and run `quorum check`.
-3. **Rebuttals**, only for objections `rejected` or partly accepted; an `escalated` one gets none. Only the adversary
-   that raised one answers, A and B in parallel; `--mode rebut` runs only when B has such an objection. When one dispatch
-   is left and both have one, neither runs, and those objections escalate. Each answers by objection id, `rebut` or
-   `concede`. Record them, and run `quorum check`. A concession keeps the first ruling and skips the final one.
-   When something is rebutted, the architect rules once more on those only, and `quorum check` runs again.
-   A final ruling other than `accept` escalates the objection. Then the rounds stop.
-
-The longest run: 2 adversaries, 1 ruling, 1 retry, 2 rebuttals, and 1 final ruling. A fallback costs one more and
-happens at most once, since it sticks; then the retry and the final ruling cannot both run.
-
-A valid partial accept's accepted part always stands. Its rebuttal, its escalation, and the Human's answer cover only its
-rejected part, so `escalated` on it means that part is escalated.
-
-No compromise: a dispute the evidence does not settle escalates with both positions, never split down the middle.
+No compromise: a dispute the evidence does not settle escalates with every position, never split down the middle.
 
 ## Asking the Human
 
 Ask the escalations one at a time, as the `challenge` skill asks, and wait for each answer before the next.
-Name no objection IDs; each position is an option, its citations in the option's description.
-An answer goes into `human_answers`, and the objection becomes `accepted` or `rejected`; a valid partial accept stays
-`accepted`, with its rejected part settled by the answer.
-An escalation the Human defers stays `escalated` and goes into the report's open questions: the plan cannot be
-`status: ready` while it is open.
+Name no objection or position IDs; each position is an option, its citations in the option's description.
+The mode file says where an answer goes. An escalation the Human defers stays open and goes into the report's open
+questions; in plan mode, the plan cannot be `status: ready` while it is open.
 
 Then write `status: complete`, and run `quorum check` once more; it must exit 0.
 
 ## Report
 
-1. **Ledger**: its path, `trigger`, `same_model`, `same_model_reason`, dispatches used of 7, and each dropped entry or citation.
-2. **Accepted**: each id with its plan change, including the accepted part of every valid partial accept, even escalated.
-3. **Rejected**: each id with its counter-evidence.
-4. **Escalated**: each id with both positions, their citations, and the Human's answer, or `deferred`.
-5. **Open questions**: each deferred escalation, for the plan's `Open questions`.
-6. **Revision-history line**: the objection ids to apply and each Human answer, for the plan change that applies them.
-7. **Opinions**, as a footnote: each id and claim.
-
-Next: `planning-agent` turns accepted objections and the Human's answers into a plan diff for the Human to approve.
+1. **Ledger**: its path, `mode`, `trigger`, `same_model`, `same_model_reason`, dispatches used of the cap, and each
+   dropped entry or citation.
+2. The mode file's items, in its order.
+3. **Open questions**: each deferred escalation; in plan mode, for the plan's `Open questions`.
+4. In plan mode, **Revision-history line**: the objection ids to apply and each Human answer, for the plan change that applies them.
+5. Footnotes: **Opinions**, each id and claim; **Dropped citations**, each citation the judge marked `supports: false`,
+   with its reason; and the mode file's.

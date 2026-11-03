@@ -22,7 +22,7 @@ see [Recorded blocks](#recorded-blocks).
 | Before compaction | A checklist of what the summary must keep | both | no |
 | The Human approves a plan | The [plan handoff offer](#session-length), in a long main session | Claude Code | no |
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
-| The main session ends a turn | The [session-length reminder](#session-length) | Claude Code | once |
+| The main session ends a turn | The [session-length reminder](#session-length) | Claude Code | once per doubled limit |
 | A subagent stops | A `stop` row, then the [delivery check](#delivery-check) | Claude Code | once |
 | A session ends | A `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code | no |
 
@@ -354,19 +354,26 @@ When the main session ends a turn, the Stop hook reads its transcript and measur
 - calls: the model calls the main session made, subagents not included;
 - hours: the time worked, where a pause of more than an hour counts as one hour, so a night away does not count.
 
-When one of them reaches its limit in config.json `session`, the hook acts once per session, as `session.handoff` says:
+When one of them reaches its limit in config.json `session`, the hook sends the agent back for one more turn
+to judge whether a handoff is worth it. It is not when the task is done or a few calls finish it,
+when a subagent or background job is still running and reports back to this session,
+or when the Human already said to finish here or that they are not watching, since a fresh session needs someone to start it.
+Then the agent ends the turn without a word about it.
+Otherwise it acts as `session.handoff` says:
 
 | `handoff` | What happens |
 | --- | --- |
 | `ask` (default) | The agent ends the turn with one question: hand off now, or keep going? Hand off runs the `session-handoff` skill. |
-| `auto` | The agent writes the brief with the `session-handoff` skill, unless nothing is left to resume, and tells you its path. |
-| `off` | Nothing. |
+| `auto` | The agent writes the brief with the `session-handoff` skill and tells you its path. |
+| `off` | Nothing; the hook does not send the agent back. |
 
-Either way it never comes back in that session, so a "keep going" is final.
-A marker in the system's temporary folder remembers this; a new session starts fresh.
+Each time the reminder fires, every limit doubles for that session: after 150,000 tokens, the next comes at 300,000.
+So neither a "keep going" nor a quiet skip turns the reminder off for the rest of the session.
+A marker in the system's temporary folder counts the firings; a new session starts fresh.
 The defaults are 150,000 tokens, 250 calls, and 4 hours; a limit of `0` turns that one off. [config.md](config.md) lists the keys.
 When the Human approves a plan (Claude Code's `ExitPlanMode`) and the main session has passed half of one limit,
 another hook tells the agent to offer the same handoff before its first build step: `ask` asks, `auto` writes the brief.
+It skips the offer when a few calls finish the build, or when the Human said to finish here or is not watching.
 The plan is on disk and nothing is running, so this is the cheapest moment for a fresh session.
 It reads Claude Code transcripts only: a transcript with no Claude Code usage, or a payload without `stop_hook_active`, does nothing.
 

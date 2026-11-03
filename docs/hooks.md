@@ -185,26 +185,32 @@ reads only this machine's [review record](review.md#the-record), and decides in 
 1. An owed review, one `aidrian pr request` recorded and no answer has marked since, refuses the merge, whatever the
    head or the outcome: a bot review sent is owed until the bot answers. Its reason says how to send it or wait for
    it, and that a later instruction does not cancel it.
-2. No record from the review step, no open run, outcome, or round, lets it run: the guard holds a review that is open or asked
-   for, not that one happens. A review run outside `aidrian pr review` leaves no record and is not guarded.
-3. A review step still running on the head, an `active` run younger than 2 hours, refuses it, even when another run
-   on the head already finished.
-4. Otherwise the head needs an `outcome` of `received` or `none_needed` on that very head. An outcome on an earlier
-   head, or any other status, refuses it.
+2. No record from the review step, no outcome and no round, lets it run: the guard holds a review that is open or
+   asked for, not that one happens. A review run outside `aidrian pr review` leaves no record and is not guarded.
+3. Otherwise the head needs an `outcome` of `received` or `none_needed` on that very head. An outcome on an earlier
+   head, or any other status, `running` and `error` included, refuses it.
 
 It never reads pull request comments. Its one network call is `gh pr view --json number,headRefOid`, made only when the
 command names no head or no pull request and a record may apply, and stopped after 3 seconds. A merge whose head it then
 cannot read is refused with a reason that says to pass `gh pr merge <PR> --match-head-commit <sha>`; so is one whose
-pull request number it cannot read, such as `gh pr merge "$PR"`.
+pull request number it cannot read, such as `gh pr merge "$PR"`, or a `gh api` merge path whose number or repository
+part is a variable; a method it cannot read, `-X "$M"`, counts as a merge.
 A merge in another repository runs when the command names its pull request number: one whose target, as `-R`, a URL,
 a `gh api` path, or the MCP owner and repo, names neither origin, the repository the review record was written for,
 nor that of a review it still owes, such as an upstream's from a fork checkout.
-A record written on another machine is not read here: that is the guard's known limit.
 
 The Human waives it. The reason prints a question naming `#<PR>` and the head's first 7 characters; the merge runs when
 the session transcript holds the Human's AskUserQuestion answer to a question naming both, whose chosen option starts
 with "Merge anyway", given at or after the head's outcome and every owed review. Without a transcript in that shape
 (Codex), the Human merges in their own shell.
+
+Limits:
+
+- A record written on another machine is not read here.
+- Two sessions writing the same record at once can lose an update; the last write wins.
+- Two concurrent review steps on one pull request share one open mark: the first to finish clears the other's.
+- In a fork checkout with gh offline, `aidrian pr request` and `aidrian pr attest` fall back to origin.
+- A record written before this release has rounds but no outcome: a merge waits until `aidrian pr review` runs again.
 
 ## Main checkout
 

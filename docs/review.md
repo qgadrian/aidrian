@@ -219,7 +219,7 @@ agent that runs it. It is still an audit entry, not proof: an agent holds the sa
 override is listed in the review summary on the pull request, or only in the local record with `review.record:
 "local"`. For proof, protect the branch with a required review from a second account.
 Like `aidrian pr attest`, it files the sign-off under the pull request's repository: `--repo OWNER/NAME`, else the one
-`gh pr view` names; without either it refuses.
+`gh pr view` names, else origin.
 
 A sign-off holds on a later head when the signed head is its ancestor and the change since selects nothing of the
 flow, through the same selection the plan uses: its globs, `added` patterns, `content`, the plan command, its tests,
@@ -499,19 +499,9 @@ keeps the compressed marker and appends a plain one, so a comment it touched can
 
 - **Outcome.** Every return of the step writes its status to this machine's record as `outcome`: `{ status, head, at,
   reason }`. The early returns, `none_needed`, `unsatisfied`, and `too_large`, write it to the state folder only and
-  post nothing; a `held` return writes nothing. A step that throws, such as a plan command that fails, writes `error`,
-  which is not finished. The [merge guard](hooks.md#merge-guard) reads it.
-- **Active runs.** Before any reviewer, the plan command, or the bot runs, the step adds itself to `active` as
-  `{ id, head, at }`, and its last write removes only its own entry. A merge waits while any run on its head is open,
-  the first step's included; an entry older than 2 hours is a run that died, and counts for nothing.
-- **Writes.** Every write of the record takes a lock file beside it (`<record>.lock`, created exclusively; one older
-  than 30 seconds is broken), and renames a temporary file over the record, so a reader never sees half a record; the
-  merge guard only reads. Only the review step writes the whole record; every other command changes its part of the
-  record as it is under the lock: `pr request`, a mark on an owed review, a run, `pr attest --pass`, `pr signoff`,
-  `pr extend`, and `await-review`, which replaces only the bot's extra-round checks. When the pull request's comment
-  holds a newer record, such a command builds on it, keeping this machine's runs, both lists of owed reviews, and the
-  later outcome. The step's full write keeps the newer outcome and the rounds another step opened since, and takes a
-  revision past both its own and the one on disk.
+  post nothing; a `held` return writes nothing. Before any reviewer, the plan command, or the bot runs, the step
+  writes `running` for its head, so a merge during the first step is refused too. A step that throws after that, such
+  as a plan command that fails, writes `error`, which is not finished. The [merge guard](hooks.md#merge-guard) reads it.
 - **Owed reviews.** `pending` lists the reviews asked for, each `{ id, kind, head, repo, at, by, sent, answered }`;
   one is owed until it is `answered`, and only an answer for its own `repo` counts. `aidrian pr request <PR>` records a
   bot review the Human asked for, the moment they ask, before any review the project requires first. It reads the head
@@ -526,8 +516,8 @@ keeps the compressed marker and appends a plain one, so a comment it touched can
   answered the same way: by an attest of its pull request's repository, or a step on that repository that finishes.
   `aidrian pr request <PR> --kind review` records a review-gate review as dispatched; `aidrian pr attest <PR>`, or a
   step that returns `received` or `none_needed`, answers it. Without `--head <sha>`, `request` reads the head with gh.
-  An entry is only ever marked, never removed, and every write of the record merges in the entries and marks on disk,
-  so a request recorded while a reviewer ran survives the step's write. Both live in the state folder: another
+  An entry is only ever marked, never removed, and the review step merges in the entries and marks on disk before it
+  writes, so a request recorded while a reviewer ran survives the step's write. Both live in the state folder: another
   machine does not see them.
 
 With `review.record: "local"` in config.json, the record is written to the state folder only: nothing is posted or

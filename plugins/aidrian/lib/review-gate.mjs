@@ -120,8 +120,8 @@ export function denyReason(pr, checklist) {
 }
 
 // The repository of pull request `pr`, as `owner/name`: `--repo` (`given`), else the one `gh pr view` names, gh's
-// default repository, which in a fork checkout is the upstream. Never origin by guess: with neither, it throws.
-// `viewPr(pr)` returns { url }; it is the test seam of the gh call.
+// default repository, which in a fork checkout is the upstream, else origin, so it works offline. `viewPr(pr)` returns
+// { url }; it is the test seam of the gh call.
 export function prRepo(project, pr, given, viewPr = (n) => ghJson(['pr', 'view', String(n), '--json', 'url'], { cwd: project.root })) {
   if (given !== undefined && given !== null) {
     const name = repoName(given);
@@ -132,8 +132,8 @@ export function prRepo(project, pr, given, viewPr = (n) => ghJson(['pr', 'view',
   try {
     url = viewPr(pr)?.url ?? null;
   } catch {}
-  const name = repoName(url);
-  if (!name) throw new Error(`cannot read the repository of pull request #${pr} through gh: pass --repo OWNER/NAME`);
+  const name = repoName(url) ?? originRepo(project);
+  if (!name) throw new Error("cannot read this repository's origin; the marker must name it: pass --repo OWNER/NAME");
   return name;
 }
 

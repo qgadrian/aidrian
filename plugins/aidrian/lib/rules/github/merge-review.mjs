@@ -8,8 +8,7 @@
 //   1. a `pending` entry not answered denies, whatever the head or the outcome: a request sent is owed until the bot answers;
 //   2. no record the review step wrote (no outcome, no round) allows: the guard holds a review that is open or asked
 //      for, not that one happens, so a review run outside `aidrian pr review` is not guarded;
-//   3. a review step still running on the head (state.mjs openRun, younger than RUN_STALE_MS) denies;
-//   4. otherwise the head needs a finished outcome (`received`, `none_needed`) on that very head.
+//   3. otherwise the head needs a finished outcome (`received`, `none_needed`) on that very head.
 // Its one network call is `gh pr view --json number,headRefOid`, made only when the call names no head or no pull request
 // and a record may apply, and bounded at 3 s. A merge whose head it then cannot read is refused, as the review gate
 // refuses a request whose pull request it cannot read: `--match-head-commit <sha>` names it.
@@ -24,7 +23,7 @@ import { readFileSync } from 'node:fs';
 import { runGh } from '../../gh.mjs';
 import { findProject } from '../../project.mjs';
 import { originRepo, prNumber, repoName } from '../../review-gate.mjs';
-import { activeRuns, FINISHED, owed, readLocalState, sameCommit } from '../../review/state.mjs';
+import { FINISHED, owed, readLocalState, sameCommit } from '../../review/state.mjs';
 import { commandLines, lexCommand, readInvocation } from '../../shell-lex.mjs';
 import { transcriptAnswers } from '../review-extend.mjs';
 import { commandPath, fillRepo, invocationRepo, readWords } from './review-request.mjs';
@@ -59,10 +58,16 @@ export function readMerge({ program, args, environment = [] }, env = {}) {
   const literal = (token) => (token && !token.dynamic ? token.text : null);
   if (command[0] === 'api') {
     const { words, flags } = readWords(args, new Set(API_VALUES));
-    const match = /(?:^|\/)repos\/([^/]+\/[^/]+)\/pulls\/(\d+)\/merge\/?$/u.exec(literal(words[1]) ?? '');
+    // The path as written, a variable included: `repos/<repo part>/pulls/<number>/merge`.
+    const match = /(?:^|\/)repos\/(.+)\/pulls\/([^/]+)\/merge\/?$/u.exec(words[1]?.text ?? '');
     const fields = flags.filter((flag) => ['-f', '--raw-field', '-F', '--field'].includes(flag.name));
-    const method = literal(flags.filter((flag) => flag.name === '-X' || flag.name === '--method').at(-1)?.value)?.toUpperCase() ?? (fields.length || flags.some((flag) => flag.name === '--input') ? 'POST' : 'GET');
+    // A method the rule cannot read (`-X "$M"`) may be PUT: it counts as a merge.
+    const given = flags.filter((flag) => flag.name === '-X' || flag.name === '--method').at(-1)?.value;
+    const method = given?.dynamic ? 'PUT' : literal(given)?.toUpperCase() ?? (fields.length || flags.some((flag) => flag.name === '--input') ? 'POST' : 'GET');
     if (!match || !['PUT', 'POST'].includes(method)) return null;
+    // A number or repository part the rule cannot read (`$PR`, `${PR}`) is a merge it cannot check: refused.
+    const variable = /[$`]/u;
+    if (variable.test(match[2]) || variable.test(match[1]) || !/^\d+$/u.test(match[2]) || !/^[^/]+\/[^/]+$/u.test(match[1])) return { pr: null, head: null, target: null, repo: null, unreadable: true };
     const sha = fields.map((flag) => literal(flag.value)).find((text) => text?.startsWith('sha='))?.slice('sha='.length) ?? null;
     const repo = fillRepo(match[1], invocationRepo(environment, env));
     return { pr: Number(match[2]), head: sha && SHA.test(sha) ? sha : null, target: null, repo };
@@ -101,8 +106,8 @@ const readTranscript = (file) => {
   }
 };
 
-// Whether the record holds anything the guard reads: an entry still owed, a run still open, or a review the step ran.
-const guards = (state) => Boolean(state) && (owed(state).length > 0 || (state.active ?? []).length > 0 || state.outcome != null || state.rounds.length > 0);
+// Whether the record holds anything the guard reads: an entry still owed, or a review the step ran or is running.
+const guards = (state) => Boolean(state) && (owed(state).length > 0 || state.outcome != null || state.rounds.length > 0);
 
 export const unresolved = (pr, how) =>
   `Blocked: this merges ${pr === null ? 'a pull request' : `pull request #${pr}`}, and the merge guard could not read ` +
@@ -138,7 +143,6 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
   const owing = owed(state);
   const outcome = state.outcome ?? null;
   const onHead = outcome !== null && sameCommit(outcome.head, head);
-  const running = activeRuns(state, head);
   let problem;
   if (owing.length) {
     problem = owing.map((entry) => {
@@ -149,8 +153,6 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
         ? `${ask}that was sent and has no answer yet: wait for it with \`aidrian pr await-review ${pr}\`${cancel}`
         : `${ask}that was never sent: send it with \`aidrian pr await-review ${pr} --request\` and merge after it answers${cancel}`;
     }).join('; and ');
-  } else if (running.length) {
-    problem = `a review step on head ${sha7} is still running (started ${running.map((each) => each.at).join(', ')}): wait for \`aidrian pr review ${pr}\` to return`;
   } else if (onHead && FINISHED.has(outcome.status)) return null;
   else if (outcome === null && !state.rounds.length) return null;
   else {
@@ -160,7 +162,7 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
         : `the last review step covered ${String(outcome.head).slice(0, 7)}, not head ${sha7}`;
     problem += `: run \`aidrian pr review ${pr}\` until it returns \`received\` or \`none_needed\``;
   }
-  const since = [onHead ? outcome.at : null, ...owing.map((entry) => entry.at), ...running.map((each) => each.at)].filter((at) => typeof at === 'string').sort().at(-1) ?? null;
+  const since = [onHead ? outcome.at : null, ...owing.map((entry) => entry.at)].filter((at) => typeof at === 'string').sort().at(-1) ?? null;
   if (mergeApproved(answers, { pr, head, since })) return null;
   const question = `Merge pull request #${pr} at ${sha7} before its review is finished?`;
   return `Blocked: this merges pull request #${pr} at ${sha7}, and ${problem}. ` +

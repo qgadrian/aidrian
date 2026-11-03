@@ -39,7 +39,7 @@ import { contentFlows } from './content.mjs';
 import { buildPlan, classify, detectFlows, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, pathPattern, validatePlan } from './plan.mjs';
 import { BUILT_IN, flowBaseBrief, resolveEngine, reviewerMap, runExec, satisfies, VERDICT_MEANING } from './reviewers.mjs';
 import { atCap, buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
-import { adoptNewer, answerPending, closeRun, heldMessage, isSummary, mergePending, newRunId, noteOutcome, openRun, prunePasses, readLocalState, readRecord, summaryBody, updateLocalState, writeLocalState } from './state.mjs';
+import { answerPending, emptyState, heldMessage, isSummary, mergePending, noteOutcome, prunePasses, readLocalState, readRecord, summaryBody, writeLocalState } from './state.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, ghImage, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput, visualMatrix, visualRoutes } from './visual.mjs';
 
 export const EXIT = Object.freeze({
@@ -194,20 +194,18 @@ function trackedAt(root, commit) {
 const touches = (changes, files) => (files === null ? changes.length > 0 : changes.some((change) => files.includes(change.file)));
 
 // The whole step. `deps` replaces gh, the engine check, the reviewers, and the bot wait in tests.
-// One review step, open as a run of its own from the moment it reads the record to its last write (state.mjs openRun):
-// a merge waits for every run on the head, and each run closes only its own.
-// A step that throws, such as a plan command that fails or a bot wait that errs, leaves `error` as the head's outcome
-// before its run closes, so the merge guard keeps refusing the head.
+// A step that throws after it marked its head `running`, such as a plan command that fails or a bot wait that errs,
+// leaves `error` as the head's outcome, so the merge guard keeps refusing the head.
 export async function reviewStep(opts, deps = {}) {
-  const run = { id: newRunId(), pr: null, head: null };
-  let failure = null;
+  const run = { pr: null, head: null, repo: null };
   try {
     return await stepOnce(opts, deps, run);
   } catch (error) {
-    failure = { head: run.head, reason: error.message };
+    if (run.pr !== null) {
+      const state = readLocalState(deps.project, run.pr) ?? emptyState(run.pr, run.repo);
+      writeLocalState(deps.project, noteOutcome(state, { status: 'error', head: run.head, reason: error.message }));
+    }
     throw error;
-  } finally {
-    if (run.pr !== null) closeRun(deps.project, run.pr, run.id, failure);
   }
 }
 
@@ -262,9 +260,12 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
   const record = readRecord(project, n, comments, repo);
   if (record.held !== undefined) return { status: 'incomplete', pr: n, repo, head, reason: heldMessage(n, record.held), held: record.held, retry_recommended: false };
   let state = record.state;
-  // The run is open on this head before any reviewer, the plan command, or the bot runs: a merge meanwhile is refused.
-  openRun(project, { pr: n, repo, head, id: run.id });
-  Object.assign(run, { pr: n, head });
+  // The step is open on this head before any reviewer, the plan command, or the bot runs: a merge meanwhile is refused.
+  // The mark is this machine's alone and posts nothing, so it is no revision of its own: the step's next write takes
+  // the one it raised. Two steps on one pull request share this one mark; the last write wins.
+  settle({ status: 'running', head });
+  state.revision -= 1;
+  Object.assign(run, { pr: n, head, repo });
 
   const engine = resolveEngine(effective, codex ? { codex } : {});
   if (engine.problem) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: engine.problem });
@@ -775,26 +776,21 @@ export function recordPass(project, { pr, repo, pass, head, reviewer, findings, 
     const strings = (list) => (Array.isArray(list) ? list.filter((each) => typeof each === 'string').slice(0, 50) : []);
     if (raw && !Array.isArray(raw)) report = { contracts: strings(raw.contracts), cross_notes: strings(raw.cross_notes) };
   } catch {}
-  // Applied to the record as it is now under its lock, brought up to the pull request's copy when that is newer.
-  let recorded;
-  updateLocalState(project, pr, repo, (state) => {
-    adoptNewer(state, current(project, pr, repo, remote));
-    const before = state.passes[pass];
-    const files = state.dispatched?.[pass]?.files ?? null;
-    recorded = state.passes[pass] = { head, reviewer, files, findings, open: findings - fixed - accepted, verdicts, ...report, list: itemized?.list ?? (before?.head === head ? before.list : null) };
-  }, { revise: true });
-  return recorded;
+  const state = current(project, pr, repo, remote);
+  const before = state.passes[pass];
+  const files = state.dispatched?.[pass]?.files ?? null;
+  state.passes[pass] = { head, reviewer, files, findings, open: findings - fixed - accepted, verdicts, ...report, list: itemized?.list ?? (before?.head === head ? before.list : null) };
+  writeLocalState(project, state);
+  return state.passes[pass];
 }
 
 // `aidrian pr signoff <PR> --flow <id> --head <sha>`: the Human's sign-off of a flow on a head. An audit entry, not
 // proof: the summary comment shows it, and who ran it.
 export function recordSignoff(project, { pr, repo, flow, head, by, remote = null }) {
-  let signed;
-  updateLocalState(project, pr, repo, (state) => {
-    adoptNewer(state, current(project, pr, repo, remote));
-    signed = state.signoffs[flow] = { head, by, at: new Date().toISOString() };
-  }, { revise: true });
-  return signed;
+  const state = current(project, pr, repo, remote);
+  state.signoffs[flow] = { head, by, at: new Date().toISOString() };
+  writeLocalState(project, state);
+  return state.signoffs[flow];
 }
 
 

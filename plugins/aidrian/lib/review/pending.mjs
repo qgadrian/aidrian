@@ -9,41 +9,40 @@ import { ghJson } from '../gh.mjs';
 import { runGit } from '../git.mjs';
 import { originRepo, prNumber, repoName } from '../review-gate.mjs';
 import { isAncestor } from './diff.mjs';
-import { answerPending, newRunId, ofRepo, updateLocalState } from './state.mjs';
+import { answerPending, emptyState, entryId, ofRepo, readLocalState, writeLocalState } from './state.mjs';
 
 const SHA = /^[0-9a-f]{7,40}$/iu;
 const KINDS = ['request', 'review'];
 
-// Records one entry owed on `pr` of `repo`, on the record as it is now. Returns the entry.
+// Records one entry owed on `pr` of `repo`. Returns the entry.
 export function recordPending(project, { pr, repo, kind, head, by }) {
-  const entry = { id: newRunId(), kind, head, at: new Date().toISOString(), by, ...(repoName(repo) ? { repo: repoName(repo) } : {}) };
-  updateLocalState(project, pr, repoName(repo), (state) => {
-    state.pending = [...state.pending, entry];
-  });
+  const entry = { id: entryId(), kind, head, at: new Date().toISOString(), by, ...(repoName(repo) ? { repo: repoName(repo) } : {}) };
+  const state = readLocalState(project, pr) ?? emptyState(pr, repoName(repo));
+  state.pending = [...state.pending, entry];
+  writeLocalState(project, state);
   return entry;
 }
 
 // Marks the requests on `pr` of `repo` (null: any) not yet sent as sent, for `head`. Returns how many it marked. A sent
 // request stays owed until the bot answers it.
 export function markRequestsSent(project, pr, head, repo = null) {
-  let marked = 0;
-  updateLocalState(project, pr, null, (state) => {
-    const open = state.pending.filter((each) => each.kind === 'request' && !each.sent && !each.answered && ofRepo(state, each, repoName(repo)));
-    const at = new Date().toISOString();
-    for (const entry of open) entry.sent = { at, head };
-    marked = open.length;
-    return marked > 0;
-  });
-  return marked;
+  const state = readLocalState(project, pr);
+  const open = (state?.pending ?? []).filter((each) => each.kind === 'request' && !each.sent && !each.answered && ofRepo(state, each, repoName(repo)));
+  if (!open.length) return 0;
+  const at = new Date().toISOString();
+  for (const entry of open) entry.sent = { at, head };
+  writeLocalState(project, state);
+  return open.length;
 }
 
 // Marks the entries of `kind` owed on `pr` of `repo` that an answer for `head` answers (answerPending), reading
 // ancestry in this checkout: the bot's answer (`request`), or the gate review's recorded result (`review`). Returns 1
 // when it marked any.
 export function answerOwed(project, pr, kind, { head, by, repo = null, isAncestor: ancestor = (a, b) => isAncestor(project.root, a, b) }) {
-  let marked = 0;
-  updateLocalState(project, pr, null, (state) => (marked = answerPending(state, kind, { head, by, repo: repoName(repo), isAncestor: ancestor })) > 0);
-  return marked > 0 ? 1 : 0;
+  const state = readLocalState(project, pr);
+  if (!state || !answerPending(state, kind, { head, by, repo: repoName(repo), isAncestor: ancestor })) return 0;
+  writeLocalState(project, state);
+  return 1;
 }
 
 // `aidrian pr request <PR> [--kind request|review] [--head SHA] [--repo OWNER/NAME]`. gh reads what is not given: the

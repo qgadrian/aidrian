@@ -14,7 +14,7 @@
 // (readRecord) rather than start over.
 
 import { randomBytes } from 'node:crypto';
-import { closeSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
 
@@ -42,11 +42,11 @@ export const sameCommit = (a, b) => typeof a === 'string' && typeof b === 'strin
 
 // `outcome` is the review step's last return, { status, head, at, reason? }, which the merge guard reads
 // (lib/rules/github/merge-review.mjs). `pending` holds the reviews owed: { kind: 'request' | 'review', head, at, by,
-// sent?, answered? }, and an `id` that tells two entries apart. A `request` is a bot review the Human asked for (`aidrian pr request`): `sent` once
+// sent?, answered?, repo?, id }. A `request` is a bot review the Human asked for (`aidrian pr request`): `sent` once
 // `aidrian pr await-review --request` posts it, `answered` once the bot's answer arrives. A `review` is a gate review
 // dispatched: `answered` once `aidrian pr attest` records it or a review step finishes. An entry is never removed, only
-// marked, so two writers' lists merge field by field (mergePending).
-export const emptyState = (pr, repo) => ({ version: 1, revision: 0, pr, repo, rounds: [], passes: {}, signoffs: {}, overrides: [], failures: {}, outcome: null, pending: [], active: [] });
+// marked, so the review step can merge in what was recorded while it ran (mergePending).
+export const emptyState = (pr, repo) => ({ version: 1, revision: 0, pr, repo, rounds: [], passes: {}, signoffs: {}, overrides: [], failures: {}, outcome: null, pending: [] });
 
 // The review step's statuses after which nothing is left to review on that head.
 export const FINISHED = new Set(['received', 'none_needed']);
@@ -114,137 +114,16 @@ export function readLocalState(project, pr) {
 }
 
 // Every write raises the record's revision, so the newer of two records is the one written last.
-// The record's `pending` on disk is merged in first: an entry recorded, sent, or answered while this writer worked
-// (`aidrian pr request` while a reviewer ran) is kept.
-// `active` is only ever changed by openRun and closeRun: every other write keeps the list on disk. A snapshot read
-// before another full write keeps that write's work: the newer outcome by its time, and the rounds of a record on disk
-// at a later revision.
 export function writeLocalState(project, state) {
-  withRecordLock(project, state.pr, () => {
-    const disk = readLocalState(project, state.pr);
-    state.pending = mergePending(disk?.pending, state.pending);
-    state.active = disk?.active ?? [];
-    state.outcome = laterOutcome(disk?.outcome, state.outcome);
-    if (disk && (disk.revision ?? 0) > (state.revision ?? 0)) state.rounds = mergeRounds(disk.rounds, state.rounds);
-    // Past both: a write from an older copy never takes a revision another write already took.
-    state.revision = Math.max(disk?.revision ?? 0, state.revision ?? 0) + 1;
-    state.updatedAt = new Date().toISOString();
-    replaceRecord(project, state);
-  });
-}
-
-// The later of two outcomes by `at`; one missing or unreadable is the older.
-export function laterOutcome(a, b) {
-  if (!a) return b ?? null;
-  if (!b) return a;
-  return Date.parse(b.at ?? '') >= Date.parse(a.at ?? '') || Number.isNaN(Date.parse(a.at ?? '')) ? b : a;
-}
-
-// Brings `current`, the record on disk under its lock, up to `other`, a copy read elsewhere such as the pull request's
-// summary comment, when `other` is the newer (newer): its fields, but this machine's runs, both lists of owed reviews,
-// and the later outcome. Returns `current`.
-export function adoptNewer(current, other) {
-  if (!other || other === current || newer(current, other) !== other) return current;
-  const { active, pending, outcome } = current;
-  return Object.assign(current, other, { active, pending: mergePending(pending, other.pending), outcome: laterOutcome(outcome, other.outcome) });
-}
-
-// The rounds of a record on disk at a later revision, with this writer's own: one per head and start, this writer's
-// copy of a round in both, in the order they started. Only a review step opens a round, so another writer's copy
-// holds the rounds it read, and a newer step's are kept.
-function mergeRounds(disk, own) {
-  const key = (round) => `${round?.head}@${round?.at}`;
-  const out = new Map((Array.isArray(disk) ? disk : []).map((round) => [key(round), round]));
-  for (const round of Array.isArray(own) ? own : []) out.set(key(round), round);
-  return [...out.values()].sort((a, b) => String(a.at ?? '').localeCompare(String(b.at ?? '')));
-}
-
-// Applies `change(state)` to the record as it is on disk now, under the record's lock, and writes it back; a record
-// that is not there starts as emptyState(pr, repo). `change` returning false writes nothing. Returns the record. Only a
-// full write, such as the review step's, raises the revision; `revise` raises it here too.
-export function updateLocalState(project, pr, repo, change, { revise = false } = {}) {
-  return withRecordLock(project, pr, () => {
-    const state = readLocalState(project, pr) ?? emptyState(pr, repo);
-    if (change(state) === false) return state;
-    if (revise) {
-      state.revision = (state.revision ?? 0) + 1;
-      state.updatedAt = new Date().toISOString();
-    }
-    replaceRecord(project, state);
-    return state;
-  });
-}
-
-// How long a lock may be held before another writer breaks it, and how long a writer waits for one.
-const LOCK_STALE_MS = 30_000;
-const LOCK_WAIT_MS = 5_000;
-const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-
-// Runs `body` holding the record's lock: a file next to it, created exclusively. A lock older than LOCK_STALE_MS was
-// left by a writer that died, and is broken. Readers, such as the merge guard, never take it: replaceRecord renames.
-function withRecordLock(project, pr, body) {
-  const target = file(project, pr);
-  mkdirSync(path.dirname(target), { recursive: true });
-  const lock = `${target}.lock`;
-  const until = Date.now() + LOCK_WAIT_MS;
-  let fd;
-  for (;;) {
-    try {
-      fd = openSync(lock, 'wx');
-      break;
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-      try {
-        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) unlinkSync(lock);
-      } catch {}
-      if (Date.now() > until) throw new Error(`the review record of #${pr} stays locked by another writer: ${lock}`);
-      pause(10);
-    }
-  }
-  try {
-    return body();
-  } finally {
-    closeSync(fd);
-    try {
-      unlinkSync(lock);
-    } catch {}
-  }
-}
-
-// Writes `state` to a file beside the record, then renames it over the record: a reader sees the old record or the
-// new one, never half of one.
-function replaceRecord(project, state) {
+  state.revision = (state.revision ?? 0) + 1;
+  state.updatedAt = new Date().toISOString();
   const target = file(project, state.pr);
-  const temporary = `${target}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(state, null, 2)}\n`);
-  renameSync(temporary, target);
+  mkdirSync(path.dirname(target), { recursive: true });
+  writeFileSync(target, `${JSON.stringify(state, null, 2)}\n`);
 }
 
-// A review step's run is active from its start to its last write: `active` holds { id, head, at } for each, so a merge
-// waits for every run on its head, not only the one that finished last. A run that died leaves its entry; past
-// RUN_STALE_MS it counts for nothing.
-export const RUN_STALE_MS = 2 * 60 * 60 * 1000;
-export const newRunId = () => `${process.pid}-${randomBytes(4).toString('hex')}`;
-
-export function openRun(project, { pr, repo, head, id }) {
-  updateLocalState(project, pr, repo, (state) => {
-    state.active = [...(state.active ?? []), { id, head, at: new Date().toISOString() }];
-  });
-}
-
-// Closes run `id`. A run that threw first leaves `error` as its outcome (`failure`, { head, reason }): not finished,
-// so a merge stays refused until a step on the head finishes.
-export function closeRun(project, pr, id, failure = null) {
-  updateLocalState(project, pr, null, (state) => {
-    if (!state.active?.some((run) => run.id === id) && !failure) return false;
-    state.active = (state.active ?? []).filter((run) => run.id !== id);
-    if (failure) state.outcome = { status: 'error', head: failure.head, at: new Date().toISOString(), reason: clip(failure.reason) };
-  });
-}
-
-// The runs of `state` still open on `head`, younger than RUN_STALE_MS at `now`.
-export const activeRuns = (state, head, now = Date.now()) =>
-  (Array.isArray(state?.active) ? state.active : []).filter((run) => isObject(run) && sameCommit(run.head, head) && now - Date.parse(run.at ?? '') < RUN_STALE_MS);
+// An id that tells two owed entries apart, even two made in the same millisecond.
+export const entryId = () => `${process.pid}-${randomBytes(4).toString('hex')}`;
 
 // One record marker's record, or null.
 function decode(data, compressed, pr) {

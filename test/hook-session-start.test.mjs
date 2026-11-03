@@ -24,7 +24,7 @@ const WITHOUT_BIN = (process.env.PATH ?? '').split(path.delimiter).filter((dir) 
 const LINE = (command) =>
   'Project knowledge: 2 buckets, 8 docs. Read now: docs/knowledge/engineering/working-agreement.md. ' +
   `For more, run \`${command} route <tag>\` for your tags or \`${command} search <words>\` for a topic.`;
-const NAMES = (ai, human = 'the Human') => `Names: call the human "${human}" and yourself "${ai}"; never "you"/"me".`;
+const NAMES = (ai, human = 'the Human') => `Names: call the human "${human}" and yourself "${ai}", in replies and questions alike; never "I", "me", "my", "you", or "your".`;
 const VOICE = (human = 'the Human') =>
   `Voice: when a request or premise looks wrong, or worse than an alternative, say so in one line with the reason before acting, then follow the call of "${human}". ` +
   `A question to "${human}" says what goes wrong in their terms, asks one decision, puts the recommended option first with one reason, and uses no internal IDs or labels.`;
@@ -71,7 +71,7 @@ test('the names line calls the AI by its host unless config.json or .aidrian.loc
   writeFileSync(path.join(project, '.aidrian/config.json'), JSON.stringify({ version: 1, names: { human: 'the team lead', ai: 'the agent' } }));
   writeFileSync(path.join(project, '.aidrian.local.json'), JSON.stringify({ names: { human: 'the "product" owner' } }));
   const lines = hook({ input: JSON.stringify({ cwd: project }), CLAUDECODE: '1' }).stdout.split('\n');
-  assert.equal(lines[1], 'Names: call the human "the \\"product\\" owner" and yourself "the agent"; never "you"/"me".');
+  assert.equal(lines[1], 'Names: call the human "the \\"product\\" owner" and yourself "the agent", in replies and questions alike; never "I", "me", "my", "you", or "your".');
   assert.equal(lines[2], VOICE('the \\"product\\" owner'));
 });
 

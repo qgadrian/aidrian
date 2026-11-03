@@ -64,7 +64,8 @@ A project overrides any of these in an `always` doc.
   - `loaded_docs`, `deferred_refs` (what to read next, in order), `blockers`, `risks`, and `next_owner`.
   - `artifacts`: bulky output such as long search results, so the fields above stay short.
   - Optional fields such as `findings`, `sign_off`, and `pending_commit`: [references/handoff.md](references/handoff.md) defines each.
-- In replies, docs, handoffs, commits, and pull request bodies, name the human and the AI instead of writing "you", "me", or "I".
+- In replies, questions to the human, docs, handoffs, commits, and pull request bodies, name the human and the AI instead
+  of writing "I", "me", "my", "you", or "your". A question dialog often shows alone, so it must name both sides by itself.
   The start hook gives both names; without it, write "the Human" and your host's name, such as Claude or Codex.
 - An agent named in this plugin's text, such as `explorer`, is this plugin's agent when the host lists it as `aidrian:<name>` in Claude Code and `aidrian-<name>` in Codex; spawn it by that name.
   Any other named agent is a role the project may supply, under its own name.

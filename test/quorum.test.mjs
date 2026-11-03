@@ -1095,6 +1095,8 @@ test('the plan mode file holds the judge\'s reject path, its verdicts, the moder
   assert.match(plan, /A flagged objection the Human has not answered is left out: it shows under Escalated and Proportionality\. For an answered one, the change is the one the answer chose\./u, 'the Accepted item and a flag');
   assert.match(plan, /When a flagged partial accept also has its rejected part escalated, one answer settles both parts\./u, 'one answer for both parts');
   assert.match(plan, /or `pass failed`, with what it returned/u, 'the report names a failed pass');
+  // A flag says the change over-complicates the plan; with no smaller form, the flag's own reason argues for dropping it.
+  assert.match(plan, /when `smaller_change` is empty, the recommended answer is none, dropping the change, with the flag's reason as the deciding reason/u, 'no smaller change: recommend none');
   assert.match(plan, /the strongest alternative plan that meets the same goal/u, 'B1 is the strongest alternative');
   assert.match(plan, /\*\*Merged\*\*/u, 'the report lists merges');
   assert.match(plan, /\*\*Proportionality\*\*/u, 'the report has the Proportionality item');

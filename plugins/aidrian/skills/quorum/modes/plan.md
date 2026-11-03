@@ -63,8 +63,8 @@ A proportionality flag is the exception: on a partial accept, it covers the acce
 An answer goes into `human_answers`, and the objection becomes `accepted` or `rejected`; a valid partial accept stays
 `accepted`, with its rejected part settled by the answer.
 A flagged objection's question carries the accepted change, the architect's reason, and `smaller_change` as the
-recommended answer; when `smaller_change` is empty, the recommended answer is the change as accepted, with the flag's
-reason as the deciding reason. The answer settles it: the change as accepted or the smaller change makes it
+recommended answer; when `smaller_change` is empty, the recommended answer is none, dropping the change, with the
+flag's reason as the deciding reason. The answer settles it: the change as accepted or the smaller change makes it
 `accepted`, none makes it `rejected`. When a flagged partial accept also has its rejected part escalated, one answer settles both parts.
 
 ## Report

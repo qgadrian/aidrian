@@ -973,6 +973,10 @@ test('extra rounds: the judge`s stop and "off" leave round_limit; a red flag goe
   assert.doesNotMatch(ask.question, /round [12]\b/u, 'the question names no round but the one it grants');
   await extend(t, flat.r, ['--human', 'approve']);
   assert.equal((await flat.r.step({ exec: clean })).max_rounds, 3, 'the Human`s approval opens the round');
+  flat.r.write('src/booking/a.js', '3\n');
+  flat.r.commit('the fix the round was granted for');
+  const three = await flat.r.step({ exec: clean });
+  assert.deepEqual([three.round, three.max_rounds, three.dispatch?.length > 0], [3, 3, true], 'the push the round was granted for keeps the grant: the flag is not new');
 
   const off = await toTheCap(t, { extraRounds: 'off' });
   assert.deepEqual([off.capped.status, off.capped.extension], ['round_limit', { status: 'off', mode: 'off' }]);

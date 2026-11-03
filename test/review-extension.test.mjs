@@ -10,7 +10,7 @@ import { DEFAULT_REVIEWER, exitCodeFor, runAwaitReview } from '../plugins/aidria
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { extensionSummary, formatExtensions } from '../plugins/aidrian/lib/report-reviews.mjs';
 import {
-  atCap, BLOAT_MIN_LINES, botRounds, findingTitle, grantedRounds, normalizeTitle, parseExtend, recordHuman, recordVerdict, revalidate, runExtend, signals,
+  atCap, BLOAT_MIN_LINES, botRounds, buildHistory, findingTitle, grantedRounds, normalizeTitle, parseExtend, recordHuman, recordVerdict, revalidate, runExtend, signals,
 } from '../plugins/aidrian/lib/review/extension.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { approved, check, transcriptAnswers } from '../plugins/aidrian/lib/rules/review-extend.mjs';
@@ -659,4 +659,53 @@ test('await-review: a retry after the head moved waits only for what is left of 
   assert.equal(waited.out.status, 'timed_out');
   assert.ok(waited.elapsed <= 10, `the whole command waited ${waited.elapsed} s of its 10`);
   assert.equal(waited.out.waited_sec, waited.elapsed, 'waited_sec counts every wait of the command');
+});
+
+test('buildHistory: a fix that rewords docs adds no code, and bloat is measured against the code first added', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-hist-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
+  const write = (file, text) => {
+    mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+    writeFileSync(path.join(dir, file), text);
+  };
+  const lines = (n, tag) => `${Array.from({ length: n }, (_, i) => `${tag} ${i}`).join('\n')}\n`;
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.email', 't@example.com');
+  git('config', 'user.name', 'Tester');
+  write('README.md', 'base\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'base');
+  const base = git('rev-parse', 'HEAD');
+  git('switch', '-q', '-c', 'feat');
+  write('docs/guide.md', lines(100, 'first'));
+  write('src/a.js', 'export const a = 1;\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'first');
+  const first = git('rev-parse', 'HEAD');
+  write('docs/guide.md', lines(100, 'reworded'));
+  git('commit', '-q', '-am', 'reword');
+  const head = git('rev-parse', 'HEAD');
+  const read = buildHistory({ root: dir, rounds: [{ round: 1, head: first, open: 1, findings: [] }], baseTip: base, head });
+  assert.deepEqual([read.rounds[0].fix.added, read.rounds[0].fix.code_added, read.originalAdded, read.originalCodeAdded], [100, 0, 101, 1]);
+  assert.equal(signals(read).bloating, false, 'a docs rewording is no bloat');
+  const grown = signals({ ...read, rounds: [{ ...read.rounds[0], fix: { added: 45, code_added: 45, removed: 0, files: ['src/a.js'] } }] });
+  assert.deepEqual([grown.bloating, grown.evidence.bloating.limit], [true, BLOAT_MIN_LINES], 'the docs do not widen the allowance for code');
+});
+
+test('atCap: a red-flag stop an older version recorded goes to the judge, not a dead end', () => {
+  const state = emptyState(7, 'o/r');
+  state.extensions = [{ source: 'plan', round: 2, head: 'b', status: 'stopped', by: 'mechanical', reasons: ['bloating: old'], mode: 'ask', max: 2 }];
+  const flagged = () => ({ ...passing(), rounds: [round(1, 'a', [finding('a.js', 1, 'one')]), round(2, 'b', [finding('a.js', 90, 'two')])] });
+  const result = atCap({ state, source: 'plan', round: 2, head: 'b', policy: { mode: 'ask', max: 2 }, history: flagged, pr: 7 });
+  assert.deepEqual([result.status, result.extension.status, result.extension.red_flags.map((reason) => reason.split(':')[0])], ['extension_check', 'judging', ['not converging']]);
+});
+
+test('revalidate: a push that raises no new red flag keeps the Human`s approval over the flags it was given for', () => {
+  const flat = () => ({ ...passing(), rounds: [round(1, 'a', [finding('a.js', 1, 'one')]), round(2, 'b', [finding('a.js', 90, 'two')], { added: 1, removed: 1, files: ['a.js'] })] });
+  const state = emptyState(7, 'o/r');
+  state.extensions = [{ source: 'plan', round: 2, head: 'b', status: 'granted', by: 'human', reasons: ['valid'], red_flags: ['not converging: round 2 left 1 open finding, round 1 left 1'], human: { answer: 'approve' }, mode: 'ask', max: 2 }];
+  const entry = revalidate({ state, source: 'plan', round: 2, head: 'c0ffee1234', history: flat });
+  assert.deepEqual([entry.status, entry.human?.answer], ['granted', 'approve']);
+  assert.match(summaryBody(state, null, 'fix_required'), /granted by the Human[^\n]*\(over red flags: not converging\)/u);
 });

@@ -91,7 +91,7 @@ const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 // `rounds`: [{ round, head, open, findings: [{ title, file, line }] | null, fix: { added, code_added, removed, files } | null }],
 // where `fix` is the change from that round's head to the next round's, or to the current head for the last, and
 // `code_added` the lines of `added` outside prose files. Bloat counts `code_added` when it is there.
-export function signals({ rounds = [], originalFiles = null, originalAdded = null } = {}) {
+export function signals({ rounds = [], originalFiles = null, originalAdded = null, originalCodeAdded = null } = {}) {
   const reasons = [];
   const unknown = [];
   const evidence = {};
@@ -143,13 +143,15 @@ export function signals({ rounds = [], originalFiles = null, originalAdded = nul
 
   const fixes = rounds.map((round) => round.fix).filter(Boolean);
   let bloating = null;
-  if (fixes.length && Number.isInteger(originalAdded)) {
+  // Code growth is measured against the code the pull request first added, when known.
+  const base = Number.isInteger(originalCodeAdded) ? originalCodeAdded : originalAdded;
+  if (fixes.length && Number.isInteger(base)) {
     const all = fixes.reduce((total, fix) => total + (fix.added ?? 0), 0);
     const added = fixes.reduce((total, fix) => total + (fix.code_added ?? fix.added ?? 0), 0);
-    const limit = Math.max(Math.ceil((originalAdded * BLOAT_PERCENT) / 100), BLOAT_MIN_LINES);
+    const limit = Math.max(Math.ceil((base * BLOAT_PERCENT) / 100), BLOAT_MIN_LINES);
     bloating = added > limit;
-    evidence.bloating = { fix_added: added, fix_added_all: all, original_added: originalAdded, limit };
-    if (bloating) reasons.push(`bloating: the fixes since round ${rounds[0].round} added ${added} lines of code, past ${limit} (${BLOAT_PERCENT}% of the ${originalAdded} lines the pull request first added, and at least ${BLOAT_MIN_LINES})`);
+    evidence.bloating = { fix_added: added, fix_added_all: all, original_added: base, limit };
+    if (bloating) reasons.push(`bloating: the fixes since round ${rounds[0].round} added ${added} lines of code, past ${limit} (${BLOAT_PERCENT}% of the ${base} lines of code the pull request first added, and at least ${BLOAT_MIN_LINES})`);
   } else unknown.push('bloating');
 
   if (unknown.length === 4) reasons.push('no signal could be read from the round history, so nothing shows the review converging');
@@ -187,6 +189,7 @@ export function buildHistory({ root, rounds, baseTip, head, review = {} }) {
   const tip = at(baseTip);
   const now = at(head);
   const original = first && tip ? attempt(() => kept(changedFiles(root, mergeBase(root, tip, first), first))) : null;
+  const proseFiles = new Set(original ? classify(original, review).nonBehaviour : []);
   const current = now && tip ? attempt(() => kept(changedFiles(root, mergeBase(root, tip, now), now))) : null;
   // The pull request's own added lines at one head, per file.
   const own = new Map();
@@ -216,6 +219,7 @@ export function buildHistory({ root, rounds, baseTip, head, review = {} }) {
     rounds: out,
     originalFiles: original ? original.map((change) => change.file) : null,
     originalAdded: original ? sum(original) : null,
+    originalCodeAdded: original ? sum(original.filter((change) => !proseFiles.has(change.file))) : null,
     files: current ? current.map((change) => change.file) : null,
   };
 }
@@ -316,7 +320,7 @@ const PENDING = new Set(['judging', 'asking', 'granted']);
 // A pending decision whose head is not `head` any more is re-read on the new head: a push after the judge's verdict
 // can grow the fixes past the bloat limit, and the verdict and any approval were for the head before. A new red flag
 // sends it back to the judge, a grant included, and so does a check waiting for the Human: the judge has not seen
-// the push. A grant without a red flag stands, as one round for the fix it was given for. Returns the entry, or null.
+// the push. A grant with no new red flag stands, as one round for the fix it was given for. Returns the entry, or null.
 export function revalidate({ state, source, round, head, history, log = () => {}, now = () => new Date().toISOString() }) {
   const entry = (state?.extensions ?? []).find((each) => each.source === source && each.round === round && PENDING.has(each.status));
   if (!entry || !head || sameCommit(entry.head, head)) return entry ?? null;
@@ -330,12 +334,16 @@ export function revalidate({ state, source, round, head, history, log = () => {}
     Object.assign(entry, { status, by, reasons, decided_at: now() });
     log(rowOf(entry));
   };
+  // Only a flag the decision was not made over is new: not converging or looping stays raised across the very push
+  // a round was granted for, and the judge and the Human already weighed it.
+  const known = new Set((entry.red_flags ?? []).map(flagName));
+  const fresh = sig.reasons.filter((reason) => !known.has(flagName(reason)));
   entry.red_flags = sig.reasons;
-  if (sig.reasons.length || entry.status === 'asking') {
+  if (fresh.length || entry.status === 'asking') {
     if (entry.judge) entry.stale_judge = entry.judge;
     delete entry.judge;
     delete entry.human;
-    decide('judging', null, sig.reasons.length ? [...sig.reasons, `read again on ${String(head).slice(0, 7)}, pushed after the decision on ${String(before).slice(0, 7)}`] : []);
+    decide('judging', null, fresh.length ? [...fresh, `read again on ${String(head).slice(0, 7)}, pushed after the decision on ${String(before).slice(0, 7)}`] : []);
   }
   return entry;
 }
@@ -364,6 +372,8 @@ export function atCap({ state, source, round, head, policy, history: readHistory
     state.extensions.push(entry);
     if (granted >= policy.max) decide('stopped', 'ceiling', [`${plural(granted, 'extra round')} granted already, and github.maxExtraRounds is ${policy.max}`]);
   }
+  // A stop an older version made on a red flag, with no way on: it goes to the judge as a red flag now does.
+  if (entry?.status === 'stopped' && entry.by === 'mechanical') Object.assign(entry, { status: 'judging', by: null });
   // A grant the policy does not count (the base branch moved from "auto" to "ask") waits for the Human again.
   if (entry.status === 'granted' && policy.mode === 'ask' && entry.human?.answer !== 'approve') entry.status = 'asking';
   // On "auto", a judge's extend needs no Human, unless a red flag stands.

@@ -176,7 +176,9 @@ function extensionLines(state) {
     const reasons = (entry.reasons ?? []).slice(0, 3).map(clip);
     const at = entry.head ? ` on \`${String(entry.head).slice(0, 7)}\`` : '';
     const round = `${entry.source === 'bot' ? 'bot round' : 'round'} ${entry.round}`;
-    lines.push(`- ${round}${at}: ${entry.status}${who ? ` by ${who}` : ''}${reasons.length ? `: ${reasons.join('; ')}` : ''}`);
+    // A decision over red flags names them, so a round granted past one says so on the pull request.
+    const flags = entry.status !== 'judging' && entry.red_flags?.length ? ` (over red flags: ${[...new Set(entry.red_flags.map((reason) => (reason.includes(':') ? reason.slice(0, reason.indexOf(':')) : 'no readable signal')))].join(', ')})` : '';
+    lines.push(`- ${round}${at}: ${entry.status}${who ? ` by ${who}` : ''}${reasons.length ? `: ${reasons.join('; ')}` : ''}${flags}`);
     // The cap stood on a fix no round reviewed: the Human sees it before merging. A plan round on that head since, after
     // a later grant, reviewed it.
     const reviewed = entry.source !== 'bot' && (state.rounds ?? []).some((each) => sameCommit(each.head, entry.unreviewed?.head));

@@ -24,6 +24,10 @@ const GIT_SCHEMA = {
   commits: { types: 'someTexts' },
 };
 
+// The most objections one plan adversary may raise in a ledger that carries `mode`: the ceiling of
+// `quorum.plan.maxObjections`, its default, and the cap lib/quorum.mjs holds a ledger to when no config sets one.
+export const MAX_PLAN_OBJECTIONS = 5;
+
 // The keys of the `quorum` group: the quorum skill's roles, providers, judge, and caps (skills/quorum/).
 // Plan adversary A takes no provider: its briefs read the ledger, and `aidrian quorum codex --mode rebut` answers only
 // B's objections, so A has no Codex path, and a `provider` on it is an unknown key.
@@ -172,8 +176,7 @@ const TYPES = {
   // One agent a dispatch names. "*" and "main" select gates in `agents`, every agent and the main session; neither is one agent.
   agentName: [(value) => isText(value) && value !== ALL && value !== MAIN && !agentNameProblem(value), 'an agent name such as code-reviewer'],
   quorumProvider: [(value) => ['agent', 'codex'].includes(value), '"agent" or "codex"'],
-  // Five is the per-adversary objection count the quorum ledger check allows a plan ledger.
-  objectionCap: [(value) => Number.isInteger(value) && value >= 1 && value <= 5, 'a whole number from 1 to 5'],
+  objectionCap: [(value) => Number.isInteger(value) && value >= 1 && value <= MAX_PLAN_OBJECTIONS, `a whole number from 1 to ${MAX_PLAN_OBJECTIONS}`],
   // The least a plan run needs: two objection dispatches, one ruling, one Codex fallback, and the reserved proportionality pass.
   dispatchCap: [(value) => Number.isInteger(value) && value >= 5, 'a whole number, 5 or more'],
   versionOrNull: [(value) => value === null || (typeof value === 'string' && SEMVER.test(value)), 'a plugin version such as "0.17.0", or null'],
@@ -255,7 +258,7 @@ export const DEFAULTS = deepFreeze({
     plan: {
       a: { agent: 'code-reviewer' },
       b: { provider: 'codex', agent: 'product-manager' },
-      maxObjections: 5,
+      maxObjections: MAX_PLAN_OBJECTIONS,
       maxDispatches: 8,
     },
     decide: {

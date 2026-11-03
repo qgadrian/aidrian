@@ -562,6 +562,18 @@ A bad pattern is left out and the rest of its list still applies, so a bad `allo
 `quorum` sets who the `quorum` skill dispatches, and how far a plan run may go.
 Set only the keys you change; the defaults are the roles and caps the skill names.
 
+Two commands read the group, so the skill text never parses this file:
+
+- `aidrian quorum check` reads `quorum.plan.maxObjections`: on an `open` plan ledger that carries `mode`, it exits 1
+  when one adversary raised more objections than that. A `complete` ledger is held to the ceiling, 5, instead,
+  so a cap lowered after a run finished never voids its ledger or the Human's answers.
+- `aidrian quorum roles plan` and `aidrian quorum roles decide` read the whole group, `maxObjections` included,
+  and print that mode's roles, judge, and caps as one JSON line, which the coordinator follows. The decide caps are `3N + 2 + C` for each position count N
+  from 2 to 4, where C counts the first N positions whose runner is Codex: 9, 12, and 16 with the defaults.
+
+Both stop on an invalid config.json, as every `aidrian` command does: they exit 1 naming each bad key, and never run
+on defaults the project did not choose.
+
 | Key | Default | Meaning and range |
 | --- | --- | --- |
 | `quorum.judge.agent` | `"architect"` | The agent that rules on every objection. The judge always runs as a host agent. |

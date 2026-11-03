@@ -164,10 +164,13 @@ A ledger written by the plan mode of the `quorum` skill carries `mode: plan`, an
 - `proportionality`: the architect's review of the accepted changes as a set, with the ones it flagged, and
   `failed: true`, with nothing flagged, when the pass returned no usable answer.
 
+`runners`, on any plan ledger, records each adversary's final runner, `agent` or `codex`: `codex` while every run went
+to Codex, `agent` once one did not. A ledger written before it has none.
+
 A ledger with no `mode` is plan mode under the rules it was written with: 7 objections each, `improvement` allowed,
 and none of the rules below that need `mode`. `check` never adds the field. Such a ledger is `complete`: `check`
 exits 1 on an `open` plan ledger with no `mode`, since the skill writes it on every ledger it opens.
-Two commands keep a ledger honest:
+Two commands keep a ledger honest, and `roles` tells the skill who runs each role:
 
 - `aidrian quorum codex --plan PLAN --brief BRIEF --out FILE [--mode object|case]` runs Codex read-only on the brief
   and then the plan, for at most 780 seconds, and writes its answer to FILE. `--mode object`, the default, holds the answer
@@ -190,6 +193,12 @@ Two commands keep a ledger honest:
   `done`, `unavailable`, `timed_out`, `quota`, or `failed`, and exits 0 on `done`, 3 on `unavailable`, and 1 otherwise.
   Any other `--mode`, `--mode rebut` or `cross` without `--ledger`, `--ledger` with `object` or `case`, or a missing flag
   prints the usage error and exits 1 without starting Codex.
+- `aidrian quorum roles plan|decide` prints that mode's roles, judge, and caps as one JSON line, from config.json
+  [`quorum`](config.md#quorum), with today's values where it sets none. Each role has `provider`, `agent`, and
+  `fallback`: the agent on `agent`, or the agent that takes over on `codex`. Plan adversary A is always `agent`;
+  plan caps are `maxObjections` and `maxDispatches`. Decide prints the `odd` runner of positions A and C and the
+  `even` one of B and D, `swap`, and `caps`, the dispatch cap for each position count from 2 to 4. It reads nothing
+  else and writes nothing. An invalid config.json, or a mode other than `plan` or `decide`, exits 1.
 - `aidrian quorum check LEDGER --plan PLAN` checks every citation. `doc` and `adr` cite `path#anchor`, and the quote
   must be in that section; `code` cites `path:line`, and the quote must be in the file; `plan` cites `#anchor` in PLAN;
   `absence` cites a path, and the quote must be in no regular file `git ls-files` lists there; a path with no tracked file fails.
@@ -208,7 +217,8 @@ Two commands keep a ledger honest:
   about on stderr; it never reads that file. A ref with a control character is not a relative path, and `doc` and
   `code` read only a regular file.
   It exits 1 on a schema error, on an objection id other than `A1` to `A7` or `B1` to `B7` or one used twice, on
-  `same_model` true with no `same_model_reason` or false with one, on a Human answer for an objection the ledger does
+  `same_model` true with no `same_model_reason` or false with one, on a ledger with `runners` whose `same_model` is
+  not whether `runners.A` and `runners.B` match, on a Human answer for an objection the ledger does
   not hold or a second answer for one, or on a `complete` ledger with an objection still `pending` or ruled on with no
   `ruling`. On an objection the Human did not settle (not `escalated`, not answered), a `complete` ledger also fails
   on a rebuttal with no final ruling, a final ruling other than `accept`, a status its final decision does not give, a
@@ -221,7 +231,10 @@ Two commands keep a ledger honest:
   objection, one of its own adversary, or one that is merged or an opinion, or one whose citations are not all among
   its survivor's (by kind, ref, and quote, whitespace collapsed), and on a `proportionality` with
   `failed: true` that flags any objection; it removes a note with no passing citation and names it.
-  On a ledger that carries `mode`, it also exits 1 on more than 5 objections from one adversary, on an `improvement`
+  On a ledger that carries `mode`, it also exits 1 on more objections from one adversary than config.json
+  `quorum.plan.maxObjections`, 5 by default, while the ledger is `open`, which is the only time it reads config.json,
+  so it also exits 1 on an invalid config.json; on more than 5 once it is `complete`, so a cap lowered after a run
+  finished never voids its ledger; on an `improvement`
   objection, on a complete ledger with an accept ruling and `proportionality` null, and on a flagged objection with no
   accept ruling or one neither escalated nor answered. It names a ruling invalid, first or final, when:
   - an accept cites no `plan` section, or rests on no citation of the entry that passes and that `tested` marks

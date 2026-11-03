@@ -127,7 +127,8 @@ test('schemas: a full ledger and an objections answer pass; a missing field, an 
   strict(FINDINGS_SCHEMA);
   assert.deepEqual(OBJECTIONS_SCHEMA.properties.objections.items.properties.severity.enum, ['blocking', 'important', 'improvement']);
 
-  // The ledger is no Codex answer: every field is required except those a ledger written before `mode` lacks, and only those.
+  // The ledger is no Codex answer: every field is required except those a ledger written before `mode`, or before
+  // `runners`, lacks, and only those.
   const optional = [];
   const walk = (node, at) => {
     if (node.items) walk(node.items, `${at}[]`);
@@ -145,7 +146,7 @@ test('schemas: a full ledger and an objections answer pass; a missing field, an 
     'mode', 'notes', 'objections[].merged_into',
     'objections[].rebuttal.ruling.ground', 'objections[].rebuttal.ruling.inferences', 'objections[].rebuttal.ruling.tested',
     'objections[].ruling.ground', 'objections[].ruling.inferences', 'objections[].ruling.tested', 'proportionality',
-    'proportionality.failed',
+    'proportionality.failed', 'runners',
   ]);
 });
 
@@ -1399,7 +1400,7 @@ test('check: a ledger with no mode keeps the old rules: 7 objections, an improve
 test('check with mode: more than 5 objections by one adversary, or an improvement, exits 1 and is not written; 5 each pass', (t) => {
   const p = project(t);
   for (const [before, message] of [
-    [planLedger(Array.from({ length: 6 }, (_, i) => objection(`A${i + 1}`, [PASSING.code]))), /: A raised 6 objections, more than 5 in a ledger with a mode$/mu],
+    [planLedger(Array.from({ length: 6 }, (_, i) => objection(`A${i + 1}`, [PASSING.code]))), /: A raised 6 objections, more than the 5 quorum\.plan\.maxObjections allows in a ledger with a mode$/mu],
     [planLedger([objection('B1', [PASSING.code], { by: 'B', severity: 'improvement' })]), /: objection B1 is an improvement, which goes to notes in a ledger with a mode$/mu],
   ]) {
     const result = p.check(before);
@@ -2081,4 +2082,194 @@ test('quorum codex --mode case, cross, and rebut on a decide ledger: each held t
   assert.equal(bare.line.reason, 'the answer does not fit the ledger: the answer concedes with no citation, which a decide ledger needs');
   assert.equal((await run('rebut', { rebuttal: { verdict: 'concede', claim: 'it holds', citations: [PASSING.adr] } })).code, 0);
   assert.match((await run('rebut', REBUTTALS)).line.reason, /^the answer does not follow the schema: \$\.rebuttal is missing$/u);
+});
+
+// config.json in `root`, with the folder version and the `quorum` group given.
+const writeQuorum = (root, quorum) => write(root, '.aidrian/config.json', JSON.stringify({ version: 1, quorum }));
+
+// `aidrian quorum roles` as a coordinator runs it, from `cwd`: exit code, stderr, and the one JSON line, parsed.
+function roles(cwd, ...args) {
+  const r = spawnSync(CLI, ['quorum', 'roles', ...args], { cwd, encoding: 'utf8', timeout: 30_000 });
+  assert.equal(r.error, undefined, 'roles finished');
+  const lines = r.stdout.trim().split('\n').filter(Boolean);
+  return { status: r.status, stderr: r.stderr, lines, out: r.status === 0 ? JSON.parse(lines[0]) : null };
+}
+
+test('quorum roles: with no quorum config, each mode prints today\'s roles, judge, and caps as one JSON line', (t) => {
+  const dir = temp(t, 'aidrian-quorum-roles-');
+  const plan = roles(dir, 'plan');
+  assert.equal(plan.status, 0, plan.stderr);
+  assert.equal(plan.lines.length, 1, 'one line');
+  assert.deepEqual(plan.out, {
+    mode: 'plan',
+    roles: {
+      A: { provider: 'agent', agent: 'code-reviewer', fallback: null },
+      B: { provider: 'codex', agent: null, fallback: 'product-manager' },
+    },
+    judge: { agent: 'architect' },
+    caps: { maxObjections: 5, maxDispatches: 8 },
+  });
+  const decide = roles(dir, 'decide');
+  assert.equal(decide.status, 0, decide.stderr);
+  assert.equal(decide.lines.length, 1, 'one line');
+  assert.deepEqual(decide.out, {
+    mode: 'decide',
+    roles: {
+      odd: { positions: ['A', 'C'], provider: 'agent', agent: 'code-reviewer', fallback: null },
+      even: { positions: ['B', 'D'], provider: 'codex', agent: null, fallback: 'code-reviewer' },
+    },
+    swap: true,
+    judge: { agent: 'architect' },
+    caps: { 2: 9, 3: 12, 4: 16 },
+  });
+});
+
+test('quorum roles: a config sets the roles, judge, swap, and caps it prints; A stays a host agent; a bad mode exits 1', (t) => {
+  const dir = temp(t, 'aidrian-quorum-roles-');
+  writeQuorum(dir, {
+    judge: { agent: 'staff-architect' },
+    plan: { a: { agent: 'security-reviewer' }, b: { provider: 'agent' }, maxObjections: 3, maxDispatches: 6 },
+    decide: { odd: { provider: 'codex' }, even: { provider: 'agent', agent: 'product-manager' }, swap: false },
+  });
+  // A folder below the project reads the project's config, as every aidrian command does.
+  mkdirSync(path.join(dir, 'src'));
+  const plan = roles(path.join(dir, 'src'), 'plan');
+  assert.equal(plan.status, 0, plan.stderr);
+  assert.deepEqual(plan.out, {
+    mode: 'plan',
+    roles: {
+      A: { provider: 'agent', agent: 'security-reviewer', fallback: null },
+      B: { provider: 'agent', agent: 'product-manager', fallback: null },
+    },
+    judge: { agent: 'staff-architect' },
+    caps: { maxObjections: 3, maxDispatches: 6 },
+  });
+  const decide = roles(dir, 'decide');
+  assert.equal(decide.status, 0, decide.stderr);
+  // Odd on Codex puts A and C there: three positions hold two Codex runners, so 3 * 3 + 2 + 2 = 13.
+  assert.deepEqual(decide.out, {
+    mode: 'decide',
+    roles: {
+      odd: { positions: ['A', 'C'], provider: 'codex', agent: null, fallback: 'code-reviewer' },
+      even: { positions: ['B', 'D'], provider: 'agent', agent: 'product-manager', fallback: null },
+    },
+    swap: false,
+    judge: { agent: 'staff-architect' },
+    caps: { 2: 9, 3: 13, 4: 16 },
+  });
+  writeQuorum(dir, { decide: { odd: { provider: 'agent' }, even: { provider: 'agent' } } });
+  assert.deepEqual(roles(dir, 'decide').out.caps, { 2: 8, 3: 11, 4: 14 }, 'no Codex runner, no fallback');
+  for (const args of [['debate'], [], ['plan', 'decide'], ['PLAN']]) {
+    const bad = roles(dir, ...args);
+    assert.equal(bad.status, 1, args.join(' '));
+    assert.deepEqual(bad.lines, [], 'no JSON line');
+    assert.match(bad.stderr, /^aidrian quorum: roles takes one mode, plan or decide/u);
+  }
+});
+
+test('quorum roles: an invalid quorum config exits 1 naming each key, and prints no roles', (t) => {
+  const dir = temp(t, 'aidrian-quorum-roles-');
+  for (const [quorum, key] of [
+    [{ plan: { b: { provider: 'Codex' } } }, /"quorum\.plan\.b\.provider" must be "agent" or "codex"/u],
+    [{ plan: { maxDispatches: 4 } }, /"quorum\.plan\.maxDispatches" must be a whole number, 5 or more/u],
+    [{ plan: { a: { provider: 'codex' } } }, /unknown key "quorum\.plan\.a\.provider"/u],
+  ]) {
+    writeQuorum(dir, quorum);
+    for (const mode of ['plan', 'decide']) {
+      const result = roles(dir, mode);
+      assert.equal(result.status, 1, `${mode}: ${JSON.stringify(quorum)}`);
+      assert.match(result.stderr, key);
+      assert.deepEqual(result.lines, [], 'no defaults printed');
+    }
+  }
+});
+
+test('check: a plan ledger with runners holds same_model to whether A and B share a runner; one without keeps the old rule', (t) => {
+  const p = project(t);
+  const base = (extra) => ({ ...ledger([objection('A1', [PASSING.code])]), ...extra });
+  // B fell back to an agent: both ran as agents, so the models match and the reason says why.
+  const fellBack = base({ runners: { A: 'agent', B: 'agent' }, same_model: true, same_model_reason: 'failed: codex exited 1' });
+  for (const passes of [fellBack, base({ runners: { A: 'agent', B: 'codex' }, same_model: false, same_model_reason: null })]) {
+    const result = p.check(passes);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.ledger.runners, passes.runners, 'runners kept');
+  }
+  for (const [before, message] of [
+    [{ ...fellBack, same_model: false, same_model_reason: null }, /: same_model is false, but the runners match: A agent, B agent$/mu],
+    [base({ runners: { A: 'agent', B: 'codex' }, same_model: true, same_model_reason: 'Codex host' }), /: same_model is true, but the runners differ: A agent, B codex$/mu],
+    [{ ...fellBack, same_model_reason: ' ' }, /: same_model is true, so same_model_reason must say why A and B share a runner$/mu],
+    [{ ...fellBack, runners: { A: 'agent', B: 'claude' } }, /: \$\.runners\.B must be one of agent, codex$/mu],
+    // Plan adversary A has no Codex path, so a ledger never records it there.
+    [{ ...fellBack, runners: { A: 'codex', B: 'codex' } }, /: \$\.runners\.A must be one of agent$/mu],
+    [{ ...fellBack, runners: { A: 'agent' } }, /: \$\.runners\.B is missing$/mu],
+  ]) {
+    const result = p.check(before);
+    assert.equal(result.status, 1, message.source);
+    assert.match(result.stderr, message);
+    assert.deepEqual(result.ledger, before, 'not written back');
+  }
+  // Without runners, same_model true needs only a reason, as before runners existed: the ledger cannot show the runs.
+  const old = p.check(base({ same_model: true, same_model_reason: 'unavailable: the codex CLI is not installed' }));
+  assert.equal(old.status, 0, old.stderr);
+  assert.equal(Object.hasOwn(old.ledger, 'runners'), false, 'check adds no runners');
+});
+
+test('check with mode: an open ledger\'s cap per adversary is config.json quorum.plan.maxObjections; a complete one, or one with no mode, never reads it', (t) => {
+  const p = project(t);
+  writeQuorum(p.root, { plan: { maxObjections: 3 } });
+  const four = planLedger([1, 2, 3, 4].map((n) => objection(`A${n}`, [PASSING.code])));
+  const refused = p.check(four);
+  assert.equal(refused.status, 1, refused.stdout);
+  assert.match(refused.stderr, /: A raised 4 objections, more than the 3 quorum\.plan\.maxObjections allows in a ledger with a mode$/mu);
+  assert.deepEqual(refused.ledger, four, 'not written back');
+  const three = planLedger([1, 2, 3].flatMap((n) => [objection(`A${n}`, [PASSING.code]), objection(`B${n}`, [PASSING.code], { by: 'B' })]));
+  const result = p.check(three);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.lines, ['checked: mode plan, 6 objections, 0 opinion, 0 problems']);
+  // A ledger with no mode keeps its old cap of 7, whatever the config says, and so does a broken config.
+  const old = legacy([1, 2, 3, 4].map((n) => objection(`A${n}`, [PASSING.code], { status: 'accepted', ruling: { decision: 'accept', change_or_reason: 'r', citations: [PASSING.code] } })));
+  for (const quorum of [{ plan: { maxObjections: 3 } }, { plan: { maxObjections: 9 } }]) {
+    writeQuorum(p.root, quorum);
+    const kept = p.check(old);
+    assert.equal(kept.status, 0, kept.stderr);
+    assert.deepEqual(kept.lines, ['checked: mode plan, 4 objections, 0 opinion, 0 problems']);
+  }
+  // With mode, open, a broken config stops the check, naming the key, before it writes anything.
+  const broken = p.check(three);
+  assert.equal(broken.status, 1, broken.stdout);
+  assert.match(broken.stderr, /"quorum\.plan\.maxObjections" must be a whole number from 1 to 5/u);
+  assert.deepEqual(broken.ledger, three, 'not written back');
+  // A complete ledger keeps the ceiling of 5: a cap lowered after the run finished never voids it or the Human's answers.
+  const finished = planLedger([1, 2, 3, 4].map((n) => objection(`A${n}`, [PASSING.code], { status: 'rejected', ruling: rejects(), rebuttal: concede([PASSING.plan]) })), { status: 'complete' });
+  for (const quorum of [{ plan: { maxObjections: 3 } }, { plan: { maxObjections: 9 } }]) {
+    writeQuorum(p.root, quorum);
+    const done = p.check(finished);
+    assert.equal(done.status, 0, done.stderr);
+    assert.deepEqual(done.lines, ['checked: mode plan, 4 objections, 0 opinion, 0 problems']);
+  }
+  writeQuorum(p.root, { plan: { maxObjections: 3 } });
+  const reopened = p.check({ ...finished, status: 'open' });
+  assert.equal(reopened.status, 1, 'the same ledger open is held to the configured cap');
+  assert.match(reopened.stderr, /: A raised 4 objections, more than the 3 quorum\.plan\.maxObjections allows in a ledger with a mode$/mu);
+  const six = planLedger(Array.from({ length: 6 }, (_, i) => objection(`A${i + 1}`, [PASSING.code], { status: 'rejected', ruling: rejects(), rebuttal: concede([PASSING.plan]) })), { status: 'complete' });
+  assert.match(p.check(six).stderr, /: A raised 6 objections, more than the 5 quorum\.plan\.maxObjections allows in a ledger with a mode$/mu, 'complete: the ceiling holds');
+});
+
+test('check on a decide ledger never reads config.json: a broken quorum config leaves it passing', (t) => {
+  const p = decideProject(t);
+  writeQuorum(p.root, { plan: { maxObjections: 9 } });
+  for (const value of [opened(), decideLedger()]) {
+    const result = p.check(value);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.lines.at(-1), /^checked: mode decide, /u);
+  }
+});
+
+test('quorum docs name the readers of the quorum config: check for maxObjections, roles for the rest', () => {
+  const ledgerText = skillTexts()['references/ledger.md'].replace(/\s+/gu, ' ');
+  assert.match(ledgerText, /- `objections\[\]\.id`:[^-]*`quorum\.plan\.maxObjections`/u, 'ledger.md: the id bullet names the configured cap');
+  const config = readFileSync(path.resolve(import.meta.dirname, '../docs/config.md'), 'utf8').split('\n## Quorum\n')[1].split('\n## ')[0].replace(/\s+/gu, ' ');
+  assert.match(config, /`aidrian quorum check` reads `quorum\.plan\.maxObjections`/u);
+  assert.match(config, /`aidrian quorum roles plan` and `aidrian quorum roles decide` read the whole group/u);
+  assert.match(ledgerText, /- `runners\.A`: always `agent`/u, 'ledger.md: A has no Codex path');
 });

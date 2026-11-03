@@ -39,15 +39,25 @@ Such an old ledger is `complete`: `quorum check` exits 1 on an `open` one with `
 - `status`: `open` while the rounds run, `complete` once the final rulings and the Human's answers are recorded.
 - `plan`: the plan's absolute path.
 - `plan_hash`: `git hash-object` of the plan, the same hash as in the file name.
-- `same_model`: `true` when adversary B ran as an agent on any of its runs; `false` when Codex ran every one.
-- `same_model_reason`: why B ran as an agent, or `null` when `same_model` is `false`.
-  It is the `status: reason` line `aidrian quorum codex` printed, or `Codex host`.
+- `same_model`: with `runners`, `true` exactly when A and B share a runner, and `quorum check` exits 1 when it does
+  not match them. Without `runners`, as on a ledger written before it, `true` when adversary B ran as an agent on any
+  of its runs, and `false` when Codex ran every one.
+- `same_model_reason`: why A and B share a runner with `runners`, or why B ran as an agent without it;
+  `null` when `same_model` is `false`.
+  After a fallback, it is the `status: reason` line `aidrian quorum codex` printed, or `Codex host`.
   When the command printed no line (a usage error, exit 127, a shell timeout), it is the exit code and the last stderr line.
+  When config.json sets `quorum.plan.b.provider` to `agent`, it says so.
+- `runners`: optional. Each adversary's final runner, as a decide ledger's `positions[].runner` records it.
+  Absent on a ledger written before it; then `quorum check` holds `same_model` to the rule without it.
+  - `runners.A`: always `agent`: plan adversary A runs as a host agent.
+  - `runners.B`: `codex` while every run of B went to Codex, `agent` once one did not, since a fallback sticks.
 - `trigger`: what started the run: the plan line or gate a calling skill names, as [Under plan-review](#under-plan-review)
   lists, or `the Human asked`.
 - `objections`: every objection both adversaries raised.
   - `objections[].id`: `A1` to `A7` and `B1` to `B7`, in each adversary's own order, each once. `quorum check` refuses any other, or a repeated one.
-    With `mode`, it also refuses more than 5 objections from one adversary.
+    With `mode`, it also refuses more objections from one adversary than config.json `quorum.plan.maxObjections`
+    on an `open` ledger, 5 by default and at most, and more than 5 on a `complete` one: a cap lowered after a run
+    finished never voids its ledger or the Human's answers.
   - `objections[].by`: `A` or `B`.
   - `objections[].severity`: `blocking`, `important`, or `improvement`. With a mode, only `blocking` or `important`:
     an improvement goes to the notes.

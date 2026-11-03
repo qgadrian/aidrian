@@ -215,7 +215,8 @@ and the proportionality pass to `{flagged: [{objection_id, reason, smaller_chang
 - A citation that is not `{kind, ref, quote}` with a known kind is dropped; an objection left with none becomes an
   opinion at `quorum check`.
 - Past 7 entries, keep the first 7. With `mode`, each `improvement` entry becomes a note with its `by`, and of each
-  adversary's entries the first 5 objections and the first 5 notes are kept.
+  adversary's entries the first `maxObjections` objections, as `aidrian quorum roles plan` prints it, and the first
+  5 notes are kept.
 - A flagged entry that names no objection with an `accept` ruling is dropped.
 - Never edit a claim, a change, or a quote. The report names every entry and citation dropped.
 

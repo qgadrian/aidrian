@@ -2333,3 +2333,12 @@ test('quorum docs name the readers of the quorum config: check for maxObjections
   assert.match(config, /`aidrian quorum roles plan` and `aidrian quorum roles decide` read the whole group/u);
   assert.match(ledgerText, /- `runners\.A`: always `agent`/u, 'ledger.md: A has no Codex path');
 });
+
+test('the objection cap is never hard-coded where the coordinator keeps objections', () => {
+  for (const file of ['modes/plan.md', 'references/ledger.md']) {
+    const text = readFileSync(path.join(SKILL, file), 'utf8').replace(/\s+/gu, ' ');
+    assert.doesNotMatch(text, /first \d+ objections/u, `${file} keeps a fixed number of objections`);
+  }
+  const ledger = readFileSync(path.join(SKILL, 'references/ledger.md'), 'utf8').replace(/\s+/gu, ' ');
+  assert.match(ledger, /the first `maxObjections` objections, as `aidrian quorum roles plan` prints it/u);
+});

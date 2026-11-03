@@ -40,10 +40,16 @@ const BINARY = NOT_TEXT;
 const SKILL_CUT_BYTES = 8000;
 const SKILL_WARN_BYTES = 7500;
 // A line that asks for `git commit --amend`, which the git-amend rule (rules/git-amend.mjs) refuses, so a skill or brief
-// that asks for one wastes the dispatch it starts. A line that forbids the amend, or names what to do instead, passes.
-const AMEND_ASK = /--amend\b|\bamend(?:ing)?\b[^.]*\b(?:commit|HEAD|tip)\b|\b(?:commit|HEAD)\b[^.]*\bamend(?:ing)?\b/iu;
-// A negation word, not part of a flag such as `--no-edit`.
-const AMEND_NOT = /(?<![-\w])(?:never|not|no|don't|instead|rather than|without|refuses?|denie[sd]|deny|blocks?|blocked|guard)\b/iu;
+// that asks for one wastes the dispatch it starts. The line names an amend of a commit (AMEND_LINE), and one of its
+// mentions (AMEND) is not negated: a negation counts only in the same clause, just before the mention, as in "never
+// `git commit --amend`" or "a new commit instead of amending", so "if there are no conflicts, run `git commit --amend`"
+// still asks. The rule's own name, such as "the amend guard" or `git-amend`, is no mention.
+const AMEND_LINE = /--amend\b|\bamend(?:ing|s)?\b[^.]*\b(?:commit|HEAD|tip)\b|\b(?:commit|HEAD)\b[^.]*\bamend(?:ing|s)?\b/iu;
+const AMEND = /--amend\b|(?<![-\w])amend(?:ing|s)?\b(?!\s+(?:guard|rule|hook)\b)/giu;
+// A negation word, not part of a flag such as `--no-edit`, ending the clause before a mention.
+const AMEND_NOT = /(?<![-\w])(?:never|not|no|don't|instead of|rather than|without|refuses?|denies|blocks?|avoid)\b/iu;
+const CLAUSE_END = /[.;:,!?]/gu;
+const NEAR = 40;
 // Room for one staged file read through git: Node's default 1 MiB would leave a larger file unread.
 const STAGED_MAX_BYTES = 64 * 1024 * 1024;
 
@@ -181,9 +187,16 @@ export function lintTerms(project, config, staged = false, only = null) {
   return { problems, warnings, summary: `no banned terms in ${files} ${staged ? 'staged' : 'tracked'} files (${rules.length} rules)` };
 }
 
+// Whether a negation ends the clause just before the mention at `at` in `line`.
+function negated(line, at) {
+  const before = line.slice(Math.max(0, at - NEAR), at);
+  const clause = before.slice(Math.max(0, ...[...before.matchAll(CLAUSE_END)].map((end) => end.index + 1)));
+  return AMEND_NOT.test(clause);
+}
+
 // Each line of `text` that asks for an amend, as a problem naming `file` and the line.
 export function amendAsks(file, text) {
-  return String(text).split('\n').flatMap((line, index) => (AMEND_ASK.test(line) && !AMEND_NOT.test(line)
+  return String(text).split('\n').flatMap((line, index) => (AMEND_LINE.test(line) && [...line.matchAll(AMEND)].some((mention) => !negated(line, mention.index))
     ? [`${file}:${index + 1}: asks for \`git commit --amend\`, which the git-amend hook refuses; ask for a new commit on the branch instead, which a squash merge folds in`]
     : []));
 }

@@ -59,9 +59,13 @@ test('no skill, reference, brief template, agent source, or host add-on asks for
     'Never `git commit --amend`: make a new commit, which the squash merge folds in.',
     'Make a new commit instead of amending the last one.',
     'A comment that amends a criterion goes in the report.',
+    'If there are no conflicts, run git commit --amend --no-edit.',
+    'Amend the commit instead of creating a follow-up commit.',
+    'Do not push yet; run git commit --amend first.',
+    'The amend guard refuses it, and the git-amend rule names the new commit.',
   ].join('\n'));
   const problems = lintSkills([dir], LIMITS).problems.map((problem) => problem.replace(`${dir}/`, ''));
-  assert.deepEqual(problems.map((problem) => problem.split(': ')[0]), ['fix/references/brief.md:2', 'fix/references/brief.md:3'], 'the two asks, and nothing that forbids one');
+  assert.deepEqual(problems.map((problem) => problem.split(': ')[0]), ['fix/references/brief.md:2', 'fix/references/brief.md:3', 'fix/references/brief.md:7', 'fix/references/brief.md:8', 'fix/references/brief.md:9'], 'every ask, and nothing that forbids one: a negation counts only in the clause before the amend');
   assert.match(problems[0], /ask for a new commit on the branch instead/u);
   const agents = tempDir(t);
   writeFileSync(path.join(agents, 'builder.md'), '---\nname: builder\ndescription: Builds.\n---\n\nAfter review, amend your commit and force-push.\n');

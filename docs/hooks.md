@@ -4,6 +4,8 @@ The plugin's hooks are in [`plugins/aidrian/hooks/hooks.json`](../plugins/aidria
 How each host runs them: [Claude Code](providers/claude-code.md#hooks), [Codex](providers/codex.md#hooks).
 
 Every hook lets the action run when it cannot read its input, so a hook never breaks a session.
+The one exception is the [merge guard](#merge-guard): a merge whose pull request or head it cannot read is refused,
+as the review gate refuses a request whose pull request it cannot read, and the reason says how to name both.
 A git call a hook makes is stopped after 2 seconds and counts as git not answering; the hook's later git calls then do not wait.
 A blocking hook exits 2 and tells the agent why on stderr.
 The Bash rules, the main-checkout rule, the terms rule, the GitHub MCP hook, the agent gates, the config guard, and the question names check also record each block:
@@ -19,6 +21,7 @@ see [Recorded blocks](#recorded-blocks).
 | Before `EnterWorktree` in a subagent | A block: the tool would move the whole session into the worktree | Claude Code | yes |
 | Before `AskUserQuestion` | A block when a question or option says "I", "me", "my", "you", or "your" (or a form of them, such as "I'm" or "yourself") outside code and quotes: [Names](config.md#names) | Claude Code | yes |
 | Before a GitHub MCP comment | The [review gate](config.md#review-gate), when the project turns it on, and the review-round rule | both | yes |
+| Before a GitHub MCP merge | The [merge guard](#merge-guard) | both | yes |
 | Before an Agent tool call | The project's [model and effort](config.md#models) for that agent | Claude Code | no |
 | After a Markdown write | The [line-length check](#markdown-line-length) | Claude Code | feedback |
 | Before compaction | A checklist of what the summary must keep | both | no |
@@ -103,6 +106,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Review rounds, when a review bot is set | Setting `AIDRIAN_ALLOW_EXTRA_ROUNDS`, and asking the bot for a review outside `aidrian pr`, which counts rounds first ([config.md](config.md#review-gate)) | none |
 | Review sign-off | `aidrian pr signoff`, which records the Human's sign-off of a flow under their name ([review.md](review.md#sign-off-by-the-human)) | none: the Human runs it in their own shell |
 | Extra round approval | `aidrian pr extend <PR> --human approve` without the Human's answer in the session ([review.md](review.md#extra-rounds)) | none: the Human answers, or runs it in their own shell |
+| Merge guard | Merging a pull request while a review it owes is open, or the review of its head has not finished ([Merge guard](#merge-guard)) | none: the Human answers "Merge anyway", or merges in their own shell |
 | Main checkout, when turned on | A shell write to a tracked file in the main checkout; a git call there that makes a commit or moves the branch; after a `cd` it cannot trust, a relative write or a git call that may change the main checkout; and a relative write that lands there only if a `cd` inside it fails ([After a cd](#after-a-cd)) | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
 
 What each rule matches:
@@ -162,6 +166,8 @@ What each rule matches:
   option starts with "Approve". `--human deny` and `--verdict` run. With no check waiting for the Human in this
   machine's review record, as when the record came from another machine, the approval is refused.
   An answer the rule cannot read, such as `--human "$X"`, counts as approve; a pull request it cannot read is refused.
+- Merge guard: `gh pr merge` but `--disable-auto`, `--auto` included, and a `gh api repos/<owner>/<name>/pulls/<n>/merge`
+  sent as a PUT or a POST ([Merge guard](#merge-guard)).
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
   `touch`, `mkdir`, and `rsync` (sources too under `--remove-source-files`); a branch switch or `git add -A` there;
   and there `git commit`, `commit-tree`, `cherry-pick`, `revert`, `rebase`, `am` (all but `--abort` and `--quit`),
@@ -196,9 +202,47 @@ Neither record waits on a lock, so a block stays well inside the host's 5-second
   an agent that keeps trying was not shown the allowed way. The count does not depend on telemetry.
 
 The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `process-kill` (both the kill and the listing rule),
-`grep-exit-chain`, `pr-body`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`, `review-extend`, `main-checkout`, `terms`, `agent-gates`, `config-guard`, and `ask-names`.
+`grep-exit-chain`, `pr-body`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`, `review-extend`, `merge-review` (the Bash rule and the MCP hook), `main-checkout`, `terms`, `agent-gates`, `config-guard`, and `ask-names`.
 The hooks load the recorder only when they block, so a call they let run costs no more than before.
 When the recorder fails, the call is still blocked.
+
+## Merge guard
+
+A session must not merge a pull request while a review of its head is still open, or while a review the Human asked for
+was never sent. The rule, `plugins/aidrian/lib/rules/github/merge-review.mjs`, reads `gh pr merge`, a `gh api` PUT or POST
+to `repos/<owner>/<name>/pulls/<n>/merge`, and the MCP tool `mcp__github__merge_pull_request`. It is on in every project,
+reads only this machine's [review record](review.md#the-record), and decides in this order:
+
+1. An owed review, one `aidrian pr request` recorded and no answer has marked since, refuses the merge, whatever the
+   head or the outcome: a bot review sent is owed until the bot answers. Its reason says how to send it or wait for
+   it, and that a later instruction does not cancel it.
+2. No record from the review step, no outcome and no round, lets it run: the guard holds a review that is open or
+   asked for, not that one happens. A review run outside `aidrian pr review` leaves no record and is not guarded.
+3. Otherwise the head needs an `outcome` of `received` or `none_needed` on that very head. An outcome on an earlier
+   head, or any other status, `running` and `error` included, refuses it.
+
+It never reads pull request comments. Its one network call is `gh pr view --json number,headRefOid`, made only when the
+command names no head or no pull request and a record may apply, and stopped after 3 seconds. A merge whose head it then
+cannot read is refused with a reason that says to pass `gh pr merge <PR> --match-head-commit <sha>`; so is one whose
+pull request number it cannot read, such as `gh pr merge "$PR"`, or a `gh api` merge path whose number or repository
+part is a variable; a method it cannot read, `-X "$M"`, counts as a merge.
+A merge in another repository runs when the command names its pull request number: one whose target, as `-R`, a URL,
+a `gh api` path, or the MCP owner and repo, names neither origin, the repository the review record was written for,
+nor that of a review it still owes, such as an upstream's from a fork checkout.
+
+The Human waives it. The reason prints a question naming `#<PR>` and the head's first 7 characters; the merge runs when
+the session transcript holds the Human's AskUserQuestion answer to a question naming both, whose chosen option starts
+with "Merge anyway", given at or after the head's outcome and every owed review. Without a transcript in that shape
+(Codex), the Human merges in their own shell.
+
+Limits:
+
+- A record written on another machine is not read here.
+- Two sessions writing the same record at once can lose an update; the last write wins.
+- Two concurrent review steps on one pull request share one open mark: the first to finish clears the other's.
+- In a fork checkout with gh offline, `aidrian pr request`, `attest`, and `signoff` fall back to origin, and a merge
+  that names the upstream is then not guarded: pass `--repo` when gh cannot answer.
+- A record written before this release has rounds but no outcome: a merge waits until `aidrian pr review` runs again.
 
 ## Main checkout
 

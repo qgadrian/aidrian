@@ -24,7 +24,7 @@
       "tags": ["docs"]
     },
     "hooks.md": {
-      "summary": "Hooks, Bash rules: pr-body, main-checkout start lines, commit guard (aidrian pre-commit), commit messages, review gate and rounds, kill, amend, terms, gates.",
+      "summary": "Hooks, Bash rules: pr-body, main-checkout start lines, commit guard (pre-commit), commit messages, review gate, rounds, merge guard, kill, amend, terms, gates.",
       "tags": []
     },
     "project-folder.md": {
@@ -36,7 +36,7 @@
       "tags": []
     },
     "review.md": {
-      "summary": "aidrian pr review: review plan, splits, critical flows and invariants, visual review, reviewers, review rounds and their limit, sign-off.",
+      "summary": "aidrian pr review: review plan, splits, critical flows and invariants, visual review, reviewers, rounds and their limit, sign-off, record, owed reviews.",
       "tags": []
     },
     "knowledge.md": {

@@ -38,7 +38,8 @@ In a group such as `github`, set only the keys you change; the others keep their
     "ignoreCancelledChecks": [],
     "conditionalChecks": [],
     "titleIssuePrefix": false,
-    "markReady": "ask",
+    "markReady": "auto",
+    "reviewLoop": "auto",
     "pullRequest": {
       "title": null,
       "issueKey": null,
@@ -114,7 +115,8 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. |
 | `github.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
 | `github.conditionalChecks` | Parts of check names whose `SKIPPED` or `NEUTRAL` result is routine, such as a job a path filter turns off. |
-| `github.markReady` | Who marks a draft pull request ready. `"ask"`, the default: its author, or the review loop when the Human asks in the session. `"auto"`: the `pr-review-loop` skill, or `autopilot` and the `orchestrator` when they run it, mark it ready once review signs off and `aidrian pr checks` says ready. Either way, nothing is pushed after it is marked ready, and nothing merges it. |
+| `github.markReady` | Who marks a draft pull request ready. `"auto"`, the default: the `pr-review-loop` skill, or `autopilot` and the `orchestrator` when they run it, mark it ready once a review of the current head signs off with no blocked row and `aidrian pr checks` says ready. `"ask"`: its author, or the review loop when the Human asks in the session. Either way, nothing is pushed after it is marked ready, and nothing merges it. The default was `"ask"` before; [Changed defaults](#changed-defaults) has the opt-out. |
+| `github.reviewLoop` | What follows the `pr-write` skill once it opens or updates a pull request. `"auto"`, the default: once `pr-write`, and any skill that ran it, has ended, the session starts the `pr-review-loop` skill on it right away, without asking. `"ask"`: the session offers the loop and runs it when the Human asks. Run inside a skill or agent that runs its own review loop, such as `autopilot` or the `orchestrator`, `pr-write` leaves the loop to it. |
 | `github.titleIssuePrefix` | `true` writes pull request titles as `[<issue key>] type(scope): subject`, or `[NOISSUE] type: subject`; `false`, the default, writes a plain Conventional Commits title. |
 | `github.pullRequest` | The project's [pull request contract](#pull-request-contract), beyond the required sections; off by default but for `sharedTempBodyFile`. |
 | `github.reviewGate.enabled` | `true` asks the review bot only once a review of the diff is on record: [Review gate](#review-gate). |
@@ -152,6 +154,13 @@ A path in `state.dir` or `git.worktrees.dir` may start with `~`, the home folder
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
 
 Once `github.conditionalChecks` has an entry, `aidrian pr checks` fails on any other skip; `[]` lets every skip pass, named in the output.
+
+### Changed defaults
+
+A changed default raises no `aidrian check` line: a project that never set the key gets the new value silently.
+
+- `github.markReady` became `"auto"`, from `"ask"`. To keep the author marking drafts ready, set `"github": { "markReady": "ask" }`.
+- `github.reviewLoop` is new, `"auto"`. To have the review loop offered instead of started, set `"github": { "reviewLoop": "ask" }`.
 
 ### No review bot
 

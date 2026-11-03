@@ -82,11 +82,29 @@ test('github.reviewer: null or "none" turns the review bot off, as null; an empt
   ]);
 });
 
-test('github.markReady: "ask" by default, "auto" lets the review loop mark a green draft ready', (t) => {
-  assert.equal(DEFAULTS.github.markReady, 'ask');
-  const { config, errors } = loadConfig(project(t, { version: 1, github: { markReady: 'auto' } }));
-  assert.deepEqual([errors, config.github.markReady], [[], 'auto']);
+test('github.markReady: "auto" by default, so the review loop marks a signed-off green draft ready; "ask" opts out', (t) => {
+  assert.equal(DEFAULTS.github.markReady, 'auto');
+  const { config, errors } = loadConfig(project(t, { version: 1, github: { markReady: 'ask' } }));
+  assert.deepEqual([errors, config.github.markReady], [[], 'ask']);
   assert.match(loadConfig(project(t, { version: 1, github: { markReady: true } })).errors[0], /"github\.markReady" must be "ask" or "auto"$/);
+});
+
+test('github.reviewLoop: "auto" by default, so the review loop starts after pr-write; "ask" offers it; any other value is an error', (t) => {
+  assert.equal(DEFAULTS.github.reviewLoop, 'auto');
+  const { config, errors } = loadConfig(project(t, { version: 1, github: { reviewLoop: 'ask' } }));
+  assert.deepEqual([errors, config.github.reviewLoop, config.github.markReady], [[], 'ask', 'auto']);
+  for (const reviewLoop of ['off', true, null]) {
+    const loaded = loadConfig(project(t, { version: 1, github: { reviewLoop } }));
+    assert.deepEqual(loaded.errors, ['.aidrian/config.json: "github.reviewLoop" must be "ask" or "auto"'], String(reviewLoop));
+    assert.equal(loaded.config.github.reviewLoop, 'auto', 'a bad value keeps the default');
+  }
+});
+
+test('docs/config.md shows the github defaults as DEFAULTS holds them', () => {
+  // A changed default raises no `aidrian check` line, so the doc is where a project reads it.
+  const doc = readFileSync(path.join(ROOT, 'docs/config.md'), 'utf8');
+  const example = JSON.parse(doc.match(/## Keys[\s\S]*?```json\n([\s\S]*?)```/)[1]);
+  assert.deepEqual(example.github, DEFAULTS.github);
 });
 
 test('git.mainCheckout has no commits key: the guard alone turns the commit guard on, and a leftover commits is unknown', (t) => {

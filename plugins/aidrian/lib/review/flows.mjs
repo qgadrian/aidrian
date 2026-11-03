@@ -11,10 +11,18 @@ export const UNSPECIFIED = Object.freeze({
   text: 'The change keeps this flow working as before: no entry point, user action, or guarantee of the flow is removed or weakened.',
 });
 
-// A heading's anchor as GitHub makes it: punctuation is dropped, not turned into a hyphen, so `config.json` and
-// `plugin's` stay one word. Unlike GitHub, `_` is dropped and runs of spaces and hyphens collapse to one hyphen, which
-// both sides of a comparison share.
+// The key two anchors are compared by: GitHub's anchor with `_` dropped and runs of spaces and hyphens collapsed, so
+// an anchor written by hand, copied from GitHub, or made by `anchor` finds its heading. Never shown as a link.
 export const slug = (text) => text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, '').replace(/[\s-]+/gu, '-').replace(/^-|-$/gu, '');
+
+// A heading's anchor exactly as GitHub makes it, for a link people follow: the rendered text, lowercased, with
+// punctuation dropped, `_` inside a word kept, and each space a hyphen. A repeated heading's `-1` suffix is not added.
+export const anchor = (text) => text.trim().toLowerCase()
+  .replace(/!?\[([^\]]*)\]\([^)]*\)/gu, '$1')
+  .replace(/`/gu, '')
+  .replace(/(^|[^\p{L}\p{N}])[*_]+|[*_]+(?=[^\p{L}\p{N}]|$)/gu, '$1')
+  .replace(/[^\p{L}\p{N}\s_-]/gu, '')
+  .replace(/\s/gu, '-');
 
 // The invariants of a flow. A list is used as written. A doc's invariants are its `##` and `###` headings, each with
 // the paragraph under it; `read(path)` returns the doc's text or null. Returns { invariants, unspecified, problem }.
@@ -32,7 +40,7 @@ export function invariantsOf(flow, read) {
     if (fenced[i]) continue;
     const heading = /^#{2,3}\s+(.+?)\s*$/u.exec(line);
     if (heading) {
-      current = { id: slug(heading[1]), text: heading[1], cite: `${flow.invariants}#${slug(heading[1])}` };
+      current = { id: slug(heading[1]), text: heading[1], cite: `${flow.invariants}#${anchor(heading[1])}` };
       invariants.push(current);
     } else if (current && line.trim() && current.body === undefined) current.body = line.trim();
   }
@@ -45,11 +53,12 @@ export function invariantsOf(flow, read) {
 export const MAX_SOURCE = 4000;
 export const MAX_FOCUSED = 8000;
 
-// The section of a markdown doc under the heading whose slug is `anchor`: the heading and its body, up to the next
+// The section of a markdown doc under the heading `anchor` names, compared by slug: the heading and its body, up to the next
 // heading of the same or a higher level; `raw` is the body with its indentation kept, for blocksOf. Null when the doc
 // has no such heading. A `#` line in a fenced code block, such as a shell comment, is code, not a heading: it neither
 // ends a section nor matches the anchor.
 export function sectionOf(text, anchor) {
+  const key = slug(String(anchor ?? ''));
   // CRLF or LF: a `\r` left on a line would hide its fence, and `raw` is rejoined with LF.
   const lines = String(text ?? '').split(/\r?\n/u);
   const fenced = fencedIn(lines);
@@ -59,7 +68,7 @@ export function sectionOf(text, anchor) {
   for (const [i, line] of lines.entries()) {
     const heading = fenced[i] ? null : /^(#{1,6})\s+(.+?)\s*#*\s*$/u.exec(line);
     if (!heading) continue;
-    if (start === -1 && slug(heading[2]) === anchor) {
+    if (start === -1 && slug(heading[2]) === key) {
       start = i;
       level = heading[1].length;
     } else if (start !== -1 && heading[1].length <= level) {

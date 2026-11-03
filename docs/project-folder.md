@@ -204,7 +204,8 @@ Two commands keep a ledger honest, and `roles` tells the skill who runs each rol
   must be in that section; `code` cites `path:line`, and the quote must be in the file; `plan` cites `#anchor` in PLAN;
   `absence` cites a path, and the quote must be in no regular file `git ls-files` lists there; a path with no tracked file fails.
   When `git ls-files` itself fails, the citation fails with git's exit code and its last stderr line.
-  An anchor matches a heading by its text or its slug, and a `#` line in a fenced code block is not a heading.
+  An anchor matches a heading by its text, the anchor GitHub gives it, or that anchor with `_` dropped and hyphens collapsed;
+  a `#` line in a fenced code block is not a heading.
   A fence counts at any indentation, and may open after a list marker, as in "- ```bash".
   A quote is at most 200 characters, compared with whitespace collapsed.
   A `pending` objection with no passing citation becomes `opinion`; one already ruled on keeps its status and is named.

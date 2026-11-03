@@ -128,7 +128,8 @@ generic invariant, that nothing in it is removed or weakened, and is marked unsp
 
 An invariant in a list that cites a heading, `{ "id": "no-double", "cite": "docs/product/booking.md#no-double-booking" }`,
 reaches its reviewer with that section as `source`: the heading and its text up to the next heading of the same or a
-higher level, read from the base branch. The reviewer judges against the source; `text` is only the question, and
+higher level, read from the base branch. The anchor may be copied from GitHub, as the heading's link gives it.
+The reviewer judges against the source; `text` is only the question, and
 without one the question comes from the heading. So the rule lives once, in the doc, and config cannot drift from it.
 A change to a cited doc triggers `harness-config`. `aidrian lint review` warns about a cited section with no text.
 

@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { DEFAULTS, versionFloorProblem } from '../plugins/aidrian/lib/config.mjs';
 import { checkReview } from '../plugins/aidrian/lib/review/config.mjs';
-import { blocksOf, focusBlocks, invariantsOf, MAX_FOCUSED, MAX_SOURCE, sectionOf, sourceOf } from '../plugins/aidrian/lib/review/flows.mjs';
+import { anchor, blocksOf, focusBlocks, invariantsOf, MAX_FOCUSED, MAX_SOURCE, sectionOf, sourceOf } from '../plugins/aidrian/lib/review/flows.mjs';
 import { questionWarnings } from '../plugins/aidrian/lib/review/lint.mjs';
 import { reviewPrompt } from '../plugins/aidrian/lib/review/reviewers.mjs';
 
@@ -169,4 +169,23 @@ test('sectionOf finds a heading with punctuation by the anchor GitHub gives it',
   const doc = "## The plugin's tools for this work\n\nworktree-new starts a task.\n\n## Read config.json first\n\nIt holds the rules.\n";
   assert.match(sectionOf(doc, 'the-plugins-tools-for-this-work')?.body ?? '', /worktree-new/u);
   assert.match(sectionOf(doc, 'read-configjson-first')?.body ?? '', /the rules/u);
+});
+
+test('anchor is the anchor GitHub makes, and sectionOf finds a heading by it, by a slug, or by a hand-written form', () => {
+  assert.equal(anchor('`hook_deny`: when a rule blocks'), 'hook_deny-when-a-rule-blocks');
+  assert.equal(anchor('A - B'), 'a---b');
+  assert.equal(anchor('Keep _this_ and **that**'), 'keep-this-and-that');
+  assert.equal(anchor("The plugin's [tools](x.md)"), 'the-plugins-tools');
+  const doc = '## `hook_deny`: when a rule blocks\n\nThe log row.\n\n## A - B\n\nBoth.\n';
+  for (const ref of ['hook_deny-when-a-rule-blocks', 'hookdeny-when-a-rule-blocks']) assert.match(sectionOf(doc, ref)?.body ?? '', /log row/u, ref);
+  for (const ref of ['a---b', 'a-b']) assert.match(sectionOf(doc, ref)?.body ?? '', /Both/u, ref);
+});
+
+test('a flow doc cites each invariant by its GitHub anchor, and a list cite copied from GitHub finds its section', () => {
+  const doc = '## `hook_deny`: when a rule blocks\n\nThe row is written.\n';
+  const read = (file) => (file === 'docs/log.md' ? doc : null);
+  const fromDoc = invariantsOf({ invariants: 'docs/log.md' }, read);
+  assert.equal(fromDoc.invariants[0].cite, 'docs/log.md#hook_deny-when-a-rule-blocks');
+  const fromList = invariantsOf({ invariants: [{ id: 'row', cite: 'docs/log.md#hook_deny-when-a-rule-blocks' }] }, read);
+  assert.match(fromList.invariants[0].source ?? '', /The row is written/u);
 });

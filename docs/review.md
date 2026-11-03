@@ -444,8 +444,9 @@ in [the record](#the-record), listed under **Extra rounds** in the summary comme
 the session's transcript holds the Human's answer to an AskUserQuestion that names the pull request (`#<PR>`) and the
 round it grants (`round <N>`), given after the judge's verdict, with the option that starts with "Approve". Claude Code
 writes that answer, not the agent. A host without such a transcript, such as Codex, leaves the approval to the Human,
-who runs the command in their own shell. `--human deny` always runs. The rest is the record's trust: the judge's
-verdict, like an attest, is the session's word, and an agent with a shell could write the state file directly. So the
+who runs the command in their own shell. `--human deny` always runs. With no check waiting for the Human, as after a
+judge's stop, the deny names the Human's route to one more round: `AIDRIAN_ALLOW_EXTRA_ROUNDS=1` and `--max-rounds`.
+The rest is the record's trust: the judge's verdict, like an attest, is the session's word, and an agent with a shell could write the state file directly. So the
 signals and the ceiling are computed by the command at every cap, a verdict over a red flag reaches the Human, never
 a grant by itself, and under `"auto"` the most a false verdict buys is `github.maxExtraRounds` rounds, every one
 listed on the pull request.

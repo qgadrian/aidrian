@@ -13,7 +13,7 @@ import {
   atCap, BLOAT_MIN_LINES, botRounds, buildHistory, findingTitle, grantedRounds, normalizeTitle, parseExtend, recordHuman, recordVerdict, revalidate, runExtend, signals,
 } from '../plugins/aidrian/lib/review/extension.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
-import { approved, check, transcriptAnswers } from '../plugins/aidrian/lib/rules/review-extend.mjs';
+import { approved, check, mismatch, transcriptAnswers } from '../plugins/aidrian/lib/rules/review-extend.mjs';
 
 const finding = (file, line, title) => ({ file, line, title });
 const round = (n, head, findings, fix = null) => ({ round: n, head, open: findings.length, findings, fix });
@@ -248,6 +248,61 @@ test('the review-extend rule: with no ask waiting in this machine`s record, an a
   const bare = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-extend-bare-')));
   t.after(() => rmSync(bare, { recursive: true, force: true }));
   assert.equal(check('aidrian pr extend 12 --human approve', { cwd: bare, input: {} }), null, 'outside a project the rule is off');
+});
+
+test('the review-extend rule: after a judge`s stop, the deny names the Human`s override, not another ask', (t) => {
+  const g = guarded(t);
+  const state = emptyState(12, 'o/r');
+  state.rounds = [{ head: 'a' }, { head: 'b' }, { head: 'c' }, { head: 'd' }];
+  state.extensions = [
+    { source: 'plan', round: 3, head: 'c', status: 'granted', by: 'judge' },
+    { source: 'plan', round: 4, head: 'd', status: 'stopped', by: 'judge', judge: { verdict: 'stop', reason: 'r', at: '2026-11-01T10:00:00.000Z' } },
+  ];
+  writeLocalState(g.project, state);
+  g.write(g.answer('Grant extra review round 5 for pull request #12?', 'Approve round 5 for pull request #12'));
+  const denied = g.run('aidrian pr extend 12 --human approve') ?? '';
+  assert.match(denied, /no extension waits for the Human on pull request #12 \(the latest check, at round 4, is stopped by the judge\)/u);
+  assert.match(denied, /`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4`/u, 'five rounds: four done, one granted, one more');
+  assert.doesNotMatch(denied, /Ask the Human with AskUserQuestion/u, 'an ask cannot help when nothing waits for it');
+  state.extensions = [{ source: 'bot', round: 4, head: 'd', status: 'stopped', by: 'judge' }];
+  writeLocalState(g.project, state);
+  assert.match(g.run('aidrian pr extend 12 --human approve') ?? '', /AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 12 --request --max-rounds 5/u, 'a bot cap reruns the bot request');
+  const other = check('aidrian pr extend 99 --human approve', { cwd: g.dir, input: {} }) ?? '';
+  assert.match(other, /holds no extension check for pull request #99.*the Human runs the approval in their own shell/su, 'no record here: maybe another machine asked');
+});
+
+test('the review-extend rule: each call in a chain is judged against its own pull request, and every refusal is named', (t) => {
+  const g = guarded(t);
+  const second = emptyState(13, 'o/r');
+  second.extensions = [{ source: 'plan', round: 2, head: 'def', status: 'asking', judge: { verdict: 'extend', reason: 'r', at: '2026-11-01T10:00:00.000Z' } }];
+  writeLocalState(g.project, second);
+  const ask13 = QUESTION.replace('#12', '#13');
+  g.write(g.answer(QUESTION, 'Approve round 3'));
+  const one = g.run('aidrian pr extend 12 --human approve && aidrian pr extend 13 --human approve') ?? '';
+  assert.match(one, /#13 and round 3/u, 'the unapproved pull request is named');
+  assert.doesNotMatch(one, /#12/u, 'the approved one is not');
+  g.write('');
+  const both = g.run('aidrian pr extend 12 --human approve; aidrian pr extend 13 --human approve') ?? '';
+  assert.match(both, /#12 and round 3/u);
+  assert.match(both, /#13 and round 3/u, 'one retry can fix both');
+  g.write(g.answer(QUESTION, 'Approve round 3'), g.answer(ask13, 'Approve round 3'));
+  assert.equal(g.run('aidrian pr extend 12 --human approve && aidrian pr extend 13 --human approve'), null, 'one answer per pull request');
+});
+
+test('the review-extend rule says why the transcript`s answers do not approve the round', (t) => {
+  const g = guarded(t);
+  const deny = () => g.run('aidrian pr extend 12 --human approve') ?? '';
+  g.write('');
+  assert.match(deny(), /\(the transcript holds no AskUserQuestion answer\)/u);
+  g.write(g.answer(QUESTION, 'Approve round 3', '2026-11-01T09:00:00.000Z'));
+  assert.match(deny(), /no AskUserQuestion answer came after the judge's verdict at 2026-11-01T10:00:00.000Z/u);
+  g.write(g.answer('Grant one more round to #57 and #58?', 'Approve'));
+  assert.match(deny(), /no question answered since the judge's verdict names #12/u);
+  g.write(g.answer('Grant one more round to #12?', 'Approve'));
+  assert.match(deny(), /the questions naming #12 do not name "round 3"/u);
+  g.write(g.answer(QUESTION, 'Deny'));
+  assert.match(deny(), /the Human picked "Deny"/u);
+  assert.equal(mismatch([{ question: QUESTION, answer: 'Approve round 3', at: null }], { pr: 12, round: 3 }), null);
 });
 
 test('transcriptAnswers reads only the host`s AskUserQuestion results', () => {

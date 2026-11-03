@@ -52,8 +52,9 @@ which may be another one. Stop and report when:
 
 - `state` is `MERGED` or `CLOSED`.
 - `isDraft` is true, unless config.json `github.markReady` is `"auto"`, the default, and a review of the current head signed off
-  with no blocked row, as this session's review loop reported: then step 2 marks it ready. Otherwise ask whether to mark it
-  ready; never do it unasked.
+  with no blocked row, as this session's review loop reported: then mark it ready now, with
+  `gh pr ready <n> --repo <owner>/<repo>` (not under `--dry-run`), before step 1, since a check may start only once it is
+  ready. Otherwise ask whether to mark it ready; never do it unasked.
 - a label says not to merge: `do-not-merge`, `WIP`, `blocked`, or the project's own.
 - `mergeable` is `CONFLICTING`: the branch needs a rebase first.
 
@@ -86,8 +87,6 @@ After 3 such re-runs, stop: the branch is still moving.
 Read the hard rules again.
 A label such as `do-not-merge` can arrive during the wait without a new commit, so the head check of step 1 cannot see it.
 Right before each merge attempt, the retry too, run the step 0 `gh pr view` again and stop on any of its stop conditions.
-A draft that step 0 let through: run `gh pr ready <n> --repo <owner>/<repo>`, not under `--dry-run`, then step 1 again,
-since marking it ready can start more checks, and merge on that verdict.
 Then run this once:
 
 ```bash

@@ -762,8 +762,9 @@ export function walkCommands(command, cwd) {
       const entry = { segment, invocation, folder, line, inputs, heredocs: own };
       out.push(entry);
       const unread = [];
-      // eval joins its words with spaces and runs the result as a command line.
-      const evaluated = invocation.program === 'eval' && invocation.args.length > 0 ? invocation.args.map((token) => token.text).join(' ') : null;
+      // eval joins its words with spaces and runs the result as a command line; a leading `--` only ends its options.
+      const evalWords = invocation.program === 'eval' ? invocation.args.slice(invocation.args[0]?.text === '--' ? 1 : 0) : [];
+      const evaluated = evalWords.length > 0 ? evalWords.map((token) => token.text).join(' ') : null;
       const inner = inlineShellCommand(invocation) ?? evaluated;
       if (inner !== null) {
         if (!nested(inner, folder)) unread.push(inner);

@@ -614,6 +614,7 @@ test('a merge inside a shell string, eval, or a heredoc fed to a shell is guarde
     'sh -c "gh api -X PUT repos/acme/notes/pulls/5/merge"',
     'eval "gh pr merge 5 --squash"',
     'eval gh pr merge 5',
+    'eval -- "gh pr merge 5"',
     "bash <<'EOF'\ngh pr merge 5 --squash\nEOF",
     'sh -s <<< "gh pr merge 5"',
     'x=$(bash -c "gh pr merge 5")',

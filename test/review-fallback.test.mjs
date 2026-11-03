@@ -105,6 +105,7 @@ test('the review-fallback rule reads the call inside a shell string, eval, or a 
     'bash -c "aidrian pr review 12 --quota-fallback agent:critic"',
     "sh -c 'aidrian pr review 12 --quota-fallback human'",
     'eval "aidrian pr review 12 --quota-fallback agent:critic"',
+    'eval -- "aidrian pr review 12 --quota-fallback human"',
     "bash <<'EOF'\naidrian pr review 12 --quota-fallback agent:critic\nEOF",
   ]) assert.match(g.run(command) ?? '', /holds no such choice by the Human/u, command);
   assert.match(g.run('echo "aidrian pr review 12 --quota-fallback agent:critic" | bash') ?? '', /a shell fed text the rule cannot read/u);

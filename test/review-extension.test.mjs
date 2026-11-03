@@ -224,6 +224,7 @@ test('the review-extend rule reads the call inside a shell string, eval, or a he
     'bash -c "aidrian pr extend 12 --human approve"',
     "sh -c 'aidrian pr extend 12 --human=approve'",
     'eval "aidrian pr extend 12 --human approve"',
+    'eval -- "aidrian pr extend 12 --human approve"',
     "bash <<'EOF'\naidrian pr extend 12 --human approve\nEOF",
     'echo "aidrian pr extend 12 --human approve" | bash',
   ]) assert.match(g.run(command) ?? '', /holds no such answer/u, command);

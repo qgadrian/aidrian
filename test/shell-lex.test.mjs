@@ -303,6 +303,7 @@ test('walkCommands reads an eval string, and names the text a shell runs that it
   const programs = (command) => walkCommands(command, null).map((entry) => [entry.invocation.program, entry.unread]);
   assert.deepEqual(programs('eval "git push --force"'), [['eval', undefined], ['git', undefined]], 'eval joins its words and runs them');
   assert.deepEqual(programs('eval git push'), [['eval', undefined], ['git', undefined]]);
+  assert.deepEqual(programs('eval -- "git push --force"'), [['eval', undefined], ['git', undefined]], 'eval -- ends its options, it is not the command');
   assert.deepEqual(programs('echo "git push" | bash'), [['echo', undefined], ['bash', 'echo "git push" | bash']], 'a pipe into a shell');
   assert.deepEqual(programs('ls; cat f |& sh -s'), [['ls', undefined], ['cat', undefined], ['sh', 'cat f |& sh -s']], 'only the pipeline that feeds it');
   assert.deepEqual(programs('bash build.sh'), [['bash', 'bash build.sh']], 'a script');

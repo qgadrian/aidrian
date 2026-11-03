@@ -8,7 +8,8 @@ whether each of their tasks can be done. Personas are synthetic: a run is a lead
 ## The persona contract
 
 A persona is one Markdown doc in a knowledge bucket, tagged `personas` in the bucket's index. Its file name without
-`.md` is the persona id, such as `floor-manager`. It has these `## ` sections:
+`.md` is the persona id, such as `floor-manager`, unique across every bucket and source; `all` is reserved, since
+it runs every persona. It has these `## ` sections:
 
 | Section | Required | What it holds |
 | --- | --- | --- |
@@ -22,8 +23,10 @@ A persona is one Markdown doc in a knowledge bucket, tagged `personas` in the bu
 | `Evidence` | no | Where the persona comes from: interviews, support tickets, data. |
 
 `aidrian lint personas` checks every doc tagged `personas`: each required section is present and not empty, `Tasks`
-has at least one `### <task>`, and every task has a `Success:` line with an outcome after it. A project with no
-personas passes. The skill ships a template that passes it:
+has at least one `### <task>`, every task has a `Success:` line with an outcome after it, no two docs share an id
+(two `product-access` docs included), and no doc is named `all.md`. It names each doc by its path as the bucket gives it:
+relative to the project, or absolute for a doc from a [local source](project-folder.md#local-knowledge-sources).
+A project with no personas passes. The skill ships a template that passes it:
 [persona-template.md](../plugins/aidrian/skills/persona-audit/references/persona-template.md).
 
 A new persona is a new doc. Personalization lives in the doc, in `Cares about`, `Voice`, and `Context`; there are no config keys.

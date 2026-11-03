@@ -50,26 +50,30 @@ export function personaProblems(text) {
     if (!Object.hasOwn(sections, title)) problems.push(`no "## ${title}" section`);
     else if (sections[title].trim() === '') problems.push(`"## ${title}" is empty`);
   }
-  if (Object.hasOwn(sections, 'Tasks') && !tasks.length) problems.push('"## Tasks" has no "### <task>"');
+  if (Object.hasOwn(sections, 'Tasks') && sections.Tasks.trim() !== '' && !tasks.length) problems.push('"## Tasks" has no "### <task>"');
   for (const task of tasks) if (!task.success) problems.push(`task "${task.title}" has no "Success:" line`);
   return problems;
 }
 
-// The persona ids, file names without .md, of the docs tagged `personas`, and their files. A doc in two buckets counts once.
+// The persona ids, file names without .md, of the docs tagged `personas`: each doc's path as its bucket shows it
+// (relative to the project, absolute for a local source), and the file to read. A doc in two buckets counts once.
 export function personaDocs(root, buckets) {
-  const files = new Set();
-  for (const bucket of buckets) for (const doc of bucket.tags[TAG] ?? []) files.add(path.resolve(root, doc));
-  return [...files].map((file) => ({ id: path.basename(file, '.md'), file }));
+  const shown = new Set();
+  for (const bucket of buckets) for (const doc of bucket.tags[TAG] ?? []) shown.add(doc);
+  return [...shown].map((doc) => ({ id: path.basename(doc, '.md'), shown: doc, file: path.resolve(root, doc) }));
 }
 
-// `aidrian lint personas`: every persona doc keeps the contract. A project with no personas passes.
+// `aidrian lint personas`: every persona doc keeps the contract, and every id names one doc. A project with no personas passes.
 export function lintPersonas(project, buckets) {
   const problems = [];
+  const seen = new Map();
   let personas = 0;
   let tasks = 0;
-  for (const { id, file } of personaDocs(project.root, buckets)) {
+  for (const { id, shown, file } of personaDocs(project.root, buckets)) {
+    if (seen.has(id)) problems.push(`persona id "${id}" is used by ${seen.get(id)} and ${shown}`);
+    else seen.set(id, shown);
+    if (id === 'all') problems.push(`${shown}: the persona id "all" is reserved: persona-audit all runs every persona`);
     if (id === ACCESS_DOC) continue;
-    const shown = path.relative(project.root, file);
     let text;
     try {
       text = readFileSync(file, 'utf8');

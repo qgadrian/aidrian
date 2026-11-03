@@ -127,11 +127,15 @@ export function lineWrites(top) {
       }
       return;
     }
-    const redirects = segment.flatMap((each, i) => (each.operator && each.operator !== '<' ? [[each, segment[i + 1]]] : []));
+    // The output redirections and the file each writes; `2>&1` and `>&-` name a descriptor, not a file, and write none.
+    const redirects = segment.flatMap((each, i) => (each.operator && each.operator !== '<' && !segment[i + 1]?.fdDup ? [[each, segment[i + 1]]] : []));
     let target = null;
     let text = null;
     // Only standard output writes the file: `cat 2> b.md` leaves it empty.
-    if (program === 'cat' && args.every((arg) => arg.text === '-') && redirects.length === 1 && redirects[0][0].operator === '>' && [undefined, '1'].includes(redirects[0][0].fd)) {
+    // A duplicate onto standard output (`>&2`, `1>&2`) may move it off the file: what lands there is unknown.
+    const stdoutMoved = segment.some((each, i) => each.operator === '>' && segment[i + 1]?.fdDup && [undefined, '1'].includes(each.fd));
+    if (program === 'cat' && args.every((arg) => arg.text === '-') && redirects.length === 1 && redirects[0][0].operator === '>' &&
+      [undefined, '1'].includes(redirects[0][0].fd) && !stdoutMoved) {
       [target, text] = [at(redirects[0][1]), stdinBody(entry)];
     } else if (program === 'tee' && args.length === 1 && !args[0].text.startsWith('-')) {
       target = at(args[0]);

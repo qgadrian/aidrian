@@ -125,7 +125,8 @@ What each rule matches:
   heredoc, or a `cp` of a file the rule reads, also through a variable the line sets to a literal path (`F=…; cat > "$F"`).
   `--body-file -` reads the heredoc fed to gh. The rule fails closed where the shell could change what it read:
   a heredoc beside a `< file` or `<<< word` input, or fed to a descriptor other than 0 (`3<<EOF`); a `cat` write
-  through a descriptor other than 1 (`cat 2> b.md`); a `tee` whose own output lands on its file; a body file a
+  through a descriptor other than 1 (`cat 2> b.md`) or with standard output duplicated off it (`>&2`), while `2>&1`
+  writes no file; a `tee` whose own output lands on its file; a body file a
   redirect writes, gh's own output included; any
   command between the write and gh that is not a known reader (such as `sed -i`, a script, or a program fed code on
   stdin); and a variable a nested shell or substitution assigns, or one used inside it. Such a body is one the rule

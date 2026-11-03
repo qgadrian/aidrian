@@ -188,6 +188,14 @@ test('a heredoc that another input or a later command can replace is never trust
     assert.match(run(command) ?? '', /^Blocked: the body is one this rule cannot read/, why);
   }
   assert.equal(run(`${write('b.md')}git -C . push -q origin HEAD 2>&1 | tail -2; ${create('b.md')}`), null, 'git push and a reader leave it');
+  const out = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-prbody-out-')));
+  t.after(() => rmSync(out, { recursive: true, force: true }));
+  const file = path.join(out, 'b.md');
+  const anywhere = project(t, { version: 1, github: { pullRequest: { sharedTempBodyFile: false } } });
+  // A real deny's shape: after a cd that is not leading, the folder is unknown, and `2>&1` must not poison the write.
+  assert.equal(anywhere(`${write(file)}cd ${out} && gh auth status 2>&1 | head -3 && git push -q 2>&1 | tail -3 && ${create(file)}`), null,
+    'a 2>&1 duplicates a descriptor and writes no file');
+  assert.match(anywhere(`${write(file)}cd ${out} && gh auth status 2> err.txt; ${create(file)}`) ?? '', /cannot read/, 'a relative redirect in an unknown folder still does');
 });
 
 test('a redirection that names a descriptor is read as bash runs it, failing closed on any but stdin or stdout', (t) => {
@@ -203,7 +211,9 @@ test('a redirection that names a descriptor is read as bash runs it, failing clo
     [`cat > b.md 3<<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'cat reads no heredoc on stdin'],
     [`cat 1>> b.md <<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'an append with fd 1'],
     [`cat &>> b.md <<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'an append of both streams'],
-    [`cat 2>&1 > b.md <<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'a second redirect'],
+    [`cat > b.md 1>&2 <<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'stdout moved off the file after it'],
+    [`cat > b.md >&2 <<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'and by >&2'],
+    [`cat > b.md 2> b.md <<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'a second write to it'],
     [`tee b.md 4<<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'tee reads no heredoc on stdin'],
     [`tee b.md > b.md <<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'tee with its own output on the same file'],
     [`cat <<'EOF' |& tee b.md\n${GOOD}EOF\n${create('b.md')}`, 'tee fed through a pipe'],
@@ -217,6 +227,8 @@ test('a redirection that names a descriptor is read as bash runs it, failing clo
     [`cat &> b.md <<'EOF'\n${GOOD}EOF\n${create('b.md')}`, '&> writes stdout and an empty stderr'],
     [`cat >& b.md <<'EOF'\n${GOOD}EOF\n${create('b.md')}`, '>& file is &>'],
     [`tee b.md 2>/dev/null 0<<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'tee with stderr elsewhere'],
+    [`cat 2>&1 > b.md <<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'stderr duplicated onto the old stdout, stdout to the file'],
+    [`cat > b.md 2>&1 <<'EOF'\n${GOOD}EOF\n${create('b.md')}`, 'both streams to the file, stderr empty'],
   ]) {
     assert.equal(run(command), null, why);
   }

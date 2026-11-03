@@ -47,6 +47,10 @@
       "summary": "Lesson inbox and aidrian lesson add, list, resolve, stats, migrate: tiers, kinds, targets, outcomes, the plugin's inbox for plugin lessons, automatic lessons.",
       "tags": []
     },
+    "handoff.md": {
+      "summary": "Session handoff: the session-length reminder and plan offer, the cost ratio and break-even model, session.handoff config, session-handoff and session-continue.",
+      "tags": []
+    },
     "config.md": {
       "summary": "config.json keys: pull request title and body sections, review plan and gate, terms, models and effort, names, attribution, telemetry.",
       "tags": []

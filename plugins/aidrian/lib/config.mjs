@@ -55,7 +55,7 @@ const SCHEMA = {
   terms: { file: 'textOrNull' },
   knowledge: { budgets: { alwaysBytes: 'positive', taggedDocBytes: 'positive' } },
   skills: { descriptionChars: 'positive', listingBytes: 'positive' },
-  session: { handoff: 'handoffMode', maxTokens: 'zeroOrMore', maxCalls: 'zeroOrMore', maxHours: 'zeroOrMore' },
+  session: { handoff: { mode: 'handoffMode', costRatio: 'aboveOne', maxTokens: 'zeroOrMore' } },
   lessons: { auto: 'boolean', maxOpen: 'zeroOrMore', maxAgeDays: 'zeroOrMore' },
   models: 'models',
   names: { human: 'text', ai: 'textOrNull' },
@@ -88,7 +88,17 @@ const RENAMED = {
   'telemetry.doc_reads': 'telemetry.docReads',
   'telemetry.hook_denies': 'telemetry.hookDenies',
   'telemetry.max_mb': 'telemetry.maxMb',
+  'session.maxTokens': 'session.handoff.maxTokens',
 };
+
+// Keys a format change took out, with why; a config that still sets one gets an error, and its value is not carried.
+const REMOVED = {
+  'session.maxCalls': 'the session-length reminder weighs cost, not calls',
+  'session.maxHours': 'the session-length reminder weighs cost, not hours',
+};
+
+// The modes a string `session.handoff` held before the handoff settings became a group.
+const HANDOFF_MODES = ['off', 'ask', 'auto'];
 
 // What `models` may set for one of this plugin's agents, per host; null takes any non-empty string.
 // The fields config.json `attribution` may list (lib/attribution.mjs).
@@ -141,9 +151,10 @@ const TYPES = {
   positive: [(value) => Number.isInteger(value) && value > 0, 'a whole number above 0'],
   percent: [(value) => Number.isInteger(value) && value > 0 && value <= 100, 'a whole number from 1 to 100'],
   zeroOrMore: [(value) => Number.isInteger(value) && value >= 0, 'a whole number, 0 or more'],
+  aboveOne: [(value) => typeof value === 'number' && Number.isFinite(value) && value > 1, 'a number above 1'],
   commitFields: [(value) => Array.isArray(value) && value.every((f) => COMMIT_FIELDS.includes(f)), `a list of ${COMMIT_FIELDS.map((f) => `"${f}"`).join(', ')}`],
   prFields: [(value) => Array.isArray(value) && value.every((f) => PR_FIELDS.includes(f)), `a list of ${PR_FIELDS.map((f) => `"${f}"`).join(', ')}`],
-  handoffMode: [(value) => ['off', 'ask', 'auto'].includes(value), '"off", "ask", or "auto"'],
+  handoffMode: [(value) => HANDOFF_MODES.includes(value), '"off", "ask", or "auto"'],
   readyMode: [(value) => ['ask', 'auto'].includes(value), '"ask" or "auto"'],
   extraMode: [(value) => ['off', 'ask', 'auto'].includes(value), '"off", "ask", or "auto"'],
   versionOrNull: [(value) => value === null || (typeof value === 'string' && SEMVER.test(value)), 'a plugin version such as "0.17.0", or null'],
@@ -189,7 +200,9 @@ export const DEFAULTS = deepFreeze({
   terms: { file: null },
   knowledge: { budgets: { alwaysBytes: 16384, taggedDocBytes: 24576 } },
   skills: { descriptionChars: 160, listingBytes: 9216 },
-  session: { handoff: 'ask', maxTokens: 150000, maxCalls: 250, maxHours: 4 },
+  // The session-length reminder (lib/session-length.mjs, docs/handoff.md): it fires once a call costs `costRatio` times
+  // what it would in a fresh session; `maxTokens` is an optional ceiling on the context, 0 for off.
+  session: { handoff: { mode: 'ask', costRatio: 2, maxTokens: 0 } },
   lessons: { auto: true, maxOpen: 20, maxAgeDays: 14 },
   models: { claude: { agents: {} }, codex: { agents: {} } },
   names: { human: 'the Human', ai: null },
@@ -235,7 +248,8 @@ export function loadConfig(project) {
   if (!raw) return { config: DEFAULTS, errors, gateErrors, current: false };
   const problem = versionProblem(file, raw.version);
   if (problem) return { config: DEFAULTS, errors: [problem], gateErrors, current: false };
-  const { version, ...values } = raw;
+  const { version, ...rest } = raw;
+  const values = legacyHandoff(rest, file, errors);
   const config = merge(SCHEMA, DEFAULTS, values, '', file, errors, gateErrors);
   if (config.github.reviewer === NO_REVIEWER) config.github = { ...config.github, reviewer: null };
   if (project.localModels !== undefined) config.models = checkModels(project.localModels, project.paths.local, errors, config.models);
@@ -263,8 +277,8 @@ export function committedConfig(project, commit) {
     return DEFAULTS;
   }
   if (!isObject(raw) || versionProblem(project.paths.config, raw.version)) return DEFAULTS;
-  const { version, ...values } = raw;
-  const config = merge(SCHEMA, DEFAULTS, values, '', project.paths.config, [], []);
+  const { version, ...rest } = raw;
+  const config = merge(SCHEMA, DEFAULTS, legacyHandoff(rest, project.paths.config, []), '', project.paths.config, [], []);
   if (config.github.reviewer === NO_REVIEWER) config.github = { ...config.github, reviewer: null };
   return deepFreeze(config);
 }
@@ -320,10 +334,21 @@ function migratingUrl() {
   return `${pluginRepository()}/blob/main/docs/project-folder.md#migrating`;
 }
 
+// The values with a string `session.handoff`, the mode it held before the handoff settings became a group, read as
+// `{ mode }`, so a legacy "off" keeps the hooks quiet. The old shape is reported. This is no RENAMED entry: that flags
+// a key by its name, and the new group has the same name.
+function legacyHandoff(values, file, errors) {
+  const handoff = isObject(values.session) ? values.session.handoff : undefined;
+  if (!HANDOFF_MODES.includes(handoff)) return values;
+  errors.push(`${file}: "session.handoff" is now "session.handoff.mode": move it`);
+  return { ...values, session: { ...values.session, handoff: { mode: handoff } } };
+}
+
 function merge(schema, defaults, values, prefix, file, errors, gateErrors = []) {
   for (const key of Object.keys(values)) {
     const name = `${prefix}${key}`;
     if (Object.hasOwn(RENAMED, name)) errors.push(`${file}: "${name}" is now "${RENAMED[name]}": rename the key`);
+    else if (Object.hasOwn(REMOVED, name)) errors.push(`${file}: "${name}" is gone: ${REMOVED[name]}; delete the key`);
     else if (!Object.hasOwn(schema, key)) errors.push(`${file}: unknown key "${name}"`);
   }
   const out = {};

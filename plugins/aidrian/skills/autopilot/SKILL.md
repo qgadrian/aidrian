@@ -58,7 +58,7 @@ the pull request, and review fixes.
 ## Checkpoints
 
 A handoff brief lets a fresh session resume the run. Write one only when the Human allowed it:
-`--handoff`, the launch words, or config.json `session.handoff` set to `"auto"`.
+`--handoff`, the launch words, or config.json `session.handoff.mode` set to `"auto"`.
 With `"ask"`, the default, or `"off"`, write none: the report carries what a resume needs.
 
 When allowed, write it with the `session-handoff` skill, in this session and never through an agent, which knows nothing of the run.

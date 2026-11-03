@@ -23,7 +23,7 @@ import { classify } from './plan.mjs';
 import { heldMessage, publishState, readRecord, sameCommit, writeLocalState } from './state.mjs';
 
 export const MODES = Object.freeze(['off', 'ask', 'auto']);
-// Fix commits that add more than this share of the lines the pull request first added are the change growing under
+// Fix commits that add more than this share of the lines of code the pull request first added are the change growing under
 // review, not converging. Below BLOAT_MIN_LINES the share says nothing: a ten-line change may need a ten-line fix.
 export const BLOAT_PERCENT = 50;
 export const BLOAT_MIN_LINES = 40;
@@ -349,7 +349,7 @@ export function revalidate({ state, source, round, head, history, log = () => {}
 }
 
 // The decision at the cap, written into `state` (an entry of `state.extensions` per source and round). Returns the
-// status and what it carries: round_limit with `extension` (off, the ceiling, the signals, the judge, or the Human
+// status and what it carries: round_limit with `extension` (off, the ceiling, the judge, or the Human
 // said stop), extension_check with the history and the judge's `dispatch`, or extension_ask with the question.
 // `history` is a function, called only when the signals need reading. `lastReviewed`, when given, is a function that
 // returns the head of the last round without git work: the record's rounds, or the bot's last review; a stop that reads
@@ -373,7 +373,14 @@ export function atCap({ state, source, round, head, policy, history: readHistory
     if (granted >= policy.max) decide('stopped', 'ceiling', [`${plural(granted, 'extra round')} granted already, and github.maxExtraRounds is ${policy.max}`]);
   }
   // A stop an older version made on a red flag, with no way on: it goes to the judge as a red flag now does.
-  if (entry?.status === 'stopped' && entry.by === 'mechanical') Object.assign(entry, { status: 'judging', by: null });
+  // It goes the way a fresh check does: the ceiling first, and the judge without any verdict made on the old head.
+  if (entry.status === 'stopped' && entry.by === 'mechanical') {
+    if (entry.judge) entry.stale_judge = entry.judge;
+    delete entry.judge;
+    delete entry.human;
+    if (granted >= policy.max) decide('stopped', 'ceiling', [`${plural(granted, 'extra round')} granted already, and github.maxExtraRounds is ${policy.max}`]);
+    else decide('judging', null, []);
+  }
   // A grant the policy does not count (the base branch moved from "auto" to "ask") waits for the Human again.
   if (entry.status === 'granted' && policy.mode === 'ask' && entry.human?.answer !== 'approve') entry.status = 'asking';
   // On "auto", a judge's extend needs no Human, unless a red flag stands.

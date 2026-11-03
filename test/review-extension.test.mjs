@@ -699,6 +699,10 @@ test('atCap: a red-flag stop an older version recorded goes to the judge, not a 
   const flagged = () => ({ ...passing(), rounds: [round(1, 'a', [finding('a.js', 1, 'one')]), round(2, 'b', [finding('a.js', 90, 'two')])] });
   const result = atCap({ state, source: 'plan', round: 2, head: 'b', policy: { mode: 'ask', max: 2 }, history: flagged, pr: 7 });
   assert.deepEqual([result.status, result.extension.status, result.extension.red_flags.map((reason) => reason.split(':')[0])], ['extension_check', 'judging', ['not converging']]);
+  const capped = emptyState(7, 'o/r');
+  capped.extensions = [{ source: 'plan', round: 2, status: 'granted', by: 'judge' }, { source: 'plan', round: 3, head: 'b', status: 'stopped', by: 'mechanical', reasons: ['bloating: old'], judge: { verdict: 'extend' } }];
+  const ceiling = atCap({ state: capped, source: 'plan', round: 3, head: 'b', policy: { mode: 'auto', max: 1 }, history: flagged, pr: 7 });
+  assert.deepEqual([ceiling.status, ceiling.extension.by, capped.extensions[1].judge], ['round_limit', 'ceiling', undefined], 'the ceiling still holds');
 });
 
 test('revalidate: a push that raises no new red flag keeps the Human`s approval over the flags it was given for', () => {
@@ -708,4 +712,7 @@ test('revalidate: a push that raises no new red flag keeps the Human`s approval 
   const entry = revalidate({ state, source: 'plan', round: 2, head: 'c0ffee1234', history: flat });
   assert.deepEqual([entry.status, entry.human?.answer], ['granted', 'approve']);
   assert.match(summaryBody(state, null, 'fix_required'), /granted by the Human[^\n]*\(over red flags: not converging\)/u);
+  const bloated = () => ({ ...flat(), rounds: [round(1, 'a', [finding('a.js', 1, 'one')]), round(2, 'b', [finding('a.js', 90, 'two')], { added: 100, code_added: 100, removed: 0, files: ['a.js'] })] });
+  const back = revalidate({ state, source: 'plan', round: 2, head: 'deadbee123', history: bloated });
+  assert.deepEqual([back.status, back.human, back.reasons[0].split(':')[0]], ['judging', undefined, 'bloating'], 'a new flag name revokes the approval');
 });

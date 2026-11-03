@@ -378,7 +378,7 @@ It applies to `aidrian pr review` and to `aidrian pr await-review --request`, wh
    - **looping**: a finding comes back after a fix, in the same file within 3 lines, or under the same title (its words of
      four letters or more, without markup, in any order).
    - **drifting**: a finding after round 1 sits in a file the pull request did not change at its first round.
-   - **bloating**: the fixes since round 1 added more than 50% of the lines the pull request first added, and more
+   - **bloating**: the fixes since round 1 added more than 50% of the lines of code (outside `review.nonBehaviour` files) the pull request first added, and more
      than 40 lines. A fix is how the pull request's own diff (each head against its merge base with the base branch)
      changed between rounds, line by line per file, without `review.ignore` files. Lines the base branch gained are in
      neither diff, so merging or rebasing on the base is no bloat, even in a file the pull request changes too. Only

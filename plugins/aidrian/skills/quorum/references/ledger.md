@@ -23,6 +23,10 @@ schema. A test holds the list below to `LEDGER_SCHEMA`: a field added there and 
 
 ## Fields
 
+A ledger written before the `mode` field has none of the fields marked optional, and `quorum check` holds it to the
+rules it was written under and never adds them. A ledger that carries `mode` is held to the rules each optional field names.
+
+- `mode`: `plan`, on a ledger written under the plan-mode briefs. Optional: absent on a ledger written before them.
 - `status`: `open` while the rounds run, `complete` once the final rulings and the Human's answers are recorded.
 - `plan`: the plan's absolute path.
 - `plan_hash`: `git hash-object` of the plan, the same hash as in the file name.
@@ -34,8 +38,10 @@ schema. A test holds the list below to `LEDGER_SCHEMA`: a field added there and 
   lists, or `the Human asked`.
 - `objections`: every objection both adversaries raised.
   - `objections[].id`: `A1` to `A7` and `B1` to `B7`, in each adversary's own order, each once. `quorum check` refuses any other, or a repeated one.
+    With `mode`, it also refuses more than 5 objections from one adversary.
   - `objections[].by`: `A` or `B`.
-  - `objections[].severity`: `blocking`, `important`, or `improvement`.
+  - `objections[].severity`: `blocking`, `important`, or `improvement`. With a mode, only `blocking` or `important`:
+    an improvement goes to the notes.
   - `objections[].claim`: the objection, in the adversary's words.
   - `objections[].citations`: its evidence.
     - `objections[].citations[].kind`: `doc`, `adr`, `code`, `plan`, or `absence`.
@@ -44,19 +50,57 @@ schema. A test holds the list below to `LEDGER_SCHEMA`: a field added there and 
   - `objections[].status`: `pending` until the architect rules; then `opinion`, `accepted`, `rejected`, or `escalated`.
     A valid partial accept is `accepted`, and its accepted part always stands: `escalated` on it means its rejected part is escalated.
     A partial accept whose ruling is still invalid after its retry escalates whole.
+    `merged` when the coordinator folds it into the other adversary's duplicate: it is never ruled on or rebutted.
+  - `objections[].merged_into`: optional. The id of the objection a merged one was folded into, or `null`.
+    `quorum check` exits 1 when a merged objection has a ruling or a rebuttal, or names no objection, an unknown one,
+    one of its own adversary, or one that is itself merged or an opinion; and when an objection that is not merged names one.
   - `objections[].ruling`: the architect's first ruling, or `null` before it and for an opinion.
     - `objections[].ruling.decision`: `accept`, `reject`, or `escalate`.
     - `objections[].ruling.change_or_reason`: for an accept, the plan change, ending in a `Rejected part:` line for a partial accept.
       For a reject, the counter-evidence. For an escalation, both positions, the recommended answer, and the deciding reason.
+      With `mode`, its first line is `Covers: #<anchor> "<quote>"` or `Covers: nothing`, and an accept also holds a
+      `Cost: ` line (the files, rules, and tests the change adds) and a `Removes: ` line (the cited risk it removes).
     - `objections[].ruling.citations`: the ruling's own evidence, in the same form as an objection's.
+      With `mode`, an accept holds at least one passing `plan` citation: the section it changes.
+    - `objections[].ruling.tested`: optional; with `mode`, one verdict per citation of the entry ruled on, the
+      objection for the first ruling and the rebuttal for the final one, each citation exactly once. An accept needs one
+      verdict that supports.
+      - `objections[].ruling.tested[].citation`: the citation's index in the ruled entry's `citations`, from 0.
+      - `objections[].ruling.tested[].supports`: `true` when the cited text supports the statement it backs, else `false`.
+        A citation marked `false` stays in the ledger and leaves the report's evidence.
+      - `objections[].ruling.tested[].reason`: why, in one line.
+    - `objections[].ruling.inferences`: optional; with `mode`, one entry per `inference:` line of the ruled entry's claim.
+      - `objections[].ruling.inferences[].statement`: that line's text after `inference:`.
+      - `objections[].ruling.inferences[].holds`: `true` when the evidence settles it as stated, else `false`.
+      - `objections[].ruling.inferences[].reason`: why, in one line.
+      - `objections[].ruling.inferences[].citations`: the evidence that settles it; may be empty.
+    - `objections[].ruling.ground`: optional; with a mode, present exactly on a reject, naming its one ground:
+      `covered` (the plan already states it), `implementation` (how the code gets written, for pull request review),
+      `settled` (reopens a settled answer), `off-goal` (outside the plan's goal or scope), `disproportionate` (the change
+      costs more than the risk it removes), or `speculative` (no cited failure path).
   - `objections[].rebuttal`: the adversary's answer to a rejection or to a partial accept's rejected part, or `null`.
     - `objections[].rebuttal.verdict`: `rebut` or `concede`.
     - `objections[].rebuttal.claim`: why the ruling is wrong, or that it stands.
-    - `objections[].rebuttal.citations`: new evidence for a rebuttal; may be empty for a concession.
-    - `objections[].rebuttal.ruling`: the architect's final ruling, in the same form as the first; `null` for a concession.
+    - `objections[].rebuttal.citations`: new evidence for a rebuttal. For a concession, the evidence of the ruling it
+      accepts: with `mode`, at least one passing citation; without it, it may be empty.
+    - `objections[].rebuttal.ruling`: the architect's final ruling, in the same form as the first, its verdicts over the
+      rebuttal's citations and claim; `null` for a concession.
+- `notes`: optional. Improvements, and B's line that no alternative beats the plan, that no one rules on; at most 10.
+  `quorum check` removes a note with no passing citation and names it.
+  - `notes[].by`: `A` or `B`.
+  - `notes[].claim`: the note, in the adversary's words.
+  - `notes[].citations`: its evidence.
 - `human_answers`: the Human's answers to this run's escalations, and only those.
   - `human_answers[].objection_id`: the objection in this ledger that the answer settles, at most one answer each.
   - `human_answers[].answer`: the Human's answer, word for word.
+- `proportionality`: optional. The judge's review of every accepted change as a set, or `null` before it runs.
+  With `mode`, `quorum check` exits 1 on a complete ledger with an accepted change and no review.
+  - `proportionality.flagged`: each accepted change that, with the others, over-complicates the plan; often empty.
+    `quorum check` exits 1 on a flagged objection with no accept ruling, or one neither escalated nor answered.
+    - `proportionality.flagged[].objection_id`: the flagged objection.
+    - `proportionality.flagged[].reason`: why, in one line.
+    - `proportionality.flagged[].smaller_change`: the smaller change that keeps its risk removed, the recommended
+      answer when it is asked of the Human; empty when the judge sees none.
 
 ## Agent answers
 

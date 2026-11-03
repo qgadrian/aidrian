@@ -7,7 +7,7 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
-import { CODEX_TIMEOUT_SEC, LEDGER_SCHEMA, OBJECTIONS_SCHEMA, REBUTTALS_SCHEMA, codexAnswer, commands, rebuttalProblems, schemaProblems } from '../plugins/aidrian/lib/quorum.mjs';
+import { CODEX_TIMEOUT_SEC, GROUNDS, LEDGER_SCHEMA, LEDGER_SCHEMAS, OBJECTIONS_SCHEMA, REBUTTALS_SCHEMA, codexAnswer, commands, modeOf, rebuttalProblems, schemaProblems } from '../plugins/aidrian/lib/quorum.mjs';
 import { slug } from '../plugins/aidrian/lib/review/flows.mjs';
 import { FINDINGS_SCHEMA, runCodex, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 
@@ -70,6 +70,17 @@ const PASSING = {
   wholeRepo: cite('absence', '.', 'NEEDLE_9'),
 };
 
+// A ledger written under the plan-mode briefs, and rulings that pass every rule a ledger with a mode adds, for an entry
+// with one citation: a `Covers:` first line, `Cost:` and `Removes:` on an accept, a ground on a reject, a passing plan
+// citation, and a verdict on the ruled entry's citation.
+const planLedger = (objections, extra = {}) => ({ ...ledger(objections), mode: 'plan', ...extra });
+const verdicts = (count, supports = true) => Array.from({ length: count }, (_, citation) => ({ citation, supports, reason: supports ? 'it says so' : 'it does not' }));
+const ACCEPT_TEXT = 'Covers: nothing\nAdd the rule to the approach.\nCost: one sentence in #approach.\nRemoves: the double booking the objection cites.';
+const REJECT_TEXT = 'Covers: #approach "Store the ledger under the state folder."\nThe plan already states it.';
+const accepts = (over = {}) => ({ decision: 'accept', change_or_reason: ACCEPT_TEXT, citations: [PASSING.plan], tested: verdicts(1), inferences: [], ...over });
+const rejects = (over = {}) => ({ decision: 'reject', change_or_reason: REJECT_TEXT, citations: [PASSING.plan], ground: 'covered', tested: verdicts(1), inferences: [], ...over });
+const concede = (citations) => ({ verdict: 'concede', claim: 'the ruling stands', citations, ruling: null });
+
 test('schemas: a full ledger and an objections answer pass; a missing field, an extra field, a bad enum, or too many fail', () => {
   const good = ledger([objection('A1', [PASSING.code], {
     status: 'rejected',
@@ -106,9 +117,49 @@ test('schemas: a full ledger and an objections answer pass; a missing field, an 
   };
   strict(OBJECTIONS_SCHEMA);
   strict(REBUTTALS_SCHEMA);
-  strict(LEDGER_SCHEMA);
   strict(FINDINGS_SCHEMA);
   assert.deepEqual(OBJECTIONS_SCHEMA.properties.objections.items.properties.severity.enum, ['blocking', 'important', 'improvement']);
+
+  // The ledger is no Codex answer: every field is required except those a ledger written before `mode` lacks, and only those.
+  const optional = [];
+  const walk = (node, at) => {
+    if (node.items) walk(node.items, `${at}[]`);
+    if (!node.properties) return;
+    assert.equal(node.additionalProperties, false, at);
+    for (const key of node.required) assert.ok(Object.hasOwn(node.properties, key), `${at || '$'} requires ${key}, which it does not define`);
+    for (const [key, child] of Object.entries(node.properties)) {
+      const field = at ? `${at}.${key}` : key;
+      if (!node.required.includes(key)) optional.push(field);
+      walk(child, field);
+    }
+  };
+  walk(LEDGER_SCHEMA, '');
+  assert.deepEqual(optional.sort(), [
+    'mode', 'notes', 'objections[].merged_into',
+    'objections[].rebuttal.ruling.ground', 'objections[].rebuttal.ruling.inferences', 'objections[].rebuttal.ruling.tested',
+    'objections[].ruling.ground', 'objections[].ruling.inferences', 'objections[].ruling.tested', 'proportionality',
+  ]);
+});
+
+test('schemas: a ledger with every plan-mode field passes; a bad ground, a non-integer citation index, or too many notes fail', () => {
+  const full = planLedger([
+    objection('A1', [PASSING.code], { status: 'accepted', ruling: accepts({ inferences: [{ statement: 's', holds: true, reason: 'r', citations: [PASSING.adr] }] }), merged_into: null }),
+    objection('B1', [PASSING.code], { by: 'B', status: 'merged', merged_into: 'A1' }),
+    objection('A2', [PASSING.code], { status: 'escalated', ruling: rejects(), rebuttal: { verdict: 'rebut', claim: 'c', citations: [PASSING.fenced], ruling: rejects({ ground: 'speculative' }) } }),
+  ], { notes: [{ by: 'B', claim: 'no better alternative', citations: [PASSING.plan] }], proportionality: { flagged: [{ objection_id: 'A1', reason: 'r', smaller_change: '' }] } });
+  assert.deepEqual(schemaProblems(full, LEDGER_SCHEMA), []);
+  assert.deepEqual(schemaProblems({ ...full, proportionality: null }, LEDGER_SCHEMA), []);
+  const bad = structuredClone(full);
+  bad.objections[0].ruling.ground = 'tangent';
+  bad.objections[0].ruling.tested[0].citation = '0';
+  bad.notes = Array(11).fill(full.notes[0]);
+  bad.mode = 'debate';
+  assert.deepEqual(schemaProblems(bad, LEDGER_SCHEMA).sort(), [
+    '$.mode must be one of plan',
+    '$.notes has 11 items, more than 10',
+    '$.objections[0].ruling.ground must be one of covered, implementation, settled, off-goal, disproportionate, speculative',
+    '$.objections[0].ruling.tested[0].citation must be integer',
+  ]);
 });
 
 test('slug is exported from flows.mjs unchanged', () => {
@@ -123,7 +174,7 @@ test('check: every citation kind passes; anchors by heading text and by slug; qu
   const result = p.check(ledger(objections));
   assert.equal(result.stderr, '');
   assert.equal(result.status, 0);
-  assert.deepEqual(result.lines, [`checked: ${objections.length} objections, 0 opinion, 0 problems`]);
+  assert.deepEqual(result.lines, [`checked: mode plan, ${objections.length} objections, 0 opinion, 0 problems`]);
   assert.deepEqual(result.ledger.objections.map((each) => each.status), Array(objections.length).fill('pending'));
 });
 
@@ -155,7 +206,7 @@ test('check: each citation kind that fails is named with its reason, and an obje
   has(/^objection A7\.citations\[0\] .*: src\/app\.js contains the quote$/u);
   has(/^objection B1\.citations\[0\] .*: the quote is 201 characters, more than 200$/u);
   assert.ok(!result.lines.some((line) => line.startsWith('objection B2:')), 'one passing citation keeps the objection');
-  assert.equal(result.lines.at(-1), `checked: 9 objections, 8 opinion, ${result.lines.length - 1} problems`);
+  assert.equal(result.lines.at(-1), `checked: mode plan, 9 objections, 8 opinion, ${result.lines.length - 1} problems`);
 });
 
 test('check: an objection already ruled on keeps its status when its citations stop passing, and is named', (t) => {
@@ -176,7 +227,7 @@ test('check: an objection already ruled on keeps its status when its citations s
     assert.ok(result.lines.includes(`objection ${id}: no citation passes; kept ${status}, since it was ruled on`), result.stdout);
   }
   assert.ok(!result.lines.some((line) => line.includes('relabeled')), result.stdout);
-  assert.equal(result.lines.at(-1), 'checked: 3 objections, 0 opinion, 6 problems');
+  assert.equal(result.lines.at(-1), 'checked: mode plan, 3 objections, 0 opinion, 6 problems');
 });
 
 test('check: a ruling, or a rebuttal that rebuts, with no passing citation is invalid; a concession needs none', (t) => {
@@ -452,7 +503,7 @@ test('check: a CRLF plan keeps a quote that follows a fenced `# comment` in its 
   writeFileSync(p.plan, ['# Plan', '', '## Approach', 'Run:', '', '```bash', '# build first', '```', '', 'Then store the ledger.', '', '## Risks', 'None.', ''].join('\r\n'));
   const result = p.check(ledger([objection('A1', [cite('plan', '#approach', 'Then store the ledger.')])]));
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(result.lines, ['checked: 1 objections, 0 opinion, 0 problems']);
+  assert.deepEqual(result.lines, ['checked: mode plan, 1 objections, 0 opinion, 0 problems']);
 });
 
 test('check: a heading inside a fenced block is no anchor', (t) => {
@@ -487,7 +538,7 @@ test('check: two rebuttals that bring the same new evidence are both valid', (t)
     objection('A2', [PASSING.plan], { by: 'B', status: 'rejected', ruling: ruled, rebuttal: structuredClone(rebuttal) }),
   ]));
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(result.lines, ['checked: 2 objections, 0 opinion, 0 problems']);
+  assert.deepEqual(result.lines, ['checked: mode plan, 2 objections, 0 opinion, 0 problems']);
 });
 
 test('check: a complete ledger with an objection pending, or ruled on with no ruling, exits 1 and is not written', (t) => {
@@ -680,7 +731,7 @@ test('check: absence reads only regular tracked files: a tracked symlink to an o
   p.git('add', 'lib');
   const result = p.check(ledger([objection('A1', [cite('absence', 'lib', 'NEEDLE_OUT')])]));
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(result.lines, ['checked: 1 objections, 0 opinion, 0 problems']);
+  assert.deepEqual(result.lines, ['checked: mode plan, 1 objections, 0 opinion, 0 problems']);
 });
 
 test('check: an absence path is a literal pathspec, a set GIT_ICASE_PATHSPECS does not break it, and a path with no tracked file fails', (t) => {
@@ -698,7 +749,7 @@ test('check: an absence path is a literal pathspec, a set GIT_ICASE_PATHSPECS do
   assert.ok(result.lines.some((line) => line.startsWith('objection A4.citations[0]') && line.endsWith(': the quote is empty')), result.stdout);
   const icase = p.check(ledger([objection('A1', [PASSING.absence])]), { env: { ...process.env, GIT_ICASE_PATHSPECS: '1' } });
   assert.equal(icase.status, 0, icase.stderr);
-  assert.deepEqual(icase.lines, ['checked: 1 objections, 0 opinion, 0 problems']);
+  assert.deepEqual(icase.lines, ['checked: mode plan, 1 objections, 0 opinion, 0 problems']);
 });
 
 test('quorum codex: a brief that cannot be read is failed, with one line and exit 1', async (t) => {
@@ -939,6 +990,11 @@ function documentedFields() {
 test('ledger.md names every field of LEDGER_SCHEMA and no other, its enum values both ways, null where the schema allows it, and keeps no schema copy', () => {
   const { text, bullets } = documentedFields();
   const schema = fieldPaths(LEDGER_SCHEMA);
+  // The plan-mode fields are in the schema, so the list below holds ledger.md to them too.
+  const fields = new Map(schema.map(({ field, node }) => [field, node]));
+  for (const field of ['mode', 'notes', 'objections[].merged_into', 'objections[].ruling.tested', 'objections[].ruling.inferences', 'objections[].ruling.ground', 'proportionality']) assert.ok(fields.has(field), `LEDGER_SCHEMA has ${field}`);
+  assert.deepEqual(fields.get('objections[].ruling.ground').enum, ['covered', 'implementation', 'settled', 'off-goal', 'disproportionate', 'speculative']);
+  assert.ok(fields.get('objections[].status').enum.includes('merged'));
   assert.deepEqual([...bullets.keys()].sort(), schema.map((each) => each.field).sort());
   for (const { field, node } of schema) {
     const bullet = bullets.get(field);
@@ -1017,4 +1073,298 @@ test('plan-review runs the quorum skill at step 3b, lists its flags in Inputs, a
   const ledger = readFileSync(path.join(SKILL, 'references/ledger.md'), 'utf8');
   assert.match(ledger, /\n## Under plan-review\n/u, 'ledger.md has § Under plan-review');
   assert.match(ledger, /\[Under plan-review\]\(#under-plan-review\)/u, 'ledger.md links its plan-review section');
+});
+
+// Plan mode: a ledger that carries `mode` is held to the plan-mode briefs' rules; one without it keeps the rules it was
+// written under, and `check` never adds the field.
+
+test('LEDGER_SCHEMAS holds the plan schema, modeOf reads a ledger with no mode as plan, and check refuses a mode with no schema', (t) => {
+  assert.equal(LEDGER_SCHEMAS.plan, LEDGER_SCHEMA);
+  assert.equal(modeOf(ledger([])), 'plan');
+  assert.equal(modeOf(planLedger([])), 'plan');
+  assert.deepEqual(GROUNDS, ['covered', 'implementation', 'settled', 'off-goal', 'disproportionate', 'speculative']);
+  const p = project(t);
+  const odd = { ...ledger([objection('A1', [PASSING.code])]), mode: 'debate' };
+  const result = p.check(odd);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /: \$\.mode must be one of plan$/mu);
+  assert.deepEqual(result.ledger, odd, 'not written back');
+});
+
+test('check: a ledger with no mode keeps the old rules: 7 objections, an improvement, a plan-less accept, an uncited concession, no verdicts, and is written back without mode', (t) => {
+  const p = project(t);
+  const old = (decision, citations) => ({ decision, change_or_reason: 'r', citations });
+  const before = { ...ledger([
+    objection('A1', [PASSING.code], { claim: 'It breaks.\ninference: the slot is shared', status: 'accepted', ruling: old('accept', [PASSING.code]) }),
+    objection('A2', [PASSING.code], { status: 'rejected', ruling: old('reject', [PASSING.adr]), rebuttal: concede([]) }),
+    ...[3, 4, 5, 6, 7].map((n) => objection(`A${n}`, [PASSING.code], { severity: n === 7 ? 'improvement' : 'important', status: 'accepted', ruling: old('accept', [PASSING.adr]) })),
+  ]), status: 'complete' };
+  const result = p.check(before);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.lines, ['checked: mode plan, 7 objections, 0 opinion, 0 problems']);
+  assert.equal(Object.hasOwn(result.ledger, 'mode'), false, 'check adds no mode');
+  assert.deepEqual(result.ledger, before);
+});
+
+test('check with mode: more than 5 objections by one adversary, or an improvement, exits 1 and is not written; 5 each pass', (t) => {
+  const p = project(t);
+  for (const [before, message] of [
+    [planLedger(Array.from({ length: 6 }, (_, i) => objection(`A${i + 1}`, [PASSING.code]))), /: A raised 6 objections, more than 5 in a ledger with a mode$/mu],
+    [planLedger([objection('B1', [PASSING.code], { by: 'B', severity: 'improvement' })]), /: objection B1 is an improvement, which goes to notes in a ledger with a mode$/mu],
+  ]) {
+    const result = p.check(before);
+    assert.equal(result.status, 1, message.source);
+    assert.match(result.stderr, message);
+    assert.deepEqual(result.ledger, before, 'not written back');
+  }
+  const five = planLedger([1, 2, 3, 4, 5].flatMap((n) => [objection(`A${n}`, [PASSING.code]), objection(`B${n}`, [PASSING.code], { by: 'B', severity: 'blocking' })]));
+  const result = p.check(five);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.lines, ['checked: mode plan, 10 objections, 0 opinion, 0 problems']);
+  assert.equal(result.ledger.mode, 'plan');
+});
+
+test('check with mode: an accept, first or final, with no passing plan citation is invalid, and stale in a complete ledger', (t) => {
+  const p = project(t);
+  const failingPlan = cite('plan', '#risks', 'Store the ledger');
+  const first = (ruling) => objection('A1', [PASSING.code], { status: 'accepted', ruling });
+  const final = (ruling) => objection('A1', [PASSING.code], { status: 'accepted', ruling: rejects(), rebuttal: { verdict: 'rebut', claim: 'c', citations: [PASSING.fenced], ruling } });
+  for (const [build, where] of [[first, 'objection A1 ruling'], [final, 'objection A1 rebuttal ruling']]) {
+    const line = `${where}: invalid: an accept cites no plan section`;
+    for (const citations of [[PASSING.adr], [PASSING.adr, failingPlan]]) {
+      const open = p.check(planLedger([build(accepts({ citations }))]));
+      assert.equal(open.status, 0, open.stderr);
+      assert.ok(open.lines.includes(line), `${line}\n${open.stdout}`);
+      const complete = planLedger([build(accepts({ citations }))], { status: 'complete', proportionality: { flagged: [] } });
+      const refused = p.check(complete);
+      assert.equal(refused.status, 1, refused.stdout);
+      assert.ok(refused.stderr.includes(`${line} in a complete ledger`), refused.stderr);
+      assert.deepEqual(refused.ledger, complete, 'not written back');
+    }
+    const good = p.check(planLedger([build(accepts())], { status: 'complete', proportionality: { flagged: [] } }));
+    assert.equal(good.status, 0, good.stderr);
+    assert.deepEqual(good.lines, ['checked: mode plan, 1 objections, 0 opinion, 0 problems']);
+  }
+});
+
+test('check: a merged objection with no ruling, folded into the other adversary`s live objection, passes and is skipped by completeness; any other shape exits 1', (t) => {
+  const p = project(t);
+  const merged = (extra = {}) => objection('B1', [PASSING.adr], { by: 'B', status: 'merged', merged_into: 'A1', ...extra });
+  for (const before of [ledger([objection('A1', [PASSING.code]), merged()]), planLedger([objection('A1', [PASSING.code]), merged()])]) {
+    const result = p.check(before);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.lines, ['checked: mode plan, 2 objections, 0 opinion, 0 problems']);
+    assert.deepEqual(result.ledger.objections.map((each) => each.status), ['pending', 'merged']);
+  }
+  const complete = p.check(planLedger([objection('A1', [PASSING.code], { status: 'accepted', ruling: accepts() }), merged()], { status: 'complete', proportionality: { flagged: [] } }));
+  assert.equal(complete.status, 0, complete.stderr);
+  const unnamed = merged();
+  delete unnamed.merged_into;
+  for (const [objections, message] of [
+    [[objection('A1', [PASSING.code]), merged({ ruling: rejects() })], /: objection B1 is merged but has a ruling$/mu],
+    [[objection('A1', [PASSING.code]), merged({ rebuttal: concede([PASSING.adr]) })], /: objection B1 is merged but has a rebuttal$/mu],
+    [[objection('A1', [PASSING.code]), merged({ merged_into: null })], /: objection B1 is merged into no objection$/mu],
+    [[objection('A1', [PASSING.code]), unnamed], /: objection B1 is merged into no objection$/mu],
+    [[objection('A1', [PASSING.code]), merged({ merged_into: 'A9' })], /: objection B1 is merged into A9, not an objection in this ledger$/mu],
+    [[objection('B2', [PASSING.code], { by: 'B' }), merged({ merged_into: 'B2' })], /: objection B1 is merged into B2, an objection of the same adversary$/mu],
+    [[objection('A1', [PASSING.code], { status: 'merged', merged_into: 'B2' }), merged(), objection('B2', [PASSING.code], { by: 'B' })], /: objection B1 is merged into A1, which is merged$/mu],
+    [[objection('A1', [cite('code', 'src/app.js:1', 'nope')], { status: 'opinion' }), merged()], /: objection B1 is merged into A1, which is opinion$/mu],
+    [[objection('A1', [PASSING.code], { merged_into: 'B1' }), objection('B1', [PASSING.code], { by: 'B' })], /: objection A1 names merged_into B1 but is pending, not merged$/mu],
+  ]) {
+    for (const before of [planLedger(objections), ledger(objections)]) {
+      const result = p.check(before);
+      assert.equal(result.status, 1, message.source);
+      assert.match(result.stderr, message);
+      assert.deepEqual(result.ledger, before, 'not written back');
+    }
+  }
+});
+
+test('check: a note with no passing citation is removed and named; one with a passing citation is kept', (t) => {
+  const p = project(t);
+  const notes = [{ by: 'A', claim: 'add a log line', citations: [PASSING.code] }, { by: 'B', claim: 'no better alternative', citations: [cite('plan', '#risks', 'nope')] }];
+  const result = p.check(planLedger([objection('A1', [PASSING.code])], { notes }));
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.ledger.notes, [notes[0]]);
+  assert.deepEqual(result.lines, [
+    'notes[1].citations[0] (plan #risks): the plan#risks does not contain the quote',
+    'notes[1] (by B): removed: no citation passes',
+    'checked: mode plan, 1 objections, 0 opinion, 2 problems',
+  ]);
+});
+
+test('check with mode: tested names each citation of the ruled entry once, an accept rests on a supporting one, and every inference line is tested', (t) => {
+  const p = project(t);
+  const claim = 'It breaks.\ninference: the slot is shared\n  Inference:   two writers race on it, and nothing in the plan or the code orders their writes';
+  const tested = [{ statement: 'the slot is shared', holds: true, reason: 'r', citations: [PASSING.code] }, { statement: 'two  writers race on it', holds: false, reason: 'r', citations: [] }];
+  const first = (over) => objection('A1', [PASSING.code, PASSING.adr], { claim, status: 'accepted', ruling: accepts({ tested: verdicts(2), inferences: tested, ...over }) });
+  const final = (over) => objection('A1', [PASSING.code], { status: 'accepted', ruling: rejects(), rebuttal: { verdict: 'rebut', claim, citations: [PASSING.fenced, PASSING.docBySlug], ruling: accepts({ tested: verdicts(2), inferences: tested, ...over }) } });
+  for (const [build, where] of [[first, 'objection A1 ruling'], [final, 'objection A1 rebuttal ruling']]) {
+    for (const [over, lines] of [
+      [{ tested: verdicts(1) }, ['tested names 1 of 2 citations']],
+      [{ tested: [] }, ['tested names 0 of 2 citations', 'an accept rests on no supporting citation']],
+      [{ tested: undefined }, ['tested names 0 of 2 citations', 'an accept rests on no supporting citation']],
+      [{ tested: [...verdicts(2), { citation: 1, supports: false, reason: 'r' }] }, ['tested names 1 of 2 citations; 1 more than once']],
+      [{ tested: [...verdicts(2), { citation: 2, supports: true, reason: 'r' }, { citation: -1, supports: true, reason: 'r' }] }, ['tested names 2 of 2 citations; 2, -1 out of range']],
+      [{ tested: verdicts(2, false) }, ['an accept rests on no supporting citation']],
+      [{ inferences: tested.slice(0, 1) }, ['inference untested: "two writers race on it, and nothing in the plan or the code "']],
+      [{ inferences: [{ ...tested[0], statement: '  ' }, tested[1]] }, ['inference untested: "the slot is shared"']],
+      [{ inferences: undefined }, ['inference untested: "the slot is shared"', 'inference untested: "two writers race on it, and nothing in the plan or the code "']],
+      // One entry settles one line: a statement two lines hold answers only the first.
+      [{ inferences: [{ ...tested[0], statement: 'the slot' }] }, ['inference untested: "two writers race on it, and nothing in the plan or the code "']],
+      [{ inferences: [{ ...tested[0], statement: 'race' }] }, ['inference untested: "the slot is shared"']],
+    ]) {
+      const result = p.check(planLedger([build(over)]));
+      assert.equal(result.status, 0, result.stderr);
+      const named = result.lines.filter((line) => line.startsWith(`${where}: `));
+      assert.deepEqual(named, lines.map((line) => `${where}: invalid: ${line}`), JSON.stringify(over));
+    }
+    const good = p.check(planLedger([build({})]));
+    assert.equal(good.status, 0, good.stderr);
+    assert.deepEqual(good.lines, ['checked: mode plan, 1 objections, 0 opinion, 0 problems']);
+  }
+});
+
+test('check with mode: inference lines are matched to distinct entries on their own line, and a bare inference: takes no next line', (t) => {
+  const p = project(t);
+  const run = (claim, inferences) => {
+    const result = p.check(planLedger([objection('A1', [PASSING.code], { claim, status: 'accepted', ruling: accepts({ inferences: inferences.map((statement) => ({ statement, holds: true, reason: 'r', citations: [] })) }) })]));
+    assert.equal(result.status, 0, result.stderr);
+    return result.lines.filter((line) => line.startsWith('objection A1 ruling: '));
+  };
+  // A bare label is no inference, and the line after it is a plain statement, not one for the judge to test.
+  assert.deepEqual(run('It breaks.\ninference:\nThe plan stores the ledger.', []), []);
+  assert.deepEqual(run('It breaks.\r\ninference:  \r\nThe plan stores the ledger.', []), []);
+  // Two lines that one entry would fit both: the second goes untested.
+  assert.deepEqual(run('inference: the slot is shared\ninference: the slot is shared by two writers', ['the slot is shared']), ['objection A1 ruling: invalid: inference untested: "the slot is shared by two writers"']);
+  // Matching is not by order: the broad statement goes to the line only it fits.
+  assert.deepEqual(run('inference: the slot is shared by two writers\ninference: the slot is shared', ['the slot is shared', 'shared by two']), []);
+});
+
+test('check: an objection merged into one that becomes an opinion goes back to pending, unmerged, and the next check passes', (t) => {
+  const p = project(t);
+  const gone = cite('code', 'src/app.js:1', 'nope');
+  for (const before of [ledger, planLedger].map((build) => build([
+    objection('A1', [gone]),
+    objection('B1', [PASSING.adr], { by: 'B', status: 'merged', merged_into: 'A1' }),
+    objection('B2', [gone], { by: 'B', status: 'merged', merged_into: 'A1' }),
+  ]))) {
+    const first = p.check(before);
+    assert.equal(first.status, 0, first.stderr);
+    for (const line of ['objection A1: relabeled opinion (was pending): no citation passes', 'objection B1: unmerged: A1 became an opinion', 'objection B2: unmerged: A1 became an opinion', 'objection B2: relabeled opinion (was pending): no citation passes']) {
+      assert.ok(first.lines.includes(line), `${line}\n${first.stdout}`);
+    }
+    assert.deepEqual(first.ledger.objections.map(({ status, merged_into }) => [status, merged_into]), [['opinion', undefined], ['pending', null], ['opinion', null]]);
+    const second = p.check(first.ledger);
+    assert.equal(second.status, 0, second.stderr);
+    assert.ok(!second.lines.some((line) => line.includes('unmerged')), second.stdout);
+  }
+});
+
+test('check with mode: a concession needs a passing citation, the ruling`s own included; without one it is invalid and escalates', (t) => {
+  const p = project(t);
+  const line = 'objection A1 rebuttal: invalid: the concession has no passing citation';
+  const conceded = (citations, status = 'rejected') => objection('A1', [PASSING.code], { status, ruling: rejects(), rebuttal: concede(citations) });
+  for (const citations of [[], [cite('code', 'src/app.js:1', 'nope')]]) {
+    const open = p.check(planLedger([conceded(citations)]));
+    assert.equal(open.status, 0, open.stderr);
+    assert.ok(open.lines.includes(line), open.stdout);
+    const refused = p.check(planLedger([conceded(citations)], { status: 'complete' }));
+    assert.equal(refused.status, 1, refused.stdout);
+    assert.ok(refused.stderr.includes(`${line} in a complete ledger`), refused.stderr);
+    // The coordinator escalated it, so the Human holds it.
+    const escalated = p.check(planLedger([conceded(citations, 'escalated')], { status: 'complete' }));
+    assert.equal(escalated.status, 0, escalated.stderr);
+    assert.ok(escalated.lines.includes(line), escalated.stdout);
+  }
+  // Nothing-new is for a rebuttal: a concession cites the evidence of the ruling it accepts.
+  const good = p.check(planLedger([conceded([PASSING.plan])], { status: 'complete' }));
+  assert.equal(good.status, 0, good.stderr);
+  assert.deepEqual(good.lines, ['checked: mode plan, 1 objections, 0 opinion, 0 problems']);
+});
+
+test('rebuttalProblems: a concession with no citation fits a ledger with no mode, and not one with a mode', () => {
+  const entry = (citations) => ({ objection_id: 'B1', verdict: 'concede', claim: 'c', citations });
+  const withMode = { ...RULED, mode: 'plan' };
+  assert.deepEqual(rebuttalProblems({ rebuttals: [entry([])] }, RULED), []);
+  assert.deepEqual(rebuttalProblems({ rebuttals: [entry([])] }, withMode), ['the answer concedes B1 with no citation, which a ledger with a mode needs']);
+  assert.deepEqual(rebuttalProblems({ rebuttals: [entry([PASSING.adr])] }, withMode), []);
+});
+
+test('quorum codex --mode rebut on a ledger with a mode: a concession with no citation is failed and not written', async (t) => {
+  const r = codexRun(t, fakeCodex({ answer: { rebuttals: [{ objection_id: 'B1', verdict: 'concede', claim: 'c', citations: [] }] } }));
+  writeFileSync(r.ledgerFile, JSON.stringify({ ...RULED, mode: 'plan' }));
+  assert.equal(await r.run({}, undefined, r.rebut), 1);
+  assert.deepEqual(r.printed.map((line) => JSON.parse(line)), [{ status: 'failed', reason: 'the answer does not fit the ledger: the answer concedes B1 with no citation, which a ledger with a mode needs' }]);
+  assert.throws(() => readFileSync(r.out), /ENOENT/u, 'nothing written');
+});
+
+test('check with mode: a reject names its ground, only a reject has one, every ruling opens with Covers, and an accept states its cost and removed risk', (t) => {
+  const p = project(t);
+  const first = (ruling, status = 'accepted') => objection('A1', [PASSING.code], { status, ruling });
+  const final = (ruling, status = 'accepted') => objection('A1', [PASSING.code], { status, ruling: rejects(), rebuttal: { verdict: 'rebut', claim: 'c', citations: [PASSING.fenced], ruling } });
+  for (const [build, where] of [[first, 'objection A1 ruling'], [final, 'objection A1 rebuttal ruling']]) {
+    for (const [ruling, line] of [
+      [rejects({ ground: undefined }), 'a reject names no ground'],
+      [accepts({ ground: 'covered' }), 'ground on an accept'],
+      [{ ...rejects({ decision: 'escalate' }) }, 'ground on an escalate'],
+      [accepts({ change_or_reason: 'Nothing covers it.\nCost: one line.\nRemoves: the race.' }), 'no Covers line'],
+      [accepts({ change_or_reason: 'Change it.\nCovers: nothing\nCost: one line.\nRemoves: the race.' }), 'no Covers line'],
+      [accepts({ change_or_reason: 'Covers: nothing\nRemoves: the race.' }), 'an accept states no cost or removed risk'],
+      [accepts({ change_or_reason: 'Covers: nothing\nCost: one line.' }), 'an accept states no cost or removed risk'],
+      [accepts({ change_or_reason: 'Covers: nothing\nCost: \nRemoves: the race.' }), 'an accept states no cost or removed risk'],
+    ]) {
+      const result = p.check(planLedger([build(ruling)]));
+      assert.equal(result.status, 0, result.stderr);
+      const named = result.lines.filter((each) => each.startsWith(`${where}: `));
+      assert.deepEqual(named, [`${where}: invalid: ${line}`], `${where}: ${line}`);
+    }
+  }
+  // Stale in a complete ledger, as any invalid ruling.
+  const stale = p.check(planLedger([first(rejects({ ground: undefined }), 'rejected')].map((each) => ({ ...each, rebuttal: concede([PASSING.plan]) })), { status: 'complete' }));
+  assert.equal(stale.status, 1, stale.stdout);
+  assert.ok(stale.stderr.includes('objection A1 ruling: invalid: a reject names no ground in a complete ledger'), stale.stderr);
+  // Valid: a reject on the ground the change costs more than the risk it removes, conceded; an accept with all three lines.
+  const good = p.check(planLedger([
+    objection('A1', [PASSING.code], { status: 'rejected', ruling: rejects({ ground: 'disproportionate', change_or_reason: 'Covers: nothing\nThe change adds a service for a risk no citation shows.' }), rebuttal: concede([PASSING.plan]) }),
+    objection('B1', [PASSING.code], { by: 'B', status: 'accepted', ruling: accepts() }),
+  ], { status: 'complete', proportionality: { flagged: [] } }));
+  assert.equal(good.status, 0, good.stderr);
+  assert.deepEqual(good.lines, ['checked: mode plan, 2 objections, 0 opinion, 0 problems']);
+});
+
+test('check with mode: proportionality is required in a complete ledger with an accept, and each flagged objection is an accept the Human holds', (t) => {
+  const p = project(t);
+  const accepted = (extra = {}) => objection('A1', [PASSING.code], { status: 'accepted', ruling: accepts(), ...extra });
+  const finalAccept = objection('A2', [PASSING.code], { status: 'accepted', ruling: rejects(), rebuttal: { verdict: 'rebut', claim: 'c', citations: [PASSING.fenced], ruling: accepts() } });
+  const conceded = objection('A3', [PASSING.code], { status: 'rejected', ruling: rejects(), rebuttal: concede([PASSING.plan]) });
+  const flag = (objection_id) => ({ objection_id, reason: 'with A2 it adds two services', smaller_change: 'one service' });
+  // `undefined` leaves the field out, as a ledger written before the pass.
+  const done = (objections, proportionality, extra = {}) => JSON.parse(JSON.stringify(planLedger(objections, { status: 'complete', proportionality, ...extra })));
+  for (const [before, message] of [
+    [done([accepted()], null), /: proportionality: missing in a complete ledger with accepted changes$/mu],
+    [done([accepted()], undefined), /: proportionality: missing in a complete ledger with accepted changes$/mu],
+    [done([finalAccept, conceded], null), /: proportionality: missing in a complete ledger with accepted changes$/mu],
+    [done([accepted(), conceded], { flagged: [flag('A3')] }), /: proportionality: flagged A3 is not an objection with an accept ruling$/mu],
+    [done([accepted()], { flagged: [flag('A9')] }), /: proportionality: flagged A9 is not an objection with an accept ruling$/mu],
+    [done([accepted()], { flagged: [flag('A1')] }), /: proportionality: flagged A1 is accepted, neither escalated nor answered in human_answers$/mu],
+    [planLedger([accepted()], { proportionality: { flagged: [flag('A1')] } }), /: proportionality: flagged A1 is accepted, neither escalated nor answered in human_answers$/mu],
+  ]) {
+    const result = p.check(before);
+    assert.equal(result.status, 1, message.source);
+    assert.match(result.stderr, message);
+    assert.deepEqual(result.ledger, before, 'not written back');
+  }
+  for (const before of [
+    done([accepted({ status: 'escalated' }), finalAccept], { flagged: [flag('A1')] }),
+    done([accepted(), finalAccept], { flagged: [flag('A1'), flag('A2')] }, { human_answers: [{ objection_id: 'A1', answer: 'the smaller change' }, { objection_id: 'A2', answer: 'as accepted' }] }),
+    done([accepted(), finalAccept], { flagged: [] }),
+    done([conceded], null),
+    done([conceded], { flagged: [] }),
+    done([conceded], undefined),
+    planLedger([accepted()], { proportionality: null }),
+  ]) {
+    const result = p.check(before);
+    assert.equal(result.status, 0, `${JSON.stringify(before.proportionality)}\n${result.stderr}`);
+  }
 });

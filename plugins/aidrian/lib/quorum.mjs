@@ -4,7 +4,8 @@
 //           architect's rulings on its objections in a ledger, to REBUTTALS_SCHEMA and that ledger (`--mode rebut`),
 //           and prints one { status, reason } line
 //   check   checks every citation of a ledger against the repository and the plan, relabels a `pending` objection
-//           with no passing citation as `opinion`, and names each ruling or rebuttal with no passing citation
+//           with no passing citation as `opinion`, removes a note with none, and names each ruling or rebuttal with no
+//           passing citation; on a ledger that carries `mode`, also the judge's verdicts and the moderation lines
 // LEDGER_SCHEMA, OBJECTIONS_SCHEMA, and REBUTTALS_SCHEMA are the one source of truth for these files. `check` runs no command but
 // `git ls-files`, and never executes what a citation names.
 
@@ -21,9 +22,16 @@ import { codexAvailable, runCodex } from './review/reviewers.mjs';
 
 export const CITATION_KINDS = Object.freeze(['doc', 'adr', 'code', 'plan', 'absence']);
 export const SEVERITIES = Object.freeze(['blocking', 'important', 'improvement']);
-// The objection statuses: `pending` until the architect rules, `opinion` when no citation passes.
-export const OBJECTION_STATUSES = Object.freeze(['pending', 'opinion', 'accepted', 'rejected', 'escalated']);
+// The objection statuses: `pending` until the architect rules, `opinion` when no citation passes, `merged` when the
+// coordinator folds it into the other adversary's duplicate.
+export const OBJECTION_STATUSES = Object.freeze(['pending', 'opinion', 'accepted', 'rejected', 'escalated', 'merged']);
 export const MAX_OBJECTIONS = 7;
+// A ledger that carries `mode` holds at most this many objections per adversary; the rest of what Codex may answer
+// (OBJECTIONS_SCHEMA keeps MAX_OBJECTIONS) the coordinator moves to `notes` or drops.
+export const MAX_MODE_OBJECTIONS = 5;
+export const MAX_NOTES = 10;
+// Why the judge rejects an objection, one per reject, on a ledger that carries `mode`.
+export const GROUNDS = Object.freeze(['covered', 'implementation', 'settled', 'off-goal', 'disproportionate', 'speculative']);
 export const MAX_QUOTE = 200;
 // Codex's time for one adversary pass; the coordinator's shell timeout (15 minutes) stays above it.
 export const CODEX_TIMEOUT_SEC = 780;
@@ -101,6 +109,8 @@ const MODES = Object.freeze({
   rebut: { schema: REBUTTALS_SCHEMA, list: 'rebuttals' },
 });
 
+// `tested`, `inferences`, and `ground` are the judge's verdicts: optional, since a ledger written before `mode` has
+// none, and required by checkLedger on a ledger that carries `mode`.
 const RULING = Object.freeze({
   type: ['object', 'null'],
   additionalProperties: false,
@@ -109,16 +119,38 @@ const RULING = Object.freeze({
     decision: { type: 'string', enum: ['accept', 'reject', 'escalate'] },
     change_or_reason: { type: 'string' },
     citations: CITATIONS,
+    tested: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['citation', 'supports', 'reason'],
+        properties: { citation: { type: 'integer' }, supports: { type: 'boolean' }, reason: { type: 'string' } },
+      },
+    },
+    inferences: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['statement', 'holds', 'reason', 'citations'],
+        properties: { statement: { type: 'string' }, holds: { type: 'boolean' }, reason: { type: 'string' }, citations: CITATIONS },
+      },
+    },
+    ground: { type: 'string', enum: GROUNDS },
   },
 });
 
 // The objection ledger, `<state>/quorum/<name>-<plan-hash>.json`: `<name>` is the plan's file name without `.md`, or
-// `<parent-folder>-plan` for a file named `plan.md`.
+// `<parent-folder>-plan` for a file named `plan.md`. `mode`, `notes`, `merged_into`, and `proportionality` are optional:
+// a ledger written before `mode` has none of them, and check never adds one. `notes` comes after `objections`, so the
+// citation shape is described at `objections[].citations` (the ledger.md test expands a shared node at its first place).
 export const LEDGER_SCHEMA = Object.freeze({
   type: 'object',
   additionalProperties: false,
   required: ['status', 'plan', 'plan_hash', 'same_model', 'same_model_reason', 'trigger', 'objections', 'human_answers'],
   properties: {
+    mode: { type: 'string', enum: ['plan'] },
     status: { type: 'string', enum: ['open', 'complete'] },
     plan: { type: 'string' },
     plan_hash: { type: 'string' },
@@ -138,6 +170,7 @@ export const LEDGER_SCHEMA = Object.freeze({
           claim: { type: 'string' },
           citations: CITATIONS,
           status: { type: 'string', enum: OBJECTION_STATUSES },
+          merged_into: { type: ['string', 'null'] },
           ruling: RULING,
           rebuttal: {
             type: ['object', 'null'],
@@ -153,6 +186,16 @@ export const LEDGER_SCHEMA = Object.freeze({
         },
       },
     },
+    notes: {
+      type: 'array',
+      maxItems: MAX_NOTES,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['by', 'claim', 'citations'],
+        properties: { by: { type: 'string', enum: ['A', 'B'] }, claim: { type: 'string' }, citations: CITATIONS },
+      },
+    },
     human_answers: {
       type: 'array',
       items: {
@@ -162,8 +205,35 @@ export const LEDGER_SCHEMA = Object.freeze({
         properties: { objection_id: { type: 'string' }, answer: { type: 'string' } },
       },
     },
+    proportionality: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      required: ['flagged'],
+      properties: {
+        flagged: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['objection_id', 'reason', 'smaller_change'],
+            properties: { objection_id: { type: 'string' }, reason: { type: 'string' }, smaller_change: { type: 'string' } },
+          },
+        },
+      },
+    },
   },
 });
+
+// The ledger schema of each mode. A ledger with no `mode` is a plan-mode ledger under the rules it was written with.
+export const LEDGER_SCHEMAS = Object.freeze({ plan: LEDGER_SCHEMA });
+export const modeOf = (ledger) => (isObject(ledger) ? ledger.mode ?? 'plan' : 'plan');
+// The schema a ledger is held to; a mode with no schema is held to the plan schema, whose `mode` enum refuses it.
+const schemaOf = (ledger) => {
+  const mode = modeOf(ledger);
+  return typeof mode === 'string' && Object.hasOwn(LEDGER_SCHEMAS, mode) ? LEDGER_SCHEMAS[mode] : LEDGER_SCHEMA;
+};
+// A ledger written under the mode briefs carries `mode`, and is held to their rules; one without it keeps the old ones.
+const carriesMode = (ledger) => Object.hasOwn(ledger, 'mode');
 
 // The problems of `value` against `schema`, for the subset of JSON Schema the schemas above use: type (one or a
 // list), enum, required, properties, additionalProperties: false, items, and maxItems. [] when it is valid.
@@ -197,7 +267,7 @@ function isType(value, type) {
 // Why a rebuttals answer does not fit `ledger`, as one line per problem: an id named twice; an id that is not one of B's
 // objections ruled `reject` or `accept` (a partial accept's rebuttal covers its rejected part) and not `escalated`, since
 // an escalated objection goes to the Human and gets no rebuttal; or one of B's objections with status `rejected` and no
-// entry. [] when it fits.
+// entry; or, in a ledger that carries `mode`, a concession that cites nothing. [] when it fits.
 export function rebuttalProblems(answer, ledger) {
   const ids = answer.rebuttals.map((entry) => entry.objection_id);
   const answerable = ledger.objections.filter((each) => each.by === 'B' && ['reject', 'accept'].includes(each.ruling?.decision) && each.status !== 'escalated');
@@ -209,6 +279,8 @@ export function rebuttalProblems(answer, ledger) {
   if (twice.length) problems.push(`the answer names ${twice.join(', ')} more than once`);
   if (unknown.length) problems.push(`the answer names ${unknown.join(', ')}, not B's objection ruled reject or accept, and not escalated, in the ledger`);
   if (missing.length) problems.push(`the answer has no entry for ${missing.join(', ')}, B's objection rejected in the ledger`);
+  const bare = carriesMode(ledger) ? answer.rebuttals.filter((entry) => entry.verdict === 'concede' && !entry.citations.length).map((entry) => entry.objection_id) : [];
+  if (bare.length) problems.push(`the answer concedes ${bare.join(', ')} with no citation, which a ledger with a mode needs`);
   return problems;
 }
 
@@ -353,6 +425,59 @@ export function answerProblems(ledger) {
   return problems;
 }
 
+// Why a merged objection does not fit, in any ledger: a merged objection is neither ruled nor rebutted, and names in
+// `merged_into` a live objection of the other adversary, one neither merged nor an opinion. An objection that names
+// `merged_into` is merged. Run after idProblems: these lines print ids.
+export function mergeProblems(ledger) {
+  const byId = new Map(ledger.objections.map((objection) => [objection.id, objection]));
+  return ledger.objections.flatMap((objection) => {
+    const where = `objection ${objection.id}`;
+    const into = objection.merged_into ?? null;
+    if (objection.status !== 'merged') return into === null ? [] : [`${where} names merged_into ${shown(into)} but is ${objection.status}, not merged`];
+    const problems = [];
+    if (objection.ruling !== null) problems.push(`${where} is merged but has a ruling`);
+    if (objection.rebuttal !== null) problems.push(`${where} is merged but has a rebuttal`);
+    const survivor = byId.get(into);
+    if (into === null) problems.push(`${where} is merged into no objection`);
+    else if (!survivor) problems.push(`${where} is merged into ${shown(into)}, not an objection in this ledger`);
+    else if (survivor.by === objection.by) problems.push(`${where} is merged into ${into}, an objection of the same adversary`);
+    else if (survivor.status === 'merged' || survivor.status === 'opinion') problems.push(`${where} is merged into ${into}, which is ${survivor.status}`);
+    return problems;
+  });
+}
+
+// Whether the objection's first or final ruling accepts: a change the plan takes on.
+const accepts = (objection) => objection.ruling?.decision === 'accept' || objection.rebuttal?.ruling?.decision === 'accept';
+
+// What a ledger that carries `mode` must hold beyond the old rules, as lines that stop the check: at most
+// MAX_MODE_OBJECTIONS objections per adversary, no `improvement` (it goes to `notes`), and the proportionality pass:
+// present in a complete ledger with an accepted change, and each flagged objection one with an accept ruling that the
+// Human holds, `escalated` or answered. [] for a ledger without `mode`.
+export function modeProblems(ledger) {
+  if (!carriesMode(ledger)) return [];
+  const problems = [];
+  for (const by of ['A', 'B']) {
+    const count = ledger.objections.filter((objection) => objection.by === by).length;
+    if (count > MAX_MODE_OBJECTIONS) problems.push(`${by} raised ${count} objections, more than ${MAX_MODE_OBJECTIONS} in a ledger with a mode`);
+  }
+  for (const objection of ledger.objections) {
+    if (objection.severity === 'improvement') problems.push(`objection ${objection.id} is an improvement, which goes to notes in a ledger with a mode`);
+  }
+  const proportionality = ledger.proportionality ?? null;
+  if (proportionality === null) {
+    if (ledger.status === 'complete' && ledger.objections.some(accepts)) problems.push('proportionality: missing in a complete ledger with accepted changes');
+    return problems;
+  }
+  const byId = new Map(ledger.objections.map((objection) => [objection.id, objection]));
+  const answered = new Set(ledger.human_answers.map((answer) => answer.objection_id));
+  for (const { objection_id: id } of proportionality.flagged) {
+    const objection = byId.get(id);
+    if (!objection || !accepts(objection)) problems.push(`proportionality: flagged ${shown(id)} is not an objection with an accept ruling`);
+    else if (objection.status !== 'escalated' && !answered.has(id)) problems.push(`proportionality: flagged ${id} is ${objection.status}, neither escalated nor answered in human_answers`);
+  }
+  return problems;
+}
+
 // The status each decision gives an objection.
 const DECIDED = Object.freeze({ accept: 'accepted', reject: 'rejected', escalate: 'escalated' });
 
@@ -360,16 +485,17 @@ const DECIDED = Object.freeze({ accept: 'accepted', reject: 'rejected', escalate
 // ruling and has none. For an objection the Human did not settle (not `escalated`, not answered), also: a rebuttal that
 // rebuts with no final ruling, a final ruling other than `accept` (any other escalates), or a status that is not the
 // one its final decision gives (the final ruling's; else the first ruling's, which a concession keeps), or a rejection
-// with no rebuttal or concession, which escalates instead. [] for an
-// `open` ledger.
+// with no rebuttal or concession, which escalates instead. An opinion or a merged objection is never ruled on. [] for
+// an `open` ledger.
 export function completeProblems(ledger) {
   if (ledger.status !== 'complete') return [];
   const answered = new Set(ledger.human_answers.map((answer) => answer.objection_id));
   return ledger.objections.flatMap((objection) => {
     const where = `objection ${objection.id}`;
     if (objection.status === 'pending') return [`${where} is pending in a complete ledger`];
-    if (objection.status !== 'opinion' && objection.ruling === null) return [`${where} is ${objection.status} with no ruling in a complete ledger`];
-    if (objection.status === 'opinion' || objection.status === 'escalated' || answered.has(objection.id)) return [];
+    const unruled = objection.status === 'opinion' || objection.status === 'merged';
+    if (!unruled && objection.ruling === null) return [`${where} is ${objection.status} with no ruling in a complete ledger`];
+    if (unruled || objection.status === 'escalated' || answered.has(objection.id)) return [];
     const { rebuttal } = objection;
     if (rebuttal?.verdict === 'rebut' && rebuttal.ruling === null) return [`${where} has a rebuttal with no final ruling in a complete ledger`];
     if (rebuttal?.ruling && rebuttal.ruling.decision !== 'accept') return [`${where} has a final ruling of ${rebuttal.ruling.decision} but is ${objection.status}, not escalated, in a complete ledger`];
@@ -381,15 +507,10 @@ export function completeProblems(ledger) {
   });
 }
 
-// Checks a ledger in place: { ledger, problems, escapes, stale }. `stale` lists each invalid ruling or rebuttal of a
-// complete ledger on an objection the Human did not settle. `problems` lists each failed citation, relabel, and
-// invalid ruling or rebuttal with its reason; `escapes` lists each ref path outside the root, for a warning. An escape
-// is also a failed citation in `problems`.
-export function checkLedger(ledger, ctx) {
-  const problems = [];
-  const escapes = [];
-  // The citations of `list` that pass, naming each that fails.
-  const passing = (list, where) => list.filter((citation, i) => {
+// The citations of `list` that pass, naming each that fails in `problems`, and each ref path outside the root in
+// `escapes` as well.
+function passing(list, where, ctx, problems, escapes) {
+  return list.filter((citation, i) => {
     try {
       const problem = citationProblem(citation, ctx);
       // The whole line goes through `shown`: a problem built from a malformed ref (`is not path:line`) quotes it raw.
@@ -402,6 +523,69 @@ export function checkLedger(ledger, ctx) {
       return false;
     }
   });
+}
+
+// An `inference:` line of a claim: a statement its author could not cite, for the judge to test. The spaces around the
+// label stay on its line, and the statement starts with a non-space, so a bare `inference:`, or one followed by spaces
+// only, is no inference and never takes the next line as its statement.
+const INFERENCE = /^[^\S\n]*inference:[^\S\n]*(\S.*)$/gimu;
+
+// The `inference:` lines of `lines` that no distinct statement tests: each statement settles one line, matched to the
+// lines whose text holds it by augmenting paths, so one entry never answers two lines and no order of entries loses a fit.
+function untestedLines(lines, statements) {
+  const fits = lines.map((line) => statements.flatMap((statement, j) => (line.includes(statement) ? [j] : [])));
+  const owner = statements.map(() => -1);
+  const take = (i, seen) => fits[i].some((j) => {
+    if (seen.has(j)) return false;
+    seen.add(j);
+    if (owner[j] !== -1 && !take(owner[j], seen)) return false;
+    owner[j] = i;
+    return true;
+  });
+  return lines.filter((_, i) => !take(i, new Set()));
+}
+
+// Why a ruling on a ledger that carries `mode` is invalid beyond its citations, one reason per line: `entry` is what it
+// rules on (the objection for the first ruling, the rebuttal for the final one) and `proof` its own passing citations.
+// An accept changes a plan section, so it cites one, and rests on a citation the judge found supporting; `tested`
+// names every citation of the entry once; every `inference:` line of the entry's claim has its own `inferences` entry,
+// one whose statement the line holds; a reject names its ground and nothing else does; the reason opens with `Covers: `; and an
+// accept states its `Cost: ` and the risk it `Removes: `. Whether a verdict is right is the judge's, never a script's.
+function verdictProblems(value, entry, proof) {
+  const problems = [];
+  const accept = value.decision === 'accept';
+  if (accept && !proof.some((citation) => citation.kind === 'plan')) problems.push('an accept cites no plan section');
+  const count = entry.citations.length;
+  const tested = value.tested ?? [];
+  const named = tested.map((verdict) => verdict.citation);
+  const inRange = (index) => index >= 0 && index < count;
+  const once = named.filter((index) => inRange(index) && named.indexOf(index) === named.lastIndexOf(index)).length;
+  const twice = [...new Set(named.filter((index, i) => inRange(index) && named.indexOf(index) !== i))];
+  const outside = [...new Set(named.filter((index) => !inRange(index)))];
+  if (once !== count || twice.length || outside.length) {
+    problems.push(`tested names ${once} of ${count} citations${twice.length ? `; ${twice.join(', ')} more than once` : ''}${outside.length ? `; ${outside.join(', ')} out of range` : ''}`);
+  }
+  if (accept && !tested.some((verdict) => inRange(verdict.citation) && verdict.supports === true)) problems.push('an accept rests on no supporting citation');
+  const statements = (value.inferences ?? []).map((inference) => collapse(inference.statement)).filter(Boolean);
+  const lines = [...String(entry.claim).matchAll(INFERENCE)].map(([, line]) => collapse(line));
+  for (const text of untestedLines(lines, statements)) problems.push(shown(`inference untested: "${text.slice(0, 60)}"`));
+  if (value.decision === 'reject' && value.ground === undefined) problems.push('a reject names no ground');
+  if (value.decision !== 'reject' && value.ground !== undefined) problems.push(`ground on an ${value.decision}`);
+  if (!/^Covers: /u.test(value.change_or_reason)) problems.push('no Covers line');
+  if (accept && !(/^Cost: .+$/mu.test(value.change_or_reason) && /^Removes: .+$/mu.test(value.change_or_reason))) problems.push('an accept states no cost or removed risk');
+  return problems;
+}
+
+// Checks a ledger in place: { ledger, problems, escapes, stale }. `stale` lists each invalid ruling or rebuttal of a
+// complete ledger on an objection the Human did not settle. `problems` lists each failed citation, relabel, and
+// invalid ruling or rebuttal with its reason, and each note removed; `escapes` lists each ref path outside the root,
+// for a warning. An escape is also a failed citation in `problems`. On a ledger that carries `mode`, a ruling is also
+// held to verdictProblems, and a concession needs a passing citation.
+export function checkLedger(ledger, ctx) {
+  const problems = [];
+  const escapes = [];
+  const pass = (list, where) => passing(list, where, ctx, problems, escapes);
+  const strict = carriesMode(ledger);
   // In a `complete` ledger, an invalid ruling or rebuttal on an objection the Human did not settle (not `escalated`, no
   // answer) is stale: its evidence changed after the ledger was finished, so reusing it would skip the retry or the
   // escalation it now needs. Those lines go to `stale` as well, and `check` refuses the ledger. A valid partial accept's
@@ -413,33 +597,63 @@ export function checkLedger(ledger, ctx) {
     problems.push(line);
     if (ledger.status === 'complete' && (stands || (objection.status !== 'escalated' && !answered.has(objection.id)))) stale.push(line);
   };
-  const ruling = (objection, value, where, stands = false) => {
-    if (value && !passing(value.citations, where).length) invalid(objection, `${where}: invalid: the ruling has no passing citation`, stands);
+  const ruling = (objection, value, where, entry, stands = false) => {
+    if (!value) return;
+    const proof = pass(value.citations, where);
+    if (!proof.length) invalid(objection, `${where}: invalid: the ruling has no passing citation`, stands);
+    if (strict) for (const reason of verdictProblems(value, entry, proof)) invalid(objection, `${where}: invalid: ${reason}`, stands);
   };
   // What a rebuttal must add to: what the ledger held before the rebuttal round, every objection's citations and every
   // first ruling's. Rebuttals and their rulings are left out, so two rebuttals that bring the same new evidence are both new.
   const cited = new Set(ledger.objections.flatMap((objection) => [...objection.citations, ...(objection.ruling?.citations ?? [])]).map(citationKey));
+  const relabel = (objection) => {
+    problems.push(`objection ${objection.id}: relabeled opinion (was pending): no citation passes`);
+    objection.status = 'opinion';
+  };
+  // The objections no citation backs, and those relabeled opinion in this check.
+  const unbacked = new Set();
+  const relabeled = new Set();
   for (const objection of ledger.objections) {
     const where = `objection ${objection.id}`;
     // Only a `pending` objection becomes an opinion. One the architect or the Human already ruled on keeps its status
     // when its citations stop passing, as after the cited code changed, and is named: a reused ledger never loses it.
-    if (!passing(objection.citations, where).length && objection.status !== 'opinion') {
+    if (!pass(objection.citations, where).length) unbacked.add(objection.id);
+    if (unbacked.has(objection.id) && objection.status !== 'opinion') {
       if (objection.status === 'pending') {
-        problems.push(`${where}: relabeled opinion (was pending): no citation passes`);
-        objection.status = 'opinion';
-      } else problems.push(`${where}: no citation passes; kept ${objection.status}, since it was ruled on`);
+        relabel(objection);
+        relabeled.add(objection.id);
+      } else if (objection.status === 'merged') problems.push(`${where}: no citation passes; kept merged into ${objection.merged_into}`);
+      else problems.push(`${where}: no citation passes; kept ${objection.status}, since it was ruled on`);
     }
-    ruling(objection, objection.ruling, `${where} ruling`, objection.ruling?.decision === 'accept' && objection.rebuttal !== null);
+    ruling(objection, objection.ruling, `${where} ruling`, objection, objection.ruling?.decision === 'accept' && objection.rebuttal !== null);
     const rebuttal = objection.rebuttal;
     if (rebuttal) {
-      // A concession needs no citation; a rebuttal needs a passing one the ledger does not already hold.
-      const proof = passing(rebuttal.citations, `${where} rebuttal`);
+      // A rebuttal needs a passing citation the ledger does not already hold. A concession needs none on a ledger
+      // without `mode`; with it, one passing citation, the ruling's own included, since it cites what it accepts.
+      const proof = pass(rebuttal.citations, `${where} rebuttal`);
       if (rebuttal.verdict === 'rebut') {
         if (!proof.length) invalid(objection, `${where} rebuttal: invalid: the rebuttal has no passing citation`);
         else if (proof.every((citation) => cited.has(citationKey(citation)))) invalid(objection, `${where} rebuttal: invalid: the rebuttal cites nothing new`);
-      }
-      ruling(objection, rebuttal.ruling, `${where} rebuttal ruling`);
+      } else if (strict && !proof.length) invalid(objection, `${where} rebuttal: invalid: the concession has no passing citation`);
+      ruling(objection, rebuttal.ruling, `${where} rebuttal ruling`, rebuttal);
     }
+  }
+  // A survivor that became an opinion is never ruled on, so what was merged into it would be lost: each objection merged
+  // into one goes back to `pending`, to be ruled on its own citations, or becomes an opinion when none passes.
+  for (const objection of ledger.objections) {
+    if (objection.status !== 'merged' || !relabeled.has(objection.merged_into)) continue;
+    problems.push(`objection ${objection.id}: unmerged: ${objection.merged_into} became an opinion`);
+    objection.status = 'pending';
+    objection.merged_into = null;
+    if (unbacked.has(objection.id)) relabel(objection);
+  }
+  // A note no citation backs is removed: no one rules on a note, so nothing else would drop it from the report.
+  if (ledger.notes) {
+    ledger.notes = ledger.notes.filter((note, i) => {
+      if (pass(note.citations, `notes[${i}]`).length) return true;
+      problems.push(`notes[${i}] (by ${note.by}): removed: no citation passes`);
+      return false;
+    });
   }
   return { ledger, problems, escapes, stale };
 }
@@ -483,7 +697,7 @@ export async function codexAnswer({ plan, brief, out, root, mode = 'object', led
     let rulings = null;
     if (mode === 'rebut') {
       rulings = JSON.parse(readFileSync(ledger, 'utf8'));
-      const invalid = schemaProblems(rulings, LEDGER_SCHEMA);
+      const invalid = schemaProblems(rulings, schemaOf(rulings));
       if (invalid.length) return { status: 'failed', reason: `the ledger does not follow the schema: ${invalid[0]}` };
     }
     const prompt = `${readFileSync(brief, 'utf8').trimEnd()}\n\n${readFileSync(plan, 'utf8')}`;
@@ -536,12 +750,13 @@ export const commands = {
         } catch (error) {
           return fail(error.message);
         }
-        // A schema error, an objection id outside A1 to B7, a same-model record that disagrees with itself, a Human answer
-        // that fits no objection, or a complete ledger left unfinished stops the check before it writes anything. The
-        // ids are checked before any line that prints one.
-        const invalid = schemaProblems(ledger, LEDGER_SCHEMA);
+        // A schema error (by the ledger's mode), an objection id outside A1 to B7, a same-model record that disagrees with
+        // itself, a Human answer that fits no objection, a merge that does not fit, a mode rule broken, or a complete
+        // ledger left unfinished stops the check before it writes anything. The ids are checked before any line that
+        // prints one.
+        const invalid = schemaProblems(ledger, schemaOf(ledger));
         if (!invalid.length) invalid.push(...idProblems(ledger));
-        if (!invalid.length) invalid.push(...sameModelProblems(ledger), ...answerProblems(ledger), ...completeProblems(ledger));
+        if (!invalid.length) invalid.push(...sameModelProblems(ledger), ...answerProblems(ledger), ...mergeProblems(ledger), ...modeProblems(ledger), ...completeProblems(ledger));
         if (invalid.length) {
           for (const problem of invalid) console.error(`${file}: ${problem}`);
           return 1;
@@ -557,7 +772,7 @@ export const commands = {
         for (const problem of problems) print(problem);
         writeFileSync(file, `${JSON.stringify(ledger, null, 2)}\n`);
         const opinions = ledger.objections.filter((objection) => objection.status === 'opinion').length;
-        print(`checked: ${ledger.objections.length} objections, ${opinions} opinion, ${problems.length} problems`);
+        print(`checked: mode ${modeOf(ledger)}, ${ledger.objections.length} objections, ${opinions} opinion, ${problems.length} problems`);
         return 0;
       }
       return fail(`usage: aidrian quorum ${USAGE}`);

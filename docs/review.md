@@ -504,14 +504,18 @@ keeps the compressed marker and appends a plain one, so a comment it touched can
   the first step's included; an entry older than 2 hours is a run that died, and counts for nothing.
 - **Writes.** Every write of the record takes a lock file beside it (`<record>.lock`, created exclusively; one older
   than 30 seconds is broken), and renames a temporary file over the record, so a reader never sees half a record; the
-  merge guard only reads. A command that changes one part, such as `pr request`, a mark on an owed review, a run, or
-  the bot's extra-round checks in `await-review`, changes the record as it is under the lock. A full write from a copy
-  read earlier keeps the newer outcome and the rounds another step opened since.
+  merge guard only reads. Only the review step writes the whole record; every other command changes its part of the
+  record as it is under the lock: `pr request`, a mark on an owed review, a run, `pr attest --pass`, `pr signoff`,
+  `pr extend`, and `await-review`, which replaces only the bot's extra-round checks. When the pull request's comment
+  holds a newer record, such a command builds on it, keeping this machine's runs, both lists of owed reviews, and the
+  later outcome. The step's full write keeps the newer outcome and the rounds another step opened since, and takes a
+  revision past both its own and the one on disk.
 - **Owed reviews.** `pending` lists the reviews asked for, each `{ id, kind, head, repo, at, by, sent, answered }`;
   one is owed until it is `answered`, and only an answer for its own `repo` counts. `aidrian pr request <PR>` records a
   bot review the Human asked for, the moment they ask, before any review the project requires first. It reads the head
   and the pull request's repository from gh, whose default is the upstream in a fork checkout, unless `--head` and
-  `--repo OWNER/NAME` name them. `aidrian pr await-review` marks it `sent` when it posts the request, and
+  `--repo OWNER/NAME` name them. A gate review (`--kind review`) is recorded for origin, the repository the review
+  gate and `aidrian pr attest` work in. `aidrian pr await-review` marks it `sent` when it posts the request, and
   `answered` when the bot's answer arrives (`received`) or is already there (`already_present`), as
   `aidrian pr review --with-bot` does whenever its bot stage holds an answer, a reused one included. A request sent
   is still owed. An answer counts for a request made for its own head, or for an earlier head it descends from

@@ -20,7 +20,7 @@ import { appendEvent, stamp } from '../dispatch-log.mjs';
 import { runGit } from '../git.mjs';
 import { changedFiles, diffLines, mergeBase, resolve } from './diff.mjs';
 import { classify } from './plan.mjs';
-import { heldMessage, publishState, readRecord, sameCommit, writeLocalState } from './state.mjs';
+import { adoptNewer, heldMessage, publishState, readRecord, sameCommit, updateLocalState } from './state.mjs';
 
 export const MODES = Object.freeze(['off', 'ask', 'auto']);
 // Fix commits that add more than this share of the lines of code the pull request first added are the change growing under
@@ -539,7 +539,7 @@ export async function runExtend(args, project, config, deps = {}) {
     const by = runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown';
     entry = recordHuman(state, { answer: opts.human, by, session: env.CLAUDE_CODE_SESSION_ID || null, current });
   }
-  writeLocalState(project, state);
+  Object.assign(state, updateLocalState(project, opts.pr, repo, (now) => { adoptNewer(now, state); now.extensions = state.extensions; }, { revise: true }));
   const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => gh.post(repo, opts.pr, body), edit: (id, body) => gh.edit(repo, id, body) }, `extension ${entry.status}`) : null;
   try {
     appendEvent(project, config, { ...rowOf(entry), ts: stamp(Date.now()), session_id: env.CLAUDE_CODE_SESSION_ID || null, pr: opts.pr, repo });

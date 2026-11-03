@@ -74,7 +74,8 @@ export function runRequest(args, project, { viewPr = (pr) => ghJson(['pr', 'view
   }
   const head = flags.head ?? view?.headRefOid;
   if (typeof head !== 'string' || !SHA.test(head)) throw new Error(`cannot read the head of pull request #${pr}: pass --head <sha>`);
-  const repo = repoName(flags.repo) ?? repoName(view?.url) ?? originRepo(project);
+  // The review gate is this checkout's, so a gate review is owed for origin, which `aidrian pr attest` answers.
+  const repo = flags.kind === 'review' ? originRepo(project) : repoName(flags.repo) ?? repoName(view?.url) ?? originRepo(project);
   const by = runGit(['config', 'user.name'], project.root).stdout?.trim() || 'unknown';
   recordPending(project, { pr, repo, kind: flags.kind, head, by });
   console.log(flags.kind === 'request'

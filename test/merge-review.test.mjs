@@ -11,9 +11,9 @@ import { runAwaitReview, saveRecord } from '../plugins/aidrian/lib/pr-await-revi
 import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { runAttest } from '../plugins/aidrian/lib/review-gate.mjs';
 import { isAncestor } from '../plugins/aidrian/lib/review/diff.mjs';
-import { reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
+import { recordPass, recordSignoff, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { answerOwed, markRequestsSent, recordPending, runRequest } from '../plugins/aidrian/lib/review/pending.mjs';
-import { answerPending, emptyState, noteOutcome, readLocalState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
+import { answerPending, emptyState, noteOutcome, readLocalState, readRecord, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { check, checkMcp, readMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 import { lexCommand, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
 
@@ -555,17 +555,20 @@ test('a review step that throws leaves an error outcome, and the merge stays ref
   assert.match(r.run(`gh pr merge 9 --match-head-commit ${f.head}`) ?? '', /is `error`/u);
 });
 
-test('a request records the pull request`s own repository: the upstream from a fork checkout', async (t) => {
+test('a bot request records the pull request`s own repository; a gate review records origin, which attest answers', async (t) => {
   const r = repo(t);
   const quiet = { log: console.log, error: console.error };
   console.log = console.error = () => {};
   t.after(() => Object.assign(console, quiet));
   // origin is acme/notes, the fork; gh's default repository is the upstream.
-  assert.equal(runRequest(['5', '--kind', 'review'], r.project, { viewPr: () => ({ headRefOid: r.commit, url: 'https://github.com/Upstream/Notes/pull/5' }) }), 0);
-  assert.equal(readLocalState(r.project, 5).pending[0].repo, 'upstream/notes');
+  const upstream = () => ({ headRefOid: r.commit, url: 'https://github.com/Upstream/Notes/pull/5' });
+  assert.equal(runRequest(['5'], r.project, { viewPr: upstream }), 0);
+  assert.equal(runRequest(['5', '--kind', 'review'], r.project, { viewPr: upstream }), 0);
+  assert.deepEqual(readLocalState(r.project, 5).pending.map((entry) => [entry.kind, entry.repo]), [['request', 'upstream/notes'], ['review', 'acme/notes']]);
   assert.equal(await runAttest(['5', '--head', r.commit, '--reviewer', 'code-reviewer', '--findings', '0', '--fixed', '0'], r.project), 0);
-  assert.deepEqual(marks(r.project, 5), [['review', false, false]], 'an attest for origin`s #5 is not the upstream`s review');
-  assert.equal(answerOwed(r.project, 5, 'review', { head: r.commit, by: 't', repo: 'UPSTREAM/notes' }), 1);
+  assert.deepEqual(marks(r.project, 5), [['request', false, false], ['review', false, true]], 'attest answers the gate review it is scoped to');
+  assert.equal(answerOwed(r.project, 5, 'request', { head: r.commit, by: 't', repo: 'acme/notes' }), 0, 'an answer on origin`s #5 is not the upstream`s');
+  assert.equal(answerOwed(r.project, 5, 'request', { head: r.commit, by: 't', repo: 'UPSTREAM/notes' }), 1);
 });
 
 test('gh api placeholders are filled one part at a time', (t) => {
@@ -575,4 +578,107 @@ test('gh api placeholders are filled one part at a time', (t) => {
   const run = (command) => check(command, { cwd: r.dir, env: {}, input: {}, viewPr: r.viewer() });
   assert.match(run('GH_REPO=other/notes gh api -X PUT repos/acme/{repo}/pulls/5/merge') ?? '', /is `running`/u, 'acme/notes, not other/notes');
   assert.equal(run('GH_REPO=other/notes gh api -X PUT repos/{owner}/{repo}/pulls/5/merge'), null, 'other/notes: another repository');
+});
+
+// Another machine's record of #5 at revision 12, in the summary comment, as await-review reads it.
+function commentRecord(project) {
+  const remote = emptyState(5, 'acme/notes');
+  remote.revision = 12;
+  remote.rounds = [{ head: 'a', at: '1' }, { head: 'b', at: '2' }, { head: 'c', at: '3' }];
+  remote.passes = { 'engine:codex': { head: 'c', findings: 0, open: 0 } };
+  remote.outcome = { status: 'fix_required', head: 'c', at: '2026-11-03T10:00:00Z' };
+  remote.pending = [{ id: 'remote', kind: 'request', head: 'c', at: '2026-11-03T09:00:00Z', by: 't' }];
+  const comments = [{ id: 1, body: summaryBody(remote, null, 'fix_required') }];
+  const record = { ...readRecord(project, 5, comments, 'acme/notes'), comments };
+  record.state.extensions = [{ source: 'bot', round: 3, status: 'asking' }];
+  let edited = null;
+  const gh = { api: (_url, opts) => ((edited = opts.fields.body), {}) };
+  return { record, gh, published: () => stateFromComment(edited, 5) };
+}
+
+test('await-review`s save builds on the comment`s newer record, never publishes an empty one over it', async (t) => {
+  const r = repo(t);
+  const { record, gh, published } = commentRecord(r.project);
+  await saveRecord(record, { project: r.project, config: loadConfig(r.project).config, gh, base: { n: '5', repo: 'acme/notes' }, status: 'round_limit' });
+  const out = published();
+  assert.deepEqual([out.revision, out.rounds.length, Object.keys(out.passes).length, out.outcome?.status, out.extensions.length], [13, 3, 1, 'fix_required', 1]);
+  assert.equal(readLocalState(r.project, 5).revision, 13, 'and keeps it here');
+});
+
+test('await-review`s save reconciles an older local record with the comment`s', async (t) => {
+  const r = repo(t);
+  const local = emptyState(5, 'acme/notes');
+  local.revision = 2;
+  local.active = [{ id: 'run', head: 'c', at: new Date().toISOString() }];
+  local.pending = [{ id: 'mine', kind: 'review', head: 'c', at: '2026-11-03T11:00:00Z', by: 't' }];
+  local.outcome = { status: 'running', head: 'c', at: '2026-11-03T11:00:00Z' };
+  mkdirSync(path.join(stateDir(r.project), 'reviews'), { recursive: true });
+  writeFileSync(path.join(stateDir(r.project), 'reviews', 'pr-5-review.json'), JSON.stringify(local));
+  const { record, gh } = commentRecord(r.project);
+  record.state = { ...record.state, ...stateFromComment(record.comments[0].body, 5), extensions: record.state.extensions };
+  await saveRecord(record, { project: r.project, config: loadConfig(r.project).config, gh, base: { n: '5', repo: 'acme/notes' }, status: 'round_limit' });
+  const saved = readLocalState(r.project, 5);
+  assert.equal(saved.rounds.length, 3, 'the comment`s rounds');
+  assert.deepEqual(saved.active.map((run) => run.id), ['run'], 'this machine`s runs');
+  assert.deepEqual(saved.pending.map((entry) => entry.id).sort(), ['mine', 'remote'], 'both lists of owed reviews');
+  assert.equal(saved.outcome.status, 'running', 'the later outcome');
+});
+
+test('await-review`s save replaces only the bot`s extra-round checks', async (t) => {
+  const r = repo(t, { review: { record: 'local' } });
+  const state = emptyState(5, 'acme/notes');
+  state.extensions = [{ source: 'plan', round: 2, status: 'granted' }, { source: 'bot', round: 1, status: 'judging' }];
+  writeLocalState(r.project, state);
+  const record = { state: { ...readLocalState(r.project, 5), extensions: [{ source: 'bot', round: 1, status: 'granted' }] }, comments: [] };
+  await saveRecord(record, { project: r.project, config: loadConfig(r.project).config, gh: null, base: { n: '5', repo: 'acme/notes' }, status: 'received' });
+  assert.deepEqual(readLocalState(r.project, 5).extensions.map((entry) => `${entry.source}:${entry.status}`), ['plan:granted', 'bot:granted']);
+});
+
+test('an owed entry`s repository is this record`s too: a merge there is guarded', (t) => {
+  const r = repo(t);
+  writeLocalState(r.project, emptyState(5, 'acme/notes'));
+  recordPending(r.project, { pr: 5, repo: 'upstream/notes', kind: 'request', head: HEAD, by: 'H' });
+  assert.match(r.run(`gh pr merge 5 -R upstream/notes --match-head-commit ${HEAD}`) ?? '', /never sent/u);
+  assert.match(checkMcp({ owner: 'Upstream', repo: 'Notes', pullNumber: 5, sha: HEAD }, { cwd: r.dir, input: {}, viewPr: r.viewer() }) ?? '', /never sent/u);
+  assert.equal(r.run(`gh pr merge 5 -R third/party --match-head-commit ${HEAD}`), null);
+});
+
+test('three writers: a write from an older copy never reuses a revision or drops a round', (t) => {
+  const r = repo(t);
+  const base = emptyState(5, 'acme/notes');
+  base.rounds.push({ head: 'h1', at: '2026-01-01T00:00:00Z' });
+  writeLocalState(r.project, base);
+  const step = readLocalState(r.project, 5);
+  writeLocalState(r.project, readLocalState(r.project, 5));
+  const late = readLocalState(r.project, 5);
+  const held = late.revision;
+  step.rounds.push({ head: 'h2', at: '2026-01-02T00:00:00Z' });
+  noteOutcome(step, { status: 'received', head: 'h2' });
+  writeLocalState(r.project, step);
+  const afterStep = readLocalState(r.project, 5);
+  writeLocalState(r.project, late);
+  const end = readLocalState(r.project, 5);
+  assert.ok(afterStep.revision > held, 'the step`s write is past the copy the late writer holds');
+  assert.deepEqual([end.rounds.map((round) => round.head), end.outcome.status, end.revision > afterStep.revision], [['h1', 'h2'], 'received', true]);
+});
+
+test('attest, signoff, and extend apply their change to the record as it is now', (t) => {
+  const r = repo(t);
+  writeLocalState(r.project, emptyState(5, 'acme/notes'));
+  const stale = readLocalState(r.project, 5);
+  const step = readLocalState(r.project, 5);
+  noteOutcome(step, { status: 'unsatisfied', head: HEAD });
+  writeLocalState(r.project, step);
+  recordPass(r.project, { pr: 5, repo: 'acme/notes', pass: 'p', head: HEAD, reviewer: 'r', findings: 0, fixed: 0 });
+  recordSignoff(r.project, { pr: 5, repo: 'acme/notes', flow: 'f', head: HEAD, by: 'H' });
+  const now = readLocalState(r.project, 5);
+  assert.deepEqual([now.outcome.status, Object.keys(now.passes), Object.keys(now.signoffs)], ['unsatisfied', ['p'], ['f']]);
+  assert.ok(now.revision > stale.revision + 1);
+});
+
+test('a finished step answers only its own repository`s gate reviews', () => {
+  const state = emptyState(5, 'acme/notes');
+  state.pending.push({ id: 'x', kind: 'review', head: HEAD, repo: 'upstream/notes', at: 'a', by: 'h' }, { id: 'y', kind: 'review', head: HEAD, repo: 'acme/notes', at: 'a', by: 'h' });
+  noteOutcome(state, { status: 'received', head: HEAD }, () => false, 'Acme/Notes');
+  assert.deepEqual(state.pending.map((entry) => Boolean(entry.answered)), [false, true]);
 });

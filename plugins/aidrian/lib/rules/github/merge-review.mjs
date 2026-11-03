@@ -117,7 +117,7 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
   // record was written for, as an upstream's in a fork checkout. Every spelling compares as `owner/name`, lower-cased.
   const elsewhere = (state) => {
     const target = repo === null ? null : repoName(repo);
-    const known = [originRepo(project), repoName(state?.repo ?? null)].filter(Boolean);
+    const known = [originRepo(project), repoName(state?.repo ?? null), ...owed(state).map((entry) => repoName(entry.repo ?? null))].filter(Boolean);
     return target !== null && known.length > 0 && !known.includes(target);
   };
   if (unreadable) return elsewhere(null) ? null : unresolved(null, how);

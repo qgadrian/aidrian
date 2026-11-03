@@ -39,7 +39,7 @@ import { contentFlows } from './content.mjs';
 import { buildPlan, classify, detectFlows, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, pathPattern, validatePlan } from './plan.mjs';
 import { BUILT_IN, flowBaseBrief, resolveEngine, reviewerMap, runExec, satisfies, VERDICT_MEANING } from './reviewers.mjs';
 import { atCap, buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
-import { answerPending, closeRun, heldMessage, isSummary, mergePending, newRunId, noteOutcome, openRun, prunePasses, readLocalState, readRecord, summaryBody, writeLocalState } from './state.mjs';
+import { adoptNewer, answerPending, closeRun, heldMessage, isSummary, mergePending, newRunId, noteOutcome, openRun, prunePasses, readLocalState, readRecord, summaryBody, updateLocalState, writeLocalState } from './state.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, ghImage, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput, visualMatrix, visualRoutes } from './visual.mjs';
 
 export const EXIT = Object.freeze({
@@ -703,7 +703,7 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
   function settle(result) {
     // A gate review recorded while the step ran is on disk only: merge it in before a finished outcome answers it.
     state.pending = mergePending(readLocalState(project, n)?.pending, state.pending);
-    noteOutcome(state, result, (a, b) => isAncestor(root, a, b));
+    noteOutcome(state, result, (a, b) => isAncestor(root, a, b), repo);
     writeLocalState(project, state);
     return result;
   }
@@ -714,7 +714,7 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
     const answers = passes.filter((pass) => map[pass.reviewer]?.kind === 'remote').map(resultFor).filter((result) => result?.bot);
     if (!answers.length) return;
     state.pending = mergePending(readLocalState(project, n)?.pending, state.pending);
-    for (const result of answers) answerPending(state, 'request', { head: result.head, by: result.reviewer, isAncestor: (a, b) => isAncestor(root, a, b) });
+    for (const result of answers) answerPending(state, 'request', { head: result.head, by: result.reviewer, repo, isAncestor: (a, b) => isAncestor(root, a, b) });
   }
 
   function finish(status, extra) {
@@ -775,21 +775,26 @@ export function recordPass(project, { pr, repo, pass, head, reviewer, findings, 
     const strings = (list) => (Array.isArray(list) ? list.filter((each) => typeof each === 'string').slice(0, 50) : []);
     if (raw && !Array.isArray(raw)) report = { contracts: strings(raw.contracts), cross_notes: strings(raw.cross_notes) };
   } catch {}
-  const state = current(project, pr, repo, remote);
-  const before = state.passes[pass];
-  const files = state.dispatched?.[pass]?.files ?? null;
-  state.passes[pass] = { head, reviewer, files, findings, open: findings - fixed - accepted, verdicts, ...report, list: itemized?.list ?? (before?.head === head ? before.list : null) };
-  writeLocalState(project, state);
-  return state.passes[pass];
+  // Applied to the record as it is now under its lock, brought up to the pull request's copy when that is newer.
+  let recorded;
+  updateLocalState(project, pr, repo, (state) => {
+    adoptNewer(state, current(project, pr, repo, remote));
+    const before = state.passes[pass];
+    const files = state.dispatched?.[pass]?.files ?? null;
+    recorded = state.passes[pass] = { head, reviewer, files, findings, open: findings - fixed - accepted, verdicts, ...report, list: itemized?.list ?? (before?.head === head ? before.list : null) };
+  }, { revise: true });
+  return recorded;
 }
 
 // `aidrian pr signoff <PR> --flow <id> --head <sha>`: the Human's sign-off of a flow on a head. An audit entry, not
 // proof: the summary comment shows it, and who ran it.
 export function recordSignoff(project, { pr, repo, flow, head, by, remote = null }) {
-  const state = current(project, pr, repo, remote);
-  state.signoffs[flow] = { head, by, at: new Date().toISOString() };
-  writeLocalState(project, state);
-  return state.signoffs[flow];
+  let signed;
+  updateLocalState(project, pr, repo, (state) => {
+    adoptNewer(state, current(project, pr, repo, remote));
+    signed = state.signoffs[flow] = { head, by, at: new Date().toISOString() };
+  }, { revise: true });
+  return signed;
 }
 
 

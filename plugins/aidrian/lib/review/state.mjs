@@ -74,9 +74,10 @@ export function answerPending(state, kind, { head, by, repo = null, isAncestor =
 
 // Notes the review step's return on `state`: its outcome, and, once finished, every gate review owed on that head or
 // an earlier one it descends from answered.
-export function noteOutcome(state, { status, head, reason }, isAncestor = () => false) {
+// `repo` is the step's repository: a gate review owed for another one stays owed.
+export function noteOutcome(state, { status, head, reason }, isAncestor = () => false, repo = null) {
   state.outcome = { status, head, at: new Date().toISOString(), ...(reason ? { reason: clip(reason) } : {}) };
-  if (FINISHED.has(status)) answerPending(state, 'review', { head, by: status, isAncestor });
+  if (FINISHED.has(status)) answerPending(state, 'review', { head, by: status, isAncestor, repo });
   return state;
 }
 
@@ -123,12 +124,29 @@ export function writeLocalState(project, state) {
     const disk = readLocalState(project, state.pr);
     state.pending = mergePending(disk?.pending, state.pending);
     state.active = disk?.active ?? [];
-    if (disk?.outcome && !(Date.parse(state.outcome?.at ?? '') >= Date.parse(disk.outcome.at ?? ''))) state.outcome = disk.outcome;
+    state.outcome = laterOutcome(disk?.outcome, state.outcome);
     if (disk && (disk.revision ?? 0) > (state.revision ?? 0)) state.rounds = mergeRounds(disk.rounds, state.rounds);
-    state.revision = (state.revision ?? 0) + 1;
+    // Past both: a write from an older copy never takes a revision another write already took.
+    state.revision = Math.max(disk?.revision ?? 0, state.revision ?? 0) + 1;
     state.updatedAt = new Date().toISOString();
     replaceRecord(project, state);
   });
+}
+
+// The later of two outcomes by `at`; one missing or unreadable is the older.
+export function laterOutcome(a, b) {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  return Date.parse(b.at ?? '') >= Date.parse(a.at ?? '') || Number.isNaN(Date.parse(a.at ?? '')) ? b : a;
+}
+
+// Brings `current`, the record on disk under its lock, up to `other`, a copy read elsewhere such as the pull request's
+// summary comment, when `other` is the newer (newer): its fields, but this machine's runs, both lists of owed reviews,
+// and the later outcome. Returns `current`.
+export function adoptNewer(current, other) {
+  if (!other || other === current || newer(current, other) !== other) return current;
+  const { active, pending, outcome } = current;
+  return Object.assign(current, other, { active, pending: mergePending(pending, other.pending), outcome: laterOutcome(outcome, other.outcome) });
 }
 
 // The rounds of a record on disk at a later revision, with this writer's own: one per head and start, this writer's

@@ -33,6 +33,7 @@ fails it.
 
 A ledger written before the `mode` field has none of the fields marked optional, and `quorum check` holds it to the
 rules it was written under and never adds them. A ledger that carries `mode` is held to the rules each optional field names.
+Such an old ledger is `complete`: `quorum check` exits 1 on an `open` one with `mode: missing in an open plan ledger`.
 
 - `mode`: `plan`, on a ledger written under the plan-mode briefs. Optional: absent on a ledger written before them.
 - `status`: `open` while the rounds run, `complete` once the final rulings and the Human's answers are recorded.
@@ -63,6 +64,8 @@ rules it was written under and never adds them. A ledger that carries `mode` is 
   - `objections[].merged_into`: optional. The id of the objection a merged one was folded into, or `null`.
     `quorum check` exits 1 when a merged objection has a ruling or a rebuttal, or names no objection, an unknown one,
     one of its own adversary, or one that is itself merged or an opinion; and when an objection that is not merged names one.
+    It also exits 1 unless each citation of a merged objection is among its survivor's `citations`, by kind, ref, and
+    quote, whitespace collapsed: `objection X is merged into Y, which lacks its citation N`.
   - `objections[].ruling`: the architect's first ruling, or `null` before it and for an opinion.
     - `objections[].ruling.decision`: `accept`, `reject`, or `escalate`.
     - `objections[].ruling.change_or_reason`: for an accept, the plan change, ending in a `Rejected part:` line for a partial accept.
@@ -148,7 +151,8 @@ fails `quorum check` on every invalid ruling or rebuttal, so it is not reused.
   - `cross[].citations`: its evidence, in the same form as a case's.
   - `cross[].status`: `pending` until the check runs; then `backed` when a citation passes, or `opinion` when none
     does. Only a pending point is relabeled: a backed one whose citations stop passing stays backed, and is named.
-- `ruling`: the architect's first ruling, or `null` before it.
+- `ruling`: the architect's first ruling, or `null` before it. When it is invalid twice, the coordinator writes an
+  `escalate` here instead, with `tested: []`, as `modes/decide.md` round 4 says.
   - `ruling.decision`: `rule` or `escalate`. Rebuttals and a final ruling follow a rule only.
   - `ruling.winner`: the winning position on a rule, `A`, `B`, `C`, or `D`; `null` on an escalate.
   - `ruling.change_or_reason`: for a rule, the losing case's strongest cited claim and the citation that defeats it.
@@ -235,8 +239,8 @@ Each step names the round of `modes/plan.md` it follows.
   `quorum check` names it.
 - **After the merge.** Set each merged objection's `status: merged` and `merged_into` to its survivor, with `ruling`
   and `rebuttal` left `null`, append its citations to the survivor's `citations`, and run `quorum check`.
-  When a survivor's citations stop passing and it becomes an opinion, `quorum check` puts each objection merged into it
-  back to `pending`, to be ruled on its own.
+  When a survivor's citations stop passing and it becomes an opinion, `quorum check` unmerges each objection merged
+  into it, which becomes an opinion too, since the survivor holds its citations.
 - **After the rulings.** Copy each ruling into `ruling`, its `tested`, `inferences`, and `ground` included, and set
   `status`: `accept` to `accepted`, `reject` to `rejected`, `escalate` to `escalated`. Run `quorum check`.
   The rulings it names invalid, and the backed objections still `pending`, go back to the

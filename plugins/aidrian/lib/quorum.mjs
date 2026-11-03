@@ -561,9 +561,13 @@ export function answerProblems(ledger) {
   return problems;
 }
 
+// A citation as a merge copies it: kind, ref, and the quote with whitespace collapsed.
+const copyKey = (citation) => `${citation.kind}\0${citation.ref}\0${collapse(citation.quote)}`;
+
 // Why a merged objection does not fit, in any ledger: a merged objection is neither ruled nor rebutted, and names in
-// `merged_into` a live objection of the other adversary, one neither merged nor an opinion. An objection that names
-// `merged_into` is merged. Run after idProblems: these lines print ids.
+// `merged_into` a live objection of the other adversary, one neither merged nor an opinion, whose `citations` hold
+// each of its own, so the architect's `tested` covers them. An objection that names `merged_into` is merged. Run after
+// idProblems: these lines print ids.
 export function mergeProblems(ledger) {
   const byId = new Map(ledger.objections.map((objection) => [objection.id, objection]));
   return ledger.objections.flatMap((objection) => {
@@ -578,6 +582,12 @@ export function mergeProblems(ledger) {
     else if (!survivor) problems.push(`${where} is merged into ${shown(into)}, not an objection in this ledger`);
     else if (survivor.by === objection.by) problems.push(`${where} is merged into ${into}, an objection of the same adversary`);
     else if (survivor.status === 'merged' || survivor.status === 'opinion') problems.push(`${where} is merged into ${into}, which is ${survivor.status}`);
+    if (survivor) {
+      const held = new Set(survivor.citations.map(copyKey));
+      objection.citations.forEach((citation, i) => {
+        if (!held.has(copyKey(citation))) problems.push(`${where} is merged into ${into}, which lacks its citation ${i}`);
+      });
+    }
     return problems;
   });
 }
@@ -588,12 +598,16 @@ const accepts = (objection) => objection.ruling?.decision === 'accept' || object
 // What a ledger that carries `mode` must hold beyond the old rules, as lines that stop the check: at most
 // MAX_MODE_OBJECTIONS objections per adversary, no `improvement` (it goes to `notes`), and the proportionality pass:
 // present in a complete ledger with an accepted change, and each flagged objection one with an accept ruling that the
-// Human holds, `escalated` or answered. A failed pass flags nothing, in any ledger. [] for a ledger without `mode` that
-// holds no failed pass with flags.
+// Human holds, `escalated` or answered. A failed pass flags nothing, in any ledger. An `open` ledger without `mode`
+// stops the check too. [] for a complete ledger without `mode` that holds no failed pass with flags.
 export function modeProblems(ledger) {
   const failed = ledger.proportionality?.failed === true && ledger.proportionality.flagged.length > 0;
   const problems = failed ? [`proportionality: failed, yet flags ${ledger.proportionality.flagged.length} objections`] : [];
-  if (!carriesMode(ledger)) return problems;
+  if (!carriesMode(ledger)) {
+    // A legacy ledger is a complete one; the coordinator writes `mode` on every ledger it opens.
+    if (ledger.status === 'open') problems.push('mode: missing in an open plan ledger');
+    return problems;
+  }
   for (const by of ['A', 'B']) {
     const count = ledger.objections.filter((objection) => objection.by === by).length;
     if (count > MAX_MODE_OBJECTIONS) problems.push(`${by} raised ${count} objections, more than ${MAX_MODE_OBJECTIONS} in a ledger with a mode`);
@@ -795,7 +809,8 @@ export function checkLedger(ledger, ctx) {
     }
   }
   // A survivor that became an opinion is never ruled on, so what was merged into it would be lost: each objection merged
-  // into one goes back to `pending`, to be ruled on its own citations, or becomes an opinion when none passes.
+  // into one goes back to `pending`, and becomes an opinion when none of its citations passes, which mergeProblems makes
+  // the case, since the survivor holds them all.
   for (const objection of ledger.objections) {
     if (objection.status !== 'merged' || !relabeled.has(objection.merged_into)) continue;
     problems.push(`objection ${objection.id}: unmerged: ${objection.merged_into} became an opinion`);

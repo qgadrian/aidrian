@@ -162,7 +162,9 @@ A ledger written by the plan mode of the `quorum` skill carries `mode: plan`, an
   `failed: true`, with nothing flagged, when the pass returned no usable answer.
 
 A ledger with no `mode` is plan mode under the rules it was written with: 7 objections each, `improvement` allowed,
-and none of the rules below that need `mode`. `check` never adds the field. Two commands keep a ledger honest:
+and none of the rules below that need `mode`. `check` never adds the field. Such a ledger is `complete`: `check`
+exits 1 on an `open` plan ledger with no `mode`, since the skill writes it on every ledger it opens.
+Two commands keep a ledger honest:
 
 - `aidrian quorum codex --plan PLAN --brief BRIEF --out FILE [--mode object|case]` runs Codex read-only on the brief
   and then the plan, for at most 780 seconds, and writes its answer to FILE. `--mode object`, the default, holds the answer
@@ -210,7 +212,8 @@ and none of the rules below that need `mode`. `check` never adds the field. Two 
   Such a ledger is not written back, so it is not reused. It runs no command but `git ls-files`. PLAN and the ledger
   may live anywhere, such as this folder.
   On every ledger, it exits 1 on a `merged` objection with a ruling or a rebuttal, or whose `merged_into` names no
-  objection, one of its own adversary, or one that is merged or an opinion, and on a `proportionality` with
+  objection, one of its own adversary, or one that is merged or an opinion, or one whose citations are not all among
+  its survivor's (by kind, ref, and quote, whitespace collapsed), and on a `proportionality` with
   `failed: true` that flags any objection; it removes a note with no passing citation and names it.
   On a ledger that carries `mode`, it also exits 1 on more than 5 objections from one adversary, on an `improvement`
   objection, on a complete ledger with an accept ruling and `proportionality` null, and on a flagged objection with no
@@ -272,6 +275,8 @@ Then it checks every citation as for a plan ledger, and names each problem:
   case and every backed cross point, each verdict keyed by `of`; a final ruling of `rule` on every rebuttal.
   A verdict keyed to anything else reads `tested names X, which the ruling does not rule on`.
   A final `escalate` is not held to `tested` or `inferences`, so the skill can write one when the rebuttals fall short.
+  A first `escalate` is held to both, but no invalid line fails a ledger that escalates, so the skill can write one
+  with `tested: []` when the architect's first ruling is invalid twice.
 - A `rule`, first or final, is invalid when `the winner's case has no passing citation`.
 - A first `rule` is invalid when `a rule rests on no supporting citation of the winner's case`, and a final ruling
   that names another winner when `a flip rests on no supporting citation of the winner's rebuttal`.

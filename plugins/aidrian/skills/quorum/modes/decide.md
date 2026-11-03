@@ -51,9 +51,10 @@ A `plan` citation anchors on a heading of the question file: `#context`, `#claim
 
 ## Rounds
 
-The cap is `3N + 2` dispatches for N positions: 8 for two, 11 for three, 14 for four.
-That is N cases, N cross-examinations, one ruling, at most N - 1 rebuttals, one final ruling, and one spare for a retry.
-Every agent dispatch and Codex run counts, fallbacks included.
+The cap is `3N + 2 + C` dispatches for N positions, where C counts the positions whose `runner` starts as `codex`.
+With the default runners that is 9 for two, 12 for three, and 16 for four.
+That is N cases, N cross-examinations, one ruling, at most N - 1 rebuttals, one final ruling, one spare for a retry,
+and one fallback per Codex position. Every agent dispatch and Codex run counts, fallbacks included.
 
 1. **Cases.** Every advocate in parallel, with the Case brief. Codex runs `aidrian quorum codex --mode case`.
 2. A position still without a case (after its fallback, on Codex) stops the run with `blocked` before round 3, naming the
@@ -72,7 +73,10 @@ Every agent dispatch and Codex run counts, fallbacks included.
 4. **Ruling.** The architect, with the ruling brief, on every case and every backed cross point, with each
    `case X: no citation passes` line. Write `ruling`, and run `quorum check`.
    A ruling `quorum check` names invalid, or a missing one, goes back once, with the line it printed, if any.
-   Invalid or missing again, stop with `blocked`.
+   Missing again, stop with `blocked`. Invalid again, replace `ruling` with
+   `{decision: escalate, winner: null, change_or_reason: <the line `quorum check` printed, then the architect's last decision and winner>, citations: <its citations>, tested: [], inferences: []}`,
+   run `quorum check`, skip rounds 5 and 6, and ask the Human, with the architect's last ruling as the recommended
+   answer. `quorum check` still prints that ruling's `tested` lines, which are never stale.
    A ruling of `escalate` skips rounds 5 and 6, since no position lost: ask the Human.
 5. **Rebuttals.** Each losing position once, in parallel, with the Rebuttal brief. Codex runs
    `aidrian quorum codex --mode rebut --ledger <ledger>`. Write each answer to `rebuttals`, and run `quorum check`.
@@ -89,7 +93,7 @@ Rounds 5 and 6 end short when:
 - A losing position never answered, because Codex and its fallback both failed, or the cap ran out.
 - A position rebutted, and the cap leaves no dispatch for the final ruling.
 
-Then the coordinator writes `final_ruling` itself, the one ruling it ever writes:
+Then the coordinator writes `final_ruling` itself, a coordinator-written ruling:
 `{decision: escalate, winner: null, change_or_reason: <the reason>, citations: <the first ruling's citations>, tested: [], inferences: []}`.
 The reason is the line `quorum check` printed, the Codex status line, or `cap reached, N of M dispatches`.
 Then ask the Human, with the first ruling as the recommended answer.
@@ -112,6 +116,9 @@ A run asks at most one question: the escalated ruling, first or final.
 It names every position with its citations, the recommended answer, and the one reason that decides it.
 The answer goes into `human_answer`, word for word. Deferred, `human_answer` stays `null`, and the report's Open
 questions carries it. A `human_answer` with no escalation makes `quorum check` exit 1.
+When the core reuses a complete ledger whose last ruling (`final_ruling`, else `ruling`) is `escalate` and whose
+`human_answer` is `null`, ask the one question before reporting, write the answer (`null` again when deferred), and
+run `quorum check`.
 
 ## Report
 
@@ -120,7 +127,8 @@ model), any swap, the question-file path the coordinator wrote, each cross point
 cross answer:
 
 1. **Ruling**: with no escalation, the governing winner and the reason. When any ruling escalates, `escalated` with
-   the Human's answer, or `deferred` with the recommended answer.
+   the Human's answer, or `deferred` with the recommended answer. Name a ruling the coordinator wrote, after two
+   invalid rulings or when rounds 5 and 6 end short, as coordinator-written.
 2. **Cases**: each position's label, its case, and its citations.
 3. **Cross points**: each backed point, with its `by` and `against`.
 4. **Rebuttals**: each rebuttal or concession, the final ruling, and any flip.
@@ -128,7 +136,7 @@ cross answer:
 The core's **Opinions** footnote lists each cross point that became `opinion`, and its **Dropped citations** footnote
 each citation the architect marked `supports: false`, with its reason.
 
-Next: the caller acts on the ruling. A lasting architecture decision goes to the `adr-writer` skill.
+Next: the caller acts on the ruling.
 
 ## Case
 

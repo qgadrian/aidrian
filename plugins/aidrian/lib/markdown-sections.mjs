@@ -5,7 +5,8 @@
 
 // An ATX level-2 heading: exactly two hashes, whitespace, then the title.
 const HEADING = /^ {0,3}##(?!#)\s+(.+?)\s*$/u;
-const LIST_ITEM = /^(\s*)(?:[-*+]|\d+[.)])\s+/u;
+// A list item's first line: its indentation, then a bullet or an ordered marker.
+export const LIST_ITEM = /^(\s*)(?:[-*+]|\d+[.)])\s+/u;
 
 // A fence line: its delimiter, and whether the line is the delimiter alone, which only a closing fence may be. An
 // opening fence may follow list markers, as in "- ```js"; such a line is never bare, so it never closes one, and `item`

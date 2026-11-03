@@ -32,7 +32,7 @@
       "tags": []
     },
     "personas.md": {
-      "summary": "Personas: the persona doc contract, aidrian lint personas, product-access, and persona-audit runs: evidence levels, findings, owners, reports.",
+      "summary": "Personas: contract, writing a persona, lint, product-access (before a walk, allowed changes, plans, where tasks live), persona-audit runs, product gaps.",
       "tags": []
     },
     "review.md": {

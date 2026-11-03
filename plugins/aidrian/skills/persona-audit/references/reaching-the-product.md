@@ -27,10 +27,26 @@ Walk only the pull request's head: its preview URL, or the local app when `git r
 `gh pr view <number> --json headRefOid`. Any other build is `seen` at best. The report's `Reached:` line names
 the build the run reached.
 
+## Before a walk
+
+When `product-access` has `## Before a walk`, run its check before the first task, in this order: the variables it
+names are set, each checked without printing its value, such as `test -n "$NAME"`; its ports are free; then start the
+app as it says, and confirm the URL answers and sign-in returns to its hosts.
+When the check fails, walk nothing: name what failed in the `Reached:` line and in `## Not reached`, and use `seen` or `read`.
+
 ## Safety
 
+- The demo account for a task is the one `## Where each task lives` names for it, else the first one `## Accounts` lists.
+  Sign in with it; the persona still finds the way to the task. The session, never the persona, uses the screen, route,
+  or command it names: to pick the `--pr` scope, to look at `seen` or `read`, and to locate a finding after the walk.
 - Reach the product only the way `product-access` says, and keep to its `## Off limits`.
-  Run its reset command before a task that changes data, when it names one.
+  Run its reset command before a task that changes data, when it names one, unless `## Allowed changes` forbids it,
+  as below.
+- A task behind a plan or feature the demo account lacks, as `## Accounts` lists, is `not walked`, and `## Not reached`
+  gives that reason.
+- When `product-access` has `## Allowed changes`, any data change it does not list is off limits. Run the reset
+  command only against the data it names, and on an environment it marks shared only when it says the reset is safe
+  for other sessions. Where it forbids the reset, walk the task without one and say so in the `Reached:` line.
 - Without `product-access`, ask the Human once for a non-production URL and a demo account, and where its password
   is kept, such as an environment variable or a password-manager entry; never ask for the password itself.
   No answer: fall back to `seen` or `read`, and say why in the report.

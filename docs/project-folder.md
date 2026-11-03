@@ -106,7 +106,8 @@ Where no shell runs it, use `node <plugin folder>/lib/cli.mjs`, and `node <plugi
 - `paths`: no tracked file holds a personal home folder such as `/Users/<name>/`; `--staged` checks the staged files only, as the index holds them.
 - `budget`: the [knowledge budgets](config.md#knowledge-budgets) that `aidrian check` also holds. It prints the `always` bytes per bucket.
 - `personas`: each knowledge doc tagged `personas`, except `product-access`, has the [persona sections](personas.md#the-persona-contract),
-  and a `Success:` line under every `### <task>`. A project with no personas passes.
+  a `Success:` line under every `### <task>`, and no two tasks with one title.
+  A `Success:` paragraph that holds a span in double quotes or backticks passes with a warning. A project with no personas passes.
 
 `aidrian lint skills <folder>` and `aidrian lint agents <folder>` check other folders.
 

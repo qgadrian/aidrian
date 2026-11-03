@@ -50,7 +50,7 @@ Every agent dispatch and Codex run counts, fallbacks included.
 
 1. **Cases.** Every advocate in parallel, with the Case brief. Codex runs `aidrian quorum codex --mode case`.
 2. A position still without a case after its fallback stops the run with `blocked` before round 3, naming the
-   position and the Codex status line.
+   position and the Codex status line, or the agent's failure.
    Otherwise, write the ledger with every field `references/ledger.md` § Decide-mode fields lists: `mode: decide`,
    `status: open`, the positions, and the cases. `cross` and `rebuttals` are empty, and `ruling`, `final_ruling`, and
    `human_answer` are `null`. Run `quorum check`. It prints `case X: no citation passes` for a case with no passing

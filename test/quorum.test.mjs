@@ -1167,7 +1167,7 @@ test('the decide mode file holds the runners, the swap, the cap, every Codex mod
     '- The final ruling is missing, after its retry or with no dispatch left for one.',
     '- A losing position never answered, because Codex and its fallback both failed, or the cap ran out.',
     '- A position rebutted, and the cap leaves no dispatch for the final ruling.',
-    'A position still without a case after its fallback stops the run with `blocked` before round 3, naming the position and the Codex status line.',
+    "A position still without a case after its fallback stops the run with `blocked` before round 3, naming the position and the Codex status line, or the agent's failure.",
     'A ruling `quorum check` names invalid, or a missing one, goes back once, with the line it printed. Invalid again, stop with `blocked`.',
     'Such a position cannot win, on the first ruling or the final one: rule for another position, or escalate.',
     '`<settled>` is always `none` in decide mode',

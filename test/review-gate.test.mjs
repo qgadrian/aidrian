@@ -8,7 +8,8 @@ import test, { after } from 'node:test';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { awaitReview, runAwaitReview } from '../plugins/aidrian/lib/pr-await-review.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
-import { asksForReview, markerFor, OVERRIDE, readRecord, writeRecord } from '../plugins/aidrian/lib/review-gate.mjs';
+import { asksForReview, gateReview, markerFor, OVERRIDE, readRecord, writeRecord } from '../plugins/aidrian/lib/review-gate.mjs';
+import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { check } from '../plugins/aidrian/lib/rules/github/review-request.mjs';
 
 const STATE = process.env.XDG_STATE_HOME;
@@ -152,6 +153,43 @@ test('aidrian pr attest records the review and prints the marker; --check reads 
   assert.match(done.stdout, new RegExp(`<!-- aidrian-review: pr=7 repo=acme/notes head=${head} reviewer=code-reviewer findings=2 fixed=1 -->`));
   assert.equal(run('7', '--check').status, 0);
   assert.equal(readRecord(project, 7).head, head);
+});
+
+// The review step's record of pull request `pr` with `passes`, as `aidrian pr attest --pass` writes them (recordPass).
+function passes(project, pr, entries) {
+  const state = emptyState(pr, 'acme/notes');
+  for (const [id, pass] of Object.entries(entries)) state.passes[id] = { head: 'abcdef1', reviewer: 'code-reviewer', files: null, findings: 2, open: 0, verdicts: [], list: null, ...pass };
+  writeLocalState(project, state);
+}
+
+test('a full-diff agent pass the review step recorded counts as the gate`s review; flow and slice passes do not', async (t) => {
+  const { dir, run, project } = repo(t);
+  const request = 'gh pr comment 5 -b "@codex review"';
+  passes(project, 5, {
+    'flow:billing:code-reviewer': { files: ['src/billing.mjs'] },
+    'agent:code-reviewer:billing+auth': { files: ['src/billing.mjs', 'src/auth.mjs'] },
+    'agent:code-reviewer.1': { files: ['src/a.mjs'] },
+    'cross:code-reviewer': {},
+    'engine:codex-local': {},
+  });
+  assert.match(run(request) ?? 'passed', /^Blocked: this asks the review bot to review pull request #5,/, 'flow, slice, cross, and engine passes alone');
+  assert.match(run(request), /aidrian pr attest 5 --pass agent:<name> --head <sha>/, 'the deny names both forms');
+  assert.match(run(request), /A pass over a flow's or a slice's files alone does not count\./);
+  assert.equal(gateReview(project, 5), null);
+  passes(project, 5, { 'agent:code-reviewer': { reviewer: '', findings: 1 } });
+  assert.ok(run(request), 'a pass that names no reviewer');
+  passes(project, 5, { 'flow:billing:code-reviewer': { files: ['src/billing.mjs'] }, 'agent:code-reviewer': { findings: 3, open: 1 } });
+  assert.equal(run(request), null, 'the full-diff agent pass lets the request through');
+  assert.deepEqual(gateReview(project, 5), { pr: 5, repo: 'acme/notes', head: 'abcdef1', reviewer: 'code-reviewer', findings: 3, fixed: 2, pass: 'agent:code-reviewer' });
+  const check = spawnSync(process.execPath, [CLI, 'pr', 'attest', '5', '--check'], { cwd: dir, encoding: 'utf8', env: process.env });
+  assert.equal(check.status, 0, 'attest --check reads the same review');
+  const config = loadConfig(project).config;
+  const gh = quietGh();
+  const quiet = { log: console.log, error: console.error };
+  console.log = console.error = () => {};
+  t.after(() => Object.assign(console, quiet));
+  assert.equal(await runAwaitReview(['5', '--request', '--timeout-sec', '0'], config, project, { gh }), 2, 'await-review --request posts, not review_required');
+  assert.match(gh.posts[0], /<!-- aidrian-review: pr=5 repo=acme\/notes head=abcdef1 reviewer=code-reviewer findings=3 fixed=2 -->$/, 'with the pass`s marker');
 });
 
 // A gh that answers the reads of one pull request with nothing, and records its posts.

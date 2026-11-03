@@ -567,10 +567,9 @@ test('signoff resolves the pull request`s repository, and falls back to origin o
   const quiet = console.log;
   console.log = () => {};
   t.after(() => (console.log = quiet));
-  assert.equal(await runSignoff(['5', '--flow', 'f', '--head', r.commit], r.project, loadConfig(r.project).config, { viewPr: () => ({ url: UPSTREAM }) }), 0);
-  assert.equal(readLocalState(r.project, 5).repo, 'upstream/notes');
-  assert.equal(await runSignoff(['6', '--flow', 'f', '--head', r.commit], r.project, loadConfig(r.project).config, { viewPr: () => { throw new Error('offline'); } }), 0);
-  assert.equal(readLocalState(r.project, 6).repo, 'acme/notes', 'offline: origin, a stated limit');
+  // No review ran on the head, so the sign-off is refused, naming the repository it resolved.
+  await assert.rejects(runSignoff(['5', '--flow', 'f', '--head', r.commit], r.project, loadConfig(r.project).config, { viewPr: () => ({ url: UPSTREAM }) }), /no review of upstream\/notes#5 ran on/u);
+  await assert.rejects(runSignoff(['6', '--flow', 'f', '--head', r.commit], r.project, loadConfig(r.project).config, { viewPr: () => { throw new Error('offline'); } }), /no review of acme\/notes#6 ran on/u, 'offline: origin, a stated limit');
 });
 
 test('recordPass builds on a newer comment record, keeping its rounds and passes', (t) => {

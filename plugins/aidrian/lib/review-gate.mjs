@@ -233,7 +233,8 @@ export function attestation(project, pr, repo = null, origin = originRepo(projec
 // `aidrian pr signoff <PR> --flow <id> --head <sha>`: the Human's sign-off of a critical flow on one head. It is an audit
 // entry, not proof: an agent holds the same shell. The review summary on the pull request shows every sign-off.
 // `--stage <name>` in place of `--flow` signs off a review stage the Human chose to review because its reviewer ran out
-// of quota on that head (lib/review/quota.mjs).
+// of quota on that head (lib/review/quota.mjs). `--flow <id> --overrule <invariant> --reason <text>` settles a dispute
+// between reviewers on that head.
 export async function runSignoff(args, project, config = null, { viewPr } = {}) {
   const [ref, ...rest] = args;
   const pr = prNumber(ref);
@@ -241,7 +242,7 @@ export async function runSignoff(args, project, config = null, { viewPr } = {}) 
   const flags = {};
   for (let i = 0; i < rest.length; i += 1) {
     const flag = rest[i];
-    if (!['--flow', '--stage', '--head', '--repo'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
+    if (!['--flow', '--stage', '--head', '--repo', '--overrule', '--reason'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
     const value = rest[++i];
     if (value === undefined || value.startsWith('--')) throw new Error(`${flag} needs a value`);
     flags[flag.slice(2)] = value;
@@ -250,7 +251,13 @@ export async function runSignoff(args, project, config = null, { viewPr } = {}) 
   if (!SHA.test(flags.head) || runGit(['cat-file', '-e', `${flags.head}^{commit}`], project.root).status !== 0) throw new Error(`--head ${flags.head} is not a commit in this repository`);
   const repo = prRepo(project, pr, flags.repo, viewPr);
   const by = runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown';
-  const { recordSignoff, recordStageSignoff, remoteState } = await import('./review/run.mjs');
+  if ((flags.overrule || flags.reason) && !(flags.flow && flags.overrule && flags.reason)) throw new Error('--overrule needs --flow and --reason');
+  const { recordOverrule, recordSignoff, recordStageSignoff, remoteState } = await import('./review/run.mjs');
+  if (flags.overrule) {
+    recordOverrule(project, { pr, repo, flow: flags.flow, invariant: flags.overrule, head: flags.head, by, reason: flags.reason, remote: remoteState(repo, pr, undefined, config) });
+    console.log(`recorded ${by}'s ruling: invariant ${flags.overrule} of flow ${flags.flow} passes on ${flags.head.slice(0, 7)} on the reviewer evidence that it holds. Run \`aidrian pr review\` again.`);
+    return 0;
+  }
   if (flags.stage) {
     recordStageSignoff(project, { pr, repo, stage: flags.stage, head: flags.head, by, remote: remoteState(repo, pr, undefined, config) });
     console.log(`recorded ${by}'s sign-off of the ${flags.stage} stage on ${flags.head.slice(0, 7)}, in place of the reviewer that ran out of quota. Run \`aidrian pr review\` again.`);

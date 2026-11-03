@@ -402,6 +402,10 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
     const gone = changes.filter((each) => each.status === 'D' && tests.some((pattern) => pattern.test(each.file))).map((each) => each.file);
     if (gone.length) removedTests.push({ flow: id, deleted: gone, accept: `aidrian pr signoff ${n} --flow ${id} --head ${head}` });
   }
+  // The flows the Human may sign off on this head: one the project marks for the Human's sign-off, the built-in
+  // harness-config, or one whose test the change deletes. `aidrian pr signoff` refuses any other, since its sign-off
+  // would count for nothing: a violated invariant is fixed, never signed away.
+  state.signoffable = { head, flows: [...new Set([...plan.flows.filter((flow) => flow.signoff === 'human').map((flow) => flow.id), ...removedTests.map((each) => each.flow)])].sort() };
   const answerless = plan.flows.find((flow) => !passes.some((pass) => (pass.flows ?? []).includes(flow.id) && map[pass.reviewer]?.kind !== 'remote'));
   if (answerless) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `flow ${answerless.id} needs a reviewer that answers its invariants, and the review bot does not: run codex-local, or require an agent for the flow`, plan });
   if (!passes.length && !removedTests.length && !fallbacks.length) return settle({ status: 'none_needed', pr: n, repo, head, base, depth: plan.depth, engine: plan.engine, plan: { depth: plan.depth, reasons: plan.reasons, flows: [], stages: [] } });
@@ -420,7 +424,9 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
   // A capture is evidence for the head it was taken of: a verdict carried forward from an earlier head cites that
   // head's captures. The keys live in the review record too, so another machine without the images can check them.
   const capturesOf = (at) => new Set([...(state.captured?.[at] ?? []), ...captureKeys(at === head ? manifest : readManifest(project, n, at))]);
-  const flowStatus = (flow) => flowState(flow.invariants, verdictsFor(flow.id), (evidence, verdict) => citationProblem(evidence, { root, head, captures: capturesOf(verdict?.at ?? head) }));
+  // The invariants the Human overruled on this head: a violated verdict another reviewer disputes with evidence.
+  const overruledOn = (flowId) => new Set((state.overrulings ?? []).filter((each) => each.flow === flowId && sameCommit(each.head, head)).map((each) => each.invariant));
+  const flowStatus = (flow) => flowState(flow.invariants, verdictsFor(flow.id), (evidence, verdict) => citationProblem(evidence, { root, head, captures: capturesOf(verdict?.at ?? head) }), overruledOn(flow.id));
 
 
   // The stage the last round runs first: the last one that needs no earlier result, so never the review bot, which
@@ -561,7 +567,11 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
         open: open.map(([pass, result]) => ({ pass: pass.id, reviewer: pass.reviewer, head: result.head, open: result.open, findings: result.list ?? null })),
         // One entry per mistake when slices and the cross pass report the same one.
         ...(stage.passes.some((pass) => pass.role) ? { findings_merged: dedupe(open.map(([pass, result]) => [pass.id, result.list ?? []])) } : {}),
-        flows: unsigned.map(([flow, status]) => ({ flow: flow.id, violated: status.open, unverified: status.unverified })),
+        flows: unsigned.map(([flow, status]) => ({
+          flow: flow.id, violated: status.open, unverified: status.unverified,
+          // Reviewers disagree: the Human decides, in their own shell, and the invariant then passes on the evidence.
+          ...(status.disputed.some((id) => status.open.includes(id)) ? { disputed: status.disputed.filter((id) => status.open.includes(id)), overrule: status.disputed.filter((id) => status.open.includes(id)).map((id) => `aidrian pr signoff ${n} --flow ${flow.id} --overrule ${id} --head ${head} --reason "<why>"`) } : {}),
+        })),
       });
     }
     // A stage the Human chose to review in place of an out-of-quota reviewer waits for their sign-off before the next.
@@ -764,6 +774,8 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
     // Slice results of packings this head no longer makes count for nothing again: they leave the record. A pass of
     // this plan always stays.
     prunePasses(state, plan.slices, new Set(plan.stages.flatMap((stage) => stage.passes.map((pass) => pass.id))));
+    // The disputes the Human may settle on this head: `aidrian pr signoff --overrule` refuses any other invariant.
+    state.disputes = { head, items: plan.flows.flatMap((flow) => flowStatus(flow).disputed.map((invariant) => ({ flow: flow.id, invariant }))) };
     settle(result);
     if (onPr) {
       const body = summaryBody(state, { ...plan, flows: plan.flows.map((flow) => ({ ...flow, signed: flowStatus(flow).signed, humanSigned: keptSignoffs.has(flow.id) })) }, status);
@@ -827,9 +839,33 @@ export function recordPass(project, { pr, repo, pass, head, reviewer, findings, 
 // proof: the summary comment shows it, and who ran it.
 export function recordSignoff(project, { pr, repo, flow, head, by, remote = null }) {
   const state = current(project, pr, repo, remote);
+  const asked = state.signoffable;
+  if (!asked || !sameCommit(asked.head, head)) throw new Error(`no review of ${repo}#${pr} ran on ${head.slice(0, 7)}: run \`aidrian pr review ${pr}\` on that head first, and sign off only a flow it names`);
+  if (!asked.flows.includes(flow)) {
+    const which = asked.flows.length ? `only ${asked.flows.join(', ')} can be` : 'no flow is';
+    throw new Error(`flow ${flow} takes no Human sign-off on ${head.slice(0, 7)} of ${repo}#${pr}: ${which} signed off there. A sign-off never clears a violated invariant: fix the code, or, where reviewers disagree, settle it with the --overrule command the review prints`);
+  }
   state.signoffs[flow] = { head, by, at: new Date().toISOString() };
   writeLocalState(project, state);
   return state.signoffs[flow];
+}
+
+// `aidrian pr signoff <PR> --flow <id> --overrule <invariant> --head <sha> --reason <text>`: the Human settles a
+// dispute on one head, where one reviewer answered violated and another answered holds or not_affected with evidence.
+// The invariant then passes on that evidence. An audit entry, not proof, listed with the overrides in the summary.
+export function recordOverrule(project, { pr, repo, flow, invariant, head, by, reason, remote = null }) {
+  const state = current(project, pr, repo, remote);
+  if (!String(reason ?? '').trim()) throw new Error('--overrule needs --reason: say why the violated verdict is wrong');
+  const disputes = state.disputes && sameCommit(state.disputes.head, head) ? state.disputes.items : null;
+  if (!disputes) throw new Error(`no review of ${repo}#${pr} ran on ${head.slice(0, 7)}: run \`aidrian pr review ${pr}\` on that head first`);
+  if (!disputes.some((each) => each.flow === flow && each.invariant === invariant)) {
+    throw new Error(`invariant ${invariant} of flow ${flow} is not disputed on ${head.slice(0, 7)} of ${repo}#${pr}: --overrule settles only a violated verdict another reviewer answers holds or not_affected with evidence. Fix the code, or have a reviewer record its verdict with evidence first`);
+  }
+  const entry = { flow, invariant, head, by, reason: reason.trim().slice(0, 300), at: new Date().toISOString() };
+  state.overrulings = [...(state.overrulings ?? []).filter((each) => !(each.flow === flow && each.invariant === invariant && sameCommit(each.head, head))), entry];
+  state.overrides = [...state.overrides, `${by} overruled the violated verdict on ${flow}/${invariant} at ${head.slice(0, 7)}: ${entry.reason}`];
+  writeLocalState(project, state);
+  return entry;
 }
 
 // `aidrian pr signoff <PR> --stage <name> --head <sha>`: the Human's sign-off of a stage they chose to review in place of

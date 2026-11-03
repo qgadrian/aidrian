@@ -265,18 +265,25 @@ export function citationProblem(evidence, { root, head, captures = new Set() }) 
   return Number(place[2]) >= 1 && Number(place[2]) <= lines ? null : `${place[1]} has no line ${place[2]}`;
 }
 
-// The sign-off state of one flow from its verdicts: { signed, open, unverified } where `open` lists the invariants a
-// verdict says are violated, and `unverified` those with no valid holds or not_affected verdict. A verdict that fails
-// its citation counts as cannot_verify.
-export function flowState(invariants, verdicts, check) {
+// The sign-off state of one flow from its verdicts: { signed, open, unverified, disputed } where `open` lists the
+// invariants a verdict says are violated, and `unverified` those with no valid holds or not_affected verdict. A verdict
+// that fails its citation counts as cannot_verify. `disputed` lists the violated invariants another verdict answers
+// holds or not_affected with valid evidence: reviewers disagree, and the Human may overrule the violated side on that
+// head (`overruled`, a set of invariant ids). An overruled invariant then passes on the other side's evidence, never
+// on the Human's word alone.
+export function flowState(invariants, verdicts, check, overruled = new Set()) {
   const open = [];
   const unverified = [];
+  const disputed = [];
   for (const invariant of invariants) {
     const mine = verdicts.filter((verdict) => verdict.invariant === invariant.id);
-    if (mine.some((verdict) => verdict.verdict === 'violated')) open.push(invariant.id);
-    else if (!mine.some((verdict) => ['holds', 'not_affected'].includes(verdict.verdict) && check(verdict.evidence, verdict) === null)) unverified.push(invariant.id);
+    const violated = mine.some((verdict) => verdict.verdict === 'violated');
+    const backed = mine.some((verdict) => ['holds', 'not_affected'].includes(verdict.verdict) && check(verdict.evidence, verdict) === null);
+    if (violated && backed) disputed.push(invariant.id);
+    if (violated && !(backed && overruled.has(invariant.id))) open.push(invariant.id);
+    else if (!backed) unverified.push(invariant.id);
   }
-  return { signed: open.length === 0 && unverified.length === 0, open, unverified };
+  return { signed: open.length === 0 && unverified.length === 0, open, unverified, disputed };
 }
 
 // The verdicts in a file an agent pass recorded: [{ flow, invariant, verdict, evidence }]; throws on a bad file.

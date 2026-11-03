@@ -9,7 +9,7 @@ import { findProject } from '../project.mjs';
 
 export const REASON =
   'Blocked: `aidrian pr signoff` is the Human\'s sign-off, recorded under their name, and only the Human runs it. ' +
-  'Stop at human_required, show the Human the command the review step printed, and ask them to run it in their own ' +
+  'Stop at human_required, or at a disputed flow\'s overrule, show the Human the command the review step printed, and ask them to run it in their own ' +
   'shell (`!` in the prompt, or another terminal).';
 
 // The deny reason for `command`, or null. On only inside a project.

@@ -10,7 +10,7 @@ import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { blocksOf, citationProblem, flowState, invariantsOf, sectionOf } from '../plugins/aidrian/lib/review/flows.mjs';
 import { cleanOutput, resolveEngine, reviewerMap, runExec, satisfies } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { parseChoice } from '../plugins/aidrian/lib/review/quota.mjs';
-import { EXIT, recordPass, recordSignoff, recordStageSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
+import { EXIT, recordOverrule, recordPass, recordSignoff, recordStageSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 import { judgeMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
@@ -318,7 +318,7 @@ test('invariantsOf and flowState: a doc gives one invariant per heading; a flow 
     { invariant: 'b', verdict: 'violated', evidence: 'ok' },
     { invariant: 'c', verdict: 'holds', evidence: 'bad' },
   ], (evidence) => (evidence === 'ok' ? null : 'missing'));
-  assert.deepEqual(state, { signed: false, open: ['b'], unverified: ['c'] });
+  assert.deepEqual(state, { signed: false, open: ['b'], unverified: ['c'], disputed: [] });
 });
 
 test('citationProblem: a path:line must exist at the head, a test:<name> must appear in a file', (t) => {
@@ -378,7 +378,37 @@ test('an independent reviewer`s violated verdict blocks the flow even with no fi
   recordPass(r.project, { pr: 7, repo: 'o/r', pass: first.dispatch[0].pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: holdsAll(first.dispatch[0], 'src/booking/a.js:1') });
   const violated = async () => ({ status: 'done', findings: [], verdicts: [{ flow: 'booking', invariant: 'unspecified', verdict: 'violated', evidence: 'src/booking/a.js:1' }], dropped: [] });
   const result = await r.step({ exec: violated });
-  assert.deepEqual([result.status, result.stage, result.flows], ['fix_required', 'independent', [{ flow: 'booking', violated: ['unspecified'], unverified: [] }]]);
+  // The code reviewer answered holds with evidence, so the reviewers disagree: still blocked, with the Human's way out named.
+  assert.deepEqual([result.status, result.stage, result.flows], ['fix_required', 'independent', [{
+    flow: 'booking', violated: ['unspecified'], unverified: [], disputed: ['unspecified'],
+    overrule: [`aidrian pr signoff 7 --flow booking --overrule unspecified --head ${first.head} --reason "<why>"`],
+  }]]);
+});
+
+test('the Human overrules a disputed violated verdict on one head; an undisputed one, or one with no reason, is refused', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'] }, pay: { files: ['src/pay/**'] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => (write('src/booking/a.js', '1\n'), write('src/pay/a.js', '1\n')) });
+  const first = await r.step({ exec: clean });
+  const pass = first.dispatch[0];
+  const verdicts = [{ flow: 'booking', invariant: 'unspecified', verdict: 'holds', evidence: 'src/booking/a.js:1' }];
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'code-reviewer', findings: 0, fixed: 0, verdictsText: JSON.stringify([...verdicts, { flow: 'pay', invariant: 'unspecified', verdict: 'holds', evidence: 'src/pay/a.js:1' }]) });
+  // The independent model says both flows are violated; only pay's reviewer agrees with it, so only booking is disputed.
+  const exec = async () => ({ status: 'done', findings: [], verdicts: [
+    { flow: 'booking', invariant: 'unspecified', verdict: 'violated', evidence: 'src/booking/a.js:1' },
+    { flow: 'pay', invariant: 'unspecified', verdict: 'violated', evidence: 'src/pay/a.js:1' },
+  ], dropped: [] });
+  const blocked = await r.step({ exec });
+  assert.equal(blocked.status, 'fix_required');
+  const overrule = (flow, reason = 'the security reviewer showed the base already behaves this way') => recordOverrule(r.project, { pr: 7, repo: 'o/r', flow, invariant: 'unspecified', head: first.head, by: 'Tester', reason });
+  assert.throws(() => overrule('booking', ' '), /needs --reason/u);
+  assert.throws(() => recordOverrule(r.project, { pr: 7, repo: 'o/r', flow: 'booking', invariant: 'nope', head: first.head, by: 'Tester', reason: 'x' }), /is not disputed/u);
+  overrule('booking');
+  const after = await r.step({ exec });
+  assert.deepEqual(after.flows?.map((flow) => flow.flow), ['pay'], 'booking passes on the reviewer evidence; pay stays violated');
+  assert.ok(readLocalState(r.project, 7).overrides.some((line) => /Tester overruled the violated verdict on booking\/unspecified/u.test(line)), 'listed with the overrides');
+  r.write('src/booking/a.js', '2\n');
+  const next = r.commit();
+  assert.throws(() => recordOverrule(r.project, { pr: 7, repo: 'o/r', flow: 'booking', invariant: 'unspecified', head: next, by: 'Tester', reason: 'x' }), /no review of o\/r#7 ran on/u, 'a ruling is for one head');
 });
 
 test('a flow only the independent model reviews is signed by its verdicts', async (t) => {
@@ -686,6 +716,19 @@ test('the round cap is the base branch\'s: an uncommitted edit to the working co
   await assert.rejects(r.step({ exec: clean, env: {} }, { maxRounds: 5 }), /--max-rounds 5 goes past config\.json github\.maxReviewRounds \(2\)/u);
   const result = await r.step({ exec: clean, env: {} });
   assert.equal(result.max_rounds, 2);
+});
+
+test('a sign-off is refused for a flow the head does not ask the Human to sign, and before any review of the head', async (t) => {
+  const flows = {
+    pay: { files: ['src/pay/**'], invariants: [{ id: 'cap', text: 'A refund never exceeds the charge.' }], require: ['agent:security-engineer'], signoff: 'human' },
+    book: { files: ['src/book/**'], invariants: [{ id: 'one', text: 'One booking per slot.' }], require: ['agent:security-engineer'] },
+  };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => (write('src/pay/a.js', 'export const refund = (x) => x;\n'), write('src/book/a.js', 'export const book = 1;\n')) });
+  const head = r.git('rev-parse', 'HEAD');
+  assert.throws(() => recordSignoff(r.project, { pr: 7, repo: 'o/r', flow: 'pay', head, by: 'Tester' }), /no review of o\/r#7 ran on/u);
+  await r.step({ exec: clean });
+  assert.throws(() => recordSignoff(r.project, { pr: 7, repo: 'o/r', flow: 'book', head, by: 'Tester' }), /flow book takes no Human sign-off .*only pay can be signed off/u);
+  assert.equal(recordSignoff(r.project, { pr: 7, repo: 'o/r', flow: 'pay', head, by: 'Tester' }).by, 'Tester');
 });
 
 test('a Human sign-off survives a push that touches nothing of the flow, and not one that does', async (t) => {
@@ -1312,7 +1355,7 @@ test('invariantsOf: a repeated heading is its own invariant, numbered as GitHub 
   ]);
   assert.deepEqual(repeated, [{ heading: 'Keep', ids: ['keep', 'keep-1'] }, { heading: 'Examples', ids: ['examples', 'examples-1'] }]);
   const state = flowState(invariants, [{ invariant: 'keep', verdict: 'holds', evidence: 'ok' }, { invariant: 'examples', verdict: 'holds', evidence: 'ok' }, { invariant: 'examples-1', verdict: 'holds', evidence: 'ok' }], () => null);
-  assert.deepEqual(state, { signed: false, open: [], unverified: ['keep-1'] });
+  assert.deepEqual(state, { signed: false, open: [], unverified: ['keep-1'], disputed: [] });
 });
 
 // The merge guard (lib/rules/github/merge-review.mjs) and the quota fallback: a stop is an open review, a fallback is a

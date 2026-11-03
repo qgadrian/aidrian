@@ -2,7 +2,8 @@
 // review by an agent that did not write the change is on record for it. docs/config.md#review-gate describes it.
 //
 // The record is written once per pull request, by `aidrian pr attest`, to the state folder, which every worktree of the
-// repository shares. A request comment may carry the marker that command prints instead: the local record dies with
+// repository shares. A full-diff agent pass that `aidrian pr review` recorded (`aidrian pr attest --pass agent:<name>`)
+// counts as that record too (gateReview); a pass over a flow's or a slice's files alone does not. A request comment may carry the marker that command prints instead: the local record dies with
 // its machine, the marker stays on GitHub. Both are the author's word that the review happened; the gate forces the
 // step, it cannot check the reading.
 //
@@ -17,6 +18,7 @@ import { ghJson } from './gh.mjs';
 import { runGit } from './git.mjs';
 import { unfencedLines } from './markdown-sections.mjs';
 import { normalizeRemote, stateDir } from './project.mjs';
+import { readLocalState } from './review/state.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_UNREVIEWED_REQUEST';
 
@@ -71,6 +73,28 @@ export function readRecord(project, pr) {
   return review || override ? record : null;
 }
 
+// A pass of one agent, as the review plan names it (lib/review/plan.mjs): `agent:<name>`, or `agent:<name>:<flow>+<flow>`
+// when the agent's flows merged into it. It reviewed the whole diff when its recorded `files` is null; a merged pass
+// limited to its flows' files, and a slice (`agent:<name>.<n>`, which always lists files), did not. A flow pass
+// (`flow:<id>:<agent>`), the cross pass, and an engine pass are never one.
+const AGENT_PASS = /^agent:[\w-]+(?::\S+)?$/u;
+
+// The review the gate counts for pull request `pr`, or null: the plain record `aidrian pr attest` writes, else an agent
+// pass over the whole diff in the review step's record (AGENT_PASS with no files), as { pr, repo, head, reviewer, findings, fixed }. The pass
+// is the reviewer's word, as the plain record is, and like it names a commit attest checked when it recorded it.
+export function gateReview(project, pr) {
+  const record = readRecord(project, pr);
+  if (record) return record;
+  const state = readLocalState(project, pr);
+  for (const [id, pass] of Object.entries(state?.passes ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
+    if (!AGENT_PASS.test(id) || pass?.files !== null || typeof pass?.head !== 'string' || !SHA.test(pass.head)) continue;
+    if (typeof pass.reviewer !== 'string' || pass.reviewer === '' || !Number.isInteger(pass.findings)) continue;
+    const open = Number.isInteger(pass.open) ? pass.open : 0;
+    return { pr, repo: typeof state.repo === 'string' ? state.repo : null, head: pass.head, reviewer: pass.reviewer, findings: pass.findings, fixed: Math.max(0, pass.findings - open), pass: id };
+  }
+  return null;
+}
+
 export function writeRecord(project, record) {
   const file = recordFile(project, record.pr);
   mkdirSync(path.dirname(file), { recursive: true });
@@ -92,7 +116,7 @@ export function judgeRequests(requests, { project, config, env = process.env, or
   const ours = requests.filter((request) => request.repo === null || origin === null || repoName(request.repo) === origin);
   if (env[OVERRIDE] === '1') {
     for (const { pr } of ours) {
-      if (pr !== null && !readRecord(project, pr)) writeRecord(project, { pr, repo: origin, head: null, reviewer: 'override', findings: 0, fixed: 0, note: OVERRIDE });
+      if (pr !== null && !gateReview(project, pr)) writeRecord(project, { pr, repo: origin, head: null, reviewer: 'override', findings: 0, fixed: 0, note: OVERRIDE });
     }
     return null;
   }
@@ -100,7 +124,7 @@ export function judgeRequests(requests, { project, config, env = process.env, or
     const target = repoName(request.repo) ?? origin;
     return (request.markers ?? []).some((marker) => marker.pr === request.pr && target !== null && marker.repo === target);
   };
-  const missing = ours.find((request) => request.pr === null || (!attested(request) && !readRecord(project, request.pr)));
+  const missing = ours.find((request) => request.pr === null || (!attested(request) && !gateReview(project, request.pr)));
   return missing ? denyReason(missing.pr, gate.checklist) : null;
 }
 
@@ -111,7 +135,9 @@ export function denyReason(pr, checklist) {
       : `Blocked: this asks the review bot to review pull request #${pr}, and no review of its diff by an agent that did not write it is on record.`,
     `First, one reviewer that did not write the change reads the whole diff${checklist ? ` against ${checklist}` : ''}`,
     '(dispatch it as a read-only subagent, such as the code-reviewer agent); fix what it finds.',
-    `Then record it: aidrian pr attest ${pr ?? '<PR>'} --head <sha> --reviewer <who> --findings <n> --fixed <n>.`,
+    `Then record it: aidrian pr attest ${pr ?? '<PR>'} --head <sha> --reviewer <who> --findings <n> --fixed <n>, or, inside \`aidrian pr review\`,`,
+    `the full-diff agent pass it dispatched: aidrian pr attest ${pr ?? '<PR>'} --pass agent:<name> --head <sha> --reviewer <who> --findings <n> --fixed <n>.`,
+    'A pass over a flow\'s or a slice\'s files alone does not count.',
     '`aidrian pr await-review --request` then puts the marker in its request by itself; only a request posted by hand needs the',
     'marker line attest prints. Never post both: that is two requests.',
     `To override for an explicit, user-confirmed reason, set ${OVERRIDE}=1 in your own shell before starting the session ` +
@@ -155,7 +181,7 @@ export async function runAttest(args, project, config = null, { viewPr } = {}) {
     } else throw new Error(`unknown argument: ${flag}`);
   }
   if (flags.check) {
-    const found = readRecord(project, pr) !== null;
+    const found = gateReview(project, pr) !== null;
     console.log(`${found ? 'recorded' : 'not recorded'}: pull request #${pr}`);
     return found ? 0 : 3;
   }
@@ -200,7 +226,7 @@ export async function runAttest(args, project, config = null, { viewPr } = {}) {
 // posts; null when there is no real review on record, or `repo` is another repository.
 export function attestation(project, pr, repo = null, origin = originRepo(project)) {
   if (repo !== null && (origin === null || repoName(repo) !== origin)) return null;
-  const record = readRecord(project, pr);
+  const record = gateReview(project, pr);
   return record?.head && record?.repo ? markerFor(record) : null;
 }
 

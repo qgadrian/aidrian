@@ -354,16 +354,21 @@ When the main session ends a turn, the Stop hook reads its transcript and measur
 - calls: the model calls the main session made, subagents not included;
 - hours: the time worked, where a pause of more than an hour counts as one hour, so a night away does not count.
 
-When one of them reaches its limit in config.json `session`, the hook acts once per session, as `session.handoff` says:
+When one of them reaches its limit in config.json `session`, the hook sends the agent back for one more turn
+to judge whether a handoff is worth it. It is not when the task is done or a few calls finish it,
+when a subagent or background job is still running and reports back to this session,
+or when the Human already said to finish here. Then the agent ends the turn without a word about it.
+Otherwise it acts as `session.handoff` says:
 
 | `handoff` | What happens |
 | --- | --- |
 | `ask` (default) | The agent ends the turn with one question: hand off now, or keep going? Hand off runs the `session-handoff` skill. |
-| `auto` | The agent writes the brief with the `session-handoff` skill, unless nothing is left to resume, and tells you its path. |
-| `off` | Nothing. |
+| `auto` | The agent writes the brief with the `session-handoff` skill and tells you its path. |
+| `off` | Nothing; the hook does not send the agent back. |
 
-Either way it never comes back in that session, so a "keep going" is final.
-A marker in the system's temporary folder remembers this; a new session starts fresh.
+Each time the reminder fires, every limit doubles for that session: after 150,000 tokens, the next comes at 300,000.
+So a "keep going", or a moment the agent judged wrong for a handoff, does not end the reminders for good.
+A marker in the system's temporary folder counts the firings; a new session starts fresh.
 The defaults are 150,000 tokens, 250 calls, and 4 hours; a limit of `0` turns that one off. [config.md](config.md) lists the keys.
 When the Human approves a plan (Claude Code's `ExitPlanMode`) and the main session has passed half of one limit,
 another hook tells the agent to offer the same handoff before its first build step: `ask` asks, `auto` writes the brief.

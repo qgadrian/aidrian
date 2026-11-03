@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
-import { handoffReason, overLimits, sessionLength } from '../plugins/aidrian/lib/session-length.mjs';
+import { handoffReason, overLimits, scaledLimits, sessionLength } from '../plugins/aidrian/lib/session-length.mjs';
 
 const HOOK = path.resolve(import.meta.dirname, '../plugins/aidrian/scripts/hook-stop.mjs');
 
@@ -38,16 +38,29 @@ test('each limit trips on its own, 0 turns a limit off, and a transcript with no
   assert.deepEqual(overLimits({ tokens: 0, calls: 0, hours: 9 }, limits), []);
 });
 
-test('ask mode asks one question and promises not to ask again; auto mode writes the brief', () => {
+test('both modes let the agent judge the handoff not worth it and say nothing; ask asks, auto writes the brief', () => {
+  for (const mode of ['ask', 'auto']) {
+    const reason = handoffReason(mode, ['250 model calls']);
+    assert.match(reason, /^This session is long: 250 model calls\./);
+    assert.match(reason, /Judge first whether a handoff is worth it\. It is not when the task is done/);
+    assert.match(reason, /subagent or background job is still running/);
+    assert.match(reason, /the user already said to finish here/);
+    assert.match(reason, /end this turn without mentioning this reminder/);
+    assert.match(reason, /which comes back once the session doubles/);
+  }
   const ask = handoffReason('ask', ['250 model calls']);
-  assert.match(ask, /^This session is long: 250 model calls\./);
   assert.match(ask, /hand off now, or keep going\?/);
   assert.match(ask, /session-handoff skill/);
-  assert.match(ask, /does not come back in this session/);
   const auto = handoffReason('auto', ['250 model calls']);
-  assert.match(auto, /Run the session-handoff skill now/);
+  assert.match(auto, /run the session-handoff skill now/);
   assert.match(auto, /session-continue skill/);
   assert.doesNotMatch(auto, /keep going/);
+});
+
+test('each firing doubles every limit, and a limit of 0 stays off', () => {
+  const limits = { maxTokens: 150000, maxCalls: 0, maxHours: 4 };
+  assert.deepEqual(scaledLimits(limits, 0), limits);
+  assert.deepEqual(scaledLimits(limits, 2), { maxTokens: 600000, maxCalls: 0, maxHours: 16 });
 });
 
 test('the default is ask, at 150k tokens, 250 calls, or 4 hours', () => {
@@ -72,21 +85,35 @@ function setup(t, session) {
   return { stop, temp, transcript };
 }
 
-test('ask mode sends the agent back once with the question, then never again in that session', (t) => {
-  const { stop, temp } = setup(t, { maxCalls: 3 });
+test('ask mode sends the agent back with the question, then again only once the session doubles', (t) => {
+  const { stop, temp, transcript } = setup(t, { maxCalls: 3 });
+  const marker = path.join(temp, 'aidrian-session-length-abc-123');
   const first = stop();
   assert.equal(first.status, 2);
   assert.match(first.stderr, /^This session is long: 3 model calls\..*hand off now, or keep going\?/s);
   assert.deepEqual(readdirSync(temp), ['aidrian-session-length-abc-123']);
-  assert.deepEqual(stop(), { status: 0, stderr: '' }, 'a later turn of the same session');
-  assert.equal(stop({ session_id: 'other' }).status, 2, 'another session asks once too');
+  assert.equal(readFileSync(marker, 'utf8'), '1\n');
+  assert.deepEqual(stop(), { status: 0, stderr: '' }, 'a later turn of the same session, under twice the limit');
+  assert.equal(stop({ session_id: 'other' }).status, 2, 'another session counts on its own');
+  appendFileSync(transcript, `\n${[3, 4, 5].map((minute) => line(minute, `m${minute}`, usage(10, 6000, 100))).join('\n')}`);
+  const second = stop();
+  assert.equal(second.status, 2, 'six calls reach twice the limit');
+  assert.match(second.stderr, /^This session is long: 6 model calls\./);
+  assert.equal(readFileSync(marker, 'utf8'), '2\n');
+  assert.deepEqual(stop(), { status: 0, stderr: '' }, 'the next reminder waits for twelve calls');
+});
+
+test('a marker an older version wrote counts as one firing', (t) => {
+  const { stop, temp } = setup(t, { maxCalls: 3 });
+  writeFileSync(path.join(temp, 'aidrian-session-length-abc-123'), 'ask\n');
+  assert.deepEqual(stop(), { status: 0, stderr: '' });
 });
 
 test('auto mode sends the agent back to write the brief', (t) => {
   const { stop } = setup(t, { handoff: 'auto', maxTokens: 6000 });
   const { status, stderr } = stop();
   assert.equal(status, 2);
-  assert.match(stderr, /^This session is long: 6k tokens of context\..*Run the session-handoff skill now/s);
+  assert.match(stderr, /^This session is long: 6k tokens of context\..*Otherwise run the session-handoff skill now/s);
 });
 
 test('nothing happens when off, within limits, on the stop it caused, on another host, or outside a project', (t) => {

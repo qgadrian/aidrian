@@ -288,6 +288,14 @@ test('pr-write hands an opened or updated pull request to the review loop as git
     'a caller that runs the loop itself, such as autopilot, still runs it once');
 });
 
+test('the lesson skill takes a feedback draft note from context and leaves the draft to the Human', () => {
+  // A session asked to write a lesson for a Claude Code feedback draft cannot read, edit, or delete that queue,
+  // so the skill says where the note comes from and that the Human sends or discards the draft.
+  const text = readFileSync(path.join(PLUGIN, 'skills/lesson/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(text, /For a lesson from a Claude Code feedback draft, the note comes from the draft text in context: no command reads, edits, or deletes that draft\./);
+  assert.match(text, /Tell the Human it stays queued for the Human to send, if it is a Claude Code bug, or discard\./);
+});
+
 test('an implementing skill ends at its draft, and the orchestrator owns what follows', () => {
   // A continuation clause buried mid-phase in issue-implement lost to the skill's own terminal signals,
   // and an orchestrator session stopped at the draft instead of running the review loop.

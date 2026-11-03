@@ -1,11 +1,11 @@
-// Bash rule, and the decision of the GitHub MCP merge hook: no merge while a review the Human asked for was never sent,
+// Bash rule, and the decision of the GitHub MCP merge hook: no merge while a review the Human asked for has no answer,
 // while a gate review is out, or while the review of the pull request's head has not finished. docs/hooks.md#merge-guard.
 // A merge is:
 //   - `gh pr merge` (but `--disable-auto`), `--auto` included;
 //   - `gh api repos/<owner>/<name>/pulls/<n>/merge` sent as a PUT or a POST;
 //   - the MCP tool `mcp__github__merge_pull_request` (scripts/hook-mcp-github.mjs).
 // It reads only this machine's review record (lib/review/state.mjs), in this order:
-//   1. a `pending` entry not sent denies, whatever the head or the outcome;
+//   1. a `pending` entry not answered denies, whatever the head or the outcome: a request sent is owed until the bot answers;
 //   2. no record the review step wrote (no outcome, no round) allows: the guard holds a review that is open or asked
 //      for, not that one happens, so a review run outside `aidrian pr review` is not guarded;
 //   3. otherwise the head needs a finished outcome (`received`, `none_needed`) on that very head.
@@ -137,9 +137,14 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
   const onHead = outcome !== null && sameCommit(outcome.head, head);
   let problem;
   if (owing.length) {
-    problem = owing.map((entry) => (entry.kind === 'request'
-      ? `the Human asked for a bot review (recorded ${entry.at}) that was never sent: send it with \`aidrian pr await-review ${pr} --request\` and merge after it answers. A later instruction, such as a merge command, does not cancel it`
-      : `a review dispatched at ${entry.at} has no result on record: wait for it, then record it with \`aidrian pr attest ${pr} --head <sha> --reviewer <who> --findings <n> --fixed <n>\``)).join('; and ');
+    problem = owing.map((entry) => {
+      if (entry.kind === 'review') return `a review dispatched at ${entry.at} has no result on record: wait for it, then record it with \`aidrian pr attest ${pr} --head <sha> --reviewer <who> --findings <n> --fixed <n>\``;
+      const ask = `the Human asked for a bot review (recorded ${entry.at}) `;
+      const cancel = '. A later instruction, such as a merge command, does not cancel it';
+      return entry.sent
+        ? `${ask}that was sent and has no answer yet: wait for it with \`aidrian pr await-review ${pr}\`${cancel}`
+        : `${ask}that was never sent: send it with \`aidrian pr await-review ${pr} --request\` and merge after it answers${cancel}`;
+    }).join('; and ');
   } else if (onHead && FINISHED.has(outcome.status)) return null;
   else {
     problem = outcome === null

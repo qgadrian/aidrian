@@ -182,8 +182,9 @@ was never sent. The rule, `plugins/aidrian/lib/rules/github/merge-review.mjs`, r
 to `repos/<owner>/<name>/pulls/<n>/merge`, and the MCP tool `mcp__github__merge_pull_request`. It is on in every project,
 reads only this machine's [review record](review.md#the-record), and decides in this order:
 
-1. An owed review, one `aidrian pr request` recorded and nothing has sent or cleared since, refuses the merge, whatever
-   the head or the outcome. Its reason says how to send it, and that a later instruction does not cancel it.
+1. An owed review, one `aidrian pr request` recorded and no answer has marked since, refuses the merge, whatever the
+   head or the outcome: a bot review sent is owed until the bot answers. Its reason says how to send it or wait for
+   it, and that a later instruction does not cancel it.
 2. No record from the review step, no outcome and no round, lets it run: the guard holds a review that is open or asked
    for, not that one happens. A review run outside `aidrian pr review` leaves no record and is not guarded.
 3. Otherwise the head needs an `outcome` of `received` or `none_needed` on that very head. An outcome on an earlier

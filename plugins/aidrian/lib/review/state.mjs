@@ -40,24 +40,48 @@ export const clip = (text) => String(text).replace(/\s+/gu, ' ').slice(0, CLIP);
 export const sameCommit = (a, b) => typeof a === 'string' && typeof b === 'string' && (a === b || (Math.min(a.length, b.length) >= 7 && (a.startsWith(b) || b.startsWith(a))));
 
 // `outcome` is the review step's last return, { status, head, at, reason? }, which the merge guard reads
-// (lib/rules/github/merge-review.mjs). `pending` holds the reviews still owed: { kind: 'request' | 'review', head, at,
-// by, sent? }. A `request` is a bot review the Human asked for (`aidrian pr request`), sent when
-// `aidrian pr await-review --request` posts it; a `review` is a gate review dispatched and not yet recorded, cleared
-// by `aidrian pr attest` or a finished review step.
+// (lib/rules/github/merge-review.mjs). `pending` holds the reviews owed: { kind: 'request' | 'review', head, at, by,
+// sent?, answered? }. A `request` is a bot review the Human asked for (`aidrian pr request`): `sent` once
+// `aidrian pr await-review --request` posts it, `answered` once the bot's answer arrives. A `review` is a gate review
+// dispatched: `answered` once `aidrian pr attest` records it or a review step finishes. An entry is never removed, only
+// marked, so two writers' lists merge field by field (mergePending).
 export const emptyState = (pr, repo) => ({ version: 1, revision: 0, pr, repo, rounds: [], passes: {}, signoffs: {}, overrides: [], failures: {}, outcome: null, pending: [] });
 
 // The review step's statuses after which nothing is left to review on that head.
 export const FINISHED = new Set(['received', 'none_needed']);
 
-// Notes the review step's return on `state`: its outcome, and, once finished, no gate review still owed.
+const pendingOf = (state) => (Array.isArray(state?.pending) ? state.pending.filter(isObject) : []);
+
+// Marks the owed entries of `kind` on `state` answered, by `by` on `head`. Returns how many it marked.
+export function answerPending(state, kind, { head = null, by }) {
+  const open = pendingOf(state).filter((entry) => entry.kind === kind && !entry.answered);
+  for (const entry of open) entry.answered = { at: new Date().toISOString(), head, by };
+  return open.length;
+}
+
+// Notes the review step's return on `state`: its outcome, and, once finished, every gate review owed answered.
 export function noteOutcome(state, { status, head, reason }) {
   state.outcome = { status, head, at: new Date().toISOString(), ...(reason ? { reason: clip(reason) } : {}) };
-  if (FINISHED.has(status)) state.pending = (state.pending ?? []).filter((entry) => entry.kind !== 'review');
+  if (FINISHED.has(status)) answerPending(state, 'review', { head, by: status });
   return state;
 }
 
-// The reviews still owed on `state`: its pending entries not sent.
-export const owed = (state) => (Array.isArray(state?.pending) ? state.pending : []).filter((entry) => !entry?.sent);
+// The reviews still owed on `state`: its pending entries not answered, a request sent included.
+export const owed = (state) => pendingOf(state).filter((entry) => !entry.answered);
+
+// One list from two copies of `pending`, such as the one on disk and one a long step read before: every entry of
+// either, and of an entry in both, each mark either holds.
+export function mergePending(a, b) {
+  const out = new Map();
+  for (const entry of [...pendingOf({ pending: a }), ...pendingOf({ pending: b })]) {
+    const key = `${entry.kind}@${entry.at}@${entry.head}`;
+    const seen = out.get(key) ?? {};
+    const merged = { ...seen, ...entry };
+    for (const mark of ['sent', 'answered']) if (seen[mark] ?? entry[mark]) merged[mark] = seen[mark] ?? entry[mark];
+    out.set(key, merged);
+  }
+  return [...out.values()];
+}
 
 const file = (project, pr) => path.join(stateDir(project), 'reviews', `pr-${pr}-review.json`);
 
@@ -75,7 +99,10 @@ export function readLocalState(project, pr) {
 }
 
 // Every write raises the record's revision, so the newer of two records is the one written last.
+// The record's `pending` on disk is merged in first: an entry recorded, sent, or answered while this writer worked
+// (`aidrian pr request` while a reviewer ran) is kept.
 export function writeLocalState(project, state) {
+  state.pending = mergePending(readLocalState(project, state.pr)?.pending, state.pending);
   state.revision = (state.revision ?? 0) + 1;
   state.updatedAt = new Date().toISOString();
   const target = file(project, state.pr);

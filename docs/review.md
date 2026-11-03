@@ -492,12 +492,16 @@ keeps the compressed marker and appends a plain one, so a comment it touched can
 - **Outcome.** Every return of the step writes its status to this machine's record as `outcome`: `{ status, head, at,
   reason }`. The early returns, `none_needed`, `unsatisfied`, and `too_large`, write it to the state folder only and
   post nothing; a `held` return writes nothing. The [merge guard](hooks.md#merge-guard) reads it.
-- **Owed reviews.** `pending` lists the reviews the pull request still owes, each `{ kind, head, at, by }`.
-  `aidrian pr request <PR>` records a bot review the Human asked for, the moment they ask, before any review the project
-  requires first; `aidrian pr await-review --request` marks it `sent` once it posts it, or once the bot answered the
-  head. `aidrian pr request <PR> --kind review` records a review-gate review as dispatched; `aidrian pr attest <PR>`,
-  or a step that returns `received` or `none_needed`, clears it. Without `--head <sha>`, `request` reads the head with gh.
-  Both live in the state folder: another machine does not see them.
+- **Owed reviews.** `pending` lists the reviews asked for, each `{ kind, head, at, by, sent, answered }`; one is owed
+  until it is `answered`. `aidrian pr request <PR>` records a bot review the Human asked for, the moment they ask,
+  before any review the project requires first. `aidrian pr await-review` marks it `sent` when it posts the request, and
+  `answered` when the bot's answer arrives (`received`) or is already there (`already_present`), as
+  `aidrian pr review --with-bot` does when the bot answers its stage. A request sent is still owed.
+  `aidrian pr request <PR> --kind review` records a review-gate review as dispatched; `aidrian pr attest <PR>`, or a
+  step that returns `received` or `none_needed`, answers it. Without `--head <sha>`, `request` reads the head with gh.
+  An entry is only ever marked, never removed, and every write of the record merges in the entries and marks on disk,
+  so a request recorded while a reviewer ran survives the step's write. Both live in the state folder: another
+  machine does not see them.
 
 With `review.record: "local"` in config.json, the record is written to the state folder only: nothing is posted or
 edited on the pull request, the visual captures comment included, and the record is read back from the state folder alone. Another machine then cannot

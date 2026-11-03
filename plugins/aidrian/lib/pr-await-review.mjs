@@ -46,6 +46,8 @@ import { runGit } from './git.mjs';
 
 export const DEFAULT_REVIEWER = CONFIG_DEFAULTS.github.reviewer;
 export const REQUEST_COMMENT = '@codex review';
+// The statuses that carry the bot's answer for the head: one that arrived during the wait, or one already there.
+export const ANSWERED = new Set(['received', 'already_present']);
 export const DEFAULTS = Object.freeze({ timeoutSec: 840, intervalSec: 60, maxRounds: CONFIG_DEFAULTS.github.maxReviewRounds });
 
 // What the request asks for after the trigger phrase. A bare "@codex review" returned about two findings per review,
@@ -593,9 +595,12 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     else if (moved) await saveRecord(record, { project, config, gh, base, status: result.status });
     else if (result.status === 'round_limit' && base && policy.mode === 'off') result = { ...result, extension: { status: 'off', mode: 'off' } };
     if (result.status === 'review_required') console.error(result.reason);
-    // The bot review the Human asked for (`aidrian pr request`) is sent once this run posted it, or the bot answered the head.
-    if (project && Number.isInteger(result.pr) && (result.requested || result.status === 'covered')) {
-      (await import('./review/pending.mjs')).markRequestsSent(project, result.pr, result.head_sha ?? null);
+    // The bot review the Human asked for (`aidrian pr request`): sent once this run posted it, and answered once the
+    // bot's answer is in, an answer that was already there included.
+    if (project && Number.isInteger(result.pr)) {
+      const { answerOwed, markRequestsSent } = await import('./review/pending.mjs');
+      if (result.requested) markRequestsSent(project, result.pr, result.head_sha ?? null);
+      if (ANSWERED.has(result.status)) answerOwed(project, result.pr, 'request', { head: result.head_sha ?? null, by: result.reviewer ?? 'bot' });
     }
     if (result.status === 'round_limit' && project) {
       const { recordSignal, roundLimitSignal } = await import('./lesson-signals.mjs');

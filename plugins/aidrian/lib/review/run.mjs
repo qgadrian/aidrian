@@ -39,7 +39,7 @@ import { contentFlows } from './content.mjs';
 import { buildPlan, classify, detectFlows, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, pathPattern, validatePlan } from './plan.mjs';
 import { BUILT_IN, flowBaseBrief, resolveEngine, reviewerMap, runExec, satisfies, VERDICT_MEANING } from './reviewers.mjs';
 import { atCap, buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
-import { heldMessage, isSummary, noteOutcome, prunePasses, readRecord, summaryBody, writeLocalState } from './state.mjs';
+import { answerPending, heldMessage, isSummary, mergePending, noteOutcome, prunePasses, readLocalState, readRecord, summaryBody, writeLocalState } from './state.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, ghImage, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput, visualMatrix, visualRoutes } from './visual.mjs';
 
 export const EXIT = Object.freeze({
@@ -504,6 +504,10 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
         if (bot.head_sha && bot.head_sha !== head) return finish('incomplete', { reason: `the pull request moved to ${String(bot.head_sha).slice(0, 7)} during the wait: run the step again`, retry_recommended: true });
         const open = bot.signal?.kind === 'thumbs_up' ? 0 : Math.max(1, bot.signal?.line_comments ?? 0);
         state.passes[remote.id] = { head, reviewer: remote.reviewer, findings: open, open, bot: { kind: bot.signal?.kind ?? null, review_id: bot.signal?.review_id ?? null } };
+        // The bot answered this head: a review the Human asked for (`aidrian pr request`) is no longer owed, recorded
+        // while the wait ran included.
+        state.pending = mergePending(readLocalState(project, n)?.pending, state.pending);
+        answerPending(state, 'request', { head, by: remote.reviewer });
         recorded = true;
       }
       const agents = pending.filter((pass) => map[pass.reviewer]?.kind === 'agent' || pass.kind === 'agent');

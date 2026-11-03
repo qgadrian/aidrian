@@ -85,9 +85,9 @@ With `github.extraRounds` on, the cap first checks whether one more round is wor
 ## Owed reviews
 
 - The Human asks for a bot review: run `aidrian pr request <n>` at once, before any review the project requires first.
-  `aidrian pr await-review <n> --request` sends it and marks it sent.
+  `aidrian pr await-review <n> --request` sends it; it stays owed until the bot's answer arrives.
 - Before dispatching the review the review gate needs outside `aidrian pr review`, run
-  `aidrian pr request <n> --kind review`; `aidrian pr attest` clears it.
+  `aidrian pr request <n> --kind review`; `aidrian pr attest` answers it.
 - Until then, and until `aidrian pr review` returns `received` or `none_needed` for the head, the merge guard hook
   refuses every merge of the pull request. A later instruction, a merge command included, does not cancel a request
   the Human made: ask the Human which one stands.

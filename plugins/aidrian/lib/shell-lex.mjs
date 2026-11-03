@@ -104,7 +104,8 @@ function lexSegments(command) {
   const separators = [];
   const substitutions = [];
   const ends = [];
-  // Each heredoc body as { segment, body }: the index of the segment whose `<<` opened it, and its text.
+  // Each heredoc body as { segment, body, expands }: the index of the segment whose `<<` opened it, its text, and
+  // whether bash expands it (its delimiter is unquoted).
   const heredocs = [];
   let tokens = [];
   let current = null;
@@ -151,7 +152,7 @@ function lexSegments(command) {
         body = consumed;
       }
       const bodyEnd = Math.min(i + 1 + body, command.length);
-      heredocs.push({ segment, body: command.slice(i + 1, bodyEnd) });
+      heredocs.push({ segment, body: command.slice(i + 1, bodyEnd), expands });
       if (expands) collectSubstitutions(command, i + 1, bodyEnd, bodyEnd, substitutions);
       i += closed ? consumed : rest.length;
       endSegment();
@@ -684,9 +685,9 @@ const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
 
 // Every command a command line runs, in the order it runs, nested ones included: the body of each command substitution
 // (before the command that owns it), each `sh -c "<string>"`, and each command line a heredoc or here-string feeds a
-// shell. Each is { segment, invocation, folder, line, inputs }: `folder` is the folder it runs in, from `cwd`, or null
-// when it cannot be known; `line` is the command line it was read from; `inputs` the heredoc bodies and here-string
-// words fed to its input. A leading `cd <dir> &&` moves the folder; any other directory change (in a subshell, a pipe,
+// shell. Each is { segment, invocation, folder, line, inputs, heredocs }: `folder` is the folder it runs in, from `cwd`,
+// or null when it cannot be known; `line` is the command line it was read from; `inputs` the heredoc bodies and
+// here-string words fed to its input; `heredocs` its heredocs alone, as { body, expands }. A leading `cd <dir> &&` moves the folder; any other directory change (in a subshell, a pipe,
 // after `;` or `||`, a second one) leaves it unknown for the commands after it. A wrapper's own directory (`env -C`)
 // and git's `-C` apply to their command only. Directory changes themselves are left out.
 export function walkCommands(command, cwd) {
@@ -713,11 +714,12 @@ export function walkCommands(command, cwd) {
           if (GIT_VALUE_GLOBALS.has(args[i].text)) i += 1;
         }
       }
+      const own = heredocs.filter((each) => each.segment === index).map(({ body, expands }) => ({ body, expands }));
       const inputs = [
-        ...heredocs.filter((each) => each.segment === index).map((each) => each.body),
+        ...own.map((each) => each.body),
         ...segment.flatMap((token, at) => (token.operator && token.text === '<<<' && segment[at + 1] ? [segment[at + 1].text] : [])),
       ];
-      out.push({ segment, invocation, folder, line, inputs });
+      out.push({ segment, invocation, folder, line, inputs, heredocs: own });
       const inner = inlineShellCommand(invocation);
       if (inner !== null) nested(inner, folder);
       else if (readsShellInput(invocation)) for (const body of inputs) nested(body, folder);

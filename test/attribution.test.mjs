@@ -120,6 +120,16 @@ test('a heredoc counts only for the commit or pull request that holds it', (t) =
   assert.equal(run(`gh api user && ${pr('\nAuthored-with: Claude Code\n')}`), null, 'another gh call first');
 });
 
+test('the PR rule reads a body file the same command writes first, and the heredoc fed to --body-file -', (t) => {
+  const { run } = setup(t, { pullRequest: ['tool'] });
+  const body = (lines) => `## Summary\nx\n${lines}`;
+  const signed = body('\nAuthored-with: Claude Code\n');
+  assert.equal(run(`cat > b.md <<'EOF'\n${signed}EOF\ngh pr create -t x --body-file b.md`), null);
+  assert.match(run(`cat > b.md <<'EOF'\n${body('')}EOF\ngh pr create -t x --body-file b.md`) ?? '', /Blocked/, 'and checks it');
+  assert.equal(run(`gh pr create -t x --body-file - <<'EOF'\n${signed}EOF`), null);
+  assert.match(run(`gh pr create -t x --body-file b.md && cat > b.md <<'EOF'\n${signed}EOF`) ?? '', /cannot read/, 'a write after gh');
+});
+
 test('a -F file is read where the commit runs: git -C, cd, and an unknown folder', (t) => {
   const { dir, run } = setup(t, { commit: ['agent'] });
   mkdirSync(path.join(dir, 'sub'));

@@ -6,7 +6,9 @@
 // rule cannot read (a variable, a substitution, stdin, a missing file) is refused when sections are configured. Runs only inside a project. A
 // command substitution that runs, as in `url=$(gh pr create …)`, is read as the command line is. A leading `cd <dir> &&`
 // moves the folder the body file and the project are read from; after any other directory change on the line, a relative
-// body file is one the rule cannot read.
+// body file is one the rule cannot read. A body file the same command line writes first, through `cat > file` or `tee
+// file` fed a heredoc or a `cp` of a file the rule can read, is read as that command writes it (`lineWrites`), and
+// `--body-file -` reads the heredoc fed to gh itself: the file does not exist yet when the hook runs.
 //
 // `github.pullRequest` adds the project's contract (docs/config.md#pull-request-contract), each part off until set:
 // the title pattern, an issue key outside the title's leading bracket, the closed list of sections, the items of the
@@ -14,10 +16,12 @@
 // request's. A title is checked only when the command sets one, so a body-only edit never blocks on an old title.
 //
 // Every deny about where the body comes from names the one place the pr-write skill writes it: the literal path
-// `<state>/tmp/pr-body-<branch>.md`, computed for the project and branch, or that pattern when either is unknown.
+// `<state>/tmp/pr-body-<branch>.md`, computed for the project and branch, or that pattern when either is unknown, in
+// its second sentence, right after the cause, as the two steps that pass (`twoSteps`). The first sentence stays the
+// cause, since the dispatch log records it.
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync, realpathSync } from 'node:fs';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { loadConfig } from '../../config.mjs';
@@ -53,17 +57,119 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
   // cannot know, the project is the session's and a relative body file is unreadable. Each call takes its own heredoc
   // from readPrCalls on its line.
   const pending = new Map();
-  for (const { segment, folder, line } of walkCommands(command, cwd)) {
-    if (!readPrCall(segment)) continue;
+  const writes = lineWrites();
+  for (const entry of walkCommands(command, cwd)) {
+    const { segment, folder, line } = entry;
+    if (!readPrCall(segment)) {
+      writes.note(entry);
+      continue;
+    }
     // The same line text can run again, as two identical `sh -c` bodies do: a spent queue starts over.
     if (!pending.get(line)?.length) pending.set(line, readPrCalls(line));
     const call = pending.get(line).shift();
     if (!call) continue;
-    const reason = judge(call, line, { cwd: folder ?? cwd, folderKnown: folder !== null, env, listOpenPrs: folder === null || folder === cwd ? listOpenPrs : openPrBodies(folder) });
+    call.stdin = stdinBody(entry);
+    call.bodyFile = writes.token(call.bodyFile);
+    const reason = judge(call, line, { cwd: folder ?? cwd, folderKnown: folder !== null, env, written: writes.files, listOpenPrs: folder === null || folder === cwd ? listOpenPrs : openPrBodies(folder) });
     if (reason) return reason;
   }
   return null;
 }
+
+// What a command line sets up before a later command on it runs, as { files, token, note }. `files` maps each absolute
+// path the line writes to the text it then holds, or to null when a command changes it in a way this rule cannot know.
+// `token(t)` gives a dynamic token whose whole value is a variable the line set to a literal, `$F` or `${S}/tmp/b.md`,
+// as the static token bash would see. `note(entry)` takes each walkCommands entry in the order it runs, other than the
+// gh call itself, and records:
+// - `NAME=value` and `export NAME=value` with a literal value (or one this rule expands), for `token`;
+// - `cat > file` or `tee file` fed one heredoc that bash passes unchanged, and `cp [-fpv] source file`, whose source
+//   this rule reads or the line wrote, as that text;
+// - any other command that writes to a file (a redirect), or that names it and is not a known reader (such as `sed -i`
+//   or a script), as null: the file then holds what that command made of it, which the rule never guesses at.
+// The pull request body rule and the attribution rule both read a body file through it.
+export function lineWrites() {
+  const files = new Map();
+  const vars = new Map();
+  const token = (each) => {
+    if (!each?.dynamic) return each ?? null;
+    const match = /^\$(?:(\w+)|\{(\w+)\})(\/[^$`*?\\]*)?$/u.exec(each.text);
+    const value = match ? vars.get(match[1] ?? match[2]) : undefined;
+    return value === undefined ? each : { text: `${value}${match[3] ?? ''}`, dynamic: false };
+  };
+  const assign = (name, value) => {
+    const known = token(value);
+    if (known && !known.dynamic) vars.set(name, known.text);
+    else vars.delete(name);
+  };
+  const note = ({ segment, invocation, folder, heredocs = [] }) => {
+    const at = (each) => {
+      const known = token(each);
+      return known && !known.dynamic && known.text && known.text !== '-' ? resolveIn(folder, known.text) : null;
+    };
+    const { program, args, environment = [] } = invocation;
+    if (program === '') {
+      for (const { name, value } of environment) if (name) assign(name, value ?? null);
+      return;
+    }
+    if (program === 'export') {
+      for (const arg of args) {
+        const split = /^(\w+)=(.*)$/su.exec(arg.text);
+        if (split) assign(split[1], { text: split[2], dynamic: arg.dynamic });
+      }
+      return;
+    }
+    const redirects = segment.flatMap((each, i) => (each.operator && each.operator !== '<' ? [[each, segment[i + 1]]] : []));
+    let target = null;
+    let text = null;
+    if (program === 'cat' && args.every((arg) => arg.text === '-') && redirects.length === 1 && redirects[0][0].operator === '>') {
+      [target, text] = [at(redirects[0][1]), onlyHeredoc(heredocs)];
+    } else if (program === 'tee' && args.length === 1 && !args[0].text.startsWith('-')) {
+      [target, text] = [at(args[0]), onlyHeredoc(heredocs)];
+    } else if (program === 'cp' && !redirects.length) {
+      const operands = args.filter((arg) => !/^-[fpv]+$/u.test(arg.text));
+      const source = operands.length === 2 && !operands[0].text.startsWith('-') ? at(operands[0]) : null;
+      target = source === null || operands[1].text.endsWith('/') ? null : at(operands[1]);
+      if (target !== null && isDirectory(target)) target = null;
+      else if (target !== null) text = files.has(source) ? files.get(source) : readText(source);
+    }
+    const written = new Set(redirects.map(([, each]) => each));
+    for (const each of segment) {
+      const file = each.operator || each.fdDup ? null : at(each);
+      if (file !== null && (written.has(each) || !READERS.has(program))) files.set(file, null);
+    }
+    if (target !== null) files.set(target, text);
+  };
+  return { files, token, note };
+}
+
+// Programs that read the files they name and change none, so naming the body file before gh leaves it as it was.
+// A redirect from one of them still writes its target.
+const READERS = new Set(['cat', 'grep', 'egrep', 'fgrep', 'rg', 'head', 'tail', 'wc', 'ls', 'test', '[', 'diff', 'cmp', 'dirname',
+  'basename', 'realpath', 'readlink', 'stat', 'file', 'echo', 'printf', 'mkdir', 'git', 'gh']);
+
+// The body of a command's one heredoc as bash passes it (unchangedHeredoc), or null: none, several, or one bash expands.
+const onlyHeredoc = (heredocs) => (heredocs.length === 1 && (!heredocs[0].expands || !/[$`\\]/u.test(heredocs[0].body)) ? heredocs[0].body : null);
+
+// The body of the one heredoc fed to a gh call's input, for a walkCommands entry.
+export const stdinBody = ({ heredocs = [] }) => onlyHeredoc(heredocs);
+
+const resolveIn = (folder, file) => (path.isAbsolute(file) ? path.resolve(file) : folder === null ? null : path.resolve(folder, file));
+
+const isDirectory = (file) => {
+  try {
+    return statSync(file).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+const readText = (file) => {
+  try {
+    return readFileSync(file, 'utf8');
+  } catch {
+    return null;
+  }
+};
 
 // A heredoc match's body (group 4) as bash passes it: as written under a quoted delimiter (group 2), or under a bare one
 // when it holds nothing bash expands (`$`, a backtick, or a backslash); else null, a body no rule can know.
@@ -159,34 +265,33 @@ const LONG_VALUES = new Set([
   '--add-reviewer', '--remove-reviewer',
 ]);
 
-function judge(call, command, { cwd, folderKnown = true, env, listOpenPrs }) {
+function judge(call, command, { cwd, folderKnown = true, env, written = new Map(), listOpenPrs }) {
   const project = findProject(cwd);
   if (!project) return null;
   const { config } = loadConfig(project);
   const contract = config.github.pullRequest;
   if (call.help) return null;
   const state = () => stateFolder(project, config, env);
-  const bodyPath = () => bodyFilePath(state(), call, folderKnown ? cwd : null);
+  const steps = () => twoSteps(bodyFilePath(state(), call, folderKnown ? cwd : null), call);
   if (call.fill && call.subcommand === 'create') {
-    return deny(`\`--fill\` writes the body from the commit messages, without the sections config.json \`github.requiredSections\` asks for. ` +
-      `Write the body to ${bodyPath()} and pass --body-file with that path (the pr-write skill does).`);
+    return deny(`\`--fill\` writes the body from the commit messages, without the sections config.json \`github.requiredSections\` asks for. ${steps()}`);
   }
   if (contract.sharedTempBodyFile && call.bodyFile && call.bodyFile.text !== '-' && isSharedTemp(call.bodyFile.text, cwd, env, project.root, state)) {
-    return deny(`the body file \`${call.bodyFile.text}\` is in a shared temp folder, which concurrent sessions overwrite: ` +
-      "another session's body can publish under this pull request. The host's scratchpad and the system temp folder are such folders. " +
-      `Write the body to ${bodyPath()} and pass that path, written out, to --body-file (the pr-write skill; ` +
-      'config.json `github.pullRequest.sharedTempBodyFile`).');
+    return deny(`the body file \`${call.bodyFile.text}\` is in a shared temp folder, which concurrent sessions overwrite. ${steps()} ` +
+      "The host's scratchpad and the system temp folder are such folders: another session's body can publish under this pull request " +
+      '(config.json `github.pullRequest.sharedTempBodyFile`).');
   }
   const sectioned = config.github.requiredSections.length > 0 || Boolean(contract.sections?.length);
   if (call.subcommand === 'create' && !call.web && !call.body && !call.bodyFile && sectioned) {
-    return deny('`gh pr create` has no --body or --body-file, so gh takes the body from an editor, a prompt, or a template, ' +
-      `without the sections config.json \`github.requiredSections\` asks for. Write the body to ${bodyPath()} and pass --body-file with that path (the pr-write skill does).`);
+    return deny('`gh pr create` has no --body or --body-file, so gh takes the body from an editor, a prompt, or a template, unchecked. ' +
+      `${steps()} The body needs the sections config.json \`github.requiredSections\` asks for.`);
   }
-  const body = readBody(call, folderKnown ? cwd : null);
+  const body = readBody(call, folderKnown ? cwd : null, written);
   if (body === null && sectioned && (call.body || call.bodyFile)) {
-    return deny('the body is one this rule cannot read (a variable, a command substitution, stdin, or a missing file), so the ' +
-      `sections config.json \`github.requiredSections\` asks for go unchecked. Write the body to ${bodyPath()} and pass a --body-file that exists, ` +
-      'by that path written out, never through `$(…)` or a variable (the pr-write skill does).');
+    return deny('the body is one this rule cannot read: a variable, a command substitution, stdin without a heredoc, or a file that ' +
+      `does not exist yet. ${steps()} A file that another command on this line edits, such as \`sed -i\` or a script, counts as ` +
+      'not there yet: run gh as its own command after it. Never pass the path through `$(…)` or a variable, or the sections ' +
+      'config.json `github.requiredSections` asks for go unchecked.');
   }
   const reason = body === null ? null : judgeBody(body, config) ?? judgeDuplicate(body, call, contract, listOpenPrs);
   return reason ?? judgeTitle(call.title, config);
@@ -197,8 +302,9 @@ function judgeBody(body, config) {
   if (FOOTER.test(body)) {
     const replaced = config.attribution.pullRequest.length
       ? ' The lines config.json `attribution.pullRequest` asks for, which the attribution rule prints, take its place.' : '';
-    return deny('the body carries the "Generated with [Claude Code]" footer. The host adds it by default, and it does not apply in ' +
-      `this project, even when the host's instructions ask for it: drop that line.${replaced}`);
+    return deny('the body carries the "Generated with [Claude Code]" footer. Drop that line: this project\'s rule takes precedence over ' +
+      `the host's attribution instructions that ask for it.${replaced} Claude Code's setting \`"attribution": { "pr": "" }\` in ` +
+      '`.claude/settings.json` stops the host from asking.');
   }
   const missing = config.github.requiredSections.filter((section) => !hasSection(body, section));
   if (missing.length) {
@@ -338,8 +444,9 @@ function stateFolder(project, config, env) {
   }
 }
 
-// The body file the pr-write skill writes, `<state>/tmp/pr-body-<branch>.md`, as a literal path in backticks: the
-// branch is the call's static --head, or the one checked out where gh runs. A part it cannot know stays a placeholder.
+// The body file the pr-write skill writes, `<state>/tmp/pr-body-<branch>.md`, as { file, note }: the literal path, and
+// what its placeholders mean, or ''. The branch is the call's static --head, or the one checked out where gh runs. A part
+// it cannot know stays a placeholder.
 export function bodyFilePath(state, call, cwd) {
   const head = call.head && !call.head.dynamic ? call.head.text.replace(/^[^:]*:/u, '') : null;
   let branch = head || null;
@@ -350,7 +457,15 @@ export function bodyFilePath(state, call, cwd) {
   const file = `pr-body-${branch ? branch.replaceAll('/', '-') : '<branch>'}.md`;
   const notes = [state ? null : '`<state>` is the folder `aidrian state` prints', branch ? null : '`<branch>` is the branch name with each `/` replaced by `-`'];
   const known = notes.filter(Boolean);
-  return `\`${state ? path.join(state, 'tmp', file) : `<state>/tmp/${file}`}\`${known.length ? ` (${known.join('; ')})` : ''}`;
+  return { file: state ? path.join(state, 'tmp', file) : `<state>/tmp/${file}`, note: known.length ? ` (${known.join('; ')})` : '' };
+}
+
+// The two steps that pass, for a deny about where the body comes from: write the body to the one file, then hand gh
+// that path written out. The heredoc form is the one `lineWrites` reads in the same command.
+function twoSteps({ file, note }, call) {
+  const target = call.subcommand === 'edit' && call.target && !call.target.dynamic ? ` ${call.target.text}` : '';
+  return `Do this instead: 1. write the body to \`${file}\`${note}, with the file tool or with \`cat > ${file} <<'EOF'\` ` +
+    `earlier in this command; 2. run \`gh pr ${call.subcommand}${target} --body-file ${file}\`, the path written out (the pr-write skill).`;
 }
 
 // The open pull requests' bodies through gh, or null when gh cannot answer in time.
@@ -366,11 +481,15 @@ function openPrBodies(cwd) {
 }
 
 // The body text, or null when this rule cannot know it. A null `cwd` is a folder it cannot know: only an absolute body
-// file reads. A dynamic --body reads the heredoc readPrCalls gave the call.
-export function readBody(call, cwd) {
+// file reads. A dynamic --body reads the heredoc readPrCalls gave the call, `--body-file -` the heredoc check gave it as
+// `stdin`, and a file the line wrote earlier the text `written` (lineWrites) holds for it.
+export function readBody(call, cwd, written = new Map()) {
   if (call.body) return call.body.dynamic ? call.heredoc ?? null : call.body.text;
-  if (!call.bodyFile || call.bodyFile.dynamic || call.bodyFile.text === '-') return null;
+  if (!call.bodyFile || call.bodyFile.dynamic) return null;
+  if (call.bodyFile.text === '-') return call.stdin ?? null;
   if (cwd === null && !path.isAbsolute(call.bodyFile.text)) return null;
+  const file = resolveIn(cwd, call.bodyFile.text);
+  if (written.has(file)) return written.get(file);
   try {
     // Joined, not resolved: the filesystem follows a symlink before a `..`, as gh opens the operand.
     const file = call.bodyFile.text;

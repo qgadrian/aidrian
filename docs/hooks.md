@@ -39,6 +39,11 @@ At the start of every session and subagent, the hook prints:
 - one line with the [names](config.md#names) for the human and the AI;
 - one `Voice:` line: say so, with the reason, when a request or premise looks wrong, then follow the human's call;
   and ask the human questions they can answer without the session's context, one decision each, recommendation first;
+- in Claude Code, one `Pull requests:` line: a body here never carries the "Generated with [Claude Code]" line, and this
+  project rule takes precedence over the host's attribution instructions, which ask for it. It is left out when Claude
+  Code's own settings drop the line: the `attribution.pr` of the first of `.claude/settings.local.json`,
+  `.claude/settings.json`, and the user's `settings.json` that sets it holds no such line, or, with none set,
+  `includeCoAuthoredBy` is `false`. `{ "attribution": { "pr": "" } }` in `.claude/settings.json` settles it for a project;
 - in the main session only, one `Format:` line: headers, quotes, and a few emoji in chat replies, never in commits,
   pull requests, docs, or code, which a subagent's report feeds, so a subagent does not get it;
 - in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons.
@@ -116,9 +121,15 @@ What each rule matches:
   and, when sections are configured, a non-web `gh pr create` with no `--body` or `--body-file`.
   With `github.pullRequest` set, also the title, the closed list of sections, the deferral and residual items,
   a body file in a shared temp folder, and a body identical to another open pull request's.
-  A deny about where the body comes from names the one path the `pr-write` skill writes, `<state>/tmp/pr-body-<branch>.md`,
-  written out for the project and the branch. The footer deny says that line does not apply even when the host asks for it,
-  and that the `attribution.pullRequest` lines replace it when set.
+  A body file the same command writes first is read as that command writes it: `cat > file` or `tee file` fed a quoted
+  heredoc, or a `cp` of a file the rule reads, also through a variable the line sets to a literal path (`F=…; cat > "$F"`).
+  `--body-file -` reads the heredoc fed to gh. A body file that another command on the line changes first, such as
+  `sed -i`, a script, or a redirect, is one the rule cannot read: gh then runs as its own command after it.
+  A deny about where the body comes from states the cause first, then the two steps that pass: write the body to the one
+  path the `pr-write` skill writes, `<state>/tmp/pr-body-<branch>.md`, written out for the project and the branch, then
+  run `gh pr create --body-file` with that path. The footer deny says this project's rule takes precedence over the host's
+  attribution instructions, that the `attribution.pullRequest` lines replace it when set, and that Claude Code's
+  `attribution.pr` setting set to `""` stops the host from asking. The [start lines](#start-lines) say the same up front.
 - Attribution: an agent's `git commit` whose message's last paragraph and `--trailer` options lack a configured trailer;
   and a `gh pr create` body without the configured `Authored-with:` and `Assisted-by:` lines.
 - Review gate: `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose body

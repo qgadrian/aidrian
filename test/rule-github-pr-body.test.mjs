@@ -61,9 +61,9 @@ test('the Claude Code footer and --fill are denied', (t) => {
   const run = project(t);
   assert.match(run(heredoc(`${GOOD}\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n`)), /^Blocked: the body carries the "Generated with \[Claude Code\]" footer/);
   const footer = heredoc(`${GOOD}\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n`);
-  assert.match(run(footer), /does not apply in this project, even when the host's instructions ask for it: drop that line\.\n/);
+  assert.match(run(footer), /footer\. Drop that line: this project's rule takes precedence over the host's attribution instructions that ask for it\. Claude Code's setting `"attribution": \{ "pr": "" \}` in `\.claude\/settings\.json` stops the host from asking\.\n/);
   const attributed = project(t, { version: 1, attribution: { pullRequest: ['tool', 'model'] } });
-  assert.match(attributed(footer), /drop that line\. The lines config\.json `attribution\.pullRequest` asks for, which the attribution rule prints, take its place\./);
+  assert.match(attributed(footer), /ask for it\. The lines config\.json `attribution\.pullRequest` asks for, which the attribution rule prints, take its place\. Claude Code's/);
   for (const fill of ['--fill', '--fill-first', '--fill-verbose', '-f']) {
     assert.match(run(`gh pr create --draft ${fill}`), /^Blocked: `--fill` writes the body from the commit messages/, fill);
   }
@@ -100,7 +100,7 @@ test('a non-web gh pr create with no body flag is denied when sections are confi
     'gh pr create --title x --web=false', 'gh pr create --title x --help=false', 'gh pr create --web --web=false', 'gh pr create -t x -- --web', 'gh pr create -tw',
     'gh pr create -t x -w=0', 'gh pr create -t x -w=F', 'gh pr create -t x -dw=false', 'gh pr create -t x -h=false',
     'gh pr create -t x --web="$WEB"', 'gh pr create -t x -w="$WEB"']) {
-    assert.match(run(command), /^Blocked: `gh pr create` has no --body or --body-file.*pass --body-file/, command);
+    assert.match(run(command), /^Blocked: `gh pr create` has no --body or --body-file.*2\. run `gh pr create --body-file /, command);
   }
   for (const command of ['gh pr create --web', 'gh pr create -w --title x', 'gh pr create -dw', 'gh pr create --help', 'gh pr create -h', 'gh pr create --web=true', 'gh pr create -w=true',
     'gh --help pr create', 'gh pr --help create', 'gh -h pr create', 'gh pr edit 3 --title y']) {
@@ -120,7 +120,7 @@ test('a body the rule cannot read is denied when sections are configured', (t) =
     `gh pr create --title '[NOISSUE] fix: x' --body "$PR_BODY"`, 'gh pr create -t x --body "$(cat f)"', 'gh pr create -t x -b "$X"',
     'gh pr create -t x --body-file -', 'gh pr create -t x --body-file missing.md', 'gh pr create -t x -F "$F"', 'gh pr edit 3 --body "$B"',
   ]) {
-    assert.match(run(command), /^Blocked: the body is one this rule cannot read.*--body-file that exists/s, command);
+    assert.match(run(command), /^Blocked: the body is one this rule cannot read: .* or a file that does not exist yet\. Do this instead: 1\. write the body to /, command);
   }
   assert.equal(project(t, { version: 1, github: { requiredSections: [] } })('gh pr create -t x --body "$B"'), null, 'no sections configured');
 });
@@ -129,9 +129,68 @@ test('the unreadable body deny names the literal body path pr-write writes, for 
   const run = project(t);
   const reason = run('gh pr create -t x -F "$(aidrian state)/tmp/pr-body.md"', { XDG_STATE_HOME: '/state' });
   assert.match(reason, /^Blocked: the body is one this rule cannot read/);
-  assert.match(reason, /Write the body to `\/state\/aidrian\/projects\/aidrian-prbody-[a-z0-9-]+\/tmp\/pr-body-<branch>\.md` \(`<branch>` is the branch name/);
-  assert.match(reason, /never through `\$\(…\)` or a variable/);
+  assert.match(reason, /Do this instead: 1\. write the body to `\/state\/aidrian\/projects\/aidrian-prbody-[a-z0-9-]+\/tmp\/pr-body-<branch>\.md` \(`<branch>` is the branch name/);
+  assert.match(reason, /2\. run `gh pr create --body-file \/state\/aidrian\/projects\/aidrian-prbody-[a-z0-9-]+\/tmp\/pr-body-<branch>\.md`, the path written out/);
+  assert.match(reason, /Never pass the path through `\$\(…\)` or a variable/);
+  assert.match(reason, /another command on this line edits, such as `sed -i` or a script, counts as not there yet: run gh as its own command after it/);
   assert.match(run('gh pr create -t x -H fix/a --body "$(cat f)"', { XDG_STATE_HOME: '/state' }), /\/tmp\/pr-body-fix-a\.md`/);
+  assert.match(run('gh pr edit 12 --body "$B"', { XDG_STATE_HOME: '/state' }), /2\. run `gh pr edit 12 --body-file /, 'an edit keeps the pull request it names');
+});
+
+test('a body file the same command writes first, from a heredoc or a copy, is read as that command writes it', (t) => {
+  const run = project(t, { version: 1 }, { 'draft.md': GOOD });
+  const write = (file, body, delimiter = "'EOF'") => `cat > ${file} <<${delimiter}\n${body}EOF\n`;
+  const create = (file) => `gh pr create --draft --title x --body-file ${file}`;
+  // The shape the samples hold: mkdir, the heredoc write, then gh, in one command.
+  assert.equal(run(`mkdir -p out && ${write('out/b.md', GOOD)}${create('out/b.md')}`), null, 'the file does not exist yet, and its heredoc is read');
+  assert.match(run(`${write('b.md', '## Summary\nx\n')}${create('b.md')}`), /^Blocked: the body has no `## Tests run` section/, 'and checked');
+  assert.match(run(`${write('b.md', `${GOOD}\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n`)}${create('b.md')}`), /footer/);
+  assert.equal(run(`cat <<'EOF' > b.md\n${GOOD}EOF\n${create('b.md')}`), null, 'the redirect after the heredoc');
+  assert.equal(run(`tee b.md >/dev/null <<'EOF'\n${GOOD}EOF\n${create('b.md')}`), null, 'tee');
+  assert.equal(run(`${write('b.md', GOOD.replaceAll('`', ''), 'EOF')}${create('b.md')}`), null, 'a bare delimiter over a body bash leaves alone');
+  assert.equal(run(`cp draft.md b.md && ${create('b.md')}`), null, 'a copy of a file the rule reads');
+  assert.equal(run(`${write('a.md', GOOD)}cp -f a.md b.md; ${create('b.md')}`), null, 'a copy of a file the line wrote');
+  assert.equal(run(`${write('b.md', GOOD)}gh pr edit 3 --body-file b.md`), null, 'an edit too');
+  for (const [command, why] of [
+    [`${write('b.md', 'has `$(date)`\n', 'EOF')}${create('b.md')}`, 'a bare delimiter over a body bash expands'],
+    [`${write('b.md', GOOD)}sed -i '' 's/x/y/' b.md; ${create('b.md')}`, 'another command edits the file after'],
+    [`${write('b.md', GOOD)}cat >> b.md <<'EOF'\nmore\nEOF\n${create('b.md')}`, 'an append'],
+    [`${write('b.md', GOOD)}${create('other.md')}`, 'gh reads another file'],
+    [`${create('b.md')} && ${write('b.md', GOOD)}`, 'the write comes after gh'],
+    [`cp missing.md b.md && ${create('b.md')}`, 'a copy of a file the rule cannot read'],
+    [`cd .. || true; ${write('b.md', GOOD)}${create('b.md')}`, 'a folder the rule cannot know'],
+    [`sed -i '' 's/^## Testing$/## Tests run/' draft.md; ${create('draft.md')}`, 'a file on disk another command edits first'],
+    [`python3 fix.py draft.md && ${create('draft.md')}`, 'a script that names it'],
+    [`gh pr view 3 --json body -q .body > draft.md && ${create('draft.md')}`, 'a redirect from a reader still writes'],
+  ]) {
+    assert.match(run(command), /^Blocked: the body is one this rule cannot read/, why);
+  }
+  assert.equal(run(`${write('b.md', GOOD)}grep -c Summary b.md && wc -l b.md; ${create('b.md')}`), null, 'a reader leaves the file as written');
+  assert.equal(run(`cat draft.md; ${create('draft.md')}`), null, 'and leaves a file on disk as it is');
+});
+
+test('a variable the line sets to a literal path names the body file', (t) => {
+  const run = project(t, { version: 1 }, { 'draft.md': GOOD });
+  const create = (file) => `gh pr create --draft --title x --body-file ${file}`;
+  const write = (file) => `cat > ${file} <<'EOF'\n${GOOD}EOF\n`;
+  assert.equal(run(`F=out.md; ${write('$F')}${create('"$F"')}`), null, 'set, written, and read through $F');
+  assert.equal(run(`mkdir -p out && S=out; ${write('$S/b.md')}${create('${S}/b.md')}`), null, 'a folder variable with a literal tail');
+  assert.equal(run(`export F=draft.md && ${create('$F')}`), null, 'export, and a file on disk');
+  assert.equal(run(`D=out; F=$D/b.md; mkdir -p $D; ${write('$F')}${create('$F')}`), null, 'one variable built from another');
+  assert.match(run(`F=out.md; sed -i '' s/a/b/ $F; ${create('$F')}`), /cannot read/, 'an edit through the variable');
+  assert.match(run(`F=$(aidrian state)/b.md; ${write('$F')}${create('$F')}`), /cannot read/, 'a value this rule cannot know');
+  assert.match(run(`${write('out.md')}${create('$F')}`), /cannot read/, 'a variable the line never sets');
+  assert.match(run(`F=out.md; ${write('$F')}${create('$F$G')}`), /cannot read/, 'a word with more than one variable');
+});
+
+test('--body-file - reads the heredoc fed to gh itself', (t) => {
+  const run = project(t);
+  assert.equal(run(`gh pr create --draft --title x --body-file - <<'EOF'\n${GOOD}EOF`), null);
+  assert.equal(run(`gh pr edit 3 -F - <<'EOF'\n${GOOD}EOF`), null, '-F');
+  assert.match(run(`gh pr create -t x --body-file - <<'EOF'\n## Summary\nEOF`), /^Blocked: the body has no `## Tests run` section/);
+  assert.match(run(`gh pr create -t x --body-file - <<'EOF'\n${GOOD}\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\nEOF`), /footer/);
+  assert.match(run('gh pr create -t x --body-file - <<EOF\n$BODY\nEOF'), /cannot read/, 'a body bash expands');
+  assert.match(run('cat b.md | gh pr create -t x --body-file -'), /cannot read/, 'a pipe');
 });
 
 test('outside a project folder nothing is checked', (t) => {

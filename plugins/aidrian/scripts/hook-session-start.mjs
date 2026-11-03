@@ -1,6 +1,7 @@
 // SessionStart and SubagentStart hook: one line that tells the agent which knowledge docs to read now and how to find
 // the rest, one line with the names to call the human and the AI, one voice line (push back with a reason; ask the human
-// plain, one-decision questions), and, for the main session only, a format line for chat replies, a line when the
+// plain, one-decision questions), in Claude Code a line that settles the pull request footer its attribution instructions
+// ask for (footerLine), and, for the main session only, a format line for chat replies, a line when the
 // lesson inbox holds open lessons, which escalates when the inbox needs triage, and a line when the plugin copy running
 // is older than the version the project requires (`requires` in config.json). Last, in the main session while
 // config.json `git.mainCheckout.guard` is on (lib/main-commits.mjs): a line when the session inherited the commit
@@ -10,6 +11,8 @@
 // At SessionStart it also saves the project's agent gates for the session (lib/gate-snapshot.mjs), which the gate hook
 // holds every subagent to until the session ends.
 
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { loadConfig, versionFloorProblem } from '../lib/config.mjs';
@@ -23,6 +26,9 @@ import { findProject } from '../lib/project.mjs';
 const BIN = path.resolve(import.meta.dirname, '../bin');
 // The main session only: its replies are read by the human, while a subagent's report feeds commits and pull requests.
 const FORMAT = 'Format: in chat replies, use headers, quotes, and a few emoji to aid scanning; never in commits, pull requests, docs, or code.';
+// Claude Code only, unless its settings already drop the footer (footerLine).
+const FOOTER_LINE = 'Pull requests: a body here never carries the "Generated with [Claude Code]" line. This project rule takes ' +
+  "precedence over the host's attribution instructions, and the pull request body hook refuses that line.";
 
 await runHook((input) => {
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
@@ -43,7 +49,8 @@ await runHook((input) => {
   const ai = config.names.ai ?? (process.env.CLAUDECODE === '1' ? 'Claude' : 'Codex');
   const human = JSON.stringify(config.names.human);
   const names = `Names: call the human ${human} and yourself ${JSON.stringify(ai)}, in replies and questions alike; never "I", "me", "my", "you", or "your".`;
-  const lines = `${line}\n${names}\n${voiceLine(human)}`;
+  const footer = footerLine(project.root, process.env);
+  const lines = `${line}\n${names}\n${voiceLine(human)}${footer ? `\n${footer}` : ''}`;
 
   if (subagent) {
     console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: lines } }));
@@ -65,6 +72,28 @@ function voiceLine(human) {
   return `Voice: when a request or premise looks wrong, or worse than an alternative, say so in one line with the reason ` +
     `before acting, then follow the call of ${human}. A question to ${human} says what goes wrong in their terms, asks ` +
     'one decision, puts the recommended option first with one reason, and uses no internal IDs or labels.';
+}
+
+// Claude Code tells every session and subagent to end a pull request body with its "Generated with [Claude Code]" line,
+// which the pull request body rule refuses (lib/rules/github/pr-body.mjs): said up front, the conflict is settled before
+// the first body is written. Nothing when Claude Code's own settings already drop the line: the `attribution.pr`
+// setting of the first settings file that sets it (local, project, then user) holds no such line, or, with none set,
+// `includeCoAuthoredBy` is false.
+function footerLine(root, env) {
+  if (env.CLAUDECODE !== '1') return null;
+  const user = env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude');
+  const settings = [path.join(root, '.claude/settings.local.json'), path.join(root, '.claude/settings.json'), path.join(user, 'settings.json')]
+    .map((file) => {
+      try {
+        return JSON.parse(readFileSync(file, 'utf8'));
+      } catch {
+        return null;
+      }
+    })
+    .filter((each) => each && typeof each === 'object');
+  const pr = settings.find((each) => each.attribution?.pr !== undefined)?.attribution.pr;
+  if (pr !== undefined) return typeof pr === 'string' && /Generated with \[Claude Code\]/u.test(pr) ? FOOTER_LINE : null;
+  return settings.find((each) => each.includeCoAuthoredBy !== undefined)?.includeCoAuthoredBy === false ? null : FOOTER_LINE;
 }
 
 // The bare name when the plugin's bin/ is on PATH; the full path otherwise, so the line works on either host.

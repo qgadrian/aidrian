@@ -6,7 +6,7 @@ How each host runs them: [Claude Code](providers/claude-code.md#hooks), [Codex](
 Every hook lets the action run when it cannot read its input, so a hook never breaks a session.
 A git call a hook makes is stopped after 2 seconds and counts as git not answering; the hook's later git calls then do not wait.
 A blocking hook exits 2 and tells the agent why on stderr.
-The Bash rules, the main-checkout rule, the terms rule, the GitHub MCP hook, the agent gates, and the config guard also record each block:
+The Bash rules, the main-checkout rule, the terms rule, the GitHub MCP hook, the agent gates, the config guard, and the question names check also record each block:
 see [Recorded blocks](#recorded-blocks).
 
 | When | What runs | Host | Blocks |
@@ -16,6 +16,7 @@ see [Recorded blocks](#recorded-blocks).
 | Before a Bash command | The [Bash rules](#bash-rules) | both | yes |
 | Before a file edit | The [main-checkout rule](#main-checkout), when the project turns it on, then the [terms rule](#terms) | both | yes |
 | Before `EnterWorktree` in a subagent | A block: the tool would move the whole session into the worktree | Claude Code | yes |
+| Before `AskUserQuestion` | A block when a question or option says "I", "me", "you", or "your" outside code and quotes: [Names](config.md#names) | Claude Code | yes |
 | Before a GitHub MCP comment | The [review gate](config.md#review-gate), when the project turns it on, and the review-round rule | both | yes |
 | Before an Agent tool call | The project's [model and effort](config.md#models) for that agent | Claude Code | no |
 | After a Markdown write | The [line-length check](#markdown-line-length) | Claude Code | feedback |

@@ -267,7 +267,7 @@ Most rounds: #4 6, #1 2
 
 `--prs N` sets how many merged pull requests to read. `--since` keeps those merged since then, at most N, and says so when N cut the list short;
 without `--since` the view takes the last N, whatever their age. `--json` prints `rounds`, every pull request with its findings per round,
-`null` where gh could not read them, and the totals. It needs `gh`, and makes one call per answered pull request and one per later commit
+`null` where gh could not read them, the totals, and `extensions`, the extra-rounds counts: `checks`, `over_flags`, `granted_over_flags`, `signals` by flag, and one count per decision. It needs `gh`, and makes one call per answered pull request and one per later commit
 with a late finding.
 
 `aidrian report --since 7d --prs N` keeps the form the view grew from: the default view, then the reviews of the last N merged pull requests.

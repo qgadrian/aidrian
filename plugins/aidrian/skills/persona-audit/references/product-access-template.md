@@ -17,9 +17,9 @@ when Accounts lists more than one.
 
 ## Before a walk
 
-- Start: `npm run dev` serves `http://localhost:3000`.
 - Variables set, by name only: `DEMO_PASSWORD`, `DATABASE_URL`.
-- Ports free: 3000 and 4000.
+- Ports free before the start: 3000 and 4000.
+- Start: `npm run dev` serves `http://localhost:3000`.
 - Sign-in redirects return to `http://localhost:3000`.
 
 ## Accounts

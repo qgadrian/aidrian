@@ -29,9 +29,9 @@ the build the run reached.
 
 ## Before a walk
 
-When `product-access` has `## Before a walk`, run its check before the first task: start the app as it says, confirm
-the URL answers, the variables it names are set, each checked without printing its value, such as `test -n "$NAME"`,
-its ports are free, and sign-in returns to its hosts.
+When `product-access` has `## Before a walk`, run its check before the first task, in this order: the variables it
+names are set, each checked without printing its value, such as `test -n "$NAME"`; its ports are free; then start the
+app as it says, and confirm the URL answers and sign-in returns to its hosts.
 When the check fails, walk nothing: name what failed in the `Reached:` line and in `## Not reached`, and use `seen` or `read`.
 
 ## Safety

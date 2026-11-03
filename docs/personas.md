@@ -75,7 +75,7 @@ lacks is not reached, with that reason, never a product gap. Three sections are 
 read as before:
 
 - `Before a walk`: the start command and the URL it serves, the environment variables that must be set, by name, the
-  ports that must be free, and the hosts a sign-in redirect returns to. A run checks them before the first task; when
+  ports that must be free before the start, and the hosts a sign-in redirect returns to. A run checks them before the first task; when
   the check fails, it walks nothing, says what failed in `Not reached`, and falls back to `seen` or `read`.
 - `Allowed changes`: the data a run may change, whether an environment is shared with other sessions, and whether the
   reset command is safe while another session uses it; where it is not, a run walks without the reset. Any other data

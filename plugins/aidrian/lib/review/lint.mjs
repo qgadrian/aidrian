@@ -58,9 +58,12 @@ export function lintReview(project, config) {
       const pattern = pathPattern(glob);
       if (!tracked.some((file) => pattern.test(file))) problems.push(`flow ${id}: files "${glob}" matches no tracked file`);
     }
-    const { invariants, unspecified, problem } = invariantsOf(flow, read(project.root));
+    const { invariants, unspecified, problem, repeated = [] } = invariantsOf(flow, read(project.root));
     if (problem) problems.push(`flow ${id}: invariants ${problem}`);
     else if (unspecified) warnings.push(`flow ${id} states no invariants: its reviewer checks only that nothing in it is removed or weakened`);
+    for (const { heading, ids } of repeated) {
+      warnings.push(`flow ${id}: ${flow.invariants} repeats the heading "${heading}"; each is its own invariant (${ids.join(', ')}), so rename one if the reviewer should tell them apart by name`);
+    }
     if (invariants.length > INVARIANT_BUDGET) warnings.push(`flow ${id} has ${invariants.length} invariants, past ${INVARIANT_BUDGET}`);
     for (const invariant of Array.isArray(flow.invariants) ? flow.invariants : []) {
       warnings.push(...questionWarnings(invariant).map((warning) => `flow ${id}: invariant ${invariant.id} ${warning}`));

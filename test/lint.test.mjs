@@ -218,6 +218,7 @@ test('aidrian lint review: dead flow globs, a missing invariants doc, and a bad 
   mkdirSync(path.join(dir, 'src/booking'), { recursive: true });
   writeFileSync(path.join(dir, 'src/booking/a.js'), '');
   writeFileSync(path.join(dir, 'inv.md'), '# Booking\n\n## Never double book\n');
+  writeFileSync(path.join(dir, 'rep.md'), '# Pay\n\n## Refund\n\nOne.\n\n## Refund\n\nTwo.\n');
   writeFileSync(path.join(dir, 'long.md'), `# Long\n\n## Rules\n\n${Array.from({ length: 50 }, (_, i) => `- Rule ${i}: ${'x'.repeat(90)}`).join('\n')}\n`);
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, review: { flows: {
     booking: { files: ['src/booking/**'], invariants: 'inv.md' },
@@ -230,6 +231,7 @@ test('aidrian lint review: dead flow globs, a missing invariants doc, and a bad 
       { id: 'empty', cite: 'inv.md#never-double-book', focus: 'Refund cap' },
     ] },
     bare: { files: ['src/booking/**'] },
+    twice: { files: ['src/booking/**'], invariants: 'rep.md' },
   } } }));
   spawnSync('git', ['-C', dir, 'add', '-A']);
   const run = spawnSync(CLI, ['lint', 'review', '--project', dir], { encoding: 'utf8' });
@@ -239,6 +241,7 @@ test('aidrian lint review: dead flow globs, a missing invariants doc, and a bad 
     'review: warning: flow focused: invariant wide cites 5145 characters of #rules; the reviewer reads the first 4000: add "focus" to name the blocks it judges against',
     'review: warning: flow focused: invariant empty cites #never-double-book, a section with no text under its heading for the reviewer to judge against',
     'review: warning: flow bare states no invariants: its reviewer checks only that nothing in it is removed or weakened',
+    'review: warning: flow twice: rep.md repeats the heading "Refund"; each is its own invariant (refund, refund-1), so rename one if the reviewer should tell them apart by name',
     'review: flow gone: files "src/gone/**" matches no tracked file',
     'review: flow gone: invariants missing.md is missing',
     'review: flow loose: invariant x cites #nope, a heading inv.md does not have',

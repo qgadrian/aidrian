@@ -228,9 +228,11 @@ export function formatReviews(result, { since = null } = {}) {
 }
 
 // The checks at the review-round cap (lib/review/extension.mjs), from the dispatch log's `review_extension` rows written
-// since `sinceMs`. Each pull request's round counts once, by its last decision: { checks, stopped_by_signals, signals,
-// stopped_by_judge, stopped_by_ceiling, granted, granted_by_human, denied, waiting }. `signals` counts the red flags of
-// the signal stops; `unreadable` is a stop whose history held no signal.
+// since `sinceMs`. Each pull request's round counts once, by its last decision: { checks, over_flags, granted_over_flags,
+// signals, stopped_by_signals, stopped_by_judge, stopped_by_ceiling, granted, granted_by_human, denied, waiting }.
+// `over_flags` counts the checks whose last row carries red flags, which go to the judge, and `granted_over_flags` those
+// granted all the same; `signals` counts each red flag. `stopped_by_signals` counts the mechanical stops of rows from
+// older versions, and `unreadable` is such a stop whose history held no signal.
 export function extensionSummary(rows, { sinceMs = 0 } = {}) {
   const last = new Map();
   for (const row of rows ?? []) {
@@ -239,14 +241,18 @@ export function extensionSummary(rows, { sinceMs = 0 } = {}) {
   }
   const decided = [...last.values()];
   const count = (keep) => decided.filter(keep).length;
+  const flagged = (row) => Array.isArray(row.signals) && row.signals.length > 0;
+  const mechanical = (row) => row.outcome === 'stopped' && row.by === 'mechanical';
   const signals = {};
-  for (const row of decided.filter((each) => each.outcome === 'stopped' && each.by === 'mechanical')) {
-    for (const name of row.signals?.length ? row.signals : ['unreadable']) signals[name] = (signals[name] ?? 0) + 1;
+  for (const row of decided.filter((each) => flagged(each) || mechanical(each))) {
+    for (const name of flagged(row) ? row.signals : ['unreadable']) signals[name] = (signals[name] ?? 0) + 1;
   }
   return {
     checks: decided.length,
-    stopped_by_signals: count((row) => row.outcome === 'stopped' && row.by === 'mechanical'),
+    over_flags: count(flagged),
+    granted_over_flags: count((row) => flagged(row) && row.outcome === 'granted'),
     signals,
+    stopped_by_signals: count(mechanical),
     stopped_by_judge: count((row) => row.outcome === 'stopped' && row.by === 'judge'),
     stopped_by_ceiling: count((row) => row.outcome === 'stopped' && row.by === 'ceiling'),
     granted: count((row) => row.outcome === 'granted'),
@@ -260,8 +266,10 @@ export function extensionSummary(rows, { sinceMs = 0 } = {}) {
 export function formatExtensions(summary, { since = null } = {}) {
   if (!summary?.checks) return null;
   const flags = Object.entries(summary.signals).map(([name, count]) => `${name} ${count}`).join(', ');
+  const mechanical = summary.stopped_by_signals ? `${summary.stopped_by_signals} stopped by the signals, ` : '';
   return `Extra rounds${since ? ` since ${since}` : ''}: ${plural(summary.checks, 'check')} at the round cap; ` +
-    `${summary.stopped_by_signals} stopped by the signals${flags ? ` (${flags})` : ''}, ${summary.stopped_by_judge} by the judge, ` +
+    `${summary.over_flags} with red flags${flags ? ` (${flags})` : ''}, ${summary.granted_over_flags} granted over them; ` +
+    `${mechanical}${summary.stopped_by_judge} stopped by the judge, ` +
     `${summary.stopped_by_ceiling} at the ceiling; ${summary.granted} granted (${summary.granted_by_human} by the Human), ` +
     `${summary.denied} denied, ${summary.waiting} waiting`;
 }

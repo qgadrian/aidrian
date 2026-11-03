@@ -262,8 +262,8 @@ Most rounds: #4 6, #1 2
   when the branch was rebased or force-pushed between the two reviews, when gh cannot read the compare, or when the compare is too large.
 - **Most rounds**: up to five pull requests, most rounds first.
 - **Extra rounds**: from the log's `review_extension` rows since `--since` (7d by default), each pull request's check at
-  the cap counted once, by its last decision: stopped by the judge or at the ceiling (or, in rows from older versions, by the signals, with each red flag);
-  granted, and how many by the Human; denied; or still waiting. The line is left out when no check ran.
+  the cap counted once, by its last decision: how many carried red flags, with each flag, and how many of those were granted all the same;
+  stopped by the judge or at the ceiling (or, in rows from older versions, by the signals); granted, and how many by the Human; denied; or still waiting. The line is left out when no check ran.
 
 `--prs N` sets how many merged pull requests to read. `--since` keeps those merged since then, at most N, and says so when N cut the list short;
 without `--since` the view takes the last N, whatever their age. `--json` prints `rounds`, every pull request with its findings per round,

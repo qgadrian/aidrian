@@ -180,6 +180,11 @@ test('slug is exported from flows.mjs unchanged', () => {
   assert.equal(slug('no-double-booking'), 'no-double-booking');
 });
 
+test('slug drops an apostrophe as GitHub does, so an anchor to a heading with one matches', () => {
+  assert.equal(slug("The plugin's tools for this work"), 'the-plugins-tools-for-this-work');
+  assert.equal(slug('The plugin\u2019s tools'), 'the-plugins-tools');
+});
+
 test('check: every citation kind passes; anchors by heading text and by slug; quotes compare with whitespace collapsed; plan and ledger outside the root', (t) => {
   const p = project(t);
   const objections = spread(Object.values(PASSING));

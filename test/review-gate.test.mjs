@@ -147,7 +147,7 @@ test('aidrian pr attest records the review and prints the marker; --check reads 
   assert.equal(run('7', '--check').status, 3);
   assert.match(run('7', '--head', 'deadbee', '--reviewer', 'r', '--findings', '0', '--fixed', '0').stderr, /--head deadbee is not a commit/);
   assert.match(run('7', '--head', head, '--reviewer', 'r', '--findings', '1', '--fixed', '2').stderr, /--fixed cannot exceed --findings/);
-  const done = run('#7', '--head', head, '--reviewer', 'code-reviewer', '--findings', '2', '--fixed', '1');
+  const done = run('#7', '--head', head, '--reviewer', 'code-reviewer', '--findings', '2', '--fixed', '1', '--repo', 'Acme/Notes');
   assert.equal(done.status, 0, done.stderr);
   assert.match(done.stdout, new RegExp(`<!-- aidrian-review: pr=7 repo=acme/notes head=${head} reviewer=code-reviewer findings=2 fixed=1 -->`));
   assert.equal(run('7', '--check').status, 0);

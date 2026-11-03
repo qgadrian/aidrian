@@ -120,7 +120,8 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
     const known = [originRepo(project), repoName(state?.repo ?? null), ...owed(state).map((entry) => repoName(entry.repo ?? null))].filter(Boolean);
     return target !== null && known.length > 0 && !known.includes(target);
   };
-  if (unreadable) return elsewhere(null) ? null : unresolved(null, how);
+  // A number the rule cannot read is refused whatever the target: no record can say the merge is another's.
+  if (unreadable) return unresolved(null, how);
   let state = pr === null ? null : readLocalState(project, pr);
   if (pr !== null && (!guards(state) || elsewhere(state))) return null;
   if (pr === null || head === null) {

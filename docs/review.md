@@ -218,6 +218,8 @@ in a Claude Code prompt, or another terminal). The `review-signoff` rule ([hooks
 agent that runs it. It is still an audit entry, not proof: an agent holds the same GitHub token. Every sign-off and
 override is listed in the review summary on the pull request, or only in the local record with `review.record:
 "local"`. For proof, protect the branch with a required review from a second account.
+Like `aidrian pr attest`, it files the sign-off under the pull request's repository: `--repo OWNER/NAME`, else the one
+`gh pr view` names; without either it refuses.
 
 A sign-off holds on a later head when the signed head is its ancestor and the change since selects nothing of the
 flow, through the same selection the plan uses: its globs, `added` patterns, `content`, the plan command, its tests,
@@ -514,15 +516,14 @@ keeps the compressed marker and appends a plain one, so a comment it touched can
   one is owed until it is `answered`, and only an answer for its own `repo` counts. `aidrian pr request <PR>` records a
   bot review the Human asked for, the moment they ask, before any review the project requires first. It reads the head
   and the pull request's repository from gh, whose default is the upstream in a fork checkout, unless `--head` and
-  `--repo OWNER/NAME` name them. A gate review (`--kind review`) is recorded for origin, the repository the review
-  gate and `aidrian pr attest` work in. `aidrian pr await-review` marks it `sent` when it posts the request, and
+  `--repo OWNER/NAME` name them; a gate review (`--kind review`) is recorded the same way. `aidrian pr await-review` marks it `sent` when it posts the request, and
   `answered` when the bot's answer arrives (`received`) or is already there (`already_present`), as
   `aidrian pr review --with-bot` does whenever its bot stage holds an answer, a reused one included. A request sent
   is still owed. An answer counts for a request made for its own head, or for an earlier head it descends from
   (`git merge-base --is-ancestor`); time plays no part, so a late answer for an older head never answers a newer head's
   request. When git cannot tell, as for a commit this checkout lacks, only the exact head counts. An `await-review` for
   another repository, through `--repo` or a URL, leaves this repository's record alone. A gate review is
-  answered the same way, by an attest or a finished step.
+  answered the same way: by an attest of its pull request's repository, or a step on that repository that finishes.
   `aidrian pr request <PR> --kind review` records a review-gate review as dispatched; `aidrian pr attest <PR>`, or a
   step that returns `received` or `none_needed`, answers it. Without `--head <sha>`, `request` reads the head with gh.
   An entry is only ever marked, never removed, and every write of the record merges in the entries and marks on disk,

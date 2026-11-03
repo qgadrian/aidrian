@@ -196,8 +196,9 @@ It never reads pull request comments. Its one network call is `gh pr view --json
 command names no head or no pull request and a record may apply, and stopped after 3 seconds. A merge whose head it then
 cannot read is refused with a reason that says to pass `gh pr merge <PR> --match-head-commit <sha>`; so is one whose
 pull request number it cannot read, such as `gh pr merge "$PR"`.
-A merge in another repository runs: one whose target, as `-R`, a URL, a `gh api` path, or the MCP owner and repo,
-names neither origin nor the repository the review record was written for, such as an upstream's from a fork checkout.
+A merge in another repository runs when the command names its pull request number: one whose target, as `-R`, a URL,
+a `gh api` path, or the MCP owner and repo, names neither origin, the repository the review record was written for,
+nor that of a review it still owes, such as an upstream's from a fork checkout.
 A record written on another machine is not read here: that is the guard's known limit.
 
 The Human waives it. The reason prints a question naming `#<PR>` and the head's first 7 characters; the merge runs when

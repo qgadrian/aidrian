@@ -221,13 +221,15 @@ With `"github": { "reviewGate": { "enabled": true } }`, the review bot is asked 
 review of its diff, by an agent that did not write it, is on record. The record is written once per pull request:
 
 ```sh
-aidrian pr attest <PR> --head <sha> --reviewer <who> --findings <n> --fixed <n> [--note <text>]
+aidrian pr attest <PR> --head <sha> --reviewer <who> --findings <n> --fixed <n> [--note <text>] [--repo <owner/name>]
 aidrian pr attest <PR> --check     # exit 0 recorded, 3 not
 ```
 
 `attest` writes the record to the [state folder](project-folder.md#local-state), which every worktree shares, and prints a marker:
 `<!-- aidrian-review: pr=<n> repo=<owner/name> head=<sha> ... -->`. A request that carries the marker for its own pull request
 and repository also passes, so a new session or machine need not review again.
+`attest` files the review under the pull request's repository: `--repo`, else the one `gh pr view` names, gh's default
+(the upstream in a fork checkout). When gh cannot answer and no `--repo` is given, it refuses rather than guess origin.
 
 - `aidrian pr await-review --request` checks the gate before it posts. It ends with `review_required`, exit 5, and posts
   nothing, or puts the marker in its request.

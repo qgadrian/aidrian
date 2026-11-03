@@ -66,6 +66,8 @@ Add `sign_off` when the dispatch asks for one, as the `knowledge` skill's handof
 ## Git
 
 - Let git hooks run. If one fails, fix the cause or stop and report; never bypass it.
+- Wait in the foreground for every command and agent you start: once you end your turn, nothing wakes you when one finishes.
+  Run a long push or CI wait as a foreground command with a timeout, repeated until it ends, and a reviewer agent in the foreground.
 - When you commit or push, list the exact git commands in `commands_run` and add `not_bypassed`, or `hook_failed`, to `compliance`.
 - At the end, record `git status --porcelain` and `git log -1 --oneline` in `artifacts`.
   When the dispatch says not to commit, list each changed file under `pending_commit`; that is not a `dirty_handoff`.

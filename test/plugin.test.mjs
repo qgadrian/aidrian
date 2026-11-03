@@ -419,3 +419,17 @@ function allFiles(dir) {
 function markdownFiles(dir) {
   return allFiles(dir).filter((file) => file.endsWith('.md'));
 }
+
+test('every agent that pushes, and the orchestration skill, says to wait in the foreground for what it starts', () => {
+  // A subagent that ends its turn with a background push or reviewer running goes idle, and nothing wakes it.
+  const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
+  for (const rel of ['agents-src/build/backend-developer.md', 'agents-src/build/frontend-developer.md', 'agents-src/harness/harness-mechanic.md']) {
+    const text = read(rel);
+    assert.equal((text.match(/Wait in the foreground for every command and agent you start/g) ?? []).length, 1, `${rel} states the rule once`);
+    assert.match(text, /a reviewer agent in the foreground/, rel);
+  }
+  assert.match(read('agents-src/coordination/integrator.md'), /Run the push in the foreground with a timeout, repeated until it ends/);
+  const skill = read('skills/orchestration/SKILL.md');
+  assert.match(skill, /An idle notice is not a result: before you act on one, check the branch and pull request yourself/);
+  assert.match(skill, /every brief to an agent that pushes, waits on CI, or starts a reviewer says to wait in the foreground/);
+});

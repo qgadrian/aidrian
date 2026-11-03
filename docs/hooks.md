@@ -25,7 +25,7 @@ see [Recorded blocks](#recorded-blocks).
 | The Human approves a plan | The [plan handoff offer](#session-length), when the main session already costs more per call | Claude Code | no |
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
 | The main session ends a turn | The [session-length reminder](#session-length) | Claude Code | once per step |
-| A subagent stops | A `stop` row, then the [delivery check](#delivery-check) | Claude Code | once |
+| A subagent stops | A `stop` row, then the [delivery check](#delivery-check) and the [background check](#background-check) | Claude Code | once |
 | A session ends | A `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code | no |
 
 The Bash rules run in the order of their table, in one process.
@@ -72,7 +72,7 @@ that line alone, and a git that hangs past the timeout drops its own line and th
 | Review gate | Off unless config.json sets `"github": { "reviewGate": { "enabled": true } }` |
 | Terms rule | Off unless config.json sets `"terms": { "file": "…" }` |
 | Session-length reminder and plan handoff offer | `"session": { "handoff": { "mode": "off" } }` |
-| Dispatch log rows | `"telemetry": { "enabled": false }`, in config.json or `.aidrian.local.json`; the delivery check still runs |
+| Dispatch log rows | `"telemetry": { "enabled": false }`, in config.json or `.aidrian.local.json`; the delivery and background checks still run |
 | `hook_deny` rows alone | `"telemetry": { "hookDenies": false }`; the rules still block |
 | Automatic lessons from the stop hook and the blocking rules | `"lessons": { "auto": false }` |
 | A Bash rule, once | Its override variable, set by a person: [Overrides](#overrides) |
@@ -346,6 +346,23 @@ A path counts as delivered only on a line that also has the 📄 marker or one o
 handoff, or output, in any case, outside a path.
 A path on any other line is a mention, such as "docs/old.md does not exist", and is never checked.
 [dispatch-log.md](dispatch-log.md) describes the rows and `aidrian report`.
+
+## Background check
+
+A subagent that ends its turn goes idle, and the end of a background shell or agent it started does not wake it:
+a background push, or a reviewer whose report can no longer reach it, leaves it waiting until someone messages it.
+So when a subagent stops while one of its own background tasks still runs, the stop hook sends it back once, naming each task,
+to wait for it in the foreground: poll it with a foreground command and a timeout, and repeat the call until it ends,
+or stop it with `TaskStop` when it should not outlive the turn. Its second stop always ends; ending with the task still running
+is an occurrence of an [automatic lesson](lessons.md#automatic-lessons) for the plugin.
+
+Claude Code's SubagentStop payload lists the session's in-flight tasks in `background_tasks`, without the agent that started each.
+A task is the subagent's own only when one of its own calls launched or resumed it, as the structured result Claude Code
+stores beside that call's result in the transcript (`toolUseResult`) names it: a Bash call's `backgroundTaskId`, set when
+it started in the background or was moved there at its timeout; an async Agent launch's `agentId`; or a SendMessage call's
+`resumedAgentId`. A result's text never counts, so a command's output or an agent's report that quotes a launch line claims nothing.
+Reading, waiting on, or stopping another agent's task, such as tailing its output file, does not make it the subagent's own.
+A peer teammate is never a child: a message wakes it. A payload without `background_tasks`, such as Codex's, checks nothing.
 
 ## Session length
 

@@ -158,7 +158,7 @@ leaves it contested, and it goes to the Human.
 Verdicts, on every ruling:
 - `tested`: one entry per citation of the objection (on the final ruling, of the rebuttal), each index once, from 0:
   {"citation", "supports": true|false, "reason"}. Name each citation marked false in change_or_reason, with why.
-  An accept rests on at least one citation that supports.
+  An accept rests on at least one citation that passes and supports.
 - `inferences`: one entry per `inference:` line of the objection's claim (on the final ruling, the rebuttal's):
   {"statement": the line's text after the label, "holds": true|false, "reason", "citations"}.
 Moderation governs scope and proportion, never which side wins: a ground is never a reason to prefer one adversary.

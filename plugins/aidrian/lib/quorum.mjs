@@ -689,8 +689,9 @@ function coverageProblem(named, count, of = '') {
   return `tested names ${once} of ${count} citations${of}${twice.length ? `; ${twice.join(', ')} more than once` : ''}${outside.length ? `; ${outside.join(', ')} out of range` : ''}`;
 }
 
-// Whether `tested` finds one of an entry's `count` citations supporting.
-const supported = (tested, count) => tested.some((verdict) => verdict.citation >= 0 && verdict.citation < count && verdict.supports === true);
+// Whether `tested` finds one of an entry's `citations` supporting that also passes now, one of `proof`: a verdict on a
+// citation that stopped passing supports nothing.
+const supported = (tested, citations, proof) => tested.some((verdict) => verdict.supports === true && Number.isInteger(verdict.citation) && proof.includes(citations[verdict.citation]));
 
 // One line for each `inference:` line of `claims` that no distinct `inferences` statement tests.
 function inferenceProblems(claims, inferences) {
@@ -700,19 +701,20 @@ function inferenceProblems(claims, inferences) {
 }
 
 // Why a ruling on a ledger that carries `mode` is invalid beyond its citations, one reason per line: `entry` is what it
-// rules on (the objection for the first ruling, the rebuttal for the final one) and `proof` its own passing citations.
-// An accept changes a plan section, so it cites one, and rests on a citation the judge found supporting; `tested`
+// rules on (the objection for the first ruling, the rebuttal for the final one), `proof` the ruling's own passing
+// citations, and `backing` the entry's. An accept changes a plan section, so it cites one, and rests on a citation of
+// the entry that passes and that the judge found supporting; `tested`
 // names every citation of the entry once; every `inference:` line of the entry's claim has its own `inferences` entry,
 // one whose statement the line holds; a reject names its ground and nothing else does; the reason opens with `Covers: `; and an
 // accept states its `Cost: ` and the risk it `Removes: `. Whether a verdict is right is the judge's, never a script's.
-function verdictProblems(value, entry, proof) {
+function verdictProblems(value, entry, proof, backing) {
   const problems = [];
   const accept = value.decision === 'accept';
   if (accept && !proof.some((citation) => citation.kind === 'plan')) problems.push('an accept cites no plan section');
   const tested = value.tested ?? [];
   const coverage = coverageProblem(tested.map((verdict) => verdict.citation), entry.citations.length);
   if (coverage) problems.push(coverage);
-  if (accept && !supported(tested, entry.citations.length)) problems.push('an accept rests on no supporting citation');
+  if (accept && !supported(tested, entry.citations, backing)) problems.push('an accept rests on no supporting citation');
   problems.push(...inferenceProblems([entry.claim], value.inferences));
   if (value.decision === 'reject' && value.ground === undefined) problems.push('a reject names no ground');
   if (value.decision !== 'reject' && value.ground !== undefined) problems.push(`ground on an ${value.decision}`);
@@ -744,11 +746,11 @@ export function checkLedger(ledger, ctx) {
     problems.push(line);
     if (ledger.status === 'complete' && (stands || (objection.status !== 'escalated' && !answered.has(objection.id)))) stale.push(line);
   };
-  const ruling = (objection, value, where, entry, stands = false) => {
+  const ruling = (objection, value, where, entry, backing, stands = false) => {
     if (!value) return;
     const proof = pass(value.citations, where);
     if (!proof.length) invalid(objection, `${where}: invalid: the ruling has no passing citation`, stands);
-    if (strict) for (const reason of verdictProblems(value, entry, proof)) invalid(objection, `${where}: invalid: ${reason}`, stands);
+    if (strict) for (const reason of verdictProblems(value, entry, proof, backing)) invalid(objection, `${where}: invalid: ${reason}`, stands);
   };
   // What a rebuttal must add to: what the ledger held before the rebuttal round, every objection's citations and every
   // first ruling's. Rebuttals and their rulings are left out, so two rebuttals that bring the same new evidence are both new.
@@ -764,7 +766,8 @@ export function checkLedger(ledger, ctx) {
     const where = `objection ${objection.id}`;
     // Only a `pending` objection becomes an opinion. One the architect or the Human already ruled on keeps its status
     // when its citations stop passing, as after the cited code changed, and is named: a reused ledger never loses it.
-    if (!pass(objection.citations, where).length) unbacked.add(objection.id);
+    const backing = pass(objection.citations, where);
+    if (!backing.length) unbacked.add(objection.id);
     if (unbacked.has(objection.id) && objection.status !== 'opinion') {
       if (objection.status === 'pending') {
         relabel(objection);
@@ -773,7 +776,7 @@ export function checkLedger(ledger, ctx) {
       else problems.push(`${where}: no citation passes; kept ${objection.status}, since it was ruled on`);
     }
     const stands = objection.ruling?.decision === 'accept' && objection.rebuttal !== null && !flagged.has(objection.id);
-    ruling(objection, objection.ruling, `${where} ruling`, objection, stands);
+    ruling(objection, objection.ruling, `${where} ruling`, objection, backing, stands);
     const rebuttal = objection.rebuttal;
     if (rebuttal) {
       // A rebuttal needs a passing citation the ledger does not already hold. A concession needs none on a ledger
@@ -783,7 +786,7 @@ export function checkLedger(ledger, ctx) {
         if (!proof.length) invalid(objection, `${where} rebuttal: invalid: the rebuttal has no passing citation`);
         else if (proof.every((citation) => cited.has(citationKey(citation)))) invalid(objection, `${where} rebuttal: invalid: the rebuttal cites nothing new`);
       } else if (strict && !proof.length) invalid(objection, `${where} rebuttal: invalid: the concession has no passing citation`);
-      ruling(objection, rebuttal.ruling, `${where} rebuttal ruling`, rebuttal);
+      ruling(objection, rebuttal.ruling, `${where} rebuttal ruling`, rebuttal, proof);
     }
   }
   // A survivor that became an opinion is never ruled on, so what was merged into it would be lost: each objection merged
@@ -906,11 +909,15 @@ export function checkDecideLedger(ledger, ctx) {
     problems.push(line);
     if (complete && !settled) stale.push(line);
   };
-  const backed = new Set();
+  // Each position's passing case citations, and each rebuttal's: only a verdict on one of these supports a rule or a flip.
+  const caseProof = new Map();
+  const rebuttalProof = new Map();
   for (const each of ledger.cases) {
-    if (pass(each.citations, `case ${each.position}`).length) backed.add(each.position);
-    else problems.push(`case ${each.position}: no citation passes`);
+    const proof = pass(each.citations, `case ${each.position}`);
+    caseProof.set(each.position, proof);
+    if (!proof.length) problems.push(`case ${each.position}: no citation passes`);
   }
+  const backed = new Set([...caseProof].filter(([, proof]) => proof.length).map(([id]) => id));
   for (const point of ledger.cross) {
     const where = `cross ${point.id}`;
     const proof = pass(point.citations, where);
@@ -932,7 +939,7 @@ export function checkDecideLedger(ledger, ctx) {
       // A position wins on evidence or not at all, so a rule for one whose case has no passing citation goes back.
       if (!backed.has(ruling.winner)) invalid("ruling: invalid: the winner's case has no passing citation");
       const won = ledger.cases.find((each) => each.position === ruling.winner);
-      if (!won || !supported(ruling.tested.filter((verdict) => verdict.of === ruling.winner), won.citations.length)) invalid("ruling: invalid: a rule rests on no supporting citation of the winner's case");
+      if (!won || !supported(ruling.tested.filter((verdict) => verdict.of === ruling.winner), won.citations, caseProof.get(won.position))) invalid("ruling: invalid: a rule rests on no supporting citation of the winner's case");
     }
   }
   // What a rebuttal must add to: every case's, cross point's, and the first ruling's citations.
@@ -940,6 +947,7 @@ export function checkDecideLedger(ledger, ctx) {
   for (const rebuttal of ledger.rebuttals) {
     const where = `rebuttal ${rebuttal.position}`;
     const proof = pass(rebuttal.citations, where);
+    rebuttalProof.set(rebuttal.position, proof);
     if (rebuttal.verdict === 'rebut') {
       if (!proof.length) invalid(`${where}: invalid: the rebuttal has no passing citation`);
       else if (proof.every((citation) => held.has(citationKey(citation)))) invalid(`${where}: invalid: the rebuttal cites nothing new`);
@@ -955,7 +963,7 @@ export function checkDecideLedger(ledger, ctx) {
       for (const reason of decideVerdictProblems(final, entries)) invalid(`final ruling: invalid: ${reason}`);
       // A flip overturns the first ruling, so it rests on the evidence of the rebuttal it upholds.
       const won = ledger.rebuttals.find((each) => each.position === final.winner);
-      if (final.winner !== ruling?.winner && (!won || !supported(final.tested.filter((verdict) => verdict.of === final.winner), won.citations.length))) invalid("final ruling: invalid: a flip rests on no supporting citation of the winner's rebuttal");
+      if (final.winner !== ruling?.winner && (!won || !supported(final.tested.filter((verdict) => verdict.of === final.winner), won.citations, rebuttalProof.get(won.position)))) invalid("final ruling: invalid: a flip rests on no supporting citation of the winner's rebuttal");
     }
   }
   const winner = governingWinner(ledger);

@@ -18,15 +18,18 @@ Placeholders:
 Paste this, word for word, where a brief says `<evidence>`:
 
 ```text
-Evidence: every objection, ruling, and rebuttal carries at least one citation {kind, ref, quote}, all three required.
+Evidence: every entry (objection or point, case, ruling, and rebuttal) carries at least one citation
+{kind, ref, quote}, all three required.
 - doc: ref is path#anchor of a knowledge doc; the quote is in that section.
 - adr: ref is path#anchor of a decision record; the quote is in that section.
 - code: ref is path:line; the quote is in that file (the line is advisory).
-- plan: ref is #anchor of a heading in the plan under review; the quote is in that section.
+- plan: ref is #anchor of a heading of the plan, or of the question file in decide mode; the quote is in that
+  section.
 - absence: ref is a file or folder path; the quote is a needle that no file git tracks there contains.
 Paths are relative to the repository root and stay inside it. An anchor is a heading's text or its slug.
 The quote is verbatim, at most 200 characters, and compared with whitespace collapsed.
-A citation that fails this check does not count; an objection with no passing citation is dropped as opinion.
+A citation that fails this check does not count; an objection or point with no passing citation is dropped as
+opinion.
 Each statement of fact your claim rests on carries its own citation. A statement you cannot cite goes on a line of
 its own, starting with the label, as: inference: <statement>
 The judge tests each such line and each citation. A claim that rests on inferences alone is an opinion.

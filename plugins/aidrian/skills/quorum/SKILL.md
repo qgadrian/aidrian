@@ -33,11 +33,9 @@ A calling skill also passes the gate verdicts and the trigger, the plan line or 
 run by the Human, the trigger is `the Human asked`.
 
 In decide mode, the input is a question file, and `<plan>` in every command and brief means it.
-Its first line is `# <the question>`; an optional `## Context` holds the Human's framing, word for word.
-Then `## Options`, with one `### A: <label>` heading per option, `A` to `D`; or `## Claim`, with the claim.
-The file is `<state>/quorum/questions/<slug>-<h7>.md`, named as the decide mode file § Question file says.
-Before round 1, write question text to that path, and show the Human the path. Never overwrite a question file.
-An edited question file is a new question, and inherits no earlier answer.
+The file is `<state>/quorum/questions/<slug>-<h7>.md`, shaped and named as the decide mode file § Question file says.
+Before round 1, write question text to that path by that section's rule, and show the Human the path.
+Never overwrite a question file. An edited question file is a new question, and inherits no earlier answer.
 When a file's name is not the `<slug>-<h7>.md` its content gives, copy it to that path, and run from the copy.
 
 ## Roles
@@ -67,7 +65,7 @@ aidrian quorum check <ledger> --plan <plan>
 
 ## Evidence rule
 
-Every objection, case, ruling, and rebuttal cites at least one `{kind, ref, quote}`: `doc`, `adr`, `code`, `plan`, or `absence`,
+Every objection, case, cross point, ruling, and rebuttal cites at least one `{kind, ref, quote}`: `doc`, `adr`, `code`, `plan`, or `absence`,
 each with the ref form the briefs' Evidence block gives, and a verbatim quote of at most 200 characters.
 `quorum check` proves a quote exists, not that it supports the claim: the judge opens the cited files.
 
@@ -77,17 +75,18 @@ each with the ref form the briefs' Evidence block gives, and a verbatim quote of
   A citation marked `supports: false` stays in the ledger and leaves the report's evidence.
 - A concession cites the evidence of the ruling it accepts.
 - A `pending` objection with no passing citation becomes `opinion`: never ruled on or accepted, and only in the report's footnote.
-- A ruling `check` names invalid goes back to the judge once. After a second invalid ruling: ledger.md § Filling it
-  in plan mode, the mode file's rounds in decide mode.
+- A ruling `check` names invalid goes back to the judge once. A second invalid ruling follows ledger.md § Filling it
+  in plan mode, and the mode file's rounds in decide mode.
 
 Hold every agent's answer to its schema before writing it, as [references/ledger.md](references/ledger.md) § Agent answers says.
 When `quorum check` still exits 1, stop with `blocked`, quoting what it printed.
 
 ## Moderator
 
-The judge also moderates: it keeps the run on the input's goal. A rejection names its ground: `covered`,
+The judge also moderates: it keeps the run on the input's goal. In plan mode, a rejection names its ground: `covered`,
 `implementation`, `settled`, `off-goal`, `disproportionate`, or `speculative`. An accept states its `Cost:` beside the
 risk it `Removes:`, and the judge prefers the smallest change that removes the cited risk.
+Decide mode moderates by the Moderation line of decide.md's ruling brief.
 Moderation governs scope and proportion, never which side wins.
 
 ## Ledger
@@ -101,7 +100,7 @@ Before round 1:
 - A `complete` ledger at this hash for which `quorum check` exits 0 is reused: skip the rounds, and report from it,
   with every line `check` printed in the Ledger item.
 - An `open` ledger at this hash, or a `complete` one whose check exits 1, is discarded, and the run starts over.
-- Every other `complete` ledger of the same mode whose `plan` is this input's absolute path gives its Human answers to
+- In plan mode, every other `complete` plan ledger whose `plan` is this input's absolute path gives its Human answers to
   every brief as settled, as ledger.md § Settled answers says. They are never copied into the new ledger.
 
 The mode file sets the dispatch cap. Every agent dispatch and Codex run counts, retries and fallbacks included.
@@ -113,7 +112,7 @@ No compromise: a dispute the evidence does not settle escalates with every posit
 Ask the escalations one at a time, as the `challenge` skill asks, and wait for each answer before the next.
 Each question names every position with its citations, the recommended answer, and the one reason that decides it.
 The mode file says where an answer goes. An escalation the Human defers stays open and goes into the report's open
-questions: the plan cannot be `status: ready` while it is open.
+questions; in plan mode, the plan cannot be `status: ready` while it is open.
 
 Then write `status: complete`, and run `quorum check` once more; it must exit 0.
 
@@ -122,7 +121,7 @@ Then write `status: complete`, and run `quorum check` once more; it must exit 0.
 1. **Ledger**: its path, `mode`, `trigger`, `same_model`, `same_model_reason`, dispatches used of the cap, and each
    dropped entry or citation.
 2. The mode file's items, in its order.
-3. **Open questions**: each deferred escalation, for the plan's `Open questions`.
+3. **Open questions**: each deferred escalation; in plan mode, for the plan's `Open questions`.
 4. In plan mode, **Revision-history line**: the objection ids to apply and each Human answer, for the plan change that applies them.
 5. Footnotes: **Opinions**, each id and claim; **Dropped citations**, each citation the judge marked `supports: false`,
    with its reason; and the mode file's.

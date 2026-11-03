@@ -176,8 +176,8 @@ fails `quorum check` on every invalid ruling or rebuttal, so it is not reused.
 - `final_ruling`: the architect's ruling on the rebuttals, in the same form as `ruling`, or `null`.
   It comes only after a first `rule`. A final `rule` needs a `rebut`, its `tested` covers every rebuttal's citations,
   and its winner is the first ruling's winner or a position that rebutted.
-  A flip, a final winner other than the first, rests on a citation of the new winner's rebuttal that `tested` marks
-  as supporting. A final `escalate` is not held to `tested` or `inferences`, so the coordinator can write one when the
+  A flip, a final winner other than the first, rests on a citation of the new winner's rebuttal that passes and
+  that `tested` marks as supporting. A final `escalate` is not held to `tested` or `inferences`, so the coordinator can write one when the
   rebuttal round ends short. The governing winner is the final ruling's winner on a final `rule`, else the first
   ruling's; in a `complete` ledger, its case needs a passing citation, whatever the Human answered.
 - `human_answer`: the Human's answer to the escalated ruling, word for word, or `null`.

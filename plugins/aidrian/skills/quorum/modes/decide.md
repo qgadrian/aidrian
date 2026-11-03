@@ -3,7 +3,7 @@
 Each advocate argues one position on a question, and the architect rules which position the evidence supports.
 Read this file once the mode is `decide`. Here `<plan>` is the question file.
 
-- [Question file](#question-file): its name.
+- [Question file](#question-file): what question text becomes, and the file's name.
 - [Positions and roles](#positions-and-roles): who argues which position, on which runner, and who rules.
 - [Rounds](#rounds): the cap, the cases, the cross-examination, the rulings, and the rebuttals.
 - [Who wins](#who-wins): the governing winner and the flip.
@@ -15,6 +15,13 @@ Read this file once the mode is `decide`. Here `<plan>` is the question file.
   `<settled>` is always `none` in decide mode: an edited question is a new question, so no earlier answer carries over.
 
 ## Question file
+
+A question file's first line is `# <the question>`; an optional `## Context` holds the Human's framing, word for word.
+Then `## Options`, with one `### A: <label>` heading per option, `A` to `D`; or `## Claim`, with the claim.
+
+Question text becomes a file by one rule: the Human's text goes word for word into `## Context`. A yes/no question
+becomes a `## Claim`. Named alternatives become the options, `### A:` to `### D:`. With none named and no yes/no
+question, ask the Human for the options or the claim before writing the file.
 
 The file is `<state>/quorum/questions/<slug>-<h7>.md`. `<h7>` is the first 7 characters of `git hash-object` of the file.
 `<slug>` comes from the question's first line, without its `# `, in these steps: lowercase it; drop backticks, `*`,
@@ -40,7 +47,7 @@ A `plan` citation anchors on a heading of the question file: `#context`, `#claim
   `same_model_reason` says which positions share one and why, such as the Codex status line of a fallback.
   `quorum check` exits 1 when `same_model` does not match the runners.
 - **Judge**: `architect`. It rules on the cases and cross points, and once more on the rebuttals.
-  It runs on the Claude host's model, so it may share a model with an advocate: the report shows the runners beside it.
+  It runs on the host's model, so it may share a model with an advocate: the report shows the runners beside it.
 
 ## Rounds
 
@@ -49,7 +56,7 @@ That is N cases, N cross-examinations, one ruling, at most N - 1 rebuttals, one 
 Every agent dispatch and Codex run counts, fallbacks included.
 
 1. **Cases.** Every advocate in parallel, with the Case brief. Codex runs `aidrian quorum codex --mode case`.
-2. A position still without a case after its fallback stops the run with `blocked` before round 3, naming the
+2. A position still without a case (after its fallback, on Codex) stops the run with `blocked` before round 3, naming the
    position and the Codex status line, or the agent's failure.
    Otherwise, write the ledger with every field `references/ledger.md` § Decide-mode fields lists: `mode: decide`,
    `status: open`, the positions, and the cases. `cross` and `rebuttals` are empty, and `ruling`, `final_ruling`, and
@@ -59,12 +66,13 @@ Every agent dispatch and Codex run counts, fallbacks included.
    `aidrian quorum codex --mode cross --ledger <ledger>`, which fails an answer with a point against a position the
    ledger does not hold. Drop any point against the advocate's own position or a position the ledger does not hold,
    and name each in the report.
+   An advocate with no cross answer (after its fallback, on Codex) raises no points; the report names it.
    Number each advocate's points `<id>1` to `<id>5`, such as `A1`, and write them with `status: pending`.
    Run `quorum check`: a point with a passing citation becomes `backed`, and one with none becomes `opinion`.
 4. **Ruling.** The architect, with the ruling brief, on every case and every backed cross point, with each
    `case X: no citation passes` line. Write `ruling`, and run `quorum check`.
-   A ruling `quorum check` names invalid, or a missing one, goes back once, with the line it printed.
-   Invalid again, stop with `blocked`.
+   A ruling `quorum check` names invalid, or a missing one, goes back once, with the line it printed, if any.
+   Invalid or missing again, stop with `blocked`.
    A ruling of `escalate` skips rounds 5 and 6, since no position lost: ask the Human.
 5. **Rebuttals.** Each losing position once, in parallel, with the Rebuttal brief. Codex runs
    `aidrian quorum codex --mode rebut --ledger <ledger>`. Write each answer to `rebuttals`, and run `quorum check`.
@@ -89,10 +97,12 @@ Then ask the Human, with the first ruling as the recommended answer.
 ## Who wins
 
 The governing winner is the final ruling's winner when the final ruling is `rule`; otherwise it is the first ruling's.
-The report's Ruling item names it.
+It is the position the evidence holds. When any ruling escalates, first or final, the Human's answer decides the
+question, and the governing winner is only the evidence's side of it.
 
 A final ruling may flip the first: it names as winner a position that rebutted.
-A flip rests on at least one citation of the new winner's rebuttal that `tested` marks as supporting.
+A flip rests on at least one citation of the new winner's rebuttal that passes and that `tested` marks as supporting.
+So does a rule, on the winner's case: a verdict on a citation that no longer passes supports nothing.
 A flip is final: the overturned winner gets no rebuttal, and the rounds stop.
 In a `complete` ledger, the governing winner's case needs a passing citation: a position wins on evidence or not at all.
 
@@ -105,10 +115,12 @@ questions carries it. A `human_answer` with no escalation makes `quorum check` e
 
 ## Report
 
-After the core's Ledger item, which also names each position's runner, the judge (`architect`, on the Claude host's
-model), any swap, the question-file path the coordinator wrote, and each cross point dropped:
+After the core's Ledger item, which also names each position's runner, the judge (`architect`, on the host's
+model), any swap, the question-file path the coordinator wrote, each cross point dropped, and each advocate with no
+cross answer:
 
-1. **Ruling**: the governing winner and the reason, or `escalated` with the Human's answer or `deferred`.
+1. **Ruling**: with no escalation, the governing winner and the reason. When any ruling escalates, `escalated` with
+   the Human's answer, or `deferred` with the recommended answer.
 2. **Cases**: each position's label, its case, and its citations.
 3. **Cross points**: each backed point, with its `by` and `against`.
 4. **Rebuttals**: each rebuttal or concession, the final ruling, and any flip.

@@ -1167,16 +1167,30 @@ test('the decide mode file holds the runners, the swap, the cap, every Codex mod
     '- The final ruling is missing, after its retry or with no dispatch left for one.',
     '- A losing position never answered, because Codex and its fallback both failed, or the cap ran out.',
     '- A position rebutted, and the cap leaves no dispatch for the final ruling.',
-    "A position still without a case after its fallback stops the run with `blocked` before round 3, naming the position and the Codex status line, or the agent's failure.",
-    'A ruling `quorum check` names invalid, or a missing one, goes back once, with the line it printed. Invalid again, stop with `blocked`.',
+    "A position still without a case (after its fallback, on Codex) stops the run with `blocked` before round 3, naming the position and the Codex status line, or the agent's failure.",
+    'An advocate with no cross answer (after its fallback, on Codex) raises no points; the report names it.',
+    'A ruling `quorum check` names invalid, or a missing one, goes back once, with the line it printed, if any. Invalid or missing again, stop with `blocked`.',
+    "When any ruling escalates, first or final, the Human's answer decides the question, and the governing winner is only the evidence's side of it.",
+    "When any ruling escalates, `escalated` with the Human's answer, or `deferred` with the recommended answer.",
+    "Question text becomes a file by one rule: the Human's text goes word for word into `## Context`. A yes/no question becomes a `## Claim`. Named alternatives become the options, `### A:` to `### D:`. With none named and no yes/no question, ask the Human for the options or the claim before writing the file.",
+    "the judge (`architect`, on the host's model)",
     'Such a position cannot win, on the first ruling or the final one: rule for another position, or escalate.',
     '`<settled>` is always `none` in decide mode',
   ]) assert.ok(decide.includes(sentence), `decide.md: ${sentence}`);
   assert.doesNotMatch(decide, /no dispatch left for the retry, stop/u, 'a first ruling with no retry left is not a separate stop');
-  // The question-file name: the steps decide.md spells out are the slug flows.mjs computes.
+  // The question-file name, as decide.md spells it out. No code computes it: the coordinator follows these steps. The
+  // first four are the slug flows.mjs computes; the 60-character cut and the `question` fallback are decide.md's own.
   assert.ok(decide.includes("`<slug>` comes from the question's first line, without its `# `, in these steps: lowercase it; drop backticks, `*`, and `_`; turn each run of other characters outside a-z and 0-9 into one `-`; leave no `-` at either end; cut it to 60 characters, with no `-` left at the end; use `question` when nothing is left."), 'the slug steps');
-  const steps = (line) => line.toLowerCase().replace(/[`*_]/gu, '').replace(/[^a-z0-9]+/gu, '-').replace(/^-+|-+$/gu, '');
-  for (const line of ['Keep one ledger or split it?', '**Bold** _x_ `code`', '--x--', 'A_B*C', '日本語']) assert.equal(steps(line), slug(line), line);
+  const words = (line) => line.toLowerCase().replace(/[`*_]/gu, '').replace(/[^a-z0-9]+/gu, '-').replace(/^-+|-+$/gu, '');
+  const steps = (line) => words(line).slice(0, 60).replace(/-+$/u, '') || 'question';
+  for (const line of ['Keep one ledger or split it?', '**Bold** _x_ `code`', '--x--', 'A_B*C']) assert.equal(steps(line), slug(line), line);
+  // A cut that lands just after a word leaves its `-` behind, and the steps drop it: 59 characters, then `-`.
+  const long = `${'a'.repeat(59)} ${'b'.repeat(10)}?`;
+  assert.equal(words(long).length, 70);
+  assert.equal(steps(long), 'a'.repeat(59));
+  assert.equal(steps(`${'word '.repeat(20)}`), 'word-'.repeat(12).slice(0, 59));
+  // Nothing left: no letter or digit a-z or 0-9, so the name falls back.
+  for (const line of ['日本語', '???', '`*_`', '']) assert.equal(steps(line), 'question', JSON.stringify(line));
   assert.match(decide, /flip/u, 'the flip');
   assert.match(decide, /\*\*Dropped citations\*\*/u, 'the Dropped citations footnote');
   assert.match(decide, /`adr-writer` skill/u, 'the adr-writer pointer');
@@ -1207,6 +1221,9 @@ test('docs/project-folder.md quotes the decide check lines exactly as lib/quorum
     'rebuts with no final ruling in a complete ledger',
     'rebuttals and a final ruling follow a first ruling of rule only',
     'final ruling rules, but no position rebutted',
+    'ruling is null in a complete ledger',
+    // Printed from a template on the case's position.
+    { doc: 'case X: no citation passes', source: ['`case ${each.position}: no citation passes`'] },
     'human_answer: set but nothing escalated',
     '--mode cross answers a decide ledger, and this ledger is in plan mode',
     "the winner's case has no passing citation",
@@ -1223,6 +1240,11 @@ test('docs/project-folder.md quotes the decide check lines exactly as lib/quorum
     assert.ok(doc.includes(`\`${line}\``), `docs/project-folder.md quotes "${line}"`);
   }
   assert.ok(doc.includes('`checked: mode decide, N cases, N cross points, N opinion, N problems`'), 'the decide summary line');
+  // decide.md quotes the case line the architect gets: it is the line the source prints, with X for the position.
+  const decide = skillTexts()['modes/decide.md'].replace(/\s+/gu, ' ');
+  const quoted = [...decide.matchAll(/`(case X[^`]*)`/gu)].map(([, line]) => line);
+  assert.ok(quoted.length >= 3, 'decide.md quotes the case line in its rounds and its ruling brief');
+  for (const line of quoted) assert.ok(source.includes(`\`${line.replace('X', '${each.position}')}\``), `decide.md quotes "${line}" as lib/quorum.mjs prints it`);
   // Each usage form, as the command prints it: the doc lists every --mode value the command takes.
   for (const form of commands.quorum.usage.split(' | ')) assert.ok(doc.includes(`\`aidrian quorum ${form}\``), `docs/project-folder.md: aidrian quorum ${form}`);
 });
@@ -1258,6 +1280,24 @@ test('the quorum core names the six grounds in its Moderator paragraph, and the 
   for (const [file, text] of Object.entries(texts)) {
     assert.doesNotMatch(text.replace(/\s+/gu, ' '), /concession needs no citation|may be empty for a concession/iu, `${file} says a concession needs no citation`);
   }
+  // The Evidence block serves both modes: a decide `plan` citation anchors on the question file, and a point is an entry.
+  const block = evidence.replace(/\s+/gu, ' ');
+  assert.ok(block.includes('every entry (objection or point, case, ruling, and rebuttal) carries at least one citation'), 'the Evidence block names every entry');
+  assert.ok(block.includes('- plan: ref is #anchor of a heading of the plan, or of the question file in decide mode;'), 'the plan kind in decide mode');
+  assert.ok(block.includes('an objection or point with no passing citation is dropped as opinion'), 'a point becomes an opinion too');
+  assert.doesNotMatch(block, /the plan under review/u);
+  // What only plan mode does is scoped to it in the core, and decide mode's moderation points to its own line.
+  const core = skill.replace(/\s+/gu, ' ');
+  for (const sentence of [
+    'Every objection, case, cross point, ruling, and rebuttal cites',
+    'A second invalid ruling follows ledger.md § Filling it in plan mode, and the mode file\'s rounds in decide mode.',
+    'In plan mode, a rejection names its ground:',
+    "Decide mode moderates by the Moderation line of decide.md's ruling brief.",
+    'In plan mode, every other `complete` plan ledger whose `plan` is this input\'s absolute path',
+    'in plan mode, the plan cannot be `status: ready` while it is open.',
+    "3. **Open questions**: each deferred escalation; in plan mode, for the plan's `Open questions`.",
+  ]) assert.ok(core.includes(sentence), `SKILL.md: ${sentence}`);
+  assert.match(texts['modes/decide.md'], /^Moderation: a cross point or rebuttal/mu, 'decide.md has the Moderation line SKILL.md names');
 });
 
 test('plan-review runs the quorum skill at step 3b, lists its flags in Inputs, and ledger.md says how it runs there', () => {
@@ -1709,7 +1749,8 @@ test('check decide: each invalid ruling, final ruling, rebuttal, and concession 
     [{ cross: [point('A1', 'B', [PASSING.code]), point('B1', 'A', [FAILS], { status: 'opinion' })] }, ['ruling: invalid: tested names B1, which the ruling does not rule on']],
     [{ ruling: decision({ tested: tested(FIRST, ['A', 'B']) }) }, ["ruling: invalid: a rule rests on no supporting citation of the winner's case"]],
     // A position wins on evidence or not at all: a rule for one whose case has no passing citation goes back.
-    [{ cases: [stand('A', [FAILS]), stand('B', [ASKED.b])], ruling: decision({ tested: tested({ A: 1, B: 1, A1: 1, B1: 1 }, ['B']) }) }, ["ruling: invalid: the winner's case has no passing citation"]],
+    // Its one verdict, `supports: true`, is on a citation that does not pass, so it supports nothing either.
+    [{ cases: [stand('A', [FAILS]), stand('B', [ASKED.b])], ruling: decision({ tested: tested({ A: 1, B: 1, A1: 1, B1: 1 }, ['B']) }) }, ["ruling: invalid: the winner's case has no passing citation", "ruling: invalid: a rule rests on no supporting citation of the winner's case"]],
     [{ ruling: decision({ tested: [...tested(FIRST, ['B']).filter((each) => each.of !== 'A'), { of: 'A', citation: 2, supports: true, reason: 'r' }] }) }, ['ruling: invalid: tested names 0 of 2 citations of case A; 2 out of range', "ruling: invalid: a rule rests on no supporting citation of the winner's case"]],
     [{ cases: [stand('A', [ASKED.a, PASSING.adr]), stand('B', [ASKED.b], inferred)] }, ['ruling: invalid: inference untested: "readers open one round at a time"']],
     [{ cross: [point('A1', 'B', [PASSING.code], { claim: 'B is slow.\ninference: the disk is the bottleneck' }), point('B1', 'A', [PASSING.docBySlug])] }, ['ruling: invalid: inference untested: "the disk is the bottleneck"']],
@@ -1734,6 +1775,36 @@ test('check decide: each invalid ruling, final ruling, rebuttal, and concession 
   const clean = p.check(decideLedger({ cases: [stand('A', [ASKED.a, PASSING.adr]), stand('B', [ASKED.b], inferred)], ruling: decision({ inferences }) }));
   assert.equal(clean.status, 0, clean.stderr);
   assert.deepEqual(clean.lines, ['checked: mode decide, 2 cases, 2 cross points, 0 opinion, 0 problems']);
+});
+
+// A citation that stopped passing supports nothing: `supports: true` on it, beside `supports: false` on one that passes,
+// leaves an accept, a rule, or a flip with no supporting citation. The same verdicts swapped are valid.
+test('check: only a verdict on a citation that passes now supports a plan accept, a decide rule, or a flip', (t) => {
+  const pair = (of, first, second) => [{ ...of, citation: 0, supports: first, reason: 'r' }, { ...of, citation: 1, supports: second, reason: 'r' }];
+  const p = project(t);
+  for (const [build, where] of [
+    [(tested) => objection('A1', [FAILS, PASSING.code], { status: 'accepted', ruling: accepts({ tested }) }), 'objection A1 ruling'],
+    [(tested) => objection('A1', [PASSING.code], { status: 'accepted', ruling: rejects(), rebuttal: { verdict: 'rebut', claim: 'c', citations: [FAILS, PASSING.fenced], ruling: accepts({ tested }) } }), 'objection A1 rebuttal ruling'],
+  ]) {
+    for (const [tested, lines] of [[pair({}, true, false), [`${where}: invalid: an accept rests on no supporting citation`]], [pair({}, false, true), []]]) {
+      const result = p.check(planLedger([build(tested)]));
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(result.lines.filter((line) => line.startsWith(`${where}: invalid: `)), lines, JSON.stringify(tested));
+    }
+  }
+  const d = decideProject(t);
+  const rule = (onA) => ({ cases: [stand('A', [FAILS, ASKED.a]), stand('B', [ASKED.b])], ruling: decision({ tested: [...onA, ...tested({ B: 1, A1: 1, B1: 1 }, ['B'])] }) });
+  const flip = (onB) => ({ rebuttals: [answer('B', 'rebut', [FAILS, PASSING.fenced])], final_ruling: decision({ winner: 'B', citations: [PASSING.fenced], tested: onB }) });
+  for (const [build, of, line] of [
+    [rule, 'A', "ruling: invalid: a rule rests on no supporting citation of the winner's case"],
+    [flip, 'B', "final ruling: invalid: a flip rests on no supporting citation of the winner's rebuttal"],
+  ]) {
+    for (const [verdictsOn, lines] of [[pair({ of }, true, false), [line]], [pair({ of }, false, true), []]]) {
+      const result = d.check(decideLedger({ status: 'open', ...build(verdictsOn) }));
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(result.lines.filter((each) => each.includes(': invalid: ')), lines, JSON.stringify(verdictsOn));
+    }
+  }
 });
 
 test('check decide: a complete ledger with no ruling, an unanswered loser, an unruled rebut, a governing winner with no evidence, or a stale ruling exits 1 unwritten', (t) => {

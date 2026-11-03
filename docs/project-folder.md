@@ -214,7 +214,8 @@ and none of the rules below that need `mode`. `check` never adds the field. Two 
   On a ledger that carries `mode`, it also exits 1 on more than 5 objections from one adversary, on an `improvement`
   objection, on a complete ledger with an accept ruling and `proportionality` null, and on a flagged objection with no
   accept ruling or one neither escalated nor answered. It names a ruling invalid, first or final, when:
-  - an accept cites no `plan` section, or rests on no citation `tested` marks supporting;
+  - an accept cites no `plan` section, or rests on no citation of the entry that passes and that `tested` marks
+    supporting;
   - `tested` does not name each citation of the ruled entry once;
   - an `inference:` line of the ruled claim has no `inferences` entry;
   - a reject has no `ground`, or another decision has one;
@@ -254,13 +255,14 @@ On a decide ledger, `check` holds the decide rules only. It exits 1 on a schema 
 - `same_model is true, so same_model_reason must say why two positions share a runner`;
 - `same_model is false, so same_model_reason must be null`.
 
-A `complete` decide ledger also fails when a position `has no case in a complete ledger`, or the ruling is null.
+A `complete` decide ledger also fails when a position `has no case in a complete ledger`, or when
+`ruling is null in a complete ledger`.
 Under a first ruling of `rule`, unless the final ruling escalates, it also fails when a position
 `lost the ruling and has no rebuttal in a complete ledger`, or a rebuttal `rebuts with no final ruling in a complete ledger`.
 
 Then it checks every citation as for a plan ledger, and names each problem:
 
-- A case with no passing citation is named; its position cannot win.
+- A case with no passing citation is named, `case X: no citation passes`; its position cannot win.
 - A `pending` cross point becomes `backed` when a citation passes, or `opinion` when none does:
   `relabeled opinion (was pending): no citation passes`. A `backed` one whose citations stop passing is named:
   `no citation passes; kept backed`.
@@ -272,6 +274,8 @@ Then it checks every citation as for a plan ledger, and names each problem:
 - A `rule`, first or final, is invalid when `the winner's case has no passing citation`.
 - A first `rule` is invalid when `a rule rests on no supporting citation of the winner's case`, and a final ruling
   that names another winner when `a flip rests on no supporting citation of the winner's rebuttal`.
+  A supporting citation is one that passes now and that `tested` marks `supports: true`: a verdict on a citation
+  that stopped passing supports nothing.
 - A rebuttal is invalid when `the rebuttal has no passing citation` or `the rebuttal cites nothing new`: every one of
   its passing citations is already in a case, a cross point, or the first ruling. A concession is invalid when
   `the concession has no passing citation`.

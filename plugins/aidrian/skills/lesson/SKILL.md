@@ -39,6 +39,9 @@ A leading `title: <text>` line sets the title, for a note whose first line is no
 - **target**: `plugin` when this plugin's agents, skills, hooks, or `aidrian` commands are at fault;
   `project` for the project's own knowledge, config, or code. Optional; leave it out when unsure.
 
+For a lesson from a Claude Code feedback draft, the note comes from the draft text in context: no command reads, edits, or deletes that draft.
+Tell the Human it stays queued for the Human to send, if it is a Claude Code bug, or discard.
+
 The command records the session, the agent, the branch, and the worktree itself. Print the id it returns and go back to the task.
 
 When the problem is one you know is already in the inbox, record it again instead of adding a second lesson:

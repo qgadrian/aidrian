@@ -11,7 +11,10 @@ export const UNSPECIFIED = Object.freeze({
   text: 'The change keeps this flow working as before: no entry point, user action, or guarantee of the flow is removed or weakened.',
 });
 
-export const slug = (text) => text.toLowerCase().replace(/[`*_]/gu, '').replace(/[^a-z0-9]+/gu, '-').replace(/^-|-$/gu, '');
+// A heading's anchor as GitHub makes it: punctuation is dropped, not turned into a hyphen, so `config.json` and
+// `plugin's` stay one word. Unlike GitHub, `_` is dropped and runs of spaces and hyphens collapse to one hyphen, which
+// both sides of a comparison share.
+export const slug = (text) => text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, '').replace(/[\s-]+/gu, '-').replace(/^-|-$/gu, '');
 
 // The invariants of a flow. A list is used as written. A doc's invariants are its `##` and `###` headings, each with
 // the paragraph under it; `read(path)` returns the doc's text or null. Returns { invariants, unspecified, problem }.

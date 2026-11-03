@@ -180,6 +180,16 @@ test('slug is exported from flows.mjs unchanged', () => {
   assert.equal(slug('no-double-booking'), 'no-double-booking');
 });
 
+test('slug drops punctuation as GitHub does, so an anchor copied from GitHub matches its heading', () => {
+  assert.equal(slug("The plugin's tools for this work"), 'the-plugins-tools-for-this-work');
+  assert.equal(slug('The plugin\u2019s tools'), 'the-plugins-tools');
+  assert.equal(slug('Read config.json first'), 'read-configjson-first');
+  assert.equal(slug('Node.js and npm'), 'nodejs-and-npm');
+  assert.equal(slug('Why (and when)'), 'why-and-when');
+  assert.equal(slug('Caf\u00e9 rules'), 'caf\u00e9-rules');
+  assert.equal(slug('`hook_deny`: when a rule blocks'), 'hookdeny-when-a-rule-blocks');
+});
+
 test('check: every citation kind passes; anchors by heading text and by slug; quotes compare with whitespace collapsed; plan and ledger outside the root', (t) => {
   const p = project(t);
   const objections = spread(Object.values(PASSING));

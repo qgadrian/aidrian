@@ -450,10 +450,10 @@ test('aidrian report reviews counts each check at the cap once, by its last deci
   const at = (minute) => `2026-11-01T10:${String(minute).padStart(2, '0')}:00.000Z`;
   const row = (pr, round, outcome, by, minute, signalsHit = []) => ({ event: 'review_extension', ts: at(minute), repo: 'o/r', pr, source: 'plan', round, outcome, by, signals: signalsHit });
   const rows = [
-    row(1, 3, 'judging', null, 1), row(1, 3, 'asking', 'judge', 2), row(1, 3, 'granted', 'human', 3),
+    row(1, 3, 'judging', null, 1), row(1, 3, 'asking', 'judge', 2), row(1, 3, 'granted', 'human', 3, ['looping']),
     row(2, 3, 'stopped', 'mechanical', 4, ['looping', 'bloating']),
     row(3, 3, 'stopped', 'mechanical', 5),
-    row(4, 3, 'judging', null, 6), row(4, 3, 'stopped', 'judge', 7),
+    row(4, 3, 'judging', null, 6), row(4, 3, 'stopped', 'judge', 7, ['looping', 'drifting']),
     row(5, 5, 'stopped', 'ceiling', 8),
     row(6, 3, 'asking', 'judge', 9),
     { event: 'stop', ts: at(10) },
@@ -461,11 +461,15 @@ test('aidrian report reviews counts each check at the cap once, by its last deci
   ];
   const summary = extensionSummary(rows, { sinceMs: Date.parse(at(1)) });
   assert.deepEqual(summary, {
-    checks: 6, stopped_by_signals: 2, signals: { looping: 1, bloating: 1, unreadable: 1 }, stopped_by_judge: 1, stopped_by_ceiling: 1,
+    checks: 6, over_flags: 3, granted_over_flags: 1, signals: { looping: 3, bloating: 1, unreadable: 1, drifting: 1 },
+    stopped_by_signals: 2, stopped_by_judge: 1, stopped_by_ceiling: 1,
     granted: 1, granted_by_human: 1, denied: 0, waiting: 1,
   });
   assert.equal(formatExtensions(summary, { since: '7d' }),
-    'Extra rounds since 7d: 6 checks at the round cap; 2 stopped by the signals (looping 1, bloating 1, unreadable 1), 1 by the judge, 1 at the ceiling; 1 granted (1 by the Human), 0 denied, 1 waiting');
+    'Extra rounds since 7d: 6 checks at the round cap; 3 with red flags (looping 3, bloating 1, unreadable 1, drifting 1), 1 granted over them; 2 stopped by the signals, 1 stopped by the judge, 1 at the ceiling; 1 granted (1 by the Human), 0 denied, 1 waiting');
+  const fresh = extensionSummary([row(8, 3, 'granted', 'judge', 1, ['bloating'])]);
+  assert.equal(formatExtensions(fresh),
+    'Extra rounds: 1 check at the round cap; 1 with red flags (bloating 1), 1 granted over them; 0 stopped by the judge, 0 at the ceiling; 1 granted (0 by the Human), 0 denied, 0 waiting', 'no old mechanical stop, no signals stop count');
   assert.equal(formatExtensions(extensionSummary([])), null, 'no check, no line');
 });
 

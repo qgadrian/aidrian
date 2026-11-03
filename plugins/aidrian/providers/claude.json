@@ -7,6 +7,7 @@
   "brand-guardian": { "effort": "low", "color": "orange", "disallowedTools": ["Write", "Edit", "NotebookEdit", "Bash"] },
   "code-reviewer": { "model": "opus", "effort": "xhigh", "color": "blue" },
   "content-creator": { "color": "orange" },
+  "critic": { "model": "opus", "effort": "high", "color": "blue" },
   "design-source-explorer": { "color": "yellow", "disallowedTools": ["Agent"] },
   "designer": { "color": "pink" },
   "doc-updater": { "color": "green", "disallowedTools": ["Agent"] },

@@ -33,6 +33,7 @@ The agent that builds or fixes a change commits and pushes it; the orchestrator 
 | Review and quality | What it does |
 | --- | --- |
 | `code-reviewer` | Reviews code for bugs, trust boundaries, and test gaps. Read-only. |
+| `critic` | Finds missing cases, unstated assumptions, docs drift, and simpler alternatives. Read-only. |
 | `security-engineer` | Reviews trust-boundary work, with a fix for each finding. Read-only. |
 | `helper-scout` | Finds existing helpers a change could reuse. Read-only. |
 | `e2e-runner` | Runs end-to-end tests and triages each failure. |

@@ -186,6 +186,8 @@ export function attestation(project, pr, repo = null, origin = originRepo(projec
 
 // `aidrian pr signoff <PR> --flow <id> --head <sha>`: the Human's sign-off of a critical flow on one head. It is an audit
 // entry, not proof: an agent holds the same shell. The review summary on the pull request shows every sign-off.
+// `--stage <name>` in place of `--flow` signs off a review stage the Human chose to review because its reviewer ran out
+// of quota on that head (lib/review/quota.mjs).
 export async function runSignoff(args, project, config = null) {
   const [ref, ...rest] = args;
   const pr = prNumber(ref);
@@ -193,16 +195,21 @@ export async function runSignoff(args, project, config = null) {
   const flags = {};
   for (let i = 0; i < rest.length; i += 1) {
     const flag = rest[i];
-    if (!['--flow', '--head'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
+    if (!['--flow', '--stage', '--head'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
     const value = rest[++i];
     if (value === undefined || value.startsWith('--')) throw new Error(`${flag} needs a value`);
     flags[flag.slice(2)] = value;
   }
-  if (!flags.flow || !flags.head) throw new Error('--flow and --head are required');
+  if (!flags.head || Boolean(flags.flow) === Boolean(flags.stage)) throw new Error('--head and one of --flow or --stage are required');
   if (!SHA.test(flags.head) || runGit(['cat-file', '-e', `${flags.head}^{commit}`], project.root).status !== 0) throw new Error(`--head ${flags.head} is not a commit in this repository`);
   const repo = originRepo(project);
   const by = runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown';
-  const { recordSignoff, remoteState } = await import('./review/run.mjs');
+  const { recordSignoff, recordStageSignoff, remoteState } = await import('./review/run.mjs');
+  if (flags.stage) {
+    recordStageSignoff(project, { pr, repo, stage: flags.stage, head: flags.head, by, remote: remoteState(repo, pr, undefined, config) });
+    console.log(`recorded ${by}'s sign-off of the ${flags.stage} stage on ${flags.head.slice(0, 7)}, in place of the reviewer that ran out of quota. Run \`aidrian pr review\` again.`);
+    return 0;
+  }
   recordSignoff(project, { pr, repo, flow: flags.flow, head: flags.head, by, remote: remoteState(repo, pr, undefined, config) });
   console.log(`recorded ${by}'s sign-off of flow ${flags.flow} on ${flags.head.slice(0, 7)}. Run \`aidrian pr review\` again.`);
   return 0;

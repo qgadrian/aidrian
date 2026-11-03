@@ -36,7 +36,7 @@
       "tags": []
     },
     "review.md": {
-      "summary": "aidrian pr review: review plan, splits, critical flows and invariants, visual review, reviewers, review rounds and their limit, sign-off.",
+      "summary": "aidrian pr review: review plan, splits, critical flows and invariants, visual review, reviewers, quota fallbacks, review rounds and their limit, sign-off.",
       "tags": []
     },
     "knowledge.md": {

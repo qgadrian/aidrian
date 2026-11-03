@@ -98,6 +98,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Review rounds, when a review bot is set | Setting `AIDRIAN_ALLOW_EXTRA_ROUNDS`, and asking the bot for a review outside `aidrian pr`, which counts rounds first ([config.md](config.md#review-gate)) | none |
 | Review sign-off | `aidrian pr signoff`, which records the Human's sign-off of a flow under their name ([review.md](review.md#sign-off-by-the-human)) | none: the Human runs it in their own shell |
 | Extra round approval | `aidrian pr extend <PR> --human approve` without the Human's answer in the session ([review.md](review.md#extra-rounds)) | none: the Human answers, or runs it in their own shell |
+| Quota fallback choice | `aidrian pr review <PR> --quota-fallback` without the Human's pick in the session ([review.md](review.md#out-of-quota)) | none: the Human answers, or runs it in their own shell |
 | Main checkout, when turned on | A shell write to a tracked file in the main checkout; a git call there that makes a commit or moves the branch; after a `cd` it cannot trust, a relative write or a git call that may change the main checkout; and a relative write that lands there only if a `cd` inside it fails ([After a cd](#after-a-cd)) | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
 
 What each rule matches:
@@ -131,6 +132,11 @@ What each rule matches:
   option starts with "Approve". `--human deny` and `--verdict` run. With no check waiting for the Human in this
   machine's review record, as when the record came from another machine, the approval is refused.
   An answer the rule cannot read, such as `--human "$X"`, counts as approve; a pull request it cannot read is refused.
+- Quota fallback choice: `aidrian pr review <PR> --quota-fallback agent:<name>` or `--quota-fallback human`, also as
+  `node …/cli.mjs` or `--quota-fallback=<value>`. It runs when this machine's review record holds a quota stop and the
+  session transcript holds an AskUserQuestion answer, given after that stop, to a question naming `#<PR>` and the quota,
+  whose chosen option starts with "Run a critic agent" for an agent, or "The Human reviews it" for `human`.
+  A value or a pull request the rule cannot read is refused.
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
   `touch`, `mkdir`, and `rsync` (sources too under `--remove-source-files`); a branch switch or `git add -A` there;
   and there `git commit`, `commit-tree`, `cherry-pick`, `revert`, `rebase`, `am` (all but `--abort` and `--quit`),
@@ -165,7 +171,7 @@ Neither record waits on a lock, so a block stays well inside the host's 5-second
   an agent that keeps trying was not shown the allowed way. The count does not depend on telemetry.
 
 The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `process-kill` (both the kill and the listing rule),
-`grep-exit-chain`, `pr-body`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`, `review-extend`, `main-checkout`, `terms`, `agent-gates`, `config-guard`, and `ask-names`.
+`grep-exit-chain`, `pr-body`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`, `review-extend`, `review-fallback`, `main-checkout`, `terms`, `agent-gates`, `config-guard`, and `ask-names`.
 The hooks load the recorder only when they block, so a call they let run costs no more than before.
 When the recorder fails, the call is still blocked.
 

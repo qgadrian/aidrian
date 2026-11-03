@@ -35,11 +35,12 @@ Act on `status`, then run it again, until it stops:
 | `received`, `none_needed` | go to step 2 for comments people or the bot left, then step 7 |
 | `extension_check` | run `dispatch[0]`, the judge, briefed with `extension`; record its verdict with its `record` |
 | `extension_ask` | ask the Human `question` with AskUserQuestion and `options`; record the answer with `record` |
-| `human_required`, `stuck`, `too_large`, `unsatisfied`, `round_limit`, `blocked_quota` | stop: report it and ask the Human |
+| `blocked_quota` | ask `question` with AskUserQuestion and `options`; run the pick's `run` |
+| `human_required`, `stuck`, `too_large`, `unsatisfied`, `round_limit` | stop: report it and ask the Human |
 
 A flow pass answers every invariant it is given with a verdict and evidence: `path:line` at the head, or
 `test:<name>`. `references/review-plan.md` has the verdicts file and what each status carries.
-With `--await-codex`, run `aidrian pr review <n> --with-bot`: the review bot then runs as the last stage too.
+With `--await-codex`, run `aidrian pr review <n> --with-bot`: the review bot then runs as the last stage.
 
 ## 2. Collect every review surface
 

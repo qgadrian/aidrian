@@ -1107,8 +1107,8 @@ test('aidrian pr prints its usage for an unknown action, and await-review report
   const cli = new URL('../plugins/aidrian/bin/aidrian', import.meta.url).pathname;
   const unknown = spawnSync(cli, ['pr', 'merge'], { encoding: 'utf8' });
   assert.deepEqual([unknown.status, unknown.stderr], [1, [
-    'usage: aidrian pr review [PR] [--with-bot] [--max-rounds N]',
-    '       aidrian pr signoff PR --flow ID --head SHA',
+    'usage: aidrian pr review [PR] [--with-bot] [--max-rounds N] [--quota-fallback agent:NAME|human]',
+    '       aidrian pr signoff PR (--flow ID | --stage NAME) --head SHA',
     '       aidrian pr extend PR',
     '               (--verdict extend|stop --reason TEXT [--head SHA] | --human approve|deny)',
     '       aidrian pr await-review [PR] [--request] [--max-rounds N] [--head SHA]',

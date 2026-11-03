@@ -71,7 +71,7 @@ export function approved(answers, { pr, round, since = null }) {
     (since === null || (each.at !== null && Date.parse(each.at) >= Date.parse(since))));
 }
 
-const readTranscript = (file) => {
+export const readTranscript = (file) => {
   try {
     return typeof file === 'string' && file !== '' ? readFileSync(file, 'utf8') : '';
   } catch {

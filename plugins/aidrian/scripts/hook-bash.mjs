@@ -12,6 +12,7 @@ import * as prBody from '../lib/rules/github/pr-body.mjs';
 import * as reviewRequest from '../lib/rules/github/review-request.mjs';
 import * as reviewRounds from '../lib/rules/github/review-rounds.mjs';
 import * as reviewExtend from '../lib/rules/review-extend.mjs';
+import * as reviewFallback from '../lib/rules/review-fallback.mjs';
 import * as reviewSignoff from '../lib/rules/review-signoff.mjs';
 import * as grepExitChain from '../lib/rules/grep-exit-chain.mjs';
 import * as mainCheckout from '../lib/rules/main-checkout.mjs';
@@ -29,6 +30,7 @@ const RULES = [
   ['review-rounds', reviewRounds],
   ['review-signoff', reviewSignoff],
   ['review-extend', reviewExtend],
+  ['review-fallback', reviewFallback],
   ['main-checkout', mainCheckout],
 ];
 

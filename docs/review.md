@@ -134,7 +134,7 @@ The reviewer judges against the source; `text` is only the question, and
 without one the question comes from the heading. So the rule lives once, in the doc, and config cannot drift from it.
 A change to a cited section triggers `harness-config`: its heading or text differs between the base and the head,
 or its heading is gone, which covers a heading inserted into it or removed after it. An edit elsewhere in the doc
-does not. A dispute needs a `holds` or `not_affected` from a reviewer that gave no `violated` verdict of its own. An invariants doc, or a `cite` with no `#anchor`, is
+does not. An invariants doc, or a `cite` with no `#anchor`, is
 cited whole, so any change to it triggers the flow. `aidrian lint review` warns about a cited section with no text.
 
 A reviewer reads at most 4000 characters of a source. A longer section is cut between its top-level blocks (a list
@@ -230,8 +230,8 @@ The command signs only a flow the last `aidrian pr review` on that head asks the
 `signoff: "human"`, the built-in `harness-config`, or one whose test the change deletes. It refuses any other flow, and
 a head no review ran on, since such a sign-off would count for nothing. A sign-off never clears a violated invariant.
 
-**A dispute between reviewers.** When one reviewer answers `violated` and another answers `holds` or `not_affected`
-with valid evidence, the flow in `fix_required` lists the invariant under `disputed`, with an `overrule` command:
+**A dispute between reviewers.** When one reviewer answers `violated` and another, one that gave no `violated` verdict
+of its own, answers `holds` or `not_affected` with valid evidence, the flow in `fix_required` lists the invariant under `disputed`, with an `overrule` command:
 `aidrian pr signoff <PR> --flow <id> --overrule <invariant> --head <sha> --reason "<why>"`. The Human runs it in their
 own shell, and the invariant then passes on that head on the other reviewer's evidence, never on the Human's word
 alone. The ruling holds for that head only and is listed with the overrides in the review summary. The command

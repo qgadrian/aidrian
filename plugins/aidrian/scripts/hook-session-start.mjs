@@ -42,7 +42,7 @@ await runHook((input) => {
   // Claude Code sets CLAUDECODE=1 for its hooks; this hook runs only there and in Codex.
   const ai = config.names.ai ?? (process.env.CLAUDECODE === '1' ? 'Claude' : 'Codex');
   const human = JSON.stringify(config.names.human);
-  const names = `Names: call the human ${human} and yourself ${JSON.stringify(ai)}, in replies and questions alike; never "I", "me", "you", or "your".`;
+  const names = `Names: call the human ${human} and yourself ${JSON.stringify(ai)}, in replies and questions alike; never "I", "me", "my", "you", or "your".`;
   const lines = `${line}\n${names}\n${voiceLine(human)}`;
 
   if (subagent) {

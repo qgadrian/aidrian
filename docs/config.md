@@ -323,7 +323,7 @@ The start hook gives every session and subagent one line with both names, and th
 in replies, docs, handoffs, commits, and pull request bodies:
 
 ```text
-Names: call the human "the Human" and yourself "Claude", in replies and questions alike; never "I", "me", "you", or "your".
+Names: call the human "the Human" and yourself "Claude", in replies and questions alike; never "I", "me", "my", "you", or "your".
 ```
 
 A team sets its names in `config.json`, and one developer in the git-ignored `.aidrian.local.json` at the project root:
@@ -333,7 +333,7 @@ A team sets its names in `config.json`, and one developer in the git-ignored `.a
 ```
 
 A question dialog often shows without the reply around it, so a hook blocks an `AskUserQuestion` call whose question or
-options say "I", "me", "you", or "your" outside backticks and quotes, and the agent asks again with the names (Claude Code).
+options say "I", "me", "my", "you", or "your", or a form of them such as "I'm" or "yourself", outside backticks and quotes, and the agent asks again with the names (Claude Code).
 
 `.aidrian.local.json` wins over `config.json`, one name at a time.
 `aidrian check` names an unknown key and a name that is not a non-empty string.

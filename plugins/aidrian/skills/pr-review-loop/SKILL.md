@@ -16,7 +16,7 @@ and `product_sensitive` docs when a comment touches what users see, money, or da
 - `git rev-parse --is-inside-work-tree` and `gh auth status` must pass; otherwise stop and say which.
 - Run the branch preflight of the `orchestration` skill's `references/review-rules.md`.
   Its § A ready pull request says when a ready pull request stops after the triage in step 3.
-  Its other sections define the fix-pass cap, the disposition actions, when the bot is out, and a review round.
+  Follow its other sections too: fix passes, proportion, dispositions, the bot out, a review round.
 
 ## 1. Run the review plan
 

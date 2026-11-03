@@ -118,7 +118,8 @@ test('the shared temp deny names the one body path pr-write uses, and a body fil
   const scratchpad = '/private/tmp/claude-501/-work-app/0b1c/scratchpad/pr-body.md';
   const reason = run(`gh pr create -t "[NOISSUE] feat: x" --body-file ${scratchpad}`);
   assert.match(reason, /^Blocked: the body file `\/private\/tmp\/claude-501\/.*` is in a shared temp folder/);
-  assert.ok(reason.includes(`Write the body to \`${file}\` and pass that path, written out, to --body-file`), reason);
+  assert.ok(reason.includes(`is in a shared temp folder, which concurrent sessions overwrite. Do this instead: 1. write the body to \`${file}\`, ` +
+    `with the file tool or with \`cat > ${file} <<'EOF'\` earlier in this command; 2. run \`gh pr create --body-file ${file}\``), reason);
   assert.match(reason, /scratchpad/);
   assert.doesNotMatch(reason, /current worktree/, 'pr-write writes the body outside the repository');
   assert.ok(run(`gh pr create -H acme:feat/other -t "[NOISSUE] feat: x" -F ${scratchpad}`).includes(path.join(state, 'tmp', 'pr-body-feat-other.md')), 'the --head branch');

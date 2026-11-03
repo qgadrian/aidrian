@@ -1,9 +1,10 @@
 // The one shell lexer behind the Bash rules. It reads a command line the way bash splits it, without running anything:
 // quotes, escapes, comments, operators, redirections, heredocs, and command substitutions.
 //
-// A token is { text, dynamic, operator?, fdDup? }: `text` without its quotes; `dynamic` when it holds `$`, a backtick,
-// or a glob, so a rule never guesses at its value; `operator` for a redirection (`>`, `>>`, `<`); `fdDup` for the
-// `&1` of `2>&1`. Everything a rule cannot read is meant to fail open: an unknown shape yields no match, never a deny.
+// A token is { text, dynamic, operator?, fd?, fdDup? }: `text` without its quotes; `dynamic` when it holds `$`, a
+// backtick, or a glob, so a rule never guesses at its value; `operator` for a redirection (`>`, `>>`, `<`); `fd` for the
+// descriptor a redirection names before it, as written (`2` of `2>`, `{x}` of `{x}<`), absent when it names none;
+// `fdDup` for the `&1` of `2>&1`. Everything a rule cannot read is meant to fail open: an unknown shape yields no match, never a deny.
 
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
@@ -104,7 +105,8 @@ function lexSegments(command) {
   const separators = [];
   const substitutions = [];
   const ends = [];
-  // Each heredoc body as { segment, body }: the index of the segment whose `<<` opened it, and its text.
+  // Each heredoc body as { segment, body, expands, fd? }: the index of the segment whose `<<` opened it, its text,
+  // whether bash expands it (its delimiter is unquoted), and the descriptor it feeds when one is written (`3<<EOF`).
   const heredocs = [];
   let tokens = [];
   let current = null;
@@ -137,7 +139,7 @@ function lexSegments(command) {
 
     if (ch === '\n' && pendingHeredocs.length > 0) {
       // Skip the body lines up to the delimiter line, then lex on.
-      const { delimiter, expands, segment } = pendingHeredocs.shift();
+      const { delimiter, expands, segment, fd } = pendingHeredocs.shift();
       const rest = command.slice(i + 1);
       let consumed = 0;
       let body = 0;
@@ -151,7 +153,7 @@ function lexSegments(command) {
         body = consumed;
       }
       const bodyEnd = Math.min(i + 1 + body, command.length);
-      heredocs.push({ segment, body: command.slice(i + 1, bodyEnd) });
+      heredocs.push({ segment, body: command.slice(i + 1, bodyEnd), expands, ...(fd === undefined ? {} : { fd }) });
       if (expands) collectSubstitutions(command, i + 1, bodyEnd, bodyEnd, substitutions);
       i += closed ? consumed : rest.length;
       endSegment();
@@ -244,9 +246,11 @@ function lexSegments(command) {
 
     if (ch === '>' || ch === '<') {
       if (command[i + 1] === '(') substitutions.push(command.slice(i + 2, closingParen(command, i + 1, command.length)));
-      // A bare fd prefix (`2>`) belongs to the operator, not to a filename.
-      if (current && !/^\d+$/u.test(current.text)) endToken();
+      // A bare fd prefix (`2>`, or bash's named `{x}>`) belongs to the operator, not to a filename.
+      const fd = current && (/^\d+$/u.test(current.text) || /^\{[A-Za-z_]\w*\}$/u.test(current.text)) ? current.text : null;
+      if (current && fd === null) endToken();
       else current = null;
+      const named = fd === null ? {} : { fd };
       let operator = ch;
       // `>|` writes as `>` does, past noclobber.
       if (ch === '>' && command[i + 1] === '|') i += 1;
@@ -257,7 +261,7 @@ function lexSegments(command) {
       if (operator === '<<' && command[i + 1] === '<') {
         // `<<<word`: a here-string, one input redirect whose word lexes as usual.
         i += 1;
-        tokens.push({ text: '<<<', dynamic: false, operator: '<' });
+        tokens.push({ text: '<<<', dynamic: false, operator: '<', ...named });
         continue;
       }
       if (operator === '<<') {
@@ -272,11 +276,11 @@ function lexSegments(command) {
           else quoted = true;
           j += 1;
         }
-        pendingHeredocs.push({ delimiter, expands: !quoted, segment: segments.length });
+        pendingHeredocs.push({ delimiter, expands: !quoted, segment: segments.length, ...named });
         i = j - 1;
         continue;
       }
-      tokens.push({ text: operator, dynamic: false, operator: operator === '<' ? '<' : operator });
+      tokens.push({ text: operator, dynamic: false, operator: operator === '<' ? '<' : operator, ...named });
       if (command[i + 1] === '&') {
         // `2>&1` and `>&-` name a descriptor, never a path; `>&file` and `>& file` write the file, as `&>` does.
         let j = i + 2;
@@ -684,9 +688,9 @@ const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
 
 // Every command a command line runs, in the order it runs, nested ones included: the body of each command substitution
 // (before the command that owns it), each `sh -c "<string>"`, and each command line a heredoc or here-string feeds a
-// shell. Each is { segment, invocation, folder, line, inputs }: `folder` is the folder it runs in, from `cwd`, or null
-// when it cannot be known; `line` is the command line it was read from; `inputs` the heredoc bodies and here-string
-// words fed to its input. A leading `cd <dir> &&` moves the folder; any other directory change (in a subshell, a pipe,
+// shell. Each is { segment, invocation, folder, line, inputs, heredocs }: `folder` is the folder it runs in, from `cwd`,
+// or null when it cannot be known; `line` is the command line it was read from; `inputs` the heredoc bodies and
+// here-string words fed to its input; `heredocs` its heredocs alone, as { body, expands, fd? }. A leading `cd <dir> &&` moves the folder; any other directory change (in a subshell, a pipe,
 // after `;` or `||`, a second one) leaves it unknown for the commands after it. A wrapper's own directory (`env -C`)
 // and git's `-C` apply to their command only. Directory changes themselves are left out.
 export function walkCommands(command, cwd) {
@@ -713,11 +717,12 @@ export function walkCommands(command, cwd) {
           if (GIT_VALUE_GLOBALS.has(args[i].text)) i += 1;
         }
       }
+      const own = heredocs.filter((each) => each.segment === index).map(({ body, expands, fd }) => ({ body, expands, ...(fd === undefined ? {} : { fd }) }));
       const inputs = [
-        ...heredocs.filter((each) => each.segment === index).map((each) => each.body),
+        ...own.map((each) => each.body),
         ...segment.flatMap((token, at) => (token.operator && token.text === '<<<' && segment[at + 1] ? [segment[at + 1].text] : [])),
       ];
-      out.push({ segment, invocation, folder, line, inputs });
+      out.push({ segment, invocation, folder, line, inputs, heredocs: own });
       const inner = inlineShellCommand(invocation);
       if (inner !== null) nested(inner, folder);
       else if (readsShellInput(invocation)) for (const body of inputs) nested(body, folder);

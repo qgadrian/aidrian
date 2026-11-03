@@ -217,6 +217,22 @@ function guarded(t, { asking = true } = {}) {
 
 const QUESTION = 'Pull request #12 reached its review-round cap. Grant one extra review round, round 3?';
 
+test('the review-extend rule reads the call inside a shell string, eval, or a heredoc fed to a shell', (t) => {
+  const g = guarded(t);
+  g.write(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: QUESTION }] } }));
+  for (const command of [
+    'bash -c "aidrian pr extend 12 --human approve"',
+    "sh -c 'aidrian pr extend 12 --human=approve'",
+    'eval "aidrian pr extend 12 --human approve"',
+    "bash <<'EOF'\naidrian pr extend 12 --human approve\nEOF",
+    'echo "aidrian pr extend 12 --human approve" | bash',
+  ]) assert.match(g.run(command) ?? '', /holds no such answer/u, command);
+  assert.equal(g.run("bash -c 'echo hi'"), null, 'an ordinary shell string');
+  assert.equal(g.run('bash -c "aidrian pr extend 12 --human deny"'), null, 'deny always runs, wrapped too');
+  g.write(g.answer(QUESTION, 'Approve round 3'));
+  assert.equal(g.run('bash -c "aidrian pr extend 12 --human approve"'), null, 'the Human`s approval, wrapped');
+});
+
 test('the review-extend rule: an agent records the Human`s approval only after the Human picked it', (t) => {
   const g = guarded(t);
   g.write(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: QUESTION }] } }));

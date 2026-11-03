@@ -8,7 +8,9 @@
 // refused too: the review step writes that record before it prints `extension_ask`, so only a record from another
 // machine lacks it, and that approval is the Human's to run. After a judge's stop nothing waits for an answer, so that
 // deny names the Human's route to one more round instead: AIDRIAN_ALLOW_EXTRA_ROUNDS=1 with --max-rounds, in their shell.
-// Every deny says why the transcript's answers miss, and a chain of calls is judged call by call.
+// Every deny says why the transcript's answers miss, and a chain of calls is judged call by call, wherever each runs
+// (shell-lex walkCommands): in a substitution, `sh -c`, `eval`, or a heredoc fed to a shell. A shell fed text the rule
+// cannot read as commands, such as a pipe into `bash`, is refused when that text names an approval.
 // The Human may also run the command in their own shell (`!` in a Claude Code prompt, or another terminal), which no
 // hook reads. Without a transcript the host writes in this shape (Codex), the approval is the Human's to run.
 
@@ -16,8 +18,7 @@ import { readFileSync } from 'node:fs';
 
 import { findProject } from '../project.mjs';
 import { readLocalState } from '../review/state.mjs';
-import { commandLines, lexCommand, readInvocation } from '../shell-lex.mjs';
-import { aidrianArgs } from '../shell-lex.mjs';
+import { aidrianArgs, walkCommands } from '../shell-lex.mjs';
 
 const LEAD = 'Blocked: `aidrian pr extend --human approve` records the Human\'s approval of an extra review round';
 
@@ -151,13 +152,11 @@ export function check(command, { cwd = process.cwd(), input = {} } = {}) {
   const project = findProject(cwd);
   if (!project) return null;
   const denies = [];
-  for (const line of commandLines(command)) {
-    for (const segment of lexCommand(line)) {
-      const call = extendCall(aidrianArgs(readInvocation(segment)));
-      if (!call || call.answer === 'deny') continue;
-      const denied = judge(call, project, input);
-      if (denied && !denies.includes(denied)) denies.push(denied);
-    }
+  for (const { invocation, unread } of walkCommands(command, null)) {
+    const hidden = unread !== undefined && /\bpr\s+extend\b[\s\S]*\bapprove\b/u.test(unread) ? reason(null, null, 'it runs in a shell fed text the rule cannot read as commands; run it as its own command') : null;
+    const call = hidden ? null : extendCall(aidrianArgs(invocation));
+    const denied = hidden ?? (call && call.answer !== 'deny' ? judge(call, project, input) : null);
+    if (denied && !denies.includes(denied)) denies.push(denied);
   }
   return denies.length ? denies.join('\n') : null;
 }

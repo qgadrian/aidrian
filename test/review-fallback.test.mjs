@@ -98,3 +98,18 @@ test('aidrian pr signoff takes one of --flow or --stage', () => {
     assert.match(run, /--head and one of --flow or --stage are required\nexit 1/u, args.join(' '));
   }
 });
+
+test('the review-fallback rule reads the call inside a shell string, eval, or a heredoc fed to a shell', (t) => {
+  const g = guarded(t);
+  for (const command of [
+    'bash -c "aidrian pr review 12 --quota-fallback agent:critic"',
+    "sh -c 'aidrian pr review 12 --quota-fallback human'",
+    'eval "aidrian pr review 12 --quota-fallback agent:critic"',
+    "bash <<'EOF'\naidrian pr review 12 --quota-fallback agent:critic\nEOF",
+  ]) assert.match(g.run(command) ?? '', /holds no such choice by the Human/u, command);
+  assert.match(g.run('echo "aidrian pr review 12 --quota-fallback agent:critic" | bash') ?? '', /a shell fed text the rule cannot read/u);
+  assert.equal(g.run("bash -c 'echo hi'"), null, 'an ordinary shell string');
+  assert.equal(g.run('bash -c "aidrian pr review 12"'), null, 'a wrapped step without the flag');
+  g.write(g.answer(asked.question, agent));
+  assert.equal(g.run('bash -c "aidrian pr review 12 --quota-fallback agent:critic"'), null, 'the Human`s pick, wrapped');
+});

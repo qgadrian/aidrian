@@ -604,3 +604,65 @@ test('a gh api merge whose number, repository, or method the rule cannot read is
   assert.match(r.run('gh api -X "$METHOD" repos/acme/notes/pulls/5/merge') ?? '', /is `running`/u, 'a method it cannot read may be PUT');
   assert.equal(r.run('gh api repos/acme/notes/pulls/$PR'), null, 'not a merge path');
 });
+
+test('a merge inside a shell string, eval, or a heredoc fed to a shell is guarded as one run directly', (t) => {
+  const r = repo(t);
+  r.record(5, (state) => outcome(state, 'running'));
+  for (const command of [
+    'bash -c "gh pr merge 5 --squash"',
+    "bash -c 'gh pr merge 5'",
+    'sh -c "gh api -X PUT repos/acme/notes/pulls/5/merge"',
+    'eval "gh pr merge 5 --squash"',
+    'eval gh pr merge 5',
+    "bash <<'EOF'\ngh pr merge 5 --squash\nEOF",
+    'sh -s <<< "gh pr merge 5"',
+    'x=$(bash -c "gh pr merge 5")',
+  ]) assert.match(r.run(command) ?? '', /pull request #5 at abcdef1, and the review of head abcdef1 is `running`/u, command);
+  r.record(6, (state) => outcome(state, 'received'));
+  assert.equal(r.run('bash -c "gh pr merge 6 --squash"'), null, 'a wrapped merge whose review finished merges');
+  assert.equal(r.run("bash -c 'echo hi'"), null, 'an ordinary shell string');
+  assert.equal(r.run('eval "$(ssh-agent -s)"'), null, 'an ordinary eval');
+  assert.equal(r.run('bash -c "$CMD"'), null, 'a shell string the rule cannot read, naming no merge');
+});
+
+test('a merge fed to a shell as text the rule cannot read is refused; other text fed to a shell runs', (t) => {
+  const r = repo(t);
+  for (const command of ['echo "gh pr merge 5 --squash" | bash', "printf 'gh api -X PUT repos/acme/notes/pulls/5/merge' | sh -s"]) {
+    assert.match(r.run(command) ?? '', /feeds a shell text the merge guard cannot read as commands/u, command);
+  }
+  assert.equal(r.run('cat setup.sh | bash'), null, 'a pipe into a shell naming no merge');
+  assert.equal(r.run('bash scripts/build.sh'), null, 'a script');
+  assert.equal(r.run('echo "gh pr merge 5"'), null, 'a merge named as text, run by no shell');
+});
+
+test('the record is scoped to the merge`s repository: origin#5 and upstream#5 share a number, not a review', (t) => {
+  const r = repo(t);
+  // A fork checkout: origin is acme/notes. The Human asked for a bot review of upstream/notes#5, never sent.
+  writeLocalState(r.project, emptyState(5, 'acme/notes'));
+  recordPending(r.project, { pr: 5, repo: 'upstream/notes', kind: 'request', head: HEAD, by: 'H' });
+  for (const command of [`gh pr merge 5 -R acme/notes --match-head-commit ${HEAD}`, `gh api -X PUT repos/acme/notes/pulls/5/merge -f sha=${HEAD}`, `gh pr merge https://github.com/acme/notes/pull/5 --match-head-commit ${HEAD}`]) {
+    assert.equal(r.run(command), null, `${command}: the upstream's request is not origin's`);
+  }
+  assert.equal(checkMcp({ owner: 'Acme', repo: 'Notes', pullNumber: 5, sha: HEAD }, { cwd: r.dir, input: {}, viewPr: r.viewer() }), null, 'the MCP merge of origin#5');
+  // Fork safety: the upstream's merge stays guarded, and so does a merge that names no repository, whose gh default may be the upstream.
+  assert.match(r.run(`gh pr merge 5 -R upstream/notes --match-head-commit ${HEAD}`) ?? '', /never sent/u);
+  assert.match(checkMcp({ owner: 'Upstream', repo: 'Notes', pullNumber: 5, sha: HEAD }, { cwd: r.dir, input: {}, viewPr: r.viewer() }) ?? '', /never sent/u);
+  assert.match(r.run(`gh pr merge 5 --match-head-commit ${HEAD}`) ?? '', /never sent/u, 'no repository named');
+  assert.match(r.run('gh pr merge 5 -R "$REPO"') ?? '', /never sent/u, 'a repository the rule cannot read');
+});
+
+test('an outcome is the record`s repository`s: another repository`s step neither blocks nor clears a merge', (t) => {
+  const r = repo(t);
+  // The review step ran on upstream/notes#5 and is still running; origin acme/notes#5 has no review of its own.
+  r.record(5, (state) => (state.repo = 'upstream/notes', state.rounds.push({ head: HEAD }), outcome(state, 'running')));
+  assert.equal(r.run('gh pr merge 5 -R acme/notes', { head: null }), null, 'origin#5: no record of its own, no gh call needed');
+  assert.equal(checkMcp({ owner: 'acme', repo: 'notes', pullNumber: 5, sha: HEAD }, { cwd: r.dir, input: {}, viewPr: r.viewer() }), null);
+  assert.match(r.run('gh pr merge 5 -R upstream/notes') ?? '', /is `running`/u);
+  // A step finished on origin#5 does not clear the gate review the upstream still owes.
+  r.record(6, (state) => {
+    outcome(state, 'received');
+    state.pending.push({ kind: 'review', head: HEAD, at: '2026-11-03T13:50:00.000Z', by: 'H', repo: 'upstream/notes' });
+  });
+  assert.equal(r.run('gh pr merge 6 -R acme/notes'), null);
+  assert.match(r.run('gh api -X PUT repos/upstream/notes/pulls/6/merge') ?? '', /no result on record/u);
+});

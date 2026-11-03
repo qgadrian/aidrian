@@ -298,3 +298,18 @@ test('only an unquoted fd prefix right against < or > is a descriptor; a quoted 
   assert.deepEqual(read('{fd}>/dev/null pkill node'), ['{fd}>', '/dev/null', 'pkill', 'node']);
   assert.deepEqual([programOf('sudo -u {fd}>/dev/null root pkill node'), argsOf('sudo -u {fd}>/dev/null root pkill node')], ['pkill', ['node']], 'a redirect takes no argument slot');
 });
+
+test('walkCommands reads an eval string, and names the text a shell runs that it cannot read', () => {
+  const programs = (command) => walkCommands(command, null).map((entry) => [entry.invocation.program, entry.unread]);
+  assert.deepEqual(programs('eval "git push --force"'), [['eval', undefined], ['git', undefined]], 'eval joins its words and runs them');
+  assert.deepEqual(programs('eval git push'), [['eval', undefined], ['git', undefined]]);
+  assert.deepEqual(programs('echo "git push" | bash'), [['echo', undefined], ['bash', 'echo "git push" | bash']], 'a pipe into a shell');
+  assert.deepEqual(programs('ls; cat f |& sh -s'), [['ls', undefined], ['cat', undefined], ['sh', 'cat f |& sh -s']], 'only the pipeline that feeds it');
+  assert.deepEqual(programs('bash build.sh'), [['bash', 'bash build.sh']], 'a script');
+  assert.deepEqual(programs("bash -c 'git push'"), [['bash', undefined], ['git', undefined]], 'a shell string it reads');
+  assert.deepEqual(programs("bash <<'EOF'\ngit push\nEOF"), [['bash', undefined], ['git', undefined]], 'a heredoc fed to a shell');
+  // Seven shells deep, past the depth limit, the innermost string goes unread.
+  let deep = 'git push';
+  for (let i = 0; i < 7; i += 1) deep = `bash -c ${JSON.stringify(deep)}`;
+  assert.match(walkCommands(deep, null).at(-1).unread ?? '', /git push/u);
+});

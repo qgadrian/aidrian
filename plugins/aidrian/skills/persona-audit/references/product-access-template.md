@@ -52,7 +52,7 @@ when Accounts lists more than one.
 ## Where each task lives
 
 - floor-manager: Move a booking to another table: the floor plan at `http://localhost:3000/floor`, with `demo-manager@example.com`.
-- floor-manager: Read tonight's covers: the day summary at `http://localhost:3000/today`, with `demo-manager@example.com`.
+- floor-manager: Check how busy tonight is: the day summary at `http://localhost:3000/today`, with `demo-manager@example.com`.
 
 ## Off limits
 

@@ -24,7 +24,8 @@ const QUOTED = /"[^"]+"|“[^”]+”|`[^`]+`/u;
 
 // { sections: { title: body }, tasks: [{ title, success, outcome }] }. Headings inside code fences are text. `outcome`
 // is the Success: paragraph after its label, its lines joined by one space up to a blank line, a heading, a list item,
-// or a fence; a later Success: line of the same task adds its paragraph after one space; null for a task without one.
+// a fence, or another Success: line; a later Success: line of the same task adds its paragraph after one space; null for
+// a task without one.
 export function parsePersona(text) {
   const lines = String(text).split(/\r?\n/u);
   const fenced = fencedLines(text);
@@ -34,7 +35,7 @@ export function parsePersona(text) {
   let task = null;
   let paragraph = false;
   lines.forEach((line, index) => {
-    const ends = fenced[index] || line.trim() === '' || ANY_HEADING.test(line) || LIST_ITEM.test(line);
+    const ends = fenced[index] || line.trim() === '' || ANY_HEADING.test(line) || LIST_ITEM.test(line) || SUCCESS.test(line);
     if (paragraph && !ends) task.outcome += ` ${line.trim()}`;
     else paragraph = false;
     const title = fenced[index] ? null : headingOf(line);

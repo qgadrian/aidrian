@@ -45,7 +45,7 @@ holds only how a session reaches the product and what it may touch.
 - Start from market and user research, such as interviews, support tickets, and data, and name it in `Evidence`.
   A persona written from the product's feature list restates the product.
 - A task is a real job the person has, in their words, whether or not the product does it today.
-  Keep a job the product cannot do: a walk reports it as `blocked`, and a run that cannot walk lists it under `Not reached`.
+  Keep a job the product cannot do: [A run](#a-run) says how a run reports it.
 - One persona per person. A task whose job differs per business mode is one `### <task>` per mode, each with a title
   that names the mode, such as `Seat a walk-in party (tables)` and `Book a treatment (services)`.
 - `Who` names the one familiarity the walk starts from. The doc may say real users range wider.
@@ -76,11 +76,13 @@ read as before:
 
 - `Before a walk`: the start command and the URL it serves, the environment variables that must be set, by name, the
   ports that must be free, and the hosts a sign-in redirect returns to. A run checks them before the first task; when
-  the check fails, it walks nothing and puts what failed in `Not reached`.
+  the check fails, it walks nothing, says what failed in `Not reached`, and falls back to `seen` or `read`.
 - `Allowed changes`: the data a run may change, whether an environment is shared with other sessions, and whether the
-  reset command is safe while another session uses it. Any other data change is off limits.
+  reset command is safe while another session uses it; where it is not, a run walks without the reset. Any other data
+  change is off limits.
 - `Where each task lives`: one line per persona task, `<persona id>: <task title>: <screen, route, or command>, with
-  <account>`, naming the account when `Accounts` lists more than one.
+  <account>`, naming the account when `Accounts` lists more than one; a task with no line uses the first account
+  `Accounts` lists.
 
 `Off limits` stays a list of what a run never does.
 
@@ -117,9 +119,8 @@ only to locate a finding for its owner.
 A task the product cannot do is a finding only from a walk: walked and blocked, the code read after it picks the
 owner, `ux-specialist` for a capability the persona did not reach and `product-manager` for one with no screen, route,
 endpoint, or command. At `seen` or `read` it gets no finding: `Not reached` lists it, with what was searched and
-`product-manager` as the one to ask. A task behind a plan or feature the demo account lacks is not reached, never a
-product gap. The walk stays within the tasks in scope: an idea that comes up in character is not walked, and the report
-lists it under `Persona doc gaps` as a suggested task, which the author adds with a `Success:` line for the next run to walk.
+`product-manager` as the one to ask. The walk stays within the tasks in scope: an idea that comes up in character is
+not walked, and the report lists it under `Persona doc gaps` as a suggested task, which the author adds with a `Success:` line for the next run to walk.
 
 A run reaches the product only the way `product-access` says, keeps to its `Off limits`, and never pays, messages a
 real person, changes data outside the demo account, or writes a secret or personal data into the report.

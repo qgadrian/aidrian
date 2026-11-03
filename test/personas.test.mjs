@@ -120,6 +120,9 @@ test('a Success: paragraph that quotes the product warns, naming the task and th
   assert.equal(parsePersona(second).tasks[1].outcome, 'every dish fits on one screen. the notes show under "Notes".');
   assert.deepEqual(personaWarnings(second), [`task "Read a ticket": Success: quotes "Notes"; ${WARN}`], 'a later Success: line counts too');
 
+  const adjacent = PERSONA.replace('- **Success:** every dish and its notes fit on one screen.', 'Success: a.\nSuccess: b.');
+  assert.equal(parsePersona(adjacent).tasks[1].outcome, 'a. b.', 'a Success: line ends the Success: paragraph before it');
+
   const single = PERSONA.replace('the dish shows as ready', "the dish shows 'Ready'");
   assert.deepEqual(personaWarnings(single), [], 'single quotes do not count');
 });

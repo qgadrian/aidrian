@@ -56,7 +56,7 @@ A booked table is out of service, and its party arrives in ten minutes.
 
 Success: the booking shows on the new table at the same time, and the old table shows as free.
 
-### Read tonight's covers
+### Check how busy tonight is
 
 Before service, the manager checks how busy the evening will be.
 

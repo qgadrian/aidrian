@@ -243,6 +243,23 @@ const errorCases = [
   ['an empty Bash prefix', { version: 1, agents: { main: { deny: ['Bash( )'] } } }, /Bash\(\) needs a command prefix/],
   ['a path pattern', { version: 1, agents: { main: { deny: ['Read(./secrets/**)'] } } }, /a pattern is a tool name such as Read/],
   ['an empty list of commit types', { version: 1, git: { commits: { types: [] } } }, /"git\.commits\.types" must be a non-empty list of non-empty strings$/],
+  ['quorum that is not an object', { version: 1, quorum: 'codex' }, /"quorum" must be an object$/],
+  ['an unknown quorum key', { version: 1, quorum: { plan: { c: { agent: 'architect' } } } }, /: unknown key "quorum\.plan\.c"$/],
+  ['a decide position cap, which nothing reads', { version: 1, quorum: { decide: { maxPositions: 3 } } }, /: unknown key "quorum\.decide\.maxPositions"$/],
+  // Plan adversary A has no Codex path: its briefs read the ledger, and `quorum codex --mode rebut` answers only B.
+  ['a provider on plan adversary A', { version: 1, quorum: { plan: { a: { provider: 'codex' } } } }, /: unknown key "quorum\.plan\.a\.provider"$/],
+  ['a provider other than agent or codex', { version: 1, quorum: { plan: { b: { provider: 'Codex' } } } }, /"quorum\.plan\.b\.provider" must be "agent" or "codex"$/],
+  ['a decide provider other than agent or codex', { version: 1, quorum: { decide: { odd: { provider: 'claude' } } } }, /"quorum\.decide\.odd\.provider" must be "agent" or "codex"$/],
+  ['no objections per adversary', { version: 1, quorum: { plan: { maxObjections: 0 } } }, /"quorum\.plan\.maxObjections" must be a whole number from 1 to 5$/],
+  ['more objections than the ledger holds', { version: 1, quorum: { plan: { maxObjections: 6 } } }, /"quorum\.plan\.maxObjections" must be a whole number from 1 to 5$/],
+  ['a fractional objection cap', { version: 1, quorum: { plan: { maxObjections: 2.5 } } }, /"quorum\.plan\.maxObjections" must be a whole number from 1 to 5$/],
+  ['a dispatch cap with no room for the reserved pass', { version: 1, quorum: { plan: { maxDispatches: 4 } } }, /"quorum\.plan\.maxDispatches" must be a whole number, 5 or more$/],
+  ['a fractional dispatch cap', { version: 1, quorum: { plan: { maxDispatches: 6.5 } } }, /"quorum\.plan\.maxDispatches" must be a whole number, 5 or more$/],
+  ['a judge agent name with a space', { version: 1, quorum: { judge: { agent: 'the architect' } } }, /"quorum\.judge\.agent" must be an agent name such as code-reviewer$/],
+  ['an agent name that is not text', { version: 1, quorum: { decide: { even: { agent: 3 } } } }, /"quorum\.decide\.even\.agent" must be an agent name such as code-reviewer$/],
+  ['"*", which names every agent, as a quorum agent', { version: 1, quorum: { plan: { a: { agent: '*' } } } }, /"quorum\.plan\.a\.agent" must be an agent name such as code-reviewer$/],
+  ['"main", the main session\'s gate selector, as a quorum agent', { version: 1, quorum: { judge: { agent: 'main' } } }, /"quorum\.judge\.agent" must be an agent name such as code-reviewer$/],
+  ['a swap switch that is not a boolean', { version: 1, quorum: { decide: { swap: 'yes' } } }, /"quorum\.decide\.swap" must be true or false$/],
 ];
 
 for (const [name, value, expected] of errorCases) {
@@ -252,9 +269,51 @@ for (const [name, value, expected] of errorCases) {
     assert.match(errors[0], /^\.aidrian\/config\.json: /);
     assert.match(errors[0], expected);
     assert.equal(current, true);
-    for (const key of ['git', 'github', 'docs']) assert.deepEqual(config[key], DEFAULTS[key], key);
+    for (const key of ['git', 'github', 'docs', 'quorum']) assert.deepEqual(config[key], DEFAULTS[key], key);
   });
 }
+
+test('quorum: the defaults are today\'s roles and caps; plan adversary A holds only an agent, and decide has no position cap', () => {
+  assert.deepEqual(DEFAULTS.quorum, {
+    judge: { agent: 'architect' },
+    plan: {
+      a: { agent: 'code-reviewer' },
+      b: { provider: 'codex', agent: 'product-manager' },
+      maxObjections: 5,
+      maxDispatches: 8,
+    },
+    decide: {
+      odd: { provider: 'agent', agent: 'code-reviewer' },
+      even: { provider: 'codex', agent: 'code-reviewer' },
+      swap: true,
+    },
+  });
+});
+
+test('quorum: a project that sets only plan.b.provider keeps every other default', (t) => {
+  const { config, errors } = loadConfig(project(t, { version: 1, quorum: { plan: { b: { provider: 'agent' } } } }));
+  assert.deepEqual(errors, []);
+  assert.deepEqual(config.quorum, {
+    ...DEFAULTS.quorum,
+    plan: { ...DEFAULTS.quorum.plan, b: { provider: 'agent', agent: 'product-manager' } },
+  });
+});
+
+test('quorum: the edges of each range and a project agent name are accepted', (t) => {
+  const quorum = {
+    judge: { agent: 'acme:staff-architect' },
+    plan: { a: { agent: 'security-reviewer' }, maxObjections: 1, maxDispatches: 5 },
+    decide: { odd: { provider: 'codex' }, even: { provider: 'agent', agent: 'product-manager' }, swap: false },
+  };
+  const { config, errors } = loadConfig(project(t, { version: 1, quorum }));
+  assert.deepEqual(errors, []);
+  assert.deepEqual(config.quorum, {
+    judge: { agent: 'acme:staff-architect' },
+    plan: { ...DEFAULTS.quorum.plan, a: { agent: 'security-reviewer' }, maxObjections: 1, maxDispatches: 5 },
+    decide: { odd: { provider: 'codex', agent: 'code-reviewer' }, even: { provider: 'agent', agent: 'product-manager' }, swap: false },
+  });
+  assert.deepEqual(loadConfig(project(t, { version: 1, quorum: { plan: { maxObjections: 5, maxDispatches: 40 } } })).errors, []);
+});
 
 // Errors that drop a deny list or a whole agents entry are gate errors, whatever their text; a bad allow pattern is not.
 test('gateErrors lists the errors that drop a gate, and malformedGates reads only them', (t) => {

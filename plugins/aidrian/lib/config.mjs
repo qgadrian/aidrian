@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { agentNameProblem, patternProblem } from './agent-gates.mjs';
+import { agentNameProblem, ALL, MAIN, patternProblem } from './agent-gates.mjs';
 import { isFile, isObject, readJson } from './fs.mjs';
 import { checkLocalReview, checkLocalVisual, checkReview, REVIEW_DEFAULTS } from './review/config.mjs';
 
@@ -22,6 +22,16 @@ const GIT_SCHEMA = {
   worktrees: { dir: 'text', bootstrap: 'textOrNull', disposable: 'folderNames' },
   mainCheckout: { guard: 'boolean', allowWrites: 'texts' },
   commits: { types: 'someTexts' },
+};
+
+// The keys of the `quorum` group: the quorum skill's roles, providers, judge, and caps (skills/quorum/).
+// Plan adversary A takes no provider: its briefs read the ledger, and `aidrian quorum codex --mode rebut` answers only
+// B's objections, so A has no Codex path, and a `provider` on it is an unknown key.
+const QUORUM_RUNNER = { provider: 'quorumProvider', agent: 'agentName' };
+const QUORUM_SCHEMA = {
+  judge: { agent: 'agentName' },
+  plan: { a: { agent: 'agentName' }, b: QUORUM_RUNNER, maxObjections: 'objectionCap', maxDispatches: 'dispatchCap' },
+  decide: { odd: QUORUM_RUNNER, even: QUORUM_RUNNER, swap: 'boolean' },
 };
 
 // The type of every key. A nested object is one group of keys; a project sets any subset of a group.
@@ -78,6 +88,7 @@ const SCHEMA = {
   },
   agents: 'agents',
   requires: { aidrian: 'versionOrNull' },
+  quorum: QUORUM_SCHEMA,
 };
 
 // Keys a format change renamed or moved, old name to new; a key inside a group is named with its group, "group.key".
@@ -158,6 +169,13 @@ const TYPES = {
   handoffMode: [(value) => HANDOFF_MODES.includes(value), '"off", "ask", or "auto"'],
   readyMode: [(value) => ['ask', 'auto'].includes(value), '"ask" or "auto"'],
   extraMode: [(value) => ['off', 'ask', 'auto'].includes(value), '"off", "ask", or "auto"'],
+  // One agent a dispatch names. "*" and "main" select gates in `agents`, every agent and the main session; neither is one agent.
+  agentName: [(value) => isText(value) && value !== ALL && value !== MAIN && !agentNameProblem(value), 'an agent name such as code-reviewer'],
+  quorumProvider: [(value) => ['agent', 'codex'].includes(value), '"agent" or "codex"'],
+  // Five is the per-adversary objection count the quorum ledger check allows a plan ledger.
+  objectionCap: [(value) => Number.isInteger(value) && value >= 1 && value <= 5, 'a whole number from 1 to 5'],
+  // The least a plan run needs: two objection dispatches, one ruling, one Codex fallback, and the reserved proportionality pass.
+  dispatchCap: [(value) => Number.isInteger(value) && value >= 5, 'a whole number, 5 or more'],
   versionOrNull: [(value) => value === null || (typeof value === 'string' && SEMVER.test(value)), 'a plugin version such as "0.17.0", or null'],
 };
 
@@ -230,6 +248,22 @@ export const DEFAULTS = deepFreeze({
     },
   },
   agents: {},
+  // The quorum skill's roles and caps, today's by default. `agent` is a role's agent on provider "agent", and its
+  // fallback on "codex". `decide.odd` runs positions A and C, `decide.even` B and D; `swap` turns the odd-hash claim swap on.
+  quorum: {
+    judge: { agent: 'architect' },
+    plan: {
+      a: { agent: 'code-reviewer' },
+      b: { provider: 'codex', agent: 'product-manager' },
+      maxObjections: 5,
+      maxDispatches: 8,
+    },
+    decide: {
+      odd: { provider: 'agent', agent: 'code-reviewer' },
+      even: { provider: 'codex', agent: 'code-reviewer' },
+      swap: true,
+    },
+  },
   reviewEngine: 'auto',
   reviewVisual: { baseUrl: null },
 });

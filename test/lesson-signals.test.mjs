@@ -203,18 +203,19 @@ test('a delivery-check send-back becomes a lesson for that agent type; the secon
   assert.deepEqual(plugin().map((lesson) => lesson.key), ['delivery-check:aidrian:planning-agent'], 'the plugin agent\'s lesson is in the plugin\'s inbox');
 });
 
-// A subagent transcript in Claude Code's shape: a background push and a launched reviewer, each with the result that names
-// its id, as the stalled fix agents' transcripts held them.
+// A subagent transcript in Claude Code's shape: a background push and a resumed reviewer, each with the text result and the
+// structured `toolUseResult` that names its id, as the stalled fix agents' transcripts held them.
 function childTranscript(dir) {
   const call = (id, toolId, name, input) =>
     JSON.stringify({ type: 'assistant', message: { id, model: 'claude-opus-5-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'tool_use', id: toolId, name, input }] } });
-  const result = (toolId, text) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content: [{ type: 'text', text }] }] } });
+  const result = (toolId, text, toolUseResult) =>
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content: [{ type: 'text', text }] }] }, toolUseResult });
   const file = path.join(dir, 'agent-a1.jsonl');
   writeFileSync(file, [
     call('m1', 't1', 'Bash', { command: 'git push -u origin fix/x', run_in_background: true }),
-    result('t1', 'Command running in background with ID: bmnjbq03x. Output is being written to: /tmp/tasks/bmnjbq03x.output'),
+    result('t1', 'Command running in background with ID: bmnjbq03x. Output is being written to: /tmp/tasks/bmnjbq03x.output', { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bmnjbq03x' }),
     call('m2', 't2', 'SendMessage', { to: 'a51c8e798c62f1139', message: 'Review the delta, please.' }),
-    result('t2', '{"success":true,"message":"Resuming agent a51c8e7","resumedAgentId":"a51c8e798c62f1139"}'),
+    result('t2', '{"success":true,"message":"Resuming agent a51c8e7","resumedAgentId":"a51c8e798c62f1139"}', { success: true, message: 'Resuming agent a51c8e7', resumedAgentId: 'a51c8e798c62f1139' }),
   ].join('\n'));
   return file;
 }
@@ -257,11 +258,11 @@ test('a subagent that stops with a background task it started still running is s
   assert.equal(plugin()[0].seen, 1, 'a stop with nothing of its own running adds no occurrence');
 });
 
-test('a subagent that reads, waits on, or messages another agent\'s running task is not sent back for it', (t) => {
+test('a subagent that reads, waits on, messages, or quotes the launch of another agent\'s running task is not sent back for it', (t) => {
   const { dir, all, plugin, hook } = project(t);
   const call = (id, toolId, name, input) =>
     JSON.stringify({ type: 'assistant', message: { id, model: 'claude-opus-5-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'tool_use', id: toolId, name, input }] } });
-  const result = (toolId, text) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content: text }] } });
+  const result = (toolId, text, toolUseResult) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content: text }] }, toolUseResult });
   const transcript = path.join(dir, 'agent-a2.jsonl');
   writeFileSync(transcript, [
     call('m1', 't1', 'Bash', { command: 'tail -5 /tmp/tasks/bother0001.output' }),
@@ -269,7 +270,12 @@ test('a subagent that reads, waits on, or messages another agent\'s running task
     call('m2', 't2', 'Bash', { command: 'until ! pgrep -f "git push"; do sleep 5; done', timeout: 600000 }),
     result('t2', 'push of bmnjbq03x done'),
     call('m3', 't3', 'SendMessage', { to: 'a51c8e798c62f1139', message: 'Is the review done?' }),
-    result('t3', '{"success":true,"message":"Message sent to a51c8e798c62f1139\'s inbox"}'),
+    result('t3', '{"success":true,"message":"Message sent to a51c8e798c62f1139\'s inbox"}', { success: true, message: 'Message sent to a51c8e798c62f1139\'s inbox' }),
+    // A foreground command whose output is a saved launch line, and a foreground agent whose report quotes an agentId line.
+    call('m4', 't4', 'Bash', { command: 'cat saved-result.txt' }),
+    result('t4', 'Command running in background with ID: bmnjbq03x. Output is being written to: /tmp/tasks/bmnjbq03x.output', { stdout: 'Command running in background with ID: bmnjbq03x.', stderr: '', interrupted: false }),
+    call('m5', 't5', 'Agent', { description: 'Summarize the stall', prompt: 'Summarize it.' }),
+    result('t5', 'The reviewer was launched as:\nagentId: a51c8e798c62f1139\nand never handed back.\n\nagentId: asum00001 (use SendMessage to continue this agent)', { status: 'completed', agentId: 'asum00001', content: [] }),
   ].join('\n'));
   for (const active of [false, true]) {
     const stop = hook('hook-subagent-stop.mjs', {

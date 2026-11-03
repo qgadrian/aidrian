@@ -66,9 +66,9 @@ const ENDED = new Set(['completed', 'failed', 'killed', 'stopped', 'cancelled', 
 
 // The background tasks this subagent started that still run as it stops: [{ id, type, description }].
 // Claude Code's SubagentStop payload lists `background_tasks` for the whole session, without the agent that started each,
-// so a task counts only when the subagent's own call launched or resumed it, as the host's result for that call names it
-// (launchedTaskIds): a background shell's `Command running in background with ID: <id>`, the `agentId` of an agent it
-// launched, or the `resumedAgentId` of one it resumed. Reading another agent's task, such as its output file, is not owning it.
+// so a task counts only when the subagent's own call launched or resumed it, as the structured result the host stored for
+// that call names it (launchedTaskIds): a Bash call's `backgroundTaskId`, an async Agent launch's `agentId`, or a
+// SendMessage's `resumedAgentId`. Reading another agent's task, or text that quotes a launch, is not owning it.
 // A subagent that ends its turn goes idle, and a background task's completion does not wake it, so it waits forever.
 // A teammate is a peer that messages wake, never a child. A payload without the array (another host, an older Claude
 // Code), or a transcript the hook cannot read, finds none.

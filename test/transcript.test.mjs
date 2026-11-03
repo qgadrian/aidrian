@@ -208,30 +208,39 @@ test('sessionActions reads the commands a Bash call runs, not the text that name
   assert.deepEqual(actions('aidrian pr status 12'), { drafts_opened: 0, review_runs: 0 }, 'another pr subcommand');
 });
 
-test('launchedTaskIds takes the ids the host results give the calls that launched or resumed a task, and no mention of one', () => {
+test('launchedTaskIds takes ids from the structured result of the calls that launched or resumed a task, never from text', () => {
   const call = (id, toolId, name, input) => usageLine(id, 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', id: toolId, name, input }] });
-  const result = (toolId, content) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content }] } });
+  const result = (toolId, content, toolUseResult) =>
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content }] }, toolUseResult });
+  const shell = (stdout, extra = {}) => ({ stdout, stderr: '', interrupted: false, isImage: false, noOutputExpected: false, ...extra });
   const lines = [
     call('m-parent', 't0', 'Bash', { command: 'git push', run_in_background: true }),
-    result('t0', 'Command running in background with ID: bparent01. Output is being written to: /tmp/tasks/bparent01.output'),
+    result('t0', 'Command running in background with ID: bparent01.', shell('', { backgroundTaskId: 'bparent01' })),
     call('m1', 't1', 'Bash', { command: 'npm test', run_in_background: true }),
-    result('t1', [{ type: 'text', text: 'Command running in background with ID: bown0001. Output is being written to: /tmp/tasks/bown0001.output' }]),
+    result('t1', [{ type: 'text', text: 'Command running in background with ID: bown0001.' }], shell('', { backgroundTaskId: 'bown0001' })),
     call('m2', 't2', 'Bash', { command: 'git push -u origin x', timeout: 120000 }),
-    result('t2', 'Command did not complete within its 120s timeout and was moved to the background (ID: bmoved01). Output is being written to: /tmp/tasks/bmoved01.output.'),
-    call('m3', 't3', 'Agent', { description: 'Review', prompt: 'Review it.', run_in_background: true }),
-    result('t3', [{ type: 'text', text: 'Async agent launched successfully.\nagentId: aown00001 (internal ID)\nThe agent is working in the background.' }]),
-    call('m4', 't4', 'SendMessage', { to: 'aold00001', message: 'Again, please.' }),
-    result('t4', [{ type: 'text', text: '{"success":true,"message":"Resuming agent aold000","resumedAgentId":"aold00001"}' }]),
-    // Reading, waiting on, or stopping another agent's task names its id, and launches nothing.
-    call('m5', 't5', 'Bash', { command: 'tail /tmp/tasks/bother001.output; grep -r "background with ID" ~/.claude/projects' }),
-    result('t5', 'pushing...\n"content":"Command running in background with ID: bquoted1. Output"'),
-    call('m6', 't6', 'TaskStop', { task_id: 'bother002' }),
-    result('t6', 'Successfully stopped task: bother002'),
-    call('m7', 't7', 'SendMessage', { to: 'aother001', message: 'Status?' }),
-    result('t7', [{ type: 'text', text: '{"success":true,"message":"Message sent to aother001\'s inbox"}' }]),
-    JSON.stringify({ type: 'user', message: { role: 'user', content: 'Command running in background with ID: bloose01.' } }),
+    result('t2', 'Command did not complete within its 120s timeout and was moved to the background (ID: bmoved01).', shell('', { backgroundTaskId: 'bmoved01', timedOutAfterMs: 120000 })),
+    call('m3', 't3', 'Bash', { command: 'sleep 60', run_in_background: true }),
+    result('t3', 'Command running in background with ID: bnometa1. Output is being written to: /tmp/tasks/bnometa1.output'),
+    call('m4', 't4', 'Agent', { description: 'Review', prompt: 'Review it.', run_in_background: true }),
+    result('t4', [{ type: 'text', text: 'Async agent launched successfully.\nagentId: aown00001 (internal ID)' }], { isAsync: true, status: 'async_launched', agentId: 'aown00001' }),
+    call('m5', 't5', 'SendMessage', { to: 'aold00001', message: 'Again, please.' }),
+    result('t5', [{ type: 'text', text: '{"success":true,"resumedAgentId":"aold00001"}' }], { success: true, message: 'Resuming agent aold000', resumedAgentId: 'aold00001' }),
+    // Text that names or quotes a launch, with no launch in the structured result, launches nothing.
+    call('m6', 't6', 'Bash', { command: 'cat saved-result.txt' }),
+    result('t6', 'Command running in background with ID: bquoted1.', shell('Command running in background with ID: bquoted1.')),
+    call('m7', 't7', 'Bash', { command: 'cat saved-result.txt' }),
+    result('t7', 'Command running in background with ID: bquoted2.'),
+    call('m8', 't8', 'Agent', { description: 'Summarize', prompt: 'Summarize it.' }),
+    result('t8', 'Its reviewer:\nagentId: aquoted01\n\nagentId: adone0001', { status: 'completed', agentId: 'adone0001' }),
+    call('m9', 't9', 'TaskStop', { task_id: 'bother002' }),
+    result('t9', 'Successfully stopped task: bother002', { task_id: 'bother002' }),
+    call('m10', 't10', 'SendMessage', { to: 'aother001', message: 'Status?' }),
+    result('t10', '{"success":true,"message":"Message sent","resumedAgentId":"aquoted02"}', { success: true, message: 'Message sent' }),
+    call('m11', 't11', 'Agent', { name: 'peer', team_name: 'team', prompt: 'Join.' }),
+    result('t11', 'Spawned.', { status: 'teammate_spawned', agentId: 'apeer0001' }),
   ].join('\n');
-  assert.deepEqual([...launchedTaskIds(lines, (key) => key !== 'm-parent')].sort(), ['aold00001', 'aown00001', 'bmoved01', 'bown0001']);
+  assert.deepEqual([...launchedTaskIds(lines, (key) => key !== 'm-parent')].sort(), ['aold00001', 'aown00001', 'bmoved01', 'bnometa1', 'bown0001']);
   assert.ok(launchedTaskIds(lines).has('bparent01'), 'without `keep`, every call counts');
 });
 

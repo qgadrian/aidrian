@@ -175,20 +175,27 @@ export function filesRead(text, keep = () => true) {
   return [...read];
 }
 
-// The ids of the background tasks the transcript's own tool calls launched or resumed, as the host's result for that call
-// names them: a Bash call's result that starts `Command running in background with ID: <id>`, or `Command did not complete
-// within its <n>s timeout and was moved to the background (ID: <id>)`; an `agentId: <id>` line of an Agent call's result;
-// and a SendMessage call's `resumedAgentId`. Each pattern is anchored where the host writes it, so a command's own output
-// that quotes one, such as a search of transcripts, names no launch. `keep` takes a request by key, as in filesRead; a call
-// it refuses, such as one a forked subagent inherited, launched nothing of its own. Any other call that names an id, such
-// as reading a task's output file or stopping it, launched nothing. The stop hook reads it (dispatch-rows.mjs).
-const AGENT_ID = /^agentId: ([\w-]+)/gmu;
+// The ids of the background tasks the transcript's own tool calls launched or resumed, read from the structured result
+// Claude Code stores beside each tool result (the entry's `toolUseResult`), never from a result's text: a command's output
+// or an agent's report that quotes a launch line launches nothing.
+// - Bash: `backgroundTaskId`, set for a call started in the background and for one the host moved there at its timeout.
+//   A call whose input asked for the background and whose entry has no structured result takes the id from the result's
+//   leading `Command running in background with ID: <id>`: such a call's result is the host's, as its output goes to a file.
+// - Agent: `agentId` of an `async_launched` result. A completed foreground agent is not running; a teammate is a peer.
+// - SendMessage: `resumedAgentId`, an agent it resumed.
+// `keep` takes a request by key, as in filesRead; a call it refuses, such as one a forked subagent inherited, launched
+// nothing of its own. Any other call that names an id, such as reading a task's output file or stopping it, launched
+// nothing. The stop hook reads it (dispatch-rows.mjs).
+const LAUNCH_ID = /^[\w-]+$/u;
+const BACKGROUND_LINE = /^Command running in background with ID: ([\w-]+)/u;
+const idOf = (value) => (typeof value === 'string' && LAUNCH_ID.test(value) ? value : null);
 const LAUNCHED = {
-  Bash: /^Command (?:running in background with ID: |did not complete within its \d+s timeout and was moved to the background \(ID: )([\w-]+)/gu,
-  Agent: AGENT_ID,
-  Task: AGENT_ID,
-  SendMessage: /"resumedAgentId":\s*"([\w-]+)"/gu,
+  Bash: (input, result, content) => idOf(result?.backgroundTaskId)
+    ?? (input?.run_in_background === true && (result === undefined || result === null) ? idOf(BACKGROUND_LINE.exec(resultText(content))?.[1]) : null),
+  Agent: (input, result) => (result?.status === 'async_launched' ? idOf(result.agentId) : null),
+  SendMessage: (input, result) => idOf(result?.resumedAgentId),
 };
+LAUNCHED.Task = LAUNCHED.Agent;
 
 export function launchedTaskIds(text, keep = () => true) {
   const calls = new Map();
@@ -199,9 +206,12 @@ export function launchedTaskIds(text, keep = () => true) {
     if (!Array.isArray(content)) continue;
     for (const block of content) {
       if (block?.type === 'tool_use' && typeof block.id === 'string' && Object.hasOwn(LAUNCHED, block.name) && keep(requestKey(entry))) {
-        calls.set(block.id, LAUNCHED[block.name]);
+        calls.set(block.id, { read: LAUNCHED[block.name], input: block.input });
       } else if (block?.type === 'tool_result' && calls.has(block.tool_use_id)) {
-        for (const [, id] of resultText(block.content).matchAll(calls.get(block.tool_use_id))) ids.add(id);
+        const { read, input } = calls.get(block.tool_use_id);
+        const result = typeof entry.toolUseResult === 'object' && !Array.isArray(entry.toolUseResult) ? entry.toolUseResult : undefined;
+        const id = read(input, result, block.content);
+        if (id) ids.add(id);
       }
     }
   }

@@ -357,9 +357,10 @@ or stop it with `TaskStop` when it should not outlive the turn. Its second stop 
 is an occurrence of an [automatic lesson](lessons.md#automatic-lessons) for the plugin.
 
 Claude Code's SubagentStop payload lists the session's in-flight tasks in `background_tasks`, without the agent that started each.
-A task is the subagent's own only when one of its own calls launched or resumed it, as the host's result for that call names it:
-a Bash result that starts `Command running in background with ID: <id>`, or says the command was moved to the background,
-the `agentId` of an Agent call, or the `resumedAgentId` of a SendMessage call.
+A task is the subagent's own only when one of its own calls launched or resumed it, as the structured result Claude Code
+stores beside that call's result in the transcript (`toolUseResult`) names it: a Bash call's `backgroundTaskId`, set when
+it started in the background or was moved there at its timeout; an async Agent launch's `agentId`; or a SendMessage call's
+`resumedAgentId`. A result's text never counts, so a command's output or an agent's report that quotes a launch line claims nothing.
 Reading, waiting on, or stopping another agent's task, such as tailing its output file, does not make it the subagent's own.
 A peer teammate is never a child: a message wakes it. A payload without `background_tasks`, such as Codex's, checks nothing.
 

@@ -159,7 +159,7 @@ test('a stop row counts the background tasks the subagent started that still run
   const transcript = path.join(base, 'agent-a4.jsonl');
   writeFileSync(transcript, [
     JSON.stringify({ type: 'assistant', message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'sleep 600', run_in_background: true } }] } }),
-    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'Command running in background with ID: bsleep001.' }] } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'Command running in background with ID: bsleep001.' }] }, toolUseResult: { stdout: '', stderr: '', backgroundTaskId: 'bsleep001' } }),
   ].join('\n'));
   const tasks = [{ id: 'bsleep001', type: 'shell', status: 'running', command: 'sleep 600' }, { id: 'bother002', type: 'shell', status: 'running' }];
   const stop = (active, background) => hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'a4', agent_type: 'fixer', agent_transcript_path: transcript, last_assistant_message: 'Done.', stop_hook_active: active, background_tasks: background });

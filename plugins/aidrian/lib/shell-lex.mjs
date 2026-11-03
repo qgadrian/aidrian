@@ -712,18 +712,30 @@ export function isLongOption(text, option, shortest) {
 const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
 
 // Every command a command line runs, in the order it runs, nested ones included: the body of each command substitution
-// (before the command that owns it), each `sh -c "<string>"`, and each command line a heredoc or here-string feeds a
-// shell. Each is { segment, invocation, folder, line, inputs, heredocs }: `folder` is the folder it runs in, from `cwd`,
+// (before the command that owns it), each `sh -c "<string>"` and `eval` string, and each command line a heredoc or
+// here-string feeds a shell. Each is { segment, invocation, folder, line, inputs, heredocs, unread? }: `folder` is the folder it runs in, from `cwd`,
 // or null when it cannot be known; `line` is the command line it was read from; `inputs` the heredoc bodies and
 // here-string words fed to its input; `heredocs` its heredocs alone, as { body, expands, fd? }. A leading `cd <dir> &&` moves the folder; any other directory change (in a subshell, a pipe,
 // after `;` or `||`, a second one) leaves it unknown for the commands after it. A wrapper's own directory (`env -C`)
 // and git's `-C` apply to their command only. Directory changes themselves are left out.
+// `unread` is the text of the commands a shell or `eval` runs that the walk could not read as command lines: what a pipe
+// feeds a shell (`echo 'git push' | bash`) with the shell itself, a shell's script or unreadable options, or a body
+// nested past SUBSTITUTION_DEPTH_LIMIT. A rule that must not miss a command fails closed on it when it names one.
 export function walkCommands(command, cwd) {
   const out = [];
   const walk = (line, start, depth) => {
-    const { segments, separators, substitutions, ends, heredocs } = lexSegments(line);
+    const { segments, separators, substitutions, ends, heredocs, spans } = lexSegments(line);
+    // Whether the body was walked: past the depth limit it is not.
     const nested = (body, folder) => {
-      if (depth < SUBSTITUTION_DEPTH_LIMIT) walk(body, folder, depth + 1);
+      if (depth >= SUBSTITUTION_DEPTH_LIMIT) return false;
+      walk(body, folder, depth + 1);
+      return true;
+    };
+    // Segment `index` with the segments that pipe into it, as written.
+    const piped = (index) => {
+      let first = index;
+      while (first > 0 && (separators[first - 1] === '|' || separators[first - 1] === '|&')) first -= 1;
+      return line.slice(spans[first][0], spans[index][1]);
     };
     let here = start;
     segments.forEach((segment, index) => {
@@ -747,10 +759,21 @@ export function walkCommands(command, cwd) {
         ...own.map((each) => each.body),
         ...segment.flatMap((token, at) => (token.operator && token.text === '<<<' && segment[at + 1] ? [segment[at + 1].text] : [])),
       ];
-      out.push({ segment, invocation, folder, line, inputs, heredocs: own });
-      const inner = inlineShellCommand(invocation);
-      if (inner !== null) nested(inner, folder);
-      else if (readsShellInput(invocation)) for (const body of inputs) nested(body, folder);
+      const entry = { segment, invocation, folder, line, inputs, heredocs: own };
+      out.push(entry);
+      const unread = [];
+      // eval joins its words with spaces and runs the result as a command line; a leading `--` only ends its options.
+      const evalWords = invocation.program === 'eval' ? invocation.args.slice(invocation.args[0]?.text === '--' ? 1 : 0) : [];
+      const evaluated = evalWords.length > 0 ? evalWords.map((token) => token.text).join(' ') : null;
+      const inner = inlineShellCommand(invocation) ?? evaluated;
+      if (inner !== null) {
+        if (!nested(inner, folder)) unread.push(inner);
+      } else if (SHELLS.has(invocation.program)) {
+        if (readsShellInput(invocation) && inputs.length > 0) {
+          for (const body of inputs) if (!nested(body, folder)) unread.push(body);
+        } else unread.push(piped(index));
+      }
+      if (unread.length) entry.unread = unread.join('\n');
     });
     for (const body of substitutions.slice(ends.at(-1) ?? 0)) nested(body, here);
   };

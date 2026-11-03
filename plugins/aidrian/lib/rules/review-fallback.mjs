@@ -8,16 +8,18 @@
 // The stop must be in this machine's review record, which the review step writes before it prints `blocked_quota`.
 // The Human may also run the command in their own shell (`!` in a Claude Code prompt, or another terminal), which no
 // hook reads. Without a transcript the host writes in this shape (Codex), the choice is the Human's to run.
+// The call is read wherever it runs (shell-lex walkCommands): in a substitution, `sh -c`, `eval`, or a heredoc fed to a
+// shell. A shell fed text the rule cannot read as commands, such as a pipe into `bash`, is refused when it names the flag.
 
 import { findProject } from '../project.mjs';
 import { AGENT, agentLabel, HUMAN, LABELS } from '../review/quota.mjs';
 import { readLocalState } from '../review/state.mjs';
-import { aidrianArgs, commandLines, lexCommand, readInvocation } from '../shell-lex.mjs';
+import { aidrianArgs, walkCommands } from '../shell-lex.mjs';
 import { readTranscript, transcriptAnswers } from './review-extend.mjs';
 
-export const reason = (pr) =>
+export const reason = (pr, why = null) =>
   'Blocked: `aidrian pr review --quota-fallback` replaces a reviewer that ran out of quota with a same-model agent or the ' +
-  'Human\'s review, and this session holds no such choice by the Human. Ask the Human with AskUserQuestion, using the ' +
+  `Human's review, and ${why ?? 'this session holds no such choice by the Human'}. Ask the Human with AskUserQuestion, using the ` +
   `\`question\` and \`options\` the review step printed for pull request #${pr ?? '<PR>'}, and run the \`run\` of the option ` +
   'the Human picks; "Wait" runs nothing. Or the Human runs the command in their own shell (`!` in the prompt).';
 
@@ -61,19 +63,18 @@ export function chosen(answers, { pr, choice, since = null }) {
 export function check(command, { cwd = process.cwd(), input = {} } = {}) {
   const project = findProject(cwd);
   if (!project) return null;
-  for (const line of commandLines(command)) {
-    for (const segment of lexCommand(line)) {
-      const call = fallbackCall(aidrianArgs(readInvocation(segment)));
-      if (!call) continue;
-      if (call.pr === null || call.choice === null) return reason(call.pr);
-      let state = null;
-      try {
-        state = readLocalState(project, call.pr);
-      } catch {}
-      const stop = (state?.quotaStops ?? []).at(-1);
-      if (!stop) return reason(call.pr);
-      if (!chosen(transcriptAnswers(readTranscript(input?.transcript_path)), { pr: call.pr, choice: call.choice, since: stop.at })) return reason(call.pr);
-    }
+  for (const { invocation, unread } of walkCommands(command, null)) {
+    if (unread !== undefined && /--quota-fallback\b/u.test(unread)) return reason(null, 'it runs in a shell fed text the rule cannot read as commands; run it as its own command');
+    const call = fallbackCall(aidrianArgs(invocation));
+    if (!call) continue;
+    if (call.pr === null || call.choice === null) return reason(call.pr);
+    let state = null;
+    try {
+      state = readLocalState(project, call.pr);
+    } catch {}
+    const stop = (state?.quotaStops ?? []).at(-1);
+    if (!stop) return reason(call.pr);
+    if (!chosen(transcriptAnswers(readTranscript(input?.transcript_path)), { pr: call.pr, choice: call.choice, since: stop.at })) return reason(call.pr);
   }
   return null;
 }

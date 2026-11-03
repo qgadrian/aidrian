@@ -197,7 +197,9 @@ It sees through `sudo`, `env`, `timeout`, `command`, `rtk`, and similar wrappers
 A long option it blocks also matches the shorter prefixes the program accepts, such as `--no-veri` for `--no-verify`,
 `--am` for `--amend`, and `--cou` for grep's `--count`.
 Every rule also reads the command substitutions that run: `$(…)`, backticks, `<(…)`, and those in a heredoc that expands.
-The process rules also read `sh -c`, `eval`, and `xargs`; the git hook bypass rule reads `sh -c` and a heredoc or here-string fed to a shell.
+The process rules also read `sh -c`, `eval`, and `xargs`. The git hook bypass, attribution, pull request body, extra round
+approval, quota fallback, and merge guard rules read `sh -c`, `eval`, and a heredoc or here-string fed to a shell; the last
+three refuse text piped or scripted into a shell that names the command they guard, such as `echo 'gh pr merge 5' | bash`.
 A command reached only through a script or an interpreter such as `python -c` is out of their sight.
 
 ## Recorded blocks
@@ -237,9 +239,11 @@ command names no head or no pull request and a record may apply, and stopped aft
 cannot read is refused with a reason that says to pass `gh pr merge <PR> --match-head-commit <sha>`; so is one whose
 pull request number it cannot read, such as `gh pr merge "$PR"`, or a `gh api` merge path whose number or repository
 part is a variable; a method it cannot read, `-X "$M"`, counts as a merge.
-A merge in another repository runs when the command names its pull request number: one whose target, as `-R`, a URL,
-a `gh api` path, or the MCP owner and repo, names neither origin, the repository the review record was written for,
-nor that of a review it still owes, such as an upstream's from a fork checkout.
+The record file is per number, so in a fork checkout it holds origin's #5 and the upstream's #5 alike. A merge whose
+target is named, as `-R`, a URL, a `gh api` path, or the MCP owner and repo, reads only that repository's part: the
+owed reviews for it, each an entry's own repository, else the record's, else origin's, and the outcome and rounds when
+the record is for it. A merge that names no repository, or one it cannot read, reads every entry, since gh's default
+may be the upstream.
 
 The Human waives it. The reason prints a question naming `#<PR>` and the head's first 7 characters; the merge runs when
 the session transcript holds the Human's AskUserQuestion answer to a question naming both, whose chosen option starts

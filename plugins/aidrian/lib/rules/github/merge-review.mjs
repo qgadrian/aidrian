@@ -4,7 +4,11 @@
 //   - `gh pr merge` (but `--disable-auto`), `--auto` included;
 //   - `gh api repos/<owner>/<name>/pulls/<n>/merge` sent as a PUT or a POST;
 //   - the MCP tool `mcp__github__merge_pull_request` (scripts/hook-mcp-github.mjs).
-// It reads only this machine's review record (lib/review/state.mjs), in this order:
+// Each is read wherever it runs (shell-lex walkCommands): in a substitution, `sh -c`, `eval`, or a heredoc fed to a shell.
+// A shell fed text the rule cannot read as commands, such as a pipe into `bash`, is refused when that text names a merge.
+// It reads only this machine's review record (lib/review/state.mjs), scoped to the merge's repository when the call names
+// one: an entry or outcome for another repository with the same number is not this merge's. A call that names none, as
+// `gh pr merge 5` in a fork checkout whose gh default may be the upstream, reads every entry. Then, in this order:
 //   1. a `pending` entry not answered denies, whatever the head or the outcome: a request sent is owed until the bot answers;
 //   2. no record the review step wrote (no outcome, no round) allows: the guard holds a review that is open or asked
 //      for, not that one happens, so a review run outside `aidrian pr review` is not guarded;
@@ -24,7 +28,7 @@ import { runGh } from '../../gh.mjs';
 import { findProject } from '../../project.mjs';
 import { originRepo, prNumber, repoName } from '../../review-gate.mjs';
 import { FINISHED, owed, readLocalState, sameCommit } from '../../review/state.mjs';
-import { commandLines, lexCommand, readInvocation } from '../../shell-lex.mjs';
+import { walkCommands } from '../../shell-lex.mjs';
 import { transcriptAnswers } from '../review-extend.mjs';
 import { commandPath, fillRepo, invocationRepo, readWords } from './review-request.mjs';
 
@@ -115,27 +119,40 @@ export const unresolved = (pr, how) =>
 
 const MERGE_HOW = 'Name both: `gh pr merge <PR> --match-head-commit <sha>`, with the head the review covered.';
 
+// A merge named in text the rule cannot read as commands: `gh pr merge`, or a `pulls/<n>/merge` API path.
+const MERGE_TEXT = /\bpr\s+merge\b|\bpulls\/[^\s/]+\/merge\b/u;
+export const UNREAD_REASON =
+  'Blocked: this feeds a shell text the merge guard cannot read as commands (a pipe into a shell, a script, or nesting ' +
+  'too deep), and that text names a merge, so the guard cannot check its review. Run the merge as its own command, ' +
+  '`gh pr merge <PR> --match-head-commit <sha>`.';
+
+// The part of `state` that is for repository `repo` (null: unknown, so all of it): the owed entries for it, and the
+// outcome and rounds when the record is. An entry's repository is its own `repo`, else the record's, else origin's;
+// one still unknown counts for every repository. Every spelling compares as `owner/name`, lower-cased. The record file is
+// per number, so a fork checkout holds upstream#5 and origin#5 in one record: each merge reads only its own entries.
+export function scoped(state, project, repo) {
+  const target = repo === null ? null : repoName(repo);
+  if (!state || target === null) return state;
+  const home = repoName(state.repo ?? null) ?? originRepo(project);
+  const ours = (own) => own === null || own === target;
+  const mine = ours(home);
+  return { ...state, pending: owed(state).filter((entry) => ours(repoName(entry.repo ?? null) ?? home)), outcome: mine ? state.outcome : null, rounds: mine ? state.rounds : [] };
+}
+
 // The deny reason for a merge of `pr` at `head` in `project`, or null. `pr` or `head` null is read through
 // `viewPr(target, repo)`; `answers` are the Human's AskUserQuestion answers in this session.
 export function judgeMerge({ project, pr = null, head = null, target = null, repo = null, unreadable = false, viewPr, answers = [], how = MERGE_HOW }) {
-  // A merge in another repository is not this record's: the target differs from both origin and the repository the
-  // record was written for, as an upstream's in a fork checkout. Every spelling compares as `owner/name`, lower-cased.
-  const elsewhere = (state) => {
-    const target = repo === null ? null : repoName(repo);
-    const known = [originRepo(project), repoName(state?.repo ?? null), ...owed(state).map((entry) => repoName(entry.repo ?? null))].filter(Boolean);
-    return target !== null && known.length > 0 && !known.includes(target);
-  };
   // A number the rule cannot read is refused whatever the target: no record can say the merge is another's.
   if (unreadable) return unresolved(null, how);
-  let state = pr === null ? null : readLocalState(project, pr);
-  if (pr !== null && (!guards(state) || elsewhere(state))) return null;
+  let state = pr === null ? null : scoped(readLocalState(project, pr), project, repo);
+  if (pr !== null && !guards(state)) return null;
   if (pr === null || head === null) {
     const view = viewPr(pr ?? target, repo);
     if (!view) return unresolved(pr, how);
     if (pr === null) {
       pr = view.number;
-      state = readLocalState(project, pr);
-      if (!guards(state) || elsewhere(state)) return null;
+      state = scoped(readLocalState(project, pr), project, repo);
+      if (!guards(state)) return null;
     }
     head ??= view.headRefOid;
   }
@@ -176,14 +193,13 @@ export function check(command, { cwd = process.cwd(), env = process.env, input =
   const project = findProject(cwd);
   if (!project) return null;
   let answers = null;
-  for (const line of commandLines(command)) {
-    for (const segment of lexCommand(line)) {
-      const merge = readMerge(readInvocation(segment), env);
-      if (!merge) continue;
-      answers ??= transcriptAnswers(readTranscript(input?.transcript_path));
-      const reason = judgeMerge({ project, ...merge, viewPr, answers });
-      if (reason) return reason;
-    }
+  for (const { invocation, unread } of walkCommands(command, null)) {
+    if (unread !== undefined && MERGE_TEXT.test(unread)) return UNREAD_REASON;
+    const merge = readMerge(invocation, env);
+    if (!merge) continue;
+    answers ??= transcriptAnswers(readTranscript(input?.transcript_path));
+    const reason = judgeMerge({ project, ...merge, viewPr, answers });
+    if (reason) return reason;
   }
   return null;
 }

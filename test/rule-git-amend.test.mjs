@@ -71,3 +71,10 @@ test('fails open on dynamic invocations, and honors the human override', () => {
   assert.equal(check('git commit --amend', { env: { AIDRIAN_ALLOW_GIT_AMEND: '1' } }), null);
   assert.match(check('git commit --amend', { env: ENV }), /new commit[\s\S]*AIDRIAN_ALLOW_GIT_AMEND=1/);
 });
+
+test('the deny names the exact replacement, and keeps the first sentence lessons group by', () => {
+  const reason = check('git commit --amend --no-edit', { env: ENV });
+  assert.ok(reason.startsWith('Blocked: `git commit --amend` rewrites the branch tip, and another agent working on this branch may already have built on it. '));
+  assert.match(reason, /run `git commit -m "<subject>"`, a follow-up commit on the same branch/u);
+  assert.match(reason, /squash merge folds it/u);
+});

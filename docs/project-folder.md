@@ -102,7 +102,10 @@ Where no shell runs it, use `node <plugin folder>/lib/cli.mjs`, and `node <plugi
 - `skills`: each `.claude/skills/<name>/SKILL.md` has a one-line YAML `description` within `skills.descriptionChars`,
   and all skill names and descriptions together fit in `skills.listingBytes`. Both hosts list them in every session.
   A `SKILL.md` of 8,000 bytes or more fails, because Codex cuts it there; one above 7,500 bytes passes with a warning.
-- `agents`: each `.claude/agents/*.md` has `name` equal to its file name, a `description`, and a known `model` and `effort`.
+  No Markdown file in a skill's folder, its references and brief templates included, asks for `git commit --amend`:
+  the [amend rule](hooks.md#bash-rules) refuses it, so the dispatch that asked is wasted. Ask for a new commit instead.
+- `agents`: each `.claude/agents/*.md` has `name` equal to its file name, a `description`, and a known `model` and `effort`,
+  and asks for no amend.
 - `paths`: no tracked file holds a personal home folder such as `/Users/<name>/`; `--staged` checks the staged files only, as the index holds them.
 - `budget`: the [knowledge budgets](config.md#knowledge-budgets) that `aidrian check` also holds. It prints the `always` bytes per bucket.
 - `personas`: each knowledge doc tagged `personas`, except `product-access`, has the [persona sections](personas.md#the-persona-contract),

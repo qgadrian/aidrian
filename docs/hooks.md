@@ -93,7 +93,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Rule | Blocks | Override |
 | --- | --- | --- |
 | Git hook bypass | Skipping or turning off git hooks, and setting `AIDRIAN_ALLOW_MAIN_COMMIT`, the [commit guard](#commit-guard)'s override | none |
-| Git amend | `git commit --amend` | `AIDRIAN_ALLOW_GIT_AMEND=1` |
+| Git amend | `git commit --amend`; the deny names a follow-up commit, which a squash merge folds in, and `aidrian lint` fails a skill or agent that asks for an amend | `AIDRIAN_ALLOW_GIT_AMEND=1` |
 | Kill by name | Killing processes by name | `AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME=1` |
 | Command-line listing | Listing the command lines of other processes | `AIDRIAN_ALLOW_PROCESS_ARGS_LISTING=1` |
 | Counting grep in `&&` | A `grep -c` whose exit status an `&&` chain reads | `AIDRIAN_ALLOW_GREP_EXIT_CHAIN=1` |

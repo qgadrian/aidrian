@@ -2,8 +2,10 @@
 // except the SKILL.md size, which is Codex's.
 //   skills  every <dir>/<name>/SKILL.md: a one-line YAML `description` within skills.descriptionChars, all skill
 //           names and descriptions within skills.listingBytes (both hosts list them in every session), and a file
-//           under SKILL_CUT_BYTES, with a warning above SKILL_WARN_BYTES
-//   agents  every <dir>/*.md: `name` equals the file name, a `description` like a skill's, and a known model and effort
+//           under SKILL_CUT_BYTES, with a warning above SKILL_WARN_BYTES. No Markdown file of the skill, its
+//           references/, steps/, modes/, and brief templates included, asks for an amend (amendAsks)
+//   agents  every <dir>/*.md: `name` equals the file name, a `description` like a skill's, a known model and effort,
+//           and no ask for an amend
 //   paths   tracked and untracked, non-ignored files hold no personal home folder such as /Users/<name>/; --staged reads what the index holds
 //   budget  the knowledge budgets that `aidrian check` also runs: the `always` docs and each tagged doc (knowledge.mjs)
 //   terms   tracked files hold no banned term of the terms file (terms.mjs): a `block` hit fails, a `warn` hit warns;
@@ -37,6 +39,11 @@ const BINARY = NOT_TEXT;
 // codex-rs/ext/skills/src/render.rs. A file at the cut has no room left, so it fails there; the warning leaves a margin.
 const SKILL_CUT_BYTES = 8000;
 const SKILL_WARN_BYTES = 7500;
+// A line that asks for `git commit --amend`, which the git-amend rule (rules/git-amend.mjs) refuses, so a skill or brief
+// that asks for one wastes the dispatch it starts. A line that forbids the amend, or names what to do instead, passes.
+const AMEND_ASK = /--amend\b|\bamend(?:ing)?\b[^.]*\b(?:commit|HEAD|tip)\b|\b(?:commit|HEAD)\b[^.]*\bamend(?:ing)?\b/iu;
+// A negation word, not part of a flag such as `--no-edit`.
+const AMEND_NOT = /(?<![-\w])(?:never|not|no|don't|instead|rather than|without|refuses?|denie[sd]|deny|blocks?|blocked|guard)\b/iu;
 // Room for one staged file read through git: Node's default 1 MiB would leave a larger file unread.
 const STAGED_MAX_BYTES = 64 * 1024 * 1024;
 
@@ -97,6 +104,10 @@ export function lintSkills(dirs, { descriptionChars, listingBytes }) {
       }
       bytes += Buffer.byteLength(meta.name ?? name) + Buffer.byteLength(description);
     }
+    for (const name of readdirSync(dir, { recursive: true }).filter((each) => String(each).endsWith('.md')).sort()) {
+      const file = path.join(dir, String(name));
+      if (isFile(file)) problems.push(...amendAsks(file, readFileSync(file, 'utf8')));
+    }
   }
   if (bytes > listingBytes) {
     problems.push(`the ${count} skills list ${bytes} bytes of names and descriptions; the limit is skills.listingBytes, ${listingBytes}`);
@@ -118,6 +129,7 @@ export function lintAgents(dirs, { descriptionChars }) {
         problems.push(`${file}: model "${meta.model}" is not one of ${[...MODELS].join(', ')}, or a claude-* model id`);
       }
       if (meta.effort !== undefined && !EFFORTS.has(meta.effort)) problems.push(`${file}: effort "${meta.effort}" is not one of ${[...EFFORTS].join(', ')}`);
+      problems.push(...amendAsks(file, readFileSync(file, 'utf8')));
     }
   }
   return { problems, summary: `${count} agents` };
@@ -167,6 +179,13 @@ export function lintTerms(project, config, staged = false, only = null) {
     for (const hit of scanLines(numbered(text), file, rules, { text, code: false })) (hit.severity === 'block' ? problems : warnings).push(formatHit(file, hit));
   }
   return { problems, warnings, summary: `no banned terms in ${files} ${staged ? 'staged' : 'tracked'} files (${rules.length} rules)` };
+}
+
+// Each line of `text` that asks for an amend, as a problem naming `file` and the line.
+export function amendAsks(file, text) {
+  return String(text).split('\n').flatMap((line, index) => (AMEND_ASK.test(line) && !AMEND_NOT.test(line)
+    ? [`${file}:${index + 1}: asks for \`git commit --amend\`, which the git-amend hook refuses; ask for a new commit on the branch instead, which a squash merge folds in`]
+    : []));
 }
 
 function workingText(root, file) {

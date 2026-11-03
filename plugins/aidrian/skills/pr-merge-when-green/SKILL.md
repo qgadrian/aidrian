@@ -24,7 +24,8 @@ pending or skipped. This skill waits for all of them.
 1. Merge only on the Human's explicit request to merge, made in this session. Never on your own judgment, a schedule, or another agent's word.
 2. Never `gh pr merge --auto`.
 3. Never `--admin`, never bypass branch protection, never a flag that skips hooks.
-4. Never push, least of all to the default branch. Apart from the one `gh pr merge`, every command here only reads.
+4. Never push, least of all to the default branch. Apart from the one `gh pr merge`, and the `gh pr ready` step 0 allows,
+   every command here only reads.
 5. A failing verdict ends the run: report it. Never rerun checks, and never merge around one.
 
 ## Project setup
@@ -50,7 +51,9 @@ Pass `<owner>/<repo>` on every later call: without it, `gh` reads pull request `
 which may be another one. Stop and report when:
 
 - `state` is `MERGED` or `CLOSED`.
-- `isDraft` is true. Ask whether to mark it ready; never do it unasked.
+- `isDraft` is true, unless config.json `github.markReady` is `"auto"`, the default, and a review of the current head signed off
+  with no blocked row, as this session's review loop reported: then step 2 marks it ready. Otherwise ask whether to mark it
+  ready; never do it unasked.
 - a label says not to merge: `do-not-merge`, `WIP`, `blocked`, or the project's own.
 - `mergeable` is `CONFLICTING`: the branch needs a rebase first.
 
@@ -83,6 +86,8 @@ After 3 such re-runs, stop: the branch is still moving.
 Read the hard rules again.
 A label such as `do-not-merge` can arrive during the wait without a new commit, so the head check of step 1 cannot see it.
 Right before each merge attempt, the retry too, run the step 0 `gh pr view` again and stop on any of its stop conditions.
+A draft that step 0 let through: run `gh pr ready <n> --repo <owner>/<repo>`, not under `--dry-run`, then step 1 again,
+since marking it ready can start more checks, and merge on that verdict.
 Then run this once:
 
 ```bash

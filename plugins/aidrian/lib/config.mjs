@@ -39,6 +39,7 @@ const SCHEMA = {
     conditionalChecks: 'texts',
     titleIssuePrefix: 'boolean',
     markReady: 'readyMode',
+    reviewLoop: 'readyMode',
     pullRequest: {
       title: 'patternOrNull',
       issueKey: 'patternOrNull',
@@ -187,8 +188,11 @@ export const DEFAULTS = deepFreeze({
     ignoreCancelledChecks: [],
     conditionalChecks: [],
     titleIssuePrefix: false,
-    // Who marks a draft ready: the author, or the loop when the Human asks ("ask"); or the loop once it is green ("auto").
-    markReady: 'ask',
+    // Who marks a draft ready: the loop once review signed off and the checks are green ("auto"); or the author, or the
+    // loop when the Human asks ("ask").
+    markReady: 'auto',
+    // What follows the pr-write skill: the session starts the review loop at once ("auto"), or offers it ("ask").
+    reviewLoop: 'auto',
     // The pull request contract the pull request body rule holds beyond requiredSections (lib/rules/github/pr-body.mjs).
     pullRequest: { title: null, issueKey: null, sections: null, deferrals: null, residuals: null, sharedTempBodyFile: true, duplicateBody: false },
     // The review that must be on record before the review bot is asked (lib/review-gate.mjs).

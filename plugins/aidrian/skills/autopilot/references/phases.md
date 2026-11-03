@@ -84,8 +84,8 @@ The loop ends at the first of these:
 
 Then:
 
-1. Leave the pull request a draft. Mark it ready with `gh pr ready <n>` only when the Human asked for that at launch
-   or config.json `github.markReady` is `"auto"`, the loop ended at sign-off, and `aidrian pr checks <n>` says ready.
+1. Leave the pull request a draft. Mark it ready with `gh pr ready <n>` only when config.json `github.markReady` is `"auto"`,
+   the default, or the Human asked for that at launch, the loop ended at sign-off, and `aidrian pr checks <n>` says ready.
    Pending or failing: leave it a draft and say why.
    After `gh pr ready`, push nothing more: a later finding belongs in a new pull request.
 2. Never merge.

@@ -369,15 +369,21 @@ than the one under review counts for nothing. A flow's required checks are read 
 
 When a reviewer runs out of quota, `codex-local` on this machine or the review bot's usage-limit notice, the step
 returns `blocked_quota` and records the stop on that head in the record's `quotaStops`: the stage, the reviewer, every
-pass of that reviewer in the stage (the slices and cross pass of a split too), and the reason. The stages before it
-have already run. The result asks the Human one `question`, with three `options`, the recommended one first, each with
+pass of that reviewer in the stage (the slices and cross pass of a split too), and the reason. There is one stop per
+head, stage, and reviewer, so a second reviewer out of quota in the same stage keeps the first one's stop and choice.
+The stages before it have already run. The result asks the Human one `question`, with three `options`, the recommended one first, each with
 the command it `run`s:
 
 | Option | `run` | What replaces the stopped passes |
 | --- | --- | --- |
-| Run a critic agent | `aidrian pr review <PR> --quota-fallback agent:critic` | one pass of the read-only `critic` agent on the whole change, `fallback:<stage>:critic`, returned as `dispatch` and recorded with `aidrian pr attest` |
+| Run a critic agent | `aidrian pr review <PR> --quota-fallback agent:critic` | one pass of the read-only `critic` agent on the whole change, `fallback:<stage>:<reviewer>:critic`, returned as `dispatch` and recorded with `aidrian pr attest` |
 | The Human reviews it | `aidrian pr review <PR> --quota-fallback human` | the Human's review: `human_required` with `aidrian pr signoff <PR> --stage <stage> --head <sha>`, which the Human runs in their own shell |
 | Wait for quota | none | nothing: the review stays stopped, and a later push runs the reviewer again |
+
+A pass of the stopped reviewer that finished before the stop, such as the slices of a split that answered, stays in
+its stage under either choice: its open findings still block, and the fallback pass reads them as `priorFindings`, each
+with the `pass` it came from. Such a pass meets no `independent-model` requirement, having reviewed only part of the
+change. One `aidrian pr signoff --stage` signs every reviewer of the stage the Human chose to replace on that head.
 
 `--quota-fallback` takes `agent:<name>` for any agent, or `human`. Nothing picks a fallback without it: with no flag,
 a stop stays `blocked_quota`. The flag answers a stop on the current head only, and fails when that head has none;

@@ -135,7 +135,8 @@ What each rule matches:
 - Quota fallback choice: `aidrian pr review <PR> --quota-fallback agent:<name>` or `--quota-fallback human`, also as
   `node …/cli.mjs` or `--quota-fallback=<value>`. It runs when this machine's review record holds a quota stop and the
   session transcript holds an AskUserQuestion answer, given after that stop, to a question naming `#<PR>` and the quota,
-  whose chosen option starts with "Run a critic agent" for an agent, or "The Human reviews it" for `human`.
+  that picks that exact value: an option starting "Run a critic agent" authorizes `agent:critic` only; any other agent
+  needs an answer that names it, "Run a <name> agent" or `agent:<name>`; and `human` needs "The Human reviews it".
   A value or a pull request the rule cannot read is refused.
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
   `touch`, `mkdir`, and `rsync` (sources too under `--remove-source-files`); a branch switch or `git add -A` there;

@@ -3,13 +3,14 @@
 // head (lib/review/quota.mjs): a same-model agent pass, or the Human's own review. Either weakens the review, so the rule
 // lets it run only when this session's transcript holds the Human's answer to the question `blocked_quota` printed: an
 // AskUserQuestion answer, given after the stop, to a question naming the pull request (`#<PR>`) and the quota, whose
-// chosen option is the one the flag runs ("Run a critic agent" for an agent, "The Human reviews it" for human).
+// chosen option is the one the flag runs, for the exact value: "Run a critic agent" for `agent:critic` only, "Run a
+// <name> agent" (or an answer that names `agent:<name>`) for any other agent, and "The Human reviews it" for human.
 // The stop must be in this machine's review record, which the review step writes before it prints `blocked_quota`.
 // The Human may also run the command in their own shell (`!` in a Claude Code prompt, or another terminal), which no
 // hook reads. Without a transcript the host writes in this shape (Codex), the choice is the Human's to run.
 
 import { findProject } from '../project.mjs';
-import { HUMAN, LABELS } from '../review/quota.mjs';
+import { AGENT, agentLabel, HUMAN, LABELS } from '../review/quota.mjs';
 import { readLocalState } from '../review/state.mjs';
 import { aidrianArgs, commandLines, lexCommand, readInvocation } from '../shell-lex.mjs';
 import { readTranscript, transcriptAnswers } from './review-extend.mjs';
@@ -38,12 +39,20 @@ function fallbackCall(words) {
   return choice === undefined ? null : { choice, pr: pr ?? null };
 }
 
-// Whether `answers` hold the Human's pick of `choice` for pull request `pr`'s quota stop, given at or after `since`.
+// Whether `answers` hold the Human's pick of exactly `choice` for pull request `pr`'s quota stop, given at or after
+// `since`. An agent's answer names that agent: its label, or the value `agent:<name>` itself, so the critic's answer
+// never authorizes another agent.
 export function chosen(answers, { pr, choice, since = null }) {
   const names = new RegExp(`#${pr}(?!\\d)`, 'u');
-  const label = choice === HUMAN ? LABELS.human : choice?.startsWith('agent:') ? LABELS.agent : null;
-  if (!label) return false;
-  const picked = (answer) => answer.trim().toLowerCase().startsWith(label.toLowerCase());
+  const agent = AGENT.exec(choice ?? '')?.[1];
+  if (choice !== HUMAN && !agent) return false;
+  const label = (agent ? agentLabel(agent) : LABELS.human).toLowerCase();
+  const value = agent ? new RegExp(`(?:^|\\s)agent:${agent}(?![\\w:-])`, 'iu') : null;
+  // The label, then the end of the answer or a word that is not part of the name, such as " (Recommended)".
+  const picked = (answer) => {
+    const text = answer.trim().toLowerCase();
+    return (text.startsWith(label) && !/^[\w-]/u.test(text.slice(label.length))) || Boolean(value?.test(answer));
+  };
   return answers.some((each) => names.test(each.question) && /out of quota/iu.test(each.question) && picked(each.answer) &&
     (since === null || (each.at !== null && Date.parse(each.at) >= Date.parse(since))));
 }

@@ -285,7 +285,24 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     if (refused) return { status: 'unsatisfied', pr: n, repo, head, reason: refused, plan };
     if (stop.choice !== opts.quotaFallback) Object.assign(stop, { choice: opts.quotaFallback, chosen_at: new Date().toISOString(), signoff: null });
   }
-  const fallbacks = quota.applyChoices(plan, state.quotaStops, head);
+  // A pass's result counts for this head when it is for this head, or for an earlier one the change since does not
+  // touch and that left nothing open.
+  const deltaCache = new Map();
+  const delta = (from) => {
+    if (!deltaCache.has(from)) deltaCache.set(from, isAncestor(root, from, head) ? changedFiles(root, from, head) : null);
+    return deltaCache.get(from);
+  };
+  // A pass with a file list (a slice, a flow pass) keeps its history only while it covers the same files: when a fix
+  // repacks slices, a slice's earlier result and findings are another set of files' and count for nothing.
+  const sameFiles = (pass, result) => !Array.isArray(pass.files) || JSON.stringify([...pass.files].sort()) === JSON.stringify(result.files ?? null);
+  const resultFor = (pass) => {
+    const result = state.passes[pass.id];
+    if (!result || !sameFiles(pass, result)) return null;
+    if (result.head === head) return result;
+    const since = delta(result.head);
+    return since && !touches(since, pass.files) && result.open === 0 ? result : null;
+  };
+  const fallbacks = quota.applyChoices(plan, state.quotaStops, head, resultFor);
   const { lines } = classify(changes, review);
   if (plan.depth !== 'none' && lines > MAX_LINES) return { status: 'too_large', pr: n, repo, head, lines, reason: `${lines} changed lines is past ${MAX_LINES}: split the pull request` };
 
@@ -375,23 +392,6 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   if (policy.mode !== 'off') revalidate({ state, source: 'plan', round: state.rounds.length, head, history: planHistory, log: extensionLog });
   const { maxRounds, grantFloor } = roundCap({ baseline: opts.maxRounds ?? cap, granted: grantedRounds(state, 'plan', policy) });
 
-  // A pass's result counts for this head when it is for this head, or for an earlier one the change since does not
-  // touch and that left nothing open.
-  const deltaCache = new Map();
-  const delta = (from) => {
-    if (!deltaCache.has(from)) deltaCache.set(from, isAncestor(root, from, head) ? changedFiles(root, from, head) : null);
-    return deltaCache.get(from);
-  };
-  // A pass with a file list (a slice, a flow pass) keeps its history only while it covers the same files: when a fix
-  // repacks slices, a slice's earlier result and findings are another set of files' and count for nothing.
-  const sameFiles = (pass, result) => !Array.isArray(pass.files) || JSON.stringify([...pass.files].sort()) === JSON.stringify(result.files ?? null);
-  const resultFor = (pass) => {
-    const result = state.passes[pass.id];
-    if (!result || !sameFiles(pass, result)) return null;
-    if (result.head === head) return result;
-    const since = delta(result.head);
-    return since && !touches(since, pass.files) && result.open === 0 ? result : null;
-  };
   const verdictsFor = (flowId) => passes.filter((pass) => (pass.flows ?? []).includes(flowId)).flatMap((pass) => {
     const result = resultFor(pass);
     return (result?.verdicts ?? []).filter((verdict) => verdict.flow === flowId).map((verdict) => ({ ...verdict, at: result.head }));
@@ -630,13 +630,22 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     const visualChecklist = visual?.checklist ? { path: visual.checklist, text: fileAt(root, baseTip, visual.checklist.split('#')[0]) } : null;
     return {
       ...split,
-      pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files, flows, priorFindings: prior?.list ?? [],
+      pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files, flows, priorFindings: [...(prior?.list ?? []), ...keptFindings(pass)],
       // An invariant is a claim about the whole change, so a delta pass still judges its flows from the merge base:
       // judged on the delta, a narrowing an earlier push made reads as a weakening, and a new head hides a violation.
       ...(flows.length && from !== base ? { flowBase: base } : {}),
       ...(checklist ? { checklist: { path: checklist, text: fileAt(root, baseTip, checklist) } } : {}),
       ...(manifest && isVisual(pass) ? { visual: visualInput(manifest, state.captures ?? {}, visualChecklist) } : {}),
     };
+  }
+
+  // A fallback pass reads the open findings of the stopped reviewer's passes that finished before the stop, each with
+  // the pass it came from: they still block, and the fallback reviews the change knowing them.
+  function keptFindings(pass) {
+    return (pass.fallback?.kept ?? []).flatMap((id) => {
+      const result = state.passes[id];
+      return result?.open > 0 ? (result.list ?? []).filter(blocks).map((finding) => ({ ...finding, pass: id })) : [];
+    });
   }
 
   function dispatchFor(pass, stage) {
@@ -786,11 +795,13 @@ export function recordSignoff(project, { pr, repo, flow, head, by, remote = null
 // stage the Human chose to review, so it never skips a reviewer that has its quota.
 export function recordStageSignoff(project, { pr, repo, stage, head, by, remote = null }) {
   const state = current(project, pr, repo, remote);
-  const stop = (state.quotaStops ?? []).filter((each) => each.stage === stage && sameCommit(each.head, head)).at(-1);
-  if (stop?.choice !== quota.HUMAN) throw new Error(`no Human review of the ${stage} stage is waiting on ${head.slice(0, 7)} of #${pr}: --stage signs off only a stage the Human chose to review after its reviewer ran out of quota`);
-  stop.signoff = { by, at: new Date().toISOString() };
+  // One sign-off covers the stage: every reviewer of it the Human chose to replace on that head.
+  const stops = (state.quotaStops ?? []).filter((each) => each.stage === stage && sameCommit(each.head, head) && each.choice === quota.HUMAN);
+  if (!stops.length) throw new Error(`no Human review of the ${stage} stage is waiting on ${head.slice(0, 7)} of #${pr}: --stage signs off only a stage the Human chose to review after its reviewer ran out of quota`);
+  const signoff = { by, at: new Date().toISOString() };
+  for (const stop of stops) stop.signoff = signoff;
   writeLocalState(project, state);
-  return stop.signoff;
+  return signoff;
 }
 
 // The CLI body of `aidrian pr review [PR] [--with-bot] [--max-rounds N] [--timeout-sec S] [--quota-fallback agent:NAME|human]`:

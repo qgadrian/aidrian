@@ -3,6 +3,8 @@
 // for that head only, so a later push runs the reviewer again. Two choices replace the stopped passes:
 //   agent:<name>  one read-only agent pass, the critic by default: a second look on the session's own model
 //   human         the Human reviews the change and signs the stage off, `aidrian pr signoff <PR> --stage <name>`
+// A pass of the stopped reviewer that finished before the stop, such as one slice of a split, stays: its findings still
+// block, and the fallback reads them as `priorFindings`.
 // Neither is an independent review: a plan that requires `independent-model` keeps waiting for the quota.
 // docs/review.md#out-of-quota describes it; lib/rules/review-fallback.mjs guards the choice.
 
@@ -11,8 +13,10 @@ import { satisfies } from './reviewers.mjs';
 export const HUMAN = 'human';
 export const AGENT = /^agent:([a-z0-9][a-z0-9-]*)$/u;
 export const DEFAULT_AGENT = 'critic';
-// The labels the Human picks from; lib/rules/review-fallback.mjs reads the answer by them.
-export const LABELS = Object.freeze({ agent: 'Run a critic agent', human: 'The Human reviews it', wait: 'Wait for quota' });
+// The labels the Human picks from; lib/rules/review-fallback.mjs reads the answer by them. An agent's label names the
+// agent, so the answer authorizes that agent only.
+export const agentLabel = (name) => `Run a ${name} agent`;
+export const LABELS = Object.freeze({ agent: agentLabel(DEFAULT_AGENT), human: 'The Human reviews it', wait: 'Wait for quota' });
 // The most stops the record keeps.
 const KEEP = 10;
 
@@ -25,18 +29,23 @@ export function parseChoice(value) {
 // Whose quota ran out, in words: the review bot's quota notice is Codex's (lib/pr-await-review.mjs).
 export const owner = (reviewer) => (reviewer === 'codex-local' || reviewer === 'pr-bot' ? 'Codex' : `the ${reviewer} reviewer`);
 
-export const fallbackPassId = (stage, agent) => `fallback:${stage}:${agent}`;
+export const fallbackPassId = (stop, agent) => `fallback:${stop.stage}:${stop.reviewer}:${agent}`;
+
+// The record's stops on `head` for `stage`, one per reviewer.
+export const stopsFor = (state, head, stage) => (state.quotaStops ?? []).filter((each) => each.stage === stage && each.head === head);
 
 export const signoffCommand = (pr, stop) => `aidrian pr signoff ${pr} --stage ${stop.stage} --head ${stop.head}`;
 
-// The stop of `pass`'s reviewer in `stage` on `head`, put on the record in place of an earlier one for the same head
-// and stage. Every pass of that reviewer in the stage stops with it, the slices and the cross pass of a split included.
+// The stop of `pass`'s reviewer in `stage` on `head`, put on the record in place of an earlier one for the same head,
+// stage, and reviewer: another reviewer's stop in the stage, and the choice made for it, stay. Every pass of that
+// reviewer in the stage stops with it, the slices and the cross pass of a split included.
 export function recordStop(state, { head, stage, pass, reason }) {
   const stop = {
     head, stage: stage.name, reviewer: pass.reviewer, passes: stage.passes.filter((each) => each.reviewer === pass.reviewer).map((each) => each.id),
     reason: String(reason ?? '').replace(/\s+/gu, ' ').slice(0, 300), at: new Date().toISOString(), choice: null,
   };
-  state.quotaStops = [...(state.quotaStops ?? []).filter((each) => !(each.head === head && each.stage === stop.stage)), stop].slice(-KEEP);
+  const same = (each) => each.head === head && each.stage === stop.stage && each.reviewer === stop.reviewer;
+  state.quotaStops = [...(state.quotaStops ?? []).filter((each) => !same(each)), stop].slice(-KEEP);
   return stop;
 }
 
@@ -62,15 +71,19 @@ export function question({ pr, stop, withBot = false }) {
 }
 
 // The plan with the Human's choice in place of every stopped pass on `head`: an agent choice adds one fallback pass, a
-// human choice leaves the stage to the Human's sign-off. Returns the stops applied.
-export function applyChoices(plan, stops, head) {
+// human choice leaves the stage to the Human's sign-off. A pass of the stopped reviewer that `finished` (it has a
+// result that counts on this head) stays, marked `beforeQuota`, so its open findings still block, and the fallback pass
+// names it in `kept`. Returns the stops applied.
+export function applyChoices(plan, stops, head, finished = () => false) {
   const applied = [];
   for (const stop of (stops ?? []).filter((each) => each.head === head && each.choice)) {
     const stage = plan.stages.find((each) => each.name === stop.stage);
     if (!stage) continue;
-    stage.passes = stage.passes.filter((pass) => pass.reviewer !== stop.reviewer);
+    const kept = stage.passes.filter((pass) => pass.reviewer === stop.reviewer && finished(pass));
+    for (const pass of kept) pass.beforeQuota = true;
+    stage.passes = [...stage.passes.filter((pass) => pass.reviewer !== stop.reviewer), ...kept];
     const agent = AGENT.exec(stop.choice)?.[1];
-    if (agent) stage.passes.push({ id: fallbackPassId(stop.stage, agent), reviewer: agent, kind: 'agent', files: null, context: 'full', fallback: { replaces: stop.reviewer, reason: stop.reason } });
+    if (agent) stage.passes.push({ id: fallbackPassId(stop, agent), reviewer: agent, kind: 'agent', files: null, context: 'full', fallback: { replaces: stop.reviewer, reason: stop.reason, kept: kept.map((pass) => pass.id) } });
     applied.push(stop);
   }
   return applied;

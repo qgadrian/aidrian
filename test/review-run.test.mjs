@@ -1153,13 +1153,13 @@ test('out of quota, the critic as the fallback: a dispatch in the stopped pass`s
   const fallback = await r.step({ exec }, { quotaFallback: 'agent:critic' });
   assert.deepEqual([fallback.status, fallback.stage, ran], ['dispatch', 'independent', 1], 'Codex is not asked again on this head');
   const [pass] = fallback.dispatch;
-  assert.deepEqual([pass.pass, pass.agent, pass.fallback.replaces, pass.context, pass.files], ['fallback:independent:critic', 'critic', 'codex-local', 'full', null]);
+  assert.deepEqual([pass.pass, pass.agent, pass.fallback.replaces, pass.context, pass.files], ['fallback:independent:codex-local:critic', 'critic', 'codex-local', 'full', null]);
   assert.match(pass.brief, /Codex is out of quota.*recorded as a fallback, not as an independent review/u);
-  assert.match(pass.record, /^aidrian pr attest 7 --pass fallback:independent:critic --head [0-9a-f]{40} --reviewer critic /u);
+  assert.match(pass.record, /^aidrian pr attest 7 --pass fallback:independent:codex-local:critic --head [0-9a-f]{40} --reviewer critic /u);
   assert.match(fallback.quota_fallback[0].note, /ran on a fallback the Human chose: the critic agent, on the session's own model\. This is not an independent review\./u);
   recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: fallback.head, reviewer: 'critic', findings: 1, fixed: 0 });
   const open = await r.step({ exec });
-  assert.deepEqual([open.status, open.open.map((each) => each.pass)], ['fix_required', ['fallback:independent:critic']], 'its findings block like any pass');
+  assert.deepEqual([open.status, open.open.map((each) => each.pass)], ['fix_required', ['fallback:independent:codex-local:critic']], 'its findings block like any pass');
   recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: fallback.head, reviewer: 'critic', findings: 1, fixed: 1 });
   const done = await r.step({ exec });
   assert.deepEqual([done.status, done.quota_fallback[0].choice, ran], ['received', 'agent:critic', 1]);
@@ -1178,7 +1178,7 @@ test('out of quota with --with-bot: the review bot`s usage limit is a stop the c
   const stopped = await r.step({ exec: clean, awaitBot }, { withBot: true });
   assert.deepEqual([stopped.status, stopped.pass, stopped.options[0].run], ['blocked_quota', 'engine:pr-bot', 'aidrian pr review 7 --with-bot --quota-fallback agent:critic']);
   const fallback = await r.step({ exec: clean, awaitBot }, { withBot: true, quotaFallback: 'agent:critic' });
-  assert.deepEqual([fallback.status, fallback.stage, fallback.dispatch[0].pass], ['dispatch', 'remote', 'fallback:remote:critic']);
+  assert.deepEqual([fallback.status, fallback.stage, fallback.dispatch[0].pass], ['dispatch', 'remote', 'fallback:remote:pr-bot:critic']);
 });
 
 test('out of quota, the Human`s review: the stage waits for the Human`s own sign-off, then passes, said as no independent review', async (t) => {
@@ -1210,6 +1210,66 @@ test('out of quota where the plan requires an independent model: no fallback is 
 
   // Whatever the fallback's reviewer is named, its pass is not an independent model.
   const map = reviewerMap({ review: { reviewers: { critic: { kind: 'agent', agent: 'critic', independent: true } } } });
-  assert.equal(satisfies('independent-model', [{ id: 'fallback:independent:critic', reviewer: 'critic', kind: 'agent', fallback: { replaces: 'codex-local' } }], map), false);
+  assert.equal(satisfies('independent-model', [{ id: 'fallback:independent:codex-local:critic', reviewer: 'critic', kind: 'agent', fallback: { replaces: 'codex-local' } }], map), false);
   assert.equal(satisfies('independent-model', [{ id: 'engine:critic', reviewer: 'critic', kind: 'agent' }], map), true, 'the same reviewer outside a fallback still counts');
+  assert.equal(satisfies('independent-model', [{ id: 'slice:codex-local:0123456789', reviewer: 'codex-local', kind: 'exec', beforeQuota: true }], reviewerMap({ review: { reviewers: {} } })), false, 'a slice that finished before the stop reviewed only part of the change');
+});
+
+// A split of two slices where Codex answers one slice with a finding and runs out of quota on the other.
+function splitStop(t) {
+  const r = repo(t, { baseConfig: { version: 1, review: { rules: [{ when: { lines: { over: 1 } }, depth: 'split' }] } }, change: (write) => (write('src/a/x.js', '1\n'), write('src/b/x.js', '2\n')) });
+  const found = { file: 'src/a/x.js', line: 1, title: 'slice a finding', body: 'x', severity: 'high' };
+  let ran = 0;
+  const exec = async (_reviewer, input) => (ran += 1, input.files?.includes('src/b/x.js') ? outOfQuota() : { status: 'done', findings: [found], verdicts: [], dropped: [] });
+  return { r, exec, ran: () => ran };
+}
+
+test('out of quota on one slice of a split, the critic as the fallback: the finished slice`s findings still block and reach the critic', async (t) => {
+  const { r, exec, ran } = splitStop(t);
+  const stopped = await r.step({ exec });
+  assert.deepEqual([stopped.status, ran()], ['blocked_quota', 2]);
+  const finished = Object.keys(readLocalState(r.project, 7).passes).find((id) => id.startsWith('slice:codex-local:'));
+  const fallback = await r.step({ exec }, { quotaFallback: 'agent:critic' });
+  assert.deepEqual([fallback.status, ran()], ['dispatch', 2], 'no slice runs again');
+  const [pass] = fallback.dispatch;
+  assert.equal(pass.pass, 'fallback:independent:codex-local:critic');
+  assert.deepEqual(pass.priorFindings.map((each) => [each.title, each.pass]), [['slice a finding', finished]], 'the critic reads what the finished slice found');
+  assert.ok(fallback.plan.stages.find((stage) => stage.name === 'independent').passes.includes(finished), 'the finished slice stays in its stage');
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: fallback.head, reviewer: 'critic', findings: 0, fixed: 0 });
+  const after = await r.step({ exec });
+  assert.deepEqual([after.status, after.open.map((each) => each.pass)], ['fix_required', [finished]], 'the finished slice`s finding still blocks');
+});
+
+test('out of quota on one slice of a split, the Human`s review: the finished slice`s findings block before the sign-off', async (t) => {
+  const { r, exec } = splitStop(t);
+  assert.equal((await r.step({ exec })).status, 'blocked_quota');
+  const asked = await r.step({ exec }, { quotaFallback: 'human' });
+  assert.deepEqual([asked.status, asked.open.map((each) => each.findings[0].title)], ['fix_required', ['slice a finding']]);
+});
+
+test('two reviewers out of quota in one stage: each keeps its own stop and choice, and one stage sign-off covers both', async (t) => {
+  const planner = "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>console.log(JSON.stringify({depth:'single',stages:[{name:'independent',passes:[{id:'extra:lint',reviewer:'lint',kind:'exec',files:null}]}]})))";
+  const r = repo(t, {
+    baseConfig: { version: 1, review: { planCommand: 'node scripts/plan.mjs', reviewers: { lint: { kind: 'exec', command: ['node', 'scripts/lint.mjs'], stage: 'independent' } } } },
+    baseFiles: { 'scripts/plan.mjs': planner, 'scripts/lint.mjs': '\n' },
+    change: (write) => write('src/app.js', 'export const app = 11;\n'),
+  });
+  const calls = { 'codex-local': 0, lint: 0 };
+  const exec = async (reviewer) => {
+    calls[reviewer.name] += 1;
+    if (reviewer.name === 'codex-local') return outOfQuota();
+    return calls.lint === 1 ? { status: 'failed', reason: 'boom' } : outOfQuota();
+  };
+  assert.equal((await r.step({ exec })).pass, 'engine:codex-local');
+  const second = await r.step({ exec }, { quotaFallback: 'agent:critic' });
+  assert.deepEqual([second.status, second.pass], ['blocked_quota', 'extra:lint']);
+  assert.deepEqual(readLocalState(r.project, 7).quotaStops.map((stop) => [stop.reviewer, stop.choice]), [['codex-local', 'agent:critic'], ['lint', null]], 'the second stop leaves the first one`s choice');
+  const third = await r.step({ exec }, { quotaFallback: 'human' });
+  assert.deepEqual([third.status, third.dispatch.map((each) => each.pass), calls['codex-local']], ['dispatch', ['fallback:independent:codex-local:critic'], 1]);
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: third.dispatch[0].pass, head: third.head, reviewer: 'critic', findings: 0, fixed: 0 });
+  const asked = await r.step({ exec });
+  assert.deepEqual([asked.status, asked.command], ['human_required', [`aidrian pr signoff 7 --stage independent --head ${third.head}`]]);
+  recordStageSignoff(r.project, { pr: 7, repo: 'o/r', stage: 'independent', head: third.head, by: 'Tester' });
+  const done = await r.step({ exec });
+  assert.deepEqual([done.status, done.quota_fallback.map((each) => [each.replaces, each.choice])], ['received', [['codex-local', 'agent:critic'], ['lint', 'human']]]);
 });

@@ -108,9 +108,10 @@ export function resolveEngine(config, { codex = codexAvailable } = {}) {
 
 // Whether `reviewers` (the names of the passes a plan will run) meet a `require` word. `independent-model` needs a
 // reviewer that is not the author's model, and a pass standing in for an out-of-quota reviewer never is one, whatever
-// its reviewer's name (lib/review/quota.mjs); `agent:<name>` needs that agent.
+// its reviewer's name, nor is a pass of that reviewer that finished before the stop, such as one slice of a split
+// (lib/review/quota.mjs); `agent:<name>` needs that agent.
 export function satisfies(word, passes, map) {
-  if (word === 'independent-model') return passes.some((pass) => !pass.fallback && map[pass.reviewer]?.independent);
+  if (word === 'independent-model') return passes.some((pass) => !pass.fallback && !pass.beforeQuota && map[pass.reviewer]?.independent);
   if (word.startsWith('agent:')) {
     const name = word.slice('agent:'.length);
     return passes.some((pass) => pass.kind === 'agent' && (pass.reviewer === name || map[pass.reviewer]?.agent === name));

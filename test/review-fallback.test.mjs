@@ -68,6 +68,21 @@ test('the review-fallback rule: with no stop in this machine`s record, the choic
   assert.equal(check('aidrian pr review 12 --quota-fallback agent:critic', { cwd: bare, input: {} }), null, 'outside a project the rule is off');
 });
 
+test('the review-fallback rule: the Human`s answer authorizes the exact agent it names, no other', (t) => {
+  const g = guarded(t);
+  g.write(g.answer(asked.question, agent));
+  assert.equal(g.run('aidrian pr review 12 --quota-fallback agent:critic'), null);
+  for (const other of ['agent:security-engineer', 'agent:critic-plus', 'agent:crit']) {
+    assert.ok(g.run(`aidrian pr review 12 --quota-fallback ${other}`), `the critic answer does not authorize ${other}`);
+  }
+  g.write(g.answer(asked.question, 'Run a security-engineer agent'));
+  assert.equal(g.run('aidrian pr review 12 --quota-fallback agent:security-engineer'), null, 'an answer that names the agent');
+  assert.ok(g.run('aidrian pr review 12 --quota-fallback agent:critic'), 'and not the critic');
+  g.write(g.answer(asked.question, 'Use agent:security-engineer instead'));
+  assert.equal(g.run('aidrian pr review 12 --quota-fallback agent:security-engineer'), null, 'an answer that names the value');
+  assert.ok(g.run('aidrian pr review 12 --quota-fallback agent:security'), 'a prefix of the named agent is another agent');
+});
+
 test('chosen reads the option labels the question prints, and the stage sign-off stays the Human`s', (t) => {
   assert.equal(chosen([{ question: asked.question, answer: agent, at: null }], { pr: 12, choice: 'agent:critic' }), true);
   assert.equal(chosen([{ question: asked.question, answer: agent, at: null }], { pr: 12, choice: 'other' }), false);

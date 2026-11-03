@@ -1,10 +1,10 @@
 // The one shell lexer behind the Bash rules. It reads a command line the way bash splits it, without running anything:
 // quotes, escapes, comments, operators, redirections, heredocs, and command substitutions.
 //
-// A token is { text, dynamic, operator?, fd?, fdDup?, substituted? }: `text` without its quotes; `dynamic` when it holds
-// `$`, a backtick, or a glob, so a rule never guesses at its value; `operator` for a redirection (`>`, `>>`, `<`), with
-// `fd` its digit prefix (the `2` of `2>`); `fdDup` for the `&1` of `2>&1`; `substituted` when an unquoted `$(…)`
-// or backtick body is in it, which `text` keeps as a bare `$` or not at all. Everything a rule cannot read is meant to fail open: an unknown shape yields no match, never a deny.
+// A token is { text, dynamic, operator?, fd?, fdDup? }: `text` without its quotes; `dynamic` when it holds `$`, a
+// backtick, or a glob, so a rule never guesses at its value; `operator` for a redirection (`>`, `>>`, `<`); `fd` for the
+// descriptor a redirection names before it, as written (`2` of `2>`, `{x}` of `{x}<`), absent when it names none;
+// `fdDup` for the `&1` of `2>&1`. Everything a rule cannot read is meant to fail open: an unknown shape yields no match, never a deny.
 
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
@@ -101,18 +101,21 @@ function collectSubstitutions(command, from, to, limit, into) {
 // unquoted. Single-quoted text, comments, and quoted heredoc bodies hold none. A heredoc body is data, never commands.
 // `ends[i]` counts the substitutions found up to the end of `segments[i]`: those of segment i run as part of it.
 // `spans[i]` is [start, end), where segment i sits in `command` without its separator, for a rule that quotes it back.
+// A token holding an unquoted `$(…)` or backtick body is `substituted`: its `text` keeps a bare `$` or nothing of it.
 function lexSegments(command) {
   const segments = [];
   const separators = [];
   const substitutions = [];
   const ends = [];
-  const spans = [];
-  let segmentStart = null;
   // Each heredoc body as { segment, body }: the index of the segment whose `<<` opened it, and its text.
   const heredocs = [];
   let tokens = [];
   let current = null;
   const pendingHeredocs = [];
+  const spans = [];
+  let segmentStart = null;
+  // The newline whose heredoc bodies end the segment: where that segment's span ends.
+  let heredocAt = null;
 
   const start = () => {
     if (!current) current = { text: '', dynamic: false };
@@ -122,7 +125,7 @@ function lexSegments(command) {
     if (current) tokens.push(current);
     current = null;
   };
-  const endSegment = (separator = null, at = command.length) => {
+  const endSegment = (separator = null, at = heredocAt ?? command.length) => {
     endToken();
     if (tokens.length > 0) {
       let end = at;
@@ -138,11 +141,13 @@ function lexSegments(command) {
     }
     tokens = [];
     segmentStart = null;
+    heredocAt = null;
   };
 
   for (let i = 0; i < command.length; i += 1) {
     const ch = command[i];
     if (segmentStart === null && !/[\s;&|]/u.test(ch)) segmentStart = i;
+    if (ch === '\n' && pendingHeredocs.length > 0) heredocAt = i;
 
     if (ch === '\n' && pendingHeredocs.length > 0) {
       // Skip the body lines up to the delimiter line, then lex on.
@@ -162,9 +167,8 @@ function lexSegments(command) {
       const bodyEnd = Math.min(i + 1 + body, command.length);
       heredocs.push({ segment, body: command.slice(i + 1, bodyEnd) });
       if (expands) collectSubstitutions(command, i + 1, bodyEnd, bodyEnd, substitutions);
-      const at = i;
       i += closed ? consumed : rest.length;
-      endSegment(null, at);
+      endSegment();
       continue;
     }
 
@@ -258,10 +262,11 @@ function lexSegments(command) {
 
     if (ch === '>' || ch === '<') {
       if (command[i + 1] === '(') substitutions.push(command.slice(i + 2, closingParen(command, i + 1, command.length)));
-      // A bare fd prefix (`2>`) belongs to the operator, not to a filename: it is the operator's `fd`.
-      const fd = current && /^\d+$/u.test(current.text) ? current.text : null;
+      // A bare fd prefix (`2>`, or bash's named `{x}>`) belongs to the operator, not to a filename.
+      const fd = current && (/^\d+$/u.test(current.text) || /^\{[A-Za-z_]\w*\}$/u.test(current.text)) ? current.text : null;
       if (current && fd === null) endToken();
       else current = null;
+      const named = fd === null ? {} : { fd };
       let operator = ch;
       // `>|` writes as `>` does, past noclobber.
       if (ch === '>' && command[i + 1] === '|') i += 1;
@@ -272,7 +277,7 @@ function lexSegments(command) {
       if (operator === '<<' && command[i + 1] === '<') {
         // `<<<word`: a here-string, one input redirect whose word lexes as usual.
         i += 1;
-        tokens.push({ text: '<<<', dynamic: false, operator: '<' });
+        tokens.push({ text: '<<<', dynamic: false, operator: '<', ...named });
         continue;
       }
       if (operator === '<<') {
@@ -287,11 +292,11 @@ function lexSegments(command) {
           else quoted = true;
           j += 1;
         }
-        pendingHeredocs.push({ delimiter, expands: !quoted, segment: segments.length });
+        pendingHeredocs.push({ delimiter, expands: !quoted, segment: segments.length, ...named });
         i = j - 1;
         continue;
       }
-      tokens.push({ text: operator, dynamic: false, operator: operator === '<' ? '<' : operator, ...(fd === null ? {} : { fd }) });
+      tokens.push({ text: operator, dynamic: false, operator: operator === '<' ? '<' : operator, ...named });
       if (command[i + 1] === '&') {
         // `2>&1` and `>&-` name a descriptor, never a path; `>&file` and `>& file` write the file, as `&>` does.
         let j = i + 2;

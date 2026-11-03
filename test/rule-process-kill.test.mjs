@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 
 import { firstSentence } from '../plugins/aidrian/lib/hook-deny.mjs';
@@ -572,7 +573,6 @@ test('listing deny reason names the root cause, the safe forms, and the override
 test('a listing whose output reaches only /dev/null or a counter runs', () => {
   allowListing('ps -p 58825 >/dev/null');
   allowListing('ps -p $p >/dev/null && echo alive');
-  allowListing("timeout 800 sh -c 'while ps -p 58825 >/dev/null; do sleep 5; done'");
   allowListing('ps aux >/dev/null 2>&1');
   allowListing('ps aux &>/dev/null');
   allowListing('ps aux 1>/dev/null');
@@ -596,6 +596,30 @@ test('a listing whose output can still be read stays denied', () => {
   denyListing('ps aux | sort >/tmp/procs.txt');
   denyListing('ps aux | wc -l; ps aux');
   denyListing('x=$(ps aux); echo "$x" | wc -l');
+});
+
+test('no listing passes for where its output goes through a nested shell, eval, env -S, or xargs', () => {
+  denyListing("sh -c 'ps aux >&2' >/dev/null");
+  denyListing("sh -c 'ps aux > /tmp/procs' | wc -l");
+  denyListing("timeout 800 sh -c 'while ps -p 58825 >/dev/null; do sleep 5; done'");
+  denyListing("eval 'ps aux >&2' >/dev/null");
+  denyListing("env -S 'ps aux' >/dev/null");
+  denyListing('echo 1 | xargs ps | wc -l');
+});
+
+test('a program between the listing and its counter passes it on only with no operand and no output option', () => {
+  allowListing('ps aux | grep -v grep | head -n 5 | sort -rk 2 | uniq | cut -c1-80 | wc -l');
+  allowListing('ps aux | grep -e node -i | tail -3 | wc -l');
+  denyListing('ps aux | sort -o /dev/stderr | wc -l');
+  denyListing('ps aux | sort -ro /dev/stderr | wc -l');
+  denyListing('ps aux | sort --output=/dev/stderr | wc -l');
+  denyListing('ps aux | uniq /dev/stdin /dev/stderr | wc -l');
+  denyListing('ps aux | uniq - /dev/stderr | wc -l');
+  denyListing('ps aux | head -n 5 /dev/stdin | wc -l');
+  denyListing('ps aux | grep node /dev/stdin | wc -l');
+  denyListing('ps aux | grep -e node /dev/stdin | wc -l');
+  denyListing('ps aux | tr a-z A-Z | wc -l');
+  denyListing('ps aux | cut -c1-80 "$F" | wc -l');
 });
 
 // [denied command, the command its reason says to run instead]
@@ -630,7 +654,27 @@ test('a listing deny names first the exact command to run instead, and that comm
     assert.equal(check(replacement, { env: NO_OVERRIDE }), null, `the replacement passes the process rules: ${replacement}`);
     assert.equal(grepChainCheck(replacement, { env: {} }), null, `and the grep rule: ${replacement}`);
     assert.equal(firstSentence(reason), 'this process listing prints full command lines.', 'the dispatch log keys the rule as before');
+    assertParses(replacement);
   }
+});
+
+// bash -n: the line parses. Skipped where bash is missing.
+function assertParses(line) {
+  const result = spawnSync('bash', ['-n', '-c', line], { encoding: 'utf8' });
+  if (result.error?.code === 'ENOENT') return;
+  assert.equal(result.status, 0, `bash -n: ${line}\n${result.stderr}`);
+}
+
+test('no whole-line replacement for a listing behind a shell word, in a group, or in a body that occurs twice', () => {
+  const lead = 'Blocked: this process listing prints full command lines.';
+  for (const command of ['(ps aux; echo done)', 'while pgrep -fl x; do sleep 1; done', '! pgrep -fl x', 'case $x in a) ps aux;; esac', 'ps aux | grep "(a|b)"']) {
+    const { decision, reason } = decideForCommand(command, NO_OVERRIDE);
+    assert.equal(decision, 'deny', command);
+    assert.ok(!reason.includes('Run this instead'), `${command}\n${reason}`);
+    assert.ok(reason.startsWith(lead), command);
+  }
+  const twice = decideForCommand(`echo '$(pgrep -fl x)' "$(pgrep -fl x)"`, NO_OVERRIDE).reason;
+  assert.ok(!twice.includes('Run this instead') && twice.includes('in place of `pgrep -fl x`'), twice);
 });
 
 test('a listing inside a command string gets the replacement for that listing alone', () => {

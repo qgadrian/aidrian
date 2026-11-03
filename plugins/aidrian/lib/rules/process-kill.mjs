@@ -7,7 +7,9 @@
 //
 // Command-line listings: no `pgrep -fl`, `pgrep -a`, or `ps` without an explicit format free of argument columns.
 // On macOS a process that sets its own title shows its environment as arguments, so secrets would reach the transcript.
-// A listing whose output reaches only `/dev/null` or a counter (`wc`, `grep -c`, `grep -q`) prints none of it, so it runs.
+// A listing whose output reaches only `/dev/null` or a counter (`wc`, `grep -c`, `grep -q`) prints none of it, so it runs,
+// but only when the listing is on the command line itself or in a substitution of it, never inside `sh -c`, `eval`,
+// `env -S`, or xargs, and only through programs whose every word this rule reads.
 //
 // Each deny names the command to run instead, built from the one it saw: `pgrep -fl x` and `ps aux | grep x` become
 // `pgrep -d, -f x | xargs -r ps -o pid=,…,comm= -p`, a `ps` format trades its argument columns for `comm`, and a
@@ -17,9 +19,10 @@
 // A lexer cannot see into a script or an interpreter (`python -c`), so this guards against accidents, not intent.
 
 import {
-  excerpt, inlineShellCommand, isLongOption, lexCommand, lexPipeline, lexSubstitutions, readInvocation, shellRedirections, shellWord,
+  excerpt, inlineShellCommand, isLongOption, lexCommand, lexPipeline, lexSubstitutions, readInvocation, readShortOptions,
+  shellRedirections, shellWord,
 } from '../shell-lex.mjs';
-import { asksForCount, asksForQuiet, GREP_PROGRAMS } from './grep-exit-chain.mjs';
+import { asksForCount, asksForQuiet, GREP_PROGRAMS, GREP_VALUE_FLAGS, startsOrEndsGroup } from './grep-exit-chain.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME';
 export const LISTING_OVERRIDE = 'AIDRIAN_ALLOW_PROCESS_ARGS_LISTING';
@@ -378,8 +381,11 @@ function findListing(command, depth = 0, exact = true) {
   if (depth > MAX_DEPTH) return null;
   const { segments, separators, spans } = lexPipeline(command);
   for (let i = 0; i < segments.length; i += 1) {
-    if (outputDiscarded(segments, separators, i)) continue;
     const found = invocationListing(readCommand(segments[i]), depth);
+    if (!found) continue;
+    // Only a listing this line runs itself may pass on where its output goes: in a nested shell, the redirections of
+    // the line that carries it say nothing about the listing's own.
+    if (found === 'direct' && exact && outputDiscarded(segments, separators, i)) continue;
     if (found === 'direct' || found === 'indirect') {
       return { line: command, segments, separators, spans, index: i, exact: exact && found === 'direct' };
     }
@@ -432,9 +438,39 @@ function stdoutTarget(segment) {
   return target;
 }
 
-// Programs that pass on only what they read, so a listing piped through them ends where they end.
-const PASS_THROUGH = new Set([...GREP_PROGRAMS, 'head', 'tail', 'sort', 'uniq', 'cut', 'tr']);
+// Programs that pass on only what they read, so a listing piped through them ends where they end, with the short
+// options of each that take a value. A word that is neither an option nor its value is an operand, which may name a
+// file to read or write in place of the pipe (`uniq - /dev/stderr`), so it fails the pass, as a long option does, and
+// so does sort's `-o`. grep alone takes one operand, its pattern, when no `-e` or `-f` gives one.
+const PASS_THROUGH = new Map([
+  ...[...GREP_PROGRAMS].map((program) => [program, GREP_VALUE_FLAGS]),
+  ['head', new Set(['-n', '-c'])],
+  ['tail', new Set(['-n', '-c'])],
+  ['cut', new Set(['-b', '-c', '-d', '-f'])],
+  ['sort', new Set(['-k', '-t', '-S'])],
+  ['uniq', new Set(['-f', '-s', '-w'])],
+]);
 const PIPES = new Set(['|', '|&']);
+
+function passesThrough({ program, args }) {
+  const valueFlags = PASS_THROUGH.get(program);
+  if (!valueFlags) return false;
+  let operands = 0;
+  let patternGiven = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const { text, dynamic } = args[i];
+    if (dynamic || text.startsWith('--')) return false;
+    if (!text.startsWith('-') || text === '-') {
+      operands += 1;
+      continue;
+    }
+    const { options, value } = readShortOptions(text, valueFlags);
+    if (program === 'sort' && options.includes('-o')) return false;
+    if (options.includes('-e') || options.includes('-f')) patternGiven ||= GREP_PROGRAMS.has(program);
+    if (value?.attached === null) i += 1;
+  }
+  return operands === 0 || (GREP_PROGRAMS.has(program) && !patternGiven && operands === 1);
+}
 
 // Whether segment `i`'s output can reach no transcript: it goes to /dev/null, or down a pipe through pass-through
 // programs into a counter that prints only a number (`wc`, `grep -c`) or nothing (`grep -q`).
@@ -444,7 +480,7 @@ function outputDiscarded(segments, separators, i) {
       const { program, args } = readInvocation(segments[j]);
       if (program === 'wc') return true;
       if (GREP_PROGRAMS.has(program) && (asksForCount(args) || asksForQuiet(args))) return true;
-      if (!PASS_THROUGH.has(program)) return false;
+      if (!passesThrough({ program, args })) return false;
     }
     const target = stdoutTarget(segments[j]);
     if (target !== 'inherited') return target === 'null';
@@ -683,13 +719,18 @@ function listingReplacement({ segments, separators, index }) {
 
 // The text to run in place of segments [first, last] of `line`: the wrappers and assignments before the listing, the
 // replacement, and the redirections of the last segment.
+// null when a word before it cannot be written back, or when the segments start with a shell word (`if`, `!`) or open
+// or close a group (`(ps aux`, `aux)`, a `case` arm), which a replacement could unbalance.
 function replacementSegment(segments, { first, last, text }) {
+  if (segments.slice(first, last + 1).some(startsOrEndsGroup)) return null;
   const segment = segments[first];
   const all = segment.filter((token, i) => !token.operator && !token.fdDup && !(i > 0 && segment[i - 1].operator));
   const { args } = unwrapPrefixes(readCommand(segment));
   const at = args.length > 0 ? all.indexOf(args[0]) - 1 : all.length - 1;
-  const prefix = at > 0 ? words(all.slice(0, at)) : [];
-  return [...(prefix ?? []), text, ...shellRedirections(segments[last])].join(' ');
+  if (args.length > 0 && at < 0) return null;
+  const prefix = all.slice(0, Math.max(0, at)).map(shellWord);
+  if (prefix.includes(null)) return null;
+  return [...prefix, text, ...shellRedirections(segments[last])].join(' ');
 }
 
 // The replacement for `found` in `command`: { text, original, fixed, from }, where `fixed` is `command` with it in place
@@ -699,10 +740,13 @@ function listingFix(command, found) {
   if (!replacement) return null;
   const { line, segments, spans, exact } = found;
   const text = replacementSegment(segments, replacement);
+  if (text === null) return null;
   const from = spans[replacement.first][0];
   const to = spans[replacement.last][1];
+  // A substitution's body is placed by its text, so only a body that occurs once is surely the one that runs.
   const at = line === command ? 0 : command.indexOf(line);
-  const fixed = exact && at !== -1 ? `${command.slice(0, at + from)}${text}${command.slice(at + to)}` : null;
+  const placed = at !== -1 && (line === command || command.lastIndexOf(line) === at);
+  const fixed = exact && placed ? `${command.slice(0, at + from)}${text}${command.slice(at + to)}` : null;
   return { text, original: line.slice(from, to), fixed, from: at + from };
 }
 

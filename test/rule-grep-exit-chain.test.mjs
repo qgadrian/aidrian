@@ -319,6 +319,33 @@ test('the deny names first the line to run instead, every chained count wrapped,
     assert.ok(reason.startsWith(`Blocked: a counting grep is chained with \`&&\`, so a clean result reads as a failed check. Run this instead:\n\n  ${fixed}\n`), `${command}\n${reason}`);
     assert.equal(decide(fixed), 'allow', `the rewrite passes: ${fixed}`);
     assert.equal(firstSentence(reason), 'a counting grep is chained with `&&`, so a clean result reads as a failed check.');
+    assertParses(fixed);
+  }
+});
+
+// bash -n: the line parses. Skipped where bash is missing.
+function assertParses(line) {
+  const result = spawnSync('bash', ['-n', '-c', line], { encoding: 'utf8' });
+  if (result.error?.code === 'ENOENT') return;
+  assert.equal(result.status, 0, `bash -n: ${line}\n${result.stderr}`);
+}
+
+test('no rewrite for a count behind a shell word, in a group, or in a substitution that occurs twice', () => {
+  const commands = [
+    'if grep -c x f && y; then z; fi',
+    'while grep -c x f && y; do z; done',
+    'if a; then grep -c x f && y; fi',
+    '(grep -c x f && y)',
+    '(a && grep -c x f)',
+    'case $x in a) grep -c x f && y;; esac',
+    "echo '$(grep -c x f && y)' $(grep -c x f && y)",
+  ];
+  for (const command of commands) {
+    assertParses(command);
+    const { decision, reason } = decideForCommand(command, {});
+    assert.equal(decision, 'deny', command);
+    assert.ok(!reason.includes('Run this instead'), `${command}\n${reason}`);
+    assert.match(reason, /\{ grep -c … \|\| true; \}/u, 'the general fix instead');
   }
 });
 

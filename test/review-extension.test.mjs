@@ -10,7 +10,7 @@ import { DEFAULT_REVIEWER, exitCodeFor, runAwaitReview } from '../plugins/aidria
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { extensionSummary, formatExtensions } from '../plugins/aidrian/lib/report-reviews.mjs';
 import {
-  atCap, BLOAT_MIN_LINES, botRounds, findingTitle, grantedRounds, normalizeTitle, parseExtend, recordHuman, recordVerdict, revalidate, runExtend, signals,
+  atCap, BLOAT_MIN_LINES, botRounds, buildHistory, findingTitle, grantedRounds, normalizeTitle, parseExtend, recordHuman, recordVerdict, revalidate, runExtend, signals,
 } from '../plugins/aidrian/lib/review/extension.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { approved, check, transcriptAnswers } from '../plugins/aidrian/lib/rules/review-extend.mjs';
@@ -54,11 +54,17 @@ test('signals: drifting is a later finding outside the files the pull request fi
 test('signals: bloating is fixes adding more than half the first diff, and never under the line floor', () => {
   const rounds = (added) => [round(1, 'a', [finding('a.js', 1, 'x'), finding('a.js', 50, 'y')], { added, removed: 0, files: ['a.js'] }), round(2, 'b', [finding('a.js', 90, 'z')], { added: 0, removed: 0, files: [] })];
   const big = signals({ rounds: rounds(120), originalAdded: 200 });
-  assert.deepEqual([big.bloating, big.evidence.bloating], [true, { fix_added: 120, original_added: 200, limit: 100 }]);
-  assert.match(big.reasons.find((reason) => reason.startsWith('bloating')), /added 120 lines, past 100 \(50% of the 200 lines/u);
+  assert.deepEqual([big.bloating, big.evidence.bloating], [true, { fix_added: 120, fix_added_all: 120, original_added: 200, limit: 100 }]);
+  assert.match(big.reasons.find((reason) => reason.startsWith('bloating')), /added 120 lines of code, past 100 \(50% of the 200 lines/u);
   assert.equal(signals({ rounds: rounds(90), originalAdded: 200 }).bloating, false);
   assert.equal(signals({ rounds: rounds(BLOAT_MIN_LINES), originalAdded: 10 }).bloating, false, 'a small change may need a fix its own size');
   assert.equal(signals({ rounds: rounds(BLOAT_MIN_LINES + 1), originalAdded: 10 }).bloating, true);
+});
+
+test('signals: doc lines a fix adds are no bloat; only code_added counts', () => {
+  const docs = [round(1, 'a', [finding('a.md', 1, 'x')], { added: 601, code_added: 0, removed: 0, files: ['a.md'] }), round(2, 'b', [], { added: 0, code_added: 0, removed: 0, files: [] })];
+  const read = signals({ rounds: docs, originalAdded: 454 });
+  assert.deepEqual([read.bloating, read.evidence.bloating], [false, { fix_added: 0, fix_added_all: 601, original_added: 454, limit: 227 }]);
 });
 
 test('signals: a history with no readable signal stops', () => {
@@ -140,14 +146,15 @@ test('atCap on a head no round reviewed: the judge is told, the question names t
   assert.match(summaryBody(state, null, 'round_limit'), /- round 2 on `c0ffee1`: denied[^\n]*\n- fix head `c0ffee1`, pushed after round 2 on `b`, is reviewed by no pass/u);
 });
 
-test('revalidate: a push that bloats an open decision stops it, and the stop names the fix as unreviewed', () => {
+test('revalidate: a push that bloats an open decision sends it back to the judge with the red flag, and names the fix as unreviewed', () => {
   const bloated = () => ({ ...passing(), rounds: [round(1, 'a', [finding('a.js', 1, 'one'), finding('a.js', 50, 'two')]), round(2, 'b', [finding('a.js', 90, 'three')], { added: 100, removed: 0, files: ['a.js'] })] });
   for (const status of ['asking', 'granted']) {
     const state = emptyState(7, 'o/r');
     state.extensions = [{ source: 'plan', round: 2, head: 'b', status, by: 'judge', reasons: ['valid'], mode: 'auto', max: 2 }];
-    const stopped = atCap({ state, source: 'plan', round: 2, head: 'c0ffee1234', policy: { mode: 'ask', max: 2 }, history: bloated, pr: 7 });
-    assert.deepEqual([stopped.status, stopped.extension.by, stopped.extension.signals.bloating, stopped.unreviewed_head], ['round_limit', 'mechanical', true, true], status);
-    assert.match(summaryBody(state, null, 'round_limit'), /- round 2 on `c0ffee1`: stopped by the signals[^\n]*\n- fix head `c0ffee1`, pushed after round 2 on `b`, is reviewed by no pass/u, status);
+    const back = atCap({ state, source: 'plan', round: 2, head: 'c0ffee1234', policy: { mode: 'ask', max: 2 }, history: bloated, pr: 7 });
+    assert.deepEqual([back.status, back.extension.by, back.extension.signals.bloating, back.extension.unreviewed_head?.head], ['extension_check', null, true, 'c0ffee1234'], status);
+    assert.match(back.extension.red_flags[0], /^bloating/u, status);
+    assert.equal(state.extensions[0].human, undefined, 'an approval for the head before does not carry over');
   }
 });
 
@@ -428,10 +435,11 @@ test('await-review --request at the cap: a push after the judge`s stop is named 
   assert.match(bot.issue[0].body, /- fix head `yyy`, pushed after bot round 3 on `c2`, is reviewed by no pass/u);
 });
 
-test('await-review --request at the cap: bot rounds that do not shrink stop, as round_limit', async (t) => {
+test('await-review --request at the cap: bot rounds that do not shrink go to the judge with their red flags', async (t) => {
   const { run } = botProject(t);
   const result = await run([[['a.js', 1, 'One']], [['a.js', 2, 'One again']], [['b.js', 9, 'Two']]]);
-  assert.deepEqual([result.code, result.out.status, result.out.extension.by], [4, 'round_limit', 'mechanical']);
+  assert.deepEqual([result.out.status, result.out.extension.by], ['extension_check', null]);
+  assert.deepEqual(result.out.extension.red_flags.map((reason) => reason.split(':')[0]), ['not converging', 'looping']);
   assert.deepEqual([result.out.extension.signals.converging, result.out.extension.signals.looping], [false, true]);
   const off = botProject(t, { github: { extraRounds: 'off' } });
   const plain = await off.run([[['a.js', 1, 'One']], [['b.js', 1, 'x']], []]);
@@ -529,7 +537,7 @@ function gitBot(t, config, { working = null } = {}) {
     const code = await runAwaitReview(['42', '--request', '--timeout-sec', '0', ...args], loadConfig(project).config, project, { gh, git: git_, env, now: () => now, sleep: async (s) => { now += s * 1000; } });
     return { code, out: code === 1 ? null : JSON.parse(log.mock.calls.at(-1).arguments[0]), elapsed: (now - start) / 1000 };
   };
-  return { project, run, requests, commit, fix, hooks };
+  return { project, run, requests, commit, fix, hooks, git };
 }
 
 test('await-review: a grant revoked by a bloated push stays revoked, whatever cap an earlier request recorded', async (t) => {
@@ -545,8 +553,14 @@ test('await-review: a grant revoked by a bloated push stays revoked, whatever ca
 
   bot.commit(`${Array.from({ length: 60 }, (_, i) => `export const line${i} = ${i};`).join('\n')}\n`);
   const revoked = await bot.run();
-  assert.deepEqual([revoked.code, revoked.out.status, bot.requests.length], [4, 'round_limit', 1], 'no new request: the recorded 4 does not bring the grant back');
-  assert.deepEqual([revoked.out.extension.by, revoked.out.extension.signals.bloating], ['mechanical', true]);
+  assert.deepEqual([revoked.out.status, bot.requests.length], ['extension_check', 1], 'no new request: the recorded 4 does not bring the grant back');
+  assert.deepEqual([revoked.out.extension.by, revoked.out.extension.signals.bloating], [null, true]);
+  const again = readLocalState(bot.project, 42);
+  recordVerdict(again, { verdict: 'extend', reason: 'the growth is the fix', current: bot.git('rev-parse', 'HEAD') });
+  writeLocalState(bot.project, again);
+  const asking = await bot.run();
+  assert.equal(asking.out.status, 'extension_ask', 'under "auto", an extend over a red flag still asks the Human');
+  assert.match(asking.out.question, /red flags \(bloating\)/u);
 
   const human = await bot.run({ AIDRIAN_ALLOW_EXTRA_ROUNDS: '1' });
   assert.deepEqual([human.out.status, bot.requests.length], ['timed_out', 2], 'the Human`s override still keeps a recorded cap');
@@ -561,7 +575,7 @@ test('await-review: the signals read the base branch`s review.ignore, so a worki
   assert.equal((await bot.run()).out.status, 'timed_out', 'the extra round is asked for');
   bot.commit(`${Array.from({ length: 60 }, (_, i) => `export const line${i} = ${i};`).join('\n')}\n`);
   const revoked = await bot.run();
-  assert.deepEqual([revoked.out.status, revoked.out.extension.signals.bloating, revoked.out.extension.signals.evidence.bloating.original_added], ['round_limit', true, 1]);
+  assert.deepEqual([revoked.out.status, revoked.out.extension.signals.bloating, revoked.out.extension.signals.evidence.bloating.original_added], ['extension_check', true, 1]);
 });
 
 test('await-review: a grant is used only for the head it was read on; a bloated push between the reads revokes it, and nothing is posted', async (t) => {
@@ -583,9 +597,9 @@ test('await-review: a grant is used only for the head it was read on; a bloated 
     if (n === 2) raced.commit(`${Array.from({ length: 60 }, (_, i) => `export const line${i} = ${i};`).join('\n')}\n`);
   };
   const revoked = await raced.run();
-  assert.deepEqual([revoked.code, revoked.out.status, raced.requests.length], [4, 'round_limit', 0], 'no request on the bloated head');
-  assert.deepEqual([revoked.out.extension.by, revoked.out.extension.signals.bloating], ['mechanical', true]);
-  assert.equal(readLocalState(raced.project, 42).extensions[0].status, 'stopped', 'the grant is revoked');
+  assert.deepEqual([revoked.out.status, raced.requests.length], ['extension_check', 0], 'no request on the bloated head');
+  assert.deepEqual([revoked.out.extension.by, revoked.out.extension.signals.bloating], [null, true]);
+  assert.equal(readLocalState(raced.project, 42).extensions[0].status, 'judging', 'the grant is revoked, back to the judge');
 });
 
 test('await-review: a grant adds to an explicit --max-rounds as to the base cap, and an explicit raise still needs the override', async (t) => {
@@ -645,4 +659,60 @@ test('await-review: a retry after the head moved waits only for what is left of 
   assert.equal(waited.out.status, 'timed_out');
   assert.ok(waited.elapsed <= 10, `the whole command waited ${waited.elapsed} s of its 10`);
   assert.equal(waited.out.waited_sec, waited.elapsed, 'waited_sec counts every wait of the command');
+});
+
+test('buildHistory: a fix that rewords docs adds no code, and bloat is measured against the code first added', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-hist-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
+  const write = (file, text) => {
+    mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+    writeFileSync(path.join(dir, file), text);
+  };
+  const lines = (n, tag) => `${Array.from({ length: n }, (_, i) => `${tag} ${i}`).join('\n')}\n`;
+  git('init', '-q', '-b', 'main');
+  git('config', 'user.email', 't@example.com');
+  git('config', 'user.name', 'Tester');
+  write('README.md', 'base\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'base');
+  const base = git('rev-parse', 'HEAD');
+  git('switch', '-q', '-c', 'feat');
+  write('docs/guide.md', lines(100, 'first'));
+  write('src/a.js', 'export const a = 1;\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'first');
+  const first = git('rev-parse', 'HEAD');
+  write('docs/guide.md', lines(100, 'reworded'));
+  git('commit', '-q', '-am', 'reword');
+  const head = git('rev-parse', 'HEAD');
+  const read = buildHistory({ root: dir, rounds: [{ round: 1, head: first, open: 1, findings: [] }], baseTip: base, head });
+  assert.deepEqual([read.rounds[0].fix.added, read.rounds[0].fix.code_added, read.originalAdded, read.originalCodeAdded], [100, 0, 101, 1]);
+  assert.equal(signals(read).bloating, false, 'a docs rewording is no bloat');
+  const grown = signals({ ...read, rounds: [{ ...read.rounds[0], fix: { added: 45, code_added: 45, removed: 0, files: ['src/a.js'] } }] });
+  assert.deepEqual([grown.bloating, grown.evidence.bloating.limit], [true, BLOAT_MIN_LINES], 'the docs do not widen the allowance for code');
+});
+
+test('atCap: a red-flag stop an older version recorded goes to the judge, not a dead end', () => {
+  const state = emptyState(7, 'o/r');
+  state.extensions = [{ source: 'plan', round: 2, head: 'b', status: 'stopped', by: 'mechanical', reasons: ['bloating: old'], mode: 'ask', max: 2 }];
+  const flagged = () => ({ ...passing(), rounds: [round(1, 'a', [finding('a.js', 1, 'one')]), round(2, 'b', [finding('a.js', 90, 'two')])] });
+  const result = atCap({ state, source: 'plan', round: 2, head: 'b', policy: { mode: 'ask', max: 2 }, history: flagged, pr: 7 });
+  assert.deepEqual([result.status, result.extension.status, result.extension.red_flags.map((reason) => reason.split(':')[0])], ['extension_check', 'judging', ['not converging']]);
+  const capped = emptyState(7, 'o/r');
+  capped.extensions = [{ source: 'plan', round: 2, status: 'granted', by: 'judge' }, { source: 'plan', round: 3, head: 'b', status: 'stopped', by: 'mechanical', reasons: ['bloating: old'], judge: { verdict: 'extend' } }];
+  const ceiling = atCap({ state: capped, source: 'plan', round: 3, head: 'b', policy: { mode: 'auto', max: 1 }, history: flagged, pr: 7 });
+  assert.deepEqual([ceiling.status, ceiling.extension.by, capped.extensions[1].judge], ['round_limit', 'ceiling', undefined], 'the ceiling still holds');
+});
+
+test('revalidate: a push that raises no new red flag keeps the Human`s approval over the flags it was given for', () => {
+  const flat = () => ({ ...passing(), rounds: [round(1, 'a', [finding('a.js', 1, 'one')]), round(2, 'b', [finding('a.js', 90, 'two')], { added: 1, removed: 1, files: ['a.js'] })] });
+  const state = emptyState(7, 'o/r');
+  state.extensions = [{ source: 'plan', round: 2, head: 'b', status: 'granted', by: 'human', reasons: ['valid'], red_flags: ['not converging: round 2 left 1 open finding, round 1 left 1'], human: { answer: 'approve' }, mode: 'ask', max: 2 }];
+  const entry = revalidate({ state, source: 'plan', round: 2, head: 'c0ffee1234', history: flat });
+  assert.deepEqual([entry.status, entry.human?.answer], ['granted', 'approve']);
+  assert.match(summaryBody(state, null, 'fix_required'), /granted by the Human[^\n]*\(over red flags: not converging\)/u);
+  const bloated = () => ({ ...flat(), rounds: [round(1, 'a', [finding('a.js', 1, 'one')]), round(2, 'b', [finding('a.js', 90, 'two')], { added: 100, code_added: 100, removed: 0, files: ['a.js'] })] });
+  const back = revalidate({ state, source: 'plan', round: 2, head: 'deadbee123', history: bloated });
+  assert.deepEqual([back.status, back.human, back.reasons[0].split(':')[0]], ['judging', undefined, 'bloating'], 'a new flag name revokes the approval');
 });

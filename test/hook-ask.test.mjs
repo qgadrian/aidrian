@@ -61,6 +61,7 @@ test('named questions, code, quotes, other languages, and look-alike words pass'
     'Le problème vient du système. Relancer le build ?',
     'Ce thème est le même. On garde ?',
     'Uděláme to hned?',
+    'Le proble\u0300me ?',
     'Is the bottleneck I/O or CPU?',
     'The I-beam cursor or the arrow?',
     'Rename my-app to web?',

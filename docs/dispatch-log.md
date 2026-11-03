@@ -88,7 +88,7 @@ can land out of order and still count the right one.
 
 ### `hook_deny`: when one of the plugin's rules blocks a tool call
 
-The Bash rules, the main-checkout rule for writes, the [agent gates](hooks.md#agent-gates), and the config guard write one row
+The Bash rules, the main-checkout rule for writes, the [agent gates](hooks.md#agent-gates), the config guard, and the question names check write one row
 per block, while config.json `telemetry.hookDenies` is on. The call is still blocked when it is off.
 
 | Field | Meaning |

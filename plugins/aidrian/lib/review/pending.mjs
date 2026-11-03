@@ -9,7 +9,7 @@ import { ghJson } from '../gh.mjs';
 import { runGit } from '../git.mjs';
 import { originRepo, prNumber, repoName } from '../review-gate.mjs';
 import { isAncestor } from './diff.mjs';
-import { answerPending, emptyState, readLocalState, writeLocalState } from './state.mjs';
+import { answerPending, emptyState, newRunId, readLocalState, writeLocalState } from './state.mjs';
 
 const SHA = /^[0-9a-f]{7,40}$/iu;
 const KINDS = ['request', 'review'];
@@ -17,7 +17,7 @@ const KINDS = ['request', 'review'];
 // Records one entry owed on `pr`. Returns the entry.
 export function recordPending(project, { pr, repo, kind, head, by }) {
   const state = readLocalState(project, pr) ?? emptyState(pr, repo);
-  const entry = { kind, head, at: new Date().toISOString(), by };
+  const entry = { id: newRunId(), kind, head, at: new Date().toISOString(), by };
   state.pending = [...state.pending, entry];
   writeLocalState(project, state);
   return entry;

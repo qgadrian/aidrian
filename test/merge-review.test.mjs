@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { runAwaitReview } from '../plugins/aidrian/lib/pr-await-review.mjs';
-import { projectAt } from '../plugins/aidrian/lib/project.mjs';
+import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { runAttest } from '../plugins/aidrian/lib/review-gate.mjs';
 import { isAncestor } from '../plugins/aidrian/lib/review/diff.mjs';
 import { reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
@@ -433,7 +434,7 @@ test('a merge while the first review step`s reviewer runs is refused', async (t)
   let during = null;
   const exec = async () => (during = r.run(`gh pr merge 9 --match-head-commit ${f.head}`), clean());
   assert.equal((await f.step({ exec })).status, 'received');
-  assert.match(during ?? '', /review of head .* is `running`/u, 'no record yet on disk would have let it run');
+  assert.match(during ?? '', /review step on head .* is still running/u, 'no record yet on disk would have let it run');
   assert.equal(r.run(`gh pr merge 9 --match-head-commit ${f.head}`), null, 'finished: it runs');
 });
 
@@ -456,4 +457,67 @@ test('await-review for the same number in another repository leaves this record 
   assert.deepEqual(marks(r.project, 5), [['request', false, false]], 'other/fork#5 answered, at the same commit: not this pull request');
   assert.equal(await runAwaitReview(['5', '--repo', 'Acme/Notes', '--timeout-sec', '0'], config, r.project, { gh: botGh(1) }), 0);
   assert.deepEqual(marks(r.project, 5), [['request', false, true]]);
+});
+
+test('a merge in the upstream a review record names is guarded from a fork checkout', (t) => {
+  const r = repo(t);
+  // origin is acme/notes, the fork; the review ran against the upstream pull request.
+  r.record(5, (state) => (state.repo = 'Upstream/Notes', outcome(state, 'running')));
+  for (const command of ['gh pr merge 5 -R upstream/notes', 'gh pr merge https://github.com/Upstream/Notes/pull/5', 'gh api -X PUT repos/upstream/notes/pulls/5/merge']) {
+    assert.match(r.run(command) ?? '', /is `running`/u, command);
+  }
+  assert.match(checkMcp({ owner: 'UPSTREAM', repo: 'notes', pullNumber: 5, sha: HEAD }, { cwd: r.dir, input: {}, viewPr: r.viewer() }) ?? '', /is `running`/u);
+  assert.equal(r.run('gh pr merge 5 -R third/party'), null, 'neither origin nor the record`s repository');
+});
+
+test('a run that finishes first does not release another run still open on the head', async (t) => {
+  const r = repo(t);
+  const f = feature(r);
+  let inner = null;
+  let during = null;
+  const exec = async () => {
+    if (inner === null) {
+      inner = await f.step({ exec: clean });
+      during = r.run(`gh pr merge 9 --match-head-commit ${f.head}`);
+    }
+    return clean();
+  };
+  assert.equal((await f.step({ exec })).status, 'received');
+  assert.equal(inner.status, 'received', 'the second run finished first');
+  assert.match(during ?? '', /still running/u, 'the first run is still open');
+  assert.equal(r.run(`gh pr merge 9 --match-head-commit ${f.head}`), null, 'both finished');
+  assert.deepEqual(readLocalState(f.project, 9).active, []);
+});
+
+test('a run that died stops blocking once it is stale', (t) => {
+  const r = repo(t);
+  // A write keeps the runs on disk, so the runs are written as openRun left them.
+  const raw = (pr, at) => {
+    const state = { ...emptyState(pr, 'acme/notes'), outcome: { status: 'received', head: HEAD, at: '2026-11-03T14:00:00.000Z' }, active: [{ id: 'x', head: HEAD, at }] };
+    mkdirSync(path.join(stateDir(r.project), 'reviews'), { recursive: true });
+    writeFileSync(path.join(stateDir(r.project), 'reviews', `pr-${pr}-review.json`), JSON.stringify(state));
+  };
+  raw(5, new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString());
+  assert.equal(r.run('gh pr merge 5'), null, 'past the cutoff');
+  raw(6, new Date().toISOString());
+  assert.match(r.run('gh pr merge 6') ?? '', /still running/u);
+});
+
+test('concurrent writers keep every entry: the record is locked and replaced whole', async (t) => {
+  const r = repo(t);
+  const pending = pathToFileURL(path.resolve('plugins/aidrian/lib/review/pending.mjs')).href;
+  const project = pathToFileURL(path.resolve('plugins/aidrian/lib/project.mjs')).href;
+  const writers = 6;
+  const each = 12;
+  const code = (i) => `import { recordPending } from '${pending}'; import { projectAt } from '${project}';
+    const p = projectAt(${JSON.stringify(r.dir)});
+    for (let j = 0; j < ${each}; j += 1) recordPending(p, { pr: 5, repo: 'acme/notes', kind: 'request', head: '${HEAD}', by: '${i}-' + j });`;
+  await Promise.all(Array.from({ length: writers }, (_, i) => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', code(i)], { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => (stderr += chunk));
+    child.on('exit', (status) => (status === 0 ? resolve() : reject(new Error(stderr))));
+  })));
+  const by = new Set(readLocalState(r.project, 5).pending.map((entry) => entry.by));
+  assert.equal(by.size, writers * each);
 });

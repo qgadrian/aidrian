@@ -185,15 +185,19 @@ reads only this machine's [review record](review.md#the-record), and decides in 
 1. An owed review, one `aidrian pr request` recorded and no answer has marked since, refuses the merge, whatever the
    head or the outcome: a bot review sent is owed until the bot answers. Its reason says how to send it or wait for
    it, and that a later instruction does not cancel it.
-2. No record from the review step, no outcome and no round, lets it run: the guard holds a review that is open or asked
+2. No record from the review step, no open run, outcome, or round, lets it run: the guard holds a review that is open or asked
    for, not that one happens. A review run outside `aidrian pr review` leaves no record and is not guarded.
-3. Otherwise the head needs an `outcome` of `received` or `none_needed` on that very head. An outcome on an earlier
+3. A review step still running on the head, an `active` run younger than 2 hours, refuses it, even when another run
+   on the head already finished.
+4. Otherwise the head needs an `outcome` of `received` or `none_needed` on that very head. An outcome on an earlier
    head, or any other status, refuses it.
 
 It never reads pull request comments. Its one network call is `gh pr view --json number,headRefOid`, made only when the
 command names no head or no pull request and a record may apply, and stopped after 3 seconds. A merge whose head it then
 cannot read is refused with a reason that says to pass `gh pr merge <PR> --match-head-commit <sha>`; so is one whose
-pull request number it cannot read, such as `gh pr merge "$PR"`. A merge in another repository runs.
+pull request number it cannot read, such as `gh pr merge "$PR"`.
+A merge in another repository runs: one whose target, as `-R`, a URL, a `gh api` path, or the MCP owner and repo,
+names neither origin nor the repository the review record was written for, such as an upstream's from a fork checkout.
 A record written on another machine is not read here: that is the guard's known limit.
 
 The Human waives it. The reason prints a question naming `#<PR>` and the head's first 7 characters; the merge runs when

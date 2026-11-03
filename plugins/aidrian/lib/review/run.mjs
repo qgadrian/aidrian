@@ -39,7 +39,7 @@ import { contentFlows } from './content.mjs';
 import { buildPlan, classify, detectFlows, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, pathPattern, validatePlan } from './plan.mjs';
 import { BUILT_IN, flowBaseBrief, resolveEngine, reviewerMap, runExec, satisfies, VERDICT_MEANING } from './reviewers.mjs';
 import { atCap, buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
-import { answerPending, heldMessage, isSummary, mergePending, noteOutcome, prunePasses, readLocalState, readRecord, summaryBody, writeLocalState } from './state.mjs';
+import { answerPending, closeRun, heldMessage, isSummary, mergePending, newRunId, noteOutcome, openRun, prunePasses, readLocalState, readRecord, summaryBody, writeLocalState } from './state.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, ghImage, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput, visualMatrix, visualRoutes } from './visual.mjs';
 
 export const EXIT = Object.freeze({
@@ -194,7 +194,18 @@ function trackedAt(root, commit) {
 const touches = (changes, files) => (files === null ? changes.length > 0 : changes.some((change) => files.includes(change.file)));
 
 // The whole step. `deps` replaces gh, the engine check, the reviewers, and the bot wait in tests.
-export async function reviewStep(opts, { project, config, env = process.env, gh = defaultGh, exec = runExec, awaitBot = null, codex, captureSpawn } = {}) {
+// One review step, open as a run of its own from the moment it reads the record to its last write (state.mjs openRun):
+// a merge waits for every run on the head, and each run closes only its own.
+export async function reviewStep(opts, deps = {}) {
+  const run = { id: newRunId(), pr: null };
+  try {
+    return await stepOnce(opts, deps, run);
+  } finally {
+    if (run.pr !== null) closeRun(deps.project, run.pr, run.id);
+  }
+}
+
+async function stepOnce(opts, { project, config, env = process.env, gh = defaultGh, exec = runExec, awaitBot = null, codex, captureSpawn } = {}, run) {
   const root = project.root;
   const cleanEnv = isolate({ ...env });
   const info = gh.pr(opts.pr);
@@ -245,11 +256,9 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   const record = readRecord(project, n, comments, repo);
   if (record.held !== undefined) return { status: 'incomplete', pr: n, repo, head, reason: heldMessage(n, record.held), held: record.held, retry_recommended: false };
   let state = record.state;
-  // The step is open on this head before any reviewer, the plan command, or the bot runs: a merge meanwhile is refused.
-  // The mark is this machine's alone and posts nothing, so it is no revision of its own: the step's next write takes
-  // the one it raised.
-  settle({ status: 'running', head });
-  state.revision -= 1;
+  // The run is open on this head before any reviewer, the plan command, or the bot runs: a merge meanwhile is refused.
+  openRun(project, { pr: n, repo, head, id: run.id });
+  run.pr = n;
 
   const engine = resolveEngine(effective, codex ? { codex } : {});
   if (engine.problem) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: engine.problem });

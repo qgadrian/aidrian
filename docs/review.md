@@ -491,8 +491,13 @@ keeps the compressed marker and appends a plain one, so a comment it touched can
 
 - **Outcome.** Every return of the step writes its status to this machine's record as `outcome`: `{ status, head, at,
   reason }`. The early returns, `none_needed`, `unsatisfied`, and `too_large`, write it to the state folder only and
-  post nothing; a `held` return writes nothing. Before any reviewer, the plan command, or the bot runs, the step writes
-  `running` for its head, so a merge during the first step is refused too. The [merge guard](hooks.md#merge-guard) reads it.
+  post nothing; a `held` return writes nothing. The [merge guard](hooks.md#merge-guard) reads it.
+- **Active runs.** Before any reviewer, the plan command, or the bot runs, the step adds itself to `active` as
+  `{ id, head, at }`, and its last write removes only its own entry. A merge waits while any run on its head is open,
+  the first step's included; an entry older than 2 hours is a run that died, and counts for nothing.
+- **Writes.** Every write of the record takes a lock file beside it (`<record>.lock`, created exclusively; one older
+  than 30 seconds is broken), merges what is on disk, and renames a temporary file over the record, so concurrent
+  writers keep each other's entries and a reader never sees half a record. The merge guard only reads.
 - **Owed reviews.** `pending` lists the reviews asked for, each `{ kind, head, at, by, sent, answered }`; one is owed
   until it is `answered`. `aidrian pr request <PR>` records a bot review the Human asked for, the moment they ask,
   before any review the project requires first. `aidrian pr await-review` marks it `sent` when it posts the request, and

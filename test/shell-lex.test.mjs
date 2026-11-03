@@ -286,3 +286,15 @@ test('assignsVariable: a prefix assignment, env, or a declaring builtin sets the
   }
   assert.equal(assignsVariable({ program: 'export' }, 'NAME'), false, 'an invocation without args or environment reads as none');
 });
+
+test('only an unquoted fd prefix right against < or > is a descriptor; a quoted one is an argument word', () => {
+  const read = (line) => lexCommand(line)[0].map((token) => (token.operator ? `${token.fd ?? ''}${token.text}` : token.text));
+  assert.deepEqual(read("x '2'> f"), ['x', '2', '>', 'f']);
+  assert.deepEqual(read('x "2"> f'), ['x', '2', '>', 'f']);
+  assert.deepEqual(read('x \\2> f'), ['x', '2', '>', 'f']);
+  assert.deepEqual(read("x '{fd}'> f"), ['x', '{fd}', '>', 'f']);
+  assert.deepEqual(read('x \\{fd\\}> f'), ['x', '{fd}', '>', 'f']);
+  assert.deepEqual(read('x 2>/dev/null 2>&1'), ['x', '2>', '/dev/null', '2>', '&1'], 'unquoted, the descriptor stays');
+  assert.deepEqual(read('{fd}>/dev/null pkill node'), ['{fd}>', '/dev/null', 'pkill', 'node']);
+  assert.deepEqual([programOf('sudo -u {fd}>/dev/null root pkill node'), argsOf('sudo -u {fd}>/dev/null root pkill node')], ['pkill', ['node']], 'a redirect takes no argument slot');
+});

@@ -21,7 +21,7 @@ import { runGit } from '../git.mjs';
 import { findProject } from '../project.mjs';
 import { isLongOption, lexCommand, readGit, walkCommands } from '../shell-lex.mjs';
 import { readText } from '../transcript.mjs';
-import { lineWrites, namedFd, readBody, stdinBody, readPrCall, readPrCalls, unchangedHeredoc } from './github/pr-body.mjs';
+import { lineWrites, readBody, stdinBody, readPrCall, readPrCalls, unchangedHeredoc } from './github/pr-body.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_UNATTRIBUTED';
 
@@ -145,8 +145,8 @@ function readCalls(command, cwd) {
       if (call?.subcommand === 'create' && !call.help && !call.web && !call.dryRun) {
         // The body file as the line wrote it so far, and the heredoc fed to `--body-file -`, as the pull request body rule reads them.
         call.stdin = stdinBody(entry);
-        call.namedFd = namedFd(entry.segment);
         call.bodyFile = writes.token(call.bodyFile, entry);
+        call.bodyOverwritten = writes.overwrites(entry, call.bodyFile);
         prCreates.push({ call, dir: folder, written: new Map(writes.files) });
       }
     }

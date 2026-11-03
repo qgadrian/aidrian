@@ -633,14 +633,18 @@ test('a word that may expand anywhere in a program between the listing and its c
 });
 
 // The lexer reads a named descriptor after quotes are gone, so a quoted '{x}' word reads as one: no rule may open on it.
-test('a named descriptor, or a quoted word that looks like one, opens neither process rule', () => {
+// A quoted '{x}' or '2' before a redirect is an argument, as bash passes it; an unquoted {x}> is a redirect and no argument.
+test('a quoted word before a redirect is an argument, and a named descriptor takes no argument slot', () => {
   deny("ps -p 1 '{x}'>/tmp/f; kill $X");
-  denyListing("ps -o pid= '{x}'>/dev/null");
-  denyListing("ps -o pid= {x}>/dev/null");
+  deny("ps -p 1 '2'>/tmp/f; kill $X");
+  denyListing("ps -o pid= '{x}'>/tmp/f");
+  denyListing("ps -o pid= '2'>/tmp/f");
   denyListing("ps aux | sort '{x}'>/tmp/f | wc -l");
-  denyListing("ps aux '{x}'>/dev/null");
+  denyListing("ps aux | sort '2'>/dev/null | wc -l");
+  allowListing("ps aux '{x}'>/dev/null");
+  allowListing('ps -o pid= {x}>/dev/null');
   const { reason } = decideForCommand("pgrep -fl next '{x}'>/tmp/f", NO_OVERRIDE);
-  assert.ok(!reason.includes('Run this instead'), 'and gets no rewrite');
+  assert.ok(!reason.includes('Run this instead'), 'a word ending in } gets no rewrite, as before');
 });
 
 test('a named descriptor before a command, or among a prefix\'s words, hides neither the command nor its kill', () => {
@@ -651,7 +655,12 @@ test('a named descriptor before a command, or among a prefix\'s words, hides nei
   deny('env {fd}>/dev/null pkill node');
   deny('nohup {fd}>/dev/null pkill node');
   deny('pgrep -f x | xargs {fd}>/dev/null kill');
+  deny('sudo -- {fd}>/dev/null pkill node');
+  deny('sudo -u {fd}>/dev/null root pkill node');
+  deny('timeout 5 {fd}>/dev/null pkill node');
+  deny('pgrep -f x | xargs -n {fd}>/dev/null 1 kill');
   denyListing('{fd}>/dev/null ps aux');
+  denyListing('command -- {fd}>/dev/null ps aux');
   deny("ps -p 1 '{x}'>/tmp/f; kill $X");
   allowListing('{fd}>/dev/null ls');
   allowListing('exec {fd}>/tmp/log');

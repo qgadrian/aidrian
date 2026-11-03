@@ -146,6 +146,7 @@ function readCalls(command, cwd) {
         // The body file as the line wrote it so far, and the heredoc fed to `--body-file -`, as the pull request body rule reads them.
         call.stdin = stdinBody(entry);
         call.bodyFile = writes.token(call.bodyFile, entry);
+        call.bodyOverwritten = writes.overwrites(entry, call.bodyFile);
         prCreates.push({ call, dir: folder, written: new Map(writes.files) });
       }
     }

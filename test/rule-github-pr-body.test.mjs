@@ -234,6 +234,16 @@ test('a redirection that names a descriptor is read as bash runs it, failing clo
   }
 });
 
+// bash truncates a redirect's target before gh reads it, whichever descriptor the redirect names.
+test('a gh call that redirects any output onto its own body file has a body this rule cannot read', (t) => {
+  const run = project(t, { version: 1 }, { 'good.md': GOOD });
+  for (const redirect of ['> good.md', '>> good.md', '2>good.md', '{fd}>good.md']) {
+    assert.match(run(`gh pr create -t x -F good.md ${redirect}`) ?? '', /^Blocked: the body is one this rule cannot read/, redirect);
+  }
+  assert.equal(run('gh pr create -t x -F good.md > out.log 2>&1'), null, 'a redirect onto another file');
+  assert.equal(run('gh pr create -t x -F good.md 2>/dev/null'), null);
+});
+
 // bash passes a quoted '2' or '{fd}' before a redirect as the body, then redirects standard output.
 test('a quoted word right before a redirect is the body, and the rule checks it', (t) => {
   const run = project(t);

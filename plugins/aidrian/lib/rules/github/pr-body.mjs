@@ -70,6 +70,7 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
     if (call) {
       call.stdin = stdinBody(entry);
       call.bodyFile = writes.token(call.bodyFile, entry);
+      call.bodyOverwritten = writes.overwrites(entry, call.bodyFile);
       const reason = judge(call, line, { cwd: folder ?? cwd, folderKnown: folder !== null, env, written: writes.files, listOpenPrs: folder === null || folder === cwd ? listOpenPrs : openPrBodies(folder) });
       if (reason) return reason;
     }
@@ -92,6 +93,8 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
 // - any other command that writes to a file (a redirect), or that names it and is not a known reader (such as `sed -i`
 //   or a script), as null: the file then holds what that command made of it, which the rule never guesses at. One that
 //   writes to, or names, a word this rule cannot resolve could be any file, so every file the line wrote turns null.
+// `overwrites(entry, file)` says whether the command redirects any output, on any descriptor, onto `file`: bash
+// truncates it before the command reads it.
 // The pull request body rule and the attribution rule both read a body file through it.
 export function lineWrites(top) {
   const files = new Map();
@@ -108,12 +111,18 @@ export function lineWrites(top) {
     if (known && !known.dynamic) vars.set(name, known.text);
     else vars.delete(name);
   };
+  const fileOf = (each, entry) => {
+    const known = token(each, entry);
+    return known && !known.dynamic && known.text && known.text !== '-' ? resolveIn(entry.folder, known.text) : null;
+  };
+  const outputs = (segment) => segment.flatMap((each, i) => (each.operator && each.operator !== '<' && !segment[i + 1]?.fdDup ? [[each, segment[i + 1]]] : []));
+  const overwrites = (entry, file) => {
+    const body = file ? fileOf(file, entry) : null;
+    return body !== null && outputs(entry.segment).some(([, each]) => fileOf(each, entry) === body);
+  };
   const note = (entry) => {
     const { segment, invocation, folder, heredocs = [] } = entry;
-    const at = (each) => {
-      const known = token(each, entry);
-      return known && !known.dynamic && known.text && known.text !== '-' ? resolveIn(folder, known.text) : null;
-    };
+    const at = (each) => fileOf(each, entry);
     const { program, args, environment = [] } = invocation;
     const set = nested(entry) ? (name) => vars.delete(name) : assign;
     if (program === '') {
@@ -128,7 +137,7 @@ export function lineWrites(top) {
       return;
     }
     // The output redirections and the file each writes; `2>&1` and `>&-` name a descriptor, not a file, and write none.
-    const redirects = segment.flatMap((each, i) => (each.operator && each.operator !== '<' && !segment[i + 1]?.fdDup ? [[each, segment[i + 1]]] : []));
+    const redirects = outputs(segment);
     let target = null;
     let text = null;
     // Only standard output writes the file: `cat 2> b.md` leaves it empty.
@@ -168,7 +177,7 @@ export function lineWrites(top) {
     }
     if (target !== null) files.set(target, text);
   };
-  return { files, token, note };
+  return { files, token, note, overwrites };
 }
 
 // Programs that change no existing file, so running one before gh leaves a body file the line wrote as it was. A
@@ -526,6 +535,7 @@ function openPrBodies(cwd) {
 // file reads. A dynamic --body reads the heredoc readPrCalls gave the call, `--body-file -` the heredoc check gave it as
 // `stdin`, and a file the line wrote earlier the text `written` (lineWrites) holds for it.
 export function readBody(call, cwd, written = new Map()) {
+  if (call.bodyOverwritten) return null;
   if (call.body) return call.body.dynamic ? call.heredoc ?? null : call.body.text;
   if (!call.bodyFile || call.bodyFile.dynamic) return null;
   if (call.bodyFile.text === '-') return call.stdin ?? null;

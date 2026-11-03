@@ -491,7 +491,8 @@ keeps the compressed marker and appends a plain one, so a comment it touched can
 
 - **Outcome.** Every return of the step writes its status to this machine's record as `outcome`: `{ status, head, at,
   reason }`. The early returns, `none_needed`, `unsatisfied`, and `too_large`, write it to the state folder only and
-  post nothing; a `held` return writes nothing. The [merge guard](hooks.md#merge-guard) reads it.
+  post nothing; a `held` return writes nothing. Before any reviewer, the plan command, or the bot runs, the step writes
+  `running` for its head, so a merge during the first step is refused too. The [merge guard](hooks.md#merge-guard) reads it.
 - **Owed reviews.** `pending` lists the reviews asked for, each `{ kind, head, at, by, sent, answered }`; one is owed
   until it is `answered`. `aidrian pr request <PR>` records a bot review the Human asked for, the moment they ask,
   before any review the project requires first. `aidrian pr await-review` marks it `sent` when it posts the request, and
@@ -499,7 +500,8 @@ keeps the compressed marker and appends a plain one, so a comment it touched can
   `aidrian pr review --with-bot` does whenever its bot stage holds an answer, a reused one included. A request sent
   is still owed. An answer counts for a request made for its own head, or for an earlier head it descends from
   (`git merge-base --is-ancestor`); time plays no part, so a late answer for an older head never answers a newer head's
-  request. When git cannot tell, as for a commit this checkout lacks, only the exact head counts. A gate review is
+  request. When git cannot tell, as for a commit this checkout lacks, only the exact head counts. An `await-review` for
+  another repository, through `--repo` or a URL, leaves this repository's record alone. A gate review is
   answered the same way, by an attest or a finished step.
   `aidrian pr request <PR> --kind review` records a review-gate review as dispatched; `aidrian pr attest <PR>`, or a
   step that returns `received` or `none_needed`, answers it. Without `--head <sha>`, `request` reads the head with gh.

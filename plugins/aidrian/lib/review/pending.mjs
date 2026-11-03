@@ -7,7 +7,7 @@
 
 import { ghJson } from '../gh.mjs';
 import { runGit } from '../git.mjs';
-import { originRepo, prNumber } from '../review-gate.mjs';
+import { originRepo, prNumber, repoName } from '../review-gate.mjs';
 import { isAncestor } from './diff.mjs';
 import { answerPending, emptyState, readLocalState, writeLocalState } from './state.mjs';
 
@@ -23,10 +23,14 @@ export function recordPending(project, { pr, repo, kind, head, by }) {
   return entry;
 }
 
-// Marks the requests on `pr` not yet sent as sent, for `head`. Returns how many it marked. A sent request stays owed
-// until the bot answers it.
-export function markRequestsSent(project, pr, head) {
+// Whether `repo` (null for this one) is another repository than the one `state` was recorded for.
+const elsewhere = (state, repo) => Boolean(repo && state?.repo) && repoName(repo) !== repoName(state.repo);
+
+// Marks the requests on `pr` of `repo` not yet sent as sent, for `head`. Returns how many it marked. A sent request
+// stays owed until the bot answers it.
+export function markRequestsSent(project, pr, head, repo = null) {
   const state = readLocalState(project, pr);
+  if (elsewhere(state, repo)) return 0;
   const open = (state?.pending ?? []).filter((each) => each.kind === 'request' && !each.sent && !each.answered);
   if (!open.length) return 0;
   const at = new Date().toISOString();
@@ -37,9 +41,9 @@ export function markRequestsSent(project, pr, head) {
 
 // Marks the entries of `kind` owed on `pr` that an answer for `head` answers (answerPending), reading ancestry in this
 // checkout: the bot's answer (`request`), or the gate review's recorded result (`review`). Returns 1 when it marked any.
-export function answerOwed(project, pr, kind, { head, by, isAncestor: ancestor = (a, b) => isAncestor(project.root, a, b) }) {
+export function answerOwed(project, pr, kind, { head, by, repo = null, isAncestor: ancestor = (a, b) => isAncestor(project.root, a, b) }) {
   const state = readLocalState(project, pr);
-  if (!state || !answerPending(state, kind, { head, by, isAncestor: ancestor })) return 0;
+  if (!state || elsewhere(state, repo) || !answerPending(state, kind, { head, by, isAncestor: ancestor })) return 0;
   writeLocalState(project, state);
   return 1;
 }

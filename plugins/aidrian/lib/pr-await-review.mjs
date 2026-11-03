@@ -599,8 +599,9 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     // bot's answer is in, an answer that was already there included.
     if (project && Number.isInteger(result.pr)) {
       const { answerOwed, markRequestsSent } = await import('./review/pending.mjs');
-      if (result.requested) markRequestsSent(project, result.pr, result.head_sha ?? null);
-      if (ANSWERED.has(result.status) && result.head_sha) answerOwed(project, result.pr, 'request', { head: result.head_sha, by: result.reviewer ?? 'bot' });
+      // Only this repository's pull request: the same number in another repository is another pull request.
+      if (result.requested) markRequestsSent(project, result.pr, result.head_sha ?? null, result.repo);
+      if (ANSWERED.has(result.status) && result.head_sha) answerOwed(project, result.pr, 'request', { head: result.head_sha, by: result.reviewer ?? 'bot', repo: result.repo });
     }
     if (result.status === 'round_limit' && project) {
       const { recordSignal, roundLimitSignal } = await import('./lesson-signals.mjs');

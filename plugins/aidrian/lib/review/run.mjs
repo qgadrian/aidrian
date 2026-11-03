@@ -245,6 +245,11 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   const record = readRecord(project, n, comments, repo);
   if (record.held !== undefined) return { status: 'incomplete', pr: n, repo, head, reason: heldMessage(n, record.held), held: record.held, retry_recommended: false };
   let state = record.state;
+  // The step is open on this head before any reviewer, the plan command, or the bot runs: a merge meanwhile is refused.
+  // The mark is this machine's alone and posts nothing, so it is no revision of its own: the step's next write takes
+  // the one it raised.
+  settle({ status: 'running', head });
+  state.revision -= 1;
 
   const engine = resolveEngine(effective, codex ? { codex } : {});
   if (engine.problem) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: engine.problem });
@@ -681,6 +686,8 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   // goes into this machine's record, for the merge guard (lib/rules/github/merge-review.mjs). Only `finish` also
   // publishes the record to the pull request.
   function settle(result) {
+    // A gate review recorded while the step ran is on disk only: merge it in before a finished outcome answers it.
+    state.pending = mergePending(readLocalState(project, n)?.pending, state.pending);
     noteOutcome(state, result, (a, b) => isAncestor(root, a, b));
     writeLocalState(project, state);
     return result;

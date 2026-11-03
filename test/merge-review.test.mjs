@@ -426,3 +426,34 @@ test('a bot answer the step reuses answers a request made after it', async (t) =
   assert.equal(asked, 1, 'the second step reuses the answer');
   assert.deepEqual(marks(f.project, 9), [['request', false, true]]);
 });
+
+test('a merge while the first review step`s reviewer runs is refused', async (t) => {
+  const r = repo(t);
+  const f = feature(r);
+  let during = null;
+  const exec = async () => (during = r.run(`gh pr merge 9 --match-head-commit ${f.head}`), clean());
+  assert.equal((await f.step({ exec })).status, 'received');
+  assert.match(during ?? '', /review of head .* is `running`/u, 'no record yet on disk would have let it run');
+  assert.equal(r.run(`gh pr merge 9 --match-head-commit ${f.head}`), null, 'finished: it runs');
+});
+
+test('a gate review recorded while a reviewer runs is answered when the step finishes', async (t) => {
+  const r = repo(t);
+  const f = feature(r);
+  const exec = async () => (recordPending(f.project, { pr: 9, repo: 'acme/notes', kind: 'review', head: f.head, by: 't' }), clean());
+  assert.equal((await f.step({ exec })).status, 'received');
+  assert.deepEqual(marks(f.project, 9), [['review', false, true]]);
+});
+
+test('await-review for the same number in another repository leaves this record alone', async (t) => {
+  const r = repo(t, { github: { reviewer: REVIEWER } });
+  const quiet = { log: console.log, error: console.error };
+  console.log = console.error = () => {};
+  t.after(() => Object.assign(console, quiet));
+  recordPending(r.project, { pr: 5, repo: 'acme/notes', kind: 'request', head: HEAD, by: 't' });
+  const config = loadConfig(r.project).config;
+  assert.equal(await runAwaitReview(['5', '--repo', 'other/fork', '--timeout-sec', '0'], config, r.project, { gh: botGh(1) }), 0);
+  assert.deepEqual(marks(r.project, 5), [['request', false, false]], 'other/fork#5 answered, at the same commit: not this pull request');
+  assert.equal(await runAwaitReview(['5', '--repo', 'Acme/Notes', '--timeout-sec', '0'], config, r.project, { gh: botGh(1) }), 0);
+  assert.deepEqual(marks(r.project, 5), [['request', false, true]]);
+});

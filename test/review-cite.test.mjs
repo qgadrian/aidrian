@@ -205,3 +205,15 @@ test('anchor keeps code spans as written, and a heading with a link or code is f
   assert.deepEqual(listed.map((each) => /Linked|Hidden/u.exec(each.source ?? '')?.[0]), ['Linked', 'Hidden']);
   assert.match(sectionOf(doc, 'the-plugin-toolsxmd')?.body ?? '', /Linked/u, 'an anchor written before still matches');
 });
+
+test('sectionOf finds a repeated heading by its GitHub number or by its id, and a closing # needs a space before it', () => {
+  const doc = '# Keep\n\n## Keep\n\nSecond.\n\n## Keep\n\nThird.\n\n## C#\n\nSharp.\n\n## Done ##\n\nClosed.\n';
+  assert.match(sectionOf(doc, 'keep-1')?.body ?? '', /Second/u, 'GitHub numbers across every level: the # Keep is keep');
+  assert.match(sectionOf(doc, 'keep-2')?.body ?? '', /Third/u);
+  assert.match(sectionOf(doc, 'keep')?.body ?? '', /Second/u, 'the first heading slugged keep');
+  assert.deepEqual([sectionOf(doc, 'c')?.heading, sectionOf(doc, 'c')?.body], ['C#', 'Sharp.']);
+  assert.equal(sectionOf(doc, 'done')?.heading, 'Done');
+  const ids = '## Keep\n\nOne.\n\n## Keep\n\nTwo.\n';
+  assert.match(sectionOf(ids, 'keep-1')?.body ?? '', /Two/u);
+  assert.equal(sectionOf(ids, 'keep-2'), null);
+});

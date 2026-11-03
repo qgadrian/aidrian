@@ -175,6 +175,49 @@ export function filesRead(text, keep = () => true) {
   return [...read];
 }
 
+// The ids of the background tasks the transcript's own tool calls launched or resumed, read from the structured result
+// Claude Code stores beside each tool result (the entry's `toolUseResult`), never from a result's text: a command's output
+// or an agent's report that quotes a launch line launches nothing.
+// - Bash: `backgroundTaskId`, set for a call started in the background and for one the host moved there at its timeout.
+//   A call whose input asked for the background and whose entry has no structured result takes the id from the result's
+//   leading `Command running in background with ID: <id>`: such a call's result is the host's, as its output goes to a file.
+// - Agent: `agentId` of an `async_launched` result. A completed foreground agent is not running; a teammate is a peer.
+// - SendMessage: `resumedAgentId`, an agent it resumed.
+// `keep` takes a request by key, as in filesRead; a call it refuses, such as one a forked subagent inherited, launched
+// nothing of its own. Any other call that names an id, such as reading a task's output file or stopping it, launched
+// nothing. The stop hook reads it (dispatch-rows.mjs).
+const LAUNCH_ID = /^[\w-]+$/u;
+const BACKGROUND_LINE = /^Command running in background with ID: ([\w-]+)/u;
+const idOf = (value) => (typeof value === 'string' && LAUNCH_ID.test(value) ? value : null);
+const LAUNCHED = {
+  Bash: (input, result, content) => idOf(result?.backgroundTaskId)
+    ?? (input?.run_in_background === true && (result === undefined || result === null) ? idOf(BACKGROUND_LINE.exec(resultText(content))?.[1]) : null),
+  Agent: (input, result) => (result?.status === 'async_launched' ? idOf(result.agentId) : null),
+  SendMessage: (input, result) => idOf(result?.resumedAgentId),
+};
+LAUNCHED.Task = LAUNCHED.Agent;
+
+export function launchedTaskIds(text, keep = () => true) {
+  const calls = new Map();
+  const ids = new Set();
+  for (const line of text.split('\n')) {
+    const entry = parseLine(line);
+    const content = entry?.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (block?.type === 'tool_use' && typeof block.id === 'string' && Object.hasOwn(LAUNCHED, block.name) && keep(requestKey(entry))) {
+        calls.set(block.id, { read: LAUNCHED[block.name], input: block.input });
+      } else if (block?.type === 'tool_result' && calls.has(block.tool_use_id)) {
+        const { read, input } = calls.get(block.tool_use_id);
+        const result = typeof entry.toolUseResult === 'object' && !Array.isArray(entry.toolUseResult) ? entry.toolUseResult : undefined;
+        const id = read(input, result, block.content);
+        if (id) ids.add(id);
+      }
+    }
+  }
+  return ids;
+}
+
 // A draft pull request create and a review run are read from the commands a Bash call runs (shell-lex walkCommands),
 // never from its text, so a heredoc body, an `echo`, or a quoted grep pattern that names one is neither.
 // A draft create is `gh pr create` (or its alias `gh pr new`) with --draft or -d, as the pull request body rule reads it.

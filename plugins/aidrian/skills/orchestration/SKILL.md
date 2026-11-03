@@ -32,6 +32,13 @@ A background agent that stays silent may be waiting on a permission prompt that 
 Before you dispatch the same work again, read what it has done so far, and ask the Human whether a prompt is waiting.
 Never put a second agent on work the first may still be doing.
 
+An idle notice is not a result: before you act on one, check the branch and pull request yourself,
+with `git ls-remote --heads origin <branch>` and `gh pr view <n>`.
+An agent that ends its turn while a command or agent it started in the background still runs goes idle, and nothing wakes it.
+So every brief to an agent that pushes, waits on CI, or starts a reviewer says to wait in the foreground:
+the push or CI wait as a foreground command with a timeout, repeated until it ends, and the reviewer in the foreground.
+The stop hook sends a subagent back once when it stops with one still running.
+
 ## 2. Parallel slices
 
 - Slices run in parallel only when their files are disjoint and they share no generated file, such as a lockfile.

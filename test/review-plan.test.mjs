@@ -217,3 +217,13 @@ test('mergeStages keeps a plan command pass that another waits for, or that wait
   assert.deepEqual(passes.map((pass) => pass.id).sort(), ['agent:code-reviewer', 'pm-first', 'pm-then']);
   assert.deepEqual(passes.find((pass) => pass.id === 'pm-then').after, ['pm-first']);
 });
+
+test('checkReview: a flow list that uses an invariant id twice is an error, since one verdict would sign off both', () => {
+  const errors = [];
+  const review = checkReview({ flows: {
+    twice: { files: ['a/**'], invariants: [{ id: 'keep', text: 'One?' }, { id: 'keep', text: 'Two?' }] },
+    once: { files: ['b/**'], invariants: [{ id: 'keep', text: 'One?' }, { id: 'other', text: 'Two?' }] },
+  } }, 'config.json', errors);
+  assert.deepEqual(Object.keys(review.flows), ['once']);
+  assert.match(errors.join('\n'), /"review.flows.twice.invariants" ids must be unique: keep is used more than once/u);
+});

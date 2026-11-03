@@ -113,7 +113,7 @@ of its invariants, with evidence, and the flow must be signed before the review 
 | --- | --- |
 | `files` | required: globs, or `re:<regex>` over the path; a changed file that can change behaviour triggers the flow |
 | `added` | regular expressions over the added lines of any file, for a use that lives outside the flow's folders |
-| `invariants` | a doc, whose `##` and `###` headings are the invariants, or a list of `{ id, text, cite?, focus? }` |
+| `invariants` | a doc, whose `##` and `###` headings are the invariants, a repeated one numbered `-1`, `-2` as GitHub numbers its anchor; or a list of `{ id, text, cite?, focus? }` with unique ids |
 | `require` | the flow's reviewers; the code-reviewer agent by default |
 | `tests` | the flow's tests: deleting one stops the review until it is restored or the Human accepts it |
 | `checks` | check names that must be `SUCCESS` on the head; a skipped or missing one does not pass |
@@ -207,7 +207,7 @@ flow's deleted test stops the review even when the change touches nothing else i
 `aidrian lint review` fails on a flow whose globs match no tracked file, an invariants doc that is missing or has no
 headings, a cite to a heading that is not there, and a `focus` that starts no block of its section. When `git ls-files`
 cannot run in the project, it fails with that alone, instead of reading every flow as matching nothing. It warns past 16
-flows, or 10 invariants in one flow; about a source past its limit, 4000 characters or 8000 with `focus`; about a question that asks
+flows, or 10 invariants in one flow; about an invariants doc that repeats a heading, naming the ids it gets; about a source past its limit, 4000 characters or 8000 with `focus`; about a question that asks
 whether the change breaks, removes, weakens, or bypasses something, so that yes would be the breach; and about a cited
 invariant's text past 200 characters, which restates the rule. The budget
 stands for how many passes a review dispatches (an agent reviews up to 3 flows per pass); a flow is a critical path,

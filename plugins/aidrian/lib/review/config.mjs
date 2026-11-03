@@ -251,6 +251,11 @@ function checkFlows(flows, bad) {
     if (flow.invariants !== undefined && !isText(flow.invariants) && !invariantList(flow.invariants)) {
       problems.push(`"${at}.invariants" must be a doc path or a list of { "id", "text", "cite"?, "focus"? }, where text may be left out, and focus set, only when cite names a heading`);
     }
+    if (invariantList(flow.invariants)) {
+      const ids = flow.invariants.map((each) => each.id);
+      const twice = [...new Set(ids.filter((each, i) => ids.indexOf(each) !== i))];
+      if (twice.length) problems.push(`"${at}.invariants" ids must be unique: ${twice.join(', ')} is used more than once, so one verdict would sign off both`);
+    }
     if (flow.signoff === 'human' && flow.invariants === undefined) problems.push(`"${at}": a flow the Human signs off must state its invariants`);
     if (flow.content !== undefined) problems.push(...contentProblems(flow.content, `${at}.content`));
     if (problems.length) problems.forEach(bad);

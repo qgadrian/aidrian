@@ -449,7 +449,8 @@ A team sets `telemetry` in `config.json`, and one developer in the git-ignored `
 `.aidrian.local.json` wins over `config.json`, one key at a time.
 
 - `enabled: false`: the hooks write no rows.
-  The [delivery check](hooks.md#delivery-check) still sends a subagent back for a file it named and did not write.
+  The [delivery check](hooks.md#delivery-check) still sends a subagent back for a file it named and did not write,
+  and the [background check](hooks.md#background-check) for a background task it left running.
 - `docReads: false`: `stop` and `session` rows keep tokens and cost, and hold `docs_read: null` instead of the docs read.
 - `maxMb`: once the log reaches this size, the next row moves it to `dispatch-log.1.jsonl`, replacing the file there.
   The two files hold about twice `maxMb` at most, and `aidrian report` reads both.

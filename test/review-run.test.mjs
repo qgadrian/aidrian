@@ -1273,3 +1273,15 @@ test('two reviewers out of quota in one stage: each keeps its own stop and choic
   const done = await r.step({ exec });
   assert.deepEqual([done.status, done.quota_fallback.map((each) => [each.replaces, each.choice])], ['received', [['codex-local', 'agent:critic'], ['lint', 'human']]]);
 });
+
+test('invariantsOf: a repeated heading is its own invariant, numbered as GitHub numbers its anchor, so one verdict never signs off both', () => {
+  const read = () => '# Rules\n\n## Keep\nThe first.\n\n### Examples\nOne.\n\n## Keep\nThe second.\n\n### Examples\nTwo.\n';
+  const { invariants, repeated } = invariantsOf({ invariants: 'r.md' }, read);
+  assert.deepEqual(invariants.map((each) => [each.id, each.cite, each.text]), [
+    ['keep', 'r.md#keep', 'Keep: The first.'], ['examples', 'r.md#examples', 'Examples: One.'],
+    ['keep-1', 'r.md#keep-1', 'Keep: The second.'], ['examples-1', 'r.md#examples-1', 'Examples: Two.'],
+  ]);
+  assert.deepEqual(repeated, [{ heading: 'Keep', ids: ['keep', 'keep-1'] }, { heading: 'Examples', ids: ['examples', 'examples-1'] }]);
+  const state = flowState(invariants, [{ invariant: 'keep', verdict: 'holds', evidence: 'ok' }, { invariant: 'examples', verdict: 'holds', evidence: 'ok' }, { invariant: 'examples-1', verdict: 'holds', evidence: 'ok' }], () => null);
+  assert.deepEqual(state, { signed: false, open: [], unverified: ['keep-1'] });
+});

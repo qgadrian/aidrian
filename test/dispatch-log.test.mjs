@@ -154,6 +154,19 @@ test('the delivery check sends a subagent back once for a path it named that doe
   assert.deepEqual(agents, [['general-purpose', 1, 0, 0, 0], ['planner', 1, 1, 1, 0]], 'a3 named a missing file and was never sent back; a2 was, once');
 });
 
+test('a stop row counts the background tasks the subagent started that still run, and records the send-back they caused', (t) => {
+  const { base, dir, log, hook } = project(t);
+  const transcript = path.join(base, 'agent-a4.jsonl');
+  writeFileSync(transcript, [
+    JSON.stringify({ type: 'assistant', message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'sleep 600', run_in_background: true } }] } }),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'Command running in background with ID: bsleep001.' }] }, toolUseResult: { stdout: '', stderr: '', backgroundTaskId: 'bsleep001' } }),
+  ].join('\n'));
+  const tasks = [{ id: 'bsleep001', type: 'shell', status: 'running', command: 'sleep 600' }, { id: 'bother002', type: 'shell', status: 'running' }];
+  const stop = (active, background) => hook('hook-subagent-stop.mjs', { cwd: dir, agent_id: 'a4', agent_type: 'fixer', agent_transcript_path: transcript, last_assistant_message: 'Done.', stop_hook_active: active, background_tasks: background });
+  assert.deepEqual([stop(false, tasks).status, stop(true, tasks).status, stop(false, tasks.slice(1)).status], [2, 0, 0]);
+  assert.deepEqual(log().map((row) => [row.delivered, row.running, row.sent_back]), [['chat', 1, true], ['chat', 1, false], ['chat', 0, false]]);
+});
+
 // Sets config.json `telemetry` in a project from project().
 const setTelemetry = (dir, telemetry) => writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, telemetry }));
 

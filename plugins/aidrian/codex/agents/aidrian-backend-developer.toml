@@ -85,6 +85,8 @@ Add `sign_off` when the dispatch asks for one, as the `knowledge` skill's handof
 ## Git compliance
 
 - Let git hooks run. If one fails, fix the cause or stop and report; never bypass it.
+- Wait in the foreground for every command and agent you start: once you end your turn, nothing wakes you when one finishes.
+  Run a long push or CI wait as a foreground command with a timeout, repeated until it ends, and a reviewer agent in the foreground.
 - When you commit or push, list the exact git commands in `commands_run` and add `not_bypassed`, or `hook_failed`, to `compliance`.
 - A formatter, or another tool that rewrites whole files, runs only through the command the project's knowledge names,
   and only on the files the task changed. When knowledge names none, edit the lines the task needs and leave the rest.

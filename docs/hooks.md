@@ -6,23 +6,25 @@ How each host runs them: [Claude Code](providers/claude-code.md#hooks), [Codex](
 Every hook lets the action run when it cannot read its input, so a hook never breaks a session.
 A git call a hook makes is stopped after 2 seconds and counts as git not answering; the hook's later git calls then do not wait.
 A blocking hook exits 2 and tells the agent why on stderr.
-The Bash rules, the main-checkout rule, the terms rule, the GitHub MCP hook, the agent gates, and the config guard also record each block:
+The Bash rules, the main-checkout rule, the terms rule, the GitHub MCP hook, the agent gates, the config guard, and the question names check also record each block:
 see [Recorded blocks](#recorded-blocks).
 
 | When | What runs | Host | Blocks |
 | --- | --- | --- | --- |
 | A session or subagent starts | The [start lines](#start-lines) | both | no |
 | Before any tool call | The [agent gates](#agent-gates), when the project sets any | both | yes |
+| A new turn starts: a prompt, a background agent's report, or a scheduled run | The [names reminder](config.md#names), when the last reply said "I" or "you" | Claude Code | no |
 | Before a Bash command | The [Bash rules](#bash-rules) | both | yes |
 | Before a file edit | The [main-checkout rule](#main-checkout), when the project turns it on, then the [terms rule](#terms) | both | yes |
 | Before `EnterWorktree` in a subagent | A block: the tool would move the whole session into the worktree | Claude Code | yes |
+| Before `AskUserQuestion` | A block when a question or option says "I", "me", "my", "you", or "your" (or a form of them, such as "I'm" or "yourself") outside code and quotes: [Names](config.md#names) | Claude Code | yes |
 | Before a GitHub MCP comment | The [review gate](config.md#review-gate), when the project turns it on, and the review-round rule | both | yes |
 | Before an Agent tool call | The project's [model and effort](config.md#models) for that agent | Claude Code | no |
 | After a Markdown write | The [line-length check](#markdown-line-length) | Claude Code | feedback |
 | Before compaction | A checklist of what the summary must keep | both | no |
-| The Human approves a plan | The [plan handoff offer](#session-length), in a long main session | Claude Code | no |
+| The Human approves a plan | The [plan handoff offer](#session-length), when the main session already costs more per call | Claude Code | no |
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
-| The main session ends a turn | The [session-length reminder](#session-length) | Claude Code | once |
+| The main session ends a turn | The [session-length reminder](#session-length) | Claude Code | once per step |
 | A subagent stops | A `stop` row, then the [delivery check](#delivery-check) | Claude Code | once |
 | A session ends | A `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code | no |
 
@@ -35,6 +37,10 @@ At the start of every session and subagent, the hook prints:
 
 - one line naming the `always` knowledge docs and the commands that find the rest;
 - one line with the [names](config.md#names) for the human and the AI;
+- one `Voice:` line: say so, with the reason, when a request or premise looks wrong, then follow the human's call;
+  and ask the human questions they can answer without the session's context, one decision each, recommendation first;
+- in the main session only, one `Format:` line: headers, quotes, and a few emoji in chat replies, never in commits,
+  pull requests, docs, or code, which a subagent's report feeds, so a subagent does not get it;
 - in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons.
 
 Last, in the main session only and while `git.mainCheckout.guard` is on ([commit guard](#commit-guard)),
@@ -65,7 +71,7 @@ that line alone, and a git that hangs past the timeout drops its own line and th
 | Pull request contract | Off unless config.json sets `github.pullRequest`, but for `"sharedTempBodyFile": false` |
 | Review gate | Off unless config.json sets `"github": { "reviewGate": { "enabled": true } }` |
 | Terms rule | Off unless config.json sets `"terms": { "file": "…" }` |
-| Session-length reminder and plan handoff offer | `"session": { "handoff": "off" }` |
+| Session-length reminder and plan handoff offer | `"session": { "handoff": { "mode": "off" } }` |
 | Dispatch log rows | `"telemetry": { "enabled": false }`, in config.json or `.aidrian.local.json`; the delivery check still runs |
 | `hook_deny` rows alone | `"telemetry": { "hookDenies": false }`; the rules still block |
 | Automatic lessons from the stop hook and the blocking rules | `"lessons": { "auto": false }` |
@@ -148,7 +154,7 @@ A command reached only through a script or an interpreter such as `python -c` is
 
 ## Recorded blocks
 
-Every block by a Bash rule, the main-checkout rule, an [agent gate](#agent-gates), or the config guard is recorded twice,
+Every block by a Bash rule, the main-checkout rule, an [agent gate](#agent-gates), the config guard, or the question names check is recorded twice,
 in `plugins/aidrian/lib/hook-deny.mjs`, after the hook writes its reason and before it exits 2.
 Neither record waits on a lock, so a block stays well inside the host's 5-second hook timeout:
 
@@ -159,7 +165,7 @@ Neither record waits on a lock, so a block stays well inside the host's 5-second
   an agent that keeps trying was not shown the allowed way. The count does not depend on telemetry.
 
 The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `process-kill` (both the kill and the listing rule),
-`grep-exit-chain`, `pr-body`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`, `review-extend`, `main-checkout`, `terms`, `agent-gates`, and `config-guard`.
+`grep-exit-chain`, `pr-body`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`, `review-extend`, `main-checkout`, `terms`, `agent-gates`, `config-guard`, and `ask-names`.
 The hooks load the recorder only when they block, so a call they let run costs no more than before.
 When the recorder fails, the call is still blocked.
 
@@ -343,28 +349,19 @@ A path on any other line is a mention, such as "docs/old.md does not exist", and
 
 ## Session length
 
-A long session pays for its whole context on every turn; a fresh session started from a handoff brief costs less.
-When the main session ends a turn, the Stop hook reads its transcript and measures three things:
+Two hooks weigh what continuing the main session costs against a fresh session started from a handoff brief.
+[handoff.md](handoff.md) has the cost model, its steps, and the config.
 
-- tokens: the context the last model call read, input and cache together;
-- calls: the model calls the main session made, subagents not included;
-- hours: the time worked, where a pause of more than an hour counts as one hour, so a night away does not count.
+- When the main session ends a turn, the Stop hook reads its transcript. Once each call costs `session.handoff.costRatio`
+  times what it would in a fresh session, or the context passes the optional `maxTokens` ceiling, it sends the agent back
+  for one more turn, with the ratio and the calls a handoff needs to pay back. The agent judges first whether a handoff
+  is worth it, and may end the turn without a word; otherwise it asks the Human (`ask`) or writes the brief (`auto`).
+  It fires once per step: a marker in the system's temporary folder counts the firings, and a compaction resets them.
+- When the Human approves a plan (Claude Code's `ExitPlanMode`), the plan hook tells the agent to offer the same handoff
+  before its first build step, from half a step: a cost ratio of 1.5 by default.
 
-When one of them reaches its limit in config.json `session`, the hook acts once per session, as `session.handoff` says:
-
-| `handoff` | What happens |
-| --- | --- |
-| `ask` (default) | The agent ends the turn with one question: hand off now, or keep going? Hand off runs the `session-handoff` skill. |
-| `auto` | The agent writes the brief with the `session-handoff` skill, unless nothing is left to resume, and tells you its path. |
-| `off` | Nothing. |
-
-Either way it never comes back in that session, so a "keep going" is final.
-A marker in the system's temporary folder remembers this; a new session starts fresh.
-The defaults are 150,000 tokens, 250 calls, and 4 hours; a limit of `0` turns that one off. [config.md](config.md) lists the keys.
-When the Human approves a plan (Claude Code's `ExitPlanMode`) and the main session has passed half of one limit,
-another hook tells the agent to offer the same handoff before its first build step: `ask` asks, `auto` writes the brief.
-The plan is on disk and nothing is running, so this is the cheapest moment for a fresh session.
-It reads Claude Code transcripts only: a transcript with no Claude Code usage, or a payload without `stop_hook_active`, does nothing.
+Both read Claude Code transcripts only: a transcript with no Claude Code usage, a subagent, or a payload without
+`stop_hook_active` does nothing.
 
 ## Overrides
 

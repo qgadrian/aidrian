@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { commandConfig, CONFIG_ERROR, DEFAULTS, loadConfig, malformedGates } from '../plugins/aidrian/lib/config.mjs';
+import { commandConfig, committedConfig, CONFIG_ERROR, DEFAULTS, loadConfig, malformedGates } from '../plugins/aidrian/lib/config.mjs';
 import { linksOutside } from '../plugins/aidrian/lib/fs.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 
@@ -102,6 +103,37 @@ test('github.titleIssuePrefix: off by default, so pull request titles are plain 
   assert.match(loadConfig(project(t, { version: 1, github: { titleIssuePrefix: 'yes' } })).errors[0], /"github\.titleIssuePrefix" must be true or false$/);
 });
 
+test('the handoff settings load as a group, and a project sets any of them', (t) => {
+  const { config, errors } = loadConfig(project(t, { version: 1, session: { handoff: { mode: 'auto', costRatio: 1.5, maxTokens: 300000 } } }));
+  assert.deepEqual([errors, config.session], [[], { handoff: { mode: 'auto', costRatio: 1.5, maxTokens: 300000 } }]);
+  const some = loadConfig(project(t, { version: 1, session: { handoff: { mode: 'off' } } }));
+  assert.deepEqual([some.errors, some.config.session.handoff], [[], { ...DEFAULTS.session.handoff, mode: 'off' }]);
+});
+
+test('a string session.handoff, the old shape, keeps its mode and is reported', (t) => {
+  for (const mode of ['off', 'ask', 'auto']) {
+    const { config, errors } = loadConfig(project(t, { version: 1, session: { handoff: mode } }));
+    assert.deepEqual(config.session.handoff, { ...DEFAULTS.session.handoff, mode });
+    assert.deepEqual(errors, ['.aidrian/config.json: "session.handoff" is now "session.handoff.mode": move it']);
+  }
+});
+
+test('the old session limit keys carry no value into the handoff settings', (t) => {
+  const { config, errors } = loadConfig(project(t, { version: 1, session: { maxTokens: 90000, maxCalls: 10, maxHours: 1 } }));
+  assert.equal(errors.length, 3, errors.join('\n'));
+  assert.deepEqual(config.session, DEFAULTS.session);
+});
+
+test('the committed config reads a string session.handoff as its mode too', (t) => {
+  const dir = project(t, { version: 1, session: { handoff: 'off' } }).root;
+  // HOME is the fixture, so no global git config, such as commit signing, applies; GIT_DIR stays unset.
+  const git = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: { PATH: process.env.PATH, HOME: dir } });
+  git('init', '-q');
+  git('add', '.aidrian/config.json');
+  assert.equal(git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'config').status, 0);
+  assert.deepEqual(committedConfig(findProject(dir), 'HEAD').session.handoff, { ...DEFAULTS.session.handoff, mode: 'off' });
+});
+
 test('the loaded config is frozen all the way down', (t) => {
   const { config } = loadConfig(project(t, { version: 1, git: { mainCheckout: { allowWrites: ['notes/**'] } } }));
   assert.throws(() => { config.git.defaultBranch = 'x'; }, TypeError);
@@ -128,7 +160,17 @@ const errorCases = [
   ['a fractional extra rounds ceiling', { version: 1, github: { maxExtraRounds: 1.5 } }, /"github\.maxExtraRounds" must be a whole number, 0 or more$/],
   ['string for a boolean', { version: 1, git: { mainCheckout: { guard: 'no' } } }, /"git\.mainCheckout\.guard" must be true or false$/],
   ['empty string', { version: 1, git: { defaultBranch: ' ' } }, /"git\.defaultBranch" must be a non-empty string$/],
-  ['handoff mode outside its list', { version: 1, session: { handoff: 'always' } }, /"session\.handoff" must be "off", "ask", or "auto"$/],
+  ['handoff mode outside its list', { version: 1, session: { handoff: { mode: 'always' } } }, /"session\.handoff\.mode" must be "off", "ask", or "auto"$/],
+  ['a string handoff that is no mode', { version: 1, session: { handoff: 'always' } }, /"session\.handoff" must be an object$/],
+  ['the old string handoff, now "session.handoff.mode"', { version: 1, session: { handoff: 'ask' } }, /: "session\.handoff" is now "session\.handoff\.mode": move it$/],
+  ['the old "session.maxTokens", now in "session.handoff"', { version: 1, session: { maxTokens: 150000 } }, /: "session\.maxTokens" is now "session\.handoff\.maxTokens": rename the key$/],
+  ['the old "session.maxCalls", gone', { version: 1, session: { maxCalls: 250 } }, /: "session\.maxCalls" is gone: the session-length reminder weighs cost, not calls; delete the key$/],
+  ['the old "session.maxHours", gone', { version: 1, session: { maxHours: 4 } }, /: "session\.maxHours" is gone: the session-length reminder weighs cost, not hours; delete the key$/],
+  ['a cost ratio a hair above 1', { version: 1, session: { handoff: { costRatio: 1.0000000000000002 } } }, /"session\.handoff\.costRatio" must be a number of 1\.1 or more$/],
+  ['a cost ratio of 1', { version: 1, session: { handoff: { costRatio: 1 } } }, /"session\.handoff\.costRatio" must be a number of 1\.1 or more$/],
+  ['a cost ratio below 1', { version: 1, session: { handoff: { costRatio: 0.5 } } }, /"session\.handoff\.costRatio" must be a number of 1\.1 or more$/],
+  ['a cost ratio as a string', { version: 1, session: { handoff: { costRatio: '2' } } }, /"session\.handoff\.costRatio" must be a number of 1\.1 or more$/],
+  ['a fractional token ceiling', { version: 1, session: { handoff: { maxTokens: 1.5 } } }, /"session\.handoff\.maxTokens" must be a whole number, 0 or more$/],
   ['review record outside its list', { version: 1, review: { record: 'pr' } }, /"review\.record" must be "comment" or "local"$/],
   ['review engine that is not a name', { version: 1, review: { engine: 'two words' } }, /"review\.engine" must be "auto", "codex-local", "pr-bot", "self", or a reviewer of review\.reviewers$/],
   ['lesson signals switch that is not a boolean', { version: 1, lessons: { auto: 'off' } }, /"lessons\.auto" must be true or false$/],

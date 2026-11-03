@@ -2,7 +2,7 @@
 // with the geometry facts a reviewer cannot see in a picture, measured in the page. It runs as its own process in the
 // project folder and loads the project's own Playwright (`playwright` or `@playwright/test`): the plugin ships no
 // browser. Input on stdin: { outDir, entries: [{ key, url, width, locale, variant, auth? }], storageStates: { auth: file } },
-// where `auth` names the signed-in persona of the entry's variant, or of its variant and locale.
+// where `auth` names the signed-in profile of the entry's variant, or of its variant and locale.
 // Output on stdout: { results: [{ key, file, facts } | { key, error }] }, or exit 3 with the reason when Playwright or
 // its browser is missing. Animations and the caret are off, and motion is reduced, so the same page gives the same
 // bytes and a re-run uploads nothing new.

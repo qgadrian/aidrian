@@ -31,6 +31,10 @@
       "summary": "The .aidrian/ folder: aidrian init, check, and lint, the local state folder, task worktrees, local knowledge sources, migrating.",
       "tags": []
     },
+    "personas.md": {
+      "summary": "Personas: the persona doc contract, aidrian lint personas, product-access, and persona-audit runs: evidence levels, findings, owners, reports.",
+      "tags": []
+    },
     "review.md": {
       "summary": "aidrian pr review: review plan, splits, critical flows and invariants, visual review, reviewers, review rounds and their limit, sign-off.",
       "tags": []
@@ -41,6 +45,10 @@
     },
     "lessons.md": {
       "summary": "Lesson inbox and aidrian lesson add, list, resolve, stats, migrate: tiers, kinds, targets, outcomes, the plugin's inbox for plugin lessons, automatic lessons.",
+      "tags": []
+    },
+    "handoff.md": {
+      "summary": "Session handoff: the session-length reminder and plan offer, the cost ratio and break-even model, session.handoff config, session-handoff and session-continue.",
       "tags": []
     },
     "config.md": {

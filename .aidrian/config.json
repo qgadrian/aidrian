@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "names": { "human": "the Human", "ai": "Aidrian" },
   "git": {
     "defaultBranch": "main",
     "worktrees": { "dir": ".worktrees" },

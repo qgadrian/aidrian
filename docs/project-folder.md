@@ -105,12 +105,14 @@ Where no shell runs it, use `node <plugin folder>/lib/cli.mjs`, and `node <plugi
 - `agents`: each `.claude/agents/*.md` has `name` equal to its file name, a `description`, and a known `model` and `effort`.
 - `paths`: no tracked file holds a personal home folder such as `/Users/<name>/`; `--staged` checks the staged files only, as the index holds them.
 - `budget`: the [knowledge budgets](config.md#knowledge-budgets) that `aidrian check` also holds. It prints the `always` bytes per bucket.
+- `personas`: each knowledge doc tagged `personas`, except `product-access`, has the [persona sections](personas.md#the-persona-contract),
+  and a `Success:` line under every `### <task>`. A project with no personas passes.
 
 `aidrian lint skills <folder>` and `aidrian lint agents <folder>` check other folders.
 
 ## Local state
 
-The plugin writes plans, session handoff briefs, agents' machine handoffs, review state, quorum ledgers, pull request body drafts, the lesson inbox,
+The plugin writes plans, session handoff briefs, agents' machine handoffs, review state, quorum ledgers, persona audits, pull request body drafts, the lesson inbox,
 and the dispatch log on each machine. They live in one state folder per project, outside the repository, so git never sees them:
 
 ```text
@@ -121,6 +123,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── reviews/              review manifests, and the agents the specialist-review skill keeps warm
 ├── quorum/               quorum ledgers, one per plan or question file and its hash
 │   └── questions/        the question files of the quorum's decide mode
+├── audits/               persona-audit reports, and the screenshots each cites
 ├── lessons/inbox.jsonl   the lesson inbox, and its inbox.jsonl.lock.<n> lock files
 ├── tmp/                  pull request bodies and review comments that skills draft
 ├── dispatch-log.jsonl    the dispatch log

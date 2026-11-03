@@ -113,7 +113,8 @@ In a `complete` ledger, the governing winner's case needs a passing citation: a 
 ## Asking the Human
 
 A run asks at most one question: the escalated ruling, first or final.
-It names every position with its citations, the recommended answer, and the one reason that decides it.
+Each position is an option named by its label, never its id, with its citations in the option's description;
+the recommended answer comes first, with the one reason that decides it.
 The answer goes into `human_answer`, word for word. Deferred, `human_answer` stays `null`, and the report's Open
 questions carries it. A `human_answer` with no escalation makes `quorum check` exit 1.
 When the core reuses a complete ledger whose last ruling (`final_ruling`, else `ruling`) is `escalate` and whose

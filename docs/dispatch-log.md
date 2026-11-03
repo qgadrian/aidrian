@@ -88,13 +88,13 @@ can land out of order and still count the right one.
 
 ### `hook_deny`: when one of the plugin's rules blocks a tool call
 
-The Bash rules, the main-checkout rule for writes, the [agent gates](hooks.md#agent-gates), and the config guard write one row
+The Bash rules, the main-checkout rule for writes, the [agent gates](hooks.md#agent-gates), the config guard, and the question names check write one row
 per block, while config.json `telemetry.hookDenies` is on. The call is still blocked when it is off.
 
 | Field | Meaning |
 | --- | --- |
 | `ts`, `session_id` | When, and in which session. |
-| `rule` | Its name: `git-hook-bypass`, `git-amend`, `process-kill`, `grep-exit-chain`, `attribution`, `pr-body`, `main-checkout`, `agent-gates`, or `config-guard`. |
+| `rule` | Its name: `git-hook-bypass`, `git-amend`, `process-kill`, `grep-exit-chain`, `attribution`, `pr-body`, `main-checkout`, `agent-gates`, `config-guard`, or `ask-names`. |
 | `tool` | The tool it blocked, such as `Bash`, `Edit`, or a tool an agent gate names. |
 | `agent_type` | The agent that made the call, named as a `dispatch` row names its dispatcher: `main` for the main session. |
 | `reason` | What the rule matched, at most 120 characters, as the list below says. |

@@ -110,7 +110,7 @@ No compromise: a dispute the evidence does not settle escalates with every posit
 ## Asking the Human
 
 Ask the escalations one at a time, as the `challenge` skill asks, and wait for each answer before the next.
-Each question names every position with its citations, the recommended answer, and the one reason that decides it.
+Name no objection or position IDs; each position is an option, its citations in the option's description.
 The mode file says where an answer goes. An escalation the Human defers stays open and goes into the report's open
 questions; in plan mode, the plan cannot be `status: ready` while it is open.
 

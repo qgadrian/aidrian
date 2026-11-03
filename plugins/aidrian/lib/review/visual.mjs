@@ -159,7 +159,7 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
       // One profile per variant ({ url, bases, auth }), and per variant and locale where the login printed one.
       const profiles = {};
       const storageStates = {};
-      // Storage states are numbered, never named after a variant or locale, so no two personas share a file.
+      // Storage states are numbered, never named after a variant or locale, so no two profiles share a file.
       const keep = (storageState) => {
         const id = `auth-${authFiles.length + 1}`;
         const file = path.join(dir, `.${id}.json`);
@@ -181,7 +181,7 @@ export async function captureVisual({ project, pr, head, visual, entries, baseUr
         const own = overrides(signedIn, what);
         if (own.error) return fail('failed', own.error);
         const profile = { url: own.url ?? url, bases: own.bases ?? {}, auth: keep(signedIn.storageState), locales: {} };
-        // A signed-in persona per locale, for screens whose language comes from a stored preference and not the
+        // A signed-in profile per locale, for screens whose language comes from a stored preference and not the
         // browser: { "locales": { "de": { "storageState": {...}, "baseUrl"?, "bases"? } } }. Each field it gives
         // replaces the variant's for that locale's captures.
         if (signedIn.locales !== undefined) {

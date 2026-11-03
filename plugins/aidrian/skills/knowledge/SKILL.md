@@ -99,3 +99,4 @@ A project may add its own tags for its own skills and dispatches.
 - `feature_flags`: feature-flag scaffolds and rollout rules.
 - `support`: canonical support answers, tone rules, escalation policy, and how to look up a customer's state.
 - `marketing`: positioning, voice, channels, competitor and market notes, and experiment rules.
+- `personas`: the product's users, one doc each, and `product-access`, how a session reaches the product.

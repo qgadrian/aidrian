@@ -1518,10 +1518,73 @@ test('check with mode: tested names each citation of the ruled entry once, an ac
   }
 });
 
+// The judge's inference verdicts carry citations too, and each goes through the same check as every other: a failing
+// one is named, and an inference that holds on none that passes leaves its ruling invalid, so a complete ledger that
+// holds one is stale. One that does not hold may cite nothing.
+test('check: every citation of an inference verdict is checked, plan and decide, first and final, and one that holds needs one that passes', (t) => {
+  const p = project(t);
+  const d = decideProject(t);
+  const made = cite('code', 'missing.js:1', 'export const made = 1;');
+  const verdict = (statement, holds, citations) => [{ statement, holds, reason: 'r', citations }];
+  const claim = 'It breaks.\ninference: the slot is shared';
+  const planCases = [
+    ['objection A1 ruling', (inferences) => objection('A1', [PASSING.code], { claim, status: 'accepted', ruling: accepts({ inferences }) })],
+    ['objection A1 rebuttal ruling', (inferences) => objection('A1', [PASSING.code], { status: 'accepted', ruling: rejects(), rebuttal: { verdict: 'rebut', claim, citations: [PASSING.fenced], ruling: accepts({ inferences }) } })],
+  ];
+  for (const [where, build] of planCases) {
+    const named = `${where}.inferences[0].citations[0] (code missing.js:1): missing.js is missing`;
+    const holdsOnNone = `${where}: invalid: inference "the slot is shared" holds on no passing citation`;
+    for (const [inferences, lines] of [
+      [verdict('the slot is shared', true, [made]), [named, holdsOnNone]],
+      [verdict('the slot is shared', true, []), [holdsOnNone]],
+      [verdict('the slot is shared', true, [made, PASSING.code]), [named]],
+      [verdict('the slot is shared', false, [made]), [named]],
+      [verdict('the slot is shared', false, []), []],
+    ]) {
+      const open = p.check(planLedger([build(inferences)]));
+      assert.equal(open.status, 0, open.stderr);
+      assert.deepEqual(open.lines.slice(0, -1), lines, JSON.stringify(inferences));
+      const complete = planLedger([build(inferences)], { status: 'complete', proportionality: { flagged: [] } });
+      const result = p.check(complete);
+      if (lines.includes(holdsOnNone)) {
+        assert.equal(result.status, 1, result.stdout);
+        assert.ok(result.stderr.includes(`: ${holdsOnNone} in a complete ledger\n`), result.stderr);
+        assert.deepEqual(result.ledger, complete, 'not written back');
+      } else assert.equal(result.status, 0, result.stderr);
+    }
+  }
+  const inferred = 'Split files read faster.\ninference: readers open one round at a time';
+  const decideCases = [
+    ['ruling', (inferences) => ({ cases: [stand('A', [ASKED.a, PASSING.adr]), stand('B', [ASKED.b], inferred)], ruling: decision({ inferences }) })],
+    ['final ruling', (inferences) => ({ rebuttals: [answer('B', 'rebut', [PASSING.fenced], inferred)], final_ruling: decision({ citations: [PASSING.fenced], tested: tested({ B: 1 }), inferences }) })],
+  ];
+  for (const [where, build] of decideCases) {
+    const named = `${where}.inferences[0].citations[0] (code missing.js:1): missing.js is missing`;
+    const holdsOnNone = `${where}: invalid: inference "readers open one round at a time" holds on no passing citation`;
+    for (const [inferences, lines] of [
+      [verdict('readers open one round at a time', true, [made]), [named, holdsOnNone]],
+      [verdict('readers open one round at a time', true, [made, PASSING.code]), [named]],
+      [verdict('readers open one round at a time', false, [made]), [named]],
+      [verdict('readers open one round at a time', false, []), []],
+    ]) {
+      const open = d.check(decideLedger({ status: 'open', ...build(inferences) }));
+      assert.equal(open.status, 0, open.stderr);
+      assert.deepEqual(open.lines.slice(0, -1), lines, JSON.stringify(inferences));
+      const complete = decideLedger(build(inferences));
+      const result = d.check(complete);
+      if (lines.includes(holdsOnNone)) {
+        assert.equal(result.status, 1, result.stdout);
+        assert.ok(result.stderr.includes(`: ${holdsOnNone} in a complete ledger\n`), result.stderr);
+        assert.deepEqual(result.ledger, complete, 'not written back');
+      } else assert.equal(result.status, 0, result.stderr);
+    }
+  }
+});
+
 test('check with mode: inference lines are matched to distinct entries on their own line, and a bare inference: takes no next line', (t) => {
   const p = project(t);
   const run = (claim, inferences) => {
-    const result = p.check(planLedger([objection('A1', [PASSING.code], { claim, status: 'accepted', ruling: accepts({ inferences: inferences.map((statement) => ({ statement, holds: true, reason: 'r', citations: [] })) }) })]));
+    const result = p.check(planLedger([objection('A1', [PASSING.code], { claim, status: 'accepted', ruling: accepts({ inferences: inferences.map((statement) => ({ statement, holds: true, reason: 'r', citations: [PASSING.code] })) }) })]));
     assert.equal(result.status, 0, result.stderr);
     return result.lines.filter((line) => line.startsWith('objection A1 ruling: '));
   };

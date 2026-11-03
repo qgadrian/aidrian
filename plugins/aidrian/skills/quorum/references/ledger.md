@@ -85,7 +85,9 @@ Such an old ledger is `complete`: `quorum check` exits 1 on an `open` one with `
       - `objections[].ruling.inferences[].statement`: that line's text after `inference:`.
       - `objections[].ruling.inferences[].holds`: `true` when the evidence settles it as stated, else `false`.
       - `objections[].ruling.inferences[].reason`: why, in one line.
-      - `objections[].ruling.inferences[].citations`: the evidence that settles it; may be empty.
+      - `objections[].ruling.inferences[].citations`: the evidence that settles it, checked as every citation is; may
+        be empty when it does not hold. One that holds with no passing citation leaves the ruling invalid:
+        `inference "<statement>" holds on no passing citation`.
     - `objections[].ruling.ground`: optional; with a mode, present exactly on a reject, naming its one ground:
       `covered` (the plan already states it), `implementation` (how the code gets written, for pull request review),
       `settled` (reopens a settled answer), `off-goal` (outside the plan's goal or scope), `disproportionate` (the change
@@ -170,7 +172,9 @@ fails `quorum check` on every invalid ruling or rebuttal, so it is not reused.
     - `ruling.inferences[].statement`: that line's text after `inference:`.
     - `ruling.inferences[].holds`: `true` when the evidence settles it as stated, else `false`.
     - `ruling.inferences[].reason`: why, in one line.
-    - `ruling.inferences[].citations`: the evidence that settles it; may be empty.
+    - `ruling.inferences[].citations`: the evidence that settles it, checked as every citation is; may be empty when
+      it does not hold. One that holds with no passing citation leaves the ruling invalid, first or final:
+      `inference "<statement>" holds on no passing citation`.
 - `rebuttals`: each losing position's answer to a first ruling of rule, at most one each, never from the winner.
   - `rebuttals[].position`: the losing position: `A`, `B`, `C`, or `D`.
   - `rebuttals[].verdict`: `rebut` or `concede`.
@@ -181,7 +185,7 @@ fails `quorum check` on every invalid ruling or rebuttal, so it is not reused.
   It comes only after a first `rule`. A final `rule` needs a `rebut`, its `tested` covers every rebuttal's citations,
   and its winner is the first ruling's winner or a position that rebutted.
   A flip, a final winner other than the first, rests on a citation of the new winner's rebuttal that passes and
-  that `tested` marks as supporting. A final `escalate` is not held to `tested` or `inferences`, so the coordinator can write one when the
+  that `tested` marks as supporting. A final `escalate` is not held to `tested` or to an `inferences` entry per line, so the coordinator can write one when the
   rebuttal round ends short. The governing winner is the final ruling's winner on a final `rule`, else the first
   ruling's; in a `complete` ledger, its case needs a passing citation, whatever the Human answered.
 - `human_answer`: the Human's answer to the escalated ruling, word for word, or `null`.

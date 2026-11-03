@@ -196,6 +196,9 @@ Two commands keep a ledger honest:
   A quote is at most 200 characters, compared with whitespace collapsed.
   A `pending` objection with no passing citation becomes `opinion`; one already ruled on keeps its status and is named.
   A ruling, or a rebuttal that rebuts, with no passing citation is named invalid.
+  Each citation of a ruling's `inferences` is checked as well, named as `<ruling>.inferences[i].citations[j]` when it
+  fails, and a ruling, first or final, is invalid when an inference that holds has no passing citation:
+  `inference "<statement>" holds on no passing citation`. One that does not hold may cite nothing.
   A rebuttal that rebuts is also invalid when it cites nothing new: every passing citation of it is already cited by an
   objection or its ruling, by kind, path, anchor, and quote. Other rebuttals do not count. It prints each problem and writes the ledger back.
   A ref path outside the repository, as `..`, an absolute path, or through a symlink, is a failed citation that it warns
@@ -274,7 +277,9 @@ Then it checks every citation as for a plan ledger, and names each problem:
   citation it rules on once, or when an `inference:` line has no `inferences` entry. The first ruling rules on every
   case and every backed cross point, each verdict keyed by `of`; a final ruling of `rule` on every rebuttal.
   A verdict keyed to anything else reads `tested names X, which the ruling does not rule on`.
-  A final `escalate` is not held to `tested` or `inferences`, so the skill can write one when the rebuttals fall short.
+  A final `escalate` is not held to `tested` or to an `inferences` entry per line, so the skill can write one when the rebuttals fall short.
+- Each citation of a ruling's `inferences`, first or final, of any decision, is checked as every citation is, and the
+  ruling is invalid when an inference that holds has no passing citation: `inference "<statement>" holds on no passing citation`.
   A first `escalate` is held to both, but no invalid line fails a ledger that escalates, so the skill can write one
   with `tested: []` when the architect's first ruling is invalid twice.
 - A `rule`, first or final, is invalid when `the winner's case has no passing citation`.

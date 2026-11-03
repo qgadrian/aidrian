@@ -160,7 +160,7 @@ Verdicts, on every ruling:
   {"citation", "supports": true|false, "reason"}. Name each citation marked false in change_or_reason, with why.
   An accept rests on at least one citation that passes and supports.
 - `inferences`: one entry per `inference:` line of the objection's claim (on the final ruling, the rebuttal's):
-  {"statement": the line's text after the label, "holds": true|false, "reason", "citations"}.
+  {"statement": the line's text after the label, "holds": true|false, "reason", "citations"}. "holds": true needs one citation that passes.
 Moderation governs scope and proportion, never which side wins: a ground is never a reason to prefer one adversary.
 <evidence>
 Rule on every objection listed. Each ruling carries its own citation; one with no passing citation is invalid.

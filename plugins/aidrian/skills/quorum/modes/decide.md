@@ -198,7 +198,7 @@ Verdicts, on every ruling:
   {"of": the position or point id, "citation", "supports": true|false, "reason"}.
   Name each citation marked false in change_or_reason, with why.
 - `inferences`: one entry per `inference:` line of each claim you rule on:
-  {"statement": the line's text after the label, "holds": true|false, "reason", "citations"}.
+  {"statement": the line's text after the label, "holds": true|false, "reason", "citations"}. "holds": true needs one citation that passes.
 Moderation: a cross point or rebuttal that is off the question, speculative, or out of proportion to what it attacks
 gets `supports: false` on its citations, with that ground in "reason", and you name it in change_or_reason.
 Moderation governs scope and proportion; it never decides which position wins.

@@ -719,6 +719,16 @@ function inferenceProblems(claims, inferences) {
   return untestedLines(lines, statements).map((text) => shown(`inference untested: "${text.slice(0, 60)}"`));
 }
 
+// The evidence of a ruling's `inferences`, on every ruling, first or final, in either mode: each citation goes through
+// `pass` as every other citation does, named under `<where>.inferences[i]` when it fails, and an inference that holds
+// rests on one that passes. One line for each that holds on none; one that does not hold may cite nothing.
+function inferenceEvidenceProblems(inferences, where, pass) {
+  return (inferences ?? []).flatMap((inference, i) => {
+    const proof = pass(inference.citations, `${where}.inferences[${i}]`);
+    return inference.holds === true && !proof.length ? [shown(`inference "${collapse(inference.statement).slice(0, 60)}" holds on no passing citation`)] : [];
+  });
+}
+
 // Why a ruling on a ledger that carries `mode` is invalid beyond its citations, one reason per line: `entry` is what it
 // rules on (the objection for the first ruling, the rebuttal for the final one), `proof` the ruling's own passing
 // citations, and `backing` the entry's. An accept changes a plan section, so it cites one, and rests on a citation of
@@ -770,6 +780,7 @@ export function checkLedger(ledger, ctx) {
     const proof = pass(value.citations, where);
     if (!proof.length) invalid(objection, `${where}: invalid: the ruling has no passing citation`, stands);
     if (strict) for (const reason of verdictProblems(value, entry, proof, backing)) invalid(objection, `${where}: invalid: ${reason}`, stands);
+    for (const reason of inferenceEvidenceProblems(value.inferences, where, pass)) invalid(objection, `${where}: invalid: ${reason}`, stands);
   };
   // What a rebuttal must add to: what the ledger held before the rebuttal round, every objection's citations and every
   // first ruling's. Rebuttals and their rulings are left out, so two rebuttals that bring the same new evidence are both new.
@@ -955,6 +966,7 @@ export function checkDecideLedger(ledger, ctx) {
       ...ledger.cross.filter((point) => point.status === 'backed').map((point) => entry(point.id, `cross ${point.id}`, point)),
     ];
     for (const reason of decideVerdictProblems(ruling, entries)) invalid(`ruling: invalid: ${reason}`);
+    for (const reason of inferenceEvidenceProblems(ruling.inferences, 'ruling', pass)) invalid(`ruling: invalid: ${reason}`);
     if (ruling.decision === 'rule') {
       // A position wins on evidence or not at all, so a rule for one whose case has no passing citation goes back.
       if (!backed.has(ruling.winner)) invalid("ruling: invalid: the winner's case has no passing citation");
@@ -975,6 +987,7 @@ export function checkDecideLedger(ledger, ctx) {
   }
   if (final) {
     if (!pass(final.citations, 'final ruling').length) invalid('final ruling: invalid: the ruling has no passing citation');
+    for (const reason of inferenceEvidenceProblems(final.inferences, 'final ruling', pass)) invalid(`final ruling: invalid: ${reason}`);
     // A final escalate goes to the Human, and the coordinator writes one with no verdicts when the rebuttal round ends
     // short, so only a final rule is held to its verdicts.
     if (final.decision === 'rule') {

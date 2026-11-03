@@ -179,9 +179,9 @@ Each step names the round of `modes/plan.md` it follows.
   that still holds a `pending` objection, or a ruled status with no `ruling`. On an objection the Human did not settle
   (not `escalated`, not answered), it also exits 1 on a rebuttal with no final ruling, a final ruling other than
   `accept`, a status its final decision does not give, a `rejected` objection with no rebuttal or concession, or an
-  invalid ruling or rebuttal, as when cited code changed. A valid partial accept's first ruling is held to its evidence
-  even when its objection is escalated or answered, flagged or not: unflagged, its accepted part stands, and the answer
-  covers only the rest.
+  invalid ruling or rebuttal, as when cited code changed. An unflagged valid partial accept's first ruling is held to
+  its evidence even when its objection is escalated or answered: its accepted part stands, and the answer covers only
+  the rest. A flagged one is held to it until the Human answers, since the answer covers its accepted part too.
 
 ## Under plan-review
 

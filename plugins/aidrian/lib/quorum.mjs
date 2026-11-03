@@ -733,10 +733,12 @@ export function checkLedger(ledger, ctx) {
   const strict = carriesMode(ledger);
   // In a `complete` ledger, an invalid ruling or rebuttal on an objection the Human did not settle (not `escalated`, no
   // answer) is stale: its evidence changed after the ledger was finished, so reusing it would skip the retry or the
-  // escalation it now needs. Those lines go to `stale` as well, and `check` refuses the ledger. A valid partial accept's
-  // first ruling (`accept` with a rebuttal) is stale even on a settled objection: its accepted part always stands, and
-  // the Human's answer covers only the rejected part.
+  // escalation it now needs. Those lines go to `stale` as well, and `check` refuses the ledger. An unflagged valid
+  // partial accept's first ruling (`accept` with a rebuttal) is stale even on a settled objection: its accepted part
+  // always stands, and the Human's answer covers only the rejected part. A proportionality flag escalates the accepted
+  // part too, so once the Human answers a flagged objection, the answer covers both parts.
   const answered = new Set(ledger.human_answers.map((answer) => answer.objection_id));
+  const flagged = new Set((ledger.proportionality?.flagged ?? []).map((flag) => flag.objection_id));
   const stale = [];
   const invalid = (objection, line, stands = false) => {
     problems.push(line);
@@ -770,7 +772,8 @@ export function checkLedger(ledger, ctx) {
       } else if (objection.status === 'merged') problems.push(`${where}: no citation passes; kept merged into ${objection.merged_into}`);
       else problems.push(`${where}: no citation passes; kept ${objection.status}, since it was ruled on`);
     }
-    ruling(objection, objection.ruling, `${where} ruling`, objection, objection.ruling?.decision === 'accept' && objection.rebuttal !== null);
+    const stands = objection.ruling?.decision === 'accept' && objection.rebuttal !== null && !(flagged.has(objection.id) && answered.has(objection.id));
+    ruling(objection, objection.ruling, `${where} ruling`, objection, stands);
     const rebuttal = objection.rebuttal;
     if (rebuttal) {
       // A rebuttal needs a passing citation the ledger does not already hold. A concession needs none on a ledger

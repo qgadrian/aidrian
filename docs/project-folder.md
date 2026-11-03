@@ -196,9 +196,10 @@ and none of the rules below that need `mode`. `check` never adds the field. Two 
   `ruling`. On an objection the Human did not settle (not `escalated`, not answered), a `complete` ledger also fails
   on a rebuttal with no final ruling, a final ruling other than `accept`, a status its final decision does not give, a
   `rejected` objection with no rebuttal or concession, or an invalid ruling or rebuttal, as after cited code changed.
-  A valid partial accept's first ruling counts even on an escalated or answered objection, since its accepted part
-  stands. Such a ledger is not written back, so it is not reused. It runs no command but `git ls-files`. PLAN and the
-  ledger may live anywhere, such as this folder.
+  An unflagged valid partial accept's first ruling counts even on an escalated or answered objection, since its
+  accepted part stands; a flagged one counts until the Human answers, since the answer covers its accepted part too.
+  Such a ledger is not written back, so it is not reused. It runs no command but `git ls-files`. PLAN and the ledger
+  may live anywhere, such as this folder.
   On every ledger, it exits 1 on a `merged` objection with a ruling or a rebuttal, or whose `merged_into` names no
   objection, one of its own adversary, or one that is merged or an opinion, and on a `proportionality` with
   `failed: true` that flags any objection; it removes a note with no passing citation and names it.
@@ -212,7 +213,7 @@ and none of the rules below that need `mode`. `check` never adds the field. Two 
   - the reason does not open with a `Covers: ` line;
   - an accept has no `Cost: ` or `Removes: ` line.
 
-  It names a concession invalid when no citation of it passes.
+  With `mode`, it also names a concession invalid when no citation of it passes.
   On every plan ledger, with `mode` or without, its last line reads
   `checked: mode plan, N objections, N opinion, N problems`.
 

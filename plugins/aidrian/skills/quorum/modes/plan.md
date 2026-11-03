@@ -53,15 +53,15 @@ The cap is 8 dispatches: one is reserved for the proportionality pass, and no ot
 The longest run: 2 adversaries, 1 ruling, 1 retry, 2 rebuttals, 1 final ruling, and the pass. A fallback costs one more
 and happens at most once, since it sticks; then the retry and the final ruling cannot both run.
 
-A valid partial accept's accepted part always stands. Its rebuttal, its escalation, and the Human's answer cover only
+An unflagged valid partial accept's accepted part always stands. Its rebuttal, its escalation, and the Human's answer cover only
 its rejected part, so `escalated` on it means that part is escalated.
 
 A proportionality flag is the exception: on a partial accept, it covers the accepted part.
 
 ## Asking the Human
 
-An answer goes into `human_answers`, and the objection becomes `accepted` or `rejected`; a valid partial accept stays
-`accepted`, with its rejected part settled by the answer.
+An answer goes into `human_answers`, and the objection becomes `accepted` or `rejected`; an unflagged valid partial
+accept stays `accepted`, with its rejected part settled by the answer.
 A flagged objection's question carries the accepted change, the architect's reason, and `smaller_change` as the
 recommended answer; when `smaller_change` is empty, the recommended answer is none, dropping the change, with the
 flag's reason as the deciding reason. The answer settles it: the change as accepted or the smaller change makes it
@@ -78,7 +78,7 @@ After the core's Ledger item, which also lists every note dropped:
 3. **Escalated**: each id with both positions, their citations, and the Human's answer, or `deferred`.
 4. **Merged**: each merged id with its survivor; a merged objection's outcome is its survivor's. Or `no duplicates`.
 5. **Proportionality**: each flagged id with its reason, the smaller change, and the Human's answer or `deferred`;
-   or `none flagged`; or `pass failed`, with what it returned.
+   or `none flagged`; or `pass failed`, with what it returned when this run dispatched it.
 
 Footnotes, beside the core's: **Notes**, each with its `by`, claim, and citations; context, never a plan change.
 

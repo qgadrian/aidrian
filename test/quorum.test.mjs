@@ -678,6 +678,18 @@ test('check: a complete ledger whose ruling lost its evidence exits 1 and is not
   assert.match(partial.stderr, /objection B1 ruling: invalid: the ruling has no passing citation in a complete ledger$/mu);
   const whole = p.check({ ...ledger([objection('B1', [PASSING.adr], { by: 'B', status: 'escalated', ruling: ruled('accept') })]), status: 'complete' });
   assert.equal(whole.status, 0, whole.stderr);
+
+  // A flagged partial accept: the flag escalated its accepted part too, so once the Human answers, the answer covers it
+  // and the stale first ruling is the Human's. Flagged but not yet answered, the accepted part still stands.
+  const flaggedPartial = (status, human_answers) => p.check({ ...ledger([
+    objection('B1', [PASSING.adr], { by: 'B', status, ruling: ruled('accept'), rebuttal: { verdict: 'rebut', claim: 'c', citations: [PASSING.fenced], ruling: ruled('reject', [PASSING.plan]) } }),
+  ]), status: 'complete', human_answers, proportionality: { flagged: [{ objection_id: 'B1', reason: 'too much', smaller_change: '' }] } });
+  const answeredFlag = flaggedPartial('rejected', [{ objection_id: 'B1', answer: 'none' }]);
+  assert.equal(answeredFlag.status, 0, answeredFlag.stderr);
+  assert.ok(answeredFlag.lines.includes('objection B1 ruling: invalid: the ruling has no passing citation'), answeredFlag.stdout);
+  const deferredFlag = flaggedPartial('escalated', []);
+  assert.equal(deferredFlag.status, 1, deferredFlag.stdout);
+  assert.match(deferredFlag.stderr, /objection B1 ruling: invalid: the ruling has no passing citation in a complete ledger$/mu);
 });
 
 test('check: a complete ledger with a rebuttal left unruled, a final ruling other than accept, or a status its decision does not give exits 1', (t) => {
@@ -1090,11 +1102,14 @@ test('the plan mode file holds the judge\'s reject path, its verdicts, the moder
     const text = raw.split(`\n## ${brief}\n`)[1].split('\n## ')[0].replace(/\s+/gu, ' ');
     assert.match(text, new RegExp(`Return at most ${MAX_MODE_OBJECTIONS} objections, each blocking or important`, 'u'), `${brief}: the objection cap`);
     assert.ok(text.includes(`At most ${MAX_OBJECTIONS} entries in all.`), `${brief}: the entry cap`);
+    // ledger.md § Agent answers reads low as improvement, so the brief says it too.
+    assert.ok(text.includes('(critical and high are read as blocking, medium as important, low as improvement)'), `${brief}: the severity words`);
   }
   // A flagged change the Human has not answered is not reported as accepted, and one answer settles a flagged partial accept.
   assert.match(plan, /A flagged objection the Human has not answered is left out: it shows under Escalated and Proportionality\. For an answered one, the change is the one the answer chose\./u, 'the Accepted item and a flag');
   assert.match(plan, /When a flagged partial accept also has its rejected part escalated, one answer settles both parts\./u, 'one answer for both parts');
-  assert.match(plan, /or `pass failed`, with what it returned/u, 'the report names a failed pass');
+  assert.match(plan, /or `pass failed`, with what it returned when this run dispatched it/u, 'the report names a failed pass');
+  assert.match(plan, /\*\*Rejected\*\*: each id with its `ground` and counter-evidence, or, when the Human rejected it, the Human's answer\./u, 'the Rejected item');
   // A flag says the change over-complicates the plan; with no smaller form, the flag's own reason argues for dropping it.
   assert.match(plan, /when `smaller_change` is empty, the recommended answer is none, dropping the change, with the flag's reason as the deciding reason/u, 'no smaller change: recommend none');
   assert.match(plan, /the strongest alternative plan that meets the same goal/u, 'B1 is the strongest alternative');
@@ -1103,6 +1118,22 @@ test('the plan mode file holds the judge\'s reject path, its verdicts, the moder
   assert.match(plan, /\*\*Notes\*\*/u, 'the report has the notes footnote');
   const rebuttal = /verdict "concede": the ruling stands; cite the ruling's evidence you accept\./gu;
   assert.equal(plan.match(rebuttal)?.length, 2, 'both rebuttal briefs say a concession cites what it accepts');
+});
+
+// A proportionality flag escalates a partial accept's accepted part too, so every sentence that says the accepted part
+// stands, or that a partial accept stays accepted, scopes itself to an unflagged one.
+test('the quorum skill scopes the partial-accept rule to unflagged objections in every file', () => {
+  const texts = skillTexts();
+  const ledgerText = texts['references/ledger.md'].replace(/\s+/gu, ' ');
+  assert.match(ledgerText, /Unless the proportionality pass flags it, its accepted part always stands, and `escalated` on it means its rejected part is escalated; a flag escalates its accepted part too\./u, 'ledger.md § Fields: the flag exception');
+  assert.match(ledgerText, /On a flagged objection, the answer settles both parts, and none makes it `rejected`\./u, 'ledger.md § Filling it: one answer for a flagged objection');
+  const unscoped = [];
+  for (const [file, text] of Object.entries(texts)) {
+    for (const [sentence] of text.replace(/\s+/gu, ' ').matchAll(/[^.]*(?:accepted part (?:always )?stands|partial accept stays `accepted`)[^.]*\./gu)) {
+      if (!/unflagged|Unless the proportionality pass flags it/u.test(sentence)) unscoped.push(`${file}: ${sentence.trim()}`);
+    }
+  }
+  assert.deepEqual(unscoped, []);
 });
 
 test('the quorum core names the six grounds in its Moderator paragraph, and the Evidence block asks for inference lines and doc or adr citations', () => {

@@ -110,7 +110,7 @@ The row never holds the command. Its `reason` can name the file a write rule mat
 ### `review_extension`: when a check at the round cap decides
 
 `aidrian pr review`, `aidrian pr await-review --request`, and `aidrian pr extend` write one row per decision of an
-[extra-rounds check](review.md#extra-rounds): the check starts, the signals stop it, the judge rules, or the Human answers.
+[extra-rounds check](review.md#extra-rounds): the check starts, the judge rules, or the Human answers; the signals' red flags go to the judge.
 
 | Field | Meaning |
 | --- | --- |
@@ -118,7 +118,7 @@ The row never holds the command. Its `reason` can name the file a write rule mat
 | `repo`, `pr` | The pull request. |
 | `source`, `round` | `plan` for `aidrian pr review`'s rounds, `bot` for the review bot's; the round at the cap. |
 | `outcome` | `judging`, `asking`, `granted`, `denied`, or `stopped`. |
-| `by` | Who decided: `mechanical` (the signals), `judge`, `human`, `ceiling`, or `null` while judging. |
+| `by` | Who decided: `judge`, `human`, `ceiling`, or `null` while judging. `mechanical` (the signals) appears only in rows from versions that stopped on a red flag. |
 | `signals` | The signals that raised a red flag: `converging`, `looping`, `drifting`, `bloating`. |
 
 The judge's reason stays in the review record, not the row.

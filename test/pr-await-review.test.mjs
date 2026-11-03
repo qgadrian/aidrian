@@ -994,7 +994,7 @@ function roundsProject(t) {
   const base = mkdtempSync(path.join(tmpdir(), 'aidrian-rounds-'));
   t.after(() => rmSync(base, { recursive: true, force: true }));
   mkdirSync(path.join(base, '.aidrian'));
-  writeFileSync(path.join(base, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' } }));
+  writeFileSync(path.join(base, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' }, github: { extraRounds: 'off' } }));
   const project = projectAt(base);
   const { config } = loadConfig(project);
   assert.equal(inboxPath(project, config), path.join(base, 'state/lessons/inbox.jsonl'));

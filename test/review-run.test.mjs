@@ -880,7 +880,7 @@ test('extra rounds "ask": a converging review at the cap dispatches the judge, t
 test('extra rounds: a fix pushed past the cap reaches the judge as unreviewed, and a stop says so on the pull request', async (t) => {
   const { r, capped, last } = await toTheCap(t, {}, { fixFirst: true });
   assert.equal(capped.status, 'extension_check', JSON.stringify(capped.extension?.reasons));
-  assert.deepEqual(capped.extension.unreviewed_head, { head: capped.head, from: last, fix: { added: 1, removed: 1, files: ['src/booking/a.js'] } });
+  assert.deepEqual(capped.extension.unreviewed_head, { head: capped.head, from: last, fix: { added: 1, removed: 1, files: ['src/booking/a.js'], code_added: 1 } });
   assert.deepEqual(readLocalState(r.project, 7).extensions[0].unreviewed, { head: capped.head, from: last });
   await extend(t, r, ['--verdict', 'stop', '--reason', 'the finding was low severity']);
   const stopped = await r.step({ exec: clean });
@@ -955,19 +955,24 @@ test('extra rounds "auto": the judge`s extend grants the round without the Human
   assert.deepEqual([(await r.step({ exec: clean })).status], ['fix_required']);
 });
 
-test('extra rounds: the judge`s stop, the signals, and "off" each leave round_limit, with the reason', async (t) => {
+test('extra rounds: the judge`s stop and "off" leave round_limit; a red flag goes to the judge, then the Human', async (t) => {
   const judged = await toTheCap(t, {});
   await extend(t, judged.r, ['--verdict', 'stop', '--reason', 'the fixes over-engineer the refund path']);
   const stopped = await judged.r.step({ exec: clean });
   assert.deepEqual([stopped.status, stopped.extension.status, stopped.extension.by, stopped.extension.reasons], ['round_limit', 'stopped', 'judge', ['the fixes over-engineer the refund path']]);
 
-  const flat = await toTheCap(t, {}, { first: 1, second: 1 });
-  assert.equal(flat.capped.status, 'round_limit', 'not converging stops before any judge');
-  assert.deepEqual([flat.capped.extension.by, flat.capped.extension.signals.converging], ['mechanical', false]);
-  assert.match(flat.capped.extension.reasons[0], /^not converging: round 2 left 1 open finding, round 1 left 1/u);
-  assert.ok(!('dispatch' in flat.capped), 'no judge is dispatched');
-  await assert.rejects(extend(t, flat.r, ['--verdict', 'extend', '--reason', 'x']), /no extension check waits for a verdict/u, 'a verdict cannot overrule the signals');
-  assert.equal((await flat.r.step({ exec: clean })).status, 'round_limit', 'the decision holds on every later step');
+  const flat = await toTheCap(t, { extraRounds: 'auto' }, { first: 1, second: 1 });
+  assert.equal(flat.capped.status, 'extension_check', 'not converging is no dead end: the judge reads it');
+  assert.deepEqual([flat.capped.extension.by, flat.capped.extension.signals.converging], [null, false]);
+  assert.match(flat.capped.extension.red_flags[0], /^not converging: round 2 left 1 open finding, round 1 left 1/u);
+  assert.match(flat.capped.dispatch[0].brief, /extension\.red_flags/u);
+  await extend(t, flat.r, ['--verdict', 'extend', '--reason', 'the open finding is a valid high']);
+  const ask = await flat.r.step({ exec: clean });
+  assert.equal(ask.status, 'extension_ask', 'under "auto", an extend over a red flag still needs the Human');
+  assert.match(ask.question, /red flags \(not converging\)[\s\S]*round 3\?$/u);
+  assert.doesNotMatch(ask.question, /round [12]\b/u, 'the question names no round but the one it grants');
+  await extend(t, flat.r, ['--human', 'approve']);
+  assert.equal((await flat.r.step({ exec: clean })).max_rounds, 3, 'the Human`s approval opens the round');
 
   const off = await toTheCap(t, { extraRounds: 'off' });
   assert.deepEqual([off.capped.status, off.capped.extension], ['round_limit', { status: 'off', mode: 'off' }]);
@@ -1002,14 +1007,14 @@ const bloat = (r) => {
   return r.commit('a large fix');
 };
 
-test('extra rounds: a push after the judge`s extend is read again; a new red flag stops it, and a stale approval is refused', async (t) => {
+test('extra rounds: a push after the judge`s extend is read again; a new red flag goes back to the judge, and a stale approval is refused', async (t) => {
   const { r, capped } = await toTheCap(t, {});
   await extend(t, r, ['--verdict', 'extend', '--reason', 'valid', '--head', capped.head]);
   assert.equal((await r.step({ exec: clean })).status, 'extension_ask');
   const pushed = bloat(r);
   await assert.rejects(extend(t, r, ['--human', 'approve']), new RegExp(`the check was for ${capped.head.slice(0, 7)}, and the pull request is at ${pushed.slice(0, 7)} now`, 'u'));
   const stopped = await r.step({ exec: clean });
-  assert.deepEqual([stopped.status, stopped.extension.status, stopped.extension.by, stopped.extension.signals.bloating], ['round_limit', 'stopped', 'mechanical', true]);
+  assert.deepEqual([stopped.status, stopped.extension.status, stopped.extension.by, stopped.extension.signals.bloating], ['extension_check', 'judging', null, true]);
   assert.match(stopped.extension.reasons.at(-1), new RegExp(`read again on ${pushed.slice(0, 7)}, pushed after the decision on ${capped.head.slice(0, 7)}`, 'u'));
 
   const clean2 = await toTheCap(t, {});
@@ -1021,13 +1026,13 @@ test('extra rounds: a push after the judge`s extend is read again; a new red fla
   assert.match(back.dispatch[0].record, new RegExp(`--head ${small}$`, 'u'));
 });
 
-test('extra rounds: a grant whose round has not opened is revoked when the next head raises a red flag', async (t) => {
+test('extra rounds: a grant whose round has not opened goes back to the judge when the next head raises a red flag', async (t) => {
   const { r } = await toTheCap(t, { extraRounds: 'auto' });
   await extend(t, r, ['--verdict', 'extend', '--reason', 'valid']);
   assert.equal((await r.step({ exec: clean })).max_rounds, 3, 'granted');
   bloat(r);
   const revoked = await r.step({ exec: clean });
-  assert.deepEqual([revoked.status, revoked.max_rounds, revoked.round, revoked.extension.by], ['round_limit', 2, 2, 'mechanical'], 'round 3 never opens');
+  assert.deepEqual([revoked.status, revoked.max_rounds, revoked.round, revoked.extension.by], ['extension_check', 2, 2, null], 'round 3 does not open on the judge`s old word');
 });
 
 test('extra rounds: aidrian pr extend writes the summary comment, so another machine continues from it', async (t) => {

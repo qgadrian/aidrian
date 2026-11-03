@@ -371,8 +371,9 @@ decides, as the base branch commits it, with `github.maxExtraRounds` (2) as the 
 It applies to `aidrian pr review` and to `aidrian pr await-review --request`, which count their own rounds.
 
 1. `"off"`, or the ceiling reached: `round_limit`, as before.
-2. **Signals.** The command reads the round history and computes four signals. Any red flag ends in `round_limit`, with
-   `extension.reasons`, and no judge runs:
+2. **Signals.** The command reads the round history and computes four signals. A red flag is no dead end: it goes to
+   the judge as evidence, in `extension.red_flags`, and an extra round over it always needs the Human, under `"auto"`
+   too:
    - **converging**: the last round left fewer open findings than the round before. Equal or more is a red flag.
    - **looping**: a finding comes back after a fix, in the same file within 3 lines, or under the same title (its words of
      four letters or more, without markup, in any order).
@@ -380,21 +381,25 @@ It applies to `aidrian pr review` and to `aidrian pr await-review --request`, wh
    - **bloating**: the fixes since round 1 added more than 50% of the lines the pull request first added, and more
      than 40 lines. A fix is how the pull request's own diff (each head against its merge base with the base branch)
      changed between rounds, line by line per file, without `review.ignore` files. Lines the base branch gained are in
-     neither diff, so merging or rebasing on the base is no bloat, even in a file the pull request changes too.
+     neither diff, so merging or rebasing on the base is no bloat, even in a file the pull request changes too. Only
+     code counts as fix growth: lines added to `review.nonBehaviour` files, such as Markdown and `docs/**`, are no
+     bloat, since rewording a doc across rounds is normal review work. A docs-only pull request never bloats.
 
    A signal the history cannot read, such as looping when the reviewers recorded counts and no findings, is unknown,
-   not red. A history with no readable signal stops.
-3. **Judge.** Otherwise the status is `extension_check` (exit 10). It carries `extension`: each round's open findings,
+   not red. A history with no readable signal is a red flag.
+3. **Judge.** The status is `extension_check` (exit 10). It carries `extension`: each round's open findings,
    with their files, lines, and titles, each fix's size, the pull request's files, its title and body, and the signals.
    `dispatch` names a read-only `code-reviewer`, which answers whether the fixes deviate from the goal, loop, or
-   over-engineer, and whether the open findings are valid and at least medium, with evidence. It records its word:
+   over-engineer, and whether the open findings are valid and at least medium, with evidence, and answers each red
+   flag as real or a false alarm. It records its word:
 
    ```sh
    aidrian pr extend <PR> --verdict extend|stop --reason "<evidence>" [--head <sha>]
    ```
 
-4. **Grant.** `stop` is `round_limit`. `extend` grants the round under `"auto"`. Under `"ask"` the status is
-   `extension_ask` (exit 11), with a `question` and `options` for the Human, and the session records the answer:
+4. **Grant.** `stop` is `round_limit`. `extend` grants the round under `"auto"` when no red flag stands. Under
+   `"ask"`, or over a red flag, the status is `extension_ask` (exit 11), with a `question` and `options` for the Human,
+   and the session records the answer. The question names the red flags, by name only:
 
    ```sh
    aidrian pr extend <PR> --human approve|deny
@@ -421,12 +426,12 @@ still needs `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, grant or not.
 
 Every open decision is bound to the head its signals were read on: a check waiting for the judge or the Human, and a
 grant whose round has not opened yet. When the pull request moves, the next step reads the signals again on the new
-head. A new red flag stops it, a grant included, so a push after the verdict cannot carry a bloated fix into the extra
-round. Without one, a check waiting for the Human goes back to the judge, who has not seen the push, and a grant
-stands. `aidrian pr extend --human approve` and `--verdict` are refused once the pull request's head is not the one the
+head. A new red flag sends it back to the judge, a grant or a Human's approval included, so a push after the verdict
+cannot carry a bloated fix into the extra round unseen. Without one, a check waiting for the Human goes back to the
+judge, who has not seen the push, and a grant stands. `aidrian pr extend --human approve` and `--verdict` are refused once the pull request's head is not the one the
 check was for. A bot request on an extra round goes out only for the head its grant was read on: when the
 pull request moves between the reads, or during the wait, the command reads the grant again on the head it would ask
-about, and posts nothing when a red flag revokes it. A bot request records the raised cap in its comment, as a Human's `--max-rounds` does, but a later
+about, and posts nothing when a red flag sends the grant back to the judge. A bot request records the raised cap in its comment, as a Human's `--max-rounds` does, but a later
 run counts that record only under `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`: otherwise the cap is the base branch's plus the
 grants still valid, so a revoked grant stays revoked. Each decision is an entry
 in [the record](#the-record), listed under **Extra rounds** in the summary comment, which `aidrian pr extend` and
@@ -440,8 +445,9 @@ round it grants (`round <N>`), given after the judge's verdict, with the option 
 writes that answer, not the agent. A host without such a transcript, such as Codex, leaves the approval to the Human,
 who runs the command in their own shell. `--human deny` always runs. The rest is the record's trust: the judge's
 verdict, like an attest, is the session's word, and an agent with a shell could write the state file directly. So the
-signals and the ceiling are computed by the command at every cap, a verdict cannot overrule a red flag, and under
-`"auto"` the most a false verdict buys is `github.maxExtraRounds` rounds, every one listed on the pull request.
+signals and the ceiling are computed by the command at every cap, a verdict over a red flag reaches the Human, never
+a grant by itself, and under `"auto"` the most a false verdict buys is `github.maxExtraRounds` rounds, every one
+listed on the pull request.
 
 ## The plan command
 

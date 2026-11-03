@@ -13,7 +13,7 @@ import { fileBytes } from './fs.mjs';
 import { checkoutRoots } from './git.mjs';
 import { loadKnowledge } from './knowledge.mjs';
 import {
-  aggregateUsage, estimateCostUsd, filesRead, partOf, readText, sessionActions, subagentTranscripts, sumTokens, toolCallText,
+  aggregateUsage, estimateCostUsd, filesRead, partOf, readText, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds,
 } from './transcript.mjs';
 
 const DESCRIPTION_CHARS = 80;
@@ -66,8 +66,9 @@ const ENDED = new Set(['completed', 'failed', 'killed', 'stopped', 'cancelled', 
 
 // The background tasks this subagent started that still run as it stops: [{ id, type, description }].
 // Claude Code's SubagentStop payload lists `background_tasks` for the whole session, without the agent that started each,
-// so a task counts only when its id appears in one of the subagent's own tool calls or their results: the
-// `Command running in background with ID: <id>` of a background shell, the `agentId` of an agent it launched or resumed.
+// so a task counts only when the subagent's own call launched or resumed it, as the host's result for that call names it
+// (launchedTaskIds): a background shell's `Command running in background with ID: <id>`, the `agentId` of an agent it
+// launched, or the `resumedAgentId` of one it resumed. Reading another agent's task, such as its output file, is not owning it.
 // A subagent that ends its turn goes idle, and a background task's completion does not wake it, so it waits forever.
 // A teammate is a peer that messages wake, never a child. A payload without the array (another host, an older Claude
 // Code), or a transcript the hook cannot read, finds none.
@@ -78,9 +79,9 @@ export function runningChildren(input) {
   if (!live.length || typeof input.agent_transcript_path !== 'string') return [];
   const transcript = readText(input.agent_transcript_path);
   if (!transcript) return [];
-  const own = toolCallText(transcript, ownRequests(input));
+  const own = launchedTaskIds(transcript, ownRequests(input));
   return live
-    .filter((task) => new RegExp(`(?<![\\w-])${task.id}(?![\\w-])`, 'u').test(own))
+    .filter((task) => own.has(task.id))
     .map((task) => ({ id: task.id, type: text(task.type) ?? 'task', description: text(task.description, DESCRIPTION_CHARS) }));
 }
 

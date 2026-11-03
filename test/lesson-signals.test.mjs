@@ -257,6 +257,30 @@ test('a subagent that stops with a background task it started still running is s
   assert.equal(plugin()[0].seen, 1, 'a stop with nothing of its own running adds no occurrence');
 });
 
+test('a subagent that reads, waits on, or messages another agent\'s running task is not sent back for it', (t) => {
+  const { dir, all, plugin, hook } = project(t);
+  const call = (id, toolId, name, input) =>
+    JSON.stringify({ type: 'assistant', message: { id, model: 'claude-opus-5-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'tool_use', id: toolId, name, input }] } });
+  const result = (toolId, text) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content: text }] } });
+  const transcript = path.join(dir, 'agent-a2.jsonl');
+  writeFileSync(transcript, [
+    call('m1', 't1', 'Bash', { command: 'tail -5 /tmp/tasks/bother0001.output' }),
+    result('t1', 'listening on :3000'),
+    call('m2', 't2', 'Bash', { command: 'until ! pgrep -f "git push"; do sleep 5; done', timeout: 600000 }),
+    result('t2', 'push of bmnjbq03x done'),
+    call('m3', 't3', 'SendMessage', { to: 'a51c8e798c62f1139', message: 'Is the review done?' }),
+    result('t3', '{"success":true,"message":"Message sent to a51c8e798c62f1139\'s inbox"}'),
+  ].join('\n'));
+  for (const active of [false, true]) {
+    const stop = hook('hook-subagent-stop.mjs', {
+      session_id: 's1', agent_id: 'a2', agent_type: 'checker', agent_transcript_path: transcript, last_assistant_message: 'Checked the others.',
+      stop_hook_active: active, background_tasks: SESSION_TASKS,
+    });
+    assert.deepEqual([stop.status, stop.stderr], [0, ''], `stop_hook_active ${active}`);
+  }
+  assert.deepEqual([...all(), ...plugin()], [], 'no false lesson');
+});
+
 test('a stop that names a missing file and leaves a task running is sent back once with both reasons', (t) => {
   const { dir, hook } = project(t);
   const sent = hook('hook-subagent-stop.mjs', {

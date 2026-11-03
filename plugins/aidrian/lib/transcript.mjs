@@ -175,26 +175,37 @@ export function filesRead(text, keep = () => true) {
   return [...read];
 }
 
-// The text of the transcript's own tool calls: each call's input as JSON, and the result the host returned for it, one
-// per line. `keep` takes a request by key, as in filesRead; a call it refuses is left out, and so is that call's result.
-// The stop hook reads it for the ids of the background shells and agents a subagent started (dispatch-rows.mjs).
-export function toolCallText(text, keep = () => true) {
-  const calls = new Set();
-  const parts = [];
+// The ids of the background tasks the transcript's own tool calls launched or resumed, as the host's result for that call
+// names them: a Bash call's result that starts `Command running in background with ID: <id>`, or `Command did not complete
+// within its <n>s timeout and was moved to the background (ID: <id>)`; an `agentId: <id>` line of an Agent call's result;
+// and a SendMessage call's `resumedAgentId`. Each pattern is anchored where the host writes it, so a command's own output
+// that quotes one, such as a search of transcripts, names no launch. `keep` takes a request by key, as in filesRead; a call
+// it refuses, such as one a forked subagent inherited, launched nothing of its own. Any other call that names an id, such
+// as reading a task's output file or stopping it, launched nothing. The stop hook reads it (dispatch-rows.mjs).
+const AGENT_ID = /^agentId: ([\w-]+)/gmu;
+const LAUNCHED = {
+  Bash: /^Command (?:running in background with ID: |did not complete within its \d+s timeout and was moved to the background \(ID: )([\w-]+)/gu,
+  Agent: AGENT_ID,
+  Task: AGENT_ID,
+  SendMessage: /"resumedAgentId":\s*"([\w-]+)"/gu,
+};
+
+export function launchedTaskIds(text, keep = () => true) {
+  const calls = new Map();
+  const ids = new Set();
   for (const line of text.split('\n')) {
     const entry = parseLine(line);
     const content = entry?.message?.content;
     if (!Array.isArray(content)) continue;
     for (const block of content) {
-      if (block?.type === 'tool_use' && typeof block.id === 'string' && keep(requestKey(entry))) {
-        calls.add(block.id);
-        parts.push(JSON.stringify(block.input ?? null));
+      if (block?.type === 'tool_use' && typeof block.id === 'string' && Object.hasOwn(LAUNCHED, block.name) && keep(requestKey(entry))) {
+        calls.set(block.id, LAUNCHED[block.name]);
       } else if (block?.type === 'tool_result' && calls.has(block.tool_use_id)) {
-        parts.push(typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? null));
+        for (const [, id] of resultText(block.content).matchAll(calls.get(block.tool_use_id))) ids.add(id);
       }
     }
   }
-  return parts.join('\n');
+  return ids;
 }
 
 // A draft pull request create and a review run are read from the commands a Bash call runs (shell-lex walkCommands),

@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { awaitReview } from '../plugins/aidrian/lib/pr-await-review.mjs';
 import { EXIT } from '../plugins/aidrian/lib/review/run.mjs';
 import {
-  aggregateUsage, estimateCostUsd, filesRead, partOf, priceFor, REVIEW_OUTPUT_STATUSES, sessionActions, subagentTranscripts, sumTokens, toolCallText,
+  aggregateUsage, estimateCostUsd, filesRead, partOf, priceFor, REVIEW_OUTPUT_STATUSES, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds,
 } from '../plugins/aidrian/lib/transcript.mjs';
 
 // One transcript line: an assistant message with usage, as Claude Code writes it.
@@ -208,22 +208,31 @@ test('sessionActions reads the commands a Bash call runs, not the text that name
   assert.deepEqual(actions('aidrian pr status 12'), { drafts_opened: 0, review_runs: 0 }, 'another pr subcommand');
 });
 
-test('toolCallText holds the inputs and results of the calls `keep` takes, and not those of the calls it refuses', () => {
-  const call = (id, toolId, input) => usageLine(id, 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', id: toolId, name: 'Bash', input }] });
+test('launchedTaskIds takes the ids the host results give the calls that launched or resumed a task, and no mention of one', () => {
+  const call = (id, toolId, name, input) => usageLine(id, 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', id: toolId, name, input }] });
   const result = (toolId, content) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content }] } });
   const lines = [
-    call('m-parent', 't0', { command: 'git push', run_in_background: true }),
-    result('t0', 'Command running in background with ID: bparent01.'),
-    call('m-own', 't1', { command: 'npm test', run_in_background: true }),
-    result('t1', [{ type: 'text', text: 'Command running in background with ID: bown0001.' }]),
-    JSON.stringify({ type: 'user', message: { role: 'user', content: 'a message that names bloose01' } }),
+    call('m-parent', 't0', 'Bash', { command: 'git push', run_in_background: true }),
+    result('t0', 'Command running in background with ID: bparent01. Output is being written to: /tmp/tasks/bparent01.output'),
+    call('m1', 't1', 'Bash', { command: 'npm test', run_in_background: true }),
+    result('t1', [{ type: 'text', text: 'Command running in background with ID: bown0001. Output is being written to: /tmp/tasks/bown0001.output' }]),
+    call('m2', 't2', 'Bash', { command: 'git push -u origin x', timeout: 120000 }),
+    result('t2', 'Command did not complete within its 120s timeout and was moved to the background (ID: bmoved01). Output is being written to: /tmp/tasks/bmoved01.output.'),
+    call('m3', 't3', 'Agent', { description: 'Review', prompt: 'Review it.', run_in_background: true }),
+    result('t3', [{ type: 'text', text: 'Async agent launched successfully.\nagentId: aown00001 (internal ID)\nThe agent is working in the background.' }]),
+    call('m4', 't4', 'SendMessage', { to: 'aold00001', message: 'Again, please.' }),
+    result('t4', [{ type: 'text', text: '{"success":true,"message":"Resuming agent aold000","resumedAgentId":"aold00001"}' }]),
+    // Reading, waiting on, or stopping another agent's task names its id, and launches nothing.
+    call('m5', 't5', 'Bash', { command: 'tail /tmp/tasks/bother001.output; grep -r "background with ID" ~/.claude/projects' }),
+    result('t5', 'pushing...\n"content":"Command running in background with ID: bquoted1. Output"'),
+    call('m6', 't6', 'TaskStop', { task_id: 'bother002' }),
+    result('t6', 'Successfully stopped task: bother002'),
+    call('m7', 't7', 'SendMessage', { to: 'aother001', message: 'Status?' }),
+    result('t7', [{ type: 'text', text: '{"success":true,"message":"Message sent to aother001\'s inbox"}' }]),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: 'Command running in background with ID: bloose01.' } }),
   ].join('\n');
-  const own = toolCallText(lines, (key) => key !== 'm-parent');
-  assert.match(own, /npm test/);
-  assert.match(own, /bown0001/, 'a result given as content blocks');
-  assert.doesNotMatch(own, /bparent01|git push/, 'a refused call and its result');
-  assert.doesNotMatch(own, /bloose01/, 'a message is not a tool call');
-  assert.match(toolCallText(lines), /bparent01/);
+  assert.deepEqual([...launchedTaskIds(lines, (key) => key !== 'm-parent')].sort(), ['aold00001', 'aown00001', 'bmoved01', 'bown0001']);
+  assert.ok(launchedTaskIds(lines).has('bparent01'), 'without `keep`, every call counts');
 });
 
 test('filesRead lists each Read file_path once; subagentTranscripts finds a session`s subagent files', (t) => {

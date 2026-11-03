@@ -238,7 +238,8 @@ Limits:
 - A record written on another machine is not read here.
 - Two sessions writing the same record at once can lose an update; the last write wins.
 - Two concurrent review steps on one pull request share one open mark: the first to finish clears the other's.
-- In a fork checkout with gh offline, `aidrian pr request` and `aidrian pr attest` fall back to origin.
+- In a fork checkout with gh offline, `aidrian pr request`, `attest`, and `signoff` fall back to origin, and a merge
+  that names the upstream is then not guarded: pass `--repo` when gh cannot answer.
 - A record written before this release has rounds but no outcome: a merge waits until `aidrian pr review` runs again.
 
 ## Main checkout

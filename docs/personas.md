@@ -35,6 +35,33 @@ A project with no personas passes. The skill ships a template that passes it:
 
 A new persona is a new doc. Personalization lives in the doc, in `Cares about`, `Voice`, and `Context`; there are no config keys.
 
+## Writing a persona
+
+A persona doc describes the person's relationship with the product: their goals, how familiar they are with it, where
+and how they use it, and the outcomes they would observe. It never describes the product's screens, menu names, rules,
+or copy. Product rules stay in the project's `product_sensitive` knowledge, which a run never loads, and `product-access`
+holds only how a session reaches the product and what it may touch.
+
+- Start from market and user research, such as interviews, support tickets, and data, and name it in `Evidence`.
+  A persona written from the product's feature list restates the product.
+- A task is a real job the person has, in their words, whether or not the product does it today.
+  Keep a job the product cannot do: the walk reports it.
+- One persona per person. A task whose job differs per business mode is one `### <task>` per mode, each with a title
+  that names the mode, such as `Seat a walk-in party (tables)` and `Book a treatment (services)`.
+- `Who` names the one familiarity the walk starts from. The doc may say real users range wider.
+- `Context` names the persona's language. The walk runs in it, so a `Success:` line names the outcome, never the
+  product's words or a screen's name: English screen text would never match a Spanish walk.
+- A section the contract does not name, such as `## Open questions`, is allowed. The lint ignores it, and a run reads
+  it as the doc's own notes.
+
+Before writing, answer these five questions. The template's comment lists them too.
+
+1. Who is this person, in one sentence with no product term?
+2. What do they want, and what is the job behind each task?
+3. What would they see when a task is done, in their words?
+4. What device, language, and rhythm shape their judgment?
+5. Where did each answer come from?
+
 ## Product access
 
 The doc named `product-access`, tagged `personas` too and exempt from the lint, says how a session reaches the product:

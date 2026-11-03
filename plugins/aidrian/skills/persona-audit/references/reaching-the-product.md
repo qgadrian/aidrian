@@ -27,10 +27,21 @@ Walk only the pull request's head: its preview URL, or the local app when `git r
 `gh pr view <number> --json headRefOid`. Any other build is `seen` at best. The report's `Reached:` line names
 the build the run reached.
 
+## Before a walk
+
+When `product-access` has `## Before a walk`, run its check before the first task: start the app as it says, confirm
+the URL answers, the variables it names are set, its ports are free, and sign-in returns to its hosts.
+When the check fails, walk nothing, and put one line in `## Not reached` with what failed.
+When `## Where each task lives` names a task, sign in with the account it names; the persona still finds the way there.
+
 ## Safety
 
 - Reach the product only the way `product-access` says, and keep to its `## Off limits`.
   Run its reset command before a task that changes data, when it names one.
+- A task behind a plan or feature the demo account lacks, as `## Accounts` lists, is `not reached`, with that reason.
+- When `product-access` has `## Allowed changes`, any data change it does not list is off limits. Run the reset
+  command only against the data it names, and on an environment it marks shared only when it says the reset is safe
+  for other sessions. Without that section, reset before a task that changes data, as above.
 - Without `product-access`, ask the Human once for a non-production URL and a demo account, and where its password
   is kept, such as an environment variable or a password-manager entry; never ask for the password itself.
   No answer: fall back to `seen` or `read`, and say why in the report.

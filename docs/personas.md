@@ -70,6 +70,20 @@ without it, a run asks the Human once, then falls back to screenshots or code.
 [product-access-template.md](../plugins/aidrian/skills/persona-audit/references/product-access-template.md) shows its shape.
 It names where a secret comes from, never the secret.
 
+Each account in `Accounts` names its plan and the features it lacks: a task behind a plan or feature the demo account
+lacks is not reached, with that reason, never a product gap. Three sections are optional, and a doc without them is
+read as before:
+
+- `Before a walk`: the start command and the URL it serves, the environment variables that must be set, by name, the
+  ports that must be free, and the hosts a sign-in redirect returns to. A run checks them before the first task; when
+  the check fails, it walks nothing and puts what failed in `Not reached`.
+- `Allowed changes`: the data a run may change, whether an environment is shared with other sessions, and whether the
+  reset command is safe while another session uses it. Any other data change is off limits.
+- `Where each task lives`: one line per persona task, `<persona id>: <task title>: <screen, route, or command>, with
+  <account>`, naming the account when `Accounts` lists more than one.
+
+`Off limits` stays a list of what a run never does.
+
 ## A run
 
 The `persona-audit` skill takes one or more persona ids, or `all`, and a scope: the whole product, the tasks named

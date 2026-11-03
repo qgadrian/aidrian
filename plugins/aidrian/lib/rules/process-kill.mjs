@@ -22,7 +22,7 @@ import {
   excerpt, inlineShellCommand, isLongOption, lexCommand, lexPipeline, lexSubstitutions, readInvocation, readShortOptions,
   shellRedirections, shellWord,
 } from '../shell-lex.mjs';
-import { asksForCount, asksForQuiet, GREP_PROGRAMS, GREP_VALUE_FLAGS, startsOrEndsGroup } from './grep-exit-chain.mjs';
+import { asksForCount, asksForQuiet, GREP_PROGRAMS, GREP_VALUE_FLAGS, hasNamedFd, startsOrEndsGroup } from './grep-exit-chain.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PROCESS_KILL_BY_NAME';
 export const LISTING_OVERRIDE = 'AIDRIAN_ALLOW_PROCESS_ARGS_LISTING';
@@ -210,7 +210,12 @@ function readCommand(segment) {
   for (let i = 0; i < segment.length; i += 1) {
     if (segment[i].operator && segment[i + 1] && !segment[i + 1].fdDup) targets.add(segment[i + 1]);
   }
-  const words = segment.filter((token) => !token.operator && !token.fdDup && !targets.has(token));
+  // A named descriptor (`{x}>f`) stays a word, as a quoted `'{x}'` is one: the rules read it as they did before the
+  // lexer kept descriptors, so dropping it can open neither rule.
+  const words = segment.flatMap((token) => {
+    if (token.operator) return hasNamedFd([token]) ? [{ text: token.fd, dynamic: false }] : [];
+    return token.fdDup || targets.has(token) ? [] : [token];
+  });
   let index = 0;
   while (index < words.length && ASSIGNMENT.test(words[index].text)) index += 1;
   return { program: (words[index]?.text ?? '').split('/').pop() ?? '', args: words.slice(index + 1) };
@@ -457,9 +462,11 @@ function passesThrough({ program, args }) {
   if (!valueFlags) return false;
   let operands = 0;
   let patternGiven = false;
+  // A word that may expand, an option's value included, can split into an operand or an `-o` (`sort -k $OPTS`).
+  if (args.some((token) => token.dynamic)) return false;
   for (let i = 0; i < args.length; i += 1) {
-    const { text, dynamic } = args[i];
-    if (dynamic || text.startsWith('--')) return false;
+    const { text } = args[i];
+    if (text.startsWith('--')) return false;
     if (!text.startsWith('-') || text === '-') {
       operands += 1;
       continue;
@@ -476,6 +483,7 @@ function passesThrough({ program, args }) {
 // programs into a counter that prints only a number (`wc`, `grep -c`) or nothing (`grep -q`).
 function outputDiscarded(segments, separators, i) {
   for (let j = i; j < segments.length; j += 1) {
+    if (hasNamedFd(segments[j])) return false;
     if (j > i) {
       const { program, args } = readInvocation(segments[j]);
       if (program === 'wc') return true;
@@ -722,7 +730,7 @@ function listingReplacement({ segments, separators, index }) {
 // null when a word before it cannot be written back, or when the segments start with a shell word (`if`, `!`) or open
 // or close a group (`(ps aux`, `aux)`, a `case` arm), which a replacement could unbalance.
 function replacementSegment(segments, { first, last, text }) {
-  if (segments.slice(first, last + 1).some(startsOrEndsGroup)) return null;
+  if (segments.slice(first, last + 1).some((segment) => startsOrEndsGroup(segment) || hasNamedFd(segment))) return null;
   const segment = segments[first];
   const all = segment.filter((token, i) => !token.operator && !token.fdDup && !(i > 0 && segment[i - 1].operator));
   const { args } = unwrapPrefixes(readCommand(segment));

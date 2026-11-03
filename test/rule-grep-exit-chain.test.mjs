@@ -361,6 +361,13 @@ test('the rewrite prints the count and keeps the chain when nothing matches', ()
   assert.deepEqual([failed.stdout, failed.status], ['', 1], 'a failure before the count still ends the chain');
 });
 
+test('a named descriptor, or a quoted word that looks like one, counts as a counting grep in a chain', () => {
+  assert.equal(decide("grep -e '{x}'>f -c x && y"), 'deny', 'the -c still counts once the word is gone');
+  assert.equal(decide("grep '{x}'>f -c && y"), 'deny');
+  assert.equal(decide('grep x {fd}>f && y'), 'deny', 'fails closed on a real named descriptor too');
+  assert.equal(decide('grep x 2>f && y'), 'allow', 'a numbered one is read as before');
+});
+
 test('asksForQuiet reads -q, a bundle with q, --quiet, and --silent', () => {
   const quiet = (line) => asksForQuiet(line.split(' ').map((text) => ({ text, dynamic: false })));
   assert.deepEqual(['-q x', '-qE x', '--quiet x', '--qui x', '--silent x', '-e -q f', '-c x'].map(quiet), [true, true, true, true, true, false, false]);

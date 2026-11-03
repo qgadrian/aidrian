@@ -114,7 +114,8 @@ What each rule matches:
   A listing on the command line itself, or in a substitution of it, whose output reaches only `/dev/null` or a counter
   (`wc`, `grep -c`, `grep -q`) runs: `ps -p <pid> >/dev/null` and `ps aux | grep -c x` print no command line.
   Between the listing and the counter only `grep`, `head`, `tail`, `sort`, `uniq`, and `cut` may stand, with no operand
-  but grep's pattern, no long option, and no `sort -o`. Inside `sh -c`, `eval`, `env -S`, or xargs a listing never passes.
+  but grep's pattern, no long option, no `sort -o`, and no word that may expand, an option value included.
+  Inside `sh -c`, `eval`, `env -S`, or xargs a listing never passes.
   The deny starts with the command to run instead, the whole line with each listing replaced:
   `pgrep -fl x` and `ps aux | grep x` become `pgrep -d, -f x | xargs -r ps -o pid=,ppid=,etime=,comm= -p`,
   and a `ps` format trades `args`, `command`, and `cmd` for `comm`.

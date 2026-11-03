@@ -622,6 +622,27 @@ test('a program between the listing and its counter passes it on only with no op
   denyListing('ps aux | cut -c1-80 "$F" | wc -l');
 });
 
+test('a word that may expand anywhere in a program between the listing and its counter, an option value included, fails it', () => {
+  denyListing("OPTS='1 -o /dev/stderr'; ps aux | sort -k $OPTS | wc -l");
+  denyListing('ps aux | uniq -f $OPTS | wc -l');
+  denyListing('ps aux | head -n "$N" | wc -l');
+  denyListing('ps aux | cut -c$W | wc -l');
+  denyListing('ps aux | grep -e "$P" | wc -l');
+  denyListing('ps aux | grep -m $M x | wc -l');
+  denyListing('ps aux | grep x* | wc -l');
+});
+
+// The lexer reads a named descriptor after quotes are gone, so a quoted '{x}' word reads as one: no rule may open on it.
+test('a named descriptor, or a quoted word that looks like one, opens neither process rule', () => {
+  deny("ps -p 1 '{x}'>/tmp/f; kill $X");
+  denyListing("ps -o pid= '{x}'>/dev/null");
+  denyListing("ps -o pid= {x}>/dev/null");
+  denyListing("ps aux | sort '{x}'>/tmp/f | wc -l");
+  denyListing("ps aux '{x}'>/dev/null");
+  const { reason } = decideForCommand("pgrep -fl next '{x}'>/tmp/f", NO_OVERRIDE);
+  assert.ok(!reason.includes('Run this instead'), 'and gets no rewrite');
+});
+
 // [denied command, the command its reason says to run instead]
 const REPLACEMENTS = [
   ['pgrep -fl "git push" | head', "pgrep -d, -f 'git push' | xargs -r ps -o pid=,ppid=,etime=,comm= -p | head"],

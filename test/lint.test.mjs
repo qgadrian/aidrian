@@ -63,9 +63,16 @@ test('no skill, reference, brief template, agent source, or host add-on asks for
     'Amend the commit instead of creating a follow-up commit.',
     'Do not push yet; run git commit --amend first.',
     'The amend guard refuses it, and the git-amend rule names the new commit.',
+    'If no tests fail then amend the commit.',
+    'Do not push yet and amend the commit first.',
+    'Using `git commit --amend --no-edit` is blocked.',
+    'The hook refuses `git commit --amend`, so make a follow-up commit.',
+    'Never rewrite history, including git commit --amend.',
   ].join('\n'));
   const problems = lintSkills([dir], LIMITS).problems.map((problem) => problem.replace(`${dir}/`, ''));
-  assert.deepEqual(problems.map((problem) => problem.split(': ')[0]), ['fix/references/brief.md:2', 'fix/references/brief.md:3', 'fix/references/brief.md:7', 'fix/references/brief.md:8', 'fix/references/brief.md:9'], 'every ask, and nothing that forbids one: a negation counts only in the clause before the amend');
+  assert.deepEqual(problems.map((problem) => problem.split(': ')[0]), ['fix/references/brief.md:2', 'fix/references/brief.md:3', 'fix/references/brief.md:7', 'fix/references/brief.md:8', 'fix/references/brief.md:9', 'fix/references/brief.md:11', 'fix/references/brief.md:12', 'fix/references/brief.md:15'],
+    'every ask; a direct prohibition passes, and one the check cannot tie to the amend fails, to be written directly');
+  assert.match(problems.at(-1), /write a prohibition directly, as "never `git commit --amend`"/u);
   assert.match(problems[0], /ask for a new commit on the branch instead/u);
   const agents = tempDir(t);
   writeFileSync(path.join(agents, 'builder.md'), '---\nname: builder\ndescription: Builds.\n---\n\nAfter review, amend your commit and force-push.\n');

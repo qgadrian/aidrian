@@ -104,6 +104,8 @@ Where no shell runs it, use `node <plugin folder>/lib/cli.mjs`, and `node <plugi
   A `SKILL.md` of 8,000 bytes or more fails, because Codex cuts it there; one above 7,500 bytes passes with a warning.
   No Markdown file in a skill's folder, its references and brief templates included, asks for `git commit --amend`:
   the [amend rule](hooks.md#bash-rules) refuses it, so the dispatch that asked is wasted. Ask for a new commit instead.
+  A prohibition passes when it governs the amend directly, as "never `git commit --amend`", "instead of amending",
+  or "`git commit --amend` is blocked"; write any other one that way.
 - `agents`: each `.claude/agents/*.md` has `name` equal to its file name, a `description`, and a known `model` and `effort`,
   and asks for no amend.
 - `paths`: no tracked file holds a personal home folder such as `/Users/<name>/`; `--staged` checks the staged files only, as the index holds them.

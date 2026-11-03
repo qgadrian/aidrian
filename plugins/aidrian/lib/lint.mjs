@@ -41,15 +41,17 @@ const SKILL_CUT_BYTES = 8000;
 const SKILL_WARN_BYTES = 7500;
 // A line that asks for `git commit --amend`, which the git-amend rule (rules/git-amend.mjs) refuses, so a skill or brief
 // that asks for one wastes the dispatch it starts. The line names an amend of a commit (AMEND_LINE), and one of its
-// mentions (AMEND) is not negated: a negation counts only in the same clause, just before the mention, as in "never
-// `git commit --amend`" or "a new commit instead of amending", so "if there are no conflicts, run `git commit --amend`"
-// still asks. The rule's own name, such as "the amend guard" or `git-amend`, is no mention.
+// mentions (AMEND) is not a direct prohibition. The check is strict on purpose: a negation counts only when it governs
+// the mention, right before it with at most a few filler words ("never `git commit --amend`", "a new commit instead of
+// amending") or right after it ("`git commit --amend` is blocked"). So "if no tests fail, amend the commit" still asks,
+// and so does a prohibition the check cannot tie to the amend, such as "never rewrite history, including an amend":
+// the problem says to write it directly. The rule's own name, such as "the amend guard" or `git-amend`, is no mention.
 const AMEND_LINE = /--amend\b|\bamend(?:ing|s)?\b[^.]*\b(?:commit|HEAD|tip)\b|\b(?:commit|HEAD)\b[^.]*\bamend(?:ing|s)?\b/iu;
 const AMEND = /--amend\b|(?<![-\w])amend(?:ing|s)?\b(?!\s+(?:guard|rule|hook)\b)/giu;
-// A negation word, not part of a flag such as `--no-edit`, ending the clause before a mention.
-const AMEND_NOT = /(?<![-\w])(?:never|not|no|don't|instead of|rather than|without|refuses?|denies|blocks?|avoid)\b/iu;
-const CLAUSE_END = /[.;:,!?]/gu;
-const NEAR = 40;
+// The words that may stand between a prohibition and the amend it governs.
+const FILLER = '(?:use|using|run|running|ask|asking|for|a|an|the|any|with|git|commit)';
+const PROHIBITS_BEFORE = new RegExp(`(?<![-\\w])(?:never|not|no|don't|without|instead of|rather than|avoid|avoiding|refuses?|denies|blocks?|forbids?)\\s+(?:${FILLER}\\s+){0,4}$`, 'iu');
+const PROHIBITS_AFTER = /^(?:\s+--?[\w-]+)*\s+(?:is|are|stays?)\s+(?:blocked|refused|denied|forbidden|not allowed)\b/iu;
 // Room for one staged file read through git: Node's default 1 MiB would leave a larger file unread.
 const STAGED_MAX_BYTES = 64 * 1024 * 1024;
 
@@ -187,17 +189,15 @@ export function lintTerms(project, config, staged = false, only = null) {
   return { problems, warnings, summary: `no banned terms in ${files} ${staged ? 'staged' : 'tracked'} files (${rules.length} rules)` };
 }
 
-// Whether a negation ends the clause just before the mention at `at` in `line`.
-function negated(line, at) {
-  const before = line.slice(Math.max(0, at - NEAR), at);
-  const clause = before.slice(Math.max(0, ...[...before.matchAll(CLAUSE_END)].map((end) => end.index + 1)));
-  return AMEND_NOT.test(clause);
+// Whether the mention `mention` in `line`, backticks removed, is directly prohibited.
+function prohibited(line, mention) {
+  return PROHIBITS_BEFORE.test(line.slice(0, mention.index)) || PROHIBITS_AFTER.test(line.slice(mention.index + mention[0].length));
 }
 
 // Each line of `text` that asks for an amend, as a problem naming `file` and the line.
 export function amendAsks(file, text) {
-  return String(text).split('\n').flatMap((line, index) => (AMEND_LINE.test(line) && [...line.matchAll(AMEND)].some((mention) => !negated(line, mention.index))
-    ? [`${file}:${index + 1}: asks for \`git commit --amend\`, which the git-amend hook refuses; ask for a new commit on the branch instead, which a squash merge folds in`]
+  return String(text).split('\n').map((line) => line.replaceAll('`', '')).flatMap((line, index) => (AMEND_LINE.test(line) && [...line.matchAll(AMEND)].some((mention) => !prohibited(line, mention))
+    ? [`${file}:${index + 1}: asks for \`git commit --amend\`, which the git-amend hook refuses; ask for a new commit on the branch instead, which a squash merge folds in, or write a prohibition directly, as "never \`git commit --amend\`"`]
     : []));
 }
 

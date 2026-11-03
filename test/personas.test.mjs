@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -107,4 +107,12 @@ test('aidrian lint personas names the doc and the task, exempts product-access, 
 test('personas is a tag the plugin knows, so aidrian check does not warn on it', () => {
   const bucket = { docs: [{ path: 'personas/cook.md', tags: ['personas'] }], always: [] };
   assert.deepEqual(tagWarnings([bucket]).warnings, []);
+});
+
+test('the persona template the persona-audit skill ships passes the lint, Voice and Evidence included', () => {
+  const template = readFileSync(path.join(ROOT, 'plugins/aidrian/skills/persona-audit/references/persona-template.md'), 'utf8');
+  assert.deepEqual(personaProblems(template), []);
+  const { sections, tasks } = parsePersona(template);
+  assert.ok(Object.hasOwn(sections, 'Voice') && Object.hasOwn(sections, 'Evidence'));
+  assert.ok(tasks.length >= 2 && tasks.every((task) => task.success));
 });

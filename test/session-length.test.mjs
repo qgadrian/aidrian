@@ -302,3 +302,12 @@ test('a firing past several steps at once re-arms above them all, so the next tu
   assert.match(first.reason, /comes back once the context reaches 400k tokens or each call costs 4 times/);
   assert.equal(stopReminder(text, handoff, JSON.stringify(first.marker)), null, 'the next turn at the same size');
 });
+
+test('a large jump at the smallest costRatio re-arms in one computed step', () => {
+  // 1.1 steps are 0.1 apart; a 50k baseline is 94k fresh, and 935.3k is a ratio of 9.95, past 89 steps (1.1 to 9.9).
+  const handoff = { ...DEFAULTS.session.handoff, costRatio: 1.1 };
+  const text = [call('w', 50_000), call('c', 935_300)].join('\n');
+  const reminder = stopReminder(text, handoff, null);
+  assert.equal(reminder.marker.ratio, 89);
+  assert.equal(stopReminder(text, handoff, JSON.stringify(reminder.marker)), null, 'the next turn at the same size');
+});

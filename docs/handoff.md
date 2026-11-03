@@ -103,7 +103,7 @@ Output tokens and subagent calls cost the same either way, so the model leaves t
 | Key | Meaning |
 | --- | --- |
 | `session.handoff.mode` | `"ask"`, `"auto"`, or `"off"`: what the reminder and the plan offer do. |
-| `session.handoff.costRatio` | The cost ratio of the first step, a number above 1; each later step adds `costRatio − 1`. |
+| `session.handoff.costRatio` | The cost ratio of the first step, a number of 1.1 or more; each later step adds `costRatio − 1`. |
 | `session.handoff.maxTokens` | A ceiling on the context, in tokens, that fires on its own and doubles; `0`, the default, is off. |
 
 Most projects set only `mode`. A config written before these settings became a group still loads, with an error from

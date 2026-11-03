@@ -62,12 +62,17 @@ export const ratioStep = (costRatio, fired) => costRatio + fired * (costRatio - 
 export const tokenCeiling = (maxTokens, fired) => maxTokens * 2 ** fired;
 
 // The firing count after a firing at `value`: past every step `value` reached, so a ratio or context that jumped two
-// steps in one turn is not reminded again at the next turn's end. `at(n)` is the trigger after `n` firings.
-function stepsPassed(value, fired, at) {
-  let next = fired + 1;
+// steps in one turn is not reminded again at the next turn's end. Computed, not counted step by step; the guard only
+// corrects the rounding of the division, so it runs at most a few times.
+function passed(value, fired, estimate, at) {
+  let next = Math.max(fired + 1, estimate);
   while (value >= at(next)) next += 1;
   return next;
 }
+const ratioPassed = (ratio, costRatio, fired) =>
+  passed(ratio, fired, Math.floor((ratio - costRatio) / (costRatio - 1)) + 1, (n) => ratioStep(costRatio, n));
+const tokensPassed = (context, maxTokens, fired) =>
+  passed(context, fired, Math.floor(Math.log2(context / maxTokens)) + 1, (n) => tokenCeiling(maxTokens, n));
 
 // The firing counts a marker holds: { ratio, tokens, compactions }. No marker is none. A marker an older version wrote,
 // a mode word or one count, counts as one firing of each, at the session's current `compactions`.
@@ -105,8 +110,8 @@ export function stopReminder(text, handoff, markerText) {
   const byTokens = handoff.maxTokens > 0 && usage.last >= ceiling;
   if (!byCost && !byTokens) return null;
   const marker = {
-    ratio: byCost ? stepsPassed(cost.ratio, counts.ratio, (n) => ratioStep(handoff.costRatio, n)) : counts.ratio,
-    tokens: byTokens ? stepsPassed(usage.last, counts.tokens, (n) => tokenCeiling(handoff.maxTokens, n)) : counts.tokens,
+    ratio: byCost ? ratioPassed(cost.ratio, handoff.costRatio, counts.ratio) : counts.ratio,
+    tokens: byTokens ? tokensPassed(usage.last, handoff.maxTokens, counts.tokens) : counts.tokens,
     compactions: usage.compactions,
   };
   const next = [];

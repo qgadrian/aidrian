@@ -25,6 +25,12 @@ const LINE = (command) =>
   'Project knowledge: 2 buckets, 8 docs. Read now: docs/knowledge/engineering/working-agreement.md. ' +
   `For more, run \`${command} route <tag>\` for your tags or \`${command} search <words>\` for a topic.`;
 const NAMES = (ai, human = 'the Human') => `Names: call the human "${human}" and yourself "${ai}"; never "you"/"me".`;
+const VOICE = (human = 'the Human') =>
+  `Voice: when a request or premise looks wrong, or worse than an alternative, say so in one line with the reason before acting, then follow the call of "${human}". ` +
+  `A question to "${human}" says what goes wrong in their terms, asks one decision, puts the recommended option first with one reason, and uses no internal IDs or labels.`;
+const FORMAT = 'Format: in chat replies, use headers, quotes, and a few emoji to aid scanning; never in commits, pull requests, docs, or code.';
+// What every main session starts with, after the knowledge line.
+const MAIN = (ai) => `${NAMES(ai)}\n${VOICE()}\n${FORMAT}\n`;
 
 // Without CLAUDECODE=1, which Claude Code sets for its hooks, the host is Codex. `CLAUDECODE: '1'` makes it Claude Code.
 // AIDRIAN_ALLOW_MAIN_COMMIT is unset unless a test passes it, whatever the shell running the tests holds.
@@ -37,20 +43,20 @@ function hook({ input = '{}', args = [], cwd = ROOT, PATH = WITHOUT_BIN, XDG_STA
 
 test('at session start, one plain line names the always docs and the commands, by full path when bin/ is not on PATH', () => {
   const { status, stdout, stderr } = hook({ input: JSON.stringify({ hook_event_name: 'SessionStart', cwd: EXAMPLE }) });
-  assert.deepEqual([status, stdout, stderr], [0, `${LINE(path.join(BIN, 'aidrian-knowledge'))}\n${NAMES('Codex')}\n`, '']);
+  assert.deepEqual([status, stdout, stderr], [0, `${LINE(path.join(BIN, 'aidrian-knowledge'))}\n${MAIN('Codex')}`, '']);
 });
 
 test('the bare command name is used when bin/ is on PATH, and the project is found from the process folder without a cwd', () => {
   const { status, stdout } = hook({ input: 'not json', cwd: path.join(EXAMPLE, 'src'), PATH: `${BIN}${path.delimiter}${WITHOUT_BIN}` });
   assert.equal(status, 0);
-  assert.equal(stdout, `${LINE('aidrian-knowledge')}\n${NAMES('Codex')}\n`);
+  assert.equal(stdout, `${LINE('aidrian-knowledge')}\n${MAIN('Codex')}`);
 });
 
-test('at subagent start, the same lines come as SubagentStart additional context', () => {
+test('at subagent start, the same lines but the format line come as SubagentStart additional context', () => {
   const { status, stdout } = hook({ args: ['--subagent'], input: JSON.stringify({ cwd: EXAMPLE, agent_type: 'Explore' }), CLAUDECODE: '1' });
   assert.equal(status, 0);
   assert.deepEqual(JSON.parse(stdout), {
-    hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: `${LINE(path.join(BIN, 'aidrian-knowledge'))}\n${NAMES('Claude')}` },
+    hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: `${LINE(path.join(BIN, 'aidrian-knowledge'))}\n${NAMES('Claude')}\n${VOICE()}` },
   });
 });
 
@@ -66,6 +72,7 @@ test('the names line calls the AI by its host unless config.json or .aidrian.loc
   writeFileSync(path.join(project, '.aidrian.local.json'), JSON.stringify({ names: { human: 'the "product" owner' } }));
   const lines = hook({ input: JSON.stringify({ cwd: project }), CLAUDECODE: '1' }).stdout.split('\n');
   assert.equal(lines[1], 'Names: call the human "the \\"product\\" owner" and yourself "the agent"; never "you"/"me".');
+  assert.equal(lines[2], VOICE('the \\"product\\" owner'));
 });
 
 test('outside a project, and for any stdin, the hook prints nothing and exits 0', (t) => {
@@ -88,7 +95,7 @@ test('a project with a broken folder still gets the line, plus how many problems
   const { status, stdout } = hook({ input: JSON.stringify({ cwd: project }) });
   assert.equal(status, 0);
   assert.match(stdout, /^Project knowledge: 0 buckets, 0 docs\. For more, run .* for a topic\. The project folder has 2 problems; run `\S+\/aidrian check`\.\n/);
-  assert.equal(stdout.split('\n').slice(1).join('\n'), `${NAMES('Codex')}\n`);
+  assert.equal(stdout.split('\n').slice(1).join('\n'), MAIN('Codex'));
 });
 
 test('the main session also hears about open lessons, escalated with the command to list them once a P1 is open; a subagent does not', (t) => {
@@ -100,16 +107,18 @@ test('the main session also hears about open lessons, escalated with the command
   assert.equal(add('the second lesson').status, 0);
 
   const input = JSON.stringify({ cwd: EXAMPLE });
-  const [knowledge, names, lessons, rest] = hook({ input, XDG_STATE_HOME: xdg }).stdout.split('\n');
+  const [knowledge, names, voice, format, lessons, rest] = hook({ input, XDG_STATE_HOME: xdg }).stdout.split('\n');
   assert.equal(knowledge, LINE(path.join(BIN, 'aidrian-knowledge')));
   assert.equal(names, NAMES('Codex'));
+  assert.equal(voice, VOICE());
+  assert.equal(format, FORMAT);
   assert.equal(lessons, 'Lesson inbox: 2 open (P2 2), the oldest from today. The lesson-triage skill drains it in a session opened for it.');
   assert.equal(rest, '');
   assert.doesNotMatch(hook({ input, args: ['--subagent'], XDG_STATE_HOME: xdg }).stdout, /Lesson inbox/);
 
   const urgent = spawnSync(path.join(BIN, 'aidrian'), ['lesson', 'add', '--tier', 'P1'], { cwd: EXAMPLE, input: 'lost a commit', encoding: 'utf8', env });
   assert.equal(urgent.status, 0);
-  const escalated = hook({ input, XDG_STATE_HOME: xdg }).stdout.split('\n')[2];
+  const escalated = hook({ input, XDG_STATE_HOME: xdg }).stdout.split('\n')[4];
   assert.match(escalated, /^Lesson inbox needs triage: 1 P1 open\. Tell the Human once, then go on with the task: .* `\S+\/bin\/aidrian lesson list` shows the order\.$/);
 });
 
@@ -169,7 +178,7 @@ function hangingGit(t, word) {
   return `${bin}${path.delimiter}${WITHOUT_BIN}`;
 }
 
-const after = (stdout) => stdout.split('\n').slice(2, -1);
+const after = (stdout) => stdout.split('\n').slice(4, -1);
 
 test('the main session hears about unpushed commits on main, after the lessons line; even with origin, nothing', (t) => {
   const { dir, git } = gitRepo(t);
@@ -207,7 +216,7 @@ test('no main-checkout line in a subagent, with the guard off, or without an ori
   git('switch', '-q', '-c', 'side');
   const input = JSON.stringify({ cwd: dir });
   const { additionalContext } = JSON.parse(hook({ input, args: ['--subagent'] }).stdout).hookSpecificOutput;
-  assert.equal(additionalContext.split('\n').length, 2);
+  assert.equal(additionalContext.split('\n').length, 3);
   assert.doesNotMatch(additionalContext, /main checkout|Local main/);
 
   const off = gitRepo(t, { version: 1, git: { mainCheckout: { guard: false } } });

@@ -1,5 +1,6 @@
 // SessionStart and SubagentStart hook: one line that tells the agent which knowledge docs to read now and how to find
-// the rest, one line with the names to call the human and the AI, and, for the main session only, a last line when the
+// the rest, one line with the names to call the human and the AI, one voice line (push back with a reason; ask the human
+// plain, one-decision questions), and, for the main session only, a format line for chat replies, a line when the
 // lesson inbox holds open lessons, which escalates when the inbox needs triage, and a line when the plugin copy running
 // is older than the version the project requires (`requires` in config.json). Last, in the main session while
 // config.json `git.mainCheckout.guard` is on (lib/main-commits.mjs): a line when the session inherited the commit
@@ -20,6 +21,8 @@ import { inheritedOverrideLine, unpushedMainLine } from '../lib/main-commits.mjs
 import { findProject } from '../lib/project.mjs';
 
 const BIN = path.resolve(import.meta.dirname, '../bin');
+// The main session only: its replies are read by the human, while a subagent's report feeds commits and pull requests.
+const FORMAT = 'Format: in chat replies, use headers, quotes, and a few emoji to aid scanning; never in commits, pull requests, docs, or code.';
 
 await runHook((input) => {
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
@@ -38,12 +41,14 @@ await runHook((input) => {
   if (errors.length) line += ` The project folder has ${errors.length} problems; run \`${binCommand('aidrian')} check\`.`;
   // Claude Code sets CLAUDECODE=1 for its hooks; this hook runs only there and in Codex.
   const ai = config.names.ai ?? (process.env.CLAUDECODE === '1' ? 'Claude' : 'Codex');
-  const names = `Names: call the human ${JSON.stringify(config.names.human)} and yourself ${JSON.stringify(ai)}; never "you"/"me".`;
+  const human = JSON.stringify(config.names.human);
+  const names = `Names: call the human ${human} and yourself ${JSON.stringify(ai)}; never "you"/"me".`;
+  const lines = `${line}\n${names}\n${voiceLine(human)}`;
 
   if (subagent) {
-    console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: `${line}\n${names}` } }));
+    console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: lines } }));
   } else {
-    console.log(`${line}\n${names}`);
+    console.log(`${lines}\n${FORMAT}`);
     const floor = versionFloorProblem(config);
     if (floor) console.log(`Plugin too old: ${floor}. Its hooks and commands may reject this project's config until then.`);
     const lessons = nudge(inboxPath(project, config), { command: binCommand('aidrian'), config });
@@ -53,6 +58,14 @@ await runHook((input) => {
     for (const warning of unpushedMainLine(project, config)) console.log(warning);
   }
 });
+
+// Every session and subagent: disagree out loud instead of going along, and ask questions the human can answer
+// without the session's context. A subagent reports to its coordinator, so the voice still applies to it.
+function voiceLine(human) {
+  return `Voice: when a request or premise looks wrong, or worse than an alternative, say so in one line with the reason ` +
+    `before acting, then follow the call of ${human}. A question to ${human} says what goes wrong in their terms, asks ` +
+    'one decision, puts the recommended option first with one reason, and uses no internal IDs or labels.';
+}
 
 // The bare name when the plugin's bin/ is on PATH; the full path otherwise, so the line works on either host.
 function binCommand(name) {

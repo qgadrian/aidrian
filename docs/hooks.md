@@ -35,6 +35,10 @@ At the start of every session and subagent, the hook prints:
 
 - one line naming the `always` knowledge docs and the commands that find the rest;
 - one line with the [names](config.md#names) for the human and the AI;
+- one `Voice:` line: say so, with the reason, when a request or premise looks wrong, then follow the human's call;
+  and ask the human questions they can answer without the session's context, one decision each, recommendation first;
+- in the main session only, one `Format:` line: headers, quotes, and a few emoji in chat replies, never in commits,
+  pull requests, docs, or code, which a subagent's report feeds, so a subagent does not get it;
 - in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons.
 
 Last, in the main session only and while `git.mainCheckout.guard` is on ([commit guard](#commit-guard)),

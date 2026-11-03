@@ -31,6 +31,10 @@
       "summary": "The .aidrian/ folder: aidrian init, check, and lint, the local state folder, task worktrees, local knowledge sources, migrating.",
       "tags": []
     },
+    "personas.md": {
+      "summary": "Personas: the persona doc contract, aidrian lint personas, product-access, and persona-audit runs: evidence levels, findings, owners, reports.",
+      "tags": []
+    },
     "review.md": {
       "summary": "aidrian pr review: review plan, splits, critical flows and invariants, visual review, reviewers, review rounds and their limit, sign-off.",
       "tags": []

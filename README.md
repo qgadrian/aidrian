@@ -135,7 +135,7 @@ Run `aidrian` or `aidrian-knowledge` with no arguments to list every subcommand 
 | --- | --- | --- |
 | `aidrian init` | Creates the project folder. | [Setting up](docs/project-folder.md#setting-up-and-checking) |
 | `aidrian check` | Checks the project folder and its indexes. | [Setting up](docs/project-folder.md#setting-up-and-checking) |
-| `aidrian lint` | Lints the project's skills, agents, paths, knowledge size, and banned terms. | [Setting up](docs/project-folder.md#setting-up-and-checking) |
+| `aidrian lint` | Lints the project's skills, agents, paths, knowledge size, banned terms, the review config, and persona docs. | [Setting up](docs/project-folder.md#setting-up-and-checking) |
 | `aidrian state` | Prints the state folder. | [Local state](docs/project-folder.md#local-state) |
 | `aidrian worktree new` | Creates a task worktree. | [Task worktrees](docs/project-folder.md#task-worktrees) |
 | `aidrian worktree cleanup` | Removes the task worktrees whose work merged. | [Task worktrees](docs/project-folder.md#task-worktrees) |

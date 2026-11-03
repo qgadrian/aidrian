@@ -75,8 +75,9 @@ The description is how the model picks the skill, in every session.
 
 Write to [references/checklist.md](references/checklist.md) § Content. Then:
 
-- Put what only some modes need, or what would push `SKILL.md` past 7,500 bytes, in `references/<topic>.md`,
-  and one phase of a long sequence in `steps/<phase>.md`. `SKILL.md` links each with when to read it.
+- Put what would push `SKILL.md` past 7,500 bytes in `references/<topic>.md`, one phase of a long sequence in
+  `steps/<phase>.md`, and each mode's own text in `modes/<mode>.md`, read once the mode is selected.
+  `SKILL.md` links each with when to read it.
 - Check every fact while you write the sentence that states it:
 
 | The draft states | Check |

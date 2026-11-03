@@ -82,7 +82,7 @@ export const VERDICTS = Object.freeze(['rebut', 'concede']);
 
 // What adversary B (Codex) answers to the architect's rulings: one rebuttal or concession per objection, named by its
 // ledger id, at most one per id (rebuttalProblems checks the ids). An entry without `objection_id` is the ledger's
-// `rebuttal` before its ruling, field for field. A concession may cite nothing.
+// `rebuttal` before its ruling, field for field. A concession may cite nothing only on a ledger without `mode`.
 export const REBUTTALS_SCHEMA = Object.freeze({
   type: 'object',
   additionalProperties: false,

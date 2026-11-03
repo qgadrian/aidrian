@@ -120,7 +120,7 @@ test('the agent tables are the agents-src/ group folders: one table per group, i
 });
 
 // Codex cuts a SKILL.md at 8,000 bytes: MAX_SKILL_PROMPT_BYTES in codex-rs/ext/skills/src/render.rs.
-// Keep a margin. A longer skill keeps its steps in SKILL.md and moves detail into references/ or steps/ files,
+// Keep a margin. A longer skill keeps its steps in SKILL.md and moves detail into references/, steps/, or modes/ files,
 // each named in SKILL.md with when to read it.
 const MAX_SKILL_BYTES = 7500;
 
@@ -128,7 +128,7 @@ test('every SKILL.md fits in Codex\'s skill size, with a margin', () => {
   const over = readdirSync(path.join(PLUGIN, 'skills'))
     .map((skill) => [skill, statSync(path.join(PLUGIN, 'skills', skill, 'SKILL.md')).size])
     .filter(([, bytes]) => bytes > MAX_SKILL_BYTES);
-  assert.deepEqual(over, [], `move detail into references/ or steps/ files; the limit is ${MAX_SKILL_BYTES} bytes`);
+  assert.deepEqual(over, [], `move detail into references/, steps/, or modes/ files; the limit is ${MAX_SKILL_BYTES} bytes`);
 });
 
 // `claude --agent aidrian:orchestrator` makes this file the session's instructions, paid for on every turn.
@@ -140,9 +140,10 @@ test('the orchestrator agent file fits in 9,000 bytes', () => {
   assert.ok(bytes <= MAX_ORCHESTRATOR_BYTES, `orchestrator.md is ${bytes} bytes; move detail into the orchestration skill`);
 });
 
-test('a skill names each of its references/ and steps/ files, and every such file the plugin names exists', () => {
+// modes/ holds one file per mode of a skill that runs in several, read only once that mode is selected.
+test('a skill names each of its references/, steps/, and modes/ files, and every such file the plugin names exists', () => {
   const skills = path.join(PLUGIN, 'skills');
-  const extra = (skill) => ['references', 'steps'].flatMap((sub) => {
+  const extra = (skill) => ['references', 'steps', 'modes'].flatMap((sub) => {
     const dir = path.join(skills, skill, sub);
     return existsSync(dir) ? readdirSync(dir).map((file) => `${sub}/${file}`) : [];
   });
@@ -155,7 +156,7 @@ test('a skill names each of its references/ and steps/ files, and every such fil
   assert.deepEqual(unnamed, [], 'SKILL.md must say when to read each of its files');
   const dangling = [];
   for (const file of markdownFiles(PLUGIN)) {
-    for (const [ref] of readFileSync(file, 'utf8').matchAll(/\b(?:references|steps)\/[\w.-]+\.md\b/g)) {
+    for (const [ref] of readFileSync(file, 'utf8').matchAll(/\b(?:references|steps|modes)\/[\w.-]+\.md\b/g)) {
       if (!shipped.has(ref)) dangling.push(`${path.relative(ROOT, file)}: ${ref}`);
     }
   }

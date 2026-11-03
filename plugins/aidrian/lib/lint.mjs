@@ -74,7 +74,7 @@ export const commands = {
 export function lintSkills(dirs, { descriptionChars, listingBytes }) {
   const problems = [];
   const warnings = [];
-  const move = 'move detail into references/ or steps/ files that SKILL.md names';
+  const move = 'move detail into references/, steps/, or modes/ files that SKILL.md names';
   let bytes = 0;
   let count = 0;
   for (const dir of dirs.filter(isDirectory)) {

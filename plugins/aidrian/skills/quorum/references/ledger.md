@@ -7,7 +7,7 @@ The objection ledger, `<state>/quorum/<name>-<plan-hash>.json`, and how each rou
 - [Fields](#fields): every field of the ledger.
 - [Agent answers](#agent-answers): how an agent's answer is held to its schema before it is written.
 - [Settled answers](#settled-answers): the Human's answers from earlier runs on the same plan.
-- [Filling it](#filling-it): what the coordinator writes after each round.
+- [Filling it](#filling-it): what the coordinator writes after each round of `modes/plan.md`.
 - [Under plan-review](#under-plan-review): the triggers `plan-review` passes, and what its critique receives.
 
 ## Schemas
@@ -93,28 +93,31 @@ rules it was written under and never adds them. A ledger that carries `mode` is 
 - `human_answers`: the Human's answers to this run's escalations, and only those.
   - `human_answers[].objection_id`: the objection in this ledger that the answer settles, at most one answer each.
   - `human_answers[].answer`: the Human's answer, word for word.
-- `proportionality`: optional. The judge's review of every accepted change as a set, or `null` before it runs.
+- `proportionality`: optional. The architect's review of every accepted change as a set, or `null` before it runs.
   With `mode`, `quorum check` exits 1 on a complete ledger with an accepted change and no review.
   - `proportionality.flagged`: each accepted change that, with the others, over-complicates the plan; often empty.
     `quorum check` exits 1 on a flagged objection with no accept ruling, or one neither escalated nor answered.
     - `proportionality.flagged[].objection_id`: the flagged objection.
     - `proportionality.flagged[].reason`: why, in one line.
     - `proportionality.flagged[].smaller_change`: the smaller change that keeps its risk removed, the recommended
-      answer when it is asked of the Human; empty when the judge sees none.
+      answer when it is asked of the Human; empty when the architect sees none.
 
 ## Agent answers
 
 Codex's answers arrive held to their schema by `aidrian quorum codex`. An agent's answer does not, so before writing one
 from A, from `product-manager` as B, or from the architect, hold it to its shape: objections to `OBJECTIONS_SCHEMA`,
-rebuttals to `REBUTTALS_SCHEMA`, and rulings to `{objection_id, decision, change_or_reason, citations}`, the ledger's
-ruling with its objection's id.
+rebuttals to `REBUTTALS_SCHEMA`, rulings to the ledger's ruling with its objection's id
+(`{objection_id, decision, change_or_reason, citations, tested, inferences, ground}`, `ground` on a reject only),
+and the proportionality pass to `{flagged: [{objection_id, reason, smaller_change}]}`.
 
 - A severity of `critical` or `high` is read as blocking, `medium` as important, and `low` as improvement, since the A
   and B briefs allow those words. Any other value outside its enum drops the entry. A dropped ruling counts as missing.
 - An entry missing a required field is dropped.
 - A citation that is not `{kind, ref, quote}` with a known kind is dropped; an objection left with none becomes an
   opinion at `quorum check`.
-- Past 7 entries, keep the first 7.
+- Past 7 entries, keep the first 7. With `mode`, each `improvement` entry becomes a note with its `by`, and of each
+  adversary's entries the first 5 objections and the first 5 notes are kept.
+- A flagged entry that names no objection with an `accept` ruling is dropped.
 - Never edit a claim, a change, or a quote. The report names every entry and citation dropped.
 
 When `quorum check` still exits 1, stop with `blocked`, quoting what it printed.
@@ -122,8 +125,9 @@ When `quorum check` still exits 1, stop with `blocked`, quoting what it printed.
 ## Settled answers
 
 Before round 1, read every `complete` ledger in `<state>/quorum/` whose `plan` is this plan's absolute path, other than
-one at this plan's hash. For each of their `human_answers`, the settled block of every brief gives the claim of the
-objection it answered, from that ledger, and the answer.
+one at this plan's hash, and whose mode is this run's (a ledger with no `mode` is plan mode).
+For each of their `human_answers`, the settled block of every brief gives the claim of the objection it answered,
+from that ledger, and the answer.
 Settled answers stay in their own ledgers: the new ledger's `human_answers` holds only this run's answers.
 The architect rejects an objection that reopens a settled answer, citing the plan's revision-history line that applied it.
 An answer the plan holds no revision-history line for yet, as after a `plan-review` restart from its step 5.1, is asked
@@ -131,25 +135,39 @@ again: its objection escalates with the earlier answer as the recommended answer
 
 ## Filling it
 
-- **After round 1.** Write each objection with its id, `by`, the adversary's fields, `status: pending`, and `ruling`
-  and `rebuttal` `null`. Write `status: open` and `human_answers: []`. Run `quorum check`: an objection with no passing
-  citation becomes `opinion`, and the architect never rules on it. Only a `pending` objection is relabeled: one already
-  ruled on keeps its status when its citations stop passing, and `quorum check` names it.
-- **After round 2.** Copy each ruling into `ruling`, and set `status`: `accept` to `accepted`, `reject` to `rejected`,
-  `escalate` to `escalated`. Run `quorum check`. The rulings it names invalid, and the backed objections still
-  `pending`, go back to the architect once. Invalid again, the objection becomes `escalated`, keeping the ruling.
-  A partial accept escalated this way escalates whole: its accepted part does not stand, and Report item 2 leaves it out.
+Each step names the round of `modes/plan.md` it follows.
+
+- **After the objections.** Write each objection with its id, `by`, the adversary's fields, `status: pending`, and
+  `ruling` and `rebuttal` `null`, and each note with its `by`, claim, and citations. Write `mode: plan`, `status: open`,
+  `human_answers: []`, and `proportionality: null`. Run `quorum check`: an objection with no passing citation becomes
+  `opinion`, and the architect never rules on it; a note with no passing citation is removed, and the report names it.
+  Only a `pending` objection is relabeled: one already ruled on keeps its status when its citations stop passing, and
+  `quorum check` names it.
+- **After the merge.** Set each merged objection's `status: merged` and `merged_into` to its survivor, with `ruling`
+  and `rebuttal` left `null`, append its citations to the survivor's `citations`, and run `quorum check`.
+  When a survivor's citations stop passing and it becomes an opinion, `quorum check` puts each objection merged into it
+  back to `pending`, to be ruled on its own.
+- **After the rulings.** Copy each ruling into `ruling`, its `tested`, `inferences`, and `ground` included, and set
+  `status`: `accept` to `accepted`, `reject` to `rejected`, `escalate` to `escalated`. Run `quorum check`.
+  The rulings it names invalid, and the backed objections still `pending`, go back to the
+  architect once. Invalid again, the objection becomes `escalated`, keeping the ruling.
+  A partial accept escalated this way escalates whole: its accepted part does not stand, and the Accepted item leaves it out.
   Still `pending`, stop with `blocked`: a complete ledger cannot hold it.
-- **After round 3.** Answers come only for objections `rejected` or partly accepted; an `escalated` objection gets no
-  rebuttal. For each answered id, write `rebuttal` with the answer's `verdict`, `claim`, and `citations`, and
-  `ruling: null`. Drop an entry for any id the brief did not list. An agent's answer, A's or B's from `product-manager`,
-  that names an id twice, or leaves one of its own `rejected` objections unanswered, is an invalid rebuttal for those ids;
-  `aidrian quorum codex` holds Codex's answer to the same rules. Run `quorum check`: a rebuttal it names invalid
-  makes its objection `escalated`, with no final ruling. A concession keeps the status of the first ruling.
-  When one dispatch is left and both A and B have objections to answer, neither runs, and those objections become `escalated`.
-- **After the final ruling.** Copy it into `rebuttal.ruling`, and run `quorum check`. `accept` makes the objection
-  `accepted`; any other decision makes it `escalated`. A final ruling that is invalid or missing gets one retry when the
-  cap leaves a dispatch for it; otherwise its objection becomes `escalated`.
+- **After the rebuttals.** Answers come only for objections `rejected` or partly accepted; an `escalated` or `merged`
+  objection gets no rebuttal. For each answered id, write `rebuttal` with the answer's `verdict`, `claim`, and
+  `citations`, and `ruling: null`. Drop an entry for any id the brief did not list. An agent's answer, A's or B's from
+  `product-manager`, that names an id twice, or leaves one of its own `rejected` objections unanswered, is an invalid
+  rebuttal for those ids; `aidrian quorum codex` holds Codex's answer to the same rules. Run `quorum check`: a rebuttal
+  it names invalid, or with `mode` a concession with no passing citation, makes its objection `escalated`, with no
+  final ruling. A concession keeps the status of the first ruling.
+  When one dispatch outside the reserved one is left and both A and B have objections to answer, neither runs, and
+  those objections become `escalated`.
+- **After the final ruling.** Copy it into `rebuttal.ruling`, its verdicts over the rebuttal's citations and claim, and
+  run `quorum check`. `accept` makes the objection `accepted`; any other decision makes it `escalated`. A final ruling
+  that is invalid or missing gets one retry when the cap leaves a dispatch for it outside the reserved one; otherwise
+  its objection becomes `escalated`.
+- **After the proportionality pass.** Write `proportionality` with the pass's `flagged` list, or `{flagged: []}` when
+  no ruling accepted, and in the same write set each flagged objection `escalated`. Run `quorum check`.
 - **After the Human.** Add each answer to `human_answers`. The objection becomes `accepted` or `rejected` as the answer
   says; a valid partial accept stays `accepted`, with its rejected part settled by the answer. A deferred
   escalation stays `escalated`. Then write `status: complete`, and run `quorum check`: it exits 1 on a complete ledger
@@ -177,8 +195,8 @@ not to a separate dispatch: its accepted objections, with each plan change, the 
 revision-history line go into `planning-agent`'s critique brief as authoritative, like gate verdicts, so they land in
 the diff the Human approves. That diff's `revision_history_entry` includes the Report's revision-history line, as
 `plan-review`'s review lens says.
-Rejected objections and opinions are context there, never findings to apply. A deferred escalation goes into the
-critique's open questions.
+Rejected objections, opinions, and notes go there as context, never authoritative and never findings to apply.
+A deferred escalation goes into the critique's open questions.
 When this skill stops with `blocked`, `plan-review` stops with `blocked on quorum`, naming the ledger and what
 `quorum check` printed, and resumes from step 3b.
 

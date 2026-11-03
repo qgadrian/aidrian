@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
-import { CASE_SCHEMA, CODEX_TIMEOUT_SEC, CROSS_SCHEMA, DECIDE_LEDGER_SCHEMA, DECIDE_REBUTTAL_SCHEMA, GROUNDS, LEDGER_SCHEMA, LEDGER_SCHEMAS, OBJECTIONS_SCHEMA, REBUTTALS_SCHEMA, codexAnswer, commands, governingWinner, modeOf, rebuttalProblems, schemaProblems } from '../plugins/aidrian/lib/quorum.mjs';
+import { CASE_SCHEMA, CODEX_TIMEOUT_SEC, CROSS_SCHEMA, DECIDE_LEDGER_SCHEMA, DECIDE_REBUTTAL_SCHEMA, GROUNDS, LEDGER_SCHEMA, LEDGER_SCHEMAS, MAX_MODE_OBJECTIONS, MAX_OBJECTIONS, OBJECTIONS_SCHEMA, REBUTTALS_SCHEMA, codexAnswer, commands, governingWinner, modeOf, rebuttalProblems, schemaProblems } from '../plugins/aidrian/lib/quorum.mjs';
 import { slug } from '../plugins/aidrian/lib/review/flows.mjs';
 import { FINDINGS_SCHEMA, runCodex, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 
@@ -1016,9 +1016,15 @@ test('ledger.md names every field of LEDGER_SCHEMA and no other, its enum values
 });
 
 
+// Every file of the quorum skill: SKILL.md, each references/ file, and each modes/ file, by its path in the skill.
+function skillTexts() {
+  const files = ['SKILL.md', ...['references', 'modes'].flatMap((dir) => readdirSync(path.join(SKILL, dir)).map((file) => `${dir}/${file}`))];
+  return Object.fromEntries(files.map((file) => [file, readFileSync(path.join(SKILL, file), 'utf8')]));
+}
+
 test('the quorum skill names exactly the flags `aidrian quorum` takes, real --mode values, and every codex status with its exit code', async () => {
   const flags = (text) => new Set([...text.matchAll(/(?<![\w-])--[a-z][a-z-]*/gu)].map((match) => match[0]));
-  const texts = Object.fromEntries(['SKILL.md', 'references/briefs.md', 'references/ledger.md'].map((file) => [file, readFileSync(path.join(SKILL, file), 'utf8')]));
+  const texts = skillTexts();
   const all = Object.values(texts).join('\n');
   const usage = flags(commands.quorum.usage);
   // A line that runs `aidrian quorum` names exactly the flags it takes.
@@ -1049,6 +1055,63 @@ test('the quorum skill says what check does to an objection with no passing cita
   // A reused complete ledger reports every line check printed, so an accepted objection whose evidence or ruling no
   // longer passes is not handed on silently as authoritative.
   assert.match(skill, /is reused: skip the rounds, and report from it, with every line `check` printed in the Ledger item/u);
+});
+
+// Eight complete plan ledgers showed an architect that accepted 56 of A's 56 objections at first ruling, and 19
+// concessions that cited nothing: the plan-mode briefs give the judge a reject path and hold it to its verdicts.
+test('the plan mode file holds the judge\'s reject path, its verdicts, the moderation lines, and the proportionality pass', () => {
+  const raw = skillTexts()['modes/plan.md'];
+  const plan = raw.replace(/\s+/gu, ' ');
+  assert.match(plan, /`Covers: #<anchor> "<quote>"` or `Covers: nothing`/u, 'the Covers line');
+  assert.match(plan, /accept: [^.]*cite the `plan` section it changes, on the first ruling and on the final one/u, 'an accept cites the plan section on both rulings');
+  assert.match(plan, /`tested`: one entry per citation/u, 'the tested line');
+  assert.match(plan, /`inferences`: one entry per `inference:` line/u, 'the inferences line');
+  for (const ground of GROUNDS) assert.match(plan, new RegExp(`\`${ground}\` \\(`, 'u'), `the ground ${ground}, with its meaning`);
+  assert.match(plan, /`Cost: /u, 'the Cost line');
+  assert.match(plan, /`Removes: /u, 'the Removes line');
+  assert.match(plan, /prefer the smallest change that removes the cited risk/iu, 'the smallest-change rule');
+  assert.match(plan, /moderation governs scope and proportion, never which side wins/iu, 'the neutrality sentence');
+  assert.match(plan, /accepted 56 of A's 56 objections at first ruling/u, 'the eight-run line');
+  assert.match(plan, /## Proportionality pass/u, 'the proportionality brief');
+  assert.match(plan, /\*\*Proportionality pass\*\*/u, 'the proportionality round');
+  assert.match(plan, /\*\*Merge\*\*/u, 'the merge round');
+  assert.match(plan, /The cap is 8 dispatches: one is reserved for the proportionality pass, and no other dispatch may spend it/u, 'the cap');
+  assert.match(plan, /When the pass returns no usable answer, write `proportionality: \{flagged: \[\]\}` too, with no retry, and the report says the pass failed/u, 'a failed pass');
+  assert.match(plan, /appends its citations to the survivor's `citations`, so the architect's `tested` covers them/u, 'a merge moves its evidence to the survivor');
+  assert.doesNotMatch(plan, /also cited by/u, 'no separate merged-citation line');
+  assert.match(plan, new RegExp(`at most ${MAX_MODE_OBJECTIONS} objections, each \`blocking\` or \`important\``, 'u'), 'each adversary returns at most MAX_MODE_OBJECTIONS objections');
+  // Codex's objections answer is held to OBJECTIONS_SCHEMA, MAX_OBJECTIONS entries, improvements included.
+  for (const brief of ['A: it will break', 'B: the wrong thing, or too much']) {
+    const text = raw.split(`\n## ${brief}\n`)[1].split('\n## ')[0].replace(/\s+/gu, ' ');
+    assert.match(text, new RegExp(`Return at most ${MAX_MODE_OBJECTIONS} objections, each blocking or important`, 'u'), `${brief}: the objection cap`);
+    assert.ok(text.includes(`At most ${MAX_OBJECTIONS} entries in all.`), `${brief}: the entry cap`);
+  }
+  // A flagged change the Human has not answered is not reported as accepted, and one answer settles a flagged partial accept.
+  assert.match(plan, /A flagged objection the Human has not answered is left out: it shows under Escalated and Proportionality\. For an answered one, the change is the one the answer chose\./u, 'the Accepted item and a flag');
+  assert.match(plan, /When a flagged partial accept also has its rejected part escalated, one answer settles both parts\./u, 'one answer for both parts');
+  assert.match(plan, /the strongest alternative plan that meets the same goal/u, 'B1 is the strongest alternative');
+  assert.match(plan, /\*\*Merged\*\*/u, 'the report lists merges');
+  assert.match(plan, /\*\*Proportionality\*\*/u, 'the report has the Proportionality item');
+  assert.match(plan, /\*\*Notes\*\*/u, 'the report has the notes footnote');
+  const rebuttal = /verdict "concede": the ruling stands; cite the ruling's evidence you accept\./gu;
+  assert.equal(plan.match(rebuttal)?.length, 2, 'both rebuttal briefs say a concession cites what it accepts');
+});
+
+test('the quorum core names the six grounds in its Moderator paragraph, and the Evidence block asks for inference lines and doc or adr citations', () => {
+  const texts = skillTexts();
+  const skill = texts['SKILL.md'];
+  const moderator = skill.split('\n## Moderator\n')[1]?.split('\n## ')[0];
+  assert.ok(moderator, 'SKILL.md has § Moderator');
+  for (const ground of GROUNDS) assert.ok(moderator.includes(`\`${ground}\``), `the Moderator paragraph names ${ground}`);
+  assert.match(moderator.replace(/\s+/gu, ' '), /never which side wins/u);
+  assert.match(skill, /Read `modes\/<mode>\.md` once the mode is selected, and only that one\./u);
+  const evidence = texts['references/briefs.md'].split('\n### Evidence block\n')[1].split('\n### ')[0];
+  assert.ok(evidence.includes('inference: <statement>'), 'the Evidence block names the inference line');
+  assert.match(evidence.replace(/\s+/gu, ' '), /prefer a `doc` or `adr` citation/u, 'the Evidence block prefers doc and adr');
+  assert.match(evidence.replace(/\s+/gu, ' '), /A concession cites the evidence of the ruling it accepts/u);
+  for (const [file, text] of Object.entries(texts)) {
+    assert.doesNotMatch(text.replace(/\s+/gu, ' '), /concession needs no citation|may be empty for a concession/iu, `${file} says a concession needs no citation`);
+  }
 });
 
 test('plan-review runs the quorum skill at step 3b, lists its flags in Inputs, and ledger.md says how it runs there', () => {

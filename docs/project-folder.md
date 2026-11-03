@@ -146,14 +146,28 @@ A quorum ledger, `quorum/<name>-<plan-hash>.json`, records the objections two ad
 the architect's ruling on each, and the Human's answers. `<name>` is the plan's file name without `.md`,
 or `<parent-folder>-plan` for a file named `plan.md`, and `<plan-hash>` is `git hash-object` of the plan.
 `lib/quorum.mjs` holds its schema, `LEDGER_SCHEMA`, and the schemas of Codex's answers, `OBJECTIONS_SCHEMA` and `REBUTTALS_SCHEMA`.
-Each objection, ruling, and rebuttal cites its evidence as `{kind, ref, quote}`. Two commands keep a ledger honest:
+Each objection, ruling, and rebuttal cites its evidence as `{kind, ref, quote}`.
+The `quorum` skill's `references/ledger.md` lists every field.
+
+A ledger written by the plan mode of the `quorum` skill carries `mode: plan`, and with it the fields its briefs fill:
+
+- `notes`: improvements no one rules on.
+- `merged_into`, on an objection whose status is `merged`: the other adversary's duplicate it was folded into.
+- On each first and final ruling: `tested`, one verdict per citation of the entry ruled on; `inferences`, one verdict
+  per `inference:` line of its claim; and `ground` on a reject, one of `covered`, `implementation`, `settled`,
+  `off-goal`, `disproportionate`, or `speculative`.
+- `proportionality`: the architect's review of the accepted changes as a set, with the ones it flagged.
+
+A ledger with no `mode` is plan mode under the rules it was written with: 7 objections each, `improvement` allowed,
+and none of the rules below. `check` never adds the field. Two commands keep a ledger honest:
 
 - `aidrian quorum codex --plan PLAN --brief BRIEF --out FILE [--mode object]` runs Codex read-only on the brief
   and then the plan, for at most 780 seconds, and writes its answer to FILE. `--mode object`, the default, holds the answer
   to `OBJECTIONS_SCHEMA`, Codex's objections.
   `aidrian quorum codex --mode rebut --ledger LEDGER --plan PLAN --brief BRIEF --out FILE` holds it to `REBUTTALS_SCHEMA`:
   at most 7 entries `{objection_id, verdict, claim, citations}`, where `verdict` is `rebut` or `concede` and a concession
-  may cite nothing; without `objection_id`, an entry is that objection's ledger `rebuttal`, whose `ruling` starts null.
+  cites at least one citation when LEDGER carries `mode`, and may cite nothing when it does not; without
+  `objection_id`, an entry is that objection's ledger `rebuttal`, whose `ruling` starts null.
   The answer must also fit LEDGER, which may live anywhere and is read and schema-checked before Codex starts:
   each id once, each one of B's objections ruled `reject` or `accept` (a partial accept's rebuttal covers the rejected
   part) and not `escalated`, since an escalated objection goes to the Human, and an entry for every one of B's objections
@@ -184,6 +198,18 @@ Each objection, ruling, and rebuttal cites its evidence as `{kind, ref, quote}`.
   A valid partial accept's first ruling counts even on an escalated or answered objection, since its accepted part
   stands. Such a ledger is not written back, so it is not reused. It runs no command but `git ls-files`. PLAN and the
   ledger may live anywhere, such as this folder.
+  On every ledger, it exits 1 on a `merged` objection with a ruling or a rebuttal, or whose `merged_into` names no
+  objection, one of its own adversary, or one that is merged or an opinion; it removes a note with no passing citation
+  and names it.
+  On a ledger that carries `mode`, it also exits 1 on more than 5 objections from one adversary, on an `improvement`
+  objection, on a complete ledger with an accept ruling and `proportionality` null, and on a flagged objection with no
+  accept ruling or one neither escalated nor answered. It names a ruling invalid, first or final, when an accept cites no
+  `plan` section or rests on no citation `tested` marks supporting, when `tested` does not name each citation of the
+  ruled entry once, when an `inference:` line has no `inferences` entry, when a reject has no `ground` or another
+  decision has one, when the reason does not open with a `Covers: ` line, or when an accept has no `Cost: ` or
+  `Removes: ` line; and a concession invalid when no citation of it passes.
+  On every plan ledger, with `mode` or without, its last line reads
+  `checked: mode plan, N objections, N opinion, N problems`.
 
 ## Task worktrees
 

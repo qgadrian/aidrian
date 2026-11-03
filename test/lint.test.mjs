@@ -37,7 +37,7 @@ function sized(dir, name, bytes) {
   writeFileSync(path.join(dir, name, 'SKILL.md'), head + '—'.repeat(Math.floor(pad / 3)) + 'a'.repeat(pad % 3));
 }
 
-const MOVE = 'move detail into references/ or steps/ files that SKILL.md names';
+const MOVE = 'move detail into references/, steps/, or modes/ files that SKILL.md names';
 
 test('the plugin`s own skills and agents pass', () => {
   assert.deepEqual(lintSkills([path.join(ROOT, 'plugins/aidrian/skills')], LIMITS).problems, []);

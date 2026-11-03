@@ -4,9 +4,10 @@
 
 import { commandLines, inlineShellCommand, lexInputs, readGit, readInvocation, readsShellInput, SUBSTITUTION_DEPTH_LIMIT } from './shell-lex.mjs';
 
-// The entry that applies to every agent, and the one for the main session, which has no `agent_id`.
-const ALL = '*';
-const MAIN = 'main';
+// The entry that applies to every agent, and the one for the main session, which has no `agent_id`. Both select gates;
+// neither is an agent a dispatch can name (config.mjs `agentName`).
+export const ALL = '*';
+export const MAIN = 'main';
 // Codex installs this plugin's agents as roles named `aidrian-<agent>`; Claude Code names them `aidrian:<agent>`.
 const CODEX_PREFIX = 'aidrian-';
 

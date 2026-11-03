@@ -32,8 +32,9 @@ Name both parties as the start hook's `Names:` line does; outside a persona's qu
 1. `aidrian-knowledge index` prints each doc's path and tags. Each doc whose tags include `personas` is a persona,
    except `product-access`; the persona id is its file name without `.md`.
    None: stop, and point the Human to [references/persona-template.md](references/persona-template.md). Never invent a persona.
-2. `aidrian lint personas`. A persona that fails it is skipped, with the lint's line in the report: a doc without
-   a `Success:` line per task cannot be judged. Without the command, hold each doc to the template's sections.
+2. `aidrian lint personas`. A persona with a lint problem is skipped, with the lint's line in the report: a doc without
+   a `Success:` line per task cannot be judged. A lint warning skips nothing: carry its line into `## Persona doc gaps`
+   for the author. Without the command, hold each doc to the template's sections.
 3. Read only the chosen personas, each whole, and `product-access` when it exists
    ([references/product-access-template.md](references/product-access-template.md) shows its shape).
 4. Scale: before walking more than one persona's whole product, list each persona and its task count, and ask the
@@ -68,6 +69,9 @@ At `seen` or `read`, with no walk: go through the screens or the code path in th
 the persona would see there: copy, a string shown as its key or in another language, a screen with no way forward.
 No outcome, no step record, and no quote: a quote needs a walk.
 
+The walk stays within the tasks in scope. An idea that comes up in character, such as "as this person I would now
+try to...", is not walked and gets no finding: it is a suggested task under `## Persona doc gaps`.
+
 The persona judges only what it sees. After the walk, the session may read code to locate a finding for its owner,
 never to judge as the persona.
 
@@ -78,7 +82,15 @@ its label (`observed` with a citation, or `opinion`), its severity, and the tabl
 `knowledge` skill's agent rule. Never put words in a persona that its doc does not support.
 
 Several personas: walk once per persona, then merge. One finding two personas share is written once, naming both.
-A gap in a persona doc, such as a task the product no longer has, is a finding about the doc, with no owner.
+A persona doc that is unclear or contradicts itself is a doc gap, with no owner; a task the product cannot do is a
+finding or a Not reached line, as [report-format.md](references/report-format.md) says:
+
+- Walked and `blocked`: the code read after the walk picks the owner. The capability exists and the persona did not
+  reach it: a dead end, `ux-specialist`. No screen, route, endpoint, or command for it: a missing capability,
+  `product-manager`. Either is `observed`, citing the screen or response, and a `blocker`.
+- At `seen` or `read`: no finding. The task stays `not walked`, and `## Not reached` lists it, with what was searched
+  and `product-manager` as the one to ask.
+- Behind a plan or feature the demo account lacks, as `product-access` says: not reached, with that reason, never a product gap.
 
 ## 5. Report
 

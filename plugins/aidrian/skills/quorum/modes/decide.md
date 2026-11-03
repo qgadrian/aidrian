@@ -11,7 +11,7 @@ Read this file once the mode is `decide`. Here `<plan>` is the question file.
 - [Report](#report): this mode's items.
 - Briefs: [Case](#case), [Cross-examination](#cross-examination), [Architect: ruling](#architect-ruling), and
   [Rebuttal](#rebuttal). Beside the placeholders of `references/briefs.md`, fill `<id>` and `<label>` with the
-  advocate's position, and `<cap>` with this run's cap.
+  advocate's position, and `<cap>` with this run's cap, from `roles`.
   `<settled>` is always `none` in decide mode: an edited question is a new question, so no earlier answer carries over.
 
 ## Question file
@@ -36,11 +36,15 @@ Write each to `positions` as `{id, label, runner}`.
 A `plan` citation anchors on a heading of the question file: `#context`, `#claim`, or an option's slug, such as
 `#a-keep-one-ledger`.
 
+`aidrian quorum roles decide` prints this run's roles, fallbacks, judge, swap, and caps: `odd` holds `A` and `C`,
+and `even` holds `B` and `D`. The values below are the defaults.
+
 - **Advocates**: one per position. `A` and `C` run as `code-reviewer`. `B` and `D` run on Codex through
   `aidrian quorum codex`; their fallback agent is `code-reviewer`.
-- **The swap**: for a claim, when the ledger's `<plan-hash>` starts with an odd hex digit (`1`, `3`, `5`, `7`, `9`,
-  `b`, `d`, or `f`), the runners swap: `A` runs on Codex, with `code-reviewer` as its fallback, and `B` runs as
-  `code-reviewer`. Options never swap.
+- **The swap**: only when `swap` is `true`. For a claim, when the ledger's `<plan-hash>` starts with an odd hex digit
+  (`1`, `3`, `5`, `7`, `9`, `b`, `d`, or `f`), the runners swap: `A` takes `even`'s provider, agent, and fallback, and
+  `B` takes `odd`'s; by default, `A` runs on Codex, with `code-reviewer` as its fallback, and `B` runs as `code-reviewer`.
+  Options never swap.
   The swap keeps one model from always arguing `true`.
 - **Runner**: `runner` is `codex` while every run of that position went to Codex, and `agent` once one did not.
 - `same_model` is `true` exactly when two positions share a runner, which three or four positions always do.
@@ -55,6 +59,7 @@ The cap is `3N + 2 + C` dispatches for N positions, where C counts the positions
 With the default runners that is 9 for two, 12 for three, and 16 for four.
 That is N cases, N cross-examinations, one ruling, at most N - 1 rebuttals, one final ruling, one spare for a retry,
 and one fallback per Codex position. Every agent dispatch and Codex run counts, fallbacks included.
+This run's cap is the `caps` entry `roles` prints for its position count.
 
 1. **Cases.** Every advocate in parallel, with the Case brief. Codex runs `aidrian quorum codex --mode case`.
 2. A position still without a case (after its fallback, on Codex) stops the run with `blocked` before round 3, naming the
@@ -123,9 +128,9 @@ run `quorum check`.
 
 ## Report
 
-After the core's Ledger item, which also names each position's runner, the judge (`architect`, on the host's
-model), any swap, the question-file path the coordinator wrote, each cross point dropped, and each advocate with no
-cross answer:
+After the core's Ledger item, which also names each position's runner, the judge (its agent, `architect` by
+default, on the host's model), any swap, the question-file path the coordinator wrote, each cross point dropped, and
+each advocate with no cross answer:
 
 1. **Ruling**: with no escalation, the governing winner and the reason. When any ruling escalates, `escalated` with
    the Human's answer, or `deferred` with the recommended answer. Name a ruling the coordinator wrote, after two
@@ -155,7 +160,7 @@ Return one JSON object: {"case": {"claim", "citations": [{"kind", "ref", "quote"
 As an agent, put it in the handoff's artifacts. Change no file.
 ```
 
-As `code-reviewer`, an advocate gets each brief of this file with `The question file follows this brief.` replaced by
+As an agent, an advocate gets each brief of this file with `The question file follows this brief.` replaced by
 `Question: <plan>.`
 
 ## Cross-examination

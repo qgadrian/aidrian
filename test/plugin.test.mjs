@@ -269,6 +269,31 @@ test('a skill that runs the pr-review-loop skill says when it marks the pull req
     assert.match(text, /gh pr ready <n>/, `${skill} marks the pull request ready`);
     assert.match(text, /github\.markReady/, `${skill} reads github.markReady`);
   }
+  // markReady is "auto" by default (lib/config.mjs), so every skill that marks ready names that default, and
+  // pr-merge-when-green marks a signed-off draft ready instead of always asking.
+  for (const file of ['pr-review-loop/SKILL.md', 'autopilot/references/phases.md', 'orchestration/SKILL.md', 'pr-merge-when-green/SKILL.md']) {
+    const text = readFileSync(path.join(PLUGIN, 'skills', file), 'utf8').replace(/\s+/g, ' ');
+    assert.match(text, /`github\.markReady` is `"auto"`, the default/, `${file} names "auto" as the markReady default`);
+  }
+});
+
+test('pr-write hands an opened or updated pull request to the review loop as github.reviewLoop says', () => {
+  // With reviewLoop "auto", the default, a session that opened a pull request and stopped left it unreviewed.
+  const text = readFileSync(path.join(PLUGIN, 'skills/pr-write/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  const handoff = text.slice(text.indexOf('## Then the review loop'));
+  assert.match(handoff, /config\.json `github\.reviewLoop`/, 'pr-write reads github.reviewLoop');
+  assert.match(handoff, /`"auto"`, the default: .*runs the `pr-review-loop` skill on the pull request right away, without asking the Human\./);
+  assert.match(handoff, /`"ask"`: offer the loop, and run it when the Human asks\./);
+  assert.match(handoff, /Inside a skill or agent that runs its own review loop, leave the loop to it, so the loop runs once\./,
+    'a caller that runs the loop itself, such as autopilot, still runs it once');
+});
+
+test('the lesson skill takes a feedback draft note from context and leaves the draft to the Human', () => {
+  // A session asked to write a lesson for a Claude Code feedback draft cannot read, edit, or delete that queue,
+  // so the skill says where the note comes from and that the Human sends or discards the draft.
+  const text = readFileSync(path.join(PLUGIN, 'skills/lesson/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(text, /For a lesson from a Claude Code feedback draft, the note comes from the draft text in context: no command reads, edits, or deletes that draft\./);
+  assert.match(text, /Tell the Human it stays queued for the Human to send, if it is a Claude Code bug, or discard\./);
 });
 
 test('an implementing skill ends at its draft, and the orchestrator owns what follows', () => {

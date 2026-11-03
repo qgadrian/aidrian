@@ -8,23 +8,31 @@ Two adversaries attack a plan, and the architect rules on each objection. Read t
 - [Report](#report): this mode's items.
 - Briefs: [A: it will break](#a-it-will-break), [B: the wrong thing, or too much](#b-the-wrong-thing-or-too-much),
   [Architect: ruling](#architect-ruling), [Proportionality pass](#proportionality-pass),
-  [A rebuttal](#a-rebuttal), and [B rebuttal](#b-rebuttal).
+  [A rebuttal](#a-rebuttal), and [B rebuttal](#b-rebuttal). Beside the placeholders of `references/briefs.md`, fill
+  `<max_objections>` with this run's `maxObjections` and `<cap>` with its `maxDispatches`, both from `roles`.
 
 ## Roles
 
-- **A, "it will break"**: `code-reviewer`.
+`aidrian quorum roles plan` prints this run's roles, fallback, judge, and caps; the values below are the defaults.
+
+- **A, "it will break"**: `code-reviewer`. A always runs as a host agent.
 - **B, "the wrong thing, or too much"**: Codex, through `aidrian quorum codex`; its agent fallback is `product-manager`.
   B's first objection is the strongest alternative plan, or a note that none beats the plan.
 - **Architect**: `architect`. It rules on each objection, and runs the proportionality pass.
+- **Runners**: write `runners` with the ledger. `A` is `agent`; `B` is `codex` while every run of B went to Codex, and
+  `agent` once one did not, since the fallback sticks. After the rounds it holds each adversary's final runner, and
+  `same_model` matches it, as `references/ledger.md` § Fields says.
 
-Each adversary returns at most 5 objections, each `blocking` or `important`, and its improvements, which no one rules on.
+Each adversary returns at most `maxObjections` objections (default 5), each `blocking` or `important`, and its
+improvements, which no one rules on.
 The coordinator moves every `improvement` entry, A's or B's, to `notes` with its `by`, keeps the first 5 notes and
-the first 5 objections per adversary, and numbers the objections `A1`, `A2`, ... and `B1`, `B2`, ..., in the
-adversary's order.
+the first `maxObjections` objections per adversary, and numbers the objections `A1`, `A2`, ... and `B1`, `B2`, ...,
+in the adversary's order.
 
 ## Rounds
 
-The cap is 8 dispatches: one is reserved for the proportionality pass, and no other dispatch may spend it.
+The cap is the `maxDispatches` that `roles` prints, 8 by default: one is reserved for the proportionality pass, and no
+other dispatch may spend it.
 
 1. **Objections.** A and B in parallel, each with the plan, the gate verdicts, and its brief.
 2. Write the ledger with `mode: plan` and `status: open`, and run `quorum check`.
@@ -50,8 +58,8 @@ The cap is 8 dispatches: one is reserved for the proportionality pass, and no ot
    failed.
    Then the rounds stop.
 
-The longest run: 2 adversaries, 1 ruling, 1 retry, 2 rebuttals, 1 final ruling, and the pass. A fallback costs one more
-and happens at most once, since it sticks; then the retry and the final ruling cannot both run.
+The longest run: 2 adversaries, 1 ruling, 1 retry, 2 rebuttals, 1 final ruling, and the pass. At the default cap, a
+fallback costs one more and happens at most once, since it sticks; then the retry and the final ruling cannot both run.
 
 An unflagged valid partial accept's accepted part always stands. Its rebuttal, its escalation, and the Human's answer cover only
 its rejected part, so `escalated` on it means that part is escalated.
@@ -95,9 +103,9 @@ scope), or on a code fact the stated approach contradicts. An objection about ho
 an implementation detail the plan does not state, is rejected with ground `implementation`: how the code gets written
 is the pull request review's job.
 <evidence>
-Return at most 5 objections, each blocking or important, most severe first (critical and high are read as blocking,
-medium as important, low as improvement). Then, at most 5 improvements with severity improvement: notes that no
-one rules on. At most 7 entries in all.
+Return at most <max_objections> objections, each blocking or important, most severe first (critical and high are
+read as blocking, medium as important, low as improvement). Then, at most 5 improvements with severity improvement:
+notes that no one rules on. At most 7 entries in all.
 Return one JSON object, in the handoff's artifacts: {"objections": [{"severity", "claim", "citations": [{"kind", "ref", "quote"}]}]}.
 Change no file.
 ```
@@ -112,14 +120,14 @@ State, as your first objection, the strongest alternative plan that meets the sa
 most ten lines, with the citations that show it fits the project. When no alternative beats the plan, say so in an
 improvement entry instead, with the citation that shows the plan is the simplest fit.
 <evidence>
-Return at most 5 objections, each blocking or important: the alternative first, then the rest most severe first
-(critical and high are read as blocking, medium as important, low as improvement). Then, at most 5 improvements
-with severity improvement: notes that no one rules on. At most 7 entries in all.
+Return at most <max_objections> objections, each blocking or important: the alternative first, then the rest most
+severe first (critical and high are read as blocking, medium as important, low as improvement). Then, at most 5
+improvements with severity improvement: notes that no one rules on. At most 7 entries in all.
 Return one JSON object: {"objections": [{"severity", "claim", "citations": [{"kind", "ref", "quote"}]}]}.
 As an agent, put it in the handoff's artifacts. Change no file.
 ```
 
-As `product-manager`, B gets this brief with `The plan under review follows this brief.` replaced by `Plan: <plan>.`
+As an agent, B gets this brief with `The plan under review follows this brief.` replaced by `Plan: <plan>.`
 
 ## Architect: ruling
 
@@ -129,7 +137,7 @@ backed objections the architect left without a ruling.
 
 ```text
 Role: adjudicator and moderator of a plan quorum. Rule on each objection below; never vote to agree, and never settle
-on a compromise between the two sides. The run is capped at 8 dispatches, so a ruling may get no second chance.
+on a compromise between the two sides. The run is capped at <cap> dispatches, so a ruling may get no second chance.
 In eight earlier runs the architect accepted 56 of A's 56 objections at first ruling. An objection the plan covers is
 rejected, not accepted with a restatement.
 Plan: <plan>. Ledger: <ledger>. Gate verdicts, authoritative: <gates>. <settled>
@@ -199,7 +207,7 @@ verdict "rebut": the ruling is wrong, with a citation that no objection or first
 A rebuttal may contest a `supports: false` verdict or a ground with that new citation.
 verdict "concede": the ruling stands; cite the ruling's evidence you accept.
 <evidence>
-Return at most 5 entries, one per objection id. Return one JSON object, in the handoff's artifacts:
+Return at most <max_objections> entries, one per objection id. Return one JSON object, in the handoff's artifacts:
 {"rebuttals": [{"objection_id", "verdict": "rebut|concede", "claim", "citations": [{"kind", "ref", "quote"}]}]}.
 Change no file.
 ```
@@ -221,9 +229,9 @@ verdict "rebut": the ruling is wrong, with a citation not in this list of the ci
 A rebuttal may contest a `supports: false` verdict or a ground with that new citation.
 verdict "concede": the ruling stands; cite the ruling's evidence you accept.
 <evidence>
-Return at most 5 entries, one per objection id:
+Return at most <max_objections> entries, one per objection id:
 {"rebuttals": [{"objection_id", "verdict": "rebut|concede", "claim", "citations": [{"kind", "ref", "quote"}]}]}.
 As an agent, put it in the handoff's artifacts. Change no file.
 ```
 
-As `product-manager`, B gets this brief with `The plan under review follows this brief.` replaced by `Plan: <plan>.`
+As an agent, B gets this brief with `The plan under review follows this brief.` replaced by `Plan: <plan>.`

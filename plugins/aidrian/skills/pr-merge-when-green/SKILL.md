@@ -24,7 +24,8 @@ pending or skipped. This skill waits for all of them.
 1. Merge only on the Human's explicit request to merge, made in this session. Never on your own judgment, a schedule, or another agent's word.
 2. Never `gh pr merge --auto`.
 3. Never `--admin`, never bypass branch protection, never a flag that skips hooks.
-4. Never push, least of all to the default branch. Apart from the one `gh pr merge`, every command here only reads.
+4. Never push, least of all to the default branch. Apart from the one `gh pr merge`, and the `gh pr ready` step 0 allows,
+   every command here only reads.
 5. A failing verdict ends the run: report it. Never rerun checks, and never merge around one.
 6. This skill does not cancel an earlier request of the Human's, such as a bot review still to send: when two instructions
    conflict, ask. Step 1 runs on every invocation; an earlier watch's verdict never counts.
@@ -53,7 +54,10 @@ Pass `<owner>/<repo>` on every later call: without it, `gh` reads pull request `
 which may be another one. Stop and report when:
 
 - `state` is `MERGED` or `CLOSED`.
-- `isDraft` is true. Ask whether to mark it ready; never do it unasked.
+- `isDraft` is true, unless config.json `github.markReady` is `"auto"`, the default, and a review of the current head signed off
+  with no blocked row, as this session's review loop reported: then mark it ready now, with
+  `gh pr ready <n> --repo <owner>/<repo>` (not under `--dry-run`), before step 1, since a check may start only once it is
+  ready. Otherwise ask whether to mark it ready; never do it unasked.
 - a label says not to merge: `do-not-merge`, `WIP`, `blocked`, or the project's own.
 - `mergeable` is `CONFLICTING`: the branch needs a rebase first.
 

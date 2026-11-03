@@ -2,6 +2,8 @@
 
 The lesson inbox turns what goes wrong in sessions into fixes.
 An agent captures a lesson with one command and goes back to its task.
+A lesson from a Claude Code feedback draft takes its note from the draft text in the session: no command reads, edits, or deletes
+the draft, so the `lesson` skill tells the Human it stays queued for the Human to send, if it is a Claude Code bug, or discard.
 Later, a session opened for the `lesson-triage` skill routes each lesson to one end: a fix, an issue, a merge, or a rejection.
 `lesson-triage --peek` prints the ranked inbox without loading knowledge or searching; `--limit N` sizes the batch.
 A lesson that comes back after its fix reopens, so a fix that did not hold is visible.

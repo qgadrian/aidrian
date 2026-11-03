@@ -38,7 +38,8 @@ In a group such as `github`, set only the keys you change; the others keep their
     "ignoreCancelledChecks": [],
     "conditionalChecks": [],
     "titleIssuePrefix": false,
-    "markReady": "ask",
+    "markReady": "auto",
+    "reviewLoop": "auto",
     "pullRequest": {
       "title": null,
       "issueKey": null,
@@ -77,7 +78,21 @@ In a group such as `github`, set only the keys you change; the others keep their
       "costRisePercent": 50
     }
   },
-  "agents": {}
+  "agents": {},
+  "quorum": {
+    "judge": { "agent": "architect" },
+    "plan": {
+      "a": { "agent": "code-reviewer" },
+      "b": { "provider": "codex", "agent": "product-manager" },
+      "maxObjections": 5,
+      "maxDispatches": 8
+    },
+    "decide": {
+      "odd": { "provider": "agent", "agent": "code-reviewer" },
+      "even": { "provider": "codex", "agent": "code-reviewer" },
+      "swap": true
+    }
+  }
 }
 ```
 
@@ -95,12 +110,13 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.requiredSections` | The `## ` sections every pull request body must have ([Bash rules](hooks.md#bash-rules)); `[]` checks none. |
 | `github.reviewer` | The login of the Codex review bot that `aidrian pr await-review` waits for. `null` or `"none"`: no bot ([below](#no-review-bot)). |
 | `github.maxReviewRounds` | The review rounds a pull request may get, 3 by default: the review loop and `aidrian pr await-review --request` stop there, unless `extraRounds` grants one more. They read it from the pull request's base branch, so an edit to the working copy does not raise it; `aidrian pr await-review` without `--request` posts nothing and reads no base branch. A `--max-rounds` above it runs only with `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, which the Human sets, and so does a higher cap an earlier bot request recorded in its comment; a Bash rule refuses an agent command that sets it, and any bot request made outside `aidrian pr`. |
-| `github.extraRounds` | What happens at that cap: [Extra rounds](review.md#extra-rounds). `"ask"`, the default: when the round history shows the review converging, a read-only judge decides whether one more round is worth it, and the Human approves it. `"auto"`: the judge's word grants it. `"off"`: the cap stops, as `round_limit`. Read from the base branch, like the cap. |
+| `github.extraRounds` | What happens at that cap: [Extra rounds](review.md#extra-rounds). `"ask"`, the default: a read-only judge decides whether one more round is worth it, with any red flag of the round history (not converging, looping, drifting, bloating) as evidence, and the Human approves it. `"auto"`: the judge's word grants it, unless a red flag stands, when the Human approves it too. `"off"`: the cap stops, as `round_limit`. Read from the base branch, like the cap. |
 | `github.maxExtraRounds` | The most extra rounds `extraRounds` may grant one pull request, 2 by default; a hard ceiling, read from the base branch. `0` grants none. |
 | `github.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. |
 | `github.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
 | `github.conditionalChecks` | Parts of check names whose `SKIPPED` or `NEUTRAL` result is routine, such as a job a path filter turns off. |
-| `github.markReady` | Who marks a draft pull request ready. `"ask"`, the default: its author, or the review loop when the Human asks in the session. `"auto"`: the `pr-review-loop` skill, or `autopilot` and the `orchestrator` when they run it, mark it ready once review signs off and `aidrian pr checks` says ready. Either way, nothing is pushed after it is marked ready, and nothing merges it. |
+| `github.markReady` | Who marks a draft pull request ready. `"auto"`, the default: the `pr-review-loop` skill, or `autopilot` and the `orchestrator` when they run it, mark it ready once a review of the current head signs off with no blocked row and `aidrian pr checks` says ready. `"ask"`: its author, or the review loop when the Human asks in the session. Either way, nothing is pushed after it is marked ready, and nothing merges it. The default was `"ask"` before; [Changed defaults](#changed-defaults) has the opt-out. |
+| `github.reviewLoop` | What follows the `pr-write` skill once it opens or updates a pull request. `"auto"`, the default: once `pr-write`, and any skill that ran it, has ended, the session starts the `pr-review-loop` skill on it right away, without asking. `"ask"`: the session offers the loop and runs it when the Human asks. Run inside a skill or agent that runs its own review loop, such as `autopilot` or the `orchestrator`, `pr-write` leaves the loop to it. |
 | `github.titleIssuePrefix` | `true` writes pull request titles as `[<issue key>] type(scope): subject`, or `[NOISSUE] type: subject`; `false`, the default, writes a plain Conventional Commits title. |
 | `github.pullRequest` | The project's [pull request contract](#pull-request-contract), beyond the required sections; off by default but for `sharedTempBodyFile`. |
 | `github.reviewGate.enabled` | `true` asks the review bot only once a review of the diff is on record: [Review gate](#review-gate). |
@@ -132,11 +148,19 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `telemetry.maxMb` | The size, in megabytes, at which the dispatch log moves to its rotated part. |
 | `telemetry.health` | The thresholds of `aidrian report health`: [Health thresholds](#health-thresholds). |
 | `agents` | The tools each agent may use in this project; `{}` gates none: [Agents](#agents). |
+| `quorum` | The roles, providers, judge, and caps of the `quorum` skill: [Quorum](#quorum). |
 
 A path in `state.dir` or `git.worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
 
 Once `github.conditionalChecks` has an entry, `aidrian pr checks` fails on any other skip; `[]` lets every skip pass, named in the output.
+
+### Changed defaults
+
+A changed default raises no `aidrian check` line: a project that never set the key gets the new value silently.
+
+- `github.markReady` became `"auto"`, from `"ask"`. To keep the author marking drafts ready, set `"github": { "markReady": "ask" }`.
+- `github.reviewLoop` is new, `"auto"`. To have the review loop offered instead of started, set `"github": { "reviewLoop": "ask" }`.
 
 ### No review bot
 
@@ -546,8 +570,52 @@ A bad pattern is left out and the rest of its list still applies, so a bad `allo
 `aidrian check` cannot know every agent's name, so a name that matches no agent is not an error: its entry never applies.
 [hooks.md](hooks.md#agent-gates) describes the hook that enforces the gates, and what each host supports.
 
+## Quorum
+
+`quorum` sets who the `quorum` skill dispatches, and how far a plan run may go.
+Set only the keys you change; the defaults are the roles and caps the skill names.
+
+Two commands read the group, so the skill text never parses this file:
+
+- `aidrian quorum check` reads `quorum.plan.maxObjections`: on an `open` plan ledger that carries `mode`, it exits 1
+  when one adversary raised more objections than that. A `complete` ledger is held to the ceiling, 5, instead,
+  so a cap lowered after a run finished never voids its ledger or the Human's answers.
+- `aidrian quorum roles plan` and `aidrian quorum roles decide` read the whole group, `maxObjections` included,
+  and print that mode's roles, judge, and caps as one JSON line, which the coordinator follows. The decide caps are `3N + 2 + C` for each position count N
+  from 2 to 4, where C counts the first N positions whose runner is Codex: 9, 12, and 16 with the defaults.
+
+Both stop on an invalid config.json, as every `aidrian` command does: they exit 1 naming each bad key, and never run
+on defaults the project did not choose.
+
+| Key | Default | Meaning and range |
+| --- | --- | --- |
+| `quorum.judge.agent` | `"architect"` | The agent that rules on every objection. The judge always runs as a host agent. |
+| `quorum.plan.a.agent` | `"code-reviewer"` | Plan adversary A, always a host agent. |
+| `quorum.plan.b.provider` | `"codex"` | Plan adversary B's runner: `"agent"` or `"codex"`. |
+| `quorum.plan.b.agent` | `"product-manager"` | B's agent on `"agent"`, and its fallback on `"codex"`. |
+| `quorum.plan.maxObjections` | `5` | The most objections each plan adversary may raise, a whole number from 1 to 5. |
+| `quorum.plan.maxDispatches` | `8` | The most dispatches a plan run may make, one of them kept for the proportionality pass; a whole number, 5 or more. |
+| `quorum.decide.odd.provider` | `"agent"` | The runner of decide positions A and C: `"agent"` or `"codex"`. |
+| `quorum.decide.odd.agent` | `"code-reviewer"` | Their agent on `"agent"`, and their fallback on `"codex"`. |
+| `quorum.decide.even.provider` | `"codex"` | The runner of decide positions B and D: `"agent"` or `"codex"`. |
+| `quorum.decide.even.agent` | `"code-reviewer"` | Their agent on `"agent"`, and their fallback on `"codex"`. |
+| `quorum.decide.swap` | `true` | Whether a claim with an odd hash swaps the runners of positions A and B. |
+
+- One `agent` field covers both cases: the role's agent when `provider` is `"agent"`, and the agent that takes over
+  when `provider` is `"codex"` and Codex cannot run, the same brief in hand.
+- `quorum.plan.a` has no `provider`. A's briefs read the ledger, and `aidrian quorum codex --mode rebut` answers only
+  B's objections, so A has no Codex path. `aidrian check` names `quorum.plan.a.provider` as an unknown key.
+- `maxDispatches` is at least 5: the two objection dispatches, one ruling, one fallback, and the reserved pass.
+  Only B can run on Codex, so a plan run falls back at most once.
+  Under 8, the default, rebuttals and the final ruling may not fit, and the objections they would answer escalate to the Human.
+- Every `agent` is an agent name, such as `code-reviewer` or a project's own agent; `"*"` and `"main"` name no one agent.
+- The number of decide positions is the question file's, 2 to 4, never a config value, so no option the Human gave is dropped.
+
 ## Checking
 
 `aidrian check` validates this file with the rest of the project folder.
 It lists every problem: a missing file, invalid JSON, a missing or other `version`, an unknown key, or a value of the wrong type.
+In `quorum`, that includes a `provider` on `quorum.plan.a`, a `provider` other than `"agent"` or `"codex"`,
+a `plan.maxObjections` outside 1 to 5, a `plan.maxDispatches` under 5 or not a whole number, and an `agent` that is no agent name.
+Each message names the key, such as `quorum.plan.b.provider`.
 A key with a bad value falls back to its default, so the plugin's hooks keep working until the file is fixed.

@@ -164,3 +164,9 @@ test('a plugin older than the version the project requires is named, with the co
   assert.match(versionFloorProblem(config('0.16.0'), '0.15.9'), /^this project requires aidrian 0\.16\.0 or later, and this session runs 0\.15\.9 from \S+plugins\/aidrian: update the plugin/u);
   assert.match(versionFloorProblem(config('0.10.0'), '0.9.12'), /requires aidrian 0\.10\.0/u, 'parts compare as numbers');
 });
+
+test('sectionOf finds a heading with punctuation by the anchor GitHub gives it', () => {
+  const doc = "## The plugin's tools for this work\n\nworktree-new starts a task.\n\n## Read config.json first\n\nIt holds the rules.\n";
+  assert.match(sectionOf(doc, 'the-plugins-tools-for-this-work')?.body ?? '', /worktree-new/u);
+  assert.match(sectionOf(doc, 'read-configjson-first')?.body ?? '', /the rules/u);
+});

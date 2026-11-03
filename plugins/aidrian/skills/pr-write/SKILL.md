@@ -69,9 +69,19 @@ gh pr create --draft --base <base> --title "<title>" --body-file <file>   # new:
 gh pr edit <n> --title "<title>" --body-file <file>                       # existing: update, never recreate
 ```
 
-- Draft by default: the review loop runs on the draft, and the author marks it ready, or the loop does when the Human asked or config.json `github.markReady` is `"auto"`. Open it ready only when asked.
+- Draft by default: the review loop runs on the draft, and marks it ready as config.json `github.markReady` says. Open it ready only when asked.
 - Before an edit, read the live body again (`gh pr view <n> --json body`) and keep what is still true.
 - After publishing, read it back and confirm each closing line is plain text on its own line.
+
+## Then the review loop
+
+After a pull request is opened or updated, config.json `github.reviewLoop` says what follows:
+
+- `"auto"`, the default: once this skill, and any skill that ran it, has ended, the session runs the `pr-review-loop`
+  skill on the pull request right away, without asking the Human.
+- `"ask"`: offer the loop, and run it when the Human asks.
+
+Inside a skill or agent that runs its own review loop, leave the loop to it, so the loop runs once.
 
 ## Stop instead of guessing
 

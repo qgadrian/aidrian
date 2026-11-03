@@ -39,6 +39,7 @@ A clone set up with the earlier relative `.githooks` reruns `make hooks`. Agents
 - No tracked file names a person.
   The owner's GitHub name appears only where a user installs: the README, the example's settings, and the manifests.
 - Every agent and skill description fits in 160 characters. Both hosts load all of them into every session.
+- No skill, agent source, host add-on, or brief template asks for `git commit --amend`, which the amend rule refuses.
 - Every `SKILL.md` fits in 7,500 bytes, because Codex cuts it at 8,000.
   A longer skill moves detail into `references/` files that `SKILL.md` names, with when to read each,
   and a skill with several modes keeps each mode in `modes/<mode>.md`, read once the mode is selected.

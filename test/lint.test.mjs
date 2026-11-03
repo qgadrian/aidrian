@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
-import { decodeScalar, frontmatter, lintAgents, lintPaths, lintSkills } from '../plugins/aidrian/lib/lint.mjs';
+import { amendAsks, decodeScalar, frontmatter, lintAgents, lintPaths, lintSkills } from '../plugins/aidrian/lib/lint.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CLI = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
@@ -42,6 +42,43 @@ const MOVE = 'move detail into references/, steps/, or modes/ files that SKILL.m
 test('the plugin`s own skills and agents pass', () => {
   assert.deepEqual(lintSkills([path.join(ROOT, 'plugins/aidrian/skills')], LIMITS).problems, []);
   assert.deepEqual(lintAgents([path.join(ROOT, 'plugins/aidrian/agents')], LIMITS).problems, []);
+});
+
+test('no skill, reference, brief template, agent source, or host add-on asks for an amend', (t) => {
+  const asks = (dir) => readdirSync(path.join(ROOT, dir), { recursive: true }).filter((file) => /\.(?:md|toml)$/u.test(file))
+    .flatMap((file) => amendAsks(path.join(dir, file), readFileSync(path.join(ROOT, dir, file), 'utf8')));
+  for (const dir of ['plugins/aidrian/skills', 'plugins/aidrian/agents-src', 'plugins/aidrian/agent-addons', 'plugins/aidrian/codex/agents']) {
+    assert.deepEqual(asks(dir), [], dir);
+  }
+  const dir = skills(t, { fix: 'description: Fix findings.' });
+  mkdirSync(path.join(dir, 'fix/references'));
+  writeFileSync(path.join(dir, 'fix/references/brief.md'), [
+    '# Builder brief',
+    'Fold the fix into the last commit with `git commit --amend --no-edit`.',
+    'Then amend the commit message to name the finding.',
+    'Never `git commit --amend`: make a new commit, which the squash merge folds in.',
+    'Make a new commit instead of amending the last one.',
+    'A comment that amends a criterion goes in the report.',
+    'If there are no conflicts, run git commit --amend --no-edit.',
+    'Amend the commit instead of creating a follow-up commit.',
+    'Do not push yet; run git commit --amend first.',
+    'The amend guard refuses it, and the git-amend rule names the new commit.',
+    'If no tests fail then amend the commit.',
+    'Do not push yet and amend the commit first.',
+    'Using `git commit --amend --no-edit` is blocked.',
+    'The hook refuses `git commit --amend`, so make a follow-up commit.',
+    'Never rewrite history, including git commit --amend.',
+    'The hook does not block git commit --amend; use it to fold in the fix.',
+    'Do not avoid amending the commit.',
+  ].join('\n'));
+  const problems = lintSkills([dir], LIMITS).problems.map((problem) => problem.replace(`${dir}/`, ''));
+  assert.deepEqual(problems.map((problem) => problem.split(': ')[0]), ['fix/references/brief.md:2', 'fix/references/brief.md:3', 'fix/references/brief.md:7', 'fix/references/brief.md:8', 'fix/references/brief.md:9', 'fix/references/brief.md:11', 'fix/references/brief.md:12', 'fix/references/brief.md:15', 'fix/references/brief.md:16', 'fix/references/brief.md:17'],
+    'every ask; a direct prohibition passes, and one the check cannot tie to the amend fails, to be written directly');
+  assert.match(problems[0], /write a prohibition directly, as "never `git commit --amend`"/u);
+  assert.match(problems[0], /ask for a new commit on the branch instead/u);
+  const agents = tempDir(t);
+  writeFileSync(path.join(agents, 'builder.md'), '---\nname: builder\ndescription: Builds.\n---\n\nAfter review, amend your commit and force-push.\n');
+  assert.deepEqual(lintAgents([agents], LIMITS).problems.map((problem) => problem.replace(`${agents}/`, '').split(': ')[0]), ['builder.md:6']);
 });
 
 test('a skill description over the limit fails naming the file and both numbers', (t) => {

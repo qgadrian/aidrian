@@ -7,9 +7,12 @@ import { commandLines, isLongOption, lexCommand, readGit } from '../shell-lex.mj
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_GIT_AMEND';
 
-const REASON =
+// The first sentence stays as it is: lessons and reports group this rule's denies by it.
+export const REASON =
   'Blocked: `git commit --amend` rewrites the branch tip, and another agent working on this branch may already have built on it. ' +
-  'Make a new commit instead. ' +
+  'Make a new commit instead: stage the change and run `git commit -m "<subject>"`, a follow-up commit on the same branch. ' +
+  'A squash merge folds it into the pull request\'s one commit, so nothing needs the amend; a brief that asked for one ' +
+  'means the follow-up commit. ' +
   `To override for an explicit, user-confirmed reason, set ${OVERRIDE}=1 in your own shell before starting the session ` +
   "(agents must never set it on the user's behalf).";
 

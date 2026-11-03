@@ -2,8 +2,10 @@
 // except the SKILL.md size, which is Codex's.
 //   skills  every <dir>/<name>/SKILL.md: a one-line YAML `description` within skills.descriptionChars, all skill
 //           names and descriptions within skills.listingBytes (both hosts list them in every session), and a file
-//           under SKILL_CUT_BYTES, with a warning above SKILL_WARN_BYTES
-//   agents  every <dir>/*.md: `name` equals the file name, a `description` like a skill's, and a known model and effort
+//           under SKILL_CUT_BYTES, with a warning above SKILL_WARN_BYTES. No Markdown file of the skill, its
+//           references/, steps/, modes/, and brief templates included, asks for an amend (amendAsks)
+//   agents  every <dir>/*.md: `name` equals the file name, a `description` like a skill's, a known model and effort,
+//           and no ask for an amend
 //   paths   tracked and untracked, non-ignored files hold no personal home folder such as /Users/<name>/; --staged reads what the index holds
 //   budget  the knowledge budgets that `aidrian check` also runs: the `always` docs and each tagged doc (knowledge.mjs)
 //   terms   tracked files hold no banned term of the terms file (terms.mjs): a `block` hit fails, a `warn` hit warns;
@@ -37,6 +39,20 @@ const BINARY = NOT_TEXT;
 // codex-rs/ext/skills/src/render.rs. A file at the cut has no room left, so it fails there; the warning leaves a margin.
 const SKILL_CUT_BYTES = 8000;
 const SKILL_WARN_BYTES = 7500;
+// A line that asks for `git commit --amend`, which the git-amend rule (rules/git-amend.mjs) refuses, so a skill or brief
+// that asks for one wastes the dispatch it starts. The line names an amend of a commit (AMEND_LINE), and one of its
+// mentions (AMEND) is not a direct prohibition. The check is strict on purpose: a negation counts only when it governs
+// the mention, right before it with at most a few filler words ("never `git commit --amend`", "a new commit instead of
+// amending") or right after it ("`git commit --amend` is blocked"). So "if no tests fail, amend the commit" still asks,
+// and so does a prohibition the check cannot tie to the amend, such as "never rewrite history, including an amend":
+// the problem says to write it directly. The rule's own name, such as "the amend guard" or `git-amend`, is no mention.
+const AMEND_LINE = /--amend\b|\bamend(?:ing|s)?\b[^.]*\b(?:commit|HEAD|tip)\b|\b(?:commit|HEAD)\b[^.]*\bamend(?:ing|s)?\b/iu;
+const AMEND = /--amend\b|(?<![-\w])amend(?:ing|s)?\b(?!\s+(?:guard|rule|hook)\b)/giu;
+// The words that may stand between a prohibition and the amend it governs.
+const FILLER = '(?:use|using|run|running|ask|asking|for|a|an|the|any|with|git|commit)';
+const PROHIBITS_BEFORE = new RegExp(`(?<![-\\w])(?:never|not|no|don't|without|instead of|rather than|avoid|avoiding|refuses?|denies|blocks?|forbids?)\\s+(?:${FILLER}\\s+){0,4}$`, 'iu');
+const NEGATED = /(?<![-\w])(?:not|no|never|don't|doesn't|won't)\s+(?:\w+\s+){0,1}$/iu;
+const PROHIBITS_AFTER = /^(?:\s+--?[\w-]+)*\s+(?:is|are|stays?)\s+(?:blocked|refused|denied|forbidden|not allowed)\b/iu;
 // Room for one staged file read through git: Node's default 1 MiB would leave a larger file unread.
 const STAGED_MAX_BYTES = 64 * 1024 * 1024;
 
@@ -97,6 +113,10 @@ export function lintSkills(dirs, { descriptionChars, listingBytes }) {
       }
       bytes += Buffer.byteLength(meta.name ?? name) + Buffer.byteLength(description);
     }
+    for (const name of readdirSync(dir, { recursive: true }).filter((each) => String(each).endsWith('.md')).sort()) {
+      const file = path.join(dir, String(name));
+      if (isFile(file)) problems.push(...amendAsks(file, readFileSync(file, 'utf8')));
+    }
   }
   if (bytes > listingBytes) {
     problems.push(`the ${count} skills list ${bytes} bytes of names and descriptions; the limit is skills.listingBytes, ${listingBytes}`);
@@ -118,6 +138,7 @@ export function lintAgents(dirs, { descriptionChars }) {
         problems.push(`${file}: model "${meta.model}" is not one of ${[...MODELS].join(', ')}, or a claude-* model id`);
       }
       if (meta.effort !== undefined && !EFFORTS.has(meta.effort)) problems.push(`${file}: effort "${meta.effort}" is not one of ${[...EFFORTS].join(', ')}`);
+      problems.push(...amendAsks(file, readFileSync(file, 'utf8')));
     }
   }
   return { problems, summary: `${count} agents` };
@@ -167,6 +188,22 @@ export function lintTerms(project, config, staged = false, only = null) {
     for (const hit of scanLines(numbered(text), file, rules, { text, code: false })) (hit.severity === 'block' ? problems : warnings).push(formatHit(file, hit));
   }
   return { problems, warnings, summary: `no banned terms in ${files} ${staged ? 'staged' : 'tracked'} files (${rules.length} rules)` };
+}
+
+// Whether the mention `mention` in `line`, backticks removed, is directly prohibited. A prohibition that is itself
+// negated, as in "does not block" or "do not avoid", permits the amend.
+function prohibited(line, mention) {
+  const before = PROHIBITS_BEFORE.exec(line.slice(0, mention.index));
+  if (before) return !NEGATED.test(line.slice(0, before.index));
+  const after = line.slice(mention.index + mention[0].length);
+  return PROHIBITS_AFTER.test(after);
+}
+
+// Each line of `text` that asks for an amend, as a problem naming `file` and the line.
+export function amendAsks(file, text) {
+  return String(text).split('\n').map((line) => line.replaceAll('`', '')).flatMap((line, index) => (AMEND_LINE.test(line) && [...line.matchAll(AMEND)].some((mention) => !prohibited(line, mention))
+    ? [`${file}:${index + 1}: asks for \`git commit --amend\`, which the git-amend hook refuses; ask for a new commit on the branch instead, which a squash merge folds in, or write a prohibition directly, as "never \`git commit --amend\`"`]
+    : []));
 }
 
 function workingText(root, file) {

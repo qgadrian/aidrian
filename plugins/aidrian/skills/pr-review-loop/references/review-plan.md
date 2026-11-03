@@ -84,6 +84,8 @@ A reviewer, Codex on this machine or the review bot, ran out of quota on this he
 - The choice holds for this head only, and only the Human makes it: the `review-fallback` rule refuses
   `--quota-fallback` without the Human's answer in the session. Under `autopilot`, nobody is there to ask: stop.
 - Every later result on that head carries `quota_fallback`: say in the step 7 summary which stage ran on a fallback.
+- The merge guard refuses a merge while the head is stopped on quota, and until the step after the fallback, or after
+  the Human's stage sign-off, returns `received`.
 
 ## At the cap: extra rounds
 
@@ -100,3 +102,13 @@ With `github.extraRounds` on, the cap first checks whether one more round is wor
   starts with "Approve", `--human deny` otherwise. The `review-extend` rule refuses an approval the Human did not give
   in this session. Under `autopilot`, nobody is there to ask: park it as a Decision for the Human.
 - A grant is one round: the step then returns `fix_required` for the same head. At the next cap the check runs again.
+
+## Owed reviews
+
+- The Human asks for a bot review: run `aidrian pr request <n>` at once, before any review the project requires first.
+  `aidrian pr await-review <n> --request` sends it; it stays owed until the bot's answer arrives.
+- Before dispatching the review the review gate needs outside `aidrian pr review`, run
+  `aidrian pr request <n> --kind review`; `aidrian pr attest` answers it.
+- Until then, and until `aidrian pr review` returns `received` or `none_needed` for the head, the merge guard hook
+  refuses every merge of the pull request. A later instruction, a merge command included, does not cancel a request
+  the Human made: ask the Human which one stands.

@@ -133,6 +133,9 @@ test('the PR rule reads a body file the same command writes first, and the hered
   assert.match(run(`gh pr create -t x --body-file - <<'EOF' < other.md\n${signed}EOF`) ?? '', /cannot read/, 'a competing input');
   assert.match(run(`gh pr create -t x --body-file - 3<<'EOF'\n${signed}EOF`) ?? '', /cannot read/, 'a heredoc on another descriptor');
   assert.match(run(`cat 2> b.md <<'EOF'\n${signed}EOF\ngh pr create -t x --body-file b.md`) ?? '', /cannot read/, 'cat writes stderr to the file');
+  for (const redirect of ['> b.md', '2>b.md', '{fd}>b.md', '{fd}>"$OUT"']) {
+    assert.match(run(`cat > b.md <<'EOF'\n${signed}EOF\ngh pr create -t x --body-file b.md ${redirect}`) ?? '', /cannot read/, `gh truncates its own body file: ${redirect}`);
+  }
   assert.match(run(`tee b.md 3<<'EOF'\n${signed}EOF\ngh pr create -t x --body-file b.md`) ?? '', /cannot read/, 'tee reads no heredoc');
   assert.equal(run(`cat 1> b.md 0<<'EOF'\n${signed}EOF\ngh pr create -t x --body-file b.md`), null, 'stdin and stdout by number');
   assert.match(run(`F=x.md; cat > $F <<'EOF'\n${signed}EOF\nsh -c 'F=y.md'; gh pr create -t x --body-file "$F"`) ?? '', /cannot read/, 'a nested assignment');

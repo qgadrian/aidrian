@@ -69,8 +69,8 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
     const call = pending.get(line).shift();
     if (call) {
       call.stdin = stdinBody(entry);
-      call.namedFd = namedFd(entry.segment);
       call.bodyFile = writes.token(call.bodyFile, entry);
+      call.bodyOverwritten = writes.overwrites(entry, call.bodyFile);
       const reason = judge(call, line, { cwd: folder ?? cwd, folderKnown: folder !== null, env, written: writes.files, listOpenPrs: folder === null || folder === cwd ? listOpenPrs : openPrBodies(folder) });
       if (reason) return reason;
     }
@@ -93,6 +93,8 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
 // - any other command that writes to a file (a redirect), or that names it and is not a known reader (such as `sed -i`
 //   or a script), as null: the file then holds what that command made of it, which the rule never guesses at. One that
 //   writes to, or names, a word this rule cannot resolve could be any file, so every file the line wrote turns null.
+// `overwrites(entry, file)` says whether the command redirects any output, on any descriptor, onto `file`, or onto a
+// target it cannot resolve (`"$OUT"`): bash truncates it before the command reads it.
 // The pull request body rule and the attribution rule both read a body file through it.
 export function lineWrites(top) {
   const files = new Map();
@@ -109,12 +111,18 @@ export function lineWrites(top) {
     if (known && !known.dynamic) vars.set(name, known.text);
     else vars.delete(name);
   };
+  const fileOf = (each, entry) => {
+    const known = token(each, entry);
+    return known && !known.dynamic && known.text && known.text !== '-' ? resolveIn(entry.folder, known.text) : null;
+  };
+  const outputs = (segment) => segment.flatMap((each, i) => (each.operator && each.operator !== '<' && !segment[i + 1]?.fdDup ? [[each, segment[i + 1]]] : []));
+  const overwrites = (entry, file) => {
+    const body = file ? fileOf(file, entry) : null;
+    return body !== null && outputs(entry.segment).some(([, each]) => [null, body].includes(fileOf(each, entry)));
+  };
   const note = (entry) => {
     const { segment, invocation, folder, heredocs = [] } = entry;
-    const at = (each) => {
-      const known = token(each, entry);
-      return known && !known.dynamic && known.text && known.text !== '-' ? resolveIn(folder, known.text) : null;
-    };
+    const at = (each) => fileOf(each, entry);
     const { program, args, environment = [] } = invocation;
     const set = nested(entry) ? (name) => vars.delete(name) : assign;
     if (program === '') {
@@ -129,7 +137,7 @@ export function lineWrites(top) {
       return;
     }
     // The output redirections and the file each writes; `2>&1` and `>&-` name a descriptor, not a file, and write none.
-    const redirects = segment.flatMap((each, i) => (each.operator && each.operator !== '<' && !segment[i + 1]?.fdDup ? [[each, segment[i + 1]]] : []));
+    const redirects = outputs(segment);
     let target = null;
     let text = null;
     // Only standard output writes the file: `cat 2> b.md` leaves it empty.
@@ -152,7 +160,6 @@ export function lineWrites(top) {
     const unknown = () => {
       for (const known of files.keys()) files.set(known, null);
     };
-    if (namedFd(segment)) unknown();
     // A command that is neither a known reader nor one of the writes above may change any file: a script, `sed -i`, or
     // a program fed its own code on stdin.
     if (target === null && !isReader(invocation)) {
@@ -170,7 +177,7 @@ export function lineWrites(top) {
     }
     if (target !== null) files.set(target, text);
   };
-  return { files, token, note };
+  return { files, token, note, overwrites };
 }
 
 // Programs that change no existing file, so running one before gh leaves a body file the line wrote as it was. A
@@ -192,10 +199,6 @@ function isReader({ program, args }) {
 // several, one bash expands, or one fed to another descriptor (`3<<EOF`), which the command does not read as its input.
 const onlyHeredoc = (heredocs) => (heredocs.length === 1 && [undefined, '0'].includes(heredocs[0].fd) &&
   (!heredocs[0].expands || !/[$`\\]/u.test(heredocs[0].body)) ? heredocs[0].body : null);
-
-// Whether a segment has a redirection naming a `{x}` descriptor. The lexer reads a quoted `'{x}'>` as one too, where bash
-// passes the word as an argument, so the command's arguments are not known.
-export const namedFd = (segment) => segment.some((each) => each.fd?.startsWith('{'));
 
 // The body of the one heredoc fed to a command's input, for a walkCommands entry, or null. An input redirect beside it,
 // `< file` or `<<< word`, may replace it, so the input is one this rule cannot know.
@@ -335,7 +338,7 @@ function judge(call, command, { cwd, folderKnown = true, env, written = new Map(
       `${steps()} The body needs the sections config.json \`github.requiredSections\` asks for.`);
   }
   const body = readBody(call, folderKnown ? cwd : null, written);
-  if (body === null && sectioned && (call.body || call.bodyFile || call.namedFd)) {
+  if (body === null && sectioned && (call.body || call.bodyFile)) {
     return deny('the body is one this rule cannot read: a variable, a command substitution, stdin without a heredoc, or a file that ' +
       `does not exist yet. ${steps()} A file that another command on this line edits, such as \`sed -i\` or a script, counts as ` +
       'not there yet: run gh as its own command after it. Never pass the path through `$(…)` or a variable, or the sections ' +
@@ -532,7 +535,7 @@ function openPrBodies(cwd) {
 // file reads. A dynamic --body reads the heredoc readPrCalls gave the call, `--body-file -` the heredoc check gave it as
 // `stdin`, and a file the line wrote earlier the text `written` (lineWrites) holds for it.
 export function readBody(call, cwd, written = new Map()) {
-  if (call.namedFd) return null;
+  if (call.bodyOverwritten) return null;
   if (call.body) return call.body.dynamic ? call.heredoc ?? null : call.body.text;
   if (!call.bodyFile || call.bodyFile.dynamic) return null;
   if (call.bodyFile.text === '-') return call.stdin ?? null;

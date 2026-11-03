@@ -94,18 +94,23 @@ function apiRequests(endpoint, flags, read, ghRepo) {
   }
   const asking = bodies.filter(asksForReview);
   if (!asking.length) return [];
-  // gh fills `{owner}` and `{repo}` from GH_REPO, or from this repository without it, and leaves literal parts alone.
-  const [owner, name] = (ghRepo ?? '').split('/');
-  const repo = !match[1].includes('{') ? match[1]
-    : ghRepo ? match[1].replaceAll('{owner}', owner).replaceAll('{repo}', name) : null;
-  return [{ pr: Number(match[2]), repo, markers: asking.flatMap(markersIn) }];
+  return [{ pr: Number(match[2]), repo: fillRepo(match[1], ghRepo), markers: asking.flatMap(markersIn) }];
+}
+
+// The `owner/name` part of a `gh api` path as gh sends it: gh fills `{owner}` and `{repo}` one part at a time from
+// GH_REPO (`ghRepo`), or from this repository without it (null, this repository), and leaves literal parts alone.
+export function fillRepo(part, ghRepo) {
+  if (!part.includes('{')) return part;
+  if (!ghRepo) return null;
+  const [owner, name] = ghRepo.split('/');
+  return part.replaceAll('{owner}', owner).replaceAll('{repo}', name);
 }
 
 // The command words of a gh command line, read as gh finds its command before it knows the command's options: an
 // option word without `=`, other than a switch every command has, takes the next word as its value, wherever it is.
 // So `gh pr -b x comment 5` is `pr comment`.
 const SWITCHES = new Set(['-h', '--help', '--version']);
-function commandPath(args) {
+export function commandPath(args) {
   const words = [];
   for (let i = 0; i < args.length && words.length < 2; i += 1) {
     const { text } = args[i];
@@ -118,7 +123,7 @@ function commandPath(args) {
 
 // The repository GH_REPO names for this invocation, after its assignments and env changes (`GH_REPO=x gh`,
 // `env -u GH_REPO gh`, `env -i gh`), or null for this repository. A value the rule cannot read is this repository.
-function invocationRepo(environment, env) {
+export function invocationRepo(environment, env) {
   let repo = env.GH_REPO ?? null;
   for (const change of environment) {
     if (change.clear) repo = change.keep?.includes('GH_REPO') ? repo : null;
@@ -130,7 +135,7 @@ function invocationRepo(environment, env) {
 
 // The positional words and the options of a gh command line, as gh reads them with `values` taking a value: `--x=v`,
 // `--x v`, `-xv`, `-x=v`, `-x v`, and a cluster of switches ending in one that takes a value, `-cb v`.
-function readWords(args, values) {
+export function readWords(args, values) {
   const words = [];
   const flags = [];
   for (let i = 0; i < args.length; i += 1) {

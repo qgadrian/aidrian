@@ -220,6 +220,8 @@ in a Claude Code prompt, or another terminal). The `review-signoff` rule ([hooks
 agent that runs it. It is still an audit entry, not proof: an agent holds the same GitHub token. Every sign-off and
 override is listed in the review summary on the pull request, or only in the local record with `review.record:
 "local"`. For proof, protect the branch with a required review from a second account.
+Like `aidrian pr attest`, it files the sign-off under the pull request's repository: `--repo OWNER/NAME`, else the one
+`gh pr view` names, else origin.
 
 A sign-off holds on a later head when the signed head is its ancestor and the change since selects nothing of the
 flow, through the same selection the plan uses: its globs, `added` patterns, `content`, the plan command, its tests,
@@ -400,6 +402,10 @@ Neither fallback is an independent review. The critic runs on the session's own 
 summary comment, or the local record under `review.record: "local"`, says in a line per stop which stage ran on a
 fallback, or on the Human's review, because the reviewer was out of quota.
 
+For the [merge guard](hooks.md#merge-guard), a quota stop is an open review: the head's outcome is `blocked_quota`, and
+a merge is refused. A fallback counts as review done only once the step after it returns `received` on that head: the
+critic's pass recorded, or the Human's stage sign-off read by the next `aidrian pr review`, as a flow's sign-off is.
+
 ### Extra rounds
 
 At the cap, more review is sometimes worth it: a real finding is left, and the rounds are shrinking. Often it is not:
@@ -531,6 +537,29 @@ keeps the compressed marker and appends a plain one, so a comment it touched can
   "local"`. Its `aidrian pr review` rewrites the comment with that record alone, in the plain marker; its
   `aidrian pr extend` and `aidrian pr await-review` keep the compressed marker and append a plain one, and a reader
   here then takes the newer of the two.
+
+- **Outcome.** Every return of the step writes its status to this machine's record as `outcome`: `{ status, head, at,
+  reason }`. The early returns, `none_needed`, `unsatisfied`, and `too_large`, write it to the state folder only and
+  post nothing; a `held` return writes nothing. Before any reviewer, the plan command, or the bot runs, the step
+  writes `running` for its head, so a merge during the first step is refused too. A step that throws after that, such
+  as a plan command that fails, writes `error`, which is not finished. The [merge guard](hooks.md#merge-guard) reads it.
+- **Owed reviews.** `pending` lists the reviews asked for, each `{ id, kind, head, repo, at, by, sent, answered }`;
+  one is owed until it is `answered`, and only an answer for its own `repo` counts. `aidrian pr request <PR>` records a
+  bot review the Human asked for, the moment they ask, before any review the project requires first. It reads the head
+  and the pull request's repository from gh, whose default is the upstream in a fork checkout, unless `--head` and
+  `--repo OWNER/NAME` name them; a gate review (`--kind review`) is recorded the same way. `aidrian pr await-review` marks it `sent` when it posts the request, and
+  `answered` when the bot's answer arrives (`received`) or is already there (`already_present`), as
+  `aidrian pr review --with-bot` does whenever its bot stage holds an answer, a reused one included. A request sent
+  is still owed. An answer counts for a request made for its own head, or for an earlier head it descends from
+  (`git merge-base --is-ancestor`); time plays no part, so a late answer for an older head never answers a newer head's
+  request. When git cannot tell, as for a commit this checkout lacks, only the exact head counts. An `await-review` for
+  another repository, through `--repo` or a URL, leaves this repository's record alone. A gate review is
+  answered the same way: by an attest of its pull request's repository, or a step on that repository that finishes.
+  `aidrian pr request <PR> --kind review` records a review-gate review as dispatched; `aidrian pr attest <PR>`, or a
+  step that returns `received` or `none_needed`, answers it. Without `--head <sha>`, `request` reads the head with gh.
+  An entry is only ever marked, never removed, and the review step merges in the entries and marks on disk before it
+  writes, so a request recorded while a reviewer ran survives the step's write. Both live in the state folder: another
+  machine does not see them.
 
 With `review.record: "local"` in config.json, the record is written to the state folder only: nothing is posted or
 edited on the pull request, the visual captures comment included, and the record is read back from the state folder alone. Another machine then cannot

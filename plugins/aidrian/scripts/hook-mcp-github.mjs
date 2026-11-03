@@ -1,13 +1,16 @@
-// PreToolUse hook for the GitHub MCP tools that post a comment: the review gate (lib/review-gate.mjs), as the Bash rule
+// PreToolUse hook for the GitHub MCP tools that post a comment or merge: the review gate (lib/review-gate.mjs), as the Bash rule
 // lib/rules/github/review-request.mjs holds it for gh. Off unless config.json `github.reviewGate.enabled` is true.
 // It also holds the review-round rule (lib/rules/github/review-rounds.mjs): with a review bot set, a request goes
 // through `aidrian pr`, which counts rounds first, never through a comment tool.
-// Anything this hook cannot read lets the call run.
+// It also holds the merge guard (lib/rules/github/merge-review.mjs) for `mcp__github__merge_pull_request`, which refuses
+// a merge whose head it cannot read rather than let it run unchecked.
+// Anything else this hook cannot read lets the call run.
 
 import { loadConfig } from '../lib/config.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
 import { findProject } from '../lib/project.mjs';
 import { asksForReview, judgeRequests, markersIn } from '../lib/review-gate.mjs';
+import { checkMcp } from '../lib/rules/github/merge-review.mjs';
 import { botNamed, REQUEST_REASON } from '../lib/rules/github/review-rounds.mjs';
 
 // Each tool, and the field that names the pull request.
@@ -18,6 +21,11 @@ const PR_FIELD = {
 };
 
 await runHook(async (input) => {
+  if (input.tool_name === 'mcp__github__merge_pull_request') {
+    const reason = checkMcp(input.tool_input ?? {}, { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), input });
+    if (reason) await block(input, 'merge-review', reason);
+    return;
+  }
   const field = PR_FIELD[input.tool_name];
   const toolInput = input.tool_input ?? {};
   if (!field || !asksForReview(toolInput.body)) return;

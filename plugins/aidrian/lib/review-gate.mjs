@@ -13,6 +13,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { ghJson } from './gh.mjs';
 import { runGit } from './git.mjs';
 import { unfencedLines } from './markdown-sections.mjs';
 import { normalizeRemote, stateDir } from './project.mjs';
@@ -118,10 +119,28 @@ export function denyReason(pr, checklist) {
   ].join(' ');
 }
 
-// `aidrian pr attest <PR> --head <sha> --reviewer <who> --findings <n> --fixed <n> [--note <text>]`, or `--check`.
+// The repository of pull request `pr`, as `owner/name`: `--repo` (`given`), else the one `gh pr view` names, gh's
+// default repository, which in a fork checkout is the upstream, else origin, so it works offline. `viewPr(pr)` returns
+// { url }; it is the test seam of the gh call.
+export function prRepo(project, pr, given, viewPr = (n) => ghJson(['pr', 'view', String(n), '--json', 'url'], { cwd: project.root })) {
+  if (given !== undefined && given !== null) {
+    const name = repoName(given);
+    if (!name) throw new Error(`--repo ${given} is not OWNER/NAME`);
+    return name;
+  }
+  let url = null;
+  try {
+    url = viewPr(pr)?.url ?? null;
+  } catch {}
+  const name = repoName(url) ?? originRepo(project);
+  if (!name) throw new Error("cannot read this repository's origin; the marker must name it: pass --repo OWNER/NAME");
+  return name;
+}
+
+// `aidrian pr attest <PR> --head <sha> --reviewer <who> --findings <n> --fixed <n> [--note <text>] [--repo OWNER/NAME]`, or `--check`.
 // With --pass, `--findings-file <file>` replaces the counts with the findings one by one (lib/review/findings.mjs).
 // Exit 0 recorded, 3 not recorded (--check), 1 a usage error.
-export async function runAttest(args, project, config = null) {
+export async function runAttest(args, project, config = null, { viewPr } = {}) {
   const [ref, ...rest] = args;
   const pr = prNumber(ref);
   if (pr === null) throw new Error('attest needs a pull request number');
@@ -129,7 +148,7 @@ export async function runAttest(args, project, config = null) {
   for (let i = 0; i < rest.length; i += 1) {
     const flag = rest[i];
     if (flag === '--check') flags.check = true;
-    else if (['--head', '--reviewer', '--findings', '--fixed', '--note', '--pass', '--accepted', '--verdicts', '--findings-file'].includes(flag)) {
+    else if (['--head', '--reviewer', '--findings', '--fixed', '--note', '--pass', '--accepted', '--verdicts', '--findings-file', '--repo'].includes(flag)) {
       const value = rest[++i];
       if (value === undefined || value === '' || value.startsWith('--')) throw new Error(`${flag} needs a value`);
       flags[flag.slice(2)] = value;
@@ -157,8 +176,7 @@ export async function runAttest(args, project, config = null) {
   if (!SHA.test(flags.head) || runGit(['cat-file', '-e', `${flags.head}^{commit}`], project.root).status !== 0) {
     throw new Error(`--head ${flags.head} is not a commit in this repository`);
   }
-  const repo = originRepo(project);
-  if (repo === null) throw new Error("cannot read this repository's origin; the marker must name it");
+  const repo = prRepo(project, pr, flags.repo, viewPr);
   if (flags.pass !== undefined) {
     const { recordPass, remoteState } = await import('./review/run.mjs');
     const verdictsText = flags.verdicts === undefined ? null : readFileSync(flags.verdicts, 'utf8');
@@ -170,6 +188,8 @@ export async function runAttest(args, project, config = null) {
   }
   const record = { pr, repo, head: flags.head, reviewer: flags.reviewer, findings, fixed, note: flags.note ?? null };
   writeRecord(project, record);
+  // The gate review recorded as dispatched (`aidrian pr request --kind review`) is no longer owed.
+  (await import('./review/pending.mjs')).answerOwed(project, pr, 'review', { head: flags.head, by: 'attest', repo });
   console.log(`recorded the review of pull request #${pr} at ${flags.head.slice(0, 7)}`);
   console.log('`aidrian pr await-review --request` adds this marker by itself; paste it only into a request posted by hand:');
   console.log(markerFor(record));
@@ -188,21 +208,21 @@ export function attestation(project, pr, repo = null, origin = originRepo(projec
 // entry, not proof: an agent holds the same shell. The review summary on the pull request shows every sign-off.
 // `--stage <name>` in place of `--flow` signs off a review stage the Human chose to review because its reviewer ran out
 // of quota on that head (lib/review/quota.mjs).
-export async function runSignoff(args, project, config = null) {
+export async function runSignoff(args, project, config = null, { viewPr } = {}) {
   const [ref, ...rest] = args;
   const pr = prNumber(ref);
   if (pr === null) throw new Error('signoff needs a pull request number');
   const flags = {};
   for (let i = 0; i < rest.length; i += 1) {
     const flag = rest[i];
-    if (!['--flow', '--stage', '--head'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
+    if (!['--flow', '--stage', '--head', '--repo'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
     const value = rest[++i];
     if (value === undefined || value.startsWith('--')) throw new Error(`${flag} needs a value`);
     flags[flag.slice(2)] = value;
   }
   if (!flags.head || Boolean(flags.flow) === Boolean(flags.stage)) throw new Error('--head and one of --flow or --stage are required');
   if (!SHA.test(flags.head) || runGit(['cat-file', '-e', `${flags.head}^{commit}`], project.root).status !== 0) throw new Error(`--head ${flags.head} is not a commit in this repository`);
-  const repo = originRepo(project);
+  const repo = prRepo(project, pr, flags.repo, viewPr);
   const by = runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown';
   const { recordSignoff, recordStageSignoff, remoteState } = await import('./review/run.mjs');
   if (flags.stage) {

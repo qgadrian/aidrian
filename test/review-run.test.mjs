@@ -13,6 +13,7 @@ import { parseChoice } from '../plugins/aidrian/lib/review/quota.mjs';
 import { EXIT, recordPass, recordSignoff, recordStageSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
+import { judgeMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 
 // A repository with `main` (carrying `baseConfig`) and a `feat` branch made by `change(dir)`. Returns the helpers a
 // review step needs, with GitHub faked in memory.
@@ -1284,4 +1285,44 @@ test('invariantsOf: a repeated heading is its own invariant, numbered as GitHub 
   assert.deepEqual(repeated, [{ heading: 'Keep', ids: ['keep', 'keep-1'] }, { heading: 'Examples', ids: ['examples', 'examples-1'] }]);
   const state = flowState(invariants, [{ invariant: 'keep', verdict: 'holds', evidence: 'ok' }, { invariant: 'examples', verdict: 'holds', evidence: 'ok' }, { invariant: 'examples-1', verdict: 'holds', evidence: 'ok' }], () => null);
   assert.deepEqual(state, { signed: false, open: [], unverified: ['keep-1'] });
+});
+
+// The merge guard (lib/rules/github/merge-review.mjs) and the quota fallback: a stop is an open review, a fallback is a
+// finished one once the step that follows it says `received`, and the Human's stage sign-off counts the same way.
+test('the merge guard refuses a head stopped on quota, and a fallback`s review counts as done once the step finishes', async (t) => {
+  const guard = (r, head) => judgeMerge({ project: projectAt(r.dir), pr: 7, head, viewPr: () => null, answers: [] });
+  const viaCritic = repo(t, { change: (write) => write('src/app.js', 'export const app = 12;\n') });
+  const stopped = await viaCritic.step({ exec: outOfQuota });
+  assert.match(guard(viaCritic, stopped.head) ?? '', /the review of head [0-9a-f]{7} is `blocked_quota`/u, 'a quota stop is an open review');
+  const dispatched = await viaCritic.step({ exec: outOfQuota }, { quotaFallback: 'agent:critic' });
+  assert.match(guard(viaCritic, dispatched.head) ?? '', /is `dispatch`/u, 'the fallback pass is still out');
+  recordPass(viaCritic.project, { pr: 7, repo: 'o/r', pass: dispatched.dispatch[0].pass, head: dispatched.head, reviewer: 'critic', findings: 0, fixed: 0 });
+  assert.equal((await viaCritic.step({ exec: outOfQuota })).status, 'received');
+  assert.equal(guard(viaCritic, dispatched.head), null, 'the critic`s finished pass is review done for the merge guard');
+
+  const viaHuman = repo(t, { change: (write) => write('src/app.js', 'export const app = 13;\n') });
+  const first = await viaHuman.step({ exec: outOfQuota });
+  assert.equal((await viaHuman.step({ exec: outOfQuota }, { quotaFallback: 'human' })).status, 'human_required');
+  assert.match(guard(viaHuman, first.head) ?? '', /is `human_required`/u);
+  recordStageSignoff(viaHuman.project, { pr: 7, repo: 'o/r', stage: 'independent', head: first.head, by: 'Tester' });
+  assert.match(guard(viaHuman, first.head) ?? '', /is `human_required`/u, 'the sign-off counts once the review step reads it, as a flow sign-off does');
+  assert.equal((await viaHuman.step({ exec: outOfQuota })).status, 'received');
+  assert.equal(guard(viaHuman, first.head), null, 'the Human`s stage sign-off is review done for the merge guard');
+
+  viaHuman.write('src/app.js', 'export const app = 14;\n');
+  const next = viaHuman.commit();
+  assert.equal((await viaHuman.step({ exec: outOfQuota })).status, 'blocked_quota');
+  assert.match(guard(viaHuman, next) ?? '', /is `blocked_quota`/u, 'the choice was for the earlier head: the new head is stopped again');
+});
+
+test('a --quota-fallback refused for an independent-model plan, or given with no stop, leaves the head unfinished for the merge guard', async (t) => {
+  const flows = { pay: { files: ['src/pay/**'], require: ['independent-model'] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => write('src/pay/a.js', '1\n') });
+  const stopped = await r.step({ exec: outOfQuota });
+  assert.equal((await r.step({ exec: outOfQuota }, { quotaFallback: 'agent:critic' })).status, 'unsatisfied');
+  assert.match(judgeMerge({ project: projectAt(r.dir), pr: 7, head: stopped.head, viewPr: () => null, answers: [] }) ?? '', /is `unsatisfied`/u);
+  r.write('src/pay/a.js', '2\n');
+  const next = r.commit();
+  await assert.rejects(r.step({ exec: outOfQuota }, { quotaFallback: 'human' }), /no quota stop is on record/u);
+  assert.match(judgeMerge({ project: projectAt(r.dir), pr: 7, head: next, viewPr: () => null, answers: [] }) ?? '', /is `error`/u, 'a step that throws leaves `error` on the head');
 });

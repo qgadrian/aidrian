@@ -41,7 +41,7 @@ import { contentFlows } from './content.mjs';
 import { buildPlan, classify, detectFlows, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, pathPattern, validatePlan } from './plan.mjs';
 import { BUILT_IN, flowBaseBrief, resolveEngine, reviewerMap, runExec, satisfies, VERDICT_MEANING } from './reviewers.mjs';
 import { atCap, buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
-import { heldMessage, isSummary, prunePasses, readRecord, sameCommit, summaryBody, writeLocalState } from './state.mjs';
+import { answerPending, emptyState, heldMessage, isSummary, mergePending, noteOutcome, prunePasses, readLocalState, readRecord, sameCommit, summaryBody, writeLocalState } from './state.mjs';
 import * as quota from './quota.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, ghImage, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput, visualMatrix, visualRoutes } from './visual.mjs';
 
@@ -197,7 +197,22 @@ function trackedAt(root, commit) {
 const touches = (changes, files) => (files === null ? changes.length > 0 : changes.some((change) => files.includes(change.file)));
 
 // The whole step. `deps` replaces gh, the engine check, the reviewers, and the bot wait in tests.
-export async function reviewStep(opts, { project, config, env = process.env, gh = defaultGh, exec = runExec, awaitBot = null, codex, captureSpawn } = {}) {
+// A step that throws after it marked its head `running`, such as a plan command that fails or a bot wait that errs,
+// leaves `error` as the head's outcome, so the merge guard keeps refusing the head.
+export async function reviewStep(opts, deps = {}) {
+  const run = { pr: null, head: null, repo: null };
+  try {
+    return await stepOnce(opts, deps, run);
+  } catch (error) {
+    if (run.pr !== null) {
+      const state = readLocalState(deps.project, run.pr) ?? emptyState(run.pr, run.repo);
+      writeLocalState(deps.project, noteOutcome(state, { status: 'error', head: run.head, reason: error.message }));
+    }
+    throw error;
+  }
+}
+
+async function stepOnce(opts, { project, config, env = process.env, gh = defaultGh, exec = runExec, awaitBot = null, codex, captureSpawn } = {}, run) {
   const root = project.root;
   const cleanEnv = isolate({ ...env });
   const info = gh.pr(opts.pr);
@@ -248,9 +263,15 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   const record = readRecord(project, n, comments, repo);
   if (record.held !== undefined) return { status: 'incomplete', pr: n, repo, head, reason: heldMessage(n, record.held), held: record.held, retry_recommended: false };
   let state = record.state;
+  // The step is open on this head before any reviewer, the plan command, or the bot runs: a merge meanwhile is refused.
+  // The mark is this machine's alone and posts nothing, so it is no revision of its own: the step's next write takes
+  // the one it raised. Two steps on one pull request share this one mark; the last write wins.
+  settle({ status: 'running', head });
+  state.revision -= 1;
+  Object.assign(run, { pr: n, head, repo });
 
   const engine = resolveEngine(effective, codex ? { codex } : {});
-  if (engine.problem) return { status: 'unsatisfied', pr: n, repo, head, reason: engine.problem };
+  if (engine.problem) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: engine.problem });
   // Flows whose files the globs miss: a changed file whose whole head content, or whose callers, hand it the flow's
   // privileged value (review.flows.<id>.content). A git failure stops the review rather than plan less.
   const traced = contentFlows({ root, head, changes, addedLines, flows: review.flows });
@@ -282,7 +303,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     const stop = (state.quotaStops ?? []).filter((each) => each.head === head).at(-1);
     if (!stop) throw new Error(`no quota stop is on record for head ${head.slice(0, 7)} of #${n}: --quota-fallback answers a blocked_quota on the current head only`);
     const refused = quota.refusal(plan, stop, plan.stages.flatMap((stage) => stage.passes), map);
-    if (refused) return { status: 'unsatisfied', pr: n, repo, head, reason: refused, plan };
+    if (refused) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: refused, plan });
     if (stop.choice !== opts.quotaFallback) Object.assign(stop, { choice: opts.quotaFallback, chosen_at: new Date().toISOString(), signoff: null });
   }
   // A pass's result counts for this head when it is for this head, or for an earlier one the change since does not
@@ -304,7 +325,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   };
   const fallbacks = quota.applyChoices(plan, state.quotaStops, head, resultFor);
   const { lines } = classify(changes, review);
-  if (plan.depth !== 'none' && lines > MAX_LINES) return { status: 'too_large', pr: n, repo, head, lines, reason: `${lines} changed lines is past ${MAX_LINES}: split the pull request` };
+  if (plan.depth !== 'none' && lines > MAX_LINES) return settle({ status: 'too_large', pr: n, repo, head, lines, reason: `${lines} changed lines is past ${MAX_LINES}: split the pull request` });
 
   // The flows' invariants: a flow the base defines reads its doc from the base, so the change under review cannot
   // rewrite it; a flow the change adds reads it from the head, the only place it exists.
@@ -356,7 +377,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     try {
       visualEntries = visualMatrix(visual, visualRoutesHere);
     } catch (error) {
-      return { status: 'too_large', pr: n, repo, head, reason: error.message };
+      return settle({ status: 'too_large', pr: n, repo, head, reason: error.message });
     }
   }
   let manifest = visual ? readManifest(project, n, head) : null;
@@ -365,14 +386,14 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
   const passes = plan.stages.flatMap((stage) => stage.passes);
   // A pass nobody can run would never finish and never block: refuse the plan instead.
   const orphan = passes.find((pass) => pass.kind !== 'agent' && !map[pass.reviewer]);
-  if (orphan) return { status: 'unsatisfied', pr: n, repo, head, reason: `pass ${orphan.id} names reviewer "${orphan.reviewer}", which is not an agent pass or a reviewer of review.reviewers`, plan };
+  if (orphan) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `pass ${orphan.id} names reviewer "${orphan.reviewer}", which is not an agent pass or a reviewer of review.reviewers`, plan });
   // Every pass after the local stage answers for every flow: a violated from any reviewer blocks the flow, and a flow
   // only the independent model reviews is signed by it. The review bot gives no verdicts, so a flow needs another
   // pass that can answer for it.
   for (const stage of plan.stages) if (stage.name !== 'local') for (const pass of stage.passes) pass.flows = plan.flows.map((flow) => flow.id);
   for (const word of plan.require) {
-    if (!satisfies(word, passes, map) && word === 'independent-model' && fallbacks.length) return { status: 'unsatisfied', pr: n, repo, head, reason: quota.refusal(plan, fallbacks[0], [], map), plan };
-    if (!satisfies(word, passes, map)) return { status: 'unsatisfied', pr: n, repo, head, reason: `the plan requires ${word}, and the engine here is ${engine.reviewer.name} (${engine.reason})`, plan };
+    if (!satisfies(word, passes, map) && word === 'independent-model' && fallbacks.length) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: quota.refusal(plan, fallbacks[0], [], map), plan });
+    if (!satisfies(word, passes, map)) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `the plan requires ${word}, and the engine here is ${engine.reviewer.name} (${engine.reason})`, plan });
   }
   // A flow's deleted test stops the review whatever else the change does, even when nothing else needs a review.
   const removedTests = [];
@@ -382,8 +403,8 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     if (gone.length) removedTests.push({ flow: id, deleted: gone, accept: `aidrian pr signoff ${n} --flow ${id} --head ${head}` });
   }
   const answerless = plan.flows.find((flow) => !passes.some((pass) => (pass.flows ?? []).includes(flow.id) && map[pass.reviewer]?.kind !== 'remote'));
-  if (answerless) return { status: 'unsatisfied', pr: n, repo, head, reason: `flow ${answerless.id} needs a reviewer that answers its invariants, and the review bot does not: run codex-local, or require an agent for the flow`, plan };
-  if (!passes.length && !removedTests.length && !fallbacks.length) return { status: 'none_needed', pr: n, repo, head, base, depth: plan.depth, engine: plan.engine, plan: { depth: plan.depth, reasons: plan.reasons, flows: [], stages: [] } };
+  if (answerless) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `flow ${answerless.id} needs a reviewer that answers its invariants, and the review bot does not: run codex-local, or require an agent for the flow`, plan });
+  if (!passes.length && !removedTests.length && !fallbacks.length) return settle({ status: 'none_needed', pr: n, repo, head, base, depth: plan.depth, engine: plan.engine, plan: { depth: plan.depth, reasons: plan.reasons, flows: [], stages: [] } });
 
   // Each extra round the base branch's policy grants (lib/review/extension.mjs) raises the cap by one. A decision still
   // open at the cap (a check, or a grant whose round has not opened) is read again when the head has moved since.
@@ -714,7 +735,28 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     return finish('blocked_quota', { reason, pass: pass.id, ...extra, ...(refused ? { fallback_refused: refused } : quota.question({ pr: n, stop, withBot: opts.withBot })) });
   }
 
+  // The one writer of every return after the record is read, but `held`, which must write nothing: the step's outcome
+  // goes into this machine's record, for the merge guard (lib/rules/github/merge-review.mjs). Only `finish` also
+  // publishes the record to the pull request.
+  function settle(result) {
+    // A gate review recorded while the step ran is on disk only: merge it in before a finished outcome answers it.
+    state.pending = mergePending(readLocalState(project, n)?.pending, state.pending);
+    noteOutcome(state, result, (a, b) => isAncestor(root, a, b), repo);
+    writeLocalState(project, state);
+    return result;
+  }
+
+  // Every bot answer that counts for this head, fresh or reused, answers the reviews the Human asked for
+  // (`aidrian pr request`), recorded while the step ran included. A reused answer counts with its own head.
+  function answerRequests() {
+    const answers = passes.filter((pass) => map[pass.reviewer]?.kind === 'remote').map(resultFor).filter((result) => result?.bot);
+    if (!answers.length) return;
+    state.pending = mergePending(readLocalState(project, n)?.pending, state.pending);
+    for (const result of answers) answerPending(state, 'request', { head: result.head, by: result.reviewer, repo, isAncestor: (a, b) => isAncestor(root, a, b) });
+  }
+
   function finish(status, extra) {
+    answerRequests();
     noteFindings(extra);
     const result = { status, pr: n, repo, head, base, depth: plan.depth, round: state.rounds.length, max_rounds: maxRounds, engine: plan.engine, ...extra };
     // Every result on a head whose review a fallback replaced says so.
@@ -722,7 +764,7 @@ export async function reviewStep(opts, { project, config, env = process.env, gh 
     // Slice results of packings this head no longer makes count for nothing again: they leave the record. A pass of
     // this plan always stays.
     prunePasses(state, plan.slices, new Set(plan.stages.flatMap((stage) => stage.passes.map((pass) => pass.id))));
-    writeLocalState(project, state);
+    settle(result);
     if (onPr) {
       const body = summaryBody(state, { ...plan, flows: plan.flows.map((flow) => ({ ...flow, signed: flowStatus(flow).signed, humanSigned: keptSignoffs.has(flow.id) })) }, status);
       try {

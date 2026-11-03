@@ -1,4 +1,4 @@
-// `aidrian pr <review|signoff|extend|await-review|attest|checks|disposition>`: the pull request review loop's deterministic steps, each in its own
+// `aidrian pr <review|signoff|extend|await-review|request|attest|checks|disposition>`: the pull request review loop's deterministic steps, each in its own
 // module. The config's `github` group supplies the reviewer, the round limit, and the check policy.
 
 import { commandConfig } from './config.mjs';
@@ -38,6 +38,15 @@ const ACTIONS = {
   },
   checks: async (args) => (await import('./pr-checks.mjs')).runChecks(args, config(3)),
   disposition: async (args) => (await import('./finding-disposition.mjs')).runDisposition(args),
+  request: async (args) => {
+    const project = projectAt(process.cwd());
+    try {
+      return (await import('./review/pending.mjs')).runRequest(args, project);
+    } catch (error) {
+      console.error(`aidrian pr request: ${error.message}`);
+      return 1;
+    }
+  },
   attest: async (args) => {
     const project = projectAt(process.cwd());
     const checked = commandConfig(project);
@@ -52,8 +61,8 @@ const ACTIONS = {
 
 export const commands = {
   pr: {
-    usage: 'review [PR] [--with-bot] [--max-rounds N] [--quota-fallback agent:NAME|human] | signoff PR (--flow ID | --stage NAME) --head SHA | extend PR (--verdict extend|stop --reason TEXT [--head SHA] | --human approve|deny) | await-review [PR] [--request] [--max-rounds N] [--head SHA] | attest PR --head SHA --reviewer WHO --findings N --fixed N [--note T] | attest PR --pass ID --head SHA --reviewer WHO (--findings N --fixed N [--accepted N] | --findings-file FILE) [--verdicts FILE] | attest PR --check | checks [PR] [-R OWNER/REPO] [--json] | disposition --severity S [--likelihood L --affects A] [--cost C] [--source bot [--round N]] [--vocab]',
-    about: 'run the review plan one step at a time, record a flow sign-off, record the verdict on one more round past the cap, wait for the review bot, record the review the review gate asks for, give a one-line check verdict, or decide what to do with one review finding',
+    usage: 'review [PR] [--with-bot] [--max-rounds N] [--quota-fallback agent:NAME|human] | signoff PR (--flow ID | --stage NAME) --head SHA [--repo OWNER/NAME] | extend PR (--verdict extend|stop --reason TEXT [--head SHA] | --human approve|deny) | await-review [PR] [--request] [--max-rounds N] [--head SHA] | request PR [--kind request|review] [--head SHA] [--repo OWNER/NAME] | attest PR --head SHA --reviewer WHO --findings N --fixed N [--note T] [--repo OWNER/NAME] | attest PR --pass ID --head SHA --reviewer WHO (--findings N --fixed N [--accepted N] | --findings-file FILE) [--verdicts FILE] [--repo OWNER/NAME] | attest PR --check | checks [PR] [-R OWNER/REPO] [--json] | disposition --severity S [--likelihood L --affects A] [--cost C] [--source bot [--round N]] [--vocab]',
+    about: 'run the review plan one step at a time, record a flow or stage sign-off, record the verdict on one more round past the cap, wait for the review bot, record a review the Human asked for or a gate review dispatched, record the review the review gate asks for, give a one-line check verdict, or decide what to do with one review finding',
     async run(args) {
       const [action, ...rest] = args;
       if (!Object.hasOwn(ACTIONS, action ?? '')) {

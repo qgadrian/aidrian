@@ -42,9 +42,8 @@ export function startsOrEndsGroup(segment) {
   return words.some((token) => /[)}]$/u.test(token.text));
 }
 
-// Whether a segment redirects a named descriptor, `{x}>file`. The lexer reads `{x}` after quotes are gone, so a quoted
-// `'{x}'`, an argument to bash, reads as one too: a rule that cannot tell them apart fails closed on both.
-export const hasNamedFd = (segment) => segment.some((token) => token.operator && token.fd !== undefined && !/^\d+$/u.test(token.fd));
+// Whether a segment redirects a named descriptor, `{x}>file`. A quoted `'{x}'` is an argument and never one.
+const hasNamedFd = (segment) => segment.some((token) => token.operator && token.fd !== undefined && !/^\d+$/u.test(token.fd));
 
 // The deny reason for `command`, or null.
 export function check(command, { env = process.env } = {}) {
@@ -83,7 +82,7 @@ function chainedCount(command) {
       continue;
     }
     const { program, args } = readInvocation(segments[i]);
-    // A named descriptor may be a quoted word the lexer took for one (`'{x}'>f`), so its grep counts until shown not to.
+    // A grep that redirects a named descriptor counts until shown not to: the rule fails closed on that rare form.
     if (!GREP_PROGRAMS.has(program) || !(asksForCount(args) || hasNamedFd(segments[i]))) continue;
     // Without pipefail a pipe swallows the grep's status; with it, the whole pipeline is the unit.
     let first = i;

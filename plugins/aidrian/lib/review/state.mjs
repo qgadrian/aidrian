@@ -13,6 +13,7 @@
 // instead: the record stays on the machine that wrote it, and another machine with an older record waits for it
 // (readRecord) rather than start over.
 
+import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
@@ -40,7 +41,63 @@ export const clip = (text) => String(text).replace(/\s+/gu, ' ').slice(0, CLIP);
 // Two spellings of one commit: equal, or one a prefix of the other, at least 7 hex long.
 export const sameCommit = (a, b) => typeof a === 'string' && typeof b === 'string' && (a === b || (Math.min(a.length, b.length) >= 7 && (a.startsWith(b) || b.startsWith(a))));
 
-export const emptyState = (pr, repo) => ({ version: 1, revision: 0, pr, repo, rounds: [], passes: {}, signoffs: {}, overrides: [], failures: {} });
+// `outcome` is the review step's last return, { status, head, at, reason? }, which the merge guard reads
+// (lib/rules/github/merge-review.mjs). `pending` holds the reviews owed: { kind: 'request' | 'review', head, at, by,
+// sent?, answered?, repo?, id }. A `request` is a bot review the Human asked for (`aidrian pr request`): `sent` once
+// `aidrian pr await-review --request` posts it, `answered` once the bot's answer arrives. A `review` is a gate review
+// dispatched: `answered` once `aidrian pr attest` records it or a review step finishes. An entry is never removed, only
+// marked, so the review step can merge in what was recorded while it ran (mergePending).
+export const emptyState = (pr, repo) => ({ version: 1, revision: 0, pr, repo, rounds: [], passes: {}, signoffs: {}, overrides: [], failures: {}, outcome: null, pending: [] });
+
+// The review step's statuses after which nothing is left to review on that head.
+export const FINISHED = new Set(['received', 'none_needed']);
+
+// Whether `entry` of `state` is for repository `repo` (null: any), compared as `owner/name` in any case.
+export const ofRepo = (state, entry, repo) => {
+  const own = entry?.repo ?? state?.repo ?? null;
+  return !repo || !own || String(own).toLowerCase() === String(repo).toLowerCase();
+};
+
+const pendingOf = (state) => (Array.isArray(state?.pending) ? state.pending.filter(isObject) : []);
+
+// Marks the owed entries of `kind` on `state` answered by `by`'s answer for `head`. An answer counts for an entry made
+// for that head, or for an earlier head that `head` descends from: `isAncestor(a, b)`, git's `merge-base
+// --is-ancestor`, the test seam. Time plays no part, so a late answer for an older head never answers a newer head's
+// entry. When git cannot tell (an unknown commit, no repository), only the entry's own head counts. Returns how many
+// it marked.
+// With `repo` (`owner/name`), only an entry for that repository counts: its own `repo`, else the record's.
+export function answerPending(state, kind, { head, by, repo = null, isAncestor = () => false }) {
+  const covers = (entry) => sameCommit(entry.head, head) || (typeof entry.head === 'string' && typeof head === 'string' && isAncestor(entry.head, head));
+  const open = pendingOf(state).filter((entry) => entry.kind === kind && !entry.answered && covers(entry) && ofRepo(state, entry, repo));
+  for (const entry of open) entry.answered = { at: new Date().toISOString(), head, by };
+  return open.length;
+}
+
+// Notes the review step's return on `state`: its outcome, and, once finished, every gate review owed on that head or
+// an earlier one it descends from answered.
+// `repo` is the step's repository: a gate review owed for another one stays owed.
+export function noteOutcome(state, { status, head, reason }, isAncestor = () => false, repo = null) {
+  state.outcome = { status, head, at: new Date().toISOString(), ...(reason ? { reason: clip(reason) } : {}) };
+  if (FINISHED.has(status)) answerPending(state, 'review', { head, by: status, isAncestor, repo });
+  return state;
+}
+
+// The reviews still owed on `state`: its pending entries not answered, a request sent included.
+export const owed = (state) => pendingOf(state).filter((entry) => !entry.answered);
+
+// One list from two copies of `pending`, such as the one on disk and one a long step read before: every entry of
+// either, and of an entry in both, each mark either holds.
+export function mergePending(a, b) {
+  const out = new Map();
+  for (const entry of [...pendingOf({ pending: a }), ...pendingOf({ pending: b })]) {
+    const key = entry.id ?? `${entry.kind}@${entry.at}@${entry.head}@${entry.by}`;
+    const seen = out.get(key) ?? {};
+    const merged = { ...seen, ...entry };
+    for (const mark of ['sent', 'answered']) if (seen[mark] ?? entry[mark]) merged[mark] = seen[mark] ?? entry[mark];
+    out.set(key, merged);
+  }
+  return [...out.values()];
+}
 
 const file = (project, pr) => path.join(stateDir(project), 'reviews', `pr-${pr}-review.json`);
 
@@ -51,7 +108,7 @@ function wellFormed(state, pr) {
 export function readLocalState(project, pr) {
   try {
     const state = JSON.parse(readFileSync(file(project, pr), 'utf8'));
-    return wellFormed(state, pr) ? { failures: {}, overrides: [], ...state } : null;
+    return wellFormed(state, pr) ? { failures: {}, overrides: [], outcome: null, pending: [], ...state } : null;
   } catch {
     return null;
   }
@@ -66,12 +123,15 @@ export function writeLocalState(project, state) {
   writeFileSync(target, `${JSON.stringify(state, null, 2)}\n`);
 }
 
+// An id that tells two owed entries apart, even two made in the same millisecond.
+export const entryId = () => `${process.pid}-${randomBytes(4).toString('hex')}`;
+
 // One record marker's record, or null.
 function decode(data, compressed, pr) {
   try {
     const bytes = Buffer.from(data, 'base64');
     const state = JSON.parse(compressed ? brotliDecompressSync(bytes, { maxOutputLength: MAX_RECORD }).toString('utf8') : bytes.toString('utf8'));
-    return wellFormed(state, pr) ? { failures: {}, overrides: [], ...state } : null;
+    return wellFormed(state, pr) ? { failures: {}, overrides: [], outcome: null, pending: [], ...state } : null;
   } catch {
     return null;
   }

@@ -158,6 +158,7 @@ test('every command that reads config.json stops on its errors before it acts; o
     [['report'], 1],
     [['pr', 'await-review', '1'], 1],
     [['pr', 'checks', '1'], 3],
+    [['quorum', 'roles', 'plan'], 1],
   ];
   for (const [args, code] of cases) {
     const { status, stdout, stderr } = run(args, dir, env);

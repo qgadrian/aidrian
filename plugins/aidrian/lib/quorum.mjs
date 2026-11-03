@@ -8,7 +8,9 @@
 //   check   checks every citation of a ledger against the repository and the plan (the question file in decide mode),
 //           relabels a `pending` objection or cross point by whether a citation passes, removes a note with none, and
 //           names each ruling or rebuttal with no passing citation; on a ledger that carries `mode`, also the judge's
-//           verdicts and, in plan mode, the moderation lines
+//           verdicts and, in plan mode, the moderation lines and, on an open ledger, the objection cap from
+//           config.json `quorum.plan.maxObjections`
+//   roles   prints the roles, judge, and caps of one mode from config.json `quorum`, as one JSON line
 // The schemas below are the one source of truth for these files. `check` runs no command but `git ls-files`, and
 // never executes what a citation names.
 
@@ -17,8 +19,10 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFile
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
+import { commandConfig, MAX_PLAN_OBJECTIONS } from './config.mjs';
 import { insidePath, isFile, isObject, linksOutside } from './fs.mjs';
 import { runGit } from './git.mjs';
+import { projectAt } from './project.mjs';
 import { isolate } from './review/env.mjs';
 import { sectionOf, slug } from './review/flows.mjs';
 import { codexAvailable, runCodex } from './review/reviewers.mjs';
@@ -29,9 +33,10 @@ export const SEVERITIES = Object.freeze(['blocking', 'important', 'improvement']
 // coordinator folds it into the other adversary's duplicate.
 export const OBJECTION_STATUSES = Object.freeze(['pending', 'opinion', 'accepted', 'rejected', 'escalated', 'merged']);
 export const MAX_OBJECTIONS = 7;
-// A ledger that carries `mode` holds at most this many objections per adversary; the rest of what Codex may answer
-// (OBJECTIONS_SCHEMA keeps MAX_OBJECTIONS) the coordinator moves to `notes` or drops.
-export const MAX_MODE_OBJECTIONS = 5;
+// A ledger that carries `mode` holds at most config.json `quorum.plan.maxObjections` objections per adversary, and this
+// is that key's ceiling; the rest of what Codex may answer (OBJECTIONS_SCHEMA keeps MAX_OBJECTIONS) the coordinator
+// moves to `notes` or drops.
+export const MAX_MODE_OBJECTIONS = MAX_PLAN_OBJECTIONS;
 export const MAX_NOTES = 10;
 // Why the judge rejects an objection, one per reject, on a ledger that carries `mode`.
 export const GROUNDS = Object.freeze(['covered', 'implementation', 'settled', 'off-goal', 'disproportionate', 'speculative']);
@@ -54,6 +59,8 @@ const CITATION = Object.freeze({
   },
 });
 const CITATIONS = Object.freeze({ type: 'array', items: CITATION });
+// Where a role ran: a host agent, or Codex.
+const RUNNER = Object.freeze({ type: 'string', enum: ['agent', 'codex'] });
 
 // What adversary B (Codex) answers: at most MAX_OBJECTIONS objections, each with its citations.
 export const OBJECTIONS_SCHEMA = Object.freeze({
@@ -135,7 +142,7 @@ const RULING = Object.freeze({
 });
 
 // The objection ledger, `<state>/quorum/<name>-<plan-hash>.json`: `<name>` is the plan's file name without `.md`, or
-// `<parent-folder>-plan` for a file named `plan.md`. `mode`, `notes`, `merged_into`, and `proportionality` are optional:
+// `<parent-folder>-plan` for a file named `plan.md`. `mode`, `runners`, `notes`, `merged_into`, and `proportionality` are optional:
 // a ledger written before `mode` has none of them, and check never adds one. `notes` comes after `objections`, so the
 // citation shape is described at `objections[].citations` (the ledger.md test expands a shared node at its first place).
 export const LEDGER_SCHEMA = Object.freeze({
@@ -149,6 +156,9 @@ export const LEDGER_SCHEMA = Object.freeze({
     plan_hash: { type: 'string' },
     same_model: { type: 'boolean' },
     same_model_reason: { type: ['string', 'null'] },
+    // Each adversary's final runner: `codex` while every run of it went to Codex, `agent` once one did not. A has no
+    // Codex path (`--mode rebut` answers only B's objections), so it is always `agent`.
+    runners: { type: 'object', additionalProperties: false, required: ['A', 'B'], properties: { A: { type: 'string', enum: ['agent'] }, B: RUNNER } },
     trigger: { type: 'string' },
     objections: {
       type: 'array',
@@ -266,7 +276,7 @@ export const DECIDE_LEDGER_SCHEMA = Object.freeze({
         type: 'object',
         additionalProperties: false,
         required: ['id', 'label', 'runner'],
-        properties: { id: { type: 'string', enum: POSITION_IDS }, label: { type: 'string' }, runner: { type: 'string', enum: ['agent', 'codex'] } },
+        properties: { id: { type: 'string', enum: POSITION_IDS }, label: { type: 'string' }, runner: RUNNER },
       },
     },
     cases: {
@@ -535,17 +545,23 @@ export function idProblems(ledger) {
   return [...bad, ...twice];
 }
 
-// Why `same_model` and `same_model_reason` disagree: a plan ledger records why B ran as an agent exactly when it did, and
-// a decide ledger why two positions share a runner exactly when they do, as its `positions` show.
+// Why `same_model` and `same_model_reason` disagree: a decide ledger records why two positions share a runner exactly
+// when they do, as its `positions` show; a plan ledger with `runners` why A and B share a runner exactly when they do;
+// and a plan ledger without it, written before `runners`, why B ran as an agent, which it cannot show.
 export function sameModelProblems(ledger) {
   const decide = modeOf(ledger) === 'decide';
+  const runners = !decide && isObject(ledger.runners) ? ledger.runners : null;
   if (decide) {
-    const runners = ledger.positions.map((position) => position.runner);
-    const shared = new Set(runners).size < runners.length;
+    const ran = ledger.positions.map((position) => position.runner);
+    const shared = new Set(ran).size < ran.length;
     if (ledger.same_model !== shared) return [`same_model is ${ledger.same_model}, but ${shared ? 'two positions share a runner' : 'no two positions share a runner'}`];
+  } else if (runners) {
+    const shared = runners.A === runners.B;
+    if (ledger.same_model !== shared) return [`same_model is ${ledger.same_model}, but the runners ${shared ? 'match' : 'differ'}: A ${runners.A}, B ${runners.B}`];
   }
+  const why = decide ? 'why two positions share a runner' : runners ? 'why A and B share a runner' : 'why B ran as an agent';
   const reason = typeof ledger.same_model_reason === 'string' && ledger.same_model_reason.trim() !== '';
-  if (ledger.same_model && !reason) return [`same_model is true, so same_model_reason must say ${decide ? 'why two positions share a runner' : 'why B ran as an agent'}`];
+  if (ledger.same_model && !reason) return [`same_model is true, so same_model_reason must say ${why}`];
   if (!ledger.same_model && ledger.same_model_reason !== null) return ['same_model is false, so same_model_reason must be null'];
   return [];
 }
@@ -596,11 +612,12 @@ export function mergeProblems(ledger) {
 const accepts = (objection) => objection.ruling?.decision === 'accept' || objection.rebuttal?.ruling?.decision === 'accept';
 
 // What a ledger that carries `mode` must hold beyond the old rules, as lines that stop the check: at most
-// MAX_MODE_OBJECTIONS objections per adversary, no `improvement` (it goes to `notes`), and the proportionality pass:
+// `maxObjections` objections per adversary (config.json `quorum.plan.maxObjections` while it is open, the ceiling
+// MAX_MODE_OBJECTIONS once complete), no `improvement` (it goes to `notes`), and the proportionality pass:
 // present in a complete ledger with an accepted change, and each flagged objection one with an accept ruling that the
 // Human holds, `escalated` or answered. A failed pass flags nothing, in any ledger. An `open` ledger without `mode`
 // stops the check too. [] for a complete ledger without `mode` that holds no failed pass with flags.
-export function modeProblems(ledger) {
+export function modeProblems(ledger, maxObjections = MAX_MODE_OBJECTIONS) {
   const failed = ledger.proportionality?.failed === true && ledger.proportionality.flagged.length > 0;
   const problems = failed ? [`proportionality: failed, yet flags ${ledger.proportionality.flagged.length} objections`] : [];
   if (!carriesMode(ledger)) {
@@ -610,7 +627,7 @@ export function modeProblems(ledger) {
   }
   for (const by of ['A', 'B']) {
     const count = ledger.objections.filter((objection) => objection.by === by).length;
-    if (count > MAX_MODE_OBJECTIONS) problems.push(`${by} raised ${count} objections, more than ${MAX_MODE_OBJECTIONS} in a ledger with a mode`);
+    if (count > maxObjections) problems.push(`${by} raised ${count} objections, more than the ${maxObjections} quorum.plan.maxObjections allows in a ledger with a mode`);
   }
   for (const objection of ledger.objections) {
     if (objection.severity === 'improvement') problems.push(`objection ${objection.id} is an improvement, which goes to notes in a ledger with a mode`);
@@ -1023,6 +1040,34 @@ export function checkoutTop(cwd) {
   }
 }
 
+// The modes `aidrian quorum roles` resolves.
+export const ROLE_MODES = Object.freeze(['plan', 'decide']);
+
+// One configured role as the coordinator runs it: on `agent`, its agent and no fallback; on `codex`, no agent and the
+// agent that takes over, with the same brief, when Codex cannot run.
+const resolved = ({ provider, agent }) => (provider === 'codex' ? { provider, agent: null, fallback: agent } : { provider, agent, fallback: null });
+
+// What `aidrian quorum roles <mode>` prints, from config.json `quorum` (its DEFAULTS when unset). Plan: adversaries A,
+// always a host agent, and B, and the caps. Decide: the odd runner (positions A and C) and the even one (B and D),
+// whether a claim's odd hash swaps A's and B's, and the dispatch cap for each position count N from 2 to 4,
+// 3N + 2 + C, where C counts the first N positions whose runner is Codex, one fallback each. A swap exchanges one
+// Codex and one agent runner, or two alike, so it never changes C.
+export function quorumRoles(mode, quorum) {
+  const judge = { agent: quorum.judge.agent };
+  if (mode === 'plan') {
+    const { a, b, maxObjections, maxDispatches } = quorum.plan;
+    return { mode, roles: { A: resolved({ provider: 'agent', agent: a.agent }), B: resolved(b) }, judge, caps: { maxObjections, maxDispatches } };
+  }
+  const { odd, even, swap } = quorum.decide;
+  const runnerOf = (i) => (i % 2 === 0 ? odd : even);
+  const caps = {};
+  for (let n = 2; n <= POSITION_IDS.length; n += 1) {
+    caps[n] = 3 * n + 2 + POSITION_IDS.slice(0, n).filter((_, i) => runnerOf(i).provider === 'codex').length;
+  }
+  const positions = (parity) => POSITION_IDS.filter((_, i) => i % 2 === parity);
+  return { mode, roles: { odd: { positions: positions(0), ...resolved(odd) }, even: { positions: positions(1), ...resolved(even) } }, swap, judge, caps };
+}
+
 const fail = (problem) => {
   console.error(`aidrian quorum: ${problem}`);
   return 1;
@@ -1079,17 +1124,26 @@ export async function codexAnswer({ plan, brief, out, root, mode = 'object', led
   }
 }
 
-const USAGE = 'codex --plan PLAN --brief BRIEF --out FILE [--mode object|case] | codex --mode rebut|cross --ledger LEDGER --plan PLAN --brief BRIEF --out FILE | check LEDGER --plan PLAN';
+const USAGE = 'codex --plan PLAN --brief BRIEF --out FILE [--mode object|case] | codex --mode rebut|cross --ledger LEDGER --plan PLAN --brief BRIEF --out FILE | check LEDGER --plan PLAN | roles plan|decide';
 
 export const commands = {
   quorum: {
     usage: USAGE,
-    about: 'run Codex as a quorum adversary or position, to object, argue a case, cross-examine, or rebut, and print one {status, reason} line, or check a ledger\'s citations against the repository and the plan',
+    about: 'run Codex as a quorum adversary or position, to object, argue a case, cross-examine, or rebut, and print one {status, reason} line; check a ledger\'s citations against the repository and the plan; or print one mode\'s roles and caps from config.json',
     async run(args, deps = {}) {
       const [action, ...rest] = args;
       // Git and Codex run without the variables a git hook sets, so they act on the repository of this folder.
       const env = isolate({ ...process.env });
-      const root = checkoutTop(deps.cwd ?? process.cwd());
+      const cwd = deps.cwd ?? process.cwd();
+      const root = checkoutTop(cwd);
+      // The project's `quorum` config. commandConfig throws on an invalid config.json, which cli.mjs prints, naming each
+      // key, and exits 1: a run never goes on with defaults the project did not choose.
+      const quorum = () => commandConfig(projectAt(cwd)).quorum;
+      if (action === 'roles') {
+        if (rest.length !== 1 || !ROLE_MODES.includes(rest[0])) return fail(`roles takes one mode, plan or decide${rest.length ? `, not "${shown(rest.join(' '))}"` : ''}`);
+        (deps.print ?? console.log)(JSON.stringify(quorumRoles(rest[0], quorum())));
+        return 0;
+      }
       if (action === 'codex') {
         const { values } = parseArgs({ args: rest, options: { plan: { type: 'string' }, brief: { type: 'string' }, out: { type: 'string' }, mode: { type: 'string', default: 'object' }, ledger: { type: 'string' } } });
         if (!values.plan || !values.brief || !values.out) return fail('codex needs --plan, --brief, and --out');
@@ -1122,7 +1176,10 @@ export const commands = {
         const invalid = schemaProblems(ledger, schemaOf(ledger));
         if (!invalid.length) invalid.push(...(decide ? decideIdProblems(ledger) : idProblems(ledger)));
         if (!invalid.length) {
-          const rest = decide ? decideCompleteProblems(ledger) : [...answerProblems(ledger), ...mergeProblems(ledger), ...modeProblems(ledger), ...completeProblems(ledger)];
+          // An open plan ledger that carries `mode` is held to the configured objection cap, so only it reads config.json.
+          // A complete one keeps the ceiling: a lower cap set after it finished never voids it and the Human's answers.
+          const cap = !decide && carriesMode(ledger) && ledger.status === 'open' ? quorum().plan.maxObjections : MAX_MODE_OBJECTIONS;
+          const rest = decide ? decideCompleteProblems(ledger) : [...answerProblems(ledger), ...mergeProblems(ledger), ...modeProblems(ledger, cap), ...completeProblems(ledger)];
           invalid.push(...sameModelProblems(ledger), ...rest);
         }
         if (invalid.length) {

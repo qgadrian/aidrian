@@ -77,7 +77,21 @@ In a group such as `github`, set only the keys you change; the others keep their
       "costRisePercent": 50
     }
   },
-  "agents": {}
+  "agents": {},
+  "quorum": {
+    "judge": { "agent": "architect" },
+    "plan": {
+      "a": { "agent": "code-reviewer" },
+      "b": { "provider": "codex", "agent": "product-manager" },
+      "maxObjections": 5,
+      "maxDispatches": 8
+    },
+    "decide": {
+      "odd": { "provider": "agent", "agent": "code-reviewer" },
+      "even": { "provider": "codex", "agent": "code-reviewer" },
+      "swap": true
+    }
+  }
 }
 ```
 
@@ -132,6 +146,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `telemetry.maxMb` | The size, in megabytes, at which the dispatch log moves to its rotated part. |
 | `telemetry.health` | The thresholds of `aidrian report health`: [Health thresholds](#health-thresholds). |
 | `agents` | The tools each agent may use in this project; `{}` gates none: [Agents](#agents). |
+| `quorum` | The roles, providers, judge, and caps of the `quorum` skill: [Quorum](#quorum). |
 
 A path in `state.dir` or `git.worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
@@ -542,8 +557,52 @@ A bad pattern is left out and the rest of its list still applies, so a bad `allo
 `aidrian check` cannot know every agent's name, so a name that matches no agent is not an error: its entry never applies.
 [hooks.md](hooks.md#agent-gates) describes the hook that enforces the gates, and what each host supports.
 
+## Quorum
+
+`quorum` sets who the `quorum` skill dispatches, and how far a plan run may go.
+Set only the keys you change; the defaults are the roles and caps the skill names.
+
+Two commands read the group, so the skill text never parses this file:
+
+- `aidrian quorum check` reads `quorum.plan.maxObjections`: on an `open` plan ledger that carries `mode`, it exits 1
+  when one adversary raised more objections than that. A `complete` ledger is held to the ceiling, 5, instead,
+  so a cap lowered after a run finished never voids its ledger or the Human's answers.
+- `aidrian quorum roles plan` and `aidrian quorum roles decide` read the whole group, `maxObjections` included,
+  and print that mode's roles, judge, and caps as one JSON line, which the coordinator follows. The decide caps are `3N + 2 + C` for each position count N
+  from 2 to 4, where C counts the first N positions whose runner is Codex: 9, 12, and 16 with the defaults.
+
+Both stop on an invalid config.json, as every `aidrian` command does: they exit 1 naming each bad key, and never run
+on defaults the project did not choose.
+
+| Key | Default | Meaning and range |
+| --- | --- | --- |
+| `quorum.judge.agent` | `"architect"` | The agent that rules on every objection. The judge always runs as a host agent. |
+| `quorum.plan.a.agent` | `"code-reviewer"` | Plan adversary A, always a host agent. |
+| `quorum.plan.b.provider` | `"codex"` | Plan adversary B's runner: `"agent"` or `"codex"`. |
+| `quorum.plan.b.agent` | `"product-manager"` | B's agent on `"agent"`, and its fallback on `"codex"`. |
+| `quorum.plan.maxObjections` | `5` | The most objections each plan adversary may raise, a whole number from 1 to 5. |
+| `quorum.plan.maxDispatches` | `8` | The most dispatches a plan run may make, one of them kept for the proportionality pass; a whole number, 5 or more. |
+| `quorum.decide.odd.provider` | `"agent"` | The runner of decide positions A and C: `"agent"` or `"codex"`. |
+| `quorum.decide.odd.agent` | `"code-reviewer"` | Their agent on `"agent"`, and their fallback on `"codex"`. |
+| `quorum.decide.even.provider` | `"codex"` | The runner of decide positions B and D: `"agent"` or `"codex"`. |
+| `quorum.decide.even.agent` | `"code-reviewer"` | Their agent on `"agent"`, and their fallback on `"codex"`. |
+| `quorum.decide.swap` | `true` | Whether a claim with an odd hash swaps the runners of positions A and B. |
+
+- One `agent` field covers both cases: the role's agent when `provider` is `"agent"`, and the agent that takes over
+  when `provider` is `"codex"` and Codex cannot run, the same brief in hand.
+- `quorum.plan.a` has no `provider`. A's briefs read the ledger, and `aidrian quorum codex --mode rebut` answers only
+  B's objections, so A has no Codex path. `aidrian check` names `quorum.plan.a.provider` as an unknown key.
+- `maxDispatches` is at least 5: the two objection dispatches, one ruling, one fallback, and the reserved pass.
+  Only B can run on Codex, so a plan run falls back at most once.
+  Under 8, the default, rebuttals and the final ruling may not fit, and the objections they would answer escalate to the Human.
+- Every `agent` is an agent name, such as `code-reviewer` or a project's own agent; `"*"` and `"main"` name no one agent.
+- The number of decide positions is the question file's, 2 to 4, never a config value, so no option the Human gave is dropped.
+
 ## Checking
 
 `aidrian check` validates this file with the rest of the project folder.
 It lists every problem: a missing file, invalid JSON, a missing or other `version`, an unknown key, or a value of the wrong type.
+In `quorum`, that includes a `provider` on `quorum.plan.a`, a `provider` other than `"agent"` or `"codex"`,
+a `plan.maxObjections` outside 1 to 5, a `plan.maxDispatches` under 5 or not a whole number, and an `agent` that is no agent name.
+Each message names the key, such as `quorum.plan.b.provider`.
 A key with a bad value falls back to its default, so the plugin's hooks keep working until the file is fixed.

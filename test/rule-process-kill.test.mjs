@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { firstSentence } from '../plugins/aidrian/lib/hook-deny.mjs';
+import { check as grepChainCheck } from '../plugins/aidrian/lib/rules/grep-exit-chain.mjs';
 import { check } from '../plugins/aidrian/lib/rules/process-kill.mjs';
 
 const decideForCommand = (command, env) => {
@@ -564,4 +566,84 @@ test('listing deny reason names the root cause, the safe forms, and the override
   assert.ok(reason.includes('`pgrep -f <pattern>`'));
   assert.ok(reason.includes('`pgrep -l <pattern>` without `-f`'));
   assert.match(reason, /AIDRIAN_ALLOW_PROCESS_ARGS_LISTING=1/u);
+});
+
+// The forms sessions reached for after a listing deny, from the dispatch log's hook_deny rows and their transcripts.
+test('a listing whose output reaches only /dev/null or a counter runs', () => {
+  allowListing('ps -p 58825 >/dev/null');
+  allowListing('ps -p $p >/dev/null && echo alive');
+  allowListing("timeout 800 sh -c 'while ps -p 58825 >/dev/null; do sleep 5; done'");
+  allowListing('ps aux >/dev/null 2>&1');
+  allowListing('ps aux &>/dev/null');
+  allowListing('ps aux 1>/dev/null');
+  allowListing('ps aux | grep -c "[g]it push"');
+  allowListing('ps aux | grep -q node && echo running');
+  allowListing('ps -A | wc -l');
+  allowListing('pgrep -l node | wc -l');
+  allowListing('pgrep -lf eslint | head -3 >/dev/null');
+  allowListing('ps aux | grep -E "next build|playwright" | grep -v grep | wc -l');
+  allowListing('n=$(ps aux | grep -c node); echo "$n"');
+});
+
+test('a listing whose output can still be read stays denied', () => {
+  denyListing('ps aux 2>/dev/null');
+  denyListing('ps aux >/tmp/procs.txt');
+  denyListing('ps aux >/dev/null 1>&2');
+  denyListing('ps aux >/dev/null >/tmp/procs.txt');
+  denyListing('ps aux | grep node');
+  denyListing('ps aux | tee /tmp/procs.txt | wc -l');
+  denyListing("ps aux | awk '{print}' | wc -l");
+  denyListing('ps aux | sort >/tmp/procs.txt');
+  denyListing('ps aux | wc -l; ps aux');
+  denyListing('x=$(ps aux); echo "$x" | wc -l');
+});
+
+// [denied command, the command its reason says to run instead]
+const REPLACEMENTS = [
+  ['pgrep -fl "git push" | head', "pgrep -d, -f 'git push' | xargs -r ps -o pid=,ppid=,etime=,comm= -p | head"],
+  ['pgrep -l -f e2e-local', 'pgrep -d, -f e2e-local | xargs -r ps -o pid=,ppid=,etime=,comm= -p'],
+  ['pgrep -fa node', 'pgrep -d, -f node | xargs -r ps -o pid=,ppid=,etime=,comm= -p'],
+  ['pgrep -fl run-agent-gates || echo none', 'pgrep -f run-agent-gates || echo none'],
+  ['pgrep -fl -u adrian node', 'pgrep -d, -f -u adrian node | xargs -r ps -o pid=,ppid=,etime=,comm= -p'],
+  ['ps aux | grep -E "git push|husky" | grep -v grep | head -5', "pgrep -d, -f 'git push|husky' | xargs -r ps -o pid=,ppid=,pcpu=,rss=,etime=,comm= -p | head -5"],
+  ['ps aux | grep "[g]it push\\|husky"', "pgrep -d, -f '[g]it push|husky' | xargs -r ps -o pid=,ppid=,pcpu=,rss=,etime=,comm= -p"],
+  ['ps -axo pid,rss,command | grep -i next', 'pgrep -i -d, -f next | xargs -r ps -o pid=,rss=,comm= -p'],
+  ['ps aux | grep node && echo up', 'pgrep -f node && echo up'],
+  ['ps aux', 'ps -ax -o pid,ppid,pcpu,rss,etime,comm'],
+  ['ps -ef', 'ps -e -o pid,ppid,pcpu,rss,etime,comm'],
+  ['ps', 'ps -o pid,ppid,pcpu,rss,etime,comm'],
+  ['ps -Ao pcpu,command -r | head -12', 'ps -Ar -o pcpu,comm | head -12'],
+  ['ps -p 14274 -o pid,command | cat', 'ps -p 14274 -o pid,comm | cat'],
+  ['ps -o pid,pcpu,etime,args -p $p 2>/dev/null | tail -1', 'ps -p "$p" -o pid,pcpu,etime,comm 2>/dev/null | tail -1'],
+  ['ps -o "%p %a" -p 1', 'ps -p 1 -o pid,comm'],
+  ['ps aux | grep -F a.b', 'ps -ax -o pid,ppid,pcpu,rss,etime,comm | grep -F a.b'],
+  ['sudo ps aux', 'sudo ps -ax -o pid,ppid,pcpu,rss,etime,comm'],
+  ['git status; pgrep -fl next | head; ps -p 1 -o command=', 'git status; pgrep -d, -f next | xargs -r ps -o pid=,ppid=,etime=,comm= -p | head; ps -p 1 -o comm='],
+  ['echo "$(pgrep -fl next)"', 'echo "$(pgrep -d, -f next | xargs -r ps -o pid=,ppid=,etime=,comm= -p)"'],
+];
+
+test('a listing deny names first the exact command to run instead, and that command runs', () => {
+  for (const [command, replacement] of REPLACEMENTS) {
+    const { decision, reason } = decideForCommand(command, NO_OVERRIDE);
+    assert.equal(decision, 'deny', command);
+    assert.ok(reason.startsWith(`Blocked: this process listing prints full command lines. Run this instead:\n\n  ${replacement}\n`), `${command}\n${reason}`);
+    assert.equal(check(replacement, { env: NO_OVERRIDE }), null, `the replacement passes the process rules: ${replacement}`);
+    assert.equal(grepChainCheck(replacement, { env: {} }), null, `and the grep rule: ${replacement}`);
+    assert.equal(firstSentence(reason), 'this process listing prints full command lines.', 'the dispatch log keys the rule as before');
+  }
+});
+
+test('a listing inside a command string gets the replacement for that listing alone', () => {
+  const { reason } = decideForCommand("sh -c 'pgrep -fl next'", NO_OVERRIDE);
+  assert.ok(reason.includes('Run `pgrep -d, -f next | xargs -r ps -o pid=,ppid=,etime=,comm= -p` in place of `pgrep -fl next`.'), reason);
+  assert.ok(decideForCommand('ps $FLAGS', NO_OVERRIDE).reason.startsWith(`Blocked: this process listing prints full command lines. On macOS`), 'none it cannot build');
+});
+
+test('a pkill or killall deny names the pgrep that lists what it would stop', () => {
+  const pkill = decideForCommand('pkill -9 -f "next dev -p 3999"; sleep 2', ENV).reason;
+  assert.ok(pkill.includes("List the pids first with `pgrep -f 'next dev -p 3999'`, then `kill <pid>` only those this session started."), pkill);
+  const killall = decideForCommand('killall -KILL node next-server', ENV).reason;
+  assert.ok(killall.includes("List the pids first with `pgrep -x 'node|next-server'`"), killall);
+  assert.equal(firstSentence(pkill), firstSentence(decideForCommand('pgrep -x yes | xargs kill', ENV).reason), 'one key for the rule in the log');
+  assert.ok(!decideForCommand('pgrep -x yes | xargs kill', ENV).reason.includes('List the pids first'));
 });

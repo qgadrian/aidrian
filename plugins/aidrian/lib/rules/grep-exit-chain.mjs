@@ -5,13 +5,16 @@
 // Allowed when `||` follows it, a `;` or newline separates a later command, a pipe takes its status (unless
 // `set -o pipefail` is on: then the pipeline carries it), a `!` inverts it, or a trailing `&` backgrounds the list.
 // A command substitution that runs is a list of its own and is judged the same way.
+//
+// The deny hands back the line to run instead: the counting grep (its pipeline, under pipefail) wrapped as
+// `{ … || true; }`, which keeps the count and the rest of the chain and drops only that status.
 
-import { commandLines, isLongOption, lexPipeline, readInvocation, readShortOptions } from '../shell-lex.mjs';
+import { commandLines, excerpt, isLongOption, lexPipeline, readInvocation, readShortOptions } from '../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_GREP_EXIT_CHAIN';
 
 const PIPES = new Set(['|', '|&']);
-const GREP_PROGRAMS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ripgrep']);
+export const GREP_PROGRAMS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ripgrep']);
 // grep takes `--cou` for `--count` (`--co` is ambiguous with `--color`); ripgrep takes no prefix of `--count-matches`.
 const countsLong = (text) => text === '--count-matches' || isLongOption(text, '--count', '--cou');
 // Options that take a value, so `grep -e -c file` searches for "-c". A short one takes the rest of its bundle when any
@@ -25,12 +28,25 @@ const VALUE_FLAGS = new Set([
 // The deny reason for `command`, or null.
 export function check(command, { env = process.env } = {}) {
   if (env[OVERRIDE] === '1') return null;
-  return commandLines(command).some(chainsCount) ? reason(command) : null;
+  const found = firstChain(command);
+  return found ? reason(command, found) : null;
 }
 
-// Whether one command line chains a counting grep's status into `&&`.
-function chainsCount(command) {
-  const { segments, separators } = lexPipeline(command);
+// The first command line of `command` that chains a count, with where the count sits in `command`: { from, to }.
+function firstChain(command) {
+  for (const line of commandLines(command)) {
+    const span = chainedCount(line);
+    if (!span) continue;
+    const at = line === command ? 0 : Math.max(0, command.indexOf(line));
+    return { from: at + span[0], to: at + span[1] };
+  }
+  return null;
+}
+
+// Where one command line chains a counting grep's status into `&&`: [start, end) of the grep, or of its pipeline under
+// pipefail, in `command`; null when it does not.
+function chainedCount(command) {
+  const { segments, separators, spans } = lexPipeline(command);
   // `set -o pipefail` applies to what follows. A toggle behind `&&`/`||` may never run, and one in a pipeline or in the
   // background runs in a child shell, so such a toggle may turn pipefail on but never off.
   let pipefail = false;
@@ -55,25 +71,31 @@ function chainsCount(command) {
     if (readInvocation(segments[first]).negated) continue;
     const gatesWhatFollows = separators[last] === '&&';
     const isGatedLastLink = separators[first - 1] === '&&' && last === segments.length - 1 && separators[last] !== '&';
-    if (gatesWhatFollows || isGatedLastLink) return true;
+    if (gatesWhatFollows || isGatedLastLink) return [spans[first][0], spans[last][1]];
   }
-  return false;
+  return null;
 }
 
 // Whether grep's arguments ask for a count: `-c`, a bundle such as `-rc`, or `--count` and its prefixes.
-export function asksForCount(args) {
+export const asksForCount = (args) => asksFor(args, '-c', countsLong);
+
+// Whether they ask for silence: `-q`, a bundle such as `-qE`, `--quiet`, or `--silent`, and their prefixes.
+const quietLong = (text) => isLongOption(text, '--quiet', '--q') || isLongOption(text, '--silent', '--si');
+export const asksForQuiet = (args) => asksFor(args, '-q', quietLong);
+
+function asksFor(args, short, isLong) {
   for (let i = 0; i < args.length; i += 1) {
     const { text, dynamic } = args[i];
     if (dynamic) continue;
     if (text === '--') return false;
-    if (countsLong(text)) return true;
+    if (isLong(text)) return true;
     if (text.startsWith('--')) {
       if (!text.includes('=') && VALUE_FLAGS.has(text)) i += 1;
       continue;
     }
     if (!text.startsWith('-') || text === '-') continue;
     const { options, value } = readShortOptions(text, VALUE_FLAGS);
-    if (options.includes('-c')) return true;
+    if (options.includes(short)) return true;
     if (value?.attached === null) i += 1;
   }
   return false;
@@ -94,18 +116,35 @@ export function pipefailToggle(segment) {
   return null;
 }
 
-function reason(command) {
-  const shown = command.length > 300 ? `${command.slice(0, 297)}...` : command;
+// `command` with every chained count wrapped as `{ … || true; }`, and where the first one landed: { text, from, to }.
+const WRAP_LIMIT = 20;
+function rewritten(command) {
+  let text = command;
+  let first = null;
+  for (let n = 0; n < WRAP_LIMIT; n += 1) {
+    const found = firstChain(text);
+    if (!found) break;
+    const wrapped = `{ ${text.slice(found.from, found.to)} || true; }`;
+    text = `${text.slice(0, found.from)}${wrapped}${text.slice(found.to)}`;
+    first ??= { from: found.from, to: found.from + wrapped.length };
+  }
+  return { text, ...first };
+}
+
+function reason(command, found) {
+  const fix = rewritten(command);
   return [
-    'Blocked: a counting grep is chained with `&&`, so a clean result reads as a failed check.',
+    'Blocked: a counting grep is chained with `&&`, so a clean result reads as a failed check. Run this instead:',
     '',
-    `  ${shown}`,
+    `  ${excerpt(fix.text, fix.from, fix.to)}`,
     '',
-    '`grep -c` exits 1 when it counts zero matches. In an `&&` chain the commands after it never run,',
-    'and the whole line reports failure for the result you wanted. Pick one:',
-    '  - run the counting grep on its own line, and read the number;',
-    '  - neutralize its status in place: `... | grep -c ... || true && ...`;',
-    '  - to gate on presence rather than a count, use `grep -q`, which exits 0 on a match.',
+    'in place of:',
+    '',
+    `  ${excerpt(command, found.from, found.to)}`,
+    '',
+    '`grep -c` exits 1 when it counts zero matches, so the `&&` after it skips the rest and the line reports failure',
+    'for the result you wanted. The braces keep the count and the chain, and drop only that status.',
+    'If no match should stop the chain, gate on presence with `grep -q` there, which exits 0 on a match.',
     '',
     `Human-only override for the whole session, set before it starts: ${OVERRIDE}=1`,
   ].join('\n');

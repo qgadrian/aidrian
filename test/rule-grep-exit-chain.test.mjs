@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 
-import { asksForCount, check, pipefailToggle } from '../plugins/aidrian/lib/rules/grep-exit-chain.mjs';
+import { firstSentence } from '../plugins/aidrian/lib/hook-deny.mjs';
+import { asksForCount, asksForQuiet, check, pipefailToggle } from '../plugins/aidrian/lib/rules/grep-exit-chain.mjs';
 
 // Ported from the source harness: the rule is narrow on purpose, a counting grep only where `&&` makes its status count.
 const decideForCommand = (command, env) => {
@@ -294,4 +299,42 @@ test('the deny text names the command and every way out', () => {
   assert.match(reason, /\|\| true/, 'the in-place fix');
   assert.match(reason, /grep -q/, 'the right tool when the intent is presence');
   assert.match(reason, /AIDRIAN_ALLOW_GREP_EXIT_CHAIN=1/, 'the escape hatch');
+});
+
+// [denied command, the line its reason says to run instead]
+const REWRITES = [
+  ['grep -c error /tmp/out.log && npm test', '{ grep -c error /tmp/out.log || true; } && npm test'],
+  ['sed -i "" s/a/b/ "$F" && grep -c "b" "$F" && npx jest', 'sed -i "" s/a/b/ "$F" && { grep -c "b" "$F" || true; } && npx jest'],
+  ['a && grep -c x f', 'a && { grep -c x f || true; }'],
+  ['git status --short | grep -c . && node x', 'git status --short | { grep -c . || true; } && node x'],
+  ['set -o pipefail; a | grep -c x | cat && b', 'set -o pipefail; { a | grep -c x | cat || true; } && b'],
+  ['y=$(grep -c x f && echo ok); echo $y', 'y=$({ grep -c x f || true; } && echo ok); echo $y'],
+  ['grep -c a f && grep -c b f && echo done', '{ grep -c a f || true; } && { grep -c b f || true; } && echo done'],
+];
+
+test('the deny names first the line to run instead, every chained count wrapped, and that line runs', () => {
+  for (const [command, fixed] of REWRITES) {
+    const { decision, reason } = decideForCommand(command, {});
+    assert.equal(decision, 'deny', command);
+    assert.ok(reason.startsWith(`Blocked: a counting grep is chained with \`&&\`, so a clean result reads as a failed check. Run this instead:\n\n  ${fixed}\n`), `${command}\n${reason}`);
+    assert.equal(decide(fixed), 'allow', `the rewrite passes: ${fixed}`);
+    assert.equal(firstSentence(reason), 'a counting grep is chained with `&&`, so a clean result reads as a failed check.');
+  }
+});
+
+test('the rewrite prints the count and keeps the chain when nothing matches', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'grep-chain-'));
+  writeFileSync(path.join(dir, 'f'), 'a\nb\n');
+  const run = (line) => spawnSync('bash', ['-c', line], { cwd: dir, encoding: 'utf8' });
+  const counted = run('{ grep -c zzz f || true; } && echo next');
+  assert.deepEqual([counted.stdout, counted.status], ['0\nnext\n', 0]);
+  const piped = run('printf "x\\n" | { grep -c zzz || true; } && echo next');
+  assert.deepEqual([piped.stdout, piped.status], ['0\nnext\n', 0]);
+  const failed = run('false && { grep -c a f || true; } && echo next');
+  assert.deepEqual([failed.stdout, failed.status], ['', 1], 'a failure before the count still ends the chain');
+});
+
+test('asksForQuiet reads -q, a bundle with q, --quiet, and --silent', () => {
+  const quiet = (line) => asksForQuiet(line.split(' ').map((text) => ({ text, dynamic: false })));
+  assert.deepEqual(['-q x', '-qE x', '--quiet x', '--qui x', '--silent x', '-e -q f', '-c x'].map(quiet), [true, true, true, true, true, false, false]);
 });

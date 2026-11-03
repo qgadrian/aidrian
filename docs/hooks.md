@@ -109,8 +109,15 @@ What each rule matches:
   `typeset`, `local`, or `readonly`. The name in a quoted argument or a comment passes, and so does `env -u`.
   This rule reads `sh -c` bodies and heredocs or here-strings fed to a shell, as well as command substitutions.
 - Kill by name: `pkill`, `killall`, `pgrep --signal`, `kill` fed by `pgrep` or `ps`, and `kill -- -1`. `kill <pid>` stays allowed.
+  The deny of a plain `pkill` or `killall` names the `pgrep` that lists what it would stop, such as `pgrep -f 'next dev'`.
 - Command-line listing: `pgrep -fl`, `pgrep -a`, and `ps` without a format free of `args`, `command`, and `cmd`.
-- Counting grep in `&&`: such as `grep -c x log && npm test`.
+  A listing whose output reaches only `/dev/null`, or a counter (`wc`, `grep -c`, `grep -q`) through `grep`, `head`, `tail`,
+  `sort`, `uniq`, `cut`, or `tr`, runs: `ps -p <pid> >/dev/null` and `ps aux | grep -c x` print no command line.
+  The deny starts with the command to run instead, the whole line with each listing replaced:
+  `pgrep -fl x` and `ps aux | grep x` become `pgrep -d, -f x | xargs -r ps -o pid=,ppid=,etime=,comm= -p`,
+  and a `ps` format trades `args`, `command`, and `cmd` for `comm`.
+- Counting grep in `&&`: such as `grep -c x log && npm test`. The deny starts with the line to run instead,
+  each such count wrapped as `{ grep -c x log || true; }`, which keeps the count and the chain.
 - Pull request body: `gh pr create` or `gh pr edit` with a body that lacks a config.json `github.requiredSections` heading,
   or that carries the "Generated with [Claude Code]" footer; `gh pr create --fill`;
   and, when sections are configured, a non-web `gh pr create` with no `--body` or `--body-file`.

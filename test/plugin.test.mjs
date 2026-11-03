@@ -140,6 +140,16 @@ test('the orchestrator agent file fits in 9,000 bytes', () => {
   assert.ok(bytes <= MAX_ORCHESTRATOR_BYTES, `orchestrator.md is ${bytes} bytes; move detail into the orchestration skill`);
 });
 
+test('the orchestrator checks the work against the project`s core invariants, and names only files it can show', () => {
+  // A resumed brief's locked scope missed a core product mode, and the orchestrator asked whether to fix the gap; a
+  // report named a shortened path and one no agent wrote, and the stop hook sent it back.
+  const orchestrator = readFileSync(path.join(PLUGIN, 'agents-src/coordination/orchestrator.md'), 'utf8').replace(/\s+/g, ' ');
+  const checkpoint = orchestrator.slice(orchestrator.indexOf('## Checkpoint'), orchestrator.indexOf('## Routing'));
+  assert.match(checkpoint, /On resume and before reporting near-done, check the work against the project's core invariants \(`AGENTS\.md`, its `always` knowledge\)/);
+  assert.match(checkpoint, /a locked scope waives none\. A gap is a defect to route, `product-manager` first, and fix here; ask the Human only a real choice it opens, never whether to fix it\./);
+  assert.match(orchestrator, /- Report a result, or name a file, that no agent's handoff or command output shows; give paths in full, never with `\.\.\.`/);
+});
+
 // modes/ holds one file per mode of a skill that runs in several, read only once that mode is selected.
 test('a skill names each of its references/, steps/, and modes/ files, and every such file the plugin names exists', () => {
   const skills = path.join(PLUGIN, 'skills');

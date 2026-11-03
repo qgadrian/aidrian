@@ -189,3 +189,16 @@ test('a flow doc cites each invariant by its GitHub anchor, and a list cite copi
   const fromList = invariantsOf({ invariants: [{ id: 'row', cite: 'docs/log.md#hook_deny-when-a-rule-blocks' }] }, read);
   assert.match(fromList.invariants[0].source ?? '', /The row is written/u);
 });
+
+test('anchor keeps code spans as written, and a heading with a link or code is found by the anchor made from it', () => {
+  assert.equal(anchor('`_private` API'), '_private-api');
+  assert.equal(anchor('`a__b` API'), 'a__b-api');
+  assert.equal(anchor('**Bold** `*` star'), 'bold--star');
+  const doc = '## The plugin [tools](x.md)\n\nLinked.\n\n## `_private` API\n\nHidden.\n';
+  const read = (file) => (file === 'd.md' ? doc : null);
+  const cites = invariantsOf({ invariants: 'd.md' }, read).invariants.map((each) => each.cite);
+  assert.deepEqual(cites, ['d.md#the-plugin-tools', 'd.md#_private-api']);
+  const listed = invariantsOf({ invariants: cites.map((cite, i) => ({ id: `i${i}`, cite })) }, read).invariants;
+  assert.deepEqual(listed.map((each) => /Linked|Hidden/u.exec(each.source ?? '')?.[0]), ['Linked', 'Hidden']);
+  assert.match(sectionOf(doc, 'the-plugin-toolsxmd')?.body ?? '', /Linked/u, 'an anchor written before still matches');
+});

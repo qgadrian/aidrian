@@ -7,7 +7,7 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
-import { CODEX_TIMEOUT_SEC, GROUNDS, LEDGER_SCHEMA, LEDGER_SCHEMAS, OBJECTIONS_SCHEMA, REBUTTALS_SCHEMA, codexAnswer, commands, modeOf, rebuttalProblems, schemaProblems } from '../plugins/aidrian/lib/quorum.mjs';
+import { CASE_SCHEMA, CODEX_TIMEOUT_SEC, CROSS_SCHEMA, DECIDE_LEDGER_SCHEMA, DECIDE_REBUTTAL_SCHEMA, GROUNDS, LEDGER_SCHEMA, LEDGER_SCHEMAS, OBJECTIONS_SCHEMA, REBUTTALS_SCHEMA, codexAnswer, commands, governingWinner, modeOf, rebuttalProblems, schemaProblems } from '../plugins/aidrian/lib/quorum.mjs';
 import { slug } from '../plugins/aidrian/lib/review/flows.mjs';
 import { FINDINGS_SCHEMA, runCodex, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
 
@@ -44,9 +44,9 @@ function project(t) {
   const plan = path.join(state, 'plans/my-plan.md');
   write(state, 'plans/my-plan.md', '# Plan\n\n## Approach\nStore the ledger\nunder the state folder.\n\n## Risks\nNone listed.\n');
   const ledgerFile = path.join(state, 'quorum/my-plan-abc.json');
-  const check = (ledger, { env = process.env } = {}) => {
+  const check = (ledger, { env = process.env, against = plan } = {}) => {
     write(state, 'quorum/my-plan-abc.json', JSON.stringify(ledger));
-    const r = spawnSync(CLI, ['quorum', 'check', ledgerFile, '--plan', plan], { cwd: path.join(root, 'src'), encoding: 'utf8', env, timeout: 30_000 });
+    const r = spawnSync(CLI, ['quorum', 'check', ledgerFile, '--plan', against], { cwd: path.join(root, 'src'), encoding: 'utf8', env, timeout: 30_000 });
     assert.equal(r.error, undefined, 'check finished');
     return { ...r, ledger: JSON.parse(readFileSync(ledgerFile, 'utf8')), lines: r.stdout.trim().split('\n') };
   };
@@ -856,7 +856,7 @@ test('quorum codex: an unknown --mode is a usage error: exit 1, no status line, 
     assert.equal(checked, 0, 'stops before it looks for Codex');
   }
   assert.equal(errors.mock.callCount(), 3);
-  assert.match(errors.mock.calls[0].arguments[0], /^aidrian quorum: codex --mode is object or rebut, not "rebuttal"$/u);
+  assert.match(errors.mock.calls[0].arguments[0], /^aidrian quorum: codex --mode is object, rebut, case, or cross, not "rebuttal"$/u);
 });
 
 test('quorum codex: --mode with no value is a parse error, as any bad flag is', async (t) => {
@@ -921,13 +921,15 @@ test('quorum codex --mode rebut: a ledger that cannot be read or is off the sche
   }
 });
 
-test('quorum codex: --mode rebut without --ledger, or --ledger without it, is a usage error and Codex never starts', async (t) => {
+test('quorum codex: --mode rebut or cross without --ledger, or --ledger without either, is a usage error and Codex never starts', async (t) => {
   const errors = t.mock.method(console, 'error', () => {});
   for (const [flags, message] of [
     [['--mode', 'rebut'], 'aidrian quorum: codex --mode rebut needs --ledger'],
     [['--mode', 'rebut', '--ledger', ''], 'aidrian quorum: codex --mode rebut needs --ledger'],
-    [['--ledger', 'x.json'], 'aidrian quorum: codex --ledger is only for --mode rebut'],
-    [['--mode', 'object', '--ledger', 'x.json'], 'aidrian quorum: codex --ledger is only for --mode rebut'],
+    [['--mode', 'cross'], 'aidrian quorum: codex --mode cross needs --ledger'],
+    [['--ledger', 'x.json'], 'aidrian quorum: codex --ledger is only for --mode rebut or cross'],
+    [['--mode', 'object', '--ledger', 'x.json'], 'aidrian quorum: codex --ledger is only for --mode rebut or cross'],
+    [['--mode', 'case', '--ledger', 'x.json'], 'aidrian quorum: codex --ledger is only for --mode rebut or cross'],
   ]) {
     const fake = fakeCodex({ answer: REBUTTALS });
     const r = codexRun(t, fake);
@@ -938,13 +940,14 @@ test('quorum codex: --mode rebut without --ledger, or --ledger without it, is a 
   }
 });
 
-test('codexAnswer: an unknown mode, or rebut with no ledger, is failed, not thrown, and Codex is never looked for', async (t) => {
+test('codexAnswer: an unknown mode, or rebut or cross with no ledger, is failed, not thrown, and Codex is never looked for', async (t) => {
   const dir = temp(t, 'aidrian-quorum-guard-');
   const deps = { spawnImpl: fakeCodex().spawnImpl, codex: () => assert.fail('looked for Codex') };
   const args = { plan: 'p', brief: 'b', out: path.join(dir, 'o.json'), root: dir };
-  assert.deepEqual(await codexAnswer({ ...args, mode: 'nope' }, deps), { status: 'failed', reason: '"nope" is not a mode: object or rebut' });
-  assert.deepEqual(await codexAnswer({ ...args, mode: 'toString' }, deps), { status: 'failed', reason: '"toString" is not a mode: object or rebut' });
+  assert.deepEqual(await codexAnswer({ ...args, mode: 'nope' }, deps), { status: 'failed', reason: '"nope" is not a mode: object, rebut, case, or cross' });
+  assert.deepEqual(await codexAnswer({ ...args, mode: 'toString' }, deps), { status: 'failed', reason: '"toString" is not a mode: object, rebut, case, or cross' });
   assert.deepEqual(await codexAnswer({ ...args, mode: 'rebut' }, deps), { status: 'failed', reason: '--mode rebut needs a ledger' });
+  assert.deepEqual(await codexAnswer({ ...args, mode: 'cross' }, deps), { status: 'failed', reason: '--mode cross needs a ledger' });
 });
 
 const SKILL = path.resolve(import.meta.dirname, '../plugins/aidrian/skills/quorum');
@@ -1367,4 +1370,302 @@ test('check with mode: proportionality is required in a complete ledger with an 
     const result = p.check(before);
     assert.equal(result.status, 0, `${JSON.stringify(before.proportionality)}\n${result.stderr}`);
   }
+});
+
+// Decide mode: a question file with options A to C, checked as the plan, and a complete ledger in which A wins, every
+// case and backed cross point is tested, and B concedes with the ruling's own evidence.
+const QUESTION = '# Keep one ledger or split it?\n\n## Context\nThe ledger grows with every round.\n\n## Options\n### A: Keep one ledger\nOne file per plan\nholds every round.\n### B: Split it\nEach round writes its own file.\n### C: Drop it\nNothing is kept between runs.\n';
+const ASKED = {
+  a: cite('plan', '#a-keep-one-ledger', 'One file per plan holds every round.'),
+  b: cite('plan', '#B: Split it', 'Each round writes its own file.'),
+  c: cite('plan', '#c-drop-it', 'Nothing is kept between runs.'),
+  context: cite('plan', '#context', 'The ledger grows with every round.'),
+};
+const FAILS = cite('code', 'src/app.js:1', 'not in the file');
+const position = (id, runner) => ({ id, label: `option ${id}`, runner });
+const stand = (id, citations, claim = `the case for ${id}`) => ({ position: id, claim, citations });
+const point = (id, against, citations, extra = {}) => ({ id, by: id[0], against, claim: `point ${id}`, citations, status: 'backed', ...extra });
+const answer = (id, verdict, citations, claim = 'the ruling misreads the record') => ({ position: id, verdict, claim, citations });
+// One verdict per citation index of each entry `counts` names, supporting unless `against` names the entry.
+const tested = (counts, against = []) => Object.entries(counts).flatMap(([of, count]) => Array.from({ length: count }, (_, citation) => ({ of, citation, supports: !against.includes(of), reason: 'r' })));
+const FIRST = { A: 2, B: 1, A1: 1, B1: 1 };
+const decision = (over = {}) => ({ decision: 'rule', winner: 'A', change_or_reason: 'B`s strongest claim is its read speed; the decision record defeats it.', citations: [PASSING.adr], tested: tested(FIRST, ['B']), inferences: [], ...over });
+const escalated = { decision: 'escalate', winner: null, change_or_reason: 'cap reached, 8 of 8 dispatches', citations: [PASSING.adr], tested: [], inferences: [] };
+const decideLedger = (over = {}) => ({
+  mode: 'decide', status: 'complete', plan: 'questions/keep-one-ledger-abc1234.md', plan_hash: 'abc', same_model: false, same_model_reason: null, trigger: 'the Human asked',
+  positions: [position('A', 'agent'), position('B', 'codex')],
+  cases: [stand('A', [ASKED.a, PASSING.adr]), stand('B', [ASKED.b])],
+  cross: [point('A1', 'B', [PASSING.code]), point('B1', 'A', [PASSING.docBySlug])],
+  ruling: decision(),
+  rebuttals: [answer('B', 'concede', [PASSING.adr], 'the ruling holds')],
+  final_ruling: null,
+  human_answer: null,
+  ...over,
+});
+// The same ledger before the ruling: open, with no ruling or rebuttal.
+const opened = (over = {}) => decideLedger({ status: 'open', ruling: null, rebuttals: [], ...over });
+
+function decideProject(t) {
+  const p = project(t);
+  const question = path.join(p.state, 'quorum/questions/keep-one-ledger-abc1234.md');
+  write(p.state, 'quorum/questions/keep-one-ledger-abc1234.md', QUESTION);
+  return { ...p, check: (value, against = question) => p.check(value, { against }) };
+}
+
+test('decide schemas: every node Codex-strict, a full ledger and each answer pass, and LEDGER_SCHEMAS holds the decide schema', () => {
+  const strict = (node, where) => {
+    if ([node.type].flat().includes('object')) {
+      assert.equal(node.additionalProperties, false, where);
+      assert.deepEqual([...node.required].sort(), Object.keys(node.properties).sort(), where);
+      for (const [key, child] of Object.entries(node.properties)) strict(child, `${where}.${key}`);
+    }
+    if (node.items) strict(node.items, `${where}[]`);
+  };
+  for (const [name, schema] of Object.entries({ DECIDE_LEDGER_SCHEMA, CASE_SCHEMA, CROSS_SCHEMA, DECIDE_REBUTTAL_SCHEMA })) strict(schema, name);
+  assert.equal(LEDGER_SCHEMAS.decide, DECIDE_LEDGER_SCHEMA);
+  assert.equal(modeOf(decideLedger()), 'decide');
+  assert.deepEqual(schemaProblems(decideLedger(), DECIDE_LEDGER_SCHEMA), []);
+  assert.deepEqual(schemaProblems(decideLedger({ final_ruling: escalated, human_answer: 'keep A' }), DECIDE_LEDGER_SCHEMA), []);
+  const { human_answer: _, ...unanswered } = decideLedger();
+  for (const [value, problem] of [
+    [unanswered, '$.human_answer is missing'],
+    [decideLedger({ ruling: { ...decision(), tested: undefined } }), '$.ruling.tested must be array'],
+    [decideLedger({ ruling: decision({ tested: [{ citation: 0, supports: true, reason: 'r' }] }) }), '$.ruling.tested[0].of is missing'],
+    [decideLedger({ ruling: decision({ winner: 'E' }) }), '$.ruling.winner must be one of A, B, C, D'],
+    [decideLedger({ cross: [point('A1', 'B', [PASSING.code], { status: 'accepted' })] }), '$.cross[0].status must be one of pending, opinion, backed'],
+    [decideLedger({ objections: [] }), '$.objections is not a known field'],
+  ]) assert.deepEqual(schemaProblems(value, DECIDE_LEDGER_SCHEMA), [problem]);
+  assert.deepEqual(schemaProblems({ case: { claim: 'c', citations: [PASSING.adr] } }, CASE_SCHEMA), []);
+  assert.deepEqual(schemaProblems({ case: { claim: 'c' } }, CASE_SCHEMA), ['$.case.citations is missing']);
+  const points = (count) => ({ cross: Array.from({ length: count }, () => ({ against: 'B', claim: 'c', citations: [] })) });
+  assert.deepEqual(schemaProblems(points(5), CROSS_SCHEMA), []);
+  assert.deepEqual(schemaProblems(points(6), CROSS_SCHEMA), ['$.cross has 6 items, more than 5']);
+  assert.deepEqual(schemaProblems({ rebuttal: { verdict: 'concede', claim: 'c', citations: [PASSING.adr] } }, DECIDE_REBUTTAL_SCHEMA), []);
+  assert.deepEqual(schemaProblems({ rebuttal: { verdict: 'yield', claim: 'c', citations: [] } }, DECIDE_REBUTTAL_SCHEMA), ['$.rebuttal.verdict must be one of rebut, concede']);
+});
+
+test('check decide: a full ledger passes unchanged, its plan citations anchored on the question file`s option and context headings', (t) => {
+  const p = decideProject(t);
+  const full = decideLedger();
+  const result = p.check(full);
+  assert.equal(result.stderr, '');
+  assert.equal(result.status, 0);
+  assert.deepEqual(result.lines, ['checked: mode decide, 2 cases, 2 cross points, 0 opinion, 0 problems']);
+  assert.deepEqual(result.ledger, full);
+  // An anchor by heading text, by slug, and on Context pass; a quote from another option's section does not.
+  const anchors = p.check(opened({ cases: [stand('A', [ASKED.context, ASKED.c]), stand('B', [cite('plan', '#a-keep-one-ledger', 'Each round writes its own file.')])] }));
+  assert.equal(anchors.status, 0, anchors.stderr);
+  assert.deepEqual(anchors.lines, [
+    'case B.citations[0] (plan #a-keep-one-ledger): the plan#a-keep-one-ledger does not contain the quote',
+    'case B: no citation passes',
+    'checked: mode decide, 2 cases, 2 cross points, 0 opinion, 2 problems',
+  ]);
+  // A claim's question file anchors on `## Claim`.
+  const claim = path.join(p.state, 'quorum/questions/one-ledger-is-enough-abc1234.md');
+  write(p.state, 'quorum/questions/one-ledger-is-enough-abc1234.md', '# One ledger is enough\n\n## Claim\nOne ledger holds\nevery round.\n');
+  const onClaim = p.check(opened({ cases: [stand('A', [cite('plan', '#claim', 'One ledger holds every round.')]), stand('B', [cite('plan', '#Claim', 'every round')])], cross: [] }), claim);
+  assert.equal(onClaim.status, 0, onClaim.stderr);
+  assert.deepEqual(onClaim.lines, ['checked: mode decide, 2 cases, 0 cross points, 0 opinion, 0 problems']);
+});
+
+test('check decide: a pending cross point becomes backed or opinion by its citations; only a pending one is relabeled', (t) => {
+  const p = decideProject(t);
+  const result = p.check(opened({ cross: [point('A1', 'B', [FAILS, PASSING.code], { status: 'pending' }), point('B1', 'A', [FAILS], { status: 'pending' }), point('B2', 'A', [FAILS])] }));
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.ledger.cross.map((each) => each.status), ['backed', 'opinion', 'backed']);
+  assert.deepEqual(result.lines.filter((line) => !line.includes('.citations[')), [
+    'cross B1: relabeled opinion (was pending): no citation passes',
+    'cross B2: no citation passes; kept backed',
+    'checked: mode decide, 2 cases, 3 cross points, 1 opinion, 5 problems',
+  ]);
+});
+
+test('check decide: each invalid ruling, final ruling, rebuttal, and concession is named, with its reason', (t) => {
+  const p = decideProject(t);
+  const inferred = 'Split files read faster.\ninference: readers open one round at a time';
+  const rebutted = (citations, claim) => [answer('B', 'rebut', citations, claim)];
+  const finalOn = (over) => decision({ citations: [PASSING.fenced], tested: tested({ B: 1 }), ...over });
+  for (const [over, lines] of [
+    [{ ruling: decision({ citations: [FAILS] }) }, ['ruling: invalid: the ruling has no passing citation']],
+    [{ ruling: decision({ tested: tested({ A: 1, B: 1, A1: 1, B1: 1 }) }) }, ['ruling: invalid: tested names 1 of 2 citations of case A']],
+    [{ ruling: decision({ tested: [...tested(FIRST), { of: 'B1', citation: 0, supports: true, reason: 'r' }] }) }, ['ruling: invalid: tested names 0 of 1 citations of cross B1; 0 more than once']],
+    [{ ruling: decision({ tested: [...tested(FIRST), { of: 'A1', citation: 3, supports: true, reason: 'r' }] }) }, ['ruling: invalid: tested names 1 of 1 citations of cross A1; 3 out of range']],
+    [{ ruling: decision({ tested: [...tested(FIRST), { of: 'C', citation: 0, supports: true, reason: 'r' }] }) }, ['ruling: invalid: tested names C, which the ruling does not rule on']],
+    // An opinion is not ruled on: a verdict on it is stray, and none is needed.
+    [{ cross: [point('A1', 'B', [PASSING.code]), point('B1', 'A', [FAILS], { status: 'opinion' })] }, ['ruling: invalid: tested names B1, which the ruling does not rule on']],
+    [{ ruling: decision({ tested: tested(FIRST, ['A', 'B']) }) }, ["ruling: invalid: a rule rests on no supporting citation of the winner's case"]],
+    [{ ruling: decision({ tested: [...tested(FIRST, ['B']).filter((each) => each.of !== 'A'), { of: 'A', citation: 2, supports: true, reason: 'r' }] }) }, ['ruling: invalid: tested names 0 of 2 citations of case A; 2 out of range', "ruling: invalid: a rule rests on no supporting citation of the winner's case"]],
+    [{ cases: [stand('A', [ASKED.a, PASSING.adr]), stand('B', [ASKED.b], inferred)] }, ['ruling: invalid: inference untested: "readers open one round at a time"']],
+    [{ cross: [point('A1', 'B', [PASSING.code], { claim: 'B is slow.\ninference: the disk is the bottleneck' }), point('B1', 'A', [PASSING.docBySlug])] }, ['ruling: invalid: inference untested: "the disk is the bottleneck"']],
+    [{ rebuttals: rebutted([FAILS]) }, ['rebuttal B: invalid: the rebuttal has no passing citation']],
+    [{ rebuttals: rebutted([ASKED.b]) }, ['rebuttal B: invalid: the rebuttal cites nothing new']],
+    [{ rebuttals: rebutted([PASSING.code]) }, ['rebuttal B: invalid: the rebuttal cites nothing new']],
+    [{ rebuttals: rebutted([PASSING.adr]) }, ['rebuttal B: invalid: the rebuttal cites nothing new']],
+    [{ rebuttals: [answer('B', 'concede', [])] }, ['rebuttal B: invalid: the concession has no passing citation']],
+    [{ rebuttals: [answer('B', 'concede', [FAILS])] }, ['rebuttal B: invalid: the concession has no passing citation']],
+    [{ rebuttals: rebutted([PASSING.fenced]), final_ruling: finalOn({ citations: [FAILS] }) }, ['final ruling: invalid: the ruling has no passing citation']],
+    [{ rebuttals: rebutted([PASSING.fenced, PASSING.exact]), final_ruling: finalOn() }, ['final ruling: invalid: tested names 1 of 2 citations of rebuttal B']],
+    [{ rebuttals: rebutted([PASSING.fenced], 'It is faster.\ninference: rounds are read alone'), final_ruling: finalOn() }, ['final ruling: invalid: inference untested: "rounds are read alone"']],
+    [{ rebuttals: rebutted([PASSING.fenced]), final_ruling: finalOn({ winner: 'B', tested: tested({ B: 1 }, ['B']) }) }, ["final ruling: invalid: a flip rests on no supporting citation of the winner's rebuttal"]],
+  ]) {
+    const result = p.check(decideLedger({ status: 'open', ...over }));
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.lines.filter((line) => line.includes(': invalid: ')), lines, JSON.stringify(over));
+  }
+  // Every inference line tested, a concession citing the ruling's own evidence, and a valid final rule pass clean.
+  const inferences = [{ statement: 'readers open one round at a time', holds: false, reason: 'r', citations: [] }];
+  const clean = p.check(decideLedger({ cases: [stand('A', [ASKED.a, PASSING.adr]), stand('B', [ASKED.b], inferred)], ruling: decision({ inferences }) }));
+  assert.equal(clean.status, 0, clean.stderr);
+  assert.deepEqual(clean.lines, ['checked: mode decide, 2 cases, 2 cross points, 0 opinion, 0 problems']);
+});
+
+test('check decide: a complete ledger with no ruling, an unanswered loser, an unruled rebut, a governing winner with no evidence, or a stale ruling exits 1 unwritten', (t) => {
+  const p = decideProject(t);
+  const flip = { rebuttals: [answer('B', 'rebut', [PASSING.fenced])], final_ruling: decision({ winner: 'B', citations: [PASSING.fenced], tested: tested({ B: 1 }) }) };
+  for (const [over, line] of [
+    [{ ruling: null, rebuttals: [] }, 'ruling is null in a complete ledger'],
+    [{ rebuttals: [] }, 'position B lost the ruling and has no rebuttal in a complete ledger'],
+    [{ rebuttals: [answer('B', 'rebut', [PASSING.fenced])] }, 'rebuttal B rebuts with no final ruling in a complete ledger'],
+    // Settled by the Human, the governing winner still needs its evidence.
+    [{ cases: [stand('A', [FAILS]), stand('B', [ASKED.b])], ruling: decision({ tested: tested({ A: 1, B: 1, A1: 1, B1: 1 }, ['B']) }), rebuttals: [], final_ruling: escalated, human_answer: 'keep A' }, "case A: the governing winner's case has no passing citation in a complete ledger"],
+    [{ cases: [stand('A', [ASKED.a, PASSING.adr])] }, 'position B has no case in a complete ledger'],
+    [{ rebuttals: [answer('B', 'rebut', [PASSING.fenced])], final_ruling: decision({ citations: [FAILS], tested: tested({ B: 1 }) }) }, 'final ruling: invalid: the ruling has no passing citation in a complete ledger'],
+    [{ rebuttals: [answer('B', 'rebut', [FAILS])], final_ruling: decision({ citations: [PASSING.fenced], tested: tested({ B: 1 }) }) }, 'rebuttal B: invalid: the rebuttal has no passing citation in a complete ledger'],
+    [{ ...flip, cases: [stand('A', [ASKED.a, PASSING.adr]), stand('B', [FAILS])] }, "case B: the governing winner's case has no passing citation in a complete ledger"],
+    [{ ruling: decision({ citations: [FAILS] }) }, 'ruling: invalid: the ruling has no passing citation in a complete ledger'],
+    [{ rebuttals: [answer('B', 'concede', [FAILS])] }, 'rebuttal B: invalid: the concession has no passing citation in a complete ledger'],
+  ]) {
+    const value = decideLedger(over);
+    const result = p.check(value);
+    assert.equal(result.status, 1, line);
+    assert.ok(result.stderr.includes(`: ${line}\n`), `${line}\n${result.stderr}`);
+    assert.deepEqual(result.ledger, value, 'not written');
+  }
+  // An escalation settles an invalid ruling, answered or deferred, as an escalated objection is settled in plan mode.
+  for (const human_answer of ['keep A', null]) {
+    const settled = p.check(decideLedger({ ruling: decision({ decision: 'escalate', winner: null, citations: [FAILS] }), rebuttals: [], human_answer }));
+    assert.equal(settled.status, 0, settled.stderr);
+    assert.deepEqual(settled.lines, ['ruling.citations[0] (code src/app.js:1): src/app.js does not contain the quote', 'ruling: invalid: the ruling has no passing citation', 'checked: mode decide, 2 cases, 2 cross points, 0 opinion, 2 problems']);
+  }
+  // A flip that stands on the winner's evidence passes, and governs.
+  const flipped = p.check(decideLedger(flip));
+  assert.equal(flipped.status, 0, flipped.stderr);
+  assert.deepEqual(flipped.lines, ['checked: mode decide, 2 cases, 2 cross points, 0 opinion, 0 problems']);
+  assert.equal(governingWinner(decideLedger(flip)), 'B');
+  assert.equal(governingWinner(decideLedger()), 'A');
+  assert.equal(governingWinner(decideLedger({ final_ruling: escalated })), 'A');
+  assert.equal(governingWinner(decideLedger({ ruling: decision({ decision: 'escalate', winner: null }) })), null);
+});
+
+test('check decide: each way the rebuttal round ends short escalates in the final ruling, and passes with the Human`s answer set or deferred', (t) => {
+  const p = decideProject(t);
+  for (const [rebuttals, lines] of [
+    // (a) an invalid rebuttal, (b) a loser that never answered, (c) a rebut the cap left without an architect's ruling.
+    [[answer('B', 'rebut', [PASSING.adr])], ['rebuttal B: invalid: the rebuttal cites nothing new']],
+    [[], []],
+    [[answer('B', 'rebut', [PASSING.fenced])], []],
+  ]) {
+    for (const human_answer of ['keep A', null]) {
+      const result = p.check(decideLedger({ rebuttals, final_ruling: escalated, human_answer }));
+      assert.equal(result.status, 0, result.stderr);
+      assert.deepEqual(result.lines, [...lines, `checked: mode decide, 2 cases, 2 cross points, 0 opinion, ${lines.length} problems`]);
+    }
+  }
+  // A first ruling that escalates has no loser to rebut; deferred, it is complete.
+  const deferred = p.check(decideLedger({ ruling: decision({ decision: 'escalate', winner: null }), rebuttals: [] }));
+  assert.equal(deferred.status, 0, deferred.stderr);
+  assert.deepEqual(deferred.lines, ['checked: mode decide, 2 cases, 2 cross points, 0 opinion, 0 problems']);
+});
+
+test('check decide: ids, positions, winners, rebuttals, and same_model that do not fit exit 1 unwritten, one line each', (t) => {
+  const p = decideProject(t);
+  const three = { positions: [position('A', 'agent'), position('B', 'codex'), position('C', 'agent')], same_model: true, same_model_reason: 'A and C run as agents', cases: [stand('A', [ASKED.a, PASSING.adr]), stand('B', [ASKED.b]), stand('C', [ASKED.c])] };
+  const threeRuled = { ...three, ruling: decision({ tested: tested({ ...FIRST, C: 1 }, ['B', 'C']) }), rebuttals: [answer('B', 'rebut', [PASSING.fenced]), answer('C', 'concede', [PASSING.adr])] };
+  const finalTo = (winner) => decision({ winner, citations: [PASSING.fenced], tested: tested({ B: 1, C: 1 }) });
+  for (const [over, line] of [
+    [{ positions: [position('B', 'agent'), position('A', 'codex')] }, 'positions are B, A, not 2 to 4 from A to D in order'],
+    [{ positions: [position('A', 'agent'), position('C', 'codex')], cases: [stand('A', [ASKED.a])], cross: [], ruling: null, rebuttals: [], status: 'open' }, 'positions are A, C, not 2 to 4 from A to D in order'],
+    [{ positions: [position('A', 'agent')], cases: [stand('A', [ASKED.a])], cross: [], ruling: null, rebuttals: [], status: 'open' }, 'positions are A, not 2 to 4 from A to D in order'],
+    [{ cases: [...decideLedger().cases, stand('C', [ASKED.c])] }, 'case C is not a position in this ledger'],
+    [{ cases: [...decideLedger().cases, stand('A', [ASKED.a])] }, 'position A has more than one case'],
+    [{ cross: [point('A6', 'B', [PASSING.code])] }, 'cross id "A6" is not A1 to D5'],
+    [{ cross: [point('A1\nchecked: ok', 'B', [PASSING.code])] }, 'cross id "A1\\u000achecked: ok" is not A1 to D5'],
+    [{ cross: [point('A1', 'B', [PASSING.code]), point('A1', 'B', [PASSING.adr])] }, 'cross id A1 is used more than once'],
+    [{ cross: [point('A2', 'A', [PASSING.code], { by: 'B' })] }, 'cross A2 is by B, not A'],
+    [{ cross: [point('C1', 'A', [PASSING.code])] }, 'cross C1 is by C, not a position in this ledger'],
+    [{ cross: [point('A1', 'C', [PASSING.code])] }, 'cross A1 is against C, not a position in this ledger'],
+    [{ cross: [point('A1', 'A', [PASSING.code])] }, 'cross A1 is against its own position'],
+    [{ rebuttals: [answer('C', 'concede', [PASSING.adr])] }, 'rebuttal C is not a position in this ledger'],
+    [{ rebuttals: [answer('A', 'concede', [PASSING.adr]), answer('B', 'concede', [PASSING.adr])] }, "rebuttal A is by the first ruling's winner"],
+    [{ rebuttals: [answer('B', 'concede', [PASSING.adr]), answer('B', 'concede', [PASSING.adr])] }, 'position B has more than one rebuttal'],
+    [{ ruling: decision({ winner: null }) }, 'ruling rules with no winner'],
+    [{ ruling: decision({ decision: 'escalate' }), rebuttals: [] }, 'ruling escalates but names the winner A'],
+    [{ ruling: decision({ winner: 'C' }) }, 'ruling names the winner C, not a position in this ledger'],
+    [{ rebuttals: [answer('B', 'rebut', [PASSING.fenced])], final_ruling: { ...escalated, winner: 'B' } }, 'final ruling escalates but names the winner B'],
+    [{ ...threeRuled, final_ruling: finalTo('C') }, "final ruling names the winner C, neither the first ruling's winner nor a position that rebutted"],
+    [{ ruling: decision({ decision: 'escalate', winner: null }) }, 'rebuttals and a final ruling follow a first ruling of rule only'],
+    [{ ruling: decision({ decision: 'escalate', winner: null }), rebuttals: [], final_ruling: escalated }, 'rebuttals and a final ruling follow a first ruling of rule only'],
+    [{ final_ruling: decision({ citations: [PASSING.fenced], tested: tested({ B: 1 }) }) }, 'final ruling rules, but no position rebutted'],
+    [{ human_answer: 'keep A' }, 'human_answer: set but nothing escalated'],
+    [{ rebuttals: [answer('B', 'rebut', [PASSING.fenced])], final_ruling: finalTo('A'), human_answer: 'keep A' }, 'human_answer: set but nothing escalated'],
+    [{ positions: [position('A', 'agent'), position('B', 'agent')] }, 'same_model is false, but two positions share a runner'],
+    [{ same_model: true, same_model_reason: 'shared' }, 'same_model is true, but no two positions share a runner'],
+    [{ ...threeRuled, final_ruling: finalTo('B'), same_model_reason: null }, 'same_model is true, so same_model_reason must say why two positions share a runner'],
+  ]) {
+    const value = decideLedger(over);
+    const result = p.check(value);
+    assert.equal(result.status, 1, line);
+    assert.deepEqual(result.stderr.trim().split('\n').map((each) => each.replace(/^.*?\.json: /u, '')), [line]);
+    assert.deepEqual(result.ledger, value, 'not written');
+  }
+  // Three positions: a final ruling for the first winner or for a position that rebutted passes.
+  for (const winner of ['A', 'B']) {
+    const result = p.check(decideLedger({ ...threeRuled, final_ruling: finalTo(winner) }));
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.lines, ['checked: mode decide, 3 cases, 2 cross points, 0 opinion, 0 problems']);
+  }
+});
+
+test('quorum codex --mode case, cross, and rebut on a decide ledger: each held to its schema and the ledger, written, one line', async (t) => {
+  const run = async (mode, answered, { ledgerValue = decideLedger(), withLedger = mode !== 'case' } = {}) => {
+    const fake = fakeCodex({ answer: answered });
+    const r = codexRun(t, fake);
+    if (ledgerValue) writeFileSync(r.ledgerFile, JSON.stringify(ledgerValue));
+    const code = await r.run({}, undefined, ['--mode', mode, ...(withLedger ? ['--ledger', r.ledgerFile] : [])]);
+    assert.equal(r.printed.length, 1);
+    const line = JSON.parse(r.printed[0]);
+    const written = line.status === 'done' ? JSON.parse(readFileSync(r.out, 'utf8')) : (assert.throws(() => readFileSync(r.out), /ENOENT/u, 'nothing written'), null);
+    return { code, line, written, fake, out: r.out };
+  };
+  const theCase = { case: { claim: 'one file is enough', citations: [PASSING.adr] } };
+  const done = await run('case', theCase);
+  assert.equal(done.code, 0);
+  assert.deepEqual(done.line, { status: 'done', reason: `1 case written to ${done.out}` });
+  assert.deepEqual(done.written, theCase);
+  assert.deepEqual(done.fake.calls[0].schema, CASE_SCHEMA);
+  assert.match((await run('case', ANSWER)).line.reason, /^the answer does not follow the schema: \$\.case is missing$/u);
+
+  const points = { cross: [{ against: 'B', claim: 'B cites no reader', citations: [PASSING.code] }, { against: 'A', claim: 'own', citations: [] }] };
+  const crossed = await run('cross', points);
+  assert.equal(crossed.code, 0, crossed.line.reason);
+  assert.deepEqual(crossed.line, { status: 'done', reason: `2 cross points written to ${crossed.out}` });
+  assert.deepEqual(crossed.fake.calls[0].schema, CROSS_SCHEMA);
+  const unknown = await run('cross', { cross: [{ against: 'C', claim: 'c', citations: [] }, { against: 'D', claim: 'd', citations: [] }] });
+  assert.equal(unknown.code, 1);
+  assert.equal(unknown.line.reason, 'the answer does not fit the ledger: the answer cross-examines C, D, not a position in the ledger');
+  const onPlan = await run('cross', points, { ledgerValue: null });
+  assert.equal(onPlan.code, 1);
+  assert.equal(onPlan.line.reason, '--mode cross answers a decide ledger, and this ledger is in plan mode');
+  assert.equal(onPlan.fake.calls.length, 0, 'Codex never starts');
+
+  const rebutted = { rebuttal: { verdict: 'rebut', claim: 'the record is old', citations: [PASSING.fenced] } };
+  const rebut = await run('rebut', rebutted);
+  assert.equal(rebut.code, 0, rebut.line.reason);
+  assert.deepEqual(rebut.line, { status: 'done', reason: `1 rebuttal written to ${rebut.out}` });
+  assert.deepEqual(rebut.fake.calls[0].schema, DECIDE_REBUTTAL_SCHEMA);
+  const bare = await run('rebut', { rebuttal: { verdict: 'concede', claim: 'it holds', citations: [] } });
+  assert.equal(bare.code, 1);
+  assert.equal(bare.line.reason, 'the answer does not fit the ledger: the answer concedes with no citation, which a decide ledger needs');
+  assert.equal((await run('rebut', { rebuttal: { verdict: 'concede', claim: 'it holds', citations: [PASSING.adr] } })).code, 0);
+  assert.match((await run('rebut', REBUTTALS)).line.reason, /^the answer does not follow the schema: \$\.rebuttal is missing$/u);
 });

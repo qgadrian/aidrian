@@ -73,20 +73,21 @@ export function readRecord(project, pr) {
   return review || override ? record : null;
 }
 
-// A pass id of one agent over the whole diff, as the review plan names it (lib/review/plan.mjs): `agent:<name>`. A flow
-// pass (`flow:<id>:<agent>`, or `agent:<name>:<flow>+<flow>` when merged), a slice (`agent:<name>.<n>`), the cross pass,
-// and an engine pass are not one.
-const FULL_AGENT_PASS = /^agent:[\w-]+$/u;
+// A pass of one agent, as the review plan names it (lib/review/plan.mjs): `agent:<name>`, or `agent:<name>:<flow>+<flow>`
+// when the agent's flows merged into it. It reviewed the whole diff when its recorded `files` is null; a merged pass
+// limited to its flows' files, and a slice (`agent:<name>.<n>`, which always lists files), did not. A flow pass
+// (`flow:<id>:<agent>`), the cross pass, and an engine pass are never one.
+const AGENT_PASS = /^agent:[\w-]+(?::\S+)?$/u;
 
-// The review the gate counts for pull request `pr`, or null: the plain record `aidrian pr attest` writes, else a pass of
-// one agent over the whole diff in the review step's record, as { pr, repo, head, reviewer, findings, fixed }. The pass
+// The review the gate counts for pull request `pr`, or null: the plain record `aidrian pr attest` writes, else an agent
+// pass over the whole diff in the review step's record (AGENT_PASS with no files), as { pr, repo, head, reviewer, findings, fixed }. The pass
 // is the reviewer's word, as the plain record is, and like it names a commit attest checked when it recorded it.
 export function gateReview(project, pr) {
   const record = readRecord(project, pr);
   if (record) return record;
   const state = readLocalState(project, pr);
   for (const [id, pass] of Object.entries(state?.passes ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
-    if (!FULL_AGENT_PASS.test(id) || pass?.files !== null || typeof pass?.head !== 'string' || !SHA.test(pass.head)) continue;
+    if (!AGENT_PASS.test(id) || pass?.files !== null || typeof pass?.head !== 'string' || !SHA.test(pass.head)) continue;
     if (typeof pass.reviewer !== 'string' || pass.reviewer === '' || !Number.isInteger(pass.findings)) continue;
     const open = Number.isInteger(pass.open) ? pass.open : 0;
     return { pr, repo: typeof state.repo === 'string' ? state.repo : null, head: pass.head, reviewer: pass.reviewer, findings: pass.findings, fixed: Math.max(0, pass.findings - open), pass: id };

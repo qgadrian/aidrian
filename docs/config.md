@@ -227,7 +227,8 @@ aidrian pr attest <PR> --check     # exit 0 recorded, 3 not
 
 Inside `aidrian pr review`, the full-diff agent pass it dispatches, recorded with
 `aidrian pr attest <PR> --pass agent:<name> --head <sha> ...`, is that record too, so the bot request needs no second
-attest. A pass over a flow's or a slice's files alone, the cross pass, and an engine pass do not count.
+attest; so is an agent pass its flows merged into, `agent:<name>:<flows>`, when it read the whole diff. A pass over a
+flow's or a slice's files alone, the cross pass, and an engine pass do not count.
 
 `attest` writes the record to the [state folder](project-folder.md#local-state), which every worktree shares, and prints a marker:
 `<!-- aidrian-review: pr=<n> repo=<owner/name> head=<sha> ... -->`. A request that carries the marker for its own pull request

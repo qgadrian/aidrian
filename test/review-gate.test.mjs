@@ -178,6 +178,9 @@ test('a full-diff agent pass the review step recorded counts as the gate`s revie
   assert.equal(gateReview(project, 5), null);
   passes(project, 5, { 'agent:code-reviewer': { reviewer: '', findings: 1 } });
   assert.ok(run(request), 'a pass that names no reviewer');
+  passes(project, 5, { 'agent:code-reviewer:billing': {} });
+  assert.equal(run(request), null, 'an agent pass its flows merged into, with no file list, read the whole diff');
+  assert.equal(gateReview(project, 5).pass, 'agent:code-reviewer:billing');
   passes(project, 5, { 'flow:billing:code-reviewer': { files: ['src/billing.mjs'] }, 'agent:code-reviewer': { findings: 3, open: 1 } });
   assert.equal(run(request), null, 'the full-diff agent pass lets the request through');
   assert.deepEqual(gateReview(project, 5), { pr: 5, repo: 'acme/notes', head: 'abcdef1', reviewer: 'code-reviewer', findings: 3, fixed: 2, pass: 'agent:code-reviewer' });

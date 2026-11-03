@@ -51,6 +51,7 @@ const AMEND = /--amend\b|(?<![-\w])amend(?:ing|s)?\b(?!\s+(?:guard|rule|hook)\b)
 // The words that may stand between a prohibition and the amend it governs.
 const FILLER = '(?:use|using|run|running|ask|asking|for|a|an|the|any|with|git|commit)';
 const PROHIBITS_BEFORE = new RegExp(`(?<![-\\w])(?:never|not|no|don't|without|instead of|rather than|avoid|avoiding|refuses?|denies|blocks?|forbids?)\\s+(?:${FILLER}\\s+){0,4}$`, 'iu');
+const NEGATED = /(?<![-\w])(?:not|no|never|don't|doesn't|won't)\s+(?:\w+\s+){0,1}$/iu;
 const PROHIBITS_AFTER = /^(?:\s+--?[\w-]+)*\s+(?:is|are|stays?)\s+(?:blocked|refused|denied|forbidden|not allowed)\b/iu;
 // Room for one staged file read through git: Node's default 1 MiB would leave a larger file unread.
 const STAGED_MAX_BYTES = 64 * 1024 * 1024;
@@ -189,9 +190,13 @@ export function lintTerms(project, config, staged = false, only = null) {
   return { problems, warnings, summary: `no banned terms in ${files} ${staged ? 'staged' : 'tracked'} files (${rules.length} rules)` };
 }
 
-// Whether the mention `mention` in `line`, backticks removed, is directly prohibited.
+// Whether the mention `mention` in `line`, backticks removed, is directly prohibited. A prohibition that is itself
+// negated, as in "does not block" or "do not avoid", permits the amend.
 function prohibited(line, mention) {
-  return PROHIBITS_BEFORE.test(line.slice(0, mention.index)) || PROHIBITS_AFTER.test(line.slice(mention.index + mention[0].length));
+  const before = PROHIBITS_BEFORE.exec(line.slice(0, mention.index));
+  if (before) return !NEGATED.test(line.slice(0, before.index));
+  const after = line.slice(mention.index + mention[0].length);
+  return PROHIBITS_AFTER.test(after) && !/^(?:\s+--?[\w-]+)*\s+(?:is|are|stays?)\s+not\s+(?:blocked|refused|denied|forbidden)\b/iu.test(after);
 }
 
 // Each line of `text` that asks for an amend, as a problem naming `file` and the line.

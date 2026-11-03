@@ -33,6 +33,17 @@ A premise that does not hold is `does not apply`, answered with the file and lin
 A finding or a failing check gets at most 2 passes: the fix, and one corrective pass when the review or the check says
 it is not fixed or broke something. After the second pass it is `blocked`, with the reason, and goes to the Human.
 
+## Proportion
+
+Fix every finding a review identified; never leave one silently open. Do not go hunting for new ones.
+
+- A finding blocks the pull request only when it breaks a path real sessions take: the skill's own steps, a direct
+  command, or a checkout the project uses. One that needs a contrived race or a hypothetical setup is fixed in the same
+  commit when it is small, and otherwise is `accepted_residual`, named in the body.
+- Each round's findings get one fix pass. Add no hardening, check, or config that no review found.
+- When the fixes since round 1 pass half of what the pull request first added, or a finding comes back at a spot already
+  fixed, stop before the next pass and ask the Human whether the rest is worth its cost.
+
 ## Disposition actions
 
 `aidrian pr disposition` gives each finding one action; `--vocab` defines every word.

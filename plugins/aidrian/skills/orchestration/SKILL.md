@@ -58,7 +58,7 @@ The stop hook sends a subagent back once when it stops with one still running.
    In these skills, route each fix to its owner by § 4, even where a skill says the session fixes it itself.
    The fixing agent commits and pushes; you run the `git ls-remote` check and post the replies.
 5. **The bot is out** and **a review round** are defined once, in `references/review-rules.md`, with the branch preflight,
-   the fix-pass cap, and the disposition actions that `pr-review-loop`, `pr-review-fix`, and `autopilot` share.
+   the fix-pass cap, proportion, and the disposition actions that `pr-review-loop`, `pr-review-fix`, and `autopilot` share.
 6. **The stop rule.** Stop when a round's review of the current head yields no `fix_now` and `aidrian pr checks <n>`
    is not failing, or after config.json `github.maxReviewRounds` rounds
    (default 3) and any extra round granted at the cap; `aidrian pr await-review` exit 4, `round_limit`, means that cap.

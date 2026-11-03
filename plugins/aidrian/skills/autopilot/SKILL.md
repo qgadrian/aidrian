@@ -12,7 +12,7 @@ It never redoes what the skills it runs already do.
 
 Before you start, follow the `knowledge` skill. Load your `product_sensitive` docs for the flows the project declares critical.
 Load the `orchestration` skill too: it owns the worktree, the pull request, and review findings.
-Its `references/review-rules.md` defines a review round, when the bot is out, the fix-pass cap, and the disposition actions.
+Its `references/review-rules.md` defines a review round, when the bot is out, the fix-pass cap, proportion, and the disposition actions.
 
 ## Inputs
 

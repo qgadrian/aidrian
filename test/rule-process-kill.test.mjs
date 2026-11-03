@@ -643,6 +643,20 @@ test('a named descriptor, or a quoted word that looks like one, opens neither pr
   assert.ok(!reason.includes('Run this instead'), 'and gets no rewrite');
 });
 
+test('a named descriptor before a command, or among a prefix\'s words, hides neither the command nor its kill', () => {
+  deny('{fd}>/dev/null pkill node');
+  deny('{fd}>/dev/null kill -- -1');
+  deny('sudo {fd}>/dev/null pkill node');
+  deny('FOO=1 {fd}>/dev/null pkill node');
+  deny('env {fd}>/dev/null pkill node');
+  deny('nohup {fd}>/dev/null pkill node');
+  deny('pgrep -f x | xargs {fd}>/dev/null kill');
+  denyListing('{fd}>/dev/null ps aux');
+  deny("ps -p 1 '{x}'>/tmp/f; kill $X");
+  allowListing('{fd}>/dev/null ls');
+  allowListing('exec {fd}>/tmp/log');
+});
+
 // [denied command, the command its reason says to run instead]
 const REPLACEMENTS = [
   ['pgrep -fl "git push" | head', "pgrep -d, -f 'git push' | xargs -r ps -o pid=,ppid=,etime=,comm= -p | head"],

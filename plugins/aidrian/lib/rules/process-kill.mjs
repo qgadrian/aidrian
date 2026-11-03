@@ -213,11 +213,11 @@ function readCommand(segment) {
   // A named descriptor (`{x}>f`) stays a word, as a quoted `'{x}'` is one: the rules read it as they did before the
   // lexer kept descriptors, so dropping it can open neither rule.
   const words = segment.flatMap((token) => {
-    if (token.operator) return hasNamedFd([token]) ? [{ text: token.fd, dynamic: false }] : [];
+    if (token.operator) return hasNamedFd([token]) ? [{ text: token.fd, dynamic: false, namedFd: true }] : [];
     return token.fdDup || targets.has(token) ? [] : [token];
   });
   let index = 0;
-  while (index < words.length && ASSIGNMENT.test(words[index].text)) index += 1;
+  while (index < words.length && (words[index].namedFd || ASSIGNMENT.test(words[index].text))) index += 1;
   return { program: (words[index]?.text ?? '').split('/').pop() ?? '', args: words.slice(index + 1) };
 }
 
@@ -227,6 +227,7 @@ function afterPrefixOptions(prefix, args, nested) {
   let i = 0;
   while (args[i]) {
     const token = args[i];
+    if (token.namedFd) { i += 1; continue; }
     if (token.dynamic) break;
     if (token.text === '--') return i + 1;
     // The env -S string is more env argv, options included, so it is judged as `env <string>`.
@@ -299,6 +300,7 @@ const XARGS_VALUE_FLAGS = new Set(['-n', '--max-args', '-I', '-P', '--max-procs'
 function xargsInvocation(args) {
   for (let i = 0; i < args.length; i += 1) {
     const token = args[i];
+    if (token.namedFd) continue;
     if (token.dynamic) return null;
     if (XARGS_VALUE_FLAGS.has(token.text)) {
       i += 1;

@@ -21,7 +21,9 @@ Before you ask, look for the answer, in this order:
    Without a project folder, search the repository's docs with `grep -rli <word>` instead.
 2. When an accepted decision record already settles it, cite the record and do not reopen it.
 3. When the code can prove it, read the code. Ask only where the code and the plan disagree, and name the file.
-4. Otherwise ask, with your recommended answer and the one reason that decides it.
+4. Otherwise ask, in words the Human can answer without this session's context: one sentence on what goes wrong
+   for the people affected, one decision, your recommended answer first with the one reason that decides it,
+   and no internal IDs, labels, or file names. Citations and code detail go in each option's description.
 
 While you ask:
 

@@ -109,7 +109,7 @@ No compromise: a dispute the evidence does not settle escalates with both positi
 ## Asking the Human
 
 Ask the escalations one at a time, as the `challenge` skill asks, and wait for each answer before the next.
-Each question names both positions with their citations, the recommended answer, and the one reason that decides it.
+Name no objection IDs; each position is an option, its citations in the option's description.
 An answer goes into `human_answers`, and the objection becomes `accepted` or `rejected`; a valid partial accept stays
 `accepted`, with its rejected part settled by the answer.
 An escalation the Human defers stays `escalated` and goes into the report's open questions: the plan cannot be

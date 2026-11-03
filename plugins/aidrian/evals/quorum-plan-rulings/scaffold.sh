@@ -3,7 +3,8 @@
 # under test or the eval suite, as a fresh one-commit repository: no history to read the skill back from, so only the
 # plugin arm has it. Adds this case's plan, points the project's state folder at .eval-state in the run folder, and
 # seeds there an open plan-mode ledger at the plan's hash, with three backed objections: one the plan covers, which
-# also cites a line that does not support it, one real omission, and one small risk whose asked change is large.
+# also cites a line that does not support it, one real omission (the doc the working agreement says the change must
+# update), and one small risk whose asked change is large.
 # `aidrian quorum check` must pass it before the run starts.
 set -eu
 case_dir=$(cd "$(dirname "$0")" && pwd)

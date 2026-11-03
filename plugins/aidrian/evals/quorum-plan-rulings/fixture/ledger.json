@@ -24,10 +24,11 @@
       "id": "A2",
       "by": "A",
       "severity": "important",
-      "claim": "With lesson ids, list takes the lessons it finds by id and never reaches the status, tier, kind, and target filters. The plan says nothing about --since with ids, so `aidrian lesson list <id> --since 7d` would print an old lesson the reader asked to leave out, with no error.",
+      "claim": "The plan adds an option to `aidrian lesson list` but names no doc change. docs/lessons.md lists every option that narrows `list`, and the working agreement says a change to a surface updates that surface's doc in the same branch, so the plan as written ships `--since` with a doc that leaves it out.",
       "citations": [
-        { "kind": "code", "ref": "plugins/aidrian/lib/lesson-cli.mjs:167", "quote": "if (ids.length) {" },
-        { "kind": "plan", "ref": "#approach", "quote": "Apply it after the `--status`, `--tier`, `--kind`, and `--target` filters, and before `--limit`." }
+        { "kind": "doc", "ref": "docs/working-agreement.md#rules-for-every-change", "quote": "A change to a surface updates that surface's doc in the same branch" },
+        { "kind": "doc", "ref": "docs/lessons.md#commands", "quote": "`--source`, and `--limit N` narrow it" },
+        { "kind": "plan", "ref": "#approach", "quote": "Add `[--since 30d]` to the `list` usage line." }
       ],
       "status": "pending",
       "ruling": null,

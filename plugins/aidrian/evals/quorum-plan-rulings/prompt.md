@@ -2,7 +2,7 @@
 name: quorum-plan-rulings
 max_turns: 40
 timeout_seconds: 1200
-allowed_tools: [Read, Glob, Grep, Skill, Bash, Agent, Write, Edit]
+allowed_tools: [Read, Glob, Grep, Skill, Bash, Agent]
 ---
 
 A plan quorum on plans/lesson-list-since.md is under way. The open ledger in .eval-state/quorum/ is this run's own

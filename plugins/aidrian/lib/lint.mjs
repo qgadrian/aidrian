@@ -196,7 +196,7 @@ function prohibited(line, mention) {
   const before = PROHIBITS_BEFORE.exec(line.slice(0, mention.index));
   if (before) return !NEGATED.test(line.slice(0, before.index));
   const after = line.slice(mention.index + mention[0].length);
-  return PROHIBITS_AFTER.test(after) && !/^(?:\s+--?[\w-]+)*\s+(?:is|are|stays?)\s+not\s+(?:blocked|refused|denied|forbidden)\b/iu.test(after);
+  return PROHIBITS_AFTER.test(after);
 }
 
 // Each line of `text` that asks for an amend, as a problem naming `file` and the line.

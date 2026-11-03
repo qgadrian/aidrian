@@ -21,7 +21,7 @@ Rules:
 - Start from market and user research: interviews, support tickets, data, named in Evidence.
   A persona written from the product's feature list restates the product.
 - A task is a real job the person has, in their words, whether or not the product does it today.
-  Keep a job the product cannot do: the walk reports it.
+  Keep a job the product cannot do: a walk reports it as blocked, and a run that cannot walk lists it under Not reached.
 - One persona per person. A task whose job differs per business mode is one task per mode, each with a title that
   names the mode, such as Seat a walk-in party (tables) and Book a treatment (services).
 - Who names the one familiarity the walk starts from, even when real users range wider.

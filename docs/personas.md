@@ -45,7 +45,7 @@ holds only how a session reaches the product and what it may touch.
 - Start from market and user research, such as interviews, support tickets, and data, and name it in `Evidence`.
   A persona written from the product's feature list restates the product.
 - A task is a real job the person has, in their words, whether or not the product does it today.
-  Keep a job the product cannot do: the walk reports it.
+  Keep a job the product cannot do: a walk reports it as `blocked`, and a run that cannot walk lists it under `Not reached`.
 - One persona per person. A task whose job differs per business mode is one `### <task>` per mode, each with a title
   that names the mode, such as `Seat a walk-in party (tables)` and `Book a treatment (services)`.
 - `Who` names the one familiarity the walk starts from. The doc may say real users range wider.
@@ -99,6 +99,13 @@ observed finding whose task is blocked, else `friction` or `polish`; and an owne
 `frontend-developer`, `backend-developer`, `product-manager`, or the project's docs owner for developer docs and
 examples, or the project's own agent for that surface. The persona judges only what it sees; the session reads code
 only to locate a finding for its owner.
+
+A task the product cannot do is a finding only from a walk: walked and blocked, the code read after it picks the
+owner, `ux-specialist` for a capability the persona did not reach and `product-manager` for one with no screen, route,
+endpoint, or command. At `seen` or `read` it gets no finding: `Not reached` lists it, with what was searched and
+`product-manager` as the one to ask. A task behind a plan or feature the demo account lacks is not reached, never a
+product gap. The walk stays within the tasks in scope: an idea that comes up in character is not walked, and the report
+lists it under `Persona doc gaps` as a suggested task, which the author adds with a `Success:` line for the next run to walk.
 
 A run reaches the product only the way `product-access` says, keeps to its `Off limits`, and never pays, messages a
 real person, changes data outside the demo account, or writes a secret or personal data into the report.

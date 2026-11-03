@@ -26,6 +26,20 @@ Each finding has:
 | Developer docs, an SDK example, or `--help` text that fails the task | the project's docs owner, else `backend-developer` |
 | A missing capability, a product rule, a promise the copy makes | `product-manager` |
 
+## A task the product cannot do
+
+A product gap is a finding only from a walk.
+
+- A `walked` task that is `blocked`: after the walk, the session reads code to locate it, and that read picks the owner.
+  The capability exists and the persona did not reach it: a dead end, for `ux-specialist`. No screen, route, endpoint,
+  or command for the capability: a missing capability, for `product-manager`. Either is `observed`, citing the screen
+  or response, and a `blocker`, because the task was walked and is `blocked`.
+- At `seen` or `read`, a task whose capability the run cannot find gets no finding and no severity. Its task row stays
+  `not walked`, and `## Not reached` lists it as `no screen, route, or endpoint found for <task>`, naming what was
+  searched and `product-manager` as the one to ask.
+- A task behind a plan or feature the demo account lacks, as `product-access` says, is not reached, with that reason:
+  never a product gap.
+
 ## The report
 
 Keep the headings and their order; leave out a section only where it says so.
@@ -69,13 +83,21 @@ Personas are synthetic: this report is a lead for the Human, not a substitute fo
 
 - What the run could not see, and why: no simulator, a task behind a payment, a screen with no demo data.
 - A persona skipped by `aidrian lint personas`, with the lint's line.
+- At `seen` or `read`: `no screen, route, or endpoint found for <task>`, what was searched, and `product-manager` to ask.
+- A task behind a plan or feature the demo account lacks, with that reason.
 
 ## Persona doc gaps
 
-- Leave this section out when there are none: a task the product no longer has, a Success line that cannot be observed.
+- Leave this section out when there are none: a doc that is unclear or contradicts itself, a Success line that cannot
+  be observed, a lint warning from `aidrian lint personas`, with its line.
+- Suggested task for floor-manager: Join two tables: seat a party of eight at two free tables for four; from Goals:
+  "Seat every guest quickly, without double-booking a table."
 ```
 
 - Number findings `F1`, `F2`, in severity order: `blocker`, then `friction`, then `polish`.
 - A screenshot the run saves goes in `<state>/audits/<report name>/`, beside the report, and the report cites its path.
 - An outcome other than `not walked` or `out of scope` needs `walked` in the Evidence column.
   An `out of scope` task was not looked at, so its Evidence is `-`.
+- A suggested task is an idea that came up in character during the walk, beyond the tasks in scope. It was not walked
+  and has no finding. Its shape: `Suggested task for <persona id>: <title>: <the job, one line>; from <the Goals or
+  Cares about line it comes from>`. The author adds the ones worth walking, with a `Success:` line, and the next run walks them.

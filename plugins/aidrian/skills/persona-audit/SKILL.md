@@ -69,6 +69,9 @@ At `seen` or `read`, with no walk: go through the screens or the code path in th
 the persona would see there: copy, a string shown as its key or in another language, a screen with no way forward.
 No outcome, no step record, and no quote: a quote needs a walk.
 
+The walk stays within the tasks in scope. An idea that comes up in character, such as "as this person I would now
+try to...", is not walked and gets no finding: it is a suggested task under `## Persona doc gaps`.
+
 The persona judges only what it sees. After the walk, the session may read code to locate a finding for its owner,
 never to judge as the persona.
 
@@ -79,7 +82,15 @@ its label (`observed` with a citation, or `opinion`), its severity, and the tabl
 `knowledge` skill's agent rule. Never put words in a persona that its doc does not support.
 
 Several personas: walk once per persona, then merge. One finding two personas share is written once, naming both.
-A gap in a persona doc, such as a task the product no longer has, is a finding about the doc, with no owner.
+A persona doc that is unclear or contradicts itself is a doc gap, with no owner; a task the product cannot do is a
+finding or a Not reached line, as [report-format.md](references/report-format.md) says:
+
+- Walked and `blocked`: the code read after the walk picks the owner. The capability exists and the persona did not
+  reach it: a dead end, `ux-specialist`. No screen, route, endpoint, or command for it: a missing capability,
+  `product-manager`. Either is `observed`, citing the screen or response, and a `blocker`.
+- At `seen` or `read`: no finding. The task stays `not walked`, and `## Not reached` lists it, with what was searched
+  and `product-manager` as the one to ask.
+- Behind a plan or feature the demo account lacks, as `product-access` says: not reached, with that reason, never a product gap.
 
 ## 5. Report
 

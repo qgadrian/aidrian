@@ -212,6 +212,8 @@ export const LEDGER_SCHEMA = Object.freeze({
             properties: { objection_id: { type: 'string' }, reason: { type: 'string' }, smaller_change: { type: 'string' } },
           },
         },
+        // The pass ran and returned no usable answer: nothing is flagged, and a reused ledger still reports the failure.
+        failed: { type: 'boolean', enum: [true] },
       },
     },
   },
@@ -581,10 +583,12 @@ const accepts = (objection) => objection.ruling?.decision === 'accept' || object
 // What a ledger that carries `mode` must hold beyond the old rules, as lines that stop the check: at most
 // MAX_MODE_OBJECTIONS objections per adversary, no `improvement` (it goes to `notes`), and the proportionality pass:
 // present in a complete ledger with an accepted change, and each flagged objection one with an accept ruling that the
-// Human holds, `escalated` or answered. [] for a ledger without `mode`.
+// Human holds, `escalated` or answered. A failed pass flags nothing, in any ledger. [] for a ledger without `mode` that
+// holds no failed pass with flags.
 export function modeProblems(ledger) {
-  if (!carriesMode(ledger)) return [];
-  const problems = [];
+  const failed = ledger.proportionality?.failed === true && ledger.proportionality.flagged.length > 0;
+  const problems = failed ? [`proportionality: failed, yet flags ${ledger.proportionality.flagged.length} objections`] : [];
+  if (!carriesMode(ledger)) return problems;
   for (const by of ['A', 'B']) {
     const count = ledger.objections.filter((objection) => objection.by === by).length;
     if (count > MAX_MODE_OBJECTIONS) problems.push(`${by} raised ${count} objections, more than ${MAX_MODE_OBJECTIONS} in a ledger with a mode`);

@@ -48,7 +48,8 @@ rules it was written under and never adds them. A ledger that carries `mode` is 
     - `objections[].citations[].ref`: where the evidence is, in the form its kind takes.
     - `objections[].citations[].quote`: the verbatim text, at most 200 characters.
   - `objections[].status`: `pending` until the architect rules; then `opinion`, `accepted`, `rejected`, or `escalated`.
-    A valid partial accept is `accepted`, and its accepted part always stands: `escalated` on it means its rejected part is escalated.
+    A valid partial accept is `accepted`. Unless the proportionality pass flags it, its accepted part always stands, and
+    `escalated` on it means its rejected part is escalated; a flag escalates its accepted part too.
     A partial accept whose ruling is still invalid after its retry escalates whole.
     `merged` when the coordinator folds it into the other adversary's duplicate: it is never ruled on or rebutted.
   - `objections[].merged_into`: optional. The id of the objection a merged one was folded into, or `null`.
@@ -101,6 +102,8 @@ rules it was written under and never adds them. A ledger that carries `mode` is 
     - `proportionality.flagged[].reason`: why, in one line.
     - `proportionality.flagged[].smaller_change`: the smaller change that keeps its risk removed, the recommended
       answer when it is asked of the Human; empty when the architect sees none.
+  - `proportionality.failed`: optional; `true` when the pass returned no usable answer. It comes only with an empty
+    flagged list, so a reused ledger still reports that the pass failed.
 
 ## Agent answers
 
@@ -166,16 +169,19 @@ Each step names the round of `modes/plan.md` it follows.
   run `quorum check`. `accept` makes the objection `accepted`; any other decision makes it `escalated`. A final ruling
   that is invalid or missing gets one retry when the cap leaves a dispatch for it outside the reserved one; otherwise
   its objection becomes `escalated`.
-- **After the proportionality pass.** Write `proportionality` with the pass's `flagged` list, or `{flagged: []}` when
-  no ruling accepted, and in the same write set each flagged objection `escalated`. Run `quorum check`.
+- **After the proportionality pass.** Write `proportionality` with the pass's `flagged` list, and in the same write set
+  each flagged objection `escalated`. With no accepted ruling, write `{flagged: []}`; when the pass returned no usable
+  answer, write `{flagged: [], failed: true}`, with no retry. Run `quorum check`.
 - **After the Human.** Add each answer to `human_answers`. The objection becomes `accepted` or `rejected` as the answer
-  says; a valid partial accept stays `accepted`, with its rejected part settled by the answer. A deferred
+  says; an unflagged valid partial accept stays `accepted`, with its rejected part settled by the answer. On a flagged
+  objection, the answer settles both parts, and none makes it `rejected`. A deferred
   escalation stays `escalated`. Then write `status: complete`, and run `quorum check`: it exits 1 on a complete ledger
   that still holds a `pending` objection, or a ruled status with no `ruling`. On an objection the Human did not settle
   (not `escalated`, not answered), it also exits 1 on a rebuttal with no final ruling, a final ruling other than
   `accept`, a status its final decision does not give, a `rejected` objection with no rebuttal or concession, or an
   invalid ruling or rebuttal, as when cited code changed. A valid partial accept's first ruling is held to its evidence
-  even when its objection is escalated or answered: its accepted part stands, and the answer covers only the rest.
+  even when its objection is escalated or answered, flagged or not: unflagged, its accepted part stands, and the answer
+  covers only the rest.
 
 ## Under plan-review
 

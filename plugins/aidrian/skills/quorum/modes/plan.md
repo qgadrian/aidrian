@@ -18,8 +18,9 @@ Two adversaries attack a plan, and the architect rules on each objection. Read t
 - **Architect**: `architect`. It rules on each objection, and runs the proportionality pass.
 
 Each adversary returns at most 5 objections, each `blocking` or `important`, and its improvements, which no one rules on.
-The coordinator moves every `improvement` entry, A's or B's, to `notes` with its `by`, keeps the first 5 notes and the
-first 5 objections per adversary, and numbers the objections `A1`, `B1`, and on, in the adversary's order.
+The coordinator moves every `improvement` entry, A's or B's, to `notes` with its `by`, keeps the first 5 notes and
+the first 5 objections per adversary, and numbers the objections `A1`, `A2`, ... and `B1`, `B2`, ..., in the
+adversary's order.
 
 ## Rounds
 
@@ -36,7 +37,8 @@ The cap is 8 dispatches: one is reserved for the proportionality pass, and no ot
    and run `quorum check`.
 5. **Rebuttals**, only for objections `rejected` or partly accepted; an `escalated` or `merged` one gets none. Only the
    adversary that raised one answers, A and B in parallel; `--mode rebut` runs only when B has such an objection.
-   When one dispatch outside the reserved one is left and both have one, neither runs, and those objections escalate.
+   When one dispatch outside the reserved one is left and both A and B have objections to answer, neither runs, and
+   those objections escalate.
    Record them, and run `quorum check`. A concession keeps the first ruling and skips the final one.
    When something is rebutted and a dispatch outside the reserved one is left, the architect rules once more on those
    only, and `quorum check` runs again; with none left, those objections escalate.
@@ -44,7 +46,8 @@ The cap is 8 dispatches: one is reserved for the proportionality pass, and no ot
 6. **Proportionality pass**, when any first or final ruling is `accept`: the architect gets the accepted set with its
    brief. Write its answer to `proportionality`, set each flagged objection `escalated` in the same write, and run
    `quorum check`. With no accept, write `proportionality: {flagged: []}` with no dispatch. When the pass returns no
-   usable answer, write `proportionality: {flagged: []}` too, with no retry, and the report says the pass failed.
+   usable answer, write `proportionality: {flagged: [], failed: true}`, with no retry, and the report says the pass
+   failed.
    Then the rounds stop.
 
 The longest run: 2 adversaries, 1 ruling, 1 retry, 2 rebuttals, 1 final ruling, and the pass. A fallback costs one more
@@ -60,8 +63,9 @@ A proportionality flag is the exception: on a partial accept, it covers the acce
 An answer goes into `human_answers`, and the objection becomes `accepted` or `rejected`; a valid partial accept stays
 `accepted`, with its rejected part settled by the answer.
 A flagged objection's question carries the accepted change, the architect's reason, and `smaller_change` as the
-recommended answer. The answer settles it: the change as accepted or the smaller change makes it `accepted`, none makes
-it `rejected`. When a flagged partial accept also has its rejected part escalated, one answer settles both parts.
+recommended answer; when `smaller_change` is empty, the recommended answer is the change as accepted, with the flag's
+reason as the deciding reason. The answer settles it: the change as accepted or the smaller change makes it
+`accepted`, none makes it `rejected`. When a flagged partial accept also has its rejected part escalated, one answer settles both parts.
 
 ## Report
 
@@ -70,11 +74,11 @@ After the core's Ledger item, which also lists every note dropped:
 1. **Accepted**: each id with its plan change, including the accepted part of every valid partial accept, even escalated.
    A flagged objection the Human has not answered is left out: it shows under Escalated and Proportionality.
    For an answered one, the change is the one the answer chose.
-2. **Rejected**: each id with its `ground` and counter-evidence.
+2. **Rejected**: each id with its `ground` and counter-evidence, or, when the Human rejected it, the Human's answer.
 3. **Escalated**: each id with both positions, their citations, and the Human's answer, or `deferred`.
 4. **Merged**: each merged id with its survivor; a merged objection's outcome is its survivor's. Or `no duplicates`.
 5. **Proportionality**: each flagged id with its reason, the smaller change, and the Human's answer or `deferred`;
-   or `none flagged`.
+   or `none flagged`; or `pass failed`, with what it returned.
 
 Footnotes, beside the core's: **Notes**, each with its `by`, claim, and citations; context, never a plan change.
 
@@ -92,8 +96,8 @@ an implementation detail the plan does not state, is rejected with ground `imple
 is the pull request review's job.
 <evidence>
 Return at most 5 objections, each blocking or important, most severe first (critical and high are read as blocking,
-medium as important). Then, at most 5 improvements with severity improvement: notes that no one rules on.
-At most 7 entries in all.
+medium as important, low as improvement). Then, at most 5 improvements with severity improvement: notes that no
+one rules on. At most 7 entries in all.
 Return one JSON object, in the handoff's artifacts: {"objections": [{"severity", "claim", "citations": [{"kind", "ref", "quote"}]}]}.
 Change no file.
 ```
@@ -109,8 +113,8 @@ most ten lines, with the citations that show it fits the project. When no altern
 improvement entry instead, with the citation that shows the plan is the simplest fit.
 <evidence>
 Return at most 5 objections, each blocking or important: the alternative first, then the rest most severe first
-(critical and high are read as blocking, medium as important). Then, at most 5 improvements with severity
-improvement: notes that no one rules on. At most 7 entries in all.
+(critical and high are read as blocking, medium as important, low as improvement). Then, at most 5 improvements
+with severity improvement: notes that no one rules on. At most 7 entries in all.
 Return one JSON object: {"objections": [{"severity", "claim", "citations": [{"kind", "ref", "quote"}]}]}.
 As an agent, put it in the handoff's artifacts. Change no file.
 ```

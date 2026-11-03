@@ -138,6 +138,7 @@ test('schemas: a full ledger and an objections answer pass; a missing field, an 
     'mode', 'notes', 'objections[].merged_into',
     'objections[].rebuttal.ruling.ground', 'objections[].rebuttal.ruling.inferences', 'objections[].rebuttal.ruling.tested',
     'objections[].ruling.ground', 'objections[].ruling.inferences', 'objections[].ruling.tested', 'proportionality',
+    'proportionality.failed',
   ]);
 });
 
@@ -149,6 +150,9 @@ test('schemas: a ledger with every plan-mode field passes; a bad ground, a non-i
   ], { notes: [{ by: 'B', claim: 'no better alternative', citations: [PASSING.plan] }], proportionality: { flagged: [{ objection_id: 'A1', reason: 'r', smaller_change: '' }] } });
   assert.deepEqual(schemaProblems(full, LEDGER_SCHEMA), []);
   assert.deepEqual(schemaProblems({ ...full, proportionality: null }, LEDGER_SCHEMA), []);
+  assert.deepEqual(schemaProblems({ ...full, proportionality: { flagged: [], failed: true } }, LEDGER_SCHEMA), []);
+  // `failed` says the pass failed, or is absent: false would say nothing a missing field does not.
+  assert.deepEqual(schemaProblems({ ...full, proportionality: { flagged: [], failed: false } }, LEDGER_SCHEMA), ['$.proportionality.failed must be one of true']);
   const bad = structuredClone(full);
   bad.objections[0].ruling.ground = 'tangent';
   bad.objections[0].ruling.tested[0].citation = '0';
@@ -1006,7 +1010,8 @@ test('ledger.md names every field of LEDGER_SCHEMA and no other, its enum values
       for (const value of enumValues) assert.ok(bullet.includes(`\`${value}\``), `ledger.md: ${field} does not name ${value}`);
       // After the field path, every backticked word in an enum field's bullet is one of its values.
       const named = [...bullet.matchAll(/`([^`]+)`/gu)].slice(1).map((match) => match[1]);
-      for (const value of named) assert.ok(enumValues.includes(value), `ledger.md: ${field} names ${value}, not in its enum`);
+      // A backticked word is text, so a boolean enum, such as `true`, matches by its text.
+      for (const value of named) assert.ok(enumValues.map(String).includes(value), `ledger.md: ${field} names ${value}, not in its enum`);
     }
     const nullable = [node.type].flat().includes('null');
     assert.equal(bullet.includes('`null`'), nullable, `ledger.md: ${field} ${nullable ? 'does not say' : 'says'} \`null\``);
@@ -1076,7 +1081,7 @@ test('the plan mode file holds the judge\'s reject path, its verdicts, the moder
   assert.match(plan, /\*\*Proportionality pass\*\*/u, 'the proportionality round');
   assert.match(plan, /\*\*Merge\*\*/u, 'the merge round');
   assert.match(plan, /The cap is 8 dispatches: one is reserved for the proportionality pass, and no other dispatch may spend it/u, 'the cap');
-  assert.match(plan, /When the pass returns no usable answer, write `proportionality: \{flagged: \[\]\}` too, with no retry, and the report says the pass failed/u, 'a failed pass');
+  assert.match(plan, /When the pass returns no usable answer, write `proportionality: \{flagged: \[\], failed: true\}`, with no retry, and the report says the pass failed/u, 'a failed pass');
   assert.match(plan, /appends its citations to the survivor's `citations`, so the architect's `tested` covers them/u, 'a merge moves its evidence to the survivor');
   assert.doesNotMatch(plan, /also cited by/u, 'no separate merged-citation line');
   assert.match(plan, new RegExp(`at most ${MAX_MODE_OBJECTIONS} objections, each \`blocking\` or \`important\``, 'u'), 'each adversary returns at most MAX_MODE_OBJECTIONS objections');
@@ -1089,6 +1094,7 @@ test('the plan mode file holds the judge\'s reject path, its verdicts, the moder
   // A flagged change the Human has not answered is not reported as accepted, and one answer settles a flagged partial accept.
   assert.match(plan, /A flagged objection the Human has not answered is left out: it shows under Escalated and Proportionality\. For an answered one, the change is the one the answer chose\./u, 'the Accepted item and a flag');
   assert.match(plan, /When a flagged partial accept also has its rejected part escalated, one answer settles both parts\./u, 'one answer for both parts');
+  assert.match(plan, /or `pass failed`, with what it returned/u, 'the report names a failed pass');
   assert.match(plan, /the strongest alternative plan that meets the same goal/u, 'B1 is the strongest alternative');
   assert.match(plan, /\*\*Merged\*\*/u, 'the report lists merges');
   assert.match(plan, /\*\*Proportionality\*\*/u, 'the report has the Proportionality item');
@@ -1415,6 +1421,9 @@ test('check with mode: proportionality is required in a complete ledger with an 
     [done([accepted()], { flagged: [flag('A9')] }), /: proportionality: flagged A9 is not an objection with an accept ruling$/mu],
     [done([accepted()], { flagged: [flag('A1')] }), /: proportionality: flagged A1 is accepted, neither escalated nor answered in human_answers$/mu],
     [planLedger([accepted()], { proportionality: { flagged: [flag('A1')] } }), /: proportionality: flagged A1 is accepted, neither escalated nor answered in human_answers$/mu],
+    // A failed pass flags nothing: one that names flags is no failure record, with or without `mode`.
+    [done([accepted({ status: 'escalated' })], { flagged: [flag('A1')], failed: true }), /: proportionality: failed, yet flags 1 objections$/mu],
+    [JSON.parse(JSON.stringify({ ...ledger([objection('A1', [PASSING.code])]), proportionality: { flagged: [flag('A1')], failed: true } })), /: proportionality: failed, yet flags 1 objections$/mu],
   ]) {
     const result = p.check(before);
     assert.equal(result.status, 1, message.source);
@@ -1425,6 +1434,8 @@ test('check with mode: proportionality is required in a complete ledger with an 
     done([accepted({ status: 'escalated' }), finalAccept], { flagged: [flag('A1')] }),
     done([accepted(), finalAccept], { flagged: [flag('A1'), flag('A2')] }, { human_answers: [{ objection_id: 'A1', answer: 'the smaller change' }, { objection_id: 'A2', answer: 'as accepted' }] }),
     done([accepted(), finalAccept], { flagged: [] }),
+    // The pass returned no usable answer: the record of the failure stands in for the review, and is kept on reuse.
+    done([accepted(), finalAccept], { flagged: [], failed: true }),
     done([conceded], null),
     done([conceded], { flagged: [] }),
     done([conceded], undefined),

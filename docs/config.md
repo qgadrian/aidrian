@@ -337,7 +337,7 @@ options say "I", "me", "my", "you", or "your", or a form of them such as "I'm" o
 outside backticks and quotes, and the agent asks again with the names (Claude Code).
 
 A chat reply is read before any check could run, so it is not blocked. When the main session's last reply said one of
-those words outside code, quotes, and quoted lines (`> …`), the next prompt adds one line to the session that names
+those words outside code, quotes, and quoted lines (`> …`), the next turn starts with one line that names
 the words and both names (Claude Code).
 
 `.aidrian.local.json` wins over `config.json`, one name at a time.

@@ -34,23 +34,35 @@ export function replyWords(markdown) {
 
 // The text of the main session's last reply in a Claude Code transcript (JSON Lines): every text block the assistant
 // wrote after the human's last prompt, or after the prompt before it when the newest prompt is already written.
-// Subagent entries and tool output are skipped. '' when there is none.
+// Subagent entries, tool output, and the host's own error entries are skipped. '' when there is none, and for a Codex
+// rollout, whose entries never match.
 export function lastReply(transcript) {
-  const parts = [];
   const lines = transcript.split('\n');
+  if (parse(lines[0])?.type === 'session_meta') return '';
+  const parts = [];
+  let turn = false;
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const entry = parse(lines[i]);
     if (!entry || entry.isSidechain) continue;
     const content = entry.message?.content;
-    if (entry.type === 'user' && typeof content === 'string' && !entry.isMeta) {
-      if (parts.length) break;
+    if (entry.type === 'user' && !entry.isMeta && isPrompt(content)) {
+      if (turn) break;
       continue;
     }
     if (entry.type !== 'assistant' || !Array.isArray(content)) continue;
-    const text = content.filter((block) => block?.type === 'text' && typeof block.text === 'string').map((block) => block.text);
-    parts.unshift(...text);
+    turn = true;
+    if (entry.isApiErrorMessage || entry.message?.model === '<synthetic>') continue;
+    parts.unshift(...content.filter((block) => block?.type === 'text' && typeof block.text === 'string').map((block) => block.text));
   }
   return parts.join('\n\n');
+}
+
+// A prompt the human sent: text, or text with images, but no tool output and no interruption marker.
+function isPrompt(content) {
+  if (typeof content === 'string') return true;
+  if (!Array.isArray(content) || !content.length) return false;
+  return content.every((block) => block?.type !== 'tool_result') &&
+    !content.some((block) => block?.type === 'text' && String(block.text).startsWith('[Request interrupted'));
 }
 
 function parse(line) {

@@ -13,7 +13,7 @@ see [Recorded blocks](#recorded-blocks).
 | --- | --- | --- | --- |
 | A session or subagent starts | The [start lines](#start-lines) | both | no |
 | Before any tool call | The [agent gates](#agent-gates), when the project sets any | both | yes |
-| The Human sends a prompt | The [names reminder](config.md#names), when the last reply said "I" or "you" | Claude Code | no |
+| A new turn starts: a prompt, a background agent's report, or a scheduled run | The [names reminder](config.md#names), when the last reply said "I" or "you" | Claude Code | no |
 | Before a Bash command | The [Bash rules](#bash-rules) | both | yes |
 | Before a file edit | The [main-checkout rule](#main-checkout), when the project turns it on, then the [terms rule](#terms) | both | yes |
 | Before `EnterWorktree` in a subagent | A block: the tool would move the whole session into the worktree | Claude Code | yes |

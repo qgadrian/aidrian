@@ -6,8 +6,9 @@ A question about names must not itself say "you" or "I", and the question hook b
 ```text
 Question: Agents name both sides instead of writing "you" and "I". What should agents call the person they work for,
 and what should agents call themselves?
-Options:
-- "the Human" and "<host>", for the whole team (Recommended): the plugin's default, so nothing is written.
-- Other names, for the whole team: the next question asks for both; they go in config.json.
-- Other names, for one developer only: the next question asks for both; they go in the git-ignored `.aidrian.local.json`.
+Options (label, then description):
+- Default names (Recommended): "the Human" and "<host>", for the whole team. The plugin's default, so nothing is written.
+- Team names: other names for the whole team. The next question asks for both; they go in config.json.
+- One developer's names: other names for one developer only. The next question asks for both; they go in the
+  git-ignored `.aidrian.local.json`.
 ```

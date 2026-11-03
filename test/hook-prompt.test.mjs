@@ -44,6 +44,17 @@ test('lastReply reads the text of the last turn only, before or after the new pr
   assert.equal(lastReply('not json\n'), '');
 });
 
+test('lastReply skips host error entries, treats image prompts as prompts, and stops at a text-less turn', () => {
+  const error = { type: 'assistant', isSidechain: false, isApiErrorMessage: true, message: { model: '<synthetic>', content: [text("You've hit your limit.")] } };
+  assert.equal(lastReply(jsonl(prompt('go'), reply(text('Claude ran it.')), error)), 'Claude ran it.');
+  const image = prompt([{ type: 'image', source: {} }, { type: 'text', text: 'look' }]);
+  assert.equal(lastReply(jsonl(prompt('go'), reply(text('I ran it.')), image, reply(text('Claude looked.')))), 'Claude looked.');
+  const interrupted = prompt([{ type: 'text', text: '[Request interrupted by user]' }]);
+  assert.equal(lastReply(jsonl(prompt('go'), reply(text('Claude ')), interrupted, reply(text('ran it.')))), 'Claude \n\nran it.');
+  assert.equal(lastReply(jsonl(prompt('go'), reply(text('I ran it.')), prompt('next'), reply({ type: 'tool_use', name: 'Bash', input: {} }))), '');
+  assert.equal(lastReply(jsonl({ type: 'session_meta' }, reply(text('I ran it.')))), '');
+});
+
 test('replyWords skips fenced code and quoted lines', () => {
   assert.deepEqual(replyWords('Here is how:\n```sh\necho I told you\n```\n> How should I finish?\nI ran it for you.'), ['I', 'you']);
   assert.deepEqual(replyWords('~~~\nyour\n~~~\nClaude ran it.'), []);

@@ -55,7 +55,7 @@ In a group such as `github`, set only the keys you change; the others keep their
   "terms": { "file": null },
   "knowledge": { "budgets": { "alwaysBytes": 16384, "taggedDocBytes": 24576 } },
   "skills": { "descriptionChars": 160, "listingBytes": 9216 },
-  "session": { "handoff": "ask", "maxTokens": 150000, "maxCalls": 250, "maxHours": 4 },
+  "session": { "handoff": { "mode": "ask", "costRatio": 2, "maxTokens": 0 } },
   "lessons": { "auto": true, "maxOpen": 20, "maxAgeDays": 14 },
   "models": { "claude": { "agents": {} }, "codex": { "agents": {} } },
   "names": { "human": "the Human", "ai": null },
@@ -113,10 +113,9 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `knowledge.budgets.taggedDocBytes` | The bytes one tagged knowledge doc may have: [Knowledge budgets](#knowledge-budgets). |
 | `skills.descriptionChars` | The longest skill or agent description, in characters (`aidrian lint skills` and `agents`). |
 | `skills.listingBytes` | The most bytes all skill names and descriptions may add up to (`aidrian lint skills`). |
-| `session.handoff` | What the [session-length reminder](hooks.md#session-length) does once a limit is passed: `"ask"`, `"auto"`, or `"off"`. |
-| `session.maxTokens` | The context, in tokens, of the main session's last model call that counts as long; `0` turns this limit off. |
-| `session.maxCalls` | The main session's model calls that count as long; `0` turns this limit off. |
-| `session.maxHours` | The hours worked that count as long, a pause of more than an hour counting as one; `0` turns this limit off. |
+| `session.handoff.mode` | What the [session-length reminder](handoff.md#the-reminder) and the plan handoff offer do: `"ask"`, `"auto"`, or `"off"`. |
+| `session.handoff.costRatio` | How many times a fresh session's cost each call must cost before the reminder fires, a number of 1.1 or more; each later reminder adds `costRatio − 1`: [Handoff](handoff.md). |
+| `session.handoff.maxTokens` | An optional ceiling on the main session's context, in tokens, that fires the reminder on its own and doubles after each firing; `0`, the default, is off. |
 | `lessons.auto` | `false` turns off the [automatic lessons](lessons.md#automatic-lessons) the hooks and `aidrian pr await-review` record. |
 | `lessons.maxOpen` | The open [lessons](lessons.md) past which the session-start line asks for triage; `0` turns this limit off. |
 | `lessons.maxAgeDays` | The age, in days, of the oldest open lesson past which the session-start line asks for triage; `0` turns this limit off. |
@@ -356,6 +355,10 @@ the project needs:
 When the running plugin is older, `aidrian check` fails and the session-start hook adds a line, both naming the
 version and the folder of the copy that runs, so the stale install shows at the first prompt. A plugin older than
 0.17.0 does not know the key and rejects it as unknown, which fails as loudly with a less specific message.
+
+A project that adopts the `session.handoff` group (`mode`, `costRatio`, `maxTokens`) sets `requires.aidrian` to the
+release that ships it: an older plugin reads only a string `session.handoff` and rejects the group.
+[handoff.md](handoff.md#config) lists the old keys and where each went.
 
 ## Attribution
 

@@ -22,9 +22,9 @@ see [Recorded blocks](#recorded-blocks).
 | Before an Agent tool call | The project's [model and effort](config.md#models) for that agent | Claude Code | no |
 | After a Markdown write | The [line-length check](#markdown-line-length) | Claude Code | feedback |
 | Before compaction | A checklist of what the summary must keep | both | no |
-| The Human approves a plan | The [plan handoff offer](#session-length), in a long main session | Claude Code | no |
+| The Human approves a plan | The [plan handoff offer](#session-length), when the main session already costs more per call | Claude Code | no |
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
-| The main session ends a turn | The [session-length reminder](#session-length) | Claude Code | once per doubled limit |
+| The main session ends a turn | The [session-length reminder](#session-length) | Claude Code | once per step |
 | A subagent stops | A `stop` row, then the [delivery check](#delivery-check) | Claude Code | once |
 | A session ends | A `session` row with its tokens, estimated cost, skills, draft pull requests, and review runs | Claude Code | no |
 
@@ -71,7 +71,7 @@ that line alone, and a git that hangs past the timeout drops its own line and th
 | Pull request contract | Off unless config.json sets `github.pullRequest`, but for `"sharedTempBodyFile": false` |
 | Review gate | Off unless config.json sets `"github": { "reviewGate": { "enabled": true } }` |
 | Terms rule | Off unless config.json sets `"terms": { "file": "…" }` |
-| Session-length reminder and plan handoff offer | `"session": { "handoff": "off" }` |
+| Session-length reminder and plan handoff offer | `"session": { "handoff": { "mode": "off" } }` |
 | Dispatch log rows | `"telemetry": { "enabled": false }`, in config.json or `.aidrian.local.json`; the delivery check still runs |
 | `hook_deny` rows alone | `"telemetry": { "hookDenies": false }`; the rules still block |
 | Automatic lessons from the stop hook and the blocking rules | `"lessons": { "auto": false }` |
@@ -349,35 +349,19 @@ A path on any other line is a mention, such as "docs/old.md does not exist", and
 
 ## Session length
 
-A long session pays for its whole context on every turn; a fresh session started from a handoff brief costs less.
-When the main session ends a turn, the Stop hook reads its transcript and measures three things:
+Two hooks weigh what continuing the main session costs against a fresh session started from a handoff brief.
+[handoff.md](handoff.md) has the cost model, its steps, and the config.
 
-- tokens: the context the last model call read, input and cache together;
-- calls: the model calls the main session made, subagents not included;
-- hours: the time worked, where a pause of more than an hour counts as one hour, so a night away does not count.
+- When the main session ends a turn, the Stop hook reads its transcript. Once each call costs `session.handoff.costRatio`
+  times what it would in a fresh session, or the context passes the optional `maxTokens` ceiling, it sends the agent back
+  for one more turn, with the ratio and the calls a handoff needs to pay back. The agent judges first whether a handoff
+  is worth it, and may end the turn without a word; otherwise it asks the Human (`ask`) or writes the brief (`auto`).
+  It fires once per step: a marker in the system's temporary folder counts the firings, and a compaction resets them.
+- When the Human approves a plan (Claude Code's `ExitPlanMode`), the plan hook tells the agent to offer the same handoff
+  before its first build step, from half a step: a cost ratio of 1.5 by default.
 
-When one of them reaches its limit in config.json `session`, the hook sends the agent back for one more turn
-to judge whether a handoff is worth it. It is not when the task is done or a few calls finish it,
-when a subagent or background job is still running and reports back to this session,
-or when the Human already said to finish here or that they are not watching, since a fresh session needs someone to start it.
-Then the agent ends the turn without a word about it.
-Otherwise it acts as `session.handoff` says:
-
-| `handoff` | What happens |
-| --- | --- |
-| `ask` (default) | The agent ends the turn with one question: hand off now, or keep going? Hand off runs the `session-handoff` skill. |
-| `auto` | The agent writes the brief with the `session-handoff` skill and tells you its path. |
-| `off` | Nothing; the hook does not send the agent back. |
-
-Each time the reminder fires, every limit doubles for that session: after 150,000 tokens, the next comes at 300,000.
-So neither a "keep going" nor a quiet skip turns the reminder off for the rest of the session.
-A marker in the system's temporary folder counts the firings; a new session starts fresh.
-The defaults are 150,000 tokens, 250 calls, and 4 hours; a limit of `0` turns that one off. [config.md](config.md) lists the keys.
-When the Human approves a plan (Claude Code's `ExitPlanMode`) and the main session has passed half of one limit,
-another hook tells the agent to offer the same handoff before its first build step: `ask` asks, `auto` writes the brief.
-It skips the offer when a few calls finish the build, or when the Human said to finish here or is not watching.
-The plan is on disk and nothing is running, so this is the cheapest moment for a fresh session.
-It reads Claude Code transcripts only: a transcript with no Claude Code usage, or a payload without `stop_hook_active`, does nothing.
+Both read Claude Code transcripts only: a transcript with no Claude Code usage, a subagent, or a payload without
+`stop_hook_active` does nothing.
 
 ## Overrides
 

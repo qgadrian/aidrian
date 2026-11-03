@@ -31,9 +31,10 @@ export const PRICE_MAP = [
   { match: 'claude-3-haiku', input: 0.25, output: 1.25 },
   { match: 'haiku', input: 1, output: 5 },
 ];
-const CACHE_READ_MULT = 0.1;
-const CACHE_WRITE_5M_MULT = 1.25;
-const CACHE_WRITE_1H_MULT = 2;
+// The multiples of the input rate: a cache hit where the model sets none, and the two cache writes.
+export const CACHE_READ_MULT = 0.1;
+export const CACHE_WRITE_5M_MULT = 1.25;
+export const CACHE_WRITE_1H_MULT = 2;
 
 export const priceFor = (model) =>
   PRICE_MAP.find((price) => typeof model === 'string' && (price.match instanceof RegExp ? price.match.test(model) : model.includes(price.match)));

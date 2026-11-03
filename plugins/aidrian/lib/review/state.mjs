@@ -51,6 +51,12 @@ export const emptyState = (pr, repo) => ({ version: 1, revision: 0, pr, repo, ro
 // The review step's statuses after which nothing is left to review on that head.
 export const FINISHED = new Set(['received', 'none_needed']);
 
+// Whether `entry` of `state` is for repository `repo` (null: any), compared as `owner/name` in any case.
+export const ofRepo = (state, entry, repo) => {
+  const own = entry?.repo ?? state?.repo ?? null;
+  return !repo || !own || String(own).toLowerCase() === String(repo).toLowerCase();
+};
+
 const pendingOf = (state) => (Array.isArray(state?.pending) ? state.pending.filter(isObject) : []);
 
 // Marks the owed entries of `kind` on `state` answered by `by`'s answer for `head`. An answer counts for an entry made
@@ -58,9 +64,10 @@ const pendingOf = (state) => (Array.isArray(state?.pending) ? state.pending.filt
 // --is-ancestor`, the test seam. Time plays no part, so a late answer for an older head never answers a newer head's
 // entry. When git cannot tell (an unknown commit, no repository), only the entry's own head counts. Returns how many
 // it marked.
-export function answerPending(state, kind, { head, by, isAncestor = () => false }) {
+// With `repo` (`owner/name`), only an entry for that repository counts: its own `repo`, else the record's.
+export function answerPending(state, kind, { head, by, repo = null, isAncestor = () => false }) {
   const covers = (entry) => sameCommit(entry.head, head) || (typeof entry.head === 'string' && typeof head === 'string' && isAncestor(entry.head, head));
-  const open = pendingOf(state).filter((entry) => entry.kind === kind && !entry.answered && covers(entry));
+  const open = pendingOf(state).filter((entry) => entry.kind === kind && !entry.answered && covers(entry) && ofRepo(state, entry, repo));
   for (const entry of open) entry.answered = { at: new Date().toISOString(), head, by };
   return open.length;
 }
@@ -108,15 +115,45 @@ export function readLocalState(project, pr) {
 // Every write raises the record's revision, so the newer of two records is the one written last.
 // The record's `pending` on disk is merged in first: an entry recorded, sent, or answered while this writer worked
 // (`aidrian pr request` while a reviewer ran) is kept.
-// `active` is only ever changed by openRun and closeRun: every other write keeps the list on disk.
+// `active` is only ever changed by openRun and closeRun: every other write keeps the list on disk. A snapshot read
+// before another full write keeps that write's work: the newer outcome by its time, and the rounds of a record on disk
+// at a later revision.
 export function writeLocalState(project, state) {
   withRecordLock(project, state.pr, () => {
     const disk = readLocalState(project, state.pr);
     state.pending = mergePending(disk?.pending, state.pending);
     state.active = disk?.active ?? [];
+    if (disk?.outcome && !(Date.parse(state.outcome?.at ?? '') >= Date.parse(disk.outcome.at ?? ''))) state.outcome = disk.outcome;
+    if (disk && (disk.revision ?? 0) > (state.revision ?? 0)) state.rounds = mergeRounds(disk.rounds, state.rounds);
     state.revision = (state.revision ?? 0) + 1;
     state.updatedAt = new Date().toISOString();
     replaceRecord(project, state);
+  });
+}
+
+// The rounds of a record on disk at a later revision, with this writer's own: one per head and start, this writer's
+// copy of a round in both, in the order they started. Only a review step opens a round, so another writer's copy
+// holds the rounds it read, and a newer step's are kept.
+function mergeRounds(disk, own) {
+  const key = (round) => `${round?.head}@${round?.at}`;
+  const out = new Map((Array.isArray(disk) ? disk : []).map((round) => [key(round), round]));
+  for (const round of Array.isArray(own) ? own : []) out.set(key(round), round);
+  return [...out.values()].sort((a, b) => String(a.at ?? '').localeCompare(String(b.at ?? '')));
+}
+
+// Applies `change(state)` to the record as it is on disk now, under the record's lock, and writes it back; a record
+// that is not there starts as emptyState(pr, repo). `change` returning false writes nothing. Returns the record. Only a
+// full write, such as the review step's, raises the revision; `revise` raises it here too.
+export function updateLocalState(project, pr, repo, change, { revise = false } = {}) {
+  return withRecordLock(project, pr, () => {
+    const state = readLocalState(project, pr) ?? emptyState(pr, repo);
+    if (change(state) === false) return state;
+    if (revise) {
+      state.revision = (state.revision ?? 0) + 1;
+      state.updatedAt = new Date().toISOString();
+    }
+    replaceRecord(project, state);
+    return state;
   });
 }
 
@@ -172,19 +209,18 @@ export const RUN_STALE_MS = 2 * 60 * 60 * 1000;
 export const newRunId = () => `${process.pid}-${randomBytes(4).toString('hex')}`;
 
 export function openRun(project, { pr, repo, head, id }) {
-  withRecordLock(project, pr, () => {
-    const state = readLocalState(project, pr) ?? emptyState(pr, repo);
+  updateLocalState(project, pr, repo, (state) => {
     state.active = [...(state.active ?? []), { id, head, at: new Date().toISOString() }];
-    replaceRecord(project, state);
   });
 }
 
-export function closeRun(project, pr, id) {
-  withRecordLock(project, pr, () => {
-    const state = readLocalState(project, pr);
-    if (!state?.active?.some((run) => run.id === id)) return;
-    state.active = state.active.filter((run) => run.id !== id);
-    replaceRecord(project, state);
+// Closes run `id`. A run that threw first leaves `error` as its outcome (`failure`, { head, reason }): not finished,
+// so a merge stays refused until a step on the head finishes.
+export function closeRun(project, pr, id, failure = null) {
+  updateLocalState(project, pr, null, (state) => {
+    if (!state.active?.some((run) => run.id === id) && !failure) return false;
+    state.active = (state.active ?? []).filter((run) => run.id !== id);
+    if (failure) state.outcome = { status: 'error', head: failure.head, at: new Date().toISOString(), reason: clip(failure.reason) };
   });
 }
 

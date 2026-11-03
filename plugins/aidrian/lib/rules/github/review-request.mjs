@@ -94,11 +94,16 @@ function apiRequests(endpoint, flags, read, ghRepo) {
   }
   const asking = bodies.filter(asksForReview);
   if (!asking.length) return [];
-  // gh fills `{owner}` and `{repo}` from GH_REPO, or from this repository without it, and leaves literal parts alone.
-  const [owner, name] = (ghRepo ?? '').split('/');
-  const repo = !match[1].includes('{') ? match[1]
-    : ghRepo ? match[1].replaceAll('{owner}', owner).replaceAll('{repo}', name) : null;
-  return [{ pr: Number(match[2]), repo, markers: asking.flatMap(markersIn) }];
+  return [{ pr: Number(match[2]), repo: fillRepo(match[1], ghRepo), markers: asking.flatMap(markersIn) }];
+}
+
+// The `owner/name` part of a `gh api` path as gh sends it: gh fills `{owner}` and `{repo}` one part at a time from
+// GH_REPO (`ghRepo`), or from this repository without it (null, this repository), and leaves literal parts alone.
+export function fillRepo(part, ghRepo) {
+  if (!part.includes('{')) return part;
+  if (!ghRepo) return null;
+  const [owner, name] = ghRepo.split('/');
+  return part.replaceAll('{owner}', owner).replaceAll('{repo}', name);
 }
 
 // The command words of a gh command line, read as gh finds its command before it knows the command's options: an

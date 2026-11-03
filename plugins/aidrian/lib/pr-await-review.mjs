@@ -478,11 +478,15 @@ async function reviewRecord(project, config, gh, repo, n) {
 
 // Writes the record where the review step does: the state folder and, unless config.json `review.record` is "local",
 // the pull request's summary comment, so another machine continues from the same checks and grants.
-async function saveRecord(record, { project, config, gh, base, status }) {
-  const { publishState, writeLocalState } = await import('./review/state.mjs');
-  writeLocalState(project, record.state);
+// The wait changes only the bot's extra-round checks, so it applies them to the record as it is now, never its
+// earlier copy over a review step's newer outcome or rounds.
+export async function saveRecord(record, { project, config, gh, base, status }) {
+  const { publishState, updateLocalState } = await import('./review/state.mjs');
+  const state = updateLocalState(project, Number(base.n), base.repo, (current) => {
+    current.extensions = record.state.extensions;
+  }, { revise: true });
   if (config.review.record === 'local') return null;
-  return publishState(record.state, {
+  return publishState(state, {
     comments: () => record.comments,
     post: (body) => gh.api(`repos/${base.repo}/issues/${base.n}/comments`, { method: 'POST', fields: { body } }),
     edit: (id, body) => gh.api(`repos/${base.repo}/issues/comments/${id}`, { method: 'PATCH', fields: { body } }),

@@ -7,12 +7,12 @@ import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
-import { runAwaitReview } from '../plugins/aidrian/lib/pr-await-review.mjs';
+import { runAwaitReview, saveRecord } from '../plugins/aidrian/lib/pr-await-review.mjs';
 import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { runAttest } from '../plugins/aidrian/lib/review-gate.mjs';
 import { isAncestor } from '../plugins/aidrian/lib/review/diff.mjs';
 import { reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
-import { markRequestsSent, recordPending, runRequest } from '../plugins/aidrian/lib/review/pending.mjs';
+import { answerOwed, markRequestsSent, recordPending, runRequest } from '../plugins/aidrian/lib/review/pending.mjs';
 import { answerPending, emptyState, noteOutcome, readLocalState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { check, checkMcp, readMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 import { lexCommand, readInvocation } from '../plugins/aidrian/lib/shell-lex.mjs';
@@ -224,7 +224,7 @@ test('aidrian pr request records a request; it stays owed once sent, until the b
   const quiet = { log: console.log, error: console.error };
   console.log = console.error = () => {};
   t.after(() => Object.assign(console, quiet));
-  assert.equal(runRequest(['5', '--head', HEAD], r.project), 0);
+  assert.equal(runRequest(['5', '--head', HEAD, '--repo', 'acme/notes'], r.project, { viewPr: () => assert.fail('head and repository given: no gh') }), 0);
   assert.throws(() => runRequest(['5', '--kind', 'bot'], r.project), /--kind must be one of/u);
   assert.throws(() => runRequest(['5'], r.project, { viewPr: () => null }), /pass --head/u);
   assert.deepEqual(marks(r.project, 5), [['request', false, false]]);
@@ -260,7 +260,7 @@ test('attest and a finished review step answer a gate review; an open step does 
   const quiet = { log: console.log, error: console.error };
   console.log = console.error = () => {};
   t.after(() => Object.assign(console, quiet));
-  assert.equal(runRequest(['5', '--kind', 'review'], r.project, { viewPr: () => ({ headRefOid: r.commit }) }), 0);
+  assert.equal(runRequest(['5', '--kind', 'review'], r.project, { viewPr: () => ({ headRefOid: r.commit, url: 'https://github.com/acme/notes/pull/5' }) }), 0);
   assert.match(r.run(`gh pr merge 5 --match-head-commit ${r.commit}`) ?? '', /no result on record/u);
   const commit = (file) => {
     writeFileSync(path.join(r.dir, file), `${file}\n`);
@@ -520,4 +520,59 @@ test('concurrent writers keep every entry: the record is locked and replaced who
   })));
   const by = new Set(readLocalState(r.project, 5).pending.map((entry) => entry.by));
   assert.equal(by.size, writers * each);
+});
+
+test('a write from an older copy of the record keeps the newer outcome and rounds', async (t) => {
+  const r = repo(t, { review: { record: 'local' } });
+  writeLocalState(r.project, emptyState(5, 'acme/notes'));
+  // await-review reads the record first...
+  const record = { state: readLocalState(r.project, 5), comments: [] };
+  // ...then a review step records its round and returns unsatisfied...
+  const step = readLocalState(r.project, 5);
+  step.rounds.push({ head: HEAD, at: '2026-11-03T14:00:00.000Z' });
+  noteOutcome(step, { status: 'unsatisfied', head: HEAD, reason: 'no engine' });
+  writeLocalState(r.project, step);
+  // ...and await-review saves what it read, with its own change.
+  record.state.extensions = [{ source: 'bot', round: 1, status: 'checked' }];
+  await saveRecord(record, { project: r.project, config: loadConfig(r.project).config, gh: null, base: { n: '5', repo: 'acme/notes' }, status: 'received' });
+  const saved = readLocalState(r.project, 5);
+  assert.deepEqual([saved.outcome.status, saved.rounds.length, saved.extensions.length], ['unsatisfied', 1, 1]);
+  assert.equal(saved.revision, step.revision + 1, 'the save is a revision after the step`s, not a copy of it');
+  assert.match(r.run(`gh pr merge 5 --match-head-commit ${HEAD}`) ?? '', /is `unsatisfied`/u);
+  // A full write from the older copy, as attest or extend makes, keeps them too.
+  const older = { ...record.state, extensions: [] };
+  writeLocalState(r.project, older);
+  const kept = readLocalState(r.project, 5);
+  assert.deepEqual([kept.outcome.status, kept.rounds.length], ['unsatisfied', 1]);
+});
+
+test('a review step that throws leaves an error outcome, and the merge stays refused', async (t) => {
+  const r = repo(t, { review: { planCommand: 'exit 17' } });
+  const f = feature(r);
+  await assert.rejects(f.step({ exec: clean }));
+  const state = readLocalState(f.project, 9);
+  assert.deepEqual([state.outcome?.status, state.active], ['error', []]);
+  assert.match(r.run(`gh pr merge 9 --match-head-commit ${f.head}`) ?? '', /is `error`/u);
+});
+
+test('a request records the pull request`s own repository: the upstream from a fork checkout', async (t) => {
+  const r = repo(t);
+  const quiet = { log: console.log, error: console.error };
+  console.log = console.error = () => {};
+  t.after(() => Object.assign(console, quiet));
+  // origin is acme/notes, the fork; gh's default repository is the upstream.
+  assert.equal(runRequest(['5', '--kind', 'review'], r.project, { viewPr: () => ({ headRefOid: r.commit, url: 'https://github.com/Upstream/Notes/pull/5' }) }), 0);
+  assert.equal(readLocalState(r.project, 5).pending[0].repo, 'upstream/notes');
+  assert.equal(await runAttest(['5', '--head', r.commit, '--reviewer', 'code-reviewer', '--findings', '0', '--fixed', '0'], r.project), 0);
+  assert.deepEqual(marks(r.project, 5), [['review', false, false]], 'an attest for origin`s #5 is not the upstream`s review');
+  assert.equal(answerOwed(r.project, 5, 'review', { head: r.commit, by: 't', repo: 'UPSTREAM/notes' }), 1);
+});
+
+test('gh api placeholders are filled one part at a time', (t) => {
+  const r = repo(t);
+  // origin is acme/notes; GH_REPO fills only the placeholder part.
+  r.record(5, (state) => outcome(state, 'running'));
+  const run = (command) => check(command, { cwd: r.dir, env: {}, input: {}, viewPr: r.viewer() });
+  assert.match(run('GH_REPO=other/notes gh api -X PUT repos/acme/{repo}/pulls/5/merge') ?? '', /is `running`/u, 'acme/notes, not other/notes');
+  assert.equal(run('GH_REPO=other/notes gh api -X PUT repos/{owner}/{repo}/pulls/5/merge'), null, 'other/notes: another repository');
 });

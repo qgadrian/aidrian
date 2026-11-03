@@ -196,12 +196,18 @@ const touches = (changes, files) => (files === null ? changes.length > 0 : chang
 // The whole step. `deps` replaces gh, the engine check, the reviewers, and the bot wait in tests.
 // One review step, open as a run of its own from the moment it reads the record to its last write (state.mjs openRun):
 // a merge waits for every run on the head, and each run closes only its own.
+// A step that throws, such as a plan command that fails or a bot wait that errs, leaves `error` as the head's outcome
+// before its run closes, so the merge guard keeps refusing the head.
 export async function reviewStep(opts, deps = {}) {
-  const run = { id: newRunId(), pr: null };
+  const run = { id: newRunId(), pr: null, head: null };
+  let failure = null;
   try {
     return await stepOnce(opts, deps, run);
+  } catch (error) {
+    failure = { head: run.head, reason: error.message };
+    throw error;
   } finally {
-    if (run.pr !== null) closeRun(deps.project, run.pr, run.id);
+    if (run.pr !== null) closeRun(deps.project, run.pr, run.id, failure);
   }
 }
 
@@ -258,7 +264,7 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
   let state = record.state;
   // The run is open on this head before any reviewer, the plan command, or the bot runs: a merge meanwhile is refused.
   openRun(project, { pr: n, repo, head, id: run.id });
-  run.pr = n;
+  Object.assign(run, { pr: n, head });
 
   const engine = resolveEngine(effective, codex ? { codex } : {});
   if (engine.problem) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: engine.problem });

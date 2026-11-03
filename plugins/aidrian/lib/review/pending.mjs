@@ -9,67 +9,76 @@ import { ghJson } from '../gh.mjs';
 import { runGit } from '../git.mjs';
 import { originRepo, prNumber, repoName } from '../review-gate.mjs';
 import { isAncestor } from './diff.mjs';
-import { answerPending, emptyState, newRunId, readLocalState, writeLocalState } from './state.mjs';
+import { answerPending, newRunId, ofRepo, updateLocalState } from './state.mjs';
 
 const SHA = /^[0-9a-f]{7,40}$/iu;
 const KINDS = ['request', 'review'];
 
-// Records one entry owed on `pr`. Returns the entry.
+// Records one entry owed on `pr` of `repo`, on the record as it is now. Returns the entry.
 export function recordPending(project, { pr, repo, kind, head, by }) {
-  const state = readLocalState(project, pr) ?? emptyState(pr, repo);
-  const entry = { id: newRunId(), kind, head, at: new Date().toISOString(), by };
-  state.pending = [...state.pending, entry];
-  writeLocalState(project, state);
+  const entry = { id: newRunId(), kind, head, at: new Date().toISOString(), by, ...(repoName(repo) ? { repo: repoName(repo) } : {}) };
+  updateLocalState(project, pr, repoName(repo), (state) => {
+    state.pending = [...state.pending, entry];
+  });
   return entry;
 }
 
-// Whether `repo` (null for this one) is another repository than the one `state` was recorded for.
-const elsewhere = (state, repo) => Boolean(repo && state?.repo) && repoName(repo) !== repoName(state.repo);
-
-// Marks the requests on `pr` of `repo` not yet sent as sent, for `head`. Returns how many it marked. A sent request
-// stays owed until the bot answers it.
+// Marks the requests on `pr` of `repo` (null: any) not yet sent as sent, for `head`. Returns how many it marked. A sent
+// request stays owed until the bot answers it.
 export function markRequestsSent(project, pr, head, repo = null) {
-  const state = readLocalState(project, pr);
-  if (elsewhere(state, repo)) return 0;
-  const open = (state?.pending ?? []).filter((each) => each.kind === 'request' && !each.sent && !each.answered);
-  if (!open.length) return 0;
-  const at = new Date().toISOString();
-  for (const entry of open) entry.sent = { at, head };
-  writeLocalState(project, state);
-  return open.length;
+  let marked = 0;
+  updateLocalState(project, pr, null, (state) => {
+    const open = state.pending.filter((each) => each.kind === 'request' && !each.sent && !each.answered && ofRepo(state, each, repoName(repo)));
+    const at = new Date().toISOString();
+    for (const entry of open) entry.sent = { at, head };
+    marked = open.length;
+    return marked > 0;
+  });
+  return marked;
 }
 
-// Marks the entries of `kind` owed on `pr` that an answer for `head` answers (answerPending), reading ancestry in this
-// checkout: the bot's answer (`request`), or the gate review's recorded result (`review`). Returns 1 when it marked any.
+// Marks the entries of `kind` owed on `pr` of `repo` that an answer for `head` answers (answerPending), reading
+// ancestry in this checkout: the bot's answer (`request`), or the gate review's recorded result (`review`). Returns 1
+// when it marked any.
 export function answerOwed(project, pr, kind, { head, by, repo = null, isAncestor: ancestor = (a, b) => isAncestor(project.root, a, b) }) {
-  const state = readLocalState(project, pr);
-  if (!state || elsewhere(state, repo) || !answerPending(state, kind, { head, by, isAncestor: ancestor })) return 0;
-  writeLocalState(project, state);
-  return 1;
+  let marked = 0;
+  updateLocalState(project, pr, null, (state) => (marked = answerPending(state, kind, { head, by, repo: repoName(repo), isAncestor: ancestor })) > 0);
+  return marked > 0 ? 1 : 0;
 }
 
-// `aidrian pr request <PR> [--kind request|review] [--head SHA]`. Without --head, gh reads the pull request's head.
+// `aidrian pr request <PR> [--kind request|review] [--head SHA] [--repo OWNER/NAME]`. gh reads what is not given: the
+// head and the pull request's repository, gh's default one, which in a fork checkout is the upstream, not origin.
 // Exit 0 recorded, 1 a usage error or a head it cannot read.
-export function runRequest(args, project, { viewPr = (pr) => ghJson(['pr', 'view', String(pr), '--json', 'headRefOid'], { cwd: project.root }) } = {}) {
+export function runRequest(args, project, { viewPr = (pr) => ghJson(['pr', 'view', String(pr), '--json', 'headRefOid,url'], { cwd: project.root }) } = {}) {
   const [ref, ...rest] = args;
   const pr = prNumber(ref ?? '');
   if (pr === null) throw new Error('request needs a pull request number');
-  const flags = { kind: 'request', head: null };
+  const flags = { kind: 'request', head: null, repo: null };
   for (let i = 0; i < rest.length; i += 1) {
     const flag = rest[i];
-    if (!['--kind', '--head'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
+    if (!['--kind', '--head', '--repo'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
     const value = rest[++i];
     if (value === undefined || value.startsWith('--')) throw new Error(`${flag} needs a value`);
     flags[flag.slice(2)] = value;
   }
   if (!KINDS.includes(flags.kind)) throw new Error(`--kind must be one of ${KINDS.join(', ')}`);
   if (flags.head !== null && !SHA.test(flags.head)) throw new Error(`--head ${flags.head} is not a commit`);
-  const head = flags.head ?? viewPr(pr)?.headRefOid;
+  if (flags.repo !== null && !repoName(flags.repo)) throw new Error(`--repo ${flags.repo} is not OWNER/NAME`);
+  let view = null;
+  if (flags.head === null || flags.repo === null) {
+    try {
+      view = viewPr(pr);
+    } catch (error) {
+      if (flags.head === null) throw error;
+    }
+  }
+  const head = flags.head ?? view?.headRefOid;
   if (typeof head !== 'string' || !SHA.test(head)) throw new Error(`cannot read the head of pull request #${pr}: pass --head <sha>`);
+  const repo = repoName(flags.repo) ?? repoName(view?.url) ?? originRepo(project);
   const by = runGit(['config', 'user.name'], project.root).stdout?.trim() || 'unknown';
-  recordPending(project, { pr, repo: originRepo(project), kind: flags.kind, head, by });
+  recordPending(project, { pr, repo, kind: flags.kind, head, by });
   console.log(flags.kind === 'request'
-    ? `recorded the bot review the Human asked for on pull request #${pr} at ${head.slice(0, 7)}. A merge waits until \`aidrian pr await-review ${pr} --request\` sends it and the bot answers.`
-    : `recorded the gate review of pull request #${pr} at ${head.slice(0, 7)} as dispatched. A merge waits until \`aidrian pr attest ${pr}\` records its result.`);
+    ? `recorded the bot review the Human asked for on ${repo ?? 'this repository'}#${pr} at ${head.slice(0, 7)}. A merge waits until \`aidrian pr await-review ${pr} --request\` sends it and the bot answers.`
+    : `recorded the gate review of ${repo ?? 'this repository'}#${pr} at ${head.slice(0, 7)} as dispatched. A merge waits until \`aidrian pr attest ${pr}\` records its result.`);
   return 0;
 }

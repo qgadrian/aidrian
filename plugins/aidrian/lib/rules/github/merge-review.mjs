@@ -27,7 +27,7 @@ import { originRepo, prNumber, repoName } from '../../review-gate.mjs';
 import { activeRuns, FINISHED, owed, readLocalState, sameCommit } from '../../review/state.mjs';
 import { commandLines, lexCommand, readInvocation } from '../../shell-lex.mjs';
 import { transcriptAnswers } from '../review-extend.mjs';
-import { commandPath, invocationRepo, readWords } from './review-request.mjs';
+import { commandPath, fillRepo, invocationRepo, readWords } from './review-request.mjs';
 
 // How long the head lookup may take, inside the hook's 5 s, as pr-body's open pull request lookup.
 const VIEW_TIMEOUT_MS = 3000;
@@ -64,9 +64,7 @@ export function readMerge({ program, args, environment = [] }, env = {}) {
     const method = literal(flags.filter((flag) => flag.name === '-X' || flag.name === '--method').at(-1)?.value)?.toUpperCase() ?? (fields.length || flags.some((flag) => flag.name === '--input') ? 'POST' : 'GET');
     if (!match || !['PUT', 'POST'].includes(method)) return null;
     const sha = fields.map((flag) => literal(flag.value)).find((text) => text?.startsWith('sha='))?.slice('sha='.length) ?? null;
-    // gh fills `{owner}` and `{repo}` from GH_REPO, or this repository without it.
-    const ghRepo = invocationRepo(environment, env);
-    const repo = match[1].includes('{') ? ghRepo : match[1];
+    const repo = fillRepo(match[1], invocationRepo(environment, env));
     return { pr: Number(match[2]), head: sha && SHA.test(sha) ? sha : null, target: null, repo };
   }
   if (command[0] !== 'pr' || command[1] !== 'merge') return null;

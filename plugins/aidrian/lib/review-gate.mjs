@@ -171,7 +171,7 @@ export async function runAttest(args, project, config = null) {
   const record = { pr, repo, head: flags.head, reviewer: flags.reviewer, findings, fixed, note: flags.note ?? null };
   writeRecord(project, record);
   // The gate review recorded as dispatched (`aidrian pr request --kind review`) is no longer owed.
-  (await import('./review/pending.mjs')).answerOwed(project, pr, 'review', { head: flags.head, by: 'attest' });
+  (await import('./review/pending.mjs')).answerOwed(project, pr, 'review', { head: flags.head, by: 'attest', repo });
   console.log(`recorded the review of pull request #${pr} at ${flags.head.slice(0, 7)}`);
   console.log('`aidrian pr await-review --request` adds this marker by itself; paste it only into a request posted by hand:');
   console.log(markerFor(record));

@@ -175,6 +175,28 @@ export function filesRead(text, keep = () => true) {
   return [...read];
 }
 
+// The text of the transcript's own tool calls: each call's input as JSON, and the result the host returned for it, one
+// per line. `keep` takes a request by key, as in filesRead; a call it refuses is left out, and so is that call's result.
+// The stop hook reads it for the ids of the background shells and agents a subagent started (dispatch-rows.mjs).
+export function toolCallText(text, keep = () => true) {
+  const calls = new Set();
+  const parts = [];
+  for (const line of text.split('\n')) {
+    const entry = parseLine(line);
+    const content = entry?.message?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (block?.type === 'tool_use' && typeof block.id === 'string' && keep(requestKey(entry))) {
+        calls.add(block.id);
+        parts.push(JSON.stringify(block.input ?? null));
+      } else if (block?.type === 'tool_result' && calls.has(block.tool_use_id)) {
+        parts.push(typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? null));
+      }
+    }
+  }
+  return parts.join('\n');
+}
+
 // A draft pull request create and a review run are read from the commands a Bash call runs (shell-lex walkCommands),
 // never from its text, so a heredoc body, an `echo`, or a quoted grep pattern that names one is neither.
 // A draft create is `gh pr create` (or its alias `gh pr new`) with --draft or -d, as the pull request body rule reads it.

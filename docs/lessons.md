@@ -186,7 +186,7 @@ A limit of `0` turns that reason off. [config.md](config.md) lists the keys.
 
 ## Automatic lessons
 
-The plugin records three signals it already sees as lessons of its own, with `source: auto`.
+The plugin records four signals it already sees as lessons of its own, with `source: auto`.
 Each has a key, so it dedupes by itself: one lesson per signal, one occurrence per event,
 and an occurrence after its fix reopens it like any other.
 
@@ -195,6 +195,9 @@ A signal with target `plugin` lands in the [plugin's inbox](#the-plugins-inbox).
 - **The [delivery check](hooks.md#delivery-check) sends a subagent back.** Key `delivery-check:<agent type>`; P2, `bug`;
   target `plugin` for an `aidrian:` agent, `project` for any other.
   It stays quiet: it fires only when a file the agent said it wrote does not exist, once per stop.
+- **A subagent ends its turn with a background task it started still running**, after the [background check](hooks.md#background-check)
+  already sent it back once to wait. Key `idle-with-children:<agent type>`; P2, `gap`; target `plugin`.
+  It stays quiet: the send-back is the check working; only the stop after it, with the task still running, counts.
 - **One of the plugin's [blocking rules](hooks.md#recorded-blocks) blocks one session 3 times.** Key `hook-deny:<rule>`; P2, `gap`;
   target `project` for `agent-gates`, whose gates the project writes, `plugin` for any other.
   It stays quiet: one block is the rule doing its job; three in a session is an agent fighting it.

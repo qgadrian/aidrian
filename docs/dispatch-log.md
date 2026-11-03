@@ -38,6 +38,7 @@ A row holds names, counts, durations, costs, and file paths. It never holds a pr
 | `docs_read` | The knowledge docs it opened with the Read tool, as `{ "path", "bytes" }`: index path and size. `null` while `telemetry.docReads` is off. |
 | `delivered` | `file` when every `.md` or `.json` path its last message presents as delivered exists, `missing` when one does not, `chat` for none. |
 | `paths` | Those paths, at most 20. |
+| `running` | The background shells and agents it started that still ran as it stopped: the [background check](hooks.md#background-check). A row written before the field has none. |
 | `sent_back` | `true` when the hook sent the subagent back at this stop, `false` when it let it end. A row written before the field has none. |
 
 `cache_write` is `cache_write_5m` plus `cache_write_1h`: the cache writes kept 5 minutes and 1 hour, which cost 1.25x and 2x the input price.
@@ -50,6 +51,8 @@ When `delivered` is `missing` and Claude Code marks the stop as a first one (`st
 the subagent back once: it is told which paths do not exist, and either writes them, corrects its report, or says it
 removed them on purpose. Its second stop always ends, and writes a second `stop` row; the report counts the last one.
 A stop that ends with `delivered: missing`, such as that second one, has `sent_back: false`.
+The same holds for `running` above 0: the first stop sends the subagent back to wait, and a second stop with `running` above 0
+is a subagent that went idle with its task still running.
 
 ### `session`: when a session ends
 

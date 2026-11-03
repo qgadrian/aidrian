@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { awaitReview } from '../plugins/aidrian/lib/pr-await-review.mjs';
 import { EXIT } from '../plugins/aidrian/lib/review/run.mjs';
 import {
-  aggregateUsage, estimateCostUsd, filesRead, partOf, priceFor, REVIEW_OUTPUT_STATUSES, sessionActions, subagentTranscripts, sumTokens,
+  aggregateUsage, estimateCostUsd, filesRead, partOf, priceFor, REVIEW_OUTPUT_STATUSES, sessionActions, subagentTranscripts, sumTokens, toolCallText,
 } from '../plugins/aidrian/lib/transcript.mjs';
 
 // One transcript line: an assistant message with usage, as Claude Code writes it.
@@ -206,6 +206,24 @@ test('sessionActions reads the commands a Bash call runs, not the text that name
   assert.deepEqual(actions('/opt/plugin/bin/aidrian pr await-review 12'), { drafts_opened: 0, review_runs: 1 }, 'aidrian by its path');
   assert.deepEqual(actions('node /opt/plugin/lib/cli.mjs pr review 12'), { drafts_opened: 0, review_runs: 1 }, 'the cli run by node');
   assert.deepEqual(actions('aidrian pr status 12'), { drafts_opened: 0, review_runs: 0 }, 'another pr subcommand');
+});
+
+test('toolCallText holds the inputs and results of the calls `keep` takes, and not those of the calls it refuses', () => {
+  const call = (id, toolId, input) => usageLine(id, 'claude-opus-5-5', {}, { content: [{ type: 'tool_use', id: toolId, name: 'Bash', input }] });
+  const result = (toolId, content) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolId, content }] } });
+  const lines = [
+    call('m-parent', 't0', { command: 'git push', run_in_background: true }),
+    result('t0', 'Command running in background with ID: bparent01.'),
+    call('m-own', 't1', { command: 'npm test', run_in_background: true }),
+    result('t1', [{ type: 'text', text: 'Command running in background with ID: bown0001.' }]),
+    JSON.stringify({ type: 'user', message: { role: 'user', content: 'a message that names bloose01' } }),
+  ].join('\n');
+  const own = toolCallText(lines, (key) => key !== 'm-parent');
+  assert.match(own, /npm test/);
+  assert.match(own, /bown0001/, 'a result given as content blocks');
+  assert.doesNotMatch(own, /bparent01|git push/, 'a refused call and its result');
+  assert.doesNotMatch(own, /bloose01/, 'a message is not a tool call');
+  assert.match(toolCallText(lines), /bparent01/);
 });
 
 test('filesRead lists each Read file_path once; subagentTranscripts finds a session`s subagent files', (t) => {

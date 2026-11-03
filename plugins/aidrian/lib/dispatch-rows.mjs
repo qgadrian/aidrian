@@ -1,6 +1,7 @@
 // The rows the hooks write to the dispatch log (dispatch-log.mjs): `dispatch` after an Agent call, `stop` when a subagent
 // stops, `session` when a session ends, and `hook_deny` when one of the plugin's rules blocks a call; and the delivery
 // check behind a `stop` row, which reads the paths a subagent's last message presents as written.
+// The stop hook's other check reads which background shells and agents the subagent started are still running (runningChildren).
 // docs/dispatch-log.md describes every field.
 
 import { existsSync } from 'node:fs';
@@ -11,7 +12,9 @@ import { stamp } from './dispatch-log.mjs';
 import { fileBytes } from './fs.mjs';
 import { checkoutRoots } from './git.mjs';
 import { loadKnowledge } from './knowledge.mjs';
-import { aggregateUsage, estimateCostUsd, filesRead, partOf, readText, sessionActions, subagentTranscripts, sumTokens } from './transcript.mjs';
+import {
+  aggregateUsage, estimateCostUsd, filesRead, partOf, readText, sessionActions, subagentTranscripts, sumTokens, toolCallText,
+} from './transcript.mjs';
 
 const DESCRIPTION_CHARS = 80;
 // A hook_deny row's `reason`: the start of what the rule matched.
@@ -52,10 +55,34 @@ export function checkDelivery(input, project) {
   return { claims, missing: missingPaths(claims, cwd) };
 }
 
-// Whether the stop hook sends the subagent back, whether or not telemetry is on: a path is `missing`, and the host marks
-// this stop as a first one with `stop_hook_active: false`. The stop that a send-back caused, and a payload without the
-// field, always end.
-export const sendsBack = (input, delivery) => delivery.missing.length > 0 && input.stop_hook_active === false;
+// Whether the stop hook sends the subagent back, whether or not telemetry is on: a path is `missing` or a background task
+// it started still runs (runningChildren), and the host marks this stop as a first one with `stop_hook_active: false`.
+// The stop that a send-back caused, and a payload without the field, always end.
+export const sendsBack = (input, delivery, children = []) =>
+  (delivery.missing.length > 0 || children.length > 0) && input.stop_hook_active === false;
+
+// A task status that is no longer in flight. Claude Code lists in-flight tasks only; this guards a host that lists more.
+const ENDED = new Set(['completed', 'failed', 'killed', 'stopped', 'cancelled', 'canceled']);
+
+// The background tasks this subagent started that still run as it stops: [{ id, type, description }].
+// Claude Code's SubagentStop payload lists `background_tasks` for the whole session, without the agent that started each,
+// so a task counts only when its id appears in one of the subagent's own tool calls or their results: the
+// `Command running in background with ID: <id>` of a background shell, the `agentId` of an agent it launched or resumed.
+// A subagent that ends its turn goes idle, and a background task's completion does not wake it, so it waits forever.
+// A teammate is a peer that messages wake, never a child. A payload without the array (another host, an older Claude
+// Code), or a transcript the hook cannot read, finds none.
+export function runningChildren(input) {
+  const tasks = Array.isArray(input.background_tasks) ? input.background_tasks : [];
+  const live = tasks.filter((task) => typeof task?.id === 'string' && /^[\w-]+$/u.test(task.id) && task.id !== input.agent_id
+    && task.type !== 'teammate' && !ENDED.has(task.status));
+  if (!live.length || typeof input.agent_transcript_path !== 'string') return [];
+  const transcript = readText(input.agent_transcript_path);
+  if (!transcript) return [];
+  const own = toolCallText(transcript, ownRequests(input));
+  return live
+    .filter((task) => new RegExp(`(?<![\\w-])${task.id}(?![\\w-])`, 'u').test(own))
+    .map((task) => ({ id: task.id, type: text(task.type) ?? 'task', description: text(task.description, DESCRIPTION_CHARS) }));
+}
 
 // Which subagent stopped, as its `stop` row names it: { session_id, agent_id, agent_type }.
 export function stopAgent(input) {
@@ -76,10 +103,11 @@ export function denyRow(input, rule, match, { env = process.env, now = Date.now(
   };
 }
 
-// SubagentStop: the subagent's tokens, cost, API requests and tool calls, the knowledge docs it read with their sizes, and
-// its delivery check with whether it sent the subagent back, over the requests it made itself (ownRequests).
+// SubagentStop: the subagent's tokens, cost, API requests and tool calls, the knowledge docs it read with their sizes,
+// its delivery check, the count of background tasks it started that still run (`running`, from runningChildren), and
+// whether the hook sent it back, over the requests it made itself (ownRequests).
 // `docReads: false` (config.json `telemetry.docReads`) records `docs_read: null`.
-export function stopRow(input, project, { now = Date.now(), docReads = true, delivery = checkDelivery(input, project) } = {}) {
+export function stopRow(input, project, { now = Date.now(), docReads = true, delivery = checkDelivery(input, project), children = [] } = {}) {
   const transcript = typeof input.agent_transcript_path === 'string' ? readText(input.agent_transcript_path) : null;
   const own = transcript ? ownRequests(input) : undefined;
   const part = transcript ? partOf(aggregateUsage(transcript), own) : { perModel: {}, requests: 0, tool_requests: 0, tool_calls: 0 };
@@ -98,7 +126,8 @@ export function stopRow(input, project, { now = Date.now(), docReads = true, del
     docs_read: !docReads ? null : transcript ? knowledgeDocsRead(filesRead(transcript, own), project) : [],
     delivered: missing.length ? 'missing' : claims.length ? 'file' : 'chat',
     paths: claims,
-    sent_back: sendsBack(input, delivery),
+    running: children.length,
+    sent_back: sendsBack(input, delivery, children),
   };
 }
 

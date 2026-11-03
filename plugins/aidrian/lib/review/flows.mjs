@@ -17,9 +17,12 @@ export const slug = (text) => text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, '
 
 // A heading's text as GitHub renders it: a link or image is its text, a code span its content as written, and
 // emphasis outside code loses its `*` and `_` delimiters; `_` inside a word, or inside code, stays.
-export const rendered = (text) => String(text).replace(/!?\[([^\]]*)\]\([^)]*\)/gu, '$1').split(/(`[^`]*`)/u)
-  .map((part, i) => (i % 2 ? part.slice(1, -1) : part.replace(/(^|[^\p{L}\p{N}])[*_]+|[*_]+(?=[^\p{L}\p{N}]|$)/gu, '$1').replace(/\*/gu, '')))
-  .join('');
+const EMPHASIS = /(^|[^\p{L}\p{N}])[*_]+|[*_]+(?=[^\p{L}\p{N}]|$)/gu;
+// A code span opens with a run of backticks and closes at the next run of the same length; an unmatched run is text.
+export const rendered = (text) => String(text).replace(/!?\[([^\]]*)\]\([^)]*\)/gu, '$1')
+  .replace(/(`+)(?!`)([\s\S]*?[^`])\1(?!`)|[^`]+|`+/gu, (part, ticks, code) => (ticks
+    ? (/^ .*[^ ].* $/su.test(code) ? code.slice(1, -1) : code)
+    : part.replace(EMPHASIS, '$1').replace(/\*/gu, '')));
 
 // A heading's anchor exactly as GitHub makes it, for a link people follow: the rendered text, lowercased, with
 // punctuation dropped, `_` kept, and each space a hyphen. A repeated heading's `-1` suffix is not added.

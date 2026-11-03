@@ -194,6 +194,9 @@ test('anchor keeps code spans as written, and a heading with a link or code is f
   assert.equal(anchor('`_private` API'), '_private-api');
   assert.equal(anchor('`a__b` API'), 'a__b-api');
   assert.equal(anchor('**Bold** `*` star'), 'bold--star');
+  assert.equal(anchor('``a_`_b`` and _x_'), 'a__b-and-x');
+  assert.equal(anchor('`` `_tick` `` here'), '_tick-here');
+  assert.equal(anchor('Lone ` tick_case'), 'lone--tick_case');
   const doc = '## The plugin [tools](x.md)\n\nLinked.\n\n## `_private` API\n\nHidden.\n';
   const read = (file) => (file === 'd.md' ? doc : null);
   const cites = invariantsOf({ invariants: 'd.md' }, read).invariants.map((each) => each.cite);

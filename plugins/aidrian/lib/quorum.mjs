@@ -736,7 +736,7 @@ export function checkLedger(ledger, ctx) {
   // escalation it now needs. Those lines go to `stale` as well, and `check` refuses the ledger. An unflagged valid
   // partial accept's first ruling (`accept` with a rebuttal) is stale even on a settled objection: its accepted part
   // always stands, and the Human's answer covers only the rejected part. A proportionality flag escalates the accepted
-  // part too, so once the Human answers a flagged objection, the answer covers both parts.
+  // part too, so a flagged objection's first ruling is the Human's, answered or deferred, as any escalation is.
   const answered = new Set(ledger.human_answers.map((answer) => answer.objection_id));
   const flagged = new Set((ledger.proportionality?.flagged ?? []).map((flag) => flag.objection_id));
   const stale = [];
@@ -772,7 +772,7 @@ export function checkLedger(ledger, ctx) {
       } else if (objection.status === 'merged') problems.push(`${where}: no citation passes; kept merged into ${objection.merged_into}`);
       else problems.push(`${where}: no citation passes; kept ${objection.status}, since it was ruled on`);
     }
-    const stands = objection.ruling?.decision === 'accept' && objection.rebuttal !== null && !(flagged.has(objection.id) && answered.has(objection.id));
+    const stands = objection.ruling?.decision === 'accept' && objection.rebuttal !== null && !flagged.has(objection.id);
     ruling(objection, objection.ruling, `${where} ruling`, objection, stands);
     const rebuttal = objection.rebuttal;
     if (rebuttal) {
@@ -929,6 +929,8 @@ export function checkDecideLedger(ledger, ctx) {
     ];
     for (const reason of decideVerdictProblems(ruling, entries)) invalid(`ruling: invalid: ${reason}`);
     if (ruling.decision === 'rule') {
+      // A position wins on evidence or not at all, so a rule for one whose case has no passing citation goes back.
+      if (!backed.has(ruling.winner)) invalid("ruling: invalid: the winner's case has no passing citation");
       const won = ledger.cases.find((each) => each.position === ruling.winner);
       if (!won || !supported(ruling.tested.filter((verdict) => verdict.of === ruling.winner), won.citations.length)) invalid("ruling: invalid: a rule rests on no supporting citation of the winner's case");
     }
@@ -948,6 +950,7 @@ export function checkDecideLedger(ledger, ctx) {
     // A final escalate goes to the Human, and the coordinator writes one with no verdicts when the rebuttal round ends
     // short, so only a final rule is held to its verdicts.
     if (final.decision === 'rule') {
+      if (!backed.has(final.winner)) invalid("final ruling: invalid: the winner's case has no passing citation");
       const entries = ledger.rebuttals.map((each) => entry(each.position, `rebuttal ${each.position}`, each));
       for (const reason of decideVerdictProblems(final, entries)) invalid(`final ruling: invalid: ${reason}`);
       // A flip overturns the first ruling, so it rests on the evidence of the rebuttal it upholds.

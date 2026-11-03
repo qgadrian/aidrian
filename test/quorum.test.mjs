@@ -679,8 +679,8 @@ test('check: a complete ledger whose ruling lost its evidence exits 1 and is not
   const whole = p.check({ ...ledger([objection('B1', [PASSING.adr], { by: 'B', status: 'escalated', ruling: ruled('accept') })]), status: 'complete' });
   assert.equal(whole.status, 0, whole.stderr);
 
-  // A flagged partial accept: the flag escalated its accepted part too, so once the Human answers, the answer covers it
-  // and the stale first ruling is the Human's. Flagged but not yet answered, the accepted part still stands.
+  // A flagged partial accept: the flag escalated its accepted part too, so its stale first ruling is the Human's,
+  // answered or deferred. The invalid line is still printed.
   const flaggedPartial = (status, human_answers) => p.check({ ...ledger([
     objection('B1', [PASSING.adr], { by: 'B', status, ruling: ruled('accept'), rebuttal: { verdict: 'rebut', claim: 'c', citations: [PASSING.fenced], ruling: ruled('reject', [PASSING.plan]) } }),
   ]), status: 'complete', human_answers, proportionality: { flagged: [{ objection_id: 'B1', reason: 'too much', smaller_change: '' }] } });
@@ -688,8 +688,8 @@ test('check: a complete ledger whose ruling lost its evidence exits 1 and is not
   assert.equal(answeredFlag.status, 0, answeredFlag.stderr);
   assert.ok(answeredFlag.lines.includes('objection B1 ruling: invalid: the ruling has no passing citation'), answeredFlag.stdout);
   const deferredFlag = flaggedPartial('escalated', []);
-  assert.equal(deferredFlag.status, 1, deferredFlag.stdout);
-  assert.match(deferredFlag.stderr, /objection B1 ruling: invalid: the ruling has no passing citation in a complete ledger$/mu);
+  assert.equal(deferredFlag.status, 0, deferredFlag.stderr);
+  assert.ok(deferredFlag.lines.includes('objection B1 ruling: invalid: the ruling has no passing citation'), deferredFlag.stdout);
 });
 
 test('check: a complete ledger with a rebuttal left unruled, a final ruling other than accept, or a status its decision does not give exits 1', (t) => {
@@ -989,49 +989,68 @@ function fieldPaths(schema) {
   return paths;
 }
 
-// ledger.md § Fields: each bullet starts with a field path in backticks; its text runs to the next bullet.
-function documentedFields() {
+// The section of ledger.md that lists each mode's ledger fields. A mode added to LEDGER_SCHEMAS needs its own section.
+const FIELD_SECTIONS = { plan: 'Fields', decide: 'Decide-mode fields' };
+
+// A fields section of ledger.md: each bullet starts with a field path in backticks; its text runs to the next bullet.
+function documentedFields(heading = 'Fields') {
   const text = readFileSync(path.join(SKILL, 'references/ledger.md'), 'utf8');
-  const section = text.split('\n## Fields\n')[1].split('\n## ')[0];
+  const section = text.split(`\n## ${heading}\n`)[1]?.split('\n## ')[0];
+  assert.ok(section, `ledger.md has § ${heading}`);
   const bullets = new Map();
   let current = null;
   for (const line of section.split('\n')) {
     const bullet = /^\s*- `([^`]+)`/u.exec(line);
     if (bullet) {
       current = bullet[1];
-      assert.ok(!bullets.has(current), `ledger.md names ${current} twice`);
+      assert.ok(!bullets.has(current), `ledger.md § ${heading} names ${current} twice`);
       bullets.set(current, line);
     } else if (current && line.trim()) bullets.set(current, `${bullets.get(current)} ${line}`);
   }
   return { text, bullets };
 }
 
+// One section's bullets against one schema: every field and no other, its enum values both ways, and null where the
+// schema allows it.
+function assertFieldParity(schema, heading) {
+  const { bullets } = documentedFields(heading);
+  const fields = fieldPaths(schema);
+  assert.deepEqual([...bullets.keys()].sort(), fields.map((each) => each.field).sort(), `ledger.md § ${heading}`);
+  for (const { field, node } of fields) {
+    const bullet = bullets.get(field);
+    const enumValues = node.enum ?? node.items?.enum;
+    const nullable = [node.type].flat().includes('null');
+    if (enumValues) {
+      for (const value of enumValues) assert.ok(bullet.includes(`\`${value}\``), `ledger.md: ${field} does not name ${value}`);
+      // After the field path, every backticked word in an enum field's bullet is one of its values, or null where the
+      // schema allows it.
+      const named = [...bullet.matchAll(/`([^`]+)`/gu)].slice(1).map((match) => match[1]);
+      // A backticked word is text, so a boolean enum, such as `true`, matches by its text.
+      const allowed = [...enumValues.map(String), ...(nullable ? ['null'] : [])];
+      for (const value of named) assert.ok(allowed.includes(value), `ledger.md: ${field} names ${value}, not in its enum`);
+    }
+    assert.equal(bullet.includes('`null`'), nullable, `ledger.md: ${field} ${nullable ? 'does not say' : 'says'} \`null\``);
+  }
+}
+
 test('ledger.md names every field of LEDGER_SCHEMA and no other, its enum values both ways, null where the schema allows it, and keeps no schema copy', () => {
-  const { text, bullets } = documentedFields();
-  const schema = fieldPaths(LEDGER_SCHEMA);
-  // The plan-mode fields are in the schema, so the list below holds ledger.md to them too.
-  const fields = new Map(schema.map(({ field, node }) => [field, node]));
+  const { text } = documentedFields();
+  // The plan-mode fields are in the schema, so the parity check holds ledger.md to them too.
+  const fields = new Map(fieldPaths(LEDGER_SCHEMA).map(({ field, node }) => [field, node]));
   for (const field of ['mode', 'notes', 'objections[].merged_into', 'objections[].ruling.tested', 'objections[].ruling.inferences', 'objections[].ruling.ground', 'proportionality']) assert.ok(fields.has(field), `LEDGER_SCHEMA has ${field}`);
   assert.deepEqual(fields.get('objections[].ruling.ground').enum, ['covered', 'implementation', 'settled', 'off-goal', 'disproportionate', 'speculative']);
   assert.ok(fields.get('objections[].status').enum.includes('merged'));
-  assert.deepEqual([...bullets.keys()].sort(), schema.map((each) => each.field).sort());
-  for (const { field, node } of schema) {
-    const bullet = bullets.get(field);
-    const enumValues = node.enum ?? node.items?.enum;
-    if (enumValues) {
-      for (const value of enumValues) assert.ok(bullet.includes(`\`${value}\``), `ledger.md: ${field} does not name ${value}`);
-      // After the field path, every backticked word in an enum field's bullet is one of its values.
-      const named = [...bullet.matchAll(/`([^`]+)`/gu)].slice(1).map((match) => match[1]);
-      // A backticked word is text, so a boolean enum, such as `true`, matches by its text.
-      for (const value of named) assert.ok(enumValues.map(String).includes(value), `ledger.md: ${field} names ${value}, not in its enum`);
-    }
-    const nullable = [node.type].flat().includes('null');
-    assert.equal(bullet.includes('`null`'), nullable, `ledger.md: ${field} ${nullable ? 'does not say' : 'says'} \`null\``);
-  }
+  assertFieldParity(LEDGER_SCHEMA, FIELD_SECTIONS.plan);
   for (const name of ['LEDGER_SCHEMA', 'OBJECTIONS_SCHEMA', 'REBUTTALS_SCHEMA']) assert.ok(text.includes(`\`${name}\``), `ledger.md names ${name}`);
   assert.doesNotMatch(text, /```json/u, 'ledger.md keeps no JSON copy of a schema');
 });
 
+test('ledger.md has a fields section per mode in LEDGER_SCHEMAS, each listing its own schema\'s fields and no other', () => {
+  assert.deepEqual(Object.keys(FIELD_SECTIONS).sort(), Object.keys(LEDGER_SCHEMAS).sort(), 'every mode has a fields section');
+  for (const [mode, schema] of Object.entries(LEDGER_SCHEMAS)) assertFieldParity(schema, FIELD_SECTIONS[mode]);
+  const { text } = documentedFields();
+  for (const name of ['DECIDE_LEDGER_SCHEMA', 'CASE_SCHEMA', 'CROSS_SCHEMA', 'DECIDE_REBUTTAL_SCHEMA']) assert.ok(text.includes(`\`${name}\``), `ledger.md names ${name}`);
+});
 
 // Every file of the quorum skill: SKILL.md, each references/ file, and each modes/ file, by its path in the skill.
 function skillTexts() {
@@ -1118,6 +1137,94 @@ test('the plan mode file holds the judge\'s reject path, its verdicts, the moder
   assert.match(plan, /\*\*Notes\*\*/u, 'the report has the notes footnote');
   const rebuttal = /verdict "concede": the ruling stands; cite the ruling's evidence you accept\./gu;
   assert.equal(plan.match(rebuttal)?.length, 2, 'both rebuttal briefs say a concession cites what it accepts');
+});
+
+// Decide mode: advocates argue one position each, the architect rules on which wins, and the losers rebut once.
+test('the decide mode file holds the runners, the swap, the cap, every Codex mode it runs, its briefs, and its report', () => {
+  const texts = skillTexts();
+  const raw = texts['modes/decide.md'];
+  assert.ok(raw, 'the skill has modes/decide.md');
+  const decide = raw.replace(/\s+/gu, ' ');
+  for (const mode of ['case', 'cross', 'rebut']) assert.match(decide, new RegExp(`aidrian quorum codex --mode ${mode}\\b`, 'u'), `decide runs --mode ${mode}`);
+  assert.match(decide, /The cap is `3N \+ 2` dispatches for N positions/u, 'the cap formula');
+  assert.match(decide, /starts with an odd hex digit[^.]*, the runners swap/u, 'the claim swap');
+  assert.match(decide, /`same_model` is `true` exactly when two positions share a runner/u, 'same_model in decide mode');
+  // The briefs: argue one side, cite or label, beat the losing citation, test everything, concede with evidence.
+  assert.match(decide, /Argue your position only/u, 'the case brief');
+  assert.match(decide, /Never concede, and never weigh the other side/u, 'no conceding before the rebuttal');
+  assert.match(decide, /name the losing case's strongest cited claim and the citation that defeats it/u, 'the judge beats the losing citation');
+  assert.match(decide, /it never decides which position wins/u, 'moderation never decides the winner');
+  assert.match(decide, /name what would settle it/u, 'an escalation names what would settle it');
+  assert.match(decide, /verdict "concede": the ruling stands; cite the ruling's evidence you accept\./u, 'a concession cites the ruling');
+  // The rebuttal round that ends short escalates, with the one ruling the coordinator writes.
+  assert.match(decide, /`\{decision: escalate, winner: null,/u, 'the coordinator-written final ruling');
+  assert.ok(decide.includes("The governing winner is the final ruling's winner when the final ruling is `rule`; otherwise it is the first ruling's."), 'the governing winner');
+  // Each way rounds 5 and 6 end short, and the two blocked stops, as whole sentences.
+  for (const sentence of [
+    'Rounds 5 and 6 end short when:',
+    '- `quorum check` names a rebuttal or a concession invalid. Neither gets a retry.',
+    '- `quorum check` names the final ruling invalid, after its retry or with no dispatch left for one.',
+    '- The final ruling is missing, after its retry or with no dispatch left for one.',
+    '- A losing position never answered, because Codex and its fallback both failed, or the cap ran out.',
+    '- A position rebutted, and the cap leaves no dispatch for the final ruling.',
+    'A position still without a case after its fallback stops the run with `blocked` before round 3, naming the position and the Codex status line.',
+    'A ruling `quorum check` names invalid, or a missing one, goes back once, with the line it printed. Invalid again, stop with `blocked`.',
+    'Such a position cannot win, on the first ruling or the final one: rule for another position, or escalate.',
+    '`<settled>` is always `none` in decide mode',
+  ]) assert.ok(decide.includes(sentence), `decide.md: ${sentence}`);
+  assert.doesNotMatch(decide, /no dispatch left for the retry, stop/u, 'a first ruling with no retry left is not a separate stop');
+  // The question-file name: the steps decide.md spells out are the slug flows.mjs computes.
+  assert.ok(decide.includes("`<slug>` comes from the question's first line, without its `# `, in these steps: lowercase it; drop backticks, `*`, and `_`; turn each run of other characters outside a-z and 0-9 into one `-`; leave no `-` at either end; cut it to 60 characters, with no `-` left at the end; use `question` when nothing is left."), 'the slug steps');
+  const steps = (line) => line.toLowerCase().replace(/[`*_]/gu, '').replace(/[^a-z0-9]+/gu, '-').replace(/^-+|-+$/gu, '');
+  for (const line of ['Keep one ledger or split it?', '**Bold** _x_ `code`', '--x--', 'A_B*C', '日本語']) assert.equal(steps(line), slug(line), line);
+  assert.match(decide, /flip/u, 'the flip');
+  assert.match(decide, /\*\*Dropped citations\*\*/u, 'the Dropped citations footnote');
+  assert.match(decide, /`adr-writer` skill/u, 'the adr-writer pointer');
+  // The core names the mode file, the question-file name, and that an edited question starts fresh.
+  const skill = texts['SKILL.md'].replace(/\s+/gu, ' ');
+  assert.match(skill, /\[modes\/decide\.md\]\(modes\/decide\.md\)/u, 'SKILL.md names modes/decide.md');
+  assert.ok(skill.includes('<slug>-<h7>.md'), 'SKILL.md names the question-file name');
+  assert.match(skill, /An edited question file is a new question, and inherits no earlier answer\./u, 'an edited question inherits nothing');
+  assert.match(skill, /`<state>\/quorum\/questions\/`/u, 'SKILL.md names the questions folder');
+});
+
+// The lines `quorum check` prints for a decide ledger, as the docs quote them: each is in lib/quorum.mjs word for word.
+test('docs/project-folder.md quotes the decide check lines exactly as lib/quorum.mjs prints them', () => {
+  const source = readFileSync(path.resolve(import.meta.dirname, '../plugins/aidrian/lib/quorum.mjs'), 'utf8');
+  const doc = readFileSync(path.resolve(import.meta.dirname, '../docs/project-folder.md'), 'utf8').replace(/\s+/gu, ' ');
+  const lines = [
+    'relabeled opinion (was pending): no citation passes',
+    'no citation passes; kept backed',
+    'the ruling has no passing citation',
+    "a rule rests on no supporting citation of the winner's case",
+    "a flip rests on no supporting citation of the winner's rebuttal",
+    'the rebuttal has no passing citation',
+    'the rebuttal cites nothing new',
+    'the concession has no passing citation',
+    "the governing winner's case has no passing citation",
+    'has no case in a complete ledger',
+    'lost the ruling and has no rebuttal in a complete ledger',
+    'rebuts with no final ruling in a complete ledger',
+    'rebuttals and a final ruling follow a first ruling of rule only',
+    'final ruling rules, but no position rebutted',
+    'human_answer: set but nothing escalated',
+    '--mode cross answers a decide ledger, and this ledger is in plan mode',
+    "the winner's case has no passing citation",
+    'is by X, not a position in this ledger',
+    'tested names X, which the ruling does not rule on',
+    // Printed from a template whose last part the ledger's mode picks.
+    { doc: 'same_model is true, so same_model_reason must say why two positions share a runner', source: ['same_model is true, so same_model_reason must say ', "'why two positions share a runner'"] },
+    'same_model is false, so same_model_reason must be null',
+  ];
+  for (const entry of lines) {
+    // X stands for an id the line prints; each literal part is in the source.
+    const line = entry.doc ?? entry;
+    for (const part of entry.source ?? line.split('X').filter(Boolean)) assert.ok(source.includes(part), `lib/quorum.mjs prints "${line}"`);
+    assert.ok(doc.includes(`\`${line}\``), `docs/project-folder.md quotes "${line}"`);
+  }
+  assert.ok(doc.includes('`checked: mode decide, N cases, N cross points, N opinion, N problems`'), 'the decide summary line');
+  // Each usage form, as the command prints it: the doc lists every --mode value the command takes.
+  for (const form of commands.quorum.usage.split(' | ')) assert.ok(doc.includes(`\`aidrian quorum ${form}\``), `docs/project-folder.md: aidrian quorum ${form}`);
 });
 
 // A proportionality flag escalates a partial accept's accepted part too, so every sentence that says the accepted part
@@ -1601,6 +1708,8 @@ test('check decide: each invalid ruling, final ruling, rebuttal, and concession 
     // An opinion is not ruled on: a verdict on it is stray, and none is needed.
     [{ cross: [point('A1', 'B', [PASSING.code]), point('B1', 'A', [FAILS], { status: 'opinion' })] }, ['ruling: invalid: tested names B1, which the ruling does not rule on']],
     [{ ruling: decision({ tested: tested(FIRST, ['A', 'B']) }) }, ["ruling: invalid: a rule rests on no supporting citation of the winner's case"]],
+    // A position wins on evidence or not at all: a rule for one whose case has no passing citation goes back.
+    [{ cases: [stand('A', [FAILS]), stand('B', [ASKED.b])], ruling: decision({ tested: tested({ A: 1, B: 1, A1: 1, B1: 1 }, ['B']) }) }, ["ruling: invalid: the winner's case has no passing citation"]],
     [{ ruling: decision({ tested: [...tested(FIRST, ['B']).filter((each) => each.of !== 'A'), { of: 'A', citation: 2, supports: true, reason: 'r' }] }) }, ['ruling: invalid: tested names 0 of 2 citations of case A; 2 out of range', "ruling: invalid: a rule rests on no supporting citation of the winner's case"]],
     [{ cases: [stand('A', [ASKED.a, PASSING.adr]), stand('B', [ASKED.b], inferred)] }, ['ruling: invalid: inference untested: "readers open one round at a time"']],
     [{ cross: [point('A1', 'B', [PASSING.code], { claim: 'B is slow.\ninference: the disk is the bottleneck' }), point('B1', 'A', [PASSING.docBySlug])] }, ['ruling: invalid: inference untested: "the disk is the bottleneck"']],
@@ -1614,6 +1723,7 @@ test('check decide: each invalid ruling, final ruling, rebuttal, and concession 
     [{ rebuttals: rebutted([PASSING.fenced, PASSING.exact]), final_ruling: finalOn() }, ['final ruling: invalid: tested names 1 of 2 citations of rebuttal B']],
     [{ rebuttals: rebutted([PASSING.fenced], 'It is faster.\ninference: rounds are read alone'), final_ruling: finalOn() }, ['final ruling: invalid: inference untested: "rounds are read alone"']],
     [{ rebuttals: rebutted([PASSING.fenced]), final_ruling: finalOn({ winner: 'B', tested: tested({ B: 1 }, ['B']) }) }, ["final ruling: invalid: a flip rests on no supporting citation of the winner's rebuttal"]],
+    [{ cases: [stand('A', [ASKED.a, PASSING.adr]), stand('B', [FAILS])], rebuttals: rebutted([PASSING.fenced]), final_ruling: finalOn({ winner: 'B' }) }, ["final ruling: invalid: the winner's case has no passing citation"]],
   ]) {
     const result = p.check(decideLedger({ status: 'open', ...over }));
     assert.equal(result.status, 0, result.stderr);

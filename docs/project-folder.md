@@ -119,7 +119,8 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── handoffs/             session handoff briefs, which the session-continue skill reads
 ├── dispatch/             machine handoffs that dispatched agents write for the orchestrator and the skills it runs
 ├── reviews/              review manifests, and the agents the specialist-review skill keeps warm
-├── quorum/               quorum ledgers, one per plan and plan hash
+├── quorum/               quorum ledgers, one per plan or question file and its hash
+│   └── questions/        the question files of the quorum's decide mode
 ├── lessons/inbox.jsonl   the lesson inbox, and its inbox.jsonl.lock.<n> lock files
 ├── tmp/                  pull request bodies and review comments that skills draft
 ├── dispatch-log.jsonl    the dispatch log
@@ -142,7 +143,8 @@ A lesson for the plugin goes to the [plugin's inbox](lessons.md#the-plugins-inbo
 `aidrian handoff` checks a handoff brief against the one it supersedes.
 `aidrian report` summarizes the [dispatch log](dispatch-log.md).
 
-A quorum ledger, `quorum/<name>-<plan-hash>.json`, records the objections two adversaries raised against a plan,
+The `quorum` skill runs in one of two modes, and its ledger records which in `mode`.
+A plan-mode ledger, `quorum/<name>-<plan-hash>.json`, records the objections two adversaries raised against a plan,
 the architect's ruling on each, and the Human's answers. `<name>` is the plan's file name without `.md`,
 or `<parent-folder>-plan` for a file named `plan.md`, and `<plan-hash>` is `git hash-object` of the plan.
 `lib/quorum.mjs` holds its schema, `LEDGER_SCHEMA`, and the schemas of Codex's answers, `OBJECTIONS_SCHEMA` and `REBUTTALS_SCHEMA`.
@@ -162,10 +164,16 @@ A ledger written by the plan mode of the `quorum` skill carries `mode: plan`, an
 A ledger with no `mode` is plan mode under the rules it was written with: 7 objections each, `improvement` allowed,
 and none of the rules below that need `mode`. `check` never adds the field. Two commands keep a ledger honest:
 
-- `aidrian quorum codex --plan PLAN --brief BRIEF --out FILE [--mode object]` runs Codex read-only on the brief
+- `aidrian quorum codex --plan PLAN --brief BRIEF --out FILE [--mode object|case]` runs Codex read-only on the brief
   and then the plan, for at most 780 seconds, and writes its answer to FILE. `--mode object`, the default, holds the answer
-  to `OBJECTIONS_SCHEMA`, Codex's objections.
-  `aidrian quorum codex --mode rebut --ledger LEDGER --plan PLAN --brief BRIEF --out FILE` holds it to `REBUTTALS_SCHEMA`:
+  to `OBJECTIONS_SCHEMA`, Codex's objections. `--mode case` holds it to `CASE_SCHEMA`, an advocate's opening case.
+  `aidrian quorum codex --mode rebut|cross --ledger LEDGER --plan PLAN --brief BRIEF --out FILE` answers a ledger.
+  `--mode cross` holds the answer to `CROSS_SCHEMA`: at most 5 points `{against, claim, citations}`, each against a
+  position LEDGER holds. LEDGER must be a decide ledger, or the run fails with
+  `--mode cross answers a decide ledger, and this ledger is in plan mode`.
+  On a decide ledger, `--mode rebut` holds the answer to `DECIDE_REBUTTAL_SCHEMA`, `{rebuttal: {verdict, claim, citations}}`,
+  and a concession must cite at least one citation.
+  On a plan ledger, `--mode rebut` holds it to `REBUTTALS_SCHEMA`:
   at most 7 entries `{objection_id, verdict, claim, citations}`, where `verdict` is `rebut` or `concede` and a concession
   cites at least one citation when LEDGER carries `mode`, and may cite nothing when it does not; without
   `objection_id`, an entry is that objection's ledger `rebuttal`, whose `ruling` starts null.
@@ -175,7 +183,7 @@ and none of the rules below that need `mode`. `check` never adds the field. Two 
   with status `rejected`. The reason names each id that breaks this.
   An answer off its schema or its ledger is `failed` and is not written. It prints one line, `{"status", "reason"}`, where status is
   `done`, `unavailable`, `timed_out`, `quota`, or `failed`, and exits 0 on `done`, 3 on `unavailable`, and 1 otherwise.
-  Any other `--mode`, `--mode rebut` without `--ledger`, `--ledger` without it, or a missing flag
+  Any other `--mode`, `--mode rebut` or `cross` without `--ledger`, `--ledger` with `object` or `case`, or a missing flag
   prints the usage error and exits 1 without starting Codex.
 - `aidrian quorum check LEDGER --plan PLAN` checks every citation. `doc` and `adr` cite `path#anchor`, and the quote
   must be in that section; `code` cites `path:line`, and the quote must be in the file; `plan` cites `#anchor` in PLAN;
@@ -197,7 +205,7 @@ and none of the rules below that need `mode`. `check` never adds the field. Two 
   on a rebuttal with no final ruling, a final ruling other than `accept`, a status its final decision does not give, a
   `rejected` objection with no rebuttal or concession, or an invalid ruling or rebuttal, as after cited code changed.
   An unflagged valid partial accept's first ruling counts even on an escalated or answered objection, since its
-  accepted part stands; a flagged one counts until the Human answers, since the answer covers its accepted part too.
+  accepted part stands. A flagged one does not count: the flag escalated its accepted part too, so it is the Human's.
   Such a ledger is not written back, so it is not reused. It runs no command but `git ls-files`. PLAN and the ledger
   may live anywhere, such as this folder.
   On every ledger, it exits 1 on a `merged` objection with a ruling or a rebuttal, or whose `merged_into` names no
@@ -216,6 +224,64 @@ and none of the rules below that need `mode`. `check` never adds the field. Two 
   With `mode`, it also names a concession invalid when no citation of it passes.
   On every plan ledger, with `mode` or without, its last line reads
   `checked: mode plan, N objections, N opinion, N problems`.
+
+A decide-mode ledger carries `mode: decide`. Advocates argue 2 to 4 positions on a question, and the architect rules
+which one the evidence supports. The question is a file, `quorum/questions/<slug>-<h7>.md`.
+`<h7>` is the first 7 characters of `git hash-object` of the file. `<slug>` comes from the question's first line,
+without its `# `: lowercase it; drop backticks, `*`, and `_`; turn each run of other characters outside a-z and 0-9
+into one `-`; leave no `-` at either end; cut it to 60 characters, with no `-` left at the end; use `question` when
+nothing is left.
+The skill names the file, and never overwrites one. An edited question file is a new question, and inherits no earlier
+answer. `check` does not enforce the name. The ledger is `quorum/<name>-<hash>.json`, where `<name>` is the question
+file's name without `.md` and `<hash>` is `git hash-object` of it; its `plan` field holds the question file's path.
+`DECIDE_LEDGER_SCHEMA` holds its shape: `positions`, `cases`, `cross` (the cross-examination points), `ruling`,
+`rebuttals`, `final_ruling`, and `human_answer`.
+
+On a decide ledger, `check` holds the decide rules only. It exits 1 on a schema error, and on any of these:
+
+- positions that are not 2 to 4, from `A` in order;
+- a case for a position the ledger does not hold, or a second case for one;
+- a cross id other than `A1` to `D5`, or one used twice;
+- a cross point by a position other than its id's letter, or `is by X, not a position in this ledger`;
+- a cross point against its own position, or against one the ledger does not hold;
+- a rebuttal from a position the ledger does not hold, from the first ruling's winner, or a second one from a position;
+- a ruling of `rule` with no winner, an `escalate` that names one, or a winner the ledger does not hold;
+- a final winner that is neither the first ruling's winner nor a position that rebutted;
+- `rebuttals and a final ruling follow a first ruling of rule only`;
+- `final ruling rules, but no position rebutted`;
+- `human_answer: set but nothing escalated`;
+- `same_model` that does not match the runners: it is `true` exactly when two positions share a runner;
+- `same_model is true, so same_model_reason must say why two positions share a runner`;
+- `same_model is false, so same_model_reason must be null`.
+
+A `complete` decide ledger also fails when a position `has no case in a complete ledger`, or the ruling is null.
+Under a first ruling of `rule`, unless the final ruling escalates, it also fails when a position
+`lost the ruling and has no rebuttal in a complete ledger`, or a rebuttal `rebuts with no final ruling in a complete ledger`.
+
+Then it checks every citation as for a plan ledger, and names each problem:
+
+- A case with no passing citation is named; its position cannot win.
+- A `pending` cross point becomes `backed` when a citation passes, or `opinion` when none does:
+  `relabeled opinion (was pending): no citation passes`. A `backed` one whose citations stop passing is named:
+  `no citation passes; kept backed`.
+- A ruling or final ruling is invalid when `the ruling has no passing citation`, when `tested` does not name each
+  citation it rules on once, or when an `inference:` line has no `inferences` entry. The first ruling rules on every
+  case and every backed cross point, each verdict keyed by `of`; a final ruling of `rule` on every rebuttal.
+  A verdict keyed to anything else reads `tested names X, which the ruling does not rule on`.
+  A final `escalate` is not held to `tested` or `inferences`, so the skill can write one when the rebuttals fall short.
+- A `rule`, first or final, is invalid when `the winner's case has no passing citation`.
+- A first `rule` is invalid when `a rule rests on no supporting citation of the winner's case`, and a final ruling
+  that names another winner when `a flip rests on no supporting citation of the winner's rebuttal`.
+- A rebuttal is invalid when `the rebuttal has no passing citation` or `the rebuttal cites nothing new`: every one of
+  its passing citations is already in a case, a cross point, or the first ruling. A concession is invalid when
+  `the concession has no passing citation`.
+
+When a complete decide ledger has no `human_answer` and no `escalate` ruling, first or final, each invalid line fails
+it, and it is not written back. Any `complete` decide ledger fails, unwritten, when
+`the governing winner's case has no passing citation`. The governing winner is the final ruling's winner when the final
+ruling is `rule`, and the first ruling's otherwise.
+Otherwise it writes the ledger back, and its last line reads
+`checked: mode decide, N cases, N cross points, N opinion, N problems`.
 
 ## Task worktrees
 

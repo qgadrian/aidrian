@@ -1,25 +1,33 @@
 # Quorum ledger
 
-The objection ledger, `<state>/quorum/<name>-<plan-hash>.json`, and how each round fills it.
+The ledger, `<state>/quorum/<name>-<plan-hash>.json`, and how each round fills it.
 `<name>` is the plan's file name without `.md`, or `<parent-folder>-plan` for a file named `plan.md`.
+In decide mode, `<name>` is the question file's name without `.md`, and `<plan-hash>` is `git hash-object` of it.
 
 - [Schemas](#schemas): where the authoritative schemas live.
-- [Fields](#fields): every field of the ledger.
+- [Fields](#fields): every field of a plan-mode ledger.
+- [Decide-mode fields](#decide-mode-fields): every field of a decide-mode ledger.
 - [Agent answers](#agent-answers): how an agent's answer is held to its schema before it is written.
 - [Settled answers](#settled-answers): the Human's answers from earlier runs on the same plan.
 - [Filling it](#filling-it): what the coordinator writes after each round of `modes/plan.md`.
+  In decide mode, the rounds of `modes/decide.md` say what each one writes.
 - [Under plan-review](#under-plan-review): the triggers `plan-review` passes, and what its critique receives.
 
 ## Schemas
 
 The plugin's `lib/quorum.mjs` is the one source of truth, and this page keeps no copy of it:
 
-- `LEDGER_SCHEMA`: the ledger.
+- `LEDGER_SCHEMA`: the plan-mode ledger.
 - `OBJECTIONS_SCHEMA`: an adversary's objections, `{objections: [{severity, claim, citations}]}`.
 - `REBUTTALS_SCHEMA`: an adversary's rebuttals, `{rebuttals: [{objection_id, verdict, claim, citations}]}`.
+- `DECIDE_LEDGER_SCHEMA`: the decide-mode ledger.
+- `CASE_SCHEMA`: an advocate's case, `{case: {claim, citations}}`.
+- `CROSS_SCHEMA`: an advocate's cross points, `{cross: [{against, claim, citations}]}`, at most 5.
+- `DECIDE_REBUTTAL_SCHEMA`: an advocate's rebuttal, `{rebuttal: {verdict, claim, citations}}`.
 
-`aidrian quorum check` refuses a ledger off `LEDGER_SCHEMA`, and `aidrian quorum codex` refuses a Codex answer off its
-schema. A test holds the list below to `LEDGER_SCHEMA`: a field added there and not here, or here and not there, fails it.
+`aidrian quorum check` refuses a ledger off its mode's schema, and `aidrian quorum codex` refuses a Codex answer off its
+schema. A test holds each fields list below to its schema: a field added there and not here, or here and not there,
+fails it.
 
 ## Fields
 
@@ -105,6 +113,76 @@ rules it was written under and never adds them. A ledger that carries `mode` is 
   - `proportionality.failed`: optional; `true` when the pass returned no usable answer. It comes only with an empty
     flagged list, so a reused ledger still reports that the pass failed.
 
+## Decide-mode fields
+
+Every decide ledger carries every field below; `quorum check` refuses one that lacks any, or holds another.
+It holds a decide ledger to the decide rules only, and prints `checked: mode decide, ...` as its last line.
+A ledger the Human did not settle (no `human_answer`, and no ruling of `escalate`, first or final) that is `complete`
+fails `quorum check` on every invalid ruling or rebuttal, so it is not reused.
+
+- `mode`: `decide`.
+- `status`: `open` while the rounds run, `complete` once the last ruling and the Human's answer are recorded.
+- `plan`: the question file's absolute path.
+- `plan_hash`: `git hash-object` of the question file, the same hash as in the file name.
+- `same_model`: `true` exactly when two positions share a runner, as three or four always do; else `false`.
+  `quorum check` exits 1 when it does not match the runners.
+- `same_model_reason`: which positions share a runner, and why, such as the Codex status line of a fallback;
+  `null` when `same_model` is `false`.
+- `trigger`: what started the run: the calling skill's line, or `the Human asked`.
+- `positions`: 2 to 4 positions, from the question file; `quorum check` exits 1 unless they run from A in order.
+  - `positions[].id`: `A`, `B`, `C`, or `D`, in the question file's order. A claim has A for true and B for false.
+  - `positions[].label`: the option's heading text after its id, or true or false for a claim.
+  - `positions[].runner`: `codex` while every run of the position went to Codex, `agent` once one did not.
+- `cases`: each position's opening case, at most one each. A `complete` ledger needs one for every position.
+  - `cases[].position`: the position it argues: `A`, `B`, `C`, or `D`.
+  - `cases[].claim`: the case, in the advocate's words, at most 200 words.
+  - `cases[].citations`: its evidence. A case with no passing citation is named, and its position cannot win.
+    - `cases[].citations[].kind`: `doc`, `adr`, `code`, `plan`, or `absence`.
+    - `cases[].citations[].ref`: where the evidence is, in the form its kind takes.
+    - `cases[].citations[].quote`: the verbatim text, at most 200 characters.
+- `cross`: the cross-examination points, at most 5 per position.
+  - `cross[].id`: the raising position's letter and a number, `A1` to `D5`, each once.
+  - `cross[].by`: the position that raised it, the id's letter: `A`, `B`, `C`, or `D`.
+  - `cross[].against`: the position it attacks, never its own: `A`, `B`, `C`, or `D`.
+  - `cross[].claim`: the point, in the advocate's words.
+  - `cross[].citations`: its evidence, in the same form as a case's.
+  - `cross[].status`: `pending` until the check runs; then `backed` when a citation passes, or `opinion` when none
+    does. Only a pending point is relabeled: a backed one whose citations stop passing stays backed, and is named.
+- `ruling`: the architect's first ruling, or `null` before it.
+  - `ruling.decision`: `rule` or `escalate`. Rebuttals and a final ruling follow a rule only.
+  - `ruling.winner`: the winning position on a rule, `A`, `B`, `C`, or `D`; `null` on an escalate.
+  - `ruling.change_or_reason`: for a rule, the losing case's strongest cited claim and the citation that defeats it.
+    For an escalation, every position, the recommended answer, the deciding reason, and what would settle it.
+  - `ruling.citations`: the ruling's own evidence, in the same form as a case's. One with no passing citation is invalid.
+  - `ruling.tested`: one verdict per citation of every case and every backed cross point, each once.
+    A rule needs one that supports, on the winner's case.
+    - `ruling.tested[].of`: the case's position or the cross point's id that the citation belongs to;
+      on the final ruling, the rebuttal's position.
+    - `ruling.tested[].citation`: the citation's index in that entry's `citations`, from 0.
+    - `ruling.tested[].supports`: `true` when the cited text supports the statement it backs, else `false`.
+      A citation marked `false` stays in the ledger and leaves the report's evidence.
+    - `ruling.tested[].reason`: why, in one line; for a point the architect moderated, its ground.
+  - `ruling.inferences`: one entry per `inference:` line of the claims it rules on.
+    - `ruling.inferences[].statement`: that line's text after `inference:`.
+    - `ruling.inferences[].holds`: `true` when the evidence settles it as stated, else `false`.
+    - `ruling.inferences[].reason`: why, in one line.
+    - `ruling.inferences[].citations`: the evidence that settles it; may be empty.
+- `rebuttals`: each losing position's answer to a first ruling of rule, at most one each, never from the winner.
+  - `rebuttals[].position`: the losing position: `A`, `B`, `C`, or `D`.
+  - `rebuttals[].verdict`: `rebut` or `concede`.
+  - `rebuttals[].claim`: why the ruling is wrong, or that it stands.
+  - `rebuttals[].citations`: for a rebut, at least one passing citation that no case, cross point, or first ruling
+    holds. For a concession, the evidence of the ruling it accepts, with at least one that passes.
+- `final_ruling`: the architect's ruling on the rebuttals, in the same form as `ruling`, or `null`.
+  It comes only after a first `rule`. A final `rule` needs a `rebut`, its `tested` covers every rebuttal's citations,
+  and its winner is the first ruling's winner or a position that rebutted.
+  A flip, a final winner other than the first, rests on a citation of the new winner's rebuttal that `tested` marks
+  as supporting. A final `escalate` is not held to `tested` or `inferences`, so the coordinator can write one when the
+  rebuttal round ends short. The governing winner is the final ruling's winner on a final `rule`, else the first
+  ruling's; in a `complete` ledger, its case needs a passing citation, whatever the Human answered.
+- `human_answer`: the Human's answer to the escalated ruling, word for word, or `null`.
+  `quorum check` exits 1 on an answer when no ruling, first or final, is `escalate`.
+
 ## Agent answers
 
 Codex's answers arrive held to their schema by `aidrian quorum codex`. An agent's answer does not, so before writing one
@@ -123,6 +201,14 @@ and the proportionality pass to `{flagged: [{objection_id, reason, smaller_chang
 - A flagged entry that names no objection with an `accept` ruling is dropped.
 - Never edit a claim, a change, or a quote. The report names every entry and citation dropped.
 
+In decide mode, hold an advocate's case to `CASE_SCHEMA`, its cross points to `CROSS_SCHEMA`, its rebuttal to
+`DECIDE_REBUTTAL_SCHEMA`, and the architect's ruling to the ledger's `ruling`. The rules above on missing fields,
+citations, and edits hold, and:
+
+- A ruling whose winner is not set exactly on `rule`, or is not a position in the ledger, is dropped, and counts as missing.
+- A cross point against the advocate's own position, or a position the ledger does not hold, is dropped.
+- Past 5 cross points, keep the first 5.
+
 When `quorum check` still exits 1, stop with `blocked`, quoting what it printed.
 
 ## Settled answers
@@ -132,6 +218,7 @@ one at this plan's hash, and whose mode is this run's (a ledger with no `mode` i
 For each of their `human_answers`, the settled block of every brief gives the claim of the objection it answered,
 from that ledger, and the answer.
 Settled answers stay in their own ledgers: the new ledger's `human_answers` holds only this run's answers.
+In decide mode, `<settled>` is always `none`, as `modes/decide.md` says.
 The architect rejects an objection that reopens a settled answer, citing the plan's revision-history line that applied it.
 An answer the plan holds no revision-history line for yet, as after a `plan-review` restart from its step 5.1, is asked
 again: its objection escalates with the earlier answer as the recommended answer, and its ruling gets no retry.
@@ -181,7 +268,8 @@ Each step names the round of `modes/plan.md` it follows.
   `accept`, a status its final decision does not give, a `rejected` objection with no rebuttal or concession, or an
   invalid ruling or rebuttal, as when cited code changed. An unflagged valid partial accept's first ruling is held to
   its evidence even when its objection is escalated or answered: its accepted part stands, and the answer covers only
-  the rest. A flagged one is held to it until the Human answers, since the answer covers its accepted part too.
+  the rest. A flagged one is not: the flag escalated its accepted part too, so the Human's answer, or the deferral,
+  covers it.
 
 ## Under plan-review
 

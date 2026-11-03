@@ -166,6 +166,10 @@ What each rule matches:
   answer, given after the judge's verdict, to a question naming `#<PR>` and the round it grants, `round <N>`, whose chosen
   option starts with "Approve". `--human deny` and `--verdict` run. With no check waiting for the Human in this
   machine's review record, as when the record came from another machine, the approval is refused.
+  Each call in a chain is judged against its own pull request, and the deny names every call it refuses. A deny says
+  why the transcript's answers miss: none after the verdict, none naming `#<PR>` or `round <N>`, or the label picked.
+  After a judge's stop, nothing waits for an answer, so the deny names the Human's route to one more round instead:
+  `AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review <PR> --max-rounds <N>` in their own shell.
   An answer the rule cannot read, such as `--human "$X"`, counts as approve; a pull request it cannot read is refused.
 - Quota fallback choice: `aidrian pr review <PR> --quota-fallback agent:<name>` or `--quota-fallback human`, also as
   `node …/cli.mjs` or `--quota-fallback=<value>`. It runs when this machine's review record holds a quota stop and the

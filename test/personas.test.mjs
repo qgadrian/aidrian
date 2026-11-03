@@ -84,6 +84,10 @@ test('a missing or empty section, a task with no Success: line, and Tasks with n
   assert.deepEqual(personaProblems(noSuccess), ['task "Mark a dish ready" has no "Success:" line']);
   const empty = PERSONA.replace('Success: the dish', 'Success:\nthe dish');
   assert.deepEqual(personaProblems(empty), ['task "Mark a dish ready" has no "Success:" line'], 'Success: needs an outcome after it');
+  for (const label of ['**Success:**', '- **Success:**', '**Success:**   ', '**Success**:']) {
+    const bold = PERSONA.replace('Success: the dish', `${label}\nthe dish`);
+    assert.deepEqual(personaProblems(bold), ['task "Mark a dish ready" has no "Success:" line'], `${JSON.stringify(label)} needs an outcome after it`);
+  }
   const fenced = PERSONA.replace('Success: the dish', '```\nSuccess: the dish').replace('five seconds.\n', 'five seconds.\n```\n');
   assert.deepEqual(personaProblems(fenced), ['task "Mark a dish ready" has no "Success:" line'], 'a quoted Success: line is not one');
   const noTasks = PERSONA.replace(/### [\s\S]*?(?=## Cares)/, 'Take orders.\n\n');

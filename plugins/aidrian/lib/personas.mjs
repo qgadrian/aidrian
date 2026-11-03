@@ -14,7 +14,7 @@ export const REQUIRED = ['Who', 'Goals', 'Tasks', 'Cares about', 'Does not care 
 
 const TASK = /^ {0,3}###(?!#)\s+(.+?)\s*$/u;
 // `Success: ...`, also as a list item or in bold, with something after the colon.
-const SUCCESS = /^\s*(?:[-*+]\s+)?\**Success:\**\s*\S/u;
+const SUCCESS = /^\s*(?:[-*+]\s+)?(?:\*\*Success:\*\*|\*\*Success\*\*:|Success:)\s*\S/u;
 
 // { sections: { title: body }, tasks: [{ title, success }] }. Headings inside code fences are text.
 export function parsePersona(text) {

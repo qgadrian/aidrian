@@ -785,6 +785,34 @@ test('an invariant that cites a doc section carries that section as its source, 
   assert.ok(first.plan.flows.includes('harness-config'), 'the cited doc changed');
 });
 
+test('an edit to a cited doc outside the cited section needs no Human; inside it, or renaming its heading, does', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'], invariants: [{ id: 'no-double', cite: 'docs/flows/booking.md#no-double-booking' }], require: ['agent:product-manager'] } };
+  const plan = async (doc) => {
+    const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => {
+      write('src/booking/book.js', 'export const book = () => 1;\n');
+      write('docs/flows/booking.md', doc);
+    } });
+    return (await r.step({ exec: clean })).plan.flows;
+  };
+  const outside = await plan('# Booking\n\n## No double booking\nTwo bookings never hold one slot.\n\n## Refund cap\nA refund never exceeds the charge, ever.\n');
+  assert.ok(!outside.includes('harness-config'), 'only the refund section changed');
+  const appended = await plan('# Booking\n\n## No double booking\nTwo bookings never hold one slot.\n\n## Refund cap\nA refund never exceeds the charge.\n\n## Alerts\nNew.\n');
+  assert.ok(!appended.includes('harness-config'), 'a section added after the cited one');
+  const inside = await plan('# Booking\n\n## No double booking\nTwo bookings may share a slot.\n\n## Refund cap\nA refund never exceeds the charge.\n');
+  assert.ok(inside.includes('harness-config'), 'the cited section changed');
+  const renamed = await plan('# Booking\n\n## No overlapping booking\nTwo bookings never hold one slot.\n\n## Refund cap\nA refund never exceeds the charge.\n');
+  assert.ok(renamed.includes('harness-config'), 'the cited heading is gone');
+});
+
+test('a flow whose invariants doc is cited whole still needs the Human for any edit to it', async (t) => {
+  const flows = { booking: { files: ['src/booking/**'], invariants: 'docs/flows/booking.md', require: ['agent:product-manager'] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => {
+    write('src/booking/book.js', 'export const book = () => 1;\n');
+    write('docs/flows/booking.md', '# Booking\n\n## No double booking\nTwo bookings never hold one slot.\n\n## Refund cap\nA refund never exceeds the charge, ever.\n');
+  } });
+  assert.ok((await r.step({ exec: clean })).plan.flows.includes('harness-config'));
+});
+
 test('a sign-off of harness-config does not survive a push that changes a project reviewer\'s script', async (t) => {
   const reviewers = { lint: { kind: 'exec', command: ['scripts/review-lint.sh'], stage: 'local' } };
   const r = repo(t, {

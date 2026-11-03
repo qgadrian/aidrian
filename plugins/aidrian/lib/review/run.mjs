@@ -38,6 +38,7 @@ import { computeVerdict } from '../pr-checks.mjs';
 import { isDirectory } from '../fs.mjs';
 import { dedupe, packageRoots } from './split.mjs';
 import { contentFlows } from './content.mjs';
+import { touchedCitations } from './cited.mjs';
 import { buildPlan, classify, detectFlows, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, pathPattern, validatePlan } from './plan.mjs';
 import { BUILT_IN, flowBaseBrief, resolveEngine, reviewerMap, runExec, satisfies, VERDICT_MEANING } from './reviewers.mjs';
 import { atCap, buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
@@ -245,10 +246,9 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
   for (const command of [review.planCommand, baseReview?.visual?.login, baseReview?.visual?.preview]) {
     for (const file of commandFiles(root, command, baseTip)) if (changedPaths.has(file)) harnessChanged.push(file);
   }
-  // A flow's invariants doc, and every doc an invariant cites, is part of how the project is reviewed: a change to
-  // one is the Human's to sign off.
-  const citedDocs = (flows) => Object.values(flows ?? {}).flatMap((flow) => (typeof flow.invariants === 'string' ? [flow.invariants] : Array.isArray(flow.invariants) ? flow.invariants.map((each) => each.cite?.split('#')[0]).filter(Boolean) : []));
-  for (const file of new Set(citedDocs(baseReview?.flows))) if (changedPaths.has(file)) harnessChanged.push(file);
+  // A flow's invariants doc, and every doc section an invariant cites, is part of how the project is reviewed: a
+  // change to one is the Human's to sign off. An edit elsewhere in a doc that is cited only by section is not.
+  harnessChanged.push(...touchedCitations(root, base, head, baseReview?.flows, changedPaths));
   for (const reviewer of Object.values(baseReview?.reviewers ?? {})) {
     for (const file of commandFiles(root, (reviewer.command ?? []).join(' '), baseTip)) if (changedPaths.has(file)) harnessChanged.push(file);
   }
@@ -340,7 +340,6 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
   // tracing, plan command, tests, and invariants doc. Accepting a deleted test stays exact to the head.
   const reviewCommands = [review.planCommand, review.visual?.login, review.visual?.preview, ...Object.values(baseReview?.reviewers ?? {}).map((reviewer) => (reviewer.command ?? []).join(' '))];
   const harnessFiles = new Set([project.paths.config, ...reviewCommands.flatMap((command) => commandFiles(root, command, baseTip))]);
-  for (const file of citedDocs(review.flows)) harnessFiles.add(file);
   const reselected = new Map();
   const selectedSince = async (from) => {
     if (reselected.has(from)) return reselected.get(from);
@@ -348,11 +347,12 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
     const lines = diffLines(root, from, head);
     const ids = new Set(detectFlows(review.flows, { sorted: classify(since, review), addedLines: lines.addedLines, removedFiles: lines.removedFiles }).map((flow) => flow.id));
     for (const flow of contentFlows({ root, head, changes: since, addedLines: lines.addedLines, flows: review.flows })) ids.add(flow.id);
+    const sincePaths = new Set(since.map((change) => change.file));
     for (const [id, definition] of Object.entries(review.flows)) {
       const tests = (definition.tests ?? []).map(pathPattern);
-      if (since.some((change) => tests.some((pattern) => pattern.test(change.file)) || citedDocs({ [id]: definition }).includes(change.file))) ids.add(id);
+      if (since.some((change) => tests.some((pattern) => pattern.test(change.file))) || touchedCitations(root, from, head, { [id]: definition }, sincePaths).length) ids.add(id);
     }
-    if (since.some((change) => harnessFiles.has(change.file))) ids.add(HARNESS_FLOW);
+    if (since.some((change) => harnessFiles.has(change.file)) || touchedCitations(root, from, head, review.flows, sincePaths).length) ids.add(HARNESS_FLOW);
     if (review.planCommand && since.length) {
       const extra = await runPlanCommand(review.planCommand, { base: from, head, changes: since }, { root, env: cleanEnv, baseTip });
       for (const flow of extra.flows ?? []) ids.add(flow.id);

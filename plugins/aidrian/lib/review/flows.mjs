@@ -98,6 +98,16 @@ export const MAX_FOCUSED = 8000;
 // has no such heading. A `#` line in a fenced code block, such as a shell comment, is code, not a heading: it neither
 // ends a section nor matches the anchor.
 export function sectionOf(text, anchor) {
+  const lines = String(text ?? '').split(/\r?\n/u);
+  const range = sectionRange(text, anchor);
+  if (!range) return null;
+  const raw = lines.slice(range.start + 1, range.end).join('\n').replace(/^(?:[ \t]*\n)+/u, '').trimEnd();
+  return { heading: range.heading, body: raw.trim(), raw };
+}
+
+// Where sectionOf's section sits: { heading, start, end }, 0-based, the heading line at `start` and `end` exclusive.
+// Null when the doc has no such heading.
+export function sectionRange(text, anchor) {
   const wanted = String(anchor ?? '');
   const key = slug(wanted);
   // CRLF or LF: a `\r` left on a line would hide its fence, and `raw` is rejoined with LF.
@@ -112,8 +122,7 @@ export function sectionOf(text, anchor) {
   if (!found) return null;
   const start = found.line;
   const end = headings.find((heading) => heading.line > start && heading.level <= found.level)?.line ?? lines.length;
-  const raw = lines.slice(start + 1, end).join('\n').replace(/^(?:[ \t]*\n)+/u, '').trimEnd();
-  return { heading: found.text, body: raw.trim(), raw };
+  return { heading: found.text, start, end };
 }
 
 // A list item's marker and the content column after it, or null: blocksOf groups a line under the item whose content

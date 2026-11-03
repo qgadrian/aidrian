@@ -106,14 +106,19 @@ export function mismatch(answers, { pr, round, since = null }) {
   return `the Human picked "${onRound.at(-1).answer}", not the option that starts with "Approve"`;
 }
 
-// What the no-ask deny names from the record: its latest check, and the --max-rounds that allows one more round. The
-// review step adds the rounds still granted to --max-rounds, so they are taken off here.
+// What the no-ask deny names from the record: its latest check, and the --max-rounds that allows one more round. A
+// check's `round` counts the rounds of its own source, the plan's or the bot's reviews; a plan check also reads the plan
+// rounds the record holds, which may have run since. The review step adds the rounds still granted to --max-rounds,
+// so they are taken off here.
 function nextCap(state) {
   const entries = state?.extensions ?? [];
   const last = entries.at(-1) ?? null;
-  const rounds = Array.isArray(state?.rounds) ? state.rounds.length : null;
-  const granted = entries.filter((entry) => entry.source === last?.source && entry.status === 'granted').length;
-  return { last, next: rounds === null ? null : Math.max(1, rounds + 1 - granted), bot: last?.source === 'bot' };
+  if (!last) return { last, next: null, bot: false };
+  const bot = last.source === 'bot';
+  const planRounds = !bot && Array.isArray(state?.rounds) ? state.rounds.length : 0;
+  const done = Math.max(Number.isInteger(last.round) ? last.round : 0, planRounds);
+  const granted = entries.filter((entry) => entry.source === last.source && entry.status === 'granted').length;
+  return { last, next: done ? Math.max(1, done + 1 - granted) : null, bot };
 }
 
 const readTranscript = (file) => {

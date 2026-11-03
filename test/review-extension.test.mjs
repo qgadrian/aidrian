@@ -264,9 +264,14 @@ test('the review-extend rule: after a judge`s stop, the deny names the Human`s o
   assert.match(denied, /no extension waits for the Human on pull request #12 \(the latest check, at round 4, is stopped by the judge\)/u);
   assert.match(denied, /`AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr review 12 --max-rounds 4`/u, 'five rounds: four done, one granted, one more');
   assert.doesNotMatch(denied, /Ask the Human with AskUserQuestion/u, 'an ask cannot help when nothing waits for it');
+  state.rounds = [];
   state.extensions = [{ source: 'bot', round: 4, head: 'd', status: 'stopped', by: 'judge' }];
   writeLocalState(g.project, state);
-  assert.match(g.run('aidrian pr extend 12 --human approve') ?? '', /AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 12 --request --max-rounds 5/u, 'a bot cap reruns the bot request');
+  assert.match(g.run('aidrian pr extend 12 --human approve') ?? '', /AIDRIAN_ALLOW_EXTRA_ROUNDS=1 aidrian pr await-review 12 --request --max-rounds 5/u, 'a bot cap counts the bot`s reviews, not the plan`s rounds');
+  state.rounds = [{ head: 'a' }];
+  state.extensions = [{ source: 'plan', round: 3, head: 'c', status: 'stopped', by: 'judge' }, { source: 'bot', round: 2, head: 'd', status: 'granted', by: 'judge' }, { source: 'bot', round: 3, head: 'e', status: 'stopped', by: 'judge' }];
+  writeLocalState(g.project, state);
+  assert.match(g.run('aidrian pr extend 12 --human approve') ?? '', /await-review 12 --request --max-rounds 3`/u, 'three bot reviews, one bot grant: a baseline of three allows a fourth');
   const other = check('aidrian pr extend 99 --human approve', { cwd: g.dir, input: {} }) ?? '';
   assert.match(other, /holds no extension check for pull request #99.*the Human runs the approval in their own shell/su, 'no record here: maybe another machine asked');
 });

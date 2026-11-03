@@ -292,3 +292,13 @@ test('with a token ceiling, an approved plan offers a handoff from half of it', 
   assert.match(plan(), /^The plan is approved, and this session already carries 60k tokens of context\. /);
   assert.equal(planApprovedContext({ mode: 'ask', costRatio: 2, maxTokens: 0 }, usageOf({ first: 58_676, last: 60_000 })), null, 'no ceiling');
 });
+
+test('a firing past several steps at once re-arms above them all, so the next turn is not reminded again', () => {
+  // A 50k baseline is a 94k fresh session; 300.8k is 3.2 times that, past the steps at 2 and 3, and three ceilings of 100k.
+  const text = [call('w', 50_000), call('c', 300_800)].join('\n');
+  const handoff = { ...DEFAULTS.session.handoff, maxTokens: 100_000 };
+  const first = stopReminder(text, handoff, null);
+  assert.deepEqual(first.marker, { ratio: 2, tokens: 2, compactions: 0 });
+  assert.match(first.reason, /comes back once the context reaches 400k tokens or each call costs 4 times/);
+  assert.equal(stopReminder(text, handoff, JSON.stringify(first.marker)), null, 'the next turn at the same size');
+});

@@ -61,6 +61,14 @@ export const ratioStep = (costRatio, fired) => costRatio + fired * (costRatio - 
 // The context at which the token ceiling fires after `fired` firings; 0 is off.
 export const tokenCeiling = (maxTokens, fired) => maxTokens * 2 ** fired;
 
+// The firing count after a firing at `value`: past every step `value` reached, so a ratio or context that jumped two
+// steps in one turn is not reminded again at the next turn's end. `at(n)` is the trigger after `n` firings.
+function stepsPassed(value, fired, at) {
+  let next = fired + 1;
+  while (value >= at(next)) next += 1;
+  return next;
+}
+
 // The firing counts a marker holds: { ratio, tokens, compactions }. No marker is none. A marker an older version wrote,
 // a mode word or one count, counts as one firing of each, at the session's current `compactions`.
 export function readMarker(text, compactions) {
@@ -84,7 +92,7 @@ const costLine = ({ ratio, breakEven }) =>
 
 // What the Stop hook does, or null: { reason, marker }. `handoff` is config.json `session.handoff`, `markerText` the
 // marker's text or null. A compaction since the marker resets both counts, so the session is reminded from the first
-// step again. A firing raises only the count of the trigger that fired.
+// step again. A firing raises only the count of the trigger that fired, past every step it reached.
 export function stopReminder(text, handoff, markerText) {
   const usage = sessionUsage(text);
   if (!usage.calls) return null;
@@ -96,12 +104,17 @@ export function stopReminder(text, handoff, markerText) {
   const byCost = cost.breakEven !== null && cost.ratio >= step;
   const byTokens = handoff.maxTokens > 0 && usage.last >= ceiling;
   if (!byCost && !byTokens) return null;
+  const marker = {
+    ratio: byCost ? stepsPassed(cost.ratio, counts.ratio, (n) => ratioStep(handoff.costRatio, n)) : counts.ratio,
+    tokens: byTokens ? stepsPassed(usage.last, counts.tokens, (n) => tokenCeiling(handoff.maxTokens, n)) : counts.tokens,
+    compactions: usage.compactions,
+  };
   const next = [];
-  if (byTokens) next.push(`the context reaches ${Math.round((ceiling * 2) / 1000)}k tokens`);
-  if (byCost) next.push(`each call costs ${round(ratioStep(handoff.costRatio, counts.ratio + 1))} times what a fresh session's would`);
+  if (byTokens) next.push(`the context reaches ${Math.round(tokenCeiling(handoff.maxTokens, marker.tokens) / 1000)}k tokens`);
+  if (byCost) next.push(`each call costs ${round(ratioStep(handoff.costRatio, marker.ratio))} times what a fresh session's would`);
   return {
     reason: handoffReason(handoff.mode, { cost: byCost ? cost : null, tokens: byTokens ? usage.last : null, next }),
-    marker: { ratio: counts.ratio + (byCost ? 1 : 0), tokens: counts.tokens + (byTokens ? 1 : 0), compactions: usage.compactions },
+    marker,
   };
 }
 

@@ -41,13 +41,14 @@ The steps scale with the session's own baseline: with a 30,000-token baseline th
 context, with a 60,000-token baseline near 208,000.
 
 **Token ceiling.** `maxTokens`, off by default, is a ceiling on the context, for the quality of the answers rather than
-their cost. It fires on its own, whatever `r` is, at `maxTokens` and then at twice the context of its last firing:
+their cost. It fires on its own, whatever `r` is, at `maxTokens` and then at each doubling of it:
 `maxTokens × 2^n` after `n` firings. Its message names the context only, with no `r` or `N`.
 
 **Re-arming.** A marker in the system's temporary folder, `aidrian-session-length-<session id>`, holds
 `{"ratio": n, "tokens": n, "compactions": n}`: how often each trigger fired, and the compactions seen.
-A firing raises only the count of the trigger that fired. A marker an older version wrote, a mode word or one count,
-counts as one firing of each. The `SessionEnd` hook deletes the marker; a new session starts fresh.
+A firing raises only the count of the trigger that fired, past every step the session already reached,
+so a jump of two steps in one turn is not reminded again at the next.
+A marker an older version wrote, a mode word or one count, counts as one firing of each. The `SessionEnd` hook deletes the marker; a new session starts fresh.
 
 **Compaction.** A compaction writes a `compact_boundary` entry into the same transcript, under the same session id.
 When the transcript holds more of them than the marker's `compactions`, both counts reset to 0 first,

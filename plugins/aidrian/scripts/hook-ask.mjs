@@ -1,31 +1,12 @@
 // PreToolUse hook for AskUserQuestion (Claude Code): a question to the human may not say "I", "me", "my", "you", or
 // "your". The dialog shows only the question, often without the reply around it, so "How should I finish?" or "needs
 // your approval" leaves the reader unsure who is meant. The start line asks for the names; this check makes it hold for
-// questions. Text in backticks or quotes is left alone, since it may quote a command, a UI string, or the human.
-// Word edges are Unicode letters and marks, so "problème" or "Uděláme" does not read as "me". "mine" is left out on
-// purpose: it is also a verb.
+// questions. lib/names.mjs finds the words and leaves text in backticks or quotes alone.
 
 import { loadConfig } from '../lib/config.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
+import { personalWords } from '../lib/names.mjs';
 import { findProject } from '../lib/project.mjs';
-
-const APOSTROPHE = "['’]";
-const START = '(?<![\\p{L}\\p{M}\\p{N}_])';
-const END = '(?![\\p{L}\\p{M}\\p{N}_])';
-// "I" alone, or a contraction of it; never the "I" of "I/O" or "I-beam".
-const FIRST = new RegExp(`${START}I(?:${APOSTROPHE}(?:m|ll|ve|d))?${END}(?![/-])`, 'gu');
-const OTHER = new RegExp(`${START}(?:me|my|myself|you(?:${APOSTROPHE}(?:re|ll|ve|d))?|your|yours|yourself|yourselves)${END}(?!-)`, 'giu');
-// A single-quoted run, which may hold an apostrophe between two letters, as in 'Don't show me again'.
-const SINGLE = /(^|[^\p{L}\p{N}])['‘](?:[^'‘’\n]|(?<=\p{L})['’](?=\p{L}))*['’](?![\p{L}\p{N}])/gu;
-
-// The words that break the names rule in `text`, outside code and quotes, in the order they appear.
-function personalWords(text) {
-  const bare = text
-    .replace(/`[^`]*`/g, ' ')
-    .replace(/"[^"]*"|“[^”]*”/g, ' ')
-    .replace(SINGLE, '$1 ');
-  return [...bare.matchAll(FIRST), ...bare.matchAll(OTHER)].sort((a, b) => a.index - b.index).map((m) => m[0]);
-}
 
 // Every text of the call the human reads: the title, and each question, its header and description, and each option's
 // label and description. An option's preview holds mockups and code, so it is left out.

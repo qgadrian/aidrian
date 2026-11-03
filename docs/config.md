@@ -336,6 +336,10 @@ A question dialog often shows without the reply around it, so a hook blocks an `
 options say "I", "me", "my", "you", or "your", or a form of them such as "I'm" or "yourself",
 outside backticks and quotes, and the agent asks again with the names (Claude Code).
 
+A chat reply is read before any check could run, so it is not blocked. When the main session's last reply said one of
+those words outside code, quotes, and quoted lines (`> …`), the next prompt adds one line to the session that names
+the words and both names (Claude Code).
+
 `.aidrian.local.json` wins over `config.json`, one name at a time.
 `aidrian check` names an unknown key and a name that is not a non-empty string.
 

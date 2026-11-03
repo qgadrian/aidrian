@@ -11,7 +11,9 @@
 //   incomplete      a reviewer failed on this head and may be retried; stuck: it failed 3 times, the Human decides
 //   too_large       the change is past what one review covers; the Human decides how to split it
 //   checks_pending  a flow's required checks have not all finished on this head: call again later
-//   timed_out, blocked_quota, round_limit   as `aidrian pr await-review`
+//   timed_out, round_limit   as `aidrian pr await-review`
+//   blocked_quota   a reviewer is out of quota: ask the Human `question`; the option picked runs its `run`, such as
+//                   `--quota-fallback agent:critic` (lib/review/quota.mjs), or nothing
 //   extension_check  at the round cap: run the listed judge, then record its verdict with `aidrian pr extend`
 //   extension_ask    the judge says one more round; ask the Human, then `aidrian pr extend <PR> --human approve|deny`
 //
@@ -39,7 +41,8 @@ import { contentFlows } from './content.mjs';
 import { buildPlan, classify, detectFlows, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, pathPattern, validatePlan } from './plan.mjs';
 import { BUILT_IN, flowBaseBrief, resolveEngine, reviewerMap, runExec, satisfies, VERDICT_MEANING } from './reviewers.mjs';
 import { atCap, buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
-import { answerPending, emptyState, heldMessage, isSummary, mergePending, noteOutcome, prunePasses, readLocalState, readRecord, summaryBody, writeLocalState } from './state.mjs';
+import { answerPending, emptyState, heldMessage, isSummary, mergePending, noteOutcome, prunePasses, readLocalState, readRecord, sameCommit, summaryBody, writeLocalState } from './state.mjs';
+import * as quota from './quota.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, ghImage, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput, visualMatrix, visualRoutes } from './visual.mjs';
 
 export const EXIT = Object.freeze({
@@ -293,6 +296,34 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
     plan.stages = [...plan.stages.filter((stage) => stage.name !== 'remote'), { name: 'remote', passes: [...(plan.stages.find((stage) => stage.name === 'remote')?.passes ?? []), { id: 'engine:pr-bot', reviewer: 'pr-bot', kind: 'remote', files: null, context: 'full' }] }];
   }
   plan.engine = { name: engine.reviewer.name, reason: engine.reason };
+  const map = reviewerMap(effective);
+  // A reviewer out of quota on this head, and the Human's choice of what replaces it (lib/review/quota.mjs). The flag
+  // answers a stop on this head only, and is refused where the plan requires an independent model.
+  if (opts.quotaFallback) {
+    const stop = (state.quotaStops ?? []).filter((each) => each.head === head).at(-1);
+    if (!stop) throw new Error(`no quota stop is on record for head ${head.slice(0, 7)} of #${n}: --quota-fallback answers a blocked_quota on the current head only`);
+    const refused = quota.refusal(plan, stop, plan.stages.flatMap((stage) => stage.passes), map);
+    if (refused) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: refused, plan });
+    if (stop.choice !== opts.quotaFallback) Object.assign(stop, { choice: opts.quotaFallback, chosen_at: new Date().toISOString(), signoff: null });
+  }
+  // A pass's result counts for this head when it is for this head, or for an earlier one the change since does not
+  // touch and that left nothing open.
+  const deltaCache = new Map();
+  const delta = (from) => {
+    if (!deltaCache.has(from)) deltaCache.set(from, isAncestor(root, from, head) ? changedFiles(root, from, head) : null);
+    return deltaCache.get(from);
+  };
+  // A pass with a file list (a slice, a flow pass) keeps its history only while it covers the same files: when a fix
+  // repacks slices, a slice's earlier result and findings are another set of files' and count for nothing.
+  const sameFiles = (pass, result) => !Array.isArray(pass.files) || JSON.stringify([...pass.files].sort()) === JSON.stringify(result.files ?? null);
+  const resultFor = (pass) => {
+    const result = state.passes[pass.id];
+    if (!result || !sameFiles(pass, result)) return null;
+    if (result.head === head) return result;
+    const since = delta(result.head);
+    return since && !touches(since, pass.files) && result.open === 0 ? result : null;
+  };
+  const fallbacks = quota.applyChoices(plan, state.quotaStops, head, resultFor);
   const { lines } = classify(changes, review);
   if (plan.depth !== 'none' && lines > MAX_LINES) return settle({ status: 'too_large', pr: n, repo, head, lines, reason: `${lines} changed lines is past ${MAX_LINES}: split the pull request` });
 
@@ -352,7 +383,6 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
   let manifest = visual ? readManifest(project, n, head) : null;
   const isVisual = (pass) => Boolean(visual) && visual.reviewers.includes(map[pass.reviewer]?.agent ?? pass.reviewer);
 
-  const map = reviewerMap(effective);
   const passes = plan.stages.flatMap((stage) => stage.passes);
   // A pass nobody can run would never finish and never block: refuse the plan instead.
   const orphan = passes.find((pass) => pass.kind !== 'agent' && !map[pass.reviewer]);
@@ -362,6 +392,7 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
   // pass that can answer for it.
   for (const stage of plan.stages) if (stage.name !== 'local') for (const pass of stage.passes) pass.flows = plan.flows.map((flow) => flow.id);
   for (const word of plan.require) {
+    if (!satisfies(word, passes, map) && word === 'independent-model' && fallbacks.length) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: quota.refusal(plan, fallbacks[0], [], map), plan });
     if (!satisfies(word, passes, map)) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `the plan requires ${word}, and the engine here is ${engine.reviewer.name} (${engine.reason})`, plan });
   }
   // A flow's deleted test stops the review whatever else the change does, even when nothing else needs a review.
@@ -373,7 +404,7 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
   }
   const answerless = plan.flows.find((flow) => !passes.some((pass) => (pass.flows ?? []).includes(flow.id) && map[pass.reviewer]?.kind !== 'remote'));
   if (answerless) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `flow ${answerless.id} needs a reviewer that answers its invariants, and the review bot does not: run codex-local, or require an agent for the flow`, plan });
-  if (!passes.length && !removedTests.length) return settle({ status: 'none_needed', pr: n, repo, head, base, depth: plan.depth, engine: plan.engine, plan: { depth: plan.depth, reasons: plan.reasons, flows: [], stages: [] } });
+  if (!passes.length && !removedTests.length && !fallbacks.length) return settle({ status: 'none_needed', pr: n, repo, head, base, depth: plan.depth, engine: plan.engine, plan: { depth: plan.depth, reasons: plan.reasons, flows: [], stages: [] } });
 
   // Each extra round the base branch's policy grants (lib/review/extension.mjs) raises the cap by one. A decision still
   // open at the cap (a check, or a grant whose round has not opened) is read again when the head has moved since.
@@ -382,23 +413,6 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
   if (policy.mode !== 'off') revalidate({ state, source: 'plan', round: state.rounds.length, head, history: planHistory, log: extensionLog });
   const { maxRounds, grantFloor } = roundCap({ baseline: opts.maxRounds ?? cap, granted: grantedRounds(state, 'plan', policy) });
 
-  // A pass's result counts for this head when it is for this head, or for an earlier one the change since does not
-  // touch and that left nothing open.
-  const deltaCache = new Map();
-  const delta = (from) => {
-    if (!deltaCache.has(from)) deltaCache.set(from, isAncestor(root, from, head) ? changedFiles(root, from, head) : null);
-    return deltaCache.get(from);
-  };
-  // A pass with a file list (a slice, a flow pass) keeps its history only while it covers the same files: when a fix
-  // repacks slices, a slice's earlier result and findings are another set of files' and count for nothing.
-  const sameFiles = (pass, result) => !Array.isArray(pass.files) || JSON.stringify([...pass.files].sort()) === JSON.stringify(result.files ?? null);
-  const resultFor = (pass) => {
-    const result = state.passes[pass.id];
-    if (!result || !sameFiles(pass, result)) return null;
-    if (result.head === head) return result;
-    const since = delta(result.head);
-    return since && !touches(since, pass.files) && result.open === 0 ? result : null;
-  };
   const verdictsFor = (flowId) => passes.filter((pass) => (pass.flows ?? []).includes(flowId)).flatMap((pass) => {
     const result = resultFor(pass);
     return (result?.verdicts ?? []).filter((verdict) => verdict.flow === flowId).map((verdict) => ({ ...verdict, at: result.head }));
@@ -467,10 +481,10 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
           };
           recorded = true;
         }
-        const quota = outcomes.find(([, outcome]) => outcome.status === 'quota');
-        if (quota) {
+        const outOfQuota = outcomes.find(([, outcome]) => outcome.status === 'quota');
+        if (outOfQuota) {
           undoRound();
-          return finish('blocked_quota', { reason: quota[1].reason, pass: quota[0].id });
+          return quotaStop(outOfQuota[0], stage, outOfQuota[1].reason);
         }
         const failed = outcomes.find(([, outcome]) => outcome.status !== 'done');
         if (failed) {
@@ -519,6 +533,7 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
         }
         if (bot.status === 'timed_out' || bot.status === 'blocked_quota' || bot.status === 'round_limit') {
           if (!bot.requested) undoRound();
+          if (bot.status === 'blocked_quota') return quotaStop(remote, stage, bot.reason ?? 'the review bot posted a usage-limit notice', { bot });
           return bot.status === 'round_limit' ? capReached({ bot }) : finish(bot.status, { bot });
         }
         // A push during the wait: the bot's answer is for another commit, so it counts for nothing here.
@@ -549,6 +564,9 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
         flows: unsigned.map(([flow, status]) => ({ flow: flow.id, violated: status.open, unverified: status.unverified })),
       });
     }
+    // A stage the Human chose to review in place of an out-of-quota reviewer waits for their sign-off before the next.
+    const unsignedStage = fallbacks.find((stop) => stop.stage === stage.name && stop.choice === quota.HUMAN && !stop.signoff);
+    if (unsignedStage) return finish('human_required', { stage: stage.name, flows: [], command: [quota.signoffCommand(n, unsignedStage)] });
   }
   // Evidence beyond the reviewers: no flow test deleted without the Human's word, and the required checks of the
   // flows the change touches passed on this head.
@@ -633,13 +651,22 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
     const visualChecklist = visual?.checklist ? { path: visual.checklist, text: fileAt(root, baseTip, visual.checklist.split('#')[0]) } : null;
     return {
       ...split,
-      pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files, flows, priorFindings: prior?.list ?? [],
+      pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files, flows, priorFindings: [...(prior?.list ?? []), ...keptFindings(pass)],
       // An invariant is a claim about the whole change, so a delta pass still judges its flows from the merge base:
       // judged on the delta, a narrowing an earlier push made reads as a weakening, and a new head hides a violation.
       ...(flows.length && from !== base ? { flowBase: base } : {}),
       ...(checklist ? { checklist: { path: checklist, text: fileAt(root, baseTip, checklist) } } : {}),
       ...(manifest && isVisual(pass) ? { visual: visualInput(manifest, state.captures ?? {}, visualChecklist) } : {}),
     };
+  }
+
+  // A fallback pass reads the open findings of the stopped reviewer's passes that finished before the stop, each with
+  // the pass it came from: they still block, and the fallback reviews the change knowing them.
+  function keptFindings(pass) {
+    return (pass.fallback?.kept ?? []).flatMap((id) => {
+      const result = state.passes[id];
+      return result?.open > 0 ? (result.list ?? []).filter(blocks).map((finding) => ({ ...finding, pass: id })) : [];
+    });
   }
 
   function dispatchFor(pass, stage) {
@@ -650,10 +677,12 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
       input.flows.length ? VERDICT_MEANING : null,
       input.flowBase ? flowBaseBrief(input) : null,
       input.visual ? 'Review the captures in `visual` (open each `file`), with their measured facts, as well as the diff.' : null,
+      pass.fallback ? `${quota.owner(pass.fallback.replaces)} is out of quota, and the Human chose this pass as the second look in its place: review the whole change through your own lens. It is recorded as a fallback, not as an independent review.` : null,
     ].filter(Boolean);
     return {
       pass: pass.id,
-      agent: map[pass.reviewer]?.agent ?? pass.reviewer,
+      agent: pass.fallback ? pass.reviewer : map[pass.reviewer]?.agent ?? pass.reviewer,
+      ...(pass.fallback ? { fallback: { replaces: pass.fallback.replaces, reason: pass.fallback.reason } } : {}),
       ...(briefs.length ? { brief: briefs.join(' ') } : {}),
       ...input,
       // A visual reviewer reports its findings one by one, so the disposition table decides what blocks.
@@ -698,6 +727,14 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
     return finish(status, { ...extra, ...carried });
   }
 
+  // A reviewer out of quota: the stop goes on the record for this head, and the Human is asked what replaces it, unless
+  // the plan requires an independent model, which no fallback gives.
+  function quotaStop(pass, stage, reason, extra = {}) {
+    const stop = quota.recordStop(state, { head, stage, pass, reason });
+    const refused = quota.refusal(plan, stop, passes, map);
+    return finish('blocked_quota', { reason, pass: pass.id, ...extra, ...(refused ? { fallback_refused: refused } : quota.question({ pr: n, stop, withBot: opts.withBot })) });
+  }
+
   // The one writer of every return after the record is read, but `held`, which must write nothing: the step's outcome
   // goes into this machine's record, for the merge guard (lib/rules/github/merge-review.mjs). Only `finish` also
   // publishes the record to the pull request.
@@ -722,6 +759,8 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
     answerRequests();
     noteFindings(extra);
     const result = { status, pr: n, repo, head, base, depth: plan.depth, round: state.rounds.length, max_rounds: maxRounds, engine: plan.engine, ...extra };
+    // Every result on a head whose review a fallback replaced says so.
+    if (fallbacks.length) result.quota_fallback = fallbacks.map((stop) => ({ stage: stop.stage, replaces: stop.reviewer, choice: stop.choice, signed_off_by: stop.signoff?.by ?? null, note: quota.describe(stop) }));
     // Slice results of packings this head no longer makes count for nothing again: they leave the record. A pass of
     // this plan always stays.
     prunePasses(state, plan.slices, new Set(plan.stages.flatMap((stage) => stage.passes.map((pass) => pass.id))));
@@ -793,11 +832,25 @@ export function recordSignoff(project, { pr, repo, flow, head, by, remote = null
   return state.signoffs[flow];
 }
 
+// `aidrian pr signoff <PR> --stage <name> --head <sha>`: the Human's sign-off of a stage they chose to review in place of
+// a reviewer out of quota on that head (lib/review/quota.mjs). Like a flow's, an audit entry, not proof. It signs only a
+// stage the Human chose to review, so it never skips a reviewer that has its quota.
+export function recordStageSignoff(project, { pr, repo, stage, head, by, remote = null }) {
+  const state = current(project, pr, repo, remote);
+  // One sign-off covers the stage: every reviewer of it the Human chose to replace on that head.
+  const stops = (state.quotaStops ?? []).filter((each) => each.stage === stage && sameCommit(each.head, head) && each.choice === quota.HUMAN);
+  if (!stops.length) throw new Error(`no Human review of the ${stage} stage is waiting on ${head.slice(0, 7)} of #${pr}: --stage signs off only a stage the Human chose to review after its reviewer ran out of quota`);
+  const signoff = { by, at: new Date().toISOString() };
+  for (const stop of stops) stop.signoff = signoff;
+  writeLocalState(project, state);
+  return signoff;
+}
 
-// The CLI body of `aidrian pr review [PR] [--with-bot] [--max-rounds N] [--timeout-sec S]`: prints the step's JSON, returns its exit code.
+// The CLI body of `aidrian pr review [PR] [--with-bot] [--max-rounds N] [--timeout-sec S] [--quota-fallback agent:NAME|human]`:
+// prints the step's JSON, returns its exit code.
 export async function runReview(args, config, project, deps = {}) {
   try {
-    const opts = { pr: null, maxRounds: undefined, timeoutSec: undefined, withBot: false };
+    const opts = { pr: null, maxRounds: undefined, timeoutSec: undefined, withBot: false, quotaFallback: null };
     for (let i = 0; i < args.length; i += 1) {
       const a = args[i];
       const value = () => {
@@ -808,6 +861,7 @@ export async function runReview(args, config, project, deps = {}) {
       if (a === '--with-bot') opts.withBot = true;
       else if (a === '--max-rounds') opts.maxRounds = Number(value());
       else if (a === '--timeout-sec') opts.timeoutSec = Number(value());
+      else if (a === '--quota-fallback') opts.quotaFallback = quota.parseChoice(value());
       else if (a.startsWith('--')) throw new Error(`unknown argument: ${a}`);
       else if (opts.pr === null) opts.pr = a.replace(/^#/u, '');
       else throw new Error(`unexpected argument: ${a}`);

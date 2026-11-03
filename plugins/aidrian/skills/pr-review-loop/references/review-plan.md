@@ -55,9 +55,10 @@ the change does not touch.
 
 ## Stops
 
-- `human_required`: a flow the Human signs off. Give them `command` to run in their own shell (`!` in the prompt,
-  or another terminal); never run it for them, and the `review-signoff` rule blocks it if you try. A sign-off holds
-  across later pushes that touch nothing of the flow.
+- `human_required`: a flow the Human signs off, or with `stage`, a stage the Human chose to review in place of a
+  reviewer out of quota. Give them `command` to run in their own shell (`!` in the prompt, or another terminal); never
+  run it for them, and the `review-signoff` rule blocks it if you try. A flow's sign-off holds across later pushes that
+  touch nothing of the flow; a stage's holds for its head only.
 - `unsatisfied`: the plan needs a reviewer this machine cannot run, such as `independent-model` with no Codex login.
 - `stuck`: a reviewer failed 3 times on this head. `too_large`: the change is past what one review covers, or its
   visual capture is past 200 images; `reason` names the routes.
@@ -65,6 +66,26 @@ the change does not touch.
   the final stage. `extension` says why no extra round: `off`, the ceiling, the judge, or the Human. A red flag
   never stops it alone: it goes to the judge. With `unreviewed_head: true`, the head is a fix no round reviewed: say so when reporting
   the stop, so the Human does not merge it as reviewed.
+
+## Out of quota: `blocked_quota`
+
+A reviewer, Codex on this machine or the review bot, ran out of quota on this head, and its stage stopped.
+
+- With `question` and `options`: ask the Human that one question with AskUserQuestion, the options as given, word for
+  word, the recommended one first. Then run the `run` command of the option the Human picked, and act on its result:
+  - "Run a critic agent": `--quota-fallback agent:critic` returns `dispatch` of the `critic` agent in place of the
+    stopped passes. Run and record it as any agent pass. It is a fallback on the session's own model, not an
+    independent review, and the record and the summary comment say so.
+  - "The Human reviews it": `--quota-fallback human` returns `human_required` with the `stage` and the sign-off
+    `command`, which the Human runs once they have reviewed the change.
+  - "Wait": `run` is null. Stop and report it; a later push runs the reviewer again.
+- With `fallback_refused` instead: the plan requires an independent model, which no fallback gives. Stop, and report
+  `fallback_refused` to the Human.
+- The choice holds for this head only, and only the Human makes it: the `review-fallback` rule refuses
+  `--quota-fallback` without the Human's answer in the session. Under `autopilot`, nobody is there to ask: stop.
+- Every later result on that head carries `quota_fallback`: say in the step 7 summary which stage ran on a fallback.
+- The merge guard refuses a merge while the head is stopped on quota, and until the step after the fallback, or after
+  the Human's stage sign-off, returns `received`.
 
 ## At the cap: extra rounds
 

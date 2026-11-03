@@ -20,6 +20,7 @@ import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
 
 import { isObject } from '../fs.mjs';
 import { stateDir } from '../project.mjs';
+import { summaryLines as quotaLines } from './quota.mjs';
 import { splitPasses } from './split.mjs';
 
 export const SUMMARY_MARKER = '<!-- aidrian-review-summary -->';
@@ -202,6 +203,7 @@ export function summaryBody(state, plan, status) {
     const visual = state.visual;
     lines.push('', `- visual capture of \`${String(visual.head).slice(0, 7)}\`: ${visual.status}${visual.status === 'captured' ? ` (${visual.captured} of ${visual.of})` : visual.reason ? ` (${clip(visual.reason)})` : ''}; attach **${visual.mode}**${visual.visibility ? `, ${String(visual.visibility).toLowerCase()} repository` : ', visibility unknown'}${visual.error ? `; ${clip(visual.error)}` : ''}`);
   }
+  lines.push(...quotaLines(state));
   lines.push(...extensionLines(state));
   if (state.overrides.length) lines.push('', '**Overrides used:**', ...state.overrides.map((each) => `- ${clip(each)}`));
   lines.push('', 'A citation shows the cited line exists, not that it proves the invariant; the independent reviewer challenges each one.');

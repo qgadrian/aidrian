@@ -5,6 +5,7 @@
   "backend-developer": { "model_reasoning_effort": "high" },
   "brand-guardian": { "model_reasoning_effort": "low" },
   "code-reviewer": { "model_reasoning_effort": "xhigh" },
+  "critic": { "model_reasoning_effort": "high" },
   "e2e-runner": { "model_reasoning_effort": "high" },
   "frontend-developer": { "model_reasoning_effort": "high" },
   "harness-librarian": { "model_reasoning_effort": "high" },

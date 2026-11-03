@@ -41,7 +41,8 @@ another.
 - `depth: "none"` needs `onlyFiles`, so it only covers the files it names, and any rule that asks for more wins.
 - `require` takes `agent:<name>` and `independent-model`. A plan that requires what this machine cannot run stops as
   `unsatisfied`; it never falls back to a weaker reviewer. So does a flow whose only reviewer would be the review bot,
-  which gives no verdicts.
+  which gives no verdicts. Only the Human picks a fallback, for a reviewer [out of quota](#out-of-quota), and none
+  meets `independent-model`.
 
 `review.ignore` lists files no review reads and no size counts: lockfiles, snapshots, generated, vendored, and
 minified files by default. `review.nonBehaviour` lists files that cannot change behaviour: prose docs and static
@@ -365,6 +366,45 @@ the change does not touch carries forward.
 `--with-bot` adds the review bot as a last stage after this machine's engine. The bot is asked only once every
 earlier pass has a result, with the review gate's marker, under the plan's round cap; an answer for a commit other
 than the one under review counts for nothing. A flow's required checks are read for that commit too.
+
+### Out of quota
+
+When a reviewer runs out of quota, `codex-local` on this machine or the review bot's usage-limit notice, the step
+returns `blocked_quota` and records the stop on that head in the record's `quotaStops`: the stage, the reviewer, every
+pass of that reviewer in the stage (the slices and cross pass of a split too), and the reason. There is one stop per
+head, stage, and reviewer, so a second reviewer out of quota in the same stage keeps the first one's stop and choice.
+The stages before it have already run. The result asks the Human one `question`, with three `options`, the recommended one first, each with
+the command it `run`s:
+
+| Option | `run` | What replaces the stopped passes |
+| --- | --- | --- |
+| Run a critic agent | `aidrian pr review <PR> --quota-fallback agent:critic` | one pass of the read-only `critic` agent on the whole change, `fallback:<stage>:<reviewer>:critic`, returned as `dispatch` and recorded with `aidrian pr attest` |
+| The Human reviews it | `aidrian pr review <PR> --quota-fallback human` | the Human's review: `human_required` with `aidrian pr signoff <PR> --stage <stage> --head <sha>`, which the Human runs in their own shell |
+| Wait for quota | none | nothing: the review stays stopped, and a later push runs the reviewer again |
+
+A pass of the stopped reviewer that finished before the stop, such as the slices of a split that answered, stays in
+its stage under either choice: its open findings still block, and the fallback pass reads them as `priorFindings`, each
+with the `pass` it came from. Such a pass meets no `independent-model` requirement, having reviewed only part of the
+change. One `aidrian pr signoff --stage` signs every reviewer of the stage the Human chose to replace on that head.
+
+`--quota-fallback` takes `agent:<name>` for any agent, or `human`. Nothing picks a fallback without it: with no flag,
+a stop stays `blocked_quota`. The flag answers a stop on the current head only, and fails when that head has none;
+the choice holds for that head, so the next push runs the reviewer again. The
+`review-fallback` rule ([hooks.md](hooks.md#bash-rules)) refuses the flag from an agent unless the Human picked that
+option in the session, and the `review-signoff` rule keeps the stage sign-off the Human's, as a flow's is.
+`aidrian pr signoff --stage` signs only a stage the Human chose to review after its reviewer ran out of quota on that
+head, so it never skips a reviewer that has its quota.
+
+Neither fallback is an independent review. The critic runs on the session's own model, so its pass never meets
+`independent-model`, whatever its reviewer is named, and the Human's sign-off does not either. A plan that requires
+`independent-model` gets no options: its `blocked_quota` carries `fallback_refused` instead, and the flag returns
+`unsatisfied` with the same reason. Every result on a head a fallback replaced carries `quota_fallback`, and the
+summary comment, or the local record under `review.record: "local"`, says in a line per stop which stage ran on a
+fallback, or on the Human's review, because the reviewer was out of quota.
+
+For the [merge guard](hooks.md#merge-guard), a quota stop is an open review: the head's outcome is `blocked_quota`, and
+a merge is refused. A fallback counts as review done only once the step after it returns `received` on that head: the
+critic's pass recorded, or the Human's stage sign-off read by the next `aidrian pr review`, as a flow's sign-off is.
 
 ### Extra rounds
 

@@ -8,10 +8,12 @@ import test from 'node:test';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { blocksOf, citationProblem, flowState, invariantsOf, sectionOf } from '../plugins/aidrian/lib/review/flows.mjs';
-import { cleanOutput, resolveEngine, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
-import { EXIT, recordPass, recordSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
+import { cleanOutput, resolveEngine, reviewerMap, runExec, satisfies } from '../plugins/aidrian/lib/review/reviewers.mjs';
+import { parseChoice } from '../plugins/aidrian/lib/review/quota.mjs';
+import { EXIT, recordPass, recordSignoff, recordStageSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
+import { judgeMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 
 // A repository with `main` (carrying `baseConfig`) and a `feat` branch made by `change(dir)`. Returns the helpers a
 // review step needs, with GitHub faked in memory.
@@ -1118,6 +1120,161 @@ test('--with-bot: a request on an extra round is for the plan`s head only; for a
   assert.deepEqual(seen, [[moved.head, 3]], 'the grant floor is the cap without grants');
 });
 
+// Out of quota (lib/review/quota.mjs): the Human's choice replaces the stopped passes, for the head it stopped on only.
+const outOfQuota = async () => ({ status: 'quota', reason: 'You hit your usage limit' });
+const summaryOf = (r) => r.comments.find((c) => c.body.startsWith('<!-- aidrian-review-summary -->')).body;
+
+test('out of quota with no flag: blocked_quota asks one question, and the next call runs the reviewer again', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 5;\n') });
+  let ran = 0;
+  const exec = async () => (ran += 1, outOfQuota());
+  const first = await r.step({ exec });
+  assert.deepEqual([first.status, first.pass, EXIT[first.status]], ['blocked_quota', 'engine:codex-local', 3]);
+  assert.match(first.question, /^Codex is out of quota, so the independent review of pull request #7 stopped on head [0-9a-f]{7}\..*never as an independent review\.$/u);
+  assert.deepEqual(first.options.map((each) => each.label), ['Run a critic agent (Recommended)', 'The Human reviews it', 'Wait for Codex quota']);
+  assert.deepEqual(first.options.map((each) => each.run), ['aidrian pr review 7 --quota-fallback agent:critic', 'aidrian pr review 7 --quota-fallback human', null]);
+  assert.equal(first.quota_fallback, undefined);
+  const again = await r.step({ exec });
+  assert.deepEqual([again.status, ran], ['blocked_quota', 2], 'nothing picks a fallback by itself: the reviewer runs again');
+  assert.equal(again.dispatch, undefined);
+  assert.deepEqual(readLocalState(r.project, 7).quotaStops.map((stop) => [stop.stage, stop.reviewer, stop.choice]), [['independent', 'codex-local', null]], 'one stop per head and stage');
+  assert.match(summaryOf(r), /Codex was out of quota on `[0-9a-f]{7}`, and the independent stage stopped: nothing replaced it/u);
+  r.write('src/app.js', 'export const app = 6;\n');
+  r.commit();
+  await assert.rejects(r.step({ exec }, { quotaFallback: 'agent:critic' }), /no quota stop is on record for head [0-9a-f]{7} of #7/u, 'the flag answers a stop on the current head only');
+  assert.throws(() => parseChoice('agent:'), /--quota-fallback must be/u);
+  assert.throws(() => parseChoice('codex'), /--quota-fallback must be/u);
+});
+
+test('out of quota, the critic as the fallback: a dispatch in the stopped pass`s place, recorded as no independent review', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 7;\n') });
+  let ran = 0;
+  const exec = async () => (ran += 1, outOfQuota());
+  assert.equal((await r.step({ exec })).status, 'blocked_quota');
+  const fallback = await r.step({ exec }, { quotaFallback: 'agent:critic' });
+  assert.deepEqual([fallback.status, fallback.stage, ran], ['dispatch', 'independent', 1], 'Codex is not asked again on this head');
+  const [pass] = fallback.dispatch;
+  assert.deepEqual([pass.pass, pass.agent, pass.fallback.replaces, pass.context, pass.files], ['fallback:independent:codex-local:critic', 'critic', 'codex-local', 'full', null]);
+  assert.match(pass.brief, /Codex is out of quota.*recorded as a fallback, not as an independent review/u);
+  assert.match(pass.record, /^aidrian pr attest 7 --pass fallback:independent:codex-local:critic --head [0-9a-f]{40} --reviewer critic /u);
+  assert.match(fallback.quota_fallback[0].note, /ran on a fallback the Human chose: the critic agent, on the session's own model\. This is not an independent review\./u);
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: fallback.head, reviewer: 'critic', findings: 1, fixed: 0 });
+  const open = await r.step({ exec });
+  assert.deepEqual([open.status, open.open.map((each) => each.pass)], ['fix_required', ['fallback:independent:codex-local:critic']], 'its findings block like any pass');
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: fallback.head, reviewer: 'critic', findings: 1, fixed: 1 });
+  const done = await r.step({ exec });
+  assert.deepEqual([done.status, done.quota_fallback[0].choice, ran], ['received', 'agent:critic', 1]);
+  assert.match(summaryOf(r), /Codex was out of quota on `[0-9a-f]{7}`, so the independent stage ran on a fallback the Human chose: the critic agent, on the session's own model\. This is not an independent review\./u);
+  assert.equal(stateFromComment(summaryOf(r), 7).quotaStops[0].choice, 'agent:critic', 'the record another machine reads holds the choice');
+
+  r.write('src/app.js', 'export const app = 8;\n');
+  r.commit();
+  const next = await r.step({ exec: async () => (ran += 1, clean()) });
+  assert.deepEqual([next.status, ran, next.quota_fallback], ['received', 2, undefined], 'a later push runs Codex again');
+});
+
+test('out of quota with --with-bot: the review bot`s usage limit is a stop the critic can stand in for too', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 9;\n') });
+  const awaitBot = async () => ({ status: 'blocked_quota', requested: true, reason: 'Codex usage limits reached' });
+  const stopped = await r.step({ exec: clean, awaitBot }, { withBot: true });
+  assert.deepEqual([stopped.status, stopped.pass, stopped.options[0].run], ['blocked_quota', 'engine:pr-bot', 'aidrian pr review 7 --with-bot --quota-fallback agent:critic']);
+  const fallback = await r.step({ exec: clean, awaitBot }, { withBot: true, quotaFallback: 'agent:critic' });
+  assert.deepEqual([fallback.status, fallback.stage, fallback.dispatch[0].pass], ['dispatch', 'remote', 'fallback:remote:pr-bot:critic']);
+});
+
+test('out of quota, the Human`s review: the stage waits for the Human`s own sign-off, then passes, said as no independent review', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 10;\n') });
+  assert.equal((await r.step({ exec: outOfQuota })).status, 'blocked_quota');
+  const head = r.git('rev-parse', 'HEAD');
+  assert.throws(() => recordStageSignoff(r.project, { pr: 7, repo: 'o/r', stage: 'independent', head, by: 'Tester' }), /no Human review of the independent stage is waiting/u, 'a stage sign-off never skips a reviewer the Human did not replace');
+  const asked = await r.step({ exec: outOfQuota }, { quotaFallback: 'human' });
+  assert.deepEqual([asked.status, asked.stage, asked.flows, asked.command, EXIT[asked.status]], ['human_required', 'independent', [], [`aidrian pr signoff 7 --stage independent --head ${head}`], 9]);
+  assert.match(summaryOf(r), /the Human chose to review the independent stage; their sign-off is needed\. This is not an independent review\./u);
+  recordStageSignoff(r.project, { pr: 7, repo: 'o/r', stage: 'independent', head, by: 'Tester' });
+  const done = await r.step({ exec: outOfQuota });
+  assert.deepEqual([done.status, done.quota_fallback[0].signed_off_by], ['received', 'Tester']);
+  assert.match(summaryOf(r), /so the Human reviewed the independent stage instead, signed off by Tester \(an audit entry, not proof\)\. This is not an independent review\./u);
+});
+
+test('out of quota where the plan requires an independent model: no fallback is offered, and none meets the rule', async (t) => {
+  const flows = { pay: { files: ['src/pay/**'], require: ['independent-model'] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => write('src/pay/a.js', '1\n') });
+  const blocked = await r.step({ exec: outOfQuota });
+  assert.deepEqual([blocked.status, blocked.question, blocked.options], ['blocked_quota', undefined, undefined]);
+  assert.match(blocked.fallback_refused, /requires an independent model.*neither a same-model agent nor the Human's sign-off counts as one/u);
+  for (const choice of ['agent:critic', 'human']) {
+    const refused = await r.step({ exec: outOfQuota }, { quotaFallback: choice });
+    assert.equal(refused.status, 'unsatisfied', choice);
+    assert.match(refused.reason, /requires an independent model/u);
+  }
+  assert.equal(readLocalState(r.project, 7).quotaStops.at(-1).choice, null, 'a refused choice is not recorded');
+
+  // Whatever the fallback's reviewer is named, its pass is not an independent model.
+  const map = reviewerMap({ review: { reviewers: { critic: { kind: 'agent', agent: 'critic', independent: true } } } });
+  assert.equal(satisfies('independent-model', [{ id: 'fallback:independent:codex-local:critic', reviewer: 'critic', kind: 'agent', fallback: { replaces: 'codex-local' } }], map), false);
+  assert.equal(satisfies('independent-model', [{ id: 'engine:critic', reviewer: 'critic', kind: 'agent' }], map), true, 'the same reviewer outside a fallback still counts');
+  assert.equal(satisfies('independent-model', [{ id: 'slice:codex-local:0123456789', reviewer: 'codex-local', kind: 'exec', beforeQuota: true }], reviewerMap({ review: { reviewers: {} } })), false, 'a slice that finished before the stop reviewed only part of the change');
+});
+
+// A split of two slices where Codex answers one slice with a finding and runs out of quota on the other.
+function splitStop(t) {
+  const r = repo(t, { baseConfig: { version: 1, review: { rules: [{ when: { lines: { over: 1 } }, depth: 'split' }] } }, change: (write) => (write('src/a/x.js', '1\n'), write('src/b/x.js', '2\n')) });
+  const found = { file: 'src/a/x.js', line: 1, title: 'slice a finding', body: 'x', severity: 'high' };
+  let ran = 0;
+  const exec = async (_reviewer, input) => (ran += 1, input.files?.includes('src/b/x.js') ? outOfQuota() : { status: 'done', findings: [found], verdicts: [], dropped: [] });
+  return { r, exec, ran: () => ran };
+}
+
+test('out of quota on one slice of a split, the critic as the fallback: the finished slice`s findings still block and reach the critic', async (t) => {
+  const { r, exec, ran } = splitStop(t);
+  const stopped = await r.step({ exec });
+  assert.deepEqual([stopped.status, ran()], ['blocked_quota', 2]);
+  const finished = Object.keys(readLocalState(r.project, 7).passes).find((id) => id.startsWith('slice:codex-local:'));
+  const fallback = await r.step({ exec }, { quotaFallback: 'agent:critic' });
+  assert.deepEqual([fallback.status, ran()], ['dispatch', 2], 'no slice runs again');
+  const [pass] = fallback.dispatch;
+  assert.equal(pass.pass, 'fallback:independent:codex-local:critic');
+  assert.deepEqual(pass.priorFindings.map((each) => [each.title, each.pass]), [['slice a finding', finished]], 'the critic reads what the finished slice found');
+  assert.ok(fallback.plan.stages.find((stage) => stage.name === 'independent').passes.includes(finished), 'the finished slice stays in its stage');
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: fallback.head, reviewer: 'critic', findings: 0, fixed: 0 });
+  const after = await r.step({ exec });
+  assert.deepEqual([after.status, after.open.map((each) => each.pass)], ['fix_required', [finished]], 'the finished slice`s finding still blocks');
+});
+
+test('out of quota on one slice of a split, the Human`s review: the finished slice`s findings block before the sign-off', async (t) => {
+  const { r, exec } = splitStop(t);
+  assert.equal((await r.step({ exec })).status, 'blocked_quota');
+  const asked = await r.step({ exec }, { quotaFallback: 'human' });
+  assert.deepEqual([asked.status, asked.open.map((each) => each.findings[0].title)], ['fix_required', ['slice a finding']]);
+});
+
+test('two reviewers out of quota in one stage: each keeps its own stop and choice, and one stage sign-off covers both', async (t) => {
+  const planner = "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>console.log(JSON.stringify({depth:'single',stages:[{name:'independent',passes:[{id:'extra:lint',reviewer:'lint',kind:'exec',files:null}]}]})))";
+  const r = repo(t, {
+    baseConfig: { version: 1, review: { planCommand: 'node scripts/plan.mjs', reviewers: { lint: { kind: 'exec', command: ['node', 'scripts/lint.mjs'], stage: 'independent' } } } },
+    baseFiles: { 'scripts/plan.mjs': planner, 'scripts/lint.mjs': '\n' },
+    change: (write) => write('src/app.js', 'export const app = 11;\n'),
+  });
+  const calls = { 'codex-local': 0, lint: 0 };
+  const exec = async (reviewer) => {
+    calls[reviewer.name] += 1;
+    if (reviewer.name === 'codex-local') return outOfQuota();
+    return calls.lint === 1 ? { status: 'failed', reason: 'boom' } : outOfQuota();
+  };
+  assert.equal((await r.step({ exec })).pass, 'engine:codex-local');
+  const second = await r.step({ exec }, { quotaFallback: 'agent:critic' });
+  assert.deepEqual([second.status, second.pass], ['blocked_quota', 'extra:lint']);
+  assert.deepEqual(readLocalState(r.project, 7).quotaStops.map((stop) => [stop.reviewer, stop.choice]), [['codex-local', 'agent:critic'], ['lint', null]], 'the second stop leaves the first one`s choice');
+  const third = await r.step({ exec }, { quotaFallback: 'human' });
+  assert.deepEqual([third.status, third.dispatch.map((each) => each.pass), calls['codex-local']], ['dispatch', ['fallback:independent:codex-local:critic'], 1]);
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: third.dispatch[0].pass, head: third.head, reviewer: 'critic', findings: 0, fixed: 0 });
+  const asked = await r.step({ exec });
+  assert.deepEqual([asked.status, asked.command], ['human_required', [`aidrian pr signoff 7 --stage independent --head ${third.head}`]]);
+  recordStageSignoff(r.project, { pr: 7, repo: 'o/r', stage: 'independent', head: third.head, by: 'Tester' });
+  const done = await r.step({ exec });
+  assert.deepEqual([done.status, done.quota_fallback.map((each) => [each.replaces, each.choice])], ['received', [['codex-local', 'agent:critic'], ['lint', 'human']]]);
+});
+
 test('invariantsOf: a repeated heading is its own invariant, numbered as GitHub numbers its anchor, so one verdict never signs off both', () => {
   const read = () => '# Rules\n\n## Keep\nThe first.\n\n### Examples\nOne.\n\n## Keep\nThe second.\n\n### Examples\nTwo.\n';
   const { invariants, repeated } = invariantsOf({ invariants: 'r.md' }, read);
@@ -1128,4 +1285,44 @@ test('invariantsOf: a repeated heading is its own invariant, numbered as GitHub 
   assert.deepEqual(repeated, [{ heading: 'Keep', ids: ['keep', 'keep-1'] }, { heading: 'Examples', ids: ['examples', 'examples-1'] }]);
   const state = flowState(invariants, [{ invariant: 'keep', verdict: 'holds', evidence: 'ok' }, { invariant: 'examples', verdict: 'holds', evidence: 'ok' }, { invariant: 'examples-1', verdict: 'holds', evidence: 'ok' }], () => null);
   assert.deepEqual(state, { signed: false, open: [], unverified: ['keep-1'] });
+});
+
+// The merge guard (lib/rules/github/merge-review.mjs) and the quota fallback: a stop is an open review, a fallback is a
+// finished one once the step that follows it says `received`, and the Human's stage sign-off counts the same way.
+test('the merge guard refuses a head stopped on quota, and a fallback`s review counts as done once the step finishes', async (t) => {
+  const guard = (r, head) => judgeMerge({ project: projectAt(r.dir), pr: 7, head, viewPr: () => null, answers: [] });
+  const viaCritic = repo(t, { change: (write) => write('src/app.js', 'export const app = 12;\n') });
+  const stopped = await viaCritic.step({ exec: outOfQuota });
+  assert.match(guard(viaCritic, stopped.head) ?? '', /the review of head [0-9a-f]{7} is `blocked_quota`/u, 'a quota stop is an open review');
+  const dispatched = await viaCritic.step({ exec: outOfQuota }, { quotaFallback: 'agent:critic' });
+  assert.match(guard(viaCritic, dispatched.head) ?? '', /is `dispatch`/u, 'the fallback pass is still out');
+  recordPass(viaCritic.project, { pr: 7, repo: 'o/r', pass: dispatched.dispatch[0].pass, head: dispatched.head, reviewer: 'critic', findings: 0, fixed: 0 });
+  assert.equal((await viaCritic.step({ exec: outOfQuota })).status, 'received');
+  assert.equal(guard(viaCritic, dispatched.head), null, 'the critic`s finished pass is review done for the merge guard');
+
+  const viaHuman = repo(t, { change: (write) => write('src/app.js', 'export const app = 13;\n') });
+  const first = await viaHuman.step({ exec: outOfQuota });
+  assert.equal((await viaHuman.step({ exec: outOfQuota }, { quotaFallback: 'human' })).status, 'human_required');
+  assert.match(guard(viaHuman, first.head) ?? '', /is `human_required`/u);
+  recordStageSignoff(viaHuman.project, { pr: 7, repo: 'o/r', stage: 'independent', head: first.head, by: 'Tester' });
+  assert.match(guard(viaHuman, first.head) ?? '', /is `human_required`/u, 'the sign-off counts once the review step reads it, as a flow sign-off does');
+  assert.equal((await viaHuman.step({ exec: outOfQuota })).status, 'received');
+  assert.equal(guard(viaHuman, first.head), null, 'the Human`s stage sign-off is review done for the merge guard');
+
+  viaHuman.write('src/app.js', 'export const app = 14;\n');
+  const next = viaHuman.commit();
+  assert.equal((await viaHuman.step({ exec: outOfQuota })).status, 'blocked_quota');
+  assert.match(guard(viaHuman, next) ?? '', /is `blocked_quota`/u, 'the choice was for the earlier head: the new head is stopped again');
+});
+
+test('a --quota-fallback refused for an independent-model plan, or given with no stop, leaves the head unfinished for the merge guard', async (t) => {
+  const flows = { pay: { files: ['src/pay/**'], require: ['independent-model'] } };
+  const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => write('src/pay/a.js', '1\n') });
+  const stopped = await r.step({ exec: outOfQuota });
+  assert.equal((await r.step({ exec: outOfQuota }, { quotaFallback: 'agent:critic' })).status, 'unsatisfied');
+  assert.match(judgeMerge({ project: projectAt(r.dir), pr: 7, head: stopped.head, viewPr: () => null, answers: [] }) ?? '', /is `unsatisfied`/u);
+  r.write('src/pay/a.js', '2\n');
+  const next = r.commit();
+  await assert.rejects(r.step({ exec: outOfQuota }, { quotaFallback: 'human' }), /no quota stop is on record/u);
+  assert.match(judgeMerge({ project: projectAt(r.dir), pr: 7, head: next, viewPr: () => null, answers: [] }) ?? '', /is `error`/u, 'a step that throws leaves `error` on the head');
 });

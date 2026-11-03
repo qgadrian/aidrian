@@ -5,7 +5,7 @@ A persona template for the persona-audit skill. Copy it into a knowledge bucket 
 floor-manager.md, tag it `personas` in the bucket's index, and replace the example with one of the product's users.
 `aidrian lint personas` checks it: every section below except Voice and Evidence is required, and every task needs
 a `Success:` line, an outcome someone can observe on a screen or in a response, never a feeling.
-Write it from what the project knows: interviews, support tickets, data. Leave out what nobody knows.
+Write it from what the project knows: interviews, support tickets, data. Leave out a detail nobody knows; keep every required section.
 -->
 
 ## Who

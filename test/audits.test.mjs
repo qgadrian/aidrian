@@ -402,3 +402,22 @@ test('no text a person reads holds a bare finding id or a file suffix: list, pen
     assert.doesNotMatch(humanText(text.split(audits).join('<audits folder>')), BARE_ID, `${what}:\n${text}`);
   }
 });
+
+// The behaviour cases of the persona-audit-triage skill run with model calls, so not here; their scaffolds run here.
+test('the triage eval scaffolds seed the bike-shop reports in the run folder\'s own state, without the skill under test', (t) => {
+  const evals = path.join(ROOT, 'plugins/aidrian/evals');
+  const seed = (name) => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-audits-eval-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const result = spawnSync('sh', [path.join(evals, name, 'scaffold.sh')], { cwd: dir, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const list = spawnSync(path.join(dir, 'plugins/aidrian/bin/aidrian'), ['audits', 'list', '--json'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(list.status, 0, list.stderr);
+    assert.equal(existsSync(path.join(dir, 'plugins/aidrian/skills/persona-audit-triage')), false, 'the baseline arm cannot read the skill');
+    assert.ok(existsSync(path.join(dir, '.eval-state/audits', NEW)), 'the reports sit in the run folder\'s state');
+    return JSON.parse(list.stdout).map((r) => [r.report, r.status]);
+  };
+  assert.deepEqual(seed('persona-audit-triage-import'), [[OLD, 'replaced'], [NEW, 'no-sidecar']]);
+  assert.deepEqual(seed('persona-audit-triage-confirm'), [[OLD, 'replaced'], [NEW, 'ok']]);
+  assert.deepEqual(seed('persona-audit-triage-trigger'), [[OLD, 'replaced'], [NEW, 'ok']]);
+});

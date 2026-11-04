@@ -639,3 +639,46 @@ test('a verdict is evidence, not a decision: it cites a real section, holds back
   assert.deepEqual([triage().F7.verdict.value, triage().F7.priority.value], ['breaks', 'high'], 'a priority and a verdict keep each other');
   assert.equal(triage().F2.history, undefined);
 });
+
+test('a sidecar that parses to anything but an object is one invalid report: list, pending, record, and the start line keep working', (t) => {
+  const { root, audits, run } = project(t);
+  const report = 'front-desk-2026-06-02.md';
+  const file = path.join(audits, 'front-desk-2026-06-02.json');
+  writeFileSync(path.join(audits, report), '## Findings\n\n### polish: a label is cut off\n\n- Owner: `ux-specialist`.\n');
+  assert.equal(run('import', NEW, '--not-rechecked', 'F2,F3', '--carried-forward', 'F1', '--write').status, 0);
+  for (const value of ['null', 'false', '0', '""', '[]', '"text"', '12']) {
+    writeFileSync(file, value);
+    const list = run('list');
+    assert.equal(list.status, 0, `${value}: ${list.stderr}`);
+    assert.match(list.stdout, /- The front-desk audit on 2026-06-02: |- The front-desk read-only run on 2026-06-02: /u, value);
+    assert.match(list.stdout, /invalid sidecar: the sidecar must be a JSON object/u, value);
+    assert.match(auditNudge(audits), /^Audit inbox: \d+ untriaged findings in 2 reports\./u, value);
+    const listed = JSON.parse(run('list', '--json').stdout).find((r) => r.report === report);
+    assert.deepEqual([listed.status, listed.findings], ['invalid', 1], value);
+    assert.equal(run('pending', NEW).status, 0, 'another report still works');
+    assert.match(run('pending', report).stderr, /invalid sidecar: the sidecar must be a JSON object/u, value);
+    assert.match(run('record', report, 'F1', 'defer').stderr, /invalid sidecar: the sidecar must be a JSON object/u, value);
+    assert.match(run('check', report).stderr, /the sidecar must be a JSON object/u, value);
+    assert.equal(run('record', NEW, 'F11', 'defer').status, 0, 'and can still be recorded');
+  }
+  // The start line through the hook, with a sidecar of JSON null beside a good report.
+  writeFileSync(file, 'null');
+  const hook = spawnSync(process.execPath, [path.join(ROOT, 'plugins/aidrian/scripts/hook-session-start.mjs')], { input: JSON.stringify({ cwd: root }), cwd: root, encoding: 'utf8' });
+  assert.equal(hook.status, 0);
+  assert.match(hook.stdout, /^Audit inbox: \d+ untriaged findings in 2 reports\./mu);
+  // A draft file with the same values is refused, not a crash.
+  const draft = path.join(root, 'draft.json');
+  for (const value of ['null', 'false', '[]']) {
+    writeFileSync(draft, value);
+    const result = run('import', report, '--from', draft);
+    assert.deepEqual([result.status, result.stderr], [1, `${draft}: the sidecar must be a JSON object\n`], value);
+  }
+  // A triage record no command can read stops each with one line, never a stack trace.
+  writeFileSync(path.join(audits, 'triage.json'), '{ cut short');
+  for (const args of [['list'], ['pending', NEW], ['check', NEW], ['import', report]]) {
+    const result = run(...args);
+    assert.equal(result.status, 1, args.join(' '));
+    assert.match(result.stderr, /triage\.json: invalid JSON/u, args.join(' '));
+    assert.doesNotMatch(result.stderr, /\n\s+at /u, args.join(' '));
+  }
+});

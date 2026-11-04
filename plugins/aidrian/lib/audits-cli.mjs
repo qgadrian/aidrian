@@ -12,9 +12,10 @@ import { parseArgs } from 'node:util';
 
 import { parseReport } from './audit-import.mjs';
 import {
-  allowedDecisions, decisionProblem, DECISIONS, DOC_FORMS, held, verdictCitation, verdictProblem, VERDICTS, itemWords, slugOf, PRIORITIES, priorityProblem, untriaged, taskNumbers, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, reportTitle, searchLabels, sidecarName, sidecarProblems, today,
+  allowedDecisions, TRIAGE_UNREADABLE, decisionProblem, DECISIONS, DOC_FORMS, held, verdictCitation, verdictProblem, VERDICTS, itemWords, slugOf, PRIORITIES, priorityProblem, untriaged, taskNumbers, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, reportTitle, searchLabels, sidecarName, sidecarProblems, today,
 } from './audits.mjs';
 import { commandConfig } from './config.mjs';
+import { isObject } from './fs.mjs';
 import { unfencedLines } from './markdown-sections.mjs';
 import { projectAt, stateDir } from './project.mjs';
 import { usageLines } from './usage.mjs';
@@ -49,7 +50,13 @@ export const commands = {
       const project = projectAt(path.resolve(values.project ?? '.'));
       const config = commandConfig(project);
       const dir = path.join(stateDir(project, { config }), 'audits');
-      return ACTIONS[action]({ values, rest, dir, triage: config.audits.triage, root: project.root });
+      try {
+        return ACTIONS[action]({ values, rest, dir, triage: config.audits.triage, root: project.root });
+      } catch (error) {
+        // A triage record a command cannot read stops it with that line, whatever the command was about to do.
+        if (error.code === TRIAGE_UNREADABLE) return fail(error.message);
+        throw error;
+      }
     },
   },
 };
@@ -145,6 +152,7 @@ function importReport({ values, rest: [name], dir }) {
     } catch (error) {
       return fail(`${values.from}: ${error.message}`);
     }
+    if (!isObject(draft)) return fail(`${values.from}: the sidecar must be a JSON object`);
     delete draft.warnings;
   } else {
     ({ warnings, ...draft } = parseReport(readFileSync(path.join(dir, report), 'utf8'), { report, dir, ownerWords: OWNER_WORDS }));

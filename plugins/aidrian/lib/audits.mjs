@@ -248,13 +248,22 @@ export function proseProblems(text, sidecar) {
   return problems;
 }
 
+// The `code` of the error readTriage throws: a command prints its message, and a hook's line is left out.
+export const TRIAGE_UNREADABLE = 'ERR_AIDRIAN_TRIAGE';
+const triageError = (message) => Object.assign(new Error(message), { code: TRIAGE_UNREADABLE });
+
 // The triage record: { version, reports: { <report>: { <id>: { decision, issue, url, reason, date } } } }.
 // A missing file is an empty record; an unreadable one throws, so a write never replaces decisions it could not read.
 export function readTriage(dir) {
   const file = path.join(dir, TRIAGE_FILE);
   if (!existsSync(file)) return { version: 1, reports: {} };
-  const value = JSON.parse(readFileSync(file, 'utf8'));
-  if (!isObject(value) || !isObject(value.reports)) throw new Error(`${file}: not a triage record ({ "version": 1, "reports": {} })`);
+  let value;
+  try {
+    value = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (error) {
+    throw triageError(`${file}: invalid JSON (${error.message})`);
+  }
+  if (!isObject(value) || !isObject(value.reports)) throw triageError(`${file}: not a triage record ({ "version": 1, "reports": {} })`);
   return value;
 }
 
@@ -350,13 +359,13 @@ function loadReport(dir, report) {
   const base = { report, sidecar: sidecarName(report), problems: [], replaced_by: null };
   const file = path.join(dir, base.sidecar);
   if (isFile(file)) {
-    let value = null;
+    let value;
     try {
       value = JSON.parse(readFileSync(file, 'utf8'));
+      base.problems.push(...sidecarProblems(value, { report }));
     } catch (error) {
       base.problems.push(`invalid JSON (${error.message})`);
     }
-    if (value) base.problems.push(...sidecarProblems(value, { report }));
     if (!base.problems.length) {
       return { ...base, status: 'ok', personas: value.personas, supersedes: value.supersedes, findings: value.findings, not_reached: value.not_reached, doc_gaps: value.doc_gaps, not_rechecked: value.not_rechecked };
     }

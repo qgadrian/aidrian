@@ -805,7 +805,7 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
     if (!flags.includes('-i') || flags.includes('-c')) return [];
     const edited = flags.some((flag) => SCRIPT_OPTIONS.get(program).includes(flag)) ? operands : operands.slice(1);
     // A suffix also writes a backup: `-i.bak` beside each file, `-i'old/*'` with `*` for the file's name.
-    const backups = suffix?.text ? edited.map((token) => ({ ...token, dynamic: token.dynamic || suffix.dynamic, text: backupOf(program, token.text, suffix.text), literal: !isHomeWord(token) })) : [];
+    const backups = suffix?.text ? edited.map((token) => ({ ...token, dynamic: token.dynamic || suffix.dynamic, text: backupOf(program, expandHome(token), suffix.text), literal: true })) : [];
     const files = [...edited, ...backups];
     // ruby -C and -x, and perl -x, run in the folder they name: a relative file is read from there.
     if (folder === null || folder.text === '') return files;

@@ -68,7 +68,7 @@ test('a write to the home folder through ~ is not a write in the main checkout',
     assert.equal(at(command), null, command);
   }
   // A `~` inside a word is literal, even when the rule cuts it out as a target, and a cd to ~ still leaves later relative writes denied.
-  for (const command of ['touch a~/p.txt', 'touch ~other/p.txt', 'cd ~ && echo x > a.txt', 'cp src/app.js -t~/d', 'cp src/app.js -ft~/d', 'cp src/app.js --target-directory=~/d', 'cp src/app.js --target=~/d', 'mv src/app.js -t~/d', 'dd if=a of=~/x', "perl -i'~/*' -pe 's/a/b/' /tmp/a.txt"]) assert.match(at(command), /^Blocked/u, command);
+  for (const command of ['touch a~/p.txt', 'touch ~other/p.txt', 'cd ~ && echo x > a.txt', 'cp src/app.js -t~/d', 'cp src/app.js -ft~/d', 'cp src/app.js --target-directory=~/d', 'cp src/app.js --target=~/d', 'mv src/app.js -t~/d', 'dd if=a of=~/x', "perl -i'~/*' -pe 's/a/b/' /tmp/a.txt", "perl -i'~/backup/*' -pe x ~/p.txt", "perl -i'old/*' -pe x ~/p.txt"]) assert.match(at(command), /^Blocked/u, command);
 });
 
 test('in a repository whose git folder is separate, the main checkout is still guarded', (t) => {

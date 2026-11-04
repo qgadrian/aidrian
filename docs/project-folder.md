@@ -333,6 +333,10 @@ Both commands print JSON for those skills to read, not for a person.
 `aidrian worktree cleanup` alone prints the plan; `aidrian worktree cleanup execute` reads the decisions for its `confirm` rows on stdin,
 as `{"<worktree path>": "delete", "<other path>": "keep"}`, or `{}` for none.
 Empty stdin, other JSON, or a value other than `"delete"` or `"keep"` stops it with nothing removed.
+`--only <path>`, on either, sorts that one worktree and lists no other, so a merge step removes exactly its pull request's worktree;
+a path that is not a worktree's folder stops it with nothing removed. `--min-age 0` turns the age guard off, so a worktree made
+minutes ago lands in `auto` when its merged pull request's head is clean; the worktree the session runs in is still skipped.
+Execute still runs `git worktree prune`, which drops only the records of worktree folders already gone.
 They live in `.worktrees/` at the repository root: editors show them beside the code,
 and Claude Code edits them without asking, because they are inside the folder the session opened.
 `"git": { "worktrees": { "dir": "<path>" } }` in config.json moves them; a relative path starts at the repository root,

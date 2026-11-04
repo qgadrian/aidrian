@@ -162,6 +162,44 @@ test('without gh nothing is automatic, and a worktree younger than --min-age is 
   assert.equal(plan({ minAgeSec: 0 }, { now: Date.now() }).auto[0].path, dirs.pr);
 });
 
+test('--only sorts one named worktree and leaves every other alone; with --min-age 0 a fresh merged one is removed', (t) => {
+  const { repo, git, dirs, heads } = fixture(t);
+  dirs.second = path.join(repo, '.worktrees', 'second');
+  git(repo, 'worktree', 'add', '-q', '-b', 'feat/second', dirs.second, 'main');
+  git(dirs.second, 'commit', '-q', '--allow-empty', '-m', 'second');
+  const merged = new Map([...heads(), ['feat/second', [git(dirs.second, 'rev-parse', 'HEAD')]]]);
+  const deps = { cwd: repo, heads: () => merged, now: Date.now() };
+  assert.deepEqual(planCleanup({ minAgeSec: 0 }, deps).auto.map((row) => row.path), [dirs.pr, dirs.second], 'both are eligible');
+
+  const plan = planCleanup({ minAgeSec: 0, only: dirs.pr }, deps);
+  assert.deepEqual([plan.only, plan.auto.map((row) => row.path), plan.confirm, plan.skip], [dirs.pr, [dirs.pr], [], []]);
+  const result = executeCleanup({ minAgeSec: 0, only: path.relative(repo, dirs.pr) }, deps);
+  assert.deepEqual(result.removed, [{ path: dirs.pr, branch: 'feat/pr', branch_deleted: true }]);
+  assert.deepEqual([existsSync(dirs.pr), existsSync(dirs.second), existsSync(dirs.open)], [false, true, true]);
+  assert.equal(git(repo, 'rev-parse', '--abbrev-ref', 'feat/second'), 'feat/second', 'the other branch stays');
+
+  // The worktree the session runs in is still skipped when it is the one named.
+  const current = planCleanup({ minAgeSec: 0, only: dirs.second }, { ...deps, cwd: dirs.second });
+  assert.deepEqual([current.auto, current.skip.map((row) => row.reason)], [[], ['current worktree']]);
+});
+
+test('--only with a path that names no worktree stops with nothing removed', (t) => {
+  const { base, repo, dirs, heads } = fixture(t);
+  let asked = false;
+  const deps = { cwd: repo, heads: () => { asked = true; return heads(); }, now: LATER };
+  for (const only of [path.join(base, 'gone'), path.join(dirs.pr, 'pr.txt'), path.join(repo, '.worktrees')]) {
+    assert.throws(() => executeCleanup({ only }, deps), (error) => error.phase === 'validate' && /names no worktree/.test(error.message), only);
+  }
+  assert.deepEqual([asked, existsSync(dirs.pr)], [false, true]);
+  const cli = spawnSync(CLI, ['worktree', 'cleanup', 'execute', '--only', path.join(base, 'gone')], { cwd: repo, input: '{}', encoding: 'utf8' });
+  assert.equal(cli.status, 1, cli.stderr);
+  assert.deepEqual([JSON.parse(cli.stdout).phase, existsSync(dirs.pr)], ['validate', true]);
+  const planned = spawnSync(CLI, ['worktree', 'cleanup', '--only', dirs.open, '--min-age', '0'], { cwd: repo, encoding: 'utf8' });
+  assert.equal(planned.status, 0, planned.stderr);
+  const rows = JSON.parse(planned.stdout);
+  assert.deepEqual([...rows.auto, ...rows.confirm, ...rows.skip].map((row) => row.path), [dirs.open]);
+});
+
 test('in a repository whose git folder is separate, the main checkout is skipped, though git lists the git folder', (t) => {
   const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-clean-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));

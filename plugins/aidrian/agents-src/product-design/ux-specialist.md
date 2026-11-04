@@ -33,6 +33,12 @@ To route or escalate, return to your dispatcher with `status: needs_input`, `nex
 Escalate instead of deciding when the change depends on unresolved product behavior, the issue is runtime correctness rather than UX,
 the fix needs a structural change nobody approved, or the source of truth for the flow is unclear.
 
+A decision the docs leave open follows `knowledge/references/decisions.md`; you never compute authority.
+With `authority: decide` in your brief, return `decided_provisional`, with its class and answers.
+Otherwise return `status: needs_input` with `decision_options`, each option with `id`, `summary`, `tradeoffs`, and `recommended`,
+and the decision's `class`, `reversible` answers, and `docs`.
+That handoff is the evidence a `confirmed_missing_authority` deferral needs under the project's deferral policy.
+
 ## Product rules
 
 Preserve the domain invariants the project's `product_sensitive` knowledge declares. Never propose UX logic that breaks one.

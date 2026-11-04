@@ -623,9 +623,10 @@ test('each dispatcher of a deciding agent runs the resolve, and each deciding ag
     assert.match(text, /run `aidrian decisions resolve`/i, rel);
     assert.ok(text.includes(DECISION_RULE), rel);
   }
-  for (const rel of ['agents-src/product-design/product-manager.md', 'agents-src/planning/architect.md']) {
+  for (const rel of ['agents-src/product-design/product-manager.md', 'agents-src/planning/architect.md', 'agents-src/product-design/designer.md', 'agents-src/product-design/ux-specialist.md']) {
     assert.match(read(rel), /[Ww]ith `authority: decide` in your brief, return `decided_provisional`/, rel);
   }
+  assert.match(readFileSync(path.join(PLUGIN, 'skills', DECISION_RULE), 'utf8'), /`backlog` for `product-manager` on the order of work/);
   assert.match(read('agents-src/product-design/product-manager.md'), /Compute authority yourself/);
   assert.match(read('agents-src/product-design/product-manager.md'), /A `decided_provisional` puts its wording and marker in the doc in this branch; wording under an unconfirmed marker does not settle another change\./);
   assert.doesNotMatch(read('agents-src/product-design/product-manager.md'), /its doc waits until the Human keeps it/);

@@ -132,7 +132,7 @@ export function pathsProblem({ files, changedFiles }, prefix = '') {
   const outside = files.find(({ path }) => !path.startsWith(prefix));
   if (outside) return `it changes ${JSON.stringify(outside.path)}, outside this project's folder, which its review does not cover`;
   const guarded = files.find(({ path }) => GUARDED_PATHS.test(path) || GUARDED_PATHS.test(path.slice(prefix.length)));
-  return guarded ? `it changes ${JSON.stringify(guarded.path)}, which instructs AI sessions or decides CI's verdict` : null;
+  return guarded ? `it changes ${JSON.stringify(guarded.path)}, which instructs AI sessions, or decides CI's verdict or auto-merge` : null;
 }
 
 // Who keeps auto-merge off by commenting: the login of the first comment or review whose author is no member of the

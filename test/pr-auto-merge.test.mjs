@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -604,4 +604,14 @@ test('a project below the root reads its own auto-merge setting, and a file outs
   const lost = { project: { ...project, root: path.join(dir, 'gone') } };
   assert.equal(reasonOf(t, lost, { files: rootAllows, view: changing('apps/api/a.js').view })[0], 1, 'a folder git cannot read is never taken for the root');
   assert.match(pathsProblem({ files: [], changedFiles: 0 }, null), /git could not give/u);
+});
+
+test('the gate never approves a change to what decides auto-merge', () => {
+  const lib = 'plugins/aidrian/lib';
+  const off = (file) => pathsProblem({ files: [{ path: file, changeType: 'MODIFIED' }], changedFiles: 1 });
+  for (const file of ['plugins/aidrian/bin/aidrian', `${lib}/cli.mjs`, `${lib}/pr.mjs`, `${lib}/fs.mjs`, `${lib}/pr-auto-merge.mjs`, `${lib}/pr-checks.mjs`, `${lib}/project.mjs`, `${lib}/config.mjs`, `${lib}/git.mjs`, `${lib}/gh.mjs`, `${lib}/review-gate.mjs`, `${lib}/shell-lex.mjs`, `${lib}/rules/github/merge-review.mjs`, `${lib}/rules/main-checkout.mjs`, `${lib}/review/state.mjs`, 'plugins/aidrian/scripts/hook-bash.mjs', 'plugins/aidrian/scripts/hook-mcp-github.mjs', 'plugins/aidrian/hooks/hooks.json']) {
+    assert.match(off(file) ?? '', /instructs AI sessions, or decides CI's verdict or auto-merge/u, file);
+    assert.ok(existsSync(path.join(import.meta.dirname, '..', file)), `${file} is a real file, so the list has not gone stale`);
+  }
+  for (const file of [`${lib}/report-health.mjs`, 'plugins/aidrian/scripts/session-row.mjs', 'docs/config.md', 'test/pr-auto-merge.test.mjs', 'src/lib/review/a.js']) assert.equal(off(file), null, file);
 });

@@ -42,6 +42,9 @@ function classEntry(kind, classes, table = loadVocab()) {
   return { class: kind, floor: false, definition: classes[kind] };
 }
 
+// The domain a built-in class of decisions.json is always judged in, whatever the caller's `--domain`, or null when it follows its owner.
+export const classDomain = (kind) => loadVocab().classes.find((entry) => entry.class === kind)?.domain ?? null;
+
 // Every built-in class name, floor classes first, as decisions.json lists them.
 export const decisionClasses = (table = loadVocab()) => table.classes.map((entry) => entry.class);
 

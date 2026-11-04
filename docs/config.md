@@ -113,7 +113,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.maxReviewRounds` | The review rounds a pull request may get, 3 by default: the review loop and `aidrian pr await-review --request` stop there, unless `extraRounds` grants one more. They read it from the pull request's base branch, so an edit to the working copy does not raise it; `aidrian pr await-review` without `--request` posts nothing and reads no base branch. A `--max-rounds` above it runs only with `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, which the Human sets, and so does a higher cap an earlier bot request recorded in its comment; a Bash rule refuses an agent command that sets it, and any bot request made outside `aidrian pr`. |
 | `github.extraRounds` | What happens at that cap: [Extra rounds](review.md#extra-rounds). `"ask"`, the default: a read-only judge decides whether one more round is worth it, with any red flag of the round history (not converging, looping, drifting, bloating) as evidence, and the Human approves it. `"auto"`: the judge's word grants it, unless a red flag stands, when the Human approves it too. `"off"`: the cap stops, as `round_limit`. Read from the base branch, like the cap. |
 | `github.maxExtraRounds` | The most extra rounds `extraRounds` may grant one pull request, 2 by default; a hard ceiling, read from the base branch. `0` grants none. |
-| `github.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. |
+| `github.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. [Auto-merge](#auto-merge) stays off until the default branch names one. |
 | `github.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
 | `github.conditionalChecks` | Parts of check names whose `SKIPPED` or `NEUTRAL` result is routine, such as a job a path filter turns off. |
 | `github.markReady` | Who marks a draft pull request ready. `"auto"`, the default: the `pr-review-loop` skill, or `autopilot` and the `orchestrator` when they run it, mark it ready once a review of the current head signs off with no blocked row and `aidrian pr checks` says ready. `"ask"`: its author, or the review loop when the Human asks in the session. Either way, nothing is pushed after it is marked ready. Marking it ready merges nothing: only the Human's request or [auto-merge](#auto-merge) does. The default was `"ask"` before; [Changed defaults](#changed-defaults) has the opt-out. |
@@ -124,7 +124,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.reviewGate.checklist` | A file the reviewer reads the diff against, named in the gate's message; `null` names none. |
 | `github.autoMerge.allow` | `true` lets a machine opt in to [auto-merge](#auto-merge); `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. |
 | `github.autoMerge.strategy` | How auto-merge merges: `"squash"`, `"merge"`, or `"rebase"`. `null`, the default: the one strategy the repository allows, or with several, `squash`, then `merge`, then `rebase`. Read from the default branch. |
-| `github.autoMerge.deleteBranch` | `true` deletes the head branch with the merge. Read from the default branch. |
+| `github.autoMerge.deleteBranch` | `true` deletes the remote head branch with the merge. Read from the default branch. |
 | `github.autoMerge.deleteWorktree` | `true` removes the head branch's worktree after the merge, but never a session's own: [Cleanup](#cleanup-after-the-merge). Read from the default branch. |
 | `github.autoMerge` in `.aidrian.local.json` | This machine's switch: `"on"` opts in under the team's `allow`; `"off"`, the default, stays out. It is not a config.json key. |
 | `review.engine` | The project's [review engine](review.md#the-engine); it wins over the machine's. `null` leaves the choice to each machine. |
@@ -184,8 +184,16 @@ Auto-merge lets a session merge a pull request without asking. It is off until b
 The team commits this in config.json, on the default branch and on any other branch pull requests target:
 
 ```json
-{ "version": 1, "github": { "autoMerge": { "allow": true, "strategy": "squash", "deleteBranch": true, "deleteWorktree": true } } }
+{
+  "version": 1,
+  "github": {
+    "requiredChecks": ["test"],
+    "autoMerge": { "allow": true, "strategy": "squash", "deleteBranch": true, "deleteWorktree": true }
+  }
+}
 ```
+
+`requiredChecks` is not optional here: without it on the default branch, auto-merge stays off.
 
 Each machine opts in with this in `.aidrian.local.json`:
 
@@ -205,34 +213,41 @@ since an older plugin rejects the key.
 `aidrian pr auto-merge [PR] [--json]` reports it for one pull request: a number, `#number`, or URL, or by default the
 current branch's. It exits 0 when on, 1 when off, and 3 on an error, such as a bad argument or a failed gh read.
 
-It is on only when all four of these hold. With `--json`, `reason` names the first that fails, and is `null` when on.
+It is on only when all five of these hold, checked in this order. With `--json`, `reason` names the first that fails, and is `null` when on.
 
 | `reason` | What must hold |
 | --- | --- |
 | `team` | `github.autoMerge.allow` is true on both the repository's default branch and the pull request's base. Both are read from GitHub as each branch commits them now, never from the checkout. So a branch cannot raise it, and the pull request that turns it on does not merge itself. |
+| `checks` | The default branch names `github.requiredChecks`: a named check that has not reported is pending, so a draft's partial set of checks cannot read as ready. This checkout's `requiredChecks`, `conditionalChecks`, and `ignoreCancelledChecks` equal the default branch's as sets, committed or not: `aidrian pr checks` reads this checkout, so a branch cannot relax the checks that judge its own merge. A working-copy config that cannot be read, or has errors, is off too. |
 | `local` | This machine's switch is `"on"`. |
 | `author` | The pull request's author is the gh user. |
 | `review` | This machine's [review record](review.md#the-record) holds a finished review of the current head, `received` or `none_needed`, and nothing is owed. There is no looser mode: no record, a review of an earlier head, or an owed review keeps it off. |
 
-`strategy`, `deleteBranch`, and `deleteWorktree` come from the default branch only. The base counts only for `allow`.
+`strategy`, `deleteBranch`, `deleteWorktree`, and the check lists come from the default branch only. The base counts only for `allow`.
+So a pull request that changes a check list does not auto-merge, and a checkout behind the default branch's lists stays off until it catches up.
 
 ### What a run does
 
-The `pr-review-loop`, `orchestration`, and `autopilot` skills run `pr-merge-when-green` when the command exits 0, and
-only after that same run marked the draft ready. The skill waits for every check, runs the command again right before
-the merge, and stops unless it still exits 0 on the same head.
+The `pr-review-loop`, `orchestration`, and `autopilot` skills run `pr-merge-when-green` with `--unattended` when the
+command exits 0, and only after that same run marked the draft ready.
+`--unattended` tells the skill that no Human asked: without it, the skill merges only on the Human's request in the session.
+An unattended run waits for every check, runs the command again right before the merge, and stops unless it still
+exits 0 on the same head and base.
 The merge goes through the [merge guard](hooks.md#merge-guard), and never uses `--auto` or `--admin`.
 
-When the Human starts `pr-merge-when-green`, the command need not exit 0.
+When the Human asks for the merge, `--unattended` is not passed and the command need not exit 0.
 The command's `strategy`, `deleteBranch`, and `deleteWorktree` only fill the choices the Human left out.
 
 ### Cleanup after the merge
 
 `deleteWorktree` removes the head branch's worktree without asking only when the cleanup can prove the work merged.
+It runs nothing for a fork's pull request, since a local branch of that name is not the fork's, or for a worktree whose
+HEAD is not the merged head.
 A session's own worktree is never removed, and a session usually works in the pull request's worktree.
 That run reports the worktree kept: run the `worktree-cleanup` skill from the main checkout.
 
-`deleteBranch` does not reach a fork: gh never deletes a head branch in another repository.
+`deleteBranch` means the remote branch; removing the worktree takes the local one with it.
+It does not reach a fork: gh never deletes a head branch in another repository.
 
 ## Pull request contract
 

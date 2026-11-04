@@ -211,19 +211,24 @@ export function mergedHeads(main) {
 // clean and holds no git-ignored file, such as a `.env`, outside the folders config.json `git.worktrees.disposable` names,
 // such as `node_modules/`, and the worktree is old enough. A merge seen only by git (HEAD already on the base, or the
 // same change squashed into it) is also true of a branch created a minute ago with no commits, so it only frames the
-// confirm question. `only`, a worktree's path (relative to `cwd`), sorts that worktree alone and lists no other; a path
-// that is not a worktree's own folder blocks the run before gh is asked. The age and current-worktree rules still apply.
+// confirm question. `only`, a worktree's path (relative to `cwd`), sorts that worktree alone and lists no other. Any
+// `only` that is not null counts as given: an empty one, or a path that is not exactly one worktree's own folder with
+// symlinks resolved, blocks the run before gh is asked, so it never widens to every worktree. The age and
+// current-worktree rules still apply.
 export function planCleanup({ minAgeSec = DAY_SEC, only = null } = {}, { cwd = process.cwd(), heads = mergedHeads, now = Date.now() } = {}) {
   const ctx = context(cwd);
   let worktrees = listWorktrees(ctx.main);
-  if (only) {
-    const wanted = realPath(path.resolve(cwd, only));
+  const scoped = only !== null && only !== undefined;
+  if (scoped) {
+    if (!String(only).trim()) throw blocked('validate', '--only is empty: name the worktree folder to clean up', 'Pass a worktree folder that git worktree list shows.');
+    const wanted = realPath(path.resolve(cwd, String(only)));
     worktrees = worktrees.filter((worktree) => realPath(worktree.path) === wanted);
     if (!worktrees.length) throw blocked('validate', `--only names no worktree: ${only}`, 'Pass a worktree folder that git worktree list shows.');
+    if (worktrees.length > 1) throw blocked('validate', `--only matches ${worktrees.length} worktrees: ${worktrees.map((worktree) => worktree.path).join(', ')}`, 'Pass the folder of exactly one worktree.');
   }
   const merged = heads(ctx.main);
   const out = {
-    status: 'planned', base: ctx.base, gh_available: merged !== null, min_age_sec: minAgeSec, only: only ? worktrees[0].path : null,
+    status: 'planned', base: ctx.base, gh_available: merged !== null, min_age_sec: minAgeSec, only: scoped ? worktrees[0].path : null,
     disposable: ctx.config.git.worktrees.disposable, auto: [], confirm: [], skip: [],
   };
   for (const worktree of worktrees) {
@@ -237,7 +242,7 @@ function classify(worktree, ctx, merged, minAgeSec, now) {
   const { path: dir, branch, head } = worktree;
   const skip = (reason) => ({ bucket: 'skip', path: dir, branch, reason });
   if (worktree.main) return skip('main checkout');
-  if (dir === ctx.current) return skip('current worktree');
+  if (realPath(dir) === realPath(ctx.current)) return skip('current worktree');
   if (worktree.locked) return skip('locked');
   if (worktree.prunable) return skip('folder is gone; cleanup execute prunes it');
   const age = ageSec(dir, now);

@@ -17,7 +17,7 @@ becomes a product rule until the project's docs say so. Start this mode only whe
 
 `aidrian quorum roles product` prints this run's roles and cap. The values below are the defaults.
 
-- **Tracer**: `explorer`, the current behavior, from the code and docs.
+- **Tracer**: `code-reviewer`, the current behavior, from the code and docs. It needs a shell to search, which `explorer` may lack.
 - **Product owner**: `product-manager`. A fresh run for each brief, each given what that brief names.
 - **End user**: `ux-researcher`, as a persona. Its brief loads no product rule, though a project's `always` docs still reach it.
 - **Grillers**: `ux-specialist` and, as the engineer, `architect`.
@@ -113,7 +113,7 @@ After the core's Ledger item, which also names each role's agent and the questio
 ```text
 Role: tracer in a product decision. Report what the product does today on this question, and where its rules say so.
 Question: <the Human's text>.
-Cite each statement with a file and line or a doc section. Say what you could not find. Propose nothing. Change no file.
+Trace the code as well as the docs: what decides the behavior, and whether its parts agree. Cite each statement with a file and line or a doc section. Say what you could not find. Propose nothing. Change no file.
 ```
 
 ## Prepare
@@ -123,7 +123,7 @@ Role: product owner preparing to interview an end user. The trace: <the tracer's
 First: is this decision open? Answer open: false when the written rules settle it, or it is not a product decision.
 A premise the question states may be wrong: test it against the trace.
 When open, write at most 3 questions for the end user about what they do, need, and fear today, in their words.
-Ask about real situations; propose no solution, and name no product rule.
+Describe a concrete situation and ask what they would do and fear in it: a persona holds no past events to recall. Propose no solution, and name no product rule.
 Cite with `doc`, `adr`, `code`, or `absence`: no question file exists yet.
 <evidence>
 Return one JSON object, in the handoff's artifacts: {"open", "premise": {"summary", "citations"}, "questions": ["<question>"]}.

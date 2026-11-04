@@ -1221,7 +1221,7 @@ export function quorumRoles(mode, quorum) {
   if (mode === 'product') {
     const { owner, witness, ux, engineer, maxLoops } = quorum.product;
     const agent = (name) => resolved({ provider: 'agent', agent: name });
-    return { mode, roles: { tracer: agent('explorer'), owner: agent(owner.agent), witness: agent(witness.agent), ux: agent(ux.agent), engineer: agent(engineer.agent) }, judge: { agent: owner.agent }, caps: { maxLoops, maxDispatches: PRODUCT_DISPATCHES + maxLoops * PRODUCT_LOOP_DISPATCHES } };
+    return { mode, roles: { tracer: agent('code-reviewer'), owner: agent(owner.agent), witness: agent(witness.agent), ux: agent(ux.agent), engineer: agent(engineer.agent) }, judge: { agent: owner.agent }, caps: { maxLoops, maxDispatches: PRODUCT_DISPATCHES + maxLoops * PRODUCT_LOOP_DISPATCHES } };
   }
   const { odd, even, swap } = quorum.decide;
   const runnerOf = (i) => (i % 2 === 0 ? odd : even);

@@ -2,6 +2,9 @@
 // how much of it is untriaged; `check` validates a sidecar against its report; `import` drafts, then writes, the sidecar
 // of a report written without one; `pending` prints one report's untriaged items in the order the Human answers them;
 // `record` keeps one decision in triage.json. docs/personas.md#triage describes each subcommand.
+//
+// What a person reads, the text output and every warning and problem, names a report by its personas, kind, and date
+// and an item by its title, never by its id or file name; `--json` carries the ids and file names the commands take.
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -9,7 +12,7 @@ import { parseArgs } from 'node:util';
 
 import { parseReport } from './audit-import.mjs';
 import {
-  decisionProblem, DECISIONS, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, reportTitle, searchLabels, sidecarName, sidecarProblems, today,
+  decisionProblem, DECISIONS, itemWords, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, reportTitle, searchLabels, sidecarName, sidecarProblems, today,
 } from './audits.mjs';
 import { commandConfig } from './config.mjs';
 import { projectAt, stateDir } from './project.mjs';
@@ -32,7 +35,7 @@ const ACTIONS = { list, check, import: importReport, pending, record };
 export const commands = {
   audits: {
     usage:
-      'list [--json] | check REPORT | import REPORT [--not-rechecked IDS] [--carried-forward IDS] [--from FILE] [--write] ' +
+      'list [--json] | check REPORT | import REPORT [--not-rechecked IDS] [--carried-forward IDS] [--from FILE] [--write] [--json] ' +
       `| pending REPORT [--json] | record REPORT ID ${DECISIONS.join('|')} [--issue KEY] [--url URL] [--reason TEXT]`,
     about: 'list the persona audits in the state folder and what is untriaged, check or import a sidecar, and record triage decisions',
     async run(args) {
@@ -79,35 +82,48 @@ function statusText(each, titles = new Map()) {
 
 // The report `name` in the audits folder, or a problem.
 function locate(dir, name) {
-  if (!name) return { problem: 'name the report, such as floor-manager-2026-11-03.md' };
+  if (!name) return { problem: 'name the report by its file name, as `aidrian audits list --json` gives it' };
   const report = reportName(path.basename(name));
-  if (!existsSync(path.join(dir, report))) return { problem: `no report ${report} in ${dir}` };
+  if (!existsSync(path.join(dir, report))) return { problem: `no such report: ${path.join(dir, report)}` };
   return { report };
+}
+
+// The report's entry in the folder, and how to name a finding of the report it replaces: { entry, replacedTitle, older }.
+function context(dir, report, supersedes) {
+  const reports = listAudits(dir);
+  const entry = reports.find((each) => each.report === report);
+  const older = reports.find((each) => each.report === (supersedes ?? entry?.supersedes)) ?? null;
+  const replacedTitle = (id) => older?.findings.find((finding) => finding.id === id)?.title ?? null;
+  return { entry, older, replacedTitle, title: entry?.title ?? reportTitle(report) };
 }
 
 function check({ rest: [name], dir }) {
   const { report, problem } = locate(dir, name);
   if (problem) return fail(problem);
   const file = path.join(dir, sidecarName(report));
-  if (!existsSync(file)) return fail(`${report} has no sidecar ${sidecarName(report)}`);
+  if (!existsSync(file)) return fail(`${capital(reportTitle(report))} has no sidecar yet: ${file}`);
   let value;
   try {
     value = JSON.parse(readFileSync(file, 'utf8'));
   } catch (error) {
     return fail(`${file}: invalid JSON (${error.message})`);
   }
-  const problems = [...sidecarProblems(value, { dir, report }), ...proseProblems(readFileSync(path.join(dir, report), 'utf8'), value)];
-  if (problems.length) return fail(problems.map((each) => `${sidecarName(report)}: ${each}`).join('\n'));
-  console.log(`ok: the sidecar of ${reportTitle(report, value.findings)}: ${value.findings.length} findings, ${value.not_reached.length} not reached, ${value.doc_gaps.length} doc gaps`);
+  const { title, replacedTitle } = context(dir, report, value?.supersedes);
+  const problems = [...sidecarProblems(value, { dir, report, replacedTitle }), ...proseProblems(readFileSync(path.join(dir, report), 'utf8'), value)];
+  if (problems.length) return fail([`The sidecar of ${title} (${file}):`, ...problems.map((each) => `- ${each}`)].join('\n'));
+  console.log(`ok: the sidecar of ${title}: ${value.findings.length} findings, ${value.not_reached.length} not reached, ${value.doc_gaps.length} doc gaps`);
   return 0;
 }
 
-// Without --write, prints the draft for the Human to check; with it, validates and writes the sidecar, never over one.
+// Without --write, prints the draft sidecar on stdout, and on stderr the warnings for the Human, each finding by its
+// title; with --json, one object instead: { draft, replaced: [{ id, title }], warnings, problems }, so a session maps the
+// titles the Human sorts back to the keys the flags take. With --write, validates and writes it, never over a sidecar.
 function importReport({ values, rest: [name], dir }) {
   const { report, problem } = locate(dir, name);
   if (problem) return fail(problem);
   const target = path.join(dir, sidecarName(report));
   let draft;
+  let warnings = [];
   if (values.from) {
     try {
       draft = JSON.parse(readFileSync(path.resolve(values.from), 'utf8'));
@@ -116,20 +132,30 @@ function importReport({ values, rest: [name], dir }) {
     }
     delete draft.warnings;
   } else {
-    const { warnings, ...parsed } = parseReport(readFileSync(path.join(dir, report), 'utf8'), { report, dir, ownerWords: OWNER_WORDS });
-    draft = parsed;
-    for (const warning of warnings) console.error(`warning: ${warning}`);
+    ({ warnings, ...draft } = parseReport(readFileSync(path.join(dir, report), 'utf8'), { report, dir, ownerWords: OWNER_WORDS }));
+  }
+  const { older, replacedTitle } = context(dir, report, draft.supersedes);
+  const replaced = (older?.findings ?? []).map(({ id, title }) => ({ id, title }));
+  if (draft.supersedes && !values.from) {
+    const what = older ? older.title : reportTitle(draft.supersedes);
+    warnings.push(replaced.length
+      ? `This run replaces ${what}. Sort each of its findings: carried forward, when a finding of this run covers it, or not re-checked, when this run did not look at it:\n${replaced.map((one) => `  - "${one.title}"`).join('\n')}`
+      : `This run replaces ${what}, which holds no findings to sort.`);
   }
   for (const [option, key] of [['not-rechecked', 'not_rechecked'], ['carried-forward', 'carried_forward']]) {
     if (values[option] !== undefined) draft[key] = values[option].split(',').map((id) => id.trim()).filter(Boolean);
   }
-  const problems = sidecarProblems(draft, { dir, report });
+  const problems = sidecarProblems(draft, { dir, report, replacedTitle });
   if (!values.write) {
-    console.log(JSON.stringify(draft, null, 2));
-    for (const each of problems) console.error(`problem: ${each}`);
+    if (values.json) console.log(JSON.stringify({ draft, replaced, warnings, problems }));
+    else {
+      console.log(JSON.stringify(draft, null, 2));
+      for (const each of warnings) console.error(`warning: ${each}`);
+      for (const each of problems) console.error(`problem: ${each}`);
+    }
     return problems.length ? 1 : 0;
   }
-  if (existsSync(target)) return fail(`${sidecarName(report)} exists already; a sidecar is never overwritten`);
+  if (existsSync(target)) return fail(`The sidecar exists already, and a sidecar is never overwritten: ${target}`);
   if (problems.length) return fail(problems.map((each) => `problem: ${each}`).join('\n'));
   writeFileSync(target, `${JSON.stringify(draft, null, 2)}\n`);
   console.log(`wrote ${target}`);
@@ -137,14 +163,20 @@ function importReport({ values, rest: [name], dir }) {
 }
 
 // With --json: { issue_creation, search_labels, groups }, so the skill reads the mode and every issue's labels from
-// config.json in one call.
+// config.json in one call. Each item also carries `source`, the line its issue body cites it by, in words and the
+// report's path, and `audit_key`, the machine key a body keeps out of sight, for the duplicate search.
 function pending({ values, rest: [name], dir, triage }) {
   const { report, problem } = locate(dir, name);
   if (problem) return fail(problem);
   const entry = listAudits(dir).find((each) => each.report === report);
-  if (entry.status === 'no-sidecar' || entry.status === 'invalid') return fail(`${report}: ${statusText(entry)}`);
-  if (entry.status === 'replaced') return fail(`${report} is replaced by ${entry.replaced_by}: triage that report`);
+  if (entry.status === 'no-sidecar' || entry.status === 'invalid') return fail(`${capital(entry.title)}: ${statusText(entry)}`);
+  if (entry.status === 'replaced') return fail(`${capital(entry.title)} is replaced by ${listAudits(dir).find((each) => each.report === entry.replaced_by)?.title}: triage that report`);
   const groups = pendingGroups(entry, { labels: triage.labels });
+  for (const item of groups.flatMap((group) => group.items)) {
+    const what = item.kind === 'not_reached' ? 'not reached' : item.kind === 'doc_gap' ? 'persona doc gap' : 'finding';
+    item.source = `Source: ${item.report_title ?? reportTitle(item.report)}, ${what} ${itemWords(item)} (${path.join(dir, item.report)})`;
+    item.audit_key = `${item.report}#${item.id}`;
+  }
   if (values.json) {
     console.log(JSON.stringify({ issue_creation: triage.issueCreation, search_labels: searchLabels(triage.labels), groups }));
     return 0;
@@ -179,14 +211,14 @@ function record({ values, rest: [name, id, decision], dir }) {
   // The item is the report's own, or a finding of it that the report replacing it offers as not re-checked.
   const holder = reports.find((each) => each.status === 'ok' && each.items.some((item) => item.report === report && item.id === id));
   if (!holder) {
-    if (owner.status === 'no-sidecar' || owner.status === 'invalid') return fail(`${report}: ${statusText(owner)}`);
-    return fail(`${report} has no item ${id} to triage`);
+    if (owner.status === 'no-sidecar' || owner.status === 'invalid') return fail(`${capital(owner.title)}: ${statusText(owner)}`);
+    return fail(`${capital(owner.title)} offers no item with that key to triage; \`aidrian audits pending <report> --json\` lists the keys`);
   }
   recordDecision(dir, report, id, entry);
   const left = listAudits(dir).find((each) => each.report === holder.report).untriaged;
   const item = holder.items.find((one) => one.report === report && one.id === id);
   const where = holder.title;
-  console.log(`recorded "${item.title ?? item.text}": ${decision}; ${left ? `${left} untriaged left in ${where}` : `${capital(where)} is fully triaged`}`);
+  console.log(`recorded ${itemWords(item)}: ${decision}; ${left ? `${left} untriaged left in ${where}` : `${capital(where)} is fully triaged`}`);
   return 0;
 }
 

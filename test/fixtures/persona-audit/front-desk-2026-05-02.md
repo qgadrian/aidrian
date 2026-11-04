@@ -18,16 +18,16 @@ Personas are synthetic: this report is a lead for the Human, not a substitute fo
 - Cited: `src/repairs/RepairForm.tsx:40` collapses "Optional" by default.
 - Owner: `ux-specialist`.
 
-### F2. friction: Spanish names the drop-in three ways
+### F2. friction: the second language names the drop-in three ways
 
 - Persona: front-desk. Task: Check a bike in. Evidence: read. Label: observed.
-- Cited: `locales/es.json:12`, `locales/es.json:30`.
+- Cited: `locales/second.json:12`, `locales/second.json:30`.
 - Owner: `ux-specialist`.
 
-### F3. polish: Spanish mixes formal and informal address
+### F3. polish: the second language mixes formal and informal address
 
 - Persona: front-desk. Task: Take a repair. Evidence: read. Label: observed.
-- Cited: `locales/es.json:44`.
+- Cited: `locales/second.json:44`.
 - Owner: `ux-specialist`.
 
 ## Not reached

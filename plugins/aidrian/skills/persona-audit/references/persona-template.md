@@ -26,7 +26,7 @@ Rules:
   names the mode, such as Seat a walk-in party (tables) and Book a treatment (services).
 - Who names the one familiarity the walk starts from, even when real users range wider.
 - Context names the persona's language. The walk runs in it, so a Success line names the outcome, never the
-  product's words: English screen text would never match a Spanish walk.
+  product's words: screen text in the product's first language would never match a walk in its second.
 - A section the template does not name, such as Open questions, is allowed: the lint ignores it, and a run reads it as the doc's own notes.
 
 Leave out a detail nobody knows; keep every required section.
@@ -76,7 +76,7 @@ Success: the manager has tonight's booked guest count within two taps of signing
 ## Context
 
 - Device: a tablet at the host stand, and a phone in a pocket.
-- Language: Spanish first, English second.
+- Language: <the product's second language> first, <its first language> second.
 - Uses the product every service, in short bursts between guests, often with a noisy room around.
 
 ## Voice

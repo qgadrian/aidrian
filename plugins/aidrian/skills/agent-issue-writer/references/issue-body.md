@@ -270,7 +270,9 @@ Labels a calling skill passes, such as the audit labels of the `persona-audit-tr
 as given, beside the domain labels. Create one that is missing only when the caller says the Human approved its
 creation: on Linear by the procedure in `references/linear.md`, on GitHub with `gh label create '<label>'`. Otherwise
 leave it out and name it in the result. A tracker without labels: list them in `Tracker Metadata`.
-A caller's `Source:` line, such as `Source: <report file> <finding id>`, stays in the body as given.
+A caller's `Source:` line, which names what the issue came from in words and gives its path, stays in the body as given.
+A caller's machine key, such as an `audit_key`, never goes in the title or the first lines: on GitHub it is the last
+line of the body, as an HTML comment, `<!-- audit_key: <key> -->`; on Linear, a line in the closing Agent notes section.
 
 ### Initiative Shape
 

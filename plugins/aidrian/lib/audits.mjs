@@ -41,16 +41,33 @@ const REPORT = /^(.+)-(\d{4}-\d{2}-\d{2})(?:-\d+)?\.md$/u;
 // A backticked span that names a screenshot by its suffix alone, such as `-24.jpg`: the reader cannot open it.
 const SHORTHAND = /`(-[^`/\s]*\.(?:png|jpe?g|gif|webp))`/giu;
 
-// A report as a person reads it: its personas, its kind, its date, and its run of that day, such as "the front-desk
-// walk of 2026-05-02, run 2". Ids and file names are keys for the commands, never words for the Human.
+// A report as a person reads it: its personas, its kind, and its date, such as "the front-desk walk on 2026-05-02" or
+// "the front-desk read-only run on 2026-05-02". Ids and file names are keys for the commands, never words for a person:
+// docs/personas.md#triage. listAudits tells apart two reports this gives the same words (ordinals).
 export function reportTitle(report, findings = []) {
-  const match = /^(.+)-(\d{4}-\d{2}-\d{2})(?:-(\d+))?\.md$/u.exec(report ?? '');
-  if (!match) return report;
-  const [, personas, date, run] = match;
-  const who = personas === 'all' ? 'every-persona' : personas.split('+').join(' and ');
-  const kind = !findings.length ? 'audit' : findings.some((finding) => finding.evidence_level === 'walked') ? 'walk' : 'read-only review';
-  return `the ${who} ${kind} of ${date}${run ? `, run ${run}` : ''}`;
+  const match = REPORT.exec(report ?? '');
+  if (!match) return 'a persona audit';
+  const [, personas, date] = match;
+  const who = personas === 'all' ? 'all-persona' : personas.split('+').join(' and ');
+  const kind = !findings.length ? 'audit' : findings.some((finding) => finding.evidence_level === 'walked') ? 'walk' : 'read-only run';
+  return `the ${who} ${kind} on ${date}`;
 }
+
+const ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'];
+// Gives each report its `title`, and the second and later of several with the same words an ordinal: "the second
+// front-desk walk on 2026-05-02". `reports` are in run order.
+function nameReports(reports) {
+  const seen = new Map();
+  for (const each of reports) {
+    const plain = reportTitle(each.report, each.findings);
+    const count = (seen.get(plain) ?? 0) + 1;
+    seen.set(plain, count);
+    each.title = count === 1 ? plain : plain.replace(/^the /u, `the ${ORDINALS[count - 1] ?? `number ${count}`} `);
+  }
+}
+
+// How a person reads one item: a finding by its title, a Not reached line or a doc gap by its text.
+export const itemWords = (item) => `"${item?.title ?? item?.text ?? 'an untitled item'}"`;
 
 export const sidecarName = (report) => report.replace(/\.md$/u, '.json');
 export const reportName = (value) => (value.endsWith('.md') ? value : `${value}.md`);
@@ -58,7 +75,9 @@ export const today = (now = new Date()) => now.toISOString().slice(0, 10);
 
 // The problems of a sidecar, as strings; empty when it is valid. With `dir`, the audits folder, every evidence path
 // must also name a file there.
-export function sidecarProblems(value, { dir = null, report = null } = {}) {
+// Every problem names a finding by its title, never by its id: the reader is a person fixing the file. `replacedTitle`
+// gives the title of a finding of the replaced report from its key, when the caller can read that report.
+export function sidecarProblems(value, { dir = null, report = null, replacedTitle = () => null } = {}) {
   if (!isObject(value)) return ['the sidecar must be a JSON object'];
   const problems = [];
   const at = (where, problem) => problems.push(`${where}: ${problem}`);
@@ -76,18 +95,22 @@ export function sidecarProblems(value, { dir = null, report = null } = {}) {
   for (const key of ['carried_forward', 'not_rechecked']) {
     const list = value[key];
     if (!Array.isArray(list) || list.some((id) => typeof id !== 'string' || !ID.findings.test(id))) {
-      at(key, 'must be a list of finding ids of the replaced report, such as F3');
+      at(key, 'must be a list of the keys the replaced report\'s sidecar gives its findings');
       continue;
     }
     if (list.length && !value.supersedes) at(key, 'needs supersedes: it lists findings of the report this run replaces');
-    if (new Set(list).size !== list.length) at(key, 'lists an id twice');
+    if (new Set(list).size !== list.length) at(key, 'lists a finding twice');
     replaced[key] = list;
   }
   const both = (replaced.carried_forward ?? []).filter((id) => (replaced.not_rechecked ?? []).includes(id));
-  if (both.length) at('not_rechecked', `${both.join(', ')} also in carried_forward: a finding is listed once`);
+  if (both.length) {
+    const named = both.map(replacedTitle);
+    const which = named.every(Boolean) ? named.map((title) => `"${title}"`).join(', ') : `${both.length} finding${both.length === 1 ? '' : 's'} of the replaced report`;
+    at('not_rechecked', `${which} also in carried_forward: a finding is listed once`);
+  }
 
   if (!Array.isArray(value.findings)) at('findings', 'must be a list');
-  else value.findings.forEach((finding, index) => findingProblems(finding, `findings[${index}]`, at, dir));
+  else value.findings.forEach((finding, index) => findingProblems(finding, nonEmptyString(finding?.title) ? `finding "${finding.title}"` : `findings[${index}]`, at, dir));
   for (const key of ['not_reached', 'doc_gaps']) {
     if (!Array.isArray(value[key])) {
       at(key, 'must be a list');
@@ -95,23 +118,21 @@ export function sidecarProblems(value, { dir = null, report = null } = {}) {
     }
     value[key].forEach((item, index) => {
       if (!isObject(item)) return at(`${key}[${index}]`, 'must be an object');
-      if (typeof item.id !== 'string' || !ID[key].test(item.id)) at(`${key}[${index}].id`, `must be ${key === 'not_reached' ? 'N1, N2' : 'D1, D2'}, ...`);
+      if (typeof item.id !== 'string' || !ID[key].test(item.id)) at(`${key}[${index}].id`, `must be ${key === 'not_reached' ? 'N' : 'D'} and the item's number in its section`);
       if (!nonEmptyString(item.text)) at(`${key}[${index}].text`, 'must say what it is');
     });
   }
   for (const key of ['findings', 'not_reached', 'doc_gaps']) {
-    const ids = (Array.isArray(value[key]) ? value[key] : []).map((item) => item?.id).filter(Boolean);
-    const twice = ids.filter((id, index) => ids.indexOf(id) !== index);
-    if (twice.length) at(key, `${[...new Set(twice)].join(', ')} used twice`);
+    const items = (Array.isArray(value[key]) ? value[key] : []).filter((item) => item?.id);
+    const twice = items.filter((item) => items.filter((other) => other.id === item.id).length > 1);
+    if (twice.length) at(key, `${twice.map(itemWords).join(', ')} share one key: each item has its own`);
   }
   return problems;
 }
 
-function findingProblems(finding, where, at, dir) {
-  if (!isObject(finding)) return at(where, 'must be an object');
-  const id = typeof finding.id === 'string' ? finding.id : null;
-  const name = id ? `${where} ${id}` : where;
-  if (!id || !ID.findings.test(id)) at(name, 'id must be F1, F2, ...');
+function findingProblems(finding, name, at, dir) {
+  if (!isObject(finding)) return at(name, 'must be an object');
+  if (typeof finding.id !== 'string' || !ID.findings.test(finding.id)) at(name, 'id must be F and the finding\'s number in severity order');
   if (!nonEmptyString(finding.title)) at(name, 'title is missing');
   if (!SEVERITIES.includes(finding.severity)) at(name, `severity must be ${SEVERITIES.join(', ')}`);
   if (!LABELS.includes(finding.label)) at(name, `label must be ${LABELS.join(' or ')}`);
@@ -155,12 +176,26 @@ export function evidenceProblem(file, dir = null) {
 // Shorthand evidence in a prose report, such as `-24.jpg`: each span found.
 export const proseShorthand = (text) => [...text.matchAll(SHORTHAND)].map((match) => match[1]);
 
-// What a prose report and its sidecar disagree on: the finding ids under `### F<n>.` headings, and shorthand evidence.
+// A finding heading: `### blocker: <title>`, or, in a report written before sidecars, `### F3. blocker: <title>`.
+export const FINDING_HEADING = /^### (?:(F[1-9]\d*)\.\s+)?(blocker|friction|polish):\s*(.+?)\s*$/u;
+
+// What a prose report and its sidecar disagree on: the findings, by title in report order, and shorthand evidence.
 export function proseProblems(text, sidecar) {
-  const problems = proseShorthand(text).map((span) => `the report cites "${span}": write the full path`);
-  const headings = [...text.matchAll(/^### (F[1-9]\d*)\./gmu)].map((match) => match[1]);
-  const ids = Array.isArray(sidecar?.findings) ? sidecar.findings.map((finding) => finding?.id) : [];
-  if (headings.join(',') !== ids.join(',')) problems.push(`the report's findings are ${headings.join(', ') || 'none'}, the sidecar's ${ids.join(', ') || 'none'}`);
+  const problems = [];
+  const headings = [];
+  let current = null;
+  for (const line of text.split('\n')) {
+    const heading = FINDING_HEADING.exec(line);
+    if (heading) headings.push((current = heading[3]));
+    else if (/^##? /u.test(line)) current = null;
+    for (const span of proseShorthand(line)) {
+      problems.push(`${current ? `finding "${current}"` : 'the report'} cites a screenshot by its suffix alone, "${span}": write the full path`);
+    }
+  }
+  const titles = Array.isArray(sidecar?.findings) ? sidecar.findings.map((finding) => finding?.title) : [];
+  for (const title of headings.filter((one) => !titles.includes(one))) problems.push(`the report's finding "${title}" is not in the sidecar`);
+  for (const title of titles.filter((one) => !headings.includes(one))) problems.push(`the sidecar's finding "${title}" is not in the report`);
+  if (!problems.length && headings.join('\n') !== titles.join('\n')) problems.push('the report and the sidecar list the findings in another order');
   return problems;
 }
 
@@ -211,7 +246,7 @@ export function listAudits(dir, { triage = readTriage(dir) } = {}) {
     if (replaced && replaced !== each) replaced.replaced_by = each.report;
   }
   const decided = (report, id) => triage.reports?.[report]?.[id] ?? null;
-  for (const each of reports) each.title = reportTitle(each.report, each.findings);
+  nameReports(reports);
   for (const each of reports) {
     if (each.replaced_by) each.status = 'replaced';
     const own = [...each.findings.map((finding) => ({ kind: 'finding', ...finding })), ...each.not_reached.map((item) => ({ kind: 'not_reached', ...item })), ...each.doc_gaps.map((item) => ({ kind: 'doc_gap', ...item }))]
@@ -219,7 +254,7 @@ export function listAudits(dir, { triage = readTriage(dir) } = {}) {
     const older = each.supersedes ? byName.get(each.supersedes) : null;
     const offered = each.not_rechecked.map((id) => {
       const olderTitle = older?.title ?? reportTitle(each.supersedes);
-      const finding = older?.findings.find((one) => one.id === id) ?? { id, title: `a finding of ${olderTitle} that it no longer holds` };
+      const finding = older?.findings.find((one) => one.id === id) ?? { id, title: `a finding ${olderTitle} no longer holds` };
       return { kind: 'not_rechecked', ...finding, report: each.supersedes, report_title: olderTitle, decision: decided(each.supersedes, id) };
     });
     each.items = [...own, ...offered];

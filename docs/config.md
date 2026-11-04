@@ -642,7 +642,8 @@ stops on an invalid config.json as every `aidrian` command does.
   after the Human approves; in `"auto"` it leaves a missing label out and names it in the summary.
 - Before a finding is recorded as a duplicate, the tracker search also queries the plain labels, which every audit
   issue carries, so an earlier audit's issue is found by its label as well as its words.
-- Each issue body cites the report file and the finding id, such as `front-desk-2026-05-02-2.md F3`.
+- Each issue body names its source in words, the report by persona, kind, and date and the finding by its title, with
+  the report's path; the machine key the duplicate search can use stays in a footer, never in the title or first lines.
 
 ## Checking
 

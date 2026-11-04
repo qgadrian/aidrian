@@ -41,14 +41,14 @@ An invalid sidecar is the run's to fix: tell the Human the problem and take anot
 ## 2. Import a report written without a sidecar
 
 Once per report, and only with the Human: in `auto`, skip such a report and name it in the summary.
-`aidrian audits import <report>` prints a draft sidecar, and its warnings on stderr. Read the report whole and check
-each finding in the draft against it: severity, tasks, owner, `owner_description` in plain words, evidence, and
-`needs_trace` for a cause the report says was not traced.
+`aidrian audits import <report> --json` gives the `draft` sidecar, its `warnings`, and `replaced`: the earlier
+report's findings, each title with its key. Read the report whole and check each finding of the draft against it:
+severity, tasks, owner, `owner_description` in plain words, evidence, and `needs_trace` for an untraced cause.
 
-When a warning says the report replaces an earlier one, read that report too and sort its findings, as the "This run
-replaces" sentence says: `carried_forward`, those a finding here covers; `not_rechecked`, those this run did not look at.
-Show the Human a table of the draft (title, severity, owner in plain words, screenshots) and the sorted earlier
-findings. After the Human's yes:
+When the report replaces an earlier one, read that report too and sort its findings, as the "This run replaces"
+sentence says: carried forward, those a finding here covers; not re-checked, those this run did not look at.
+Show the Human a table of the draft (title, severity, owner in plain words, screenshots) and the earlier findings,
+sorted, by title. After the Human's yes, pass their keys:
 
 ```bash
 aidrian audits import <report> --not-rechecked F2,F3 --carried-forward F1 --write
@@ -68,7 +68,7 @@ aidrian audits pending <report> --json
 It prints `issue_creation`, the mode; `search_labels`, the labels every audit issue carries; and `groups`, the
 untriaged items in the order to ask: each blocker alone; the other findings by severity and owner; the earlier
 report's findings this run did not re-check, each once and never one carried forward; Not reached lines; doc gaps.
-Each item names its report and the `labels` its issue gets. Read each item's section of its report, and open the
+Each item has its report, `labels`, `source`, and `audit_key`. Read each item's section of its report, and open the
 screenshots it cites: each `evidence` path is relative to `<state>/audits/`.
 
 **Done when** every item in the batch was read with its evidence.
@@ -91,7 +91,7 @@ group. Name the owner in plain words, from `owner_description`, never as an agen
 | Decision | When | Then |
 | --- | --- | --- |
 | `issue` | Work beyond one small change | `agent-issue-writer` drafts it and creates it in the tracker that skill uses for the project |
-| `duplicate` | An issue already covers it | Search the tracker by words and by `search_labels`, as the `knowledge` skill's `references/tracker.md` says; record its key |
+| `duplicate` | An issue already covers it | Search the tracker by words, `search_labels`, and `audit_key`, as the `knowledge` skill's `references/tracker.md` says; record its key |
 | `fix-now` | One small, clear change | Route it to the owner the finding names, with `other_owners` |
 | `drop` | Not worth its cost, or not a problem | Record the reason |
 | `defer` | Decided later | Record it |
@@ -107,8 +107,8 @@ group. Name the owner in plain words, from `owner_description`, never as an agen
 
 In `confirm`, act on an item only after the Human's yes for it:
 
-- `issue`: run the `agent-issue-writer` skill with the finding, its steps, quote, evidence, and `labels`, and the
-  body line `Source: <report file> <finding id>`. In `confirm`, it shows the draft, creates it after the Human
+- `issue`: run the `agent-issue-writer` skill with the finding, its steps, quote, evidence, `labels`, its `source`
+  line for the body, and its `audit_key` for a hidden footer only. In `confirm`, it shows the draft, creates it after the Human
   approves, and only then may create a missing label. In `auto`, it creates at once and leaves out a missing label.
   A tracker without labels: they go in the body. Attach each screenshot the finding cites: on GitHub, upload it with
   `gh image` as the `pr-screenshot` skill's preflight sets up, and put the reference in the body; on Linear, the host's

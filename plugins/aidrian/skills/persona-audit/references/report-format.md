@@ -75,7 +75,7 @@ Personas are synthetic: this report is a lead for the Human, not a substitute fo
 
 ## Findings
 
-### F1. blocker: a moved booking cannot be saved
+### blocker: a moved booking cannot be saved
 
 - Persona: floor-manager. Task: Move a booking to another table. Evidence: walked. Label: observed.
 - Steps: open tonight's floor plan; tap the 20:00 booking on table 4; tap Move; pick table 7.
@@ -84,7 +84,7 @@ Personas are synthetic: this report is a lead for the Human, not a substitute fo
 - Finding: the table picker never sets the form's table field; `src/bookings/MoveDialog.tsx:84`.
 - Owner: `frontend-developer`.
 
-### F2. friction: "Covers" means nothing to these personas
+### friction: "Covers" means nothing to these personas
 
 - Personas: floor-manager, owner. Task: Check how busy tonight is. Evidence: read. Label: observed.
 - Cited: the dashboard title is "Covers"; `locales/en.json:12` "covers.title". Cares about: plain words.
@@ -107,7 +107,11 @@ Personas are synthetic: this report is a lead for the Human, not a substitute fo
   "Seat every guest quickly, without double-booking a table."
 ```
 
-- Number findings `F1`, `F2`, in severity order: `blocker`, then `friction`, then `polish`.
+- Order findings by severity: `blocker`, then `friction`, then `polish`. A heading is `### <severity>: <title>`, with no
+  number: the sidecar keys each finding by its place, `F1` for the first, and only the sidecar holds those keys.
+- A person reads the report, so it never names a finding or a report by a key or a file suffix: another finding by its
+  title, such as "as in a moved booking cannot be saved", and another report by persona, kind, and date, such as
+  "the floor-manager read-only run on 2026-11-03", with its path once, as its location.
 - A screenshot the run saves goes in `<state>/audits/<report name>/`, beside the report, and the report cites its path.
 - An outcome other than `not walked` or `out of scope` needs `walked` in the Evidence column.
   An `out of scope` task was not looked at, so its Evidence is `-`.
@@ -118,17 +122,20 @@ Personas are synthetic: this report is a lead for the Human, not a substitute fo
 ## A run that replaces a report
 
 A run of the same personas and tasks as an earlier report, at a better evidence level or because the Human asked for
-it again, replaces that report. `aidrian audits list` shows the earlier reports. Say so under the header:
-``This run replaces `<earlier report>.md`; <what it did not re-check>.`` In the sidecar, name the earlier report in
-`supersedes`, and sort its findings: `carried_forward`, those a finding of this run covers, the same problem seen again;
-`not_rechecked`, those this run did not look at, which the triage offers again. An id this run re-checked and did not
-see again is in neither. No id is in both.
+it again, replaces that report. `aidrian audits list` shows the earlier reports. Say so under the header, naming the
+report in words with its path, then its findings by title:
+``This run replaces the floor-manager read-only run on 2026-11-03 (`<earlier report>.md`).``
+``Carried forward: <title>; <title>. Not re-checked: <title>; <title>.``
+Carried forward are those a finding of this run covers, the same problem seen again; not re-checked, those this run
+did not look at, which the triage offers again. A finding this run re-checked and did not see again is in neither,
+and none is in both. In the sidecar, name the earlier report in `supersedes`, and list the same findings, by the keys
+the earlier sidecar gives them, in `carried_forward` and `not_rechecked`.
 
 ## The sidecar
 
 Beside each report `<name>.md`, write `<name>.json`, the same run for the triage to read. `aidrian audits check
-<name>.md` validates it against the report: its finding ids are the report's `### F<n>.` headings, and every
-evidence path names a file. Every key is required except `other_owners`, `cited`, and `likely_cause`.
+<name>.md` validates it against the report: its findings are the report's finding headings, by title and in order,
+and every evidence path names a file. Every key is required except `other_owners`, `cited`, and `likely_cause`.
 
 ```json
 {
@@ -155,7 +162,7 @@ evidence path names a file. Every key is required except `other_owners`, `cited`
       "needs_trace": false
     }
   ],
-  "not_reached": [{ "id": "N1", "text": "Tablet width: the browser would not resize below 1143 px." }],
+  "not_reached": [{ "id": "N1", "text": "Tablet width: the browser would not resize below its window width." }],
   "doc_gaps": [{ "id": "D1", "text": "Suggested task for floor-manager: Join two tables: ..." }]
 }
 ```

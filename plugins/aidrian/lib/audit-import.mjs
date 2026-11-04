@@ -2,12 +2,14 @@
 // Not reached lines, doc gaps, and the report it replaces. The draft is for the Human to check before it is written:
 // `warnings` names what the prose could not settle, such as the findings of the replaced report this run did not
 // re-check, which only a reader can judge, and evidence written as a suffix (`-24.jpg`) that matched no single file.
+// Warnings name each finding by its title: a person reads them. A heading with no id, `### friction: <title>`, gets the
+// key of its place in the report, F1 for the first.
 
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
 
-// A heading `### F3. friction: the title`.
-const FINDING = /^### (F[1-9]\d*)\.\s+(blocker|friction|polish):\s*(.+?)\s*$/u;
+// A heading `### friction: the title`, or `### F3. friction: the title` in a report written before sidecars.
+const FINDING = /^### (?:(F[1-9]\d*)\.\s+)?(blocker|friction|polish):\s*(.+?)\s*$/u;
 // The first line of a finding: `- Persona: <ids>. Task: <tasks>. Evidence: <level>. Label: <label>.`, singular or plural.
 // A finding about every task says `All tasks.` in place of the Task field.
 const META = /Personas?:\s*(.+?)\.\s+(?:Tasks?:\s*(.+?)|(All tasks))\.\s+Evidence:\s*(walked|seen|read)\.\s+Label:\s*(observed|opinion)\b/u;
@@ -27,12 +29,9 @@ export function parseReport(text, { report, dir = null, ownerWords = {} } = {}) 
   const findings = [];
   for (const [heading, lines] of sections.findings) {
     const [, id, severity, title] = FINDING.exec(heading);
-    findings.push(readFinding({ id, severity, title, lines, report, dir, ownerWords, warnings }));
+    findings.push(readFinding({ id: id ?? `F${findings.length + 1}`, severity, title, lines, report, dir, ownerWords, warnings }));
   }
   const supersedes = REPLACES.exec(text)?.[1] ?? null;
-  if (supersedes) {
-    warnings.push(`this run replaces ${supersedes}: list in not_rechecked its findings this run did not re-check, and in carried_forward those a finding here covers`);
-  }
   return {
     version: 1,
     report,
@@ -92,16 +91,16 @@ function readFinding({ id, severity, title, lines, report, dir, ownerWords, warn
     const full = span.startsWith('-') ? expandShorthand(span, report, dir) : span;
     if (full) {
       if (!evidence.includes(full)) evidence.push(full);
-    } else warnings.push(`${id}: "${span}" matched no single file in the report's folder; it is left out`);
+    } else warnings.push(`"${title}": the screenshot "${span}" matched no single file in the report's folder, so it is left out`);
   }
   const cited = spans.filter((each) => FILE_LINE.test(each));
   const seen = field('Seen') ?? field('Cited');
   if (!evidence.length && !cited.length && seen) cited.push(seen);
   const owner = roles[0] ?? null;
-  if (!meta) warnings.push(`${id}: no "Persona: ... Task: ... Evidence: ... Label: ..." line`);
-  if (!owner) warnings.push(`${id}: no owner in backticks on its Owner line`);
+  if (!meta) warnings.push(`"${title}": no "Persona: ... Task: ... Evidence: ... Label: ..." line`);
+  if (!owner) warnings.push(`"${title}": no owner in backticks on its Owner line`);
   const words = ownerWords[owner];
-  if (owner && !words) warnings.push(`${id}: write owner_description, in plain words, for ${owner}`);
+  if (owner && !words) warnings.push(`"${title}": write owner_description, in plain words, for ${owner}`);
   const finding = {
     id,
     title,

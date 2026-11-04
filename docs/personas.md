@@ -50,7 +50,7 @@ holds only how a session reaches the product and what it may touch.
   that names the mode, such as `Seat a walk-in party (tables)` and `Book a treatment (services)`.
 - `Who` names the one familiarity the walk starts from. The doc may say real users range wider.
 - `Context` names the persona's language. The walk runs in it, so a `Success:` line names the outcome, never the
-  product's words or a screen's name: English screen text would never match a Spanish walk.
+  product's words or a screen's name: screen text in the product's first language would never match a walk in its second.
 - A section the contract does not name, such as `## Open questions`, is allowed. The lint ignores it, and a run reads
   it as the doc's own notes.
 
@@ -146,8 +146,8 @@ change; it never approves, blocks, or posts. A project that wants a persona pass
 
 ## Triage
 
-The `persona-audit-triage` skill takes each item of a report to a decision with the Human: each finding (`F1`), each
-`Not reached` line (`N1`), each doc gap (`D1`), and each finding of a replaced report that the new run did not re-check.
+The `persona-audit-triage` skill takes each item of a report to a decision with the Human: each finding, each
+`Not reached` line, each doc gap, and each finding of a replaced report that the new run did not re-check.
 A decision is one of `issue`, `fix-now`, `duplicate`, `drop`, or `defer`. A report is fully triaged when every item
 has one. The skill sends a finding about a product rule, or an open question in a product doc, to `product-manager`
 first; it drafts an issue with `agent-issue-writer` and creates it in the project's tracker. It names owners in plain
@@ -158,8 +158,14 @@ default: each draft is shown, and no issue, route, or label is created until the
 creates issues without asking, for unsupervised runs: it files what it would recommend as an issue or a duplicate,
 defers everything else, including a finding `product-manager` does not settle, records every decision, and ends with
 the issues it created. `audits.triage.labels` gives every issue the `persona-audit` label, one per persona, and one
-for its severity by default; the duplicate search queries the plain label as well as the finding's words, and each
-issue body cites the report file and the finding id.
+for its severity by default; the duplicate search queries the plain label as well as the finding's words. Each issue
+body names its source in words, such as `Source: the front-desk walk on 2026-05-02, finding "a drop-in is not shown as
+a drop-in" (<path>)`, and keeps the item's machine key, `<report file>#<id>`, out of sight in a footer.
+
+Keys are for machines only: the sidecar, `triage.json`, and the arguments of `aidrian audits record` hold them. What a
+person reads, a report, a question, a summary, an issue, or the commands' text output, names a finding by its title and
+a report by its personas, kind, and date, such as "the front-desk read-only run on 2026-05-02", with a path only as a
+location. A second report with the same words gets an ordinal: "the second front-desk walk on 2026-05-02".
 
 The decisions live in `<state>/audits/triage.json`, never in the repository, keyed by report file and item id:
 
@@ -178,14 +184,16 @@ file names the other commands take.
   `no sidecar: import needed`; one whose sidecar is invalid names the first problem.
 - `check <report>`: validates the sidecar: every required key, finding, `N` and `D` id, evidence paths that name
   files and are never a suffix, a blocker only when walked and observed, no id in both `carried_forward` and
-  `not_rechecked`, and the report's `### F<n>.` headings matching the sidecar's findings. It prints `ok` or each problem.
+  `not_rechecked`, and the report's finding headings matching the sidecar's findings by title. It prints `ok` or each problem.
 - `import <report> [--not-rechecked IDS] [--carried-forward IDS] [--from FILE] [--write]`: drafts the sidecar of a
   report written without one, best effort, from its prose, and prints it with warnings for what the prose could not
-  settle, such as which findings of a replaced report were not re-checked. A screenshot cited by a suffix becomes the
+  settle, such as the findings of a replaced report, by title, to sort into carried forward and not re-checked;
+  `--json` gives one object, with `replaced`, each of those titles with its key. A screenshot cited by a suffix becomes the
   one file in the report's folder that ends with it. `--write` validates the draft and writes it; it never overwrites a sidecar.
 - `pending <report> [--json]`: the untriaged items in the order the Human answers them: each blocker alone, the other
   findings grouped by severity and owner, the replaced report's findings not re-checked, `Not reached`, then doc gaps.
-  With `--json`, it also gives `issue_creation`, the mode, `search_labels`, the plain labels, and each item's `labels`.
+  With `--json`, it also gives `issue_creation`, the mode, `search_labels`, the plain labels, and for each item its
+  `labels`, its `source` line for an issue body, and its `audit_key`.
 - `record <report> <id> <decision> [--issue KEY] [--url URL] [--reason TEXT]`: records one decision. `issue` and
   `duplicate` need `--issue` or `--url`, and `drop` needs `--reason`. A finding of a replaced report is recorded under
   that report. It refuses an id the report does not offer, and a `triage.json` it cannot read.

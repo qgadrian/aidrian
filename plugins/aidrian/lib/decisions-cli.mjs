@@ -46,7 +46,7 @@ export const commands = {
       const docs = (values.doc ?? []).flatMap((doc) => docReadings(project, doc));
       const out = decisions === null
         ? { authority: 'ask', rule: 'no-base', reason: 'git could not give the base branch\'s config, so the decision goes to the Human' }
-        : resolveAuthority({ decisions }, { domain: values.domain, class: values.class, reversible, docs });
+        : resolveAuthority({ decisions: withResolvedEntries(project, decisions) }, { domain: values.domain, class: values.class, reversible, docs });
       console.log(JSON.stringify({ ...out, base }));
       return 0;
     },
@@ -72,17 +72,49 @@ function answers(value) {
 }
 
 // What `doc` can mean, each as a path from the project root with its `#section` kept: from the current folder, and,
-// when relative, from the project root, the spelling config.json uses, unless that climbs out of it. resolveAuthority
-// asks when either reading is covered, and for a path outside the project, which starts with `../`.
+// when relative, from the project root, the spelling config.json uses, unless that climbs out of it. Each comes with
+// symlinks resolved, and with those inside the project left as written, so an entry that names a link matches it.
+// resolveAuthority asks when any reading is covered, and for a path outside the project, which starts with `../`: only
+// a resolved reading can start so, since a link out of the project is outside it, however it is written.
 function docReadings(project, doc) {
-  const at = doc.indexOf('#');
-  const [file, section] = at === -1 ? [doc, ''] : [doc.slice(0, at), doc.slice(at)];
+  const [file, section] = splitSection(doc);
   const root = real(project.root);
-  const fromRoot = (absolute) => `${path.relative(root, real(absolute)).replaceAll(path.sep, '/') || '.'}${section}`;
-  const readings = [fromRoot(path.resolve(file))];
+  const fromRoot = (absolute) => [resolvedFromRoot(root, absolute), writtenFromRoot(root, absolute)].filter((each) => each !== null).map((each) => `${each}${section}`);
+  const readings = fromRoot(path.resolve(file));
   const climbs = path.normalize(file).split(path.sep)[0] === '..';
-  if (!path.isAbsolute(file) && !climbs) readings.push(fromRoot(path.join(root, file)));
+  if (!path.isAbsolute(file) && !climbs) readings.push(...fromRoot(path.join(root, file)));
   return [...new Set(readings)];
+}
+
+// `decisions` with each `escalateDocs` entry also in its resolved spelling, so an entry that names a link covers its
+// target too. An entry is a path from the project root, so it has one reading.
+function withResolvedEntries(project, decisions) {
+  const root = real(project.root);
+  const resolved = decisions.escalateDocs.map((entry) => {
+    const [file, section] = splitSection(entry);
+    return `${resolvedFromRoot(root, path.join(root, file))}${section}`;
+  });
+  return { ...decisions, escalateDocs: [...new Set([...decisions.escalateDocs, ...resolved])] };
+}
+
+// A doc path as [file, section], with the section's `#` kept, or empty.
+function splitSection(doc) {
+  const at = doc.indexOf('#');
+  return at === -1 ? [doc, ''] : [doc.slice(0, at), doc.slice(at)];
+}
+
+// `absolute` from `root`, a real path, with every symlink resolved. It starts with `../` when it leaves the project.
+const resolvedFromRoot = (root, absolute) => path.relative(root, real(absolute)).replaceAll(path.sep, '/') || '.';
+
+// `absolute` from `root`, a real path, with the symlinks past the project root as written; any spelling of the root
+// itself counts as it. null when `absolute` is not under the root as written.
+function writtenFromRoot(root, absolute) {
+  const top = path.parse(absolute).root;
+  const parts = path.relative(top, absolute).split(path.sep).filter(Boolean);
+  for (let i = 0; i <= parts.length; i += 1) {
+    if (real(path.join(top, ...parts.slice(0, i))) === root) return parts.slice(i).join('/') || '.';
+  }
+  return null;
 }
 
 // `file` with symlinks resolved and, on a disk that ignores case, the disk's own spelling, through the nearest folder
@@ -97,8 +129,9 @@ function real(file) {
 }
 
 // The `decisions` block in force, and the commit it was read from: { decisions, base }. The team's block is the base
-// branch's, in the config folder the base branch names, so an edit to the working copy, committed or not, cannot raise
-// an agent's authority; the machine's local file then goes over it, held to that block's ceilings. commandConfig stops
+// branch's, in the config folder the base branch names, so an uncommitted edit, or a commit on another branch, cannot
+// raise an agent's authority. The exception: with no remote, a commit on the local main is the base, so it does. The
+// machine's local file then goes over the block, held to its ceilings. commandConfig stops
 // on an invalid config. Only with no git at all is the working copy the team's block. Inside git, `decisions` is null
 // when git cannot give the base, so a stalled git never reads as a project with no rules.
 function decisionsInForce(project) {
@@ -125,10 +158,10 @@ function insideGit(root) {
 }
 
 // The commit of the base branch, from names the working copy cannot set: origin/HEAD, then the plugin's default branch
-// name on origin. A branch that names itself in config.json `git.defaultBranch` is not its own base. With no origin
-// remote, a local branch of that name is the only record of the base; with one, a local branch can hold commits no one
-// reviewed, so it never stands in. null when none resolves, or when git fails on one, whose answer the next ref must
-// not replace: for rev-parse, 1 is git saying no such ref; for get-url, 2 is git saying no such remote.
+// name on origin. A branch that names itself in config.json `git.defaultBranch` is not its own base. With no remote at
+// all, a local branch of that name is the only record of the base; with any remote, whatever its name, a local branch
+// can hold commits no one reviewed, so it never stands in. null when none resolves, or when git fails on one, whose
+// answer the next ref must not replace: for rev-parse, 1 is git saying no such ref.
 function baseTip(project) {
   const branch = DEFAULTS.git.defaultBranch;
   const tipOf = (ref) => runGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], project.root);
@@ -137,7 +170,8 @@ function baseTip(project) {
     if (tip.status === 0) return tip.stdout.trim();
     if (tip.status !== 1) return null;
   }
-  if (runGit(['remote', 'get-url', 'origin'], project.root).status !== 2) return null;
+  const remotes = runGit(['remote'], project.root);
+  if (remotes.status !== 0 || remotes.stdout.trim() !== '') return null;
   const local = tipOf(`refs/heads/${branch}`);
   return local.status === 0 ? local.stdout.trim() : null;
 }

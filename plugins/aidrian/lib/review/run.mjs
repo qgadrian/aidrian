@@ -112,9 +112,8 @@ export function reviewInForce(baseReview, headReview) {
 }
 
 // The `review` group of the project config at `commit`, or null when that commit has no config.
-export function baseReviewAt(project, commit) {
-  // `./`: the path from project.root, so a project below the repository root reads its own file.
-  const text = fileAt(project.root, commit, `./${project.paths.config}`);
+function baseReviewAt(project, commit) {
+  const text = fileAt(project.root, commit, project.paths.config);
   if (text === null) return null;
   try {
     const raw = JSON.parse(text);
@@ -242,19 +241,14 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
   const effective = { ...config, review };
   const changes = changedFiles(root, base, head);
   const changedPaths = new Set(changes.map((change) => change.file));
-  // Git names a change from the repository root, and a project names its config and flow docs from its own: `prefix`
-  // puts both on git's base, for a project below the root.
-  const shownPrefix = runGit(['rev-parse', '--show-prefix'], root);
-  const prefix = shownPrefix.status === 0 ? shownPrefix.stdout.trim() : '';
-  const configPath = `${prefix}${project.paths.config}`;
   const harnessChanged = [];
-  if (changed.length && changedPaths.has(configPath)) harnessChanged.push(configPath);
+  if (changed.length && changedPaths.has(project.paths.config)) harnessChanged.push(project.paths.config);
   for (const command of [review.planCommand, baseReview?.visual?.login, baseReview?.visual?.preview]) {
     for (const file of commandFiles(root, command, baseTip)) if (changedPaths.has(file)) harnessChanged.push(file);
   }
   // A flow's invariants doc, and every doc section an invariant cites, is part of how the project is reviewed: a
   // change to one is the Human's to sign off. An edit elsewhere in a doc that is cited only by section is not.
-  harnessChanged.push(...touchedCitations(root, base, head, baseReview?.flows, changedPaths, prefix));
+  harnessChanged.push(...touchedCitations(root, base, head, baseReview?.flows, changedPaths));
   for (const reviewer of Object.values(baseReview?.reviewers ?? {})) {
     for (const file of commandFiles(root, (reviewer.command ?? []).join(' '), baseTip)) if (changedPaths.has(file)) harnessChanged.push(file);
   }
@@ -335,7 +329,7 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
 
   // The flows' invariants: a flow the base defines reads its doc from the base, so the change under review cannot
   // rewrite it; a flow the change adds reads it from the head, the only place it exists.
-  const readAt = (commit) => (file) => fileAt(root, commit, `./${file}`);
+  const readAt = (commit) => (file) => fileAt(root, commit, file);
   for (const flow of plan.flows) {
     if (flow.id === HARNESS_FLOW) Object.assign(flow, { invariants: [HARNESS_INVARIANT], unspecified: false, signoff: 'human' });
     else Object.assign(flow, invariantsOf(review.flows[flow.id] ?? {}, readAt(baseReview?.flows?.[flow.id] ? baseTip : head)));
@@ -345,7 +339,7 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
   // selects nothing of the flow, run through the same selection as the plan: its globs, added-line patterns, content
   // tracing, plan command, tests, and invariants doc. Accepting a deleted test stays exact to the head.
   const reviewCommands = [review.planCommand, review.visual?.login, review.visual?.preview, ...Object.values(baseReview?.reviewers ?? {}).map((reviewer) => (reviewer.command ?? []).join(' '))];
-  const harnessFiles = new Set([configPath, ...reviewCommands.flatMap((command) => commandFiles(root, command, baseTip))]);
+  const harnessFiles = new Set([project.paths.config, ...reviewCommands.flatMap((command) => commandFiles(root, command, baseTip))]);
   const reselected = new Map();
   const selectedSince = async (from) => {
     if (reselected.has(from)) return reselected.get(from);
@@ -356,9 +350,9 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
     const sincePaths = new Set(since.map((change) => change.file));
     for (const [id, definition] of Object.entries(review.flows)) {
       const tests = (definition.tests ?? []).map(pathPattern);
-      if (since.some((change) => tests.some((pattern) => pattern.test(change.file))) || touchedCitations(root, from, head, { [id]: definition }, sincePaths, prefix).length) ids.add(id);
+      if (since.some((change) => tests.some((pattern) => pattern.test(change.file))) || touchedCitations(root, from, head, { [id]: definition }, sincePaths).length) ids.add(id);
     }
-    if (since.some((change) => harnessFiles.has(change.file)) || touchedCitations(root, from, head, review.flows, sincePaths, prefix).length) ids.add(HARNESS_FLOW);
+    if (since.some((change) => harnessFiles.has(change.file)) || touchedCitations(root, from, head, review.flows, sincePaths).length) ids.add(HARNESS_FLOW);
     if (review.planCommand && since.length) {
       const extra = await runPlanCommand(review.planCommand, { base: from, head, changes: since }, { root, env: cleanEnv, baseTip });
       for (const flow of extra.flows ?? []) ids.add(flow.id);

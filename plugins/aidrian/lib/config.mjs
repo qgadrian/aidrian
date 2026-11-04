@@ -369,8 +369,7 @@ export function loadConfig(project) {
 // DEFAULTS; a value that fails its check keeps its default, as loadConfig does, and goes to `errors` when the caller
 // passes that list.
 export function committedConfig(project, commit, errors = []) {
-  // `./`: the path from project.root, so a project below the repository root reads its own file.
-  const shown = spawnSync('git', ['show', `${commit}:./${project.paths.config}`], { cwd: project.root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 15_000 });
+  const shown = spawnSync('git', ['show', `${commit}:${project.paths.config}`], { cwd: project.root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 15_000 });
   if (shown.error || shown.signal) throw new Error(`git show ${commit}:${project.paths.config} failed: ${shown.error?.message ?? shown.signal}`);
   if (shown.status !== 0) return DEFAULTS;
   let raw;
@@ -389,7 +388,9 @@ export function committedConfig(project, commit, errors = []) {
 // `team`, the `decisions` of config.json, with the local file's `decisions` over it, as `project.localDecisions` holds
 // it. The local file may set `mode` and `domains`, each held to the team's `maxMode`; `unreviewed.remind`; and
 // `unreviewed.pauseDomainAt`, of which only a value lower than the team's applies, one limit at a time. Any other key
-// is an error, and keeps the team's value. `errors` gets the problems; a caller that already reported them passes [].
+// is an error, and keeps the team's value. A key the local file does not set stays as the team wrote it, even above
+// `maxMode`, so the resolver and `aidrian check` can say so. `errors` gets the problems; a caller that already reported
+// them passes [].
 export function localDecisions(team, project, errors) {
   const local = project.localDecisions;
   const file = project.paths.local;
@@ -402,11 +403,12 @@ export function localDecisions(team, project, errors) {
   for (const key of Object.keys(local).filter(teamOnly)) errors.push(`${file}: "decisions.${key}" is the team's: set it in config.json`);
   const own = Object.fromEntries(Object.entries(local).filter(([key]) => !teamOnly(key)));
   const read = merge(LOCAL_DECISIONS_SCHEMA, team, own, 'decisions.', file, errors);
-  const capped = (mode) => (mode === 'inherit' ? mode : lowerMode(mode, team.maxMode));
+  // `merge` keeps the team's value for a key that is unset or refused, so `read` holds the local value only when `set` is it.
+  const capped = (set, mode) => (set !== mode || mode === 'inherit' ? mode : lowerMode(mode, team.maxMode));
   return {
     ...team,
-    mode: capped(read.mode),
-    domains: Object.fromEntries(Object.entries(read.domains).map(([domain, mode]) => [domain, capped(mode)])),
+    mode: capped(own.mode, read.mode),
+    domains: Object.fromEntries(Object.entries(read.domains).map(([domain, mode]) => [domain, capped(own.domains?.[domain], mode)])),
     unreviewed: { remind: read.unreviewed.remind, pauseDomainAt: lowerPause(team.unreviewed.pauseDomainAt, read.unreviewed.pauseDomainAt) },
   };
 }
@@ -428,7 +430,8 @@ export function committedDecisions(project, commit, file) {
   const askOnly = { ...DEFAULTS.decisions, maxMode: 'ask' };
   if (file === null) return askOnly;
   const errors = [];
-  const committed = committedConfig({ ...project, paths: { ...project.paths, config: file } }, commit, errors);
+  // `./`: the path from project.root, so a project below the repository root reads its own file.
+  const committed = committedConfig({ ...project, paths: { ...project.paths, config: `./${file}` } }, commit, errors);
   return committed === DEFAULTS || errors.some((error) => /"decisions[".]/u.test(error)) ? askOnly : committed.decisions;
 }
 

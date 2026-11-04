@@ -132,8 +132,7 @@ function configOnBranch(project, cwd) {
   const names = branches.stdout.split('\n').filter(Boolean);
   if (!names.length) return DEFAULTS;
   const resolves = (ref) => runGit(['rev-parse', '--verify', '-q', `${ref}^{commit}`], cwd).status === 0;
-  // `./` from project.root: a project below the repository root holds its config there.
-  const holdsConfig = (ref) => runGit(['cat-file', '-e', `${ref}:./${project.paths.config}`], project.root).status === 0;
+  const holdsConfig = (ref) => runGit(['cat-file', '-e', `${ref}:${project.paths.config}`], cwd).status === 0;
   const ref =
     ['refs/remotes/origin/HEAD', `refs/heads/${DEFAULTS.git.defaultBranch}`].find(resolves) ?? names.find(holdsConfig);
   if (ref === undefined) return DEFAULTS;

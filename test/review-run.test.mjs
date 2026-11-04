@@ -10,15 +10,14 @@ import { projectAt, stateDir } from '../plugins/aidrian/lib/project.mjs';
 import { blocksOf, citationProblem, flowState, invariantsOf, sectionOf } from '../plugins/aidrian/lib/review/flows.mjs';
 import { cleanOutput, resolveEngine, reviewerMap, runExec, satisfies } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { parseChoice } from '../plugins/aidrian/lib/review/quota.mjs';
-import { baseReviewAt, EXIT, recordOverrule, recordPass, recordSignoff, recordStageSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
+import { EXIT, recordOverrule, recordPass, recordSignoff, recordStageSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 import { judgeMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 
 // A repository with `main` (carrying `baseConfig`) and a `feat` branch made by `change(dir)`. Returns the helpers a
 // review step needs, with GitHub faked in memory.
-// `below` puts the project in that folder of the repository, such as "apps/web/"; `change` still writes from the top.
-function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = {}, below = '' } = {}) {
+function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = {} } = {}) {
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-review-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const git = (...args) => {
@@ -33,15 +32,15 @@ function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = 
   git('init', '-q', '-b', 'main');
   git('config', 'user.email', 't@example.com');
   git('config', 'user.name', 'Tester');
-  write(`${below}.aidrian/config.json`, JSON.stringify(baseConfig));
+  write('.aidrian/config.json', JSON.stringify(baseConfig));
   write('src/app.js', 'export const app = 1;\n');
   for (const [file, text] of Object.entries(baseFiles)) write(file, text);
-  write(`${below}docs/flows/booking.md`, '# Booking\n\n## No double booking\nTwo bookings never hold one slot.\n\n## Refund cap\nA refund never exceeds the charge.\n');
+  write('docs/flows/booking.md', '# Booking\n\n## No double booking\nTwo bookings never hold one slot.\n\n## Refund cap\nA refund never exceeds the charge.\n');
   git('add', '-A');
   git('commit', '-q', '-m', 'base');
   git('switch', '-q', '-c', 'feat');
   change(write, dir);
-  if (headConfig) write(`${below}.aidrian/config.json`, JSON.stringify(headConfig));
+  if (headConfig) write('.aidrian/config.json', JSON.stringify(headConfig));
   git('add', '-A');
   git('commit', '-q', '-m', 'change');
   const comments = [];
@@ -52,10 +51,10 @@ function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = 
     post: (_repo, _n, body) => comments.push({ id: comments.length + 1, body }),
     edit: (_repo, id, body) => (comments.find((c) => c.id === id).body = body),
   };
-  const project = projectAt(path.join(dir, below));
+  const project = projectAt(dir);
   // A fresh project per step, so a local settings file written mid-test is read.
   const step = (deps = {}, opts = {}) => {
-    const current = projectAt(path.join(dir, below));
+    const current = projectAt(dir);
     return reviewStep({ pr: '7', ...opts }, { project: current, config: loadConfig(current).config, gh, codex: () => ({ ok: true }), ...deps });
   };
   return { dir, git, write, gh, comments, project, step, commit: (msg = 'next') => (git('add', '-A'), git('commit', '-q', '-m', msg), git('rev-parse', 'HEAD')) };
@@ -152,51 +151,6 @@ test('a pull request cannot weaken the review it is under: a removed flow still 
   assert.deepEqual(human.flows, ['harness-config']);
   recordSignoff(r.project, { pr: 7, repo: 'o/r', flow: 'harness-config', head: first.head, by: 'Tester' });
   assert.equal((await r.step({ exec: clean })).status, 'received');
-});
-
-test('baseReviewAt reads the review config of a project below the repository root, and null with no config at that commit', (t) => {
-  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-review-')));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const below = path.join(dir, 'apps/web');
-  mkdirSync(path.join(below, '.aidrian'), { recursive: true });
-  writeFileSync(path.join(below, '.aidrian/config.json'), JSON.stringify({ version: 1, review: { record: 'local' } }));
-  const git = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
-  git('init', '-q', '-b', 'main');
-  git('add', '-A');
-  assert.equal(git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'base').status, 0);
-  assert.equal(baseReviewAt(projectAt(below), 'HEAD').record, 'local');
-  assert.equal(baseReviewAt(projectAt(dir), 'HEAD'), null, 'the repository root holds no config');
-});
-
-test('below the repository root, a changed config and a flow\'s invariants doc are changes to the review, and its invariants are read', async (t) => {
-  const below = 'apps/web/';
-  const whole = { booking: { files: ['apps/web/src/booking/**'], invariants: 'docs/flows/booking.md', require: ['agent:product-manager'] } };
-  const plan = async (flows, change, headConfig) => {
-    const r = repo(t, { below, baseConfig: { version: 1, review: { flows } }, headConfig, change });
-    return r.step({ exec: clean });
-  };
-  const code = (write) => write('apps/web/src/booking/book.js', 'export const book = () => 1;\n');
-
-  const config = await plan(whole, code, { version: 1, review: { flows: whole, ignore: ['apps/web/src/**'] } });
-  assert.ok(config.plan.flows.includes('harness-config'), 'the project\'s config changed');
-  const unchanged = await plan(whole, code);
-  assert.ok(!unchanged.plan.flows.includes('harness-config'), 'only code changed');
-  const pass = unchanged.dispatch.find((each) => each.agent === 'product-manager');
-  assert.deepEqual(pass.flows[0].invariants.map((each) => each.id), ['no-double-booking', 'refund-cap'], 'the flow\'s doc is read from the project');
-
-  const doc = await plan(whole, (write) => write('apps/web/docs/flows/booking.md', '# Booking\n\n## No double booking\nChanged.\n'));
-  assert.ok(doc.plan.flows.includes('harness-config'), 'the invariants doc changed');
-  const sameName = await plan(whole, (write) => write('docs/flows/booking.md', '# Elsewhere\n'));
-  assert.ok(!sameName.plan.flows?.includes('harness-config'), 'a doc of that name at the repository root is not the project\'s');
-
-  const cited = { booking: { files: ['apps/web/src/booking/**'], invariants: [{ id: 'no-double', cite: 'docs/flows/booking.md#no-double-booking' }], require: ['agent:product-manager'] } };
-  const outside = await plan(cited, (write) => {
-    code(write);
-    write('apps/web/docs/flows/booking.md', '# Booking\n\n## No double booking\nTwo bookings never hold one slot.\n\n## Refund cap\nChanged.\n');
-  });
-  assert.ok(!outside.plan.flows.includes('harness-config'), 'an edit outside the cited section');
-  const inside = await plan(cited, (write) => write('apps/web/docs/flows/booking.md', '# Booking\n\n## No double booking\nChanged.\n\n## Refund cap\nA refund never exceeds the charge.\n'));
-  assert.ok(inside.plan.flows.includes('harness-config'), 'an edit inside the cited section');
 });
 
 test('reviewInForce: rules add up, flows and ignore lists come from the base, and every change is named', () => {

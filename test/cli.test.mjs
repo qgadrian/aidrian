@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -132,6 +132,16 @@ function decisionsRepo(t, decisions) {
 
 const pick = ({ authority, rule, base }) => [authority, rule, base];
 
+// An environment whose `git` runs `script` first, then the real git, unless the script exits.
+const fake = (t, script) => {
+  const real = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  const bin = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-git-')));
+  t.after(() => rmSync(bin, { recursive: true, force: true }));
+  writeFileSync(path.join(bin, 'git'), `#!/bin/sh\n${script}\nexec ${real} "$@"\n`);
+  chmodSync(path.join(bin, 'git'), 0o755);
+  return { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+};
+
 const resolveCopy = (dir, ...more) => {
   const { status, stdout, stderr } = run(['decisions', 'resolve', '--domain', 'ux', '--class', 'copy', '--reversible', 'no,no,no,no', ...more], dir);
   assert.deepEqual([status, stderr], [0, '']);
@@ -231,6 +241,26 @@ test('decisions resolve falls back to origin/main, ahead of a local main, with n
   assert.deepEqual([resolveCopy(dir).authority, resolveCopy(dir).base], ['decide', pushed], 'with no local main at all');
 });
 
+test('decisions resolve takes a local main only with no remote at all: a remote of another name gives no-base', (t) => {
+  const { dir, git } = decisionsRepo(t, { maxMode: 'decide-reversible', mode: 'decide-reversible' });
+  const main = git('rev-parse', 'main');
+  assert.deepEqual(pick(resolveCopy(dir)), ['decide', 'mode', main], 'no remote: the local main is the only record of the base');
+  git('remote', 'add', 'upstream', 'https://example.com/upstream.git');
+  git('update-ref', 'refs/remotes/upstream/main', main);
+  assert.deepEqual(pick(resolveCopy(dir)), ['ask', 'no-base', null], 'only upstream: its main is not a name this command reads, and the local main does not stand in');
+  git('remote', 'add', 'origin', 'https://example.com/origin.git');
+  assert.deepEqual(pick(resolveCopy(dir)), ['ask', 'no-base', null], 'an origin with no fetched refs names no base yet');
+  git('update-ref', 'refs/remotes/origin/main', main);
+  assert.deepEqual(pick(resolveCopy(dir)), ['decide', 'mode', main], 'origin added and fetched, one remedy config.md names');
+
+  const renamed = decisionsRepo(t, { maxMode: 'decide-reversible', mode: 'decide-reversible' });
+  renamed.git('remote', 'add', 'upstream', 'https://example.com/upstream.git');
+  renamed.git('update-ref', 'refs/remotes/upstream/main', 'main');
+  assert.equal(resolveCopy(renamed.dir).rule, 'no-base');
+  renamed.git('remote', 'rename', 'upstream', 'origin');
+  assert.equal(resolveCopy(renamed.dir).authority, 'decide', 'upstream renamed to origin, the other remedy config.md names');
+});
+
 test('inside git with no base, or a git that fails or stalls, resolve asks and never reads the working copy', (t) => {
   const { dir, git, write } = decisionsRepo(t, { maxMode: 'decide-reversible', mode: 'decide-reversible' });
   git('branch', '-q', '-m', 'main', 'trunk');
@@ -239,14 +269,6 @@ test('inside git with no base, or a git that fails or stalls, resolve asks and n
 
   git('branch', '-q', '-m', 'trunk', 'main');
   assert.equal(resolveCopy(dir).authority, 'decide', 'the base is back');
-  const real = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
-  const fake = (t2, script) => {
-    const bin = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-git-')));
-    t2.after(() => rmSync(bin, { recursive: true, force: true }));
-    writeFileSync(path.join(bin, 'git'), `#!/bin/sh\n${script}\nexec ${real} "$@"\n`);
-    chmodSync(path.join(bin, 'git'), 0o755);
-    return { ...process.env, PATH: `${bin}:${process.env.PATH}` };
-  };
   const resolved = (env) => {
     const { status, stdout, stderr } = run(['decisions', 'resolve', '--domain', 'ux', '--class', 'copy', '--reversible', 'no,no,no,no'], dir, env);
     assert.deepEqual([status, stderr], [0, '']);
@@ -255,7 +277,7 @@ test('inside git with no base, or a git that fails or stalls, resolve asks and n
   assert.deepEqual(pick(resolved(fake(t, 'exit 3'))), ['ask', 'no-base', null], 'git fails on everything');
   assert.deepEqual(pick(resolved(fake(t, 'case " $* " in *" --verify "*) exit 3;; esac'))), ['ask', 'no-base', null], 'git fails on the base ref');
   assert.deepEqual(pick(resolved(fake(t, 'case " $* " in *" --verify "*) exec sleep 30;; esac'))), ['ask', 'no-base', null], 'git stalls on the base ref');
-  assert.deepEqual(pick(resolved(fake(t, 'case " $* " in *" get-url "*) exit 3;; esac'))), ['ask', 'no-base', null], 'git fails naming the remote: the local main does not stand in');
+  assert.deepEqual(pick(resolved(fake(t, 'case " $* " in *" remote "*) exit 3;; esac'))), ['ask', 'no-base', null], 'git fails listing the remotes: the local main does not stand in');
   const failedShow = resolved(fake(t, 'case " $* " in *" show "*) exit 3;; esac'));
   assert.deepEqual([failedShow.authority, failedShow.rule], ['ask', 'no-base'], 'git fails reading the base config');
 });
@@ -418,15 +440,90 @@ test('decisions resolve reads a relative --doc from the current folder and from 
   assert.deepEqual(rule(src, 'x/../docs/pricing.md'), ['ask', 'escalate-doc'], 'the root reading of a spelled path');
 });
 
-test('decisions resolve takes the disk\'s spelling of a --doc, so another case of a listed doc asks on a disk that ignores case', (t) => {
-  const { dir } = decisionsRepo(t, { maxMode: 'decide-reversible', mode: 'decide-reversible', escalateDocs: ['docs/pricing.md'] });
+test('decisions resolve matches a symlinked escalateDocs file or folder, named by the link or by its target, in the entry or the --doc', (t) => {
+  const outside = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-cli-')));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  writeFileSync(path.join(outside, 'away.md'), '# Away\n');
+  const asked = ['ask', 'escalate-doc'];
+  const decide = ['decide', 'mode'];
+  const repoWith = (escalateDocs) => {
+    const { dir, git } = decisionsRepo(t, { maxMode: 'decide-reversible', mode: 'decide-reversible', escalateDocs });
+    mkdirSync(path.join(dir, 'docs/real-legal'), { recursive: true });
+    for (const file of ['target.md', 'guide.md', 'real-legal/a.md']) writeFileSync(path.join(dir, 'docs', file), '# Doc\n');
+    symlinkSync('target.md', path.join(dir, 'docs/link.md'));
+    symlinkSync('real-legal', path.join(dir, 'docs/legal'));
+    symlinkSync(path.join(outside, 'away.md'), path.join(dir, 'docs/away.md'));
+    git('add', 'docs');
+    git('commit', '-q', '-m', 'docs');
+    return dir;
+  };
+  const rule = (dir, doc) => {
+    const out = resolveCopy(dir, '--doc', doc);
+    return [out.authority, out.rule];
+  };
+
+  const byLink = repoWith(['docs/link.md', 'docs/legal/']);
+  assert.deepEqual(rule(byLink, 'docs/link.md'), asked, 'file: entry and doc name the link');
+  assert.deepEqual(rule(byLink, 'docs/target.md'), asked, 'file: the entry names the link, the doc its target');
+  assert.deepEqual(rule(byLink, 'docs/legal/a.md'), asked, 'folder: entry and doc name the link');
+  assert.deepEqual(rule(byLink, 'docs/real-legal/a.md'), asked, 'folder: the entry names the link, the doc its target');
+  assert.deepEqual(rule(byLink, 'docs/guide.md'), decide, 'a doc neither reaches');
+
+  const byTarget = repoWith(['docs/target.md', 'docs/real-legal/']);
+  assert.deepEqual(rule(byTarget, 'docs/link.md'), asked, 'file: the entry names the target, the doc the link');
+  assert.deepEqual(rule(byTarget, 'docs/target.md'), asked, 'file: entry and doc name the target');
+  assert.deepEqual(rule(byTarget, 'docs/legal/a.md'), asked, 'folder: the entry names the target, the doc the link');
+  assert.deepEqual(rule(byTarget, 'docs/real-legal/a.md'), asked, 'folder: entry and doc name the target');
+
+  const section = repoWith(['docs/link.md#refunds']);
+  assert.deepEqual(rule(section, 'docs/target.md#refunds'), asked, 'a resolved entry keeps its section');
+  assert.deepEqual(rule(section, 'docs/link.md#refunds'), asked);
+  assert.deepEqual(rule(section, 'docs/target.md#other'), decide, 'another section of the target');
+  assert.deepEqual(rule(section, 'docs/link.md#other'), decide, 'another section of the link');
+
+  assert.deepEqual(rule(byLink, 'docs/away.md'), ['ask', 'doc-outside-project'], 'a link out of the project: its resolved reading decides, not the path as written');
+  const alias = path.join(outside, 'alias');
+  symlinkSync(byLink, alias);
+  assert.deepEqual(rule(byLink, path.join(alias, 'docs/link.md')), asked, 'an absolute path through a link to the project keeps the link inside it');
+  assert.deepEqual(rule(byLink, path.join(alias, 'docs/guide.md')), decide, 'and is not outside the project');
+
+  const toRoot = repoWith(['docs/whole']);
+  symlinkSync('..', path.join(toRoot, 'docs/whole'));
+  assert.deepEqual(rule(toRoot, 'docs/guide.md'), asked, 'an entry that links to the project root covers every doc');
+
+  // A doc the entry covers, swapped in the working copy for a link to one it does not: the target alone would decide.
+  const swap = (dir, file) => {
+    rmSync(path.join(dir, file));
+    symlinkSync('../guide.md', path.join(dir, file));
+  };
+  const real = decisionsRepo(t, { maxMode: 'decide-reversible', mode: 'decide-reversible', escalateDocs: ['docs/legal/'] });
+  mkdirSync(path.join(real.dir, 'docs/legal'), { recursive: true });
+  writeFileSync(path.join(real.dir, 'docs/guide.md'), '# Guide\n');
+  writeFileSync(path.join(real.dir, 'docs/legal/a.md'), '# A\n');
+  real.git('add', 'docs');
+  real.git('commit', '-q', '-m', 'docs');
+  swap(real.dir, 'docs/legal/a.md');
+  assert.deepEqual(rule(real.dir, 'docs/legal/a.md'), asked, 'swapped doc, by relative path: the path as written');
+  const realAlias = path.join(outside, 'real-alias');
+  symlinkSync(real.dir, realAlias);
+  assert.deepEqual(rule(real.dir, path.join(realAlias, 'docs/legal/a.md')), asked, 'swapped doc, by an absolute path through a link to the project: the root in any spelling');
+  const linkedFolder = repoWith(['docs/legal/']);
+  swap(linkedFolder, 'docs/real-legal/a.md');
+  assert.deepEqual(rule(linkedFolder, 'docs/legal/a.md'), asked, 'swapped doc in a folder that is itself a link: the entry as written');
+});
+
+test('decisions resolve compares a doc\'s path in any case, so another case of a listed doc asks on every disk', (t) => {
+  const { dir } = decisionsRepo(t, { maxMode: 'decide-reversible', mode: 'decide-reversible', escalateDocs: ['docs/pricing.md', 'docs/Later.md', 'docs/Legal/'] });
   mkdirSync(path.join(dir, 'docs'));
   writeFileSync(path.join(dir, 'docs/pricing.md'), '# Pricing\n');
-  const ignoresCase = existsSync(path.join(dir, 'DOCS/PRICING.md'));
   for (const doc of ['DOCS/PRICING.md', 'docs/Pricing.md#Plans', 'DOCS/new/../pricing.md']) {
-    assert.equal(resolveCopy(dir, '--doc', doc).authority, ignoresCase ? 'ask' : 'decide', doc);
+    assert.equal(resolveCopy(dir, '--doc', doc).authority, 'ask', doc);
   }
   assert.equal(resolveCopy(dir, '--doc', 'docs/pricing.md').authority, 'ask');
+  // No file on disk here, so no disk supplies a spelling: the comparison alone has to catch these.
+  for (const doc of ['docs/later.md', 'docs/LATER.md', 'docs/legal/a.md', 'DOCS/LEGAL/b.md']) {
+    assert.deepEqual(pick(resolveCopy(dir, '--doc', doc)).slice(0, 2), ['ask', 'escalate-doc'], `${doc}: docs that differ only by case both ask`);
+  }
   assert.equal(resolveCopy(dir, '--doc', 'docs/not-yet.md').authority, 'decide', 'a doc that does not exist yet still resolves');
 });
 
@@ -489,6 +586,69 @@ test('check warns when decisions.unreviewed has neither a reminder nor a pause, 
   assert.match(warned.stderr, /^warning: decisions\.unreviewed: "remind" is "off" and "pauseDomainAt" is null/mu);
   write({ unreviewed: { remind: 'off' } });
   assert.doesNotMatch(run(['check'], dir).stderr, /decisions\.unreviewed/u, 'the default pause still stops them');
+});
+
+test('a team mode or domain above maxMode: resolve names maxMode and check warns, with and without a local file that leaves the key alone', (t) => {
+  const { dir } = decisionsRepo(t, { maxMode: 'ask', mode: 'decide-reversible', domains: { product: 'decide-reversible' } });
+  writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n.worktrees/\n');
+  const check = () => {
+    const out = run(['check'], dir);
+    assert.equal(out.status, 0, out.stderr);
+    return out.stderr;
+  };
+  const local = (decisions) => writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ decisions }));
+  const MODE = /^warning: decisions\.mode: "decide-reversible" is above decisions\.maxMode "ask".*commit decisions\.maxMode "decide-reversible"/mu;
+  const DOMAIN = /^warning: decisions\.domains\.product: "decide-reversible" is above decisions\.maxMode "ask"/mu;
+
+  assert.deepEqual(pick(resolveCopy(dir)).slice(0, 2), ['ask', 'maxMode'], 'no local file');
+  assert.match(check(), MODE);
+  assert.match(check(), DOMAIN);
+
+  local({ unreviewed: { remind: 'session-start' } });
+  assert.deepEqual(pick(resolveCopy(dir)).slice(0, 2), ['ask', 'maxMode'], 'a local file that leaves mode alone');
+  assert.match(check(), MODE);
+  assert.match(check(), DOMAIN);
+
+  local({ mode: 'decide-reversible' });
+  assert.deepEqual(pick(resolveCopy(dir)).slice(0, 2), ['ask', 'mode'], 'a local file that sets mode is held down');
+  assert.doesNotMatch(check(), MODE);
+  assert.match(check(), DOMAIN, 'the key the local file left alone still warns');
+});
+
+test('check warns for an escalateDocs entry with no exact tracked path, for a typo and a case difference, and still passes', (t) => {
+  const escalateDocs = ['docs/pricing.md', 'docs/pricng.md', 'docs/Pricing.md', 'docs/legal/', 'docs/terms.md#refunds', 'docs/LEGAL/', 'docs/later.md', 'docs/café.md'];
+  const { dir, git } = decisionsRepo(t, { escalateDocs });
+  writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n.worktrees/\n');
+  mkdirSync(path.join(dir, 'docs/legal'), { recursive: true });
+  for (const file of ['pricing.md', 'terms.md', 'legal/a.md', 'café.md']) writeFileSync(path.join(dir, 'docs', file), '# Doc\n');
+  writeFileSync(path.join(dir, 'docs/later.md'), 'on disk, not tracked\n');
+  git('add', 'docs/pricing.md', 'docs/terms.md', 'docs/legal/a.md', 'docs/café.md');
+  const { status, stderr } = run(['check'], dir);
+  assert.equal(status, 0, stderr);
+  const named = [...stderr.matchAll(/^warning: decisions\.escalateDocs: "([^"]+)" matches no tracked path/gmu)].map((match) => match[1]);
+  assert.deepEqual(named, ['docs/pricng.md', 'docs/Pricing.md', 'docs/LEGAL/', 'docs/later.md'], 'a non-ASCII path git would quote matches too');
+
+  // Past the 1 MiB a spawn buffers by default, a listing that is cut off would hide the warning.
+  const large = fake(t, `case " $* " in *" ls-files "*) head -c 1200000 /dev/zero | tr '\\000' x; printf '\\000docs/pricing.md\\000'; exit 0;; esac`);
+  const listedLong = [...run(['check'], dir, large).stderr.matchAll(/escalateDocs: "([^"]+)"/gmu)].map((match) => match[1]);
+  assert.ok(listedLong.includes('docs/pricng.md'), 'a listing over 1 MiB is still read');
+  assert.ok(!listedLong.includes('docs/pricing.md'), 'to its end');
+
+  const below = path.join(dir, 'apps/web');
+  mkdirSync(path.join(below, '.aidrian'), { recursive: true });
+  mkdirSync(path.join(below, 'docs'));
+  writeFileSync(path.join(below, '.aidrian/config.json'), JSON.stringify({ version: 1, decisions: { escalateDocs: ['docs/own.md', 'docs/pricing.md'] } }));
+  writeFileSync(path.join(below, '.gitignore'), '.aidrian.local.json\n.worktrees/\n');
+  writeFileSync(path.join(below, 'docs/own.md'), '# Own\n');
+  git('add', 'apps/web/docs/own.md');
+  const nested = run(['check'], below);
+  assert.deepEqual([...nested.stderr.matchAll(/escalateDocs: "([^"]+)"/gmu)].map((match) => match[1]), ['docs/pricing.md'], 'paths are from the project root');
+
+  const plain = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-cli-')));
+  t.after(() => rmSync(plain, { recursive: true, force: true }));
+  mkdirSync(path.join(plain, '.aidrian'));
+  writeFileSync(path.join(plain, '.aidrian/config.json'), JSON.stringify({ version: 1, decisions: { escalateDocs: ['docs/none.md'] } }));
+  assert.doesNotMatch(run(['check'], plain).stderr, /escalateDocs/u, 'outside git, nothing says what is tracked');
 });
 
 // A git repository whose config.json still uses the old `pr` group, and a `gh` on the PATH that reports one skipped e2e

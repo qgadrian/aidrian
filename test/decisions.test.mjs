@@ -4,8 +4,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
-import { slug } from '../plugins/aidrian/lib/review/flows.mjs';
-import { anchorSlug, DECISION_DOMAINS, decisionClasses, decisionWarnings, loadVocab, lowerMode, resolveAuthority } from '../plugins/aidrian/lib/decisions.mjs';
+import { DECISION_DOMAINS, decisionClasses, decisionWarnings, escalateDocWarnings, loadVocab, lowerMode, resolveAuthority } from '../plugins/aidrian/lib/decisions.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const FLOOR = ['security', 'critical-flow', 'money', 'data-loss', 'unknown'];
@@ -91,13 +90,12 @@ test('a project escalate class or doc asks before anything weighs reversibility'
   for (const doc of ['docs/legal/b.md', 'docs/a.md']) assert.deepEqual(pick(resolveAuthority(spelled, question({ docs: [doc] }))), ['ask', 'escalate-doc'], `entry spelling ${doc}`);
 });
 
-test('a section matches by its heading\'s slug, as the review\'s sectionOf reads it, and that slug is the review\'s', () => {
+test('a section matches by its heading\'s slug, as the review\'s sectionOf reads it', () => {
   const listed = config({ mode: 'decide-reversible', escalateDocs: ['docs/terms.md#Refund-Policy'] });
   for (const doc of ['docs/terms.md#refund-policy', 'docs/terms.md#Refund Policy', 'docs/terms.md#refund  policy!', 'docs/terms.md#!!!']) {
     assert.deepEqual(pick(resolveAuthority(listed, question({ docs: [doc] }))), ['ask', 'escalate-doc'], doc);
   }
   assert.deepEqual(pick(resolveAuthority(listed, question({ docs: ['docs/terms.md#refund-policy-1'] }))), ['decide', 'mode']);
-  for (const text of ['Refund Policy', ' -Mixed  CASE- ', 'café: déjà-vu!', 'a_b.c', '--', '', 'Año 2026 (nuevo)']) assert.equal(anchorSlug(text), slug(text), text);
 });
 
 test('a doc outside the project asks, with or without an escalateDocs list', () => {
@@ -128,6 +126,30 @@ test('lowerMode takes the lower of two modes, and an unknown mode counts as ask'
   assert.equal(lowerMode('decide-reversible', 'ask'), 'ask');
   assert.equal(lowerMode('decide-reversible', 'decide-reversible'), 'decide-reversible');
   assert.equal(lowerMode('decide-reversible', 'bogus'), 'ask');
+});
+
+test('check warns for a mode or a domain above maxMode, naming the key to commit, and for nothing at or below it', () => {
+  const ceiling = { maxMode: 'ask' };
+  assert.deepEqual(decisionWarnings(config({ ...ceiling, mode: 'ask' })), []);
+  assert.deepEqual(decisionWarnings(open), []);
+  const [mode, ...noMore] = decisionWarnings(config({ ...ceiling, mode: 'decide-reversible' }));
+  assert.deepEqual(noMore, []);
+  assert.match(mode, /^decisions\.mode: "decide-reversible" is above decisions\.maxMode "ask".*commit decisions\.maxMode "decide-reversible"/u);
+  const domains = { ...DEFAULTS.decisions.domains, ux: 'decide-reversible', product: 'ask' };
+  const warned = decisionWarnings(config({ ...ceiling, domains }));
+  assert.equal(warned.length, 1, '"inherit" and "ask" are not above "ask"');
+  assert.match(warned[0], /^decisions\.domains\.ux: "decide-reversible" is above decisions\.maxMode "ask"/u);
+});
+
+test('escalateDocWarnings names each entry whose file or folder no tracked path matches exactly', () => {
+  const tracked = ['docs/pricing.md', 'docs/legal/terms.md', 'docs/legalese.md'];
+  const warned = (...entries) => escalateDocWarnings(entries, tracked);
+  assert.deepEqual(warned('docs/pricing.md', './docs//pricing.md', 'docs/pricing.md#refunds', 'docs/legal/', 'docs/legal'), [], 'every spelling, a section, and a folder');
+  assert.match(warned('docs/pricng.md')[0], /^decisions\.escalateDocs: "docs\/pricng\.md" matches no tracked path/u);
+  assert.match(warned('docs/Pricing.md')[0], /"docs\/Pricing\.md"/u, 'another case is no match, on any disk');
+  assert.equal(warned('docs/lega/').length, 1, 'a folder needs a whole path segment');
+  assert.equal(warned('docs/LEGAL/').length, 1);
+  assert.equal(warned('docs/pricng.md#refunds', 'docs/pricing.md').length, 1, 'one warning for each entry that misses');
 });
 
 test('check warns only when remind is off and the pause is null', () => {

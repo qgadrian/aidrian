@@ -52,7 +52,7 @@
       "tags": []
     },
     "config.md": {
-      "summary": "config.json keys: pull request title and body, review plan and gate, terms, models and effort, names, attribution, telemetry, quorum caps, decision authority.",
+      "summary": "config.json keys: pull request title, body, review plan, gate, terms, models, effort, names, attribution, telemetry, quorum roles, caps, decisions authority.",
       "tags": []
     },
     "dispatch-log.md": {

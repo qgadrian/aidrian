@@ -2,10 +2,12 @@
 // decisions.json is the only place the decision classes and the reversibility questions live; config.json `decisions`
 // sets how far a project lets agents go (docs/config.md#decisions). resolveAuthority walks a fixed order and the first
 // rule that matches wins, so no prompt weighs these by hand.
-// No dependencies: config.mjs reads this file from every hook, so it imports nothing of the plugin's.
+// config.mjs reads this file from every hook, so of the plugin's files it imports only markdown-sections.mjs, which imports nothing.
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+
+import { slug } from './markdown-sections.mjs';
 
 export const VOCAB_PATH = path.join(import.meta.dirname, 'decisions.json');
 
@@ -71,17 +73,14 @@ function pauseReason(limits, pending, now) {
   return null;
 }
 
-// A heading's anchor as review/flows.mjs `slug` reads it, so `#Refund-Policy` and `#refund policy` name one section. A
-// copy, since this file imports nothing of the plugin's; test/decisions.test.mjs holds the two equal.
-export const anchorSlug = (text) => text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, '').replace(/[\s-]+/gu, '-').replace(/^-|-$/gu, '');
-
 // One spelling of a doc path: { file, anchor }, with `file` normalised and no trailing slash, so `docs//a.md`,
-// `./docs/a.md`, and `docs/x/../a.md` are one doc; the project root is ".". `anchor` is the section's slug, or empty.
+// `./docs/a.md`, and `docs/x/../a.md` are one doc; the project root is ".". `anchor` is the section's slug, or empty,
+// so `#Refund-Policy` and `#refund policy` name one section.
 function docParts(value) {
   const text = String(value).trim().replaceAll('\\', '/');
   const at = text.indexOf('#');
   const [file, anchor] = at === -1 ? [text, ''] : [text.slice(0, at), text.slice(at + 1)];
-  return { file: path.posix.normalize(file || '.').replace(/(?<=.)\/+$/u, ''), anchor: anchorSlug(anchor) };
+  return { file: path.posix.normalize(file || '.').replace(/(?<=.)\/+$/u, ''), anchor: slug(anchor) };
 }
 
 const outsideProject = ({ file }) => file === '..' || file.startsWith('../') || file.startsWith('/');
@@ -92,21 +91,42 @@ const holds = (outer, inner) => outer === '.' || inner === outer || inner.starts
 // Whether the `escalateDocs` entry `listed` covers the doc `doc`. A doc that is a folder holding the entry is covered:
 // what it touches includes the entry. An entry with no section covers its file, whatever the doc's section, and every
 // file of its folder. An entry `file#section` covers that section, and the file with no section named, which may
-// include it; another section of the file is not covered.
+// include it; another section of the file is not covered. Paths compare in any case, so an entry asks alike on a disk
+// that ignores case and on one that does not; two docs that differ only by case both ask, which fails closed.
 function docMatches(listed, doc) {
   const entry = docParts(listed);
   const wanted = docParts(doc);
-  if (wanted.file !== entry.file && holds(wanted.file, entry.file)) return true;
-  if (!entry.anchor) return holds(entry.file, wanted.file);
-  return wanted.file === entry.file && (!wanted.anchor || wanted.anchor === entry.anchor);
+  const entryFile = entry.file.toLowerCase();
+  const wantedFile = wanted.file.toLowerCase();
+  if (wantedFile !== entryFile && holds(wantedFile, entryFile)) return true;
+  if (!entry.anchor) return holds(entryFile, wantedFile);
+  return wantedFile === entryFile && (!wanted.anchor || wanted.anchor === entry.anchor);
 }
 
 // What `aidrian check` warns about in a loaded config's `decisions`: a setting that lets unreviewed decisions pile up
-// with nothing to say so or to stop them.
+// with nothing to say so or to stop them, and a `mode` or domain above `maxMode`, which the resolver holds to ask.
 export function decisionWarnings(config) {
-  const { remind, pauseDomainAt } = config.decisions.unreviewed;
+  const { mode, maxMode, domains, unreviewed: { remind, pauseDomainAt } } = config.decisions;
+  const warnings = [];
   if (remind === 'off' && pauseDomainAt === null) {
-    return ['decisions.unreviewed: "remind" is "off" and "pauseDomainAt" is null, so unreviewed decisions pile up unseen; turn one back on'];
+    warnings.push('decisions.unreviewed: "remind" is "off" and "pauseDomainAt" is null, so unreviewed decisions pile up unseen; turn one back on');
   }
-  return [];
+  const settings = [['decisions.mode', mode], ...Object.entries(domains).map(([domain, value]) => [`decisions.domains.${domain}`, value])];
+  for (const [key, value] of settings) {
+    if (value === 'inherit' || lowerMode(value, maxMode) === value) continue;
+    warnings.push(`${key}: "${value}" is above decisions.maxMode "${maxMode}", so it has no effect; to turn it on, commit decisions.maxMode "${value}" in config.json`);
+  }
+  return warnings;
+}
+
+// What `aidrian check` warns about in `decisions.escalateDocs`: each entry whose file or folder no path of `tracked`,
+// from the project root, matches exactly, case included. A typo escalates nothing. Another case still asks, since
+// docMatches ignores case, but it names no doc as git does. Only a warning: a doc may be listed before it exists.
+export function escalateDocWarnings(entries, tracked) {
+  return entries
+    .filter((entry) => {
+      const { file: listed } = docParts(entry);
+      return !tracked.some((file) => holds(listed, file));
+    })
+    .map((entry) => `decisions.escalateDocs: "${entry}" matches no tracked path, so it may escalate nothing; check its spelling and case`);
 }

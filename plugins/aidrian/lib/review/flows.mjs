@@ -3,17 +3,15 @@
 
 import { isObject } from '../fs.mjs';
 import { runGit } from '../git.mjs';
-import { closes, expandTabs, fencedIn, fenceOf, indentOf } from '../markdown-sections.mjs';
+import { closes, expandTabs, fencedIn, fenceOf, indentOf, slug } from '../markdown-sections.mjs';
+
+export { slug };
 
 // The invariant a flow with none stated is held to. Lint and the summary mark such a flow "unspecified".
 export const UNSPECIFIED = Object.freeze({
   id: 'unspecified',
   text: 'The change keeps this flow working as before: no entry point, user action, or guarantee of the flow is removed or weakened.',
 });
-
-// The key two anchors are compared by: GitHub's anchor with `_` dropped and runs of spaces and hyphens collapsed, so
-// an anchor written by hand, copied from GitHub, or made by `anchor` finds its heading. Never shown as a link.
-export const slug = (text) => text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, '').replace(/[\s-]+/gu, '-').replace(/^-|-$/gu, '');
 
 // A heading's text as GitHub renders it: a link or image is its text, a code span its content as written, and
 // emphasis outside code loses its `*` and `_` delimiters; `_` inside a word, or inside code, stays.

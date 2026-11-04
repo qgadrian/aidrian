@@ -655,6 +655,8 @@ $ aidrian decisions resolve --domain ux --class copy --reversible no,no,no,no
 `authority` is `decide` or `ask`, and either one exits 0.
 `--doc PATH`, repeated, names a doc the decision touches, with an optional `#section`. A relative path is read from the current folder and from the
 project root, and either reading can match. Any spelling of a path counts as the same doc, and a section matches by its heading's slug.
+Case does not count, on any disk: two docs that differ only by case both ask, which fails closed.
+A symlink counts as both its own path and its target's, in `--doc` and in `escalateDocs`; a link whose target is outside the project asks.
 `aidrian decisions resolve --vocab` prints every class and reversibility question with its definition; `lib/decisions.json` is the one place they live.
 
 The first rule that matches wins:
@@ -669,11 +671,13 @@ The first rule that matches wins:
 5. `domains.<domain>`, unless it is `"inherit"`, then `mode`, each held to `maxMode`. Only `"decide-reversible"` decides.
 
 The command reads the team's block from the commit of the base branch: `origin/HEAD`, or else `main` on `origin`.
-A local `main` counts only in a repository with no `origin` remote.
+A local `main` counts only in a repository with no remote at all.
 It takes the config folder from `.aidrian.json` at that commit too. No name it uses comes from the working copy,
-so an edit there, committed or not, cannot raise an agent's authority, on any branch.
+so an uncommitted edit, or a commit on another branch, cannot raise an agent's authority.
+The exception: with no remote, a commit on the local `main` is the base, so it does raise authority.
 
 - In a git repository with no such commit, or when git does not answer, every decision asks, with the rule `no-base`.
+  That includes a repository whose only remote has another name, such as `upstream`: run `git remote rename upstream origin`, or add `origin` and fetch it.
   A project whose default branch is not `main` needs `origin/HEAD`: `git remote set-head origin --auto` sets it.
 - A base commit whose config.json is missing, does not parse, or has another version holds every decision at ask, whatever the local file says.
   So does one with a bad value or an unknown key under `decisions`.
@@ -696,7 +700,14 @@ A bad value or an unknown key under `decisions` in the working copy is a config 
 as in any other group, and `aidrian decisions resolve` stops.
 At the base commit, where no command reports it, it holds every decision at ask instead of keeping the default.
 `secondLook` and `pauseDomainAt` are given whole, or `null`.
-`aidrian check` warns when `remind` is `"off"` and `pauseDomainAt` is `null`: nothing would say that decisions are piling up, or stop them.
+
+`aidrian check` warns about settings that do nothing, and still passes:
+
+- `remind` is `"off"` and `pauseDomainAt` is `null`: nothing would say that decisions are piling up, or stop them.
+- `mode` or a `domains` entry in config.json is above `maxMode`: it has no effect, and the warning names `decisions.maxMode` as the key to commit.
+  The command answers with the rule `maxMode`. A local value above it is held down, as above, with no warning.
+- An `escalateDocs` entry whose file or folder no tracked path matches exactly, case included, such as a typo.
+  A doc may be listed before it exists, so this is a warning and not an error.
 
 ## Checking
 

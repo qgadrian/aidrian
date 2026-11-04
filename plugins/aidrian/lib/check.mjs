@@ -6,14 +6,23 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { commandConfig, VERSION, versionFloorProblem } from './config.mjs';
-import { decisionWarnings } from './decisions.mjs';
+import { decisionWarnings, escalateDocWarnings } from './decisions.mjs';
 import { isWithin, linksOutside } from './fs.mjs';
-import { checkoutRoots, isIgnored } from './git.mjs';
+import { checkoutRoots, isIgnored, runGit } from './git.mjs';
 import { checkBudgets, indexRows, loadKnowledge, tagWarnings } from './knowledge.mjs';
 import { findProject, noProjectMessage, projectAt, stateDir, worktreesDir } from './project.mjs';
 import { loadTerms } from './terms.mjs';
 
 const OPTIONS = { project: { type: 'string' } };
+
+// The warnings for `decisions.escalateDocs` entries no tracked path matches. Outside git, or when git fails, nothing
+// says what is tracked, so there are none. `-z` keeps a path git would otherwise quote as it is on disk.
+function untrackedDocs(project, config) {
+  const entries = config.decisions.escalateDocs;
+  if (!entries.length) return [];
+  const listed = runGit(['ls-files', '-z'], project.root, { maxBuffer: 64 * 1024 * 1024 });
+  return listed.status === 0 ? escalateDocWarnings(entries, listed.stdout.split('\0').filter(Boolean)) : [];
+}
 
 export const commands = {
   check: {
@@ -36,7 +45,8 @@ export const commands = {
         errors.push(`${line} is not git-ignored: add the line "${line}" to ${gitignore}, or run aidrian init`);
       }
       const tags = tagWarnings(buckets);
-      const shown = [...budgets.warnings, ...warnings, ...tags.warnings, ...decisionWarnings(config)].map((warning) => `warning: ${warning}`);
+      const decisions = [...decisionWarnings(config), ...untrackedDocs(project, config)];
+      const shown = [...budgets.warnings, ...warnings, ...tags.warnings, ...decisions].map((warning) => `warning: ${warning}`);
       if (shown.length || tags.notes.length) console.error([...shown, ...tags.notes.map((note) => `note: ${note}`)].join('\n'));
       if (errors.length) {
         console.error(errors.join('\n'));

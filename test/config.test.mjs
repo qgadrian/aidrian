@@ -5,10 +5,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { commandConfig, committedConfig, CONFIG_ERROR, DEFAULTS, loadConfig, malformedGates } from '../plugins/aidrian/lib/config.mjs';
+import { commandConfig, committedConfig, committedDecisions, CONFIG_ERROR, DEFAULTS, loadConfig, malformedGates } from '../plugins/aidrian/lib/config.mjs';
 import { linksOutside } from '../plugins/aidrian/lib/fs.mjs';
 import { loadVocab } from '../plugins/aidrian/lib/decisions.mjs';
-import { findProject } from '../plugins/aidrian/lib/project.mjs';
+import { committedConfigFile, findProject } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXAMPLE = path.join(ROOT, 'examples/consumer');
@@ -153,19 +153,20 @@ test('the committed config reads a string session.handoff as its mode too', (t) 
   assert.deepEqual(committedConfig(findProject(dir), 'HEAD').session.handoff, { ...DEFAULTS.session.handoff, mode: 'off' });
 });
 
-test('the committed config of a project below the repository root is its own file, not the defaults', (t) => {
+test('the committed decisions of a project below the repository root are its own file\'s, not the ask-only block', (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-config-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const below = path.join(dir, 'apps/web');
   mkdirSync(path.join(below, '.aidrian'), { recursive: true });
-  writeFileSync(path.join(below, '.aidrian/config.json'), JSON.stringify({ version: 1, decisions: { maxMode: 'ask' }, github: { maxReviewRounds: 7 } }));
+  writeFileSync(path.join(below, '.aidrian/config.json'), JSON.stringify({ version: 1, decisions: { maxMode: 'decide-reversible', escalate: ['copy'] } }));
   const git = (...args) => spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
   git('init', '-q');
   git('add', '.');
   assert.equal(git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'config').status, 0);
-  const committed = committedConfig(findProject(below), 'HEAD');
-  assert.equal(committed.decisions.maxMode, 'ask');
-  assert.equal(committed.github.maxReviewRounds, 7);
+  const at = findProject(below);
+  const decisions = committedDecisions(at, 'HEAD', committedConfigFile(at, 'HEAD'));
+  assert.equal(decisions.maxMode, 'decide-reversible');
+  assert.deepEqual(decisions.escalate, ['copy']);
 });
 
 test('the loaded config is frozen all the way down', (t) => {
@@ -436,6 +437,25 @@ test('decisions: the local file sets mode and domains up to the team ceiling, an
   assert.equal(bad.config.decisions.mode, 'ask');
   writeFileSync(local, JSON.stringify({ decisions: true }));
   assert.deepEqual(loadConfig(findProject(team.root)).errors, ['.aidrian.local.json: "decisions" must be an object']);
+});
+
+test('decisions: the local file caps only the keys it sets, so a team value above maxMode stays as written', (t) => {
+  const team = project(t, { version: 1, decisions: { maxMode: 'ask', mode: 'decide-reversible', domains: { ux: 'decide-reversible' } } });
+  const read = (local) => {
+    writeFileSync(path.join(team.root, '.aidrian.local.json'), JSON.stringify({ decisions: local }));
+    return loadConfig(findProject(team.root));
+  };
+  const other = read({ unreviewed: { remind: 'off' } }).config.decisions;
+  assert.equal(other.mode, 'decide-reversible', 'the local file does not set mode');
+  assert.equal(other.domains.ux, 'decide-reversible', 'the local file does not set domains.ux');
+  const some = read({ mode: 'decide-reversible', domains: { product: 'decide-reversible' } }).config.decisions;
+  assert.equal(some.mode, 'ask', 'the local file sets mode');
+  assert.equal(some.domains.product, 'ask', 'the local file sets domains.product');
+  assert.equal(some.domains.ux, 'decide-reversible', 'the local file does not set domains.ux');
+  const bad = read({ mode: 'always', domains: { ux: 'always' } });
+  assert.equal(bad.errors.length, 2);
+  assert.equal(bad.config.decisions.mode, 'decide-reversible', 'a refused local value sets nothing');
+  assert.equal(bad.config.decisions.domains.ux, 'decide-reversible', 'a refused local value sets nothing');
 });
 
 test('decisions: the local file names no team key, and unknown local keys are errors, each keeping the team value', (t) => {

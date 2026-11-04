@@ -160,26 +160,6 @@ test('pre-commit after an orphan switch reads the default branch, origin/HEAD fi
   assert.match(remote.stderr, MAIN);
 });
 
-test('pre-commit after an orphan switch finds the committed config of a project below the repository root', (t) => {
-  const dir = tempDir(t);
-  const git = gitIn(dir);
-  const below = path.join(dir, 'apps/web');
-  git('init', '-q', '-b', 'trunk');
-  mkdirSync(path.join(below, '.aidrian'), { recursive: true });
-  writeFileSync(path.join(below, '.aidrian/config.json'), JSON.stringify(GUARD_ON));
-  git('add', '.');
-  git('commit', '-q', '-m', 'init');
-  git('switch', '-q', '--orphan', 'a-bare');
-  git('commit', '-q', '--allow-empty', '-m', 'no config here');
-  git('switch', '-q', '--orphan', 'fresh');
-  // The switch removed the project's folder; git runs the lookup from it, so it has to be there.
-  mkdirSync(below, { recursive: true });
-  assert.equal(existsSync(path.join(below, '.aidrian/config.json')), false, 'the orphan switch removed config.json');
-  const { status, stderr } = preCommit(dir, {}, ['--project', below]);
-  assert.equal(status, 1, 'trunk holds the config at apps/web, though a-bare sorts first');
-  assert.match(stderr, MAIN);
-});
-
 test('pre-commit passes on a main with no config.json, though a branch that sorts first turns the guard on', (t) => {
   const { dir, git } = repo(t, null);
   git('switch', '-q', '-c', 'chore/adopt-aidrian');

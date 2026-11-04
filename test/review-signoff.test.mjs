@@ -32,6 +32,24 @@ test('an agent cannot sign off a flow, however it runs aidrian', (t) => {
   }
 });
 
+test('a sign-off inside a shell wrapper is denied', (t) => {
+  const cwd = project(t);
+  for (const command of [
+    'bash -c "aidrian pr signoff 9"',
+    "sh -c 'aidrian pr signoff 9'",
+    'zsh -lc "aidrian pr signoff 9"',
+    'eval "aidrian pr signoff 9"',
+    'eval -- "aidrian pr signoff 9"',
+    'bash -c "eval \'aidrian pr signoff 9\'"',
+    "bash <<'EOF'\naidrian pr signoff 9\nEOF",
+    'bash <<< "aidrian pr signoff 9"',
+    'echo "aidrian pr signoff 9" | bash',
+  ]) assert.equal(check(command, { cwd }), REASON, command);
+  for (const command of ['bash -c "aidrian pr review 9"', 'eval "echo pr signoff"', 'echo "pr signoff" | grep signoff', "cat <<'EOF'\naidrian pr signoff 9\nEOF"]) {
+    assert.equal(check(command, { cwd }), null, command);
+  }
+});
+
 test('outside a project the rule is off', (t) => {
   const bare = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-signoff-bare-')));
   t.after(() => rmSync(bare, { recursive: true, force: true }));

@@ -602,6 +602,7 @@ test('the shared decision rule states who computes authority, and points at the 
     /in the order `--vocab` gives/,
     /when the host cannot reach it, dispatch a fresh one with `authority: decide` and the options/,
     /already holds the class, answers, and docs may resolve first/,
+    /Read it when you return such a decision, dispatch or relay an agent that does, or write its marker\./,
   ]) assert.match(rule, line);
   for (const kind of decisionClasses()) assert.doesNotMatch(rule, new RegExp(`\`${kind}\``, 'u'), `the rule restates the class ${kind}`);
   assert.ok(existsSync(path.join(PLUGIN, 'lib/decisions.json')), 'the path the rule gives an agent with no shell');
@@ -627,6 +628,7 @@ test('each dispatcher of a deciding agent runs the resolve, and each deciding ag
     assert.match(read(rel), /[Ww]ith `authority: decide` in your brief, return `decided_provisional`/, rel);
   }
   assert.match(readFileSync(path.join(PLUGIN, 'skills', DECISION_RULE), 'utf8'), /`backlog` for `product-manager` on the order of work/);
+  assert.match(read('agents-src/coordination/orchestrator.md'), /Defer only as the project's deferral policy allows; without one, ask the Human\./);
   assert.match(read('agents-src/product-design/product-manager.md'), /Compute authority yourself/);
   assert.match(read('agents-src/product-design/product-manager.md'), /A `decided_provisional` puts its wording and marker in the doc in this branch; wording under an unconfirmed marker does not settle another change\./);
   assert.doesNotMatch(read('agents-src/product-design/product-manager.md'), /its doc waits until the Human keeps it/);

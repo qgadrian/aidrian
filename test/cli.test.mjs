@@ -1599,7 +1599,7 @@ test('list --added-since with a class in neither list at the merge base: adding 
   adds.write({ classes: { 'pricing-page': 'the words of the pricing page' } });
   adds.git('add', '.');
   adds.git('commit', '-q', '-m', 'add the class');
-  assert.deepEqual(list(adds.dir), { decisions: [], settled: [], removed: [], problems: [], pullRequest: null }, 'the marker is on record at both ends, so it is not new');
+  assert.deepEqual(list(adds.dir), { decisions: [], settled: [], removed: [], problems: [], pullRequest: null, queue: 'pr-body' }, 'the marker is on record at both ends, so it is not new');
 
   const deletes = classRepo(t, text, {});
   writeFileSync(path.join(deletes.dir, 'docs/a.md'), 'Rule.\n');

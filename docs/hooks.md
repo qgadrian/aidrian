@@ -258,6 +258,13 @@ the session transcript holds the Human's AskUserQuestion answer to a question na
 with "Merge anyway", given at or after the head's outcome and every owed review. Without a transcript in that shape
 (Codex), the Human merges in their own shell.
 
+[Auto-merge](config.md#auto-merge) goes through this guard: the rule reads its `gh pr merge` like any other.
+The guard is not proof that a review happened, because no record lets a merge run (step 2 above).
+So `aidrian pr auto-merge` reads the record itself, and no record keeps auto-merge off.
+It also stays off for a changed instruction or workflow file (`paths`), a comment from outside the repository (`outsider`),
+and requested changes (`review`). Neither it nor this guard stops a session with a shell or a forged local record:
+for proof, protect the branch with a required review from a second account. [Limits](config.md#limits).
+
 Limits:
 
 - A record written on another machine is not read here.
@@ -387,6 +394,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - A write to a folder that holds one of the files, such as `rm -rf .aidrian`, counts; one to the project root, such as `cp notes.md .`, does not.
 - A call without `agent_id` is the main session's, which may still change them.
 - A block is [recorded](#recorded-blocks) as `config-guard`, with the file it changes as its reason.
+- With or without gates, a subagent may not target `.aidrian.local.json` with a Write, Edit, or apply_patch that changes the switch,
+  or a Bash command that names `autoMerge`:
+  the [auto-merge](config.md#auto-merge) switch is the main session's. Other writes to that file follow the rules above.
 - A write the rule cannot see, such as one by a script, `xargs`, or `eval`, or a file name the code builds, still runs.
   It changes the file, but lifts no gate before the session ends: see the session's gates below.
   Like the gates, the guard is for agents that cooperate, not a sandbox.

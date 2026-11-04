@@ -350,7 +350,7 @@ function botProject(t, config = {}) {
   const log = t.mock.method(console, 'log', () => {});
   const T = (m) => `2026-08-23T07:${String(m).padStart(2, '0')}:00Z`;
   const issue = [];
-  const post = (body) => (issue.push({ id: issue.length + 1, user: { login: 'someone' }, created_at: T(20), body }), issue.at(-1));
+  const post = (body) => (issue.push({ id: issue.length + 1, user: { login: 'someone' }, author_association: 'MEMBER', created_at: T(20), body }), issue.at(-1));
   const edit = (id, body) => (issue.find((comment) => comment.id === id).body = body);
   let head = 'zzz';
   // `failRead`: the read of the bot's reviews, counted from 1 in this run, that fails as GitHub would.
@@ -364,6 +364,7 @@ function botProject(t, config = {}) {
       repo: () => 'acme/notes',
       currentPr: () => ({ number: 42 }),
       api: (p, { method, fields } = {}) => {
+        if (p === 'user') return { login: 'someone' };
         if (method === 'POST' && fields.body.startsWith('@codex review')) return (requests.push(fields), {});
         if (method === 'POST' && p.endsWith('/issues/42/comments')) return post(fields.body);
         if (method === 'PATCH' && /\/issues\/comments\/\d+$/u.test(p)) return edit(Number(p.split('/').at(-1)), fields.body);
@@ -386,7 +387,7 @@ function botProject(t, config = {}) {
   // `aidrian pr extend` as the CLI runs it, with the review step's gh over the same comments.
   const extend = (args) => runExtend(['42', ...args], project, loadConfig(project).config, {
     repo: 'acme/notes', env: {},
-    gh: { pr: () => ({ headRefOid: head }), comments: () => issue, post: (_repo, _n, body) => post(body), edit: (_repo, id, body) => edit(id, body) },
+    gh: { pr: () => ({ headRefOid: head }), comments: () => issue, post: (_repo, _n, body) => post(body), edit: (_repo, id, body) => edit(id, body), viewer: () => 'someone' },
   });
   // Another machine: this one's state folder is gone, and only the pull request's comments remain.
   const forget = () => rmSync(path.join(base, 'state'), { recursive: true, force: true });
@@ -396,6 +397,17 @@ function botProject(t, config = {}) {
 }
 
 const converging = [[['a.js', 1, 'One'], ['b.js', 5, 'Two'], ['c.js', 9, 'Three']], [['d.js', 1, 'Four'], ['e.js', 2, 'Five']], [['f.js', 3, 'Six']]];
+
+test('await-review and extend, run by a non-member, edit that user\'s own summary comment', async (t) => {
+  const { run, extend, issue } = botProject(t);
+  await run(converging);
+  assert.equal(issue.length, 1);
+  issue[0].author_association = 'CONTRIBUTOR';
+  await run(converging);
+  assert.equal(issue.length, 1, 'await-review edits it');
+  assert.equal(await extend(['--verdict', 'extend', '--reason', 'f.js:3 is a valid high finding']), 0);
+  assert.equal(issue.length, 1, 'extend edits it');
+});
 
 test('await-review --request at the cap: converging bot rounds get the judge, and a Human-approved round asks the bot once more', async (t) => {
   const { project, run } = botProject(t);
@@ -591,7 +603,7 @@ function gitBot(t, config, { working = null } = {}) {
     currentPr: () => ({ number: 42 }),
     api: (p, { method, fields } = {}) => {
       if (method === 'POST' && p.endsWith('/issues/42/comments')) {
-        const comment = { id: issue.length + 1, user: { login: 'someone' }, created_at: at(), body: fields.body };
+        const comment = { id: issue.length + 1, user: { login: 'someone' }, author_association: 'MEMBER', created_at: at(), body: fields.body };
         issue.push(comment);
         if (fields.body.startsWith('@codex review')) requests.push(comment);
         return comment;

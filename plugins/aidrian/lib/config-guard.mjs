@@ -8,7 +8,7 @@
 // unless its code is one of the few that only read (READS). The guard keeps a gate from changing for the next session;
 // within a session, the gates a subagent started with hold anyway (lib/gate-snapshot.mjs).
 
-import { readdirSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
@@ -65,6 +65,58 @@ export function configWriteDenial(input, project, { names: { human } }, { also =
   const spelled = [...configFiles(project), ...also].map((file, i) => [path.resolve(file), files[i]]);
   const named = namedFile(names, files, project, guarded) ?? globbedFile(globs, spelled, targets.length + names.length + globs.length > 1, input.tool_input?.command ?? '');
   return named ? blocked(input, shown(named), 'may change', human) : null;
+}
+
+// Why the subagent call in `input` may not set the machine's auto-merge switch, or null: { match, reason }. It targets
+// the project's local file and either changes the switch (changesAutoMerge) or is a Bash command that names `autoMerge`.
+// This holds with no gates set, and other writes to that file stay allowed. Like the rest of this guard, it is for agents that cooperate.
+export function autoMergeWriteDenial(input, project, { names: { human } }) {
+  if (typeof input.agent_id !== 'string' || input.agent_id === '') return null;
+  const isBash = input.tool_name === 'Bash';
+  if (isBash && !String(input.tool_input?.command).includes('autoMerge')) return null;
+  const { files, names } = writeTargets(input);
+  const local = project.paths.local;
+  const targets = files.filter((file) => path.basename(file).toLowerCase() === local);
+  if (targets.length === 0 && !names.some((name) => name.toLowerCase().includes(local))) return null;
+  if (!isBash && !changesAutoMerge(input, targets[0])) return null;
+  return { match: `sets github.autoMerge in ${local}`, reason: projectRuleReason(input, `it sets github.autoMerge in ${local}, and only the main session may turn merging without a Human on or off`, human) };
+}
+
+// Whether a Write, Edit, or apply_patch of the local `file` changes the switch. A Write or Edit changes it when its text
+// names `autoMerge`, or when the file it leaves parses to another `github.autoMerge` than the file on disk, which covers
+// `"off"` to `"on"`, a JSON escape, a removed key, and a file left unparsable. A patch changes it when a line it adds or
+// removes names `autoMerge`: a patch is not applied here, so a value on a line of its own without the key, or a key spelled with a JSON escape, is not seen.
+function changesAutoMerge({ tool_name: tool, tool_input: given }, file) {
+  if (tool === 'apply_patch') return /^[+-].*autoMerge/mu.test(given.command);
+  const written = { Write: given.content, Edit: given.new_string }[tool];
+  if (typeof written !== 'string') return false;
+  if (written.includes('autoMerge')) return true;
+  const before = readText(file);
+  return switchIn(before) !== switchIn(tool === 'Write' ? written : editedText(before, given));
+}
+
+// `text` after an Edit, with its new text taken literally: a replacer function keeps `$&` from meaning what it replaces.
+function editedText(text, { old_string: from, new_string: to, replace_all: all }) {
+  if (typeof from !== 'string') return text;
+  return all === true ? text.replaceAll(from, () => to) : text.replace(from, () => to);
+}
+
+// The file's text, or an empty one when it cannot be read: a hook lets the action run when it cannot read its input.
+function readText(file) {
+  try {
+    return readFileSync(file, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+// The `github.autoMerge` a text of the local file sets, as JSON text, or undefined when it sets none or is no JSON.
+function switchIn(text) {
+  try {
+    return JSON.stringify(JSON.parse(text)?.github?.autoMerge);
+  } catch {
+    return undefined;
+  }
 }
 
 // What the call writes: { files, names }. `files` are absolute paths; `names` are texts that may name a file in a folder

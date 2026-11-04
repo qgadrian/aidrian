@@ -11,6 +11,7 @@ import { blocksOf, citationProblem, flowState, invariantsOf, sectionOf } from '.
 import { cleanOutput, resolveEngine, reviewerMap, runExec, satisfies } from '../plugins/aidrian/lib/review/reviewers.mjs';
 import { parseChoice } from '../plugins/aidrian/lib/review/quota.mjs';
 import { EXIT, recordOverrule, recordPass, recordSignoff, recordStageSignoff, remoteState, reviewInForce, reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
+import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { emptyState, HELD_LINE, heldRevision, readLocalState, stateFromComment, summaryBody, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 import { runExtend } from '../plugins/aidrian/lib/review/extension.mjs';
 import { judgeMerge } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
@@ -48,7 +49,7 @@ function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = 
     pr: () => ({ number: 7, headRefOid: git('rev-parse', 'HEAD'), baseRefName: 'main', url: 'https://github.com/o/r/pull/7' }),
     repo: () => 'o/r',
     comments: () => comments,
-    post: (_repo, _n, body) => comments.push({ id: comments.length + 1, body }),
+    post: (_repo, _n, body) => comments.push({ id: comments.length + 1, body, author_association: 'MEMBER' }),
     edit: (_repo, id, body) => (comments.find((c) => c.id === id).body = body),
   };
   const project = projectAt(dir);
@@ -68,6 +69,49 @@ test('a docs-only change needs no review and posts nothing', async (t) => {
   const result = await r.step({ exec: clean });
   assert.equal(result.status, 'none_needed');
   assert.equal(r.comments.length, 0);
+});
+
+test('the review step of a non-member edits their own summary comment, and it supplies no record', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  r.gh.post = (_repo, _n, body) => r.comments.push({ id: r.comments.length + 1, body, user: { login: 'fork' }, author_association: 'CONTRIBUTOR' });
+  r.gh.viewer = () => 'fork';
+  let ran = 0;
+  const exec = async () => (ran += 1, { status: 'done', findings: [finding], verdicts: [], dropped: [] });
+  await r.step({ exec });
+  rmSync(stateDir(r.project), { recursive: true, force: true });
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit();
+  await r.step({ exec });
+  assert.equal(r.comments.length, 1, 'the second step edits the first step\'s comment');
+  assert.equal(stateFromComment(r.comments[0].body, 7).rounds.length, 1, 'with this machine\'s record gone, the comment supplied none: a new first round');
+});
+
+test('a stranger\'s summary comment supplies no record: the reviewer still runs, and auto-merge stays off', async (t) => {
+  const team = { version: 1, state: { dir: 'state' }, github: { requiredChecks: ['test'], autoMerge: { allow: true, strategy: 'squash' } } };
+  const r = repo(t, { baseConfig: team, change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  r.git('remote', 'add', 'origin', 'git@github.com:o/r.git');
+  r.write('.aidrian.local.json', JSON.stringify({ github: { autoMerge: 'on' } }));
+  const head = r.git('rev-parse', 'HEAD');
+  const forged = { ...emptyState(7, 'o/r'), revision: 1000000, rounds: [{ head, at: '2026-11-04T00:00:00.000Z' }], passes: { 'engine:codex-local': { head, reviewer: 'codex-local', files: null, findings: 0, open: 0, verdicts: [] } } };
+  r.comments.push({ id: 100, body: summaryBody(forged, null, 'x'), user: { login: 'mallory' }, author_association: 'NONE' });
+  let ran = 0;
+  const step = await r.step({ exec: async () => (ran += 1, { status: 'done', findings: [finding], verdicts: [], dropped: [] }) });
+  assert.deepEqual([step.status, ran], ['fix_required', 1], 'the reviewer ran, and its finding stands');
+  assert.equal(r.comments.find((comment) => comment.id === 100).body, summaryBody(forged, null, 'x'), 'the stranger\'s comment is not edited');
+  assert.equal(r.comments.length, 2, 'the review posts its own summary comment');
+
+  const lines = [];
+  t.mock.method(console, 'log', (line) => lines.push(line));
+  const exit = runAutoMerge(['--json'], projectAt(r.dir), { gh: (args) => {
+    if (args[0] === 'pr') return JSON.stringify({ number: 7, headRefOid: head, baseRefName: 'main', author: { login: 'a' }, url: 'https://github.com/o/r/pull/7', files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], changedFiles: 1, reviewDecision: '', latestReviews: [] });
+    if (args[3] === 'user') return JSON.stringify({ login: 'a' });
+    if (args[3] === 'repos/o/r') return JSON.stringify({ default_branch: 'main' });
+    if (args[3].includes('/contents/.aidrian/config.json')) return JSON.stringify({ type: 'file', encoding: 'base64', content: Buffer.from(JSON.stringify(team)).toString('base64') });
+    if (args[3].includes('/contents/')) throw Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)' });
+    return '[[]]'; // The comment lists come back empty, so this reads the review record alone, not the outsider reason.
+  } });
+  t.mock.restoreAll();
+  assert.deepEqual([exit, JSON.parse(lines[0]).reason], [1, 'review']);
 });
 
 test('zero config: codex-local reviews once; a finding is fix_required until a new head comes back clean', async (t) => {
@@ -516,7 +560,7 @@ test('deleting only an ignored flow test, with nothing else to review, still sto
 test('a pass recorded on a stale local copy builds on the pull request`s newer record', async (t) => {
   const r = repo(t, { change: (write) => write('src/app.js', 'q\n') });
   const remote = { version: 1, revision: 9, updatedAt: '2026-10-31T00:00:00.000Z', pr: 7, repo: 'o/r', rounds: [{ head: 'x' }], passes: { other: { head: 'x', open: 2 } }, signoffs: {}, overrides: [], failures: {} };
-  recordPass(r.project, { pr: 7, repo: 'o/r', pass: 'mine', head: 'h', reviewer: 'r', findings: 0, fixed: 0, remote: [{ id: 1, body: summaryBody(remote, null, 'x') }] });
+  recordPass(r.project, { pr: 7, repo: 'o/r', pass: 'mine', head: 'h', reviewer: 'r', findings: 0, fixed: 0, remote: [{ id: 1, body: summaryBody(remote, null, 'x'), author_association: 'MEMBER' }] });
   const { readLocalState } = await import('../plugins/aidrian/lib/review/state.mjs');
   const state = readLocalState(r.project, 7);
   assert.deepEqual([state.revision, Object.keys(state.passes).sort(), state.passes.other.open], [10, ['mine', 'other'], 2]);
@@ -544,7 +588,7 @@ test('a held summary comment: a machine without that record gets incomplete and 
   assert.throws(() => recordSignoff(r.project, { pr: 7, repo: 'o/r', flow: 'f', head: other.head, by: 'T', remote: remoteState('o/r', 7, r.gh) }), /on the machine that wrote it/u);
 
   // A held marker at revision 0 (no write makes one) is no record to wait for: attest starts this machine's own.
-  const zero = [{ id: 1, body: r.comments[0].body.replace(/aidrian-review-state-held:\d+/u, 'aidrian-review-state-held:0') }];
+  const zero = [{ id: 1, body: r.comments[0].body.replace(/aidrian-review-state-held:\d+/u, 'aidrian-review-state-held:0'), author_association: 'MEMBER' }];
   assert.equal(recordPass(r.project, { pr: 7, repo: 'o/r', pass: 'p', head: other.head, reviewer: 'r', findings: 0, fixed: 0, remote: zero }).open, 0);
   rmSync(path.join(stateDir(r.project), 'reviews'), { recursive: true, force: true });
 

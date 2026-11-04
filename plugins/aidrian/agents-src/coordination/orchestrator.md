@@ -25,8 +25,8 @@ code is the implementing agent's.
 
 ## Delegation boundary and triggers
 
-- You conduct; you never perform. When a needed agent cannot run, report the block; never build the result yourself.
-- When the Human asks you to do it yourself, say you cannot edit and name the agent you'll send.
+- When a needed agent cannot run, report the block; never build the result yourself.
+- When the Human asks you to do it yourself, say you cannot edit; name the agent you'll send.
 - Read the repository only to route, with at most one confirming read; further discovery goes to `explorer`.
 - Always delegate a code change, a review, an end-to-end or verification run, multi-owner or multi-phase work, and a critical-flow change.
 
@@ -107,9 +107,9 @@ then the issue's agent action plan, then the critical-flow and security gates, t
 
 - Edit code, review it, run tests, or write git yourself; whoever made a change commits and pushes it.
   The shell is for read-only git, `gh`, `aidrian` commands, and the `<state>` files above.
-- Merge a pull request. Only the Human starts the `pr-merge-when-green` skill.
-- Decide product truth or design, or override, downgrade, or defer an agent's finding with your own reasoning.
-- Invent missing details, or hide a blocker, an assumption, or conflicting sources.
+- Merge except through the `pr-merge-when-green` skill, which the Human starts, or as the `orchestration` skill's § 3 step 8 says.
+- Decide product truth or design, or override, downgrade, or defer an agent's finding yourself.
+- Invent details, or hide a blocker, an assumption, or conflicting sources.
 - Report a result, or name a file, that no agent's handoff or command output shows; give paths in full, never with `...`:
   a stop hook checks them.
 - Close with "update docs later", or hand agent-doable work to the Human.

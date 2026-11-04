@@ -2,7 +2,8 @@
 // `new` creates a worktree for a branch in the project's worktrees folder and runs config.json `git.worktrees.bootstrap`
 // there. `cleanup` sorts the other worktrees into auto (a merged pull request's exact head, clean with no ignored files
 // outside the `git.worktrees.disposable` folders, old enough), confirm (everything else, with the reasons), and skip, and
-// removes auto rows plus the ones a person confirmed. Its plan only reads: it writes nothing to the repository.
+// removes auto rows plus the ones a person confirmed. `--only PATH` sorts that one worktree and no other, as a merge
+// step that removes its own pull request's worktree needs. Its plan only reads: it writes nothing to the repository.
 // Both print one JSON object; a problem is {"status":"blocked","phase","reason","next_step"} with exit 1.
 
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
@@ -33,12 +34,13 @@ const OPTIONS = {
   plan: { type: 'boolean' },
   'reuse-existing': { type: 'boolean' },
   'min-age': { type: 'string' },
+  only: { type: 'string' },
   force: { type: 'boolean' },
 };
 
 export const commands = {
   worktree: {
-    usage: 'new BRANCH [--base REF] [--slug NAME] [--fetch] [--plan] [--reuse-existing] | cleanup [plan|execute] [--min-age 24h] [--force]',
+    usage: 'new BRANCH [--base REF] [--slug NAME] [--fetch] [--plan] [--reuse-existing] | cleanup [plan|execute] [--only PATH] [--min-age 24h] [--force]',
     about: 'create a task worktree and run its bootstrap, or remove the worktrees whose work has merged (execute reads decisions on stdin)',
     run(args) {
       const { values, positionals } = parseArgs({ args, allowPositionals: true, options: OPTIONS });
@@ -49,8 +51,9 @@ export const commands = {
         }
         if (action === 'cleanup' && ['plan', 'execute', undefined].includes(target) && !extra.length) {
           const minAgeSec = parseDuration(values['min-age'] ?? '24h');
-          if (target !== 'execute') return print(planCleanup({ minAgeSec }));
-          return print(executeCleanup({ minAgeSec, force: Boolean(values.force), decisions: readDecisions(readFileSync(0, 'utf8')) }));
+          const { only } = values;
+          if (target !== 'execute') return print(planCleanup({ minAgeSec, only }));
+          return print(executeCleanup({ minAgeSec, only, force: Boolean(values.force), decisions: readDecisions(readFileSync(0, 'utf8')) }));
         }
       } catch (error) {
         console.log(JSON.stringify({ status: 'blocked', phase: error.phase ?? 'arguments', reason: error.message, ...(error.nextStep ? { next_step: error.nextStep } : {}) }));
@@ -208,15 +211,27 @@ export function mergedHeads(main) {
 // clean and holds no git-ignored file, such as a `.env`, outside the folders config.json `git.worktrees.disposable` names,
 // such as `node_modules/`, and the worktree is old enough. A merge seen only by git (HEAD already on the base, or the
 // same change squashed into it) is also true of a branch created a minute ago with no commits, so it only frames the
-// confirm question.
-export function planCleanup({ minAgeSec = DAY_SEC } = {}, { cwd = process.cwd(), heads = mergedHeads, now = Date.now() } = {}) {
+// confirm question. `only`, a worktree's path (relative to `cwd`), sorts that worktree alone and lists no other. Any
+// `only` that is not null counts as given: an empty one, or a path that is not exactly one worktree's own folder with
+// symlinks resolved, blocks the run before gh is asked, so it never widens to every worktree. The age and
+// current-worktree rules still apply.
+export function planCleanup({ minAgeSec = DAY_SEC, only = null } = {}, { cwd = process.cwd(), heads = mergedHeads, now = Date.now() } = {}) {
   const ctx = context(cwd);
+  let worktrees = listWorktrees(ctx.main);
+  const scoped = only !== null && only !== undefined;
+  if (scoped) {
+    if (!String(only).trim()) throw blocked('validate', '--only is empty: name the worktree folder to clean up', 'Pass a worktree folder that git worktree list shows.');
+    const wanted = realPath(path.resolve(cwd, String(only)));
+    worktrees = worktrees.filter((worktree) => realPath(worktree.path) === wanted);
+    if (!worktrees.length) throw blocked('validate', `--only names no worktree: ${only}`, 'Pass a worktree folder that git worktree list shows.');
+    if (worktrees.length > 1) throw blocked('validate', `--only matches ${worktrees.length} worktrees: ${worktrees.map((worktree) => worktree.path).join(', ')}`, 'Pass the folder of exactly one worktree.');
+  }
   const merged = heads(ctx.main);
   const out = {
-    status: 'planned', base: ctx.base, gh_available: merged !== null, min_age_sec: minAgeSec, disposable: ctx.config.git.worktrees.disposable,
-    auto: [], confirm: [], skip: [],
+    status: 'planned', base: ctx.base, gh_available: merged !== null, min_age_sec: minAgeSec, only: scoped ? worktrees[0].path : null,
+    disposable: ctx.config.git.worktrees.disposable, auto: [], confirm: [], skip: [],
   };
-  for (const worktree of listWorktrees(ctx.main)) {
+  for (const worktree of worktrees) {
     const row = classify(worktree, ctx, merged, minAgeSec, now);
     out[row.bucket].push(row);
   }
@@ -227,7 +242,7 @@ function classify(worktree, ctx, merged, minAgeSec, now) {
   const { path: dir, branch, head } = worktree;
   const skip = (reason) => ({ bucket: 'skip', path: dir, branch, reason });
   if (worktree.main) return skip('main checkout');
-  if (dir === ctx.current) return skip('current worktree');
+  if (realPath(dir) === realPath(ctx.current)) return skip('current worktree');
   if (worktree.locked) return skip('locked');
   if (worktree.prunable) return skip('folder is gone; cleanup execute prunes it');
   const age = ageSec(dir, now);
@@ -340,9 +355,9 @@ function readDecisions(raw) {
 // that names no row is reported in `unmatched`. A row with uncommitted changes, or a detached HEAD with commits on no
 // branch, needs both that decision and `force`. Another session may commit while this runs, so a row whose HEAD moved,
 // or whose tree gained changes or ignored files, is refused with its branch kept. Branches go with their worktree;
-// `git worktree prune` ends it.
-export function executeCleanup({ minAgeSec = DAY_SEC, force = false, decisions = {} } = {}, { cwd = process.cwd(), heads = mergedHeads, now = Date.now() } = {}) {
-  const plan = planCleanup({ minAgeSec }, { cwd, heads, now });
+// `git worktree prune` ends it. With `only`, the plan holds that one worktree, so nothing else is removed.
+export function executeCleanup({ minAgeSec = DAY_SEC, only = null, force = false, decisions = {} } = {}, { cwd = process.cwd(), heads = mergedHeads, now = Date.now() } = {}) {
+  const plan = planCleanup({ minAgeSec, only }, { cwd, heads, now });
   const { main } = checkoutRoots(cwd);
   const decided = new Map(Object.entries(decisions).map(([key, decision]) => [realPath(key), { key, decision }]));
   const rows = [...plan.auto, ...plan.confirm, ...plan.skip].map((row) => realPath(row.path));

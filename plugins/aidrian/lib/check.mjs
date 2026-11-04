@@ -34,6 +34,8 @@ export const commands = {
       for (const { line, gitignore } of unignored(project, config)) {
         errors.push(`${line} is not git-ignored: add the line "${line}" to ${gitignore}, or run aidrian init`);
       }
+      // A machine opted in under a ceiling the team keeps closed merges nothing: a warning, since the local file is valid.
+      if (project.localAutoMerge === 'on' && !config.github.autoMerge.allow) warnings.push('auto-merge is on locally but the team does not allow it');
       const tags = tagWarnings(buckets);
       const shown = [...budgets.warnings, ...warnings, ...tags.warnings].map((warning) => `warning: ${warning}`);
       if (shown.length || tags.notes.length) console.error([...shown, ...tags.notes.map((note) => `note: ${note}`)].join('\n'));

@@ -351,3 +351,84 @@ test('ln, truncate, install, dd, git checkout --, git restore, and a glob that m
     assert.equal(verdict(dir, subagent(dir, 'Bash', { command })), null, command);
   }
 });
+
+test('a subagent may not set the auto-merge switch, with or without gates; other local writes and the main session stay allowed', (t) => {
+  const on = JSON.stringify({ github: { autoMerge: 'on' } });
+  const gated = project(t).dir;
+  const denied = spawnSync(process.execPath, [HOOK], { input: JSON.stringify(subagent(gated, 'Write', { file_path: '.aidrian.local.json', content: on })), cwd: gated, encoding: 'utf8' });
+  assert.equal(denied.status, 2);
+  assert.match(denied.stderr, /github\.autoMerge/u, 'with gates, this rule answers first');
+  {
+    const { dir } = project(t, { version: 1 });
+    const run = (input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
+    for (const [tool, toolInput] of [
+      ['Write', { file_path: path.join(dir, '.aidrian.local.json'), content: on }],
+      ['Write', { file_path: '.aidrian.local.json', content: on }],
+      ['Write', { file_path: '.AIDRIAN.LOCAL.JSON', content: on }],
+      ['Edit', { file_path: '.aidrian.local.json', old_string: '"off"', new_string: '"autoMerge": "on"' }],
+      ['Write', { file_path: '/elsewhere/main/.aidrian.local.json', content: on }],
+      ['Bash', { command: `echo '${on}' > .aidrian.local.json` }],
+      ['Bash', { command: `cd "$d" && echo '${on}' > .aidrian.local.json` }],
+      ['Bash', { command: `python3 -c "open('.aidrian.local.json','w').write('autoMerge')"` }],
+    ]) {
+      const result = run(subagent(dir, tool, toolInput));
+      assert.equal(result.status, 2, JSON.stringify(toolInput));
+      assert.match(result.stderr, /github\.autoMerge/u);
+    }
+    for (const [tool, toolInput] of [
+      ['Write', { file_path: '.aidrian.local.json', content: JSON.stringify({ names: { human: 'x' } }) }],
+      ['Edit', { file_path: '.aidrian.local.json', old_string: 'a', new_string: 'b' }],
+      ['Write', { file_path: 'docs/notes.md', content: 'autoMerge is a key of .aidrian.local.json' }],
+      ['Read', { file_path: '.aidrian.local.json' }],
+      ['Bash', { command: 'jq .github.autoMerge .aidrian.local.json' }],
+      ['Bash', { command: 'echo autoMerge > docs/.aidrian.local.json.md' }],
+    ]) {
+      assert.equal(run(subagent(dir, tool, toolInput)).status, 0, JSON.stringify(toolInput));
+    }
+    const { agent_id: _ignored, agent_type: _alsoIgnored, ...main } = subagent(dir, 'Write', { file_path: '.aidrian.local.json', content: on });
+    assert.equal(run(main).status, 0, 'the main session may');
+  }
+});
+
+test('a subagent may not change the auto-merge switch without naming it: the guard reads what an Edit, Write, or apply_patch leaves', (t) => {
+  const { dir } = project(t, { version: 1 });
+  const local = path.join(dir, '.aidrian.local.json');
+  writeFileSync(local, `${JSON.stringify({ names: { human: 'off' }, models: { claude: { agents: {} } }, github: { autoMerge: 'off' } }, null, 2)}\n`);
+  const run = (input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
+  const patch = (file, ...lines) => ({ command: ['*** Begin Patch', `*** Update File: ${file}`, '@@', ...lines, '*** End Patch', ''].join('\n') });
+  const edit = (old_string, new_string, more = {}) => ['Edit', { file_path: '.aidrian.local.json', old_string, new_string, ...more }];
+  for (const [tool, toolInput] of [
+    edit('"autoMerge": "off"', '"autoMerge": "on"'),
+    ['Edit', { file_path: local, old_string: '"autoMerge": "off"', new_string: '"auto\\u004derge": "on"' }],
+    // The second "off" is the switch, so only replace_all reaches it.
+    edit('"off"', '"on"', { replace_all: true }),
+    edit('"autoMerge": "off"', '"other": 1'),
+    edit('"autoMerge": "off"', '"no longer JSON'),
+    ['Write', { file_path: '.aidrian.local.json', content: '{ "github": { "auto\\u004derge": "on" } }' }],
+    ['Write', { file_path: '.aidrian.local.json', content: '{}' }],
+    ['apply_patch', patch('.aidrian.local.json', '-    "autoMerge": "off"', '+    "autoMerge": "on"')],
+    ['apply_patch', patch(local, '+    "autoMerge": "on",')],
+    ['apply_patch', patch('.aidrian.local.json', '-    "autoMerge": "off"')],
+    ['apply_patch', { command: '*** Begin Patch\n*** Add File: .aidrian.local.json\n+{ "github": { "autoMerge": "on" } }\n*** End Patch\n' }],
+    ['apply_patch', patch('old.json', '*** Move to: .aidrian.local.json', '+{ "github": { "autoMerge": "on" } }')],
+  ]) {
+    const result = run(subagent(dir, tool, toolInput));
+    assert.equal(result.status, 2, JSON.stringify(toolInput));
+    assert.match(result.stderr, /github\.autoMerge/u, JSON.stringify(toolInput));
+  }
+  for (const [tool, toolInput] of [
+    edit('"agents": {}', '"agents": { "explorer": { "model": "opus" } }'),
+    // The text is written as it is: `$&` is no reference to what it replaces.
+    edit('"human": "off"', '"human": "$&"'),
+    edit('"off"', '"on"'),
+    edit('"absent"', '"on"'),
+    ['Edit', { file_path: 'src/app.js', old_string: '"off"', new_string: '"on"' }],
+    ['Write', { file_path: '.aidrian.local.json', content: '{ "github": { "auto\\u004derge": "off" } }' }],
+    ['apply_patch', patch('.aidrian.local.json', '     "autoMerge": "off"', '-  "models": {}', '+  "models": { "claude": {} }')],
+    ['apply_patch', patch('docs/notes.md', '+autoMerge is a key of the local file')],
+  ]) {
+    assert.equal(run(subagent(dir, tool, toolInput)).status, 0, JSON.stringify(toolInput));
+  }
+  const { agent_id: _ignored, agent_type: _alsoIgnored, ...main } = subagent(dir, ...edit('"autoMerge": "off"', '"autoMerge": "on"'));
+  assert.equal(run(main).status, 0, 'the main session may');
+});

@@ -141,6 +141,8 @@ export function sidecarProblems(value, { dir = null, report = null, replacedTitl
     at('supersedes', 'must be null or the file name of the report this run replaces');
   } else if (value.supersedes && value.supersedes === value.report) at('supersedes', 'a report cannot replace itself');
 
+  // A finding of the replaced report has two spellings, `F1` and `<that report>#F1`: one finding, so one key here.
+  const oneSpelling = (key) => (key.startsWith(`${value.supersedes}#`) ? key.slice(value.supersedes.length + 1) : key);
   const replaced = {};
   for (const key of ['carried_forward', 'not_rechecked']) {
     const list = value[key];
@@ -149,8 +151,9 @@ export function sidecarProblems(value, { dir = null, report = null, replacedTitl
       continue;
     }
     if (list.length && !value.supersedes) at(key, 'needs supersedes: it lists findings of the report this run replaces');
-    if (new Set(list).size !== list.length) at(key, 'lists a finding twice');
-    replaced[key] = list;
+    const keys = list.map(oneSpelling);
+    if (new Set(keys).size !== keys.length) at(key, 'lists a finding twice');
+    replaced[key] = keys;
   }
   const both = (replaced.carried_forward ?? []).filter((id) => (replaced.not_rechecked ?? []).includes(id));
   if (both.length) {

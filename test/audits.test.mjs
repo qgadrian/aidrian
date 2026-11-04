@@ -832,3 +832,37 @@ test('a finding left open stays open down a chain of replacements: three runs, a
   const reports = JSON.parse(run('list', '--json').stdout);
   assert.ok(reports.some((r) => r.status !== 'replaced'), JSON.stringify(reports.map((r) => [r.report, r.status])));
 });
+
+test('the two spellings of a replaced finding are one finding: neither listed twice, nor carried forward and not re-checked', (t) => {
+  const { audits, run } = project(t);
+  const file = path.join(audits, 'front-desk-2026-05-02-2.json');
+  const cases = [
+    { not_rechecked: ['F2', `${OLD}#F2`], carried_forward: [], message: /not_rechecked: lists a finding twice/u },
+    { not_rechecked: [], carried_forward: ['F1', `${OLD}#F1`], message: /carried_forward: lists a finding twice/u },
+    { not_rechecked: [`${OLD}#F1`], carried_forward: ['F1'], message: /not_rechecked: "the part note sits behind a collapsed "Optional" section" also in carried_forward/u },
+    { not_rechecked: ['F1'], carried_forward: [`${OLD}#F1`], message: /not_rechecked: "the part note sits behind a collapsed "Optional" section" also in carried_forward/u },
+  ];
+  for (const { not_rechecked: rechecks, carried_forward: carried, message } of cases) {
+    const flags = ['--not-rechecked', rechecks.join(','), '--carried-forward', carried.join(',')];
+    // import refuses it.
+    const imported = run('import', NEW, ...flags, '--write');
+    assert.equal(imported.status, 1, flags.join(' '));
+    assert.match(imported.stderr, message);
+    assert.equal(existsSync(file), false);
+    noIds(imported.stderr);
+
+    // A sidecar already on disk is one invalid report, through list and check, and pending offers nothing twice.
+    writeFileSync(file, JSON.stringify({ ...JSON.parse(run('import', NEW, '--json').stdout).draft, not_rechecked: rechecks, carried_forward: carried }));
+    const entry = JSON.parse(run('list', '--json').stdout).find((r) => r.report === NEW);
+    assert.equal(entry.status, 'invalid', flags.join(' '));
+    assert.equal(entry.items, 15, 'its own items, with no finding offered twice');
+    assert.match(run('check', NEW).stderr, /lists a finding twice|also in carried_forward/u);
+    assert.match(run('pending', NEW).stderr, /invalid sidecar/u);
+    rmSync(file);
+  }
+
+  // Either spelling alone is fine, and offers the finding once.
+  assert.equal(run('import', NEW, '--not-rechecked', `${OLD}#F2,F3`, '--carried-forward', 'F1', '--write').status, 0, 'one of each');
+  const items = JSON.parse(run('pending', NEW, '--json').stdout).groups.flatMap((g) => g.items).filter((i) => i.kind === 'not_rechecked');
+  assert.deepEqual(items.map((i) => i.audit_key), [`${OLD}#F2`, `${OLD}#F3`]);
+});

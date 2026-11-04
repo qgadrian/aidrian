@@ -25,7 +25,7 @@ becomes a product rule until the project's docs say so. Start this mode only whe
 The cap is 10 dispatches with no loop: the trace, the prepare, the interview, the shape, two grills, the draft, the
 walkthrough, the ruling, and one retry. Each of `maxLoops` loops, 2 by default, adds up to 6. `roles` prints both. Every role runs on the host's model, so `same_model` is `true`, and its reason says so. A resume of an agent counts as a dispatch.
 
-Run this mode from the session the Human is in, never from a subagent: an agent's answer returns only to a parent still running, and a parent that ends its turn to wait is gone.
+An agent's answer returns only to a parent still running. A coordinator that is itself a subagent, such as `orchestrator`, never ends its turn to wait: it stays running with a shell wait, such as 30 seconds at a time, until each answer arrives.
 
 A missing trace, prepare, shape, or draft stops the run with `blocked`. A missing interview or walkthrough answer leaves
 that field empty, and a missing grill raises no points; the report names each.

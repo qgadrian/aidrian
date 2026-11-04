@@ -19,7 +19,8 @@
 // docs/project-folder.md#decision-markers the marker. `list` exits 0 with problems: they are part of what it reports.
 // `list --added-since` in a repository with no project folder prints the empty result and exits 0: no folder, no markers.
 // `undo` exits 1 and writes nothing when it refuses, after printing why, both wordings, and the block it searched.
-// `resolve`, `set`, and `undo` each add a row to the dispatch log (logDecision); docs/dispatch-log.md describes them.
+// `resolve`, `set`, and `undo` each add a row to the dispatch log (logDecision), and `quorum route` adds `resolve`'s;
+// docs/dispatch-log.md describes them.
 
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -67,25 +68,33 @@ export const commands = {
       }
       if (!values.domain || !values.class) return fail('resolve needs --domain and --class');
       const reversible = answers(values.reversible);
-      if (!reversible) return fail(`--reversible takes up to ${questions().length} answers, each no or yes, separated by commas: ${questions().join(', ')}`);
+      if (!reversible) return fail(reversibleProblem());
       const project = projectAt(values.project ?? process.cwd());
-      const { decisions, base, autoMergeAllow } = decisionsInForce(project);
-      const docs = (values.doc ?? []).flatMap((doc) => docReadings(project, doc));
-      const pending = decisions === null || decisions.unreviewed.pauseDomainAt === null ? [] : pendingDecisions(project, base, decisions.classes);
-      const block = decisions === null ? null : withResolvedEntries(project, decisions);
-      const question = { domain: values.domain, class: values.class, reversible, docs, pending };
-      const out = decisions === null
-        ? { authority: 'ask', rule: 'no-base', reason: 'git could not give the base branch\'s config, so the decision goes to the Human' }
-        : pending === null
-          ? { authority: 'ask', rule: 'no-base', reason: 'git could not give the unreviewed decisions, so the decision goes to the Human' }
-          : resolveAuthority({ decisions: block, github: { autoMerge: { allow: autoMergeAllow } } }, question);
-      const unattended = out.authority === 'decide' ? null : out.rule === 'no-base' ? 'park' : unattendedAnswer(block, question);
-      logDecision(project, resolveRow(out, question));
-      console.log(JSON.stringify({ ...out, unattended, secondLook: out.rule === 'no-base' ? null : decisions.secondLook, base }));
+      console.log(JSON.stringify(resolveQuestion(project, { domain: values.domain, class: values.class, reversible, docs: values.doc ?? [] })));
       return 0;
     },
   },
 };
+
+// Who settles one decision, from the base branch's rules: what `decisions resolve` prints,
+// `{ authority, rule, reason, unattended, secondLook, base }`, with its one row in the dispatch log.
+// `decisions resolve` and `quorum route` both ask through here, so they cannot disagree, and the row's `key` counts one
+// question once, whichever asked. commandConfig stops it on an invalid config.
+export function resolveQuestion(project, { domain, class: kind, reversible, docs: named = [] }) {
+  const { decisions, base, autoMergeAllow } = decisionsInForce(project);
+  const docs = named.flatMap((doc) => docReadings(project, doc));
+  const pending = decisions === null || decisions.unreviewed.pauseDomainAt === null ? [] : pendingDecisions(project, base, decisions.classes);
+  const block = decisions === null ? null : withResolvedEntries(project, decisions);
+  const question = { domain, class: kind, reversible, docs, pending };
+  const out = decisions === null
+    ? { authority: 'ask', rule: 'no-base', reason: 'git could not give the base branch\'s config, so the decision goes to the Human' }
+    : pending === null
+      ? { authority: 'ask', rule: 'no-base', reason: 'git could not give the unreviewed decisions, so the decision goes to the Human' }
+      : resolveAuthority({ decisions: block, github: { autoMerge: { allow: autoMergeAllow } } }, question);
+  const unattended = out.authority === 'decide' ? null : out.rule === 'no-base' ? 'park' : unattendedAnswer(block, question);
+  logDecision(project, resolveRow(out, question));
+  return { ...out, unattended, secondLook: out.rule === 'no-base' ? null : decisions.secondLook, base };
+}
 
 // What resolve logs: the rule, and the domain and class when each is a name. An argument is free text to the parser, and the
 // log holds names; so is the rule's `reason`, which can quote a doc, left out. `key` is one question, asked in one session
@@ -490,9 +499,11 @@ function vocabulary(own = {}) {
   return { classes: Object.fromEntries([...classes.map(({ class: name, floor, definition }) => [name, { floor, definition }]), ...added]), reversibility };
 }
 
+export const reversibleProblem = () => `--reversible takes up to ${questions().length} answers, each no or yes, separated by commas: ${questions().join(', ')}`;
+
 // `--reversible` as { question: boolean }, with a question left out missing, or null when a word is neither no nor yes,
 // or there are more words than questions. An absent `--reversible` answers nothing, so every question asks.
-function answers(value) {
+export function answers(value) {
   if (value === undefined) return {};
   const words = value.split(',').map((word) => word.trim().toLowerCase());
   const keys = questions();

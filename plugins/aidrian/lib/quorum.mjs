@@ -12,6 +12,8 @@
 //           verdicts and, in plan mode, the moderation lines and, on an open ledger, the objection cap from
 //           config.json `quorum.plan.maxObjections`
 //   roles   prints the roles, judge, and caps of one mode from config.json `quorum`, as one JSON line
+//   route   says what happens to one product decision, from the base branch's `quorum.product` and `decisions resolve`'s
+//           answer, or, with `--ledger`, what happens after a product ruling, as one JSON line; docs/config.md has the table
 // The schemas below are the one source of truth for these files. `check` runs no command but `git ls-files`, and
 // never executes what a citation names.
 
@@ -20,10 +22,11 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFile
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { commandConfig, MAX_PLAN_OBJECTIONS } from './config.mjs';
+import { commandConfig, committedQuorumProduct, DEFAULTS, MAX_PLAN_OBJECTIONS } from './config.mjs';
+import { answers as reversibleAnswers, resolveQuestion, reversibleProblem } from './decisions-cli.mjs';
 import { insidePath, isFile, isObject, linksOutside } from './fs.mjs';
 import { runGit } from './git.mjs';
-import { projectAt } from './project.mjs';
+import { committedConfigFile, projectAt } from './project.mjs';
 import { isolate } from './review/env.mjs';
 import { anchor as anchorOf, sectionOf, slug } from './review/flows.mjs';
 import { codexAvailable, runCodex } from './review/reviewers.mjs';
@@ -1239,6 +1242,153 @@ export function quorumRoles(mode, quorum) {
   return { mode, roles: { odd: { positions: positions(0), ...resolved(odd) }, even: { positions: positions(1), ...resolved(even) } }, swap, judge, caps };
 }
 
+// The deciding agent's five answers on how hard a call is, in the order docs/config.md gives them.
+const HARDNESS_QUESTIONS = 5;
+
+// Whether `--hard` says a call is small and clear: all five answers no. Any yes, any word that is no answer, and any
+// answer missing leaves it hard.
+export const isClearCall = (value) => {
+  const words = String(value ?? '').split(',').map((word) => word.trim().toLowerCase());
+  return words.length === HARDNESS_QUESTIONS && words.every((word) => word === 'no');
+};
+
+// The domains an automatic quorum may run in. Any other, an unknown one included, keeps resolve's answer as it is.
+const ROUTED_DOMAINS = Object.freeze(['product', 'ux']);
+const otherDomain = (domain) => `${JSON.stringify(domain ?? null)} is not a domain a quorum routes, so resolve's answer stands as it is`;
+
+// What happens to one product decision: { route, wait, reason }. `settings` is the base branch's `quorum.product`, `call`
+// is { hard, runs, domain }, and `answer` is resolve's. Only `authority: "decide"` counts as a decision the agent may make, and only
+// `approval: "review-later"` lets work go on, so a value this code does not know waits. `wait` is true when work on the
+// decision waits for the Human. A quorum with `wait` false is the provisional one, and it needs resolve's decide:
+// an ask under any setting stays with the Human.
+export function routeFor({ autoStart, approval, maxAutoRuns }, { hard, runs = 0, domain }, answer) {
+  const decides = answer.authority === 'decide';
+  if (!ROUTED_DOMAINS.includes(domain)) return { route: 'as-today', wait: !decides, reason: otherDomain(domain) };
+  if (!autoStart) return { route: 'as-today', wait: !decides, reason: 'quorum.product.autoStart is off at the base branch, so resolve\'s answer stands as it is' };
+  if (!hard) {
+    return decides
+      ? { route: 'agent', wait: false, reason: `a small, clear call, and resolve says decide: ${answer.reason}` }
+      : { route: 'human', wait: true, reason: `a small, clear call, and resolve says ask, so it runs no quorum: ${answer.reason}` };
+  }
+  if (runs >= maxAutoRuns) return { route: 'human', wait: true, reason: `a hard call, and this session has made ${runs} automatic runs, at quorum.product.maxAutoRuns ${maxAutoRuns}, so it waits with no quorum` };
+  if (!decides) return { route: 'quorum', wait: true, reason: `a hard call, and resolve says ask, so the quorum recommends and the Human approves: ${answer.reason}` };
+  if (approval === 'review-later') return { route: 'quorum', wait: false, reason: 'a hard call, and review-later with resolve\'s decide: work continues on the recommendation, recorded as provisional' };
+  return { route: 'quorum', wait: true, reason: 'a hard call under approval first: the quorum recommends and the Human approves' };
+}
+
+const isBoolean = (value) => typeof value === 'boolean';
+const isText = (value) => typeof value === 'string' && value.trim() !== '';
+
+// The Ruling's question for `decisions resolve`, from a ledger read as JSON: { class, reversible, docs }, or null when any
+// of the three is missing or holds no answer. `reversible` is as `--reversible` spells it, or a list of those words.
+function rulingQuestion(ledger) {
+  const ruling = isObject(ledger) ? ledger.ruling : null;
+  if (!isObject(ruling)) return null;
+  const { class: kind, reversible, docs } = ruling;
+  const words = Array.isArray(reversible) ? reversible.join(',') : reversible;
+  const parsed = typeof words === 'string' ? reversibleAnswers(words) : null;
+  if (!isText(kind) || parsed === null || !Array.isArray(docs) || !docs.every(isText)) return null;
+  return { class: kind, reversible: parsed, docs };
+}
+
+// What happens after a product ruling: { route, wait, reason, settle, listed }. `answer` is resolve's on the Ruling's
+// question, or null when the ledger asks none, and `domain` the one the caller named. A missing field reads as the Human's,
+// whatever the settings, and so does a ledger the Human answered, or one not complete: `wait` stays true there, so no
+// caller goes on with the recommendation. Under review-later and resolve's decide, a fact that could make the decision
+// harder to undo waits; one the repository can settle waits in `settle` for its one read-only dispatch; and every other
+// is `listed`, for the batch review, as work continues. Anywhere else the Human sees all of them in `listed` before deciding.
+export function routeAfterRuling({ autoStart, approval }, ledger, answer, domain) {
+  const flips = isObject(ledger) && isObject(ledger.outcome) ? ledger.outcome.flips_if : null;
+  const entries = Array.isArray(flips) ? flips.filter(isObject) : [];
+  const shown = ({ fact, how_to_settle }) => ({ fact, how_to_settle });
+  const waits = (route, reason, settle = [], listed = entries) => ({ route, wait: true, reason, settle: settle.map(shown), listed: listed.map(shown) });
+  const human = (reason) => waits('human', reason);
+  if (!ROUTED_DOMAINS.includes(domain)) return waits('as-today', otherDomain(domain));
+  if (!isObject(ledger) || ledger.mode !== 'product') return human('this is no product ledger');
+  if (ledger.human_answer === undefined) return human('the ledger lacks human_answer');
+  if (ledger.human_answer !== null) return human('the Human has answered, so the Human\'s answer governs, not the recommendation');
+  if (ledger.status !== 'complete') return human('the ledger is not complete');
+  if (!isObject(ledger.ruling)) return human('the ledger holds no ruling');
+  if (ledger.ruling.decision === 'escalate') return human('the ruling escalates');
+  if (ledger.ruling.decision !== 'rule') return human('the ruling neither rules nor escalates');
+  if (answer === null) return human('the ledger lacks the Ruling\'s class, reversible, or docs');
+  if (!isText(ledger.ruling.winner)) return human('the ruling names no winner');
+  if (!Array.isArray(flips)) return human('the ledger lacks outcome.flips_if');
+  const marked = flips.every((entry) => isObject(entry) && isBoolean(entry.settles_from_repo) && isBoolean(entry.could_harden_undo));
+  if (!marked) return human('a flips_if entry lacks settles_from_repo or could_harden_undo');
+  if (!flips.every((entry) => isText(entry.fact) && isText(entry.how_to_settle))) return human('a flips_if entry lacks its fact or how_to_settle');
+  if (!autoStart) return waits('as-today', 'quorum.product.autoStart is off at the base branch, so the Human answers a product ruling');
+  if (answer.authority !== 'decide') return waits('quorum', `resolve says ask, so the Human approves: ${answer.reason}`);
+  if (approval !== 'review-later') return waits('quorum', 'approval is first, so the Human approves');
+  if (entries.some((entry) => entry.could_harden_undo)) return human('a flipping fact could make the decision harder to undo');
+  const settle = entries.filter((entry) => entry.settles_from_repo);
+  const listed = entries.filter((entry) => !entry.settles_from_repo);
+  if (settle.length) return waits('quorum', 'settle the facts in `settle` from the repository first: a result that keeps the winner is recorded and work continues, and any other waits for the Human', settle, listed);
+  return { route: 'quorum', wait: false, reason: 'review-later with resolve\'s decide: work continues on the recommendation, recorded as provisional', settle: [], listed: listed.map(shown) };
+}
+
+// The `quorum.product` of the commit resolve read: `base` is null with no readable base, and git failing reads the same.
+function productInForce(project, base) {
+  if (base === null) return DEFAULTS.quorum.product;
+  try {
+    return committedQuorumProduct(project, base, committedConfigFile(project, base));
+  } catch {
+    return DEFAULTS.quorum.product;
+  }
+}
+
+const ROUTE_EXIT_BAD = 3;
+const LEDGER_TAKES_NO = ['class', 'reversible', 'hard', 'doc', 'runs'];
+// Printed on a bad argument and beside USAGE. USAGE holds exactly the flags the quorum skill's text names, a test says so,
+// and route's belong to knowledge/references/decisions.md, so they stay out of it.
+const ROUTE_USAGE = 'route --domain D --class C [--reversible A,B,C,D] [--hard A,B,C,D,E] [--doc PATH]... [--runs N] | route --ledger LEDGER --domain D';
+
+// `aidrian quorum route`: one JSON line, and exit 0; a bad argument exits 3 with nothing on stdout, and an invalid
+// config.json stops it on every path, as it stops every command.
+function routeCommand(args, { cwd, print }) {
+  const project = projectAt(cwd);
+  commandConfig(project);
+  const bad = (problem) => {
+    console.error(`usage: aidrian quorum ${ROUTE_USAGE}\n\naidrian quorum route: ${problem}`);
+    return ROUTE_EXIT_BAD;
+  };
+  const word = { type: 'string' };
+  let values;
+  try {
+    ({ values } = parseArgs({ args, options: { domain: word, class: word, reversible: word, hard: word, doc: { type: 'string', multiple: true }, runs: word, ledger: word } }));
+  } catch (error) {
+    if (!error.code?.startsWith('ERR_PARSE_ARGS')) throw error;
+    return bad(error.message);
+  }
+  if (values.ledger !== undefined) {
+    const extra = LEDGER_TAKES_NO.find((key) => values[key] !== undefined);
+    if (extra) return bad(`--ledger takes no --${extra}: the ledger holds the Ruling's answers`);
+    if (!values.domain) return bad('--ledger needs --domain: a ruling resolves under its own domain\'s answer');
+    let ledger;
+    try {
+      // Read as JSON and never checked: `quorum check` holds a ledger to the schema, and this reads only what it names.
+      ledger = JSON.parse(readFileSync(path.resolve(cwd, values.ledger), 'utf8'));
+    } catch (error) {
+      return bad(`cannot read ${values.ledger}: ${error.message}`);
+    }
+    const asked = rulingQuestion(ledger);
+    const answer = asked === null ? null : resolveQuestion(project, { domain: values.domain, ...asked });
+    const settings = productInForce(project, answer?.base ?? null);
+    const { route, wait, reason, settle, listed } = routeAfterRuling(settings, ledger, answer, values.domain);
+    print(JSON.stringify({ route, wait, reason, resolve: answer, settle, listed }));
+    return 0;
+  }
+  if (!values.domain || !values.class) return bad('route needs --domain and --class, or --ledger');
+  const reversible = reversibleAnswers(values.reversible);
+  if (!reversible) return bad(reversibleProblem());
+  if (values.runs !== undefined && !/^\d+$/u.test(values.runs)) return bad(`--runs takes a whole number, 0 or more, not "${shown(values.runs)}"`);
+  const answer = resolveQuestion(project, { domain: values.domain, class: values.class, reversible, docs: values.doc ?? [] });
+  const call = { hard: !isClearCall(values.hard), runs: Number(values.runs ?? 0), domain: values.domain };
+  const { route, wait, reason } = routeFor(productInForce(project, answer.base), call, answer);
+  print(JSON.stringify({ route, wait, reason, resolve: answer }));
+  return 0;
+}
+
 const fail = (problem) => {
   console.error(`aidrian quorum: ${problem}`);
   return 1;
@@ -1301,7 +1451,7 @@ const USAGE = 'codex --plan PLAN --brief BRIEF --out FILE [--mode object|case] |
 export const commands = {
   quorum: {
     usage: USAGE,
-    about: 'run Codex as a quorum adversary or position, to object, argue a case, cross-examine, or rebut, and print one {status, reason} line; check a ledger\'s citations against the repository and the plan; or print one mode\'s roles and caps from config.json',
+    about: 'run Codex as a quorum adversary or position, to object, argue a case, cross-examine, or rebut, and print one {status, reason} line; check a ledger\'s citations against the repository and the plan; print one mode\'s roles and caps from config.json; or, with route, say what happens to one product decision, before a quorum or after its ruling',
     async run(args, deps = {}) {
       const [action, ...rest] = args;
       // Git and Codex run without the variables a git hook sets, so they act on the repository of this folder.
@@ -1316,6 +1466,7 @@ export const commands = {
         (deps.print ?? console.log)(JSON.stringify(quorumRoles(rest[0], quorum())));
         return 0;
       }
+      if (action === 'route') return routeCommand(rest, { cwd, print: deps.print ?? console.log });
       if (action === 'codex') {
         const { values } = parseArgs({ args: rest, options: { plan: { type: 'string' }, brief: { type: 'string' }, out: { type: 'string' }, mode: { type: 'string', default: 'object' }, ledger: { type: 'string' } } });
         if (!values.plan || !values.brief || !values.out) return fail('codex needs --plan, --brief, and --out');
@@ -1401,7 +1552,7 @@ export const commands = {
         print(`checked: mode ${modeOf(ledger)}, ${ledger.objections.length} objections, ${opinions} opinion, ${problems.length} problems`);
         return 0;
       }
-      return fail(`usage: aidrian quorum ${USAGE}`);
+      return fail(`usage: aidrian quorum ${USAGE} | ${ROUTE_USAGE}`);
     },
   },
 };

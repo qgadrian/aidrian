@@ -1681,3 +1681,69 @@ test('resolve prints a null secondLook with the rule no-base, whichever read fai
   assert.deepEqual([baseFailed.rule, baseFailed.secondLook], ['no-base', null]);
   assert.match(readFileSync(path.join(ROOT, 'docs/config.md'), 'utf8'), /it is `null` with the rule `no-base`\./u);
 });
+
+test('decisions resolve prints the same fields in the same order, now that quorum route shares its lookup', (t) => {
+  const { dir } = decisionsRepo(t, { maxMode: 'decide-reversible', mode: 'decide-reversible' });
+  const out = resolveCopy(dir);
+  assert.deepEqual(Object.keys(out), ['authority', 'rule', 'reason', 'unattended', 'secondLook', 'base']);
+  assert.deepEqual([out.authority, out.rule, out.unattended], ['decide', 'mode', null]);
+});
+
+test('quorum route logs resolve\'s row, with resolve\'s key, so the report counts the question once whichever command asked', (t) => {
+  const env = logEnv(t);
+  const { dir } = decisionsRepo(t, OPTED);
+  assert.equal(resolveRow(dir, env).status, 0);
+  const asked = ['quorum', 'route', '--domain', 'ux', '--class', 'copy', '--reversible', 'no,no,no,no', '--hard', 'no,yes,no,no,no'];
+  assert.equal(run(asked, dir, env).status, 0);
+  const ledger = path.join(dir, '.git', 'ledger.json');
+  const ruled = { mode: 'product', status: 'complete', ruling: { decision: 'rule', winner: 'A', class: 'copy', reversible: 'no,no,no,no', docs: [] }, outcome: { conditions: [], flips_if: [], disputes: [] }, human_answer: null };
+  writeFileSync(ledger, JSON.stringify(ruled));
+  assert.equal(run(['quorum', 'route', '--ledger', ledger, '--domain', 'ux'], dir, env).status, 0);
+  const rows = decisionRows(dir, env);
+  assert.equal(rows.length, 3);
+  for (const row of rows) assert.deepEqual([row.event, row.rule, row.domain, row.class, row.key], ['decision_made', 'mode', 'ux', 'copy', rows[0].key]);
+
+  assert.equal(run(['quorum', 'route', '--domain', 'ux', '--class', 'money', '--reversible', 'no,no,no,no'], dir, env).status, 0);
+  const asks = decisionRows(dir, env).at(-1);
+  assert.deepEqual([asks.event, asks.rule, asks.class], ['decision_escalated', 'floor-class', 'money'], 'an ask logs too');
+
+  writeFileSync(ledger, JSON.stringify({ ...ruled, ruling: { decision: 'rule', winner: 'A' } }));
+  assert.equal(run(['quorum', 'route', '--ledger', ledger, '--domain', 'ux'], dir, env).status, 0);
+  assert.equal(decisionRows(dir, env).length, 4, 'a ledger that asks no question logs nothing');
+});
+
+test('check warns about quorum.product settings that have no effect, and stays quiet about those that do', (t) => {
+  const { dir } = decisionsRepo(t, {});
+  writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n.worktrees/\n');
+  const check = (config) => {
+    writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, ...config }));
+    const out = run(['check'], dir);
+    assert.equal(out.status, 0, out.stderr);
+    return out.stderr;
+  };
+  const OPEN = { maxMode: 'decide-reversible', mode: 'decide-reversible' };
+  const NEVER = /^warning: quorum\.product\.approval: "review-later" can never apply while the product domain resolves to "ask"/mu;
+  const APPROVAL = /^warning: quorum\.product\.approval is set, but quorum\.product\.autoStart is off, so it has no effect/mu;
+  const RUNS = /^warning: quorum\.product\.maxAutoRuns is set, but quorum\.product\.autoStart is off, so it has no effect/mu;
+  const product = (settings, decisions) => ({ quorum: { product: settings }, ...(decisions ? { decisions } : {}) });
+
+  assert.doesNotMatch(check({}), /quorum\.product/u, 'nothing set');
+  assert.doesNotMatch(check(product({ autoStart: false })), /quorum\.product/u, 'off, said out loud');
+  assert.doesNotMatch(check(product({ autoStart: true, approval: 'first', maxAutoRuns: 3 })), /quorum\.product/u, 'on, with both set');
+  assert.doesNotMatch(check(product({ autoStart: true, approval: 'review-later' }, OPEN)), /quorum\.product/u, 'review later that can apply');
+
+  assert.match(check(product({ autoStart: true, approval: 'review-later' })), NEVER, 'the default ask');
+  assert.match(check(product({ autoStart: true, approval: 'review-later' }, { maxMode: 'ask', mode: 'decide-reversible' })), NEVER, 'held down by maxMode');
+  assert.match(check(product({ autoStart: true, approval: 'review-later' }, { ...OPEN, domains: { product: 'ask' } })), NEVER, 'the product domain alone asks');
+  assert.doesNotMatch(check(product({ autoStart: true, approval: 'review-later' }, { maxMode: 'decide-reversible', domains: { product: 'decide-reversible' } })), NEVER, 'the product domain alone decides');
+  assert.doesNotMatch(check(product({ autoStart: true, approval: 'first' })), NEVER, 'first never needs decide');
+
+  const set = check(product({ autoStart: false, approval: 'first' }));
+  assert.match(set, APPROVAL, 'a value equal to the default is still set');
+  assert.doesNotMatch(set, RUNS);
+  const both = check(product({ approval: 'review-later', maxAutoRuns: 5 }, OPEN));
+  assert.match(both, APPROVAL, 'autoStart left out is off');
+  assert.match(both, RUNS);
+  assert.doesNotMatch(both, NEVER);
+  assert.match(check(product({ maxAutoRuns: 3 })), RUNS, 'a value equal to the default is still set');
+});

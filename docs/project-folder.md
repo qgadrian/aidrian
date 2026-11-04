@@ -184,7 +184,7 @@ to Codex, `agent` once one did not. A ledger written before it has none.
 A ledger with no `mode` is plan mode under the rules it was written with: 7 objections each, `improvement` allowed,
 and none of the rules below that need `mode`. `check` never adds the field. Such a ledger is `complete`: `check`
 exits 1 on an `open` plan ledger with no `mode`, since the skill writes it on every ledger it opens.
-Two commands keep a ledger honest, and `roles` tells the skill who runs each role:
+Two commands keep a ledger honest, `roles` tells the skill who runs each role, and `route` says what happens to a product decision:
 
 - `aidrian quorum codex --plan PLAN --brief BRIEF --out FILE [--mode object|case]` runs Codex read-only on the brief
   and then the plan, for at most 780 seconds, and writes its answer to FILE. `--mode object`, the default, holds the answer
@@ -215,6 +215,32 @@ Two commands keep a ledger honest, and `roles` tells the skill who runs each rol
   else and writes nothing. An invalid config.json, or a mode other than `plan`, `decide`, or `product`, exits 1.
 - `aidrian quorum premise FILE` checks a framer's `open: false` answer, which ends a product run before any ledger exists:
   exit 0 when every citation passes, and 1 otherwise, printing each problem. Any other `open`, or a bad shape, is a problem.
+- `aidrian quorum route --domain D --class C [--reversible A,B,C,D] [--hard A,B,C,D,E] [--doc PATH]... [--runs N]` says what
+  happens to one product decision, as one JSON line, `{ route, wait, reason, resolve }`,
+  from [the table in config.md](config.md#automatic-product-quorums).
+  `route` is `as-today`, `agent`, `human`, or `quorum`. `wait` is true when work on the decision waits for the Human,
+  so a `quorum` with `wait` false is provisional. `resolve` is what `aidrian decisions resolve` prints for the same question:
+  both commands share one lookup of the base branch, the pending markers, and `unattended`, so they cannot disagree.
+  A route adds `resolve`'s row to the [dispatch log](dispatch-log.md), with the same `key`.
+  `--hard` holds the five answers `no` or `yes`; anything but five `no` is hard. `--runs` counts this session's automatic runs, 0 when left out.
+  Any domain other than `product` or `ux` is `as-today`, in both forms, before hardness is read.
+- `aidrian quorum route --ledger LEDGER --domain D` reads LEDGER as JSON, and never runs `quorum check` on it. It says what
+  happens after a product ruling, adding two lists to the line above: `settle`, the flipping facts to settle first with one read-only
+  `explorer` dispatch, and `listed`, the others, for the Human's review. Each entry is `{ fact, how_to_settle }`.
+  `--domain` is required, so a ruling resolves under its own domain's answer.
+  It reads the Ruling's answers from `ruling.class`, `ruling.reversible` (as `--reversible` spells it, or a
+  list of those words), and `ruling.docs`, and each entry's `settles_from_repo` and `could_harden_undo` from `outcome.flips_if`.
+  The route is `human`, whatever the settings, for a ledger of another mode, a `status` other than `complete`, and a ruling that escalates.
+  So it is for no `human_answer`, ruling, class, reversible, docs, winner, or `outcome.flips_if`,
+  and for an entry whose `fact` or `how_to_settle` is not a non-empty string, or whose either boolean is missing or not a boolean.
+  A non-null `human_answer`, an empty string included, is `human` too, whatever else the ledger holds: the Human's answer governs,
+  and `wait` stays true so no caller goes on with the recommendation.
+  `resolve` is null when the ledger asks no question, and that case adds no row.
+  With a `settle` list, `wait` is true until that dispatch ends: a result that keeps the winner is recorded and work continues, and any other waits.
+  With `autoStart` off, the route is `as-today`, and `wait` is true, since the Human answers a product ruling.
+  Either form exits 0, or 3 on a bad argument with nothing on stdout: a flag it does not take, a missing `--domain` or `--class`,
+  a bad `--reversible` or `--runs`, a flag beside `--ledger` that the ledger answers, or a LEDGER that cannot be read or parsed.
+  An invalid config.json exits 1 on every path.
 - `aidrian quorum check LEDGER --plan PLAN` checks every citation. `doc` and `adr` cite `path#anchor`, and the quote
   must be in that section; `code` cites `path:line`, and the quote must be in the file; `plan` cites `#anchor` in PLAN;
   `absence` cites a path, and the quote must be in no regular file `git ls-files` lists there; a path with no tracked file fails.

@@ -11,7 +11,7 @@ import { parseArgs } from 'node:util';
 import { configFromText, DEFAULTS, loadConfig } from './config.mjs';
 import { isFile, isWithin, resolvedPath } from './fs.mjs';
 import { checkoutRoots, mainRoot, runGit } from './git.mjs';
-import { findProject, projectAt } from './project.mjs';
+import { findProject, projectAt, relocatedConfigAt } from './project.mjs';
 
 // The override, which the Human puts in front of one command in their own terminal; agents never set it.
 export const OVERRIDE = 'AIDRIAN_ALLOW_MAIN_COMMIT';
@@ -152,7 +152,9 @@ function configOnBranch(project, cwd) {
   const files = configsFromTop(project, cwd);
   if (!files.length) return null;
   const resolves = (ref) => runGit(['rev-parse', '--verify', '-q', `${ref}^{commit}`], cwd).status === 0;
-  const heldAt = (ref) => files.find((file) => runGit(['cat-file', '-e', `${ref}:${file}`], cwd).status === 0);
+  const holds = (ref, file) => runGit(['cat-file', '-e', `${ref}:${file}`], cwd).status === 0;
+  // The orphan switch also removed the working copy's relocation file, so the folder it names comes from the ref.
+  const heldAt = (ref) => files.flatMap((file) => [relocatedConfigAt(ref, file.slice(0, file.length - project.paths.config.length), cwd), file]).find((file) => file && holds(ref, file));
   const ref =
     ['refs/remotes/origin/HEAD', `refs/heads/${DEFAULTS.git.defaultBranch}`].find(resolves) ?? names.find(heldAt);
   if (ref === undefined) return DEFAULTS;

@@ -331,6 +331,28 @@ test('the commit guard reads a below-root project\'s config from the default bra
   assert.deepEqual(preCommit(off, {}, ['--project', 'apps/web']), { status: 0, stderr: '' }, 'the committed guard is off');
 });
 
+test('the commit guard reads a project relocated by .aidrian.json from the default branch after an orphan switch', (t) => {
+  const relocated = (guard, prefix) => {
+    const dir = tempDir(t);
+    const git = gitIn(dir);
+    git('init', '-q', '-b', 'main');
+    mkdirSync(path.join(dir, prefix, 'tools/aidrian'), { recursive: true });
+    writeFileSync(path.join(dir, prefix, '.aidrian.json'), JSON.stringify({ dir: 'tools/aidrian' }));
+    writeFileSync(path.join(dir, prefix, 'tools/aidrian/config.json'), JSON.stringify({ version: 1, git: { mainCheckout: { guard } } }));
+    git('add', '-A');
+    git('commit', '-q', '-m', 'init');
+    git('switch', '-q', '--orphan', 'fresh');
+    assert.equal(existsSync(path.join(dir, prefix, '.aidrian.json')), false, 'the orphan switch removed .aidrian.json');
+    return dir;
+  };
+  for (const [prefix, args] of [['.', []], ['apps/web', ['--project', 'apps/web']]]) {
+    const refused = preCommit(relocated(true, prefix), {}, args);
+    assert.equal(refused.status, 1, `${prefix}: ${refused.stderr}`);
+    assert.match(refused.stderr, MAIN);
+    assert.deepEqual(preCommit(relocated(false, prefix), {}, args), { status: 0, stderr: '' }, `${prefix}: the committed guard is off`);
+  }
+});
+
 test('a commit routed through GIT_DIR after an orphan switch is still judged by the root-level project\'s committed config', (t) => {
   const dir = guarded(t, true, '.aidrian/config.json');
   const refused = preCommit(tempDir(t), { GIT_DIR: path.join(dir, '.git') });

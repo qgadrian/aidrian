@@ -151,6 +151,19 @@ export function committedConfigFile(project, commit) {
   return dir ? `${dir}/config.json` : null;
 }
 
+// The config path, from the repository top, that the `.aidrian.json` at `<ref>:<prefix>` names, or null when the ref holds
+// none or it names no folder inside the project. Read from the ref alone, for a project the working tree no longer has.
+export function relocatedConfigAt(ref, prefix, cwd) {
+  const shown = runGit(['show', `${ref}:${prefix}${OVERRIDE}`], cwd);
+  if (shown.status !== 0) return null;
+  try {
+    const dir = joinedInside('', JSON.parse(shown.stdout)?.dir);
+    return dir ? `${prefix}${dir}/config.json` : null;
+  } catch {
+    return null;
+  }
+}
+
 function folderDir(root, errors, unreadable) {
   if (!isFile(path.join(root, OVERRIDE))) return DEFAULT_DIR;
   const raw = readJson(root, OVERRIDE, errors);

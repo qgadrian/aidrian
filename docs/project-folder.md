@@ -259,7 +259,7 @@ Two commands keep a ledger honest, and `roles` tells the skill who runs each rol
   On every plan ledger, with `mode` or without, its last line reads
   `checked: mode plan, N objections, N opinion, N problems`.
 
-A product-mode ledger carries `mode: product`: a premise, 2 or 3 options, a persona's reactions and answers, one examiner's points,
+A product-mode ledger carries `mode: product`: a premise, 2 or 3 options, the end user's interview and walkthrough, two grillers' points, a draft,
 a ruling, and an `outcome`. It has no rebuttal round, and only `human_answer` settles it, on a rule or an escalation.
 Product files live under `quorum/product/`. `check` exits 1 when a `complete` ledger misses a case, the ruling, or a rule's outcome.
 On an unanswered `complete` ledger, it also exits 1 on an invalid premise, a winner resting only on the persona doc, or a winner whose case lost its evidence; on an open one it prints each as a line.

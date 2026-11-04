@@ -209,17 +209,14 @@ fails `quorum check` on every invalid ruling or rebuttal, so it is not reused.
 `modes/product.md` says what each round writes. A product ledger holds no rebuttal round and no final ruling.
 
 - `mode`: `product`.
-- `status`: `open` while the rounds run, `complete` once the Human answered or deferred.
+- `status`: `open` while the rounds run, `complete` just before the Human is asked, and it stays so after the answer.
 - `plan`: the question file's absolute path.
 - `plan_hash`: `git hash-object` of the question file.
 - `same_model`: `true` exactly when two positions share a runner.
 - `same_model_reason`: which positions share one and why, or `null`.
 - `trigger`: what started the run, normally `the Human asked`.
-- `trace`: what the tracer found, word for word, for the report and the advocates.
-- `dropped`: each option the merge dropped.
-  - `dropped[].label`: its label.
-  - `dropped[].reason`: why.
-- `persona_docs`: every doc tagged `personas` other than `product-access`, as the knowledge index prints it, whichever one reacted. A winner resting only on these is invalid.
+- `trace`: what the tracer found, word for word, for the report and the grillers.
+- `persona_docs`: every doc tagged `personas` inside the repository other than `product-access`, from the repository root, whichever one took part. A winner resting only on these is invalid.
 - `premise`: why the decision is open.
   - `premise.summary`: the framer's answer.
   - `premise.citations`: its evidence, never a `plan` citation; with none passing, `quorum check` names the premise invalid.
@@ -230,21 +227,25 @@ fails `quorum check` on every invalid ruling or rebuttal, so it is not reused.
   - `positions[].id`: `A`, `B`, `C`, or `D`, in order.
   - `positions[].label`: the option's label.
   - `positions[].runner`: `agent` or `codex`, as in a decide ledger.
-- `witness`: the persona's reactions, or `null` when no persona fits.
+- `witness`: the end user's part, or `null` when no persona fits.
   - `witness.persona`: the persona doc's path, from the repository root.
-  - `witness.reactions`: at most one per position; hypotheses, which no one rules on.
-    - `witness.reactions[].position`: `A`, `B`, `C`, or `D`.
-    - `witness.reactions[].reaction`: the persona's words.
-  - `witness.answers`: the examiner's questions to the persona, at most 3; hypotheses too.
-    - `witness.answers[].question`: the question, in the persona's terms.
-    - `witness.answers[].answer`: the persona's words.
+  - `witness.interview`: the product owner's questions, at most 5; hypotheses, which no one rules on.
+    - `witness.interview[].question`: the question.
+    - `witness.interview[].answer`: the persona's words.
+  - `witness.walkthrough`: the persona's walk through the draft, or `null`.
+- `draft`: the product owner's recommendation before the walkthrough, or `null`.
+  - `draft.winner`: `A`, `B`, `C`, or `D`.
+  - `draft.reason`: why.
+- `loops`: each time the run went back; a new ledger after a reshape keeps them.
+  - `loops[].back_to`: `interview`, `shape`, or `grill`.
+  - `loops[].reason`: what the walkthrough or a griller exposed.
 - `cases`: each position's case, as in a decide ledger.
   - `cases[].position`: `A`, `B`, `C`, or `D`.
   - `cases[].claim`: the case, at most 200 words.
   - `cases[].citations`: its evidence. A case with no passing citation cannot win.
-- `cross`: the examiner's points, at most 9.
-  - `cross[].id`: `X1` to `X9`, each once.
-  - `cross[].by`: always `X`.
+- `cross`: the grillers' points, at most 5 each.
+  - `cross[].id`: `U1` to `U5` or `E1` to `E5`, each once.
+  - `cross[].by`: `U` for UX or `E` for the engineer, the id's letter.
   - `cross[].against`: `A`, `B`, `C`, or `D`.
   - `cross[].claim`: the point.
   - `cross[].citations`: its evidence.
@@ -302,8 +303,7 @@ citations, and edits hold, and:
 - Past 5 cross points, keep the first 5.
 
 In product mode, hold a case to `CASE_SCHEMA` and a ruling to the ledger's `ruling`, with `outcome` split from it; on an
-escalate, `outcome` is `null`. Keep the first 9 examiner points and the first 3 questions and answers; drop a point against, or a reaction to, a position the ledger does not hold, and a
-second reaction to one. The rules above on missing fields, citations, and edits hold.
+escalate, `outcome` is `null`. Keep each griller's first 5 points and the first 5 interview answers; drop a point against a position the ledger does not hold. The rules above on missing fields, citations, and edits hold.
 
 When `quorum check` still exits 1, stop with `blocked`, quoting what it printed.
 

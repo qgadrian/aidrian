@@ -306,12 +306,11 @@ test('quorum: the defaults are today\'s roles and caps; plan adversary A holds o
       swap: true,
     },
     product: {
-      framer: { agent: 'product-manager' },
-      second: { agent: 'ux-specialist' },
+      owner: { agent: 'product-manager' },
       witness: { agent: 'ux-researcher' },
-      advocate: { provider: 'agent', agent: 'product-manager' },
-      examiner: { agent: 'critic' },
-      judge: { agent: 'product-manager' },
+      ux: { agent: 'ux-specialist' },
+      engineer: { agent: 'architect' },
+      maxLoops: 2,
     },
   });
 });

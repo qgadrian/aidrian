@@ -323,16 +323,19 @@ export const DECIDE_LEDGER_SCHEMA = Object.freeze({
   },
 });
 
-// A product-mode cross point comes from one examiner, X, so its ids are X1 to X9.
-export const PRODUCT_CROSS_ID = /^X[1-9]$/u;
+// A product-mode cross point comes from a griller, U for UX or E for the engineer, so its ids are U1 to E5.
+export const PRODUCT_CROSS_ID = /^[UE][1-5]$/u;
+// A run's dispatches with no loop, and what each loop may add: an interview or a reshape, two grills, a draft, and a walkthrough.
+export const PRODUCT_DISPATCHES = 10;
+export const PRODUCT_LOOP_DISPATCHES = 5;
 export const MAX_PRODUCT_POSITIONS = 3;
 
-// The product ledger: a decide ledger with no rebuttal round, plus the premise check, the persona's reactions, and what
+// The product ledger: a decide ledger with no rebuttal round, plus the premise check, the end user's interview and walkthrough, and what
 // the ruling leaves behind. Its ruling is a recommendation: only `human_answer` settles it. See modes/product.md.
 export const PRODUCT_LEDGER_SCHEMA = Object.freeze({
   type: 'object',
   additionalProperties: false,
-  required: ['mode', 'status', 'plan', 'plan_hash', 'same_model', 'same_model_reason', 'trigger', 'premise', 'trace', 'dropped', 'persona_docs', 'positions', 'witness', 'cases', 'cross', 'ruling', 'outcome', 'human_answer'],
+  required: ['mode', 'status', 'plan', 'plan_hash', 'same_model', 'same_model_reason', 'trigger', 'premise', 'trace', 'persona_docs', 'positions', 'witness', 'draft', 'loops', 'cases', 'cross', 'ruling', 'outcome', 'human_answer'],
   properties: {
     mode: { type: 'string', enum: ['product'] },
     status: DECIDE_LEDGER_SCHEMA.properties.status,
@@ -348,45 +351,43 @@ export const PRODUCT_LEDGER_SCHEMA = Object.freeze({
       properties: { summary: { type: 'string' }, citations: CITATIONS },
     },
     trace: { type: 'string' },
-    dropped: {
-      type: 'array',
-      items: { type: 'object', additionalProperties: false, required: ['label', 'reason'], properties: { label: { type: 'string' }, reason: { type: 'string' } } },
-    },
     persona_docs: { type: 'array', items: { type: 'string' } },
     positions: DECIDE_LEDGER_SCHEMA.properties.positions,
     witness: {
       type: ['object', 'null'],
       additionalProperties: false,
-      required: ['persona', 'reactions', 'answers'],
+      required: ['persona', 'interview', 'walkthrough'],
       properties: {
         persona: { type: 'string' },
-        reactions: {
+        interview: {
           type: 'array',
-          items: {
-            type: 'object',
-            additionalProperties: false,
-            required: ['position', 'reaction'],
-            properties: { position: { type: 'string', enum: POSITION_IDS }, reaction: { type: 'string' } },
-          },
-        },
-        answers: {
-          type: 'array',
-          maxItems: 3,
+          maxItems: 5,
           items: { type: 'object', additionalProperties: false, required: ['question', 'answer'], properties: { question: { type: 'string' }, answer: { type: 'string' } } },
         },
+        walkthrough: { type: ['string', 'null'] },
       },
+    },
+    draft: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      required: ['winner', 'reason'],
+      properties: { winner: { type: 'string', enum: POSITION_IDS }, reason: { type: 'string' } },
+    },
+    loops: {
+      type: 'array',
+      items: { type: 'object', additionalProperties: false, required: ['back_to', 'reason'], properties: { back_to: { type: 'string', enum: ['interview', 'shape', 'grill'] }, reason: { type: 'string' } } },
     },
     cases: DECIDE_LEDGER_SCHEMA.properties.cases,
     cross: {
       type: 'array',
-      maxItems: 9,
+      maxItems: 10,
       items: {
         type: 'object',
         additionalProperties: false,
         required: ['id', 'by', 'against', 'claim', 'citations', 'status'],
         properties: {
           id: { type: 'string' },
-          by: { type: 'string', enum: ['X'] },
+          by: { type: 'string', enum: ['U', 'E'] },
           against: { type: 'string', enum: POSITION_IDS },
           claim: { type: 'string' },
           citations: CITATIONS,
@@ -1118,29 +1119,27 @@ export function checkDecideLedger(ledger, ctx) {
 const decideView = (ledger) => ({ ...ledger, rebuttals: [], final_ruling: null });
 
 // Why a product ledger does not fit, as lines that stop the check: the decide id rules on its positions, cases, and
-// ruling; at most three positions; examiner points X1 to X9, each once, against a position; each persona reaction on a
-// position, at most once; an outcome only with a rule; and a Human answer only to a ruling. A complete ledger has a
+// ruling; at most three positions; griller points U1 to E5, each once, by the id's letter, against a position; a draft
+// for a position; an outcome only with a rule; and a Human answer only to a ruling. A complete ledger has a
 // case per position, a ruling, and, on a rule, an outcome. Its ruling never stands without `human_answer`, so an
 // unanswered one is complete and deferred.
-export function productProblems(ledger) {
+export function productProblems(ledger, maxLoops = MAX_PLAN_OBJECTIONS) {
   const problems = decideIdProblems({ ...decideView(ledger), cross: [], human_answer: null });
   if (ledger.positions.length > MAX_PRODUCT_POSITIONS) problems.push(`product mode holds at most ${MAX_PRODUCT_POSITIONS} positions, not ${ledger.positions.length}`);
   const known = new Set(ledger.positions.map(({ id }) => id));
   const seen = new Set();
   for (const point of ledger.cross) {
-    if (!PRODUCT_CROSS_ID.test(point.id)) problems.push(`cross id "${shown(point.id)}" is not X1 to X9`);
+    if (!PRODUCT_CROSS_ID.test(point.id)) problems.push(`cross id "${shown(point.id)}" is not U1 to U5 or E1 to E5`);
     else if (seen.has(point.id)) problems.push(`cross id ${point.id} is used more than once`);
     seen.add(point.id);
+    if (point.by !== point.id[0]) problems.push(`cross ${shown(point.id)} is by ${point.by}, not ${shown(point.id[0])}`);
     if (!known.has(point.against)) problems.push(`cross ${shown(point.id)} is against ${point.against}, not a position in this ledger`);
   }
   if (ledger.premise.citations.some(({ kind }) => kind === 'plan')) problems.push('premise cites the question file, which only repeats it');
   const persona = ledger.witness?.persona;
   if (persona !== undefined && (path.isAbsolute(persona) || path.normalize(persona).startsWith('..'))) problems.push(`witness.persona "${shown(persona)}" is not a path inside the repository`);
-  const reacted = (ledger.witness?.reactions ?? []).map(({ position }) => position);
-  for (const id of new Set(reacted)) {
-    if (!known.has(id)) problems.push(`witness reacts to ${id}, not a position in this ledger`);
-    if (reacted.indexOf(id) !== reacted.lastIndexOf(id)) problems.push(`witness reacts to ${id} more than once`);
-  }
+  if (ledger.loops.length > maxLoops) problems.push(`loops: ${ledger.loops.length}, more than the ${maxLoops} allowed`);
+  if (ledger.draft && !known.has(ledger.draft.winner)) problems.push(`draft names ${ledger.draft.winner}, not a position in this ledger`);
   if (ledger.outcome !== null && ledger.ruling?.decision !== 'rule') problems.push('outcome: set but no ruling rules');
   if (ledger.human_answer !== null && ledger.ruling === null) problems.push('human_answer: set but nothing was ruled');
   if (ledger.status === 'complete') {
@@ -1217,12 +1216,9 @@ export function quorumRoles(mode, quorum) {
     return { mode, roles: { A: resolved({ provider: 'agent', agent: a.agent }), B: resolved(b) }, judge, caps: { maxObjections, maxDispatches } };
   }
   if (mode === 'product') {
-    // The trace, the frame, the second framing, the merge, the witness, its answers to the examiner, one case per position, the examiner, the ruling, and one
-    // retry, plus one fallback per position when advocates run on Codex.
-    const { framer, second, witness, advocate, examiner, judge: ruler } = quorum.product;
-    const caps = {};
-    for (let n = 2; n <= MAX_PRODUCT_POSITIONS; n += 1) caps[n] = n + 9 + (advocate.provider === 'codex' ? n : 0);
-    return { mode, roles: { tracer: resolved({ provider: 'agent', agent: 'explorer' }), framer: resolved({ provider: 'agent', agent: framer.agent }), second: resolved({ provider: 'agent', agent: second.agent }), witness: resolved({ provider: 'agent', agent: witness.agent }), advocate: resolved(advocate), examiner: resolved({ provider: 'agent', agent: examiner.agent }) }, judge: { agent: ruler.agent }, caps };
+    const { owner, witness, ux, engineer, maxLoops } = quorum.product;
+    const agent = (name) => resolved({ provider: 'agent', agent: name });
+    return { mode, roles: { tracer: agent('explorer'), owner: agent(owner.agent), witness: agent(witness.agent), ux: agent(ux.agent), engineer: agent(engineer.agent) }, judge: { agent: owner.agent }, caps: { maxLoops, maxDispatches: PRODUCT_DISPATCHES + maxLoops * PRODUCT_LOOP_DISPATCHES } };
   }
   const { odd, even, swap } = quorum.decide;
   const runnerOf = (i) => (i % 2 === 0 ? odd : even);
@@ -1364,7 +1360,7 @@ export const commands = {
         const product = modeOf(ledger) === 'product';
         const decide = modeOf(ledger) === 'decide';
         const invalid = schemaProblems(ledger, schemaOf(ledger));
-        if (!invalid.length) invalid.push(...(product ? productProblems(ledger) : decide ? decideIdProblems(ledger) : idProblems(ledger)));
+        if (!invalid.length) invalid.push(...(product ? productProblems(ledger, ledger.status === 'open' ? quorum().product.maxLoops : undefined) : decide ? decideIdProblems(ledger) : idProblems(ledger)));
         if (!invalid.length && product) invalid.push(...sameModelProblems(ledger));
         else if (!invalid.length) {
           // An open plan ledger that carries `mode` is held to the configured objection cap, so only it reads config.json.

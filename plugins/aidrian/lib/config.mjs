@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { agentNameProblem, ALL, MAIN, patternProblem } from './agent-gates.mjs';
+import { agentNameProblem, ALL, MAIN, nameMatches, patternProblem } from './agent-gates.mjs';
 import { isFile, isObject, readJson } from './fs.mjs';
 import { checkLocalReview, checkLocalVisual, checkReview, REVIEW_DEFAULTS } from './review/config.mjs';
 
@@ -630,7 +630,7 @@ function readToolProblem(name, writeTools) {
   if (name.includes('*')) return 'a read tool is an exact tool name, with no "*"';
   const problem = patternProblem(name);
   if (problem) return problem;
-  const covering = writeTools.find((pattern) => (pattern.endsWith('*') ? name.startsWith(pattern.slice(0, -1)) : name === pattern));
+  const covering = writeTools.find((pattern) => nameMatches(pattern, name));
   return covering === undefined ? null : `a read tool cannot also match "tracker.writeTools", and ${JSON.stringify(covering)} covers it`;
 }
 

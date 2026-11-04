@@ -1,6 +1,6 @@
 ---
 name: quorum
-description: Run a quorum on a plan, options, a claim, or a product decision: sides argue cited evidence, a judge rules, into a ledger.
+description: Run a quorum on a plan, options, a claim, or a product decision, where sides argue cited evidence and a judge rules.
 ---
 
 # quorum

@@ -39,8 +39,9 @@ Mandatory consultations:
 - A task that turns into implementation goes back to `orchestrator` or the owning implementation agent.
 - A landing or growth surface that needs presentation changes goes to `designer` or `ux-specialist`.
 
-Attribute each recommendation to the specialist that made it. When product truth is unresolved and the user must choose,
-route to `product-manager` first and relay its `decision_options` with attribution.
+Attribute each recommendation to the specialist that made it. When product truth is unresolved,
+route to `product-manager` first, then run `aidrian decisions resolve` and pass `authority` as `knowledge/references/decisions.md` says;
+under `ask`, relay its `decision_options` with attribution.
 
 Do not:
 

@@ -100,7 +100,7 @@ In Codex, only `*` and `main` [agent gates](../hooks.md#agent-gates) are sure to
 - A named agent's gates hold only when Codex sends the call's `agent_type`, which no live session has confirmed yet.
 - Codex names this plugin's roles `aidrian-<agent>`; the gates read that as `<agent>`.
 - A call without `agent_id` counts as the main session's: `main` gates apply,
-  and neither the config guard nor the [session's gates](../hooks.md#the-sessions-gates) does.
+  and neither the config guard, the [`decisions-set` rule](../hooks.md#bash-rules), nor the [session's gates](../hooks.md#the-sessions-gates) does.
 
 ## Limits
 

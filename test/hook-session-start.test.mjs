@@ -157,6 +157,60 @@ test('the main session also hears about open lessons, escalated with the command
   assert.match(escalated, /^Lesson inbox needs triage: 1 P1 open\. Tell the Human once, then go on with the task: .* `\S+\/bin\/aidrian lesson list` shows the order\.$/);
 });
 
+// A project with `docs` indexed, each a file of docs/, and optional config.
+function decisionsProject(t, docs, config = {}) {
+  const project = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-start-')));
+  t.after(() => rmSync(project, { recursive: true, force: true }));
+  mkdirSync(path.join(project, '.aidrian/knowledge'), { recursive: true });
+  mkdirSync(path.join(project, 'docs'));
+  writeFileSync(path.join(project, '.aidrian/config.json'), JSON.stringify({ version: 1, ...config }));
+  const entries = Object.fromEntries(Object.keys(docs).map((name) => [name, { summary: `${name} rules`, tags: [] }]));
+  writeFileSync(path.join(project, '.aidrian/knowledge/10-docs.json'), JSON.stringify({ dir: 'docs', description: 'The rules.', docs: entries }));
+  for (const [name, text] of Object.entries(docs)) writeFileSync(path.join(project, 'docs', name), text);
+  return project;
+}
+const daysAgo = (n) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+const unreviewed = (id, status, date) => `Rule.\n<!-- aidrian:decision id=${id} status=${status} class=copy domain=ux date=${date} pr=41 -->\n<!-- aidrian:decision-new id=${id} text="Rule." -->\n`;
+const REMINDER = /^Decisions to review: .*$/mu;
+
+test('the main session hears how many decisions wait for the Human and how old the oldest is; a subagent does not', (t) => {
+  const project = decisionsProject(t, {
+    'a.md': `${unreviewed('one', 'unconfirmed', daysAgo(1))}\n${unreviewed('kept', 'confirmed', daysAgo(90))}\n`,
+    'b.md': unreviewed('two', 'unconfirmed', daysAgo(3)),
+  });
+  const input = JSON.stringify({ cwd: project });
+  const { status, stdout } = hook({ input });
+  assert.equal(status, 0);
+  assert.match(stdout, /^Decisions to review: 2 \(oldest 3 days\)\. Tell the Human once, then go on with the task: the decision-review skill goes through them, and only a person starts it\.$/mu);
+  assert.doesNotMatch(hook({ input, args: ['--subagent'] }).stdout, /Decisions to review/u);
+  const one = decisionsProject(t, { 'a.md': unreviewed('one', 'unconfirmed', daysAgo(1)) });
+  assert.match(hook({ input: JSON.stringify({ cwd: one }) }).stdout, /^Decisions to review: 1 \(oldest 1 day\)\./mu);
+});
+
+test('no reminder with nothing to review or with remind off, and a doc it cannot read costs only that doc', (t) => {
+  const settled = decisionsProject(t, { 'a.md': unreviewed('kept', 'confirmed', daysAgo(9)) });
+  assert.doesNotMatch(hook({ input: JSON.stringify({ cwd: settled }) }).stdout, REMINDER, 'N is 0');
+  const none = decisionsProject(t, { 'a.md': '# Nothing here\n' });
+  assert.doesNotMatch(hook({ input: JSON.stringify({ cwd: none }) }).stdout, REMINDER, 'no markers');
+  const own = decisionsProject(t, { 'a.md': unreviewed('one', 'unconfirmed', daysAgo(1)).replace('class=copy', 'class=pricing-page') }, { decisions: { classes: { 'pricing-page': 'the pricing page' } } });
+  assert.match(hook({ input: JSON.stringify({ cwd: own }) }).stdout, /^Decisions to review: 1 /mu, 'a marker of a project class counts');
+  const removed = decisionsProject(t, { 'a.md': unreviewed('one', 'unconfirmed', daysAgo(1)).replace('class=copy', 'class=pricing-page') });
+  assert.match(hook({ input: JSON.stringify({ cwd: removed }) }).stdout, /^Decisions to review: 1 /mu, 'a marker whose class was removed still counts, as it does toward the pause');
+  const off = decisionsProject(t, { 'a.md': unreviewed('one', 'unconfirmed', daysAgo(1)) }, { decisions: { unreviewed: { remind: 'off', pauseDomainAt: null } } });
+  assert.doesNotMatch(hook({ input: JSON.stringify({ cwd: off }) }).stdout, REMINDER, 'remind off');
+
+  const folder = decisionsProject(t, { 'a.md': unreviewed('one', 'unconfirmed', daysAgo(2)), 'b.md': 'gone\n' });
+  rmSync(path.join(folder, 'docs/b.md'));
+  mkdirSync(path.join(folder, 'docs/b.md'));
+  const { status, stdout } = hook({ input: JSON.stringify({ cwd: folder }) });
+  assert.equal(status, 0);
+  assert.match(stdout, /^Decisions to review: 1 \(oldest 2 days\)\./mu, 'the doc that reads still counts');
+  const broken = decisionsProject(t, { 'a.md': '<!-- aidrian:decision id=a status=nope -->\n' });
+  const quiet = hook({ input: JSON.stringify({ cwd: broken }) });
+  assert.equal(quiet.status, 0);
+  assert.doesNotMatch(quiet.stdout, REMINDER, 'a malformed marker counts for nothing');
+});
+
 test('the main session hears about untriaged persona audits only while some are; a subagent never, and bad state prints nothing', (t) => {
   const project = path.join(mkdtempSync(path.join(tmpdir(), 'aidrian-start-')), 'consumer');
   t.after(() => rmSync(path.dirname(project), { recursive: true, force: true }));

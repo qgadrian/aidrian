@@ -8,10 +8,10 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { committedConfig, DEFAULTS, loadConfig } from './config.mjs';
-import { isFile } from './fs.mjs';
+import { configFromText, DEFAULTS, loadConfig } from './config.mjs';
+import { isFile, isWithin, resolvedPath } from './fs.mjs';
 import { checkoutRoots, mainRoot, runGit } from './git.mjs';
-import { findProject, projectAt } from './project.mjs';
+import { findProject, projectAt, relocatedConfigAt } from './project.mjs';
 
 // The override, which the Human puts in front of one command in their own terminal; agents never set it.
 export const OVERRIDE = 'AIDRIAN_ALLOW_MAIN_COMMIT';
@@ -111,10 +111,28 @@ export const commands = {
 // folder outside the repository runs the hook there, where no project is found: then the project is the one in the
 // main checkout git names, the folder that holds the common git folder, as checkoutRoots reads it.
 function committingProject(cwd) {
-  const here = findProject(cwd);
-  if (here) return here;
+  return findProject(cwd) ?? projectAt(commonParent(cwd) ?? cwd);
+}
+
+// The folder that holds the common git folder, or null when git cannot say.
+function commonParent(cwd) {
   const common = runGit(['rev-parse', '--path-format=absolute', '--git-common-dir'], cwd);
-  return projectAt(common.status === 0 && common.stdout.trim() ? path.dirname(common.stdout.trim()) : cwd);
+  return common.status === 0 && common.stdout.trim() ? path.dirname(common.stdout.trim()) : null;
+}
+
+// The config's paths from the top of the repository, as `<ref>:<path>` reads them, joined rather than asked of git in
+// project.root: after an orphan switch a project below the top no longer exists on disk. One per top the project is
+// under: the checkout's and the folder that holds the common git folder. A commit routed through GIT_DIR has git take
+// `cwd` for the top, and a `cwd` above the repository holds the project by a path no ref has, so the caller reads the
+// one a ref holds. Empty for a project outside both. Symlinks are resolved, as git resolves the top.
+function configsFromTop(project, cwd) {
+  const root = resolvedPath(project.root);
+  if (root === null) return [];
+  const tops = new Set([checkoutRoots(cwd)?.current, commonParent(cwd)]);
+  return [...tops].filter((top) => top && isWithin(top, root)).map((top) => {
+    const rel = path.relative(top, root);
+    return rel ? `${rel.split(path.sep).join('/')}/${project.paths.config}` : project.paths.config;
+  });
 }
 
 // The config for a working tree that has no config.json. With HEAD born, or in a repository with no branch yet, the
@@ -122,7 +140,7 @@ function committingProject(cwd) {
 // in a repository that has branches, as after `git switch --orphan`, which empties the working tree, config.json with
 // it, the config committed on the repository's default branch: origin/HEAD when it resolves, else the local branch
 // named DEFAULTS.git.defaultBranch, else the first branch whose tree holds the config path. A ref with no config.json
-// gives the defaults too. null when git cannot answer.
+// gives the defaults too. null when git cannot answer, or the project is outside the checkout.
 function configOnBranch(project, cwd) {
   const head = runGit(['rev-parse', '--verify', '-q', 'HEAD'], cwd);
   if (head.status === 0) return DEFAULTS;
@@ -131,16 +149,19 @@ function configOnBranch(project, cwd) {
   if (branches.status !== 0) return null;
   const names = branches.stdout.split('\n').filter(Boolean);
   if (!names.length) return DEFAULTS;
+  const files = configsFromTop(project, cwd);
+  if (!files.length) return null;
   const resolves = (ref) => runGit(['rev-parse', '--verify', '-q', `${ref}^{commit}`], cwd).status === 0;
-  const holdsConfig = (ref) => runGit(['cat-file', '-e', `${ref}:${project.paths.config}`], cwd).status === 0;
+  const holds = (ref, file) => runGit(['cat-file', '-e', `${ref}:${file}`], cwd).status === 0;
+  // The orphan switch also removed the working copy's relocation file, so the folder it names comes from the ref.
+  const heldAt = (ref) => files.flatMap((file) => [relocatedConfigAt(ref, file.slice(0, file.length - project.paths.config.length), cwd), file]).find((file) => file && holds(ref, file));
   const ref =
-    ['refs/remotes/origin/HEAD', `refs/heads/${DEFAULTS.git.defaultBranch}`].find(resolves) ?? names.find(holdsConfig);
+    ['refs/remotes/origin/HEAD', `refs/heads/${DEFAULTS.git.defaultBranch}`].find(resolves) ?? names.find(heldAt);
   if (ref === undefined) return DEFAULTS;
-  try {
-    return committedConfig(project, ref);
-  } catch {
-    return null;
-  }
+  // 128 is git saying the ref has no such file.
+  const shown = runGit(['show', `${ref}:${heldAt(ref) ?? files[0]}`], cwd, { timeout: 15_000, maxBuffer: 16 * 1024 * 1024 });
+  if (shown.status === 128) return DEFAULTS;
+  return shown.status === 0 ? configFromText(shown.stdout, project.paths.config) : null;
 }
 
 // What is wrong with the commit git is about to make from `cwd`: { problems: [line], unreadable: [what] }. A check

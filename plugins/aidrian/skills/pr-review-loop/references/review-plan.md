@@ -11,6 +11,8 @@ repository describes the plan itself.
 - `agent`: the agent to run. Never the agent that wrote the change.
 - `base`..`head` and `context`: `full` reviews the whole change; `delta` only what changed since the agent's last
   review, with `priorFindings` from it. `files`: the files to report findings in, or null for all.
+  For a project below the repository root, `brief` says so: hand it to the agent, which runs every `git diff` in the
+  project's folder with `--relative` and cites from the project root, as `files` lists them.
 - `flows[]`: each critical flow with its `invariants`. The agent writes one verdict per invariant to a JSON file:
 
   ```json

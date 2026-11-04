@@ -4,8 +4,9 @@
 // ask for (footerLine), a line when another copy of the plugin's `aidrian` comes first on PATH (commandsLine), and, for
 // the main session only, a format line for chat replies, a line when the
 // lesson inbox holds open lessons, which escalates when the inbox needs triage, a line while persona audits in the
-// state folder hold untriaged findings (lib/audits.mjs auditNudge), and a line when the plugin copy running
-// is older than the version the project requires (`requires` in config.json). Last, in the main session while
+// state folder hold untriaged findings (lib/audits.mjs auditNudge), a line when the plugin copy running
+// is older than the version the project requires (`requires` in config.json), and a line when the indexed docs hold
+// unconfirmed decisions and config.json `decisions.unreviewed.remind` says so. Last, in the main session while
 // config.json `git.mainCheckout.guard` is on (lib/main-commits.mjs): a line when the session inherited the commit
 // guard's override, and up to three lines about the main checkout: local commits not on origin, a branch other than
 // the default or a detached HEAD, and changed tracked files. SessionStart adds plain
@@ -19,9 +20,10 @@ import path from 'node:path';
 
 import { auditNudge } from '../lib/audits.mjs';
 import { loadConfig, versionFloorProblem } from '../lib/config.mjs';
+import { ageDays, parseDecisions } from '../lib/decisions.mjs';
 import { saveGateSnapshot } from '../lib/gate-snapshot.mjs';
 import { runHook } from '../lib/hook-io.mjs';
-import { indexRows, loadKnowledge } from '../lib/knowledge.mjs';
+import { indexedPaths, indexRows, loadKnowledge } from '../lib/knowledge.mjs';
 import { inboxPath, nudge } from '../lib/lesson-inbox.mjs';
 import { inheritedOverrideLine, unpushedMainLine } from '../lib/main-commits.mjs';
 import { findProject, stateDir } from '../lib/project.mjs';
@@ -64,6 +66,8 @@ await runHook((input) => {
     if (floor) console.log(`Plugin too old: ${floor}. Its hooks and commands may reject this project's config until then.`);
     const lessons = nudge(inboxPath(project, config), { command: binCommand('aidrian'), config });
     if (lessons) console.log(lessons);
+    const decisions = decisionsLine(project.root, buckets, config);
+    if (decisions) console.log(decisions);
     const audits = auditLine(project, config);
     if (audits) console.log(audits);
     const inherited = inheritedOverrideLine(config);
@@ -71,6 +75,26 @@ await runHook((input) => {
     for (const warning of unpushedMainLine(project, config)) console.log(warning);
   }
 });
+
+// The reminder of the decisions an agent made alone that the Human has not answered, from the indexed docs of the working
+// copy, as the domain pause counts them: a marker whose only problem is its class counts too. A marker in a file no index
+// lists does not, since that takes git, which a hook does not wait for. A doc it cannot read counts for nothing here:
+// `aidrian decisions list` reports it, and a hook never breaks a session.
+function decisionsLine(root, buckets, config) {
+  if (config.decisions.unreviewed.remind !== 'session-start') return null;
+  const unconfirmed = indexedPaths(buckets).flatMap((doc) => {
+    try {
+      const { decisions, unlisted } = parseDecisions(readFileSync(path.resolve(root, doc), 'utf8'), config.decisions);
+      return [...decisions, ...unlisted].filter(({ status }) => status === 'unconfirmed');
+    } catch {
+      return [];
+    }
+  });
+  if (!unconfirmed.length) return null;
+  const oldest = Math.max(...unconfirmed.map(({ date }) => ageDays(date)));
+  return `Decisions to review: ${unconfirmed.length} (oldest ${oldest} day${oldest === 1 ? '' : 's'}). ` +
+    `Tell ${config.names.human} once, then go on with the task: the decision-review skill goes through them, and only a person starts it.`;
+}
 
 // The audit inbox line, or '': like auditNudge itself, a state folder it cannot find costs the line, never the session.
 function auditLine(project, config) {

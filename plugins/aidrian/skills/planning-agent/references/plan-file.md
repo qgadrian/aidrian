@@ -107,7 +107,7 @@ A plan is `status: ready` (decision-complete) only when ALL of:
 
 - every slice has `files_in_scope` and `verification_path`
 - no `Open questions` section entries remain
-- no `decision_options` are deferred to the user
+- no `decision_options` are deferred to the user (`knowledge/references/decisions.md`)
 - the `workspace_decision` frontmatter block is populated
 - for issue-driven plans, every `acceptance_criteria_covered` entry maps to a real AC ID from the issue; for design-import plans
   (`plan_kind: technical-design`), every `screens_covered` entry maps to a real screen ID in `docs/design-imports/<slug>/inventory.md`

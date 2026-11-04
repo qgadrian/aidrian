@@ -2,7 +2,7 @@
 
 Read before the first question of step 5, and § The tracker at step 3.
 
-Sections: The tracker; How to ask; What follows a decision; A rule verdict; Search for an existing issue first; Priority;
+Sections: The tracker; How to ask; What follows a decision; A rule verdict; A held item's authority; Search for an existing issue first; Priority;
 A product decision before an issue; Works as documented; A delegated answer.
 
 ## The tracker
@@ -22,7 +22,7 @@ guess it from a remote or a key. When that knowledge names none, the tracker is 
   open, gets one line at most. Offer only the item's `allowed_decisions`; `pending --json` prints them, and `record`
   refuses any other.
 - A `held` item's question asks the Human for the product decision: what should happen, with a recommended answer and
-  the reason, and the verdict in one plain line. Issue options come only after that decision.
+  the reason, the verdict in one plain line, and the authority § A held item's authority reports. Issue options come only after that decision.
 - After the question, at most one line on what comes next, such as "Then seven more groups, one at a time".
   Never preview later groups or a leaning on them: each gets its recommendation when its turn comes.
 - A line of an older report may name a task by its number, such as "Task 2", and `pending` marks it `numbered_task`.
@@ -57,6 +57,9 @@ The verdict quotes the rule with its doc's path and section. It follows any term
 an amount, a limit, or a time span, into the docs that define it, decision records included. A paragraph that names a
 term without its value settles nothing.
 
+With `conforms` or `silent`, the answer also gives the product decision's `class`, `reversible`, and `docs`, as
+`knowledge/references/decisions.md` defines them, for § A held item's authority. Those three stay out of `triage.json`, and they do not change who decides: the Human does.
+
 A verdict is evidence, not a decision: recording it changes no item's state, and needs no answer from the Human.
 A `silent` says what was searched instead of quoting:
 
@@ -69,6 +72,15 @@ decision is recorded, `decided --by human`, with the decision as the reason; tha
 "your recommendation" is the Human's decision: record it `--by human`, with the reason naming whose pick it adopts.
 An agent's own `decided` releases nothing. In `auto`, record a held item `defer`, with the verdict as the reason.
 The verdict stays in `triage.json` through later decisions.
+
+## A held item's authority
+
+Before a held item's question, in `confirm`, run `aidrian decisions resolve` as `knowledge/references/decisions.md` says, in the `product` domain,
+with the verdict's `class`, `reversible`, and `docs`. A missing field, or a command that fails, means `ask`.
+Report `resolve`'s `authority` and `reason` beside the question, or `ask` and why it did not answer.
+A held item always asks, under `ask` and `decide` alike: `decide` settles nothing here,
+no `authority` line goes back to the product owner, and no `decided_provisional` or marker follows.
+In `auto`, no question comes, so run no `resolve`: record the item `defer`, as § A rule verdict says.
 
 ## Search for an existing issue first
 

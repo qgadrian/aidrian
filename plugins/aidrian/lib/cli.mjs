@@ -20,6 +20,7 @@ const COMMANDS = {
   pr: './pr.mjs',
   review: './review/bench.mjs',
   quorum: './quorum.mjs',
+  decisions: './decisions-cli.mjs',
   report: './report.mjs',
 };
 

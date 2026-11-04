@@ -7,7 +7,7 @@ disable-model-invocation: true
 # autopilot
 
 Take one task from implementation to a reviewed pull request while the Human is away, then report. It merges only when auto-merge is on.
-This skill runs other skills and adds two things: what to do with a decision nobody is there to make, and a bound on the review loop.
+It runs other skills and adds two things: what to do with a decision nobody is there to make, and a bound on the review loop.
 It never redoes what the skills it runs already do.
 
 Before you start, follow the `knowledge` skill. Load your `product_sensitive` docs for the flows the project declares critical.
@@ -35,10 +35,10 @@ Its `references/review-rules.md` defines a review round, when the bot is out, th
 
 ## Before launch
 
-While the Human is still here:
+While the Human is here:
 
 - A vague or large task: run the `challenge` skill first, or the `plan-review` skill on an existing plan.
-- Best: launch from the task worktree, already created, so the run never has to ask about one.
+- Best: launch from the task worktree, so the run never has to ask about one.
 - Record what the Human says at launch word for word, such as "skip the end-to-end run" or "five review rounds".
 
 ## Who decides
@@ -50,10 +50,12 @@ the pull request, and review fixes.
    Only the hard rules below do not yield.
 2. **A critical decision**, such as an open product trade-off, an architecture choice with lasting effects, a trust-boundary
    question, a risky refactor, or scope growth: never guess anything that cannot be undone.
-   With a clearly safe default that can be undone, take it and flag it in the report.
+   Run `aidrian decisions resolve` as `knowledge/references/decisions.md` says. Under `decide`, follow its order to the end and record the `decided_provisional` in the report.
+   Under `ask`, read its `unattended`, which the base branch's config sets: never the working copy's.
+   With `safe-default` and a clearly safe default that can be undone, take it and flag it in the report.
    Otherwise park it: record it with its options and the safest recommendation, and go on with all work that does not depend on it.
 3. **Mandatory gates stay.** A critical-flow `product-manager` sign-off and a `security-engineer` verdict still block their work.
-   Never approve one yourself: park it.
+   No setting and no `unattended` answer covers them: never approve one yourself; park it.
 4. **A "stop and ask"** in a skill this run uses becomes park and go on. When nothing independent is left, stop.
 
 ## Checkpoints
@@ -64,7 +66,7 @@ With `"ask"`, the default, or `"off"`, write none: the report carries what a res
 
 When allowed, write it with the `session-handoff` skill, in this session and never through an agent, which knows nothing of the run.
 Checkpoint after the implementation is committed, after the draft opens, after each review round, and at any stop, before the report.
-Fold each parked decision and each finding left open into the brief as it arises. A failed write never blocks the run.
+Fold each parked decision, each `decided_provisional`, and each finding left open into the brief as it arises. A failed write never blocks the run.
 
 ## Phases
 
@@ -78,18 +80,7 @@ Read `references/phases.md` at the start, and follow it.
 
 The engine ends at its draft, and these phases own what follows: the review loop runs once.
 The `orchestration` skill's § 3 rules apply inside phases 3 and 4, never as a second loop after them.
-
-## Bounds
-
-- **Review rounds**: the `orchestration` skill § 3 stop rule, the one rule this run stops by, at most config.json
-  `github.maxReviewRounds` rounds as the review rules count them, unless the Human set another number at launch,
-  plus an extra round `github.extraRounds: "auto"` grants at the cap.
-- **No rare edge cases.** End the loop early once a review of the current head leaves every open finding `accepted_residual`,
-  `acceptable_as_is`, or `drop_unless_cited` by `aidrian pr disposition`. Reply with the reason; resolve only the bot's threads.
-  A round that pushed a fix has not reached that point: the next round reviews the new head.
-- **The bot is asked at most once per round** through `aidrian pr await-review`, and never once it is out,
-  as the review rules define it. Its state is recorded every round.
-- **Fix passes**: the review rules' cap of 2 per finding or failing check; then it is parked. An agent blocked twice is parked too.
+The bounds of the review rounds, the bot, and the fix passes: `references/phases.md` § Bounds.
 
 ## Stop
 
@@ -116,7 +107,8 @@ by the names the start hook gives, never "you" or "I". In this order:
    `aidrian pr auto-merge` printed or the stop line of the `pr-merge-when-green` skill.
 2. **Checks**: verification and CI status, and the bot review state of each round:
    `received`, `already_present`, `timed_out`, `blocked_quota`, `round_limit`, `extension_ask`, or `no_reviewer`.
-3. **Decisions for the Human**: each parked decision, with its options and the safest recommendation.
+3. **Decisions for the Human**: each parked decision, with its options and the safest recommendation;
+   then each `decided_provisional`, with its reason, revisit trigger, and how it reverts.
 4. **Left open**: findings closed as rare edge cases, each with its reason, findings still open at the cap,
    and fixes the last round pushed that no review has seen.
 5. **Next**: when a brief was written, its path and the resume line the `session-handoff` skill prints;

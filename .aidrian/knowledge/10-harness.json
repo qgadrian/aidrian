@@ -28,7 +28,7 @@
       "tags": []
     },
     "project-folder.md": {
-      "summary": "The .aidrian/ folder: aidrian init, check, and lint, the local state folder, task worktrees, local knowledge sources, migrating.",
+      "summary": "The .aidrian/ folder: aidrian init, check, lint, local state, task worktrees, local sources, decision markers, aidrian decisions list and set, migrating.",
       "tags": []
     },
     "personas.md": {
@@ -36,7 +36,7 @@
       "tags": []
     },
     "review.md": {
-      "summary": "aidrian pr review: plan, splits, critical flows and invariants, visual review, reviewers, quota fallbacks, rounds and limit, sign-off, record, owed reviews.",
+      "summary": "aidrian pr review: plan, splits, flows and invariants, project-root paths, visual review, reviewers, quota fallbacks, rounds, sign-off, record, owed reviews.",
       "tags": []
     },
     "knowledge.md": {
@@ -52,7 +52,7 @@
       "tags": []
     },
     "config.md": {
-      "summary": "config.json keys: pull request title and body, review gate, auto-merge, terms, tracker write guard (workspace, team, project), models, names, attribution.",
+      "summary": "config.json: pull request body, review gate, auto-merge, terms/names, models, attribution, telemetry, quorum roles, decisions, authority, tracker write guard.",
       "tags": []
     },
     "dispatch-log.md": {

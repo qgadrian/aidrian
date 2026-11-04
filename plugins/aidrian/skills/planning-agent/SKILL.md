@@ -56,6 +56,10 @@ Rules:
 - Use the smallest specialist set required.
 - Prefer one short evidence pass per unresolved question.
 - Stop once the local plan is decision-complete.
+- When an owner you consulted returns `decision_options`, run `aidrian decisions resolve` as `knowledge/references/decisions.md` says.
+  Under `ask`, the decision becomes an `Open questions` entry, which blocks `ready`.
+  Under `decide`, follow its order to the end and record the `decided_provisional` in `## Approach` and your handoff, so the run's report carries it.
+- You may also consult the agent the command's `secondLook` names, for that look only.
 
 ## Workflow
 

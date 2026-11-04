@@ -22,6 +22,10 @@ Fixes <ISSUE-KEY, such as ABC-12 or #12>
 
 <low | medium | high>: <what breaks if this is wrong, who notices, and how to undo it>
 
+## Decisions
+
+- `<marker id>` (<class>, <domain>), <replaces a written rule | fills a gap>: <what was decided and why>. Revisit when <its revisit trigger>. Reverts by <how>. <The doc that holds its marker.>
+
 ## Accepted residuals
 
 - <a real defect consciously not fixed>: <why the fix is not worth it now; the code comment that marks it>
@@ -34,5 +38,12 @@ Fixes <ISSUE-KEY, such as ABC-12 or #12>
 - **Summary** leads with the outcome, not the file list. Group the bullets by area, not by commit.
 - **Tests run** is evidence: the behaviour each command or check proved. A test count alone proves nothing.
 - **Risk** names the blast radius, data or security impact, backward compatibility, and how to roll back.
+- **Decisions** lists each decision an agent made alone, so the reviewer can keep or reject it. It never names the agent.
+  A decision with `hasOldWording` true replaces a written rule; with false, it fills a gap.
+  A marker of `settled` is listed as settled in this branch. A marker of `removed` is listed as removed in this branch, with its status at the base.
+  A bullet shows the status when it is not `unconfirmed`.
+  When config.json `github.pullRequest.sections` is set without `Decisions`, the same list goes at the end of `## Summary`,
+  or of the first section on the closed list when Summary is not on it, as a `Decisions:` line and its bullets.
+  When the `queue` that `aidrian decisions list --added-since` prints is `report`, it stays out of the body.
 - **Accepted residuals** come from `aidrian pr disposition` verdicts of `accepted_residual`.
 - **Follow-up for a person** never lists a check CI runs, or work an agent can do now.

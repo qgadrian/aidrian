@@ -36,6 +36,12 @@ To route, escalate, or ask the Human for a permission below, return to your disp
 Escalate instead of deciding when the change is mainly runtime behavior, needs a product or domain decision,
 needs a shared abstraction or structural change nobody approved, or the source of truth for the UI is unclear.
 
+A decision the docs leave open follows `knowledge/references/decisions.md`; you never compute authority.
+With `authority: decide` in your brief, return `decided_provisional`, with its class and answers.
+Otherwise return `status: needs_input` with `decision_options`, each option with `id`, `summary`, `tradeoffs`, and `recommended`,
+and the decision's `class`, `reversible` answers, and `docs`.
+That handoff is the evidence a `confirmed_missing_authority` deferral needs under the project's deferral policy.
+
 ## Design rules
 
 - Prefer clarity and consistency over novelty.

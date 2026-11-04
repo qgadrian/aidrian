@@ -59,7 +59,7 @@ docs to check against. It carries nothing of your own: no suspected findings, ri
 
 - **Critical flow.** The plan's goal, scope, approach, affected surfaces, or slice files touch a flow the project's
   `product_sensitive` knowledge declares critical (the whole text, for a free-form plan): `product-manager` first.
-  `blocked` or `needs_evidence` stops the run with its `decision_options`, attributed.
+  `blocked` or `needs_evidence` stops the run with its `decision_options`, attributed: no `authority` covers this gate (`knowledge/references/decisions.md`).
 - **Security.** The plan touches auth, sessions, tokens, tenancy, permissions, payments, webhooks, uploads, redirects, secrets,
   untrusted content, privileged access, or a surface the project's `security` knowledge lists: `security-engineer` first.
   Its verdict and required invariants bind the critique; no critique finding drops them.

@@ -57,6 +57,9 @@ At the start of every session and subagent, the hook prints:
 - in the main session only, one `Format:` line: headers, quotes, and a few emoji in chat replies, never in commits,
   pull requests, docs, or code, which a subagent's report feeds, so a subagent does not get it;
 - in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons;
+- in the main session only, one `Decisions to review: N (oldest X days)` line while the indexed docs hold unconfirmed
+  [decision markers](project-folder.md#decision-markers), unless [`decisions.unreviewed.remind`](config.md#decisions) is `"off"`.
+  A doc it cannot read counts for nothing here, and never stops the hook. The line names the `decision-review` skill.
 - in the main session only, one more line while the persona audits in the state folder hold untriaged items
   ([Triage](personas.md#triage)): `Audit inbox: N untriaged findings in M reports. The persona-audit-triage skill triages them.`
   Nothing prints when every item has a decision, or when the audits folder, a report, or `triage.json` cannot be read.
@@ -116,6 +119,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Review gate, when turned on | Asking the review bot before a review is on record ([config.md](config.md#review-gate)) | `AIDRIAN_ALLOW_UNREVIEWED_REQUEST=1` |
 | Review rounds, when a review bot is set | Setting `AIDRIAN_ALLOW_EXTRA_ROUNDS`, and asking the bot for a review outside `aidrian pr`, which counts rounds first ([config.md](config.md#review-gate)) | none |
 | Review sign-off | `aidrian pr signoff`, which records the Human's sign-off of a flow under their name ([review.md](review.md#sign-off-by-the-human)) | none: the Human runs it in their own shell |
+| Decision answer | `aidrian decisions set` or `undo` from a subagent, which carry out the Human's answer on a decision ([Decision markers](project-folder.md#decision-markers)) | none: the main session runs them on the Human's word |
 | Extra round approval | `aidrian pr extend <PR> --human approve` without the Human's answer in the session ([review.md](review.md#extra-rounds)) | none: the Human answers, or runs it in their own shell |
 | Quota fallback choice | `aidrian pr review <PR> --quota-fallback` without the Human's pick in the session ([review.md](review.md#out-of-quota)) | none: the Human answers, or runs it in their own shell |
 | Merge guard | Merging a pull request while a review it owes is open, or the review of its head has not finished ([Merge guard](#merge-guard)) | none: the Human answers "Merge anyway", or merges in their own shell |
@@ -170,8 +174,12 @@ What each rule matches:
   and a `gh pr create` body without the configured `Authored-with:` and `Assisted-by:` lines.
 - Review gate: `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose body
   asks `@codex review`; `gh pr create --reviewer` and `gh pr edit --add-reviewer` naming `github.reviewer`.
-- Review sign-off: `aidrian pr signoff`, with `--overrule` too, also as `node …/cli.mjs` or `node …/bin/aidrian`. In a Claude Code session the
+- Review sign-off: `aidrian pr signoff`, with `--overrule` too, also as `node …/cli.mjs` or `node …/bin/aidrian`, and inside a substitution, `sh -c`, `eval`, or a heredoc or pipe fed to a shell. In a Claude Code session the
   Human runs it with `!`; if a host routes `!` through the hooks too, the Human runs it from another terminal.
+- Decision answer: `aidrian decisions set` and `aidrian decisions undo`, also as `node …/cli.mjs` or `node …/bin/aidrian`,
+  and in `sh -c`, `eval`, or a heredoc fed to a shell,
+  in a call with an `agent_id`. The main session has none, so it stays allowed. A subagent on a host that sends no `agent_id` passes too.
+  The rule stops accidents and is no security boundary: a form it does not read, such as `xargs` or `npx`, runs.
 - Extra round approval: `aidrian pr extend <PR> --human approve`, also as `node …/cli.mjs` or `--human=approve`, while the
   pull request's check at the cap waits for the Human. It runs when the session transcript holds an AskUserQuestion
   answer, given after the judge's verdict, to a question naming `#<PR>` and the round it grants, `round <N>`, whose chosen
@@ -228,8 +236,8 @@ Neither record waits on a lock, so a block stays well inside the host's 5-second
 
 The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `process-kill` (both the kill and the listing rule),
 `grep-exit-chain`, `pr-body`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
-`review-extend`, `review-fallback`, `merge-review` (the Bash rule and the MCP hook), `main-checkout`, `terms`, `agent-gates`, `config-guard`,
-`tracker-guard`, and `ask-names`.
+`decisions-set`, `review-extend`, `review-fallback`, `merge-review` (the Bash rule and the MCP hook), `main-checkout`, `terms`, `agent-gates`,
+`config-guard`, `tracker-guard`, and `ask-names`.
 The hooks load the recorder only when they block, so a call they let run costs no more than before.
 When the recorder fails, the call is still blocked.
 
@@ -447,7 +455,8 @@ The rule has no override: a term that is right in some file belongs in its rule'
 
 After an Edit or Write of a `.md`, `.markdown`, or `.mdx` file in a project, the hook reads the whole file and names the lines
 the write touched that are longer than `docs.wrapLimit`. The write already happened, so the agent fixes them with a follow-up edit.
-Frontmatter, fenced and indented code, table rows, and a line whose overflow is one unbreakable token such as a URL are never reported.
+Frontmatter, fenced and indented code, table rows, a [decision marker](project-folder.md#decision-markers) line, and a line whose overflow is
+one unbreakable token such as a URL are never reported.
 `"docs": { "wrapLimit": 0 }` turns it off.
 
 ## Delivery check
@@ -546,6 +555,7 @@ such as an index it cannot read, finds nothing and prints one line naming what i
 found still counts. A missing config.json gives the defaults, so the guard is off, except with HEAD unborn in a
 repository that has branches: `git switch --orphan` empties the working tree, config.json with it, so the guard reads
 the config.json committed on `origin/HEAD`, else on the local `main`, else on the first branch that holds one.
+For a project below the repository root, `--project <folder>` names it, and the guard reads that folder's config.json on the same branch.
 One that is there but does not load,
 as when it does not parse, prints `aidrian pre-commit: config.json unreadable; not checked` and lets the commit run.
 

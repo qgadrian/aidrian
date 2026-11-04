@@ -6,6 +6,18 @@ Follow that skill as written, with the autopilot `SKILL.md` § Who decides in pl
 The bounds compose: the implementing skill's own per-slice fix cap holds inside phase 1,
 and config.json `github.maxReviewRounds`, the `orchestration` skill's round cap, bounds phase 3.
 
+## Bounds
+
+- **Review rounds**: the `orchestration` skill § 3 stop rule, the one rule this run stops by, at most config.json
+  `github.maxReviewRounds` rounds as the review rules count them, unless the Human set another number at launch,
+  plus an extra round `github.extraRounds: "auto"` grants at the cap.
+- **No rare edge cases.** End the loop early once a review of the current head leaves every open finding `accepted_residual`,
+  `acceptable_as_is`, or `drop_unless_cited` by `aidrian pr disposition`. Reply with the reason; resolve only the bot's threads.
+  A round that pushed a fix has not reached that point: the next round reviews the new head.
+- **The bot is asked at most once per round** through `aidrian pr await-review`, and never once it is out,
+  as the review rules define it. Its state is recorded every round.
+- **Fix passes**: the review rules' cap of 2 per finding or failing check; then it is parked. An agent blocked twice is parked too.
+
 ## 1. Implement
 
 Pick the engine by the input:

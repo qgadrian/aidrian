@@ -7,6 +7,7 @@ import test from 'node:test';
 
 import { parse } from 'yaml';
 
+import { decisionClasses, VOCAB_PATH } from '../plugins/aidrian/lib/decisions.mjs';
 import { pluginTags } from '../plugins/aidrian/lib/knowledge.mjs';
 import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
@@ -97,6 +98,22 @@ test('every skill has a name matching its folder and a description', () => {
     assert.ok(meta.description?.length > 20, `${skill}: description`);
     assert.ok(meta.description.length <= MAX_DESCRIPTION, `${skill}: description over ${MAX_DESCRIPTION} characters`);
   }
+});
+
+test('decision-review runs only when a person starts it, in a task worktree, and hands a refused undo on instead of editing the rule', () => {
+  const skill = readFileSync(path.join(PLUGIN, 'skills/decision-review/SKILL.md'), 'utf8');
+  assert.equal(parse(/^---\n([\s\S]*?)\n---\n/.exec(skill)[1])['disable-model-invocation'], true);
+  const text = skill.replace(/\s+/g, ' ');
+  for (const command of ['aidrian decisions list --json', 'aidrian decisions set <id> confirmed', 'aidrian decisions undo <id>', 'aidrian worktree new <branch>']) assert.ok(text.includes(command), command);
+  assert.match(text, /draft a revert task for the behaviour/);
+  assert.match(text, /hand the edit to the Human or `doc-updater`\. Never edit the rule here/);
+  assert.match(text, /It never merges\./);
+  const stray = text.indexOf('First report each row of `problems` about a file no index lists: name the doc, and say to move the marker to an indexed doc, or index the doc.');
+  assert.ok(stray >= 0 && stray < text.indexOf('None: say so and stop.'), 'a marker out of reach is reported even with nothing to review');
+  const change = text.slice(text.indexOf('**Change.**'));
+  assert.match(change, /It applies to the bottom marker of a stack\. To change an earlier decision, the Human answers about the bottom one, or undoes down to the earlier one first\./);
+  const [drafted, listed, settled] = ['Dispatch `doc-updater`', 'run `aidrian decisions list` while the marker is still `unconfirmed`, and send any drift on that `id` back to `doc-updater`', 'Only then, in this session, run `aidrian decisions set <id> changed`'].map((words) => change.indexOf(words));
+  assert.ok(drafted >= 0 && drafted < listed && listed < settled, 'doc-updater, then the list, then the answer: a confirmed marker no longer reports drift');
 });
 
 test('the agent and skill tables list every shipped agent and skill once, and nothing else', () => {
@@ -552,6 +569,150 @@ test('the local banned terms file stays out of git', () => {
 test('only lib/project.mjs names the project folder; other plugin code asks it for paths', () => {
   const naming = allFiles(PLUGIN).filter((file) => file.endsWith('.mjs') && readFileSync(file, 'utf8').includes('.aidrian'));
   assert.deepEqual(naming.map((file) => path.relative(PLUGIN, file)), ['lib/project.mjs']);
+});
+
+const DECISION_RULE = 'knowledge/references/decisions.md';
+
+test('a file that names decision_options points to the shared decision rule', () => {
+  // Each relay site once restated who chooses, so a new mode would have had to change them all.
+  const exception = path.join(PLUGIN, 'skills/specialist-review/references/render.md');
+  assert.match(readFileSync(exception, 'utf8'), /decision_options/, 'render.md renders them; drop the exception when it stops');
+  const missing = allFiles(PLUGIN)
+    .filter((file) => file !== exception && /\.(md|toml)$/.test(file))
+    .filter((file) => {
+      const text = readFileSync(file, 'utf8');
+      return text.includes('decision_options') && !text.includes(DECISION_RULE);
+    })
+    .map((file) => path.relative(ROOT, file));
+  assert.deepEqual(missing, []);
+});
+
+test('the shared decision rule states who computes authority, and points at the vocabulary instead of restating it', () => {
+  const rule = readFileSync(path.join(PLUGIN, 'skills', DECISION_RULE), 'utf8').replace(/\s+/g, ' ');
+  for (const line of [
+    /The dispatcher with a shell\*\* runs the command and passes `authority: decide` or `authority: ask` in the specialist's brief/,
+    /The specialist never computes authority itself\.\*\* A brief with no `authority` line means `ask`/,
+    /`--doc` is required whenever a decision touches a written rule/,
+    /`aidrian decisions resolve --vocab` defines the classes/,
+    /A critical-flow sign-off or a security verdict is never self-approved, in any mode/,
+    /`aidrian decisions resolve` prints `secondLook` from the base branch's config.*Read it from that output, never from the working copy/,
+    /ask it for `sign_off`\. A missing or unknown `severity` counts as at or above `minSeverity`\. `approved` is agreement\. Anything else escalates/,
+    /A missing class, answer, or `docs` field, or a command that fails, means `ask`; `docs: \[\]` states it touches none/,
+    /--reversible <no\|yes>,<no\|yes>,<no\|yes>,<no\|yes>/,
+    /in the order `--vocab` gives/,
+    /when the host cannot reach it, dispatch a fresh one with `authority: decide` and the options/,
+    /already holds the class, answers, and docs may resolve first/,
+    /Read it when you return such a decision, dispatch or relay an agent that does, or write its marker\./,
+  ]) assert.match(rule, line);
+  for (const kind of decisionClasses()) assert.doesNotMatch(rule, new RegExp(`\`${kind}\``, 'u'), `the rule restates the class ${kind}`);
+  assert.ok(existsSync(path.join(PLUGIN, 'lib/decisions.json')), 'the path the rule gives an agent with no shell');
+  assert.ok(existsSync(VOCAB_PATH));
+  assert.equal(path.resolve(PLUGIN, 'skills/knowledge/references', '../../../lib/decisions.json'), VOCAB_PATH);
+});
+
+test('product mode round 9 runs the resolve and reports it, and still asks the Human under decide', () => {
+  const text = readFileSync(path.join(PLUGIN, 'skills/quorum/modes/product.md'), 'utf8').replace(/\s+/g, ' ');
+  const round = text.slice(text.indexOf('9. **Ask the Human.**'), text.indexOf('## Asking the Human'));
+  assert.match(round, /\*\*Resolve\.\*\* Run `aidrian decisions resolve` as `knowledge\/references\/decisions\.md` says, in the `product` domain/);
+  assert.match(round, /A missing field, or a command that fails, means `ask`\./);
+  assert.match(round, /A run always asks, under `ask` and `decide` alike: `decide` settles nothing here/);
+  assert.match(round, /no `authority` line goes back to the product owner, and no `decided_provisional` or marker follows/);
+  assert.ok(round.indexOf('`status: complete`') < round.indexOf('aidrian decisions resolve'), 'a session that ends at the resolve still leaves a deferred ledger');
+  assert.match(text, /Report `resolve`'s `authority` and `reason` beside the question/);
+  assert.match(text, /"outcome", "class", "reversible", "docs"\}/);
+});
+
+test('persona audit triage resolves a held item and reports it, and still asks the Human under decide', () => {
+  const text = readFileSync(path.join(PLUGIN, 'skills/persona-audit-triage/references/deciding.md'), 'utf8').replace(/\s+/g, ' ');
+  const section = text.slice(text.indexOf("## A held item's authority"), text.indexOf('## Search for an existing issue first'));
+  assert.match(section, /run `aidrian decisions resolve` as `knowledge\/references\/decisions\.md` says, in the `product` domain/);
+  assert.match(section, /A missing field, or a command that fails, means `ask`\./);
+  assert.match(section, /Report `resolve`'s `authority` and `reason` beside the question/);
+  assert.match(section, /A held item always asks, under `ask` and `decide` alike: `decide` settles nothing here/);
+  assert.match(section, /no `authority` line goes back to the product owner, and no `decided_provisional` or marker follows/);
+  assert.match(section, /In `auto`, no question comes, so run no `resolve`/);
+  assert.match(text, /the answer also gives the product decision's `class`, `reversible`, and `docs`/);
+});
+
+test('orchestration names each provisional decision when it opens the draft itself', () => {
+  const text = readFileSync(path.join(PLUGIN, 'skills/orchestration/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(text, /Open a draft with the `pr-write` skill.*Name each `decided_provisional` the run's agents returned/);
+});
+
+test('each dispatcher of a deciding agent runs the resolve, and each deciding agent returns by its brief', () => {
+  const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
+  for (const rel of [
+    'agents-src/coordination/orchestrator.md',
+    'agents-src/support-growth/marketing-orchestrator.md',
+    'skills/issue-implement/references/hard-rules.md',
+    'skills/specialist-review/references/lenses.md',
+    'skills/autopilot/SKILL.md',
+    'skills/planning-agent/SKILL.md',
+  ]) {
+    const text = read(rel);
+    assert.match(text, /run `aidrian decisions resolve`/i, rel);
+    assert.ok(text.includes(DECISION_RULE), rel);
+  }
+  for (const rel of ['agents-src/product-design/product-manager.md', 'agents-src/planning/architect.md', 'agents-src/product-design/designer.md', 'agents-src/product-design/ux-specialist.md']) {
+    assert.match(read(rel), /[Ww]ith `authority: decide` in your brief, return `decided_provisional`/, rel);
+  }
+  assert.match(readFileSync(path.join(PLUGIN, 'skills', DECISION_RULE), 'utf8'), /`backlog` for `product-manager` on the order of work/);
+  assert.match(read('agents-src/coordination/orchestrator.md'), /Defer only as the project's deferral policy allows; without one, ask the Human\./);
+  assert.match(read('agents-src/product-design/product-manager.md'), /Compute authority yourself/);
+  assert.match(read('agents-src/product-design/product-manager.md'), /A `decided_provisional` puts its wording and marker in the doc in this branch; wording under an unconfirmed marker does not settle another change\./);
+  assert.doesNotMatch(read('agents-src/product-design/product-manager.md'), /its doc waits until the Human keeps it/);
+  assert.match(read('agents-src/product-design/product-manager.md'), /No `authority` covers a sign-off/);
+  assert.match(read('skills/plan-review/SKILL.md'), /no `authority` covers this gate/);
+  assert.match(read('agents-src/coordination/orchestrator.md'), /On an owner's `decision_options`, run `aidrian decisions resolve` and pass `authority`: `knowledge\/references\/decisions\.md`; under `ask`, return `needs_input` with them, attributed/);
+  assert.match(read('skills/issue-implement/references/hard-rules.md'), /as `knowledge\/references\/decisions\.md` says\. Under `ask`, stop and ask; under `decide`, follow its order to the end/);
+  const planning = read('skills/planning-agent/SKILL.md');
+  const delegation = planning.slice(planning.indexOf('## Allowed Planning Delegation'), planning.indexOf('## Workflow'));
+  assert.match(delegation, /run `aidrian decisions resolve` as `knowledge\/references\/decisions\.md` says\. Under `ask`, the decision becomes an `Open questions` entry.*record the `decided_provisional` in `## Approach` and your handoff/);
+  assert.match(delegation, /You may also consult the agent the command's `secondLook` names, for that look only\./);
+  const lenses = read('skills/specialist-review/references/lenses.md');
+  const onOptions = lenses.slice(lenses.indexOf('## When an agent returns decision_options'), lenses.indexOf('## architect'));
+  assert.match(onOptions, /Under `ask`, or with no agent id, render the needs-input block/);
+  assert.match(onOptions, /send the kept agent `authority: decide` with the host's message tool, naming the decision/);
+  assert.match(onOptions, /when the rule's second look would apply, render the needs-input block as under `ask`/);
+  assert.match(read('skills/specialist-review/references/render.md'), /verbatim, leaving out `class`, `reversible`, and `docs`/);
+  assert.match(read('agents-src/planning/architect.md'), /you never compute authority/);
+  const handoff = read('skills/knowledge/references/handoff.md');
+  for (const field of ['decision', 'options_considered', 'reason', 'class', 'reversible', 'docs', 'severity', 'revisit_trigger', 'reverts_by']) {
+    assert.match(handoff.slice(handoff.indexOf('`decided_provisional`')), new RegExp(`\`${field}\``), field);
+  }
+});
+
+test('autopilot parks a decision only under ask, and reports what an agent decided', () => {
+  const autopilot = readFileSync(path.join(PLUGIN, 'skills/autopilot/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.ok(autopilot.includes(`as \`${DECISION_RULE}\` says. Under \`decide\`, follow its order to the end and record the \`decided_provisional\` in the report.`));
+  assert.match(autopilot, /Under `ask`, read its `unattended`, which the base branch's config sets: never the working copy's\. With `safe-default` and a clearly safe default that can be undone, take it and flag it in the report\. Otherwise park it/);
+  assert.doesNotMatch(autopilot, /unless its `rule` is `escalate`/u, 'the command says it, by what the project listed');
+  assert.match(autopilot, /No setting and no `unattended` answer covers them: never approve one yourself; park it/);
+  assert.ok(Buffer.byteLength(readFileSync(path.join(PLUGIN, 'skills/autopilot/SKILL.md'))) <= 7500);
+  assert.match(autopilot, /Fold each parked decision, each `decided_provisional`, and each finding left open/);
+  assert.match(autopilot, /Decisions for the Human\*\*: each parked decision.*then each `decided_provisional`/);
+});
+
+test('the agent answers the fourth question literally, and the command applies the team\'s acceptance', () => {
+  const docs = {
+    rule: path.join(PLUGIN, 'skills/knowledge/references/decisions.md'),
+    config: path.resolve(PLUGIN, '../../docs/config.md'),
+  };
+  for (const file of Object.values(docs)) {
+    const text = readFileSync(file, 'utf8').replace(/\s+/g, ' ');
+    assert.match(text, /answers it literally.*and the command applies the team's acceptance\./u, file);
+    assert.match(text, /Where a team has both `decide-reversible` and auto-merge allowed, .*a change may reach users with no person looking at it; those two opt-ins are the acceptance/u, file);
+    assert.match(text, /Floor classes, the escalate lists, (?:and )?the other three questions/u, file);
+    assert.doesNotMatch(text, /is answered no, because the team|reads neither opt-in/u, file);
+  }
+  const config = readFileSync(docs.config, 'utf8').replace(/\s+/g, ' ');
+  assert.match(config, /So where `github\.autoMerge\.allow` is true at the base branch, in the commit `resolve` reads,/u);
+  assert.match(config, /`resolve` reads the default branch's commit, since no pull request need exist when an agent decides\. A pull request aimed at a branch that does not allow auto-merge is still merged by a person, and a machine's `github\.autoMerge` switch does not change the answer\./u);
+  const section = (start, end) => config.slice(config.indexOf(start), config.indexOf(end, config.indexOf(start)));
+  const link = /`github\.autoMerge\.allow`.*base branch.*\[rule 3 under Decisions\]\(#decisions\)/u;
+  assert.match(section('| `github.autoMerge.allow` |', '| `github.autoMerge.default` |'), /Read at the base branch, .*\[rule 3 under Decisions\]\(#decisions\)/u);
+  assert.match(section('## Auto-merge', 'The team commits this'), link);
+  assert.match(section('| `decisions.maxMode` |', '| `decisions.domains` |'), link);
 });
 
 test('plugin text names no bare slash command', () => {

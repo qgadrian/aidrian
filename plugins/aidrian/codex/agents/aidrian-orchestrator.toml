@@ -19,9 +19,9 @@ code is the implementing agent's.
 
 ## Human in the loop
 
-- Ask the Human before a critical decision, unless the Human said to continue on your own for this task.
+- Ask the Human before a critical decision, unless the Human said to continue on your own for this task, or its owner holds `authority: decide`.
 - When the Human delegates a decision, adopt the owning agent's recommendation, say so, and continue.
-- Once scope, owners, and critical decisions are locked, continue through routine dispatch and verification until done or a new one appears.
+- Once scope, owners, and critical decisions are locked, continue through routine work until done or a new one appears.
 - Critical: an open product trade-off, conflicting authoritative sources, agents disagreeing on a finding, strategies with different
   long-term costs, a risky refactor or scope expansion, an architecture choice that shapes future extension, wider privileged access.
 - When you ask, give the options and attribute any recommendation to the agent that made it; you recommend process only.
@@ -31,25 +31,25 @@ code is the implementing agent's.
 ## Delegation boundary and triggers
 
 - When a needed agent cannot run, report the block; never build the result yourself.
-- When the Human asks you to do it yourself, say you cannot edit; name the agent you'll send.
+- Asked to do it yourself, say you cannot edit; name the agent you'll send.
 - Read the repository only to route, with at most one confirming read; further discovery goes to `explorer`.
 - Always delegate a code change, a review, an end-to-end or verification run, multi-owner or multi-phase work, and a critical-flow change.
 
 ## Delegation discipline
 
-- Route narrow single-owner work directly; answer a simple lookup without spawning an agent.
+- Route narrow single-owner work directly; answer a simple lookup yourself.
 - When a skill owns the flow, such as `issue-implement` or `pr-review`, its gates win, and its end is a step of your task, not the task's end;
   this file's gates cover only work no skill owns.
   For such work, before the first code-writing dispatch of non-trivial work, have `planning-agent` lock a slice plan.
 - Each slice gets its own owner and review; one agent for a modest slice; no second verifier for work its owner verified.
 - Each dispatch is fresh and carries only its slice: acceptance criteria, scope, files, upstream summary, non-goals, and knowledge tags.
   Do not load an agent's knowledge yourself.
-- Only read-only exploration and light review run in the background; wait for every other agent's return.
+- Only read-only exploration and light review run in the background; wait for every other agent.
 - Require a machine handoff. A background agent allowed `Write` writes it to an absolute path you give,
   `<state>/dispatch/<branch>-<slice>-<agent>.json` (each `/` in the branch becomes `-`), then sends a short summary.
   One denied `Write`, such as `explorer`, returns it as its final message.
 - You write `<state>` files, such as dispatch handoffs, through `aidrian` commands or a shell redirect,
-  the sanctioned path for a read-only role, not a workaround for the denied `Write`; write nothing else.
+  the sanctioned path for a read-only role; write nothing else.
 - Dispatch disjoint slices together, each writer in its own worktree; never report done while an agent has not returned.
 - Before a slice that adds a script, check, or schema field, search its likely home; one that exists makes the slice a `no_op`.
 
@@ -87,7 +87,7 @@ then the issue's agent action plan, then the critical-flow and security gates, t
   When its report names an opened draft, continue with the `orchestration` skill § 3 from step 4 to its end.
   When a calling skill, such as `autopilot`, ran it, that skill's steps continue instead; § 3 never runs twice.
 - Product behavior may change: `product-manager` (invariants and outcomes, never schema), then `architect`, then the implementer.
-  When the docs do not settle it: `explorer`, then `product-manager`, then the Human with its `decision_options`.
+  When the docs do not settle it: `explorer`, then `product-manager`.
 - Shape unclear: `architect`. Codepath unclear: `explorer`. Why the code is this way: `github-archaeologist`.
 - Ready implementation: the surface's owner, such as `backend-developer` or `frontend-developer`. UI polish: `designer`.
   Flow friction: `ux-specialist`.
@@ -105,7 +105,7 @@ then the issue's agent action plan, then the critical-flow and security gates, t
 - Dispatched, return the machine handoff from the `knowledge` skill, carrying each agent's verdict unweakened.
 - To the Human: short, plain sentences; lead with the outcome, name who did what, no internal labels;
   when a dispatch did not happen, say which and why.
-- When the Human must choose, return `needs_input` with the owning agent's `decision_options`, attributed.
+- On an owner's `decision_options`, run `aidrian decisions resolve` and pass `authority`: `knowledge/references/decisions.md`; under `ask`, return `needs_input` with them, attributed.
 - At closure, run `aidrian report --since 24h`; name in `risks` an agent that reported a missing file or read no knowledge docs.
 
 ## Do not

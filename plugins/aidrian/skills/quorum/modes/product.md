@@ -23,7 +23,9 @@ becomes a product rule until the project's docs say so. Start this mode only whe
 - **Grillers**: `ux-specialist` and, as the engineer, `architect`.
 
 The cap is 10 dispatches with no loop: the trace, the prepare, the interview, the shape, two grills, the draft, the
-walkthrough, the ruling, and one retry. Each of `maxLoops` loops, 2 by default, adds up to 6. `roles` prints both. Every role runs on the host's model, so `same_model` is `true`, and its reason says so.
+walkthrough, the ruling, and one retry. Each of `maxLoops` loops, 2 by default, adds up to 6. `roles` prints both. Every role runs on the host's model, so `same_model` is `true`, and its reason says so. A resume of an agent counts as a dispatch.
+
+An agent's answer returns only to a parent still running. A coordinator that is itself a subagent, such as `orchestrator`, never ends its turn to wait: it stays running with a shell wait, such as 30 seconds at a time, until each answer arrives.
 
 A missing trace, prepare, shape, or draft stops the run with `blocked`. A missing interview or walkthrough answer leaves
 that field empty, and a missing grill raises no points; the report names each.
@@ -51,6 +53,13 @@ When the core finds no reusable ledger for an input question file:
 
 A complete ledger the core reuses with `human_answer` `null` asks the one question before reporting, writes the
 answer (`null` again when deferred), and runs `quorum check`.
+
+## Filling a brief
+
+When the project is not the working directory, a brief's first line is `Project root: <path>`.
+An input over 2 KB, such as the trace or the cases, may be the path of its exact copy in `<state>`, never a summary.
+`against` and `winner` always name a position's id, `A` to `C`.
+The product owner has no shell: for the Evidence block's `route` and `search`, it reads `.aidrian/knowledge/*.json`.
 
 ## Rounds
 
@@ -83,7 +92,11 @@ answer (`null` again when deferred), and runs `quorum check`.
    - `shape`: no option survives. The Shape brief with the reason; a new question file and ledger, carrying `trace`, `premise`, `witness`, and `loops`; then round 6.
    Then rule again. With no loop left, rule on what exists, and put what stays open in `outcome.flips_if`, or escalate.
 9. **Ask the Human.** First write `status: complete` with `human_answer: null`, and run `quorum check`, so a session that
-   ends here leaves a deferred ledger. Then ask, write `human_answer`, and run `quorum check`.
+   ends here leaves a deferred ledger.
+   **Resolve.** Run `aidrian decisions resolve` as `knowledge/references/decisions.md` says, in the `product` domain,
+   with the Ruling's `class`, `reversible`, and `docs`; those three stay out of the ledger. A missing field, or a command that fails, means `ask`.
+   **Ask.** Ask, write `human_answer`, and run `quorum check`. A run always asks, under `ask` and `decide` alike: `decide` settles nothing here,
+   no `authority` line goes back to the product owner, and no `decided_provisional` or marker follows.
 
 ## Asking the Human
 
@@ -92,6 +105,7 @@ Each position is an option named by its label, with its citations in the descrip
 with the one reason that decides it; on an escalation with no leaning, say that no option is recommended.
 Say which written rule would change, from the option's `Rule changed:` line, what the end user said, marked as simulated,
 and each fact that would flip the ruling and how to settle it.
+Report `resolve`'s `authority` and `reason` beside the question, or `ask` and why it did not answer.
 The answer goes into `human_answer`, word for word. Deferred, it stays `null`, the report's Open questions carries the
 question, and nothing is decided.
 
@@ -209,7 +223,8 @@ On a rule, also return `outcome`: "conditions", changes the winner needs, each a
 each unknown that would change the winner, with what only a real user could confirm; "disputes": [{"topic", "owner"}], smaller disagreements and who settles each.
 <evidence>
 Return one JSON object, in the handoff's artifacts:
-{"decision": "rule|escalate", "winner", "change_or_reason", "citations": [{"kind", "ref", "quote"}], "tested": [...], "inferences": [...], "outcome"}.
+{"decision": "rule|escalate", "winner", "change_or_reason", "citations": [{"kind", "ref", "quote"}], "tested": [...], "inferences": [...], "outcome", "class", "reversible", "docs"}.
+`class`, `reversible`, and `docs` are as `knowledge/references/decisions.md` defines them, for this decision. They do not change who approves: the Human does.
 With loops left (<loops left>) and a problem only another pass could settle, return instead {"loop": {"back_to": "<interview|shape|grill, leaving out interview with no end user>", "reason"}}. Never loop for polish.
 Change no file.
 ```

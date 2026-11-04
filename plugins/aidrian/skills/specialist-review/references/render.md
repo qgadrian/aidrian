@@ -58,7 +58,7 @@ Run again with --full to send the whole diff.
 ## <agent> review of <branch>: needs input
 
 The agent cannot finish without:
-<the agent's decision_options or open_questions, verbatim>
+<the agent's decision_options or open_questions, verbatim, leaving out `class`, `reversible`, and `docs`>
 
 Answer them, then run the skill again. Agent: <agent_id | not captured>
 ```

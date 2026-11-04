@@ -27,7 +27,7 @@ import path from 'node:path';
 import { committedConfig } from '../config.mjs';
 import { runGh } from '../gh.mjs';
 import { roundCapProblem, ROUNDS_OVERRIDE } from '../pr-await-review.mjs';
-import { runGit } from '../git.mjs';
+import { currentRoot, runGit, showPrefix } from '../git.mjs';
 import { markerFor } from '../review-gate.mjs';
 import { isolate } from './env.mjs';
 import { changedFiles, diffLines, fileAt, isAncestor, isClean, mergeBase, resolve } from './diff.mjs';
@@ -40,7 +40,7 @@ import { dedupe, packageRoots } from './split.mjs';
 import { contentFlows } from './content.mjs';
 import { touchedCitations } from './cited.mjs';
 import { buildPlan, classify, detectFlows, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, pathPattern, validatePlan } from './plan.mjs';
-import { BUILT_IN, flowBaseBrief, resolveEngine, reviewerMap, runExec, satisfies, VERDICT_MEANING } from './reviewers.mjs';
+import { belowRootBrief, BUILT_IN, flowBaseBrief, resolveEngine, reviewerMap, runExec, satisfies, VERDICT_MEANING } from './reviewers.mjs';
 import { atCap, buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
 import { answerPending, emptyState, heldMessage, mergePending, noteOutcome, prunePasses, readLocalState, readRecord, sameCommit, summaryBody, summaryToEdit, writeSummary, writeLocalState } from './state.mjs';
 import * as quota from './quota.mjs';
@@ -131,7 +131,8 @@ function commandFiles(root, command, commit) {
 
 // A temporary worktree of the base tip, for running the project's own review code (a plan command, an exec
 // reviewer) as the base branch has it: a pull request that edits that code cannot run its own version. The worktree
-// shares the repository's objects, so the code can still read the head with git. `use(dir)` runs inside it.
+// shares the repository's objects, so the code can still read the head with git. `use(dir)` runs inside it, with `dir`
+// the project's folder in that checkout, as the project's config paths start there.
 async function inBaseWorktree(root, baseTip, use) {
   const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-base-'));
   const tree = path.join(dir, 'base');
@@ -141,12 +142,17 @@ async function inBaseWorktree(root, baseTip, use) {
     throw new Error(`could not check out the base to run the project's review code: ${(added.stderr || '').trim()}`);
   }
   // The checkout's installed dependencies, linked in, so base code that imports them runs. They are the checkout's
-  // install, not the base's: the code is pinned to the base, its packages to what this machine has.
-  for (const name of DEPENDENCY_DIRS) {
-    if (isDirectory(path.join(root, name)) && !existsSync(path.join(tree, name))) symlinkSync(path.join(root, name), path.join(tree, name));
+  // install, not the base's: the code is pinned to the base, its packages to what this machine has. A project below the
+  // repository root gets its own folder's and the checkout top's, for packages a monorepo hoists.
+  const projectTree = path.join(tree, showPrefix(root));
+  const top = currentRoot(root) ?? root;
+  for (const [from, to] of [[root, projectTree], ...(top === root ? [] : [[top, tree]])]) {
+    for (const name of DEPENDENCY_DIRS) {
+      if (isDirectory(path.join(from, name)) && !existsSync(path.join(to, name))) symlinkSync(path.join(from, name), path.join(to, name));
+    }
   }
   try {
-    return await use(tree);
+    return await use(projectTree);
   } finally {
     runGit(['worktree', 'remove', '--force', tree], root, { timeout: 60_000 });
     rmSync(dir, { recursive: true, force: true });
@@ -682,7 +688,9 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
 
   function dispatchFor(pass, stage) {
     const input = passInput(pass, stage);
+    const prefix = showPrefix(root);
     const briefs = [
+      prefix ? belowRootBrief(prefix) : null,
       input.checklist ? `Review the diff against the checklist in ${input.checklist.path} as well as for bugs.` : null,
       input.flows.some((flow) => (flow.invariants ?? []).some((invariant) => invariant.source)) ? 'Judge each invariant against its `source`, the section of the project doc it cites; `text` is only the question.' : null,
       input.flows.length ? VERDICT_MEANING : null,

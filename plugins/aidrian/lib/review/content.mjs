@@ -58,7 +58,8 @@ function headRepo({ root, head, roots, spawn }) {
   const prefetch = (files) => {
     const missing = [...new Set(files)].filter((file) => !cache.has(file));
     if (!missing.length) return;
-    const input = `${missing.map((file) => `${head}:${file}`).join('\n')}\n`;
+    // `./`: the path from `root`, where git runs; a bare name reads from the repository root.
+    const input = `${missing.map((file) => `${head}:./${file}`).join('\n')}\n`;
     const out = spawn('git', ['cat-file', '--batch'], { ...options, input });
     if (gitFailed(out)) throw new Error(`git cat-file --batch at ${head} failed: ${gitProblem(out)}`);
     const buffer = Buffer.from(out.stdout);

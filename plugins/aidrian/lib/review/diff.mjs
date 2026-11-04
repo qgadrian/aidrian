@@ -1,5 +1,7 @@
 // What a pull request changes, read from git: the files with their line counts, the lines it adds, and the files it
-// removes lines from. Every read is pinned to two commits, never to the working tree.
+// removes lines from. Every read is pinned to two commits, never to the working tree. Every path is relative to `root`,
+// the project root, which may sit below the repository root: `--relative` and `<commit>:./<file>` ask git for that, so
+// a file outside `root` is not listed, and at the repository root they change nothing.
 
 import { runGit } from '../git.mjs';
 
@@ -16,9 +18,9 @@ export const mergeBase = (root, base, head) => git(root, ['merge-base', base, he
 
 // [{ file, added, removed, status }] between two commits. A binary file counts 0 lines; a rename is its new path.
 export function changedFiles(root, from, to) {
-  const numstat = git(root, ['diff', '--numstat', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', from, to]);
+  const numstat = git(root, ['diff', '--relative', '--numstat', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', from, to]);
   const status = new Map();
-  const names = git(root, ['diff', '--name-status', '-z', '--no-renames', '--no-ext-diff', from, to]).split('\0');
+  const names = git(root, ['diff', '--relative', '--name-status', '-z', '--no-renames', '--no-ext-diff', from, to]).split('\0');
   for (let i = 0; i + 1 < names.length; i += 2) status.set(names[i + 1], names[i]);
   const out = [];
   for (const record of numstat.split('\0').filter(Boolean)) {
@@ -32,7 +34,7 @@ export function changedFiles(root, from, to) {
 export function diffLines(root, from, to, files = null) {
   // Unquoted paths (core.quotePath=false), so a header names `src/café.ts` as the file list does; no external diff or
   // text conversion, so the lines are the file's own.
-  const text = git(root, ['-c', 'core.quotePath=false', 'diff', '--unified=0', '--no-color', '--no-renames', '--no-ext-diff', '--no-textconv', from, to, ...(files ? ['--', ...files] : [])]);
+  const text = git(root, ['-c', 'core.quotePath=false', 'diff', '--relative', '--unified=0', '--no-color', '--no-renames', '--no-ext-diff', '--no-textconv', from, to, ...(files ? ['--', ...files] : [])]);
   const addedLines = {};
   const removedFiles = new Set();
   let file = null;
@@ -56,7 +58,7 @@ export function diffLines(root, from, to, files = null) {
 
 // The text of `file` at `commit`, or null when it is not there.
 export function fileAt(root, commit, file) {
-  const result = runGit(['show', `${commit}:${file}`], root, TIMEOUT);
+  const result = runGit(['show', `${commit}:./${file}`], root, TIMEOUT);
   return result.status === 0 ? result.stdout : null;
 }
 

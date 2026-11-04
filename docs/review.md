@@ -320,6 +320,19 @@ A finding blocks the pass while it is open and not `acceptable_as_is`, or accept
 accepted (`fix_now`, or no likelihood and affects yet). Any agent pass may record this way. Flow results gate the
 review step; they are not a merge gate by themselves, so protect the branch with the checks the review posts.
 
+## Paths
+
+Every path in `review` and `github.reviewGate.checklist` is relative to the project root, the folder that holds
+`.aidrian/` or that `.aidrian.json` names, as `aidrian lint review` reads them. So is the `path:line` of a verdict's
+evidence. At the repository root, the usual case, nothing differs.
+
+A project below the repository root, such as `apps/web/`, writes `src/**` for `apps/web/src/**`. Its review covers only
+its own folder: it reads the pull request's changes relative to that folder and does not review files outside it, so a
+pull request that touches only files outside it reports `none_needed`. Its reviewers, plan command, and visual hooks
+run in that folder of the base checkout, with the project's and the checkout top's dependency folders linked in.
+The built-in engine and every dispatched agent are told to run `git diff` there with `--relative` and to cite from the
+project root; a project's own exec reviewer that runs `git diff` passes `--relative` itself.
+
 ## Reviewers
 
 Every reviewer is an entry in one map. The built-ins:

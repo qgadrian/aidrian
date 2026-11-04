@@ -2,7 +2,7 @@
 // whether a flow is signed off. docs/review.md#flows describes them.
 
 import { isObject } from '../fs.mjs';
-import { runGit } from '../git.mjs';
+import { runGit, showPrefix } from '../git.mjs';
 import { closes, expandTabs, fencedIn, fenceOf, indentOf, slug } from '../markdown-sections.mjs';
 
 export { slug };
@@ -257,7 +257,9 @@ export function citationProblem(evidence, { root, head, captures = new Set() }) 
   }
   const place = /^(.+?):(\d+)(?:-\d+)?$/u.exec(evidence.trim());
   if (!place) return `"${evidence}" is not path:line, test:<name>, or capture:<key>`;
-  const shown = runGit(['show', `${head}:${place[1]}`], root, { timeout: 15_000 });
+  // From the project root, as the reviewer cites it. Not `./` in front of every path: that would also resolve `/src/a.js`.
+  const named = /^\.\.?\//u.test(place[1]) ? place[1] : `${showPrefix(root)}${place[1]}`;
+  const shown = runGit(['show', `${head}:${named}`], root, { timeout: 15_000 });
   if (shown.status !== 0) return `${place[1]} is not in ${head.slice(0, 7)}`;
   const lines = shown.stdout.split('\n').length;
   return Number(place[2]) >= 1 && Number(place[2]) <= lines ? null : `${place[1]} has no line ${place[2]}`;

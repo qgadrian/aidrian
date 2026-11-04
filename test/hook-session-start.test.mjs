@@ -192,6 +192,10 @@ test('no reminder with nothing to review or with remind off, and a doc it cannot
   assert.doesNotMatch(hook({ input: JSON.stringify({ cwd: settled }) }).stdout, REMINDER, 'N is 0');
   const none = decisionsProject(t, { 'a.md': '# Nothing here\n' });
   assert.doesNotMatch(hook({ input: JSON.stringify({ cwd: none }) }).stdout, REMINDER, 'no markers');
+  const own = decisionsProject(t, { 'a.md': unreviewed('one', 'unconfirmed', daysAgo(1)).replace('class=copy', 'class=pricing-page') }, { decisions: { classes: { 'pricing-page': 'the pricing page' } } });
+  assert.match(hook({ input: JSON.stringify({ cwd: own }) }).stdout, /^Decisions to review: 1 /mu, 'a marker of a project class counts');
+  const removed = decisionsProject(t, { 'a.md': unreviewed('one', 'unconfirmed', daysAgo(1)).replace('class=copy', 'class=pricing-page') });
+  assert.match(hook({ input: JSON.stringify({ cwd: removed }) }).stdout, /^Decisions to review: 1 /mu, 'a marker whose class was removed still counts, as it does toward the pause');
   const off = decisionsProject(t, { 'a.md': unreviewed('one', 'unconfirmed', daysAgo(1)) }, { decisions: { unreviewed: { remind: 'off', pauseDomainAt: null } } });
   assert.doesNotMatch(hook({ input: JSON.stringify({ cwd: off }) }).stdout, REMINDER, 'remind off');
 

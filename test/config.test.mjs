@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -243,6 +243,40 @@ test('the committed decisions of a project below the repository root are its own
   assert.deepEqual(decisions.escalate, ['copy']);
 });
 
+test('decisions.classes and decisions.unattended: the team sets them, the local file cannot, and an escalate entry may name a project class', (t) => {
+  assert.deepEqual([DEFAULTS.decisions.classes, DEFAULTS.decisions.unattended], [{}, { safeDefaults: 'outside-escalated' }]);
+  const classes = { 'pricing-page': 'the words of the pricing page' };
+  const team = project(t, { version: 1, decisions: { classes, escalate: ['pricing-page', 'copy'], unattended: { safeDefaults: 'all' } } });
+  const read = loadConfig(team);
+  assert.deepEqual(read.errors, []);
+  assert.deepEqual([read.config.decisions.classes, read.config.decisions.escalate, read.config.decisions.unattended], [classes, ['pricing-page', 'copy'], { safeDefaults: 'all' }]);
+  writeFileSync(path.join(team.root, '.aidrian.local.json'), JSON.stringify({ decisions: { classes: { mine: 'x' }, unattended: { safeDefaults: 'outside-escalated' } } }));
+  const local = loadConfig(findProject(team.root));
+  assert.deepEqual(local.errors, [
+    '.aidrian.local.json: "decisions.classes" is the team\'s: set it in config.json',
+    '.aidrian.local.json: "decisions.unattended" is the team\'s: set it in config.json',
+  ]);
+  assert.deepEqual([local.config.decisions.classes, local.config.decisions.unattended], [classes, { safeDefaults: 'all' }]);
+
+  const bad = project(t, { version: 1, decisions: { classes: { pricing: 'x', copy: 'y' }, escalate: ['pricing'] } });
+  assert.deepEqual(loadConfig(bad).errors.map((error) => error.split(' must ')[0]), ['.aidrian/config.json: "decisions.classes"', '.aidrian/config.json: "decisions.escalate"'], 'a bad block adds no class');
+});
+
+test('a base commit with a block no one can read keeps its classes and safe defaults from nobody: nothing added, and every ask parks', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-config-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, decisions: { classes: { copy: 'redefined' }, unattended: { safeDefaults: 'all' } } }));
+  const git = (...args) => spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+  git('init', '-q');
+  git('add', '.');
+  assert.equal(git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'config').status, 0);
+  const at = findProject(dir);
+  const block = committedDecisions(at, 'HEAD', committedConfigFile(at, 'HEAD'));
+  assert.deepEqual([block.maxMode, block.classes, block.unattended], ['ask', {}, { safeDefaults: null }]);
+  assert.deepEqual(committedDecisions(at, 'HEAD', null).unattended, { safeDefaults: null });
+});
+
 test('the loaded config is frozen all the way down', (t) => {
   const { config } = loadConfig(project(t, { version: 1, git: { mainCheckout: { allowWrites: ['notes/**'] } } }));
   assert.throws(() => { config.git.defaultBranch = 'x'; }, TypeError);
@@ -342,6 +376,8 @@ const errorCases = [
   ['a health percent above 100', { version: 1, telemetry: { health: { redispatchPercent: 120 } } }, /"telemetry\.health\.redispatchPercent" must be a whole number from 1 to 100$/],
   ['a health percent of 0', { version: 1, telemetry: { health: { topDocPercent: 0 } } }, /"telemetry\.health\.topDocPercent" must be a whole number from 1 to 100$/],
   ['a minimum sample of 0', { version: 1, telemetry: { health: { minSample: 0 } } }, /"telemetry\.health\.minSample" must be a whole number above 0$/],
+  ['an override percent above 100', { version: 1, telemetry: { health: { decisionOverridePercent: 120 } } }, /"telemetry\.health\.decisionOverridePercent" must be a whole number from 1 to 100$/],
+  ['a decision sample of 0', { version: 1, telemetry: { health: { decisionMinSample: 0 } } }, /"telemetry\.health\.decisionMinSample" must be a whole number above 0$/],
   ['an unknown health threshold', { version: 1, telemetry: { health: { maxCost: 3 } } }, /: unknown key "telemetry\.health\.maxCost"$/],
   ['agents that is not an object', { version: 1, agents: ['explorer'] }, /"agents" must be an object$/],
   ['an agent name with a space', { version: 1, agents: { 'code reviewer': { deny: ['Bash'] } } }, /"agents\.code reviewer": an agent name is/],
@@ -378,6 +414,16 @@ const errorCases = [
   ['a decisions ceiling outside its list', { version: 1, decisions: { maxMode: 'always' } }, /"decisions\.maxMode" must be "ask" or "decide-reversible"$/],
   ['an unknown domain', { version: 1, decisions: { domains: { finance: 'ask' } } }, /: unknown key "decisions\.domains\.finance"$/],
   ['a domain mode outside its list', { version: 1, decisions: { domains: { ux: 'decide' } } }, /"decisions\.domains\.ux" must be "ask", "decide-reversible", or "inherit"$/],
+  ['a project class that redefines a built-in', { version: 1, decisions: { classes: { copy: 'our own copy' } } }, /"decisions\.classes" must be an object of new class names/],
+  ['a project class that takes a floor class', { version: 1, decisions: { classes: { money: 'not money here' } } }, /"decisions\.classes" must be an object of new class names/],
+  ['a project class that removes a floor class', { version: 1, decisions: { classes: { security: null } } }, /"decisions\.classes" must be an object of new class names/],
+  ['a project class with a space', { version: 1, decisions: { classes: { 'pricing page': 'x' } } }, /"decisions\.classes" must be an object of new class names/],
+  ['a project class too long for a marker', { version: 1, decisions: { classes: { [`a${'b'.repeat(23)}`]: 'x' } } }, /"decisions\.classes" must be an object of new class names, each lowercase letters, digits, and "-", at most 23 characters/],
+  ['a project class on two lines', { version: 1, decisions: { classes: { pricing: 'one\ntwo' } } }, /"decisions\.classes" must be an object of new class names/],
+  ['a project class with no definition', { version: 1, decisions: { classes: { pricing: '' } } }, /"decisions\.classes" must be an object of new class names/],
+  ['classes that are a list', { version: 1, decisions: { classes: ['pricing'] } }, /"decisions\.classes" must be an object of new class names/],
+  ['an unknown unattended mode', { version: 1, decisions: { unattended: { safeDefaults: 'every' } } }, /"decisions\.unattended\.safeDefaults" must be "outside-escalated" or "all"$/],
+  ['an unknown unattended key', { version: 1, decisions: { unattended: { other: 1 } } }, /unknown key "decisions\.unattended\.other"$/],
   ['an escalate class not in decisions.json', { version: 1, decisions: { escalate: ['pricing'] } }, /"decisions\.escalate" must be a list of decision classes/],
   ['escalate docs that are not a list', { version: 1, decisions: { escalateDocs: 'docs/a.md' } }, ESCALATE_DOCS],
   ['a glob in escalate docs', { version: 1, decisions: { escalateDocs: ['docs/**/*.md'] } }, ESCALATE_DOCS],
@@ -466,8 +512,10 @@ test('decisions: every decision goes to the Human by default, and docs/config.md
     mode: 'ask',
     maxMode: 'ask',
     domains: { product: 'inherit', ux: 'inherit', architecture: 'inherit', backlog: 'inherit' },
+    classes: {},
     escalate: [],
     escalateDocs: [],
+    unattended: { safeDefaults: 'outside-escalated' },
     secondLook: { agent: 'critic', minSeverity: 'high' },
     record: { queue: 'pr-body' },
     unreviewed: { remind: 'session-start', pauseDomainAt: { pending: 10, oldestDays: 7 } },
@@ -475,6 +523,7 @@ test('decisions: every decision goes to the Human by default, and docs/config.md
   const doc = readFileSync(path.join(ROOT, 'docs/config.md'), 'utf8');
   const example = JSON.parse(doc.match(/## Keys[\s\S]*?```json\n([\s\S]*?)```/)[1]);
   assert.deepEqual(example.decisions, DEFAULTS.decisions);
+  assert.deepEqual(example.telemetry.health, DEFAULTS.telemetry.health);
 });
 
 test('decisions: a project sets any subset, and null turns the second look and the pause off', (t) => {
@@ -694,7 +743,7 @@ test('telemetry: on, with doc reads, hook denies, and 20 MB by default; .aidrian
 
 test('telemetry.health: report health thresholds by default; config.json and .aidrian.local.json each set any of them', (t) => {
   assert.deepEqual(DEFAULTS.telemetry.health, {
-    minSample: 5, redispatchPercent: 20, sentBackPercent: 10, topDocPercent: 50, reviewRounds: 3, lateFindingPercent: 50, denyHotSpot: 5, costRisePercent: 50,
+    minSample: 5, redispatchPercent: 20, sentBackPercent: 10, topDocPercent: 50, reviewRounds: 3, lateFindingPercent: 50, denyHotSpot: 5, costRisePercent: 50, decisionOverridePercent: 20, decisionMinSample: 5,
   });
   const team = project(t, { version: 1, telemetry: { health: { minSample: 10, costRisePercent: 150 } } });
   assert.deepEqual(loadConfig(team).config.telemetry.health, { ...DEFAULTS.telemetry.health, minSample: 10, costRisePercent: 150 });

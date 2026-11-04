@@ -21,6 +21,9 @@ aidrian decisions list --json
 
 First report each row of `problems` about a file no index lists: name the doc, and say to move the marker to an indexed doc, or index the doc.
 Such a marker counts toward the domain pause, and this skill cannot reach it.
+Report each row about a class no list holds the same way: that marker counts toward the domain pause, and `set` and `undo` cannot reach it,
+so say to restore the class in config.json `decisions.classes`, or to correct the marker's class.
+Relay each entry of `notes` too: it says which markers went unscanned, so an empty batch may not be the whole record.
 
 The batch is every decision with `status` `unconfirmed`, oldest first. None: say so and stop.
 Each has `id`, `class`, `domain`, `doc`, `line`, `date`, `pr`, `oldWording`, and `newWording`.

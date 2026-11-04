@@ -1,5 +1,5 @@
 {
-  "$comment": "Vocabulary for lib/decisions.mjs (aidrian decisions resolve): the one place the decision classes and the reversibility questions live. A floor class always goes to the Human, whatever config.json says; so does a class not listed here. Every reversibility question must be answered no before an agent may decide. Change the list here, not in a prompt.",
+  "$comment": "Vocabulary for lib/decisions.mjs (aidrian decisions resolve): the one place the built-in decision classes and the reversibility questions live; config.json decisions.classes adds a project's own classes, and can change none of these. Authority on a floor class is always ask, whatever config.json says; so it is on a class in neither list. Every reversibility question must be answered no before an agent may decide, but for a yes on reachesUsersUnreviewed that the base branch's github.autoMerge.allow accepts (lib/decisions.mjs). Change the list here, not in a prompt.",
   "classes": [
     { "class": "security", "floor": true, "definition": "touches sign-in, permissions, secrets, tenant isolation, or another trust boundary" },
     { "class": "critical-flow", "floor": true, "definition": "changes a flow people cannot work without, such as sign-up, sign-in, checkout, or a flow the project's review config lists" },

@@ -76,7 +76,9 @@ In a group such as `github`, set only the keys you change; the others keep their
       "reviewRounds": 3,
       "lateFindingPercent": 50,
       "denyHotSpot": 5,
-      "costRisePercent": 50
+      "costRisePercent": 50,
+      "decisionOverridePercent": 20,
+      "decisionMinSample": 5
     }
   },
   "agents": {},
@@ -98,8 +100,10 @@ In a group such as `github`, set only the keys you change; the others keep their
     "mode": "ask",
     "maxMode": "ask",
     "domains": { "product": "inherit", "ux": "inherit", "architecture": "inherit", "backlog": "inherit" },
+    "classes": {},
     "escalate": [],
     "escalateDocs": [],
+    "unattended": { "safeDefaults": "outside-escalated" },
     "secondLook": { "agent": "critic", "minSeverity": "high" },
     "record": { "queue": "pr-body" },
     "unreviewed": { "remind": "session-start", "pauseDomainAt": { "pending": 10, "oldestDays": 7 } }
@@ -135,7 +139,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.pullRequest` | The project's [pull request contract](#pull-request-contract), beyond the required sections; off by default but for `sharedTempBodyFile`. |
 | `github.reviewGate.enabled` | `true` asks the review bot only once a review of the diff is on record: [Review gate](#review-gate). |
 | `github.reviewGate.checklist` | A file the reviewer reads the diff against, named in the gate's message; `null` names none. |
-| `github.autoMerge.allow` | `true` lets a machine opt in to [auto-merge](#auto-merge); `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. |
+| `github.autoMerge.allow` | `true` lets a machine opt in to [auto-merge](#auto-merge); `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. Read at the base branch, with `decide-reversible`, it also stops a yes on `reachesUsersUnreviewed` from asking: [rule 3 under Decisions](#decisions). |
 | `github.autoMerge.default` | What a machine with no local setting does under `allow`: `"off"`, the default, stays out until it opts in; `"on"` takes part until it opts out. Read from the default branch. |
 | `github.autoMerge.strategy` | How auto-merge merges: `"squash"`, `"merge"`, or `"rebase"`. `null`, the default: the one strategy the repository allows, or with several, `squash`, then `merge`, then `rebase`. Read from the default branch. |
 | `github.autoMerge.deleteBranch` | `true` deletes the remote head branch with the merge. Read from the default branch. |
@@ -162,18 +166,20 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `attribution.commit` | The trailers an agent's commit must carry: [Attribution](#attribution). `[]`, the default, is off. |
 | `attribution.pullRequest` | The lines a pull request body an agent opens must end with: [Attribution](#attribution). `[]` is off. |
 | `attribution.exclude` | The agents the `Assisted-by:` lines leave out; by default the ones that only search and read. |
-| `telemetry.enabled` | `false` stops the hooks from writing the [dispatch log](dispatch-log.md): [Telemetry](#telemetry). |
+| `telemetry.enabled` | `false` stops the hooks and `aidrian decisions` from writing the [dispatch log](dispatch-log.md): [Telemetry](#telemetry). |
 | `telemetry.docReads` | `false` leaves out which knowledge docs each agent read. |
 | `telemetry.hookDenies` | `false` leaves out the `hook_deny` row each block by one of the plugin's rules writes; the rules still block. |
 | `telemetry.maxMb` | The size, in megabytes, at which the dispatch log moves to its rotated part. |
 | `telemetry.health` | The thresholds of `aidrian report health`: [Health thresholds](#health-thresholds). |
 | `agents` | The tools each agent may use in this project; `{}` gates none: [Agents](#agents). |
 | `quorum` | The roles, providers, judge, and caps of the `quorum` skill: [Quorum](#quorum). |
-| `decisions.mode` | Who settles a decision no other rule covers: `"ask"`, the default, the Human; `"decide-reversible"`, the agent, when every reversibility answer is no: [Decisions](#decisions). |
-| `decisions.maxMode` | The highest mode any setting can reach, the local file's included. `"ask"`, the default, keeps every decision with the Human, until the team commits `"decide-reversible"`. |
+| `decisions.mode` | Who settles a decision no other rule covers: `"ask"`, the default, the Human; `"decide-reversible"`, the agent, when every reversibility answer is no, or a yes the team accepted: [Decisions](#decisions). |
+| `decisions.maxMode` | The highest mode any setting can reach, the local file's included. `"ask"`, the default, keeps every decision with the Human, until the team commits `"decide-reversible"`. Committed as `"decide-reversible"`, with `github.autoMerge.allow` true at the base branch, it lets a yes on `reachesUsersUnreviewed` stop asking: [rule 3 under Decisions](#decisions). |
 | `decisions.domains` | `mode` for one domain, `product`, `ux`, `architecture`, or `backlog`; `"inherit"`, the default, takes `decisions.mode`. |
-| `decisions.escalate` | Ordinary decision classes that always go to the Human in this project. |
+| `decisions.classes` | The project's own decision classes, each name to a one-line definition, added to the built-in list: [Project classes](#project-classes). Team only. |
+| `decisions.escalate` | Ordinary decision classes, built-in or the project's, that always go to the Human in this project. |
 | `decisions.escalateDocs` | Docs and folders, from the project root, whose decisions always go to the Human: `docs/pricing.md`, `docs/legal/` for everything in it, or `docs/terms.md#refunds` for one section. No glob characters, absolute paths, or `..`. |
+| `decisions.unattended.safeDefaults` | What an unattended `autopilot` run may settle with a safe default: `"outside-escalated"`, the default, or `"all"`: [Unattended runs](#unattended-runs). Team only. |
 | `decisions.secondLook` | The agent that must agree with a decision at or above `minSeverity`; `null` turns it off. |
 | `decisions.record.queue` | Where the decisions an agent made alone are listed: `"pr-body"`, the default, in the pull request body and the dispatcher's report; `"report"`, in the report alone. [Recording decisions](#recording-decisions). |
 | `decisions.unreviewed.remind` | When the Human is reminded of unreviewed decisions: `"session-start"`, the default, or `"off"`. |
@@ -192,6 +198,9 @@ A changed default raises no `aidrian check` line: a project that never set the k
 
 - `github.markReady` became `"auto"`, from `"ask"`. To keep the author marking drafts ready, set `"github": { "markReady": "ask" }`.
 - `github.reviewLoop` is new, `"auto"`. To have the review loop offered instead of started, set `"github": { "reviewLoop": "ask" }`.
+- `decisions.unattended.safeDefaults` is new, `"outside-escalated"`. An unattended `autopilot` run now parks a floor class,
+  where it used to take a safe default that could be undone, and a base commit with no config it can read parks every decision.
+  To park only what the project listed, set `"decisions": { "unattended": { "safeDefaults": "all" } }`.
 
 ### No review bot
 
@@ -205,6 +214,8 @@ A project without the Codex review bot sets `"github": { "reviewer": null }`, or
 ## Auto-merge
 
 Auto-merge lets a session merge a pull request without asking. It is off unless the team allows it and the machine takes part.
+`github.autoMerge.allow`, read at the base branch, also stops a yes on `reachesUsersUnreviewed` from asking under `decide-reversible`:
+[rule 3 under Decisions](#decisions).
 
 The team commits this in config.json, on the default branch and on any other branch pull requests target:
 
@@ -597,7 +608,7 @@ A team sets `telemetry` in `config.json`, and one developer in the git-ignored `
 
 `.aidrian.local.json` wins over `config.json`, one key at a time.
 
-- `enabled: false`: the hooks write no rows.
+- `enabled: false`: the hooks and `aidrian decisions` write no rows.
   The [delivery check](hooks.md#delivery-check) still sends a subagent back for a file it named and did not write,
   and the [background check](hooks.md#background-check) for a background task it left running.
 - `docReads: false`: `stop` and `session` rows keep tokens and cost, and hold `docs_read: null` instead of the docs read.
@@ -626,8 +637,10 @@ Set only the keys you change; a team sets them in `config.json`, and one develop
 | `lateFindingPercent` | More than this share of the late findings checked sat on a line the bot had already reviewed. |
 | `denyHotSpot` | One of the plugin's rules blocks this many calls or more in the window. |
 | `costRisePercent` | A session in the newer half of the window's sessions costs more than this percent above one in the older half, on average. |
+| `decisionOverridePercent` | The Human overrides this share or more of the decisions the Human reviewed: rejects them, or undoes them. |
+| `decisionMinSample` | Not a threshold: the override rate says "not enough data" over fewer reviewed decisions than this. It stands in for `minSample` there. |
 
-The four `Percent` keys take a whole number from 1 to 100; the others, a whole number above 0.
+The `Percent` keys take a whole number from 1 to 100, except `costRisePercent`; the others, a whole number above 0.
 The knowledge budget uses [`knowledge.budgets`](#knowledge-budgets), and the lesson backlog `lessons.maxOpen` and `lessons.maxAgeDays`.
 
 ## Knowledge budgets
@@ -773,25 +786,37 @@ An agent may then settle the reversible, ordinary decisions.
 
 ```console
 $ aidrian decisions resolve --domain ux --class copy --reversible no,no,no,no
-{"authority":"ask","rule":"mode","reason":"mode is ask","secondLook":{"agent":"critic","minSeverity":"high"},"base":"451dc4b8cce82671ae7afc534c0a7ab8c9604546"}
+{"authority":"ask","rule":"mode","reason":"mode is ask","unattended":"safe-default","secondLook":{"agent":"critic","minSeverity":"high"},"base":"451dc4b8cce82671ae7afc534c0a7ab8c9604546"}
 ```
 
 `authority` is `decide` or `ask`, and either one exits 0.
+`unattended` says what an unattended run does with this `ask`, and is `null` under `decide`: [Unattended runs](#unattended-runs).
 `secondLook` is the block's `decisions.secondLook`, read as the rest is, so a working-copy edit cannot change it; it is `null` with the rule `no-base`.
 `--doc PATH`, repeated, names a doc the decision touches, with an optional `#section`. A relative path is read from the current folder and from the
 project root, and either reading can match. Any spelling of a path counts as the same doc, and a section matches by its heading's slug.
 Case does not count, on any disk: two docs that differ only by case both ask, which fails closed.
 A symlink counts as both its own path and its target's, in `--doc` and in `escalateDocs`; a link whose target is outside the project asks.
-`aidrian decisions resolve --vocab` prints every class and reversibility question with its definition; `lib/decisions.json` is the one place they live.
+`aidrian decisions resolve --vocab` prints every class and reversibility question with its definition;
+`lib/decisions.json` is the one place the built-in ones live, and the base branch's [`decisions.classes`](#project-classes) adds the project's.
 
 The first rule that matches wins:
 
-1. A floor class, `security`, `critical-flow`, `money`, `data-loss`, or `unknown`, or a class not in the list, asks. No setting changes this.
+1. A floor class, `security`, `critical-flow`, `money`, `data-loss`, or `unknown`, or a class in neither list, asks:
+   `authority` stays `ask` under every setting.
+   An [unattended run](#unattended-runs) under `safeDefaults` `"all"` may still act on one with a safe default.
+   No setting lets an agent approve a critical-flow sign-off or a security verdict; the skill text holds that rule, and no command checks it.
 2. A class in `escalate` asks. A doc outside the project asks, and so does a doc `escalateDocs` covers.
    `docs/terms.md#refunds` covers that section and the file with no section named, but not `docs/terms.md#other`.
-3. Any reversibility answer that is yes or missing asks.
+3. Any reversibility answer that is yes or missing asks, but for the yes below that the team accepted.
    The four answers, in order: `storedData`, `external`, `pricingOrContract`, `reachesUsersUnreviewed`.
    The last asks whether the change reaches existing users with no human review of its pull request and no off switch.
+   The agent answers it literally, and the command applies the team's acceptance.
+   Where a team has both `decide-reversible` and auto-merge allowed, a change may reach users with no person looking at it;
+   those two opt-ins are the acceptance.
+   So where `github.autoMerge.allow` is true at the base branch, in the commit `resolve` reads,
+   and the domain's mode, held to `maxMode`, is `decide-reversible`, a yes on `reachesUsersUnreviewed` does not ask, and `reason` says so.
+   Floor classes, the escalate lists, the other three questions, a missing answer, and the rules below still ask.
+   A working-copy value counts for nothing, and no base, git absent included, or no readable block keeps asking.
 4. An unknown domain asks. A domain that is paused asks, with the rule `domain-paused`: its unreviewed decisions reach `pauseDomainAt.pending`,
    or the oldest reaches `pauseDomainAt.oldestDays` days.
    Unreviewed means each unconfirmed marker at the base commit, plus each marker the branch committed, whatever its status.
@@ -799,8 +824,45 @@ The first rule that matches wins:
    The base is the local `origin/HEAD`, so after that answer merges, `resolve` stays paused until a fetch.
    The reason names the docs that hold the domain's markers, since any tracked Markdown file counts.
    `aidrian decisions list` reports a marker in a file no index lists.
+   A marker whose only problem is a class in neither list still counts, so a commit that removes a class lifts no pause.
+   `aidrian decisions list` reports it as a problem, and the `decision-review` skill relays it.
    With no git at all, the working copy's unconfirmed markers count. When git cannot read them, the decision asks, with the rule `no-base`.
 5. `domains.<domain>`, unless it is `"inherit"`, then `mode`, each held to `maxMode`. Only `"decide-reversible"` decides.
+
+### Project classes
+
+`decisions.classes` adds a project's own classes to the built-in list:
+
+```json
+{ "decisions": { "classes": { "pricing-page": "the words and layout of the pricing page" }, "escalate": ["pricing-page"] } }
+```
+
+- A name takes lowercase letters, digits, and `-`, at most 23 characters, since it goes in a [marker](project-folder.md#decision-markers).
+  Its definition is one line.
+- A name of the built-in list is a config error, so a project can neither redefine a class nor lift or remove a floor class.
+- A project class is an ordinary class: the rules below rule 1 apply to it, and `decisions.escalate` may list it.
+- `resolve` and `--vocab` read it from the base branch, so a class the working copy adds counts once it merges.
+  `aidrian decisions list`, `set`, and `undo` read it from the working copy, as they read the docs;
+  `list --added-since` reads each end's from that commit, so a branch that removes a class owns the problems that makes.
+  A class removed later leaves its markers as problems, which `aidrian check` warns about. They still count toward the domain pause.
+
+### Unattended runs
+
+Nobody is there to answer an `ask` during an [`autopilot`](../plugins/aidrian/skills/autopilot/SKILL.md) run.
+`resolve` prints what the run does, so the skill reads no config: `unattended` is `park`, or `safe-default`,
+take a clearly safe default that can be undone, and flag it in the report.
+`decisions.unattended.safeDefaults` sets it, from the base branch:
+
+| Value | The run parks | On any other `ask` |
+| --- | --- | --- |
+| `"outside-escalated"`, the default | A floor class or a class in neither list, a class in `escalate`, and a doc `escalateDocs` covers | `safe-default` |
+| `"all"` | Only a class in `escalate` and a doc `escalateDocs` covers | `safe-default` |
+
+- What the project listed parks whichever rule matched first, such as a floor class on a listed doc, under either value.
+- `unattended` is `park` where nobody can say what the project listed: the rule `no-base`; a base commit whose config.json is missing, does not parse,
+  or has another version; and an error under `decisions` at that commit. A config.json with no `decisions` key takes the defaults.
+- No setting lets an agent approve a critical-flow sign-off or a security verdict: those are gates, not decisions, and `resolve` is never asked about them.
+  The skill text holds that rule, and no command checks it.
 
 ### How agents use the answer
 
@@ -821,7 +883,10 @@ Each `decided_provisional` is committed as a marker line in the doc that governs
 `aidrian decisions undo <id>` takes one back.
 The [`decision-review`](../plugins/aidrian/skills/decision-review/SKILL.md) skill goes through them with the Human, in a batch.
 Session start reminds the main session of them while `unreviewed.remind` is `"session-start"`.
-The skill below reads the branch's own with `aidrian decisions list --added-since <ref>`.
+The skill below reads the branch's own with `aidrian decisions list --added-since <ref>`: `decisions`, `settled`, and `removed` are the branch's;
+`problems` may also hold rows marked `inherited`.
+`resolve`, `set`, and `undo` add a [row to the dispatch log](dispatch-log.md#decision_made-and-decision_escalated-when-resolve-answers),
+and `aidrian report health` ranks [how often the Human overrides](dispatch-log.md#health).
 
 Under `decisions.record.queue` `"pr-body"`, the default, the [`pr-write`](../plugins/aidrian/skills/pr-write/SKILL.md) skill also lists
 the branch's decisions in the pull request body: in a `## Decisions` section, or, when `github.pullRequest.sections` is set without `Decisions`,
@@ -855,7 +920,8 @@ so a copy in a worktree raises nothing:
   Under the default `"ask"`, they raise nothing.
 - `unreviewed.remind` is free.
 - `unreviewed.pauseDomainAt` applies only where it is lower than the team's, one limit at a time; a higher value or `null` is ignored.
-- Any other key is an error, and the team's value stays: `maxMode`, `escalate`, `escalateDocs`, `secondLook`, and `record` are the team's.
+- Any other key is an error, and the team's value stays: `maxMode`, `classes`, `escalate`, `escalateDocs`, `unattended`, `secondLook`,
+  and `record` are the team's.
 
 A bad value or an unknown key under `decisions` in the working copy is a config error: `aidrian check` names it, the hooks keep the default,
 as in any other group, and `aidrian decisions resolve` stops.

@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
-import { ageDays, DECISION_DOMAINS, DECISION_STATUSES, decisionClasses, decisionWarnings, escalateDocWarnings, isDecisionLine, loadVocab, lowerMode, parseDecisions, resolveAuthority, setDecisionStatus } from '../plugins/aidrian/lib/decisions.mjs';
+import { ageDays, CLASS_MAX, DECISION_DOMAINS, DECISION_STATUSES, decisionClasses, decisionWarnings, escalateDocWarnings, isClassName, isDecisionLine, loadVocab, lowerMode, parseDecisions, resolveAuthority, setDecisionStatus, unattendedAnswer, undoDecision } from '../plugins/aidrian/lib/decisions.mjs';
 import { findWrapViolations } from '../plugins/aidrian/lib/markdown-wrap.mjs';
 import { check as prBodyDeny } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
 
@@ -269,8 +269,8 @@ test('a marker inside a table is a problem, a stack judged from the first line b
 
 test('a quoted marker is no decision: inside a code fence or a code span, as a doc shows one', () => {
   const quoted = ['```text', MARKER, '```', '', `Write it as \`${MARKER}\`.`, '- ```md', `  ${MARKER}`, '  ```', ''].join('\n');
-  assert.deepEqual(parseDecisions(quoted), { decisions: [], problems: [] });
-  assert.deepEqual(parseDecisions('aidrian:decision is the marker word, and <!-- aidrian:decisions --> another comment.'), { decisions: [], problems: [] });
+  assert.deepEqual(parseDecisions(quoted), { decisions: [], problems: [], unlisted: [] });
+  assert.deepEqual(parseDecisions('aidrian:decision is the marker word, and <!-- aidrian:decisions --> another comment.'), { decisions: [], problems: [], unlisted: [] });
 });
 
 test('a malformed marker is reported with its line and why, never thrown, and the good ones beside it still read', () => {
@@ -319,7 +319,7 @@ test('a decision that replaces a rule keeps the old wording in the lines directl
   assert.equal(split.decisions[0].oldWording, 'Refunds take ten days.', 'long wording spans lines, so each stays under the wrap limit');
   const gap = parseDecisions(`The new rule.\n${MARKER}\n${wrote('The new rule.')}\n`).decisions[0];
   assert.deepEqual([gap.hasOldWording, gap.oldWording, gap.hasNewWording, gap.newWording], [false, null, true, 'The new rule.']);
-  assert.deepEqual(parseDecisions(`\`\`\`\n${old('quoted')}\n${wrote('quoted')}\n\`\`\`\n`), { decisions: [], problems: [] }, 'a quoted line is not a line of wording');
+  assert.deepEqual(parseDecisions(`\`\`\`\n${old('quoted')}\n${wrote('quoted')}\n\`\`\`\n`), { decisions: [], problems: [], unlisted: [] }, 'a quoted line is not a line of wording');
 });
 
 test('old wording that cannot be read is reported, and the decision says it has some rather than reading as a gap', () => {
@@ -409,6 +409,11 @@ test('the longest marker stays on one screen, and the wrap check never reports a
   const longest = `<!-- aidrian:decision id=${'a'.repeat(32)} status=unconfirmed class=${kind} domain=${longestOf(DECISION_DOMAINS)} date=2026-11-01 pr=99999 -->`;
   assert.deepEqual(parseDecisions(`Rule.\n${longest}\n<!-- aidrian:decision-new id=${'a'.repeat(32)} text="Rule." -->`).problems, []);
   assert.ok(longest.length <= DEFAULTS.docs.wrapLimit, `${longest.length} characters`);
+  const ownClass = (name) => longest.replace(`class=${kind}`, `class=${name}`);
+  assert.ok(isClassName('a'.repeat(CLASS_MAX)));
+  assert.equal(isClassName('a'.repeat(CLASS_MAX + 1)), false);
+  assert.equal(ownClass('a'.repeat(CLASS_MAX)).length, DEFAULTS.docs.wrapLimit, 'the longest project class just fits');
+  assert.ok(ownClass('a'.repeat(CLASS_MAX + 1)).length > DEFAULTS.docs.wrapLimit, 'one more would not');
   const longOld = old(`${'word '.repeat(60)}end`);
   const longNew = wrote(`${'word '.repeat(60)}end`);
   assert.deepEqual(findWrapViolations(`Rule.\n${longest}\n  ${longOld}\n  ${longNew}\n`, 60), []);
@@ -483,7 +488,8 @@ test('pr-write and its body template name both forms of the decisions list', () 
   assert.match(skill, /each of its `removed` as removed in this branch/u);
   assert.match(skill, /When one of its `decisions` has `pr` null, replace `pr=none` on that marker line with the pull request's number, then commit and push only that\.\s+Never on a `settled` entry\./u);
   assert.match(skill, /That push moves the head: it comes before the review of the new head, or the report says it did not\./u);
-  assert.match(skill, /^A problem on an inherited marker goes under Risk and stops nothing\.$/mu);
+  assert.match(skill.replace(/\s+/gu, ' '), /A row marked `inherited` was there before this branch, so leave it out; an unmarked problem on a marker the merge base has goes under Risk and stops nothing\./u);
+  assert.doesNotMatch(skill, /A problem on an inherited marker/u);
   assert.match(skill, /that list reports a problem in a marker the branch added, other than the `pr=none` Publish fixes: route it back to the same writer\./u, 'the stop stays');
   assert.ok(Buffer.byteLength(skill) <= 7500, `${Buffer.byteLength(skill)} bytes`);
   const rule = readFileSync(path.join(ROOT, 'plugins/aidrian/skills/knowledge/references/decisions.md'), 'utf8');
@@ -497,4 +503,138 @@ test('pr-write and its body template name both forms of the decisions list', () 
   assert.match(template, /`hasOldWording`/u);
   assert.match(template, /a bullet shows the status when it is not `unconfirmed`/iu);
   assert.match(template, /A marker of `removed` is listed as removed in this branch/u);
+});
+
+test('a project class resolves as an ordinary class, and a built-in keeps its floor', () => {
+  const classes = { 'pricing-page': 'the words and layout of the pricing page' };
+  assert.deepEqual(pick(resolveAuthority(config({ mode: 'decide-reversible', classes }), question({ class: 'pricing-page' }))), ['decide', 'mode']);
+  assert.deepEqual(pick(resolveAuthority(config({ classes }), question({ class: 'pricing-page' }))), ['ask', 'mode']);
+  assert.deepEqual(pick(resolveAuthority(config({ mode: 'decide-reversible', classes, escalate: ['pricing-page'] }), question({ class: 'pricing-page' }))), ['ask', 'escalate']);
+  assert.deepEqual(pick(resolveAuthority(open, question({ class: 'pricing-page' }))), ['ask', 'unknown-class'], 'another project has no such class');
+  for (const kind of FLOOR) {
+    const lifted = config({ mode: 'decide-reversible', classes: { [kind]: 'an ordinary class now' } });
+    assert.deepEqual(pick(resolveAuthority(lifted, question({ class: kind }))), ['ask', 'floor-class'], `${kind} stays a floor class`);
+  }
+  assert.deepEqual(pick(resolveAuthority(config({ mode: 'decide-reversible', classes }), question({ class: 'constructor' }))), ['ask', 'unknown-class'], 'nothing an object inherits is a class');
+});
+
+test('unattendedAnswer parks what the setting says, by what the project listed, whichever rule matched first', () => {
+  const answer = (safeDefaults, changes = {}, asked = {}) => unattendedAnswer({ ...config(changes).decisions, unattended: { safeDefaults } }, question(asked));
+  const docs = ['docs/pricing.md'];
+  const listed = { escalate: ['copy', 'security'], escalateDocs: docs, classes: { custom: 'a project class' } };
+  for (const mode of ['outside-escalated', 'all']) {
+    assert.equal(answer(mode, listed), 'park', `${mode}: a class the project listed`);
+    assert.equal(answer(mode, listed, { class: 'layout', docs }), 'park', `${mode}: a doc the project listed`);
+    assert.equal(answer(mode, listed, { class: 'layout', docs: ['../away.md', 'docs/pricing.md'] }), 'park', `${mode}: the rule says outside the project, and a later doc is listed`);
+    assert.equal(answer(mode, listed, { class: 'security' }), 'park', `${mode}: a floor class the project also listed`);
+    assert.equal(answer(mode, listed, { class: 'money', docs }), 'park', `${mode}: a floor class on a listed doc`);
+    assert.equal(answer(mode, listed, { class: 'layout' }), 'safe-default', `${mode}: an ordinary class no list names`);
+    assert.equal(answer(mode, listed, { class: 'custom' }), 'safe-default', `${mode}: a project class no list names`);
+    assert.equal(answer(mode, { escalate: ['custom'], classes: listed.classes }, { class: 'custom' }), 'park', `${mode}: a project class the project listed`);
+  }
+  for (const kind of [...FLOOR, 'no-such-class']) {
+    assert.equal(answer('outside-escalated', {}, { class: kind }), 'park', kind);
+    assert.equal(answer('all', {}, { class: kind }), 'safe-default', kind);
+  }
+  assert.equal(answer(null, {}, { class: 'layout' }), 'park', 'a block no one can read parks everything');
+});
+
+test('a marker of a project class reads, is set, and is undone only where the project has that class', () => {
+  const classes = { 'pricing-page': 'the words of the pricing page' };
+  const line = '<!-- aidrian:decision id=a status=unconfirmed class=pricing-page domain=ux date=2026-01-01 pr=none -->';
+  const text = `Rule.\n${line}\n${wrote('Rule.', 'a')}\n`;
+  assert.deepEqual(problemsOf(text).map(([, problem]) => problem), ['class "pricing-page" is no class of decisions.json or config.json decisions.classes', 'new wording with no decision marker directly above it']);
+  const read = parseDecisions(text, { classes });
+  assert.deepEqual([read.problems, read.decisions.map((each) => each.class)], [[], ['pricing-page']]);
+  assert.equal(setDecisionStatus(text, 'a', 'confirmed'), null);
+  assert.match(setDecisionStatus(text, 'a', 'confirmed', { classes }).text, /status=confirmed class=pricing-page/u);
+  assert.ok(undoDecision(text, 'a').refused);
+  assert.equal(undoDecision(text, 'a', { classes }).text, '');
+  const floor = line.replace('pricing-page', 'money');
+  assert.match(parseDecisions(`Rule.\n${floor}\n`, { classes: { money: 'lifted' } }).problems[0].problem, /is a floor class/u);
+});
+
+test('the docs say what list --added-since holds and where a symlinked folder stops, and decision-review relays notes first', () => {
+  const read = (file) => readFileSync(path.join(ROOT, file), 'utf8').replace(/\s+/gu, ' ');
+  const scope = /`decisions`, `settled`, and `removed` are the branch's; `problems` may also hold rows marked `inherited`/u;
+  assert.match(read('docs/project-folder.md'), scope);
+  assert.match(read('docs/config.md'), scope);
+  assert.match(readFileSync(path.join(ROOT, 'plugins/aidrian/lib/decisions-cli.mjs'), 'utf8').split('\n')[6], /decisions, settled, and removed are the branch's; problems may also hold rows marked inherited/u);
+  assert.match(read('docs/project-folder.md'), /A doc reached through a symlink is the file it reaches\. At `--added-since` a doc indexed through a symlink is not read, and a new marker in it reports as stray\./u);
+  const review = read('plugins/aidrian/skills/decision-review/SKILL.md');
+  assert.match(review, /Relay each entry of `notes`/u);
+  assert.ok(review.indexOf('`notes`') < review.indexOf('None: say so and stop.'), 'a batch of none must not hide a scan that failed');
+});
+
+test('the docs name both team keys, the changed default, each decision row, and the override threshold', () => {
+  const read = (file) => readFileSync(path.join(ROOT, file), 'utf8').replace(/\s+/gu, ' ');
+  const config = read('docs/config.md');
+  for (const key of ['decisions.classes', 'decisions.unattended.safeDefaults']) assert.match(config, new RegExp(`\\| \`${key.replace('.', '\\.')}\` \\|.*Team only\\.`, 'u'), key);
+  const changed = config.slice(config.indexOf('### Changed defaults'), config.indexOf('### No review bot'));
+  assert.match(changed, /`decisions\.unattended\.safeDefaults` is new, `"outside-escalated"`\. An unattended `autopilot` run now parks a floor class/u);
+  assert.match(changed, /"safeDefaults": "all"/u);
+  assert.match(config, /asks: `authority` stays `ask` under every setting\. An \[unattended run\]\(#unattended-runs\) under `safeDefaults` `"all"` may still act on one with a safe default\./u);
+  assert.match(config, /No setting lets an agent approve a critical-flow sign-off or a security verdict; the skill text holds that rule, and no command checks it\./u);
+  assert.match(config, /`unattended` is `park` where nobody can say what the project listed: the rule `no-base`; a base commit whose config\.json is missing, does not parse, or has another version; and an error under `decisions` at that commit\. A config\.json with no `decisions` key takes the defaults\./u);
+  assert.match(config, /A marker whose only problem is a class in neither list still counts, so a commit that removes a class lifts no pause\./u);
+  assert.match(config, /\| `telemetry\.enabled` \| `false` stops the hooks and `aidrian decisions` from writing/u);
+  assert.match(read('plugins/aidrian/skills/decision-review/SKILL.md'), /Report each row about a class no list holds the same way: that marker counts toward the domain pause/u);
+  assert.match(read('plugins/aidrian/lib/decisions.json'), /the one place the built-in decision classes and the reversibility questions live; config\.json decisions\.classes adds a project's own classes/u);
+  assert.match(read('plugins/aidrian/lib/dispatch-log.mjs'), /per answer of `aidrian decisions`/u);
+  assert.match(read('plugins/aidrian/lib/decisions.mjs'), /the only place the built-in decision classes .* `decisions\.classes` adds a project's classes/u);
+  assert.match(config, /`maxMode`, `classes`, `escalate`, `escalateDocs`, `unattended`, `secondLook`, and `record` are the team's\./u);
+  assert.match(config, /\| `decisionOverridePercent` \|/u);
+  assert.match(config, /\| `decisionMinSample` \|/u);
+  const log = read('docs/dispatch-log.md');
+  for (const row of ['decision_made', 'decision_escalated', 'decision_confirmed', 'decision_overridden']) assert.match(log, new RegExp(`### .*\`${row}\``, 'u'), row);
+  assert.match(log, /a repeated `resolve` writes a second row, with the same `key`, and the report counts one decision per `key`/u);
+  assert.match(log, /A row that cannot be written fails no command/u);
+});
+
+test('the knowledge index finds docs/config.md by the words a search for its decisions uses', () => {
+  const { docs } = JSON.parse(readFileSync(path.join(ROOT, '.aidrian/knowledge/10-harness.json'), 'utf8'));
+  const { summary } = docs['config.md'];
+  assert.ok(summary.length <= 160, `${summary.length} characters`);
+  for (const word of ['decisions', 'decision', 'authority', 'roles', 'auto-merge']) assert.ok(summary.includes(word), word);
+});
+
+test('a marker whose only problem is its class is on record; any other problem is not', () => {
+  const marker = (changes = '') => `<!-- aidrian:decision id=a status=unconfirmed class=gone domain=ux date=2026-01-01 pr=none${changes} -->`;
+  const { decisions, problems, unlisted } = parseDecisions(`Rule.\n${marker()}\n${wrote('Rule.', 'a')}\n`);
+  assert.deepEqual([decisions, unlisted.map(({ id, class: kind, line }) => [id, kind, line])], [[], [['a', 'gone', 2]]]);
+  assert.match(problems[0].problem, /class "gone" is no class of decisions\.json/u, 'still reported');
+  assert.deepEqual(parseDecisions(`Rule.\n${marker().replace('date=2026-01-01', 'date=soon')}\n`).unlisted, [], 'a second problem');
+  assert.deepEqual(parseDecisions(`Rule.\n${marker().replace('class=gone', 'class=money')}\n`).unlisted, [], 'a floor class is no decision an agent made');
+});
+
+test('every test file that spawns aidrian decisions keeps its state apart, whatever command runs it', () => {
+  const dir = path.join(ROOT, 'test');
+  const spawning = readdirSync(dir).filter((file) => file.endsWith('.test.mjs')).filter((file) => /\[\s*'decisions',\s*'(?:resolve|list|set|undo)'/u.test(readFileSync(path.join(dir, file), 'utf8')));
+  assert.ok(spawning.length >= 2);
+  for (const file of spawning) assert.match(readFileSync(path.join(dir, file), 'utf8'), /^import '\.\.\/scripts\/test-state\.mjs';\n/u, file);
+});
+
+test('a yes on the fourth question decides only where the team allows auto-merge and the mode is decide-reversible', () => {
+  const YES = { ...NO, reachesUsersUnreviewed: true };
+  const allowed = (changes) => ({ ...config(changes), github: { autoMerge: { allow: true } } });
+  const mode = { mode: 'decide-reversible' };
+  const decided = resolveAuthority(allowed(mode), question({ reversible: YES }));
+  assert.deepEqual(pick(decided), ['decide', 'mode']);
+  assert.match(decided.reason, /reachesUsersUnreviewed is yes, which github\.autoMerge\.allow accepts at the base branch/u);
+  assert.doesNotMatch(resolveAuthority(allowed(mode), question()).reason, /accepts/u, 'all no is the plain reason');
+
+  const asks = (cfg, asked, rule = 'reversibility') => assert.deepEqual(pick(resolveAuthority(cfg, question(asked))), ['ask', rule]);
+  asks(open, { reversible: YES });
+  asks({ ...open, github: { autoMerge: { allow: false } } }, { reversible: YES });
+  asks(allowed({}), { reversible: YES });
+  asks({ decisions: { ...DEFAULTS.decisions, mode: 'decide-reversible' }, github: { autoMerge: { allow: true } } }, { reversible: YES }, 'reversibility');
+  asks(allowed({ mode: 'decide-reversible', domains: { ...DEFAULTS.decisions.domains, ux: 'ask' } }), { reversible: YES });
+  assert.deepEqual(pick(resolveAuthority(allowed({ domains: { ...DEFAULTS.decisions.domains, ux: 'decide-reversible' } }), question({ reversible: YES }))), ['decide', 'domains.ux']);
+  for (const key of ['storedData', 'external', 'pricingOrContract']) asks(allowed(mode), { reversible: { ...YES, [key]: true } });
+  asks(allowed(mode), { reversible: { ...NO, reachesUsersUnreviewed: undefined } });
+  asks(allowed(mode), { reversible: YES, class: 'money' }, 'floor-class');
+  asks(allowed({ ...mode, escalate: ['copy'] }), { reversible: YES }, 'escalate');
+  asks(allowed({ ...mode, escalateDocs: ['docs/a.md'] }), { reversible: YES, docs: ['docs/a.md'] }, 'escalate-doc');
+  const paused = allowed({ ...mode, unreviewed: { remind: 'off', pauseDomainAt: { pending: 1, oldestDays: 100 } } });
+  asks(paused, { reversible: YES, pending: [{ domain: 'ux', date: '2026-11-01' }] }, 'domain-paused');
 });

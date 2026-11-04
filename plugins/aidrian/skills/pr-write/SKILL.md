@@ -107,4 +107,5 @@ Return the drafted title and body, the reason, and the next step, instead of pub
 - a `decided_provisional` the caller names has no marker in the branch: route it back to its writer (the `knowledge` skill's `references/decisions.md`);
 - that list reports a problem in a marker the branch added, other than the `pr=none` Publish fixes: route it back to the same writer.
 
-A problem on an inherited marker goes under Risk and stops nothing.
+A row marked `inherited` was there before this branch, so leave it out;
+an unmarked problem on a marker the merge base has goes under Risk and stops nothing.

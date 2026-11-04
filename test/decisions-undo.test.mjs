@@ -1,3 +1,4 @@
+import '../scripts/test-state.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -355,4 +356,18 @@ test('undo refuses a tracked doc in a guarded main checkout, as set does, and pa
   assert.equal(readFileSync(file, 'utf8'), text);
 
   assert.equal(run(['decisions', 'undo', 'refund-copy'], dir, { ...env, AIDRIAN_ALLOW_MAIN_WRITE: '1' }).status, 0, 'the override');
+});
+
+test('undo reads the line above as it reads the line below: an unterminated decision comment refuses, a quote does not', () => {
+  const rule = 'Five days.';
+  const good = record({ was: 'Ten days.', wrote: rule }).join('\n');
+  for (const line of ['<!-- aidrian:decision id=earlier status=unconfirmed', '<!-- aidrian:decision-new id=earlier text="Other.']) {
+    const out = undoDecision(`${rule}\n${line}\n${good}\n`, 'refund-copy');
+    assert.equal(out.text, undefined, line);
+    assert.match(out.refused, /the decision line above it has no wording it can read/u, line);
+  }
+  const quote = '`<!-- aidrian:decision id=earlier`';
+  assert.equal(undoDecision(`${rule}\n${quote}\n${good}\n`, 'refund-copy').text, `Ten days.\n${quote}\n`, 'a code span is a quote');
+  const fence = '```\n<!-- aidrian:decision id=earlier\n```';
+  assert.equal(undoDecision(`${rule}\n${fence}\n${good}\n`, 'refund-copy').text, `Ten days.\n${fence}\n`, 'a fenced marker is a quote');
 });

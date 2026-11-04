@@ -8,7 +8,8 @@ Every agent and skill that handles one points here and restates none of it.
 
 - **The deciding agent**, such as `product-manager` or `architect`, supplies the decision's `class`, its four `reversible` answers,
   and `docs`, each written rule the decision touches.
-  `aidrian decisions resolve --vocab` defines the classes and the questions. With no shell, read `../../../lib/decisions.json` from this file.
+  `aidrian decisions resolve --vocab` defines the classes and the questions, the project's own classes among them.
+  With no shell, read `../../../lib/decisions.json` from this file, and config.json `decisions.classes` for the project's.
 - **The dispatcher with a shell** runs the command and passes `authority: decide` or `authority: ask` in the specialist's brief.
 
   ```bash
@@ -18,6 +19,10 @@ Every agent and skill that handles one points here and restates none of it.
   `--reversible` answers the questions in the order `--vocab` gives. `--doc` is required whenever a decision touches a written rule, once per doc.
   `--domain` follows the owner: `product` for `product-manager`, `architecture` for `architect`, `ux` for `ux-specialist` or `designer`, and `backlog` for the order of work.
 - **The specialist never computes authority itself.** A brief with no `authority` line means `ask`.
+- **The fourth question.** The deciding agent answers it literally, whatever the team has opted in to, and the command applies the team's acceptance.
+  Where a team has both `decide-reversible` and auto-merge allowed, at the base branch, a change may reach users
+  with no person looking at it; those two opt-ins are the acceptance, so a yes on that question does not ask, and the `reason` it prints says so.
+  Floor classes, the escalate lists, and the other three questions still ask.
 
 ## The order
 

@@ -77,12 +77,15 @@ await runHook((input) => {
 });
 
 // The reminder of the decisions an agent made alone that the Human has not answered, from the indexed docs of the working
-// copy. A doc it cannot read counts for nothing here: `aidrian decisions list` reports it, and a hook never breaks a session.
+// copy, as the domain pause counts them: a marker whose only problem is its class counts too. A marker in a file no index
+// lists does not, since that takes git, which a hook does not wait for. A doc it cannot read counts for nothing here:
+// `aidrian decisions list` reports it, and a hook never breaks a session.
 function decisionsLine(root, buckets, config) {
   if (config.decisions.unreviewed.remind !== 'session-start') return null;
   const unconfirmed = indexedPaths(buckets).flatMap((doc) => {
     try {
-      return parseDecisions(readFileSync(path.resolve(root, doc), 'utf8')).decisions.filter(({ status }) => status === 'unconfirmed');
+      const { decisions, unlisted } = parseDecisions(readFileSync(path.resolve(root, doc), 'utf8'), config.decisions);
+      return [...decisions, ...unlisted].filter(({ status }) => status === 'unconfirmed');
     } catch {
       return [];
     }

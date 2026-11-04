@@ -1,6 +1,6 @@
 // Who settles a product or design decision a session meets: the agent ("decide") or the Human ("ask").
-// decisions.json is the only place the decision classes and the reversibility questions live; config.json `decisions`
-// sets how far a project lets agents go (docs/config.md#decisions). resolveAuthority walks a fixed order and the first
+// decisions.json is the only place the built-in decision classes and the reversibility questions live; config.json
+// `decisions.classes` adds a project's classes, and `decisions` sets how far a project lets agents go (docs/config.md#decisions). resolveAuthority walks a fixed order and the first
 // rule that matches wins, so no prompt weighs these by hand.
 // A decision an agent made alone stays on record as a marker line in the doc that governs it (parseDecisions,
 // docs/project-folder.md#decision-markers); decisions-cli.mjs scans the docs for them.
@@ -14,7 +14,7 @@ import { fencedIn, slug } from './markdown-sections.mjs';
 export const VOCAB_PATH = path.join(import.meta.dirname, 'decisions.json');
 
 // The authority modes, lowest first: "ask" leaves every decision to the Human; "decide-reversible" lets an agent
-// settle one that every reversibility question answers no to.
+// settle one that every reversibility question answers no to, or yes where the team accepted it (ACCEPTED_QUESTION).
 export const DECISION_MODES = ['ask', 'decide-reversible'];
 
 // The domains config.json `decisions.domains` sets one by one.
@@ -24,16 +24,39 @@ let vocab;
 // decisions.json, read once.
 export const loadVocab = () => (vocab ??= JSON.parse(readFileSync(VOCAB_PATH, 'utf8')));
 
-// Every class name, floor classes first, as decisions.json lists them.
+// What config.json `decisions.unattended.safeDefaults` may be: what an unattended run may settle with a safe default.
+export const SAFE_DEFAULTS = ['outside-escalated', 'all'];
+
+// The longest class a project adds: with the longest id, domain, and pull request, its marker just fits the default
+// `docs.wrapLimit`, as the test measures.
+export const CLASS_MAX = 23;
+
+// Whether `name` can be a class a project adds: it goes in a marker's `class=` field, so it is one short word.
+export const isClassName = (name) => /^[a-z0-9][a-z0-9-]*$/u.test(name) && name.length <= CLASS_MAX;
+
+// The entry of `kind`: a built-in of decisions.json, which no project can change, else a class of `classes`, config.json
+// `decisions.classes`, which is never a floor class.
+function classEntry(kind, classes, table = loadVocab()) {
+  const entry = table.classes.find((each) => each.class === kind);
+  if (entry || !classes || !Object.hasOwn(classes, kind)) return entry;
+  return { class: kind, floor: false, definition: classes[kind] };
+}
+
+// Every built-in class name, floor classes first, as decisions.json lists them.
 export const decisionClasses = (table = loadVocab()) => table.classes.map((entry) => entry.class);
 
 // The lower of two modes; a mode outside DECISION_MODES counts as "ask".
 export const lowerMode = (a, b) => DECISION_MODES[Math.min(Math.max(DECISION_MODES.indexOf(a), 0), Math.max(DECISION_MODES.indexOf(b), 0))];
 
-// The decision on one question. `config` is a loaded config, or its `decisions` block. The question:
-// - `domain`: one of DECISION_DOMAINS; `class`: a class of decisions.json;
+// The reversibility question whose yes a team can accept: the one about reaching users with no person looking. A team that
+// allows auto-merge and runs at decide-reversible has accepted that, so a yes there does not ask.
+const ACCEPTED_QUESTION = 'reachesUsersUnreviewed';
+
+// The decision on one question. `config` is a loaded config, or its `decisions` block; its `github.autoMerge.allow` counts
+// only as the caller passes it, so `aidrian decisions resolve` passes the base branch's. The question:
+// - `domain`: one of DECISION_DOMAINS; `class`: a class of decisions.json, or of the block's `classes`;
 // - `reversible`: { storedData, external, pricingOrContract, reachesUsersUnreviewed }, each true (yes) or false (no);
-//   an answer that is missing, or anything but false, asks;
+//   an answer that is missing, or anything but false, asks, but for a yes on ACCEPTED_QUESTION that the team accepted;
 // - `docs`: the doc paths the decision touches, from the project root, each with an optional `#section`, matched
 //   against `escalateDocs`; one outside the project asks;
 // - `pending`: the unreviewed decisions so far, as [{ domain, date, doc? }], for the domain pause.
@@ -41,28 +64,48 @@ export const lowerMode = (a, b) => DECISION_MODES[Math.min(Math.max(DECISION_MOD
 export function resolveAuthority(config, { domain, class: kind, reversible, docs = [], pending = [] } = {}, { now = new Date(), table = loadVocab() } = {}) {
   const block = config.decisions ?? config;
   const ask = (rule, reason) => ({ authority: 'ask', rule, reason });
-  const entry = table.classes.find((each) => each.class === kind);
-  if (!entry) return ask('unknown-class', `${JSON.stringify(kind ?? null)} is no class of decisions.json, so it goes to the Human`);
+  const entry = classEntry(kind, block.classes, table);
+  if (!entry) return ask('unknown-class', `${JSON.stringify(kind ?? null)} is no class of decisions.json or decisions.classes, so it goes to the Human`);
   if (entry.floor) return ask('floor-class', `${kind} is a floor class: it always goes to the Human`);
   if (block.escalate.includes(kind)) return ask('escalate', `config.json decisions.escalate lists ${kind}`);
   const away = docs.find((each) => outsideProject(docParts(each)));
   if (away !== undefined) return ask('doc-outside-project', `${away} is outside the project, so no rule of the project covers it`);
   const doc = docs.find((each) => block.escalateDocs.some((listed) => docMatches(listed, each)));
   if (doc !== undefined) return ask('escalate-doc', `config.json decisions.escalateDocs covers ${doc}`);
+  const own = block.domains[domain];
+  const [mode, rule] = own === 'inherit' ? [block.mode, 'mode'] : [own, `domains.${domain}`];
+  const effective = lowerMode(mode, block.maxMode);
+  const accepts = config.github?.autoMerge?.allow === true && effective === 'decide-reversible';
+  let accepted = false;
   for (const key of Object.keys(table.reversibility)) {
     const answer = reversible?.[key];
+    if (key === ACCEPTED_QUESTION && answer === true && accepts) {
+      accepted = true;
+      continue;
+    }
     if (answer !== false) return ask('reversibility', `${key} is ${answer === true ? 'yes' : 'unanswered'}: ${table.reversibility[key]}`);
   }
   if (!DECISION_DOMAINS.includes(domain)) return ask('unknown-domain', `${JSON.stringify(domain ?? null)} is not one of ${DECISION_DOMAINS.join(', ')}`);
   const domainPending = pending.filter((each) => each?.domain === domain);
   const paused = pauseReason(block.unreviewed.pauseDomainAt, domainPending, now);
   if (paused) return ask('domain-paused', `${domain} is paused: ${paused}${docsClause(domainPending)}`);
-  const own = block.domains[domain];
-  const [mode, rule] = own === 'inherit' ? [block.mode, 'mode'] : [own, `domains.${domain}`];
-  const effective = lowerMode(mode, block.maxMode);
   if (effective !== mode) return ask('maxMode', `${rule} is ${mode}, above decisions.maxMode ${block.maxMode}`);
+  if (accepted) return { authority: 'decide', rule, reason: `${rule} is decide-reversible, every other reversibility answer is no, and ${ACCEPTED_QUESTION} is yes, which github.autoMerge.allow accepts at the base branch` };
   if (effective === 'decide-reversible') return { authority: 'decide', rule, reason: `${rule} is decide-reversible and every reversibility answer is no` };
   return ask(rule, `${rule} is ask`);
+}
+
+// What an unattended run does with a question resolveAuthority answered `ask`: "park" it, or "safe-default", take a safe
+// default that can be undone. `block` is the `decisions` block in force. What the project listed always parks, so this asks
+// the lists itself: the rule that matched first may hide them, as a floor class or a doc outside the project does.
+// A `safeDefaults` outside SAFE_DEFAULTS is a block no one could read (committedDecisions), so it parks too.
+export function unattendedAnswer(block, { class: kind, docs = [] } = {}, { table = loadVocab() } = {}) {
+  const { safeDefaults } = block.unattended;
+  const listed = block.escalate.includes(kind) || docs.some((doc) => block.escalateDocs.some((entry) => docMatches(entry, doc)));
+  if (listed || !SAFE_DEFAULTS.includes(safeDefaults)) return 'park';
+  if (safeDefaults === 'all') return 'safe-default';
+  const entry = classEntry(kind, block.classes, table);
+  return entry && !entry.floor ? 'safe-default' : 'park';
 }
 
 // Where the markers of a pause are, so the Human can reach them; nothing when `pending` names no doc.
@@ -162,19 +205,22 @@ export const isDecisionLine = (line) => COMMENT_LINE.test(line);
 // whether the line is well formed, or fenced.
 const mentionIn = (line) => MENTION.exec(line.replace(CODE_SPAN, ''));
 
-// Every decision marker of one doc's text, and what is wrong with the rest: { decisions, problems }, where a decision
+// Every decision marker of one doc's text, and what is wrong with the rest: { decisions, problems, unlisted }, where a decision
 // is { id, status, class, domain, date, pr, line, through, hasOldWording, oldWording, hasNewWording, newWording } and a
 // problem { line, problem }, both by 1-based line, with `through` the decision's last line. `pr` is a number, or null for
 // `pr=none`. A marker quoted in a code fence or code span is no decision. A malformed marker is a problem, never a throw.
-// A marker out of place is a problem too, and still a decision.
+// A marker out of place is a problem too, and still a decision. `classes` is config.json `decisions.classes`, whose
+// names a marker may hold too. `unlisted` holds each marker whose only problem is a class in neither list, shaped as a
+// decision: it is still a decision on record, so a commit that removes a class cannot lift the domain pause.
 // `oldWording` joins the `decision-old` lines directly under the marker, and `newWording` the `decision-new` lines below
 // those. When one cannot be read, its `has...` is still true and the wording null: a decision whose old wording is
 // unreadable replaced a rule, so an undo must not read it as one that filled a gap.
-export function parseDecisions(text) {
+export function parseDecisions(text, { classes } = {}) {
   const lines = String(text).split(/\r?\n/u);
   const fenced = fencedIn(lines);
   const decisions = [];
   const problems = [];
+  const unlisted = [];
   // The decision whose marker and wording run down to the line before this one.
   let open = null;
   const close = () => {
@@ -188,9 +234,10 @@ export function parseDecisions(text) {
     if (!mention) return;
     const line = i + 1;
     if (!kind) {
-      const { problem, decision } = readMarker(raw.trim());
+      const { problem, decision, unlisted: outOfList } = readMarker(raw.trim(), classes);
       if (problem) {
         problems.push({ line, problem });
+        if (outOfList) unlisted.push({ ...outOfList, line, through: line });
         return;
       }
       decisions.push({ ...decision, line, through: line });
@@ -219,7 +266,7 @@ export function parseDecisions(text) {
     }
   });
   close();
-  return { decisions, problems: problems.sort((a, b) => a.line - b.line) };
+  return { decisions, problems: problems.sort((a, b) => a.line - b.line), unlisted };
 }
 
 // What is wrong with where the marker on the 0-based line `i` sits, or null. It goes directly below the rule's last line,
@@ -239,8 +286,8 @@ function misplaced(lines, fenced, i) {
   return null;
 }
 
-// One marker line as { decision } or { problem }.
-function readMarker(line) {
+// One marker line as { decision } or { problem }, with `unlisted` the decision it would be when its only problem is its class.
+function readMarker(line, classes) {
   const found = MARKER_LINE.exec(line);
   if (!found) return { problem: `${OWN_LINE}: <!-- aidrian:decision ${MARKER_FIELDS.map((key) => `${key}=...`).join(' ')} -->` };
   const fields = new Map();
@@ -256,18 +303,20 @@ function readMarker(line) {
   if (missing.length) return { problem: `a decision marker is missing ${missing.join(', ')}` };
   const [id, status, kind, domain, date, pr] = MARKER_FIELDS.map((key) => fields.get(key));
   const quoted = (key, value) => `${key} ${JSON.stringify(value)}`;
-  const entry = loadVocab().classes.find((each) => each.class === kind);
-  const problem = !/^[a-z0-9][a-z0-9-]*$/u.test(id) ? `${quoted('id', id)} takes lowercase letters, digits, and "-"`
-    : id.length > ID_MAX ? `${quoted('id', id)} takes at most ${ID_MAX} characters`
-      : !DECISION_STATUSES.includes(status) ? `${quoted('status', status)} is not one of ${DECISION_STATUSES.join(', ')}`
-        : !entry ? `${quoted('class', kind)} is no class of decisions.json`
-          : entry.floor ? `${quoted('class', kind)} is a floor class: it always goes to the Human, so no agent decided it alone`
-            : !DECISION_DOMAINS.includes(domain) ? `${quoted('domain', domain)} is not one of ${DECISION_DOMAINS.join(', ')}`
-              : !isDate(date) ? `${quoted('date', date)} is not a real YYYY-MM-DD date`
-                : !/^(?:[1-9]\d*|none)$/u.test(pr) ? `${quoted('pr', pr)} takes a pull request number, or none`
-                  : null;
-  if (problem) return { problem };
-  return { decision: { id, status, class: kind, domain, date, pr: pr === 'none' ? null : Number(pr), hasOldWording: false, oldWording: null, hasNewWording: false, newWording: null } };
+  const entry = classEntry(kind, classes);
+  const wrong = [
+    !/^[a-z0-9][a-z0-9-]*$/u.test(id) && `${quoted('id', id)} takes lowercase letters, digits, and "-"`,
+    id.length > ID_MAX && `${quoted('id', id)} takes at most ${ID_MAX} characters`,
+    !DECISION_STATUSES.includes(status) && `${quoted('status', status)} is not one of ${DECISION_STATUSES.join(', ')}`,
+    !entry && `${quoted('class', kind)} is no class of decisions.json or config.json decisions.classes`,
+    entry?.floor && `${quoted('class', kind)} is a floor class: it always goes to the Human, so no agent decided it alone`,
+    !DECISION_DOMAINS.includes(domain) && `${quoted('domain', domain)} is not one of ${DECISION_DOMAINS.join(', ')}`,
+    !isDate(date) && `${quoted('date', date)} is not a real YYYY-MM-DD date`,
+    !/^(?:[1-9]\d*|none)$/u.test(pr) && `${quoted('pr', pr)} takes a pull request number, or none`,
+  ].filter(Boolean);
+  const decision = { id, status, class: kind, domain, date, pr: pr === 'none' ? null : Number(pr), hasOldWording: false, oldWording: null, hasNewWording: false, newWording: null };
+  if (!wrong.length) return { decision };
+  return { problem: wrong[0], ...(!entry && wrong.length === 1 ? { unlisted: decision } : {}) };
 }
 
 const isDate = (text) => /^\d{4}-\d{2}-\d{2}$/u.test(text) && !Number.isNaN(Date.parse(text)) && new Date(text).toISOString().startsWith(text);
@@ -291,8 +340,8 @@ function readWording(line, id, kind) {
 
 // `text` with `status` on the one marker of `id`, and every other byte as it was: { text, from, line }, or null when
 // the doc does not hold exactly one such marker. A line ending stays with its line, since only `\n` splits.
-export function setDecisionStatus(text, id, status) {
-  const found = parseDecisions(text).decisions.filter((each) => each.id === id);
+export function setDecisionStatus(text, id, status, { classes } = {}) {
+  const found = parseDecisions(text, { classes }).decisions.filter((each) => each.id === id);
   if (found.length !== 1) return null;
   const [{ line, status: from }] = found;
   const lines = text.split('\n');
@@ -371,12 +420,12 @@ export function recordAt(text, line) {
 // and its lines removed, every other byte as it was. Returns { text, line, wrote, restored }, with `line` the first line
 // that changed and `wrote` and `restored` as lines, or, when it cannot be done safely, { refused, decision, block }, with
 // `decision` null when no marker of `id` reads. Only `\n` splits, so a line ending stays with its line. Status is no gate.
-export function undoDecision(text, id) {
+export function undoDecision(text, id, { classes } = {}) {
   const source = String(text);
   const raw = source.split('\n');
   const lines = source.split(/\r?\n/u);
   const fenced = fencedIn(lines);
-  const { decisions, problems } = parseDecisions(source);
+  const { decisions, problems } = parseDecisions(source, { classes });
   const found = decisions.filter((each) => each.id === id);
   if (found.length === 0) {
     const named = problems.find(({ line }) => lines[line - 1].trim().split(/\s+/u).includes(`id=${id}`));
@@ -392,7 +441,7 @@ export function undoDecision(text, id) {
     const later = decisions.find((each) => each.line === through + 1);
     return refuse(later ? `a later decision ${later.id} replaced this wording; undo that one first` : 'a later decision line it cannot read sits below this one; fix that line first');
   }
-  if (line > 1 && !fenced[line - 2] && isDecisionLine(lines[line - 2])) {
+  if (line > 1 && !fenced[line - 2] && mentionIn(lines[line - 2])) {
     const above = decisions.find((each) => each.through + 1 === line);
     if (!above || above.newWording === null) return refuse('the decision line above it has no wording it can read, so undo would not put that rule back; fix that line first');
     if (!chained(above, decision)) return refuse(`its old wording is not the wording "${above.id}" wrote, so undo would not put that rule back; fix the decision-old line first`);

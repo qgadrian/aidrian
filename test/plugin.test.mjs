@@ -651,10 +651,33 @@ test('each dispatcher of a deciding agent runs the resolve, and each deciding ag
 test('autopilot parks a decision only under ask, and reports what an agent decided', () => {
   const autopilot = readFileSync(path.join(PLUGIN, 'skills/autopilot/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
   assert.ok(autopilot.includes(`as \`${DECISION_RULE}\` says. Under \`decide\`, follow its order to the end and record the \`decided_provisional\` in the report.`));
-  assert.match(autopilot, /Under `ask`, with a clearly safe default that can be undone, take it and flag it in the report, unless its `rule` is `escalate` or `escalate-doc`\. Otherwise park it/);
+  assert.match(autopilot, /Under `ask`, read its `unattended`, which the base branch's config sets: never the working copy's\. With `safe-default` and a clearly safe default that can be undone, take it and flag it in the report\. Otherwise park it/);
+  assert.doesNotMatch(autopilot, /unless its `rule` is `escalate`/u, 'the command says it, by what the project listed');
+  assert.match(autopilot, /No setting and no `unattended` answer covers them: never approve one yourself; park it/);
+  assert.ok(Buffer.byteLength(readFileSync(path.join(PLUGIN, 'skills/autopilot/SKILL.md'))) <= 7500);
   assert.match(autopilot, /Fold each parked decision, each `decided_provisional`, and each finding left open/);
   assert.match(autopilot, /Decisions for the Human\*\*: each parked decision.*then each `decided_provisional`/);
-  assert.match(autopilot, /Never approve one yourself: park it/);
+});
+
+test('the agent answers the fourth question literally, and the command applies the team\'s acceptance', () => {
+  const docs = {
+    rule: path.join(PLUGIN, 'skills/knowledge/references/decisions.md'),
+    config: path.resolve(PLUGIN, '../../docs/config.md'),
+  };
+  for (const file of Object.values(docs)) {
+    const text = readFileSync(file, 'utf8').replace(/\s+/g, ' ');
+    assert.match(text, /answers it literally.*and the command applies the team's acceptance\./u, file);
+    assert.match(text, /Where a team has both `decide-reversible` and auto-merge allowed, .*a change may reach users with no person looking at it; those two opt-ins are the acceptance/u, file);
+    assert.match(text, /Floor classes, the escalate lists, (?:and )?the other three questions/u, file);
+    assert.doesNotMatch(text, /is answered no, because the team|reads neither opt-in/u, file);
+  }
+  const config = readFileSync(docs.config, 'utf8').replace(/\s+/g, ' ');
+  assert.match(config, /So where `github\.autoMerge\.allow` is true at the base branch, in the commit `resolve` reads,/u);
+  const section = (start, end) => config.slice(config.indexOf(start), config.indexOf(end, config.indexOf(start)));
+  const link = /`github\.autoMerge\.allow`.*base branch.*\[rule 3 under Decisions\]\(#decisions\)/u;
+  assert.match(section('| `github.autoMerge.allow` |', '| `github.autoMerge.default` |'), /Read at the base branch, .*\[rule 3 under Decisions\]\(#decisions\)/u);
+  assert.match(section('## Auto-merge', 'The team commits this'), link);
+  assert.match(section('| `decisions.maxMode` |', '| `decisions.domains` |'), link);
 });
 
 test('plugin text names no bare slash command', () => {

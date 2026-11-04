@@ -419,7 +419,7 @@ Refunds take five days.
 - `id` is lowercase letters, digits, and `-`, unique across the docs.
   It takes at most 32 characters, so the longest marker fits on one screen at the default `docs.wrapLimit`.
 - `status` is `unconfirmed`, `confirmed`, or `rejected`. An agent writes `unconfirmed`; only the Human moves it, and nothing settles a decision by time.
-- `class` is an ordinary class of `lib/decisions.json`, since a floor class never reaches an agent.
+- `class` is an ordinary class of `lib/decisions.json` or of [`decisions.classes`](config.md#project-classes), since a floor class never reaches an agent.
 - `domain` is `product`, `ux`, `architecture`, or `backlog`.
 - `pr` is `none` until the pull request exists; a writer on a branch whose pull request already exists writes the real number.
   The [`pr-write`](../plugins/aidrian/skills/pr-write/SKILL.md) skill writes the number on each marker the branch added with `none`, commits, and pushes.
@@ -462,11 +462,13 @@ A marker in a code fence or a code span is a quote, not a decision.
 A doc from a [local source](#local-knowledge-sources) lists too, but no other machine sees it, so markers belong in committed docs.
 A marker in a tracked Markdown file no index lists is a `problem` with its doc and line: it counts toward the
 [domain pause](config.md#decisions), and `set` and `undo` read only indexed docs, so move it to an indexed doc, or index its doc.
-A doc reached through a symlink is the file it reaches. When `git grep` fails in a checkout, the list says those markers could not be scanned,
+A doc reached through a symlink is the file it reaches. At `--added-since` a doc indexed through a symlink is not read,
+and a new marker in it reports as stray. When `git grep` fails in a checkout, the list says those markers could not be scanned,
 as a `note` row, or in `notes` in the JSON, and still exits 0.
 `aidrian check` warns about each problem, and still passes.
 
-`aidrian decisions list --added-since <ref>` lists only what the branch committed since it left `<ref>`, read from git at the merge base and at `HEAD`.
+`aidrian decisions list --added-since <ref>` lists what the branch committed since it left `<ref>`, read from git at the merge base and at `HEAD`:
+`decisions`, `settled`, and `removed` are the branch's; `problems` may also hold rows marked `inherited`.
 A decision counts when no marker at the merge base has its id, whatever its status and however it is indented,
 so a moved marker or a changed status does not.
 A problem the merge base already has, the same text on the same line, stays in the list, marked `inherited: true`, and its row ends in `inherited`.

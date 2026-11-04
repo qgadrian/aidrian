@@ -7,7 +7,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { agentNameProblem, ALL, MAIN, patternProblem } from './agent-gates.mjs';
-import { DECISION_DOMAINS, DECISION_MODES, decisionClasses, lowerMode } from './decisions.mjs';
+import { CLASS_MAX, DECISION_DOMAINS, DECISION_MODES, decisionClasses, isClassName, lowerMode, SAFE_DEFAULTS } from './decisions.mjs';
 import { loadTable as dispositionTable } from './finding-disposition.mjs';
 import { isFile, isObject, readJson } from './fs.mjs';
 import { checkLocalReview, checkLocalVisual, checkReview, REVIEW_DEFAULTS } from './review/config.mjs';
@@ -46,8 +46,10 @@ const DECISIONS_SCHEMA = {
   mode: 'decisionMode',
   maxMode: 'decisionMode',
   domains: Object.fromEntries(DECISION_DOMAINS.map((domain) => [domain, 'domainMode'])),
+  classes: 'projectClasses',
   escalate: 'decisionClasses',
   escalateDocs: 'docPaths',
+  unattended: { safeDefaults: 'safeDefaults' },
   secondLook: 'secondLookOrNull',
   record: { queue: 'decisionQueue' },
   unreviewed: { remind: 'remindMode', pauseDomainAt: 'pauseOrNull' },
@@ -108,6 +110,8 @@ const SCHEMA = {
       lateFindingPercent: 'percent',
       denyHotSpot: 'positive',
       costRisePercent: 'positive',
+      decisionOverridePercent: 'percent',
+      decisionMinSample: 'positive',
     },
   },
   agents: 'agents',
@@ -174,6 +178,9 @@ const isDocPath = (value) => {
   if (section.length && file.endsWith('/')) return false;
   return path.posix.normalize(file).replace(/\/$/u, '') !== '.';
 };
+// What `decisions.classes` holds: new names only, so a project can neither lift a floor class nor change a built-in's meaning.
+const isProjectClasses = (value) => isObject(value) && Object.entries(value).every(([name, definition]) =>
+  isClassName(name) && !decisionClasses().includes(name) && isText(definition) && !/[\r\n]/u.test(definition));
 const hasOnly = (value, keys) => isObject(value) && Object.keys(value).every((key) => keys.includes(key));
 const TYPES = {
   text: [isText, 'a non-empty string'],
@@ -223,10 +230,19 @@ const TYPES = {
   versionOrNull: [(value) => value === null || (typeof value === 'string' && SEMVER.test(value)), 'a plugin version such as "0.17.0", or null'],
   decisionMode: [(value) => DECISION_MODES.includes(value), '"ask" or "decide-reversible"'],
   domainMode: [(value) => value === 'inherit' || DECISION_MODES.includes(value), '"ask", "decide-reversible", or "inherit"'],
+  // `group` is the keys beside this one, so an `escalate` entry may name a class of a valid `classes` beside it.
   decisionClasses: [
-    (value) => Array.isArray(value) && value.every((kind) => decisionClasses().includes(kind)),
-    'a list of decision classes of lib/decisions.json, which `aidrian decisions resolve --vocab` lists',
+    (value, group) => {
+      const own = isProjectClasses(group?.classes) ? Object.keys(group.classes) : [];
+      return Array.isArray(value) && value.every((kind) => decisionClasses().includes(kind) || own.includes(kind));
+    },
+    'a list of decision classes of lib/decisions.json or decisions.classes, which `aidrian decisions resolve --vocab` lists',
   ],
+  projectClasses: [
+    (value) => isProjectClasses(value),
+    `an object of new class names, each lowercase letters, digits, and "-", at most ${CLASS_MAX} characters, to a one-line definition; a class of lib/decisions.json cannot be redefined or removed`,
+  ],
+  safeDefaults: [(value) => SAFE_DEFAULTS.includes(value), '"outside-escalated" or "all"'],
   secondLookOrNull: [
     (value) => value === null || (hasOnly(value, ['agent', 'minSeverity']) && TYPES.agentName[0](value.agent) && dispositionTable().severities.includes(value.minSeverity)),
     () => `null, or { "agent": an agent name, "minSeverity": ${oneOf(dispositionTable().severities)} }`,
@@ -316,6 +332,9 @@ export const DEFAULTS = deepFreeze({
       lateFindingPercent: 50,
       denyHotSpot: 5,
       costRisePercent: 50,
+      // The share of the decisions the Human reviewed that the Human overrode, over decisionMinSample of them.
+      decisionOverridePercent: 20,
+      decisionMinSample: 5,
     },
   },
   agents: {},
@@ -348,8 +367,11 @@ export const DEFAULTS = deepFreeze({
     mode: 'ask',
     maxMode: 'ask',
     domains: Object.fromEntries(DECISION_DOMAINS.map((domain) => [domain, 'inherit'])),
+    classes: {},
     escalate: [],
     escalateDocs: [],
+    // What an unattended run may settle with a safe default (unattendedAnswer).
+    unattended: { safeDefaults: 'outside-escalated' },
     secondLook: { agent: 'critic', minSeverity: 'high' },
     record: { queue: 'pr-body' },
     unreviewed: { remind: 'session-start', pauseDomainAt: { pending: 10, oldestDays: 7 } },
@@ -462,13 +484,21 @@ function lowerPause(team, local) {
 // or `file` null, has no team block to read, and one with an error under `decisions` has a block no one can read as the
 // team meant it. Either way the ceiling is "ask", spelled here so it does not follow the default, and the block's other
 // values are the defaults, not a partial block's. committedConfig returns DEFAULTS itself only in the first cases.
-export function committedDecisions(project, commit, file) {
-  const askOnly = { ...DEFAULTS.decisions, maxMode: 'ask' };
+// No one can say what such a block listed, so `safeDefaults` is null, which no config can set, and an unattended run parks:
+// a commit whose config.json is missing, does not parse, or has another version, and one with an error under `decisions`.
+// A config.json with no `decisions` key says nothing to misread: it takes the defaults, as any other unset group does.
+export const committedDecisions = (project, commit, file) => committedAuthority(project, commit, file).decisions;
+
+// committedDecisions' block and `autoMergeAllow`, whether that same commit sets `github.autoMerge.allow` true: false for a
+// block no one can read, since its team said nothing anyone can read. resolveAuthority takes it as the team's acceptance.
+export function committedAuthority(project, commit, file) {
+  const askOnly = { decisions: { ...DEFAULTS.decisions, maxMode: 'ask', unattended: { safeDefaults: null } }, autoMergeAllow: false };
   if (file === null) return askOnly;
   const errors = [];
   // `./`: the path from project.root, so a project below the repository root reads its own file.
   const committed = committedConfig({ ...project, paths: { ...project.paths, config: `./${file}` } }, commit, errors);
-  return committed === DEFAULTS || errors.some((error) => /"decisions[".]/u.test(error)) ? askOnly : committed.decisions;
+  if (committed === DEFAULTS || errors.some((error) => /"decisions[".]/u.test(error))) return askOnly;
+  return { decisions: committed.decisions, autoMergeAllow: committed.github.autoMerge.allow === true };
 }
 
 // Whether auto-merge is on, from a `github` config and the local file's switch (`project.localAutoMerge`, "on",
@@ -565,7 +595,7 @@ function merge(schema, defaults, values, prefix, file, errors, gateErrors = []) 
       out[key] = checkReview(value, file, errors);
     } else if (type === 'agents') {
       out[key] = checkAgents(value, file, errors, defaults[key], gateErrors);
-    } else if (TYPES[type][0](value)) {
+    } else if (TYPES[type][0](value, values)) {
       out[key] = value;
     } else {
       const must = TYPES[type][1];

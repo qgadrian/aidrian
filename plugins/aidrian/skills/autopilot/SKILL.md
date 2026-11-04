@@ -51,10 +51,11 @@ the pull request, and review fixes.
 2. **A critical decision**, such as an open product trade-off, an architecture choice with lasting effects, a trust-boundary
    question, a risky refactor, or scope growth: never guess anything that cannot be undone.
    Run `aidrian decisions resolve` as `knowledge/references/decisions.md` says. Under `decide`, follow its order to the end and record the `decided_provisional` in the report.
-   Under `ask`, with a clearly safe default that can be undone, take it and flag it in the report, unless its `rule` is `escalate` or `escalate-doc`.
+   Under `ask`, read its `unattended`, which the base branch's config sets: never the working copy's.
+   With `safe-default` and a clearly safe default that can be undone, take it and flag it in the report.
    Otherwise park it: record it with its options and the safest recommendation, and go on with all work that does not depend on it.
 3. **Mandatory gates stay.** A critical-flow `product-manager` sign-off and a `security-engineer` verdict still block their work.
-   Never approve one yourself: park it.
+   No setting and no `unattended` answer covers them: never approve one yourself; park it.
 4. **A "stop and ask"** in a skill this run uses becomes park and go on. When nothing independent is left, stop.
 
 ## Checkpoints

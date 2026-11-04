@@ -4,33 +4,38 @@
 //   aidrian decisions resolve --domain ux --class copy --reversible no,no,no,no
 //   aidrian decisions resolve --vocab            # every class and reversibility question, defined
 //   aidrian decisions list [--json]              # every marker, and what is wrong with the malformed ones
-//   aidrian decisions list --added-since REF     # only what the branch committed since it left REF: new, settled, removed
+//   aidrian decisions list --added-since REF     # decisions, settled, and removed are the branch's; problems may also hold rows marked inherited
 //   aidrian decisions set ID confirmed|rejected  # the Human's answer: rewrites that one marker in the working copy
 //   aidrian decisions undo ID                    # the Human's undo: puts back the old wording and removes the decision's lines
 //
 // `--reversible` answers the questions of decisions.json in its order: storedData, external, pricingOrContract,
-// reachesUsersUnreviewed. An answer left out asks. `--doc` names a doc, with an optional `#section`: from the current folder
+// reachesUsersUnreviewed. An answer left out asks, and a yes asks but for one on the last that the base commit's
+// `github.autoMerge.allow` and a decide-reversible mode accept, as the printed reason says. `--doc` names a doc, with an optional `#section`: from the current folder
 // and, when relative, from the project root too.
-// Output: { authority, rule, reason, secondLook, base }, where `base` is the commit whose config was read, or null when
-// none was, and `secondLook` is that config's `decisions.secondLook`, or null when none was read.
+// Output: { authority, rule, reason, unattended, secondLook, base }, where `base` is the commit whose config was read, or
+// null when none was, and `secondLook` is that config's `decisions.secondLook`, or null with the rule `no-base`. `unattended`
+// says what an unattended run does with an `ask`, "park" or "safe-default", from that config, and is null under `decide`.
 // Exit 0 on either answer; 1 on bad arguments or an invalid config. docs/config.md#decisions has the rules, and
 // docs/project-folder.md#decision-markers the marker. `list` exits 0 with problems: they are part of what it reports.
 // `undo` exits 1 and writes nothing when it refuses, after printing why, both wordings, and the block it searched.
+// `resolve`, `set`, and `undo` each add a row to the dispatch log (logDecision); docs/dispatch-log.md describes them.
 
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { commandConfig, committedDecisions, DEFAULTS, localDecisions } from './config.mjs';
+import { commandConfig, committedAuthority, committedDecisions, DEFAULTS, loadConfig, localDecisions } from './config.mjs';
+import { appendEvent, stamp } from './dispatch-log.mjs';
 import { ghJson } from './gh.mjs';
-import { ageDays, blockOf, DECISION_STATUSES, loadVocab, parseDecisions, recordAt, resolveAuthority, setDecisionStatus, undoDecision, wordingProblems } from './decisions.mjs';
+import { ageDays, blockOf, DECISION_STATUSES, isClassName, loadVocab, parseDecisions, recordAt, resolveAuthority, setDecisionStatus, unattendedAnswer, undoDecision, wordingProblems } from './decisions.mjs';
 import { checkoutRoots, runGit } from './git.mjs';
 import { indexedPaths, loadKnowledge } from './knowledge.mjs';
 import { committedConfigFile, findProject, noProjectMessage, projectAt } from './project.mjs';
 import { checkTool as mainCheckoutDenial } from './rules/main-checkout.mjs';
 import { usageLines } from './usage.mjs';
 
-const USAGE = 'resolve --domain D --class C [--reversible A,B,C,D] [--doc PATH]... [--project DIR] | resolve --vocab ' +
+const USAGE = 'resolve --domain D --class C [--reversible A,B,C,D] [--doc PATH]... [--project DIR] | resolve --vocab [--project DIR] ' +
   '| list [--added-since REF] [--json] [--project DIR] | set ID confirmed|rejected [--project DIR] | undo ID [--project DIR]';
 const SETTLED = ['confirmed', 'rejected'];
 // A branch-scoped list reads whole docs from git, which can outlast git.mjs's default for a hook.
@@ -53,33 +58,75 @@ export const commands = {
         options: { domain: word, class: word, reversible: word, doc: { type: 'string', multiple: true }, project: word, vocab: { type: 'boolean' } },
       });
       if (values.vocab) {
-        console.log(JSON.stringify(vocabulary(), null, 2));
+        const { decisions } = decisionsInForce(projectAt(values.project ?? process.cwd()));
+        console.log(JSON.stringify(vocabulary(decisions?.classes), null, 2));
         return 0;
       }
       if (!values.domain || !values.class) return fail('resolve needs --domain and --class');
       const reversible = answers(values.reversible);
       if (!reversible) return fail(`--reversible takes up to ${questions().length} answers, each no or yes, separated by commas: ${questions().join(', ')}`);
       const project = projectAt(values.project ?? process.cwd());
-      const { decisions, base } = decisionsInForce(project);
+      const { decisions, base, autoMergeAllow } = decisionsInForce(project);
       const docs = (values.doc ?? []).flatMap((doc) => docReadings(project, doc));
-      const pending = decisions === null || decisions.unreviewed.pauseDomainAt === null ? [] : pendingDecisions(project, base);
+      const pending = decisions === null || decisions.unreviewed.pauseDomainAt === null ? [] : pendingDecisions(project, base, decisions.classes);
+      const block = decisions === null ? null : withResolvedEntries(project, decisions);
+      const question = { domain: values.domain, class: values.class, reversible, docs, pending };
       const out = decisions === null
         ? { authority: 'ask', rule: 'no-base', reason: 'git could not give the base branch\'s config, so the decision goes to the Human' }
         : pending === null
           ? { authority: 'ask', rule: 'no-base', reason: 'git could not give the unreviewed decisions, so the decision goes to the Human' }
-          : resolveAuthority({ decisions: withResolvedEntries(project, decisions) }, { domain: values.domain, class: values.class, reversible, docs, pending });
-      console.log(JSON.stringify({ ...out, secondLook: decisions?.secondLook ?? null, base }));
+          : resolveAuthority({ decisions: block, github: { autoMerge: { allow: autoMergeAllow } } }, question);
+      const unattended = out.authority === 'decide' ? null : out.rule === 'no-base' ? 'park' : unattendedAnswer(block, question);
+      logDecision(project, resolveRow(out, question));
+      console.log(JSON.stringify({ ...out, unattended, secondLook: out.rule === 'no-base' ? null : decisions.secondLook, base }));
       return 0;
     },
   },
 };
 
-// The markers of `docs`, each read by `read`, which may return null for a doc to pass over: { decisions, problems, lineAt },
-// where a decision adds { doc, ageDays }, a problem is { doc, line, problem }, and `lineAt` gives the trimmed text of the
-// line either names. An id on two markers is a problem on each.
-function readMarkers(docs, read) {
+// What resolve logs: the rule, and the domain and class when each is a name. An argument is free text to the parser, and the
+// log holds names; so is the rule's `reason`, which can quote a doc, left out. `key` is one question, asked in one session
+// (or, with no session id, one day): the same words again carry the same key, and `aidrian report health` counts them once.
+function resolveRow({ authority, rule }, { domain, class: kind, reversible, docs }, { env = process.env, now = Date.now() } = {}) {
+  const asked = [env.CLAUDE_CODE_SESSION_ID || stamp(now).slice(0, 10), domain, kind, questions().map((key) => reversible[key] ?? null), [...docs].sort()];
+  return {
+    event: authority === 'decide' ? 'decision_made' : 'decision_escalated',
+    rule,
+    domain: isClassName(domain) ? domain : null,
+    class: isClassName(kind) ? kind : null,
+    key: createHash('sha256').update(JSON.stringify(asked)).digest('hex').slice(0, 16),
+  };
+}
+
+// Appends one row to the dispatch log, while telemetry is on and only inside a project folder. A row that cannot be written
+// is lost, and the command's answer stands: nothing here fails a command.
+function logDecision(project, row, { env = process.env } = {}) {
+  try {
+    if (!findProject(project.root)) return;
+    appendEvent(project, loadConfig(project).config, { event: row.event, ts: stamp(Date.now()), session_id: env.CLAUDE_CODE_SESSION_ID || null, ...row });
+  } catch {
+    // The state folder is out of reach, or a disk is full: the log says less, and the decision is still on record.
+  }
+}
+
+// The row of the Human's answer on one marker: `action` is `confirmed`, `rejected`, or `undo`, and `was` its status before.
+const answerRow = ({ id, class: kind, domain }, action, was) =>
+  ({ event: action === 'confirmed' ? 'decision_confirmed' : 'decision_overridden', id, class: kind, domain, action, was });
+
+// Every marker of `text` on record, a class in neither list included: what the pause counts, and what is no new or removed marker.
+const onRecord = (text, classes) => {
+  const { decisions, unlisted } = parseDecisions(text, { classes });
+  return [...decisions, ...unlisted];
+};
+
+// The markers of `docs`, each read by `read`, which may return null for a doc to pass over: { decisions, problems, unlisted, lineAt },
+// where a decision and an `unlisted` marker (parseDecisions) add { doc, ageDays }, a problem is { doc, line, problem }, and
+// `lineAt` gives the trimmed text of the line either names. An id on two markers is a problem on each. `classes` is config.json
+// `decisions.classes`.
+function readMarkers(docs, read, classes) {
   const decisions = [];
   const problems = [];
+  const unlisted = [];
   const lines = new Map();
   for (const doc of docs) {
     let text;
@@ -91,8 +138,10 @@ function readMarkers(docs, read) {
     }
     if (text === null) continue;
     lines.set(doc, text.split(/\r?\n/u));
-    const found = parseDecisions(text);
-    decisions.push(...found.decisions.map((each) => ({ ...each, doc, ageDays: ageDays(each.date) })));
+    const found = parseDecisions(text, { classes });
+    const placed = (each) => ({ ...each, doc, ageDays: ageDays(each.date) });
+    decisions.push(...found.decisions.map(placed));
+    unlisted.push(...found.unlisted.map(placed));
     problems.push(...[...found.problems, ...wordingProblems(text, found)].map((each) => ({ doc, ...each })));
   }
   for (const decision of decisions) {
@@ -100,24 +149,25 @@ function readMarkers(docs, read) {
     if (others.length) problems.push({ doc: decision.doc, line: decision.line, problem: `id "${decision.id}" is also at ${others.map(place).join(', ')}` });
   }
   problems.sort((a, b) => docs.indexOf(a.doc) - docs.indexOf(b.doc) || a.line - b.line);
-  return { decisions, problems, lineAt: ({ doc, line }) => lines.get(doc)[line - 1].trim() };
+  return { decisions, problems, unlisted, lineAt: ({ doc, line }) => lines.get(doc)[line - 1].trim() };
 }
 
 const strayProblem = (id) => `"${id}" is in a doc no knowledge index lists: markers belong in an indexed doc`;
 const indexProblems = (errors) => errors.map((problem) => ({ doc: null, line: null, problem }));
 
 // The markers of every indexed knowledge doc, as the working copy holds them, so a branch sees its own: { decisions,
-// problems, notes, docs, lineAt }, with `docs` the count of docs read, and `lineAt` as readMarkers gives it. A problem of
+// problems, unlisted, notes, docs, lineAt }, with `docs` the count of docs read, and `lineAt` as readMarkers gives it. A problem of
 // the indexes has a null doc and line; `aidrian check` reports those as errors. A marker of a doc a local source indexes
 // lists too, under its absolute path, though no other machine sees it. A marker in a tracked Markdown file no index lists
 // is a problem: it counts toward the domain pause, so the Human must be able to find it. A doc through a symlink is the
-// file it reaches. When git cannot search a checkout, `notes` says those markers went unscanned.
+// file it reaches. When git cannot search a checkout, `notes` says those markers went unscanned. A marker may hold a class of
+// the working copy's `decisions.classes`, as it holds the working copy's docs; only `resolve` needs the base branch's.
 export function scanDecisions(project) {
-  commandConfig(project);
+  const { classes } = commandConfig(project).decisions;
   const { buckets, errors } = loadKnowledge(project);
   const docs = indexedPaths(buckets);
   const read = (doc) => readFileSync(path.resolve(project.root, doc), 'utf8');
-  const { decisions, problems, lineAt } = readMarkers(docs, read);
+  const { decisions, problems, unlisted, lineAt } = readMarkers(docs, read, classes);
   const stray = new Map();
   const outside = [];
   const onDisk = (doc) => real(path.resolve(project.root, doc));
@@ -132,17 +182,17 @@ export function scanDecisions(project) {
       continue;
     }
     stray.set(doc, text.split(/\r?\n/u));
-    outside.push(...parseDecisions(text).decisions.map(({ id, line }) => ({ doc, line, problem: strayProblem(id) })));
+    outside.push(...onRecord(text, classes).map(({ id, line }) => ({ doc, line, problem: strayProblem(id) })));
   }
   const textAt = (each) => (stray.has(each.doc) ? stray.get(each.doc)[each.line - 1].trim() : lineAt(each));
-  return { decisions, problems: [...indexProblems(errors), ...problems, ...outside], notes, docs: docs.length, lineAt: textAt };
+  return { decisions, problems: [...indexProblems(errors), ...problems, ...outside], unlisted, notes, docs: docs.length, lineAt: textAt };
 }
 
 // How to read `rev`s of the project from git: { git, show, markerFiles, markersAt }. `show` gives a file's text, or null.
 // `markerFiles` gives the Markdown files of `rev`, or with none the tracked files of the working copy, that mention a
 // marker, or null when git fails; 1 is git saying there are none. `markersAt` gives the decisions of a rev's such files,
-// each with its `doc`, or null when git fails on one.
-function gitReader(project) {
+// each with its `doc`, or null when git fails on one, reading config.json `decisions.classes` as `classes`.
+function gitReader(project, classes) {
   const git = (...args) => runGit(args, project.root, GIT_READ);
   const show = (rev, file) => {
     const shown = git('show', `${rev}:./${file}`);
@@ -160,7 +210,7 @@ function gitReader(project) {
     for (const doc of files) {
       const text = show(rev, doc);
       if (text === null) return null;
-      found.push(...parseDecisions(text).decisions.map((each) => ({ ...each, doc })));
+      found.push(...onRecord(text, classes).map((each) => ({ ...each, doc })));
     }
     return found;
   };
@@ -170,10 +220,14 @@ function gitReader(project) {
 // The unreviewed decisions for the domain pause, as [{ domain, date }], or null when git cannot give them. Each unconfirmed
 // marker of `base`, plus each marker the branch committed whose id neither `base` nor the merge base holds, whatever its
 // status. So nothing in the working copy, or a status the branch set, lifts a pause: only the base branch's own record
-// does. With no git at all, `base` is null, and the working copy is the only record.
-function pendingDecisions(project, base) {
-  if (base === null) return scanDecisions(project).decisions.filter(({ status }) => status === 'unconfirmed');
-  const { git, markersAt } = gitReader(project);
+// does. A marker whose only problem is a class in neither list counts too, so a commit that removes a class lifts nothing.
+// With no git at all, `base` is null, and the working copy is the only record.
+function pendingDecisions(project, base, classes) {
+  if (base === null) {
+    const { decisions, unlisted } = scanDecisions(project);
+    return [...decisions, ...unlisted].filter(({ status }) => status === 'unconfirmed');
+  }
+  const { git, markersAt } = gitReader(project, classes);
   const fork = git('merge-base', base, 'HEAD');
   if (fork.status !== 0 && fork.status !== 1) return null;
   const atBase = markersAt(base);
@@ -196,7 +250,9 @@ const sameLine = (line) => line.trim().replace(STATUS_VALUE, '$1').replace(/(\sp
 // such as one undone; a marker the merge base held outside the indexed docs, and HEAD still holds there, is not removed.
 // A problem is `inherited: true` when the merge base has the same problem on the same line, a valid status and pull request
 // aside, and every other is the branch's own. A new decision in a Markdown file no index lists is a problem, and with a pull
-// request open for the branch, so is a `pr=none` the branch added.
+// request open for the branch, so is a `pr=none` the branch added. Each end reads its markers with its own commit's
+// `decisions.classes`, so a branch that removes a class owns the problems that makes, and a marker that only lost its class
+// is neither new nor removed.
 function addedSince(project, ref) {
   commandConfig(project);
   const { buckets, errors } = loadKnowledge(project);
@@ -207,19 +263,23 @@ function addedSince(project, ref) {
   const atBase = markerFiles(base);
   const atHead = markerFiles('HEAD');
   if (atBase === null || atHead === null) return null;
-  const atMergeBase = readMarkers(atBase, (file) => show(base, file) ?? '');
-  const statuses = new Map(atMergeBase.decisions.map(({ id, status }) => [id, status]));
-  const homes = new Map(atMergeBase.decisions.map(({ id, doc }) => [id, doc]));
+  const baseClasses = classesAt(project, base);
+  const headClasses = classesAt(project, 'HEAD');
+  if (baseClasses === null || headClasses === null) return null;
+  const atMergeBase = readMarkers(atBase, (file) => show(base, file) ?? '', baseClasses);
+  const baseMarkers = [...atMergeBase.decisions, ...atMergeBase.unlisted];
+  const statuses = new Map(baseMarkers.map(({ id, status }) => [id, status]));
+  const homes = new Map(baseMarkers.map(({ id, doc }) => [id, doc]));
   const sameProblem = (each, lineAt) => `${sameLine(lineAt(each))}\0${each.problem}`;
   const baseProblems = new Set(atMergeBase.problems.filter(({ line }) => line !== null).map((each) => sameProblem(each, atMergeBase.lineAt)));
   const docs = indexedPaths(buckets).filter((doc) => !path.isAbsolute(doc));
-  const { decisions, problems, lineAt } = readMarkers(docs, (doc) => show('HEAD', doc));
+  const { decisions, problems, unlisted, lineAt } = readMarkers(docs, (doc) => show('HEAD', doc), headClasses);
   const added = decisions.filter(({ id }) => !statuses.has(id));
   const settled = decisions.filter(({ id, status }) => statuses.has(id) && statuses.get(id) !== status).map((each) => ({ ...each, was: statuses.get(each.id) }));
-  const outside = atHead.filter((file) => !docs.includes(file)).flatMap((doc) => parseDecisions(show('HEAD', doc) ?? '').decisions.map((each) => ({ ...each, doc })));
+  const outside = atHead.filter((file) => !docs.includes(file)).flatMap((doc) => onRecord(show('HEAD', doc) ?? '', headClasses).map((each) => ({ ...each, doc })));
   const stray = outside.filter(({ id }) => !statuses.has(id))
     .map(({ doc, line, id }) => ({ doc, line, problem: strayProblem(id) }));
-  const held = new Set(decisions.map(({ id }) => id));
+  const held = new Set([...decisions, ...unlisted].map(({ id }) => id));
   const removed = [...statuses].filter(([id]) => !held.has(id) && !outside.some((each) => each.id === id && each.doc === homes.get(id)))
     .map(([id, status]) => ({ id, status, doc: homes.get(id) }));
   const pullRequest = openPullRequest(project);
@@ -227,6 +287,15 @@ function addedSince(project, ref) {
     .map(({ doc, line, id }) => ({ doc, line, problem: `"${id}" still says pr=none, but pull request #${pullRequest} exists: write its number on the marker` }));
   const marked = problems.map((each) => (each.line !== null && baseProblems.has(sameProblem(each, lineAt)) ? { ...each, inherited: true } : each));
   return { decisions: added, settled, removed, problems: [...indexProblems(errors), ...marked, ...stray, ...unset], pullRequest };
+}
+
+// `decisions.classes` as committed at `rev`, {} for a commit whose block cannot be read, or null when git fails.
+function classesAt(project, rev) {
+  try {
+    return committedDecisions(project, rev, committedConfigFile(project, rev)).classes;
+  } catch {
+    return null;
+  }
 }
 
 // The number of the branch's pull request, or null when it has none or gh cannot say.
@@ -293,7 +362,7 @@ function set(args) {
   const file = path.resolve(project.root, doc);
   // Latin-1 maps each byte to one character and back, so a byte that is not UTF-8 survives; a marker is ASCII.
   const before = readFileSync(file, 'latin1');
-  const out = setDecisionStatus(before, id, status);
+  const out = setDecisionStatus(before, id, status, commandConfig(project).decisions);
   if (!out) {
     console.error(`${place(found[0])}: could not rewrite the marker of "${id}"`);
     return 1;
@@ -309,6 +378,7 @@ function set(args) {
     return 1;
   }
   writeFileSync(file, out.text, 'latin1');
+  logDecision(project, answerRow(found[0], status, out.from));
   console.log(`${doc}:${out.line}: ${id} ${status} (was ${out.from})`);
   return 0;
 }
@@ -371,7 +441,7 @@ function undo(args) {
     refusalDetail(decision, blockOf(before, decision));
     return 1;
   }
-  const out = undoDecision(before, id);
+  const out = undoDecision(before, id, commandConfig(project).decisions);
   if (out.refused) {
     console.error(`cannot undo "${id}" at ${place(decision)}: ${out.refused}`);
     refusalDetail(out.decision ?? decision, out.block);
@@ -384,6 +454,7 @@ function undo(args) {
     return 1;
   }
   writeFileSync(file, out.text);
+  logDecision(project, answerRow(decision, 'undo', decision.status));
   const count = (n) => `${n} line${n === 1 ? '' : 's'}`;
   const what = out.restored.length ? `replaced ${count(out.wrote.length)} with ${out.restored.length}` : `removed ${count(out.wrote.length)}`;
   console.log([`${doc}:${out.line}: undid ${id}: ${what}`, ...out.wrote.map((line) => `- ${line}`), ...out.restored.map((line) => `+ ${line}`)].join('\n'));
@@ -392,10 +463,12 @@ function undo(args) {
 
 const questions = () => Object.keys(loadVocab().reversibility);
 
-// The vocabulary `--vocab` prints: each class with its definition and whether it is a floor class, floor classes first.
-function vocabulary() {
+// The vocabulary `--vocab` prints: each class with its definition and whether it is a floor class, floor classes first,
+// then `own`, the classes config.json `decisions.classes` adds at the base branch, which are never floor classes.
+function vocabulary(own = {}) {
   const { classes, reversibility } = loadVocab();
-  return { classes: Object.fromEntries(classes.map(({ class: name, floor, definition }) => [name, { floor, definition }])), reversibility };
+  const added = Object.entries(own).map(([name, definition]) => [name, { floor: false, definition }]);
+  return { classes: Object.fromEntries([...classes.map(({ class: name, floor, definition }) => [name, { floor, definition }]), ...added]), reversibility };
 }
 
 // `--reversible` as { question: boolean }, with a question left out missing, or null when a word is neither no nor yes,
@@ -465,22 +538,23 @@ function real(file) {
   }
 }
 
-// The `decisions` block in force, and the commit it was read from: { decisions, base }. The team's block is the base
-// branch's, in the config folder the base branch names, so an uncommitted edit, or a commit on another branch, cannot
-// raise an agent's authority. The exception: with no remote, a commit on the local main is the base, so it does. The
-// machine's local file then goes over the block, held to its ceilings. commandConfig stops
-// on an invalid config. Only with no git at all is the working copy the team's block. Inside git, `decisions` is null
-// when git cannot give the base, so a stalled git never reads as a project with no rules.
+// The `decisions` block in force, the commit it was read from, and whether that commit allows auto-merge:
+// { decisions, base, autoMergeAllow }. The team's block is the base branch's, in the config folder the base branch names,
+// so an uncommitted edit, or a commit on another branch, cannot raise an agent's authority. The exception: with no remote,
+// a commit on the local main is the base, so it does. The machine's local file then goes over the block, held to its
+// ceilings. commandConfig stops on an invalid config. Only with no git at all is the working copy the team's block.
+// Inside git, `decisions` is null when git cannot give the base, so a stalled git never reads as a project with no rules.
 function decisionsInForce(project) {
   const config = commandConfig(project);
-  if (!insideGit(project.root)) return { decisions: config.decisions, base: null };
+  // With no base, no team has accepted merging without a person, whatever the working copy says.
+  if (!insideGit(project.root)) return { decisions: config.decisions, base: null, autoMergeAllow: false };
   const base = baseTip(project);
-  if (base === null) return { decisions: null, base };
+  if (base === null) return { decisions: null, base, autoMergeAllow: false };
   try {
-    const team = committedDecisions(project, base, committedConfigFile(project, base));
-    return { decisions: localDecisions(team, project, []), base };
+    const { decisions, autoMergeAllow } = committedAuthority(project, base, committedConfigFile(project, base));
+    return { decisions: localDecisions(decisions, project, []), base, autoMergeAllow };
   } catch {
-    return { decisions: null, base };
+    return { decisions: null, base, autoMergeAllow: false };
   }
 }
 

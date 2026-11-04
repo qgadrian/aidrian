@@ -2534,3 +2534,12 @@ test('product ledger: a no-verdict escalation keeps only its coverage exemption'
   assert.equal(result.status, 1);
   assert.match(result.stderr, /holds on no passing citation/u);
 });
+
+test('product ledger: an inference quoting the exempt words does not slip past the coverage exemption', (t) => {
+  const d = decideProject(t);
+  for (const statement of ['tested names are reliable', 'inference untested is harmless']) {
+    const inferences = [{ statement, holds: true, reason: 'r', citations: [] }];
+    const result = d.check(productLedger({ ruling: { decision: 'escalate', winner: null, change_or_reason: 'r', citations: [PASSING.adr], tested: [], inferences }, outcome: null }));
+    assert.equal(result.status, 1, statement);
+  }
+});

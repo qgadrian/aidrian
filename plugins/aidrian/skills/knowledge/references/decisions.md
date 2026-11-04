@@ -80,7 +80,7 @@ A marker elsewhere still counts, and `aidrian decisions list` reports it.
 
   `text` writes a line break as `\n`, a quote as `\"`, and `-->` as `-\u002d>`.
   Wording may span several such lines, one piece each; they join with nothing between them. The line-length check skips these lines and the marker.
-- **Only the Human settles one.** The main session runs `aidrian decisions set <id> confirmed|rejected` or `aidrian decisions undo <id>`,
+- **Only the Human settles one.** The main session runs `aidrian decisions set <id> confirmed|changed|rejected` or `aidrian decisions undo <id>`,
   on the Human's word. A hook refuses a subagent.
   `set` rewrites that one marker; `undo` puts the old wording back and removes the decision's lines, or refuses and writes nothing.
   Run either in a worktree and commit the change; with the main-checkout guard on, each refuses the main checkout.

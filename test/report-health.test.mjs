@@ -415,6 +415,14 @@ test('summarizeHealth ranks the override rate once it reaches its threshold, ove
   assert.deepEqual([near.signals.decisions.status, near.signals.decisions.percent], ['ok', 19.6], 'unrounded, and printed so it does not read as 20');
 });
 
+test('summarizeHealth counts a change of the agent\'s wording as an override, though its marker reads confirmed', () => {
+  const change = (id, kind) => ({ event: 'decision_overridden', ts: at(10), session_id: 's1', id, class: kind, domain: 'ux', action: 'changed', was: 'unconfirmed' });
+  const health = judged([...answered(3, 0), change('a', 'copy'), change('b', 'layout')]);
+  const { sample, overridden, percent } = health.signals.decisions;
+  assert.deepEqual([sample.n, overridden, percent, health.signals.decisions.status], [5, 2, 40, 'problem']);
+  assert.match(overrideProblem(health).summary, /^The Human overrode 2 of 5 decisions agents made alone \(40%\)/u);
+});
+
 test('summarizeHealth counts one decision once: a repeated resolve by its key, and a decision reviewed twice by its last answer', () => {
   const asked = (event, key) => ({ event, ts: at(10), session_id: 's1', rule: 'mode', domain: 'ux', class: 'copy', key });
   const repeats = [asked('decision_made', 'a'), asked('decision_made', 'a'), asked('decision_made', 'b'), asked('decision_escalated', 'c'), asked('decision_escalated', 'c')];

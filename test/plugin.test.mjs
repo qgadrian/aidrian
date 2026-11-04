@@ -112,7 +112,7 @@ test('decision-review runs only when a person starts it, in a task worktree, and
   assert.ok(stray >= 0 && stray < text.indexOf('None: say so and stop.'), 'a marker out of reach is reported even with nothing to review');
   const change = text.slice(text.indexOf('**Change.**'));
   assert.match(change, /It applies to the bottom marker of a stack\. To change an earlier decision, the Human answers about the bottom one, or undoes down to the earlier one first\./);
-  const [drafted, listed, settled] = ['Dispatch `doc-updater`', 'run `aidrian decisions list` while the marker is still `unconfirmed`, and send any drift on that `id` back to `doc-updater`', 'Only then, in this session, run `aidrian decisions set <id> confirmed`'].map((words) => change.indexOf(words));
+  const [drafted, listed, settled] = ['Dispatch `doc-updater`', 'run `aidrian decisions list` while the marker is still `unconfirmed`, and send any drift on that `id` back to `doc-updater`', 'Only then, in this session, run `aidrian decisions set <id> changed`'].map((words) => change.indexOf(words));
   assert.ok(drafted >= 0 && drafted < listed && listed < settled, 'doc-updater, then the list, then the answer: a confirmed marker no longer reports drift');
 });
 

@@ -483,7 +483,8 @@ With a number, a new marker still at `pr=none` is a `problem`.
 It exits 1 when git cannot compare the two.
 A repository with no project folder holds no markers: it prints the empty result and exits 0, and still exits 1 when git cannot compare the two.
 
-`aidrian decisions set <id> confirmed|rejected` rewrites only that marker's `status`, every other byte as it was, and leaves the old wording in place.
+`aidrian decisions set <id> confirmed|changed|rejected` rewrites only that marker's `status`, every other byte as it was, and leaves the old wording in place.
+`changed` writes `confirmed`, for wording the Human replaced, and the [dispatch log](dispatch-log.md#decision_confirmed-and-decision_overridden-when-the-human-answers) counts it as an override.
 It changes the working copy, so run it in a task worktree and commit the change. It refuses an unknown id, an unreadable marker, and an id on two markers.
 With [`git.mainCheckout.guard`](hooks.md#main-checkout) on, it refuses a tracked doc in the main checkout, as an edit is refused,
 under the same `AIDRIAN_ALLOW_MAIN_WRITE=1` and `allowWrites`.

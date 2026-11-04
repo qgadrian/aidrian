@@ -5,7 +5,7 @@
 //   aidrian decisions resolve --vocab            # every class and reversibility question, defined
 //   aidrian decisions list [--json]              # every marker, and what is wrong with the malformed ones
 //   aidrian decisions list --added-since REF     # decisions, settled, and removed are the branch's; problems may also hold rows marked inherited
-//   aidrian decisions set ID confirmed|rejected  # the Human's answer: rewrites that one marker in the working copy
+//   aidrian decisions set ID confirmed|changed|rejected  # the Human's answer: rewrites that one marker in the working copy; changed confirms it
 //   aidrian decisions undo ID                    # the Human's undo: puts back the old wording and removes the decision's lines
 //
 // `--reversible` answers the questions of decisions.json in its order: storedData, external, pricingOrContract,
@@ -37,8 +37,10 @@ import { checkTool as mainCheckoutDenial } from './rules/main-checkout.mjs';
 import { usageLines } from './usage.mjs';
 
 const USAGE = 'resolve --domain D --class C [--reversible A,B,C,D] [--doc PATH]... [--project DIR] | resolve --vocab [--project DIR] ' +
-  '| list [--added-since REF] [--json] [--project DIR] | set ID confirmed|rejected [--project DIR] | undo ID [--project DIR]';
-const SETTLED = ['confirmed', 'rejected'];
+  '| list [--added-since REF] [--json] [--project DIR] | set ID confirmed|changed|rejected [--project DIR] | undo ID [--project DIR]';
+// Each answer `set` takes, and the status it writes. `changed` is the Human's wording in place of the agent's: the rule stands, so
+// the marker reads confirmed, and the log counts the answer as an override.
+const SET_STATUS = { confirmed: 'confirmed', changed: 'confirmed', rejected: 'rejected' };
 // A branch-scoped list reads whole docs from git, which can outlast git.mjs's default for a hook.
 const GIT_READ = { timeout: 30_000, maxBuffer: 64 * 1024 * 1024 };
 const ANSWERS = { no: false, yes: true };
@@ -110,7 +112,7 @@ function logDecision(project, row, { env = process.env } = {}) {
   }
 }
 
-// The row of the Human's answer on one marker: `action` is `confirmed`, `rejected`, or `undo`, and `was` its status before.
+// The row of the Human's answer on one marker: `action` is `confirmed`, `changed`, `rejected`, or `undo`, and `was` its status before.
 const answerRow = ({ id, class: kind, domain }, action, was) =>
   ({ event: action === 'confirmed' ? 'decision_confirmed' : 'decision_overridden', id, class: kind, domain, action, was });
 
@@ -359,9 +361,10 @@ function list(args) {
 
 function set(args) {
   const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { project: { type: 'string' } } });
-  const [id, status, ...extra] = positionals;
-  if (!id || !status || extra.length) return fail('set needs an id and confirmed or rejected');
-  if (!SETTLED.includes(status)) return fail(`set takes confirmed or rejected, not "${status}": nothing goes back to unconfirmed`);
+  const [id, answer, ...extra] = positionals;
+  if (!id || !answer || extra.length) return fail('set needs an id and confirmed, changed, or rejected');
+  if (!Object.hasOwn(SET_STATUS, answer)) return fail(`set takes confirmed, changed, or rejected, not "${answer}": nothing goes back to unconfirmed`);
+  const status = SET_STATUS[answer];
   const project = knownProject(values.project);
   if (!project) return 1;
   const { decisions, problems } = scanDecisions(project);
@@ -392,8 +395,8 @@ function set(args) {
     return 1;
   }
   writeFileSync(file, out.text, 'latin1');
-  logDecision(project, answerRow(found[0], status, out.from));
-  console.log(`${doc}:${out.line}: ${id} ${status} (was ${out.from})`);
+  logDecision(project, answerRow(found[0], answer, out.from));
+  console.log(`${doc}:${out.line}: ${id} ${status} (${answer === status ? '' : `${answer}, `}was ${out.from})`);
   return 0;
 }
 

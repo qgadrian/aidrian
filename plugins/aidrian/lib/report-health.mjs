@@ -312,7 +312,7 @@ function deniesSignal(rows, sinceMs, { minSample, denyHotSpot }, recorded, add) 
 }
 
 // How often the Human overrode a decision agents made alone: the share of the decisions the Human reviewed that were
-// rejected or undone. A problem when it reaches decisionOverridePercent, over at least decisionMinSample reviewed; its own
+// rejected, undone, or changed. A problem when it reaches decisionOverridePercent, over at least decisionMinSample reviewed; its own
 // minimum, since a project reviews far fewer decisions than it dispatches agents. One decision counts once, by its last
 // answer in the window, and a resolve asked again in a session once, by its key.
 function decisionsSignal(rows, sinceMs, { decisionMinSample, decisionOverridePercent }, add) {

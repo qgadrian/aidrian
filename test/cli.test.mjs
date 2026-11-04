@@ -1149,10 +1149,10 @@ test('decisions set refuses a bad status, an unknown or malformed id, and a repe
   const docs = { 'a.md': `Rule.\n${decided()}\n\nRule.\n${twice}\n\nRule.\n${DECISION.replaceAll('refund-copy', 'broken').replace('date=2026-01-01', 'date=soon')}\n\nRule.\n${badId}\n`, 'b.md': `Rule.\n${twice}\n` };
   const dir = decisionDocs(t, docs);
   const bad = [
-    [['decisions', 'set'], /set needs an id and confirmed or rejected/u],
-    [['decisions', 'set', 'refund-copy'], /set needs an id and confirmed or rejected/u],
-    [['decisions', 'set', 'refund-copy', 'confirmed', 'extra'], /set needs an id and confirmed or rejected/u],
-    [['decisions', 'set', 'refund-copy', 'unconfirmed'], /confirmed or rejected, not "unconfirmed"/u],
+    [['decisions', 'set'], /set needs an id and confirmed, changed, or rejected/u],
+    [['decisions', 'set', 'refund-copy'], /set needs an id and confirmed, changed, or rejected/u],
+    [['decisions', 'set', 'refund-copy', 'confirmed', 'extra'], /set needs an id and confirmed, changed, or rejected/u],
+    [['decisions', 'set', 'refund-copy', 'unconfirmed'], /confirmed, changed, or rejected, not "unconfirmed"/u],
     [['decisions', 'set', 'no-such', 'confirmed'], /no decision marker with id "no-such".*4 marker problems/su],
     [['decisions', 'set', 'broken', 'confirmed'], /no decision marker with id "broken"/u],
     [['decisions', 'set', 'twice', 'confirmed'], /id "twice" is on 2 markers: docs\/a\.md:6, docs\/b\.md:2/u],
@@ -1167,7 +1167,7 @@ test('decisions set refuses a bad status, an unknown or malformed id, and a repe
 
 test('decisions usage lists resolve, list, set, and undo, and list, set, and undo need a project', (t) => {
   const { stderr } = run(['decisions', 'bogus'], EXAMPLE);
-  for (const form of ['aidrian decisions resolve --domain', 'aidrian decisions list', 'aidrian decisions set ID confirmed|rejected', 'aidrian decisions undo ID']) assert.ok(stderr.includes(form), form);
+  for (const form of ['aidrian decisions resolve --domain', 'aidrian decisions list', 'aidrian decisions set ID confirmed|changed|rejected', 'aidrian decisions undo ID']) assert.ok(stderr.includes(form), form);
   assert.match(run(['--help']).stdout, /aidrian decisions list/u);
   const away = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-cli-')));
   t.after(() => rmSync(away, { recursive: true, force: true }));
@@ -1442,7 +1442,7 @@ test('a repeated identical resolve carries the same key in a session, and any ot
 
 test('set and undo log the Human\'s answer once a doc changed, and a command that changed nothing logs nothing', (t) => {
   const env = logEnv(t);
-  const doc = [`Rule.\n${decided('kept')}`, `Rule.\n${decided('refused')}`, `Rule.\n${decided('undone')}`, ''].join('\n\n');
+  const doc = [`Rule.\n${decided('kept')}`, `Rule.\n${decided('refused')}`, `Rule.\n${decided('undone')}`, `Rule.\n${decided('reworded')}`, ''].join('\n\n');
   const dir = decisionDocs(t, { 'a.md': doc });
   const events = () => decisionRows(dir, env).map(({ event, id, class: kind, domain, action, was }) => [event, id, kind, domain, action, was]);
   assert.equal(run(['decisions', 'set', 'kept', 'confirmed'], dir, env).status, 0);
@@ -1450,10 +1450,14 @@ test('set and undo log the Human\'s answer once a doc changed, and a command tha
   assert.equal(run(['decisions', 'set', 'refused', 'rejected'], dir, env).status, 0);
   assert.equal(run(['decisions', 'undo', 'undone'], dir, env).status, 0);
   assert.equal(run(['decisions', 'undo', 'no-such'], dir, env).status, 1);
+  const changed = run(['decisions', 'set', 'reworded', 'changed'], dir, env);
+  assert.deepEqual([changed.status, changed.stdout], [0, 'docs/a.md:10: reworded confirmed (changed, was unconfirmed)\n']);
+  assert.match(readFileSync(path.join(dir, 'docs/a.md'), 'utf8'), /id=reworded status=confirmed /u, 'the Human\'s wording stands, so the marker reads confirmed');
   assert.deepEqual(events(), [
     ['decision_confirmed', 'kept', 'copy', 'ux', 'confirmed', 'unconfirmed'],
     ['decision_overridden', 'refused', 'copy', 'ux', 'rejected', 'unconfirmed'],
     ['decision_overridden', 'undone', 'copy', 'ux', 'undo', 'unconfirmed'],
+    ['decision_overridden', 'reworded', 'copy', 'ux', 'changed', 'unconfirmed'],
   ]);
 });
 

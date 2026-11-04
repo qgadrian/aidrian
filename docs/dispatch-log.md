@@ -144,14 +144,15 @@ The log has no way to take a row back, so a repeated `resolve` writes a second r
 ### `decision_confirmed` and `decision_overridden`: when the Human answers
 
 `aidrian decisions set` and `undo` write one row once the doc changed: `decision_confirmed` for `set confirmed`,
-and `decision_overridden` for `set rejected` and for `undo`.
+and `decision_overridden` for `set rejected`, `set changed`, and `undo`.
+`set changed` is the `decision-review` skill's Change: the Human's wording replaces the agent's, so the marker reads `confirmed`, and the row counts it as overridden.
 A `set` that changes nothing, and an `undo` that refuses, write none.
 
 | Field | Meaning |
 | --- | --- |
 | `ts`, `session_id` | When, and in which session. |
 | `id`, `class`, `domain` | The decision, as its marker names it. |
-| `action` | `confirmed`, `rejected`, or `undo`. |
+| `action` | `confirmed`, `rejected`, `changed`, or `undo`. |
 | `was` | The marker's status before: `unconfirmed`, `confirmed`, or `rejected`. |
 
 A decision reviewed twice counts once, by its last answer in the window.

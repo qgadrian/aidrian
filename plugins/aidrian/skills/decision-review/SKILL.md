@@ -58,7 +58,7 @@ Take no answer from a reply that did not name that decision. A decision left una
   Dispatch `doc-updater` with the doc, the `id`, and the Human's wording.
   It writes that wording as the rule, and in the marker's `decision-new` line, as the rule's lines exactly; the `decision-old` lines stay.
   When it returns, run `aidrian decisions list` while the marker is still `unconfirmed`, and send any drift on that `id` back to `doc-updater`.
-  Only then, in this session, run `aidrian decisions set <id> confirmed`.
+  Only then, in this session, run `aidrian decisions set <id> changed`: the marker reads `confirmed`, and the log counts the Human's new wording as an override.
 
 Then read it again:
 

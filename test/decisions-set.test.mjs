@@ -29,6 +29,7 @@ test('a subagent cannot settle or undo a decision, however it runs aidrian', (t)
     "echo 'aidrian decisions undo refund-copy' | bash",
     'aidrian decisions set refund-copy confirmed',
     '/usr/local/bin/aidrian decisions set refund-copy rejected',
+    'aidrian decisions set refund-copy changed',
     'node plugins/aidrian/lib/cli.mjs decisions set refund-copy confirmed',
     'node "$CLAUDE_PLUGIN_ROOT/bin/aidrian" decisions set refund-copy confirmed',
     'cd x && aidrian decisions set refund-copy confirmed',

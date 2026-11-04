@@ -637,7 +637,7 @@ Set only the keys you change; a team sets them in `config.json`, and one develop
 | `lateFindingPercent` | More than this share of the late findings checked sat on a line the bot had already reviewed. |
 | `denyHotSpot` | One of the plugin's rules blocks this many calls or more in the window. |
 | `costRisePercent` | A session in the newer half of the window's sessions costs more than this percent above one in the older half, on average. |
-| `decisionOverridePercent` | The Human overrides this share or more of the decisions the Human reviewed: rejects them, or undoes them. |
+| `decisionOverridePercent` | The Human overrides this share or more of the decisions the Human reviewed: rejects them, undoes them, or changes their wording. |
 | `decisionMinSample` | Not a threshold: the override rate says "not enough data" over fewer reviewed decisions than this. It stands in for `minSample` there. |
 
 The `Percent` keys take a whole number from 1 to 100, except `costRisePercent`; the others, a whole number above 0.
@@ -879,7 +879,7 @@ The dispatcher runs the command and passes `authority: decide` or `authority: as
 ### Recording decisions
 
 Each `decided_provisional` is committed as a marker line in the doc that governs it: [Decision markers](project-folder.md#decision-markers).
-`aidrian decisions list` prints them, and `aidrian decisions set <id> confirmed|rejected` records the Human's answer. Nothing settles one by time.
+`aidrian decisions list` prints them, and `aidrian decisions set <id> confirmed|changed|rejected` records the Human's answer. Nothing settles one by time.
 `aidrian decisions undo <id>` takes one back.
 The [`decision-review`](../plugins/aidrian/skills/decision-review/SKILL.md) skill goes through them with the Human, in a batch.
 Session start reminds the main session of them while `unreviewed.remind` is `"session-start"`.

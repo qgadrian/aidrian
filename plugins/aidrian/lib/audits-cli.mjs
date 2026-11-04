@@ -12,7 +12,7 @@ import { parseArgs } from 'node:util';
 
 import { parseReport } from './audit-import.mjs';
 import {
-  decisionProblem, DECISIONS, itemWords, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, reportTitle, searchLabels, sidecarName, sidecarProblems, today,
+  decisionProblem, DECISIONS, itemWords, taskNumbers, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, reportTitle, searchLabels, sidecarName, sidecarProblems, today,
 } from './audits.mjs';
 import { commandConfig } from './config.mjs';
 import { projectAt, stateDir } from './project.mjs';
@@ -109,8 +109,11 @@ function check({ rest: [name], dir }) {
     return fail(`${file}: invalid JSON (${error.message})`);
   }
   const { title, replacedTitle } = context(dir, report, value?.supersedes);
-  const problems = [...sidecarProblems(value, { dir, report, replacedTitle }), ...proseProblems(readFileSync(path.join(dir, report), 'utf8'), value)];
+  const prose = readFileSync(path.join(dir, report), 'utf8');
+  const problems = [...sidecarProblems(value, { dir, report, replacedTitle }), ...proseProblems(prose, value)];
   if (problems.length) return fail([`The sidecar of ${title} (${file}):`, ...problems.map((each) => `- ${each}`)].join('\n'));
+  // A warning, not a problem: a report written before this rule keeps its text, and the reader still gets it.
+  for (const task of taskNumbers(prose)) console.error(`warning: the report says "${task}", which no reader can place: name the task by its title`);
   console.log(`ok: the sidecar of ${title}: ${value.findings.length} findings, ${value.not_reached.length} not reached, ${value.doc_gaps.length} doc gaps`);
   return 0;
 }
@@ -138,9 +141,10 @@ function importReport({ values, rest: [name], dir }) {
   const replaced = (older?.findings ?? []).map(({ id, title }) => ({ id, title }));
   if (draft.supersedes && !values.from) {
     const what = older ? older.title : reportTitle(draft.supersedes);
-    warnings.push(replaced.length
-      ? `This run replaces ${what}. Sort each of its findings: carried forward, when a finding of this run covers it, or not re-checked, when this run did not look at it:\n${replaced.map((one) => `  - "${one.title}"`).join('\n')}`
-      : `This run replaces ${what}, which holds no findings to sort.`);
+    const sort = 'Sort each of its findings: carried forward, when a finding of this run covers it, or not re-checked, when this run did not look at it';
+    // The plain output's next step lists the findings, with their keys; --json lists them here, and in `replaced`.
+    warnings.push(!replaced.length ? `This run replaces ${what}, which holds no findings to sort.`
+      : values.json ? `This run replaces ${what}. ${sort}:\n${replaced.map((one) => `  - "${one.title}"`).join('\n')}` : `This run replaces ${what}. ${sort}.`);
   }
   for (const [option, key] of [['not-rechecked', 'not_rechecked'], ['carried-forward', 'carried_forward']]) {
     if (values[option] !== undefined) draft[key] = values[option].split(',').map((id) => id.trim()).filter(Boolean);
@@ -152,6 +156,7 @@ function importReport({ values, rest: [name], dir }) {
       console.log(JSON.stringify(draft, null, 2));
       for (const each of warnings) console.error(`warning: ${each}`);
       for (const each of problems) console.error(`problem: ${each}`);
+      console.error(nextStep(report, replaced));
     }
     return problems.length ? 1 : 0;
   }
@@ -160,6 +165,18 @@ function importReport({ values, rest: [name], dir }) {
   writeFileSync(target, `${JSON.stringify(draft, null, 2)}\n`);
   console.log(`wrote ${target}`);
   return 0;
+}
+
+// The end of a plain import: the command that writes the sidecar, ready to edit. With a replaced report, its findings
+// first, each led by its title, then the key the flags take: a key appears here only because the command needs it.
+function nextStep(report, replaced) {
+  if (!replaced.length) return `Next: once the Human approves the draft, write it:\n  aidrian audits import ${report} --write`;
+  return [
+    'Next: sort the earlier run\'s findings with the Human, then write the sidecar. Each finding, with the key the flags take:',
+    ...replaced.map(({ id, title }) => `  - "${title}": key ${id}`),
+    'Move the key of each finding a finding of this run covers to --carried-forward, and keep the rest in --not-rechecked:',
+    `  aidrian audits import ${report} --not-rechecked ${replaced.map(({ id }) => id).join(',')} --carried-forward '' --write`,
+  ].join('\n');
 }
 
 // With --json: { issue_creation, search_labels, groups }, so the skill reads the mode and every issue's labels from
@@ -185,10 +202,12 @@ function pending({ values, rest: [name], dir, triage }) {
     console.log(`${capital(entry.title)}: fully triaged`);
     return 0;
   }
-  console.log(`Issue creation: ${triage.issueCreation}. Duplicate search label: ${searchLabels(triage.labels).join(', ')}.`);
+  const labelled = searchLabels(triage.labels).join(' or ');
+  console.log(triage.issueCreation === 'auto' ? 'Issues: created without asking, and listed at the end.' : 'Issues: each draft is shown to the Human before it is created.');
+  console.log(`Duplicates: open issues labelled ${labelled} are searched first.`);
   for (const group of groups) {
     console.log(`## ${group.title}`);
-    for (const item of group.items) console.log(`- ${item.title ?? item.text}`);
+    for (const item of group.items) console.log(`- ${item.title ?? item.text}${item.proposed === 'covered' ? ' (covered by the findings above)' : ''}`);
   }
   return 0;
 }

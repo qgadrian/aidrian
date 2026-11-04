@@ -148,7 +148,9 @@ change; it never approves, blocks, or posts. A project that wants a persona pass
 
 The `persona-audit-triage` skill takes each item of a report to a decision with the Human: each finding, each
 `Not reached` line, each doc gap, and each finding of a replaced report that the new run did not re-check.
-A decision is one of `issue`, `fix-now`, `duplicate`, `drop`, or `defer`. A report is fully triaged when every item
+A decision is one of `issue`, `fix-now`, `duplicate`, `drop`, `defer`, or `covered`: a `Not reached` line of an
+imported report that restates the replaced report's findings not re-checked, which `pending` offers with those
+findings, so the Human decides them once. A report is fully triaged when every item
 has one. The skill sends a finding about a product rule, or an open question in a product doc, to `product-manager`
 first; it drafts an issue with `agent-issue-writer` and creates it in the project's tracker. It names owners in plain
 words, from each finding's `owner_description`.
@@ -182,7 +184,7 @@ file names the other commands take.
 - `list [--json]`: each report with its finding count and untriaged items. A replaced report shows `replaced by
   <report>`, and its items count toward the report that replaced it. A report with no sidecar shows
   `no sidecar: import needed`; one whose sidecar is invalid names the first problem.
-- `check <report>`: validates the sidecar: every required key, finding, `N` and `D` id, evidence paths that name
+- `check <report>`: warns, and still passes, on a task named by its number, such as "Task 2". It validates the sidecar: every required key, finding, `N` and `D` id, evidence paths that name
   files and are never a suffix, a blocker only when walked and observed, no id in both `carried_forward` and
   `not_rechecked`, and the report's finding headings matching the sidecar's findings by title. It prints `ok` or each problem.
 - `import <report> [--not-rechecked IDS] [--carried-forward IDS] [--from FILE] [--write]`: drafts the sidecar of a
@@ -190,12 +192,17 @@ file names the other commands take.
   settle, such as the findings of a replaced report, by title, to sort into carried forward and not re-checked;
   `--json` gives one object, with `replaced`, each of those titles with its key. A screenshot cited by a suffix becomes the
   one file in the report's folder that ends with it. `--write` validates the draft and writes it; it never overwrites a sidecar.
-- `pending <report> [--json]`: the untriaged items in the order the Human answers them: each blocker alone, the other
-  findings grouped by severity and owner, the replaced report's findings not re-checked, `Not reached`, then doc gaps.
+  Without `--json`, it ends with the next step: each of the replaced report's findings, led by its title, with the key
+  the flags take, and the `--write` command ready to edit.
+- `pending <report> [--json]`: the untriaged items in the order the Human answers them, each group headed
+  `<Severity>, for <owner in plain words>`, after a line on how issues are created and which label the duplicate
+  search starts from: each blocker alone, the other findings grouped by severity and owner, the replaced report's
+  findings not re-checked with any `Not reached` line that restates them, proposed as `covered`, the other `Not
+  reached` lines, then doc gaps.
   With `--json`, it also gives `issue_creation`, the mode, `search_labels`, the plain labels, and for each item its
   `labels`, its `source` line for an issue body, and its `audit_key`.
 - `record <report> <id> <decision> [--issue KEY] [--url URL] [--reason TEXT]`: records one decision. `issue` and
-  `duplicate` need `--issue` or `--url`, and `drop` needs `--reason`. A finding of a replaced report is recorded under
+  `duplicate` need `--issue` or `--url`, and `drop` and `covered` need `--reason`. A finding of a replaced report is recorded under
   that report. It refuses an id the report does not offer, and a `triage.json` it cannot read.
 
 While any report holds untriaged items, the main session's [start lines](hooks.md#start-lines) say how many, in how

@@ -17,8 +17,9 @@ export const SEVERITIES = ['blocker', 'friction', 'polish'];
 export const LABELS = ['observed', 'opinion'];
 export const LEVELS = ['walked', 'seen', 'read'];
 // issue: filed in the tracker. fix-now: routed to its owner. duplicate: an issue already covers it. drop: not worth
-// it, with a reason. defer: decided later, on purpose.
-export const DECISIONS = ['issue', 'fix-now', 'duplicate', 'drop', 'defer'];
+// it, with a reason. defer: decided later, on purpose. covered: a Not reached line that restates the replaced run's
+// findings this run did not re-check, which carry the decision themselves, with a reason.
+export const DECISIONS = ['issue', 'fix-now', 'duplicate', 'drop', 'defer', 'covered'];
 export const TRIAGE_FILE = 'triage.json';
 
 // The plugin's agents a finding names as its owner, in the words the Human reads. A project agent has no entry, and
@@ -120,6 +121,9 @@ export function sidecarProblems(value, { dir = null, report = null, replacedTitl
       if (!isObject(item)) return at(`${key}[${index}]`, 'must be an object');
       if (typeof item.id !== 'string' || !ID[key].test(item.id)) at(`${key}[${index}].id`, `must be ${key === 'not_reached' ? 'N' : 'D'} and the item's number in its section`);
       if (!nonEmptyString(item.text)) at(`${key}[${index}].text`, 'must say what it is');
+      if (item.covered_by !== undefined && (key !== 'not_reached' || item.covered_by !== 'not_rechecked' || !value.supersedes)) {
+        at(`${key}[${index}].covered_by`, 'is only "not_rechecked", on a Not reached line of a run that replaces a report');
+      }
     });
   }
   for (const key of ['findings', 'not_reached', 'doc_gaps']) {
@@ -227,7 +231,7 @@ export function recordDecision(dir, report, id, entry) {
 export function decisionProblem({ decision, issue, url, reason }) {
   if (!DECISIONS.includes(decision)) return `decision must be ${DECISIONS.join(', ')}`;
   if ((decision === 'issue' || decision === 'duplicate') && !issue && !url) return `${decision} needs --issue KEY or --url URL`;
-  if (decision === 'drop' && !reason) return 'drop needs --reason';
+  if ((decision === 'drop' || decision === 'covered') && !reason) return `${decision} needs --reason`;
   return null;
 }
 
@@ -300,17 +304,21 @@ export function pendingGroups(entry, { labels = [], personas = entry.personas ??
   const open = (entry.items ?? []).filter((item) => !item.decision).map((item) => ({ ...item, labels: issueLabels(labels, item, personas) }));
   const groups = [];
   const findings = open.filter((item) => item.kind === 'finding');
-  for (const item of findings.filter((one) => one.severity === 'blocker')) groups.push({ kind: 'blocker', title: `Blocker: ${item.title}`, items: [item] });
+  // One heading shape for every group of findings: "<Severity>, for <owner in plain words>". A blocker is a group alone.
+  const heading = ({ severity, owner, owner_description: words }) => `${capitalize(severity)}, for ${words || OWNER_WORDS[owner] || owner}`;
+  for (const item of findings.filter((one) => one.severity === 'blocker')) groups.push({ kind: 'blocker', title: heading(item), items: [item] });
   const rest = findings.filter((one) => one.severity !== 'blocker');
   const keys = [...new Set(rest.map((item) => `${SEVERITIES.indexOf(item.severity)}\0${item.owner}`))].sort();
   for (const key of keys) {
     const items = rest.filter((item) => `${SEVERITIES.indexOf(item.severity)}\0${item.owner}` === key);
-    const [{ severity, owner, owner_description: words }] = items;
-    groups.push({ kind: 'findings', title: `${severity}, for ${words || OWNER_WORDS[owner] || owner}`, items });
+    groups.push({ kind: 'findings', title: heading(items[0]), items });
   }
+  // A Not reached line that restates the not re-checked findings is offered with them, as `covered`, so the Human
+  // decides those findings once.
+  const covered = open.filter((item) => item.kind === 'not_reached' && item.covered_by === 'not_rechecked').map((item) => ({ ...item, proposed: 'covered' }));
   const rechecks = open.filter((item) => item.kind === 'not_rechecked');
-  if (rechecks.length) groups.push({ kind: 'not_rechecked', title: `Not re-checked from ${rechecks[0].report_title ?? reportTitle(rechecks[0].report)}`, items: rechecks });
-  const reruns = open.filter((item) => item.kind === 'not_reached');
+  if (rechecks.length) groups.push({ kind: 'not_rechecked', title: `Not re-checked from ${rechecks[0].report_title ?? reportTitle(rechecks[0].report)}`, items: [...rechecks, ...covered] });
+  const reruns = [...open.filter((item) => item.kind === 'not_reached' && item.covered_by !== 'not_rechecked'), ...(rechecks.length ? [] : covered)];
   if (reruns.length) groups.push({ kind: 'not_reached', title: 'Not reached: follow-ups for a rerun', items: reruns });
   const gaps = open.filter((item) => item.kind === 'doc_gap');
   if (gaps.length) groups.push({ kind: 'doc_gap', title: 'Persona doc gaps', items: gaps });
@@ -346,5 +354,9 @@ export function auditNudge(dir) {
   }
 }
 
+const capitalize = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+// A task named by its number, such as "Task 2": the reader cannot place it, so a report names a task by its title.
+const TASK_NUMBER = /\bTasks? \d+\b/gu;
+export const taskNumbers = (text) => [...new Set([...text.matchAll(TASK_NUMBER)].map(([match]) => match))];
 const nonEmptyString = (value) => typeof value === 'string' && value.trim() !== '';
 const nonEmptyStrings = (value) => Array.isArray(value) && value.length > 0 && value.every(nonEmptyString);

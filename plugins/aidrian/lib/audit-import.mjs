@@ -18,6 +18,9 @@ const FILE_LINE = /^[\w./-]+:\d+(?:-\d+)?$/u;
 // Words a finding uses when its cause was not found: such a finding gets `needs_trace`.
 const UNTRACED = /\b(?:not traced|untraced|was not found|cause (?:is )?unknown)\b/iu;
 const REPLACES = /This run replaces\b[^`\n]*`([^`]+\.md)`/u;
+// A Not reached line about the replaced run, such as "its findings stand unverified": the not re-checked findings
+// already carry it, so the triage offers it with them (audits.mjs pendingGroups).
+const ABOUT_REPLACED = /\b(?:read-only|earlier|replaced|previous) (?:report|run)\b|\bnot re-?checked\b|\bstand unverified\b/iu;
 
 // { version, report, personas, date, supersedes, carried_forward, not_rechecked, findings, not_reached, doc_gaps,
 // warnings }. `report` is the file name; `dir`, the audits folder, lets a suffix such as `-24.jpg` become the one file
@@ -41,7 +44,7 @@ export function parseReport(text, { report, dir = null, ownerWords = {} } = {}) 
     carried_forward: [],
     not_rechecked: [],
     findings,
-    not_reached: bullets(sections.not_reached).map((text, index) => ({ id: `N${index + 1}`, text })),
+    not_reached: bullets(sections.not_reached).map((text, index) => ({ id: `N${index + 1}`, text, ...(supersedes && ABOUT_REPLACED.test(text) ? { covered_by: 'not_rechecked' } : {}) })),
     doc_gaps: bullets(sections.doc_gaps).map((text, index) => ({ id: `D${index + 1}`, text })),
     warnings,
   };

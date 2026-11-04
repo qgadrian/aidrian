@@ -21,7 +21,10 @@ const OLD_TITLE = 'The front-desk read-only run on 2026-05-02';
 // What a person reads holds no item id, such as F1, N2, or D1, and no file suffix, such as -2.md: ids are keys for the
 // commands only. A path given as a location is the one exception, so callers strip the audits folder's paths first.
 const BARE_ID = /\b[FND][1-9]\d*\b|-\d+\.md\b/u;
-const noIds = (text, location = null) => assert.doesNotMatch(location ? text.split(location).join('<location>') : text, BARE_ID, text);
+// The next step a plain import ends with is the one other exception: its command line, and each finding's "key F1",
+// which the flags take, after the finding's title.
+const humanText = (text) => text.split('\n').filter((line) => !/^ {2}aidrian audits /u.test(line)).join('\n').replace(/": key F[1-9]\d*$/gmu, '"');
+const noIds = (text, location = null) => assert.doesNotMatch(humanText(location ? text.split(location).join('<location>') : text), BARE_ID, text);
 // Every screenshot the new report cites, by full path or by suffix.
 const SHOTS = [10, 13, 15, 20, 23, 24, 25, 27, 28, 29, 30, 31, 32, 33, 38].map((n) => `shot-17000000000${n}-${n}.jpg`).concat('shot-1700000000022-22.png');
 
@@ -59,7 +62,7 @@ function sidecar(overrides = {}) {
       },
     ],
     not_reached: [{ id: 'N1', text: 'Tablet width: the browser would not resize.' }],
-    doc_gaps: [{ id: 'D1', text: 'Task 2 joins three outcomes in one success line.' }],
+    doc_gaps: [{ id: 'D1', text: 'Check a bike in, and hand it back joins three outcomes in one success line.' }],
     ...overrides,
   };
 }
@@ -187,12 +190,19 @@ test('pending orders the items: blockers alone, then by severity and owner, then
   ];
   const groups = pendingGroups({ items });
   assert.deepEqual(groups.map((g) => [g.kind, g.title, g.items.map((i) => i.id)]), [
-    ['blocker', 'Blocker: a drop-in is not shown as a drop-in', ['F1']],
-    ['findings', 'friction, for the server and the answers it gives', ['F2']],
-    ['findings', 'polish, for how the product flows and what its words say', ['F3']],
+    ['blocker', 'Blocker, for the screens and their code', ['F1']],
+    ['findings', 'Friction, for the server and the answers it gives', ['F2']],
+    ['findings', 'Polish, for how the product flows and what its words say', ['F3']],
     ['not_rechecked', 'Not re-checked from the front-desk audit on 2026-05-02', ['F3']],
     ['not_reached', 'Not reached: follow-ups for a rerun', ['N1']],
   ]);
+  // A Not reached line that restates the not re-checked findings is offered with them, as covered.
+  const restating = { kind: 'not_reached', id: 'N2', text: 'The second language: not walked.', covered_by: 'not_rechecked', report: value.report, decision: null };
+  const withCovered = pendingGroups({ items: [...items, restating] });
+  assert.deepEqual(withCovered.find((g) => g.kind === 'not_rechecked').items.map((i) => [i.id, i.proposed ?? null]), [['F3', null], ['N2', 'covered']]);
+  assert.deepEqual(withCovered.find((g) => g.kind === 'not_reached').items.map((i) => i.id), ['N1']);
+  const alone = pendingGroups({ items: [restating] });
+  assert.deepEqual(alone.map((g) => [g.kind, g.items.map((i) => [i.id, i.proposed])]), [['not_reached', [['N2', 'covered']]]], 'with the findings decided, it stays a rerun, still proposed as covered');
 });
 
 // `aidrian audits` in a project whose config.json puts the state folder in a temporary folder.
@@ -223,8 +233,18 @@ test('aidrian audits: list, import after review, pending, and record every decis
   result = run('import', NEW);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).findings.length, 11);
-  assert.match(result.stderr, new RegExp(`^warning: This run replaces ${OLD_TITLE.toLowerCase()}\\. Sort each of its findings: carried forward, when a finding of this run covers it, or not re-checked, when this run did not look at it:\n  - "the part note sits behind a collapsed "Optional" section"\n  - "the second language names the drop-in three ways"\n  - "the second language mixes formal and informal address"\n`, 'mu'));
+  assert.match(result.stderr, new RegExp(`^warning: This run replaces ${OLD_TITLE.toLowerCase()}\\. Sort each of its findings: carried forward, when a finding of this run covers it, or not re-checked, when this run did not look at it\\.\n`, 'mu'));
+  assert.match(result.stderr, new RegExp([
+    'Next: sort the earlier run\'s findings with the Human, then write the sidecar. Each finding, with the key the flags take:',
+    '  - "the part note sits behind a collapsed "Optional" section": key F1',
+    '  - "the second language names the drop-in three ways": key F2',
+    '  - "the second language mixes formal and informal address": key F3',
+    'Move the key of each finding a finding of this run covers to --carried-forward, and keep the rest in --not-rechecked:',
+    `  aidrian audits import ${NEW} --not-rechecked F1,F2,F3 --carried-forward '' --write`,
+  ].map((line) => line.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')).join('\n') + '\n$', 'u'), 'the plain import ends with the next step, each finding led by its title');
   noIds(result.stderr);
+  const jsonWarnings = JSON.parse(run('import', NEW, '--json').stdout).warnings.join('\n');
+  assert.match(jsonWarnings, /:\n {2}- "the part note sits behind a collapsed "Optional" section"\n {2}- "the second language names the drop-in three ways"/u, '--json lists the titles in the warning');
   const envelope = JSON.parse(run('import', NEW, '--json').stdout);
   assert.deepEqual(envelope.replaced.map((one) => one.id), ['F1', 'F2', 'F3'], '--json maps each title to the key the flags take');
   assert.equal(envelope.draft.findings.length, 11);
@@ -242,17 +262,17 @@ test('aidrian audits: list, import after review, pending, and record every decis
   result = run('pending', NEW);
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(result.stdout.split('\n').filter((line) => line.startsWith('## ')), [
-    '## Blocker: a drop-in is not shown as a drop-in',
-    '## friction, for the server and the answers it gives',
-    '## friction, for the screens and their code',
-    '## friction, for what the product should do, and its rules',
-    '## friction, for how the product flows and what its words say',
-    '## polish, for how the product flows and what its words say',
+    '## Blocker, for the screens and their code',
+    '## Friction, for the server and the answers it gives',
+    '## Friction, for the screens and their code',
+    '## Friction, for what the product should do, and its rules',
+    '## Friction, for how the product flows and what its words say',
+    '## Polish, for how the product flows and what its words say',
     `## Not re-checked from ${OLD_TITLE.toLowerCase()}`,
     '## Not reached: follow-ups for a rerun',
     '## Persona doc gaps',
   ]);
-  assert.match(result.stdout, /\n- the second language names the drop-in three ways\n- the second language mixes formal and informal address\n## Not reached/u);
+  assert.match(result.stdout, /\n- the second language names the drop-in three ways\n- the second language mixes formal and informal address\n- The second language: not walked; the read-only report's second-language findings stand unverified\. \(covered by the findings above\)\n## Not reached: follow-ups for a rerun\n- Tablet width/u, 'a Not reached line that restates them is offered with the not re-checked findings, once');
   assert.doesNotMatch(result.stdout, /collapsed "Optional" section/u, 'a carried-forward finding is not offered again');
   noIds(result.stdout);
 
@@ -271,9 +291,11 @@ test('aidrian audits: list, import after review, pending, and record every decis
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, `recorded "a drop-in is not shown as a drop-in": issue; 16 untriaged left in ${NEW_TITLE.toLowerCase()}\n`);
   assert.equal(run('record', OLD, 'F2', 'duplicate', '--issue', 'ABC-2').status, 0);
-  for (const id of ['F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'N1', 'N2', 'N3', 'D1']) {
+  for (const id of ['F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'N1', 'N3', 'D1']) {
     assert.equal(run('record', NEW, id, 'defer').status, 0);
   }
+  assert.match(run('record', NEW, 'N2', 'covered').stderr, /covered needs --reason/);
+  assert.equal(run('record', NEW, 'N2', 'covered', '--reason', 'decided with the findings the walk did not re-check').status, 0);
   result = run('record', OLD, 'F3', 'drop', '--reason', 'covered by the next second-language pass');
   assert.equal(result.stdout, `recorded "the second language mixes formal and informal address": drop; ${NEW_TITLE} is fully triaged\n`);
   noIds(result.stdout);
@@ -302,6 +324,12 @@ test('aidrian audits check passes a new run whose sidecar and prose agree', (t) 
   const result = run('check', value.report);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, 'ok: the sidecar of the front-desk walk on 2026-06-01: 2 findings, 1 not reached, 1 doc gaps\n');
+  assert.equal(result.stderr, '', 'a task named by its title draws no warning');
+  // A task named by its number: the check still passes, and warns.
+  writeFileSync(path.join(audits, value.report), `${readFileSync(path.join(audits, value.report), 'utf8')}\n## Persona doc gaps\n\n- Task 2 joins three outcomes in one success line.\n`);
+  const numbered = run('check', value.report);
+  assert.equal(numbered.status, 0, numbered.stderr);
+  assert.equal(numbered.stderr, 'warning: the report says "Task 2", which no reader can place: name the task by its title\n');
   assert.match(run('list').stdout, /- The front-desk walk on 2026-06-01: 2 findings, 4 of 4 items untriaged\n/);
 });
 
@@ -330,7 +358,7 @@ test('pending --json carries the issue creation mode, the duplicate search label
   assert.deepEqual([out.issue_creation, out.search_labels], ['confirm', ['persona-audit']]);
   assert.deepEqual(out.groups[0].items[0].labels, ['persona-audit', 'persona:front-desk', 'severity:blocker']);
   assert.deepEqual(out.groups.find((g) => g.kind === 'not_reached').items[0].labels, ['persona-audit', 'persona:front-desk']);
-  assert.match(run('pending', NEW).stdout, /^Issue creation: confirm\. Duplicate search label: persona-audit\.\n/u);
+  assert.match(run('pending', NEW).stdout, /^Issues: each draft is shown to the Human before it is created\.\nDuplicates: open issues labelled persona-audit are searched first\.\n/u);
 
   const configFile = path.join(root, '.aidrian/config.json');
   const config = JSON.parse(readFileSync(configFile, 'utf8'));
@@ -371,6 +399,6 @@ test('no text a person reads holds a bare finding id or a file suffix: list, pen
   assert.match(human.at(-1)[1], /- The second front-desk walk on 2026-05-02: 11 findings, no sidecar: import needed\n/u);
   for (const [what, text] of human) {
     assert.ok(text.trim(), `${what} printed something`);
-    assert.doesNotMatch(text.split(audits).join('<audits folder>'), BARE_ID, `${what}:\n${text}`);
+    assert.doesNotMatch(humanText(text.split(audits).join('<audits folder>')), BARE_ID, `${what}:\n${text}`);
   }
 });

@@ -111,7 +111,8 @@ Personas are synthetic: this report is a lead for the Human, not a substitute fo
   number: the sidecar keys each finding by its place, `F1` for the first, and only the sidecar holds those keys.
 - A person reads the report, so it never names a finding or a report by a key or a file suffix: another finding by its
   title, such as "as in a moved booking cannot be saved", and another report by persona, kind, and date, such as
-  "the floor-manager read-only run on 2026-11-03", with its path once, as its location.
+  "the floor-manager read-only run on 2026-11-03", with its path once, as its location. A task is named by its
+  title, never by its number: "Seat a walk-in party", not "Task 2". `aidrian audits check` warns on "Task <n>".
 - A screenshot the run saves goes in `<state>/audits/<report name>/`, beside the report, and the report cites its path.
 - An outcome other than `not walked` or `out of scope` needs `walked` in the Evidence column.
   An `out of scope` task was not looked at, so its Evidence is `-`.
@@ -128,7 +129,8 @@ report in words with its path, then its findings by title:
 ``Carried forward: <title>; <title>. Not re-checked: <title>; <title>.``
 Carried forward are those a finding of this run covers, the same problem seen again; not re-checked, those this run
 did not look at, which the triage offers again. A finding this run re-checked and did not see again is in neither,
-and none is in both. In the sidecar, name the earlier report in `supersedes`, and list the same findings, by the keys
+and none is in both. They are listed only here: `## Not reached` never restates them, such as "the earlier run's
+second-language findings stand unverified". In the sidecar, name the earlier report in `supersedes`, and list the same findings, by the keys
 the earlier sidecar gives them, in `carried_forward` and `not_rechecked`.
 
 ## The sidecar
@@ -175,3 +177,5 @@ and every evidence path names a file. Every key is required except `other_owners
 - `evidence` holds the screenshot paths, relative to the audits folder; `cited` holds any other citation: a
   `file:line`, a URL, or the exact text seen. An `observed` finding has at least one of the two.
 - `not_reached` and `doc_gaps` hold one item per line of those sections, `N1`, `D1`, in the report's order.
+  An imported report's Not reached line that restates the not re-checked findings carries `"covered_by":
+  "not_rechecked"`, so the triage offers it with them; a new run never writes one, since it lists them in the note.

@@ -65,11 +65,10 @@ A correction the flags cannot carry: save the draft to `<state>/tmp/<report name
 aidrian audits pending <report> --json
 ```
 
-It prints `issue_creation`, the mode; `search_labels`, the labels every audit issue carries; and `groups`, the
-untriaged items in the order to ask: each blocker alone; the other findings by severity and owner; the earlier
-report's findings this run did not re-check, each once and never one carried forward; Not reached lines; doc gaps.
-Each item has its report, `labels`, `source`, and `audit_key`. Read each item's section of its report, and open the
-screenshots it cites: each `evidence` path is relative to `<state>/audits/`.
+It prints `issue_creation`, `search_labels`, and `groups`, the untriaged items in the order to ask: each blocker
+alone; the other findings by severity and owner; the earlier report's findings this run did not re-check, with any
+Not reached line that restates them, `proposed: covered`; Not reached lines; doc gaps. Each item has its report,
+`labels`, `source`, and `audit_key`. Read its section of the report, and open the screenshots it cites, relative to `<state>/audits/`.
 
 **Done when** every item in the batch was read with its evidence.
 
@@ -95,6 +94,7 @@ group. Name the owner in plain words, from `owner_description`, never as an agen
 | `fix-now` | One small, clear change | Route it to the owner the finding names, with `other_owners` |
 | `drop` | Not worth its cost, or not a problem | Record the reason |
 | `defer` | Decided later | Record it |
+| `covered` | A `proposed: covered` line, once its group is decided | Record the reason |
 
 - A Not reached line is a follow-up for a rerun: an `issue` or `defer` to walk that task again once what stopped it,
   a width, a host, or an account, is solved.
@@ -122,7 +122,7 @@ Then record it, with the report the item names, which is the earlier report for 
 aidrian audits record <report> <id> <decision> [--issue <key>] [--url <url>] [--reason '<why>']
 ```
 
-`issue` and `duplicate` need `--issue` or `--url`; `drop` needs `--reason`. Never edit `triage.json` by hand.
+`issue` and `duplicate` need `--issue` or `--url`; `drop` and `covered` need `--reason`. Never edit `triage.json` by hand.
 A route that fails records nothing: the item stays untriaged, with the failure in the summary.
 
 **Done when** `aidrian audits pending <report>` prints `fully triaged`, or the summary names what is left and why.

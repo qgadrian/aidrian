@@ -383,6 +383,7 @@ test('pr-merge-when-green pins each merge to the judged head, in order, and clea
   const order = ['`aidrian pr auto-merge`', '`gh pr view`', 'gh pr merge <n>'].map((part) => merge.indexOf(part));
   assert.ok(order.every((at) => at !== -1) && order[0] < order[1] && order[1] < order[2], `step 2 order: ${order}`);
   assert.match(merge.replace(/\s+/g, ' '), /when `isDraft` is true \(no `gh pr ready` here\)/u, 'a draft at the merge always stops');
+  assert.match(merge.replace(/\s+/g, ' '), /Stop unless it exits 0, its `head` is `<sha>`, its `base` is step 0's `baseRefName`, and its `strategy`, `deleteBranch`, and `deleteWorktree` are step 0's\./u, 'a merge choice changed during the wait stops the run');
   assert.match(merge, /`baseRefName` is not step 0's/u, 'every run compares the base');
   const preflight = section('## 0. Preflight', '## 1. Wait');
   const bullets = [...preflight.matchAll(/^- (`state`|a label|`mergeable`|`isDraft`)/gmu)].map((match) => match[1]);

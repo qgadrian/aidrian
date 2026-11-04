@@ -94,7 +94,8 @@ arrived during the wait. After 3 such re-runs, stop: the branch is still moving.
 
 Read the hard rules again. Right before each merge attempt, the retry too:
 
-1. Unattended run: run step 0's `aidrian pr auto-merge` again. Stop unless it exits 0, its `head` is `<sha>`, and its `base` is step 0's `baseRefName`.
+1. Unattended run: run step 0's `aidrian pr auto-merge` again. Stop unless it exits 0, its `head` is `<sha>`, its `base` is step 0's `baseRefName`,
+   and its `strategy`, `deleteBranch`, and `deleteWorktree` are step 0's.
 2. Run step 0's `gh pr view` again, last: a label such as `do-not-merge` can arrive without a new commit. Stop on any
    of its stop conditions, when `isDraft` is true (no `gh pr ready` here), when `baseRefName` is not step 0's, or when `headRefOid` is not `<sha>`.
 

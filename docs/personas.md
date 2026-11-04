@@ -159,7 +159,7 @@ A triage priority, `urgent`, `high`, `medium`, or `low`, is set apart from the a
 rewritten: a reviewer re-ranks a finding with it, and `pending` shows it beside the finding, first in its group.
 Each decision and priority records who made the pick, `human` or the role of the agent whose pick the Human adopted.
 The tracker is the one the project's `issue_tracker` knowledge names. With none, the skill asks for it as its own
-question before any finding, or, in `auto`, defers every item and says why. It asks one question at a time and stops,
+question before any finding, naming no finding and recommending none from the remote, or, in `auto`, defers every item and says why. It asks one question at a time and stops,
 with at most a line on what comes next.
 The skill searches the tracker for an existing issue by the finding's words, the surface it touches, and the issues
 opened or updated since the audit, before the audit label, and shows the Human any open issue whose decision a
@@ -213,7 +213,7 @@ file names the other commands take.
   findings not re-checked with any `Not reached` line that restates them, proposed as `covered`, the other `Not
   reached` lines, then doc gaps.
   With `--json`, it also gives `issue_creation`, the mode, `search_labels`, the plain labels, and for each item its
-  `labels`, its `source` line for an issue body, and its `audit_key`. An older report's line that names a task by its
+  `labels`, its `source` line for an issue body, its `audit_key`, its `verdict`, `held`, and its `allowed_decisions`. An older report's line that names a task by its
   number is shown as stored, marked `numbered_task` and with a note, so the session says which task in words.
 - `record <report> <keys> <decision> [--issue KEY] [--url URL] [--reason TEXT] [--doc PATH#SECTION] [--by WHO]`:
   records one decision for each key, and keeps each item's priority. A key is the item's `audit_key`,
@@ -223,6 +223,8 @@ file names the other commands take.
   `covered` need `--reason`; `decided` needs `--reason`, the decision, and `--by`; `documented` needs `--doc`, a file
   of the project and one of its headings, as written or as its slug, kept as the slug. `--by` is `human` or an agent role. A finding of a replaced report is recorded under
   that report. It refuses an id the report does not offer, and a `triage.json` it cannot read.
+- `verdict <report> <keys> breaks|conforms|silent --by ROLE --reason TEXT`: records a [rule verdict](#rule-verdicts),
+  which changes no item's state.
 - `rank <report> <keys> urgent|high|medium|low --by WHO [--reason TEXT]`: sets the item's triage priority, and keeps
   its decision.
 
@@ -239,10 +241,15 @@ would state or imply what the rule is, or when it asks to change behaviour rathe
 reports as an error; a plain crash or broken string needs none. The verdict quotes the rule with its path and section,
 and follows a term the rule leaves undefined, such as an amount or a limit, into the docs that define it.
 
-It is recorded as a `decided` whose reason starts with the verdict's word:
-`record <report> <keys> decided --by product-manager --reason 'conforms: "<rule>" <path#section-slug>'`. The command
-checks that `breaks` and `conforms` cite a section that exists. After `conforms` or `silent`, it refuses `issue` and
-`fix-now` until the Human's own `decided --by human`, a delegated answer included, since changing the behaviour is a product decision; `conforms` is
-also a candidate for `documented`, and `auto` defers both. A `decided` entry moves to `history` when another decision
-follows it, so the verdict outlasts the final outcome, and the issue body carries its citation. Whether a verdict was
-asked for at all is the skill's rule, not the command's: it cannot see what a draft will claim.
+A verdict is evidence, not a decision, and recording one changes no item's state:
+`verdict <report> <keys> breaks|conforms|silent --by <role> --reason '"<rule>" <path#section-slug>'`, with a `silent`
+saying what was searched. It is kept in the item's entry as `verdict`, through later decisions. The command checks that
+`breaks` and `conforms` cite a section that exists. After `conforms` or `silent` the item is held: `pending --json`
+marks it `held`, and prints each item's `allowed_decisions`, and `record` refuses `issue` and `fix-now`, and `documented`
+after `silent`. `record ... decided --by human`, a delegated answer included, releases the hold and keeps the decision on
+the verdict as `settled`; an agent's own `decided` releases nothing. `auto` defers a held item. Verdicts are asked for
+one question at a time, the blocker before its question and the others when their group comes up.
+
+A held item's question asks the Human for the product decision, with a recommended answer and the verdict in one plain
+line; issue options come only after it. Whether a verdict was asked for at all is the skill's rule, not the command's:
+it cannot see what a draft will claim.

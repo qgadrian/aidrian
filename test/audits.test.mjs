@@ -432,8 +432,12 @@ test('the triage eval scaffolds seed the bike-shop reports in the run folder\'s 
   // What the run reads: screenshots a session can open, the product doc the walk cites, and a tracker with no network.
   const [confirm, noTracker] = dirs.slice(1, 2).concat(dirs[3]);
   const shots = path.join(confirm, '.eval-state/audits/front-desk-2026-05-02-2');
-  assert.equal(readFileSync(path.join(shots, SHOTS[0])).subarray(0, 3).toString('hex'), 'ffd8ff', 'a JPEG');
-  assert.equal(readFileSync(path.join(shots, 'shot-1700000000022-22.png')).subarray(1, 4).toString(), 'PNG');
+  const jpeg = readFileSync(path.join(shots, SHOTS[0])).toString('hex');
+  assert.ok(jpeg.startsWith('ffd8ff'), 'a JPEG');
+  assert.ok(jpeg.includes('ffc0') && jpeg.includes('ffc4'), 'baseline, with Huffman tables: the API rejected one without');
+  const png = readFileSync(path.join(shots, 'shot-1700000000022-22.png'));
+  assert.equal(png.subarray(1, 4).toString(), 'PNG');
+  assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [64, 48]);
   const route = (dir, tag) => spawnSync(path.join(dir, 'plugins/aidrian/bin/aidrian-knowledge'), ['route', tag], { cwd: dir, encoding: 'utf8' }).stdout;
   assert.match(route(confirm, 'issue_tracker'), /bike-shop\/tracker\.md/u);
   assert.match(route(confirm, 'personas'), /bike-shop\/product-access\.md/u);
@@ -554,55 +558,84 @@ test('pending marks a line of an older report that names a task by its number, a
   assert.match(run('pending', report).stdout, /- Task 2 joins three outcomes in one success line\. \(as the report wrote it: say which task in words\)\n/u);
 });
 
-test('a rule verdict cites a real section, holds back an issue or a fix until the Human decides, and outlasts the final outcome', (t) => {
+test('a verdict is evidence, not a decision: it cites a real section, holds back an issue or a fix until the Human decides, and outlasts later decisions', (t) => {
   const { root, audits, run } = project(t);
   assert.equal(run('import', NEW, '--not-rechecked', 'F2,F3', '--carried-forward', 'F1', '--write').status, 0);
   mkdirSync(path.join(root, 'docs'), { recursive: true });
   writeFileSync(path.join(root, 'docs/rules.md'), '# Rules\n\n## Bench headroom\n\nA bench keeps ten minutes of headroom.\n');
   const triage = () => JSON.parse(readFileSync(path.join(audits, 'triage.json'), 'utf8')).reports[NEW];
-  const verdict = (id, reason) => run('record', NEW, id, 'decided', '--reason', reason, '--by', 'product-manager');
+  const verdict = (id, value, reason, by = 'product-manager') => run('verdict', NEW, id, value, '--by', by, '--reason', reason);
   const RULE = '"A bench keeps ten minutes of headroom." docs/rules.md#bench-headroom';
+  const pendingItem = (id) => JSON.parse(run('pending', NEW, '--json').stdout).groups.flatMap((g) => g.items).find((i) => i.report === NEW && i.id === id);
+  const untriagedCount = () => JSON.parse(run('list', '--json').stdout).find((r) => r.report === NEW).untriaged;
 
-  // The shape: what it rests on, and for breaks and conforms a section that exists.
-  assert.match(verdict('F2', 'conforms:').stderr, /a conforms verdict says what it rests on/u);
-  assert.match(verdict('F2', 'silent:').stderr, /a silent verdict says what it rests on/u);
-  assert.match(verdict('F2', 'conforms: enough headroom').stderr, /a conforms verdict quotes the rule and cites it as path#section/u);
-  assert.match(verdict('F2', 'breaks: "x" docs/missing.md#a').stderr, /the verdict names no file in the project/u);
-  assert.match(verdict('F2', 'breaks: "x" docs/rules.md#closing').stderr, /the verdict names no section "closing" in docs\/rules\.md; its sections are: rules, bench-headroom/u);
+  // The shape: a role, a reason, and for breaks and conforms a section that exists.
+  assert.match(run('verdict', NEW, 'F2', 'maybe', '--by', 'product-manager', '--reason', 'x').stderr, /verdict must be breaks, conforms, silent/u);
+  assert.match(run('verdict', NEW, 'F2', 'silent', '--reason', 'x').stderr, /a verdict needs --by, the role of the agent/u);
+  assert.match(verdict('F2', 'silent', 'x', 'human').stderr, /a verdict needs --by, the role of the agent/u, 'the Human decides; a verdict is the product owner\'s');
+  assert.match(run('verdict', NEW, 'F2', 'silent', '--by', 'product-manager').stderr, /a silent verdict needs --reason: what was searched/u);
+  assert.match(verdict('F2', 'conforms', 'enough headroom').stderr, /a conforms verdict quotes the rule in --reason and cites it as path#section/u);
+  assert.match(verdict('F2', 'breaks', '"x" docs/missing.md#a').stderr, /the verdict names no file in the project/u);
+  assert.match(verdict('F2', 'breaks', '"x" docs/rules.md#closing').stderr, /the verdict names no section "closing" in docs\/rules\.md; its sections are: rules, bench-headroom/u);
   assert.equal(existsSync(path.join(audits, 'triage.json')), false, 'nothing recorded so far');
-  assert.equal(run('record', NEW, 'F4', 'decided', '--reason', 'warn before a move', '--by', 'human').status, 0, 'a plain decision is no verdict');
 
-  // conforms and silent: no issue or fix until the Human decides; both stay untriaged, and pending says so.
-  assert.equal(verdict('F2', `conforms: ${RULE}`).status, 0);
-  assert.equal(verdict('F5', 'silent: searched the rules and the decision records; nothing says when an undo ends').status, 0);
-  assert.match(run('pending', NEW).stdout, /\(decided by product-manager: conforms: [^\n]*; the Human decides before any draft\)\n/u);
+  // A verdict changes no state: the item stays untriaged, with no decision recorded.
+  const start = untriagedCount();
+  assert.equal(pendingItem('F2').held, null);
+  assert.ok(pendingItem('F2').allowed_decisions.includes('issue'));
+  let result = verdict('F2', 'conforms', RULE);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^recorded "the bench a repair lands on differs from the bench the form showed": verdict conforms, from product-manager\n/u);
+  assert.equal(verdict('F5', 'silent', 'searched the rules and the decision records; nothing says when an undo ends').status, 0);
+  assert.equal(triage().F2.decision, undefined, 'a verdict is no decision');
+  assert.equal(triage().F2.verdict.value, 'conforms');
+  assert.equal(untriagedCount(), start);
+
+  // pending marks a held item and prints the decisions it can take, so a session cannot offer a refused one.
+  assert.equal(pendingItem('F2').held, 'conforms');
+  assert.equal(pendingItem('F2').verdict.reason, RULE);
+  assert.deepEqual(pendingItem('F2').allowed_decisions, ['duplicate', 'drop', 'defer', 'documented', 'decided']);
+  assert.equal(pendingItem('F5').held, 'silent');
+  assert.deepEqual(pendingItem('F5').allowed_decisions, ['duplicate', 'drop', 'defer', 'decided']);
+  assert.deepEqual(pendingItem('F6').allowed_decisions, ['issue', 'fix-now', 'duplicate', 'drop', 'defer', 'documented', 'decided']);
+  assert.ok(pendingItem('N2').allowed_decisions.includes('covered'), 'only a line that restates the findings not re-checked');
+  assert.match(run('pending', NEW).stdout, /\(verdict conforms, from product-manager; the Human decides before any draft\)\n/u);
+
+  // record enforces the same rule: one held key writes nothing.
   const before = readFileSync(path.join(audits, 'triage.json'), 'utf8');
-  let result = run('record', NEW, 'F2,F6', 'issue', '--issue', 'ABC-1');
+  result = run('record', NEW, 'F2,F6', 'issue', '--issue', 'ABC-1');
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /^Nothing was recorded\. Changing this behaviour is a product decision, so the Human decides first/u);
-  assert.match(result.stderr, /- "the bench a repair lands on differs from the bench the form showed": the verdict is that the product conforms to the rule\n$/u);
+  assert.match(result.stderr, /^Nothing was recorded\. Issue is not open for:\n- "the bench a repair lands on differs from the bench the form showed": the verdict is that the product conforms to the rule, so the Human decides first/u);
   noIds(result.stderr);
-  assert.match(run('record', NEW, 'F5', 'fix-now').stderr, /- "Hand back and Did not come act at once, with no undo": the verdict is that the product has no rule that settles it\n$/u);
-  assert.equal(readFileSync(path.join(audits, 'triage.json'), 'utf8'), before, 'one held key writes nothing');
+  assert.match(run('record', NEW, 'F5', 'fix-now').stderr, /the verdict is that no rule settles it, so the Human decides first/u);
+  assert.match(run('record', NEW, 'F5', 'documented', '--doc', 'docs/rules.md#rules').stderr, /the verdict is that the docs do not settle it/u);
+  assert.match(run('record', NEW, 'F6', 'covered', '--reason', 'x').stderr, /it does not restate the findings not re-checked/u);
+  assert.equal(readFileSync(path.join(audits, 'triage.json'), 'utf8'), before);
 
-  // An agent's own decision opens nothing; the Human's opens the way, and the verdict outlasts the final outcome.
+  // An agent's own decision releases nothing; the Human's does, and the verdict outlasts every later decision.
   assert.equal(run('record', NEW, 'F2', 'decided', '--reason', 'show the saved bench first', '--by', 'ux-specialist').status, 0);
+  assert.equal(pendingItem('F2').held, 'conforms');
   assert.match(run('record', NEW, 'F2', 'issue', '--issue', 'ABC-1').stderr, /the Human decides first/u);
   assert.equal(run('record', NEW, 'F2', 'decided', '--reason', 'show the saved bench before saving', '--by', 'human').status, 0);
-  assert.equal(run('record', NEW, 'F2', 'issue', '--issue', 'ABC-1').status, 0);
-  assert.deepEqual([triage().F2.decision, triage().F2.history.map((h) => [h.by, h.reason])], ['issue', [['product-manager', `conforms: ${RULE}`], ['ux-specialist', 'show the saved bench first'], ['human', 'show the saved bench before saving']]]);
+  assert.equal(pendingItem('F2').held, null, 'released');
+  assert.ok(pendingItem('F2').allowed_decisions.includes('issue'));
+  assert.equal(run('record', NEW, 'F2', 'defer').status, 0);
+  assert.equal(run('record', NEW, 'F2', 'issue', '--issue', 'ABC-1').status, 0, 'a defer between keeps the release');
+  assert.equal(triage().F2.decision, 'issue');
+  assert.deepEqual([triage().F2.verdict.value, triage().F2.verdict.by, triage().F2.verdict.settled.reason], ['conforms', 'product-manager', 'show the saved bench before saving']);
 
-  // conforms can end as documented, and a held item can still be deferred; a delegated pick is the agent's plain decision.
+  // Held after a defer too, and a new verdict after a release holds again. breaks holds nothing.
+  assert.equal(verdict('F4', 'silent', 'searched the rules').status, 0);
+  assert.equal(run('record', NEW, 'F4', 'decided', '--reason', 'warn first', '--by', 'human').status, 0);
+  assert.equal(verdict('F4', 'conforms', RULE).status, 0);
+  assert.equal(pendingItem('F4').held, 'conforms');
   assert.equal(run('record', NEW, 'F5', 'defer', '--reason', 'waits for the Human').status, 0);
-  assert.match(run('record', NEW, 'F5', 'issue', '--issue', 'ABC-2').stderr, /the Human decides first/u, 'a verdict still holds after a defer');
-  assert.equal(verdict('F3', `conforms: ${RULE}`).status, 0);
+  assert.match(run('record', NEW, 'F5', 'issue', '--issue', 'ABC-2').stderr, /the Human decides first/u);
+  assert.equal(verdict('F3', 'conforms', RULE).status, 0);
   assert.equal(run('record', NEW, 'F3', 'documented', '--doc', 'docs/rules.md#bench-headroom').status, 0);
-  assert.equal(triage().F3.history[0].by, 'product-manager');
-
-  // breaks: nothing is held. A crash needs no verdict at all.
-  assert.equal(verdict('F7', `breaks: ${RULE}`).status, 0);
+  assert.equal(verdict('F7', 'breaks', RULE).status, 0);
   assert.equal(run('record', NEW, 'F7', 'issue', '--issue', 'ABC-3').status, 0);
-  assert.equal(run('record', NEW, 'F6', 'issue', '--issue', 'ABC-4').status, 0);
   assert.equal(run('rank', NEW, 'F7', 'high', '--by', 'human').status, 0);
-  assert.equal(triage().F7.history[0].reason, `breaks: ${RULE}`, 'a priority keeps the history');
+  assert.deepEqual([triage().F7.verdict.value, triage().F7.priority.value], ['breaks', 'high'], 'a priority and a verdict keep each other');
+  assert.equal(triage().F2.history, undefined);
 });

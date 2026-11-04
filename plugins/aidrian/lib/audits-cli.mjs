@@ -12,7 +12,7 @@ import { parseArgs } from 'node:util';
 
 import { parseReport } from './audit-import.mjs';
 import {
-  decisionProblem, DECISIONS, DOC_FORMS, verdictCitation, verdictHolds, itemWords, slugOf, PRIORITIES, priorityProblem, untriaged, taskNumbers, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, reportTitle, searchLabels, sidecarName, sidecarProblems, today,
+  allowedDecisions, decisionProblem, DECISIONS, DOC_FORMS, held, verdictCitation, verdictProblem, VERDICTS, itemWords, slugOf, PRIORITIES, priorityProblem, untriaged, taskNumbers, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, reportTitle, searchLabels, sidecarName, sidecarProblems, today,
 } from './audits.mjs';
 import { commandConfig } from './config.mjs';
 import { unfencedLines } from './markdown-sections.mjs';
@@ -33,14 +33,14 @@ const OPTIONS = {
   doc: { type: 'string' },
 };
 
-const ACTIONS = { list, check, import: importReport, pending, record, rank };
+const ACTIONS = { list, check, import: importReport, pending, record, rank, verdict };
 
 export const commands = {
   audits: {
     usage:
       'list [--json] | check REPORT | import REPORT [--not-rechecked IDS] [--carried-forward IDS] [--from FILE] [--write] [--json] ' +
       `| pending REPORT [--json] | record REPORT KEYS ${DECISIONS.join('|')} [--issue KEY] [--url URL] [--reason TEXT] [--doc PATH#SECTION] [--by WHO] ` +
-      `| rank REPORT KEYS ${PRIORITIES.join('|')} --by WHO [--reason TEXT]`,
+      `| rank REPORT KEYS ${PRIORITIES.join('|')} --by WHO [--reason TEXT] | verdict REPORT KEYS ${VERDICTS.join('|')} --by ROLE --reason TEXT`,
     about: 'list the persona audits in the state folder and what is untriaged, check or import a sidecar, and record triage decisions',
     async run(args) {
       const { values, positionals } = parseArgs({ args, allowPositionals: true, options: OPTIONS });
@@ -244,12 +244,6 @@ function record({ values, rest: [name, keys, decision], dir, root }) {
     if (doc.problem) return fail(doc.problem);
     entry.doc = doc.reference;
   }
-  // A verdict's citation names a real section: a rule nobody can open settles nothing.
-  const citation = decision === 'decided' ? verdictCitation(entry.reason) : null;
-  if (citation) {
-    const cited = docReference(root, citation, 'the verdict');
-    if (cited.problem) return fail(cited.problem);
-  }
   return write(dir, name, keys, entry, () => (decision === 'decided' ? `decided by ${byWords(entry.by)}` : decision));
 }
 
@@ -278,16 +272,33 @@ function rank({ values, rest: [name, keys, value], dir }) {
   return write(dir, name, keys, { priority }, () => `priority ${value}, set by ${byWords(values.by)}`);
 }
 
+// `verdict`: a product owner's verdict on an item, evidence for the Human's decision and no decision itself: the item's
+// state does not change. A conforms or silent verdict holds back an issue or a fix until `decided --by human`.
+function verdict({ values, rest: [name, keys, value], dir, root }) {
+  if (!keys || !value) return fail(usageLines('audits', commands.audits.usage, 'usage: ').join('\n'));
+  const entry = { value, by: values.by, reason: values.reason };
+  const bad = verdictProblem(entry);
+  if (bad) return fail(bad);
+  // A verdict's citation names a real section: a rule nobody can open settles nothing.
+  const citation = verdictCitation(entry);
+  if (citation) {
+    const cited = docReference(root, citation, 'the verdict');
+    if (cited.problem) return fail(cited.problem);
+  }
+  return write(dir, name, keys, { verdict: { ...entry, date: today() } }, () => `verdict ${value}, from ${values.by}`);
+}
+
 // Who made a pick, in words: "the Human", or the agent's role.
 const byWords = (by) => (by === 'human' ? 'the Human' : by);
 
 // What a pending line adds to an item's title: a priority a reviewer set, a decision taken, or the covered proposal.
 function notes(item) {
-  const { priority, decision, reason, by } = item.decision ?? {};
+  const { priority, decision, reason, by, verdict: rule } = item.decision ?? {};
   const parts = [];
+  if (rule) parts.push(`verdict ${rule.value}, from ${rule.by}`);
   if (priority) parts.push(`priority ${priority.value}, set by ${byWords(priority.set_by)}`);
   if (decision === 'decided') parts.push(`decided by ${byWords(by)}: ${reason}`);
-  if (verdictHolds(item.decision)) parts.push('the Human decides before any draft');
+  if (held(item.decision)) parts.push('the Human decides before any draft');
   if (item.proposed === 'covered') parts.push('covered by the findings above');
   if (taskNumbers(item.title ?? item.text ?? '').length) parts.push('as the report wrote it: say which task in words');
   return parts.length ? ` (${parts.join('; ')})` : '';
@@ -321,13 +332,18 @@ function write(dir, name, keys, entry, said) {
     const which = !missing.length ? 'No key was given' : missing.length > 1 ? `${missing.length} keys name no item` : 'One key names no item';
     return fail(`${which} open to triage through ${owner.title}, so nothing was recorded; \`aidrian audits pending <report> --json\` gives each item's key and its record command`);
   }
-  // A conforms or silent verdict means changing the behaviour is a product decision: no issue or fix before the Human's.
-  if (entry.decision === 'issue' || entry.decision === 'fix-now') {
-    const held = targets.filter(({ item }) => verdictHolds(item.decision));
-    if (held.length) {
-      const lines = held.map(({ item }) => `- ${itemWords(item)}: the verdict is that the product ${verdictHolds(item.decision) === 'conforms' ? 'conforms to the rule' : 'has no rule that settles it'}`);
-      return fail([`Nothing was recorded. Changing this behaviour is a product decision, so the Human decides first, with \`record ... decided --by human\`:`, ...lines].join('\n'));
-    }
+  // The one rule `pending` prints as each item's allowed_decisions.
+  const refused = entry.decision ? targets.filter(({ item }) => !allowedDecisions(item).includes(entry.decision)) : [];
+  if (refused.length) {
+    const lines = refused.map(({ item }) => {
+      const verdictHeld = held(item.decision);
+      const why = entry.decision === 'covered' ? 'it does not restate the findings not re-checked'
+        : verdictHeld === 'conforms' ? 'the verdict is that the product conforms to the rule, so the Human decides first, with `record ... decided --by human`'
+          : verdictHeld === 'silent' && entry.decision === 'documented' ? 'the verdict is that the docs do not settle it'
+            : 'the verdict is that no rule settles it, so the Human decides first, with `record ... decided --by human`';
+      return `- ${itemWords(item)}: ${why}`;
+    });
+    return fail([`Nothing was recorded. ${capital(entry.decision)} is not open for:`, ...lines].join('\n'));
   }
   recordDecision(dir, targets, entry);
   const after = listAudits(dir);

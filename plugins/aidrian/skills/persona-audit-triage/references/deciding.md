@@ -11,13 +11,18 @@ The tracker is the one the `agent-issue-writer` skill uses: the one the project'
 guess it from a remote or a key. When that knowledge names none, the tracker is unresolved:
 
 - In `confirm`, ask it as its own question before any finding, and stop for the answer. Never put it in a question
-  about a finding, and never leave it for a later one.
+  about a finding, and never leave it for a later one. The reply is that question and why it is needed, nothing else:
+  it names no finding, gives no counts, and proposes no decision on the items, such as deferring them all. It offers
+  no tracker as a recommendation drawn from the remote.
 - In `auto`, no issue can be filed: record each item `defer`, with that reason, and say so in the summary.
 
 ## How to ask
 
 - A question holds one decision. Lead with it: a fact that changes no decision, such as a screenshot that will not
-  open, gets one line at most.
+  open, gets one line at most. Offer only the item's `allowed_decisions`; `pending --json` prints them, and `record`
+  refuses any other.
+- A `held` item's question asks the Human for the product decision: what should happen, with a recommended answer and
+  the reason, and the verdict in one plain line. Issue options come only after that decision.
 - After the question, at most one line on what comes next, such as "Then seven more groups, one at a time".
   Never preview later groups or a leaning on them: each gets its recommendation when its turn comes.
 - A line of an older report may name a task by its number, such as "Task 2", and `pending` marks it `numbered_task`.
@@ -37,29 +42,33 @@ cites one: that citation is a lead to check. So before a draft may call a change
 product decision", a verdict from `product-manager`, or the project's product owner, must exist for that finding.
 
 A finding needs one when its draft would state or imply what the rule is, or when it asks to change behaviour rather
-than fix a defect the product itself reports as an error. A plain crash or a broken string needs none. Hand the
-findings that need one to the product owner together, with step 4's, and ask for one of three answers:
+than fix a defect the product itself reports as an error. A plain crash or a broken string needs none.
+
+Ask only for the findings of the question coming next, not the whole report: the blocker before its question, the others
+when their group comes up, one batch per group. Ask for one of three answers:
 
 | Verdict | Means | What follows |
 | --- | --- | --- |
 | `breaks` | The product breaks the rule | A conformance fix: the draft may say so, citing the rule |
-| `conforms` | The product follows the rule, so changing it is a product decision | The Human decides before any draft says what to build; also a candidate for `documented` |
-| `silent` | The docs do not settle it, also a product decision | The Human decides before any draft says what to build |
+| `conforms` | The product follows the rule, so changing it is a product decision | The item is `held`: the Human decides before any draft says what to build; also a candidate for `documented` |
+| `silent` | The docs do not settle it, also a product decision | The item is `held`: the Human decides before any draft says what to build |
 
 The verdict quotes the rule with its doc's path and section. It follows any term the rule leaves undefined, such as
 an amount, a limit, or a time span, into the docs that define it, decision records included. A paragraph that names a
 term without its value settles nothing.
 
-Record it as the finding's `decided`, the verdict's word first; a `silent` says what was searched instead of quoting:
+A verdict is evidence, not a decision: recording it changes no item's state, and needs no answer from the Human.
+A `silent` says what was searched instead of quoting:
 
 ```bash
-aidrian audits record <report> '<audit_key>' decided --by product-manager --reason 'conforms: "<the rule>" <path#section-slug>'
+aidrian audits verdict <report> '<audit_key>' conforms --by product-manager --reason '"<the rule>" <path#section-slug>'
 ```
 
-The command checks the cited section exists, and refuses `issue` and `fix-now` after a `conforms` or `silent` until a
-`decided --by human` follows. Here a delegated "your recommendation" is the Human's decision: record it `--by human`,
-with the reason naming whose pick it adopts. In `auto`, record both `defer`, with the verdict as the reason.
-The verdict stays in `triage.json` under `history` through the final outcome.
+The command checks the cited section exists. On a held item it refuses `issue` and `fix-now` until the Human's product
+decision is recorded, `decided --by human`, with the decision as the reason; that releases the hold. Here a delegated
+"your recommendation" is the Human's decision: record it `--by human`, with the reason naming whose pick it adopts.
+An agent's own `decided` releases nothing. In `auto`, record a held item `defer`, with the verdict as the reason.
+The verdict stays in `triage.json` through later decisions.
 
 ## Search for an existing issue first
 

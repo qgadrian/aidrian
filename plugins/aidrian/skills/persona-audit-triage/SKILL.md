@@ -20,8 +20,8 @@ Copy this checklist and tick it:
 ```text
 - [ ] 1. Report chosen
 - [ ] 2. Sidecar imported, if missing, after the Human's yes
-- [ ] 3. Batch read, with its screenshots
-- [ ] 4. Product-rule findings answered by product-manager
+- [ ] 3. Tracker settled; next question's items read
+- [ ] 4. The next question's product-rule findings answered by product-manager
 - [ ] 5. Each item decided
 - [ ] 6. Each decision acted on and recorded
 - [ ] 7. Summary
@@ -71,18 +71,19 @@ aidrian audits pending <report> --json
 It prints `issue_creation`, `search_labels`, and `groups`, the untriaged items in the order to ask: each blocker
 alone; the other findings by severity and owner; the earlier report's findings this run did not re-check, with any
 Not reached line that restates them, `proposed: covered`; Not reached lines; doc gaps. Each item has its report,
-`labels`, `source`, and `audit_key`. Read its section of the report, and open the screenshots it cites, relative to `<state>/audits/`.
+`labels`, `source`, `audit_key`, `held`, and `allowed_decisions`. For the question coming next, read its items' sections
+of the report, and open the screenshots they cite, relative to `<state>/audits/`.
 
-**Done when** every item in the batch was read with its evidence.
+**Done when** the next question's items were read with their evidence.
 
-## 4. Product rules first
+## 4. Product rules first, for the next question
 
-In both modes, a finding that touches a product rule in the `product_sensitive` knowledge, or an open question in a
-product doc, as a report's "already an open question" says, goes to `product-manager` with its evidence before any
-decision, for a verdict where deciding.md § A rule verdict asks one. No issue is drafted before its answer. In `auto`,
-one it does not settle is recorded `defer`, never filed.
+In both modes, a finding of the question coming next that touches a product rule in the `product_sensitive` knowledge,
+or an open question in a product doc, as a report's "already an open question" says, goes to `product-manager` with its
+evidence, in one batch per group, for a verdict where deciding.md § A rule verdict asks one. No issue is drafted before
+its answer. In `auto`, one it does not settle is recorded `defer`, never filed. Repeat this step for each question.
 
-**Done when** each such finding has the product manager's answer.
+**Done when** the next question's findings have the product manager's answer.
 
 ## 5. Decide
 
@@ -101,7 +102,7 @@ items (title and what was seen, one line each), recommends one decision with one
 | `drop` | Not worth its cost, or not a problem | Record the reason |
 | `defer` | Decided later | Record it |
 | `covered` | A `proposed: covered` line, once its group is decided | Record the reason |
-| `decided` | A product decision an issue needs first; not final | Record `--reason '<decision>' --by <who>` |
+| `decided` | A product decision an issue needs first; not final | Record `--reason '<decision>' --by <who>`; `--by human` releases a `held` item |
 
 **Done when** every item in the batch has a decision.
 

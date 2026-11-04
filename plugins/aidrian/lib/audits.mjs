@@ -34,32 +34,33 @@ export const slugOf = (heading) => heading.trim().toLowerCase().replace(/[^\p{L}
 
 // Who made a pick: the Human, or the agent whose recommendation the Human adopted, by its role.
 const BY = /^(?:human|[a-z0-9]+(?:-[a-z0-9]+)*)$/u;
-// A rule verdict, kept as a `decided` reason: "breaks: <the rule quoted> <path#section>", "conforms: ...", or "silent:
-// <what was searched>". Conforms and silent mean that changing the behaviour is a product decision, so only the Human
-// can open the way to an issue or a fix (verdictHolds). docs/personas.md#rule-verdicts.
-const VERDICT = /^(breaks|conforms|silent):\s*(\S[\s\S]*)?$/u;
+// A rule verdict is evidence, not a decision: an item's state does not change with one. breaks: the product breaks the
+// rule. conforms: it follows the rule, so changing it is a product decision. silent: the docs do not settle it, also a
+// product decision. Kept in the item's entry as `verdict`, through later decisions. docs/personas.md#rule-verdicts.
+export const VERDICTS = ['breaks', 'conforms', 'silent'];
 const CITATION = /[^\s"'`()]+\.[A-Za-z0-9]+#[^\s"'`()]+/u;
-const verdictOf = (reason) => VERDICT.exec(reason ?? '')?.[1] ?? null;
-// The doc a verdict cites, `path#section`, or null. Only `breaks` and `conforms` quote a rule.
-export const verdictCitation = (reason) => (['breaks', 'conforms'].includes(verdictOf(reason)) ? CITATION.exec(reason)?.[0] ?? null : null);
-// Why a `decided` reason is no usable verdict, or null when it is one or is no verdict at all.
-export function verdictProblem(reason) {
-  const verdict = verdictOf(reason);
-  if (!verdict) return null;
-  if (!VERDICT.exec(reason)[2]) return `a ${verdict} verdict says what it rests on, after "${verdict}:"`;
-  if (verdict !== 'silent' && !verdictCitation(reason)) return `a ${verdict} verdict quotes the rule and cites it as path#section, the section as its slug`;
+// The doc a verdict cites, `path#section`, or null. `breaks` and `conforms` quote a rule; `silent` has none to quote.
+export const verdictCitation = ({ value, reason }) => (value !== 'silent' ? CITATION.exec(reason ?? '')?.[0] ?? null : null);
+// Why a verdict cannot be recorded, or null.
+export function verdictProblem({ value, by, reason }) {
+  if (!VERDICTS.includes(value)) return `verdict must be ${VERDICTS.join(', ')}`;
+  if (!by || by === 'human' || !BY.test(by)) return 'a verdict needs --by, the role of the agent that gave it, such as product-manager; the Human decides, with `record ... decided --by human`';
+  if (!reason?.trim()) return `a ${value} verdict needs --reason: ${value === 'silent' ? 'what was searched' : 'the rule quoted, and its path#section'}`;
+  if (value !== 'silent' && !verdictCitation({ value, reason })) return `a ${value} verdict quotes the rule in --reason and cites it as path#section, the section as its slug`;
   return null;
 }
-// The verdict that still holds an item back from an issue or a fix: a conforms or silent verdict with no `decided` of
-// the Human's after it. An agent's plain decision after the verdict opens nothing.
-export function verdictHolds(entry) {
-  const decisions = [...(entry?.history ?? []), ...(entry?.decision === 'decided' ? [entry] : [])].reverse();
-  for (const { reason, by } of decisions) {
-    if (by === 'human') return null;
-    const verdict = verdictOf(reason);
-    if (verdict === 'conforms' || verdict === 'silent') return verdict;
-  }
-  return null;
+// The verdict that holds an item back: conforms or silent, with no `decided --by human` since (recordDecision).
+export const held = (entry) => (['conforms', 'silent'].includes(entry?.verdict?.value) && !entry.verdict.settled ? entry.verdict.value : null);
+// The decisions an item can take now, the one rule `pending` prints and `record` enforces. A held item takes the
+// Human's product decision first, and no issue or fix before it; docs that are silent cannot make it `documented`.
+// `covered` is only for a line that restates the findings not re-checked.
+export function allowedDecisions(item) {
+  const verdict = held(item.decision);
+  return DECISIONS.filter((decision) => {
+    if (decision === 'covered') return item.covered_by === 'not_rechecked';
+    if (verdict && (decision === 'issue' || decision === 'fix-now')) return false;
+    return !(verdict === 'silent' && decision === 'documented');
+  });
 }
 
 // Whether an item still waits for a final outcome: no entry, a priority alone, or a decision that is not final.
@@ -258,9 +259,9 @@ export function readTriage(dir) {
 }
 
 // Records one decision for every target, { report, id }, in one write: under the lock of triage.json, read to write,
-// and the file replaced in one rename, so a bulk record lands whole or not at all. A decision keeps the item's
-// priority; a priority (`{ priority }`) keeps its decision: the two are set apart. A `decided` entry moves to `history`
-// when another decision follows it, so a verdict and the Human's decision outlast the final outcome.
+// and the file replaced in one rename, so a bulk record lands whole or not at all. A decision keeps the item's priority
+// and verdict; a priority or a verdict keeps its decision and each other: they are set apart. `decided --by human`
+// settles a verdict, keeping the decision on it, so it holds nothing back through later decisions.
 export function recordDecision(dir, targets, entry) {
   const file = path.join(dir, TRIAGE_FILE);
   mkdirSync(dir, { recursive: true });
@@ -268,8 +269,9 @@ export function recordDecision(dir, targets, entry) {
     const triage = readTriage(dir);
     for (const { report, id } of targets) {
       const before = triage.reports[report]?.[id] ?? {};
-      const history = [...(before.history ?? []), ...(entry.decision && before.decision === 'decided' ? [{ reason: before.reason, by: before.by, date: before.date }] : [])];
-      const next = entry.decision ? { ...entry, ...(before.priority ? { priority: before.priority } : {}), ...(history.length ? { history } : {}) } : { ...before, ...entry };
+      const settled = entry.decision === 'decided' && entry.by === 'human' && before.verdict ? { verdict: { ...before.verdict, settled: { reason: entry.reason, date: entry.date } } } : {};
+      const kept = { ...(before.priority ? { priority: before.priority } : {}), ...(before.verdict ? { verdict: before.verdict } : {}) };
+      const next = entry.decision ? { ...entry, ...kept, ...settled } : { ...before, ...entry };
       triage.reports[report] = { ...triage.reports[report], [id]: next };
     }
     const temporary = `${file}.${process.pid}.tmp`;
@@ -286,7 +288,6 @@ export function decisionProblem({ decision, issue, url, reason, doc, by }) {
   if ((decision === 'issue' || decision === 'duplicate') && !issue && !url) return `${decision} needs --issue KEY or --url URL`;
   if ((decision === 'drop' || decision === 'covered' || decision === 'decided') && !reason) return `${decision} needs --reason${decision === 'decided' ? ', the decision itself' : ''}`;
   if (decision === 'decided' && !by) return 'decided needs --by, who made the decision';
-  if (decision === 'decided' && verdictProblem(reason)) return verdictProblem(reason);
   if (decision === 'documented' && !DOC.test(doc ?? '')) return `documented needs --doc <path#section>: ${DOC_FORMS}`;
   return null;
 }
@@ -369,7 +370,9 @@ function loadReport(dir, report) {
 // grouped by owner and severity, then the replaced report's findings this run did not re-check, then Not reached
 // lines, then doc gaps. Each group: { kind, title, items }, each item with the `labels` its issue would get.
 export function pendingGroups(entry, { labels = [], personas = entry.personas ?? [] } = {}) {
-  const open = (entry.items ?? []).filter(untriaged).map((item) => ({ ...item, labels: issueLabels(labels, item, personas) }))
+  const open = (entry.items ?? []).filter(untriaged).map((item) => ({
+    ...item, labels: issueLabels(labels, item, personas), verdict: item.decision?.verdict ?? null, held: held(item.decision), allowed_decisions: allowedDecisions(item),
+  }))
     // Within a group, a priority a reviewer set comes first, highest first; the audit's own order after.
     .sort((a, b) => rank(a) - rank(b));
   const groups = [];

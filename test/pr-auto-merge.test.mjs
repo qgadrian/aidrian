@@ -225,6 +225,17 @@ test('a team default of "on": a machine with no setting follows it unless its lo
   tracked.git('add', '-f', '.aidrian.local.json');
   const result = run(t, tracked, ['7', '--json'], gh);
   assert.deepEqual([result.code, json(result).reason, json(result).local], [1, 'local', 'off'], 'tracked');
+  const deleted = repo(t, { working, local: {} });
+  deleted.record((state) => finished(state));
+  deleted.git('add', '-f', '.aidrian.local.json');
+  rmSync(path.join(deleted.dir, '.aidrian.local.json'));
+  assert.deepEqual(reasonOf(t, deleted, gh), [1, 'local'], 'tracked, and gone from the disk');
+  const otherCase = repo(t, { working, local: null });
+  otherCase.record((state) => finished(state));
+  writeFileSync(path.join(otherCase.dir, '.AIDRIAN.LOCAL.JSON'), '{}');
+  otherCase.git('add', '-f', '.AIDRIAN.LOCAL.JSON');
+  rmSync(path.join(otherCase.dir, '.AIDRIAN.LOCAL.JSON'));
+  assert.deepEqual(reasonOf(t, otherCase, gh), [1, 'local'], 'tracked under another case');
 });
 
 test('the machine has not opted in: off (local), with no gh api user call, and a broken local file is named', (t) => {

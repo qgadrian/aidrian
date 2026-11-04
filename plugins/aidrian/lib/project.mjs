@@ -225,12 +225,11 @@ function switchOfValidFile(raw, main) {
   return value === 'unset' && problems.length > 0 ? 'off' : value;
 }
 
-// Whether a machine with no setting may follow a team default of "on": no main-checkout local file, or one git says it
-// does not track. Asked only when the default applies, so a hook pays no git call. A tracked file, or a git that fails
+// Whether a machine with no setting may follow a team default of "on": git says it tracks no local file in the main
+// checkout, under any case, present on disk or not. Asked only when the default applies, so a hook pays no git call. A tracked file, or a git that fails
 // or stalls, is no machine's own, as machineSwitch reads it.
 export function mayFollowTeamDefault(project) {
   const main = project.checkouts.at(-1);
-  if (!isFile(path.join(main, LOCAL))) return true;
   return runGit(['ls-files', '--error-unmatch', '--', `:(icase)${LOCAL}`], main).status === 1;
 }
 

@@ -217,6 +217,7 @@ and `strategy` and the cleanup stay the team's. The older `"on"` and `"off"` sti
 | `allow: true`, `default: "on"` | On | On | Off |
 
 With `default: "on"`, every machine with no local setting merges without having chosen to, so a team sets it knowingly.
+A local file with an error, or one git tracks, counts as `enabled: false`.
 `aidrian check` warns when the machine opts in and the team does not allow it.
 It fails when git tracks the file, in any case, and the switch then reads `"off"`: [Setting up](project-folder.md#setting-up-and-checking).
 The switch counts only in the main checkout's file: a task worktree's own copy never turns it on or off, though its other keys apply as usual.

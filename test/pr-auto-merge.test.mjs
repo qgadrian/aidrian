@@ -208,6 +208,25 @@ test('the base\'s .aidrian.json folder override is read at the base, never the w
   assert.deepEqual(reasonOf(t, r, { files: escaping }), [1, 'team'], 'an override that escapes keeps the default folder');
 });
 
+test('a team default of "on": a machine with no setting follows it unless its local file is tracked or opts out', (t) => {
+  const working = { ...TEAM, default: 'on' };
+  const gh = { files: { 'acme/notes@main:.aidrian/config.json': configText(working) } };
+  const none = repo(t, { working, local: null });
+  none.record((state) => finished(state));
+  assert.deepEqual(reasonOf(t, none, gh), [0, null], 'no local file');
+  const untracked = repo(t, { working, local: {} });
+  untracked.record((state) => finished(state));
+  assert.deepEqual(reasonOf(t, untracked, gh), [0, null], 'an untracked file with no setting');
+  const out = repo(t, { working, local: { github: { autoMerge: { enabled: false } } } });
+  out.record((state) => finished(state));
+  assert.deepEqual(reasonOf(t, out, gh), [1, 'local'], 'opted out');
+  const tracked = repo(t, { working, local: {} });
+  tracked.record((state) => finished(state));
+  tracked.git('add', '-f', '.aidrian.local.json');
+  const result = run(t, tracked, ['7', '--json'], gh);
+  assert.deepEqual([result.code, json(result).reason, json(result).local], [1, 'local', 'off'], 'tracked');
+});
+
 test('the machine has not opted in: off (local), with no gh api user call, and a broken local file is named', (t) => {
   const off = repo(t, { local: 'off' });
   off.record((state) => finished(state));

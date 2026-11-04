@@ -166,6 +166,8 @@ function checkoutsOf(root, roots) {
   return main && main !== realpathSync(root) ? [root, main] : [root];
 }
 
+const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'github'];
+
 // `.aidrian.local.json`: { sources, models, names, telemetry, agents, review, autoMerge }. A git worktree has no copy of that git-ignored file, so it is read
 // from the main checkout then: from the first of `checkouts` that has it. Each source is a folder with its own knowledge/
 // and, optionally, a config.json with `version`. The auto-merge switch alone comes only from the main checkout's file
@@ -181,7 +183,7 @@ function readLocal(checkouts, errors, unreadable) {
     return { ...none, autoMerge: machineSwitch(raw, holder, main, errors) };
   }
   for (const key of Object.keys(raw)) {
-    if (!['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'github'].includes(key)) errors.push(`${LOCAL}: unknown key "${key}"`);
+    if (!LOCAL_KEYS.includes(key)) errors.push(`${LOCAL}: unknown key "${key}"`);
   }
   const { models, names, telemetry, agents, review } = raw;
   const sources = localSources(holder, raw, errors);
@@ -197,7 +199,7 @@ function machineSwitch(raw, holder, main, errors) {
   let autoMerge = raw ? localAutoMerge(raw, errors) : 'off';
   if (holder !== main) {
     const mainFile = isFile(path.join(main, LOCAL)) ? readJson(main, LOCAL, []) : null;
-    autoMerge = !isFile(path.join(main, LOCAL)) ? 'unset' : mainFile ? localAutoMerge(mainFile, []) : 'off';
+    autoMerge = !isFile(path.join(main, LOCAL)) ? 'unset' : mainFile ? switchOfValidFile(mainFile, main) : 'off';
   }
   // A local file git tracks travels with a branch, so it is no machine's own switch. Only git's answer "untracked"
   // (exit 1) keeps it on: tracked under any case, a git that fails or stalls, or no repository at all reads "off". Asked
@@ -209,6 +211,27 @@ function machineSwitch(raw, holder, main, errors) {
     if (status !== 1) autoMerge = 'off';
   }
   return autoMerge;
+}
+
+// The switch of the main checkout's file when a worktree's own copy was the one loaded: any error in it reads "off", as
+// it does when that file is the one loaded, so a worktree's copy cannot hide it.
+function switchOfValidFile(raw, main) {
+  const problems = [];
+  for (const key of Object.keys(raw)) {
+    if (!LOCAL_KEYS.includes(key)) problems.push(key);
+  }
+  localSources(main, raw, problems);
+  const value = localAutoMerge(raw, problems);
+  return value === 'unset' && problems.length > 0 ? 'off' : value;
+}
+
+// Whether a machine with no setting may follow a team default of "on": no main-checkout local file, or one git says it
+// does not track. Asked only when the default applies, so a hook pays no git call. A tracked file, or a git that fails
+// or stalls, is no machine's own, as machineSwitch reads it.
+export function mayFollowTeamDefault(project) {
+  const main = project.checkouts.at(-1);
+  if (!isFile(path.join(main, LOCAL))) return true;
+  return runGit(['ls-files', '--error-unmatch', '--', `:(icase)${LOCAL}`], main).status === 1;
 }
 
 // The local file's `github.autoMerge` as "on", "off", or "unset": `{ "enabled": true | false }`, the shape of the team's

@@ -210,6 +210,12 @@ test('a worktree\'s own .aidrian.local.json never sets the auto-merge switch: on
   const local = (autoMerge) => JSON.stringify({ names: { human: 'Own' }, github: { autoMerge } });
   writeFileSync(path.join(worktree, '.aidrian.local.json'), local('on'));
   assert.deepEqual([findProject(worktree).localAutoMerge, findProject(worktree).localNames], ['unset', { human: 'Own' }], 'the main checkout has no file');
+  for (const broken of [{ stray: 1 }, { sources: 'no-list' }]) {
+    writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify(broken));
+    assert.equal(findProject(worktree).localAutoMerge, 'off', `a worktree's copy hides no error: ${JSON.stringify(broken)}`);
+  }
+  writeFileSync(path.join(dir, '.aidrian.local.json'), '{}');
+  assert.equal(findProject(worktree).localAutoMerge, 'unset', 'a valid main file with no setting');
   writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ github: { autoMerge: 'off' } }));
   assert.deepEqual([findProject(worktree).localAutoMerge, findProject(worktree).localNames], ['off', { human: 'Own' }], 'the main checkout says off');
   writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ github: { autoMerge: 'on' } }));

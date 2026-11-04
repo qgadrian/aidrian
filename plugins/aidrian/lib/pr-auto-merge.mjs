@@ -35,7 +35,7 @@
 
 import { configFromText, loadConfig, resolveAutoMerge } from './config.mjs';
 import { runGh } from './gh.mjs';
-import { configPathIn, GUARDED_PATHS } from './project.mjs';
+import { configPathIn, GUARDED_PATHS, mayFollowTeamDefault } from './project.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
 import { MEMBER_ASSOCIATIONS, owed, readLocalState } from './review/state.mjs';
 import { scoped } from './rules/github/merge-review.mjs';
@@ -206,7 +206,10 @@ export function runAutoMerge(argv, project, { gh = (args) => runGh(args, { cwd: 
     return fail(error.message);
   }
 
-  let { effective, reason } = resolveAutoMerge({ autoMerge: team }, project.localAutoMerge);
+  // A tracked local file is no machine's own, so it follows no default of "on". Read only when that default would apply.
+  const followsDefault = project.localAutoMerge === 'unset' && team.allow && team.default === 'on';
+  const local = followsDefault && !mayFollowTeamDefault(project) ? 'off' : project.localAutoMerge;
+  let { effective, reason } = resolveAutoMerge({ autoMerge: team }, local);
   let why = reason === 'team'
     ? `the team does not allow it (github.autoMerge.allow on ${pr.repo} ${refusing.join(' and ')})`
     : reason === 'local' ? `this machine has not opted in (github.autoMerge in ${project.paths.local})` : null;
@@ -240,7 +243,7 @@ export function runAutoMerge(argv, project, { gh = (args) => runGh(args, { cwd: 
   }
 
   const result = {
-    effective, reason, why, allow: team.allow, local: project.localAutoMerge, strategy: team.strategy, deleteBranch: team.deleteBranch,
+    effective, reason, why, allow: team.allow, local, strategy: team.strategy, deleteBranch: team.deleteBranch,
     deleteWorktree: team.deleteWorktree, pr: pr.number, head: pr.head, repo: pr.repo, base: pr.base,
   };
   console.log(asJson ? JSON.stringify(result)

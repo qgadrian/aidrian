@@ -51,6 +51,7 @@ The stop hook sends a subagent back once when it stops with one still running.
 1. Once every slice is committed and pushed, confirm with `git ls-remote --heads origin <branch>` that the remote has the last commit.
    A missing commit goes back to the agent that made it. Never force-push.
 2. Open a draft with the `pr-write` skill, unless the implementing skill already opened it: its integration review was step 3.
+   Name each `decided_provisional` the run's agents returned, with its reason, revisit trigger, and how it reverts, so `pr-write` can check its marker.
 3. With more than one slice, run the `pr-review` skill on the assembled branch: it rechecks earlier slices' stubs and
    defaults against the later slices. Its findings go through the `pr-review-fix` skill and § 4.
 4. After each push, run the `pr-review-loop` skill, with `--await-codex` unless the review bot is out, as step 5 says.

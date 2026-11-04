@@ -627,6 +627,8 @@ test('each dispatcher of a deciding agent runs the resolve, and each deciding ag
     assert.match(read(rel), /[Ww]ith `authority: decide` in your brief, return `decided_provisional`/, rel);
   }
   assert.match(read('agents-src/product-design/product-manager.md'), /Compute authority yourself/);
+  assert.match(read('agents-src/product-design/product-manager.md'), /A `decided_provisional` puts its wording and marker in the doc in this branch; wording under an unconfirmed marker does not settle another change\./);
+  assert.doesNotMatch(read('agents-src/product-design/product-manager.md'), /its doc waits until the Human keeps it/);
   assert.match(read('agents-src/product-design/product-manager.md'), /No `authority` covers a sign-off/);
   assert.match(read('skills/plan-review/SKILL.md'), /no `authority` covers this gate/);
   assert.match(read('agents-src/coordination/orchestrator.md'), /On an owner's `decision_options`, run `aidrian decisions resolve` and pass `authority`: `knowledge\/references\/decisions\.md`; under `ask`, return `needs_input` with them, attributed/);

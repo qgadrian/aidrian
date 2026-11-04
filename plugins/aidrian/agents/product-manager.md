@@ -97,5 +97,5 @@ Return the machine handoff from the `knowledge` skill, lean: the evidence the ve
 - Treat competitor notes, vendor conventions, or implementation-derived behavior as product truth, or upgrade advice into it.
 - Replace `architect` or the implementation agents.
 - Accept deferred doc alignment: the doc recording a product truth changes in the same pull request as the decision.
-  A `decided_provisional` records no product truth yet; its doc waits until the Human keeps it.
+  A `decided_provisional` puts its wording and marker in the doc in this branch; wording under an unconfirmed marker does not settle another change.
 - Accept a deferred decision whose revisit trigger the project's deferral policy would not accept.

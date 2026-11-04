@@ -58,6 +58,16 @@ test('ignored paths, worktrees inside or beside the repository, and paths outsid
   assert.equal(edit(path.join(tmpdir(), 'scratch.txt'), repo), null);
 });
 
+test('a write to the home folder through ~ is not a write in the main checkout', (t) => {
+  const { repo } = fixture(t);
+  const at = (command) => check(command, { cwd: repo, env: ENV });
+  for (const command of ['echo x > ~/p.txt', 'echo x >> ~/.cache/p', 'tee ~/p.txt', 'cp src/app.js ~/p.txt', 'mkdir -p ~/p', 'rm -f ~/p.txt', 'echo x > ~', 'cd /tmp && touch ~/p', 'cd /tmp && rm ~/*.txt']) {
+    assert.equal(at(command), null, command);
+  }
+  // A `~` elsewhere in the word is literal, and a cd to ~ still leaves later relative writes denied.
+  for (const command of ['touch a~/p.txt', 'touch ~other/p.txt', 'cd ~ && echo x > a.txt']) assert.match(at(command), /^Blocked/u, command);
+});
+
 test('in a repository whose git folder is separate, the main checkout is still guarded', (t) => {
   const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-guard-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));

@@ -15,6 +15,7 @@
 // safe and a Bash command runs: a command line is never as certain as a file path.
 
 import { existsSync, lstatSync, realpathSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { globPattern } from '../fs.mjs';
@@ -636,6 +637,10 @@ export function toolTargets(input) {
   return targets.filter((target) => typeof target === 'string' && target !== '');
 }
 
+// A write target as the shell reads a leading `~`: `~` and `~/x` are in the home folder, not in the shell's folder.
+// `~user` stays as written. Accepted residual: the lexer drops quotes, so a quoted "~/x", a literal folder named `~`, reads the same.
+const expandHome = (text) => (text === '~' || text.startsWith('~/') ? path.join(homedir(), text.slice(1)) : text);
+
 // Every path a Bash command writes with certainty, resolved against `cwd`. Commands are read in the order they run: a
 // relative target after a `cd` is dropped, and one before it stays. A command substitution runs in a shell of its own,
 // which starts where its command runs; a `cd` inside it moves nothing outside it.
@@ -685,7 +690,8 @@ export function bashWrites(command, cwd, { followCd = false, shells = false, res
   visit(command, { dirs: [cwd], unsure: false, cds: [], via: [] }, 0);
   return targets
     .filter(({ token }) => (!token.dynamic || (globs && !/[$`]/u.test(token.text))) && token.text !== '')
-    .map(({ token: { text, dynamic }, place: { dirs, unsure, cds, via } }) => {
+    .map(({ token: { text: written, dynamic }, place: { dirs, unsure, cds, via } }) => {
+      const text = expandHome(written);
       if (dynamic) return { text, files: [], dirs, unsure, glob: true, cds, via };
       if (path.isAbsolute(text)) return { text, files: [text], unsure: false, cds, via };
       return { text, files: dirs.map((dir) => path.resolve(dir, text)), unsure, cds, via };

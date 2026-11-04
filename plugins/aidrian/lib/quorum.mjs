@@ -325,9 +325,9 @@ export const DECIDE_LEDGER_SCHEMA = Object.freeze({
 
 // A product-mode cross point comes from a griller, U for UX or E for the engineer, so its ids are U1 to E5.
 export const PRODUCT_CROSS_ID = /^[UE][1-5]$/u;
-// A run's dispatches with no loop, and what each loop may add: an interview or a reshape, two grills, a draft, and a walkthrough.
+// A run's dispatches with no loop, and what each loop may add: an interview or a reshape, two grills, a draft, a walkthrough, and a new ruling.
 export const PRODUCT_DISPATCHES = 10;
-export const PRODUCT_LOOP_DISPATCHES = 5;
+export const PRODUCT_LOOP_DISPATCHES = 6;
 export const MAX_PRODUCT_POSITIONS = 3;
 
 // The product ledger: a decide ledger with no rebuttal round, plus the premise check, the end user's interview and walkthrough, and what
@@ -370,8 +370,8 @@ export const PRODUCT_LEDGER_SCHEMA = Object.freeze({
     draft: {
       type: ['object', 'null'],
       additionalProperties: false,
-      required: ['winner', 'reason'],
-      properties: { winner: { type: 'string', enum: POSITION_IDS }, reason: { type: 'string' } },
+      required: ['winner', 'reason', 'walkthrough'],
+      properties: { winner: { type: 'string', enum: POSITION_IDS }, reason: { type: 'string' }, walkthrough: { type: 'string' } },
     },
     loops: {
       type: 'array',
@@ -1139,6 +1139,7 @@ export function productProblems(ledger, maxLoops = MAX_PLAN_OBJECTIONS) {
   const persona = ledger.witness?.persona;
   if (persona !== undefined && (path.isAbsolute(persona) || path.normalize(persona).startsWith('..'))) problems.push(`witness.persona "${shown(persona)}" is not a path inside the repository`);
   if (ledger.loops.length > maxLoops) problems.push(`loops: ${ledger.loops.length}, more than the ${maxLoops} allowed`);
+  if (ledger.witness === null && ledger.loops.some(({ back_to }) => back_to === 'interview')) problems.push('loops: back to an interview, but no end user took part');
   if (ledger.draft && !known.has(ledger.draft.winner)) problems.push(`draft names ${ledger.draft.winner}, not a position in this ledger`);
   if (ledger.outcome !== null && ledger.ruling?.decision !== 'rule') problems.push('outcome: set but no ruling rules');
   if (ledger.human_answer !== null && ledger.ruling === null) problems.push('human_answer: set but nothing was ruled');
@@ -1175,6 +1176,8 @@ export function checkProductLedger(ledger, ctx) {
       .filter((citation) => held.includes(citation));
     if (backing.length && backing.every((citation) => personas.includes(path.normalize(refParts(citation).path ?? '')))) invalid('ruling: invalid: the winner rests only on the persona doc, which is a hypothesis');
   }
+  // A deferred question must not be asked again on dead evidence, under a rule or an escalation alike.
+  if (complete && ledger.human_answer === null) stale.push(...problems.filter((line) => /citations\[\d+\]/u.test(line) && !stale.includes(line)));
   return { ledger, problems, escapes, stale };
 }
 

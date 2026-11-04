@@ -23,7 +23,7 @@ becomes a product rule until the project's docs say so. Start this mode only whe
 - **Grillers**: `ux-specialist` and, as the engineer, `architect`.
 
 The cap is 10 dispatches with no loop: the trace, the prepare, the interview, the shape, two grills, the draft, the
-walkthrough, the ruling, and one retry. Each of `maxLoops` loops, 2 by default, adds up to 5. `roles` prints both. Every role runs on the host's model, so `same_model` is `true`, and its reason says so.
+walkthrough, the ruling, and one retry. Each of `maxLoops` loops, 2 by default, adds up to 6. `roles` prints both. Every role runs on the host's model, so `same_model` is `true`, and its reason says so.
 
 A missing trace, prepare, shape, or draft stops the run with `blocked`. A missing interview or walkthrough answer leaves
 that field empty, and a missing grill raises no points; the report names each.
@@ -58,31 +58,30 @@ answer (`null` again when deferred), and runs `quorum check`.
 2. **Prepare.** The product owner, with the Prepare brief. With `open: false`, the written rules settle the question, or
    it is not a product decision: write the answer to a file, and run `aidrian quorum premise <file>`. Exit 0: stop before any
    ledger, and report the answer with its citations. Exit 1: send it back once, on the retry; still 1, stop with `blocked`.
-3. **Interview.** Pick the end user: each doc tagged `personas` inside the repository, other than `product-access` and any
+3. **Interview.** Pick the end user: each row of `aidrian-knowledge index` whose tags hold `personas`, inside the repository, other than `product-access` and any
    with an `aidrian lint personas` problem, is a candidate, and the one the decision changes most is the pick. It answers the
-   product owner's questions. With no candidate, skip this round and round 7: `witness` is `null`, and the report warns that no end user took part. Never invent one.
+   product owner's questions. With no candidate, skip this round and round 7, on every pass: `witness` is `null`, and the report warns that no end user took part. Never invent one.
 4. **Shape.** The product owner, with the Shape brief, proposes 2 or 3 options, each with its case. Fewer than 2: stop before
    any ledger, and report that there is no choice to make. Write the question file as § Files says, and show the Human the
    path. It never changes from here: a later change is a condition on the ruling.
 5. **Open the ledger.** Write every field `references/ledger.md` § Product-mode fields lists, `status: open`, and run
-   `quorum check`. `persona_docs` lists every doc tagged `personas` inside the repository, other than `product-access`, from
-   the repository root, whether or not it lints clean. A `premise: invalid` line goes back to the product owner once, on
+   `quorum check`. `persona_docs` lists every such row, other than `product-access`, from the repository root, whether or not it lints clean. A `premise: invalid` line goes back to the product owner once, on
    the retry; still invalid, stop with `blocked`. A retry that answers `open: false` follows round 2's exit.
 6. **Grill.** The two grillers in parallel, each without the other's answer. Number UX's points `U1` to `U5` and the
    engineer's `E1` to `E5`, `by: U` or `E`, `status: pending`. Run `quorum check`.
 7. **Draft and walk through.** The product owner, with the Draft brief; write `draft`. Then the end user, with the Walkthrough
    brief; write `witness.walkthrough`. Run `quorum check`.
-   **Loop.** The product owner's Draft answer on a later pass, or the Ruling brief's `loop`, can go back while loops remain, naming what
-   exposed the need; add it to `loops`:
-   - `interview`: a new question the end user must answer. Add its answers to `witness.interview`, up to its limit, then redraft.
-   - `grill`: the winner changed, or a griller must answer something new. Grill again, then redraft. New points take the next free ids; with none free, the griller's first ones stand.
-   - `shape`: no option survives. Write a new question file with the new options and a new ledger, carrying `trace`, `premise`, `witness`, and `loops`, then grill.
-   With no loop left, rule on what exists, and put what stays open in `outcome.flips_if`, or escalate.
-8. **Ruling.** The product owner, with the Ruling brief. It may keep the draft, change the winner, add conditions, or return `loop`. Write
+8. **Ruling.** With no dispatch left for it, write the coordinator's escalate below, with the premise's citations, and ask.
+   Otherwise the product owner, with the Ruling brief. It may keep the draft, change the winner, add conditions, or return `loop`. Write
    `ruling` and `outcome`, and run `quorum check`. One the check names invalid, or a missing one, goes back once, on the retry.
-   Missing again, or with the retry spent, stop with `blocked`. Invalid again, or with the retry spent, write
+   Missing again, or with the retry spent, stop with `blocked`, unless a loop was spent: then write the escalate. Invalid again, or with the retry spent, write
    `{decision: escalate, winner: null, change_or_reason: <the line it printed, then the last decision and winner>, citations: <its citations>, tested: [], inferences: []}`
    and `outcome: null`, and run `quorum check`.
+   **Loop.** The Ruling can return `loop` while loops remain. Add it to `loops`, then:
+   - `interview`: ask the end user the new question; add the answer to `witness.interview`, up to its limit; then round 7. With no witness, a `loop` of `interview` counts as a missing ruling.
+   - `grill`: round 6 with the reason, new points taking the next free ids, and with none free the griller's first ones stand; then round 7.
+   - `shape`: no option survives. The Shape brief with the reason; a new question file and ledger, carrying `trace`, `premise`, `witness`, and `loops`; then round 6.
+   Then rule again. With no loop left, rule on what exists, and put what stays open in `outcome.flips_if`, or escalate.
 9. **Ask the Human.** First write `status: complete` with `human_answer: null`, and run `quorum check`, so a session that
    ends here leaves a deferred ledger. Then ask, write `human_answer`, and run `quorum check`.
 
@@ -123,7 +122,7 @@ Cite each statement with a file and line or a doc section. Say what you could no
 Role: product owner preparing to interview an end user. The trace: <the tracer's answer>. Question: <the Human's text>.
 First: is this decision open? Answer open: false when the written rules settle it, or it is not a product decision.
 A premise the question states may be wrong: test it against the trace.
-When open, write at most 5 questions for the end user about what they do, need, and fear today, in their words.
+When open, write at most 3 questions for the end user about what they do, need, and fear today, in their words.
 Ask about real situations; propose no solution, and name no product rule.
 Cite with `doc`, `adr`, `code`, or `absence`: no question file exists yet.
 <evidence>
@@ -145,6 +144,7 @@ Return one JSON object, in the handoff's artifacts: {"answers": [{"question", "a
 ```text
 Role: product owner shaping a decision. The trace: <the tracer's answer>. Question: <the Human's text>.
 The end user's interview, simulated: <each question and answer, or none>.
+<On a loop: why the earlier options failed: the reason.> The docs not settling the point does not block you here: the Human approves.
 Propose 2 or 3 options that differ in what a user gets, and the strongest case for each, in at most 200 words, from the
 product's docs, decision records, code, and data committed to the repository. A persona's answer is not evidence.
 Put the written rule each would change in "rule_changed", or "none". A fact you cannot cite goes on an `inference:` line.
@@ -157,7 +157,7 @@ Change no file.
 ## Grill
 
 ```text
-Role: <UX specialist | engineer> grilling a product decision. Argue for no option.
+Role: <UX specialist | engineer> grilling a product decision. Argue for no option. <On a loop: what to look at: the reason.>
 Question: <plan>. The trace: <`trace`>. The cases, word for word: <id, label, claim, and citations, per position>.
 The end user's interview, simulated: <each, or none>.
 Return at most 5 points, each naming in "against" the option it attacks: UX, where a user would fail, get confused, or
@@ -172,6 +172,7 @@ Change no file.
 ```text
 Role: product owner drafting a recommendation, for the end user to try. Question: <plan>.
 The cases and the grillers' points: <each>. The end user's interview, simulated: <each, or none>.
+The docs not settling the point does not block you here: the Human approves.
 Pick one option, and describe it as what this person would meet, in their words, with no product rule.
 Return one JSON object, in the handoff's artifacts: {"winner", "reason", "walkthrough": "<the description>"}. Change no file.
 ```
@@ -209,6 +210,6 @@ each unknown that would change the winner, with what only a real user could conf
 <evidence>
 Return one JSON object, in the handoff's artifacts:
 {"decision": "rule|escalate", "winner", "change_or_reason", "citations": [{"kind", "ref", "quote"}], "tested": [...], "inferences": [...], "outcome"}.
-With loops left (<loops left>) and a problem only another pass could settle, return instead {"loop": {"back_to": "interview|shape|grill", "reason"}}. Never loop for polish.
+With loops left (<loops left>) and a problem only another pass could settle, return instead {"loop": {"back_to": "<interview|shape|grill, leaving out interview with no end user>", "reason"}}. Never loop for polish.
 Change no file.
 ```

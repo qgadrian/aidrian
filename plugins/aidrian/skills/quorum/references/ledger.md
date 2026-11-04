@@ -216,7 +216,7 @@ fails `quorum check` on every invalid ruling or rebuttal, so it is not reused.
 - `same_model_reason`: which positions share one and why, or `null`.
 - `trigger`: what started the run, normally `the Human asked`.
 - `trace`: what the tracer found, word for word, for the report and the grillers.
-- `persona_docs`: every doc tagged `personas` inside the repository other than `product-access`, from the repository root, whichever one took part. A winner resting only on these is invalid.
+- `persona_docs`: every row of `aidrian-knowledge index` whose tags hold `personas`, inside the repository, other than `product-access`, from the repository root, whichever one took part. A winner resting only on these is invalid.
 - `premise`: why the decision is open.
   - `premise.summary`: the framer's answer.
   - `premise.citations`: its evidence, never a `plan` citation; with none passing, `quorum check` names the premise invalid.
@@ -236,6 +236,7 @@ fails `quorum check` on every invalid ruling or rebuttal, so it is not reused.
 - `draft`: the product owner's recommendation before the walkthrough, or `null`.
   - `draft.winner`: `A`, `B`, `C`, or `D`.
   - `draft.reason`: why.
+  - `draft.walkthrough`: the description the end user was shown.
 - `loops`: each time the run went back; a new ledger after a reshape keeps them.
   - `loops[].back_to`: `interview`, `shape`, or `grill`.
   - `loops[].reason`: what the walkthrough or a griller exposed.
@@ -303,7 +304,7 @@ citations, and edits hold, and:
 - Past 5 cross points, keep the first 5.
 
 In product mode, hold a case to `CASE_SCHEMA` and a ruling to the ledger's `ruling`, with `outcome` split from it; on an
-escalate, `outcome` is `null`. Keep each griller's first 5 points and the first 5 interview answers; drop a point against a position the ledger does not hold. The rules above on missing fields, citations, and edits hold.
+escalate, `outcome` is `null`. Write a draft answer as returned. Keep each griller's first 5 points and the first 5 interview answers; drop a point against a position the ledger does not hold. The rules above on missing fields, citations, and edits hold.
 
 When `quorum check` still exits 1, stop with `blocked`, quoting what it printed.
 

@@ -2395,7 +2395,8 @@ test('product ledger: the shape rules stop the check', (t) => {
     [{ outcome: null }, /outcome is null under a rule/u],
     [{ cross: [{ id: 'A1', by: 'U', against: 'A', claim: 'c', citations: [], status: 'pending' }] }, /not U1 to U5 or E1 to E5/u],
     [{ ruling: null, outcome: null }, /ruling is null/u],
-    [{ draft: { winner: 'C', reason: 'r' } }, /draft names C/u],
+    [{ draft: { winner: 'C', reason: 'r', walkthrough: 'w' } }, /draft names C/u],
+    [{ loops: [{ back_to: 'interview', reason: 'r' }] }, /no end user took part/u],
     [{ positions: ['A', 'B', 'C', 'D'].map((id) => position(id, 'agent')), same_model: true, same_model_reason: 'all agents' }, /at most 3 positions/u],
   ]) {
     const result = d.check(productLedger(over));
@@ -2428,7 +2429,7 @@ test('quorum roles product: the end user, the grillers, and a fixed cap', (t) =>
   assert.equal(out.judge.agent, 'product-manager');
   assert.equal(out.roles.witness.agent, 'ux-researcher');
   assert.equal(out.roles.engineer.agent, 'architect');
-  assert.deepEqual(out.caps, { maxLoops: 2, maxDispatches: 20 });
+  assert.deepEqual(out.caps, { maxLoops: 2, maxDispatches: 22 });
 });
 
 const xPoint = (id, citations, status = 'pending') => ({ id, by: id[0], against: 'B', claim: `point ${id}`, citations, status });
@@ -2504,4 +2505,13 @@ test('product ledger: an open run may loop up to the cap, and a complete one kee
   assert.equal(d.check(productLedger({ status: 'open', loops: loops(2) })).status, 0);
   assert.match(d.check(productLedger({ status: 'open', loops: loops(3) })).stderr, /loops: 3, more than the 2 allowed/u);
   assert.equal(d.check(productLedger({ loops: loops(3) })).status, 0);
+});
+
+test('product ledger: a deferred question on dead evidence goes stale, under an escalation too', (t) => {
+  const d = decideProject(t);
+  const dead = cite('doc', 'docs/missing.md#x', 'nope');
+  const escalate = { decision: 'escalate', winner: null, change_or_reason: 'r', citations: [PASSING.adr], tested: [], inferences: [] };
+  const cases = [stand('A', [dead]), stand('B', [PASSING.code])];
+  assert.equal(d.check(productLedger({ ruling: escalate, outcome: null, cases })).status, 1);
+  assert.equal(d.check(productLedger({ ruling: escalate, outcome: null, cases, human_answer: 'A' })).status, 0);
 });

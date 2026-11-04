@@ -643,3 +643,11 @@ test('a yes on the fourth question decides only where the team allows auto-merge
   const paused = allowed({ ...mode, unreviewed: { remind: 'off', pauseDomainAt: { pending: 1, oldestDays: 100 } } });
   asks(paused, { reversible: YES, pending: [{ domain: 'ux', date: '2026-11-01' }] }, 'domain-paused');
 });
+
+test('an older marker of a class with its own domain counts toward that domain\'s pause, whatever domain it recorded', () => {
+  const block = { ...DEFAULTS.decisions, maxMode: 'decide-reversible', mode: 'decide-reversible', unreviewed: { ...DEFAULTS.decisions.unreviewed, pauseDomainAt: { pending: 1, oldestDays: null } } };
+  const pending = [{ id: 'old', class: 'product-behaviour', domain: 'ux', date: '2026-11-01', doc: 'docs/a.md' }];
+  const answer = (over) => resolveAuthority({ decisions: block }, question({ ...over, pending })).rule;
+  assert.equal(answer({ domain: 'product', class: 'product-behaviour' }), 'domain-paused');
+  assert.notEqual(answer({ domain: 'ux', class: 'copy' }), 'domain-paused', 'it no longer counts for the domain it recorded');
+});

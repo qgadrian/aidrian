@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { isObject } from '../fs.mjs';
+import { showPrefix } from '../git.mjs';
 
 // The schema every exec reviewer's stdout follows, and the one Codex is held to with --output-schema.
 export const FINDINGS_SCHEMA = Object.freeze({
@@ -146,12 +147,17 @@ export const VERDICT_MEANING = 'A verdict says whether the change keeps the rule
 // How a pass that reviews only the change since an earlier head judges its flows: from the merge base.
 export const flowBaseBrief = (input) => `Find bugs in ${input.base}..${input.head}, but judge every flow invariant on the whole change, \`git diff ${input.flowBase} ${input.head}\`: an invariant compares the head with the base branch, so a change an earlier push of this pull request made counts as much as a new one, and narrowing something this pull request itself added weakens nothing the base had.`;
 
+// What a reviewer of a project below the repository root reads, with `prefix` the project's folder from the top: a plain
+// `git diff` lists repository-root paths and files outside the project, and a citation of one is refused.
+export const belowRootBrief = (prefix) => `This project is the folder ${prefix} of its repository. Run every \`git diff\` in that folder with \`--relative\`, which lists this project's files by their paths from it. Cite evidence from the project root, as \`files\` lists them.`;
+
 // The prompt a model reviewer reads: the pass input as instructions and data. The input is JSON, so a diff cannot
-// close the instructions.
-export function reviewPrompt(input) {
+// close the instructions. `prefix` is the project's folder from the top of the repository, empty at the top.
+export function reviewPrompt(input, prefix = '') {
   return [
     'You are reviewing a pull request. You did not write it. Read-only: change nothing.',
     `Review the diff from ${input.base} to ${input.head} (run \`git diff ${input.base} ${input.head}\`; read any file at ${input.head} you need).`,
+    prefix ? belowRootBrief(prefix) : '',
     input.role === 'slice'
       ? `This is one slice of a large change. Review the diff of these files only: ${input.files.join(', ')} (\`git diff ${input.base} ${input.head} -- <file>\`); \`manifest\` lists every changed file, and you may read any file at ${input.head}. Report findings only in your files. In \`contracts\`, list every exported or behavioural contract your files change (signatures, types, schemas, routes, events, config); in \`cross_notes\`, anything you saw that other changed files must agree with.`
       : input.role === 'cross'
@@ -176,7 +182,7 @@ const lastLine = (text) => text.trim().split('\n').filter(Boolean).at(-1) ?? '';
 export async function runExec(reviewer, input, { root, env, spawnImpl = spawn }) {
   const timeoutSec = reviewer.timeoutSec ?? 600;
   const result = reviewer.builtIn === 'codex'
-    ? await runCodex({ root, env, schema: FINDINGS_SCHEMA, prompt: reviewPrompt(input), timeoutSec, spawnImpl })
+    ? await runCodex({ root, env, schema: FINDINGS_SCHEMA, prompt: reviewPrompt(input, showPrefix(root)), timeoutSec, spawnImpl })
     : await runDetached({ argv: reviewer.command, stdinText: JSON.stringify(input), root, env, timeoutSec, spawnImpl, output: (stdout) => stdout });
   if (result.status !== 'done') return result;
   const clean = cleanOutput(result.raw);

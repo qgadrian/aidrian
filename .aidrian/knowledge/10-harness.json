@@ -36,7 +36,7 @@
       "tags": []
     },
     "review.md": {
-      "summary": "aidrian pr review: plan, splits, critical flows and invariants, visual review, reviewers, quota fallbacks, rounds and limit, sign-off, record, owed reviews.",
+      "summary": "aidrian pr review: plan, splits, flows and invariants, project-root paths, visual review, reviewers, quota fallbacks, rounds, sign-off, record, owed reviews.",
       "tags": []
     },
     "knowledge.md": {

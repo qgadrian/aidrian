@@ -904,6 +904,7 @@ The first rule that matches wins:
    `aidrian decisions list` reports it as a problem, and the `decision-review` skill relays it.
    With no git at all, the working copy's unconfirmed markers count. When git cannot read them, the decision asks, with the rule `no-base`.
 5. `domains.<domain>`, unless it is `"inherit"`, then `mode`, each held to `maxMode`. Only `"decide-reversible"` decides.
+   The class `product-behaviour` always counts as the `product` domain, in this rule and the pause, whatever `--domain` or an older marker says.
 
 ### Project classes
 

@@ -165,6 +165,18 @@ test('decisions resolve says ask with the matched rule, for a floor class, an un
   assert.equal(resolve('--domain', 'ux', '--class', 'copy').rule, 'reversibility', 'no answers at all');
 });
 
+test('decisions resolve judges product-behaviour under the product domain, whoever raises it', (t) => {
+  const resolve = (dir, domain, kind) => JSON.parse(run(['decisions', 'resolve', '--domain', domain, '--class', kind, '--reversible', 'no,no,no,no'], dir).stdout).authority;
+  const held = decisionsRepo(t, { maxMode: 'decide-reversible', mode: 'ask', domains: { ux: 'decide-reversible', product: 'ask' } }).dir;
+  assert.equal(resolve(held, 'ux', 'product-behaviour'), 'ask', 'a ux owner cannot settle it where product asks');
+  assert.equal(resolve(held, 'ux', 'copy'), 'decide', 'another class still follows its owner');
+  const open = decisionsRepo(t, { maxMode: 'decide-reversible', mode: 'ask', domains: { ux: 'ask', product: 'decide-reversible' } }).dir;
+  assert.equal(resolve(open, 'ux', 'product-behaviour'), 'decide', 'the product domain answers either way');
+  const vocab = JSON.parse(run(['decisions', 'resolve', '--vocab'], held).stdout);
+  assert.equal(vocab.classes['product-behaviour'].domain, 'product', 'the vocabulary says so, for the deciding agent and its marker');
+  assert.equal(vocab.classes.copy.domain, undefined);
+});
+
 test('decisions resolve prints the base branch\'s secondLook, so a working-copy edit cannot change it', (t) => {
   const look = { agent: 'critic', minSeverity: 'low' };
   const { dir, git, write } = decisionsRepo(t, { secondLook: look });

@@ -42,6 +42,9 @@ function classEntry(kind, classes, table = loadVocab()) {
   return { class: kind, floor: false, definition: classes[kind] };
 }
 
+// The domain a built-in class of decisions.json is always judged in, whatever the caller's `--domain`, or null when it follows its owner.
+export const classDomain = (kind) => loadVocab().classes.find((entry) => entry.class === kind)?.domain ?? null;
+
 // Every built-in class name, floor classes first, as decisions.json lists them.
 export const decisionClasses = (table = loadVocab()) => table.classes.map((entry) => entry.class);
 
@@ -86,7 +89,7 @@ export function resolveAuthority(config, { domain, class: kind, reversible, docs
     if (answer !== false) return ask('reversibility', `${key} is ${answer === true ? 'yes' : 'unanswered'}: ${table.reversibility[key]}`);
   }
   if (!DECISION_DOMAINS.includes(domain)) return ask('unknown-domain', `${JSON.stringify(domain ?? null)} is not one of ${DECISION_DOMAINS.join(', ')}`);
-  const domainPending = pending.filter((each) => each?.domain === domain);
+  const domainPending = pending.filter((each) => (classDomain(each?.class) ?? each?.domain) === domain);
   const paused = pauseReason(block.unreviewed.pauseDomainAt, domainPending, now);
   if (paused) return ask('domain-paused', `${domain} is paused: ${paused}${docsClause(domainPending)}`);
   if (effective !== mode) return ask('maxMode', `${rule} is ${mode}, above decisions.maxMode ${block.maxMode}`);

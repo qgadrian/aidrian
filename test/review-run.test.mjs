@@ -381,6 +381,8 @@ test('citationProblem: a path:line must exist at the head, a test:<name> must ap
   assert.equal(citationProblem('test:books a slot', { root: r.dir, head }), null);
   assert.match(citationProblem('test:missing', { root: r.dir, head }), /names the test/u);
   assert.match(citationProblem('trust me', { root: r.dir, head }), /not path:line/u);
+  assert.match(citationProblem('/src/app.js:1', { root: r.dir, head }), /is not in/u, 'a leading slash names no file of the commit');
+  assert.equal(citationProblem('./src/app.js:1', { root: r.dir, head }), null);
 });
 
 test('flow evidence: a deleted flow test needs the Human, and the flow`s checks must pass on the head', async (t) => {

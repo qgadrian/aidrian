@@ -30,7 +30,7 @@ import { parseArgs } from 'node:util';
 import { commandConfig, committedAuthority, committedDecisions, DEFAULTS, loadConfig, localDecisions } from './config.mjs';
 import { appendEvent, stamp } from './dispatch-log.mjs';
 import { ghJson } from './gh.mjs';
-import { ageDays, blockOf, DECISION_STATUSES, isClassName, loadVocab, parseDecisions, recordAt, resolveAuthority, setDecisionStatus, unattendedAnswer, undoDecision, wordingProblems } from './decisions.mjs';
+import { ageDays, blockOf, classDomain, DECISION_STATUSES, isClassName, loadVocab, parseDecisions, recordAt, resolveAuthority, setDecisionStatus, unattendedAnswer, undoDecision, wordingProblems } from './decisions.mjs';
 import { checkoutRoots, runGit } from './git.mjs';
 import { indexedPaths, loadKnowledge } from './knowledge.mjs';
 import { committedConfigFile, findProject, noProjectMessage, projectAt } from './project.mjs';
@@ -85,7 +85,8 @@ export function resolveQuestion(project, { domain, class: kind, reversible, docs
   const docs = named.flatMap((doc) => docReadings(project, doc));
   const pending = decisions === null || decisions.unreviewed.pauseDomainAt === null ? [] : pendingDecisions(project, base, decisions.classes);
   const block = decisions === null ? null : withResolvedEntries(project, decisions);
-  const question = { domain, class: kind, reversible, docs, pending };
+  // A class with its own domain in decisions.json is judged there, whoever raises it: a ux owner's call on what the product does never reads `domains.ux`.
+  const question = { domain: classDomain(kind) ?? domain, class: kind, reversible, docs, pending };
   const out = decisions === null
     ? { authority: 'ask', rule: 'no-base', reason: 'git could not give the base branch\'s config, so the decision goes to the Human' }
     : pending === null
@@ -491,12 +492,12 @@ function undo(args) {
 
 const questions = () => Object.keys(loadVocab().reversibility);
 
-// The vocabulary `--vocab` prints: each class with its definition and whether it is a floor class, floor classes first,
+// The vocabulary `--vocab` prints: each class with its definition, whether it is a floor class, and its own domain if it has one, floor classes first,
 // then `own`, the classes config.json `decisions.classes` adds at the base branch, which are never floor classes.
 function vocabulary(own = {}) {
   const { classes, reversibility } = loadVocab();
   const added = Object.entries(own).map(([name, definition]) => [name, { floor: false, definition }]);
-  return { classes: Object.fromEntries([...classes.map(({ class: name, floor, definition }) => [name, { floor, definition }]), ...added]), reversibility };
+  return { classes: Object.fromEntries([...classes.map(({ class: name, floor, definition, domain }) => [name, { floor, definition, ...(domain ? { domain } : {}) }]), ...added]), reversibility };
 }
 
 export const reversibleProblem = () => `--reversible takes up to ${questions().length} answers, each no or yes, separated by commas: ${questions().join(', ')}`;

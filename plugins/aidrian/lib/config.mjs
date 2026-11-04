@@ -427,8 +427,9 @@ export function loadConfig(project) {
 // DEFAULTS; a value that fails its check keeps its default, as loadConfig does, and goes to `errors` when the caller
 // passes that list.
 export function committedConfig(project, commit, errors = []) {
-  const shown = spawnSync('git', ['show', `${commit}:${project.paths.config}`], { cwd: project.root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 15_000 });
-  if (shown.error || shown.signal) throw new Error(`git show ${commit}:${project.paths.config} failed: ${shown.error?.message ?? shown.signal}`);
+  // `./`: the path from project.root, where git runs, so a project below the repository root reads its own file.
+  const shown = spawnSync('git', ['show', `${commit}:./${project.paths.config}`], { cwd: project.root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 15_000 });
+  if (shown.error || shown.signal) throw new Error(`git show ${commit}:./${project.paths.config} failed: ${shown.error?.message ?? shown.signal}`);
   return configFromText(shown.status === 0 ? shown.stdout : null, project.paths.config, errors);
 }
 
@@ -502,8 +503,7 @@ export function committedAuthority(project, commit, file) {
   const askOnly = { decisions: { ...DEFAULTS.decisions, maxMode: 'ask', unattended: { safeDefaults: null } }, autoMergeAllow: false };
   if (file === null) return askOnly;
   const errors = [];
-  // `./`: the path from project.root, so a project below the repository root reads its own file.
-  const committed = committedConfig({ ...project, paths: { ...project.paths, config: `./${file}` } }, commit, errors);
+  const committed = committedConfig({ ...project, paths: { ...project.paths, config: file } }, commit, errors);
   if (committed === DEFAULTS || errors.some((error) => /"decisions[".]/u.test(error))) return askOnly;
   return { decisions: committed.decisions, autoMergeAllow: committed.github.autoMerge.allow === true };
 }

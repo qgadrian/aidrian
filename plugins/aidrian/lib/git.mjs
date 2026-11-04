@@ -35,6 +35,11 @@ export function currentRoot(cwd) {
   return firstLine(['rev-parse', '--show-toplevel'], cwd);
 }
 
+// `cwd` from the top of its checkout, with a trailing slash: '' at the top, or when git cannot answer.
+export function showPrefix(cwd) {
+  return firstLine(['rev-parse', '--show-prefix'], cwd) ?? '';
+}
+
 // Both at once, in one git call: { main, current }, or null. They differ inside a linked worktree.
 // In the main checkout, its own git folder is the common one, so the main checkout is the current one, wherever
 // `git init --separate-git-dir` put that folder. A linked worktree has only the common folder's place to go by: the

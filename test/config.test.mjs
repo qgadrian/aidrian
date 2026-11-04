@@ -107,6 +107,21 @@ test('docs/config.md shows the github defaults as DEFAULTS holds them', () => {
   assert.deepEqual(example.github, DEFAULTS.github);
 });
 
+test('audits.triage: issues wait for the Human by default, with the audit, persona, and severity labels; "auto" opts in', (t) => {
+  assert.deepEqual(DEFAULTS.audits.triage, { issueCreation: 'confirm', labels: ['persona-audit', 'persona:{persona}', 'severity:{severity}'] });
+  const load = (triage) => loadConfig(project(t, { version: 1, audits: { triage } }));
+  let { config, errors } = load({ issueCreation: 'auto' });
+  assert.deepEqual([errors, config.audits.triage], [[], { ...DEFAULTS.audits.triage, issueCreation: 'auto' }]);
+  ({ config, errors } = load({ labels: ['ux-audit', 'who:{persona}'] }));
+  assert.deepEqual([errors, config.audits.triage], [[], { issueCreation: 'confirm', labels: ['ux-audit', 'who:{persona}'] }]);
+  const bad = (triage) => load(triage).errors.join('\n');
+  assert.match(bad({ issueCreation: 'yes' }), /"audits\.triage\.issueCreation" must be "confirm" or "auto"$/);
+  for (const labels of [['persona-audit', '{owner}'], ['persona:{persona}'], ['persona-audit', 'cut{'], [], 'persona-audit']) {
+    assert.match(bad({ labels }), /"audits\.triage\.labels" must be a list of labels, each plain or holding \{persona\} or \{severity\}, with at least one plain label$/, JSON.stringify(labels));
+  }
+  assert.equal(load({ issueCreation: 'yes' }).config.audits.triage.issueCreation, 'confirm', 'a bad value keeps the default');
+});
+
 test('git.mainCheckout has no commits key: the guard alone turns the commit guard on, and a leftover commits is unknown', (t) => {
   assert.deepEqual(Object.keys(DEFAULTS.git.mainCheckout), ['guard', 'allowWrites']);
   const { config, errors } = loadConfig(project(t, { version: 1, git: { mainCheckout: { guard: true, commits: 'warn' } } }));

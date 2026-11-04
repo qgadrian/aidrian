@@ -130,7 +130,8 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── quorum/               quorum ledgers, one per plan or question file and its hash
 │   ├── questions/        the question files of the quorum's decide mode
 │   └── product/          the product mode's question files, in questions/, and its ledgers
-├── audits/               persona-audit reports, and the screenshots each cites
+├── audits/               persona-audit reports, each with its JSON sidecar and the screenshots it cites,
+│                         and triage.json, the decision on each finding (personas.md#triage)
 ├── lessons/inbox.jsonl   the lesson inbox, and its inbox.jsonl.lock.<n> lock files
 ├── tmp/                  pull request bodies and review comments that skills draft
 ├── dispatch-log.jsonl    the dispatch log
@@ -149,6 +150,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 `aidrian state` prints the folder. Skills use it to find plans and handoff briefs, and to draft pull request bodies;
 the orchestrator uses it to name each background agent's handoff file.
 `aidrian lesson` adds, lists, resolves, and counts lessons in the inbox ([lessons.md](lessons.md)).
+`aidrian audits` lists the persona audits and records their triage ([personas.md](personas.md#triage)).
 A lesson for the plugin goes to the [plugin's inbox](lessons.md#the-plugins-inbox), in the state folder of the plugin's own repository.
 `aidrian handoff` checks a handoff brief against the one it supersedes.
 `aidrian report` summarizes the [dispatch log](dispatch-log.md).

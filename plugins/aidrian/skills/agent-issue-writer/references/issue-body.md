@@ -266,6 +266,16 @@ On GitHub Issues, priority and effort labels are only the ones the `issue_tracke
 Otherwise add only domain/work-type labels (`bug`, `chore`, `feature`, etc.) to `tracker_fields.labels`; on Linear, follow the create-if-missing
 procedure and the label-set-replacement warning in `references/linear.md`.
 
+Labels a calling skill passes, such as the audit labels of the `persona-audit-triage` skill, go into `tracker_fields.labels`
+as given, beside the domain labels. Create one that is missing only when the caller says the Human approved its
+creation: on Linear by the procedure in `references/linear.md`, on GitHub with `gh label create '<label>'`. Otherwise
+leave it out and name it in the result. A tracker without labels: list them in `Tracker Metadata`.
+A caller's `Source:` line, which names what the issue came from in words and gives its path, stays in the body as given.
+A caller's rule verdict, its quote and `path#section`, stays in the body as given; without a `breaks` verdict the body
+never calls the change a conformance fix or says it needs no product decision.
+A caller's machine key, such as an `audit_key`, never goes in the title or the first lines: on GitHub it is the last
+line of the body, as an HTML comment, `<!-- audit_key: <key> -->`; on Linear, a line in the closing Agent notes section.
+
 ### Initiative Shape
 
 - Parent issues must state whether the topology is `parent_issue_only` or `tracker_project_plus_parent_issue`.

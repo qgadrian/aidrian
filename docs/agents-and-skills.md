@@ -107,6 +107,7 @@ Claude Code runs each skill as `/aidrian:<skill>`. In Codex, ask for it by name.
 | `specialist-review` | One agent reviews the current branch's changes. |
 | `issue-verify-ac` | Checks one issue's acceptance criteria against the code. |
 | `persona-audit` | Walks the product as one of its [personas](personas.md), like a user test, and reports what they hit, with owners. Read-only. |
+| `persona-audit-triage` | Takes each persona-audit finding to a decision with the Human: an issue, a fix, a duplicate, a drop, or later ([Triage](personas.md#triage)). |
 
 | Harness | What it does |
 | --- | --- |

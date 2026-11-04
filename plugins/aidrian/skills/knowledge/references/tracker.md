@@ -8,6 +8,12 @@ When the knowledge names no tracker, the reference decides: `ABC-123` or a `line
 `#123`, `owner/repo#123`, or a `github.com/<owner>/<repo>/issues/<n>` URL is GitHub Issues.
 Never search a tracker to guess a key.
 
+When config.json sets `tracker.team`, that key is the team's home: take the team's key and name from it,
+and its conventions from the knowledge.
+Make no read ahead of a write: when the guard refuses a write because this session has not read the connected workspace,
+call the read tool the refusal names, then write again.
+For any other refusal, follow its reason. Never edit `tracker` to get a write through.
+
 | Step | Linear: the host's Linear tools | GitHub Issues: `gh` |
 | --- | --- | --- |
 | The key, `<key>` | `ABC-123`; from a URL, the key in it | the number, `123`; add `--repo owner/repo` for another repository |

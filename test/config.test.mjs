@@ -29,6 +29,7 @@ test('the example consumer config is valid, turns its rules on, and gets every o
     git: { ...DEFAULTS.git, mainCheckout: { ...DEFAULTS.git.mainCheckout, guard: true } },
     github: { ...DEFAULTS.github, pullRequest, reviewGate: { enabled: true, checklist: 'docs/knowledge/engineering/testing.md' } },
     terms: { file: '.aidrian/terms.json' },
+    tracker: { ...DEFAULTS.tracker, ...JSON.parse(readFileSync(path.join(EXAMPLE, '.aidrian/config.json'), 'utf8')).tracker },
   });
   assert.equal(DEFAULTS.git.mainCheckout.guard, false, 'a project opts in; a fresh one is never blocked');
 });

@@ -777,13 +777,33 @@ Every value comes from this key, so the plugin names no tracker of its own; the 
   "tracker": {
     "enabled": true,
     "workspace": { "expect": "https://linear.app/acme", "field": "url" },
-    "readTools": ["mcp__plugin_linear_linear__get_workspace"],
-    "writeTools": ["mcp__plugin_linear_linear__save_*"],
-    "team": { "key": "NOTES", "values": ["Notes"], "createFields": ["team"], "keyFields": ["id", "issueId"] },
+    "readTools": ["mcp__plugin_linear_linear__get_workspace", "mcp__linear__get_workspace"],
+    "writeTools": [
+      "mcp__plugin_linear_linear__save_*", "mcp__plugin_linear_linear__create_*", "mcp__plugin_linear_linear__delete_*",
+      "mcp__plugin_linear_linear__share_*", "mcp__plugin_linear_linear__unshare_*", "mcp__plugin_linear_linear__update_*",
+      "mcp__plugin_linear_linear__merge_*", "mcp__plugin_linear_linear__submit_*", "mcp__plugin_linear_linear__resolve_diff_thread",
+      "mcp__plugin_linear_linear__retire_*", "mcp__plugin_linear_linear__restore_*",
+      "mcp__linear__save_*", "mcp__linear__create_*", "mcp__linear__delete_*",
+      "mcp__linear__share_*", "mcp__linear__unshare_*", "mcp__linear__update_*",
+      "mcp__linear__merge_*", "mcp__linear__submit_*", "mcp__linear__resolve_diff_thread",
+      "mcp__linear__retire_*", "mcp__linear__restore_*"
+    ],
+    "team": {
+      "key": "NOTES",
+      "values": ["Notes"],
+      "createFields": ["team", "addTeams", "setTeams", "leadTeam"],
+      "keyFields": ["id", "issueId", "issue"]
+    },
     "project": { "values": ["Notes launch"], "field": "project" }
   }
 }
 ```
+
+This is what the `harness-setup` skill writes for Linear, with `project` only when the Human names one.
+Relation fields, such as `blocks`, `parentId`, and `duplicateOf`, are left out of `keyFields` on purpose, since a relation may cross teams.
+`createFields` holds the inputs that put a write in a team: `removeTeams` takes one out, and `teamId` takes a UUID, which skips the check.
+`id` stays in `keyFields` on every write tool, which has a limit: a non-issue whose name looks like an issue key, such as a label `Sev-1`,
+is refused, and the agent retries with its UUID.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -812,6 +832,10 @@ Every value comes from this key, so the plugin names no tracker of its own; the 
   `aidrian check` names each problem by its key.
 
 A project that adopts the key sets [`requires.aidrian`](#plugin-version), since an older plugin rejects it.
+The `harness-setup` skill asks for the key only while setting a project up, so an existing project adds the key by hand.
+It uses the values above, and must match the patterns to the server name the project's connection shows.
+It raises [`requires.aidrian`](#plugin-version) to the plugin version that ships the key unless it is already higher,
+replaces the team in its `issue_tracker` doc and that doc's summary with a pointer to the key, and runs `aidrian check`.
 
 ### How a write is judged
 
@@ -860,6 +884,7 @@ The values compare like this:
 
 Only the fields this key names are read, so a project lists every field it wants checked:
 a tool that names its team in a field missing from `createFields` passes unchecked.
+The same holds for tools: a tool that matches no pattern in `writeTools` passes unchecked, including every tool of a connection under another server name.
 
 A refused reason holds the workspace or input value it refused.
 While `telemetry.hookDenies` is on, that cause goes to the [`hook_deny` row](dispatch-log.md#hook_deny-when-one-of-the-plugins-rules-blocks-a-tool-call)

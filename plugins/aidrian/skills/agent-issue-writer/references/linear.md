@@ -1,7 +1,7 @@
 # Linear Publishing Rules
 
-Use this reference when converting a concrete issue blueprint into Linear-native artifacts. The project's `issue_tracker` knowledge owns the tracker rules (team, transition rules, priority mapping, magic-word grammar, status taxonomy) — this doc covers only the tool-call mechanics specific to publishing.
-Below, `<team>` is the team name or id from that knowledge, and `<KEY>` its issue key prefix.
+Use this reference when converting a concrete issue blueprint into Linear-native artifacts. The project's `issue_tracker` knowledge owns the tracker rules (team unless config.json sets `tracker.team`, transition rules, priority mapping, magic-word grammar, status taxonomy) — this doc covers only the tool-call mechanics specific to publishing.
+Below, `<team>` is the team name or id, and `<KEY>` its issue key prefix: take them from config.json `tracker.team` when that key is set, else from that knowledge.
 
 ## Native Hierarchy
 
@@ -115,7 +115,7 @@ Use `save_milestone(project: "<project name or id>", name: "<milestone name>")` 
 
 ## Team resolution
 
-`save_issue`'s `team` parameter is a scalar (team name or id, required when creating). Take both from the project's `issue_tracker` knowledge, or resolve them once with `get_team(query: "<KEY>")`. `save_issue` documents only "name or id", so pass the name or id, never the bare key, when creating an issue.
+`save_issue`'s `team` parameter is a scalar (team name or id, required when creating). Take the name from config.json `tracker.team` when set, else from the project's `issue_tracker` knowledge, or resolve them once with `get_team(query: "<KEY>")`. `save_issue` documents only "name or id", so pass the name or id, never the bare key, when creating an issue.
 
 `save_project` has no scalar `team` parameter — team membership is set via `addTeams` / `removeTeams` (add or remove team names/ids) or `setTeams` (replace the full team set), as used in Publishing Order step 1 above.
 

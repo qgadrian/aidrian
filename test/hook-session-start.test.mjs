@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -151,6 +151,47 @@ test('the main session also hears about open lessons, escalated with the command
   assert.equal(urgent.status, 0);
   const escalated = hook({ input, XDG_STATE_HOME: xdg }).stdout.split('\n')[4];
   assert.match(escalated, /^Lesson inbox needs triage: 1 P1 open\. Tell the Human once, then go on with the task: .* `\S+\/bin\/aidrian lesson list` shows the order\.$/);
+});
+
+test('the main session hears about untriaged persona audits only while some are; a subagent never, and bad state prints nothing', (t) => {
+  const project = path.join(mkdtempSync(path.join(tmpdir(), 'aidrian-start-')), 'consumer');
+  t.after(() => rmSync(path.dirname(project), { recursive: true, force: true }));
+  cpSync(EXAMPLE, project, { recursive: true });
+  const configFile = path.join(project, '.aidrian/config.json');
+  const state = path.join(path.dirname(project), 'state');
+  writeFileSync(configFile, JSON.stringify({ ...JSON.parse(readFileSync(configFile, 'utf8')), state: { dir: state } }));
+  const audits = path.join(state, 'audits');
+  const input = JSON.stringify({ cwd: project });
+  const run = (args = []) => hook({ input, args });
+  const LINE_RE = /^Audit inbox:/mu;
+
+  assert.doesNotMatch(run().stdout, LINE_RE, 'no audits folder');
+  mkdirSync(audits, { recursive: true });
+  assert.doesNotMatch(run().stdout, LINE_RE, 'an empty audits folder');
+
+  const fixtures = path.join(ROOT, 'test/fixtures/persona-audit');
+  for (const name of ['front-desk-2026-05-02.md', 'front-desk-2026-05-02-2.md']) cpSync(path.join(fixtures, name), path.join(audits, name));
+  const { status, stdout } = run();
+  assert.equal(status, 0);
+  assert.equal(stdout.split('\n')[4], 'Audit inbox: 15 untriaged findings in 1 report. The persona-audit-triage skill triages them.', 'after the format line');
+  assert.doesNotMatch(run(['--subagent']).stdout, /Audit inbox/);
+
+  writeFileSync(path.join(audits, 'triage.json'), '{ cut short');
+  const broken = run();
+  assert.equal(broken.status, 0);
+  assert.equal(broken.stdout, `${LINE(path.join(BIN, 'aidrian-knowledge'))}\n${MAIN('Codex')}`, 'an unreadable triage record costs the line, nothing else');
+
+  // Every item decided: the line goes away.
+  const sidecar = {
+    version: 1, report: 'front-desk-2026-05-02-2.md', personas: ['front-desk'], date: '2026-05-02', supersedes: 'front-desk-2026-05-02.md',
+    carried_forward: [], not_rechecked: [], not_reached: [], doc_gaps: [],
+    findings: [{ id: 'F1', title: 't', severity: 'polish', label: 'opinion', evidence_level: 'walked', personas: ['front-desk'], tasks: ['t'], owner: 'ux-specialist', owner_description: 'words', evidence: [], needs_trace: false }],
+  };
+  writeFileSync(path.join(audits, 'front-desk-2026-05-02-2.json'), JSON.stringify(sidecar));
+  writeFileSync(path.join(audits, 'triage.json'), JSON.stringify({ version: 1, reports: {} }));
+  assert.match(run().stdout, /^Audit inbox: 1 untriaged finding in 1 report\./mu);
+  writeFileSync(path.join(audits, 'triage.json'), JSON.stringify({ version: 1, reports: { 'front-desk-2026-05-02-2.md': { F1: { decision: 'defer', date: '2026-05-03' } } } }));
+  assert.doesNotMatch(run().stdout, LINE_RE, 'fully triaged');
 });
 
 test('the gate snapshot is saved before the knowledge loads, so a knowledge folder that throws still leaves the gates held', (t) => {

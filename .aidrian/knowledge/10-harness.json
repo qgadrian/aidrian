@@ -32,7 +32,7 @@
       "tags": []
     },
     "personas.md": {
-      "summary": "Personas: contract, writing a persona, lint, product-access (before a walk, allowed changes, plans, where tasks live), persona-audit runs, product gaps.",
+      "summary": "Personas: contract, lint, product-access, persona-audit runs, report sidecars, aidrian audits list, import, record, and triage.json, the audit inbox line.",
       "tags": []
     },
     "review.md": {

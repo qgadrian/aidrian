@@ -49,7 +49,10 @@ At the start of every session and subagent, the hook prints:
   `includeCoAuthoredBy` is `false`. `{ "attribution": { "pr": "" } }` in `.claude/settings.json` settles it for a project;
 - in the main session only, one `Format:` line: headers, quotes, and a few emoji in chat replies, never in commits,
   pull requests, docs, or code, which a subagent's report feeds, so a subagent does not get it;
-- in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons.
+- in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons;
+- in the main session only, one more line while the persona audits in the state folder hold untriaged items
+  ([Triage](personas.md#triage)): `Audit inbox: N untriaged findings in M reports. The persona-audit-triage skill triages them.`
+  Nothing prints when every item has a decision, or when the audits folder, a report, or `triage.json` cannot be read.
 
 Last, in the main session only and while `git.mainCheckout.guard` is on ([commit guard](#commit-guard)),
 a line when the session inherited the commit guard's override, then up to three lines about the main checkout,

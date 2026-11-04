@@ -1,0 +1,185 @@
+// `aidrian audits`: the persona audits in the state folder and their triage (audits.mjs). `list` shows each report and
+// how much of it is untriaged; `check` validates a sidecar against its report; `import` drafts, then writes, the sidecar
+// of a report written without one; `pending` prints one report's untriaged items in the order the Human answers them;
+// `record` keeps one decision in triage.json. docs/personas.md#triage describes each subcommand.
+
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { parseArgs } from 'node:util';
+
+import { parseReport } from './audit-import.mjs';
+import {
+  decisionProblem, DECISIONS, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, sidecarName, sidecarProblems, today,
+} from './audits.mjs';
+import { commandConfig } from './config.mjs';
+import { projectAt, stateDir } from './project.mjs';
+import { usageLines } from './usage.mjs';
+
+const OPTIONS = {
+  project: { type: 'string' },
+  json: { type: 'boolean' },
+  write: { type: 'boolean' },
+  from: { type: 'string' },
+  'not-rechecked': { type: 'string' },
+  'carried-forward': { type: 'string' },
+  issue: { type: 'string' },
+  url: { type: 'string' },
+  reason: { type: 'string' },
+};
+
+const ACTIONS = { list, check, import: importReport, pending, record };
+
+export const commands = {
+  audits: {
+    usage:
+      'list [--json] | check REPORT | import REPORT [--not-rechecked IDS] [--carried-forward IDS] [--from FILE] [--write] ' +
+      `| pending REPORT [--json] | record REPORT ID ${DECISIONS.join('|')} [--issue KEY] [--url URL] [--reason TEXT]`,
+    about: 'list the persona audits in the state folder and what is untriaged, check or import a sidecar, and record triage decisions',
+    async run(args) {
+      const { values, positionals } = parseArgs({ args, allowPositionals: true, options: OPTIONS });
+      const [action, ...rest] = positionals;
+      if (!Object.hasOwn(ACTIONS, action ?? '')) return fail(usageLines('audits', commands.audits.usage, 'usage: ').join('\n'));
+      const project = projectAt(path.resolve(values.project ?? '.'));
+      const dir = path.join(stateDir(project, { config: commandConfig(project) }), 'audits');
+      return ACTIONS[action]({ values, rest, dir });
+    },
+  },
+};
+
+function list({ values, dir }) {
+  const reports = listAudits(dir);
+  if (values.json) {
+    console.log(JSON.stringify(reports.map(({ report, status, problems, findings, items, untriaged, supersedes, replaced_by: replacedBy }) => ({
+      report, status, problems, findings: findings.length, items: items.length, untriaged, supersedes, replaced_by: replacedBy,
+    }))));
+    return 0;
+  }
+  if (!reports.length) {
+    console.log(`No persona audits in ${dir}.`);
+    return 0;
+  }
+  console.log(`Persona audits in ${dir}`);
+  for (const each of reports) console.log(`- ${each.report}: ${statusText(each)}`);
+  return 0;
+}
+
+function statusText(each) {
+  const counts = `${each.findings.length} finding${each.findings.length === 1 ? '' : 's'}`;
+  if (each.status === 'replaced') return `replaced by ${each.replaced_by}`;
+  if (each.status === 'no-sidecar') return `${counts}, no sidecar: import needed`;
+  if (each.status === 'invalid') return `${counts}, invalid sidecar: ${each.problems[0]}`;
+  return each.untriaged ? `${counts}, ${each.untriaged} of ${each.items.length} items untriaged` : `${counts}, fully triaged`;
+}
+
+// The report `name` in the audits folder, or a problem.
+function locate(dir, name) {
+  if (!name) return { problem: 'name the report, such as floor-manager-2026-11-03.md' };
+  const report = reportName(path.basename(name));
+  if (!existsSync(path.join(dir, report))) return { problem: `no report ${report} in ${dir}` };
+  return { report };
+}
+
+function check({ rest: [name], dir }) {
+  const { report, problem } = locate(dir, name);
+  if (problem) return fail(problem);
+  const file = path.join(dir, sidecarName(report));
+  if (!existsSync(file)) return fail(`${report} has no sidecar ${sidecarName(report)}`);
+  let value;
+  try {
+    value = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (error) {
+    return fail(`${file}: invalid JSON (${error.message})`);
+  }
+  const problems = [...sidecarProblems(value, { dir, report }), ...proseProblems(readFileSync(path.join(dir, report), 'utf8'), value)];
+  if (problems.length) return fail(problems.map((each) => `${sidecarName(report)}: ${each}`).join('\n'));
+  console.log(`ok: ${sidecarName(report)}, ${value.findings.length} findings, ${value.not_reached.length} not reached, ${value.doc_gaps.length} doc gaps`);
+  return 0;
+}
+
+// Without --write, prints the draft for the Human to check; with it, validates and writes the sidecar, never over one.
+function importReport({ values, rest: [name], dir }) {
+  const { report, problem } = locate(dir, name);
+  if (problem) return fail(problem);
+  const target = path.join(dir, sidecarName(report));
+  let draft;
+  if (values.from) {
+    try {
+      draft = JSON.parse(readFileSync(path.resolve(values.from), 'utf8'));
+    } catch (error) {
+      return fail(`${values.from}: ${error.message}`);
+    }
+    delete draft.warnings;
+  } else {
+    const { warnings, ...parsed } = parseReport(readFileSync(path.join(dir, report), 'utf8'), { report, dir, ownerWords: OWNER_WORDS });
+    draft = parsed;
+    for (const warning of warnings) console.error(`warning: ${warning}`);
+  }
+  for (const [option, key] of [['not-rechecked', 'not_rechecked'], ['carried-forward', 'carried_forward']]) {
+    if (values[option] !== undefined) draft[key] = values[option].split(',').map((id) => id.trim()).filter(Boolean);
+  }
+  const problems = sidecarProblems(draft, { dir, report });
+  if (!values.write) {
+    console.log(JSON.stringify(draft, null, 2));
+    for (const each of problems) console.error(`problem: ${each}`);
+    return problems.length ? 1 : 0;
+  }
+  if (existsSync(target)) return fail(`${sidecarName(report)} exists already; a sidecar is never overwritten`);
+  if (problems.length) return fail(problems.map((each) => `problem: ${each}`).join('\n'));
+  writeFileSync(target, `${JSON.stringify(draft, null, 2)}\n`);
+  console.log(`wrote ${target}`);
+  return 0;
+}
+
+function pending({ values, rest: [name], dir }) {
+  const { report, problem } = locate(dir, name);
+  if (problem) return fail(problem);
+  const entry = listAudits(dir).find((each) => each.report === report);
+  if (entry.status === 'no-sidecar' || entry.status === 'invalid') return fail(`${report}: ${statusText(entry)}`);
+  if (entry.status === 'replaced') return fail(`${report} is replaced by ${entry.replaced_by}: triage that report`);
+  const groups = pendingGroups(entry);
+  if (values.json) {
+    console.log(JSON.stringify(groups));
+    return 0;
+  }
+  if (!groups.length) {
+    console.log(`${report}: fully triaged`);
+    return 0;
+  }
+  for (const group of groups) {
+    console.log(`## ${group.title}`);
+    for (const item of group.items) console.log(`- ${item.report} ${item.id}: ${item.title ?? item.text}`);
+  }
+  return 0;
+}
+
+function record({ values, rest: [name, id, decision], dir }) {
+  const { report, problem } = locate(dir, name);
+  if (problem) return fail(problem);
+  if (!id || !decision) return fail(usageLines('audits', commands.audits.usage, 'usage: ').join('\n'));
+  const entry = { decision, issue: values.issue ?? null, url: values.url ?? null, reason: values.reason ?? null, date: today() };
+  const bad = decisionProblem(entry);
+  if (bad) return fail(bad);
+  let triage;
+  try {
+    triage = readTriage(dir);
+  } catch (error) {
+    return fail(`${error.message}; nothing was recorded`);
+  }
+  const reports = listAudits(dir, { triage });
+  const owner = reports.find((each) => each.report === report);
+  // The item is the report's own, or a finding of it that the report replacing it offers as not re-checked.
+  const holder = reports.find((each) => each.status === 'ok' && each.items.some((item) => item.report === report && item.id === id));
+  if (!holder) {
+    if (owner.status === 'no-sidecar' || owner.status === 'invalid') return fail(`${report}: ${statusText(owner)}`);
+    return fail(`${report} has no item ${id} to triage`);
+  }
+  recordDecision(dir, report, id, entry);
+  const left = listAudits(dir).find((each) => each.report === holder.report).untriaged;
+  console.log(`recorded ${report} ${id}: ${decision}; ${left ? `${left} untriaged left in ${holder.report}` : `${holder.report} is fully triaged`}`);
+  return 0;
+}
+
+function fail(problem) {
+  console.error(problem);
+  return 1;
+}

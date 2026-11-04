@@ -2,7 +2,8 @@
 // the rest, one line with the names to call the human and the AI, one voice line (push back with a reason; ask the human
 // plain, one-decision questions), in Claude Code a line that settles the pull request footer its attribution instructions
 // ask for (footerLine), and, for the main session only, a format line for chat replies, a line when the
-// lesson inbox holds open lessons, which escalates when the inbox needs triage, and a line when the plugin copy running
+// lesson inbox holds open lessons, which escalates when the inbox needs triage, a line while persona audits in the
+// state folder hold untriaged findings (lib/audits.mjs auditNudge), and a line when the plugin copy running
 // is older than the version the project requires (`requires` in config.json). Last, in the main session while
 // config.json `git.mainCheckout.guard` is on (lib/main-commits.mjs): a line when the session inherited the commit
 // guard's override, and up to three lines about the main checkout: local commits not on origin, a branch other than
@@ -15,13 +16,14 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
+import { auditNudge } from '../lib/audits.mjs';
 import { loadConfig, versionFloorProblem } from '../lib/config.mjs';
 import { saveGateSnapshot } from '../lib/gate-snapshot.mjs';
 import { runHook } from '../lib/hook-io.mjs';
 import { indexRows, loadKnowledge } from '../lib/knowledge.mjs';
 import { inboxPath, nudge } from '../lib/lesson-inbox.mjs';
 import { inheritedOverrideLine, unpushedMainLine } from '../lib/main-commits.mjs';
-import { findProject } from '../lib/project.mjs';
+import { findProject, stateDir } from '../lib/project.mjs';
 
 const BIN = path.resolve(import.meta.dirname, '../bin');
 // The main session only: its replies are read by the human, while a subagent's report feeds commits and pull requests.
@@ -60,11 +62,22 @@ await runHook((input) => {
     if (floor) console.log(`Plugin too old: ${floor}. Its hooks and commands may reject this project's config until then.`);
     const lessons = nudge(inboxPath(project, config), { command: binCommand('aidrian'), config });
     if (lessons) console.log(lessons);
+    const audits = auditLine(project, config);
+    if (audits) console.log(audits);
     const inherited = inheritedOverrideLine(config);
     if (inherited) console.log(inherited);
     for (const warning of unpushedMainLine(project, config)) console.log(warning);
   }
 });
+
+// The audit inbox line, or '': like auditNudge itself, a state folder it cannot find costs the line, never the session.
+function auditLine(project, config) {
+  try {
+    return auditNudge(path.join(stateDir(project, { config }), 'audits'));
+  } catch {
+    return '';
+  }
+}
 
 // Every session and subagent: disagree out loud instead of going along, and ask questions the human can answer
 // without the session's context. A subagent reports to its coordinator, so the voice still applies to it.

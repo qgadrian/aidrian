@@ -760,7 +760,7 @@ on defaults the project did not choose.
 | `quorum.decide.even.agent` | `"code-reviewer"` | Their agent on `"agent"`, and their fallback on `"codex"`. |
 | `quorum.decide.swap` | `true` | Whether a claim with an odd hash swaps the runners of positions A and B. |
 | `quorum.product.owner.agent` | `"product-manager"` | Interviews the end user, shapes options, and recommends one to the Human. `quorum.judge` does not apply to this mode. |
-| `quorum.product.witness.agent` | `"ux-researcher"` | Plays the end-user persona. |
+| `quorum.product.witness.agent` | `"ux-researcher"` | The agent that plays the end-user persona. It does not turn a persona on, or choose one: [who takes part](#who-plays-the-end-user). |
 | `quorum.product.ux.agent` | `"ux-specialist"` | Grills the options for what a user would hit. |
 | `quorum.product.engineer.agent` | `"architect"` | Grills the options for cost and risk. |
 | `quorum.product.maxLoops` | `2` | How many times a product run may go back after a walkthrough, a whole number from 1 to 5. |
@@ -774,6 +774,14 @@ on defaults the project did not choose.
   Under 8, the default, rebuttals and the final ruling may not fit, and the objections they would answer escalate to the Human.
 - Every `agent` is an agent name, such as `code-reviewer` or a project's own agent; `"*"` and `"main"` name no one agent.
 - The number of decide positions is the question file's, 2 to 4, never a config value, so no option the Human gave is dropped.
+
+### Who plays the end user
+
+No key turns a persona on, and none names one. In a product run a persona takes part whenever the project has a usable one:
+each doc the knowledge index tags `personas`, other than `product-access` and any with an `aidrian lint personas` problem, is a candidate,
+and the run picks the one the decision changes most.
+With no candidate, no end user takes part, and the report warns about it. To add a persona, add its doc: see [Personas](personas.md).
+`aidrian-knowledge route personas` lists the docs tagged `personas` before a run starts.
 
 ## Decisions
 

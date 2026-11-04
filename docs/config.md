@@ -221,11 +221,11 @@ It is on only when all seven of these hold, checked in this order. With `--json`
 | --- | --- |
 | `team` | `github.autoMerge.allow` is true on both the repository's default branch and the pull request's base. Both are read from GitHub as each branch commits them now, never from the checkout. So a branch cannot raise it, and the pull request that turns it on does not merge itself. |
 | `checks` | The default branch names `github.requiredChecks`: a named check that has not reported is pending, so a draft's partial set of checks cannot read as ready. This checkout's `requiredChecks`, `conditionalChecks`, and `ignoreCancelledChecks` equal the default branch's as sets, committed or not: `aidrian pr checks` reads this checkout, so a branch cannot relax the lists, and a branch that changes workflows stays off (`paths`). This checkout's `state.dir` equals the default branch's, since the review record is read from it. A working-copy config that cannot be read, or has errors, is off too. |
-| `paths` | gh lists every changed file (`files` matches `changedFiles`), and none is on this fixed list, in any case: `AGENTS.md`, `CLAUDE.md`, `SKILL.md`, `CODEOWNERS`, and `.aidrian.json` at any depth, and anything under `.claude/`, `.codex/`, `.aidrian/`, `.github/workflows/`, or `.github/actions/` at the repository root. These instruct AI sessions or decide CI, and a review of the change may not read them as behavior. Plain docs may still merge. |
+| `paths` | gh lists every changed file (`files` matches `changedFiles`) with its `changeType`, none is `RENAMED`, since gh does not give the old path, and none is on this fixed list, in any case: `AGENTS.md`, `CLAUDE.md`, `SKILL.md`, `CODEOWNERS`, and `.aidrian.json` at any depth, and anything under `.claude/`, `.codex/`, `.aidrian/`, `.github/workflows/`, or `.github/actions/` at the repository root. These instruct AI sessions or decide CI, and a review of the change may not read them as behavior. |
 | `local` | This machine's switch is `"on"`. |
 | `author` | The pull request's author is the gh user. |
 | `outsider` | Every issue comment, review, and inline comment on the pull request has the author association `OWNER`, `MEMBER`, or `COLLABORATOR`, or is by the default branch's `github.reviewer` bot. Any other bot, such as a CI or preview bot that comments, counts as an outsider. |
-| `review` | Nobody's latest review requests changes, and the review decision is not changes requested. This machine's [review record](review.md#the-record) holds a finished review of exactly the current head, `received` or `none_needed`, and nothing is owed. There is no looser mode: no record, a review of an earlier head, or an owed review keeps it off. |
+| `review` | Nobody's latest review requests changes, and the review decision is not changes requested. This machine's [review record](review.md#the-record) holds a `received` review of exactly the current head, and nothing is owed. There is no looser mode: no record, a review of an earlier head, or an owed review keeps it off. A pull request that needed no review, `none_needed`, such as plain docs, waits for the Human. |
 
 `strategy`, `deleteBranch`, `deleteWorktree`, and the check lists come from the default branch only. The base counts only for `allow`.
 So a checkout whose lists differ from the default branch's does not auto-merge, including one behind them until it catches up.
@@ -247,7 +247,10 @@ The command's `strategy`, `deleteBranch`, and `deleteWorktree` only fill the cho
 - Name every check that matters in `requiredChecks`. An unnamed check that starts only once a pull request is ready is not waited for.
 - A required check that runs only on ready pull requests keeps the caller's ready step from passing, so auto-merge will not fire for it.
 - `deleteBranch` conflicts with a merge queue.
-- The `paths` list is fixed: it misses a project folder that `.aidrian.json` moves elsewhere, and the old name of a renamed file.
+- The `paths` list is fixed: it misses a project folder that `.aidrian.json` moves elsewhere.
+- A branch can still change what a workflow runs, such as `package.json` scripts or tests, and only the review reads that.
+- The `outsider` check reads only the pull request's comments and reviews, so text reaching a run by other routes, such as an issue, is not seen.
+- `MEMBER` covers every organization member, so a read-only member or an invited collaborator can still forge a record.
 - The switch does not stop a session with a shell or a forged local record.
   For proof, protect the branch with a required review from a second account, as [Sign-off by the Human](review.md#sign-off-by-the-human) says.
 

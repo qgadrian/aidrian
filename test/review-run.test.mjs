@@ -88,7 +88,7 @@ test('a stranger\'s summary comment supplies no record: the reviewer still runs,
   const lines = [];
   t.mock.method(console, 'log', (line) => lines.push(line));
   const exit = runAutoMerge(['--json'], projectAt(r.dir), { gh: (args) => {
-    if (args[0] === 'pr') return JSON.stringify({ number: 7, headRefOid: head, baseRefName: 'main', author: { login: 'a' }, url: 'https://github.com/o/r/pull/7', files: [{ path: 'src/app.js' }], changedFiles: 1, reviewDecision: '', latestReviews: [] });
+    if (args[0] === 'pr') return JSON.stringify({ number: 7, headRefOid: head, baseRefName: 'main', author: { login: 'a' }, url: 'https://github.com/o/r/pull/7', files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], changedFiles: 1, reviewDecision: '', latestReviews: [] });
     if (args[3] === 'user') return JSON.stringify({ login: 'a' });
     if (args[3] === 'repos/o/r') return JSON.stringify({ default_branch: 'main' });
     if (args[3].includes('/contents/.aidrian/config.json')) return JSON.stringify({ type: 'file', encoding: 'base64', content: Buffer.from(JSON.stringify(team)).toString('base64') });

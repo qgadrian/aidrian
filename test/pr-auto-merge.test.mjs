@@ -54,7 +54,7 @@ function fakeGh({ files = { 'acme/notes@main:.aidrian/config.json': configText(T
   const gh = (args) => {
     calls.push(args);
     if (args[0] === 'pr' && args[1] === 'view') {
-      return JSON.stringify({ number: 7, headRefOid: HEAD, baseRefName: 'main', author: { login: 'adrian' }, url: URL7, files: [{ path: 'src/app.js' }], changedFiles: 1, reviewDecision: '', latestReviews: [], ...view });
+      return JSON.stringify({ number: 7, headRefOid: HEAD, baseRefName: 'main', author: { login: 'adrian' }, url: URL7, files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], changedFiles: 1, reviewDecision: '', latestReviews: [], ...view });
     }
     if (args[0] === 'api' && args[3] === 'user') {
       if (typeof user === 'function') return user();
@@ -242,7 +242,7 @@ test('review: no record, an outcome on an older head, an unfinished outcome, or 
   });
   assert.deepEqual(reasonOf(t, r), [1, 'review'], 'an entry still owed');
   r.record((state) => finished(state, HEAD, 'none_needed'));
-  assert.deepEqual(reasonOf(t, r), [0, null], 'none_needed is finished');
+  assert.deepEqual(reasonOf(t, r, { view: { files: [{ path: 'docs/guide.md', changeType: 'MODIFIED' }] } }), [1, 'review'], 'a docs-only pull request that needed no review waits for the Human');
 });
 
 test('review: a record for another repository with the same number is not this pull request\'s', (t) => {
@@ -255,14 +255,14 @@ test('the first failing reason wins, in the order team, checks, paths, local, au
   const r = repo(t, { local: 'off' });
   const stranger = { user: { login: 'mallory' }, author_association: 'NONE' };
   const everything = {
-    view: { author: { login: 'someone-else' }, files: [{ path: 'AGENTS.md' }], latestReviews: [{ author: { login: 'lead' }, state: 'CHANGES_REQUESTED' }] },
+    view: { author: { login: 'someone-else' }, files: [{ path: 'AGENTS.md', changeType: 'MODIFIED' }], latestReviews: [{ author: { login: 'lead' }, state: 'CHANGES_REQUESTED' }] },
     comments: { issues: [stranger] },
   };
   const named = (files) => ({ ...everything, files: { 'acme/notes@main:.aidrian/config.json': files } });
   assert.equal(reasonOf(t, r, named(configText({ ...TEAM, allow: false })))[1], 'team');
   assert.equal(reasonOf(t, r, named(configText(TEAM, {})))[1], 'checks');
   assert.equal(reasonOf(t, r, everything)[1], 'paths');
-  const noPaths = { ...everything, view: { ...everything.view, files: [{ path: 'src/app.js' }] } };
+  const noPaths = { ...everything, view: { ...everything.view, files: [{ path: 'src/app.js', changeType: 'MODIFIED' }] } };
   assert.equal(reasonOf(t, r, noPaths)[1], 'local');
   const on = repo(t);
   assert.equal(reasonOf(t, on, noPaths)[1], 'author');
@@ -302,7 +302,7 @@ test('a comment, review, or inline comment by anyone outside the repository is o
 test('a changed file that instructs an AI session or decides CI, or a file list gh cuts short, is off (paths)', (t) => {
   const r = repo(t);
   r.record((state) => finished(state));
-  const changed = (...paths) => ({ view: { files: paths.map((each) => ({ path: each })), changedFiles: paths.length } });
+  const changed = (...paths) => ({ view: { files: paths.map((each) => ({ path: each, changeType: 'MODIFIED' })), changedFiles: paths.length } });
   for (const file of [
     'AGENTS.md', 'CLAUDE.md', 'packages/api/AGENTS.md', 'a/b/CLAUDE.md', 'packages/api/agents.md', '.claude/settings.json', '.claude/agents/x.md',
     '.codex/config.toml', '.aidrian/config.json', '.aidrian/knowledge/rules.md', '.aidrian.json', 'plugins/x/skills/y/SKILL.md', 'SKILL.md',
@@ -314,7 +314,14 @@ test('a changed file that instructs an AI session or decides CI, or a file list 
     assert.deepEqual(reasonOf(t, r, changed(file)), [0, null], file);
   }
   assert.match(run(t, r, ['7'], changed('docs/guide.md', '.github/workflows/ci.yml')).out[0], /it changes \.github\/workflows\/ci\.yml/u);
-  const cut = { view: { files: [{ path: 'src/app.js' }], changedFiles: 101 } };
+  for (const changeType of ['ADDED', 'CHANGED', 'COPIED', 'DELETED', 'MODIFIED']) {
+    assert.deepEqual(reasonOf(t, r, { view: { files: [{ path: 'docs/guide.md', changeType }] } }), [0, null], changeType);
+  }
+  for (const changeType of ['RENAMED', '', null, undefined]) {
+    assert.deepEqual(reasonOf(t, r, { view: { files: [{ path: 'docs/guide.md', changeType }] } }), [1, 'paths'], String(changeType));
+  }
+  assert.match(run(t, r, ['7'], { view: { files: [{ path: 'notes.md', changeType: 'RENAMED' }] } }).out[0], /gh lists notes\.md as RENAMED/u);
+  const cut = { view: { files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], changedFiles: 101 } };
   assert.deepEqual(reasonOf(t, r, cut), [1, 'paths'], 'a shorter list hides files');
   assert.match(run(t, r, ['7'], cut).out[0], /gh listed 1 of its 101 changed files/u);
 });

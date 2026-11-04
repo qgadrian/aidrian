@@ -11,14 +11,16 @@
 //      make its verdict the default branch's policy, and a branch cannot relax the lists that judge its own merge. The
 //      review record is read from `state.dir`, so a branch cannot point it at a record of its own. A working copy config
 //      that cannot be read, or has errors, is off too.
-//   3. paths: gh lists every changed file, and none is one that instructs an AI session or runs in CI (GUARDED_PATHS).
+//   3. paths: gh lists every changed file with its change type, none is a rename, whose old path gh does not give, and
+//      none is one that instructs an AI session or runs in CI (GUARDED_PATHS).
 //   4. local: this machine opted in, `github.autoMerge: "on"` in the main checkout's local file (project.localAutoMerge).
 //   5. author: the pull request is the gh user's own.
 //   6. outsider: every issue comment, review, and inline comment is by a member of the repository, or by the default
-//      branch's `github.reviewer` bot: with no Human present, nobody acts on a stranger's text.
+//      branch's `github.reviewer` bot. It reads only these lists, so text that reaches a run another way, such as an
+//      issue, is not seen.
 //   7. review: nobody's latest review requests changes, and this machine's review record (lib/review/state.mjs), scoped
-//      to the pull request's repository, holds a finished outcome (`received`, `none_needed`) on exactly the pull
-//      request's current head, and nothing is owed.
+//      to the pull request's repository, holds the outcome `received` on exactly the pull request's current head,
+//      and nothing is owed. `none_needed` is no review, so a pull request that needed none waits for the Human.
 // gh reads: one `gh pr view` for the number, head, base, author, URL, files, and reviews; `gh api repos/<repo>` for the
 // default branch; each branch's folder override and config.json through the contents API, at `refs/heads/<branch>` (once
 // when the base is the default branch); and, only when the team, the checks, the paths, and the machine all allow it,
@@ -33,7 +35,7 @@ import { configFromText, loadConfig, resolveAutoMerge } from './config.mjs';
 import { runGh } from './gh.mjs';
 import { configPathIn, GUARDED_PATHS } from './project.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
-import { FINISHED, MEMBER_ASSOCIATIONS, owed, readLocalState } from './review/state.mjs';
+import { MEMBER_ASSOCIATIONS, owed, readLocalState } from './review/state.mjs';
 import { scoped } from './rules/github/merge-review.mjs';
 
 const VIEW_FIELDS = 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews';
@@ -75,7 +77,7 @@ export function readView(view) {
   if (!Array.isArray(files) || files.some((file) => typeof file?.path !== 'string') || !Number.isInteger(changedFiles) || typeof reviewDecision !== 'string' || !Array.isArray(latestReviews)) {
     return 'gh returned no file list, changed-file count, review decision, or latest reviews for the pull request';
   }
-  return { number, head, base, author, repo, host, files: files.map((file) => file.path), changedFiles, reviewDecision, latestReviews };
+  return { number, head, base, author, repo, host, files: files.map(({ path, changeType }) => ({ path, changeType })), changedFiles, reviewDecision, latestReviews };
 }
 
 // The default branch of `repo` on GitHub. Throws when gh cannot say.
@@ -112,11 +114,14 @@ export function branchConfig(gh, { repo, host }, branch) {
   return configFromText(read(file), file);
 }
 
-// Why the changed files keep auto-merge off, or null. A list shorter than the count hides files, so it is off too.
+// Why the changed files keep auto-merge off, or null. A list shorter than the count hides files, and a rename, or a file
+// with no change type, may hide the path it replaced, so those are off too.
 export function pathsProblem({ files, changedFiles }) {
   if (files.length !== changedFiles) return `gh listed ${files.length} of its ${changedFiles} changed files`;
-  const guarded = files.find((file) => GUARDED_PATHS.test(file));
-  return guarded === undefined ? null : `it changes ${guarded}, which instructs AI sessions or decides CI's verdict`;
+  const hidden = files.find(({ changeType }) => changeType === 'RENAMED' || !changeType);
+  if (hidden) return `gh lists ${hidden.path} as ${hidden.changeType || 'no change type'}, which may hide the path it replaced`;
+  const guarded = files.find(({ path }) => GUARDED_PATHS.test(path));
+  return guarded ? `it changes ${guarded.path}, which instructs AI sessions or decides CI's verdict` : null;
 }
 
 // Who keeps auto-merge off by commenting: the login of the first comment or review whose author is no member of the
@@ -142,7 +147,7 @@ export function changesRequested({ reviewDecision, latestReviews }) {
   return reviewDecision === 'CHANGES_REQUESTED' ? 'its review decision is changes requested' : null;
 }
 
-// Why the review keeps auto-merge off, or null when the record holds a finished review of exactly `head` and nothing is owed.
+// Why the review keeps auto-merge off, or null when the record holds a `received` review of exactly `head` and nothing is owed.
 export function reviewProblem(state, head) {
   if (!state) return 'this machine holds no review record for it: run `aidrian pr review`';
   const owing = owed(state);
@@ -150,7 +155,7 @@ export function reviewProblem(state, head) {
   const outcome = state.outcome ?? null;
   if (outcome === null) return 'its review record holds no finished review';
   if (outcome.head !== head) return `the last review covered ${String(outcome.head).slice(0, 7)}, not head ${head.slice(0, 7)}`;
-  if (!FINISHED.has(outcome.status)) return `the review of head ${head.slice(0, 7)} is \`${outcome.status}\``;
+  if (outcome.status !== 'received') return `the review of head ${head.slice(0, 7)} is \`${outcome.status}\``;
   return null;
 }
 

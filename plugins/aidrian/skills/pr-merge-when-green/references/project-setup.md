@@ -29,12 +29,12 @@ Never add an entry on your own during a merge run.
   branch's, as sets, and its `state.dir` too. A named check that has not registered is pending, not passed;
   `aidrian pr checks` reads this checkout, so equal lists make its verdict the default branch's policy.
   A config this checkout cannot read is off too.
-- `paths`: gh lists every changed file, and none instructs an AI session or decides CI: `AGENTS.md`, `CLAUDE.md`, `SKILL.md`,
+- `paths`: gh lists every changed file with its change type, none is a rename, and none instructs an AI session or decides CI: `AGENTS.md`, `CLAUDE.md`, `SKILL.md`,
   `CODEOWNERS`, `.aidrian.json`, or a file under `.claude/`, `.codex/`, `.aidrian/`, `.github/workflows/`, or `.github/actions/`.
 - `local`: this machine opted in, with `"github": { "autoMerge": "on" }` in the main checkout's `.aidrian.local.json`, which git must not track.
 - `author`: the pull request is the gh user's own.
 - `outsider`: every comment and review on the pull request is by an owner, member, or collaborator, or by the `github.reviewer` bot.
-- `review`: nobody's latest review requests changes, and this machine's review record holds a finished review of exactly the current head, with nothing owed.
+- `review`: nobody's latest review requests changes, and this machine's review record holds a `received` review of exactly the current head, with nothing owed. A pull request that needed no review waits for the Human.
 
 The team's `strategy` (null: step 0's order), `deleteBranch`, and `deleteWorktree` come from the default branch.
 They decide an unattended run, and fill the choices the Human leaves out of a run the Human starts.

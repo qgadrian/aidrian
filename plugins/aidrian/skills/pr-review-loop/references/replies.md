@@ -1,6 +1,7 @@
 # Reply shapes
 
-Read before the first reply of a run. Each reply starts with the shape for its verdict:
+Read before the first reply of a run. A thread that does not apply gets the evidence and stays open for the reviewer to confirm.
+Each reply starts with the shape for its verdict:
 
 ```text
 Addressed in <sha>: <one line>.

@@ -7,7 +7,7 @@ import test from 'node:test';
 
 import { commands } from '../plugins/aidrian/lib/pr.mjs';
 import { computeVerdict } from '../plugins/aidrian/lib/pr-checks.mjs';
-import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
+import { pathsProblem, runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 
@@ -600,4 +600,8 @@ test('a project below the root reads its own auto-merge setting, and a file outs
   for (const file of ['apps/api/b.js', 'README.md', 'apps/web/.aidrian/config.json', 'apps/web/.claude/settings.json', 'apps/web/.github/workflows/ci.yml', '.github/workflows/ci.yml']) {
     assert.deepEqual(reasonOf(t, r, changing(file)), [1, 'paths'], file);
   }
+  const rootAllows = { 'acme/notes@main:.aidrian/config.json': configText(TEAM) };
+  const lost = { project: { ...project, root: path.join(dir, 'gone') } };
+  assert.equal(reasonOf(t, lost, { files: rootAllows, view: changing('apps/api/a.js').view })[0], 1, 'a folder git cannot read is never taken for the root');
+  assert.match(pathsProblem({ files: [], changedFiles: 0 }, null), /git could not give/u);
 });

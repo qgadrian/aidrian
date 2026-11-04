@@ -35,7 +35,7 @@
 
 import { configFromText, loadConfig, resolveAutoMerge } from './config.mjs';
 import { runGh } from './gh.mjs';
-import { showPrefix } from './git.mjs';
+import { runGit } from './git.mjs';
 import { configPathIn, GUARDED_PATHS, mayFollowTeamDefault } from './project.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
 import { MEMBER_ASSOCIATIONS, owed, readLocalState } from './review/state.mjs';
@@ -125,6 +125,7 @@ export function branchConfig(gh, { repo, host }, branch, prefix = '') {
 // A project below the root reviews only its own folder, so a file outside it has had no review, and its own folder's files
 // are guarded by their path from the project root.
 export function pathsProblem({ files, changedFiles }, prefix = '') {
+  if (prefix === null) return 'git could not give the project\'s folder in the repository';
   if (files.length !== changedFiles) return `gh listed ${files.length} of its ${changedFiles} changed files`;
   const hidden = files.find(({ changeType }) => changeType === 'RENAMED' || !changeType);
   if (hidden) return `gh lists ${JSON.stringify(hidden.path)} as ${hidden.changeType || 'no change type'}, which may hide the path it replaced`;
@@ -199,15 +200,17 @@ export function runAutoMerge(argv, project, { gh = (args) => runGh(args, { cwd: 
   }
   if (typeof pr === 'string') return fail(pr);
   let team;
-  const prefix = showPrefix(project.root);
+  // An empty prefix is the repository root, so a failed lookup is null, which the paths check refuses, never the root.
+  const shown = runGit(['rev-parse', '--show-prefix'], project.root);
+  const prefix = shown.status === 0 ? shown.stdout.trim() : null;
   let refusing;
   let main;
   let policy;
   try {
     main = defaultBranch(gh, pr);
-    policy = branchConfig(gh, pr, main, prefix);
+    policy = branchConfig(gh, pr, main, prefix ?? '');
     const onDefault = policy.github.autoMerge;
-    const onBase = pr.base === main ? onDefault : branchConfig(gh, pr, pr.base, prefix).github.autoMerge;
+    const onBase = pr.base === main ? onDefault : branchConfig(gh, pr, pr.base, prefix ?? '').github.autoMerge;
     refusing = [...new Set([[main, onDefault], [pr.base, onBase]].filter(([, each]) => each.allow !== true).map(([name]) => name))];
     team = { ...onDefault, allow: refusing.length === 0 };
   } catch (error) {

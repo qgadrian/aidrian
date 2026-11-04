@@ -1,12 +1,12 @@
 ---
 name: autopilot
-description: Run one issue, plan, or task unattended to a reviewed draft pull request, then report. Never merges.
+description: Run one issue, plan, or task unattended to a reviewed pull request, then report. Merges only when auto-merge is on.
 disable-model-invocation: true
 ---
 
 # autopilot
 
-Take one task from implementation to a reviewed draft pull request while the Human is away, then stop and report.
+Take one task from implementation to a reviewed pull request while the Human is away, then report. It merges only when auto-merge is on.
 This skill runs other skills and adds two things: what to do with a decision nobody is there to make, and a bound on the review loop.
 It never redoes what the skills it runs already do.
 
@@ -29,7 +29,8 @@ Its `references/review-rules.md` defines a review round, when the bot is out, th
 ## What it is, and is not
 
 - It is a bounded runner: implementation, a draft pull request, review rounds, and a report. It cannot loop forever.
-- It is not a merge tool. Merging needs the Human's explicit say-so and the `pr-merge-when-green` skill, which only the Human starts.
+- It merges only when `aidrian pr auto-merge <n>` exits 0, through the `pr-auto-merge` skill
+  that `references/phases.md` § 4 runs. Any other merge needs the Human's explicit say-so.
 - It is not an interview. Questions need the Human present, so settle them before launch.
 
 ## Before launch
@@ -73,7 +74,7 @@ Read `references/phases.md` at the start, and follow it.
 2. Open the draft pull request through the `pr-write` skill.
 3. Review rounds: the bot review, when the project has a bot, through the `pr-review-loop` skill,
    and the `pr-review` skill when the phase says so.
-4. Stop at sign-off, or at a bound.
+4. Stop at sign-off, or at a bound; merge as § 4 allows.
 
 The engine ends at its draft, and these phases own what follows: the review loop runs once.
 The `orchestration` skill's § 3 rules apply inside phases 3 and 4, never as a second loop after them.
@@ -99,7 +100,7 @@ Write the brief first when checkpoints are allowed.
 
 ## Hard rules
 
-1. Never merge: no `gh pr merge`, and never the `pr-merge-when-green` skill.
+1. Merge only through the `pr-auto-merge` skill, as § 4 of the phases says: never `gh pr merge` yourself.
 2. Leave the pull request a draft, unless `github.markReady` is `"auto"`, the default, or the Human asked at launch to mark it ready;
    § 4 of the phases says when.
 3. Never approve a product or security gate yourself, and never guess a critical decision that cannot be undone.
@@ -111,11 +112,12 @@ Write the brief first when checkpoints are allowed.
 Write for a reader who saw nothing of the run: plain words, no internal labels, and the Human and the AI named
 by the names the start hook gives, never "you" or "I". In this order:
 
-1. **What shipped**: one or two lines, and the pull request link.
+1. **What shipped**: one or two lines, the pull request link, and the merge: merged, or why not, as the line
+   `aidrian pr auto-merge` printed or the stop line of the `pr-merge-when-green` skill.
 2. **Checks**: verification and CI status, and the bot review state of each round:
    `received`, `already_present`, `timed_out`, `blocked_quota`, `round_limit`, `extension_ask`, or `no_reviewer`.
 3. **Decisions for the Human**: each parked decision, with its options and the safest recommendation.
 4. **Left open**: findings closed as rare edge cases, each with its reason, findings still open at the cap,
    and fixes the last round pushed that no review has seen.
 5. **Next**: when a brief was written, its path and the resume line the `session-handoff` skill prints;
-   otherwise the next action: ask the Human to review. Never suggest a merge beyond that.
+   otherwise the next action: ask the Human to review, or nothing once merged. Never suggest a merge beyond that.

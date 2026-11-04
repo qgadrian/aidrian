@@ -66,7 +66,9 @@ The stop hook sends a subagent back once when it stops with one still running.
    § A review round says. At the cap, report the open `fix_now` findings and ask the Human.
 7. **Ready.** Stopped by a clean round, not the cap, mark it ready with `gh pr ready <n>` when config.json `github.markReady`
    is `"auto"`, the default, or the Human asked for that, and `aidrian pr checks <n>` says ready; then push nothing more.
-   Otherwise it stays a draft. Never merge.
+   Otherwise it stays a draft.
+8. **Merge.** Once step 7 marked it ready in this run, run the `pr-auto-merge` skill, and report the line it stops on.
+   Merge only through this step, never otherwise.
 
 ## 4. Review findings
 

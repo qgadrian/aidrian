@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { commandConfig, committedConfig, CONFIG_ERROR, DEFAULTS, loadConfig, malformedGates } from '../plugins/aidrian/lib/config.mjs';
+import { commandConfig, committedConfig, CONFIG_ERROR, DEFAULTS, loadConfig, malformedGates, resolveAutoMerge } from '../plugins/aidrian/lib/config.mjs';
 import { linksOutside } from '../plugins/aidrian/lib/fs.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 
@@ -98,6 +98,60 @@ test('github.reviewLoop: "auto" by default, so the review loop starts after pr-w
     assert.deepEqual(loaded.errors, ['.aidrian/config.json: "github.reviewLoop" must be "ask" or "auto"'], String(reviewLoop));
     assert.equal(loaded.config.github.reviewLoop, 'auto', 'a bad value keeps the default');
   }
+});
+
+test('github.autoMerge: the team ceiling is off by default, with no strategy and no cleanup', () => {
+  assert.deepEqual(DEFAULTS.github.autoMerge, { allow: false, strategy: null, deleteBranch: false, deleteWorktree: false });
+  assert.deepEqual(resolveAutoMerge(DEFAULTS.github, 'off'), { effective: false, reason: 'team' });
+});
+
+test('github.autoMerge: strategy is null, "squash", "merge", or "rebase"; a team sets any key of the group', (t) => {
+  for (const strategy of [null, 'squash', 'merge', 'rebase']) {
+    const { config, errors } = loadConfig(project(t, { version: 1, github: { autoMerge: { allow: true, strategy } } }));
+    assert.deepEqual([errors, config.github.autoMerge], [[], { allow: true, strategy, deleteBranch: false, deleteWorktree: false }]);
+  }
+  const bad = loadConfig(project(t, { version: 1, github: { autoMerge: { strategy: 'fast-forward', deleteBranch: 'yes', when: 'green' } } }));
+  assert.deepEqual(bad.errors, [
+    '.aidrian/config.json: unknown key "github.autoMerge.when"',
+    '.aidrian/config.json: "github.autoMerge.strategy" must be null, "squash", "merge", or "rebase"',
+    '.aidrian/config.json: "github.autoMerge.deleteBranch" must be true or false',
+  ]);
+  assert.deepEqual(bad.config.github.autoMerge, DEFAULTS.github.autoMerge);
+});
+
+test('github.autoMerge: on only when the team allows it and the machine opts in; loadConfig decides nothing', (t) => {
+  const allowed = { ...DEFAULTS.github, autoMerge: { ...DEFAULTS.github.autoMerge, allow: true } };
+  assert.deepEqual(resolveAutoMerge(DEFAULTS.github, 'off'), { effective: false, reason: 'team' }, 'default');
+  assert.deepEqual(resolveAutoMerge(allowed, 'off'), { effective: false, reason: 'local' }, 'team allow alone');
+  assert.deepEqual(resolveAutoMerge(DEFAULTS.github, 'on'), { effective: false, reason: 'team' }, 'local on alone');
+  assert.deepEqual(resolveAutoMerge(allowed, 'on'), { effective: true, reason: null }, 'both on');
+  const team = project(t, { version: 1, github: { autoMerge: { allow: true } } });
+  writeFileSync(path.join(team.root, '.aidrian.local.json'), JSON.stringify({ github: { autoMerge: 'on' } }));
+  const { config, errors } = loadConfig(findProject(team.root));
+  assert.deepEqual(errors, []);
+  assert.deepEqual(config.github.autoMerge, { ...DEFAULTS.github.autoMerge, allow: true }, 'no effective field: a caller resolves it');
+  assert.equal(Object.hasOwn(config, 'autoMerge'), false);
+});
+
+test('github.autoMerge: aidrian check warns, and still passes, when the machine opts in and the team does not allow it', (t) => {
+  const team = project(t, { version: 1 });
+  // A temporary repository of its own, so git can say the local file is untracked: never GIT_DIR.
+  spawnSync('git', ['init', '-q'], { cwd: team.root });
+  writeFileSync(path.join(team.root, '.gitignore'), '.aidrian.local.json\n.worktrees/\n');
+  const local = path.join(team.root, '.aidrian.local.json');
+  const check = () => spawnSync(path.join(ROOT, 'plugins/aidrian/bin/aidrian'), ['check'], { cwd: team.root, encoding: 'utf8' });
+  const WARNING = 'warning: auto-merge is on locally but the team does not allow it';
+  writeFileSync(local, JSON.stringify({ github: { autoMerge: 'on' } }));
+  const warned = check();
+  assert.equal(warned.status, 0, warned.stderr);
+  assert.match(warned.stderr, new RegExp(`^${WARNING}$`, 'mu'));
+  assert.match(warned.stdout, /^ok: /u);
+  assert.doesNotThrow(() => commandConfig(findProject(team.root)), 'the warning is no config error');
+  writeFileSync(local, JSON.stringify({ github: { autoMerge: 'off' } }));
+  assert.doesNotMatch(check().stderr, /auto-merge/u, 'off locally: nothing to say');
+  writeFileSync(path.join(team.root, '.aidrian/config.json'), JSON.stringify({ version: 1, github: { autoMerge: { allow: true } } }));
+  writeFileSync(local, JSON.stringify({ github: { autoMerge: 'on' } }));
+  assert.doesNotMatch(check().stderr, /auto-merge/u, 'allowed by the team: nothing to say');
 });
 
 test('docs/config.md shows the github defaults as DEFAULTS holds them', () => {

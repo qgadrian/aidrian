@@ -12,6 +12,9 @@
 // BODY_LIMIT (GitHub refuses a comment over 65,536 characters), the comment holds `aidrian-review-state-held:<revision>`
 // instead: the record stays on the machine that wrote it, and another machine with an older record waits for it
 // (readRecord) rather than start over.
+//
+// Anyone can comment on a pull request, so a summary comment counts only when GitHub says its author belongs to the
+// repository (MEMBER_ASSOCIATIONS, summaryComment): a stranger's comment never supplies a record.
 
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -24,6 +27,8 @@ import { summaryLines as quotaLines } from './quota.mjs';
 import { splitPasses } from './split.mjs';
 
 export const SUMMARY_MARKER = '<!-- aidrian-review-summary -->';
+// The author associations GitHub gives the people who belong to a repository.
+export const MEMBER_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 const STATE = /<!--\s*aidrian-review-state:([A-Za-z0-9+/=]+)\s*-->/u;
 const STATE_BR = /<!--\s*aidrian-review-state-br:([A-Za-z0-9+/=]+)\s*-->/u;
 const HELD = /<!--\s*aidrian-review-state-held:(\d+)\s*-->/u;
@@ -162,7 +167,7 @@ export const heldMessage = (pr, revision) => `the review record of #${pr} is at 
 // carries (an empty one when neither exists), or { held: revision } when the comment holds a record this machine's is
 // older than. `comments` are the pull request's comments as read; [] under `review.record: "local"`.
 export function readRecord(project, pr, comments, repo) {
-  const body = (comments ?? []).filter((comment) => isSummary(comment.body)).at(-1)?.body;
+  const body = summaryComment(comments)?.body;
   const local = readLocalState(project, pr);
   const remote = stateFromComment(body, pr);
   const held = remote ? null : heldRevision(body);
@@ -223,6 +228,27 @@ const RECORD_LINE = (line) => STATE.test(line) || STATE_BR.test(line) || HELD.te
 
 export const isSummary = (body) => typeof body === 'string' && body.startsWith(SUMMARY_MARKER);
 
+// The last summary comment among `comments`, as GitHub's REST API returns them, by a member of the repository, or null.
+export const summaryComment = (comments) => (comments ?? []).filter((comment) => isSummary(comment.body) && MEMBER_ASSOCIATIONS.has(comment.author_association)).at(-1) ?? null;
+
+// The summary comment a write edits, or null to post a new one. A non-member edits the last one they wrote, which still
+// supplies no record, so their steps keep one comment; everyone else edits the one readers take (summaryComment).
+// `viewer()` gives the current gh user's login, and is asked only when a non-member's summary comment is there. A login
+// it cannot give matches nobody, so no non-member's comment is edited for it; a member's is still attempted.
+export function summaryToEdit(comments, viewer) {
+  const outside = (comments ?? []).filter((comment) => isSummary(comment.body) && !MEMBER_ASSOCIATIONS.has(comment.author_association));
+  const login = outside.length ? currentLogin(viewer) : null;
+  return (login && outside.filter((comment) => comment.user?.login === login).at(-1)) || summaryComment(comments);
+}
+
+function currentLogin(viewer) {
+  try {
+    return viewer?.() ?? null;
+  } catch {
+    return null;
+  }
+}
+
 const EXTRA_HEADING = '**Extra rounds:**';
 // The decisions after which the cap stands.
 const STOPS = new Set(['stopped', 'denied']);
@@ -273,11 +299,11 @@ export function refreshSummary(body, state) {
 }
 
 // Writes `state`, already written to the state folder, to the pull request's summary comment, as the review step does,
-// so another machine reads the same record. `io` is { comments(), post(body), edit(id, body) }. With no summary
-// comment yet, it posts one under `status`. Returns the error message, or null.
+// so another machine reads the same record. `io` is { comments(), post(body), edit(id, body), viewer() }. With no summary
+// comment to edit (summaryToEdit), it posts one under `status`. Returns the error message, or null.
 export function publishState(state, io, status) {
   try {
-    const summary = io.comments().filter((comment) => isSummary(comment.body)).at(-1) ?? null;
+    const summary = summaryToEdit(io.comments(), io.viewer);
     if (summary) io.edit(summary.id, refreshSummary(summary.body, state));
     else io.post(summaryBody(state, null, status));
     return null;

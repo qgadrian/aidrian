@@ -142,7 +142,7 @@ test('the report relays the check and lint lines this session ran, and every onb
 const DISPATCHES = 'plugins/aidrian/skills/harness-setup/references/dispatches.md';
 const TRACKER_SECTION = 'The tracker key: Linear only';
 // The server names a Linear connection is known to show.
-const LINEAR_SERVERS = ['mcp__plugin_linear_linear__', 'mcp__linear__', 'mcp__claude_ai_Linear__'];
+const LINEAR_SERVERS = ['mcp__plugin_linear_linear__', 'mcp__linear__', 'mcp__linear-server__', 'mcp__claude_ai_Linear__'];
 
 // The `tracker` value and optional `project` group of the librarian's brief, with the Human's answers filled in.
 function briefTracker({ expect, key, name, project }) {
@@ -197,8 +197,8 @@ test('the key names every known Linear server, with the same read tool and write
 
   const config = read('docs/config.md').replace(/\s+/gu, ' ');
   for (const server of LINEAR_SERVERS) assert.ok(config.includes(`\`${server}\``), server);
-  assert.match(config, /These three server names are the known ones, and a connection under another name must be added by hand/u);
-  assert.match(read(DISPATCHES).replace(/\s+/gu, ' '), /The block above holds the three known spellings, and a connection under another name must be added by hand/u);
+  assert.match(config, /These four server names are the known ones, and a connection under another name must be added by hand/u);
+  assert.match(read(DISPATCHES).replace(/\s+/gu, ' '), /The block above holds the four known spellings, and a connection under another name must be added by hand/u);
 });
 
 test('the example project sets the key setup writes', () => {

@@ -980,7 +980,7 @@ Every value comes from this key, so the plugin names no tracker of its own; the 
   "tracker": {
     "enabled": true,
     "workspace": { "expect": "https://linear.app/acme", "field": "url" },
-    "readTools": ["mcp__plugin_linear_linear__get_workspace", "mcp__linear__get_workspace", "mcp__claude_ai_Linear__get_workspace"],
+    "readTools": ["mcp__plugin_linear_linear__get_workspace", "mcp__linear__get_workspace", "mcp__linear-server__get_workspace", "mcp__claude_ai_Linear__get_workspace"],
     "writeTools": [
       "mcp__plugin_linear_linear__save_*", "mcp__plugin_linear_linear__create_*", "mcp__plugin_linear_linear__delete_*",
       "mcp__plugin_linear_linear__share_*", "mcp__plugin_linear_linear__unshare_*", "mcp__plugin_linear_linear__update_*",
@@ -990,6 +990,10 @@ Every value comes from this key, so the plugin names no tracker of its own; the 
       "mcp__linear__share_*", "mcp__linear__unshare_*", "mcp__linear__update_*",
       "mcp__linear__merge_*", "mcp__linear__submit_*", "mcp__linear__resolve_diff_thread",
       "mcp__linear__retire_*", "mcp__linear__restore_*", "mcp__linear__prepare_*",
+      "mcp__linear-server__save_*", "mcp__linear-server__create_*", "mcp__linear-server__delete_*",
+      "mcp__linear-server__share_*", "mcp__linear-server__unshare_*", "mcp__linear-server__update_*",
+      "mcp__linear-server__merge_*", "mcp__linear-server__submit_*", "mcp__linear-server__resolve_diff_thread",
+      "mcp__linear-server__retire_*", "mcp__linear-server__restore_*", "mcp__linear-server__prepare_*",
       "mcp__claude_ai_Linear__save_*", "mcp__claude_ai_Linear__create_*", "mcp__claude_ai_Linear__delete_*",
       "mcp__claude_ai_Linear__share_*", "mcp__claude_ai_Linear__unshare_*", "mcp__claude_ai_Linear__update_*",
       "mcp__claude_ai_Linear__merge_*", "mcp__claude_ai_Linear__submit_*", "mcp__claude_ai_Linear__resolve_diff_thread",
@@ -1007,8 +1011,8 @@ Every value comes from this key, so the plugin names no tracker of its own; the 
 ```
 
 This is what the `harness-setup` skill writes for Linear, with `project` only when the Human names one.
-It lists `mcp__plugin_linear_linear__`, `mcp__linear__`, and `mcp__claude_ai_Linear__`, with the same patterns on each.
-These three server names are the known ones, and a connection under another name must be added by hand, in both lists.
+It lists `mcp__plugin_linear_linear__`, `mcp__linear__`, `mcp__linear-server__`, and `mcp__claude_ai_Linear__`, with the same patterns on each.
+These four server names are the known ones, and a connection under another name must be added by hand, in both lists.
 `prepare_*` counts as a write: those tools are the step before file bytes reach the connected workspace.
 `mark_notification` stays out of the patterns on purpose, so it is unguarded: it changes only one person's inbox state.
 Relation fields, such as `blocks`, `parentId`, and `duplicateOf`, are left out of `keyFields` on purpose, since a relation may cross teams.

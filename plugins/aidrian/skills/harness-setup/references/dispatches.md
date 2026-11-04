@@ -66,7 +66,7 @@ GitHub Issues writes no key, and neither does none.
   "tracker": {
     "enabled": true,
     "workspace": { "expect": "<workspace URL>", "field": "url" },
-    "readTools": ["mcp__plugin_linear_linear__get_workspace", "mcp__linear__get_workspace", "mcp__claude_ai_Linear__get_workspace"],
+    "readTools": ["mcp__plugin_linear_linear__get_workspace", "mcp__linear__get_workspace", "mcp__linear-server__get_workspace", "mcp__claude_ai_Linear__get_workspace"],
     "writeTools": [
       "mcp__plugin_linear_linear__save_*", "mcp__plugin_linear_linear__create_*", "mcp__plugin_linear_linear__delete_*",
       "mcp__plugin_linear_linear__share_*", "mcp__plugin_linear_linear__unshare_*", "mcp__plugin_linear_linear__update_*",
@@ -76,6 +76,10 @@ GitHub Issues writes no key, and neither does none.
       "mcp__linear__share_*", "mcp__linear__unshare_*", "mcp__linear__update_*",
       "mcp__linear__merge_*", "mcp__linear__submit_*", "mcp__linear__resolve_diff_thread",
       "mcp__linear__retire_*", "mcp__linear__restore_*", "mcp__linear__prepare_*",
+      "mcp__linear-server__save_*", "mcp__linear-server__create_*", "mcp__linear-server__delete_*",
+      "mcp__linear-server__share_*", "mcp__linear-server__unshare_*", "mcp__linear-server__update_*",
+      "mcp__linear-server__merge_*", "mcp__linear-server__submit_*", "mcp__linear-server__resolve_diff_thread",
+      "mcp__linear-server__retire_*", "mcp__linear-server__restore_*", "mcp__linear-server__prepare_*",
       "mcp__claude_ai_Linear__save_*", "mcp__claude_ai_Linear__create_*", "mcp__claude_ai_Linear__delete_*",
       "mcp__claude_ai_Linear__share_*", "mcp__claude_ai_Linear__unshare_*", "mcp__claude_ai_Linear__update_*",
       "mcp__claude_ai_Linear__merge_*", "mcp__claude_ai_Linear__submit_*", "mcp__claude_ai_Linear__resolve_diff_thread",
@@ -96,7 +100,7 @@ GitHub Issues writes no key, and neither does none.
 - `<team key>` is the prefix of the team's issues, such as `ABC` in `ABC-123`.
   `<team name>` is the name Linear shows, with its case and spaces.
 - A tool that matches no pattern in `writeTools` passes unchecked, so match the patterns to the server name the project's connection shows,
-  and the names in `readTools` with them. The block above holds the three known spellings,
+  and the names in `readTools` with them. The block above holds the four known spellings,
   and a connection under another name must be added by hand.
 - The guard reads only the fields listed, so keep both field lists whole. `createFields` lists the Linear inputs that put a write in a team.
   `keyFields` lists the single-string inputs that name the issue a write lands on.

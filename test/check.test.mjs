@@ -78,6 +78,38 @@ test('check warns past the knowledge budgets, and fails when the always docs pas
   assert.match(failed.stderr, new RegExp(`^always docs: ${always} bytes, over twice knowledge\\.budgets\\.alwaysBytes \\(${Math.floor((always - 1) / 2)}\\); `));
 });
 
+test('check passes on a config without tracker, and names the key of each tracker problem', (t) => {
+  const dir = exampleRepo(t);
+  const check = (config) => {
+    writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, ...config }));
+    return run(['check'], dir);
+  };
+  assert.deepEqual([check({}).status, check({}).stderr], [0, '']);
+  const save = ['mcp__tracker__save_*'];
+  const read = ['mcp__tracker__get_workspace'];
+  const workspace = { expect: 'https://tracker.example/acme', field: 'url' };
+  assert.equal(check({ tracker: { enabled: true, workspace, readTools: read, writeTools: save } }).status, 0);
+  const cases = [
+    [{ enabled: 'yes' }, '"tracker.enabled" must be true or false'],
+    [{ writeTools: ['mcp__*__save'] }, '"tracker.writeTools" has "mcp__*__save": a "*" can only end a pattern, as in mcp__github__*'],
+    [{ workspace }, '"tracker.workspace" needs "tracker.readTools", the tools that read the connected workspace'],
+    [{ readTools: read }, '"tracker.readTools" needs "tracker.workspace", the value those tools must report'],
+    [{ enabled: true }, '"tracker.enabled" needs "tracker.writeTools", the tools the guard watches'],
+    [{ enabled: true, writeTools: save }, '"tracker.enabled" needs one of "tracker.workspace", "tracker.team", or "tracker.project", the values a write is held to'],
+    [{ enabled: true, writeTools: save, team: 'Notes' }, '"tracker.team" must be an object, or null'],
+    [{ writeTools: ['Bash(git push)'] }, '"tracker.writeTools" has "Bash(git push)": a tracker tool is an MCP tool, so its pattern starts with "mcp__"'],
+    [{ readTools: null }, '"tracker.readTools" must be a list of tool names'],
+    [{ workspace: [] }, '"tracker.workspace" must be an object, or null'],
+    [{ workspace, readTools: ['mcp__tracker__get_*'] }, '"tracker.readTools" has "mcp__tracker__get_*": a read tool is an exact tool name, with no "*"'],
+    [{ workspace, readTools: read, writeTools: ['mcp__*'] }, '"tracker.readTools" has "mcp__tracker__get_workspace": a read tool cannot also match "tracker.writeTools", and "mcp__*" covers it'],
+    [{ team: { key: 'NOTES-1', values: ['Notes'], createFields: ['team'], keyFields: ['id'] } }, '"tracker.team.key" must be a non-empty string with no hyphen or whitespace, such as NOTES'],
+  ];
+  for (const [tracker, problem] of cases) {
+    const { status, stdout, stderr } = check({ tracker });
+    assert.deepEqual([status, stdout, stderr], [1, '', `.aidrian/config.json: ${problem}\n`], JSON.stringify(tracker));
+  }
+});
+
 test('state prints the state folder, with or without a project folder', (t) => {
   const dir = exampleRepo(t);
   const { status, stdout } = run(['state'], path.join(dir, 'docs'));

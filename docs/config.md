@@ -96,7 +96,8 @@ In a group such as `github`, set only the keys you change; the others keep their
   },
   "audits": {
     "triage": { "issueCreation": "confirm", "labels": ["persona-audit", "persona:{persona}", "severity:{severity}"] }
-  }
+  },
+  "tracker": { "enabled": false, "workspace": null, "readTools": [], "writeTools": [], "team": null, "project": null }
 }
 ```
 
@@ -161,6 +162,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `quorum` | The roles, providers, judge, and caps of the `quorum` skill: [Quorum](#quorum). |
 | `audits.triage.issueCreation` | Whether the persona-audit triage asks before it creates an issue: `"confirm"`, the default, or `"auto"`: [Audit triage](#audit-triage). |
 | `audits.triage.labels` | The labels every issue from the persona-audit triage gets: [Audit triage](#audit-triage). |
+| `tracker` | The workspace, team, and project MCP tracker writes belong to, off by default: [Tracker](#tracker). |
 
 A path in `state.dir` or `git.worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
@@ -512,7 +514,7 @@ version and the folder of the copy that runs, so the stale install shows at the 
 A project that adopts the `session.handoff` group (`mode`, `costRatio`, `maxTokens`) sets `requires.aidrian` to the
 release that ships it: an older plugin reads only a string `session.handoff` and rejects the group.
 [handoff.md](handoff.md#config) lists the old keys and where each went.
-A project that adopts [`github.autoMerge`](#auto-merge) does the same, since an older plugin rejects the key.
+A project that adopts [`github.autoMerge`](#auto-merge) or [`tracker`](#tracker) does the same, since an older plugin rejects the key.
 
 ## Attribution
 
@@ -764,11 +766,59 @@ stops on an invalid config.json as every `aidrian` command does.
 - Each issue body names its source in words, the report by persona, kind, and date and the finding by its title, with
   the report's path; the machine key the duplicate search can use stays in a footer, never in the title or first lines.
 
+## Tracker
+
+`tracker` names the workspace, team, and project that MCP tracker writes belong to, and the tools that read and write them.
+It is off by default, and `aidrian check` validates it.
+Every value comes from this key, so the plugin names no tracker of its own; the values below are Linear's.
+
+```json
+{
+  "tracker": {
+    "enabled": true,
+    "workspace": { "expect": "https://linear.app/acme", "field": "url" },
+    "readTools": ["mcp__plugin_linear_linear__get_workspace"],
+    "writeTools": ["mcp__plugin_linear_linear__save_*"],
+    "team": { "key": "NOTES", "values": ["Notes"], "createFields": ["team"], "keyFields": ["id", "issueId"] },
+    "project": { "values": ["Notes launch"], "field": "project" }
+  }
+}
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `tracker.enabled` | `false` | `true` turns the key on. It needs a pattern in `writeTools`, and one of `workspace`, `team`, or `project`. |
+| `tracker.workspace.expect` | | The workspace a write must belong to, as `readTools` report it. |
+| `tracker.workspace.field` | | The field of the read's response that holds that value. |
+| `tracker.readTools` | `[]` | The MCP tools that read the connected workspace, as exact tool names, with no `*`. |
+| `tracker.writeTools` | `[]` | The MCP tools that write to the tracker, as [tool patterns](#agents) that start with `mcp__`. |
+| `tracker.team.key` | | The team's issue key prefix, such as `NOTES` in `NOTES-12`, with no hyphen or whitespace. |
+| `tracker.team.values` | | The team names a write may set; at least one. |
+| `tracker.team.createFields` | | The tool input fields that name a team; at least one. |
+| `tracker.team.keyFields` | | The tool input fields that hold an issue key; at least one. |
+| `tracker.project.values` | | The project names a write may set; at least one. |
+| `tracker.project.field` | | The tool input field that names a project. |
+
+- `workspace`, `team`, and `project` are `null` by default, which leaves them unset. One that is set needs every key of its group.
+- `workspace` and `readTools` are set together or not at all; a tracker with no tool that reads its workspace sets neither.
+- `*` and `Bash(...)` are not tracker tools: both lists take MCP tools only, so `"writeTools": ["mcp__*"]` is the widest.
+- A name in `readTools` must not match a pattern in `writeTools`, so that `"mcp__*"` works only with no read tools.
+- A group with any error falls back to unset, and a bad entry is left out of its list.
+  A bad entry in `readTools`, even beside a good one, also unsets `workspace` and `readTools`.
+  `enabled` falls back to `false` with no write tool or no group left, so the loaded key is never half set.
+  `aidrian check` names each problem by its key.
+
+A project that adopts the key sets [`requires.aidrian`](#plugin-version), since an older plugin rejects it.
+
 ## Checking
 
 `aidrian check` validates this file with the rest of the project folder.
 It lists every problem: a missing file, invalid JSON, a missing or other `version`, an unknown key, or a value of the wrong type.
 In `quorum`, that includes a `provider` on `quorum.plan.a`, a `provider` other than `"agent"` or `"codex"`,
 a `plan.maxObjections` outside 1 to 5, a `plan.maxDispatches` under 5 or not a whole number, and an `agent` that is no agent name.
+In `tracker`, it includes a bad tool pattern, one that does not start with `mcp__`, a `*` in `readTools`,
+a read tool that `writeTools` covers, a `team.key` with a hyphen or whitespace, a group missing a key,
+a `workspace` without `readTools`, `readTools` without a `workspace`, and `enabled: true` with no `writeTools`,
+or with none of `workspace`, `team`, or `project`.
 Each message names the key, such as `quorum.plan.b.provider`.
 A key with a bad value falls back to its default, so the plugin's hooks keep working until the file is fixed.

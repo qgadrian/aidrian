@@ -23,7 +23,9 @@ becomes a product rule until the project's docs say so. Start this mode only whe
 - **Grillers**: `ux-specialist` and, as the engineer, `architect`.
 
 The cap is 10 dispatches with no loop: the trace, the prepare, the interview, the shape, two grills, the draft, the
-walkthrough, the ruling, and one retry. Each of `maxLoops` loops, 2 by default, adds up to 6. `roles` prints both. Every role runs on the host's model, so `same_model` is `true`, and its reason says so.
+walkthrough, the ruling, and one retry. Each of `maxLoops` loops, 2 by default, adds up to 6. `roles` prints both. Every role runs on the host's model, so `same_model` is `true`, and its reason says so. A resume of an agent counts as a dispatch.
+
+Run this mode from the session the Human is in, never from a subagent: an agent's answer returns only to a parent still running, and a parent that ends its turn to wait is gone.
 
 A missing trace, prepare, shape, or draft stops the run with `blocked`. A missing interview or walkthrough answer leaves
 that field empty, and a missing grill raises no points; the report names each.
@@ -51,6 +53,13 @@ When the core finds no reusable ledger for an input question file:
 
 A complete ledger the core reuses with `human_answer` `null` asks the one question before reporting, writes the
 answer (`null` again when deferred), and runs `quorum check`.
+
+## Filling a brief
+
+When the project is not the working directory, a brief's first line is `Project root: <path>`.
+An input over 2 KB, such as the trace or the cases, may be the path of its exact copy in `<state>`, never a summary.
+`against` and `winner` always name a position's id, `A` to `C`.
+The product owner has no shell: for the Evidence block's `route` and `search`, it reads `.aidrian/knowledge/*.json`.
 
 ## Rounds
 

@@ -2543,3 +2543,15 @@ test('product ledger: an inference quoting the exempt words does not slip past t
     assert.equal(result.status, 1, statement);
   }
 });
+
+test('product ledger: a malformed citation beside a passing one does not void a complete ruling', (t) => {
+  const d = decideProject(t);
+  const bad = cite('doc', 'docs/waiter.md', 'no anchor');
+  const cross = [{ id: 'U1', by: 'U', against: 'B', claim: 'point', citations: [PASSING.code, bad], status: 'backed' }];
+  const ruling = decision({ tested: [...tested({ A: 1, B: 1 }, ['B']), { of: 'U1', citation: 0, supports: true, reason: 'r' }, { of: 'U1', citation: 1, supports: false, reason: 'r' }] });
+  const result = d.check(productLedger({ cross, ruling }));
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /cross U1\.citations\[1\]/u, 'the bad citation is still named');
+  const dead = d.check(productLedger({ cross: [{ ...cross[0], citations: [bad] }], ruling: decision({ tested: [...tested({ A: 1, B: 1 }, ['B']), { of: 'U1', citation: 0, supports: false, reason: 'r' }] }) }));
+  assert.equal(dead.status, 1, 'a point left with no passing citation still goes stale');
+});

@@ -229,3 +229,20 @@ file names the other commands take.
 While any report holds untriaged items, the main session's [start lines](hooks.md#start-lines) say how many, in how
 many reports; the count includes `Not reached` lines and doc gaps, and a report without a sidecar counts the items its
 prose holds.
+
+### Rule verdicts
+
+A finding reports what a person experienced, and a rule it cites is a lead to check. Before an issue may call a change
+a conformance fix, or say it needs no product decision, `product-manager`, or the project's product owner, gives a
+verdict: `breaks` the rule, `conforms` to it, or `silent`, the docs do not settle it. A finding needs one when its draft
+would state or imply what the rule is, or when it asks to change behaviour rather than fix a defect the product itself
+reports as an error; a plain crash or broken string needs none. The verdict quotes the rule with its path and section,
+and follows a term the rule leaves undefined, such as an amount or a limit, into the docs that define it.
+
+It is recorded as a `decided` whose reason starts with the verdict's word:
+`record <report> <keys> decided --by product-manager --reason 'conforms: "<rule>" <path#section-slug>'`. The command
+checks that `breaks` and `conforms` cite a section that exists. After `conforms` or `silent`, it refuses `issue` and
+`fix-now` until the Human's own `decided --by human`, a delegated answer included, since changing the behaviour is a product decision; `conforms` is
+also a candidate for `documented`, and `auto` defers both. A `decided` entry moves to `history` when another decision
+follows it, so the verdict outlasts the final outcome, and the issue body carries its citation. Whether a verdict was
+asked for at all is the skill's rule, not the command's: it cannot see what a draft will claim.

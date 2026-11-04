@@ -12,7 +12,7 @@ import { parseArgs } from 'node:util';
 
 import { parseReport } from './audit-import.mjs';
 import {
-  decisionProblem, DECISIONS, DOC_FORMS, itemWords, slugOf, PRIORITIES, priorityProblem, untriaged, taskNumbers, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, reportTitle, searchLabels, sidecarName, sidecarProblems, today,
+  decisionProblem, DECISIONS, DOC_FORMS, verdictCitation, verdictHolds, itemWords, slugOf, PRIORITIES, priorityProblem, untriaged, taskNumbers, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, reportTitle, searchLabels, sidecarName, sidecarProblems, today,
 } from './audits.mjs';
 import { commandConfig } from './config.mjs';
 import { unfencedLines } from './markdown-sections.mjs';
@@ -244,21 +244,27 @@ function record({ values, rest: [name, keys, decision], dir, root }) {
     if (doc.problem) return fail(doc.problem);
     entry.doc = doc.reference;
   }
+  // A verdict's citation names a real section: a rule nobody can open settles nothing.
+  const citation = decision === 'decided' ? verdictCitation(entry.reason) : null;
+  if (citation) {
+    const cited = docReference(root, citation, 'the verdict');
+    if (cited.problem) return fail(cited.problem);
+  }
   return write(dir, name, keys, entry, () => (decision === 'decided' ? `decided by ${byWords(entry.by)}` : decision));
 }
 
 // A `documented` outcome's doc: a file of the project and one of its headings, as written or as its slug, stored as
 // `path#slug` so the Human can open the section it names.
-function docReference(root, doc) {
+function docReference(root, doc, label = '--doc') {
   const at = doc.indexOf('#');
   const [file, section] = [doc.slice(0, at), doc.slice(at + 1).trim()];
   const full = path.join(root, file);
-  if (!existsSync(full)) return { problem: `--doc names no file in the project: ${full}. It takes ${DOC_FORMS}` };
+  if (!existsSync(full)) return { problem: `${label} names no file in the project: ${full}. It takes ${DOC_FORMS}` };
   // Every heading, of any level, outside code fences: each is a section a link can name.
   const slugs = [...unfencedLines(readFileSync(full, 'utf8'))].map((line) => /^ {0,3}#{1,6}\s+(.+?)[\s#]*$/u.exec(line)?.[1]).filter(Boolean).map(slugOf);
   const slug = slugs.includes(section) ? section : slugOf(section);
   if (!slugs.includes(slug)) {
-    return { problem: `--doc names no section "${section}" in ${file}; its sections are: ${slugs.join(', ') || 'none'}. It takes ${DOC_FORMS}` };
+    return { problem: `${label} names no section "${section}" in ${file}; its sections are: ${slugs.join(', ') || 'none'}. It takes ${DOC_FORMS}` };
   }
   return { reference: `${file}#${slug}` };
 }
@@ -281,6 +287,7 @@ function notes(item) {
   const parts = [];
   if (priority) parts.push(`priority ${priority.value}, set by ${byWords(priority.set_by)}`);
   if (decision === 'decided') parts.push(`decided by ${byWords(by)}: ${reason}`);
+  if (verdictHolds(item.decision)) parts.push('the Human decides before any draft');
   if (item.proposed === 'covered') parts.push('covered by the findings above');
   if (taskNumbers(item.title ?? item.text ?? '').length) parts.push('as the report wrote it: say which task in words');
   return parts.length ? ` (${parts.join('; ')})` : '';
@@ -313,6 +320,14 @@ function write(dir, name, keys, entry, said) {
   if (missing.length || !targets.length) {
     const which = !missing.length ? 'No key was given' : missing.length > 1 ? `${missing.length} keys name no item` : 'One key names no item';
     return fail(`${which} open to triage through ${owner.title}, so nothing was recorded; \`aidrian audits pending <report> --json\` gives each item's key and its record command`);
+  }
+  // A conforms or silent verdict means changing the behaviour is a product decision: no issue or fix before the Human's.
+  if (entry.decision === 'issue' || entry.decision === 'fix-now') {
+    const held = targets.filter(({ item }) => verdictHolds(item.decision));
+    if (held.length) {
+      const lines = held.map(({ item }) => `- ${itemWords(item)}: the verdict is that the product ${verdictHolds(item.decision) === 'conforms' ? 'conforms to the rule' : 'has no rule that settles it'}`);
+      return fail([`Nothing was recorded. Changing this behaviour is a product decision, so the Human decides first, with \`record ... decided --by human\`:`, ...lines].join('\n'));
+    }
   }
   recordDecision(dir, targets, entry);
   const after = listAudits(dir);

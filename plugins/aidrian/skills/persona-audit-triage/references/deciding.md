@@ -1,8 +1,9 @@
 # Deciding an item
 
-Read before the first question of step 5, and § The tracker at step 3: which tracker, how to ask, how to search for
-duplicates, re-rank, take a product decision, close a finding as documented, and adopt a recommendation the Human
-delegates.
+Read before the first question of step 5, and § The tracker at step 3.
+
+Sections: The tracker; How to ask; What follows a decision; A rule verdict; Search for an existing issue first; Priority;
+A product decision before an issue; Works as documented; A delegated answer.
 
 ## The tracker
 
@@ -28,6 +29,37 @@ guess it from a remote or a key. When that knowledge names none, the tracker is 
   a width, a host, or an account, is solved.
 - A doc gap goes to `harness-librarian` for a persona or product-access doc in the knowledge, else to `doc-updater`.
 - A `needs_trace` finding's issue says the cause was not traced; a `likely_cause` goes in labelled as likely.
+
+## A rule verdict
+
+A persona finding reports what a person experienced. It never settles whether the product breaks a rule, even when it
+cites one: that citation is a lead to check. So before a draft may call a change a conformance fix, or say "no new
+product decision", a verdict from `product-manager`, or the project's product owner, must exist for that finding.
+
+A finding needs one when its draft would state or imply what the rule is, or when it asks to change behaviour rather
+than fix a defect the product itself reports as an error. A plain crash or a broken string needs none. Hand the
+findings that need one to the product owner together, with step 4's, and ask for one of three answers:
+
+| Verdict | Means | What follows |
+| --- | --- | --- |
+| `breaks` | The product breaks the rule | A conformance fix: the draft may say so, citing the rule |
+| `conforms` | The product follows the rule, so changing it is a product decision | The Human decides before any draft says what to build; also a candidate for `documented` |
+| `silent` | The docs do not settle it, also a product decision | The Human decides before any draft says what to build |
+
+The verdict quotes the rule with its doc's path and section. It follows any term the rule leaves undefined, such as
+an amount, a limit, or a time span, into the docs that define it, decision records included. A paragraph that names a
+term without its value settles nothing.
+
+Record it as the finding's `decided`, the verdict's word first; a `silent` says what was searched instead of quoting:
+
+```bash
+aidrian audits record <report> '<audit_key>' decided --by product-manager --reason 'conforms: "<the rule>" <path#section-slug>'
+```
+
+The command checks the cited section exists, and refuses `issue` and `fix-now` after a `conforms` or `silent` until a
+`decided --by human` follows. Here a delegated "your recommendation" is the Human's decision: record it `--by human`,
+with the reason naming whose pick it adopts. In `auto`, record both `defer`, with the verdict as the reason.
+The verdict stays in `triage.json` under `history` through the final outcome.
 
 ## Search for an existing issue first
 

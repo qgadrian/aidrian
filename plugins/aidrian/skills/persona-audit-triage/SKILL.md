@@ -79,7 +79,8 @@ Not reached line that restates them, `proposed: covered`; Not reached lines; doc
 
 In both modes, a finding that touches a product rule in the `product_sensitive` knowledge, or an open question in a
 product doc, as a report's "already an open question" says, goes to `product-manager` with its evidence before any
-decision. No issue is drafted before its answer. In `auto`, one it does not settle is recorded `defer`, never filed.
+decision, for a verdict where deciding.md § A rule verdict asks one. No issue is drafted before its answer. In `auto`,
+one it does not settle is recorded `defer`, never filed.
 
 **Done when** each such finding has the product manager's answer.
 

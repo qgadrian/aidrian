@@ -8,6 +8,10 @@ Read before the first `issue` of a run: what the `agent-issue-writer` skill gets
 - Pass the finding, its steps, its quote, its evidence, its `labels`, its `source` line for the body, and its
   `audit_key` for a hidden footer only, as `pending --json` gives them. The source line names the report in words and
   the finding by its title, with the report's path as its location; the key never goes in the title or the first lines.
+- Before a draft states what a rule is, calls itself a conformance fix, or says "no new product decision", the finding
+  has a `breaks` verdict, as [deciding.md](deciding.md) § A rule verdict says. The body carries the verdict's quote and
+  its `path#section`, from the item's decision or its `history`. After `conforms` or `silent`, the body builds what the
+  Human decided and says so, and never calls the change a conformance fix.
 - Pass a priority `pending` shows as the issue's priority, and a `decided` finding's decision in its body.
 - In `confirm`, the skill shows the draft, creates the issue after the Human approves it, and only then may create a
   missing label the Human approved. In `auto`, it creates the issue at once and leaves a missing label out.

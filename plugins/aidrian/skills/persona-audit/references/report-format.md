@@ -17,6 +17,8 @@ Each finding has:
   `blocker` is only for a `walked`, `observed` finding whose task is `blocked`; at `seen` or `read` the most is `friction`;
 - every screenshot cited by its full path from the audits folder, `<report name>/<file>`, each time it is cited:
   never a suffix such as `-24.jpg`, which names no file for the reader or the triage;
+- what the person experienced, never whether the product breaks a rule: a finding that says a rule is broken cites
+  the rule, and that citation stays a lead for the triage to check;
 - for a `walked` finding, the steps that reach it, and the persona's words: one or two sentences in their `## Voice`
   when the doc has one. A finding that was not walked has neither: a quote needs a walk;
 - the technical finding, where in the code when found, and its owner, picked by the `knowledge` skill's agent rule:

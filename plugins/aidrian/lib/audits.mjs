@@ -34,6 +34,34 @@ export const slugOf = (heading) => heading.trim().toLowerCase().replace(/[^\p{L}
 
 // Who made a pick: the Human, or the agent whose recommendation the Human adopted, by its role.
 const BY = /^(?:human|[a-z0-9]+(?:-[a-z0-9]+)*)$/u;
+// A rule verdict, kept as a `decided` reason: "breaks: <the rule quoted> <path#section>", "conforms: ...", or "silent:
+// <what was searched>". Conforms and silent mean that changing the behaviour is a product decision, so only the Human
+// can open the way to an issue or a fix (verdictHolds). docs/personas.md#rule-verdicts.
+const VERDICT = /^(breaks|conforms|silent):\s*(\S[\s\S]*)?$/u;
+const CITATION = /[^\s"'`()]+\.[A-Za-z0-9]+#[^\s"'`()]+/u;
+const verdictOf = (reason) => VERDICT.exec(reason ?? '')?.[1] ?? null;
+// The doc a verdict cites, `path#section`, or null. Only `breaks` and `conforms` quote a rule.
+export const verdictCitation = (reason) => (['breaks', 'conforms'].includes(verdictOf(reason)) ? CITATION.exec(reason)?.[0] ?? null : null);
+// Why a `decided` reason is no usable verdict, or null when it is one or is no verdict at all.
+export function verdictProblem(reason) {
+  const verdict = verdictOf(reason);
+  if (!verdict) return null;
+  if (!VERDICT.exec(reason)[2]) return `a ${verdict} verdict says what it rests on, after "${verdict}:"`;
+  if (verdict !== 'silent' && !verdictCitation(reason)) return `a ${verdict} verdict quotes the rule and cites it as path#section, the section as its slug`;
+  return null;
+}
+// The verdict that still holds an item back from an issue or a fix: a conforms or silent verdict with no `decided` of
+// the Human's after it. An agent's plain decision after the verdict opens nothing.
+export function verdictHolds(entry) {
+  const decisions = [...(entry?.history ?? []), ...(entry?.decision === 'decided' ? [entry] : [])].reverse();
+  for (const { reason, by } of decisions) {
+    if (by === 'human') return null;
+    const verdict = verdictOf(reason);
+    if (verdict === 'conforms' || verdict === 'silent') return verdict;
+  }
+  return null;
+}
+
 // Whether an item still waits for a final outcome: no entry, a priority alone, or a decision that is not final.
 export const untriaged = (item) => !FINAL.includes(item.decision?.decision);
 export const TRIAGE_FILE = 'triage.json';
@@ -231,7 +259,8 @@ export function readTriage(dir) {
 
 // Records one decision for every target, { report, id }, in one write: under the lock of triage.json, read to write,
 // and the file replaced in one rename, so a bulk record lands whole or not at all. A decision keeps the item's
-// priority; a priority (`{ priority }`) keeps its decision: the two are set apart.
+// priority; a priority (`{ priority }`) keeps its decision: the two are set apart. A `decided` entry moves to `history`
+// when another decision follows it, so a verdict and the Human's decision outlast the final outcome.
 export function recordDecision(dir, targets, entry) {
   const file = path.join(dir, TRIAGE_FILE);
   mkdirSync(dir, { recursive: true });
@@ -239,7 +268,8 @@ export function recordDecision(dir, targets, entry) {
     const triage = readTriage(dir);
     for (const { report, id } of targets) {
       const before = triage.reports[report]?.[id] ?? {};
-      const next = entry.decision ? { ...entry, ...(before.priority ? { priority: before.priority } : {}) } : { ...before, ...entry };
+      const history = [...(before.history ?? []), ...(entry.decision && before.decision === 'decided' ? [{ reason: before.reason, by: before.by, date: before.date }] : [])];
+      const next = entry.decision ? { ...entry, ...(before.priority ? { priority: before.priority } : {}), ...(history.length ? { history } : {}) } : { ...before, ...entry };
       triage.reports[report] = { ...triage.reports[report], [id]: next };
     }
     const temporary = `${file}.${process.pid}.tmp`;
@@ -256,6 +286,7 @@ export function decisionProblem({ decision, issue, url, reason, doc, by }) {
   if ((decision === 'issue' || decision === 'duplicate') && !issue && !url) return `${decision} needs --issue KEY or --url URL`;
   if ((decision === 'drop' || decision === 'covered' || decision === 'decided') && !reason) return `${decision} needs --reason${decision === 'decided' ? ', the decision itself' : ''}`;
   if (decision === 'decided' && !by) return 'decided needs --by, who made the decision';
+  if (decision === 'decided' && verdictProblem(reason)) return verdictProblem(reason);
   if (decision === 'documented' && !DOC.test(doc ?? '')) return `documented needs --doc <path#section>: ${DOC_FORMS}`;
   return null;
 }

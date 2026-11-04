@@ -549,6 +549,7 @@ such as an index it cannot read, finds nothing and prints one line naming what i
 found still counts. A missing config.json gives the defaults, so the guard is off, except with HEAD unborn in a
 repository that has branches: `git switch --orphan` empties the working tree, config.json with it, so the guard reads
 the config.json committed on `origin/HEAD`, else on the local `main`, else on the first branch that holds one.
+For a project below the repository root, `--project <folder>` names it, and the guard reads that folder's config.json on the same branch.
 One that is there but does not load,
 as when it does not parse, prints `aidrian pre-commit: config.json unreadable; not checked` and lets the commit run.
 

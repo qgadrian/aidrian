@@ -305,7 +305,7 @@ test('aidrian audits: list, import after review, pending, and record every decis
   assert.equal(result.stdout, `recorded "the second language mixes formal and informal address": drop; ${NEW_TITLE} is fully triaged\n`);
   noIds(result.stdout);
   const triage = JSON.parse(readFileSync(path.join(audits, 'triage.json'), 'utf8'));
-  assert.deepEqual(triage.reports[NEW].F1, { decision: 'issue', issue: 'ABC-1', url: 'https://tracker.example.com/ABC-1', reason: null, date: triage.reports[NEW].F1.date });
+  assert.deepEqual(triage.reports[NEW].F1, { decision: 'issue', issue: 'ABC-1', url: 'https://tracker.example.com/ABC-1', reason: null, doc: null, by: null, date: triage.reports[NEW].F1.date });
   assert.deepEqual(triage.reports[OLD].F3.reason, 'covered by the next second-language pass');
   assert.match(run('list').stdout, new RegExp(`- ${OLD_TITLE}: replaced by ${NEW_TITLE.toLowerCase()}; nothing of it is left to triage\n- ${NEW_TITLE}: 11 findings, fully triaged\n`, 'u'));
   assert.equal(run('pending', NEW).stdout, `${NEW_TITLE}: fully triaged\n`);
@@ -425,4 +425,49 @@ test('the triage eval scaffolds seed the bike-shop reports in the run folder\'s 
   assert.deepEqual(seed('persona-audit-triage-import'), [[OLD, 'replaced'], [NEW, 'no-sidecar']]);
   assert.deepEqual(seed('persona-audit-triage-confirm'), [[OLD, 'replaced'], [NEW, 'ok']]);
   assert.deepEqual(seed('persona-audit-triage-trigger'), [[OLD, 'replaced'], [NEW, 'ok']]);
+});
+
+test('record: decided waits for a final outcome, documented cites a doc, rank sets a priority apart from the severity, and --by names who picked', (t) => {
+  const { root, audits, run } = project(t);
+  assert.equal(run('import', NEW, '--not-rechecked', 'F2,F3', '--carried-forward', 'F1', '--write').status, 0);
+  const untriagedCount = () => JSON.parse(run('list', '--json').stdout).find((r) => r.report === NEW).untriaged;
+  const start = untriagedCount();
+
+  // decided: the decision text and who took it; the item stays untriaged.
+  assert.match(run('record', NEW, 'F7', 'decided', '--by', 'product-manager').stderr, /decided needs --reason, the decision itself/);
+  assert.match(run('record', NEW, 'F7', 'decided', '--reason', 'block past times').stderr, /decided needs --by, who made the decision/);
+  assert.match(run('record', NEW, 'F7', 'decided', '--reason', 'x', '--by', 'The PM').stderr, /--by names who made the pick: human, or the role/);
+  let result = run('record', NEW, 'F7', 'decided', '--reason', 'staff may not book a time that has passed', '--by', 'product-manager');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^recorded "the desk can book a time that already passed, with no warning": decided by product-manager; /u);
+  assert.equal(untriagedCount(), start, 'a decided finding is still untriaged');
+  assert.match(run('pending', NEW).stdout, /\n- the desk can book a time that already passed, with no warning \(decided by product-manager: staff may not book a time that has passed\)\n/u);
+
+  // documented: needs a doc of the project, by path and section; a final outcome.
+  assert.match(run('record', NEW, 'F11', 'documented').stderr, /documented needs --doc <path#section>/);
+  assert.match(run('record', NEW, 'F11', 'documented', '--doc', 'docs/hours.md').stderr, /documented needs --doc <path#section>/, 'a path alone names no section');
+  assert.match(run('record', NEW, 'F11', 'documented', '--doc', 'docs/hours.md#opening').stderr, /--doc names no file in the project/);
+  mkdirSync(path.join(root, 'docs'), { recursive: true });
+  writeFileSync(path.join(root, 'docs/hours.md'), '# Hours\n\n## Opening\n');
+  assert.equal(run('record', NEW, 'F11', 'documented', '--doc', 'docs/hours.md#opening').status, 0);
+  assert.equal(untriagedCount(), start - 1, 'documented is final');
+
+  // rank: a priority with who set it, kept apart from the severity, shown by pending, first in its group.
+  assert.match(run('rank', NEW, 'F6', 'top', '--by', 'product-manager').stderr, /priority must be urgent, high, medium, low/);
+  assert.match(run('rank', NEW, 'F6', 'urgent').stderr, /a priority needs --by/);
+  assert.equal(run('rank', NEW, 'F1', 'medium', '--by', 'product-manager', '--reason', 'staff can still seat them').status, 0);
+  assert.equal(run('rank', NEW, 'F6', 'urgent', '--by', 'human').status, 0);
+  const text = run('pending', NEW).stdout;
+  assert.match(text, /## Blocker, for the screens and their code\n- a drop-in is not shown as a drop-in \(priority medium, set by product-manager\)\n/u, 'the severity stays; the priority shows beside it');
+  assert.match(text, /## Friction, for the screens and their code\n- old messages stay on screen and say the wrong thing \(priority urgent, set by the Human\)\n- the move list/u, 'a set priority comes first in its group');
+  assert.equal(untriagedCount(), start - 1, 'a priority is no decision');
+  // A later decision keeps the priority, and the sidecar's severity is never rewritten.
+  assert.equal(run('record', NEW, 'F1', 'issue', '--issue', 'ABC-9', '--by', 'ux-specialist').status, 0);
+  const triage = JSON.parse(readFileSync(path.join(audits, 'triage.json'), 'utf8')).reports[NEW];
+  assert.deepEqual([triage.F1.decision, triage.F1.by, triage.F1.priority.value, triage.F1.priority.set_by], ['issue', 'ux-specialist', 'medium', 'product-manager']);
+  assert.equal(triage.F7.reason, 'staff may not book a time that has passed');
+  assert.equal(triage.F11.doc, 'docs/hours.md#opening');
+  const sidecar = JSON.parse(readFileSync(path.join(audits, 'front-desk-2026-05-02-2.json'), 'utf8'));
+  assert.equal(sidecar.findings[0].severity, 'blocker');
+  noIds(text);
 });

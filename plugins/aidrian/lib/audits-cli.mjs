@@ -12,7 +12,7 @@ import { parseArgs } from 'node:util';
 
 import { parseReport } from './audit-import.mjs';
 import {
-  decisionProblem, DECISIONS, itemWords, taskNumbers, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, reportTitle, searchLabels, sidecarName, sidecarProblems, today,
+  decisionProblem, DECISIONS, itemWords, PRIORITIES, priorityProblem, untriaged, taskNumbers, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, reportTitle, searchLabels, sidecarName, sidecarProblems, today,
 } from './audits.mjs';
 import { commandConfig } from './config.mjs';
 import { projectAt, stateDir } from './project.mjs';
@@ -28,15 +28,18 @@ const OPTIONS = {
   issue: { type: 'string' },
   url: { type: 'string' },
   reason: { type: 'string' },
+  by: { type: 'string' },
+  doc: { type: 'string' },
 };
 
-const ACTIONS = { list, check, import: importReport, pending, record };
+const ACTIONS = { list, check, import: importReport, pending, record, rank };
 
 export const commands = {
   audits: {
     usage:
       'list [--json] | check REPORT | import REPORT [--not-rechecked IDS] [--carried-forward IDS] [--from FILE] [--write] [--json] ' +
-      `| pending REPORT [--json] | record REPORT ID ${DECISIONS.join('|')} [--issue KEY] [--url URL] [--reason TEXT]`,
+      `| pending REPORT [--json] | record REPORT ID ${DECISIONS.join('|')} [--issue KEY] [--url URL] [--reason TEXT] [--doc PATH#SECTION] [--by WHO] ` +
+      `| rank REPORT ID ${PRIORITIES.join('|')} --by WHO [--reason TEXT]`,
     about: 'list the persona audits in the state folder and what is untriaged, check or import a sidecar, and record triage decisions',
     async run(args) {
       const { values, positionals } = parseArgs({ args, allowPositionals: true, options: OPTIONS });
@@ -45,7 +48,7 @@ export const commands = {
       const project = projectAt(path.resolve(values.project ?? '.'));
       const config = commandConfig(project);
       const dir = path.join(stateDir(project, { config }), 'audits');
-      return ACTIONS[action]({ values, rest, dir, triage: config.audits.triage });
+      return ACTIONS[action]({ values, rest, dir, triage: config.audits.triage, root: project.root });
     },
   },
 };
@@ -79,7 +82,7 @@ function statusText(each, titles = new Map(), reports = []) {
     const newer = titles.get(each.replaced_by) ?? each.replaced_by;
     // Never "replaced" alone: a replaced report's findings are triaged through the report that replaces it.
     if (each.awaiting_sort) return `replaced by ${newer}; its ${plural(each.awaiting_sort)} have no decision yet, and wait for that report's import to sort them`;
-    const open = (reports.find((one) => one.report === each.replaced_by)?.items ?? []).filter((item) => item.kind === 'not_rechecked' && !item.decision).length;
+    const open = (reports.find((one) => one.report === each.replaced_by)?.items ?? []).filter((item) => item.kind === 'not_rechecked' && untriaged(item)).length;
     return open ? `replaced by ${newer}, which triages the ${plural(open)} of it not re-checked` : `replaced by ${newer}; nothing of it is left to triage`;
   }
   const sort = each.awaiting_sort ? `, then sort the ${plural(each.awaiting_sort)} of the run it replaces` : '';
@@ -215,18 +218,49 @@ function pending({ values, rest: [name], dir, triage }) {
   console.log(`Duplicates: open issues labelled ${labelled} are searched first.`);
   for (const group of groups) {
     console.log(`## ${group.title}`);
-    for (const item of group.items) console.log(`- ${item.title ?? item.text}${item.proposed === 'covered' ? ' (covered by the findings above)' : ''}`);
+    for (const item of group.items) console.log(`- ${item.title ?? item.text}${notes(item)}`);
   }
   return 0;
 }
 
-function record({ values, rest: [name, id, decision], dir }) {
-  const { report, problem } = locate(dir, name);
-  if (problem) return fail(problem);
+function record({ values, rest: [name, id, decision], dir, root }) {
   if (!id || !decision) return fail(usageLines('audits', commands.audits.usage, 'usage: ').join('\n'));
-  const entry = { decision, issue: values.issue ?? null, url: values.url ?? null, reason: values.reason ?? null, date: today() };
+  const entry = {
+    decision, issue: values.issue ?? null, url: values.url ?? null, reason: values.reason ?? null, doc: values.doc ?? null, by: values.by ?? null, date: today(),
+  };
   const bad = decisionProblem(entry);
   if (bad) return fail(bad);
+  // A doc a `documented` outcome cites is a file of the project, so the Human can open the section it names.
+  if (entry.doc && !existsSync(path.join(root, entry.doc.split('#')[0]))) return fail(`--doc names no file in the project: ${path.join(root, entry.doc.split('#')[0])}`);
+  return write(dir, name, id, entry, (item) => (decision === 'decided' ? `decided by ${byWords(entry.by)}` : decision));
+}
+
+// `rank`: a triage priority for an item, apart from the audit's severity, which stays as the run wrote it.
+function rank({ values, rest: [name, id, value], dir }) {
+  if (!id || !value) return fail(usageLines('audits', commands.audits.usage, 'usage: ').join('\n'));
+  const bad = priorityProblem({ value, by: values.by });
+  if (bad) return fail(bad);
+  const priority = { value, set_by: values.by, reason: values.reason ?? null, date: today() };
+  return write(dir, name, id, { priority }, () => `priority ${value}, set by ${byWords(values.by)}`);
+}
+
+// Who made a pick, in words: "the Human", or the agent's role.
+const byWords = (by) => (by === 'human' ? 'the Human' : by);
+
+// What a pending line adds to an item's title: a priority a reviewer set, a decision taken, or the covered proposal.
+function notes(item) {
+  const { priority, decision, reason, by } = item.decision ?? {};
+  const parts = [];
+  if (priority) parts.push(`priority ${priority.value}, set by ${byWords(priority.set_by)}`);
+  if (decision === 'decided') parts.push(`decided by ${byWords(by)}: ${reason}`);
+  if (item.proposed === 'covered') parts.push('covered by the findings above');
+  return parts.length ? ` (${parts.join('; ')})` : '';
+}
+
+// Writes one change to an item's triage entry, once the item is one the report offers.
+function write(dir, name, id, entry, said) {
+  const { report, problem } = locate(dir, name);
+  if (problem) return fail(problem);
   let triage;
   try {
     triage = readTriage(dir);
@@ -245,7 +279,7 @@ function record({ values, rest: [name, id, decision], dir }) {
   const left = listAudits(dir).find((each) => each.report === holder.report).untriaged;
   const item = holder.items.find((one) => one.report === report && one.id === id);
   const where = holder.title;
-  console.log(`recorded ${itemWords(item)}: ${decision}; ${left ? `${left} untriaged left in ${where}` : `${capital(where)} is fully triaged`}`);
+  console.log(`recorded ${itemWords(item)}: ${said(item)}; ${left ? `${left} untriaged left in ${where}` : `${capital(where)} is fully triaged`}`);
   return 0;
 }
 

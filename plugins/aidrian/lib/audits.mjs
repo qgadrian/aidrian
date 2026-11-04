@@ -18,8 +18,18 @@ export const LABELS = ['observed', 'opinion'];
 export const LEVELS = ['walked', 'seen', 'read'];
 // issue: filed in the tracker. fix-now: routed to its owner. duplicate: an issue already covers it. drop: not worth
 // it, with a reason. defer: decided later, on purpose. covered: a Not reached line that restates the replaced run's
-// findings this run did not re-check, which carry the decision themselves, with a reason.
-export const DECISIONS = ['issue', 'fix-now', 'duplicate', 'drop', 'defer', 'covered'];
+// findings this run did not re-check, which carry the decision themselves, with a reason. documented: the product works
+// as a doc says, with the doc's `path#section`. decided: a product decision taken, with who took it, before an issue
+// can exist; the one decision that is not final, so the item stays untriaged until it reaches one of the others.
+export const DECISIONS = ['issue', 'fix-now', 'duplicate', 'drop', 'defer', 'covered', 'documented', 'decided'];
+export const FINAL = DECISIONS.filter((decision) => decision !== 'decided');
+// A triage priority, apart from the audit's severity, which is never rewritten: a reviewer re-ranks a finding with it.
+// The words of the trackers' own priority fields.
+export const PRIORITIES = ['urgent', 'high', 'medium', 'low'];
+// Who made a pick: the Human, or the agent whose recommendation the Human adopted, by its role.
+const BY = /^(?:human|[a-z0-9]+(?:-[a-z0-9]+)*)$/u;
+// Whether an item still waits for a final outcome: no entry, a priority alone, or a decision that is not final.
+export const untriaged = (item) => !FINAL.includes(item.decision?.decision);
 export const TRIAGE_FILE = 'triage.json';
 
 // The plugin's agents a finding names as its owner, in the words the Human reads. A project agent has no entry, and
@@ -213,13 +223,16 @@ export function readTriage(dir) {
   return value;
 }
 
-// Records one decision, under the lock of triage.json, read to write, and replaces the file in one rename.
+// Records one decision, under the lock of triage.json, read to write, and replaces the file in one rename. A decision
+// keeps the item's priority; a priority (`{ priority }`) keeps its decision: the two are set apart.
 export function recordDecision(dir, report, id, entry) {
   const file = path.join(dir, TRIAGE_FILE);
   mkdirSync(dir, { recursive: true });
   return withLocks([file], () => {
     const triage = readTriage(dir);
-    triage.reports[report] = { ...triage.reports[report], [id]: entry };
+    const before = triage.reports[report]?.[id] ?? {};
+    const next = entry.decision ? { ...entry, ...(before.priority ? { priority: before.priority } : {}) } : { ...before, ...entry };
+    triage.reports[report] = { ...triage.reports[report], [id]: next };
     const temporary = `${file}.${process.pid}.tmp`;
     writeFileSync(temporary, `${JSON.stringify(triage, null, 2)}\n`);
     renameSync(temporary, file);
@@ -228,10 +241,20 @@ export function recordDecision(dir, report, id, entry) {
 }
 
 // The problem with a decision's fields, or null: an issue or a duplicate names the tracker issue; a drop gives a reason.
-export function decisionProblem({ decision, issue, url, reason }) {
+export function decisionProblem({ decision, issue, url, reason, doc, by }) {
   if (!DECISIONS.includes(decision)) return `decision must be ${DECISIONS.join(', ')}`;
+  if (by != null && !BY.test(by)) return '--by names who made the pick: human, or the role of the agent whose pick it was, such as product-manager';
   if ((decision === 'issue' || decision === 'duplicate') && !issue && !url) return `${decision} needs --issue KEY or --url URL`;
-  if ((decision === 'drop' || decision === 'covered') && !reason) return `${decision} needs --reason`;
+  if ((decision === 'drop' || decision === 'covered' || decision === 'decided') && !reason) return `${decision} needs --reason${decision === 'decided' ? ', the decision itself' : ''}`;
+  if (decision === 'decided' && !by) return 'decided needs --by, who made the decision';
+  if (decision === 'documented' && !/^[^#\s]+#\S+$/u.test(doc ?? '')) return 'documented needs --doc <path#section>, the doc that says the product works this way';
+  return null;
+}
+
+// The problem with a priority's fields, or null: one of PRIORITIES, set by someone.
+export function priorityProblem({ value, by }) {
+  if (!PRIORITIES.includes(value)) return `priority must be ${PRIORITIES.join(', ')}`;
+  if (!by || !BY.test(by)) return 'a priority needs --by: human, or the role of the agent that set it, such as product-manager';
   return null;
 }
 
@@ -267,7 +290,7 @@ export function listAudits(dir, { triage = readTriage(dir) } = {}) {
     // them into carried forward and not re-checked, so they wait here, and count as untriaged.
     each.awaiting_sort = older && older !== each && each.status !== 'ok' && !each.replaced_by ? older.findings.length : 0;
     if (older && older !== each) older.awaiting_sort = each.awaiting_sort;
-    each.untriaged = each.status === 'replaced' ? 0 : each.items.filter((item) => !item.decision).length + each.awaiting_sort;
+    each.untriaged = each.status === 'replaced' ? 0 : each.items.filter(untriaged).length + each.awaiting_sort;
   }
   return reports;
 }
@@ -306,7 +329,9 @@ function loadReport(dir, report) {
 // grouped by owner and severity, then the replaced report's findings this run did not re-check, then Not reached
 // lines, then doc gaps. Each group: { kind, title, items }, each item with the `labels` its issue would get.
 export function pendingGroups(entry, { labels = [], personas = entry.personas ?? [] } = {}) {
-  const open = (entry.items ?? []).filter((item) => !item.decision).map((item) => ({ ...item, labels: issueLabels(labels, item, personas) }));
+  const open = (entry.items ?? []).filter(untriaged).map((item) => ({ ...item, labels: issueLabels(labels, item, personas) }))
+    // Within a group, a priority a reviewer set comes first, highest first; the audit's own order after.
+    .sort((a, b) => rank(a) - rank(b));
   const groups = [];
   const findings = open.filter((item) => item.kind === 'finding');
   // One heading shape for every group of findings: "<Severity>, for <owner in plain words>". A blocker is a group alone.
@@ -359,6 +384,10 @@ export function auditNudge(dir) {
   }
 }
 
+const rank = (item) => {
+  const at = PRIORITIES.indexOf(item.decision?.priority?.value);
+  return at === -1 ? PRIORITIES.length : at;
+};
 const capitalize = (text) => text.charAt(0).toUpperCase() + text.slice(1);
 // A task named by its number, such as "Task 2": the reader cannot place it, so a report names a task by its title.
 const TASK_NUMBER = /\bTasks? \d+\b/gu;

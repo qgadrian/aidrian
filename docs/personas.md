@@ -148,10 +148,19 @@ change; it never approves, blocks, or posts. A project that wants a persona pass
 
 The `persona-audit-triage` skill takes each item of a report to a decision with the Human: each finding, each
 `Not reached` line, each doc gap, and each finding of a replaced report that the new run did not re-check.
-A decision is one of `issue`, `fix-now`, `duplicate`, `drop`, `defer`, or `covered`: a `Not reached` line of an
-imported report that restates the replaced report's findings not re-checked, which `pending` offers with those
-findings, so the Human decides them once. A report is fully triaged when every item
-has one. The skill sends a finding about a product rule, or an open question in a product doc, to `product-manager`
+A final decision is one of `issue`, `fix-now`, `duplicate`, `drop`, `defer`, `documented`, or `covered`.
+`documented` means the product works as a doc says, and cites it as `path#section`; the skill prefers it to `drop`.
+`covered` is a `Not reached` line of an imported report that restates the replaced report's findings not re-checked,
+which `pending` offers with those findings, so the Human decides them once. `decided` comes before a final one: a
+product decision an issue needs first, with the decision and who took it; the item stays untriaged until it reaches
+a final decision. A report is fully triaged when every item has a final one.
+
+A triage priority, `urgent`, `high`, `medium`, or `low`, is set apart from the audit's severity, which is never
+rewritten: a reviewer re-ranks a finding with it, and `pending` shows it beside the finding, first in its group.
+Each decision and priority records who made the pick, `human` or the role of the agent whose pick the Human adopted.
+The skill searches the tracker for an existing issue by the finding's words, the surface it touches, and the issues
+opened or updated since the audit, before the audit label, and shows the Human any open issue whose decision a
+triage decision would contradict before it drafts one. The skill sends a finding about a product rule, or an open question in a product doc, to `product-manager`
 first; it drafts an issue with `agent-issue-writer` and creates it in the project's tracker. It names owners in plain
 words, from each finding's `owner_description`.
 
@@ -172,7 +181,7 @@ location. A second report with the same words gets an ordinal: "the second front
 The decisions live in `<state>/audits/triage.json`, never in the repository, keyed by report file and item id:
 
 ```json
-{ "version": 1, "reports": { "floor-manager-2026-11-03.md": { "F1": { "decision": "issue", "issue": "ABC-12", "url": null, "reason": null, "date": "2026-11-04" } } } }
+{ "version": 1, "reports": { "floor-manager-2026-11-03.md": { "F1": { "decision": "issue", "issue": "ABC-12", "url": null, "reason": null, "doc": null, "by": "human", "date": "2026-11-04", "priority": { "value": "high", "set_by": "product-manager", "reason": null, "date": "2026-11-04" } } } } }
 ```
 
 `aidrian audits` reads and writes them; `--project <dir>` runs it for another project:
@@ -202,9 +211,13 @@ file names the other commands take.
   reached` lines, then doc gaps.
   With `--json`, it also gives `issue_creation`, the mode, `search_labels`, the plain labels, and for each item its
   `labels`, its `source` line for an issue body, and its `audit_key`.
-- `record <report> <id> <decision> [--issue KEY] [--url URL] [--reason TEXT]`: records one decision. `issue` and
-  `duplicate` need `--issue` or `--url`, and `drop` and `covered` need `--reason`. A finding of a replaced report is recorded under
+- `record <report> <id> <decision> [--issue KEY] [--url URL] [--reason TEXT] [--doc PATH#SECTION] [--by WHO]`:
+  records one decision, and keeps the item's priority. `issue` and `duplicate` need `--issue` or `--url`; `drop` and
+  `covered` need `--reason`; `decided` needs `--reason`, the decision, and `--by`; `documented` needs `--doc`, a file
+  of the project and a section. `--by` is `human` or an agent role. A finding of a replaced report is recorded under
   that report. It refuses an id the report does not offer, and a `triage.json` it cannot read.
+- `rank <report> <id> urgent|high|medium|low --by WHO [--reason TEXT]`: sets the item's triage priority, and keeps
+  its decision.
 
 While any report holds untriaged items, the main session's [start lines](hooks.md#start-lines) say how many, in how
 many reports; the count includes `Not reached` lines and doc gaps, and a report without a sidecar counts the items its

@@ -83,6 +83,8 @@ decision. No issue is drafted before its answer. In `auto`, one it does not sett
 
 ## 5. Decide
 
+Read [references/deciding.md](references/deciding.md) before the first question: duplicates, conflicts, priorities,
+and delegated answers.
 In `auto`, ask nothing: take the recommended decision when it is `issue` or `duplicate`, and record any other as
 `defer` with the reason, for the Human. In `confirm`, ask the Human: blockers one at a time, then one question per
 group. Name the owner in plain words, from `owner_description`, never as an agent role. Each question lists its items
@@ -91,11 +93,13 @@ group. Name the owner in plain words, from `owner_description`, never as an agen
 | Decision | When | Then |
 | --- | --- | --- |
 | `issue` | Work beyond one small change | `agent-issue-writer` drafts it and creates it in the tracker that skill uses for the project |
-| `duplicate` | An issue already covers it | Search the tracker by words, `search_labels`, and `audit_key`, as the `knowledge` skill's `references/tracker.md` says; record its key |
+| `duplicate` | An open or in-progress issue covers it | Search by content first, as deciding.md says; record its key |
 | `fix-now` | One small, clear change | Route it to the owner the finding names, with `other_owners` |
+| `documented` | It works as a doc says; prefer it to `drop` | Record `--doc <path#section>` |
 | `drop` | Not worth its cost, or not a problem | Record the reason |
 | `defer` | Decided later | Record it |
 | `covered` | A `proposed: covered` line, once its group is decided | Record the reason |
+| `decided` | A product decision an issue needs first; not final | Record `--reason '<decision>' --by <who>` |
 
 - A Not reached line is a follow-up for a rerun: an `issue` or `defer` to walk that task again once what stopped it,
   a width, a host, or an account, is solved.
@@ -119,7 +123,8 @@ Then record it, with the report the item names, which is the earlier report for 
 aidrian audits record <report> <id> <decision> [--issue <key>] [--url <url>] [--reason '<why>']
 ```
 
-`issue` and `duplicate` need `--issue` or `--url`; `drop` and `covered` need `--reason`. Never edit `triage.json` by hand.
+`issue` and `duplicate` need `--issue` or `--url`; `drop` and `covered` need `--reason`. `--by <role or human>`
+records whose pick it was. Never edit `triage.json` by hand.
 A route that fails records nothing: the item stays untriaged, with the failure in the summary.
 
 **Done when** `aidrian audits pending <report>` prints `fully triaged`, or the summary names what is left and why.
@@ -127,5 +132,5 @@ A route that fails records nothing: the item stays untriaged, with the failure i
 ## 7. Summary
 
 In `auto`, first the issues created, each with its link, and any label left out. Then per item: its title, decision,
-and the issue link or reason; the untriaged count before and after; and the commands run. One report per run;
+whose pick it was, and the issue link or reason; the untriaged count before and after; and the commands run. One report per run;
 take the next only when the Human asks.

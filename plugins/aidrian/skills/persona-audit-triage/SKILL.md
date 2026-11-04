@@ -45,10 +45,11 @@ Once per report, and only with the Human: in `auto`, skip such a report and name
 report's findings, each title with its key. Read the report whole and check each finding of the draft against it:
 severity, tasks, owner, `owner_description` in plain words, evidence, and `needs_trace` for an untraced cause.
 
-When the report replaces an earlier one, read that report too and sort its findings, as the "This run replaces"
-sentence says: carried forward, those a finding here covers; not re-checked, those this run did not look at.
-Show the Human a table of the draft (title, severity, owner in plain words, screenshots) and the earlier findings,
-sorted, by title. After the Human's yes, pass their keys:
+When the report replaces an earlier one, its findings have no decision yet, whatever `list` says of that report:
+the import sorts them. Read it too, and sort each, as the "This run replaces" sentence says: carried forward, when a
+finding here covers it; not re-checked, when this run did not look at it. Show the Human a table of the draft
+(title, severity, owner in plain words, screenshots), then every earlier finding by title with its proposed sort,
+and say nothing is written yet. After the Human's yes, pass their keys:
 
 ```bash
 aidrian audits import <report> --not-rechecked F2,F3 --carried-forward F1 --write
@@ -107,12 +108,8 @@ group. Name the owner in plain words, from `owner_description`, never as an agen
 
 In `confirm`, act on an item only after the Human's yes for it:
 
-- `issue`: run the `agent-issue-writer` skill with the finding, its steps, quote, evidence, `labels`, its `source`
-  line for the body, and its `audit_key` for a hidden footer only. In `confirm`, it shows the draft, creates it after the Human
-  approves, and only then may create a missing label. In `auto`, it creates at once and leaves out a missing label.
-  A tracker without labels: they go in the body. Attach each screenshot the finding cites: on GitHub, upload it with
-  `gh image` as the `pr-screenshot` skill's preflight sets up, and put the reference in the body; on Linear, the host's
-  Linear file upload. Neither works: list the screenshots' full paths in the issue, and say they are local.
+- `issue`: run the `agent-issue-writer` skill as [references/issues.md](references/issues.md) says, which also
+  attaches the screenshots; read it before the first issue.
 - `duplicate`: comment on the existing issue with the finding and its evidence, when the Human asks.
 - `fix-now`: dispatch the owner with the finding, its evidence, and the project folder.
 

@@ -157,12 +157,13 @@ test('a report written before sidecars parses into a draft: findings, the report
   assert.deepEqual(fresh.findings.map((f) => [f.id, f.title]), [['F1', 'one'], ['F2', 'two']], 'a heading with no id takes the key of its place');
 });
 
-test('a folder of reports without sidecars counts the newest run, and the run it replaces is not counted twice', (t) => {
+test('a folder of reports without sidecars counts the newest run, and the findings of the run it replaces once, as awaiting the sort', (t) => {
   const dir = auditsDir(t);
   const [old, current] = listAudits(dir);
   assert.deepEqual([old.report, old.status, old.replaced_by, old.untriaged], [OLD, 'replaced', NEW, 0]);
-  assert.deepEqual([current.report, current.status, current.untriaged], [NEW, 'no-sidecar', 15]);
-  assert.equal(auditNudge(dir), 'Audit inbox: 15 untriaged findings in 1 report. The persona-audit-triage skill triages them.');
+  assert.deepEqual([current.report, current.status, current.untriaged, current.awaiting_sort], [NEW, 'no-sidecar', 18, 3], 'its own 15 items and the 3 findings it must sort');
+  assert.equal(old.awaiting_sort, 3);
+  assert.equal(auditNudge(dir), 'Audit inbox: 18 untriaged findings in 1 report. The persona-audit-triage skill triages them.');
 });
 
 test('the start line is empty without audits, and never throws on a broken folder', (t) => {
@@ -225,9 +226,12 @@ test('aidrian audits: list, import after review, pending, and record every decis
   const { audits, run } = project(t);
   let result = run('list');
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, new RegExp(`\n- ${OLD_TITLE}: replaced by ${NEW_TITLE.toLowerCase()}\n- ${NEW_TITLE}: 11 findings, no sidecar: import needed\n`, 'u'));
+  // A replaced run never reads as done while its findings wait for the import to sort them.
+  assert.match(result.stdout, new RegExp(`\n- ${OLD_TITLE}: replaced by ${NEW_TITLE.toLowerCase()}; its 3 findings have no decision yet, and wait for that report's import to sort them\n- ${NEW_TITLE}: 11 findings, no sidecar: import needed, then sort the 3 findings of the run it replaces\n`, 'u'));
+  assert.doesNotMatch(result.stdout, /triaged|nothing of it is left/u);
   noIds(result.stdout);
-  assert.deepEqual(JSON.parse(run('list', '--json').stdout).map((r) => [r.report, r.status, r.findings, r.untriaged]), [[OLD, 'replaced', 3, 0], [NEW, 'no-sidecar', 11, 15]]);
+  assert.deepEqual(JSON.parse(run('list', '--json').stdout).map((r) => [r.report, r.status, r.findings, r.untriaged]), [[OLD, 'replaced', 3, 0], [NEW, 'no-sidecar', 11, 18]]);
+  assert.deepEqual(JSON.parse(run('list', '--json').stdout).map((r) => r.awaiting_sort), [3, 3]);
   assert.match(run('record', NEW, 'F1', 'defer').stderr, /no sidecar: import needed/, 'a report needs its sidecar before a decision');
 
   result = run('import', NEW);
@@ -254,6 +258,7 @@ test('aidrian audits: list, import after review, pending, and record every decis
   noIds(result.stderr);
   result = run('import', NEW, '--not-rechecked', 'F2,F3', '--carried-forward', 'F1', '--write');
   assert.equal(result.status, 0, result.stderr);
+  assert.match(run('list').stdout, new RegExp(`\n- ${OLD_TITLE}: replaced by ${NEW_TITLE.toLowerCase()}, which triages the 2 findings of it not re-checked\n`, 'u'));
   assert.match(run('import', NEW, '--write').stderr, /The sidecar exists already, and a sidecar is never overwritten/);
   result = run('check', NEW);
   assert.match(result.stderr, /- finding "the part-to-order note is not on the board card" cites a screenshot by its suffix alone, "-24\.jpg"/, 'the old prose keeps its shorthand, and check names it');
@@ -302,7 +307,7 @@ test('aidrian audits: list, import after review, pending, and record every decis
   const triage = JSON.parse(readFileSync(path.join(audits, 'triage.json'), 'utf8'));
   assert.deepEqual(triage.reports[NEW].F1, { decision: 'issue', issue: 'ABC-1', url: 'https://tracker.example.com/ABC-1', reason: null, date: triage.reports[NEW].F1.date });
   assert.deepEqual(triage.reports[OLD].F3.reason, 'covered by the next second-language pass');
-  assert.match(run('list').stdout, new RegExp(`- ${NEW_TITLE}: 11 findings, fully triaged\n`, 'u'));
+  assert.match(run('list').stdout, new RegExp(`- ${OLD_TITLE}: replaced by ${NEW_TITLE.toLowerCase()}; nothing of it is left to triage\n- ${NEW_TITLE}: 11 findings, fully triaged\n`, 'u'));
   assert.equal(run('pending', NEW).stdout, `${NEW_TITLE}: fully triaged\n`);
   assert.equal(auditNudge(audits), '');
 
@@ -396,7 +401,7 @@ test('no text a person reads holds a bare finding id or a file suffix: list, pen
   // A second walk on the same day: told apart by an ordinal, not by its file suffix.
   copyFileSync(path.join(FIXTURES, NEW), path.join(audits, 'front-desk-2026-05-02-3.md'));
   human.push(['list, two walks on one day', read('list').stdout]);
-  assert.match(human.at(-1)[1], /- The second front-desk walk on 2026-05-02: 11 findings, no sidecar: import needed\n/u);
+  assert.match(human.at(-1)[1], /- The second front-desk walk on 2026-05-02: 11 findings, no sidecar: import needed[^\n]*\n/u);
   for (const [what, text] of human) {
     assert.ok(text.trim(), `${what} printed something`);
     assert.doesNotMatch(humanText(text.split(audits).join('<audits folder>')), BARE_ID, `${what}:\n${text}`);

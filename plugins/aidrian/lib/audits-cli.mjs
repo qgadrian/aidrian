@@ -53,8 +53,8 @@ export const commands = {
 function list({ values, dir }) {
   const reports = listAudits(dir);
   if (values.json) {
-    console.log(JSON.stringify(reports.map(({ report, title, status, problems, findings, items, untriaged, supersedes, replaced_by: replacedBy }) => ({
-      report, title, status, problems, findings: findings.length, items: items.length, untriaged, supersedes, replaced_by: replacedBy,
+    console.log(JSON.stringify(reports.map(({ report, title, status, problems, findings, items, untriaged, awaiting_sort: awaitingSort = 0, supersedes, replaced_by: replacedBy }) => ({
+      report, title, status, problems, findings: findings.length, items: items.length, untriaged, awaiting_sort: awaitingSort, supersedes, replaced_by: replacedBy,
     }))));
     return 0;
   }
@@ -65,17 +65,25 @@ function list({ values, dir }) {
   // Words for a person: each report by its title, never its file name; --json gives the names the commands take.
   console.log(`Persona audits in ${dir}`);
   const titles = new Map(reports.map((each) => [each.report, each.title]));
-  for (const each of reports) console.log(`- ${capital(each.title)}: ${statusText(each, titles)}`);
+  for (const each of reports) console.log(`- ${capital(each.title)}: ${statusText(each, titles, reports)}`);
   console.log('`aidrian audits list --json` gives the file name each other command takes.');
   return 0;
 }
 
 const capital = (text) => text.charAt(0).toUpperCase() + text.slice(1);
 
-function statusText(each, titles = new Map()) {
+function statusText(each, titles = new Map(), reports = []) {
   const counts = `${each.findings.length} finding${each.findings.length === 1 ? '' : 's'}`;
-  if (each.status === 'replaced') return `replaced by ${titles.get(each.replaced_by) ?? each.replaced_by}`;
-  if (each.status === 'no-sidecar') return `${counts}, no sidecar: import needed`;
+  const plural = (n) => `${n} finding${n === 1 ? '' : 's'}`;
+  if (each.status === 'replaced') {
+    const newer = titles.get(each.replaced_by) ?? each.replaced_by;
+    // Never "replaced" alone: a replaced report's findings are triaged through the report that replaces it.
+    if (each.awaiting_sort) return `replaced by ${newer}; its ${plural(each.awaiting_sort)} have no decision yet, and wait for that report's import to sort them`;
+    const open = (reports.find((one) => one.report === each.replaced_by)?.items ?? []).filter((item) => item.kind === 'not_rechecked' && !item.decision).length;
+    return open ? `replaced by ${newer}, which triages the ${plural(open)} of it not re-checked` : `replaced by ${newer}; nothing of it is left to triage`;
+  }
+  const sort = each.awaiting_sort ? `, then sort the ${plural(each.awaiting_sort)} of the run it replaces` : '';
+  if (each.status === 'no-sidecar') return `${counts}, no sidecar: import needed${sort}`;
   if (each.status === 'invalid') return `${counts}, invalid sidecar: ${each.problems[0]}`;
   return each.untriaged ? `${counts}, ${each.untriaged} of ${each.items.length} items untriaged` : `${counts}, fully triaged`;
 }

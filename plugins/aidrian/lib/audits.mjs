@@ -236,7 +236,8 @@ export function decisionProblem({ decision, issue, url, reason }) {
 }
 
 // Every report in the audits folder `dir`, oldest run first, each as:
-// { report, status, sidecar, problems, findings, items, untriaged, supersedes, replaced_by }.
+// { report, status, sidecar, problems, findings, items, untriaged, awaiting_sort, supersedes, replaced_by }.
+// `awaiting_sort` counts the findings of the replaced report that wait for this report's import to sort them, on both.
 // status: `ok` (a valid sidecar), `invalid` (a sidecar with problems), `no-sidecar` (a report to import), or `replaced`
 // (another report replaces it; its findings that run did not re-check are that report's items).
 // `items` lists each item with its `report` key and its decision, null while untriaged.
@@ -262,7 +263,11 @@ export function listAudits(dir, { triage = readTriage(dir) } = {}) {
       return { kind: 'not_rechecked', ...finding, report: each.supersedes, report_title: olderTitle, decision: decided(each.supersedes, id) };
     });
     each.items = [...own, ...offered];
-    each.untriaged = each.status === 'replaced' ? 0 : each.items.filter((item) => !item.decision).length;
+    // A report not imported yet that replaces another: that report's findings have no decision until the import sorts
+    // them into carried forward and not re-checked, so they wait here, and count as untriaged.
+    each.awaiting_sort = older && older !== each && each.status !== 'ok' && !each.replaced_by ? older.findings.length : 0;
+    if (older && older !== each) older.awaiting_sort = each.awaiting_sort;
+    each.untriaged = each.status === 'replaced' ? 0 : each.items.filter((item) => !item.decision).length + each.awaiting_sort;
   }
   return reports;
 }

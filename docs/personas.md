@@ -182,7 +182,8 @@ walk of 2026-05-02, run 2", and each item by its title, never by its id or file 
 file names the other commands take.
 
 - `list [--json]`: each report with its finding count and untriaged items. A replaced report shows `replaced by
-  <report>`, and its items count toward the report that replaced it. A report with no sidecar shows
+  <report>`, and its items count toward the report that replaced it: before that report's import, every finding of
+  the replaced one, which has no decision until the import sorts it, and after it, those not re-checked. A report with no sidecar shows
   `no sidecar: import needed`; one whose sidecar is invalid names the first problem.
 - `check <report>`: warns, and still passes, on a task named by its number, such as "Task 2". It validates the sidecar: every required key, finding, `N` and `D` id, evidence paths that name
   files and are never a suffix, a blocker only when walked and observed, no id in both `carried_forward` and

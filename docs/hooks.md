@@ -50,6 +50,8 @@ At the start of every session and subagent, the hook prints:
   Code's own settings drop the line: the `attribution.pr` of the first of `.claude/settings.local.json`,
   `.claude/settings.json`, and the user's `settings.json` that sets it holds no such line, or, with none set,
   `includeCoAuthoredBy` is `false`. `{ "attribution": { "pr": "" } }` in `.claude/settings.json` settles it for a project;
+- one `Commands:` line when the first `aidrian` on the PATH is another copy of the plugin, such as an installed
+  release while a branch is tried: it names this copy's `aidrian` by its path, so the session runs the code it loaded;
 - in the main session only, one `Format:` line: headers, quotes, and a few emoji in chat replies, never in commits,
   pull requests, docs, or code, which a subagent's report feeds, so a subagent does not get it;
 - in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons;

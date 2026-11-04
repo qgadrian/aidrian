@@ -20,7 +20,9 @@ const EXAMPLE = path.join(mkdtempSync(path.join(tmpdir(), 'aidrian-start-example
 cpSync(path.join(ROOT, 'examples/consumer'), EXAMPLE, { recursive: true });
 test.after(() => rmSync(path.dirname(EXAMPLE), { recursive: true, force: true }));
 
-const WITHOUT_BIN = (process.env.PATH ?? '').split(path.delimiter).filter((dir) => dir !== BIN).join(path.delimiter);
+// The shell's PATH without this plugin's bin/, and without any folder that holds another `aidrian`, such as an installed
+// copy of the plugin: that one would add the commands line to every test.
+const WITHOUT_BIN = (process.env.PATH ?? '').split(path.delimiter).filter((dir) => dir !== BIN && !existsSync(path.join(dir, 'aidrian'))).join(path.delimiter);
 const LINE = (command) =>
   'Project knowledge: 2 buckets, 8 docs. Read now: docs/knowledge/engineering/working-agreement.md. ' +
   `For more, run \`${command} route <tag>\` for your tags or \`${command} search <words>\` for a topic.`;
@@ -175,7 +177,7 @@ test('the main session hears about untriaged persona audits only while some are;
   for (const name of ['front-desk-2026-05-02.md', 'front-desk-2026-05-02-2.md']) cpSync(path.join(fixtures, name), path.join(audits, name));
   const { status, stdout } = run();
   assert.equal(status, 0);
-  assert.equal(stdout.split('\n')[4], 'Audit inbox: 15 untriaged findings in 1 report. The persona-audit-triage skill triages them.', 'after the format line');
+  assert.equal(stdout.split('\n')[4], 'Audit inbox: 18 untriaged findings in 1 report. The persona-audit-triage skill triages them.', 'after the format line');
   assert.doesNotMatch(run(['--subagent']).stdout, /Audit inbox/);
 
   writeFileSync(path.join(audits, 'triage.json'), '{ cut short');
@@ -194,6 +196,21 @@ test('the main session hears about untriaged persona audits only while some are;
   assert.match(run().stdout, /^Audit inbox: 1 untriaged finding in 1 report\./mu);
   writeFileSync(path.join(audits, 'triage.json'), JSON.stringify({ version: 1, reports: { 'front-desk-2026-05-02-2.md': { F1: { decision: 'defer', date: '2026-05-03' } } } }));
   assert.doesNotMatch(run().stdout, LINE_RE, 'fully triaged');
+});
+
+test('when another copy of the plugin\'s aidrian comes first on PATH, one line names this copy\'s by its path', (t) => {
+  const other = mkdtempSync(path.join(tmpdir(), 'aidrian-start-other-'));
+  t.after(() => rmSync(other, { recursive: true, force: true }));
+  writeFileSync(path.join(other, 'aidrian'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const input = JSON.stringify({ cwd: EXAMPLE });
+  const line = `Commands: the aidrian on PATH, in ${other}, is another copy of this plugin; run this session's as ${path.join(BIN, 'aidrian')}.`;
+  const first = hook({ input, PATH: `${other}${path.delimiter}${BIN}${path.delimiter}${WITHOUT_BIN}` });
+  assert.equal(first.status, 0);
+  assert.deepEqual(first.stdout.split('\n').slice(3, 5), [line, FORMAT], 'after the voice line, in the main session');
+  const subagent = JSON.parse(hook({ input, args: ['--subagent'], PATH: `${other}${path.delimiter}${WITHOUT_BIN}` }).stdout);
+  assert.match(subagent.hookSpecificOutput.additionalContext, new RegExp(`\n${line.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}$`, 'u'), 'and in a subagent');
+  assert.doesNotMatch(hook({ input, PATH: `${BIN}${path.delimiter}${other}${path.delimiter}${WITHOUT_BIN}` }).stdout, /^Commands:/mu, 'this copy first: nothing');
+  assert.doesNotMatch(hook({ input }).stdout, /^Commands:/mu, 'no aidrian on PATH: nothing');
 });
 
 test('the gate snapshot is saved before the knowledge loads, so a knowledge folder that throws still leaves the gates held', (t) => {

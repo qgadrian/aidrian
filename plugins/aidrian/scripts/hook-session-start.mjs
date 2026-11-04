@@ -1,7 +1,8 @@
 // SessionStart and SubagentStart hook: one line that tells the agent which knowledge docs to read now and how to find
 // the rest, one line with the names to call the human and the AI, one voice line (push back with a reason; ask the human
 // plain, one-decision questions), in Claude Code a line that settles the pull request footer its attribution instructions
-// ask for (footerLine), and, for the main session only, a format line for chat replies, a line when the
+// ask for (footerLine), a line when another copy of the plugin's `aidrian` comes first on PATH (commandsLine), and, for
+// the main session only, a format line for chat replies, a line when the
 // lesson inbox holds open lessons, which escalates when the inbox needs triage, a line while persona audits in the
 // state folder hold untriaged findings (lib/audits.mjs auditNudge), and a line when the plugin copy running
 // is older than the version the project requires (`requires` in config.json). Last, in the main session while
@@ -12,7 +13,7 @@
 // At SessionStart it also saves the project's agent gates for the session (lib/gate-snapshot.mjs), which the gate hook
 // holds every subagent to until the session ends.
 
-import { readFileSync } from 'node:fs';
+import { accessSync, constants, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
@@ -52,7 +53,8 @@ await runHook((input) => {
   const human = JSON.stringify(config.names.human);
   const names = `Names: call the human ${human} and yourself ${JSON.stringify(ai)}, in replies and questions alike; never "I", "me", "my", "you", or "your".`;
   const footer = footerLine(project.root, process.env);
-  const lines = `${line}\n${names}\n${voiceLine(human)}${footer ? `\n${footer}` : ''}`;
+  const commands = commandsLine(process.env);
+  const lines = `${line}\n${names}\n${voiceLine(human)}${footer ? `\n${footer}` : ''}${commands ? `\n${commands}` : ''}`;
 
   if (subagent) {
     console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: lines } }));
@@ -110,6 +112,31 @@ function footerLine(root, env) {
   const pr = settings.find((each) => each.attribution?.pr !== undefined)?.attribution.pr;
   if (pr !== undefined) return typeof pr === 'string' && /Generated with \[Claude Code\]/u.test(pr) ? FOOTER_LINE : null;
   return settings.find((each) => each.includeCoAuthoredBy !== undefined)?.includeCoAuthoredBy === false ? null : FOOTER_LINE;
+}
+
+// When the first `aidrian` on PATH is another copy of the plugin, such as an installed release while this copy is a
+// branch under test, a bare `aidrian` runs that copy's code and not this one's: one line names this copy's by its path.
+// Nothing when this copy's comes first, or when none is on PATH, where the knowledge line already names commands by path.
+function commandsLine(env) {
+  const real = (dir) => {
+    try {
+      return realpathSync(dir);
+    } catch {
+      return null;
+    }
+  };
+  const own = real(BIN);
+  for (const dir of (env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
+    try {
+      accessSync(path.join(dir, 'aidrian'), constants.X_OK);
+    } catch {
+      continue;
+    }
+    if (real(dir) === own) return null;
+    const full = path.join(BIN, 'aidrian');
+    return `Commands: the aidrian on PATH, in ${dir}, is another copy of this plugin; run this session's as ${/\s/.test(full) ? `"${full}"` : full}.`;
+  }
+  return null;
 }
 
 // The bare name when the plugin's bin/ is on PATH; the full path otherwise, so the line works on either host.

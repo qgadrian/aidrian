@@ -3,7 +3,8 @@
 // plain, one-decision questions), in Claude Code a line that settles the pull request footer its attribution instructions
 // ask for (footerLine), and, for the main session only, a format line for chat replies, a line when the
 // lesson inbox holds open lessons, which escalates when the inbox needs triage, and a line when the plugin copy running
-// is older than the version the project requires (`requires` in config.json). Last, in the main session while
+// is older than the version the project requires (`requires` in config.json), and a line when the indexed docs hold
+// unconfirmed decisions and config.json `decisions.unreviewed.remind` says so. Last, in the main session while
 // config.json `git.mainCheckout.guard` is on (lib/main-commits.mjs): a line when the session inherited the commit
 // guard's override, and up to three lines about the main checkout: local commits not on origin, a branch other than
 // the default or a detached HEAD, and changed tracked files. SessionStart adds plain
@@ -16,9 +17,10 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { loadConfig, versionFloorProblem } from '../lib/config.mjs';
+import { ageDays, parseDecisions } from '../lib/decisions.mjs';
 import { saveGateSnapshot } from '../lib/gate-snapshot.mjs';
 import { runHook } from '../lib/hook-io.mjs';
-import { indexRows, loadKnowledge } from '../lib/knowledge.mjs';
+import { indexedPaths, indexRows, loadKnowledge } from '../lib/knowledge.mjs';
 import { inboxPath, nudge } from '../lib/lesson-inbox.mjs';
 import { inheritedOverrideLine, unpushedMainLine } from '../lib/main-commits.mjs';
 import { findProject } from '../lib/project.mjs';
@@ -60,11 +62,30 @@ await runHook((input) => {
     if (floor) console.log(`Plugin too old: ${floor}. Its hooks and commands may reject this project's config until then.`);
     const lessons = nudge(inboxPath(project, config), { command: binCommand('aidrian'), config });
     if (lessons) console.log(lessons);
+    const decisions = decisionsLine(project.root, buckets, config);
+    if (decisions) console.log(decisions);
     const inherited = inheritedOverrideLine(config);
     if (inherited) console.log(inherited);
     for (const warning of unpushedMainLine(project, config)) console.log(warning);
   }
 });
+
+// The reminder of the decisions an agent made alone that the Human has not answered, from the indexed docs of the working
+// copy. A doc it cannot read counts for nothing here: `aidrian decisions list` reports it, and a hook never breaks a session.
+function decisionsLine(root, buckets, config) {
+  if (config.decisions.unreviewed.remind !== 'session-start') return null;
+  const unconfirmed = indexedPaths(buckets).flatMap((doc) => {
+    try {
+      return parseDecisions(readFileSync(path.resolve(root, doc), 'utf8')).decisions.filter(({ status }) => status === 'unconfirmed');
+    } catch {
+      return [];
+    }
+  });
+  if (!unconfirmed.length) return null;
+  const oldest = Math.max(...unconfirmed.map(({ date }) => ageDays(date)));
+  return `Decisions to review: ${unconfirmed.length} (oldest ${oldest} day${oldest === 1 ? '' : 's'}). ` +
+    `Tell ${config.names.human} once, then go on with the task: the decision-review skill goes through them, and only a person starts it.`;
+}
 
 // Every session and subagent: disagree out loud instead of going along, and ask questions the human can answer
 // without the session's context. A subagent reports to its coordinator, so the voice still applies to it.

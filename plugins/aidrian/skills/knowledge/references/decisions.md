@@ -46,7 +46,9 @@ It settles this change only, and becomes product truth only once the Human keeps
 
 Every `decided_provisional` goes on record, so every machine and session can see it: one line in the indexed knowledge doc that governs it, committed.
 It is an HTML comment, so a reader of the rendered doc never sees it. It goes directly below the rule's last line, the one place undo looks for that rule.
-A table row's marker goes directly below the table, with the row named in the old wording. Under a bullet, the marker is indented to the bullet's text.
+A rule ending in a code block takes its marker directly below the closing fence.
+A table row's marker goes directly below the table, with the row as its wording. Under a bullet, the marker is indented to the bullet's text.
+A later decision on the same rule goes directly below the earlier one's lines, oldest nearest the rule.
 A marker elsewhere still counts, and `aidrian decisions list` reports it.
 
 ```md
@@ -60,19 +62,25 @@ A marker elsewhere still counts, and `aidrian decisions list` reports it.
   `aidrian decisions list --added-since <ref>` flags any `pr=none` left once a pull request exists.
 - **The writer.** The slice's implementer, in its commit; else `doc-updater`.
   `product-manager` and `architect` decide; neither writes. When no indexed doc covers the area, `harness-librarian` adds one.
-- **Old wording is required.** A decision that replaces a written rule keeps the old wording, in lines directly below its marker, so undo can restore it:
+- **Old wording is required.** A decision that replaces a written rule keeps the old wording, in lines directly below its marker, so undo can restore it.
+  A decision that fills a gap has no such line.
+- **New wording is required.** Every decision records the lines it wrote, in lines directly below the old wording,
+  exactly as in the doc, indentation and any fence lines included. Undo finds exactly that text.
+  The wording must sit in one block, with no blank line outside a fence and no heading inside it; a rule spanning blocks takes one decision per block:
 
   ```md
   <!-- aidrian:decision-old id=<slug> text="<the old wording, as a JSON string>" -->
+  <!-- aidrian:decision-new id=<slug> text="<the wording it wrote, as a JSON string>" -->
   ```
 
   `text` writes a line break as `\n`, a quote as `\"`, and `-->` as `-\u002d>`.
   Wording may span several such lines, one piece each; they join with nothing between them. The line-length check skips these lines and the marker.
-  A decision that fills a gap has no such line.
-- **Only the Human settles one.** The main session runs `aidrian decisions set <id> confirmed|rejected`, on the Human's word.
-  A hook refuses a subagent.
-  It rewrites that one marker. Run it in a worktree and commit the change; with the main-checkout guard on, it refuses the main checkout.
+- **Only the Human settles one.** The main session runs `aidrian decisions set <id> confirmed|rejected` or `aidrian decisions undo <id>`,
+  on the Human's word. A hook refuses a subagent.
+  `set` rewrites that one marker; `undo` puts the old wording back and removes the decision's lines, or refuses and writes nothing.
+  Run either in a worktree and commit the change; with the main-checkout guard on, each refuses the main checkout.
   Nothing settles a decision by time. `aidrian decisions list` prints each one, and each marker it cannot read; `aidrian check` warns about those.
+  The `decision-review` skill goes through them with the Human, in a batch.
 - **The pull request.** The `pr-write` skill lists the branch's decisions in the body.
 
 ## Never self-approved

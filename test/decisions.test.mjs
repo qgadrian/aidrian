@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
-import { ageDays, DECISION_DOMAINS, DECISION_STATUSES, decisionClasses, decisionWarnings, escalateDocWarnings, loadVocab, lowerMode, parseDecisions, resolveAuthority, setDecisionStatus } from '../plugins/aidrian/lib/decisions.mjs';
+import { ageDays, DECISION_DOMAINS, DECISION_STATUSES, decisionClasses, decisionWarnings, escalateDocWarnings, isDecisionLine, loadVocab, lowerMode, parseDecisions, resolveAuthority, setDecisionStatus } from '../plugins/aidrian/lib/decisions.mjs';
 import { findWrapViolations } from '../plugins/aidrian/lib/markdown-wrap.mjs';
 import { check as prBodyDeny } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
 
@@ -132,6 +132,16 @@ test('the domain pause asks at the count or the age, per domain, and null turns 
   assert.deepEqual(paused([recent, recent, recent], null), ['decide', 'mode'], 'null turns the pause off');
 });
 
+test('the domain pause names the docs of that domain\'s markers, once each, when the pending list gives them', () => {
+  const now = new Date('2026-11-10T12:00:00Z');
+  const pending = [{ domain: 'ux', date: '2026-11-09', doc: 'docs/a.md' }, { domain: 'ux', date: '2026-11-09', doc: 'notes/b.md' }, { domain: 'ux', date: '2026-11-09', doc: 'docs/a.md' }, { domain: 'product', date: '2026-11-09', doc: 'docs/other.md' }];
+  const limited = config({ mode: 'decide-reversible', unreviewed: { remind: 'session-start', pauseDomainAt: { pending: 3, oldestDays: 7 } } });
+  const { reason } = resolveAuthority(limited, question({ pending }), { now });
+  assert.equal(reason, 'ux is paused: 3 unreviewed decisions, the pause is at 3; the markers are in docs/a.md, notes/b.md');
+  const bare = pending.map(({ domain, date }) => ({ domain, date }));
+  assert.equal(resolveAuthority(limited, question({ pending: bare }), { now }).reason, 'ux is paused: 3 unreviewed decisions, the pause is at 3');
+});
+
 test('lowerMode takes the lower of two modes, and an unknown mode counts as ask', () => {
   assert.equal(lowerMode('ask', 'decide-reversible'), 'ask');
   assert.equal(lowerMode('decide-reversible', 'ask'), 'ask');
@@ -176,56 +186,85 @@ const pick = ({ authority, rule }) => [authority, rule];
 
 const MARKER = '<!-- aidrian:decision id=refund-copy status=unconfirmed class=copy domain=ux date=2026-11-01 pr=41 -->';
 const old = (text, id = 'refund-copy') => `<!-- aidrian:decision-old id=${id} text=${JSON.stringify(text)} -->`;
+const wrote = (text = 'Rule.', id = 'refund-copy') => `<!-- aidrian:decision-new id=${id} text=${JSON.stringify(text)} -->`;
 const problemsOf = (text) => parseDecisions(text).problems.map(({ line, problem }) => [line, problem]);
 
 test('parseDecisions reads a marker beside its rule, with the line and every field', () => {
-  const { decisions, problems } = parseDecisions(`# Refunds\n\nRefunds take five days.\n${MARKER}\nNext rule.\n`);
+  const { decisions, problems } = parseDecisions(`# Refunds\n\nRefunds take five days.\n${MARKER}\n${wrote('Refunds take five days.')}\nNext rule.\n`);
   assert.deepEqual(problems, []);
-  assert.deepEqual(decisions, [{ id: 'refund-copy', status: 'unconfirmed', class: 'copy', domain: 'ux', date: '2026-11-01', pr: 41, line: 4, hasOldWording: false, oldWording: null }]);
+  assert.deepEqual(decisions, [{ id: 'refund-copy', status: 'unconfirmed', class: 'copy', domain: 'ux', date: '2026-11-01', pr: 41, line: 4, through: 5, hasOldWording: false, oldWording: null, hasNewWording: true, newWording: 'Refunds take five days.' }]);
   assert.deepEqual(DECISION_STATUSES, ['unconfirmed', 'confirmed', 'rejected']);
-  for (const status of DECISION_STATUSES) assert.equal(parseDecisions(`Rule.\n${MARKER.replace('unconfirmed', status)}`).decisions[0].status, status);
+  for (const status of DECISION_STATUSES) assert.equal(parseDecisions(`Rule.\n${MARKER.replace('unconfirmed', status)}\n${wrote()}`).decisions[0].status, status);
 });
 
 test('a marker takes any field order and any indentation, and pr=none says no pull request exists yet', () => {
-  const reordered = '- Rule.\r\n  <!-- aidrian:decision pr=none date=2026-11-01 domain=product class=naming status=confirmed id=a1 -->\r\nnext\r\n';
+  const reordered = `- Rule.\r\n  <!-- aidrian:decision pr=none date=2026-11-01 domain=product class=naming status=confirmed id=a1 -->\r\n  ${wrote('- Rule.', 'a1')}\r\nnext\r\n`;
   const { decisions, problems } = parseDecisions(reordered);
   assert.deepEqual(problems, []);
   assert.deepEqual([decisions[0].id, decisions[0].pr, decisions[0].line], ['a1', null, 2]);
 });
 
 test('a marker out of place is a problem, and still a decision, so undo is told before it looks for the rule', () => {
+  const lastDecision = wrote();
   const at = (text) => {
     const { decisions, problems } = parseDecisions(text);
     assert.equal(decisions.filter((each) => each.id === 'refund-copy').length, 1, text);
     return problems.map(({ line, problem }) => [line, problem]);
   };
+  const other = MARKER.replace('refund-copy', 'other-one');
   const expected = [
-    [MARKER, 'nothing'],
-    [`Rule.\n\n${MARKER}`, 'a blank line'],
-    [`# Refunds\n${MARKER}`, 'a heading'],
-    [`## Refunds ##\n${MARKER}`, 'a heading'],
-    [`\`\`\`\nrule\n\`\`\`\n${MARKER}`, 'a code fence'],
-    [`Rule.\n${MARKER.replace('refund-copy', 'other-one')}\n${MARKER}`, 'another decision line'],
-    [`Rule.\n${MARKER.replace('refund-copy', 'other-one')}\n${old('ten', 'other-one')}\n${MARKER}`, 'another decision line'],
+    [`${MARKER}\n${lastDecision}`, 'nothing'],
+    [`Rule.\n\n${MARKER}\n${lastDecision}`, 'a blank line'],
+    [`# Refunds\n${MARKER}\n${lastDecision}`, 'a heading'],
+    [`## Refunds ##\n${MARKER}\n${lastDecision}`, 'a heading'],
   ];
   for (const [text, what] of expected) {
     const found = at(text);
     assert.equal(found.length, 1, text);
     assert.match(found[0][1], new RegExp(`"refund-copy" sits under ${what}`, 'u'), text);
   }
-  for (const text of [`Rule.\n${MARKER}`, `- Rule.\n  ${MARKER}`, `#hashtag rule\n${MARKER}`, `| a | b |\n| - | - |\n| 1 | 2 |\n${MARKER}\n\nNext.`, `| a |\n| 1 |\n${MARKER}\n${old('| 1 | was ten |')}\nNext.`]) {
+  const stackUnder = [
+    [`${other}\n${wrote('Rule.', 'other-one')}\n${MARKER}\n${lastDecision}`, 'nothing', 2],
+    [`Rule.\n\n${other}\n${wrote('Rule.', 'other-one')}\n${MARKER}\n${lastDecision}`, 'a blank line', 2],
+    [`# Refunds\n${other}\n${wrote('Rule.', 'other-one')}\n${MARKER}\n${lastDecision}`, 'a heading', 2],
+  ];
+  for (const [text, what, count] of stackUnder) {
+    const found = at(text).filter(([, problem]) => problem.includes('"refund-copy" sits'));
+    assert.equal(found.length, 1, text);
+    assert.match(found[0][1], new RegExp(`sits under ${what}`, 'u'), text);
+    assert.equal(at(text).length, count, 'the marker above it sits there too');
+  }
+  for (const text of [
+    `Rule.\n${MARKER}\n${lastDecision}`,
+    `- Rule.\n  ${MARKER}\n  ${lastDecision}`,
+    `#hashtag rule\n${MARKER}\n${lastDecision}`,
+    `| a | b |\n| - | - |\n| 1 | 2 |\n${MARKER}\n${lastDecision}\n\nNext.`,
+    `| a |\n| 1 |\n${MARKER}\n${old('| 1 | was ten |')}\n${lastDecision}\nNext.`,
+    `\`\`\`\nrule\n\`\`\`\n${MARKER}\n${lastDecision}`,
+    `Rule.\n${other}\n${wrote('Rule.', 'other-one')}\n${MARKER}\n${lastDecision}`,
+    `Rule.\n${other}\n${old('ten', 'other-one')}\n${wrote('Rule.', 'other-one')}\n${MARKER}\n${lastDecision}`,
+    `| a |\n| 1 |\n${other}\n${wrote('| 1 |', 'other-one')}\n${MARKER}\n${lastDecision}\n\nNext.`,
+  ]) {
     assert.deepEqual(at(text), [], text);
   }
 });
 
-test('a marker inside a table is a problem: it goes directly below the table', () => {
-  for (const text of [`| a |\n| - |\n${MARKER}\n| 1 |\n`, `| a |\n| - |\n  ${MARKER}\n${old('was')}\n| 1 |\n`]) {
+test('a marker inside a table is a problem, a stack judged from the first line below it: it goes directly below the table', () => {
+  const other = MARKER.replace('refund-copy', 'other-one');
+  const cases = [
+    [`| a |\n| - |\n${MARKER}\n${wrote('| a |')}\n| 1 |\n`, 3],
+    [`| a |\n| - |\n  ${MARKER}\n${old('was')}\n${wrote('| a |')}\n| 1 |\n`, 3],
+    [`| a |\n| - |\n${other}\n${wrote('| a |', 'other-one')}\n${MARKER}\n${wrote('| a |')}\n| 1 |\n`, 5],
+  ];
+  for (const [text, line] of cases) {
     const { decisions, problems } = parseDecisions(text);
-    assert.equal(decisions.length, 1, text);
-    assert.equal(problems.length, 1, text);
-    assert.equal(problems[0].line, 3, text);
-    assert.match(problems[0].problem, /"refund-copy" sits inside a table: it goes directly below the table/u, text);
+    const own = problems.filter(({ problem }) => problem.includes('"refund-copy"'));
+    assert.ok(decisions.some(({ id }) => id === 'refund-copy'), text);
+    assert.equal(own.length, 1, text);
+    assert.equal(own[0].line, line, text);
+    assert.match(own[0].problem, /"refund-copy" sits inside a table: it goes directly below the table/u, text);
   }
+  assert.deepEqual(parseDecisions(`| a |\n| 1 |\n${MARKER}\n${wrote('| 1 |')}\nNext.\n`).problems, [], 'below the table, the next line no row');
 });
 
 test('a quoted marker is no decision: inside a code fence or a code span, as a doc shows one', () => {
@@ -261,7 +300,7 @@ test('a malformed marker is reported with its line and why, never thrown, and th
     [MARKER.replace('pr=41', 'pr=0'), /pr "0"/u],
   ];
   for (const [line, expected] of cases) {
-    const { decisions, problems } = parseDecisions(`first\n${line}\n\nSecond rule.\n${MARKER}\n`);
+    const { decisions, problems } = parseDecisions(`first\n${line}\n\nSecond rule.\n${MARKER}\n${wrote('Second rule.')}\n`);
     assert.equal(decisions.length, 1, line);
     assert.equal(decisions[0].line, 5, line);
     assert.equal(problems.length, 1, line);
@@ -272,15 +311,15 @@ test('a malformed marker is reported with its line and why, never thrown, and th
 
 test('a decision that replaces a rule keeps the old wording in the lines directly under it; one that fills a gap has none', () => {
   const wording = 'Refunds take "ten" days.\nAsk `support` first.';
-  const one = parseDecisions(`The new rule.\n${MARKER}\n${old(wording)}\nNext rule.\n`);
+  const one = parseDecisions(`The new rule.\n${MARKER}\n${old(wording)}\n${wrote('The new rule.')}\nNext rule.\n`);
   assert.deepEqual(one.problems, []);
-  assert.deepEqual([one.decisions[0].hasOldWording, one.decisions[0].oldWording], [true, wording]);
-  const split = parseDecisions(`The new rule.\r\n${MARKER}\r\n${old('Refunds take ')}\r\n${old('ten days.')}\r\nnext\r\n`);
+  assert.deepEqual([one.decisions[0].hasOldWording, one.decisions[0].oldWording, one.decisions[0].through], [true, wording, 4]);
+  const split = parseDecisions(`The new rule.\r\n${MARKER}\r\n${old('Refunds take ')}\r\n${old('ten days.')}\r\n${wrote('The new rule.')}\r\nnext\r\n`);
   assert.deepEqual(split.problems, []);
   assert.equal(split.decisions[0].oldWording, 'Refunds take ten days.', 'long wording spans lines, so each stays under the wrap limit');
-  const gap = parseDecisions(`The new rule.\n${MARKER}\n`).decisions[0];
-  assert.deepEqual([gap.hasOldWording, gap.oldWording], [false, null]);
-  assert.deepEqual(parseDecisions(`\`\`\`\n${old('quoted')}\n\`\`\`\n`), { decisions: [], problems: [] }, 'a quoted line is not a line of old wording');
+  const gap = parseDecisions(`The new rule.\n${MARKER}\n${wrote('The new rule.')}\n`).decisions[0];
+  assert.deepEqual([gap.hasOldWording, gap.oldWording, gap.hasNewWording, gap.newWording], [false, null, true, 'The new rule.']);
+  assert.deepEqual(parseDecisions(`\`\`\`\n${old('quoted')}\n${wrote('quoted')}\n\`\`\`\n`), { decisions: [], problems: [] }, 'a quoted line is not a line of wording');
 });
 
 test('old wording that cannot be read is reported, and the decision says it has some rather than reading as a gap', () => {
@@ -294,23 +333,62 @@ test('old wording that cannot be read is reported, and the decision says it has 
     [`rule ${old('ten')}`, /text="/u],
   ];
   for (const [line, expected] of cases) {
-    const { decisions, problems } = parseDecisions(`The new rule.\n${MARKER}\n${line}\n${old('more')}\n`);
+    const { decisions, problems } = parseDecisions(`The new rule.\n${MARKER}\n${line}\n${old('more')}\n${wrote('The new rule.')}\n`);
     assert.deepEqual([decisions[0].hasOldWording, decisions[0].oldWording], [true, null], line);
+    assert.equal(decisions[0].newWording, 'The new rule.', line);
     assert.equal(problems.length, 1, line);
     assert.equal(problems[0].line, 3, line);
     assert.match(problems[0].problem, expected, line);
   }
   assert.deepEqual(problemsOf(`rule\n${old('ten')}\n`), [[2, 'old wording with no decision marker directly above it']]);
-  assert.deepEqual(problemsOf(`rule\n${MARKER}\n\n${old('ten')}\n`), [[4, 'old wording with no decision marker directly above it']], 'a gap between them');
-  assert.deepEqual(parseDecisions(`rule\n${MARKER}\n\n${old('ten')}\n`).decisions[0].hasOldWording, false);
+  assert.deepEqual(problemsOf(`rule\n${MARKER}\n${wrote('rule')}\n\n${old('ten')}\n`), [[5, 'old wording with no decision marker directly above it']], 'a gap between them');
+  assert.deepEqual(parseDecisions(`rule\n${MARKER}\n${wrote('rule')}\n\n${old('ten')}\n`).decisions[0].hasOldWording, false);
+});
+
+test('new wording joins its pieces, and is required: unreadable, under the wrong id, before the old lines, or missing is a problem', () => {
+  const split = parseDecisions(`The new rule.\nIts second line.\n${MARKER}\n${old('Was.')}\n${wrote('The new rule.\n')}\n${wrote('Its second line.')}\nnext\n`);
+  assert.deepEqual(split.problems, []);
+  assert.equal(split.decisions[0].newWording, 'The new rule.\nIts second line.');
+  assert.deepEqual([split.decisions[0].line, split.decisions[0].through], [3, 6]);
+
+  const cases = [
+    ['<!-- aidrian:decision-new id=refund-copy text=oops -->', /new wording is one HTML comment/u],
+    ['<!-- aidrian:decision-new id=refund-copy text="a\\q" -->', /new wording: text is not a JSON string/u],
+    ['<!-- aidrian:decision-new id=refund-copy text="a --> b" -->', /new wording holds "-->"/u],
+    ['<!-- aidrian:decision-new id=refund-copy text="" -->', /new wording is empty/u],
+    [wrote('Rule.', 'other-id'), /new wording with id "other-id"/u],
+  ];
+  for (const [line, expected] of cases) {
+    const { decisions, problems } = parseDecisions(`Rule.\n${MARKER}\n${line}\n${wrote('more')}\n`);
+    assert.deepEqual([decisions[0].hasNewWording, decisions[0].newWording, decisions[0].through], [true, null, 4], line);
+    assert.equal(problems.length, 1, line);
+    assert.equal(problems[0].line, 3, line);
+    assert.match(problems[0].problem, expected, line);
+  }
+
+  const reversed = parseDecisions(`Rule.\n${MARKER}\n${wrote()}\n${old('Was.')}\n`);
+  assert.deepEqual(reversed.problems.map(({ line }) => line), [4]);
+  assert.match(reversed.problems[0].problem, /old wording comes after the new wording/u);
+  assert.deepEqual([reversed.decisions[0].hasOldWording, reversed.decisions[0].oldWording], [true, null]);
+
+  const missing = `"refund-copy" records no wording it wrote: add a decision-new line`;
+  assert.deepEqual(problemsOf(`Rule.\n${MARKER}\n`), [[2, missing]], 'at the end of the run');
+  assert.deepEqual(problemsOf(`Rule.\n${MARKER}\n${old('Was.')}\nNext.\n`), [[2, missing]], 'old wording alone');
+  assert.deepEqual(problemsOf(`Rule.\n${MARKER}\n\n${wrote()}\n`), [[2, missing], [4, 'new wording with no decision marker directly above it']], 'a gap before it');
+  const other = MARKER.replace('refund-copy', 'other-one');
+  assert.deepEqual(problemsOf(`Rule.\n${MARKER}\n${other}\n${wrote('Rule.', 'other-one')}\n`), [[2, missing]], 'the next marker closes the run');
+  assert.equal(parseDecisions(`Rule.\n${MARKER}\n`).decisions[0].hasNewWording, false);
+
+  for (const line of [old('x'), wrote('x'), `  ${wrote('x')}`, MARKER]) assert.equal(isDecisionLine(line), true, line);
+  for (const line of ['Rule.', `rule ${wrote('x')}`, '<!-- aidrian:decision-new id=open']) assert.equal(isDecisionLine(line), false, line);
 });
 
 test('setDecisionStatus rewrites only the status of that marker, byte for byte around it', () => {
   const other = MARKER.replace('refund-copy', 'other-one');
   const quoted = ['```', MARKER, '```'].join('\n');
-  const before = `# Doc  \r\n\r\n${quoted}\nRule.\n${other}\n\nRule.\n${MARKER}\n${old('status=unconfirmed stays')}\n\tlast line, no newline`;
+  const before = `# Doc  \r\n\r\n${quoted}\nRule.\n${other}\n${wrote('Rule.', 'other-one')}\n\nRule.\n${MARKER}\n${old('status=unconfirmed stays')}\n${wrote()}\n\tlast line, no newline`;
   const { text, from, line } = setDecisionStatus(before, 'refund-copy', 'rejected');
-  assert.deepEqual([from, line], ['unconfirmed', 10]);
+  assert.deepEqual([from, line], ['unconfirmed', 11]);
   assert.equal(text, before.replace(`Rule.\n${MARKER}`, `Rule.\n${MARKER.replace('status=unconfirmed', 'status=rejected')}`));
   assert.equal(parseDecisions(text).decisions.find((each) => each.id === 'refund-copy').oldWording, 'status=unconfirmed stays', 'old wording stays');
   assert.equal(setDecisionStatus(MARKER.replace('status=unconfirmed', 'status=rejected'), 'refund-copy', 'rejected').text, MARKER.replace('status=unconfirmed', 'status=rejected'));
@@ -329,13 +407,31 @@ test('the longest marker stays on one screen, and the wrap check never reports a
   const floor = new Set(loadVocab().classes.filter((each) => each.floor).map((each) => each.class));
   const kind = longestOf(decisionClasses().filter((each) => !floor.has(each)));
   const longest = `<!-- aidrian:decision id=${'a'.repeat(32)} status=unconfirmed class=${kind} domain=${longestOf(DECISION_DOMAINS)} date=2026-11-01 pr=99999 -->`;
-  assert.deepEqual(parseDecisions(`Rule.\n${longest}`).problems, []);
+  assert.deepEqual(parseDecisions(`Rule.\n${longest}\n<!-- aidrian:decision-new id=${'a'.repeat(32)} text="Rule." -->`).problems, []);
   assert.ok(longest.length <= DEFAULTS.docs.wrapLimit, `${longest.length} characters`);
   const longOld = old(`${'word '.repeat(60)}end`);
-  assert.deepEqual(findWrapViolations(`Rule.\n${longest}\n  ${longOld}\n`, 60), []);
+  const longNew = wrote(`${'word '.repeat(60)}end`);
+  assert.deepEqual(findWrapViolations(`Rule.\n${longest}\n  ${longOld}\n  ${longNew}\n`, 60), []);
   const prose = `The rule says <!-- aidrian:decision is a marker --> and ${'word '.repeat(30)}end`;
   assert.deepEqual(findWrapViolations(prose, 60).map(({ line }) => line), [1], 'prose that mentions one is still prose');
   assert.deepEqual(findWrapViolations(`<!-- aidrian:decision id=open ${'word '.repeat(30)}end`, 60).map(({ line }) => line), [1], 'an unclosed comment is no marker');
+});
+
+test('the docs say what the code does for removed, rejected markers, undo refusals, the pause, and the rule\'s limit', () => {
+  const read = (file) => readFileSync(path.join(ROOT, file), 'utf8').replace(/\s+/g, ' ');
+  const folder = read('docs/project-folder.md');
+  assert.match(folder, /A marker the merge base held in an unindexed file, which `HEAD` still holds in that file, is not `removed`\./u);
+  assert.match(folder, /A rejected marker is exempt too: `set rejected` changes no wording, so a later hand edit is expected\./u);
+  assert.match(folder, /For an unknown id it prints the reason alone\./u);
+  assert.match(folder, /a later decision or one it cannot read, such as an unterminated comment or a marker on a prose line/u);
+  assert.match(folder, /a decision line directly above whose new wording is not this marker's old wording, or cannot be read/u);
+  assert.match(folder, /A problem the merge base already has, the same text on the same line, stays in the list, marked `inherited: true`/u);
+  assert.match(folder, /For a marker that does not parse, or one in a file no index lists, it prints the reason, the raw wording lines, and the block\./u);
+  assert.match(folder, /the list says those markers could not be scanned, as a `note` row, or in `notes` in the JSON, and still exits 0\./u);
+  assert.match(folder, /A marker in a tracked Markdown file no index lists is a `problem`/u);
+  assert.match(read('docs/config.md'), /a stack whose wordings do not chain, or a marker in a tracked Markdown file no index lists\./u);
+  assert.match(read('docs/config.md'), /The base is the local `origin\/HEAD`, so after that answer merges, `resolve` stays paused until a fetch\./u);
+  assert.match(read('docs/hooks.md'), /The rule stops accidents and is no security boundary: a form it does not read, such as `xargs` or `npx`, runs\./u);
 });
 
 test('ageDays counts whole days from the marker date, and a date ahead of the clock is zero', () => {
@@ -384,13 +480,21 @@ test('pr-write and its body template name both forms of the decisions list', () 
   assert.match(skill, /Every run, run `aidrian decisions list --added-since origin\/<base> --json`; exit 1 is the stop below for an unclear base\./u, 'the list runs whatever the queue');
   assert.match(skill, /Unless config\.json `decisions\.record\.queue` is `report`, list each of its `decisions`/u, 'only the body listing depends on the queue');
   assert.match(skill, /each of its `settled` as settled in this branch/u);
+  assert.match(skill, /each of its `removed` as removed in this branch/u);
+  assert.match(skill, /When one of its `decisions` has `pr` null, replace `pr=none` on that marker line with the pull request's number, then commit and push only that\.\s+Never on a `settled` entry\./u);
   assert.match(skill, /That push moves the head: it comes before the review of the new head, or the report says it did not\./u);
+  assert.match(skill, /^A problem on an inherited marker goes under Risk and stops nothing\.$/mu);
+  assert.match(skill, /that list reports a problem in a marker the branch added, other than the `pr=none` Publish fixes: route it back to the same writer\./u, 'the stop stays');
   assert.ok(Buffer.byteLength(skill) <= 7500, `${Buffer.byteLength(skill)} bytes`);
   const rule = readFileSync(path.join(ROOT, 'plugins/aidrian/skills/knowledge/references/decisions.md'), 'utf8');
   assert.match(rule, /A writer on a branch whose pull request already exists writes the real number\./u);
+  assert.match(rule, /\*\*Old wording is required\.\*\*/u);
+  assert.match(rule, /\*\*New wording is required\.\*\*/u);
+  assert.match(rule, /The wording must sit in one block.*a rule spanning blocks takes one decision per block/u);
   assert.doesNotMatch(skill, /grep '\^\+<!--/u, 'the parser reads the markers, not a grep');
   const template = readFileSync(path.join(ROOT, 'plugins/aidrian/skills/pr-write/references/body-template.md'), 'utf8');
   assert.match(template, /replaces a written rule \| fills a gap/u);
   assert.match(template, /`hasOldWording`/u);
   assert.match(template, /a bullet shows the status when it is not `unconfirmed`/iu);
+  assert.match(template, /A marker of `removed` is listed as removed in this branch/u);
 });

@@ -384,11 +384,17 @@ docs/knowledge/engineering/testing.md
 
 A decision an agent made alone, under [`decisions`](config.md#decisions), stays on record in git, in the indexed knowledge doc that governs it.
 It is one HTML comment on a line of its own, directly below the rule's last line, the one place undo looks for that rule.
-A table row's marker goes directly below the table, with the row named in the old wording. Under a bullet, the marker is indented to the bullet's text:
+A rule ending in a code block takes its marker directly below the closing fence.
+A table row's marker goes directly below the table, with the row as its old and new wording. Under a bullet, the marker is indented to the bullet's text.
+
+Every decision records the wording it wrote, in `decision-new` lines directly below the marker, so undo can find exactly that text.
+A decision that replaces a written rule also keeps the old wording, in `decision-old` lines above them. One that fills a gap has no such line:
 
 ```md
 Refunds take five days.
 <!-- aidrian:decision id=refund-copy status=unconfirmed class=copy domain=ux date=2026-11-04 pr=41 -->
+<!-- aidrian:decision-old id=refund-copy text="Refunds take ten days.\nAsk support first." -->
+<!-- aidrian:decision-new id=refund-copy text="Refunds take five days." -->
 ```
 
 - `id` is lowercase letters, digits, and `-`, unique across the docs.
@@ -405,42 +411,52 @@ The dispatcher gives the writer the decision, its domain, and the doc that gover
 `product-manager` and `architect` decide, and neither writes.
 [`decisions.md`](../plugins/aidrian/skills/knowledge/references/decisions.md) is the rule they follow.
 
-A decision that replaces a written rule must keep the old wording, in lines directly below its marker, so undo can restore it.
-One that fills a gap has no such line:
+`text` is a JSON string holding the lines exactly as in the doc, indentation and any fence lines included, so a line break or a quote stays on one line.
+`-->` would end the comment, so it is written `-\u002d>`.
+Wording may span several `decision-old` or `decision-new` lines, one piece each, joined with nothing between them.
+The [line-length check](hooks.md#markdown-line-length) skips marker and wording lines, since wrapping one would break it.
 
-```md
-Refunds take five days.
-<!-- aidrian:decision id=refund-copy status=unconfirmed class=copy domain=ux date=2026-11-04 pr=41 -->
-<!-- aidrian:decision-old id=refund-copy text="Refunds take ten days.\nAsk support first." -->
-```
-
-`text` is a JSON string, so a line break or a quote stays on one line. `-->` would end the comment, so it is written `-\u002d>`.
-Wording may span several `decision-old` lines, one piece each, joined with nothing between them.
-The [line-length check](hooks.md#markdown-line-length) skips marker and `decision-old` lines, since wrapping one would break it.
+A later decision on the same rule makes a stack: its lines go directly below the earlier decision's, oldest nearest the rule.
+Its old wording is the new wording of the marker above it.
 
 `aidrian decisions list` reads the indexed docs of the working copy, so a decision on an unmerged branch lists only on that branch.
-Each row is the id, status, class, domain, age, doc and line, pull request, and whether it has old wording.
-`--json` adds the date and the wording:
+Each row is the id, status, class, domain, age, doc and line, pull request, and whether it has old and new wording.
+`--json` adds the date, the wording, and `through`, the decision's last line:
 
 ```json
-{ "decisions": [{ "id": "", "status": "", "class": "", "domain": "", "date": "", "pr": 41, "line": 2, "hasOldWording": true, "oldWording": "", "doc": "", "ageDays": 0 }],
-  "problems": [{ "doc": "", "line": 2, "problem": "" }] }
+{ "decisions": [{ "id": "", "status": "", "class": "", "domain": "", "date": "", "pr": 41, "line": 2, "through": 4, "hasOldWording": true, "oldWording": "", "hasNewWording": true, "newWording": "", "doc": "", "ageDays": 0 }],
+  "problems": [{ "doc": "", "line": 2, "problem": "" }],
+  "notes": [] }
 ```
 
 A marker it cannot read, or an id on two markers, is a `problem` and the list goes on, with exit 0.
-So is a marker out of place, which still lists: one on a doc's first line, one inside a table,
-or one under a blank line, a heading, a code fence, or another decision line.
-`hasOldWording` true with `oldWording` null means the old wording cannot be read.
+So is a marker out of place, which still lists: one inside a table, or one that, past the decision lines of its stack,
+is on a doc's first line or under a blank line or a heading.
+So is a marker with no `decision-new` line, and an old wording line below a new one.
+`hasOldWording` true with `oldWording` null means the old wording cannot be read, and `hasNewWording` true with `newWording` null the same of the new.
+Two more problems compare the wording with the doc.
+An unconfirmed marker at the bottom of its stack has drifted when its new wording is not in its block exactly once.
+A confirmed marker is exempt, since the Human may reword what they kept.
+A rejected marker is exempt too: `set rejected` changes no wording, so a later hand edit is expected.
+And in any stack, each marker's old wording must be the new wording of the marker above it.
 A marker in a code fence or a code span is a quote, not a decision.
 A doc from a [local source](#local-knowledge-sources) lists too, but no other machine sees it, so markers belong in committed docs.
+A marker in a tracked Markdown file no index lists is a `problem` with its doc and line: it counts toward the
+[domain pause](config.md#decisions), and `set` and `undo` read only indexed docs, so move it to an indexed doc, or index its doc.
+A doc reached through a symlink is the file it reaches. When `git grep` fails in a checkout, the list says those markers could not be scanned,
+as a `note` row, or in `notes` in the JSON, and still exits 0.
 `aidrian check` warns about each problem, and still passes.
 
 `aidrian decisions list --added-since <ref>` lists only what the branch committed since it left `<ref>`, read from git at the merge base and at `HEAD`.
 A decision counts when no marker at the merge base has its id, whatever its status and however it is indented,
 so a moved marker or a changed status does not.
-A problem counts when its line is new, so one the branch inherited does not.
+A problem the merge base already has, the same text on the same line, stays in the list, marked `inherited: true`, and its row ends in `inherited`.
+A change to a valid `status` or `pr` alone does not make a line new, and an invalid value does.
+So a branch that rewords an inherited rule sees the drift as its own.
 A new decision in a Markdown file no index lists is a `problem`: markers belong in an indexed doc.
 Its JSON adds `settled`, each inherited marker whose status the branch changed, with `was`, the status at the merge base.
+`removed` holds each id at the merge base that no indexed doc at `HEAD` holds, such as one undone, with its `status` and `doc` there.
+A marker the merge base held in an unindexed file, which `HEAD` still holds in that file, is not `removed`.
 It also adds `pullRequest`, the branch's number from `gh`; `null` means no pull request, or `gh` could not say.
 With a number, a new marker still at `pr=none` is a `problem`.
 It exits 1 when git cannot compare the two.
@@ -449,7 +465,27 @@ It exits 1 when git cannot compare the two.
 It changes the working copy, so run it in a task worktree and commit the change. It refuses an unknown id, an unreadable marker, and an id on two markers.
 With [`git.mainCheckout.guard`](hooks.md#main-checkout) on, it refuses a tracked doc in the main checkout, as an edit is refused,
 under the same `AIDRIAN_ALLOW_MAIN_WRITE=1` and `allowWrites`.
-The [`decisions-set` rule](hooks.md#bash-rules) denies it to a subagent: the main session runs it on the Human's word.
+
+`aidrian decisions undo <id>` takes a decision back in the working copy, guarded and run as `set` is.
+It finds the new wording in the marker's block, replaces it with the old wording, or deletes it when there is none.
+Then it removes the marker and its wording lines.
+Every other byte stays as it was; when removal leaves two adjacent blank lines, one stays. It prints the doc and the lines replaced or removed.
+The block runs up from the marker, past the decision lines of its stack,
+to a blank line outside a fence, a heading, another decision line, or the doc's start.
+Fenced lines are part of it. Lines compare with trailing whitespace trimmed and nothing else.
+Status is no gate, and `set rejected` keeps its meaning: it records the answer and changes no wording.
+
+Only the bottom marker of a stack can be undone, so a stack goes back bottom up, to the original wording.
+Undo refuses, exits 1, and writes nothing, whenever it cannot do this safely.
+For an unknown id it prints the reason alone.
+For a marker that does not parse, or one in a file no index lists, it prints the reason, the raw wording lines, and the block.
+Otherwise it prints the reason, both wordings, and the block, for: an id on two markers; any other problem on the marker's own lines;
+a decision line directly below the marker, a later decision or one it cannot read, such as an unterminated comment or a marker on a prose line,
+since only the bottom of a stack can go back; a decision line directly above whose new wording is not this marker's old wording, or cannot be read;
+new wording not found in the block, or found more than once; and a doc that is not valid UTF-8.
+
+The [`decisions-set` rule](hooks.md#bash-rules) denies both commands to a subagent: the main session runs them on the Human's word.
+The [`decision-review`](../plugins/aidrian/skills/decision-review/SKILL.md) skill goes through the unconfirmed decisions with the Human, in a batch.
 
 Markers count toward the [knowledge budgets](config.md#knowledge-budgets), as any line of a doc does.
 

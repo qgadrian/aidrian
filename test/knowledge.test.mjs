@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { initBucket, listTags, loadKnowledge as loadKnowledgeOf, routeKnowledge } from '../plugins/aidrian/lib/knowledge.mjs';
+import { indexedPaths, initBucket, listTags, loadKnowledge as loadKnowledgeOf, routeKnowledge } from '../plugins/aidrian/lib/knowledge.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -323,4 +323,10 @@ test('initBucket drafts a summary past CRLF frontmatter', (t) => {
   writeFileSync(path.join(dir, 'notes/a.md'), '---\r\ntitle: hidden\r\n---\r\n# Rules\r\nKeep it short.\r\n');
   const { file } = initBucket(findProject(dir), 'notes');
   assert.equal(JSON.parse(readFileSync(path.join(dir, file), 'utf8')).docs['a.md'].summary, 'Rules: Keep it short.');
+});
+
+test('indexedPaths gives each doc path once, in index order, when two buckets index one doc', () => {
+  const buckets = [{ docs: [{ path: 'docs/a.md' }, { path: 'docs/b.md' }] }, { docs: [{ path: 'docs/a.md' }, { path: 'docs/c.md' }] }, { docs: [] }];
+  assert.deepEqual(indexedPaths(buckets), ['docs/a.md', 'docs/b.md', 'docs/c.md']);
+  assert.deepEqual(indexedPaths([]), []);
 });

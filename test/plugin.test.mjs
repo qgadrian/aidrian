@@ -97,6 +97,22 @@ test('every skill has a name matching its folder and a description', () => {
   }
 });
 
+test('decision-review runs only when a person starts it, in a task worktree, and hands a refused undo on instead of editing the rule', () => {
+  const skill = readFileSync(path.join(PLUGIN, 'skills/decision-review/SKILL.md'), 'utf8');
+  assert.equal(parse(/^---\n([\s\S]*?)\n---\n/.exec(skill)[1])['disable-model-invocation'], true);
+  const text = skill.replace(/\s+/g, ' ');
+  for (const command of ['aidrian decisions list --json', 'aidrian decisions set <id> confirmed', 'aidrian decisions undo <id>', 'aidrian worktree new <branch>']) assert.ok(text.includes(command), command);
+  assert.match(text, /draft a revert task for the behaviour/);
+  assert.match(text, /hand the edit to the Human or `doc-updater`\. Never edit the rule here/);
+  assert.match(text, /It never merges\./);
+  const stray = text.indexOf('First report each row of `problems` about a file no index lists: name the doc, and say to move the marker to an indexed doc, or index the doc.');
+  assert.ok(stray >= 0 && stray < text.indexOf('None: say so and stop.'), 'a marker out of reach is reported even with nothing to review');
+  const change = text.slice(text.indexOf('**Change.**'));
+  assert.match(change, /It applies to the bottom marker of a stack\. To change an earlier decision, the Human answers about the bottom one, or undoes down to the earlier one first\./);
+  const [drafted, listed, settled] = ['Dispatch `doc-updater`', 'run `aidrian decisions list` while the marker is still `unconfirmed`, and send any drift on that `id` back to `doc-updater`', 'Only then, in this session, run `aidrian decisions set <id> confirmed`'].map((words) => change.indexOf(words));
+  assert.ok(drafted >= 0 && drafted < listed && listed < settled, 'doc-updater, then the list, then the answer: a confirmed marker no longer reports drift');
+});
+
 test('the agent and skill tables list every shipped agent and skill once, and nothing else', () => {
   const doc = readFileSync(path.join(ROOT, 'docs/agents-and-skills.md'), 'utf8');
   const rows = (heading) => {

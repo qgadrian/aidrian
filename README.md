@@ -151,6 +151,7 @@ Run `aidrian` or `aidrian-knowledge` with no arguments to list every subcommand 
 | `aidrian decisions resolve` | Says whether an agent may settle one decision or must ask the Human. | [Decisions](docs/config.md#decisions) |
 | `aidrian decisions list` | Lists the decisions agents made alone, from the markers in the indexed docs. | [Decision markers](docs/project-folder.md#decision-markers) |
 | `aidrian decisions set` | Records the Human's answer on one decision. | [Decision markers](docs/project-folder.md#decision-markers) |
+| `aidrian decisions undo` | Puts back the wording one decision replaced and removes its lines, or refuses and writes nothing. | [Decision markers](docs/project-folder.md#decision-markers) |
 | `aidrian report` | Shows what each agent type cost and read. | [The report](docs/dispatch-log.md#the-report) |
 | `aidrian report docs` | Lists the knowledge docs agents read. | [Doc reads](docs/dispatch-log.md#doc-reads) |
 | `aidrian report sessions` | Shows what each session cost. | [Sessions](docs/dispatch-log.md#sessions) |

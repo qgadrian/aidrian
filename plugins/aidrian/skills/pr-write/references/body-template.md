@@ -40,7 +40,8 @@ Fixes <ISSUE-KEY, such as ABC-12 or #12>
 - **Risk** names the blast radius, data or security impact, backward compatibility, and how to roll back.
 - **Decisions** lists each decision an agent made alone, so the reviewer can keep or reject it. It never names the agent.
   A decision with `hasOldWording` true replaces a written rule; with false, it fills a gap.
-  A marker of `settled` is listed as settled in this branch. A bullet shows the status when it is not `unconfirmed`.
+  A marker of `settled` is listed as settled in this branch. A marker of `removed` is listed as removed in this branch, with its status at the base.
+  A bullet shows the status when it is not `unconfirmed`.
   When config.json `github.pullRequest.sections` is set without `Decisions`, the same list goes at the end of `## Summary`,
   or of the first section on the closed list when Summary is not on it, as a `Decisions:` line and its bullets.
   When `decisions.record.queue` is `report`, it stays out of the body.

@@ -571,8 +571,8 @@ test('decisions resolve --vocab lists the classes with definitions, and bad argu
   assert.deepEqual(Object.keys(vocab.reversibility), ['storedData', 'external', 'pricingOrContract', 'reachesUsersUnreviewed']);
 
   const bad = [
-    [['decisions'], /decisions takes resolve, list, or set/u],
-    [['decisions', 'bogus'], /decisions takes resolve, list, or set, not "bogus"/u],
+    [['decisions'], /decisions takes resolve, list, set, or undo/u],
+    [['decisions', 'bogus'], /decisions takes resolve, list, set, or undo, not "bogus"/u],
     [['decisions', 'resolve', '--class', 'copy'], /resolve needs --domain and --class/u],
     [['decisions', 'resolve', '--domain', 'ux', '--class', 'copy', '--reversible', 'no,maybe'], /--reversible takes up to 4 answers/u],
     [['decisions', 'resolve', '--domain', 'ux', '--class', 'copy', '--reversible', 'no,no,no,no,no'], /--reversible takes up to 4 answers/u],
@@ -600,6 +600,9 @@ function decisionDocs(t, docs) {
 
 const DECISION = '<!-- aidrian:decision id=refund-copy status=unconfirmed class=copy domain=ux date=2026-01-01 pr=41 -->';
 const OLD_WORDING = '<!-- aidrian:decision-old id=refund-copy text="Refunds take ten days." -->';
+const NEW_WORDING = '<!-- aidrian:decision-new id=refund-copy text="Rule." -->';
+// A marker under the rule "Rule.", with the wording it wrote, for a test about anything else.
+const decided = (id = 'refund-copy', marker = DECISION) => `${marker}\n${NEW_WORDING}`.replaceAll('refund-copy', id);
 const listDecisions = (dir) => {
   const { status, stdout, stderr } = run(['decisions', 'list', '--json'], dir);
   assert.deepEqual([status, stderr], [0, '']);
@@ -608,23 +611,25 @@ const listDecisions = (dir) => {
 
 test('decisions list prints each marker of the indexed docs, with its old wording, for a person and as JSON', (t) => {
   const gap = DECISION.replaceAll('refund-copy', 'tab-order').replace('class=copy', 'class=ordering').replace('pr=41', 'pr=none').replace('unconfirmed', 'confirmed');
-  const dir = decisionDocs(t, { 'refunds.md': `# Refunds\n\nFive days.\n${DECISION}\n${OLD_WORDING}\n`, 'ui.md': `Tabs by use.\n${gap}\n`, 'plain.md': '# Nothing here\n' });
+  const fiveDays = NEW_WORDING.replace('Rule.', 'Five days.');
+  const tabs = NEW_WORDING.replace('refund-copy', 'tab-order').replace('Rule.', 'Tabs by use.');
+  const dir = decisionDocs(t, { 'refunds.md': `# Refunds\n\nFive days.\n${DECISION}\n${OLD_WORDING}\n${fiveDays}\n`, 'ui.md': `Tabs by use.\n${gap}\n${tabs}\n`, 'plain.md': '# Nothing here\n' });
   writeFileSync(path.join(dir, 'docs/unindexed-sibling.txt'), `${DECISION}\n`);
 
   const out = listDecisions(dir);
   assert.deepEqual(out.problems, []);
-  assert.deepEqual(out.decisions.map(({ id, status, class: kind, domain, date, pr, doc, line, hasOldWording, oldWording }) => [id, status, kind, domain, date, pr, doc, line, hasOldWording, oldWording]), [
-    ['refund-copy', 'unconfirmed', 'copy', 'ux', '2026-01-01', 41, 'docs/refunds.md', 4, true, 'Refunds take ten days.'],
-    ['tab-order', 'confirmed', 'ordering', 'ux', '2026-01-01', null, 'docs/ui.md', 2, false, null],
+  assert.deepEqual(out.decisions.map(({ id, status, class: kind, domain, date, pr, doc, line, through, hasOldWording, oldWording, newWording }) => [id, status, kind, domain, date, pr, doc, line, through, hasOldWording, oldWording, newWording]), [
+    ['refund-copy', 'unconfirmed', 'copy', 'ux', '2026-01-01', 41, 'docs/refunds.md', 4, 6, true, 'Refunds take ten days.', 'Five days.'],
+    ['tab-order', 'confirmed', 'ordering', 'ux', '2026-01-01', null, 'docs/ui.md', 2, 3, false, null, 'Tabs by use.'],
   ]);
   assert.ok(out.decisions.every(({ ageDays }) => Number.isInteger(ageDays) && ageDays > 0));
 
   const { status, stdout, stderr } = run(['decisions', 'list'], dir);
   assert.deepEqual([status, stderr], [0, '']);
   const rows = stdout.trimEnd().split('\n').map((row) => row.split('\t'));
-  assert.deepEqual(rows.map(([id, state, kind, domain, , doc, pr, wording]) => [id, state, kind, domain, doc, pr, wording]), [
-    ['refund-copy', 'unconfirmed', 'copy', 'ux', 'docs/refunds.md:4', 'pr=41', 'old wording: yes'],
-    ['tab-order', 'confirmed', 'ordering', 'ux', 'docs/ui.md:2', 'pr=none', 'old wording: no'],
+  assert.deepEqual(rows.map(([id, state, kind, domain, , doc, pr, wording, wrote]) => [id, state, kind, domain, doc, pr, wording, wrote]), [
+    ['refund-copy', 'unconfirmed', 'copy', 'ux', 'docs/refunds.md:4', 'pr=41', 'old wording: yes', 'new wording: yes'],
+    ['tab-order', 'confirmed', 'ordering', 'ux', 'docs/ui.md:2', 'pr=none', 'old wording: no', 'new wording: yes'],
   ]);
   assert.match(rows[0][4], /^\d+d$/u);
   assert.equal(run(['decisions', 'list', '--project', dir], ROOT).stdout, stdout, '--project names the project');
@@ -632,9 +637,9 @@ test('decisions list prints each marker of the indexed docs, with its old wordin
 
 test('decisions list reports a malformed marker, a broken old wording, and a repeated id, and still lists the rest', (t) => {
   const dir = decisionDocs(t, {
-    'a.md': `Rule.\n${DECISION.replace('class=copy', 'class=pricing')}\n\nRule.\n${DECISION.replaceAll('refund-copy', 'kept')}\n<!-- aidrian:decision-old id=kept text=oops -->\n`,
-    'b.md': `Rule.\n${DECISION.replaceAll('refund-copy', 'twice')}\n`,
-    'c.md': `first\n${DECISION.replaceAll('refund-copy', 'twice')}\n`,
+    'a.md': `Rule.\n${DECISION.replace('class=copy', 'class=pricing')}\n\nRule.\n${DECISION.replaceAll('refund-copy', 'kept')}\n<!-- aidrian:decision-old id=kept text=oops -->\n${NEW_WORDING.replace('refund-copy', 'kept')}\n`,
+    'b.md': `Rule.\n${decided('twice')}\n`,
+    'c.md': `Rule.\n${decided('twice')}\n`,
   });
   const { decisions, problems } = listDecisions(dir);
   assert.deepEqual(decisions.map(({ id, doc, hasOldWording, oldWording }) => [id, doc, hasOldWording, oldWording]), [
@@ -650,12 +655,12 @@ test('decisions list reports a malformed marker, a broken old wording, and a rep
 
   const { status, stdout } = run(['decisions', 'list'], dir);
   assert.equal(status, 0);
-  assert.match(stdout, /^kept\t.*\told wording: unreadable$/mu);
+  assert.match(stdout, /^kept\t.*\told wording: unreadable\tnew wording: yes$/mu);
   assert.match(stdout, /^problem\tdocs\/a\.md:2\t.*class "pricing"/mu);
 });
 
 test('decisions list survives a broken index and a doc it cannot read, and says so', (t) => {
-  const dir = decisionDocs(t, { 'a.md': `Rule.\n${DECISION}\n`, 'gone.md': 'x\n' });
+  const dir = decisionDocs(t, { 'a.md': `Rule.\n${decided()}\n`, 'gone.md': 'x\n' });
   rmSync(path.join(dir, 'docs/gone.md'));
   const { decisions, problems } = listDecisions(dir);
   assert.deepEqual(decisions.map(({ id }) => id), ['refund-copy']);
@@ -664,7 +669,7 @@ test('decisions list survives a broken index and a doc it cannot read, and says 
   const empty = decisionDocs(t, { 'a.md': 'nothing\n' });
   assert.equal(run(['decisions', 'list'], empty).stdout, 'no decisions in 1 indexed doc\n');
 
-  const badIndex = decisionDocs(t, { 'a.md': `Rule.\n${DECISION}\n` });
+  const badIndex = decisionDocs(t, { 'a.md': `Rule.\n${decided()}\n` });
   writeFileSync(path.join(badIndex, '.aidrian/knowledge/20-broken.json'), '{ not json');
   const broken = listDecisions(badIndex);
   assert.deepEqual(broken.decisions.map(({ id }) => id), ['refund-copy'], 'the good index still lists');
@@ -673,7 +678,7 @@ test('decisions list survives a broken index and a doc it cannot read, and says 
 });
 
 test('decisions list says so when a doc cannot be read', { skip: process.getuid?.() === 0 ? 'root reads every file' : false }, (t) => {
-  const dir = decisionDocs(t, { 'a.md': `Rule.\n${DECISION}\n`, 'locked.md': 'secret\n' });
+  const dir = decisionDocs(t, { 'a.md': `Rule.\n${decided()}\n`, 'locked.md': 'secret\n' });
   const locked = path.join(dir, 'docs/locked.md');
   chmodSync(locked, 0o000);
   const { decisions, problems } = listDecisions(dir);
@@ -697,16 +702,17 @@ function decisionRepo(t, docs) {
 }
 
 test('decisions list --added-since parses both ends: new markers, however written, and no quote, inherited marker, or uncommitted one', (t) => {
-  const inherited = DECISION.replaceAll('refund-copy', 'inherited');
-  const movedAway = DECISION.replaceAll('refund-copy', 'moved-away');
+  const inherited = decided('inherited');
+  const movedAway = decided('moved-away');
   const oldBroken = DECISION.replaceAll('refund-copy', 'old-broken').replace('date=2026-01-01', 'date=soon');
   const { dir, git } = decisionRepo(t, { 'a.md': `Rule.\n${inherited}\n\nRule.\n${oldBroken}\n`, 'b.md': `Rule.\n${movedAway}\n` });
   git('checkout', '-q', '-b', 'feature');
-  const indented = DECISION.replaceAll('refund-copy', 'indented');
-  const settled = DECISION.replaceAll('refund-copy', 'settled').replace('unconfirmed', 'confirmed');
+  const indented = '<!-- aidrian:decision id=indented status=unconfirmed class=copy domain=ux date=2026-01-01 pr=41 -->';
+  const indentedWording = NEW_WORDING.replace('refund-copy', 'indented').replace('Rule.', '- Nested rule.');
+  const settled = decided('settled').replace('unconfirmed', 'confirmed');
   const bad = DECISION.replaceAll('refund-copy', 'bad-class').replace('class=copy', 'class=pricing');
   writeFileSync(path.join(dir, 'docs/a.md'), [
-    'Rule.', inherited.replace('unconfirmed', 'confirmed'), '', 'Rule.', oldBroken, '', '- Nested rule.', `  ${indented}`, '', 'Rule.', settled, '',
+    'Rule.', inherited.replace('unconfirmed', 'confirmed'), '', 'Rule.', oldBroken, '', '- Nested rule.', `  ${indented}`, `  ${indentedWording}`, '', 'Rule.', settled, '',
     'Rule.', bad, '', '```md', DECISION.replaceAll('refund-copy', 'fenced'), '```', `Write \`${DECISION.replaceAll('refund-copy', 'spanned')}\`.`, '',
   ].join('\n'));
   writeFileSync(path.join(dir, 'docs/b.md'), 'Nothing here now.\n');
@@ -716,22 +722,26 @@ test('decisions list --added-since parses both ends: new markers, however writte
   writeFileSync(index, JSON.stringify({ dir: 'docs', description: 'The rules.', docs: entries }));
   git('add', '.');
   git('commit', '-q', '-m', 'decide');
-  writeFileSync(path.join(dir, 'docs/b.md'), `Rule.\n${DECISION.replaceAll('refund-copy', 'uncommitted')}\n`);
+  writeFileSync(path.join(dir, 'docs/b.md'), `Rule.\n${decided('uncommitted')}\n`);
 
   const { status, stdout, stderr } = run(['decisions', 'list', '--added-since', 'main', '--json'], dir, { ...process.env, PATH: noGh(t) });
   assert.deepEqual([status, stderr], [0, '']);
   const out = JSON.parse(stdout);
-  assert.deepEqual(out.decisions.map(({ id, status: state, doc, line }) => [id, state, doc, line]), [['indented', 'unconfirmed', 'docs/a.md', 8], ['settled', 'confirmed', 'docs/a.md', 11]]);
-  assert.deepEqual(out.problems.map(({ doc, line }) => [doc, line]), [['docs/a.md', 14]], 'only the branch\'s own problem');
-  assert.match(out.problems[0].problem, /class "pricing"/u);
+  assert.deepEqual(out.decisions.map(({ id, status: state, doc, line }) => [id, state, doc, line]), [['indented', 'unconfirmed', 'docs/a.md', 9], ['settled', 'confirmed', 'docs/a.md', 13]]);
+  const own = out.problems.filter(({ inherited }) => !inherited);
+  assert.deepEqual(own.map(({ doc, line }) => [doc, line]), [['docs/a.md', 17]], 'only the branch\'s own problem');
+  assert.match(own[0].problem, /class "pricing"/u);
+  assert.deepEqual(out.problems.filter(({ inherited }) => inherited).map(({ doc, line, inherited }) => [doc, line, inherited]), [['docs/a.md', 6, true]], 'the one the merge base has');
   assert.equal(out.pullRequest, null);
 
   const text = run(['decisions', 'list', '--added-since', 'main'], dir, { ...process.env, PATH: noGh(t) });
   assert.match(text.stdout, /^indented\tunconfirmed\t/mu);
-  assert.match(text.stdout, /^problem\tdocs\/a\.md:14\t/mu);
+  assert.match(text.stdout, /^problem\tdocs\/a\.md:17\t/mu);
   git('checkout', '-q', '--', 'docs/b.md');
   git('checkout', '-q', 'main');
-  assert.equal(run(['decisions', 'list', '--added-since', 'main'], dir, { ...process.env, PATH: noGh(t) }).stdout, 'no decisions added since main\n');
+  assert.match(run(['decisions', 'list', '--added-since', 'main'], dir, { ...process.env, PATH: noGh(t) }).stdout, /^problem\tdocs\/a\.md:6\tdate "soon".*\tinherited\n$/u, 'on main, only what it inherited');
+  const clean = decisionRepo(t, { 'a.md': `Rule.\n${decided('kept')}\n` });
+  assert.equal(run(['decisions', 'list', '--added-since', 'main'], clean.dir, { ...process.env, PATH: noGh(t) }).stdout, 'no decisions added since main\n');
   for (const ref of ['no-such-ref', '--output=x']) {
     const { status: code, stderr: said } = run(['decisions', 'list', `--added-since=${ref}`], dir);
     assert.equal(code, 1, ref);
@@ -742,8 +752,8 @@ test('decisions list --added-since parses both ends: new markers, however writte
 test('decisions list --added-since flags a pr=none the branch added once its pull request exists, and only then', (t) => {
   const { dir, git } = decisionRepo(t, { 'a.md': 'Rule.\n' });
   git('checkout', '-q', '-b', 'feature');
-  const noNumber = DECISION.replace('pr=41', 'pr=none');
-  writeFileSync(path.join(dir, 'docs/a.md'), `Rule.\n${noNumber}\n\nRule.\n${DECISION.replaceAll('refund-copy', 'numbered')}\n`);
+  const noNumber = decided().replace('pr=41', 'pr=none');
+  writeFileSync(path.join(dir, 'docs/a.md'), `Rule.\n${noNumber}\n\nRule.\n${decided('numbered')}\n`);
   git('add', '.');
   git('commit', '-q', '-m', 'decide');
   const before = JSON.parse(run(['decisions', 'list', '--added-since', 'main', '--json'], dir, { ...process.env, PATH: noGh(t) }).stdout);
@@ -773,16 +783,16 @@ const noGh = (t) => {
 };
 
 test('decisions list --added-since returns an inherited marker whose status the branch changed as settled, and flags a decision outside the indexed docs', (t) => {
-  const kept = DECISION.replaceAll('refund-copy', 'kept');
-  const unchanged = DECISION.replaceAll('refund-copy', 'unchanged');
+  const kept = decided('kept');
+  const unchanged = decided('unchanged');
   const { dir, git } = decisionRepo(t, { 'a.md': `Rule.\n${kept}\n\nRule.\n${unchanged}\n` });
   mkdirSync(path.join(dir, 'notes'));
-  writeFileSync(path.join(dir, 'notes/inherited.md'), `Rule.\n${DECISION.replaceAll('refund-copy', 'in-notes')}\n`);
+  writeFileSync(path.join(dir, 'notes/inherited.md'), `Rule.\n${decided('in-notes')}\n`);
   git('add', '.');
   git('commit', '-q', '-m', 'notes');
   git('checkout', '-q', '-b', 'feature');
   writeFileSync(path.join(dir, 'docs/a.md'), `Rule.\n${kept.replace('unconfirmed', 'confirmed')}\n\nRule.\n${unchanged}\n`);
-  writeFileSync(path.join(dir, 'notes/new.md'), `Rule.\n${DECISION.replaceAll('refund-copy', 'stray')}\n\n\`\`\`md\n${DECISION.replaceAll('refund-copy', 'quoted')}\n\`\`\`\n`);
+  writeFileSync(path.join(dir, 'notes/new.md'), `Rule.\n${decided('stray')}\n\n\`\`\`md\n${DECISION.replaceAll('refund-copy', 'quoted')}\n\`\`\`\n`);
   git('add', '.');
   git('commit', '-q', '-m', 'settle');
 
@@ -798,20 +808,249 @@ test('decisions list --added-since returns an inherited marker whose status the 
   const text = run(['decisions', 'list', '--added-since', 'main'], dir, env).stdout;
   assert.match(text, /^kept\tconfirmed\t.*\tsettled, was unconfirmed$/mu);
   assert.match(text, /^problem\tnotes\/new\.md:2\t/mu);
+  assert.deepEqual(out.removed, [], 'nothing left the indexed docs, and the inherited marker of an unindexed file stays there');
+});
+
+test('decisions list --added-since returns what no indexed doc at HEAD holds as removed, an undone marker too, with its status at the base', (t) => {
+  const gone = decided('gone').replace('unconfirmed', 'confirmed');
+  const { dir, git } = decisionRepo(t, { 'a.md': `Rule.\n${decided('undone')}\n\nRule.\n${gone}\n\nRule.\n${decided('stays')}\n`, 'b.md': 'Other.\n' });
+  git('checkout', '-q', '-b', 'feature');
+  const env = { ...process.env, PATH: noGh(t) };
+  assert.equal(run(['decisions', 'undo', 'undone'], dir, env).status, 0);
+  const moved = readFileSync(path.join(dir, 'docs/a.md'), 'utf8').replace(`Rule.\n${gone}\n\n`, '');
+  writeFileSync(path.join(dir, 'docs/a.md'), moved);
+  git('add', '.');
+  git('commit', '-q', '-m', 'undo');
+  const { status, stdout, stderr } = run(['decisions', 'list', '--added-since', 'main', '--json'], dir, env);
+  assert.deepEqual([status, stderr], [0, '']);
+  const out = JSON.parse(stdout);
+  assert.deepEqual(out.removed, [{ id: 'undone', status: 'unconfirmed', doc: 'docs/a.md' }, { id: 'gone', status: 'confirmed', doc: 'docs/a.md' }]);
+  assert.deepEqual(out.decisions, [], 'nothing new');
+  assert.match(run(['decisions', 'list', '--added-since', 'main'], dir, env).stdout, /^undone\tunconfirmed\tremoved from docs\/a\.md$/mu);
+});
+
+test('decisions list --added-since blanks only a valid status and pr: a line the branch made invalid is its own problem', (t) => {
+  const inherited = decided('inherited');
+  const broken = decided('old-broken').replace('status=unconfirmed', 'status=pending');
+  const { dir, git } = decisionRepo(t, { 'a.md': `Rule.\n${inherited}\n\nRule.\n${broken}\n\nRule.\n${decided('good-pr')}\n` });
+  git('checkout', '-q', '-b', 'feature');
+  writeFileSync(path.join(dir, 'docs/a.md'), `Rule.\n${inherited.replace('status=unconfirmed', 'status=approved')}\n\nRule.\n${broken}\n\nRule.\n${decided('good-pr').replace('pr=41', 'pr=#41')}\n`);
+  git('add', '.');
+  git('commit', '-q', '-m', 'break');
+  const out = JSON.parse(run(['decisions', 'list', '--added-since', 'main', '--json'], dir, { ...process.env, PATH: noGh(t) }).stdout);
+  const problems = out.problems.filter(({ problem }) => /status "|pr "/u.test(problem)).map(({ line, problem, inherited }) => [line, problem.split(' ').slice(0, 2).join(' '), inherited ?? false]);
+  assert.deepEqual(problems, [[2, 'status "approved"', false], [6, 'status "pending"', true], [10, 'pr "#41"', false]], 'the status the branch inherited broken is marked');
+});
+
+test('list and check report wording undo could no longer find, on the marker that wrote it', (t) => {
+  const dir = decisionDocs(t, { 'a.md': `Someone changed this.\n${decided('drifted')}\n` });
+  writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n.worktrees/\n');
+  assert.match(listDecisions(dir).problems[0].problem, /"drifted" wrote wording found 0 times/u);
+  const { status, stderr } = run(['check'], dir);
+  assert.equal(status, 0);
+  assert.match(stderr, /^warning: docs\/a\.md:2: "drifted" wrote wording found 0 times/mu);
+});
+
+const optedPause = (pending, oldestDays = 100000) => ({ maxMode: 'decide-reversible', mode: 'decide-reversible', unreviewed: { remind: 'session-start', pauseDomainAt: { pending, oldestDays } } });
+const freshDecision = (id) => decided(id).replace('date=2026-01-01', `date=${new Date().toISOString().slice(0, 10)}`);
+const docOf = (...records) => records.map((each) => `Rule.\n${each}\n`).join('\n');
+
+// `decisionsRepo` with docs/a.md committed and indexed.
+function pauseRepo(t, decisions, text) {
+  const { dir, git } = decisionsRepo(t, decisions);
+  mkdirSync(path.join(dir, 'docs'));
+  mkdirSync(path.join(dir, '.aidrian/knowledge'));
+  writeFileSync(path.join(dir, '.aidrian/knowledge/10-docs.json'), JSON.stringify({ dir: 'docs', description: 'The rules.', docs: { 'a.md': { summary: 'a rules', tags: [] } } }));
+  writeFileSync(path.join(dir, 'docs/a.md'), text);
+  git('add', '.');
+  git('commit', '-q', '-m', 'docs');
+  return { dir, git };
+}
+
+test('with no git at all, resolve counts the working copy\'s unconfirmed markers at either threshold', (t) => {
+  const project = (decisions, text) => {
+    const dir = decisionDocs(t, { 'a.md': text });
+    writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, decisions }));
+    return dir;
+  };
+  const atCount = resolveCopy(project(optedPause(2), docOf(freshDecision('one'), freshDecision('two'))));
+  assert.deepEqual(pick(atCount), ['ask', 'domain-paused', null]);
+  assert.match(atCount.reason, /2 unreviewed decisions, the pause is at 2; the markers are in docs\/a\.md/u);
+  const old = resolveCopy(project(optedPause(50, 7), docOf(decided('old-one'))));
+  assert.deepEqual(pick(old), ['ask', 'domain-paused', null], 'the oldest reached the age');
+  assert.match(old.reason, /the oldest unreviewed decision is \d+ days old, the pause is at 7/u);
+  const below = resolveCopy(project(optedPause(2), docOf(freshDecision('one'), freshDecision('two').replace('unconfirmed', 'confirmed'))));
+  assert.deepEqual(pick(below), ['decide', 'mode', null], 'a confirmed marker does not count, as the working copy is the only record');
+});
+
+test('a marker at the merge base that the base has since removed does not count, though HEAD still holds it', (t) => {
+  const { dir, git } = pauseRepo(t, optedPause(1), docOf(freshDecision('undone-on-main')));
+  git('checkout', '-q', '-b', 'feature');
+  assert.equal(resolveCopy(dir).rule, 'domain-paused', 'on the base: it counts');
+  git('checkout', '-q', 'main');
+  writeFileSync(path.join(dir, 'docs/a.md'), 'Rule.\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'undo on main');
+  git('checkout', '-q', 'feature');
+  assert.match(readFileSync(path.join(dir, 'docs/a.md'), 'utf8'), /undone-on-main/u, 'HEAD still holds it');
+  assert.deepEqual(pick(resolveCopy(dir)).slice(0, 2), ['decide', 'mode']);
+});
+
+test('a tracked marker no index lists counts toward the pause: the reason names its doc, and list and check report it', (t) => {
+  const { dir, git } = pauseRepo(t, optedPause(2), docOf(freshDecision('indexed')));
+  mkdirSync(path.join(dir, 'notes'));
+  writeFileSync(path.join(dir, 'notes/stray.md'), docOf(freshDecision('stray')));
+  writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n.worktrees/\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'notes');
+  writeFileSync(path.join(dir, 'notes/untracked.md'), docOf(freshDecision('untracked')));
+
+  const { rule, reason } = resolveCopy(dir);
+  assert.equal(rule, 'domain-paused');
+  assert.match(reason, /the markers are in docs\/a\.md, notes\/stray\.md$/u);
+
+  const { decisions, problems } = listDecisions(dir);
+  assert.deepEqual(decisions.map(({ id }) => id), ['indexed'], 'set and undo read the indexed docs');
+  assert.deepEqual(problems.map(({ doc, line }) => [doc, line]), [['notes/stray.md', 2]], 'tracked only');
+  assert.match(problems[0].problem, /"stray" is in a doc no knowledge index lists: markers belong in an indexed doc/u);
+  assert.match(run(['decisions', 'list'], dir).stdout, /^problem\tnotes\/stray\.md:2\t"stray" is in a doc/mu);
+  const checked = run(['check'], dir);
+  assert.equal(checked.status, 0, checked.stderr);
+  assert.match(checked.stderr, /^warning: notes\/stray\.md:2: "stray" is in a doc no knowledge index lists/mu);
+
+  assert.equal(new Set(problems.map(({ doc }) => doc)).size, 1);
+  const undone = run(['decisions', 'undo', 'stray'], dir);
+  assert.equal(undone.status, 1);
+  assert.match(undone.stderr, /cannot undo "stray" at notes\/stray\.md:2: "stray" is in a doc no knowledge index lists/u);
+  assert.match(undone.stderr, /^block above the marker:\n {2}Rule\.$/mu);
+});
+
+test('decisions list --added-since marks a problem inherited only when the merge base has the same problem on the same line', (t) => {
+  const stackTop = decided('top').replace(NEW_WORDING.replace('refund-copy', 'top'), NEW_WORDING.replace('refund-copy', 'top').replace('Rule.', 'Second.'));
+  const stackBottom = `${DECISION.replaceAll('refund-copy', 'bottom')}\n${OLD_WORDING.replace('refund-copy', 'bottom').replace('Refunds take ten days.', 'Second.')}\n${NEW_WORDING.replace('refund-copy', 'bottom')}`;
+  const base = [`Rule.\n${decided('rewords')}`, `Already moved.\n${decided('inherited')}`, `Again moved.\n${decided('grew')}`, `Rule.\n${stackTop}\n${stackBottom}`, ''].join('\n\n');
+  const { dir, git } = decisionRepo(t, { 'a.md': base });
+  const list = () => JSON.parse(run(['decisions', 'list', '--added-since', 'main', '--json'], dir, { ...process.env, PATH: noGh(t) }).stdout).problems;
+  git('checkout', '-q', '-b', 'feature');
+  assert.deepEqual(list().map(({ problem, inherited }) => [problem.split(' ')[0], inherited]), [['"inherited"', true], ['"grew"', true]], 'the branch changed nothing: both inherited, and both still listed');
+  const edited = base
+    .replace(`Rule.\n${decided('rewords')}`, `Reworded by the branch.\n${decided('rewords')}`)
+    .replace(`Again moved.\n${decided('grew')}`, `Rule.\nRule.\n${decided('grew')}`)
+    .replace('text="Second." -->\n<!-- aidrian:decision-new id=bottom', 'text="Other." -->\n<!-- aidrian:decision-new id=bottom');
+  writeFileSync(path.join(dir, 'docs/a.md'), edited);
+  git('add', '.');
+  git('commit', '-q', '-m', 'reword');
+  const rows = list();
+  const problems = rows.filter(({ inherited }) => !inherited).map(({ problem }) => problem);
+  assert.equal(problems.length, 3, problems.join('\n'));
+  assert.match(problems[0], /"rewords" wrote wording found 0 times/u, 'the line is inherited, the drift the branch\'s');
+  assert.match(problems[1], /"grew" wrote wording found 2 times/u, 'another count is another problem');
+  assert.match(problems[2], /"bottom" sits below "top", but its old wording/u);
+  assert.deepEqual(rows.filter(({ inherited }) => inherited).map(({ problem }) => problem.split(' ')[0]), ['"inherited"'], 'the same problem on the same line at the merge base');
+
+  const statusOnly = decisionRepo(t, { 'a.md': `Moved.\n${decided('settled-late')}\n` });
+  statusOnly.git('checkout', '-q', '-b', 'feature');
+  writeFileSync(path.join(statusOnly.dir, 'docs/a.md'), `Moved.\n${decided('settled-late').replace('pr=41', 'pr=42')}\n`);
+  statusOnly.git('add', '.');
+  statusOnly.git('commit', '-q', '-m', 'number');
+  const [same] = JSON.parse(run(['decisions', 'list', '--added-since', 'main', '--json'], statusOnly.dir, { ...process.env, PATH: noGh(t) }).stdout).problems;
+  assert.equal(same.inherited, true, 'a valid pull request number aside');
+  assert.match(run(['decisions', 'list', '--added-since', 'main'], statusOnly.dir, { ...process.env, PATH: noGh(t) }).stdout, /^problem\tdocs\/a\.md:2\t.*\tinherited$/mu);
+});
+
+test('a doc reached through a symlinked folder is no unindexed file, and a real unindexed one still reports', (t) => {
+  const { dir, git } = decisionRepo(t, { 'a.md': 'Rule.\n' });
+  mkdirSync(path.join(dir, 'shared'));
+  writeFileSync(path.join(dir, 'shared/a.md'), `Rule.\n${decided('linked')}\n`);
+  mkdirSync(path.join(dir, 'notes'));
+  writeFileSync(path.join(dir, 'notes/other.md'), `Rule.\n${decided('other')}\n`);
+  rmSync(path.join(dir, 'docs'), { recursive: true });
+  symlinkSync('shared', path.join(dir, 'docs'));
+  git('add', '.');
+  git('commit', '-q', '-m', 'link');
+  const { decisions, problems } = listDecisions(dir);
+  assert.deepEqual(decisions.map(({ id, doc }) => [id, doc]), [['linked', 'docs/a.md']]);
+  assert.deepEqual(problems.map(({ doc, line }) => [doc, line]), [['notes/other.md', 2]], 'shared/a.md is the indexed doc, by its real path');
+});
+
+test('when git grep fails, list notes that unindexed markers went unscanned and still exits 0; with no git there is no note', (t) => {
+  const { dir } = decisionRepo(t, { 'a.md': `Rule.\n${decided()}\n` });
+  const failing = fake(t, 'case " $* " in *" grep "*) exit 3;; esac');
+  const json = run(['decisions', 'list', '--json'], dir, failing);
+  assert.deepEqual([json.status, json.stderr], [0, '']);
+  const out = JSON.parse(json.stdout);
+  assert.deepEqual(out.decisions.map(({ id }) => id), ['refund-copy']);
+  assert.deepEqual(out.notes, ['markers in files no index lists could not be scanned: git grep failed']);
+  const text = run(['decisions', 'list'], dir, failing);
+  assert.equal(text.status, 0);
+  assert.match(text.stdout, /^note\tmarkers in files no index lists could not be scanned: git grep failed$/mu);
+  assert.deepEqual(listDecisions(dir).notes, [], 'git answers: no note');
+  const plain = decisionDocs(t, { 'a.md': '# Nothing here\n' });
+  assert.deepEqual(listDecisions(plain).notes, [], 'no git at all');
+  assert.equal(run(['decisions', 'list'], plain).stdout, 'no decisions in 1 indexed doc\n');
+  const empty = decisionRepo(t, { 'a.md': '# Nothing here\n' });
+  assert.equal(run(['decisions', 'list'], empty.dir, failing).stdout, 'no decisions in 1 indexed doc\nnote\tmarkers in files no index lists could not be scanned: git grep failed\n');
+});
+
+test('decisions resolve pauses a domain at either threshold, counting the base and what the branch added, and no working-copy edit lifts it', (t) => {
+  const opted = optedPause(2);
+
+  const { dir, git } = pauseRepo(t, opted, docOf(freshDecision('one'), freshDecision('two')));
+  git('checkout', '-q', '-b', 'feature');
+  const atCount = resolveCopy(dir);
+  assert.deepEqual([atCount.authority, atCount.rule], ['ask', 'domain-paused'], 'two on the base, at the count');
+  assert.match(atCount.reason, /ux is paused: 2 unreviewed decisions, the pause is at 2/u);
+
+  const file = path.join(dir, 'docs/a.md');
+  writeFileSync(file, docOf(freshDecision('one').replace('unconfirmed', 'confirmed'), freshDecision('two').replace('unconfirmed', 'confirmed')));
+  assert.equal(resolveCopy(dir).rule, 'domain-paused', 'an uncommitted status edit does not lift it');
+  writeFileSync(file, 'Nothing here now.\n');
+  assert.equal(resolveCopy(dir).rule, 'domain-paused', 'nor does deleting the markers');
+  git('checkout', '-q', '--', 'docs/a.md');
+  writeFileSync(file, docOf(freshDecision('one').replace('unconfirmed', 'confirmed'), freshDecision('two').replace('unconfirmed', 'confirmed')));
+  git('add', '.');
+  git('commit', '-q', '-m', 'settle on the branch');
+  assert.equal(resolveCopy(dir).rule, 'domain-paused', 'nor does a commit on the branch: only the base branch counts');
+  git('checkout', '-q', 'main');
+  git('merge', '-q', '--ff-only', 'feature');
+  assert.deepEqual(pick(resolveCopy(dir)).slice(0, 2), ['decide', 'mode'], 'the answer on the base branch lifts it');
+
+  const branch = pauseRepo(t, opted, docOf(freshDecision('one')));
+  assert.equal(resolveCopy(branch.dir).authority, 'decide', 'one on the base is below the count');
+  branch.git('checkout', '-q', '-b', 'feature');
+  writeFileSync(path.join(branch.dir, 'docs/a.md'), docOf(freshDecision('one'), freshDecision('added').replace('unconfirmed', 'confirmed')));
+  assert.equal(resolveCopy(branch.dir).authority, 'decide', 'an uncommitted marker is not yet the branch\'s');
+  branch.git('add', '.');
+  branch.git('commit', '-q', '-m', 'decide');
+  assert.equal(resolveCopy(branch.dir).rule, 'domain-paused', 'a marker the branch committed counts, whatever status it wrote');
+
+  const elsewhere = run(['decisions', 'resolve', '--domain', 'product', '--class', 'copy', '--reversible', 'no,no,no,no'], branch.dir);
+  assert.equal(JSON.parse(elsewhere.stdout).authority, 'decide', 'another domain pauses only itself');
+
+  const aged = pauseRepo(t, { ...opted, unreviewed: { remind: 'session-start', pauseDomainAt: { pending: 50, oldestDays: 7 } } }, docOf(decided('old-one')));
+  const old = resolveCopy(aged.dir);
+  assert.deepEqual([old.authority, old.rule], ['ask', 'domain-paused'], 'the oldest reached the age');
+  assert.match(old.reason, /the oldest unreviewed decision is \d+ days old, the pause is at 7/u);
+
+  const off = pauseRepo(t, { ...opted, unreviewed: { remind: 'session-start', pauseDomainAt: null } }, docOf(freshDecision('one'), freshDecision('two')));
+  assert.equal(resolveCopy(off.dir).authority, 'decide', 'null turns the pause off');
+
+  const stalled = run(['decisions', 'resolve', '--domain', 'ux', '--class', 'copy', '--reversible', 'no,no,no,no'], aged.dir, fake(t, 'case " $* " in *" grep "*) exit 3;; esac'));
+  assert.deepEqual(pick(JSON.parse(stalled.stdout)).slice(0, 2), ['ask', 'no-base'], 'git failing on the markers asks');
 });
 
 test('check warns about a marker it cannot read and still passes, and reports nothing for a good one', (t) => {
-  const dir = decisionDocs(t, { 'a.md': `Rule.\n${DECISION}\n\nRule.\n${DECISION.replaceAll('refund-copy', 'bad-class').replace('class=copy', 'class=pricing')}\n` });
+  const dir = decisionDocs(t, { 'a.md': `Rule.\n${decided()}\n\nRule.\n${DECISION.replaceAll('refund-copy', 'bad-class').replace('class=copy', 'class=pricing')}\n` });
   writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n.worktrees/\n');
   const { status, stdout, stderr } = run(['check'], dir);
   assert.equal(status, 0, stderr);
   assert.match(stdout, /^ok: /u);
-  assert.match(stderr, /^warning: docs\/a\.md:5: class "pricing" is no class of decisions\.json$/mu);
+  assert.match(stderr, /^warning: docs\/a\.md:6: class "pricing" is no class of decisions\.json$/mu);
   assert.doesNotMatch(stderr, /docs\/a\.md:2/u);
 });
 
 test('decisions set refuses a tracked doc in a guarded main checkout, names the worktree command, and honours the override', (t) => {
-  const { dir, git } = decisionRepo(t, { 'a.md': `Rule.\n${DECISION}\n` });
+  const { dir, git } = decisionRepo(t, { 'a.md': `Rule.\n${decided()}\n` });
   const config = path.join(dir, '.aidrian/config.json');
   writeFileSync(config, JSON.stringify({ version: 1, git: { mainCheckout: { guard: true } } }));
   writeFileSync(path.join(dir, '.gitignore'), '.worktrees/\n');
@@ -847,13 +1086,14 @@ test('decisions list reads this repository\'s docs with no problem: their exampl
 test('decisions set rewrites only that marker\'s status, byte for byte, and reads back', (t) => {
   // A byte that is not UTF-8, and CRLF lines, must survive the write.
   const other = DECISION.replaceAll('refund-copy', 'other-one');
-  const before = Buffer.concat([Buffer.from(`# Caf`), Buffer.from([0xe9]), Buffer.from(`\r\n${other}\r\n\r\nRule.\r\n${DECISION}\r\n${OLD_WORDING}\r\nlast, no newline`)]);
+  const otherWording = NEW_WORDING.replaceAll('refund-copy', 'other-one').replace('Rule.', 'Above.');
+  const before = Buffer.concat([Buffer.from(`# Caf`), Buffer.from([0xe9]), Buffer.from(`\r\nAbove.\r\n${other}\r\n${otherWording}\r\n\r\nRule.\r\n${DECISION}\r\n${OLD_WORDING}\r\n${NEW_WORDING}\r\nlast, no newline`)]);
   const dir = decisionDocs(t, { 'a.md': before });
   const file = path.join(dir, 'docs/a.md');
 
   const { status, stdout, stderr } = run(['decisions', 'set', 'refund-copy', 'confirmed'], dir);
   assert.deepEqual([status, stderr], [0, '']);
-  assert.match(stdout, /docs\/a\.md:5: refund-copy confirmed \(was unconfirmed\)/u);
+  assert.match(stdout, /docs\/a\.md:7: refund-copy confirmed \(was unconfirmed\)/u);
   assert.deepEqual(readFileSync(file), Buffer.from(before.toString('latin1').replace(`Rule.\r\n${DECISION}`, `Rule.\r\n${DECISION.replace('unconfirmed', 'confirmed')}`), 'latin1'));
   const listed = listDecisions(dir).decisions;
   assert.deepEqual(listed.map(({ id, status: state }) => [id, state]), [['other-one', 'unconfirmed'], ['refund-copy', 'confirmed']]);
@@ -867,9 +1107,9 @@ test('decisions set rewrites only that marker\'s status, byte for byte, and read
 });
 
 test('decisions set refuses a bad status, an unknown or malformed id, and a repeated id, and writes nothing', (t) => {
-  const twice = DECISION.replaceAll('refund-copy', 'twice');
+  const twice = decided('twice');
   const badId = DECISION.replaceAll('refund-copy', 'Bad_Id');
-  const docs = { 'a.md': `Rule.\n${DECISION}\n\nRule.\n${twice}\n\nRule.\n${DECISION.replaceAll('refund-copy', 'broken').replace('date=2026-01-01', 'date=soon')}\n\nRule.\n${badId}\n`, 'b.md': `Rule.\n${twice}\n` };
+  const docs = { 'a.md': `Rule.\n${decided()}\n\nRule.\n${twice}\n\nRule.\n${DECISION.replaceAll('refund-copy', 'broken').replace('date=2026-01-01', 'date=soon')}\n\nRule.\n${badId}\n`, 'b.md': `Rule.\n${twice}\n` };
   const dir = decisionDocs(t, docs);
   const bad = [
     [['decisions', 'set'], /set needs an id and confirmed or rejected/u],
@@ -878,7 +1118,7 @@ test('decisions set refuses a bad status, an unknown or malformed id, and a repe
     [['decisions', 'set', 'refund-copy', 'unconfirmed'], /confirmed or rejected, not "unconfirmed"/u],
     [['decisions', 'set', 'no-such', 'confirmed'], /no decision marker with id "no-such".*4 marker problems/su],
     [['decisions', 'set', 'broken', 'confirmed'], /no decision marker with id "broken"/u],
-    [['decisions', 'set', 'twice', 'confirmed'], /id "twice" is on 2 markers: docs\/a\.md:5, docs\/b\.md:2/u],
+    [['decisions', 'set', 'twice', 'confirmed'], /id "twice" is on 2 markers: docs\/a\.md:6, docs\/b\.md:2/u],
   ];
   for (const [args, expected] of bad) {
     const { status, stdout, stderr } = run(args, dir);
@@ -888,13 +1128,13 @@ test('decisions set refuses a bad status, an unknown or malformed id, and a repe
   for (const [name, text] of Object.entries(docs)) assert.equal(readFileSync(path.join(dir, 'docs', name), 'utf8'), text, name);
 });
 
-test('decisions usage lists resolve, list, and set, and list and set need a project', (t) => {
+test('decisions usage lists resolve, list, set, and undo, and list, set, and undo need a project', (t) => {
   const { stderr } = run(['decisions', 'bogus'], EXAMPLE);
-  for (const form of ['aidrian decisions resolve --domain', 'aidrian decisions list', 'aidrian decisions set ID confirmed|rejected']) assert.ok(stderr.includes(form), form);
+  for (const form of ['aidrian decisions resolve --domain', 'aidrian decisions list', 'aidrian decisions set ID confirmed|rejected', 'aidrian decisions undo ID']) assert.ok(stderr.includes(form), form);
   assert.match(run(['--help']).stdout, /aidrian decisions list/u);
   const away = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-cli-')));
   t.after(() => rmSync(away, { recursive: true, force: true }));
-  for (const args of [['list'], ['set', 'a', 'confirmed']]) {
+  for (const args of [['list'], ['set', 'a', 'confirmed'], ['undo', 'a']]) {
     const { status, stderr: said } = run(['decisions', ...args], away);
     assert.equal(status, 1);
     assert.match(said, /^no project folder at or above /u);

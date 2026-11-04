@@ -49,7 +49,10 @@ At the start of every session and subagent, the hook prints:
   `includeCoAuthoredBy` is `false`. `{ "attribution": { "pr": "" } }` in `.claude/settings.json` settles it for a project;
 - in the main session only, one `Format:` line: headers, quotes, and a few emoji in chat replies, never in commits,
   pull requests, docs, or code, which a subagent's report feeds, so a subagent does not get it;
-- in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons.
+- in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons;
+- in the main session only, one `Decisions to review: N (oldest X days)` line while the indexed docs hold unconfirmed
+  [decision markers](project-folder.md#decision-markers), unless [`decisions.unreviewed.remind`](config.md#decisions) is `"off"`.
+  A doc it cannot read counts for nothing here, and never stops the hook. The line names the `decision-review` skill.
 
 Last, in the main session only and while `git.mainCheckout.guard` is on ([commit guard](#commit-guard)),
 a line when the session inherited the commit guard's override, then up to three lines about the main checkout,
@@ -105,7 +108,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Review gate, when turned on | Asking the review bot before a review is on record ([config.md](config.md#review-gate)) | `AIDRIAN_ALLOW_UNREVIEWED_REQUEST=1` |
 | Review rounds, when a review bot is set | Setting `AIDRIAN_ALLOW_EXTRA_ROUNDS`, and asking the bot for a review outside `aidrian pr`, which counts rounds first ([config.md](config.md#review-gate)) | none |
 | Review sign-off | `aidrian pr signoff`, which records the Human's sign-off of a flow under their name ([review.md](review.md#sign-off-by-the-human)) | none: the Human runs it in their own shell |
-| Decision answer | `aidrian decisions set` from a subagent, which records the Human's answer on a decision ([Decision markers](project-folder.md#decision-markers)) | none: the main session runs it on the Human's word |
+| Decision answer | `aidrian decisions set` or `undo` from a subagent, which carry out the Human's answer on a decision ([Decision markers](project-folder.md#decision-markers)) | none: the main session runs them on the Human's word |
 | Extra round approval | `aidrian pr extend <PR> --human approve` without the Human's answer in the session ([review.md](review.md#extra-rounds)) | none: the Human answers, or runs it in their own shell |
 | Quota fallback choice | `aidrian pr review <PR> --quota-fallback` without the Human's pick in the session ([review.md](review.md#out-of-quota)) | none: the Human answers, or runs it in their own shell |
 | Merge guard | Merging a pull request while a review it owes is open, or the review of its head has not finished ([Merge guard](#merge-guard)) | none: the Human answers "Merge anyway", or merges in their own shell |
@@ -162,8 +165,10 @@ What each rule matches:
   asks `@codex review`; `gh pr create --reviewer` and `gh pr edit --add-reviewer` naming `github.reviewer`.
 - Review sign-off: `aidrian pr signoff`, with `--overrule` too, also as `node …/cli.mjs` or `node …/bin/aidrian`. In a Claude Code session the
   Human runs it with `!`; if a host routes `!` through the hooks too, the Human runs it from another terminal.
-- Decision answer: `aidrian decisions set`, also as `node …/cli.mjs` or `node …/bin/aidrian`, and in `sh -c`, `eval`, or a heredoc fed to a shell,
+- Decision answer: `aidrian decisions set` and `aidrian decisions undo`, also as `node …/cli.mjs` or `node …/bin/aidrian`,
+  and in `sh -c`, `eval`, or a heredoc fed to a shell,
   in a call with an `agent_id`. The main session has none, so it stays allowed. A subagent on a host that sends no `agent_id` passes too.
+  The rule stops accidents and is no security boundary: a form it does not read, such as `xargs` or `npx`, runs.
 - Extra round approval: `aidrian pr extend <PR> --human approve`, also as `node …/cli.mjs` or `--human=approve`, while the
   pull request's check at the cap waits for the Human. It runs when the session transcript holds an AskUserQuestion
   answer, given after the judge's verdict, to a question naming `#<PR>` and the round it grants, `round <N>`, whose chosen

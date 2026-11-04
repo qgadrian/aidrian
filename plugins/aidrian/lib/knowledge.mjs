@@ -245,6 +245,11 @@ export function indexRows(buckets) {
   return buckets.flatMap((bucket) => bucket.docs);
 }
 
+// Each doc path the buckets index, once, in index order. Two buckets may index one doc.
+export function indexedPaths(buckets) {
+  return [...new Set(indexRows(buckets).map((doc) => doc.path))];
+}
+
 // The knowledge budgets, config.json `knowledge.budgets`. Every session and subagent reads the `always` docs, so their
 // total warns above `alwaysBytes` and fails above twice that. A route to a tag reads each of its docs whole, so a tagged
 // doc above `taggedDocBytes` warns. Returns { problems, warnings, summary, always }; `always` is

@@ -19,9 +19,14 @@ function project(t) {
   return dir;
 }
 
-test('a subagent cannot settle a decision, however it runs aidrian', (t) => {
+test('a subagent cannot settle or undo a decision, however it runs aidrian', (t) => {
   const cwd = project(t);
   for (const command of [
+    'aidrian decisions undo refund-copy',
+    'node plugins/aidrian/lib/cli.mjs decisions undo refund-copy',
+    'cd x && aidrian decisions undo refund-copy --project .',
+    "bash -c 'aidrian decisions undo refund-copy'",
+    "echo 'aidrian decisions undo refund-copy' | bash",
     'aidrian decisions set refund-copy confirmed',
     '/usr/local/bin/aidrian decisions set refund-copy rejected',
     'node plugins/aidrian/lib/cli.mjs decisions set refund-copy confirmed',
@@ -35,7 +40,7 @@ test('a subagent cannot settle a decision, however it runs aidrian', (t) => {
     "bash <<'EOF'\naidrian decisions set refund-copy confirmed\nEOF",
     "echo 'aidrian decisions set refund-copy confirmed' | bash",
   ]) assert.equal(check(command, { cwd, input: SUBAGENT }), REASON, command);
-  for (const command of ['aidrian decisions list', 'aidrian decisions resolve --vocab', 'echo "aidrian decisions set a confirmed"', 'grep "decisions set" docs/hooks.md', 'node other.mjs decisions set a confirmed']) {
+  for (const command of ['aidrian decisions list', 'aidrian decisions resolve --vocab', 'echo "aidrian decisions set a confirmed"', 'echo "aidrian decisions undo a"', 'grep "decisions set" docs/hooks.md', 'node other.mjs decisions set a confirmed']) {
     assert.equal(check(command, { cwd, input: SUBAGENT }), null, command);
   }
 });
@@ -43,7 +48,10 @@ test('a subagent cannot settle a decision, however it runs aidrian', (t) => {
 test('the main session, with no agent_id, runs it, and outside a project the rule is off', (t) => {
   const cwd = project(t);
   const command = 'aidrian decisions set refund-copy confirmed';
-  for (const input of [{}, { agent_id: '' }, { agent_id: 7 }, undefined]) assert.equal(check(command, { cwd, input }), null, JSON.stringify(input));
+  for (const input of [{}, { agent_id: '' }, { agent_id: 7 }, undefined]) {
+    assert.equal(check(command, { cwd, input }), null, JSON.stringify(input));
+    assert.equal(check('aidrian decisions undo refund-copy', { cwd, input }), null, JSON.stringify(input));
+  }
   const bare = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-decisions-set-bare-')));
   t.after(() => rmSync(bare, { recursive: true, force: true }));
   assert.equal(check(command, { cwd: bare, input: SUBAGENT }), null);
@@ -61,6 +69,6 @@ test('the Bash hook runs the rule: exit 2 for a subagent, and the same command p
   });
   const denied = hook(SUBAGENT);
   assert.equal(denied.status, 2);
-  assert.match(denied.stderr, /`aidrian decisions set` records the Human's answer/u);
+  assert.match(denied.stderr, /`aidrian decisions set` and `aidrian decisions undo` carry out the Human's answer/u);
   assert.equal(hook({}).status, 0);
 });

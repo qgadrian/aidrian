@@ -114,6 +114,7 @@ Claude Code runs each skill as `/aidrian:<skill>`. In Codex, ask for it by name.
 | `knowledge-update` | Adds or refreshes knowledge docs from evidence. |
 | `lesson` | Captures a session lesson into the inbox. |
 | `lesson-triage` | Routes each open lesson to a fix. |
+| `decision-review` | Goes through the decisions agents made alone with the Human: keep, undo, or change each. Only a person starts it. |
 | `harness-health` | Explains the top problems in `aidrian report health`. |
 | `harness-setup` | Sets up a project in one guided session through `harness-librarian`; on a set-up project, runs `harness-health`. |
 | `skill-writer` | Creates, updates, audits, renames, or retires a skill. |

@@ -4,8 +4,9 @@
 //   aidrian decisions resolve --domain ux --class copy --reversible no,no,no,no
 //   aidrian decisions resolve --vocab            # every class and reversibility question, defined
 //   aidrian decisions list [--json]              # every marker, and what is wrong with the malformed ones
-//   aidrian decisions list --added-since REF     # only what the branch committed since it left REF, new and settled
+//   aidrian decisions list --added-since REF     # only what the branch committed since it left REF: new, settled, removed
 //   aidrian decisions set ID confirmed|rejected  # the Human's answer: rewrites that one marker in the working copy
+//   aidrian decisions undo ID                    # the Human's undo: puts back the old wording and removes the decision's lines
 //
 // `--reversible` answers the questions of decisions.json in its order: storedData, external, pricingOrContract,
 // reachesUsersUnreviewed. An answer left out asks. `--doc` names a doc, with an optional `#section`: from the current folder
@@ -14,6 +15,7 @@
 // none was, and `secondLook` is that config's `decisions.secondLook`, or null when none was read.
 // Exit 0 on either answer; 1 on bad arguments or an invalid config. docs/config.md#decisions has the rules, and
 // docs/project-folder.md#decision-markers the marker. `list` exits 0 with problems: they are part of what it reports.
+// `undo` exits 1 and writes nothing when it refuses, after printing why, both wordings, and the block it searched.
 
 import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -21,15 +23,15 @@ import { parseArgs } from 'node:util';
 
 import { commandConfig, committedDecisions, DEFAULTS, localDecisions } from './config.mjs';
 import { ghJson } from './gh.mjs';
-import { ageDays, loadVocab, parseDecisions, resolveAuthority, setDecisionStatus } from './decisions.mjs';
+import { ageDays, blockOf, DECISION_STATUSES, loadVocab, parseDecisions, recordAt, resolveAuthority, setDecisionStatus, undoDecision, wordingProblems } from './decisions.mjs';
 import { checkoutRoots, runGit } from './git.mjs';
-import { loadKnowledge } from './knowledge.mjs';
+import { indexedPaths, loadKnowledge } from './knowledge.mjs';
 import { committedConfigFile, findProject, noProjectMessage, projectAt } from './project.mjs';
 import { checkTool as mainCheckoutDenial } from './rules/main-checkout.mjs';
 import { usageLines } from './usage.mjs';
 
 const USAGE = 'resolve --domain D --class C [--reversible A,B,C,D] [--doc PATH]... [--project DIR] | resolve --vocab ' +
-  '| list [--added-since REF] [--json] [--project DIR] | set ID confirmed|rejected [--project DIR]';
+  '| list [--added-since REF] [--json] [--project DIR] | set ID confirmed|rejected [--project DIR] | undo ID [--project DIR]';
 const SETTLED = ['confirmed', 'rejected'];
 // A branch-scoped list reads whole docs from git, which can outlast git.mjs's default for a hook.
 const GIT_READ = { timeout: 30_000, maxBuffer: 64 * 1024 * 1024 };
@@ -38,12 +40,13 @@ const ANSWERS = { no: false, yes: true };
 export const commands = {
   decisions: {
     usage: USAGE,
-    about: 'say whether an agent may settle one decision or must ask the Human, from config.json `decisions` at the base branch, with A,B,C,D the four reversibility answers, each no or yes; print the decision classes; list the decisions on record in the indexed docs, or those a branch added since REF; or set the Human\'s answer on one',
+    about: 'say whether an agent may settle one decision or must ask the Human, from config.json `decisions` at the base branch, with A,B,C,D the four reversibility answers, each no or yes; print the decision classes; list the decisions on record in the indexed docs, or those a branch added since REF; set the Human\'s answer on one; or undo one, putting back the wording it replaced',
     run(args) {
       const [action, ...rest] = args;
       if (action === 'list') return list(rest);
       if (action === 'set') return set(rest);
-      if (action !== 'resolve') return fail(`decisions takes resolve, list, or set${action ? `, not "${action}"` : ''}`);
+      if (action === 'undo') return undo(rest);
+      if (action !== 'resolve') return fail(`decisions takes resolve, list, set, or undo${action ? `, not "${action}"` : ''}`);
       const word = { type: 'string' };
       const { values } = parseArgs({
         args: rest,
@@ -59,9 +62,12 @@ export const commands = {
       const project = projectAt(values.project ?? process.cwd());
       const { decisions, base } = decisionsInForce(project);
       const docs = (values.doc ?? []).flatMap((doc) => docReadings(project, doc));
+      const pending = decisions === null || decisions.unreviewed.pauseDomainAt === null ? [] : pendingDecisions(project, base);
       const out = decisions === null
         ? { authority: 'ask', rule: 'no-base', reason: 'git could not give the base branch\'s config, so the decision goes to the Human' }
-        : resolveAuthority({ decisions: withResolvedEntries(project, decisions) }, { domain: values.domain, class: values.class, reversible, docs });
+        : pending === null
+          ? { authority: 'ask', rule: 'no-base', reason: 'git could not give the unreviewed decisions, so the decision goes to the Human' }
+          : resolveAuthority({ decisions: withResolvedEntries(project, decisions) }, { domain: values.domain, class: values.class, reversible, docs, pending });
       console.log(JSON.stringify({ ...out, secondLook: decisions?.secondLook ?? null, base }));
       return 0;
     },
@@ -87,7 +93,7 @@ function readMarkers(docs, read) {
     lines.set(doc, text.split(/\r?\n/u));
     const found = parseDecisions(text);
     decisions.push(...found.decisions.map((each) => ({ ...each, doc, ageDays: ageDays(each.date) })));
-    problems.push(...found.problems.map((each) => ({ doc, ...each })));
+    problems.push(...[...found.problems, ...wordingProblems(text, found)].map((each) => ({ doc, ...each })));
   }
   for (const decision of decisions) {
     const others = decisions.filter((each) => each !== decision && each.id === decision.id);
@@ -97,67 +103,130 @@ function readMarkers(docs, read) {
   return { decisions, problems, lineAt: ({ doc, line }) => lines.get(doc)[line - 1].trim() };
 }
 
-const indexed = (buckets) => [...new Set(buckets.flatMap((bucket) => bucket.docs.map((doc) => doc.path)))];
+const strayProblem = (id) => `"${id}" is in a doc no knowledge index lists: markers belong in an indexed doc`;
 const indexProblems = (errors) => errors.map((problem) => ({ doc: null, line: null, problem }));
 
 // The markers of every indexed knowledge doc, as the working copy holds them, so a branch sees its own: { decisions,
-// problems, docs }, with `docs` the count of docs read. A problem of the indexes has a null doc and line; `aidrian check`
-// reports those as errors. A marker of a doc a local source indexes lists too, under its absolute path, though no other
-// machine sees it.
+// problems, notes, docs, lineAt }, with `docs` the count of docs read, and `lineAt` as readMarkers gives it. A problem of
+// the indexes has a null doc and line; `aidrian check` reports those as errors. A marker of a doc a local source indexes
+// lists too, under its absolute path, though no other machine sees it. A marker in a tracked Markdown file no index lists
+// is a problem: it counts toward the domain pause, so the Human must be able to find it. A doc through a symlink is the
+// file it reaches. When git cannot search a checkout, `notes` says those markers went unscanned.
 export function scanDecisions(project) {
   commandConfig(project);
   const { buckets, errors } = loadKnowledge(project);
-  const docs = indexed(buckets);
-  const { decisions, problems } = readMarkers(docs, (doc) => readFileSync(path.resolve(project.root, doc), 'utf8'));
-  return { decisions, problems: [...indexProblems(errors), ...problems], docs: docs.length };
+  const docs = indexedPaths(buckets);
+  const read = (doc) => readFileSync(path.resolve(project.root, doc), 'utf8');
+  const { decisions, problems, lineAt } = readMarkers(docs, read);
+  const stray = new Map();
+  const outside = [];
+  const onDisk = (doc) => real(path.resolve(project.root, doc));
+  const known = new Set(docs.map(onDisk));
+  const tracked = gitReader(project).markerFiles();
+  const notes = tracked === null && insideGit(project.root) ? ['markers in files no index lists could not be scanned: git grep failed'] : [];
+  for (const doc of (tracked ?? []).filter((file) => !known.has(onDisk(file)))) {
+    let text;
+    try {
+      text = read(doc);
+    } catch {
+      continue;
+    }
+    stray.set(doc, text.split(/\r?\n/u));
+    outside.push(...parseDecisions(text).decisions.map(({ id, line }) => ({ doc, line, problem: strayProblem(id) })));
+  }
+  const textAt = (each) => (stray.has(each.doc) ? stray.get(each.doc)[each.line - 1].trim() : lineAt(each));
+  return { decisions, problems: [...indexProblems(errors), ...problems, ...outside], notes, docs: docs.length, lineAt: textAt };
 }
 
-// What the branch committed since it left `ref`, parsed at both ends: { decisions, settled, problems, pullRequest }, or
-// null when git cannot compare them. A decision counts when its id is on no marker at the merge base, in any Markdown
-// file, so a moved marker is not new. `settled` holds each marker the base has whose status the branch changed, with
-// `was`. A problem counts when its line, status and pull request aside, is not there, so one the branch inherited is not
-// its own. A new decision in a Markdown file no index lists is a problem, and with a pull request open for the branch, so
-// is a `pr=none` the branch added.
-function addedSince(project, ref) {
-  commandConfig(project);
-  const { buckets, errors } = loadKnowledge(project);
+// How to read `rev`s of the project from git: { git, show, markerFiles, markersAt }. `show` gives a file's text, or null.
+// `markerFiles` gives the Markdown files of `rev`, or with none the tracked files of the working copy, that mention a
+// marker, or null when git fails; 1 is git saying there are none. `markersAt` gives the decisions of a rev's such files,
+// each with its `doc`, or null when git fails on one.
+function gitReader(project) {
   const git = (...args) => runGit(args, project.root, GIT_READ);
-  const merged = ref.startsWith('-') ? null : git('merge-base', ref, 'HEAD');
-  if (merged?.status !== 0) return null;
-  const base = merged.stdout.trim();
   const show = (rev, file) => {
     const shown = git('show', `${rev}:./${file}`);
     return shown.status === 0 ? shown.stdout : null;
   };
-  // The Markdown files of `rev` that mention a marker, or null when git fails; 1 is git saying there are none.
   const markerFiles = (rev) => {
-    const listed = git('grep', '-l', '-z', '-F', 'aidrian:decision', rev, '--', '*.md');
+    const listed = git('grep', '-l', '-z', '-F', 'aidrian:decision', ...(rev ? [rev] : []), '--', '*.md');
     if (listed.status !== 0 && listed.status !== 1) return null;
-    return listed.stdout.split('\0').filter(Boolean).map((entry) => entry.slice(rev.length + 1));
+    return listed.stdout.split('\0').filter(Boolean).map((entry) => (rev ? entry.slice(rev.length + 1) : entry));
   };
+  const markersAt = (rev) => {
+    const files = markerFiles(rev);
+    if (files === null) return null;
+    const found = [];
+    for (const doc of files) {
+      const text = show(rev, doc);
+      if (text === null) return null;
+      found.push(...parseDecisions(text).decisions.map((each) => ({ ...each, doc })));
+    }
+    return found;
+  };
+  return { git, show, markerFiles, markersAt };
+}
+
+// The unreviewed decisions for the domain pause, as [{ domain, date }], or null when git cannot give them. Each unconfirmed
+// marker of `base`, plus each marker the branch committed whose id neither `base` nor the merge base holds, whatever its
+// status. So nothing in the working copy, or a status the branch set, lifts a pause: only the base branch's own record
+// does. With no git at all, `base` is null, and the working copy is the only record.
+function pendingDecisions(project, base) {
+  if (base === null) return scanDecisions(project).decisions.filter(({ status }) => status === 'unconfirmed');
+  const { git, markersAt } = gitReader(project);
+  const fork = git('merge-base', base, 'HEAD');
+  if (fork.status !== 0 && fork.status !== 1) return null;
+  const atBase = markersAt(base);
+  const atFork = fork.status === 0 ? markersAt(fork.stdout.trim()) : [];
+  const atHead = markersAt('HEAD');
+  if (atBase === null || atFork === null || atHead === null) return null;
+  const known = new Set([...atBase, ...atFork].map(({ id }) => id));
+  return [...atBase.filter(({ status }) => status === 'unconfirmed'), ...atHead.filter(({ id }) => !known.has(id))];
+}
+
+// A marker line with a valid status and pull request blanked, so changing one of those does not make a line new, and
+// writing an invalid one does.
+const STATUS_VALUE = new RegExp(`(\\sstatus=)(?:${DECISION_STATUSES.join('|')})(?=\\s|-->)`, 'u');
+const sameLine = (line) => line.trim().replace(STATUS_VALUE, '$1').replace(/(\spr=)(?:[1-9]\d*|none)(?=\s|-->)/u, '$1');
+
+// What the branch committed since it left `ref`, parsed at both ends: { decisions, settled, removed, problems, pullRequest },
+// or null when git cannot compare them. A decision counts when its id is on no marker at the merge base, in any Markdown
+// file, so a moved marker is not new. `settled` holds each marker the base has whose status the branch changed, with
+// `was`. `removed` holds each id at the merge base, with its `status` and `doc` there, that no indexed doc at HEAD holds,
+// such as one undone; a marker the merge base held outside the indexed docs, and HEAD still holds there, is not removed.
+// A problem is `inherited: true` when the merge base has the same problem on the same line, a valid status and pull request
+// aside, and every other is the branch's own. A new decision in a Markdown file no index lists is a problem, and with a pull
+// request open for the branch, so is a `pr=none` the branch added.
+function addedSince(project, ref) {
+  commandConfig(project);
+  const { buckets, errors } = loadKnowledge(project);
+  const { git, show, markerFiles } = gitReader(project);
+  const merged = ref.startsWith('-') ? null : git('merge-base', ref, 'HEAD');
+  if (merged?.status !== 0) return null;
+  const base = merged.stdout.trim();
   const atBase = markerFiles(base);
   const atHead = markerFiles('HEAD');
   if (atBase === null || atHead === null) return null;
-  const sameLine = (line) => line.trim().replace(/(\s(?:status|pr)=)[^\s-]+/gu, '$1');
-  const statuses = new Map();
-  const lines = new Set();
-  for (const file of atBase) {
-    const text = show(base, file) ?? '';
-    for (const { id, status } of parseDecisions(text).decisions) statuses.set(id, status);
-    for (const line of text.split(/\r?\n/u)) if (line.includes('aidrian:decision')) lines.add(sameLine(line));
-  }
-  const docs = indexed(buckets).filter((doc) => !path.isAbsolute(doc));
+  const atMergeBase = readMarkers(atBase, (file) => show(base, file) ?? '');
+  const statuses = new Map(atMergeBase.decisions.map(({ id, status }) => [id, status]));
+  const homes = new Map(atMergeBase.decisions.map(({ id, doc }) => [id, doc]));
+  const sameProblem = (each, lineAt) => `${sameLine(lineAt(each))}\0${each.problem}`;
+  const baseProblems = new Set(atMergeBase.problems.filter(({ line }) => line !== null).map((each) => sameProblem(each, atMergeBase.lineAt)));
+  const docs = indexedPaths(buckets).filter((doc) => !path.isAbsolute(doc));
   const { decisions, problems, lineAt } = readMarkers(docs, (doc) => show('HEAD', doc));
   const added = decisions.filter(({ id }) => !statuses.has(id));
   const settled = decisions.filter(({ id, status }) => statuses.has(id) && statuses.get(id) !== status).map((each) => ({ ...each, was: statuses.get(each.id) }));
-  const stray = atHead.filter((file) => !docs.includes(file)).flatMap((doc) => parseDecisions(show('HEAD', doc) ?? '').decisions
-    .filter(({ id }) => !statuses.has(id))
-    .map(({ id, line }) => ({ doc, line, problem: `"${id}" is in a doc no knowledge index lists: markers belong in an indexed doc` })));
+  const outside = atHead.filter((file) => !docs.includes(file)).flatMap((doc) => parseDecisions(show('HEAD', doc) ?? '').decisions.map((each) => ({ ...each, doc })));
+  const stray = outside.filter(({ id }) => !statuses.has(id))
+    .map(({ doc, line, id }) => ({ doc, line, problem: strayProblem(id) }));
+  const held = new Set(decisions.map(({ id }) => id));
+  const removed = [...statuses].filter(([id]) => !held.has(id) && !outside.some((each) => each.id === id && each.doc === homes.get(id)))
+    .map(([id, status]) => ({ id, status, doc: homes.get(id) }));
   const pullRequest = openPullRequest(project);
   const unset = pullRequest === null ? [] : added.filter(({ pr }) => pr === null)
     .map(({ doc, line, id }) => ({ doc, line, problem: `"${id}" still says pr=none, but pull request #${pullRequest} exists: write its number on the marker` }));
-  const own = problems.filter((each) => each.line === null || !lines.has(sameLine(lineAt(each))));
-  return { decisions: added, settled, problems: [...indexProblems(errors), ...own, ...stray, ...unset], pullRequest };
+  const marked = problems.map((each) => (each.line !== null && baseProblems.has(sameProblem(each, lineAt)) ? { ...each, inherited: true } : each));
+  return { decisions: added, settled, removed, problems: [...indexProblems(errors), ...marked, ...stray, ...unset], pullRequest };
 }
 
 // The number of the branch's pull request, or null when it has none or gh cannot say.
@@ -189,16 +258,19 @@ function list(args) {
     console.error(`cannot compare this branch with "${ref}": git knows no such ref, or could not read it`);
     return 1;
   }
-  const { decisions, settled = [], problems, docs, pullRequest } = found;
+  const { decisions, settled = [], removed = [], problems, notes = [], docs, pullRequest } = found;
   if (values.json) {
-    console.log(JSON.stringify(ref === undefined ? { decisions, problems } : { decisions, settled, problems, pullRequest }));
+    console.log(JSON.stringify(ref === undefined ? { decisions, problems, notes } : { decisions, settled, removed, problems, pullRequest }));
     return 0;
   }
-  const wording = ({ hasOldWording, oldWording }) => (!hasOldWording ? 'no' : oldWording === null ? 'unreadable' : 'yes');
-  const row = (each) => [each.id, each.status, each.class, each.domain, `${each.ageDays}d`, place(each), `pr=${each.pr ?? 'none'}`, `old wording: ${wording(each)}`];
-  const rows = [...decisions.map(row), ...settled.map((each) => [...row(each), `settled, was ${each.was}`])];
-  rows.push(...problems.map((each) => ['problem', ...(each.doc === null ? [] : [place(each)]), each.problem]));
-  console.log(rows.length ? rows.map((row) => row.join('\t')).join('\n') : ref === undefined ? `no decisions in ${docs} indexed doc${docs === 1 ? '' : 's'}` : `no decisions added since ${ref}`);
+  const wording = (has, words) => (!has ? 'no' : words === null ? 'unreadable' : 'yes');
+  const row = (each) => [each.id, each.status, each.class, each.domain, `${each.ageDays}d`, place(each), `pr=${each.pr ?? 'none'}`,
+    `old wording: ${wording(each.hasOldWording, each.oldWording)}`, `new wording: ${wording(each.hasNewWording, each.newWording)}`];
+  const rows = [...decisions.map(row), ...settled.map((each) => [...row(each), `settled, was ${each.was}`]), ...removed.map(({ id, status, doc }) => [id, status, `removed from ${doc}`])];
+  rows.push(...problems.map((each) => ['problem', ...(each.doc === null ? [] : [place(each)]), each.problem, ...(each.inherited ? ['inherited'] : [])]));
+  const empty = ref === undefined ? `no decisions in ${docs} indexed doc${docs === 1 ? '' : 's'}` : `no decisions added since ${ref}`;
+  const shown = [...(rows.length ? rows.map((row) => row.join('\t')) : [empty]), ...notes.map((note) => `note\t${note}`)];
+  console.log(shown.join('\n'));
   return 0;
 }
 
@@ -238,6 +310,83 @@ function set(args) {
   }
   writeFileSync(file, out.text, 'latin1');
   console.log(`${doc}:${out.line}: ${id} ${status} (was ${out.from})`);
+  return 0;
+}
+
+// What a refusal of `undo` prints for one marker: its wordings and the block it searched, or as much as reads.
+function refusalDetail(decision, block) {
+  const shown = (has, words) => (!has ? 'none' : words === null ? 'unreadable' : JSON.stringify(words));
+  console.error(`old wording: ${shown(decision.hasOldWording, decision.oldWording)}`);
+  console.error(`new wording: ${shown(decision.hasNewWording, decision.newWording)}`);
+  printBlock(block);
+}
+
+function printBlock(block) {
+  console.error(`block above the marker:${block.length ? '' : ' empty'}`);
+  for (const line of block) console.error(`  ${line}`);
+}
+
+function undo(args) {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { project: { type: 'string' } } });
+  if (positionals.length !== 1) return fail('undo needs one id');
+  const [id] = positionals;
+  const project = knownProject(values.project);
+  if (!project) return 1;
+  const { decisions, problems, lineAt } = scanDecisions(project);
+  const found = decisions.filter((each) => each.id === id);
+  if (found.length === 0) {
+    const named = problems.filter((each) => each.line !== null && lineAt(each).split(/\s+/u).includes(`id=${id}`));
+    const hint = problems.some((each) => each.line !== null) ? ': run aidrian decisions list for the marker problems' : '';
+    if (!named.length) {
+      console.error(`no decision marker with id "${id}"${hint}`);
+      return 1;
+    }
+    for (const each of named) console.error(`cannot undo "${id}" at ${place(each)}: ${each.problem}`);
+    // The first named line of each doc is its marker's, or the wording left with no marker to read.
+    for (const each of named.filter((one, i) => named.findIndex((other) => other.doc === one.doc) === i)) {
+      const { wording, block } = recordAt(readFileSync(path.resolve(project.root, each.doc), 'utf8'), each.line);
+      console.error(`wording lines from ${place(each)}:${wording.length ? '' : ' none'}`);
+      for (const line of wording) console.error(`  ${line}`);
+      printBlock(block);
+    }
+    return 1;
+  }
+  const textOf = (doc) => readFileSync(path.resolve(project.root, doc));
+  if (found.length > 1) {
+    console.error(`cannot undo "${id}": id "${id}" is on ${found.length} markers: ${found.map(place).join(', ')}; fix the repeat first`);
+    for (const each of found) {
+      console.error(place(each));
+      refusalDetail(each, blockOf(textOf(each.doc).toString('utf8'), each));
+    }
+    return 1;
+  }
+  const [decision] = found;
+  const { doc } = decision;
+  const file = path.resolve(project.root, doc);
+  // Wording compares and writes as text, so the doc must decode: a byte that is not UTF-8 would not survive.
+  const bytes = textOf(doc);
+  const before = bytes.toString('utf8');
+  if (!Buffer.from(before, 'utf8').equals(bytes)) {
+    console.error(`cannot undo "${id}" at ${place(decision)}: the doc is not valid UTF-8, so its wording cannot be matched`);
+    refusalDetail(decision, blockOf(before, decision));
+    return 1;
+  }
+  const out = undoDecision(before, id);
+  if (out.refused) {
+    console.error(`cannot undo "${id}" at ${place(decision)}: ${out.refused}`);
+    refusalDetail(out.decision ?? decision, out.block);
+    return 1;
+  }
+  // The same answer the main-checkout rule gives an edit of this doc, with its override and `allowWrites`.
+  const denied = mainCheckoutDenial({ tool_name: 'Edit', tool_input: { file_path: file }, cwd: project.root });
+  if (denied) {
+    console.error(denied);
+    return 1;
+  }
+  writeFileSync(file, out.text);
+  const count = (n) => `${n} line${n === 1 ? '' : 's'}`;
+  const what = out.restored.length ? `replaced ${count(out.wrote.length)} with ${out.restored.length}` : `removed ${count(out.wrote.length)}`;
+  console.log([`${doc}:${out.line}: undid ${id}: ${what}`, ...out.wrote.map((line) => `- ${line}`), ...out.restored.map((line) => `+ ${line}`)].join('\n'));
   return 0;
 }
 

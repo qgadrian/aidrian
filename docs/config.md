@@ -668,8 +668,14 @@ The first rule that matches wins:
 3. Any reversibility answer that is yes or missing asks.
    The four answers, in order: `storedData`, `external`, `pricingOrContract`, `reachesUsersUnreviewed`.
    The last asks whether the change reaches existing users with no human review of its pull request and no off switch.
-4. An unknown domain asks. A domain that is paused asks: its unreviewed decisions reach `pauseDomainAt.pending`, or the oldest reaches
-   `pauseDomainAt.oldestDays` days. This rule takes effect when the resolver is given the pending list; `aidrian decisions resolve` gives it an empty one.
+4. An unknown domain asks. A domain that is paused asks, with the rule `domain-paused`: its unreviewed decisions reach `pauseDomainAt.pending`,
+   or the oldest reaches `pauseDomainAt.oldestDays` days.
+   Unreviewed means each unconfirmed marker at the base commit, plus each marker the branch committed, whatever its status.
+   So an uncommitted edit, or a status set on the branch, cannot lift a pause; the Human's answer lifts it once it reaches the base branch.
+   The base is the local `origin/HEAD`, so after that answer merges, `resolve` stays paused until a fetch.
+   The reason names the docs that hold the domain's markers, since any tracked Markdown file counts.
+   `aidrian decisions list` reports a marker in a file no index lists.
+   With no git at all, the working copy's unconfirmed markers count. When git cannot read them, the decision asks, with the rule `no-base`.
 5. `domains.<domain>`, unless it is `"inherit"`, then `mode`, each held to `maxMode`. Only `"decide-reversible"` decides.
 
 ### How agents use the answer
@@ -688,6 +694,9 @@ The dispatcher runs the command and passes `authority: decide` or `authority: as
 
 Each `decided_provisional` is committed as a marker line in the doc that governs it: [Decision markers](project-folder.md#decision-markers).
 `aidrian decisions list` prints them, and `aidrian decisions set <id> confirmed|rejected` records the Human's answer. Nothing settles one by time.
+`aidrian decisions undo <id>` takes one back.
+The [`decision-review`](../plugins/aidrian/skills/decision-review/SKILL.md) skill goes through them with the Human, in a batch.
+Session start reminds the main session of them while `unreviewed.remind` is `"session-start"`.
 The skill below reads the branch's own with `aidrian decisions list --added-since <ref>`.
 
 Under `decisions.record.queue` `"pr-body"`, the default, the [`pr-write`](../plugins/aidrian/skills/pr-write/SKILL.md) skill also lists
@@ -736,7 +745,8 @@ At the base commit, where no command reports it, it holds every decision at ask 
   The command answers with the rule `maxMode`. A local value above it is held down, as above, with no warning.
 - An `escalateDocs` entry whose file or folder no tracked path matches exactly, case included, such as a typo.
   A doc may be listed before it exists, so this is a warning and not an error.
-- A [decision marker](project-folder.md#decision-markers) it cannot read, or an id on two markers.
+- A [decision marker](project-folder.md#decision-markers) it cannot read, an id on two markers, wording undo could no longer find,
+  a stack whose wordings do not chain, or a marker in a tracked Markdown file no index lists.
 
 ## Checking
 

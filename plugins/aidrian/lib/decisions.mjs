@@ -36,7 +36,7 @@ export const lowerMode = (a, b) => DECISION_MODES[Math.min(Math.max(DECISION_MOD
 //   an answer that is missing, or anything but false, asks;
 // - `docs`: the doc paths the decision touches, from the project root, each with an optional `#section`, matched
 //   against `escalateDocs`; one outside the project asks;
-// - `pending`: the unreviewed decisions so far, as [{ domain, date }], for the domain pause.
+// - `pending`: the unreviewed decisions so far, as [{ domain, date, doc? }], for the domain pause.
 // Returns { authority: "decide" | "ask", rule, reason }: `rule` names the rule that matched, `reason` says why.
 export function resolveAuthority(config, { domain, class: kind, reversible, docs = [], pending = [] } = {}, { now = new Date(), table = loadVocab() } = {}) {
   const block = config.decisions ?? config;
@@ -54,14 +54,21 @@ export function resolveAuthority(config, { domain, class: kind, reversible, docs
     if (answer !== false) return ask('reversibility', `${key} is ${answer === true ? 'yes' : 'unanswered'}: ${table.reversibility[key]}`);
   }
   if (!DECISION_DOMAINS.includes(domain)) return ask('unknown-domain', `${JSON.stringify(domain ?? null)} is not one of ${DECISION_DOMAINS.join(', ')}`);
-  const paused = pauseReason(block.unreviewed.pauseDomainAt, pending.filter((each) => each?.domain === domain), now);
-  if (paused) return ask('domain-paused', `${domain} is paused: ${paused}`);
+  const domainPending = pending.filter((each) => each?.domain === domain);
+  const paused = pauseReason(block.unreviewed.pauseDomainAt, domainPending, now);
+  if (paused) return ask('domain-paused', `${domain} is paused: ${paused}${docsClause(domainPending)}`);
   const own = block.domains[domain];
   const [mode, rule] = own === 'inherit' ? [block.mode, 'mode'] : [own, `domains.${domain}`];
   const effective = lowerMode(mode, block.maxMode);
   if (effective !== mode) return ask('maxMode', `${rule} is ${mode}, above decisions.maxMode ${block.maxMode}`);
   if (effective === 'decide-reversible') return { authority: 'decide', rule, reason: `${rule} is decide-reversible and every reversibility answer is no` };
   return ask(rule, `${rule} is ask`);
+}
+
+// Where the markers of a pause are, so the Human can reach them; nothing when `pending` names no doc.
+function docsClause(pending) {
+  const docs = [...new Set(pending.map((each) => each.doc).filter(Boolean))];
+  return docs.length ? `; the markers are in ${docs.join(', ')}` : '';
 }
 
 // Why `pending`, one domain's unreviewed decisions, pauses that domain under `limits` ({ pending, oldestDays } or
@@ -139,74 +146,96 @@ export const DECISION_STATUSES = ['unconfirmed', 'confirmed', 'rejected'];
 const MARKER_FIELDS = ['id', 'status', 'class', 'domain', 'date', 'pr'];
 // Long enough for a slug, and short enough that the longest marker stays on one screen, at the default `docs.wrapLimit`.
 const ID_MAX = 32;
-// A comment that means to be a marker, whatever else is wrong with it.
-const MENTION = /<!--\s*aidrian:decision(-old)?(?=\s|-->|$)/u;
+// A comment that means to be a marker or a line of its wording, whatever else is wrong with it.
+const MENTION = /<!--\s*aidrian:decision(?:-(old|new))?(?=\s|-->|$)/u;
 const MARKER_LINE = /^<!--\s+aidrian:decision\s+(.*?)\s*-->$/u;
-const OLD_LINE = /^<!--\s+aidrian:decision-old\s+id=(\S+)\s+text=("(?:[^"\\]|\\.)*")\s+-->$/u;
+const WORDING_LINE = /^<!--\s+aidrian:decision-(old|new)\s+id=(\S+)\s+text=("(?:[^"\\]|\\.)*")\s+-->$/u;
+const HEADING_LINE = /^ {0,3}#{1,6}(?:\s|$)/u;
 const CODE_SPAN = /(?<!`)(`+)(?!`).*?(?<!`)\1(?!`)/gu;
 const OWN_LINE = 'a decision marker is one HTML comment alone on its line';
-const COMMENT_LINE = /^\s*<!--\s*aidrian:decision(?:-old)?\s.*-->\s*$/u;
+const COMMENT_LINE = /^\s*<!--\s*aidrian:decision(?:-old|-new)?\s.*-->\s*$/u;
 
 // Whether a line is one whole decision comment. Wrapping one would break it, so the wrap check never reports it.
 export const isDecisionLine = (line) => COMMENT_LINE.test(line);
 
+// What a line means to be, by the words of its comment outside code spans: the MENTION match, or null. It says nothing on
+// whether the line is well formed, or fenced.
+const mentionIn = (line) => MENTION.exec(line.replace(CODE_SPAN, ''));
+
 // Every decision marker of one doc's text, and what is wrong with the rest: { decisions, problems }, where a decision
-// is { id, status, class, domain, date, pr, line, hasOldWording, oldWording } and a problem { line, problem }, both by
-// 1-based line. `pr` is a number, or null for `pr=none`. A marker quoted in a code fence or code span is no decision.
-// A malformed marker is a problem, never a throw. A marker out of place is a problem too, and still a decision.
-// `oldWording` joins the `decision-old` lines directly under the marker.
-// When one cannot be read, `hasOldWording` is still true and `oldWording` null: the decision replaced a rule, so an undo
-// must not read it as one that filled a gap.
+// is { id, status, class, domain, date, pr, line, through, hasOldWording, oldWording, hasNewWording, newWording } and a
+// problem { line, problem }, both by 1-based line, with `through` the decision's last line. `pr` is a number, or null for
+// `pr=none`. A marker quoted in a code fence or code span is no decision. A malformed marker is a problem, never a throw.
+// A marker out of place is a problem too, and still a decision.
+// `oldWording` joins the `decision-old` lines directly under the marker, and `newWording` the `decision-new` lines below
+// those. When one cannot be read, its `has...` is still true and the wording null: a decision whose old wording is
+// unreadable replaced a rule, so an undo must not read it as one that filled a gap.
 export function parseDecisions(text) {
   const lines = String(text).split(/\r?\n/u);
   const fenced = fencedIn(lines);
   const decisions = [];
   const problems = [];
-  // The decision whose marker and old wording end at the line `through`, 0-based.
+  // The decision whose marker and wording run down to the line before this one.
   let open = null;
+  const close = () => {
+    if (open && !open.decision.hasNewWording) problems.push({ line: open.decision.line, problem: `"${open.decision.id}" records no wording it wrote: add a decision-new line` });
+    open = null;
+  };
   lines.forEach((raw, i) => {
-    const mention = fenced[i] ? null : MENTION.exec(raw.replace(CODE_SPAN, ''));
+    const mention = fenced[i] ? null : mentionIn(raw);
+    const kind = mention?.[1];
+    if (open && !(kind && open.decision.through === i)) close();
     if (!mention) return;
     const line = i + 1;
-    if (!mention[1]) {
+    if (!kind) {
       const { problem, decision } = readMarker(raw.trim());
-      if (problem) problems.push({ line, problem });
-      else decisions.push({ ...decision, line });
-      const away = problem ? null : misplaced(lines, fenced, i);
+      if (problem) {
+        problems.push({ line, problem });
+        return;
+      }
+      decisions.push({ ...decision, line, through: line });
+      const away = misplaced(lines, fenced, i);
       if (away) problems.push({ line, problem: `"${decision.id}" sits ${away}` });
-      open = problem ? null : { decision: decisions.at(-1), through: i, broken: false };
+      open = { decision: decisions.at(-1), broken: new Set() };
       return;
     }
-    if (open?.through !== i - 1) {
-      problems.push({ line, problem: 'old wording with no decision marker directly above it' });
+    if (!open) {
+      problems.push({ line, problem: `${kind} wording with no decision marker directly above it` });
       return;
     }
-    const { problem, wording } = readOldWording(raw.trim(), open.decision.id);
-    open.through = i;
-    open.decision.hasOldWording = true;
+    const { decision, broken } = open;
+    decision.through = line;
+    const [has, words] = kind === 'old' ? ['hasOldWording', 'oldWording'] : ['hasNewWording', 'newWording'];
+    decision[has] = true;
+    const { problem, wording } = kind === 'old' && decision.hasNewWording
+      ? { problem: 'old wording comes after the new wording: the old lines go first' }
+      : readWording(raw.trim(), decision.id, kind);
     if (problem) {
       problems.push({ line, problem });
-      open.broken = true;
-      open.decision.oldWording = null;
-    } else if (!open.broken) {
-      open.decision.oldWording = (open.decision.oldWording ?? '') + wording;
+      broken.add(kind);
+      decision[words] = null;
+    } else if (!broken.has(kind)) {
+      decision[words] = (decision[words] ?? '') + wording;
     }
   });
-  return { decisions, problems };
+  close();
+  return { decisions, problems: problems.sort((a, b) => a.line - b.line) };
 }
 
 // What is wrong with where the marker on the 0-based line `i` sits, or null. It goes directly below the rule's last line,
-// the one place undo looks for that rule; a table row's marker goes directly below the table, since a comment breaks a table.
+// or below the decision lines of a stack on that rule, the one place undo looks for that rule; a table row's marker goes
+// directly below the table, since a comment breaks a table.
 function misplaced(lines, fenced, i) {
-  const below = lines.slice(i + 1).find((line) => !isDecisionLine(line));
   const rule = "a marker goes directly below the rule's last line";
-  if (i === 0) return `under nothing: ${rule}`;
-  const above = lines[i - 1];
+  let at = i - 1;
+  while (at >= 0 && !fenced[at] && isDecisionLine(lines[at])) at -= 1;
+  if (at < 0) return `under nothing: ${rule}`;
+  const above = lines[at];
   if (above.trim() === '') return `under a blank line: ${rule}`;
-  if (fenced[i - 1]) return `under a code fence: ${rule}`;
-  if (/^ {0,3}#{1,6}(?:\s|$)/u.test(above)) return `under a heading: ${rule}`;
-  if (isDecisionLine(above)) return `under another decision line: ${rule}`;
-  if (above.trimStart().startsWith('|') && below?.trimStart().startsWith('|')) return 'inside a table: it goes directly below the table, with the row named in the old wording';
+  if (fenced[at]) return null;
+  if (HEADING_LINE.test(above)) return `under a heading: ${rule}`;
+  const below = lines.slice(i + 1).find((line) => !isDecisionLine(line));
+  if (above.trimStart().startsWith('|') && below?.trimStart().startsWith('|')) return 'inside a table: it goes directly below the table, with the row named in the wording';
   return null;
 }
 
@@ -238,23 +267,25 @@ function readMarker(line) {
                 : !/^(?:[1-9]\d*|none)$/u.test(pr) ? `${quoted('pr', pr)} takes a pull request number, or none`
                   : null;
   if (problem) return { problem };
-  return { decision: { id, status, class: kind, domain, date, pr: pr === 'none' ? null : Number(pr), hasOldWording: false, oldWording: null } };
+  return { decision: { id, status, class: kind, domain, date, pr: pr === 'none' ? null : Number(pr), hasOldWording: false, oldWording: null, hasNewWording: false, newWording: null } };
 }
 
 const isDate = (text) => /^\d{4}-\d{2}-\d{2}$/u.test(text) && !Number.isNaN(Date.parse(text)) && new Date(text).toISOString().startsWith(text);
 
-// One `decision-old` line under the marker of `id`, as { wording } or { problem }. `text` is a JSON string, so it holds a
-// line break or a quote on one line; a raw `-->` would end the comment early, and a reader would see the rest.
-function readOldWording(line, id) {
-  const found = OLD_LINE.exec(line);
-  if (!found) return { problem: 'old wording is one HTML comment alone on its line: <!-- aidrian:decision-old id=<id> text="<JSON string>" -->' };
-  if (found[1] !== id) return { problem: `old wording with id ${JSON.stringify(found[1])} sits under the marker of ${JSON.stringify(id)}` };
-  if (found[2].includes('-->')) return { problem: 'old wording holds "-->", which ends the comment: write it as -\\u002d>' };
+// One wording line of `kind`, "old" or "new", under the marker of `id`, as { wording } or { problem }. `text` is a JSON
+// string, so it holds a line break or a quote on one line; a raw `-->` would end the comment early, and a reader would
+// see the rest.
+function readWording(line, id, kind) {
+  const found = WORDING_LINE.exec(line);
+  if (!found || found[1] !== kind) return { problem: `${kind} wording is one HTML comment alone on its line: <!-- aidrian:decision-${kind} id=<id> text="<JSON string>" -->` };
+  if (found[2] !== id) return { problem: `${kind} wording with id ${JSON.stringify(found[2])} sits under the marker of ${JSON.stringify(id)}` };
+  if (found[3].includes('-->')) return { problem: `${kind} wording holds "-->", which ends the comment: write it as -\\u002d>` };
   try {
-    const wording = JSON.parse(found[2]);
-    return wording === '' ? { problem: 'old wording is empty; a decision that fills a gap has no such line' } : { wording };
+    const wording = JSON.parse(found[3]);
+    if (wording !== '') return { wording };
+    return { problem: `${kind} wording is empty; ${kind === 'old' ? 'a decision that fills a gap has no such line' : 'it holds the lines the decision wrote'}` };
   } catch {
-    return { problem: 'old wording: text is not a JSON string' };
+    return { problem: `${kind} wording: text is not a JSON string` };
   }
 }
 
@@ -267,6 +298,126 @@ export function setDecisionStatus(text, id, status) {
   const lines = text.split('\n');
   lines[line - 1] = lines[line - 1].replace(/(\sstatus=)[a-z]+/u, `$1${status}`);
   return { text: lines.join('\n'), from, line };
+}
+
+// The rule a marker on the 0-based line `i` sits under, as the 0-based range { from, to }, `to` exclusive: from the line
+// above it, past the decision lines of its stack, up to a blank line outside a fence, a heading, another decision line,
+// or the doc's start. Fenced lines are content, whatever they look like. It never says which lines are the rule:
+// findWording matches the recorded text inside it.
+export function blockAbove(lines, fenced, i) {
+  const isDecision = (at) => !fenced[at] && isDecisionLine(lines[at]);
+  let to = i;
+  while (to > 0 && isDecision(to - 1)) to -= 1;
+  let from = to;
+  while (from > 0 && (fenced[from - 1] || !(lines[from - 1].trim() === '' || HEADING_LINE.test(lines[from - 1]) || isDecision(from - 1)))) from -= 1;
+  return { from, to };
+}
+
+const wordingLines = (wording) => wording.split('\n').map((line) => line.trimEnd());
+
+// Whether `below`, a marker directly under the marker `above`, has as its old wording the wording `above` wrote.
+const chained = (above, below) => above.newWording !== null && below.oldWording !== null && wordingLines(above.newWording).join('\n') === wordingLines(below.oldWording).join('\n');
+
+// Each 0-based line of `block` where `wording` starts, comparing lines with trailing whitespace trimmed and nothing else.
+export function findWording(lines, { from, to }, wording) {
+  const wanted = wordingLines(wording);
+  const found = [];
+  for (let at = from; at + wanted.length <= to; at += 1) {
+    if (wanted.every((line, k) => lines[at + k].trimEnd() === line)) found.push(at);
+  }
+  return found;
+}
+
+// What is wrong between the wording a doc's markers recorded and the doc: { line, problem } for each unconfirmed marker at
+// the bottom of its stack whose new wording is not in its block exactly once, and for each stack where a marker's old
+// wording is not the wording of the marker above it. Unreadable wording is parseDecisions' problem already.
+export function wordingProblems(text, { decisions } = parseDecisions(text)) {
+  const lines = String(text).split(/\r?\n/u);
+  const fenced = fencedIn(lines);
+  const problems = [];
+  decisions.forEach((decision, index) => {
+    const next = decisions[index + 1];
+    if (next?.line === decision.through + 1) {
+      const unreadable = decision.newWording === null && decision.hasNewWording || next.oldWording === null && next.hasOldWording;
+      if (!unreadable && !chained(decision, next)) problems.push({ line: next.line, problem: `"${next.id}" sits below "${decision.id}", but its old wording is not the wording "${decision.id}" wrote` });
+      return;
+    }
+    if (decision.status !== 'unconfirmed' || decision.newWording === null) return;
+    const count = findWording(lines, blockAbove(lines, fenced, decision.line - 1), decision.newWording).length;
+    if (count !== 1) problems.push({ line: decision.line, problem: `"${decision.id}" wrote wording found ${count} times in the block above it, and undo needs it exactly once: put it back, or fix the decision-new line` });
+  });
+  return problems;
+}
+
+// The lines of the block above the marker of `decision`, for a person to compare with its wording.
+export function blockOf(text, { line }) {
+  const lines = String(text).split(/\r?\n/u);
+  const { from, to } = blockAbove(lines, fencedIn(lines), line - 1);
+  return lines.slice(from, to);
+}
+
+// What can still be read of a marker that did not parse, on the 1-based `line`: { wording, block }, with `wording` the raw
+// wording lines from there down, the named line first when it is one, and `block` as blockOf gives it.
+export function recordAt(text, line) {
+  const lines = String(text).split(/\r?\n/u);
+  const fenced = fencedIn(lines);
+  const isWording = (at) => at < lines.length && !fenced[at] && Boolean(mentionIn(lines[at])?.[1]);
+  const wording = [];
+  for (let at = isWording(line - 1) ? line - 1 : line; isWording(at); at += 1) wording.push(lines[at].trim());
+  return { wording, block: blockOf(text, { line }) };
+}
+
+// `text` with the decision of `id` taken back: its new wording replaced by its old wording, or deleted when it has none,
+// and its lines removed, every other byte as it was. Returns { text, line, wrote, restored }, with `line` the first line
+// that changed and `wrote` and `restored` as lines, or, when it cannot be done safely, { refused, decision, block }, with
+// `decision` null when no marker of `id` reads. Only `\n` splits, so a line ending stays with its line. Status is no gate.
+export function undoDecision(text, id) {
+  const source = String(text);
+  const raw = source.split('\n');
+  const lines = source.split(/\r?\n/u);
+  const fenced = fencedIn(lines);
+  const { decisions, problems } = parseDecisions(source);
+  const found = decisions.filter((each) => each.id === id);
+  if (found.length === 0) {
+    const named = problems.find(({ line }) => lines[line - 1].trim().split(/\s+/u).includes(`id=${id}`));
+    return { refused: named ? named.problem : `no decision marker with id "${id}"`, decision: null, block: [] };
+  }
+  const refuse = (refused, decision = found[0]) => ({ refused, decision, block: blockOf(source, decision) });
+  if (found.length > 1) return refuse(`id "${id}" is on ${found.length} markers: lines ${found.map(({ line }) => line).join(', ')}`);
+  const [decision] = found;
+  const { line, through, oldWording, newWording } = decision;
+  const parseProblem = problems.find((each) => each.line >= line && each.line <= through);
+  if (parseProblem) return refuse(parseProblem.problem);
+  if (!fenced[through] && mentionIn(lines[through] ?? '')) {
+    const later = decisions.find((each) => each.line === through + 1);
+    return refuse(later ? `a later decision ${later.id} replaced this wording; undo that one first` : 'a later decision line it cannot read sits below this one; fix that line first');
+  }
+  if (line > 1 && !fenced[line - 2] && isDecisionLine(lines[line - 2])) {
+    const above = decisions.find((each) => each.through + 1 === line);
+    if (!above || above.newWording === null) return refuse('the decision line above it has no wording it can read, so undo would not put that rule back; fix that line first');
+    if (!chained(above, decision)) return refuse(`its old wording is not the wording "${above.id}" wrote, so undo would not put that rule back; fix the decision-old line first`);
+  }
+  const block = blockAbove(lines, fenced, line - 1);
+  const starts = findWording(lines, block, newWording);
+  if (starts.length === 0) return refuse('its new wording is not found in the block above it');
+  if (starts.length > 1) return refuse(`its new wording is found ${starts.length} times in the block above it`);
+  const [start] = starts;
+  const wrote = newWording.split('\n').length;
+  const ending = raw[start].endsWith('\r') ? '\r' : '';
+  const restored = oldWording === null ? [] : oldWording.split('\n').map((each) => each.replace(/\r$/u, ''));
+  const out = [...raw];
+  // Below the wording first, so `start` still counts from the top.
+  out.splice(line - 1, through - line + 1);
+  out.splice(start, wrote, ...restored.map((each) => each + ending));
+  if (!restored.length) closeGap(out, start);
+  // The marker was the doc's last line, with no line ending: what is now last has none either.
+  if (through === raw.length && out.length) out[out.length - 1] = out.at(-1).replace(/\r$/u, '');
+  return { text: out.join('\n'), line: start + 1, wrote: lines.slice(start, start + wrote), restored };
+}
+
+// One blank line where a removal at `at` left two.
+function closeGap(lines, at) {
+  if (at > 0 && at < lines.length && lines[at - 1].trim() === '' && lines[at].trim() === '') lines.splice(at, 1);
 }
 
 // Whole days since a marker's `date`; a date ahead of the clock is zero.

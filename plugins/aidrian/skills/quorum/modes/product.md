@@ -75,7 +75,7 @@ answer (`null` again when deferred), and runs `quorum check`.
    Otherwise the product owner, with the Ruling brief. It may keep the draft, change the winner, add conditions, or return `loop`. Write
    `ruling` and `outcome`, and run `quorum check`. One the check names invalid, or a missing one, goes back once, on the retry.
    Missing again, or with the retry spent, stop with `blocked`, unless a loop was spent: then write the escalate. Invalid again, or with the retry spent, write
-   `{decision: escalate, winner: null, change_or_reason: <the line it printed, then the last decision and winner>, citations: <its citations>, tested: [], inferences: []}`
+   `{decision: escalate, winner: null, change_or_reason: <the line it printed, then the last decision and winner>, citations: <the premise's citations, since an invalid ruling's may not pass>, tested: [], inferences: []}`
    and `outcome: null`, and run `quorum check`.
    **Loop.** The Ruling can return `loop` while loops remain. Add it to `loops`, then:
    - `interview`: ask the end user the new question; add the answer to `witness.interview`, up to its limit; then round 7. With no witness, a `loop` of `interview` counts as a missing ruling.

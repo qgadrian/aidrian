@@ -36,6 +36,7 @@ const QUORUM_SCHEMA = {
   judge: { agent: 'agentName' },
   plan: { a: { agent: 'agentName' }, b: QUORUM_RUNNER, maxObjections: 'objectionCap', maxDispatches: 'dispatchCap' },
   decide: { odd: QUORUM_RUNNER, even: QUORUM_RUNNER, swap: 'boolean' },
+  product: { owner: { agent: 'agentName' }, witness: { agent: 'agentName' }, ux: { agent: 'agentName' }, engineer: { agent: 'agentName' }, maxLoops: 'objectionCap' },
 };
 
 // The type of every key. A nested object is one group of keys; a project sets any subset of a group.
@@ -286,6 +287,13 @@ export const DEFAULTS = deepFreeze({
       odd: { provider: 'agent', agent: 'code-reviewer' },
       even: { provider: 'codex', agent: 'code-reviewer' },
       swap: true,
+    },
+    product: {
+      owner: { agent: 'product-manager' },
+      witness: { agent: 'ux-researcher' },
+      ux: { agent: 'ux-specialist' },
+      engineer: { agent: 'architect' },
+      maxLoops: 2,
     },
   },
   // How the persona-audit-triage skill files issues (lib/audits.mjs, docs/personas.md#triage): "confirm" shows each

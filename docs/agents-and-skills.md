@@ -81,7 +81,7 @@ Claude Code runs each skill as `/aidrian:<skill>`. In Codex, ask for it by name.
 | `initiative-agent` | Breaks a broad goal into a project of ordered tracker issues. |
 | `agent-issue-writer` | Drafts or creates tracker issues for agents. |
 | `challenge` | Tests a plan against the docs and code, one question at a time. |
-| `quorum` | Stress-tests a plan, or decides between options, with cited cases and an architect's ruling. |
+| `quorum` | Stress-tests a plan, decides between options, or recommends a product decision for the Human to approve, with cited cases and a ruling. |
 | `adr-writer` | Writes an architecture decision record. |
 
 | Build | What it does |

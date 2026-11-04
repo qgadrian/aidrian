@@ -1,12 +1,12 @@
 ---
 name: quorum
-description: Run an expert quorum on a high-stakes plan, or on options or a claim to decide, where sides argue with cited evidence and an architect rules, into a ledger.
+description: Run a quorum on a plan, options, a claim, or a product decision, where sides argue cited evidence and a judge rules.
 ---
 
 # quorum
 
-Experts argue over the input with cited evidence, and an architect rules. The output is a ledger, not a consensus.
-This session coordinates: it dispatches, writes the ledger, runs the checks, and asks the Human.
+Experts argue the input with cited evidence, and a judge rules. The output is a ledger, not a consensus.
+This session dispatches, writes the ledger, runs the checks, and asks the Human.
 It never rules, never edits the input, and never commits.
 
 Before you start, follow the `knowledge` skill. Knowledge tags: `product_sensitive`, `docs`.
@@ -14,7 +14,7 @@ Before you start, follow the `knowledge` skill. Knowledge tags: `product_sensiti
 ## Inputs
 
 ```text
-[plan | decide] <plan path | question path | question text>
+[plan | decide | product] <plan path | question path | question text>
 ```
 
 The mode is a leading keyword, never a flag. The first row that holds picks it:
@@ -23,12 +23,13 @@ The mode is a leading keyword, never a flag. The first row that holds picks it:
 | --- | --- |
 | The keyword | that mode |
 | A file with YAML frontmatter holding `plan_kind`, a file under `<state>/plans/`, the plan `plan-review` passes, or no path | `plan` |
+| A file under `<state>/quorum/product/` | `product` |
 | A file under `<state>/quorum/questions/`, or text that is not a path | `decide` |
 | Anything else | stop and ask which mode |
 
 With no path, find the plan as the `plan-review` skill's step 1 does.
 Read `modes/<mode>.md` once the mode is selected, and only that one.
-The mode files: [modes/plan.md](modes/plan.md) and [modes/decide.md](modes/decide.md).
+Modes: [modes/plan.md](modes/plan.md), [modes/decide.md](modes/decide.md), [modes/product.md](modes/product.md).
 A calling skill also passes the gate verdicts and the trigger, the plan line or gate that started the run;
 run by the Human, the trigger is `the Human asked`.
 
@@ -110,7 +111,7 @@ No compromise: a dispute the evidence does not settle escalates with every posit
 
 ## Asking the Human
 
-Ask the escalations one at a time, as the `challenge` skill asks, and wait for each answer before the next.
+Ask the escalations one at a time, as the `challenge` skill asks, waiting for each answer.
 Name no objection or position IDs; each position is an option, its citations in the option's description.
 The mode file says where an answer goes. An escalation the Human defers stays open and goes into the report's open
 questions; in plan mode, the plan cannot be `status: ready` while it is open.

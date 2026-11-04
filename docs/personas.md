@@ -4,6 +4,7 @@ A persona is one of the people who use a project's product: a waiter, a restaura
 developer. The project writes each one as a knowledge doc, and the `persona-audit` skill walks the product as that
 person and reports what they would hit: friction, confusing copy, missing or wrong translations, dead ends, and
 whether each of their tasks can be done. Personas are synthetic: a run is a lead for the Human, not a substitute for real users.
+The `quorum` skill's product mode also interviews one before a decision's options exist, and walks it through the recommendation, as a hypothesis no ruling may rest on alone.
 
 ## The persona contract
 

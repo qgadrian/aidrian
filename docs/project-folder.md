@@ -436,7 +436,11 @@ Wording may span several `decision-old` or `decision-new` lines, one piece each,
 The [line-length check](hooks.md#markdown-line-length) skips marker and wording lines, since wrapping one would break it.
 
 A later decision on the same rule makes a stack: its lines go directly below the earlier decision's, oldest nearest the rule.
-Its old wording is the new wording of the marker above it.
+Its old wording is the new wording of the marker above it, which makes the two a chain.
+Decisions on different rows of one table share the lines below that table with no chain between them.
+A stack is independent when it holds two chains or more, a lone marker counting as one, and the last marker of each has new wording
+that stands exactly once in the block, on lines no other takes, with every decision line of the stack readable.
+A gap-fill starts a chain of its own.
 
 `aidrian decisions list` reads the indexed docs of the working copy, so a decision on an unmerged branch lists only on that branch.
 Each row is the id, status, class, domain, age, doc and line, pull request, and whether it has old and new wording.
@@ -457,7 +461,7 @@ Two more problems compare the wording with the doc.
 An unconfirmed marker at the bottom of its stack has drifted when its new wording is not in its block exactly once.
 A confirmed marker is exempt, since the Human may reword what they kept.
 A rejected marker is exempt too: `set rejected` changes no wording, so a later hand edit is expected.
-And in any stack, each marker's old wording must be the new wording of the marker above it.
+And in any stack that is not independent, each marker's old wording must be the new wording of the marker above it.
 A marker in a code fence or a code span is a quote, not a decision.
 A doc from a [local source](#local-knowledge-sources) lists too, but no other machine sees it, so markers belong in committed docs.
 A marker in a tracked Markdown file no index lists is a `problem` with its doc and line: it counts toward the
@@ -499,14 +503,17 @@ to a blank line outside a fence, a heading, another decision line, or the doc's 
 Fenced lines are part of it. Lines compare with trailing whitespace trimmed and nothing else.
 Status is no gate, and `set rejected` keeps its meaning: it records the answer and changes no wording.
 
-Only the bottom marker of a stack can be undone, so a stack goes back bottom up, to the original wording.
+Only the bottom marker of a chain can be undone, so a chain goes back bottom up, to the original wording.
+In an independent stack, the bottom marker of each chain can be undone on its own, in any order.
+A stack that is neither one chain nor independent cannot be undone until its lines are fixed.
 Undo refuses, exits 1, and writes nothing, whenever it cannot do this safely.
 For an unknown id it prints the reason alone.
 For a marker that does not parse, or one in a file no index lists, it prints the reason, the raw wording lines, and the block.
 Otherwise it prints the reason, both wordings, and the block, for: an id on two markers; any other problem on the marker's own lines;
 a decision line directly below the marker, a later decision or one it cannot read, such as an unterminated comment or a marker on a prose line,
-since only the bottom of a stack can go back; a decision line directly above whose new wording is not this marker's old wording, or cannot be read;
+since only the bottom of a chain can go back; a decision line directly above whose new wording is not this marker's old wording, or cannot be read;
 new wording not found in the block, or found more than once; and a doc that is not valid UTF-8.
+In an independent stack, a readable decision directly below or above that does not chain to this marker is no refusal.
 
 The [`decisions-set` rule](hooks.md#bash-rules) denies both commands to a subagent: the main session runs them on the Human's word.
 The [`decision-review`](../plugins/aidrian/skills/decision-review/SKILL.md) skill goes through the unconfirmed decisions with the Human, in a batch.

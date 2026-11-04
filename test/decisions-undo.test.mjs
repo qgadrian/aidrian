@@ -99,6 +99,93 @@ test('a stack undoes bottom up only, and ends at the original wording', () => {
   assert.equal(undone(once, 'first'), 'Original rule.\n\nNext.\n');
 });
 
+// A table of two rows, with the decisions `records` below it: what list reports, and the doc after undoing `ids` in order.
+const TABLE_HEAD = ['| a | b |', '| - | - |'];
+const tableDoc = (rows, records) => [...TABLE_HEAD, ...rows, ...records.flat(), '', 'Next.', ''].join('\n');
+const undoAll = (text, ids) => ids.reduce((doc, id) => undone(doc, id), text);
+
+test('two decisions on different rows of one table are independent: no problem, and each undoes on its own, in either order', () => {
+  const first = record({ id: 'first', was: '| 1 | ten |', wrote: '| 1 | five |' });
+  const second = record({ id: 'second', was: '| 2 | eight |', wrote: '| 2 | nine |' });
+  const before = tableDoc(['| 1 | five |', '| 2 | nine |'], [first, second]);
+  assert.deepEqual(wordingProblems(before), []);
+  assert.equal(undone(before, 'first'), tableDoc(['| 1 | ten |', '| 2 | nine |'], [second]), 'the upper one first, though a marker sits below it');
+  assert.equal(undone(before, 'second'), tableDoc(['| 1 | five |', '| 2 | eight |'], [first]), 'the lower one first, though its old row is not the upper one\'s new row');
+  const original = tableDoc(['| 1 | ten |', '| 2 | eight |'], []);
+  assert.equal(undoAll(before, ['first', 'second']), original);
+  assert.equal(undoAll(before, ['second', 'first']), original);
+  assert.deepEqual(wordingProblems(undone(before, 'first')), [], 'what is left still reads');
+});
+
+test('a gap-fill beside a replacement in one table is independent, whichever sits on top and goes back first', () => {
+  const fill = record({ id: 'fill', wrote: '| 3 | new |' });
+  const swap = record({ id: 'swap', was: '| 1 | ten |', wrote: '| 1 | five |' });
+  const rows = ['| 1 | five |', '| 3 | new |'];
+  const original = tableDoc(['| 1 | ten |'], []);
+  for (const records of [[fill, swap], [swap, fill]]) {
+    const before = tableDoc(rows, records);
+    assert.deepEqual(wordingProblems(before), []);
+    assert.equal(undoAll(before, ['fill', 'swap']), original);
+    assert.equal(undoAll(before, ['swap', 'fill']), original);
+  }
+});
+
+test('in a stack holding a chain and an independent decision, the chain still goes back bottom up', () => {
+  const upper = record({ id: 'upper', was: '| 1 | ten |', wrote: '| 1 | seven |' });
+  const lower = record({ id: 'lower', was: '| 1 | seven |', wrote: '| 1 | five |' });
+  const other = record({ id: 'other', was: '| 2 | eight |', wrote: '| 2 | nine |' });
+  for (const records of [[upper, lower, other], [other, upper, lower]]) {
+    const before = tableDoc(['| 1 | five |', '| 2 | nine |'], records);
+    assert.deepEqual(wordingProblems(before), []);
+    assert.equal(undoDecision(before, 'upper').refused, 'a later decision lower replaced this wording; undo that one first');
+    const original = tableDoc(['| 1 | ten |', '| 2 | eight |'], []);
+    assert.equal(undoAll(before, ['lower', 'upper', 'other']), original);
+    assert.equal(undoAll(before, ['other', 'lower', 'upper']), original);
+  }
+});
+
+test('a stack that is neither a chain nor independent stays a problem, and undo refuses both its markers', () => {
+  const first = (wrote = '| 1 | five |') => record({ id: 'first', was: '| 1 | ten |', wrote });
+  const second = (wrote = '| 2 | nine |') => record({ id: 'second', was: '| 2 | eight |', wrote });
+  const cases = [
+    ['the upper wording is gone, as under a real mismatched chain', tableDoc(['| 2 | nine |'], [first(), second()])],
+    ['the upper wording drifted', tableDoc(['| 1 | six |', '| 2 | nine |'], [first(), second()])],
+    ['the lower wording drifted', tableDoc(['| 1 | five |', '| 2 | six |'], [first(), second()])],
+    ['both wrote the same row, so it stands twice', tableDoc(['| 1 | five |', '| 1 | five |'], [first(), second('| 1 | five |')])],
+    ['one wording overlaps the other', tableDoc(['| 1 | five |', '| 2 | nine |'], [first('| 1 | five |\n| 2 | nine |'), second()])],
+  ];
+  for (const [what, text] of cases) {
+    assert.ok(wordingProblems(text).length > 0, what);
+    for (const id of ['first', 'second']) {
+      const out = undoDecision(text, id);
+      assert.ok(out.refused, `${what}: ${id}`);
+      assert.equal(out.text, undefined, `${what}: ${id}`);
+    }
+  }
+});
+
+test('an unreadable or broken line in a table\'s stack still refuses, though the readable decisions would stand alone', () => {
+  const first = record({ id: 'first', was: '| 1 | ten |', wrote: '| 1 | five |' });
+  const second = record({ id: 'second', was: '| 2 | eight |', wrote: '| 2 | nine |' });
+  const rows = ['| 1 | five |', '| 2 | nine |'];
+  for (const line of [marker('Bad_Id'), '<!-- aidrian:decision id=open status=unconfirmed']) {
+    assert.match(undoDecision(tableDoc(rows, [first, second, [line]]), 'second').refused, /a later decision line it cannot read/u, line);
+    assert.ok(undoDecision(tableDoc(rows, [first, second, [line]]), 'first').refused, line);
+  }
+  const unreadable = [marker('first'), wording('old', '| 1 | ten |', 'first'), '<!-- aidrian:decision-new id=first text=oops -->'];
+  assert.match(undoDecision(tableDoc(rows, [unreadable, second]), 'second').refused, /the decision line above it has no wording it can read/u);
+  const badOld = [marker('second'), '<!-- aidrian:decision-old id=second text=oops -->', wording('new', '| 2 | nine |', 'second')];
+  assert.ok(undoDecision(tableDoc(rows, [first, badOld]), 'first').refused, 'the old wording below cannot be read');
+});
+
+test('the limit: a wrong old wording under wording that still stands reads as independent, and undo puts back what each recorded', () => {
+  const first = record({ id: 'first', was: 'Orig.', wrote: 'Second.' });
+  const second = record({ id: 'second', was: 'Other.', wrote: 'Third.' });
+  const before = ['Second.', 'Third.', ...first, ...second, ''].join('\n');
+  assert.deepEqual(wordingProblems(before), [], 'no line says the second decision meant the first one\'s wording');
+  assert.equal(undoAll(before, ['second', 'first']), 'Orig.\nOther.\n');
+});
+
 test('a broken decision line below the marker blocks undo too, naming no id it cannot read', () => {
   const first = record({ id: 'first', wrote: 'Rule.' });
   for (const line of [marker('Bad_Id'), '<!-- aidrian:decision id=open status=unconfirmed', `A prose line, then ${marker('second')}`]) {

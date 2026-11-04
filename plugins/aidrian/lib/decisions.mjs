@@ -377,10 +377,46 @@ export function findWording(lines, { from, to }, wording) {
   return found;
 }
 
+// The markers directly above and below `decision`, each record's lines touching the next, it included, in doc order.
+function stackAround(decisions, decision) {
+  let first = decisions.indexOf(decision);
+  let last = first;
+  while (first > 0 && decisions[first - 1].through + 1 === decisions[first].line) first -= 1;
+  while (last + 1 < decisions.length && decisions[last].through + 1 === decisions[last + 1].line) last += 1;
+  return decisions.slice(first, last + 1);
+}
+
+// Whether `stack` holds independent records, as decisions on different rows of one table do, and not a broken chain. A
+// marker continues the chain of the one above it when `chained` says so. Independent means two chains or more, whose last
+// markers' new wordings each stand exactly once in the block, on lines no other takes, with every line of the stack
+// readable and no decision line it cannot read beside it. Its first and last lines bound what `problems` may name.
+function independentRecords(stack, lines, fenced, problems) {
+  const [first] = stack;
+  const last = stack.at(-1);
+  const isDecision = (at) => at >= 0 && at < lines.length && !fenced[at] && Boolean(mentionIn(lines[at]));
+  if (isDecision(first.line - 2) || isDecision(last.through)) return false;
+  if (problems.some(({ line }) => line >= first.line && line <= last.through)) return false;
+  if (stack.some(({ newWording, hasOldWording, oldWording }) => newWording === null || (hasOldWording && oldWording === null))) return false;
+  const tips = stack.filter((each, i) => !(stack[i + 1] && chained(each, stack[i + 1])));
+  if (tips.length < 2) return false;
+  const block = blockAbove(lines, fenced, first.line - 1);
+  const taken = new Set();
+  for (const { newWording } of tips) {
+    const starts = findWording(lines, block, newWording);
+    if (starts.length !== 1) return false;
+    for (let k = 0; k < wordingLines(newWording).length; k += 1) {
+      if (taken.has(starts[0] + k)) return false;
+      taken.add(starts[0] + k);
+    }
+  }
+  return true;
+}
+
 // What is wrong between the wording a doc's markers recorded and the doc: { line, problem } for each unconfirmed marker at
-// the bottom of its stack whose new wording is not in its block exactly once, and for each stack where a marker's old
-// wording is not the wording of the marker above it. Unreadable wording is parseDecisions' problem already.
-export function wordingProblems(text, { decisions } = parseDecisions(text)) {
+// the bottom of its stack whose new wording is not in its block exactly once, and for each stack that is not independent
+// (independentRecords) where a marker's old wording is not the wording of the marker above it. Unreadable wording is
+// parseDecisions' problem already.
+export function wordingProblems(text, { decisions, problems: parsed = [] } = parseDecisions(text)) {
   const lines = String(text).split(/\r?\n/u);
   const fenced = fencedIn(lines);
   const problems = [];
@@ -388,7 +424,7 @@ export function wordingProblems(text, { decisions } = parseDecisions(text)) {
     const next = decisions[index + 1];
     if (next?.line === decision.through + 1) {
       const unreadable = decision.newWording === null && decision.hasNewWording || next.oldWording === null && next.hasOldWording;
-      if (!unreadable && !chained(decision, next)) problems.push({ line: next.line, problem: `"${next.id}" sits below "${decision.id}", but its old wording is not the wording "${decision.id}" wrote` });
+      if (!unreadable && !chained(decision, next) && !independentRecords(stackAround(decisions, decision), lines, fenced, parsed)) problems.push({ line: next.line, problem: `"${next.id}" sits below "${decision.id}", but its old wording is not the wording "${decision.id}" wrote` });
       return;
     }
     if (decision.status !== 'unconfirmed' || decision.newWording === null) return;
@@ -420,6 +456,7 @@ export function recordAt(text, line) {
 // and its lines removed, every other byte as it was. Returns { text, line, wrote, restored }, with `line` the first line
 // that changed and `wrote` and `restored` as lines, or, when it cannot be done safely, { refused, decision, block }, with
 // `decision` null when no marker of `id` reads. Only `\n` splits, so a line ending stays with its line. Status is no gate.
+// A marker with another below it goes back only when the two do not chain and the stack is independent (independentRecords).
 export function undoDecision(text, id, { classes } = {}) {
   const source = String(text);
   const raw = source.split('\n');
@@ -437,14 +474,16 @@ export function undoDecision(text, id, { classes } = {}) {
   const { line, through, oldWording, newWording } = decision;
   const parseProblem = problems.find((each) => each.line >= line && each.line <= through);
   if (parseProblem) return refuse(parseProblem.problem);
+  const independent = independentRecords(stackAround(decisions, decision), lines, fenced, problems);
   if (!fenced[through] && mentionIn(lines[through] ?? '')) {
     const later = decisions.find((each) => each.line === through + 1);
-    return refuse(later ? `a later decision ${later.id} replaced this wording; undo that one first` : 'a later decision line it cannot read sits below this one; fix that line first');
+    if (!later) return refuse('a later decision line it cannot read sits below this one; fix that line first');
+    if (chained(decision, later) || !independent) return refuse(`a later decision ${later.id} replaced this wording; undo that one first`);
   }
   if (line > 1 && !fenced[line - 2] && mentionIn(lines[line - 2])) {
     const above = decisions.find((each) => each.through + 1 === line);
     if (!above || above.newWording === null) return refuse('the decision line above it has no wording it can read, so undo would not put that rule back; fix that line first');
-    if (!chained(above, decision)) return refuse(`its old wording is not the wording "${above.id}" wrote, so undo would not put that rule back; fix the decision-old line first`);
+    if (!chained(above, decision) && !independent) return refuse(`its old wording is not the wording "${above.id}" wrote, so undo would not put that rule back; fix the decision-old line first`);
   }
   const block = blockAbove(lines, fenced, line - 1);
   const starts = findWording(lines, block, newWording);

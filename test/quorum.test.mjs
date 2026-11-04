@@ -1022,7 +1022,7 @@ function fieldPaths(schema) {
 }
 
 // The section of ledger.md that lists each mode's ledger fields. A mode added to LEDGER_SCHEMAS needs its own section.
-const FIELD_SECTIONS = { plan: 'Fields', decide: 'Decide-mode fields' };
+const FIELD_SECTIONS = { plan: 'Fields', decide: 'Decide-mode fields', product: 'Product-mode fields' };
 
 // A fields section of ledger.md: each bullet starts with a field path in backticks; its text runs to the next bullet.
 function documentedFields(heading = 'Fields') {
@@ -2255,7 +2255,7 @@ test('quorum roles: a config sets the roles, judge, swap, and caps it prints; A 
     const bad = roles(dir, ...args);
     assert.equal(bad.status, 1, args.join(' '));
     assert.deepEqual(bad.lines, [], 'no JSON line');
-    assert.match(bad.stderr, /^aidrian quorum: roles takes one mode, plan or decide/u);
+    assert.match(bad.stderr, /^aidrian quorum: roles takes one mode, plan, decide, or product/u);
   }
 });
 
@@ -2373,4 +2373,62 @@ test('the objection cap is never hard-coded where the coordinator keeps objectio
   }
   const ledger = readFileSync(path.join(SKILL, 'references/ledger.md'), 'utf8').replace(/\s+/gu, ' ');
   assert.match(ledger, /the first `maxObjections` objections, as `aidrian quorum roles plan` prints it/u);
+});
+
+// Product mode: a recommendation the Human settles, with no rebuttal round and a persona no ruling may rest on alone.
+const PERSONA_REF = 'docs/waiter.md#Who';
+const productLedger = (over = {}) => {
+  const { mode, positions, cases, ruling: first, human_answer, status, plan, plan_hash, same_model, same_model_reason, trigger } = decideLedger({ cases: [stand('A', [PASSING.adr]), stand('B', [PASSING.code])], cross: [], ruling: decision({ tested: tested({ A: 1, B: 1 }, ['B']) }) });
+  return { mode: 'product', status, plan, plan_hash, same_model, same_model_reason, trigger, premise: { summary: 'open', citations: [PASSING.adr] }, positions, witness: null, cases, cross: [], ruling: first, outcome: { conditions: [], flips_if: [{ fact: 'f', how_to_settle: 'ask' }], disputes: [] }, human_answer, ...over };
+};
+
+test('product ledger: a complete rule passes with no rebuttal, and unanswered it stays deferred', (t) => {
+  const d = decideProject(t);
+  const result = d.check(productLedger());
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /checked: mode product, 2 cases, 0 cross points/u);
+});
+
+test('product ledger: the shape rules stop the check', (t) => {
+  const d = decideProject(t);
+  for (const [over, message] of [
+    [{ outcome: null }, /outcome is null under a rule/u],
+    [{ cross: [{ id: 'A1', by: 'X', against: 'A', claim: 'c', citations: [], status: 'pending' }] }, /not X1 to X9/u],
+    [{ ruling: null, outcome: null }, /ruling is null/u],
+    [{ witness: { persona: 'docs/waiter.md', reactions: [{ position: 'C', reaction: 'r' }] } }, /witness reacts to C/u],
+    [{ positions: ['A', 'B', 'C', 'D'].map((id) => position(id, 'agent')), same_model: true, same_model_reason: 'all agents' }, /at most 3 positions/u],
+  ]) {
+    const result = d.check(productLedger(over));
+    assert.equal(result.status, 1, JSON.stringify(over));
+    assert.match(result.stderr, message);
+  }
+});
+
+test('product ledger: a Human answer is allowed on a rule, which a decide ledger refuses', (t) => {
+  const d = decideProject(t);
+  assert.equal(d.check(productLedger({ human_answer: 'approved' })).status, 0);
+  assert.equal(d.check(decideLedger({ human_answer: 'approved' })).status, 1);
+});
+
+test('product ledger: a winner resting only on the persona doc does not stand, and a premise needs a passing citation', (t) => {
+  const d = decideProject(t);
+  const persona = { persona: PASSING.adr.ref.split('#')[0], reactions: [] };
+  const rests = d.check(productLedger({ witness: persona }));
+  assert.equal(rests.status, 1, 'the only supporting citation is the persona doc');
+  assert.match(rests.stderr, /rests only on the persona doc/u);
+  const other = d.check(productLedger({ witness: { persona: PERSONA_REF.split('#')[0], reactions: [] } }));
+  assert.equal(other.status, 0, other.stderr);
+  const premise = d.check(productLedger({ premise: { summary: 'open', citations: [cite('doc', 'docs/missing.md#x', 'nope')] } }));
+  assert.equal(premise.status, 1);
+  assert.match(premise.stderr, /premise: invalid/u);
+});
+
+test('quorum roles product: defaults and caps, and Codex advocates add a fallback each', async (t) => {
+  const dir = temp(t, 'aidrian-quorum-roles-');
+  const { out } = roles(dir, 'product');
+  assert.equal(out.judge.agent, 'product-manager');
+  assert.equal(out.roles.witness.agent, 'ux-researcher');
+  assert.deepEqual(out.caps, { 2: 9, 3: 10 });
+  const product = { ...DEFAULTS.quorum.product, advocate: { provider: 'codex', agent: 'critic' } };
+  assert.deepEqual((await import('../plugins/aidrian/lib/quorum.mjs')).quorumRoles('product', { ...DEFAULTS.quorum, product }).caps, { 2: 11, 3: 13 });
 });

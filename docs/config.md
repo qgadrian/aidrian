@@ -590,7 +590,7 @@ Two commands read the group, so the skill text never parses this file:
   so a cap lowered after a run finished never voids its ledger or the Human's answers.
 - `aidrian quorum roles plan` and `aidrian quorum roles decide` read the whole group, `maxObjections` included,
   and print that mode's roles, judge, and caps as one JSON line, which the coordinator follows. The decide caps are `3N + 2 + C` for each position count N
-  from 2 to 4, where C counts the first N positions whose runner is Codex: 9, 12, and 16 with the defaults.
+  from 2 to 4, where C counts the first N positions whose runner is Codex: 9, 12, and 16 with the defaults. `aidrian quorum roles product` reads it too; the product caps are `N + 7` for 2 or 3 positions, plus N when advocates run on Codex.
 
 Both stop on an invalid config.json, as every `aidrian` command does: they exit 1 naming each bad key, and never run
 on defaults the project did not choose.
@@ -608,6 +608,13 @@ on defaults the project did not choose.
 | `quorum.decide.even.provider` | `"codex"` | The runner of decide positions B and D: `"agent"` or `"codex"`. |
 | `quorum.decide.even.agent` | `"code-reviewer"` | Their agent on `"agent"`, and their fallback on `"codex"`. |
 | `quorum.decide.swap` | `true` | Whether a claim with an odd hash swaps the runners of positions A and B. |
+| `quorum.product.framer.agent` | `"product-manager"` | Checks a product decision's premise and proposes options. |
+| `quorum.product.second.agent` | `"ux-specialist"` | Proposes options independently. |
+| `quorum.product.witness.agent` | `"ux-researcher"` | Reacts to the options as a persona. |
+| `quorum.product.advocate.provider` | `"agent"` | The runner of the positions' cases: `"agent"` or `"codex"`. |
+| `quorum.product.advocate.agent` | `"product-manager"` | Their agent on `"agent"`, and their fallback on `"codex"`. |
+| `quorum.product.examiner.agent` | `"critic"` | Attacks every case. |
+| `quorum.product.judge.agent` | `"product-manager"` | Recommends one option to the Human. `quorum.judge` does not apply to this mode. |
 
 - One `agent` field covers both cases: the role's agent when `provider` is `"agent"`, and the agent that takes over
   when `provider` is `"codex"` and Codex cannot run, the same brief in hand.

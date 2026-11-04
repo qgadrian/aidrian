@@ -7,6 +7,7 @@ In decide mode, `<name>` is the question file's name without `.md`, and `<plan-h
 - [Schemas](#schemas): where the authoritative schemas live.
 - [Fields](#fields): every field of a plan-mode ledger.
 - [Decide-mode fields](#decide-mode-fields): every field of a decide-mode ledger.
+- [Product-mode fields](#product-mode-fields): every field of a product-mode ledger.
 - [Agent answers](#agent-answers): how an agent's answer is held to its schema before it is written.
 - [Settled answers](#settled-answers): the Human's answers from earlier runs on the same plan.
 - [Filling it](#filling-it): what the coordinator writes after each round of `modes/plan.md`.
@@ -200,6 +201,68 @@ fails `quorum check` on every invalid ruling or rebuttal, so it is not reused.
   ruling's; in a `complete` ledger, its case needs a passing citation, whatever the Human answered.
 - `human_answer`: the Human's answer to the escalated ruling, word for word, or `null`.
   `quorum check` exits 1 on an answer when no ruling, first or final, is `escalate`.
+
+## Product-mode fields
+
+`modes/product.md` says what each round writes. A product ledger holds no rebuttal round and no final ruling.
+
+- `mode`: `product`.
+- `status`: `open` while the rounds run, `complete` once the Human answered or deferred.
+- `plan`: the question file's absolute path.
+- `plan_hash`: `git hash-object` of the question file.
+- `same_model`: `true` exactly when two positions share a runner.
+- `same_model_reason`: which positions share one and why, or `null`.
+- `trigger`: what started the run, normally `the Human asked`.
+- `premise`: why the decision is open.
+  - `premise.summary`: the framer's answer.
+  - `premise.citations`: its evidence; with none passing, `quorum check` names the premise invalid.
+    - `premise.citations[].kind`: `doc`, `adr`, `code`, `plan`, or `absence`.
+    - `premise.citations[].ref`: where the evidence is, in the form its kind takes.
+    - `premise.citations[].quote`: the verbatim text, at most 200 characters.
+- `positions`: the options, 2 or 3; `quorum check` refuses more.
+  - `positions[].id`: `A`, `B`, `C`, or `D`, in order.
+  - `positions[].label`: the option's label.
+  - `positions[].runner`: `agent` or `codex`, as in a decide ledger.
+- `witness`: the persona's reactions, or `null` when no persona fits.
+  - `witness.persona`: the persona doc's path, from the repository root.
+  - `witness.reactions`: at most one per position; hypotheses, which no one rules on.
+    - `witness.reactions[].position`: `A`, `B`, `C`, or `D`.
+    - `witness.reactions[].reaction`: the persona's words.
+- `cases`: each position's case, as in a decide ledger.
+  - `cases[].position`: `A`, `B`, `C`, or `D`.
+  - `cases[].claim`: the case, at most 200 words.
+  - `cases[].citations`: its evidence. A case with no passing citation cannot win.
+- `cross`: the examiner's points, at most 9.
+  - `cross[].id`: `X1` to `X9`, each once.
+  - `cross[].by`: always `X`.
+  - `cross[].against`: `A`, `B`, `C`, or `D`.
+  - `cross[].claim`: the point.
+  - `cross[].citations`: its evidence.
+  - `cross[].status`: `pending` until the check runs; then `backed` or `opinion`.
+- `ruling`: the judge's recommendation, or `null` before it. A winner resting only on the persona doc is invalid.
+  - `ruling.decision`: `rule` or `escalate`.
+  - `ruling.winner`: `A`, `B`, `C`, or `D` on a rule; `null` on an escalate.
+  - `ruling.change_or_reason`: the losing case's strongest claim and what defeats it, or what would settle an escalation.
+  - `ruling.citations`: the ruling's own evidence.
+  - `ruling.tested`: one verdict per citation of every case and backed point.
+    - `ruling.tested[].of`: the position or point id.
+    - `ruling.tested[].citation`: the citation's index, from 0.
+    - `ruling.tested[].supports`: `true` or `false`.
+    - `ruling.tested[].reason`: why, in one line.
+  - `ruling.inferences`: one entry per `inference:` line.
+    - `ruling.inferences[].statement`: the line's text.
+    - `ruling.inferences[].holds`: `true` or `false`.
+    - `ruling.inferences[].reason`: why, in one line.
+    - `ruling.inferences[].citations`: the evidence that settles it.
+- `outcome`: what a rule leaves behind, required on a rule in a `complete` ledger, otherwise `null`.
+  - `outcome.conditions`: changes the winner needs.
+  - `outcome.flips_if`: unknowns that would change the winner.
+    - `outcome.flips_if[].fact`: the unknown.
+    - `outcome.flips_if[].how_to_settle`: the cheapest way to find out.
+  - `outcome.disputes`: smaller disagreements.
+    - `outcome.disputes[].topic`: the disagreement.
+    - `outcome.disputes[].owner`: who settles it.
+- `human_answer`: the Human's answer to the ruling, word for word, or `null` while deferred. Only this settles the decision.
 
 ## Agent answers
 

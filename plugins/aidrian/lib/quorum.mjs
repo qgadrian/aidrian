@@ -322,6 +322,87 @@ export const DECIDE_LEDGER_SCHEMA = Object.freeze({
   },
 });
 
+// A product-mode cross point comes from one examiner, X, so its ids are X1 to X9.
+export const PRODUCT_CROSS_ID = /^X[1-9]$/u;
+export const MAX_PRODUCT_POSITIONS = 3;
+
+// The product ledger: a decide ledger with no rebuttal round, plus the premise check, the persona's reactions, and what
+// the ruling leaves behind. Its ruling is a recommendation: only `human_answer` settles it. See modes/product.md.
+export const PRODUCT_LEDGER_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  required: ['mode', 'status', 'plan', 'plan_hash', 'same_model', 'same_model_reason', 'trigger', 'premise', 'positions', 'witness', 'cases', 'cross', 'ruling', 'outcome', 'human_answer'],
+  properties: {
+    mode: { type: 'string', enum: ['product'] },
+    status: DECIDE_LEDGER_SCHEMA.properties.status,
+    plan: { type: 'string' },
+    plan_hash: { type: 'string' },
+    same_model: { type: 'boolean' },
+    same_model_reason: { type: ['string', 'null'] },
+    trigger: { type: 'string' },
+    premise: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['summary', 'citations'],
+      properties: { summary: { type: 'string' }, citations: CITATIONS },
+    },
+    positions: DECIDE_LEDGER_SCHEMA.properties.positions,
+    witness: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      required: ['persona', 'reactions'],
+      properties: {
+        persona: { type: 'string' },
+        reactions: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['position', 'reaction'],
+            properties: { position: { type: 'string', enum: POSITION_IDS }, reaction: { type: 'string' } },
+          },
+        },
+      },
+    },
+    cases: DECIDE_LEDGER_SCHEMA.properties.cases,
+    cross: {
+      type: 'array',
+      maxItems: 9,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'by', 'against', 'claim', 'citations', 'status'],
+        properties: {
+          id: { type: 'string' },
+          by: { type: 'string', enum: ['X'] },
+          against: { type: 'string', enum: POSITION_IDS },
+          claim: { type: 'string' },
+          citations: CITATIONS,
+          status: { type: 'string', enum: CROSS_STATUSES },
+        },
+      },
+    },
+    ruling: DECIDE_RULING,
+    outcome: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      required: ['conditions', 'flips_if', 'disputes'],
+      properties: {
+        conditions: { type: 'array', items: { type: 'string' } },
+        flips_if: {
+          type: 'array',
+          items: { type: 'object', additionalProperties: false, required: ['fact', 'how_to_settle'], properties: { fact: { type: 'string' }, how_to_settle: { type: 'string' } } },
+        },
+        disputes: {
+          type: 'array',
+          items: { type: 'object', additionalProperties: false, required: ['topic', 'owner'], properties: { topic: { type: 'string' }, owner: { type: 'string' } } },
+        },
+      },
+    },
+    human_answer: { type: ['string', 'null'] },
+  },
+});
+
 // What a position run on Codex answers in decide mode: its opening case, its cross-examination points, and its
 // rebuttal or concession of the first ruling. Each is the ledger entry without the fields the coordinator writes.
 const claimOf = (extra = {}) => ({
@@ -345,7 +426,7 @@ export const DECIDE_REBUTTAL_SCHEMA = Object.freeze({
 });
 
 // The ledger schema of each mode. A ledger with no `mode` is a plan-mode ledger under the rules it was written with.
-export const LEDGER_SCHEMAS = Object.freeze({ plan: LEDGER_SCHEMA, decide: DECIDE_LEDGER_SCHEMA });
+export const LEDGER_SCHEMAS = Object.freeze({ plan: LEDGER_SCHEMA, decide: DECIDE_LEDGER_SCHEMA, product: PRODUCT_LEDGER_SCHEMA });
 export const modeOf = (ledger) => (isObject(ledger) ? ledger.mode ?? 'plan' : 'plan');
 // The schema a ledger is held to; a mode with no schema is held to the plan schema, whose `mode` enum refuses it.
 const schemaOf = (ledger) => {
@@ -549,7 +630,7 @@ export function idProblems(ledger) {
 // when they do, as its `positions` show; a plan ledger with `runners` why A and B share a runner exactly when they do;
 // and a plan ledger without it, written before `runners`, why B ran as an agent, which it cannot show.
 export function sameModelProblems(ledger) {
-  const decide = modeOf(ledger) === 'decide';
+  const decide = ['decide', 'product'].includes(modeOf(ledger));
   const runners = !decide && isObject(ledger.runners) ? ledger.runners : null;
   if (decide) {
     const ran = ledger.positions.map((position) => position.runner);
@@ -1021,6 +1102,65 @@ export function checkDecideLedger(ledger, ctx) {
   return { ledger, problems, escapes, stale };
 }
 
+// A product ledger as the decide rules see it: no rebuttal round, and no final ruling.
+const decideView = (ledger) => ({ ...ledger, rebuttals: [], final_ruling: null });
+
+// Why a product ledger does not fit, as lines that stop the check: the decide id rules on its positions, cases, and
+// ruling; at most three positions; examiner points X1 to X9, each once, against a position; each persona reaction on a
+// position, at most once; an outcome only with a rule; and a Human answer only to a ruling. A complete ledger has a
+// case per position, a ruling, and, on a rule, an outcome. Its ruling never stands without `human_answer`, so an
+// unanswered one is complete and deferred.
+export function productProblems(ledger) {
+  const problems = decideIdProblems({ ...decideView(ledger), cross: [], human_answer: null });
+  if (ledger.positions.length > MAX_PRODUCT_POSITIONS) problems.push(`product mode holds at most ${MAX_PRODUCT_POSITIONS} positions, not ${ledger.positions.length}`);
+  const known = new Set(ledger.positions.map(({ id }) => id));
+  const seen = new Set();
+  for (const point of ledger.cross) {
+    if (!PRODUCT_CROSS_ID.test(point.id)) problems.push(`cross id "${shown(point.id)}" is not X1 to X9`);
+    else if (seen.has(point.id)) problems.push(`cross id ${point.id} is used more than once`);
+    seen.add(point.id);
+    if (!known.has(point.against)) problems.push(`cross ${shown(point.id)} is against ${point.against}, not a position in this ledger`);
+  }
+  const reacted = (ledger.witness?.reactions ?? []).map(({ position }) => position);
+  for (const id of new Set(reacted)) {
+    if (!known.has(id)) problems.push(`witness reacts to ${id}, not a position in this ledger`);
+    if (reacted.indexOf(id) !== reacted.lastIndexOf(id)) problems.push(`witness reacts to ${id} more than once`);
+  }
+  if (ledger.outcome !== null && ledger.ruling?.decision !== 'rule') problems.push('outcome: set but no ruling rules');
+  if (ledger.human_answer !== null && ledger.ruling === null) problems.push('human_answer: set but nothing was ruled');
+  if (ledger.status === 'complete') {
+    const cased = new Set(ledger.cases.map(({ position }) => position));
+    for (const id of known) if (!cased.has(id)) problems.push(`position ${id} has no case in a complete ledger`);
+    if (ledger.ruling === null) problems.push('ruling is null in a complete ledger');
+    if (ledger.ruling?.decision === 'rule' && ledger.outcome === null) problems.push('outcome is null under a rule in a complete ledger');
+  }
+  return problems;
+}
+
+// Checks a product ledger in place: the decide checks with no rebuttal round; the premise needs a passing citation;
+// and a persona is a hypothesis, so a rule whose winner rests only on the persona's own doc goes back.
+export function checkProductLedger(ledger, ctx) {
+  const { problems, escapes, stale } = checkDecideLedger(decideView(ledger), ctx);
+  const complete = ledger.status === 'complete';
+  const invalid = (line) => {
+    problems.push(line);
+    if (complete && ledger.human_answer === null) stale.push(line);
+  };
+  if (!passing(ledger.premise.citations, 'premise', ctx, problems, escapes).length) invalid('premise: invalid: no citation passes');
+  const persona = ledger.witness?.persona;
+  const { ruling } = ledger;
+  if (persona && ruling?.decision === 'rule') {
+    const won = ledger.cases.find(({ position }) => position === ruling.winner);
+    const held = passing(won?.citations ?? [], `case ${ruling.winner}`, ctx, [], []);
+    const backing = ruling.tested
+      .filter((verdict) => verdict.of === ruling.winner && verdict.supports)
+      .map((verdict) => won?.citations[verdict.citation])
+      .filter((citation) => held.includes(citation));
+    if (backing.length && backing.every(({ ref }) => path.normalize(ref.split('#')[0]) === path.normalize(persona))) invalid('ruling: invalid: the winner rests only on the persona doc, which is a hypothesis');
+  }
+  return { ledger, problems, escapes, stale };
+}
+
 // Reads a file under the root, or null when it is missing or not a regular file: a FIFO or a device would hang the read.
 const reader = (root) => (file) => {
   try {
@@ -1041,7 +1181,7 @@ export function checkoutTop(cwd) {
 }
 
 // The modes `aidrian quorum roles` resolves.
-export const ROLE_MODES = Object.freeze(['plan', 'decide']);
+export const ROLE_MODES = Object.freeze(['plan', 'decide', 'product']);
 
 // One configured role as the coordinator runs it: on `agent`, its agent and no fallback; on `codex`, no agent and the
 // agent that takes over, with the same brief, when Codex cannot run.
@@ -1057,6 +1197,14 @@ export function quorumRoles(mode, quorum) {
   if (mode === 'plan') {
     const { a, b, maxObjections, maxDispatches } = quorum.plan;
     return { mode, roles: { A: resolved({ provider: 'agent', agent: a.agent }), B: resolved(b) }, judge, caps: { maxObjections, maxDispatches } };
+  }
+  if (mode === 'product') {
+    // The trace, the frame, the second framing, the witness, one case per position, the examiner, the ruling, and one
+    // retry, plus one fallback per position when advocates run on Codex.
+    const { framer, second, witness, advocate, examiner, judge: ruler } = quorum.product;
+    const caps = {};
+    for (let n = 2; n <= MAX_PRODUCT_POSITIONS; n += 1) caps[n] = n + 7 + (advocate.provider === 'codex' ? n : 0);
+    return { mode, roles: { tracer: resolved({ provider: 'agent', agent: 'explorer' }), framer: resolved({ provider: 'agent', agent: framer.agent }), second: resolved({ provider: 'agent', agent: second.agent }), witness: resolved({ provider: 'agent', agent: witness.agent }), advocate: resolved(advocate), examiner: resolved({ provider: 'agent', agent: examiner.agent }) }, judge: { agent: ruler.agent }, caps };
   }
   const { odd, even, swap } = quorum.decide;
   const runnerOf = (i) => (i % 2 === 0 ? odd : even);
@@ -1124,7 +1272,7 @@ export async function codexAnswer({ plan, brief, out, root, mode = 'object', led
   }
 }
 
-const USAGE = 'codex --plan PLAN --brief BRIEF --out FILE [--mode object|case] | codex --mode rebut|cross --ledger LEDGER --plan PLAN --brief BRIEF --out FILE | check LEDGER --plan PLAN | roles plan|decide';
+const USAGE = 'codex --plan PLAN --brief BRIEF --out FILE [--mode object|case] | codex --mode rebut|cross --ledger LEDGER --plan PLAN --brief BRIEF --out FILE | check LEDGER --plan PLAN | roles plan|decide|product';
 
 export const commands = {
   quorum: {
@@ -1140,7 +1288,7 @@ export const commands = {
       // key, and exits 1: a run never goes on with defaults the project did not choose.
       const quorum = () => commandConfig(projectAt(cwd)).quorum;
       if (action === 'roles') {
-        if (rest.length !== 1 || !ROLE_MODES.includes(rest[0])) return fail(`roles takes one mode, plan or decide${rest.length ? `, not "${shown(rest.join(' '))}"` : ''}`);
+        if (rest.length !== 1 || !ROLE_MODES.includes(rest[0])) return fail(`roles takes one mode, plan, decide, or product${rest.length ? `, not "${shown(rest.join(' '))}"` : ''}`);
         (deps.print ?? console.log)(JSON.stringify(quorumRoles(rest[0], quorum())));
         return 0;
       }
@@ -1172,10 +1320,12 @@ export const commands = {
         // or with the runners, a Human answer that fits no objection, a merge that does not fit, a mode rule broken, or a
         // complete ledger left unfinished stops the check before it writes anything. The ids are checked before any line
         // that prints one. A decide ledger is held to the decide rules only.
+        const product = modeOf(ledger) === 'product';
         const decide = modeOf(ledger) === 'decide';
         const invalid = schemaProblems(ledger, schemaOf(ledger));
-        if (!invalid.length) invalid.push(...(decide ? decideIdProblems(ledger) : idProblems(ledger)));
-        if (!invalid.length) {
+        if (!invalid.length) invalid.push(...(product ? productProblems(ledger) : decide ? decideIdProblems(ledger) : idProblems(ledger)));
+        if (!invalid.length && product) invalid.push(...sameModelProblems(ledger));
+        else if (!invalid.length) {
           // An open plan ledger that carries `mode` is held to the configured objection cap, so only it reads config.json.
           // A complete one keeps the ceiling: a lower cap set after it finished never voids it and the Human's answers.
           const cap = !decide && carriesMode(ledger) && ledger.status === 'open' ? quorum().plan.maxObjections : MAX_MODE_OBJECTIONS;
@@ -1186,7 +1336,7 @@ export const commands = {
           for (const problem of invalid) console.error(`${file}: ${problem}`);
           return 1;
         }
-        const { problems, escapes, stale } = (decide ? checkDecideLedger : checkLedger)(ledger, { root, plan, env, read: reader(root) });
+        const { problems, escapes, stale } = (product ? checkProductLedger : decide ? checkDecideLedger : checkLedger)(ledger, { root, plan, env, read: reader(root) });
         for (const escape of escapes) console.error(`${file}: warning: ${escape}`);
         // A complete ledger whose rulings lost their evidence is not settled any more: exit 1, unwritten, so it is not reused.
         if (stale.length) {
@@ -1196,9 +1346,9 @@ export const commands = {
         const print = deps.print ?? console.log;
         for (const problem of problems) print(problem);
         writeFileSync(file, `${JSON.stringify(ledger, null, 2)}\n`);
-        if (decide) {
+        if (decide || product) {
           const opinions = ledger.cross.filter((point) => point.status === 'opinion').length;
-          print(`checked: mode decide, ${ledger.cases.length} cases, ${ledger.cross.length} cross points, ${opinions} opinion, ${problems.length} problems`);
+          print(`checked: mode ${ledger.mode}, ${ledger.cases.length} cases, ${ledger.cross.length} cross points, ${opinions} opinion, ${problems.length} problems`);
           return 0;
         }
         const opinions = ledger.objections.filter((objection) => objection.status === 'opinion').length;

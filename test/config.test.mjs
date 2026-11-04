@@ -305,6 +305,14 @@ test('quorum: the defaults are today\'s roles and caps; plan adversary A holds o
       even: { provider: 'codex', agent: 'code-reviewer' },
       swap: true,
     },
+    product: {
+      framer: { agent: 'product-manager' },
+      second: { agent: 'ux-specialist' },
+      witness: { agent: 'ux-researcher' },
+      advocate: { provider: 'agent', agent: 'product-manager' },
+      examiner: { agent: 'critic' },
+      judge: { agent: 'product-manager' },
+    },
   });
 });
 
@@ -329,6 +337,7 @@ test('quorum: the edges of each range and a project agent name are accepted', (t
     judge: { agent: 'acme:staff-architect' },
     plan: { ...DEFAULTS.quorum.plan, a: { agent: 'security-reviewer' }, maxObjections: 1, maxDispatches: 5 },
     decide: { odd: { provider: 'codex', agent: 'code-reviewer' }, even: { provider: 'agent', agent: 'product-manager' }, swap: false },
+    product: DEFAULTS.quorum.product,
   });
   assert.deepEqual(loadConfig(project(t, { version: 1, quorum: { plan: { maxObjections: 5, maxDispatches: 40 } } })).errors, []);
 });

@@ -36,6 +36,14 @@ const QUORUM_SCHEMA = {
   judge: { agent: 'agentName' },
   plan: { a: { agent: 'agentName' }, b: QUORUM_RUNNER, maxObjections: 'objectionCap', maxDispatches: 'dispatchCap' },
   decide: { odd: QUORUM_RUNNER, even: QUORUM_RUNNER, swap: 'boolean' },
+  product: {
+    framer: { agent: 'agentName' },
+    second: { agent: 'agentName' },
+    witness: { agent: 'agentName' },
+    advocate: QUORUM_RUNNER,
+    examiner: { agent: 'agentName' },
+    judge: { agent: 'agentName' },
+  },
 };
 
 // The type of every key. A nested object is one group of keys; a project sets any subset of a group.
@@ -269,6 +277,14 @@ export const DEFAULTS = deepFreeze({
       odd: { provider: 'agent', agent: 'code-reviewer' },
       even: { provider: 'codex', agent: 'code-reviewer' },
       swap: true,
+    },
+    product: {
+      framer: { agent: 'product-manager' },
+      second: { agent: 'ux-specialist' },
+      witness: { agent: 'ux-researcher' },
+      advocate: { provider: 'agent', agent: 'product-manager' },
+      examiner: { agent: 'critic' },
+      judge: { agent: 'product-manager' },
     },
   },
   reviewEngine: 'auto',

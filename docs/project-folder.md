@@ -128,7 +128,7 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── dispatch/             machine handoffs that dispatched agents write for the orchestrator and the skills it runs
 ├── reviews/              review manifests, and the agents the specialist-review skill keeps warm
 ├── quorum/               quorum ledgers, one per plan or question file and its hash
-│   └── questions/        the question files of the quorum's decide mode
+│   └── questions/        the question files of the quorum's decide and product modes
 ├── audits/               persona-audit reports, and the screenshots each cites
 ├── lessons/inbox.jsonl   the lesson inbox, and its inbox.jsonl.lock.<n> lock files
 ├── tmp/                  pull request bodies and review comments that skills draft
@@ -199,12 +199,12 @@ Two commands keep a ledger honest, and `roles` tells the skill who runs each rol
   `done`, `unavailable`, `timed_out`, `quota`, or `failed`, and exits 0 on `done`, 3 on `unavailable`, and 1 otherwise.
   Any other `--mode`, `--mode rebut` or `cross` without `--ledger`, `--ledger` with `object` or `case`, or a missing flag
   prints the usage error and exits 1 without starting Codex.
-- `aidrian quorum roles plan|decide` prints that mode's roles, judge, and caps as one JSON line, from config.json
+- `aidrian quorum roles plan|decide|product` prints that mode's roles, judge, and caps as one JSON line, from config.json
   [`quorum`](config.md#quorum), with today's values where it sets none. Each role has `provider`, `agent`, and
   `fallback`: the agent on `agent`, or the agent that takes over on `codex`. Plan adversary A is always `agent`;
   plan caps are `maxObjections` and `maxDispatches`. Decide prints the `odd` runner of positions A and C and the
   `even` one of B and D, `swap`, and `caps`, the dispatch cap for each position count from 2 to 4. It reads nothing
-  else and writes nothing. An invalid config.json, or a mode other than `plan` or `decide`, exits 1.
+  else and writes nothing. An invalid config.json, or a mode other than `plan`, `decide`, or `product`, exits 1.
 - `aidrian quorum check LEDGER --plan PLAN` checks every citation. `doc` and `adr` cite `path#anchor`, and the quote
   must be in that section; `code` cites `path:line`, and the quote must be in the file; `plan` cites `#anchor` in PLAN;
   `absence` cites a path, and the quote must be in no regular file `git ls-files` lists there; a path with no tracked file fails.
@@ -255,6 +255,10 @@ Two commands keep a ledger honest, and `roles` tells the skill who runs each rol
   With `mode`, it also names a concession invalid when no citation of it passes.
   On every plan ledger, with `mode` or without, its last line reads
   `checked: mode plan, N objections, N opinion, N problems`.
+
+A product-mode ledger carries `mode: product`: a premise, 2 or 3 options, a persona's reactions, one examiner's points,
+a ruling, and an `outcome`. It has no rebuttal round, and only `human_answer` settles it, on a rule or an escalation.
+`check` also exits 1 when the winner of a `rule` rests only on the persona doc, or a `complete` ledger misses a case, the ruling, or a rule's outcome.
 
 A decide-mode ledger carries `mode: decide`. Advocates argue 2 to 4 positions on a question, and the architect rules
 which one the evidence supports. The question is a file, `quorum/questions/<slug>-<h7>.md`.

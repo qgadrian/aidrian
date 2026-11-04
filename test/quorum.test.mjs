@@ -2515,3 +2515,14 @@ test('product ledger: a deferred question on dead evidence goes stale, under an 
   assert.equal(d.check(productLedger({ ruling: escalate, outcome: null, cases })).status, 1);
   assert.equal(d.check(productLedger({ ruling: escalate, outcome: null, cases, human_answer: 'A' })).status, 0);
 });
+
+test('product ledger: an unanswered escalation with an invalid ruling is not reused, and an answered one stands', (t) => {
+  const d = decideProject(t);
+  const escalate = { decision: 'escalate', winner: null, change_or_reason: 'r', citations: [PASSING.adr], tested: [], inferences: [] };
+  const noCitation = { ...escalate, citations: [] };
+  assert.match(d.check(productLedger({ ruling: noCitation, outcome: null })).stderr, /the ruling has no passing citation/u);
+  const partial = { ...escalate, tested: tested({ A: 1 }) };
+  assert.match(d.check(productLedger({ ruling: partial, outcome: null })).stderr, /ruling: invalid: tested names/u);
+  assert.equal(d.check(productLedger({ ruling: escalate, outcome: null })).status, 0, 'a coordinator-written escalate has no verdicts');
+  assert.equal(d.check(productLedger({ ruling: partial, outcome: null, human_answer: 'A' })).status, 0);
+});

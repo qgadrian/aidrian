@@ -1177,7 +1177,12 @@ export function checkProductLedger(ledger, ctx) {
     if (backing.length && backing.every((citation) => personas.includes(path.normalize(refParts(citation).path ?? '')))) invalid('ruling: invalid: the winner rests only on the persona doc, which is a hypothesis');
   }
   // A deferred question must not be asked again on dead evidence, under a rule or an escalation alike.
-  if (complete && ledger.human_answer === null) stale.push(...problems.filter((line) => /citations\[\d+\]/u.test(line) && !stale.includes(line)));
+  if (complete && ledger.human_answer === null) {
+    // Only a coordinator-written escalate, with no verdicts, keeps the exemption from covering what it rules on.
+    const hasVerdicts = ledger.ruling?.tested.length > 0;
+    const dead = (line) => /citations\[\d+\]/u.test(line) || line === 'ruling: invalid: the ruling has no passing citation' || (hasVerdicts && line.startsWith('ruling: invalid: '));
+    stale.push(...problems.filter((line) => dead(line) && !stale.includes(line)));
+  }
   return { ledger, problems, escapes, stale };
 }
 

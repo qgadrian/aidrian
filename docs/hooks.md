@@ -159,7 +159,7 @@ What each rule matches:
   and a `gh pr create` body without the configured `Authored-with:` and `Assisted-by:` lines.
 - Review gate: `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose body
   asks `@codex review`; `gh pr create --reviewer` and `gh pr edit --add-reviewer` naming `github.reviewer`.
-- Review sign-off: `aidrian pr signoff`, also as `node …/cli.mjs` or `node …/bin/aidrian`. In a Claude Code session the
+- Review sign-off: `aidrian pr signoff`, with `--overrule` too, also as `node …/cli.mjs` or `node …/bin/aidrian`. In a Claude Code session the
   Human runs it with `!`; if a host routes `!` through the hooks too, the Human runs it from another terminal.
 - Extra round approval: `aidrian pr extend <PR> --human approve`, also as `node …/cli.mjs` or `--human=approve`, while the
   pull request's check at the cap waits for the Human. It runs when the session transcript holds an AskUserQuestion

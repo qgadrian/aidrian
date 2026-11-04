@@ -47,6 +47,11 @@ crosses them.
 - `findings_merged[]` (split reviews): each mistake once, with the passes that reported it in `sources`.
 - `open[]`: passes with findings still open: `findings` lists them for a local model; the bot's are on the pull request.
 - `flows[]`: flows not signed off: `violated` invariants are findings to fix; `unverified` need a verdict with evidence.
+  A `disputed` invariant has a `violated` verdict and another reviewer's `holds` or `not_affected` with evidence.
+  When the fix is wrong, ask the Human which side is right, in their terms. If the Human sides with the evidence,
+  give them its `overrule` command, with their reason in place of `<why>`, alone in a code block for their own shell.
+  `aidrian pr signoff --flow` without `--overrule` never clears a violated invariant, and the command refuses a flow
+  the head does not ask the Human to sign.
 - `tests_removed[]`: a flow's test was deleted. Restore it, or the Human accepts it with the `accept` command.
 - `checks_failing[]`: a check the flow requires failed or was skipped on the head.
 
@@ -56,7 +61,7 @@ the change does not touch.
 ## Stops
 
 - `human_required`: a flow the Human signs off, or with `stage`, a stage the Human chose to review in place of a
-  reviewer out of quota. Give them `command` to run in their own shell (`!` in the prompt, or another terminal); never
+  reviewer out of quota. Give them `command`, alone in a code block with nothing after it on the line, to run in their own shell (`!` in the prompt, or another terminal); never
   run it for them, and the `review-signoff` rule blocks it if you try. A flow's sign-off holds across later pushes that
   touch nothing of the flow; a stage's holds for its head only.
 - `unsatisfied`: the plan needs a reviewer this machine cannot run, such as `independent-model` with no Codex login.

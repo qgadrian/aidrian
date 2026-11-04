@@ -132,7 +132,10 @@ reaches its reviewer with that section as `source`: the heading and its text up 
 higher level, read from the base branch. The anchor may be copied from GitHub, as the heading's link gives it.
 The reviewer judges against the source; `text` is only the question, and
 without one the question comes from the heading. So the rule lives once, in the doc, and config cannot drift from it.
-A change to a cited doc triggers `harness-config`. `aidrian lint review` warns about a cited section with no text.
+A change to a cited section triggers `harness-config`: its heading or text differs between the base and the head,
+or its heading is gone, which covers a heading inserted into it or removed after it. An edit elsewhere in the doc
+does not. An invariants doc, or a `cite` with no `#anchor`, is
+cited whole, so any change to it triggers the flow. `aidrian lint review` warns about a cited section with no text.
 
 A reviewer reads at most 4000 characters of a source. A longer section is cut between its top-level blocks (a list
 item with its nested lines, a paragraph, a sub-heading, a code fence), and a note names each block left out and the
@@ -222,6 +225,17 @@ override is listed in the review summary on the pull request, or only in the loc
 "local"`. For proof, protect the branch with a required review from a second account.
 Like `aidrian pr attest`, it files the sign-off under the pull request's repository: `--repo OWNER/NAME`, else the one
 `gh pr view` names, else origin.
+
+The command signs only a flow the last `aidrian pr review` on that head asks the Human to sign: one with
+`signoff: "human"`, the built-in `harness-config`, or one whose test the change deletes. It refuses any other flow, and
+a head no review ran on, since such a sign-off would count for nothing. A sign-off never clears a violated invariant.
+
+**A dispute between reviewers.** When one reviewer answers `violated` and another, one that gave no `violated` verdict
+of its own, answers `holds` or `not_affected` with valid evidence, the flow in `fix_required` lists the invariant under `disputed`, with an `overrule` command:
+`aidrian pr signoff <PR> --flow <id> --overrule <invariant> --head <sha> --reason "<why>"`. The Human runs it in their
+own shell, and the invariant then passes on that head on the other reviewer's evidence, never on the Human's word
+alone. The ruling holds for that head only and is listed with the overrides in the review summary. The command
+refuses an invariant that is not disputed on that head, and a ruling with no reason.
 
 A sign-off holds on a later head when the signed head is its ancestor and the change since selects nothing of the
 flow, through the same selection the plan uses: its globs, `added` patterns, `content`, the plan command, its tests,

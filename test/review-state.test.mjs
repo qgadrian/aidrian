@@ -219,3 +219,48 @@ test('the visible summary is bounded: a 100,000-character visual reason is clipp
   const incompressible = summaryBody({ ...emptyState(7, 'o/r'), visual: { head: 'a', status: 'failed', reason: noise(next, 100_000), mode: 'none' } }, null, 'x');
   assert.equal(heldRevision(incompressible), 0, 'one that does not is held');
 });
+
+test('a non-member\'s repeated writes edit their own summary comment, which still supplies no record', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-state-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' } }));
+  const project = projectAt(dir);
+  const state = (revision) => ({ ...emptyState(7, 'o/r'), revision });
+  const summary = (id, login, author_association, revision = 1) => ({ id, user: { login }, author_association, body: summaryBody(state(revision), null, 'x') });
+  const io = (comments, viewer) => ({
+    comments: () => comments,
+    post: (body) => comments.push({ id: comments.length + 100, user: { login: 'fork' }, author_association: 'CONTRIBUTOR', body }),
+    edit: (id, body) => (comments.find((comment) => comment.id === id).body = body),
+    viewer,
+  });
+
+  const own = [];
+  for (const revision of [1, 2, 3, 4]) assert.equal(publishState(state(revision), io(own, () => 'fork'), 'x'), null);
+  assert.equal(own.length, 1, 'four writes leave one comment');
+  assert.equal(stateFromComment(own[0].body, 7).revision, 4);
+  assert.equal(readRecord(project, 7, own, 'o/r').state.revision, 0, 'it still supplies no record');
+
+  // Someone else's summary comment is never edited, a member's or a stranger's, whichever came last.
+  const mixed = [summary(1, 'fork', 'CONTRIBUTOR'), summary(2, 'mallory', 'NONE'), summary(3, 'maintainer', 'MEMBER', 12)];
+  const others = [mixed[1].body, mixed[2].body];
+  assert.equal(publishState(state(5), io(mixed, () => 'fork'), 'x'), null);
+  assert.deepEqual([mixed.length, stateFromComment(mixed[0].body, 7).revision, mixed[1].body, mixed[2].body], [3, 5, ...others]);
+  assert.equal(readRecord(project, 7, mixed, 'o/r').state.revision, 12, 'readers still take the member\'s');
+
+  // A login that cannot be read posts a new comment, even with the user's own comment there.
+  for (const viewer of [() => { throw new Error('HTTP 401'); }, () => null, () => '', undefined]) {
+    const unknown = [summary(1, 'fork', 'CONTRIBUTOR')];
+    const before = unknown[0].body;
+    assert.equal(publishState(state(2), io(unknown, viewer), 'x'), null);
+    assert.deepEqual([unknown.length, unknown[0].body], [2, before], String(viewer));
+  }
+
+  // A member's write keeps the one comment readers take, and asks gh nothing with no non-member's summary comment there.
+  const members = [summary(1, 'other-member', 'MEMBER')];
+  assert.equal(publishState(state(2), io(members, () => assert.fail('no login is read')), 'x'), null);
+  assert.deepEqual([members.length, stateFromComment(members[0].body, 7).revision], [1, 2]);
+  const member = [summary(1, 'other-member', 'MEMBER'), summary(2, 'mallory', 'NONE')];
+  assert.equal(publishState(state(2), io(member, () => 'me'), 'x'), null);
+  assert.deepEqual([member.length, stateFromComment(member[0].body, 7).revision, stateFromComment(member[1].body, 7).revision], [2, 2, 1]);
+});

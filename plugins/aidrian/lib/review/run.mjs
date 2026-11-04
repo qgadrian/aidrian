@@ -42,7 +42,7 @@ import { touchedCitations } from './cited.mjs';
 import { buildPlan, classify, detectFlows, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, pathPattern, validatePlan } from './plan.mjs';
 import { BUILT_IN, flowBaseBrief, resolveEngine, reviewerMap, runExec, satisfies, VERDICT_MEANING } from './reviewers.mjs';
 import { atCap, buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
-import { answerPending, emptyState, heldMessage, mergePending, noteOutcome, prunePasses, readLocalState, readRecord, sameCommit, summaryBody, summaryComment, writeLocalState } from './state.mjs';
+import { answerPending, emptyState, heldMessage, mergePending, noteOutcome, prunePasses, readLocalState, readRecord, sameCommit, summaryBody, summaryToEdit, writeLocalState } from './state.mjs';
 import * as quota from './quota.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, ghImage, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput, visualMatrix, visualRoutes } from './visual.mjs';
 
@@ -67,6 +67,7 @@ export const defaultGh = {
   comments: (repo, n) => JSON.parse(runGh(['api', `repos/${repo}/issues/${n}/comments`, '--paginate', '--slurp']) || '[]').flat(),
   post: (repo, n, body) => JSON.parse(runGh(['api', `repos/${repo}/issues/${n}/comments`, '--method', 'POST', '-f', `body=${body}`])),
   edit: (repo, id, body) => JSON.parse(runGh(['api', `repos/${repo}/issues/comments/${id}`, '--method', 'PATCH', '-f', `body=${body}`])),
+  viewer: () => JSON.parse(runGh(['api', 'user'])).login,
   visibility: (repo) => JSON.parse(runGh(['repo', 'view', repo, '--json', 'visibility'])).visibility,
   image: ghImage,
   // The check runs of one commit, as `gh pr checks` rows: the evidence must be for the head under review.
@@ -259,7 +260,7 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
   // a record newer than this machine's stops the step before it writes anything: starting over would replace it.
   const onPr = config.review.record !== 'local';
   const comments = onPr ? gh.comments(repo, n) : [];
-  const summary = summaryComment(comments);
+  const summary = summaryToEdit(comments, () => gh.viewer());
   const record = readRecord(project, n, comments, repo);
   if (record.held !== undefined) return { status: 'incomplete', pr: n, repo, head, reason: heldMessage(n, record.held), held: record.held, retry_recommended: false };
   let state = record.state;

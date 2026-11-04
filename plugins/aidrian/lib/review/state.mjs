@@ -231,6 +231,24 @@ export const isSummary = (body) => typeof body === 'string' && body.startsWith(S
 // The last summary comment among `comments`, as GitHub's REST API returns them, by a member of the repository, or null.
 export const summaryComment = (comments) => (comments ?? []).filter((comment) => isSummary(comment.body) && MEMBER_ASSOCIATIONS.has(comment.author_association)).at(-1) ?? null;
 
+// The summary comment a write edits, or null to post a new one. A non-member edits the last one they wrote, which still
+// supplies no record, so their steps keep one comment; everyone else edits the one readers take (summaryComment).
+// `viewer()` gives the current gh user's login, and is asked only when a non-member's summary comment is there. A login
+// it cannot give matches nobody, so no one else's comment is edited for it.
+export function summaryToEdit(comments, viewer) {
+  const outside = (comments ?? []).filter((comment) => isSummary(comment.body) && !MEMBER_ASSOCIATIONS.has(comment.author_association));
+  const login = outside.length ? currentLogin(viewer) : null;
+  return (login && outside.filter((comment) => comment.user?.login === login).at(-1)) || summaryComment(comments);
+}
+
+function currentLogin(viewer) {
+  try {
+    return viewer?.() ?? null;
+  } catch {
+    return null;
+  }
+}
+
 const EXTRA_HEADING = '**Extra rounds:**';
 // The decisions after which the cap stands.
 const STOPS = new Set(['stopped', 'denied']);
@@ -281,11 +299,11 @@ export function refreshSummary(body, state) {
 }
 
 // Writes `state`, already written to the state folder, to the pull request's summary comment, as the review step does,
-// so another machine reads the same record. `io` is { comments(), post(body), edit(id, body) }. With no summary
-// comment yet, it posts one under `status`. Returns the error message, or null.
+// so another machine reads the same record. `io` is { comments(), post(body), edit(id, body), viewer() }. With no summary
+// comment to edit (summaryToEdit), it posts one under `status`. Returns the error message, or null.
 export function publishState(state, io, status) {
   try {
-    const summary = summaryComment(io.comments());
+    const summary = summaryToEdit(io.comments(), io.viewer);
     if (summary) io.edit(summary.id, refreshSummary(summary.body, state));
     else io.post(summaryBody(state, null, status));
     return null;

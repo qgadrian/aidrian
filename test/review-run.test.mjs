@@ -71,6 +71,21 @@ test('a docs-only change needs no review and posts nothing', async (t) => {
   assert.equal(r.comments.length, 0);
 });
 
+test('the review step of a non-member edits their own summary comment, and it supplies no record', async (t) => {
+  const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
+  r.gh.post = (_repo, _n, body) => r.comments.push({ id: r.comments.length + 1, body, user: { login: 'fork' }, author_association: 'CONTRIBUTOR' });
+  r.gh.viewer = () => 'fork';
+  let ran = 0;
+  const exec = async () => (ran += 1, { status: 'done', findings: [finding], verdicts: [], dropped: [] });
+  await r.step({ exec });
+  rmSync(stateDir(r.project), { recursive: true, force: true });
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit();
+  await r.step({ exec });
+  assert.equal(r.comments.length, 1, 'the second step edits the first step\'s comment');
+  assert.equal(stateFromComment(r.comments[0].body, 7).rounds.length, 1, 'with this machine\'s record gone, the comment supplied none: a new first round');
+});
+
 test('a stranger\'s summary comment supplies no record: the reviewer still runs, and auto-merge stays off', async (t) => {
   const team = { version: 1, state: { dir: 'state' }, github: { requiredChecks: ['test'], autoMerge: { allow: true, strategy: 'squash' } } };
   const r = repo(t, { baseConfig: team, change: (write) => write('src/app.js', 'export const app = 2;\n') });

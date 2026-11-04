@@ -540,7 +540,7 @@ export async function runExtend(args, project, config, deps = {}) {
     entry = recordHuman(state, { answer: opts.human, by, session: env.CLAUDE_CODE_SESSION_ID || null, current });
   }
   writeLocalState(project, state);
-  const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => gh.post(repo, opts.pr, body), edit: (id, body) => gh.edit(repo, id, body) }, `extension ${entry.status}`) : null;
+  const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => gh.post(repo, opts.pr, body), edit: (id, body) => gh.edit(repo, id, body), viewer: () => gh.viewer() }, `extension ${entry.status}`) : null;
   try {
     appendEvent(project, config, { ...rowOf(entry), ts: stamp(Date.now()), session_id: env.CLAUDE_CODE_SESSION_ID || null, pr: opts.pr, repo });
   } catch {}

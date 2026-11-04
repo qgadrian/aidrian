@@ -622,6 +622,18 @@ test('product mode round 9 runs the resolve and reports it, and still asks the H
   assert.match(text, /"outcome", "class", "reversible", "docs"\}/);
 });
 
+test('persona audit triage resolves a held item and reports it, and still asks the Human under decide', () => {
+  const text = readFileSync(path.join(PLUGIN, 'skills/persona-audit-triage/references/deciding.md'), 'utf8').replace(/\s+/g, ' ');
+  const section = text.slice(text.indexOf("## A held item's authority"), text.indexOf('## Search for an existing issue first'));
+  assert.match(section, /run `aidrian decisions resolve` as `knowledge\/references\/decisions\.md` says, in the `product` domain/);
+  assert.match(section, /A missing field, or a command that fails, means `ask`\./);
+  assert.match(section, /Report `resolve`'s `authority` and `reason` beside the question/);
+  assert.match(section, /A held item always asks, under `ask` and `decide` alike: `decide` settles nothing here/);
+  assert.match(section, /no `authority` line goes back to the product owner, and no `decided_provisional` or marker follows/);
+  assert.match(section, /In `auto`, no question comes, so run no `resolve`/);
+  assert.match(text, /the answer also gives the product decision's `class`, `reversible`, and `docs`/);
+});
+
 test('each dispatcher of a deciding agent runs the resolve, and each deciding agent returns by its brief', () => {
   const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
   for (const rel of [

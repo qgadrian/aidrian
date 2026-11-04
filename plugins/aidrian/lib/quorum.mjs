@@ -1180,7 +1180,8 @@ export function checkProductLedger(ledger, ctx) {
   if (complete && ledger.human_answer === null) {
     // Only a coordinator-written escalate, with no verdicts, keeps the exemption from covering what it rules on.
     const hasVerdicts = ledger.ruling?.tested.length > 0;
-    const dead = (line) => /citations\[\d+\]/u.test(line) || (line.startsWith('ruling: invalid: ') && (hasVerdicts || !/^ruling: invalid: (?:tested names|inference untested)/u.test(line)));
+    // One bad citation beside a passing one leaves a case or point standing: only an entry left with none is dead.
+    const dead = (line) => /^(?:ruling|final ruling|premise)\.citations\[\d+\]/u.test(line) || /^(?:case|cross) \S+: no citation passes/u.test(line) || (line.startsWith('ruling: invalid: ') && (hasVerdicts || !/^ruling: invalid: (?:tested names|inference untested)/u.test(line)));
     stale.push(...problems.filter((line) => dead(line) && !stale.includes(line)));
   }
   return { ledger, problems, escapes, stale };

@@ -41,6 +41,17 @@ const REPORT = /^(.+)-(\d{4}-\d{2}-\d{2})(?:-\d+)?\.md$/u;
 // A backticked span that names a screenshot by its suffix alone, such as `-24.jpg`: the reader cannot open it.
 const SHORTHAND = /`(-[^`/\s]*\.(?:png|jpe?g|gif|webp))`/giu;
 
+// A report as a person reads it: its personas, its kind, its date, and its run of that day, such as "the front-desk
+// walk of 2026-05-02, run 2". Ids and file names are keys for the commands, never words for the Human.
+export function reportTitle(report, findings = []) {
+  const match = /^(.+)-(\d{4}-\d{2}-\d{2})(?:-(\d+))?\.md$/u.exec(report ?? '');
+  if (!match) return report;
+  const [, personas, date, run] = match;
+  const who = personas === 'all' ? 'every-persona' : personas.split('+').join(' and ');
+  const kind = !findings.length ? 'audit' : findings.some((finding) => finding.evidence_level === 'walked') ? 'walk' : 'read-only review';
+  return `the ${who} ${kind} of ${date}${run ? `, run ${run}` : ''}`;
+}
+
 export const sidecarName = (report) => report.replace(/\.md$/u, '.json');
 export const reportName = (value) => (value.endsWith('.md') ? value : `${value}.md`);
 export const today = (now = new Date()) => now.toISOString().slice(0, 10);
@@ -200,14 +211,16 @@ export function listAudits(dir, { triage = readTriage(dir) } = {}) {
     if (replaced && replaced !== each) replaced.replaced_by = each.report;
   }
   const decided = (report, id) => triage.reports?.[report]?.[id] ?? null;
+  for (const each of reports) each.title = reportTitle(each.report, each.findings);
   for (const each of reports) {
     if (each.replaced_by) each.status = 'replaced';
     const own = [...each.findings.map((finding) => ({ kind: 'finding', ...finding })), ...each.not_reached.map((item) => ({ kind: 'not_reached', ...item })), ...each.doc_gaps.map((item) => ({ kind: 'doc_gap', ...item }))]
-      .map((item) => ({ ...item, report: each.report, decision: decided(each.report, item.id) }));
+      .map((item) => ({ ...item, report: each.report, report_title: each.title, decision: decided(each.report, item.id) }));
     const older = each.supersedes ? byName.get(each.supersedes) : null;
     const offered = each.not_rechecked.map((id) => {
-      const finding = older?.findings.find((one) => one.id === id) ?? { id, title: `${id} of ${each.supersedes}` };
-      return { kind: 'not_rechecked', ...finding, report: each.supersedes, decision: decided(each.supersedes, id) };
+      const olderTitle = older?.title ?? reportTitle(each.supersedes);
+      const finding = older?.findings.find((one) => one.id === id) ?? { id, title: `a finding of ${olderTitle} that it no longer holds` };
+      return { kind: 'not_rechecked', ...finding, report: each.supersedes, report_title: olderTitle, decision: decided(each.supersedes, id) };
     });
     each.items = [...own, ...offered];
     each.untriaged = each.status === 'replaced' ? 0 : each.items.filter((item) => !item.decision).length;
@@ -252,7 +265,7 @@ export function pendingGroups(entry, { labels = [], personas = entry.personas ??
   const open = (entry.items ?? []).filter((item) => !item.decision).map((item) => ({ ...item, labels: issueLabels(labels, item, personas) }));
   const groups = [];
   const findings = open.filter((item) => item.kind === 'finding');
-  for (const item of findings.filter((one) => one.severity === 'blocker')) groups.push({ kind: 'blocker', title: `Blocker ${item.id}: ${item.title}`, items: [item] });
+  for (const item of findings.filter((one) => one.severity === 'blocker')) groups.push({ kind: 'blocker', title: `Blocker: ${item.title}`, items: [item] });
   const rest = findings.filter((one) => one.severity !== 'blocker');
   const keys = [...new Set(rest.map((item) => `${SEVERITIES.indexOf(item.severity)}\0${item.owner}`))].sort();
   for (const key of keys) {
@@ -261,7 +274,7 @@ export function pendingGroups(entry, { labels = [], personas = entry.personas ??
     groups.push({ kind: 'findings', title: `${severity}, for ${words || OWNER_WORDS[owner] || owner}`, items });
   }
   const rechecks = open.filter((item) => item.kind === 'not_rechecked');
-  if (rechecks.length) groups.push({ kind: 'not_rechecked', title: `Not re-checked from ${rechecks[0].report}`, items: rechecks });
+  if (rechecks.length) groups.push({ kind: 'not_rechecked', title: `Not re-checked from ${rechecks[0].report_title ?? reportTitle(rechecks[0].report)}`, items: rechecks });
   const reruns = open.filter((item) => item.kind === 'not_reached');
   if (reruns.length) groups.push({ kind: 'not_reached', title: 'Not reached: follow-ups for a rerun', items: reruns });
   const gaps = open.filter((item) => item.kind === 'doc_gap');

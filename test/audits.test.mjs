@@ -15,6 +15,12 @@ const AIDRIAN = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
 const FIXTURES = path.join(ROOT, 'test/fixtures/persona-audit');
 const NEW = 'front-desk-2026-05-02-2.md';
 const OLD = 'front-desk-2026-05-02.md';
+// How the text output names them to a person: by persona, kind, date, and run, never by file name.
+const NEW_TITLE = 'The front-desk walk of 2026-05-02, run 2';
+const OLD_TITLE = 'The front-desk read-only review of 2026-05-02';
+// What the Human reads holds no item id, such as F1, N2, or D1, and no file suffix, such as -2.md: ids are keys for the
+// commands only.
+const noIds = (text) => assert.doesNotMatch(text, /\b[FND][1-9]\d*\b|-\d+\.(?:md|json)\b/u, text);
 // Every screenshot the new report cites, by full path or by suffix.
 const SHOTS = [10, 13, 15, 20, 23, 24, 25, 27, 28, 29, 30, 31, 32, 33, 38].map((n) => `shot-17000000000${n}-${n}.jpg`).concat('shot-1700000000022-22.png');
 
@@ -161,10 +167,10 @@ test('pending orders the items: blockers alone, then by severity and owner, then
   ];
   const groups = pendingGroups({ items });
   assert.deepEqual(groups.map((g) => [g.kind, g.title, g.items.map((i) => i.id)]), [
-    ['blocker', 'Blocker F1: a drop-in is not shown as a drop-in', ['F1']],
+    ['blocker', 'Blocker: a drop-in is not shown as a drop-in', ['F1']],
     ['findings', 'friction, for the server and the answers it gives', ['F2']],
     ['findings', 'polish, for how the product flows and what its words say', ['F3']],
-    ['not_rechecked', 'Not re-checked from front-desk-2026-05-02.md', ['F3']],
+    ['not_rechecked', 'Not re-checked from the front-desk audit of 2026-05-02', ['F3']],
     ['not_reached', 'Not reached: follow-ups for a rerun', ['N1']],
   ]);
 });
@@ -189,7 +195,8 @@ test('aidrian audits: list, import after review, pending, and record every decis
   const { audits, run } = project(t);
   let result = run('list');
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, new RegExp(`- ${OLD}: replaced by ${NEW}\n- ${NEW}: 11 findings, no sidecar: import needed\n$`, 'u'));
+  assert.match(result.stdout, new RegExp(`\n- ${OLD_TITLE}: replaced by ${NEW_TITLE.toLowerCase()}\n- ${NEW_TITLE}: 11 findings, no sidecar: import needed\n`, 'u'));
+  noIds(result.stdout);
   assert.deepEqual(JSON.parse(run('list', '--json').stdout).map((r) => [r.report, r.status, r.findings, r.untriaged]), [[OLD, 'replaced', 3, 0], [NEW, 'no-sidecar', 11, 15]]);
   assert.match(run('record', NEW, 'F1', 'defer').stderr, /no sidecar: import needed/, 'a report needs its sidecar before a decision');
 
@@ -207,18 +214,19 @@ test('aidrian audits: list, import after review, pending, and record every decis
   result = run('pending', NEW);
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(result.stdout.split('\n').filter((line) => line.startsWith('## ')), [
-    '## Blocker F1: a drop-in is not shown as a drop-in',
+    '## Blocker: a drop-in is not shown as a drop-in',
     '## friction, for the server and the answers it gives',
     '## friction, for the screens and their code',
     '## friction, for what the product should do, and its rules',
     '## friction, for how the product flows and what its words say',
     '## polish, for how the product flows and what its words say',
-    `## Not re-checked from ${OLD}`,
+    `## Not re-checked from ${OLD_TITLE.toLowerCase()}`,
     '## Not reached: follow-ups for a rerun',
     '## Persona doc gaps',
   ]);
-  assert.match(result.stdout, new RegExp(`- ${OLD} F2: Spanish names the drop-in three ways\n- ${OLD} F3: Spanish mixes formal and informal address\n`, 'u'));
-  assert.doesNotMatch(result.stdout, new RegExp(`${OLD} F1:`, 'u'), 'a carried-forward finding is not offered again');
+  assert.match(result.stdout, /\n- Spanish names the drop-in three ways\n- Spanish mixes formal and informal address\n## Not reached/u);
+  assert.doesNotMatch(result.stdout, /collapsed "Optional" section/u, 'a carried-forward finding is not offered again');
+  noIds(result.stdout);
 
   assert.match(run('record', NEW, 'F1', 'issue').stderr, /issue needs --issue KEY or --url URL/);
   assert.match(run('record', NEW, 'F8', 'drop').stderr, /drop needs --reason/);
@@ -227,17 +235,19 @@ test('aidrian audits: list, import after review, pending, and record every decis
   assert.match(run('record', NEW, 'F1', 'maybe').stderr, /decision must be issue, fix-now, duplicate, drop, defer/);
   result = run('record', NEW, 'F1', 'issue', '--issue', 'ABC-1', '--url', 'https://tracker.example.com/ABC-1');
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, new RegExp(`^recorded ${NEW} F1: issue; 16 untriaged left in ${NEW}\n$`, 'u'));
+  assert.equal(result.stdout, `recorded "a drop-in is not shown as a drop-in": issue; 16 untriaged left in ${NEW_TITLE.toLowerCase()}\n`);
   assert.equal(run('record', OLD, 'F2', 'duplicate', '--issue', 'ABC-2').status, 0);
   for (const id of ['F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'N1', 'N2', 'N3', 'D1']) {
     assert.equal(run('record', NEW, id, 'defer').status, 0);
   }
   result = run('record', OLD, 'F3', 'drop', '--reason', 'covered by the next Spanish pass');
-  assert.match(result.stdout, new RegExp(`${NEW} is fully triaged\n$`, 'u'));
+  assert.equal(result.stdout, `recorded "Spanish mixes formal and informal address": drop; ${NEW_TITLE} is fully triaged\n`);
+  noIds(result.stdout);
   const triage = JSON.parse(readFileSync(path.join(audits, 'triage.json'), 'utf8'));
   assert.deepEqual(triage.reports[NEW].F1, { decision: 'issue', issue: 'ABC-1', url: 'https://tracker.example.com/ABC-1', reason: null, date: triage.reports[NEW].F1.date });
   assert.deepEqual(triage.reports[OLD].F3.reason, 'covered by the next Spanish pass');
-  assert.match(run('list').stdout, new RegExp(`- ${NEW}: 11 findings, fully triaged\n`, 'u'));
+  assert.match(run('list').stdout, new RegExp(`- ${NEW_TITLE}: 11 findings, fully triaged\n`, 'u'));
+  assert.equal(run('pending', NEW).stdout, `${NEW_TITLE}: fully triaged\n`);
   assert.equal(auditNudge(audits), '');
 
   writeFileSync(path.join(audits, 'triage.json'), '{ cut short');
@@ -255,8 +265,8 @@ test('aidrian audits check passes a new run whose sidecar and prose agree', (t) 
   for (const n of [1, 2, 3]) writeFileSync(path.join(audits, `front-desk-2026-06-01/shot-${n}.png`), '');
   const result = run('check', value.report);
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, 'ok: front-desk-2026-06-01.json, 2 findings, 1 not reached, 1 doc gaps\n');
-  assert.match(run('list').stdout, /- front-desk-2026-06-01\.md: 2 findings, 4 of 4 items untriaged\n/);
+  assert.equal(result.stdout, 'ok: the sidecar of the front-desk walk of 2026-06-01: 2 findings, 1 not reached, 1 doc gaps\n');
+  assert.match(run('list').stdout, /- The front-desk walk of 2026-06-01: 2 findings, 4 of 4 items untriaged\n/);
 });
 
 test('the sidecar example persona-audit ships is valid, and its owner words are the ones the import writes', () => {

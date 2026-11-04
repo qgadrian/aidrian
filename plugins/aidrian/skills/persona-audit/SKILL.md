@@ -101,6 +101,6 @@ Beside it, write its sidecar, the same name with `.json`, as § The sidecar ther
 `aidrian audits check <report>.md` and fix the report or the sidecar until it prints `ok`.
 A run that repeats a report `aidrian audits list` shows replaces it: § A run that replaces a report.
 
-Then reply to the Human with the report's path, each persona's task table, the blockers, and what the run
+Then reply to the Human with the report's path, each persona's task table, the blockers by title, and what the run
 could not reach, and say that personas are synthetic and do not replace real users.
 With `--pr`, the report is input to the Human's review: it never approves, blocks, or posts to the pull request.

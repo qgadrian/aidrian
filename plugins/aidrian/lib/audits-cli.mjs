@@ -9,7 +9,7 @@ import { parseArgs } from 'node:util';
 
 import { parseReport } from './audit-import.mjs';
 import {
-  decisionProblem, DECISIONS, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, searchLabels, sidecarName, sidecarProblems, today,
+  decisionProblem, DECISIONS, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, reportTitle, searchLabels, sidecarName, sidecarProblems, today,
 } from './audits.mjs';
 import { commandConfig } from './config.mjs';
 import { projectAt, stateDir } from './project.mjs';
@@ -50,8 +50,8 @@ export const commands = {
 function list({ values, dir }) {
   const reports = listAudits(dir);
   if (values.json) {
-    console.log(JSON.stringify(reports.map(({ report, status, problems, findings, items, untriaged, supersedes, replaced_by: replacedBy }) => ({
-      report, status, problems, findings: findings.length, items: items.length, untriaged, supersedes, replaced_by: replacedBy,
+    console.log(JSON.stringify(reports.map(({ report, title, status, problems, findings, items, untriaged, supersedes, replaced_by: replacedBy }) => ({
+      report, title, status, problems, findings: findings.length, items: items.length, untriaged, supersedes, replaced_by: replacedBy,
     }))));
     return 0;
   }
@@ -59,14 +59,19 @@ function list({ values, dir }) {
     console.log(`No persona audits in ${dir}.`);
     return 0;
   }
+  // Words for a person: each report by its title, never its file name; --json gives the names the commands take.
   console.log(`Persona audits in ${dir}`);
-  for (const each of reports) console.log(`- ${each.report}: ${statusText(each)}`);
+  const titles = new Map(reports.map((each) => [each.report, each.title]));
+  for (const each of reports) console.log(`- ${capital(each.title)}: ${statusText(each, titles)}`);
+  console.log('`aidrian audits list --json` gives the file name each other command takes.');
   return 0;
 }
 
-function statusText(each) {
+const capital = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+
+function statusText(each, titles = new Map()) {
   const counts = `${each.findings.length} finding${each.findings.length === 1 ? '' : 's'}`;
-  if (each.status === 'replaced') return `replaced by ${each.replaced_by}`;
+  if (each.status === 'replaced') return `replaced by ${titles.get(each.replaced_by) ?? each.replaced_by}`;
   if (each.status === 'no-sidecar') return `${counts}, no sidecar: import needed`;
   if (each.status === 'invalid') return `${counts}, invalid sidecar: ${each.problems[0]}`;
   return each.untriaged ? `${counts}, ${each.untriaged} of ${each.items.length} items untriaged` : `${counts}, fully triaged`;
@@ -93,7 +98,7 @@ function check({ rest: [name], dir }) {
   }
   const problems = [...sidecarProblems(value, { dir, report }), ...proseProblems(readFileSync(path.join(dir, report), 'utf8'), value)];
   if (problems.length) return fail(problems.map((each) => `${sidecarName(report)}: ${each}`).join('\n'));
-  console.log(`ok: ${sidecarName(report)}, ${value.findings.length} findings, ${value.not_reached.length} not reached, ${value.doc_gaps.length} doc gaps`);
+  console.log(`ok: the sidecar of ${reportTitle(report, value.findings)}: ${value.findings.length} findings, ${value.not_reached.length} not reached, ${value.doc_gaps.length} doc gaps`);
   return 0;
 }
 
@@ -145,13 +150,13 @@ function pending({ values, rest: [name], dir, triage }) {
     return 0;
   }
   if (!groups.length) {
-    console.log(`${report}: fully triaged`);
+    console.log(`${capital(entry.title)}: fully triaged`);
     return 0;
   }
   console.log(`Issue creation: ${triage.issueCreation}. Duplicate search label: ${searchLabels(triage.labels).join(', ')}.`);
   for (const group of groups) {
     console.log(`## ${group.title}`);
-    for (const item of group.items) console.log(`- ${item.report} ${item.id}: ${item.title ?? item.text}`);
+    for (const item of group.items) console.log(`- ${item.title ?? item.text}`);
   }
   return 0;
 }
@@ -179,7 +184,9 @@ function record({ values, rest: [name, id, decision], dir }) {
   }
   recordDecision(dir, report, id, entry);
   const left = listAudits(dir).find((each) => each.report === holder.report).untriaged;
-  console.log(`recorded ${report} ${id}: ${decision}; ${left ? `${left} untriaged left in ${holder.report}` : `${holder.report} is fully triaged`}`);
+  const item = holder.items.find((one) => one.report === report && one.id === id);
+  const where = holder.title;
+  console.log(`recorded "${item.title ?? item.text}": ${decision}; ${left ? `${left} untriaged left in ${where}` : `${capital(where)} is fully triaged`}`);
   return 0;
 }
 

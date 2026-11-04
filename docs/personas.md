@@ -169,6 +169,10 @@ The decisions live in `<state>/audits/triage.json`, never in the repository, key
 
 `aidrian audits` reads and writes them; `--project <dir>` runs it for another project:
 
+Their text output is for a person: it names each report by its personas, kind, date, and run, such as "the front-desk
+walk of 2026-05-02, run 2", and each item by its title, never by its id or file name. `--json` carries the ids and
+file names the other commands take.
+
 - `list [--json]`: each report with its finding count and untriaged items. A replaced report shows `replaced by
   <report>`, and its items count toward the report that replaced it. A report with no sidecar shows
   `no sidecar: import needed`; one whose sidecar is invalid names the first problem.

@@ -12,6 +12,8 @@ nothing is routed or created before the Human says yes; in `auto`, for unsupervi
 
 Before you start, follow the `knowledge` skill. Knowledge tags: `issue_tracker`, `personas`, `product_sensitive`.
 
+To the Human, name an item by its title and a report by its `title`; ids and file names are for the commands only.
+
 Argument: `[<report>]`, a report file name in `<state>/audits/`; with none, step 1 picks.
 Copy this checklist and tick it:
 
@@ -28,11 +30,10 @@ Copy this checklist and tick it:
 ## 1. Find the reports
 
 ```bash
-aidrian audits list
+aidrian audits list --json
 ```
 
-Each line is a report with its findings and untriaged items, or `replaced by <report>`, `no sidecar: import needed`,
-or `invalid sidecar: <problem>`. Take the report named, else the oldest with untriaged items; several: ask the Human.
+Each row is a report: its file name, `title`, `status` (`ok`, `replaced`, `no-sidecar`, or `invalid`), and counts. Take the report named, else the oldest with untriaged items; several: ask the Human.
 An invalid sidecar is the run's to fix: tell the Human the problem and take another report.
 
 **Done when** one report is chosen and it has a sidecar or needs an import.
@@ -46,7 +47,7 @@ each finding in the draft against it: severity, tasks, owner, `owner_description
 
 When a warning says the report replaces an earlier one, read that report too and sort its findings, as the "This run
 replaces" sentence says: `carried_forward`, those a finding here covers; `not_rechecked`, those this run did not look at.
-Show the Human a table of the draft (id, severity, title, owner in plain words, screenshots) and the sorted earlier
+Show the Human a table of the draft (title, severity, owner in plain words, screenshots) and the sorted earlier
 findings. After the Human's yes:
 
 ```bash
@@ -85,7 +86,7 @@ decision. No issue is drafted before its answer. In `auto`, one it does not sett
 In `auto`, ask nothing: take the recommended decision when it is `issue` or `duplicate`, and record any other as
 `defer` with the reason, for the Human. In `confirm`, ask the Human: blockers one at a time, then one question per
 group. Name the owner in plain words, from `owner_description`, never as an agent role. Each question lists its items
-(id, title, what was seen, one line each), recommends one decision with one reason, and takes per-item answers.
+(title and what was seen, one line each), recommends one decision with one reason, and takes per-item answers.
 
 | Decision | When | Then |
 | --- | --- | --- |
@@ -128,6 +129,6 @@ A route that fails records nothing: the item stays untriaged, with the failure i
 
 ## 7. Summary
 
-In `auto`, first the issues created, each with its link, and any label left out. Then per item: report, id, decision,
+In `auto`, first the issues created, each with its link, and any label left out. Then per item: its title, decision,
 and the issue link or reason; the untriaged count before and after; and the commands run. One report per run;
 take the next only when the Human asks.

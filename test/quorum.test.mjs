@@ -2428,7 +2428,51 @@ test('quorum roles product: defaults and caps, and Codex advocates add a fallbac
   const { out } = roles(dir, 'product');
   assert.equal(out.judge.agent, 'product-manager');
   assert.equal(out.roles.witness.agent, 'ux-researcher');
-  assert.deepEqual(out.caps, { 2: 9, 3: 10 });
+  assert.deepEqual(out.caps, { 2: 10, 3: 11 });
   const product = { ...DEFAULTS.quorum.product, advocate: { provider: 'codex', agent: 'critic' } };
-  assert.deepEqual((await import('../plugins/aidrian/lib/quorum.mjs')).quorumRoles('product', { ...DEFAULTS.quorum, product }).caps, { 2: 11, 3: 13 });
+  assert.deepEqual((await import('../plugins/aidrian/lib/quorum.mjs')).quorumRoles('product', { ...DEFAULTS.quorum, product }).caps, { 2: 12, 3: 14 });
+});
+
+const xPoint = (id, citations, status = 'pending') => ({ id, by: 'X', against: 'B', claim: `point ${id}`, citations, status });
+
+test('product ledger: pending examiner points are relabeled on disk, and a ruling must test a backed one', (t) => {
+  const d = decideProject(t);
+  const open = { status: 'open', ruling: null, outcome: null, cross: [xPoint('X1', [PASSING.code]), xPoint('X2', [cite('doc', 'docs/missing.md#x', 'nope')])] };
+  const result = d.check(productLedger(open));
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.ledger.cross.map(({ status }) => status), ['backed', 'opinion']);
+  assert.ok(!Object.hasOwn(result.ledger, 'rebuttals'), 'the decide view stays out of the file');
+  const missed = d.check(productLedger({ status: 'open', cross: [xPoint('X1', [PASSING.code], 'backed')] }));
+  assert.match(missed.stdout, /ruling: invalid: .*X1/u);
+});
+
+test('product ledger: a coordinator-written escalate passes, answered or deferred, and an outcome on it does not', (t) => {
+  const d = decideProject(t);
+  const escalate = { decision: 'escalate', winner: null, change_or_reason: 'invalid twice', citations: [PASSING.adr], tested: [], inferences: [] };
+  assert.equal(d.check(productLedger({ ruling: escalate, outcome: null })).status, 0);
+  assert.equal(d.check(productLedger({ ruling: escalate, outcome: null, human_answer: 'A' })).status, 0);
+  assert.match(d.check(productLedger({ ruling: escalate })).stderr, /outcome: set but no ruling rules/u);
+});
+
+test('product ledger: an open rule with no outcome goes back, and repeats stop the check', (t) => {
+  const d = decideProject(t);
+  const open = d.check(productLedger({ status: 'open', outcome: null }));
+  assert.match(open.stdout, /ruling: invalid: a rule has no outcome/u);
+  const repeated = d.check(productLedger({ status: 'open', cross: [xPoint('X1', [PASSING.code]), xPoint('X1', [PASSING.code])] }));
+  assert.match(repeated.stderr, /X1 is used more than once/u);
+  const twice = d.check(productLedger({ witness: { persona: 'docs/waiter.md', reactions: [{ position: 'A', reaction: 'r' }, { position: 'A', reaction: 'r' }] } }));
+  assert.match(twice.stderr, /reacts to A more than once/u);
+  assert.match(d.check(productLedger({ witness: { persona: '/abs/waiter.md', reactions: [] } })).stderr, /not a path inside the repository/u);
+  assert.match(d.check(productLedger({ ruling: null, outcome: null, status: 'open', human_answer: 'A' })).stderr, /nothing was ruled/u);
+});
+
+test('product ledger: the persona guard holds for a code citation, and an answer survives a lost citation', (t) => {
+  const d = decideProject(t);
+  const persona = PASSING.code.ref.split(':')[0];
+  const cases = [stand('A', [PASSING.code]), stand('B', [PASSING.adr])];
+  const rests = d.check(productLedger({ cases, witness: { persona, reactions: [] } }));
+  assert.match(rests.stderr, /rests only on the persona doc/u);
+  const lost = [stand('A', [cite('doc', 'docs/missing.md#x', 'nope')]), stand('B', [PASSING.code])];
+  assert.equal(d.check(productLedger({ cases: lost })).status, 1, 'unanswered, it is stale');
+  assert.equal(d.check(productLedger({ cases: lost, human_answer: 'approved' })).status, 0, 'answered, it stands');
 });

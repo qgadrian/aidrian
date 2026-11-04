@@ -3,6 +3,7 @@
 The ledger, `<state>/quorum/<name>-<plan-hash>.json`, and how each round fills it.
 `<name>` is the plan's file name without `.md`, or `<parent-folder>-plan` for a file named `plan.md`.
 In decide mode, `<name>` is the question file's name without `.md`, and `<plan-hash>` is `git hash-object` of it.
+A product ledger is named the same way, under `<state>/quorum/product/`.
 
 - [Schemas](#schemas): where the authoritative schemas live.
 - [Fields](#fields): every field of a plan-mode ledger.
@@ -25,6 +26,7 @@ The plugin's `lib/quorum.mjs` is the one source of truth, and this page keeps no
 - `CASE_SCHEMA`: an advocate's case, `{case: {claim, citations}}`.
 - `CROSS_SCHEMA`: an advocate's cross points, `{cross: [{against, claim, citations}]}`, at most 5.
 - `DECIDE_REBUTTAL_SCHEMA`: an advocate's rebuttal, `{rebuttal: {verdict, claim, citations}}`.
+- `PRODUCT_LEDGER_SCHEMA`: the product-mode ledger.
 
 `aidrian quorum check` refuses a ledger off its mode's schema, and `aidrian quorum codex` refuses a Codex answer off its
 schema. A test holds each fields list below to its schema: a field added there and not here, or here and not there,
@@ -239,7 +241,7 @@ fails `quorum check` on every invalid ruling or rebuttal, so it is not reused.
   - `cross[].claim`: the point.
   - `cross[].citations`: its evidence.
   - `cross[].status`: `pending` until the check runs; then `backed` or `opinion`.
-- `ruling`: the judge's recommendation, or `null` before it. A winner resting only on the persona doc is invalid.
+- `ruling`: the judge's recommendation, or `null` before it. A winner resting only on the `witness.persona` doc is invalid, as is a rule with no `outcome` on an open ledger.
   - `ruling.decision`: `rule` or `escalate`.
   - `ruling.winner`: `A`, `B`, `C`, or `D` on a rule; `null` on an escalate.
   - `ruling.change_or_reason`: the losing case's strongest claim and what defeats it, or what would settle an escalation.
@@ -262,7 +264,7 @@ fails `quorum check` on every invalid ruling or rebuttal, so it is not reused.
   - `outcome.disputes`: smaller disagreements.
     - `outcome.disputes[].topic`: the disagreement.
     - `outcome.disputes[].owner`: who settles it.
-- `human_answer`: the Human's answer to the ruling, word for word, or `null` while deferred. Only this settles the decision.
+- `human_answer`: the Human's answer to the ruling, word for word, or `null` while deferred. Only this settles the decision, and it stands when the cited code later changes.
 
 ## Agent answers
 
@@ -290,6 +292,10 @@ citations, and edits hold, and:
 - A ruling whose winner is not set exactly on `rule`, or is not a position in the ledger, is dropped, and counts as missing.
 - A cross point against the advocate's own position, or a position the ledger does not hold, is dropped.
 - Past 5 cross points, keep the first 5.
+
+In product mode, hold a case to `CASE_SCHEMA` and a ruling to the ledger's `ruling`, with `outcome` split from it; on an
+escalate, `outcome` is `null`. Keep the first 9 examiner points; drop a point against, or a reaction to, a position the ledger does not hold, and a
+second reaction to one. The rules above on missing fields, citations, and edits hold.
 
 When `quorum check` still exits 1, stop with `blocked`, quoting what it printed.
 

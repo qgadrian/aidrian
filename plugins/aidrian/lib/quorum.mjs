@@ -1121,6 +1121,8 @@ export function productProblems(ledger) {
     seen.add(point.id);
     if (!known.has(point.against)) problems.push(`cross ${shown(point.id)} is against ${point.against}, not a position in this ledger`);
   }
+  const persona = ledger.witness?.persona;
+  if (persona !== undefined && (path.isAbsolute(persona) || path.normalize(persona).startsWith('..'))) problems.push(`witness.persona "${shown(persona)}" is not a path inside the repository`);
   const reacted = (ledger.witness?.reactions ?? []).map(({ position }) => position);
   for (const id of new Set(reacted)) {
     if (!known.has(id)) problems.push(`witness reacts to ${id}, not a position in this ledger`);
@@ -1140,7 +1142,9 @@ export function productProblems(ledger) {
 // Checks a product ledger in place: the decide checks with no rebuttal round; the premise needs a passing citation;
 // and a persona is a hypothesis, so a rule whose winner rests only on the persona's own doc goes back.
 export function checkProductLedger(ledger, ctx) {
-  const { problems, escapes, stale } = checkDecideLedger(decideView(ledger), ctx);
+  const { problems, escapes, stale: decideStale } = checkDecideLedger(decideView(ledger), ctx);
+  // The Human's answer settles a product ledger, and acting on it often changes the code a case quoted.
+  const stale = ledger.human_answer === null ? decideStale : [];
   const complete = ledger.status === 'complete';
   const invalid = (line) => {
     problems.push(line);
@@ -1149,6 +1153,7 @@ export function checkProductLedger(ledger, ctx) {
   if (!passing(ledger.premise.citations, 'premise', ctx, problems, escapes).length) invalid('premise: invalid: no citation passes');
   const persona = ledger.witness?.persona;
   const { ruling } = ledger;
+  if (ruling?.decision === 'rule' && ledger.outcome === null && !complete) problems.push('ruling: invalid: a rule has no outcome');
   if (persona && ruling?.decision === 'rule') {
     const won = ledger.cases.find(({ position }) => position === ruling.winner);
     const held = passing(won?.citations ?? [], `case ${ruling.winner}`, ctx, [], []);
@@ -1156,7 +1161,7 @@ export function checkProductLedger(ledger, ctx) {
       .filter((verdict) => verdict.of === ruling.winner && verdict.supports)
       .map((verdict) => won?.citations[verdict.citation])
       .filter((citation) => held.includes(citation));
-    if (backing.length && backing.every(({ ref }) => path.normalize(ref.split('#')[0]) === path.normalize(persona))) invalid('ruling: invalid: the winner rests only on the persona doc, which is a hypothesis');
+    if (backing.length && backing.every((citation) => path.normalize(refParts(citation).path ?? '') === path.normalize(persona))) invalid('ruling: invalid: the winner rests only on the persona doc, which is a hypothesis');
   }
   return { ledger, problems, escapes, stale };
 }
@@ -1199,11 +1204,11 @@ export function quorumRoles(mode, quorum) {
     return { mode, roles: { A: resolved({ provider: 'agent', agent: a.agent }), B: resolved(b) }, judge, caps: { maxObjections, maxDispatches } };
   }
   if (mode === 'product') {
-    // The trace, the frame, the second framing, the witness, one case per position, the examiner, the ruling, and one
+    // The trace, the frame, the second framing, the merge, the witness, one case per position, the examiner, the ruling, and one
     // retry, plus one fallback per position when advocates run on Codex.
     const { framer, second, witness, advocate, examiner, judge: ruler } = quorum.product;
     const caps = {};
-    for (let n = 2; n <= MAX_PRODUCT_POSITIONS; n += 1) caps[n] = n + 7 + (advocate.provider === 'codex' ? n : 0);
+    for (let n = 2; n <= MAX_PRODUCT_POSITIONS; n += 1) caps[n] = n + 8 + (advocate.provider === 'codex' ? n : 0);
     return { mode, roles: { tracer: resolved({ provider: 'agent', agent: 'explorer' }), framer: resolved({ provider: 'agent', agent: framer.agent }), second: resolved({ provider: 'agent', agent: second.agent }), witness: resolved({ provider: 'agent', agent: witness.agent }), advocate: resolved(advocate), examiner: resolved({ provider: 'agent', agent: examiner.agent }) }, judge: { agent: ruler.agent }, caps };
   }
   const { odd, even, swap } = quorum.decide;
@@ -1251,6 +1256,7 @@ export async function codexAnswer({ plan, brief, out, root, mode = 'object', led
       fits = JSON.parse(readFileSync(ledger, 'utf8'));
       const invalid = schemaProblems(fits, schemaOf(fits));
       if (invalid.length) return { status: 'failed', reason: `the ledger does not follow the schema: ${invalid[0]}` };
+      if (modeOf(fits) === 'product') return { status: 'failed', reason: `--mode ${mode} does not answer a product ledger` };
       const decide = modeOf(fits) === 'decide';
       if (mode === 'cross' && !decide) return { status: 'failed', reason: '--mode cross answers a decide ledger, and this ledger is in plan mode' };
       if (mode === 'rebut' && decide) spec = DECIDE_REBUT;
@@ -1272,7 +1278,7 @@ export async function codexAnswer({ plan, brief, out, root, mode = 'object', led
   }
 }
 
-const USAGE = 'codex --plan PLAN --brief BRIEF --out FILE [--mode object|case] | codex --mode rebut|cross --ledger LEDGER --plan PLAN --brief BRIEF --out FILE | check LEDGER --plan PLAN | roles plan|decide|product';
+const USAGE = 'codex --plan PLAN --brief BRIEF --out FILE [--mode object|case] | codex --mode rebut|cross --ledger LEDGER --plan PLAN --brief BRIEF --out FILE | check LEDGER --plan PLAN | roles plan|decide|product | premise FILE';
 
 export const commands = {
   quorum: {
@@ -1302,6 +1308,23 @@ export const commands = {
         const result = await codexAnswer({ ...values, root }, deps);
         (deps.print ?? console.log)(JSON.stringify({ status: result.status, reason: result.reason }));
         return result.status === 'done' ? 0 : result.status === 'unavailable' ? 3 : 1;
+      }
+      if (action === 'premise') {
+        // Checks a framer's `open: false` answer, which ends a product run before any ledger exists.
+        if (rest.length !== 1) return fail('premise needs one FILE');
+        if (!root) return fail('run it inside a git repository');
+        let citations;
+        try {
+          ({ citations } = JSON.parse(readFileSync(rest[0], 'utf8')).premise);
+        } catch (error) {
+          return fail(error.message);
+        }
+        const problems = [];
+        const held = passing(Array.isArray(citations) ? citations : [], 'premise', { root, plan: '', env, read: reader(root) }, problems, []);
+        const print = deps.print ?? console.log;
+        for (const problem of problems) print(problem);
+        print(`checked: premise, ${held.length} citations pass, ${problems.length} problems`);
+        return held.length && !problems.length ? 0 : 1;
       }
       if (action === 'check') {
         const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { plan: { type: 'string' } } });

@@ -152,7 +152,7 @@ A lesson for the plugin goes to the [plugin's inbox](lessons.md#the-plugins-inbo
 `aidrian handoff` checks a handoff brief against the one it supersedes.
 `aidrian report` summarizes the [dispatch log](dispatch-log.md).
 
-The `quorum` skill runs in one of two modes, and its ledger records which in `mode`.
+The `quorum` skill runs in one of three modes, and its ledger records which in `mode`.
 A plan-mode ledger, `quorum/<name>-<plan-hash>.json`, records the objections two adversaries raised against a plan,
 the architect's ruling on each, and the Human's answers. `<name>` is the plan's file name without `.md`,
 or `<parent-folder>-plan` for a file named `plan.md`, and `<plan-hash>` is `git hash-object` of the plan.
@@ -205,6 +205,8 @@ Two commands keep a ledger honest, and `roles` tells the skill who runs each rol
   plan caps are `maxObjections` and `maxDispatches`. Decide prints the `odd` runner of positions A and C and the
   `even` one of B and D, `swap`, and `caps`, the dispatch cap for each position count from 2 to 4. It reads nothing
   else and writes nothing. An invalid config.json, or a mode other than `plan`, `decide`, or `product`, exits 1.
+- `aidrian quorum premise FILE` checks the `premise.citations` of a framer's answer, which ends a product run before any
+  ledger exists: exit 0 when every citation passes, and 1 otherwise, printing each problem.
 - `aidrian quorum check LEDGER --plan PLAN` checks every citation. `doc` and `adr` cite `path#anchor`, and the quote
   must be in that section; `code` cites `path:line`, and the quote must be in the file; `plan` cites `#anchor` in PLAN;
   `absence` cites a path, and the quote must be in no regular file `git ls-files` lists there; a path with no tracked file fails.
@@ -258,7 +260,8 @@ Two commands keep a ledger honest, and `roles` tells the skill who runs each rol
 
 A product-mode ledger carries `mode: product`: a premise, 2 or 3 options, a persona's reactions, one examiner's points,
 a ruling, and an `outcome`. It has no rebuttal round, and only `human_answer` settles it, on a rule or an escalation.
-`check` also exits 1 when the winner of a `rule` rests only on the persona doc, or a `complete` ledger misses a case, the ruling, or a rule's outcome.
+Product files live under `quorum/product/`. `check` exits 1 when a `complete` ledger misses a case, the ruling, or a rule's outcome.
+On an unanswered `complete` ledger, it also exits 1 on an invalid premise, a winner resting only on the persona doc, or a winner whose case lost its evidence; on an open one it prints each as a line.
 
 A decide-mode ledger carries `mode: decide`. Advocates argue 2 to 4 positions on a question, and the architect rules
 which one the evidence supports. The question is a file, `quorum/questions/<slug>-<h7>.md`.

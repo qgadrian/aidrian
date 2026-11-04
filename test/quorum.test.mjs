@@ -2526,3 +2526,11 @@ test('product ledger: an unanswered escalation with an invalid ruling is not reu
   assert.equal(d.check(productLedger({ ruling: escalate, outcome: null })).status, 0, 'a coordinator-written escalate has no verdicts');
   assert.equal(d.check(productLedger({ ruling: partial, outcome: null, human_answer: 'A' })).status, 0);
 });
+
+test('product ledger: a no-verdict escalation keeps only its coverage exemption', (t) => {
+  const d = decideProject(t);
+  const inferences = [{ statement: 's', holds: true, reason: 'r', citations: [] }];
+  const result = d.check(productLedger({ ruling: { decision: 'escalate', winner: null, change_or_reason: 'r', citations: [PASSING.adr], tested: [], inferences }, outcome: null }));
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /holds on no passing citation/u);
+});

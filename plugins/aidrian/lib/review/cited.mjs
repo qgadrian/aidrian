@@ -31,16 +31,19 @@ export function citedDocs(flows) {
 // The cited docs among `changedPaths` whose cited part the change from `from` to `to` touches. A section counts as
 // touched when its heading or text differs between the two sides, or its heading is missing on either side: an edit
 // inside it, a heading inserted into it or removed after it, and a renamed heading all change what the citation reads.
-export function touchedCitations(root, from, to, flows, changedPaths) {
+// A flow names a doc from the project root; git reports a change from the repository's, so `prefix` is the project's
+// folder there, as `git rev-parse --show-prefix` prints it, and a doc comes back as git names it.
+export function touchedCitations(root, from, to, flows, changedPaths, prefix = '') {
   const touched = [];
-  for (const [file, anchors] of citedDocs(flows)) {
+  for (const [doc, anchors] of citedDocs(flows)) {
+    const file = `${prefix}${doc}`;
     if (!changedPaths.has(file)) continue;
     if (anchors === WHOLE) {
       touched.push(file);
       continue;
     }
-    const before = fileAt(root, from, file);
-    const after = fileAt(root, to, file);
+    const before = fileAt(root, from, `./${doc}`);
+    const after = fileAt(root, to, `./${doc}`);
     if (before === null || after === null) {
       touched.push(file);
       continue;

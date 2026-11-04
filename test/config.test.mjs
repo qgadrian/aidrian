@@ -7,6 +7,7 @@ import test from 'node:test';
 
 import { commandConfig, committedConfig, CONFIG_ERROR, DEFAULTS, loadConfig, malformedGates } from '../plugins/aidrian/lib/config.mjs';
 import { linksOutside } from '../plugins/aidrian/lib/fs.mjs';
+import { loadVocab } from '../plugins/aidrian/lib/decisions.mjs';
 import { findProject } from '../plugins/aidrian/lib/project.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -152,6 +153,21 @@ test('the committed config reads a string session.handoff as its mode too', (t) 
   assert.deepEqual(committedConfig(findProject(dir), 'HEAD').session.handoff, { ...DEFAULTS.session.handoff, mode: 'off' });
 });
 
+test('the committed config of a project below the repository root is its own file, not the defaults', (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-config-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const below = path.join(dir, 'apps/web');
+  mkdirSync(path.join(below, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(below, '.aidrian/config.json'), JSON.stringify({ version: 1, decisions: { maxMode: 'ask' }, github: { maxReviewRounds: 7 } }));
+  const git = (...args) => spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+  git('init', '-q');
+  git('add', '.');
+  assert.equal(git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'config').status, 0);
+  const committed = committedConfig(findProject(below), 'HEAD');
+  assert.equal(committed.decisions.maxMode, 'ask');
+  assert.equal(committed.github.maxReviewRounds, 7);
+});
+
 test('the loaded config is frozen all the way down', (t) => {
   const { config } = loadConfig(project(t, { version: 1, git: { mainCheckout: { allowWrites: ['notes/**'] } } }));
   assert.throws(() => { config.git.defaultBranch = 'x'; }, TypeError);
@@ -159,6 +175,8 @@ test('the loaded config is frozen all the way down', (t) => {
   assert.throws(() => config.git.mainCheckout.allowWrites.push('x'), TypeError);
   assert.throws(() => config.git.commits.types.push('x'), TypeError);
 });
+
+const ESCALATE_DOCS = /"decisions\.escalateDocs" must be a list of paths from the project root, each a file, a "file#section", or a folder such as "docs\/legal\/" for everything in it; no glob characters, absolute path, or "\.\."$/;
 
 // Each case expects exactly one error, and the default in place of the bad value.
 const errorCases = [
@@ -278,6 +296,33 @@ const errorCases = [
   ['"*", which names every agent, as a quorum agent', { version: 1, quorum: { plan: { a: { agent: '*' } } } }, /"quorum\.plan\.a\.agent" must be an agent name such as code-reviewer$/],
   ['"main", the main session\'s gate selector, as a quorum agent', { version: 1, quorum: { judge: { agent: 'main' } } }, /"quorum\.judge\.agent" must be an agent name such as code-reviewer$/],
   ['a swap switch that is not a boolean', { version: 1, quorum: { decide: { swap: 'yes' } } }, /"quorum\.decide\.swap" must be true or false$/],
+  ['decisions that is not an object', { version: 1, decisions: 'ask' }, /"decisions" must be an object$/],
+  ['an unknown decisions key', { version: 1, decisions: { authority: 'ask' } }, /: unknown key "decisions\.authority"$/],
+  ['a decisions mode outside its list', { version: 1, decisions: { mode: 'decide' } }, /"decisions\.mode" must be "ask" or "decide-reversible"$/],
+  ['"inherit" as the mode, which has nothing to inherit', { version: 1, decisions: { mode: 'inherit' } }, /"decisions\.mode" must be "ask" or "decide-reversible"$/],
+  ['a decisions ceiling outside its list', { version: 1, decisions: { maxMode: 'always' } }, /"decisions\.maxMode" must be "ask" or "decide-reversible"$/],
+  ['an unknown domain', { version: 1, decisions: { domains: { finance: 'ask' } } }, /: unknown key "decisions\.domains\.finance"$/],
+  ['a domain mode outside its list', { version: 1, decisions: { domains: { ux: 'decide' } } }, /"decisions\.domains\.ux" must be "ask", "decide-reversible", or "inherit"$/],
+  ['an escalate class not in decisions.json', { version: 1, decisions: { escalate: ['pricing'] } }, /"decisions\.escalate" must be a list of decision classes/],
+  ['escalate docs that are not a list', { version: 1, decisions: { escalateDocs: 'docs/a.md' } }, ESCALATE_DOCS],
+  ['a glob in escalate docs', { version: 1, decisions: { escalateDocs: ['docs/**/*.md'] } }, ESCALATE_DOCS],
+  ['a question mark in escalate docs', { version: 1, decisions: { escalateDocs: ['docs/a?.md'] } }, ESCALATE_DOCS],
+  ['a character class in escalate docs', { version: 1, decisions: { escalateDocs: ['docs/[ab].md'] } }, ESCALATE_DOCS],
+  ['braces in escalate docs', { version: 1, decisions: { escalateDocs: ['docs/{a,b}.md'] } }, ESCALATE_DOCS],
+  ['an absolute escalate doc', { version: 1, decisions: { escalateDocs: ['/etc/hosts'] } }, ESCALATE_DOCS],
+  ['a home path in escalate docs', { version: 1, decisions: { escalateDocs: ['~/notes.md'] } }, ESCALATE_DOCS],
+  ['a parent path in escalate docs', { version: 1, decisions: { escalateDocs: ['../other.md'] } }, ESCALATE_DOCS],
+  ['a parent path inside an escalate doc', { version: 1, decisions: { escalateDocs: ['docs/../../other.md'] } }, ESCALATE_DOCS],
+  ['the project root as an escalate doc', { version: 1, decisions: { escalateDocs: ['./'] } }, ESCALATE_DOCS],
+  ['a section with no file in escalate docs', { version: 1, decisions: { escalateDocs: ['#refunds'] } }, ESCALATE_DOCS],
+  ['a section on a folder in escalate docs', { version: 1, decisions: { escalateDocs: ['docs/#refunds'] } }, ESCALATE_DOCS],
+  ['a second look with no severity', { version: 1, decisions: { secondLook: { agent: 'critic' } } }, /"decisions\.secondLook" must be null, or \{ "agent": an agent name, "minSeverity": "critical", "high", "medium", or "low" \}$/],
+  ['a second look severity outside the disposition words', { version: 1, decisions: { secondLook: { agent: 'critic', minSeverity: 'blocker' } } }, /"decisions\.secondLook" must be null, or/],
+  ['a second look that names no one agent', { version: 1, decisions: { secondLook: { agent: '*', minSeverity: 'high' } } }, /"decisions\.secondLook" must be null, or/],
+  ['a record queue outside its list', { version: 1, decisions: { record: { queue: 'issue' } } }, /"decisions\.record\.queue" must be "pr-body" or "report"$/],
+  ['a remind mode outside its list', { version: 1, decisions: { unreviewed: { remind: 'always' } } }, /"decisions\.unreviewed\.remind" must be "session-start" or "off"$/],
+  ['a pause with one limit', { version: 1, decisions: { unreviewed: { pauseDomainAt: { pending: 5 } } } }, /"decisions\.unreviewed\.pauseDomainAt" must be null, or \{ "pending", "oldestDays" \}, each a whole number above 0$/],
+  ['a pause at zero', { version: 1, decisions: { unreviewed: { pauseDomainAt: { pending: 0, oldestDays: 7 } } } }, /"decisions\.unreviewed\.pauseDomainAt" must be null, or/],
 ];
 
 for (const [name, value, expected] of errorCases) {
@@ -287,7 +332,7 @@ for (const [name, value, expected] of errorCases) {
     assert.match(errors[0], /^\.aidrian\/config\.json: /);
     assert.match(errors[0], expected);
     assert.equal(current, true);
-    for (const key of ['git', 'github', 'docs', 'quorum']) assert.deepEqual(config[key], DEFAULTS[key], key);
+    for (const key of ['git', 'github', 'docs', 'quorum', 'decisions']) assert.deepEqual(config[key], DEFAULTS[key], key);
   });
 }
 
@@ -331,6 +376,126 @@ test('quorum: the edges of each range and a project agent name are accepted', (t
     decide: { odd: { provider: 'codex', agent: 'code-reviewer' }, even: { provider: 'agent', agent: 'product-manager' }, swap: false },
   });
   assert.deepEqual(loadConfig(project(t, { version: 1, quorum: { plan: { maxObjections: 5, maxDispatches: 40 } } })).errors, []);
+});
+
+test('decisions: every decision goes to the Human by default, and docs/config.md shows the defaults as DEFAULTS holds them', () => {
+  assert.deepEqual(DEFAULTS.decisions, {
+    mode: 'ask',
+    maxMode: 'ask',
+    domains: { product: 'inherit', ux: 'inherit', architecture: 'inherit', backlog: 'inherit' },
+    escalate: [],
+    escalateDocs: [],
+    secondLook: { agent: 'critic', minSeverity: 'high' },
+    record: { queue: 'pr-body' },
+    unreviewed: { remind: 'session-start', pauseDomainAt: { pending: 10, oldestDays: 7 } },
+  });
+  const doc = readFileSync(path.join(ROOT, 'docs/config.md'), 'utf8');
+  const example = JSON.parse(doc.match(/## Keys[\s\S]*?```json\n([\s\S]*?)```/)[1]);
+  assert.deepEqual(example.decisions, DEFAULTS.decisions);
+});
+
+test('decisions: a project sets any subset, and null turns the second look and the pause off', (t) => {
+  const decisions = { mode: 'decide-reversible', domains: { ux: 'ask' }, escalate: ['copy'], secondLook: null, unreviewed: { pauseDomainAt: null } };
+  const { config, errors } = loadConfig(project(t, { version: 1, decisions }));
+  assert.deepEqual(errors, []);
+  assert.deepEqual(config.decisions, {
+    ...DEFAULTS.decisions,
+    mode: 'decide-reversible',
+    domains: { ...DEFAULTS.decisions.domains, ux: 'ask' },
+    escalate: ['copy'],
+    secondLook: null,
+    unreviewed: { remind: 'session-start', pauseDomainAt: null },
+  });
+});
+
+test('decisions: the local file sets mode and domains up to the team ceiling, and an out-of-range value keeps the one below it', (t) => {
+  const team = project(t, { version: 1, decisions: { maxMode: 'ask', domains: { product: 'ask' } } });
+  const local = path.join(team.root, '.aidrian.local.json');
+  writeFileSync(local, JSON.stringify({ decisions: { mode: 'decide-reversible', domains: { ux: 'decide-reversible', backlog: 'inherit' } } }));
+  const capped = loadConfig(findProject(team.root));
+  assert.deepEqual(capped.errors, [], 'a value above the ceiling is held to it, not refused');
+  assert.equal(capped.config.decisions.mode, 'ask');
+  assert.deepEqual(capped.config.decisions.domains, { product: 'ask', ux: 'ask', architecture: 'inherit', backlog: 'inherit' });
+
+  const unset = project(t, { version: 1 });
+  writeFileSync(path.join(unset.root, '.aidrian.local.json'), JSON.stringify({ decisions: { mode: 'decide-reversible', domains: { ux: 'decide-reversible' } } }));
+  const defaultCeiling = loadConfig(findProject(unset.root));
+  assert.deepEqual(defaultCeiling.errors, []);
+  assert.equal(defaultCeiling.config.decisions.mode, 'ask', 'a team that set no ceiling has not opted in');
+  assert.equal(defaultCeiling.config.decisions.domains.ux, 'ask');
+
+  const raised = project(t, { version: 1, decisions: { maxMode: 'decide-reversible' } });
+  writeFileSync(path.join(raised.root, '.aidrian.local.json'), JSON.stringify({ decisions: { mode: 'decide-reversible', domains: { ux: 'ask' } } }));
+  const within = loadConfig(findProject(raised.root)).config.decisions;
+  assert.equal(within.mode, 'decide-reversible', 'the team ceiling allows it');
+  assert.equal(within.domains.ux, 'ask');
+
+  writeFileSync(local, JSON.stringify({ decisions: { mode: 'always' } }));
+  const bad = loadConfig(findProject(team.root));
+  assert.deepEqual(bad.errors, ['.aidrian.local.json: "decisions.mode" must be "ask" or "decide-reversible"']);
+  assert.equal(bad.config.decisions.mode, 'ask');
+  writeFileSync(local, JSON.stringify({ decisions: true }));
+  assert.deepEqual(loadConfig(findProject(team.root)).errors, ['.aidrian.local.json: "decisions" must be an object']);
+});
+
+test('decisions: the local file names no team key, and unknown local keys are errors, each keeping the team value', (t) => {
+  const team = project(t, { version: 1, decisions: { maxMode: 'ask', escalate: ['copy'] } });
+  writeFileSync(path.join(team.root, '.aidrian.local.json'), JSON.stringify({
+    decisions: { maxMode: 'decide-reversible', escalate: [], escalateDocs: [], secondLook: null, record: { queue: 'report' }, other: 1 },
+  }));
+  const { config, errors } = loadConfig(findProject(team.root));
+  assert.deepEqual(errors, [
+    '.aidrian.local.json: "decisions.maxMode" is the team\'s: set it in config.json',
+    '.aidrian.local.json: "decisions.escalate" is the team\'s: set it in config.json',
+    '.aidrian.local.json: "decisions.escalateDocs" is the team\'s: set it in config.json',
+    '.aidrian.local.json: "decisions.secondLook" is the team\'s: set it in config.json',
+    '.aidrian.local.json: "decisions.record" is the team\'s: set it in config.json',
+    '.aidrian.local.json: unknown key "decisions.other"',
+  ]);
+  assert.equal(config.decisions.maxMode, 'ask');
+  assert.deepEqual(config.decisions.escalate, ['copy']);
+  assert.deepEqual(config.decisions.secondLook, DEFAULTS.decisions.secondLook);
+  assert.deepEqual(config.decisions.record, DEFAULTS.decisions.record);
+
+  writeFileSync(path.join(team.root, '.aidrian.local.json'), '{"decisions": {"__proto__": {"mode": "decide-reversible"}}}');
+  const inherited = loadConfig(findProject(team.root));
+  assert.deepEqual(inherited.errors, ['.aidrian.local.json: unknown key "decisions.__proto__"']);
+  assert.equal(inherited.config.decisions.mode, 'ask');
+});
+
+test('decisions: remind is free in the local file; a pause applies only where it is lower than the team value', (t) => {
+  const team = project(t, { version: 1, decisions: { unreviewed: { pauseDomainAt: { pending: 10, oldestDays: 7 } } } });
+  const local = path.join(team.root, '.aidrian.local.json');
+  const unreviewed = (value) => {
+    writeFileSync(local, JSON.stringify({ decisions: { unreviewed: value } }));
+    const { config, errors } = loadConfig(findProject(team.root));
+    assert.deepEqual(errors, []);
+    return config.decisions.unreviewed;
+  };
+  assert.equal(unreviewed({ remind: 'off' }).remind, 'off');
+  assert.deepEqual(unreviewed({ pauseDomainAt: { pending: 3, oldestDays: 2 } }).pauseDomainAt, { pending: 3, oldestDays: 2 });
+  assert.deepEqual(unreviewed({ pauseDomainAt: { pending: 50, oldestDays: 90 } }).pauseDomainAt, { pending: 10, oldestDays: 7 }, 'above the team value: ignored');
+  assert.deepEqual(unreviewed({ pauseDomainAt: { pending: 3, oldestDays: 90 } }).pauseDomainAt, { pending: 3, oldestDays: 7 }, 'one limit at a time');
+  assert.deepEqual(unreviewed({ pauseDomainAt: null }).pauseDomainAt, { pending: 10, oldestDays: 7 }, 'null is no pause, so it raises the limit: ignored');
+
+  const off = project(t, { version: 1, decisions: { unreviewed: { pauseDomainAt: null } } });
+  writeFileSync(path.join(off.root, '.aidrian.local.json'), JSON.stringify({ decisions: { unreviewed: { pauseDomainAt: { pending: 5, oldestDays: 5 } } } }));
+  assert.deepEqual(loadConfig(findProject(off.root)).config.decisions.unreviewed.pauseDomainAt, { pending: 5, oldestDays: 5 }, 'any limit is lower than none');
+});
+
+test('docs/config.md names the floor classes and the four questions as decisions.json holds them', () => {
+  const { classes, reversibility } = loadVocab();
+  const section = readFileSync(path.join(ROOT, 'docs/config.md'), 'utf8').match(/^## Decisions\n([\s\S]*?)^## /mu)[1];
+  const named = (start) => [...section.split('\n').find((line) => line.includes(start)).matchAll(/`([^`]+)`/gu)].map((match) => match[1]);
+  assert.deepEqual(named('A floor class'), classes.filter((each) => each.floor).map((each) => each.class));
+  assert.deepEqual(named('The four answers'), Object.keys(reversibility));
+});
+
+test('decisions: escalateDocs takes files, sections, and folders from the project root', (t) => {
+  const escalateDocs = ['docs/pricing.md', './docs/legal/', 'docs/terms.md#refunds', 'README.md'];
+  const { config, errors } = loadConfig(project(t, { version: 1, decisions: { escalateDocs } }));
+  assert.deepEqual(errors, []);
+  assert.deepEqual(config.decisions.escalateDocs, escalateDocs);
 });
 
 // Errors that drop a deny list or a whole agents entry are gate errors, whatever their text; a bad allow pattern is not.

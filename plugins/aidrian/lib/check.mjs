@@ -6,6 +6,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { commandConfig, VERSION, versionFloorProblem } from './config.mjs';
+import { decisionWarnings } from './decisions.mjs';
 import { isWithin, linksOutside } from './fs.mjs';
 import { checkoutRoots, isIgnored } from './git.mjs';
 import { checkBudgets, indexRows, loadKnowledge, tagWarnings } from './knowledge.mjs';
@@ -35,7 +36,7 @@ export const commands = {
         errors.push(`${line} is not git-ignored: add the line "${line}" to ${gitignore}, or run aidrian init`);
       }
       const tags = tagWarnings(buckets);
-      const shown = [...budgets.warnings, ...warnings, ...tags.warnings].map((warning) => `warning: ${warning}`);
+      const shown = [...budgets.warnings, ...warnings, ...tags.warnings, ...decisionWarnings(config)].map((warning) => `warning: ${warning}`);
       if (shown.length || tags.notes.length) console.error([...shown, ...tags.notes.map((note) => `note: ${note}`)].join('\n'));
       if (errors.length) {
         console.error(errors.join('\n'));

@@ -92,6 +92,16 @@ In a group such as `github`, set only the keys you change; the others keep their
       "even": { "provider": "codex", "agent": "code-reviewer" },
       "swap": true
     }
+  },
+  "decisions": {
+    "mode": "ask",
+    "maxMode": "ask",
+    "domains": { "product": "inherit", "ux": "inherit", "architecture": "inherit", "backlog": "inherit" },
+    "escalate": [],
+    "escalateDocs": [],
+    "secondLook": { "agent": "critic", "minSeverity": "high" },
+    "record": { "queue": "pr-body" },
+    "unreviewed": { "remind": "session-start", "pauseDomainAt": { "pending": 10, "oldestDays": 7 } }
   }
 }
 ```
@@ -149,6 +159,15 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `telemetry.health` | The thresholds of `aidrian report health`: [Health thresholds](#health-thresholds). |
 | `agents` | The tools each agent may use in this project; `{}` gates none: [Agents](#agents). |
 | `quorum` | The roles, providers, judge, and caps of the `quorum` skill: [Quorum](#quorum). |
+| `decisions.mode` | Who settles a decision no other rule covers: `"ask"`, the default, the Human; `"decide-reversible"`, the agent, when every reversibility answer is no: [Decisions](#decisions). |
+| `decisions.maxMode` | The highest mode any setting can reach, the local file's included. `"ask"`, the default, keeps every decision with the Human, until the team commits `"decide-reversible"`. |
+| `decisions.domains` | `mode` for one domain, `product`, `ux`, `architecture`, or `backlog`; `"inherit"`, the default, takes `decisions.mode`. |
+| `decisions.escalate` | Ordinary decision classes that always go to the Human in this project. |
+| `decisions.escalateDocs` | Docs and folders, from the project root, whose decisions always go to the Human: `docs/pricing.md`, `docs/legal/` for everything in it, or `docs/terms.md#refunds` for one section. No glob characters, absolute paths, or `..`. |
+| `decisions.secondLook` | The agent that takes a second look at a decision, and the least severity it reports; `null` turns it off. |
+| `decisions.record.queue` | Where agents list the decisions they settled: `"pr-body"`, the default, or `"report"`. |
+| `decisions.unreviewed.remind` | When the Human is reminded of unreviewed decisions: `"session-start"`, the default, or `"off"`. |
+| `decisions.unreviewed.pauseDomainAt` | The unreviewed `pending` count and `oldestDays` age at which a domain goes back to asking; `null` never pauses. |
 
 A path in `state.dir` or `git.worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
@@ -618,6 +637,66 @@ on defaults the project did not choose.
   Under 8, the default, rebuttals and the final ruling may not fit, and the objections they would answer escalate to the Human.
 - Every `agent` is an agent name, such as `code-reviewer` or a project's own agent; `"*"` and `"main"` name no one agent.
 - The number of decide positions is the question file's, 2 to 4, never a config value, so no option the Human gave is dropped.
+
+## Decisions
+
+`decisions` sets how far agents may settle product and design decisions on their own.
+By default every decision goes to the Human, and no setting changes that until the team opts in.
+To opt in, commit `"maxMode": "decide-reversible"` with a `mode` or `domains` entry of the same, or leave those to each machine's local file.
+An agent may then settle the reversible, ordinary decisions.
+
+`aidrian decisions resolve` answers for one decision, and prints the rule that matched, as one JSON line:
+
+```console
+$ aidrian decisions resolve --domain ux --class copy --reversible no,no,no,no
+{"authority":"ask","rule":"mode","reason":"mode is ask","base":"451dc4b8cce82671ae7afc534c0a7ab8c9604546"}
+```
+
+`authority` is `decide` or `ask`, and either one exits 0.
+`--doc PATH`, repeated, names a doc the decision touches, with an optional `#section`. A relative path is read from the current folder and from the
+project root, and either reading can match. Any spelling of a path counts as the same doc, and a section matches by its heading's slug.
+`aidrian decisions resolve --vocab` prints every class and reversibility question with its definition; `lib/decisions.json` is the one place they live.
+
+The first rule that matches wins:
+
+1. A floor class, `security`, `critical-flow`, `money`, `data-loss`, or `unknown`, or a class not in the list, asks. No setting changes this.
+2. A class in `escalate` asks. A doc outside the project asks, and so does a doc `escalateDocs` covers.
+   `docs/terms.md#refunds` covers that section and the file with no section named, but not `docs/terms.md#other`.
+3. Any reversibility answer that is yes or missing asks.
+   The four answers, in order: `storedData`, `external`, `pricingOrContract`, `visibleBeforeReview`.
+4. An unknown domain asks. A domain that is paused asks: its unreviewed decisions reach `pauseDomainAt.pending`, or the oldest reaches
+   `pauseDomainAt.oldestDays` days. This rule takes effect when the resolver is given the pending list; `aidrian decisions resolve` gives it an empty one.
+5. `domains.<domain>`, unless it is `"inherit"`, then `mode`, each held to `maxMode`. Only `"decide-reversible"` decides.
+
+The command reads the team's block from the commit of the base branch: `origin/HEAD`, or else `main` on `origin`.
+A local `main` counts only in a repository with no `origin` remote.
+It takes the config folder from `.aidrian.json` at that commit too. No name it uses comes from the working copy,
+so an edit there, committed or not, cannot raise an agent's authority, on any branch.
+
+- In a git repository with no such commit, or when git does not answer, every decision asks, with the rule `no-base`.
+  A project whose default branch is not `main` needs `origin/HEAD`: `git remote set-head origin --auto` sets it.
+- A base commit whose config.json is missing, does not parse, or has another version holds every decision at ask, whatever the local file says.
+  So does one with a bad value or an unknown key under `decisions`.
+- Only outside git does the command read the working copy's config.json, and `base` is `null`.
+
+`.aidrian.local.json` may set a few of these keys for one machine, on top of the team's block. They are read only from the main checkout's copy,
+so a copy in a worktree raises nothing:
+
+```json
+{ "decisions": { "mode": "decide-reversible", "domains": { "ux": "ask" }, "unreviewed": { "remind": "off", "pauseDomainAt": { "pending": 3, "oldestDays": 2 } } } }
+```
+
+- `mode` and `domains.*` are held to the team's `maxMode`: a higher value counts as `maxMode`, with no error.
+  Under the default `"ask"`, they raise nothing.
+- `unreviewed.remind` is free.
+- `unreviewed.pauseDomainAt` applies only where it is lower than the team's, one limit at a time; a higher value or `null` is ignored.
+- Any other key is an error, and the team's value stays: `maxMode`, `escalate`, `escalateDocs`, `secondLook`, and `record` are the team's.
+
+A bad value or an unknown key under `decisions` in the working copy is a config error: `aidrian check` names it, the hooks keep the default,
+as in any other group, and `aidrian decisions resolve` stops.
+At the base commit, where no command reports it, it holds every decision at ask instead of keeping the default.
+`secondLook` and `pauseDomainAt` are given whole, or `null`.
+`aidrian check` warns when `remind` is `"off"` and `pauseDomainAt` is `null`: nothing would say that decisions are piling up, or stop them.
 
 ## Checking
 

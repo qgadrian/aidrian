@@ -1,7 +1,7 @@
 // Finds a project and its project folder: `.aidrian/` at the project root, or the folder the committed root file
 // `.aidrian.json` names. This is the only file that knows those names; every other file asks it for paths.
 // docs/project-folder.md describes the folder, the git-ignored `.aidrian.local.json` that adds local knowledge sources,
-// personal model choices, personal names, and personal telemetry settings, and the machine-local state folder outside
+// personal model choices, personal names, personal telemetry settings, and personal decision settings, and the machine-local state folder outside
 // the repository.
 
 import { createHash } from 'node:crypto';
@@ -82,11 +82,13 @@ export function projectAt(start) {
 }
 
 // The project rooted at `root`, whether or not its folder exists yet:
-// { root, dir, paths, sources, checkouts, localModels, localNames, localTelemetry, localAgents, errors, unreadable }.
+// { root, dir, paths, sources, checkouts, localModels, localNames, localTelemetry, localAgents, localReview, localDecisions,
+// errors, unreadable }.
 // `dir` and every path are POSIX-style and relative to `root`. `sources` lists where knowledge indexes are read from:
 // the project folder first, then each local source. `checkouts` is `root`, then, when it is in a git worktree, the same
-// folder in the main checkout. `localModels`, `localNames`, `localTelemetry`, and `localAgents` are the `models`,
-// `names`, `telemetry`, and `agents` values of `.aidrian.local.json`, as written; config.mjs checks them. `errors` lists the problems in the root files; a broken
+// folder in the main checkout. `localModels`, `localNames`, `localTelemetry`, `localAgents`, `localReview`, and
+// `localDecisions` are the `models`, `names`, `telemetry`, `agents`, `review`, and `decisions` values of
+// `.aidrian.local.json`, as written; config.mjs checks them. `errors` lists the problems in the root files; a broken
 // `.aidrian.json` leaves the default folder in place, and a broken local source is left out.
 // `unreadable` names each of `.aidrian.json` and `.aidrian.local.json` that is there but whose settings are not in force,
 // because it could not be read or names no usable folder: from `root`, or absolute when it is in the main checkout.
@@ -110,6 +112,7 @@ export function openProject(root, roots) {
     localTelemetry: local.telemetry,
     localAgents: local.agents,
     localReview: local.review,
+    localDecisions: local.decisions,
     errors,
     unreadable,
   };
@@ -121,6 +124,24 @@ export function openProject(root, roots) {
 export function configFiles(project) {
   const names = [OVERRIDE, project.paths.config, `${DEFAULT_DIR}/config.json`, LOCAL];
   return [...new Set(project.checkouts.flatMap((base) => names.map((name) => path.join(base, name))))];
+}
+
+// The config.json path, from the project root, that `commit` names through its own `.aidrian.json`, or the default
+// folder's when that commit has none; null when its `.aidrian.json` cannot be read or names no usable folder. What a
+// working copy's `.aidrian.json` says, committed later or never, cannot move a lookup at the base branch. Throws when
+// git itself fails, stopped by a timeout or the like. 128 is git saying the commit has no such file.
+export function committedConfigFile(project, commit) {
+  const shown = runGit(['show', `${commit}:./${OVERRIDE}`], project.root);
+  if (shown.status === 128) return `${DEFAULT_DIR}/config.json`;
+  if (shown.status !== 0) throw new Error(`git show ${commit}:./${OVERRIDE} failed`);
+  let raw;
+  try {
+    raw = JSON.parse(shown.stdout);
+  } catch {
+    return null;
+  }
+  const dir = insidePath(project.root, '', raw?.dir);
+  return dir ? `${dir}/config.json` : null;
 }
 
 function folderDir(root, errors, unreadable) {
@@ -146,9 +167,10 @@ function checkoutsOf(root, roots) {
   return main && main !== realpathSync(root) ? [root, main] : [root];
 }
 
-// `.aidrian.local.json`: { sources, models, names, telemetry, agents, review }. A git worktree has no copy of that git-ignored file, so it is read
+// `.aidrian.local.json`: { sources, models, names, telemetry, agents, review, decisions }. A git worktree has no copy of that git-ignored file, so it is read
 // from the main checkout then: from the first of `checkouts` that has it. Each source is a folder with its own knowledge/
-// and, optionally, a config.json with `version`.
+// and, optionally, a config.json with `version`. `decisions` comes only from the main checkout's file, the last of
+// `checkouts`: a copy a session writes in its own worktree raises nothing.
 function readLocal(checkouts, errors, unreadable) {
   const none = { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined };
   const holder = checkouts.find((dir) => isFile(path.join(dir, LOCAL)));
@@ -159,9 +181,17 @@ function readLocal(checkouts, errors, unreadable) {
     return none;
   }
   for (const key of Object.keys(raw)) {
-    if (!['sources', 'models', 'names', 'telemetry', 'agents', 'review'].includes(key)) errors.push(`${LOCAL}: unknown key "${key}"`);
+    if (!['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'decisions'].includes(key)) errors.push(`${LOCAL}: unknown key "${key}"`);
   }
-  return { sources: localSources(holder, raw, errors), models: raw.models, names: raw.names, telemetry: raw.telemetry, agents: raw.agents, review: raw.review };
+  const { models, names, telemetry, agents, review, decisions } = raw;
+  return { sources: localSources(holder, raw, errors), models, names, telemetry, agents, review, decisions: mainDecisions(checkouts.at(-1), holder, decisions, errors) };
+}
+
+// The `decisions` of the local file in `main`, the main checkout; `held` when that file is the one already read.
+function mainDecisions(main, holder, held, errors) {
+  if (main === holder) return held;
+  if (!isFile(path.join(main, LOCAL))) return undefined;
+  return readJson(main, LOCAL, errors)?.decisions;
 }
 
 function localSources(holder, raw, errors) {

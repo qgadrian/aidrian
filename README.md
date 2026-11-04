@@ -148,6 +148,7 @@ Run `aidrian` or `aidrian-knowledge` with no arguments to list every subcommand 
 | `aidrian lesson` | Keeps the lesson inbox. | [Lessons](docs/lessons.md#commands) |
 | `aidrian handoff` | Checks a session handoff brief. | [`session-handoff`](plugins/aidrian/skills/session-handoff/SKILL.md) |
 | `aidrian quorum` | Runs Codex as a quorum adversary or advocate, checks a quorum ledger's citations, and prints a mode's roles and caps from config.json. | [Local state](docs/project-folder.md#local-state) |
+| `aidrian decisions resolve` | Says whether an agent may settle one decision or must ask the Human. | [Decisions](docs/config.md#decisions) |
 | `aidrian report` | Shows what each agent type cost and read. | [The report](docs/dispatch-log.md#the-report) |
 | `aidrian report docs` | Lists the knowledge docs agents read. | [Doc reads](docs/dispatch-log.md#doc-reads) |
 | `aidrian report sessions` | Shows what each session cost. | [Sessions](docs/dispatch-log.md#sessions) |

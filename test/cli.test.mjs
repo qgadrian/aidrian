@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -110,6 +110,385 @@ test('a missing or unknown command, an unknown option, or a stray argument print
     assert.match(stderr, /^usage: aidrian <command> \[args\]\n\n {2}aidrian check \[--project DIR\]\n(?: {6}.*\n)+ {2}aidrian init \[--project DIR\]\n(?: {6}.*\n)+ {2}aidrian state \[--project DIR\]\n/);
     if (expected) assert.match(stderr, expected, args.join(' '));
   }
+});
+
+// A git repository on `main` with `decisions` committed in config.json, and `git` run in it.
+function decisionsRepo(t, decisions) {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-cli-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => {
+    const out = spawnSync('git', ['-C', dir, '-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' });
+    assert.equal(out.status, 0, out.stderr);
+    return out.stdout.trim();
+  };
+  const write = (value) => writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, decisions: value }));
+  git('init', '-q', '-b', 'main');
+  mkdirSync(path.join(dir, '.aidrian'));
+  write(decisions);
+  git('add', '.');
+  git('commit', '-q', '-m', 'config');
+  return { dir, git, write };
+}
+
+const pick = ({ authority, rule, base }) => [authority, rule, base];
+
+const resolveCopy = (dir, ...more) => {
+  const { status, stdout, stderr } = run(['decisions', 'resolve', '--domain', 'ux', '--class', 'copy', '--reversible', 'no,no,no,no', ...more], dir);
+  assert.deepEqual([status, stderr], [0, '']);
+  return JSON.parse(stdout);
+};
+
+test('decisions resolve says ask with the matched rule, for a floor class, an unknown class, and any yes or missing answer', (t) => {
+  const { dir } = decisionsRepo(t, { maxMode: 'decide-reversible', mode: 'decide-reversible' });
+  const resolve = (...args) => {
+    const { status, stdout, stderr } = run(['decisions', 'resolve', ...args], dir);
+    assert.deepEqual([status, stderr], [0, ''], args.join(' '));
+    return JSON.parse(stdout);
+  };
+  assert.deepEqual([resolveCopy(dir).authority, resolveCopy(dir).rule], ['decide', 'mode']);
+  assert.equal(resolve('--domain', 'ux', '--class', 'money', '--reversible', 'no,no,no,no').rule, 'floor-class');
+  assert.equal(resolve('--domain', 'ux', '--class', 'pricing', '--reversible', 'no,no,no,no').rule, 'unknown-class');
+  for (const answers of ['yes,no,no,no', 'no,no,no,yes', 'no,no,no', 'no']) {
+    assert.deepEqual([resolve('--domain', 'ux', '--class', 'copy', '--reversible', answers).authority, resolve('--domain', 'ux', '--class', 'copy', '--reversible', answers).rule], ['ask', 'reversibility'], answers);
+  }
+  assert.equal(resolve('--domain', 'ux', '--class', 'copy').rule, 'reversibility', 'no answers at all');
+});
+
+test('decisions resolve reads the base branch, so a branch cannot raise its own authority', (t) => {
+  const { dir, git, write } = decisionsRepo(t, { mode: 'ask' });
+  const main = git('rev-parse', 'main');
+  git('switch', '-q', '-c', 'feature');
+  write({ maxMode: 'decide-reversible', mode: 'decide-reversible' });
+  assert.deepEqual([resolveCopy(dir).authority, resolveCopy(dir).base], ['ask', main], 'an uncommitted edit');
+  git('commit', '-q', '-am', 'raise');
+  assert.deepEqual([resolveCopy(dir).authority, resolveCopy(dir).base], ['ask', main], 'a commit on the branch');
+
+  git('switch', '-q', 'main');
+  git('merge', '-q', '--ff-only', 'feature');
+  git('switch', '-q', 'feature');
+  assert.equal(resolveCopy(dir).authority, 'decide', 'once the base branch has it');
+});
+
+test('decisions resolve prefers origin/HEAD, which the working copy cannot move, over the default branch config.json names', (t) => {
+  const { dir, git } = decisionsRepo(t, { mode: 'ask' });
+  const main = git('rev-parse', 'main');
+  git('update-ref', 'refs/remotes/origin/main', main);
+  git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  git('switch', '-q', '-c', 'feature');
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, git: { defaultBranch: 'feature' }, decisions: { maxMode: 'decide-reversible', mode: 'decide-reversible' } }));
+  git('commit', '-q', '-am', 'point the default branch at this one');
+  assert.deepEqual([resolveCopy(dir).authority, resolveCopy(dir).base], ['ask', main]);
+});
+
+test('decisions resolve holds the local file to the base branch ceiling, and an out-of-git project reads its working copy', (t) => {
+  const { dir, git, write } = decisionsRepo(t, { mode: 'ask', maxMode: 'ask' });
+  writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n');
+  writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ decisions: { mode: 'decide-reversible' } }));
+  git('switch', '-q', '-c', 'feature');
+  assert.equal(resolveCopy(dir).authority, 'ask', 'the base maxMode holds the local mode down');
+  write({ mode: 'ask', maxMode: 'decide-reversible' });
+  assert.equal(resolveCopy(dir).authority, 'ask', 'a working-copy maxMode does not lift the ceiling');
+  git('switch', '-q', '-f', 'main');
+  write({ mode: 'ask', maxMode: 'decide-reversible' });
+  git('commit', '-q', '-am', 'allow');
+  assert.equal(resolveCopy(dir).authority, 'decide', 'the base allows it, and the local file sets it');
+
+  const plain = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-cli-')));
+  t.after(() => rmSync(plain, { recursive: true, force: true }));
+  mkdirSync(path.join(plain, '.aidrian'));
+  writeFileSync(path.join(plain, '.aidrian/config.json'), JSON.stringify({ version: 1, decisions: { maxMode: 'decide-reversible', mode: 'decide-reversible' } }));
+  assert.deepEqual([resolveCopy(plain).authority, resolveCopy(plain).base], ['decide', null]);
+});
+
+test('decisions resolve never takes its base from a branch that names itself in git.defaultBranch', (t) => {
+  const repoAt = (origin) => {
+    const repo = decisionsRepo(t, { mode: 'ask' });
+    const main = repo.git('rev-parse', 'main');
+    if (origin) repo.git('update-ref', 'refs/remotes/origin/main', main);
+    repo.git('switch', '-q', '-c', 'feature');
+    writeFileSync(path.join(repo.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, git: { defaultBranch: 'feature' }, decisions: { maxMode: 'decide-reversible', mode: 'decide-reversible' } }));
+    repo.git('commit', '-q', '-am', 'name this branch the default');
+    repo.git('update-ref', 'refs/remotes/origin/feature', 'HEAD');
+    return { ...repo, main };
+  };
+  const withOrigin = repoAt(true);
+  assert.deepEqual([resolveCopy(withOrigin.dir).authority, resolveCopy(withOrigin.dir).base], ['ask', withOrigin.main], 'origin/main, with no origin/HEAD');
+  const without = repoAt(false);
+  assert.deepEqual([resolveCopy(without.dir).authority, resolveCopy(without.dir).base], ['ask', without.main], 'the local main, with no origin/main');
+  without.git('branch', '-q', '-D', 'main');
+  assert.deepEqual(pick(resolveCopy(without.dir)), ['ask', 'no-base', null], 'no main at all: nothing the working copy names is a base');
+});
+
+test('decisions resolve falls back to origin/main, ahead of a local main, with no origin/HEAD', (t) => {
+  const { dir, git, write } = decisionsRepo(t, { maxMode: 'decide-reversible', mode: 'decide-reversible' });
+  const pushed = git('rev-parse', 'main');
+  git('update-ref', 'refs/remotes/origin/main', pushed);
+  write({ mode: 'ask' });
+  git('commit', '-q', '-am', 'a local main the remote does not have');
+  git('switch', '-q', '-c', 'feature');
+  assert.deepEqual([resolveCopy(dir).authority, resolveCopy(dir).base], ['decide', pushed]);
+  git('branch', '-q', '-D', 'main');
+  assert.deepEqual([resolveCopy(dir).authority, resolveCopy(dir).base], ['decide', pushed], 'with no local main at all');
+});
+
+test('inside git with no base, or a git that fails or stalls, resolve asks and never reads the working copy', (t) => {
+  const { dir, git, write } = decisionsRepo(t, { maxMode: 'decide-reversible', mode: 'decide-reversible' });
+  git('branch', '-q', '-m', 'main', 'trunk');
+  write({ maxMode: 'decide-reversible', mode: 'decide-reversible' });
+  assert.deepEqual(pick(resolveCopy(dir)), ['ask', 'no-base', null], 'no base branch');
+
+  git('branch', '-q', '-m', 'trunk', 'main');
+  assert.equal(resolveCopy(dir).authority, 'decide', 'the base is back');
+  const real = spawnSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  const fake = (t2, script) => {
+    const bin = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-git-')));
+    t2.after(() => rmSync(bin, { recursive: true, force: true }));
+    writeFileSync(path.join(bin, 'git'), `#!/bin/sh\n${script}\nexec ${real} "$@"\n`);
+    chmodSync(path.join(bin, 'git'), 0o755);
+    return { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+  };
+  const resolved = (env) => {
+    const { status, stdout, stderr } = run(['decisions', 'resolve', '--domain', 'ux', '--class', 'copy', '--reversible', 'no,no,no,no'], dir, env);
+    assert.deepEqual([status, stderr], [0, '']);
+    return JSON.parse(stdout);
+  };
+  assert.deepEqual(pick(resolved(fake(t, 'exit 3'))), ['ask', 'no-base', null], 'git fails on everything');
+  assert.deepEqual(pick(resolved(fake(t, 'case " $* " in *" --verify "*) exit 3;; esac'))), ['ask', 'no-base', null], 'git fails on the base ref');
+  assert.deepEqual(pick(resolved(fake(t, 'case " $* " in *" --verify "*) exec sleep 30;; esac'))), ['ask', 'no-base', null], 'git stalls on the base ref');
+  assert.deepEqual(pick(resolved(fake(t, 'case " $* " in *" get-url "*) exit 3;; esac'))), ['ask', 'no-base', null], 'git fails naming the remote: the local main does not stand in');
+  const failedShow = resolved(fake(t, 'case " $* " in *" show "*) exit 3;; esac'));
+  assert.deepEqual([failedShow.authority, failedShow.rule], ['ask', 'no-base'], 'git fails reading the base config');
+});
+
+test('decisions resolve takes the config folder from the base commit, and a base with no team block holds every decision at ask', (t) => {
+  const raise = (dir) => writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ decisions: { mode: 'decide-reversible' } }));
+  const route = decisionsRepo(t, { mode: 'ask', maxMode: 'ask' });
+  raise(route.dir);
+  // The base holds a raising config in a folder no one reads, so reading it would decide.
+  mkdirSync(path.join(route.dir, 'other'));
+  writeFileSync(path.join(route.dir, 'other/config.json'), JSON.stringify({ version: 1, decisions: { maxMode: 'decide-reversible', mode: 'decide-reversible' } }));
+  route.git('add', 'other');
+  route.git('commit', '-q', '-m', 'a folder the project does not name');
+  route.git('switch', '-q', '-c', 'feature');
+  writeFileSync(path.join(route.dir, '.aidrian.json'), JSON.stringify({ dir: 'other' }));
+  assert.equal(resolveCopy(route.dir).authority, 'ask', 'an uncommitted {"dir":"other"} does not move the lookup off the team maxMode');
+  route.git('add', '.aidrian.json');
+  route.git('commit', '-q', '-m', 'move the folder on the branch');
+  assert.equal(resolveCopy(route.dir).authority, 'ask', 'nor does the same move committed on the branch');
+
+  const moved = decisionsRepo(t, {});
+  mkdirSync(path.join(moved.dir, 'team'));
+  writeFileSync(path.join(moved.dir, 'team/config.json'), JSON.stringify({ version: 1, decisions: { maxMode: 'decide-reversible', mode: 'decide-reversible' } }));
+  writeFileSync(path.join(moved.dir, '.aidrian.json'), JSON.stringify({ dir: 'team' }));
+  moved.git('add', '.');
+  moved.git('commit', '-q', '-m', 'the team moved its folder');
+  moved.git('switch', '-q', '-c', 'feature');
+  assert.equal(resolveCopy(moved.dir).authority, 'decide', 'the folder the base names is read');
+
+  const atBase = (text, override) => {
+    const repo = decisionsRepo(t, {});
+    if (text === null) repo.git('rm', '-q', '--cached', '.aidrian/config.json');
+    else writeFileSync(path.join(repo.dir, '.aidrian/config.json'), text);
+    if (override !== undefined) writeFileSync(path.join(repo.dir, '.aidrian.json'), override);
+    repo.git('add', '.');
+    repo.git('commit', '-q', '-m', 'the base');
+    repo.git('switch', '-q', '-c', 'feature');
+    rmSync(path.join(repo.dir, '.aidrian.json'), { force: true });
+    repo.write({ maxMode: 'decide-reversible', mode: 'decide-reversible' });
+    raise(repo.dir);
+    return resolveCopy(repo.dir).authority;
+  };
+  assert.equal(atBase('{ not json'), 'ask', 'a base config that does not parse');
+  assert.equal(atBase(JSON.stringify({ version: 99, decisions: { maxMode: 'decide-reversible', mode: 'decide-reversible' } })), 'ask', 'a base config of another version');
+  const optedIn = JSON.stringify({ version: 1, decisions: { maxMode: 'decide-reversible' } });
+  assert.equal(atBase(optedIn, '{ not json'), 'ask', 'a base .aidrian.json that does not parse');
+  assert.equal(atBase(optedIn, JSON.stringify({ dir: '../up' })), 'ask', 'a base .aidrian.json that names no usable folder');
+  assert.equal(atBase(optedIn, JSON.stringify({ dir: 'nowhere' })), 'ask', 'a base .aidrian.json whose folder has no config');
+  assert.equal(atBase(JSON.stringify({ version: 1 })), 'ask', 'a valid base with no decisions key has not opted in, so the local file raises nothing');
+  assert.equal(atBase(optedIn), 'decide', 'a committed ceiling honours the local raise');
+
+  const empty = decisionsRepo(t, {});
+  empty.git('rm', '-q', '-r', '--cached', '.aidrian');
+  empty.git('commit', '-q', '--allow-empty', '-m', 'no config at the base');
+  empty.git('switch', '-q', '-c', 'feature');
+  raise(empty.dir);
+  assert.equal(resolveCopy(empty.dir).authority, 'ask', 'a base with no config.json');
+});
+
+test('decisions resolve reads the local file from the main checkout in a linked worktree, held to the base ceiling', (t) => {
+  const open = decisionsRepo(t, { maxMode: 'decide-reversible' });
+  writeFileSync(path.join(open.dir, '.aidrian.local.json'), JSON.stringify({ decisions: { mode: 'decide-reversible' } }));
+  const tree = path.join(open.dir, '.worktrees/wt');
+  open.git('worktree', 'add', '-q', '-b', 'wt', tree);
+  assert.equal(resolveCopy(open.dir).authority, 'decide', 'in the main checkout');
+  assert.equal(resolveCopy(tree).authority, 'decide', 'the worktree has no copy of the file, and reads the main checkout\'s');
+
+  const capped = decisionsRepo(t, { maxMode: 'ask' });
+  writeFileSync(path.join(capped.dir, '.aidrian.local.json'), JSON.stringify({ decisions: { mode: 'decide-reversible' } }));
+  const held = path.join(capped.dir, '.worktrees/wt');
+  capped.git('worktree', 'add', '-q', '-b', 'wt', held);
+  assert.equal(resolveCopy(held).authority, 'ask');
+
+  const only = decisionsRepo(t, { maxMode: 'decide-reversible' });
+  const own = path.join(only.dir, '.worktrees/wt');
+  only.git('worktree', 'add', '-q', '-b', 'wt', own);
+  writeFileSync(path.join(own, '.aidrian.local.json'), JSON.stringify({ decisions: { mode: 'decide-reversible' } }));
+  assert.equal(resolveCopy(own).authority, 'ask', 'a file only in the worktree raises nothing');
+  writeFileSync(path.join(only.dir, '.aidrian.local.json'), JSON.stringify({ decisions: { domains: { ux: 'ask' } } }));
+  assert.equal(resolveCopy(own).authority, 'ask', 'with both, the main checkout\'s decisions apply, not the worktree\'s');
+  writeFileSync(path.join(only.dir, '.aidrian.local.json'), JSON.stringify({ decisions: { mode: 'decide-reversible' } }));
+  rmSync(path.join(own, '.aidrian.local.json'));
+  assert.equal(resolveCopy(own).authority, 'decide', 'the main checkout\'s file still applies in the worktree');
+});
+
+test('decisions resolve treats every spelling of a --doc as the same path from the project root', (t) => {
+  const { dir, git } = decisionsRepo(t, { maxMode: 'decide-reversible', mode: 'decide-reversible', escalateDocs: ['docs/pricing.md', 'docs/terms.md#refunds'] });
+  mkdirSync(path.join(dir, 'src'));
+  mkdirSync(path.join(dir, 'docs'));
+  writeFileSync(path.join(dir, 'docs/pricing.md'), '# Pricing\n');
+  const outside = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-cli-')));
+  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  git('switch', '-q', '-c', 'feature');
+  const rule = (cwd, ...docs) => {
+    const out = resolveCopy(cwd, ...docs.flatMap((doc) => ['--doc', doc]));
+    return [out.authority, out.rule];
+  };
+  const src = path.join(dir, 'src');
+  const asked = ['ask', 'escalate-doc'];
+  assert.deepEqual(rule(dir, 'docs/pricing.md'), asked);
+  assert.deepEqual(rule(dir, './docs/pricing.md'), asked, './');
+  assert.deepEqual(rule(dir, path.join(dir, 'docs/pricing.md')), asked, 'absolute');
+  assert.deepEqual(rule(src, '../docs/pricing.md'), asked, '../ from a subfolder');
+  assert.deepEqual(rule(dir, 'docs//pricing.md'), asked, '//');
+  assert.deepEqual(rule(dir, 'docs/./pricing.md'), asked, '/./');
+  assert.deepEqual(rule(dir, 'docs/x/../pricing.md'), asked, 'x/../');
+  assert.deepEqual(rule(dir, `${dir}/docs/terms.md#refunds`), asked, 'absolute, keeping its section');
+  assert.deepEqual(rule(dir, 'docs/terms.md'), asked, 'no section names the listed one too');
+  assert.deepEqual(rule(dir, 'docs/terms.md#other'), ['decide', 'mode'], 'another section');
+  assert.deepEqual(rule(dir, 'docs/guide.md'), ['decide', 'mode'], 'another doc');
+  const away = ['ask', 'doc-outside-project'];
+  assert.deepEqual(rule(dir, '../elsewhere.md'), away, '../ out of the project');
+  assert.deepEqual(rule(dir, path.join(outside, 'a.md')), away, 'an absolute path elsewhere');
+  assert.deepEqual(rule(src, '../../elsewhere.md#x'), away, '../../ from a subfolder, with a section');
+  assert.deepEqual(rule(outside, 'docs/pricing.md').slice(0, 1), ['ask'], 'run from elsewhere with no project, no rule covers it');
+});
+
+test('a bad decisions value at the base holds every decision at ask, on a clean branch, though the local file raises the mode', (t) => {
+  const cases = [
+    ['maxMode', { mode: 'decide-reversible', maxMode: 'bogus' }],
+    ['mode', { maxMode: 'decide-reversible', mode: 'bogus' }],
+    ['escalate', { maxMode: 'decide-reversible', mode: 'decide-reversible', escalate: ['pricing'] }],
+    ['escalateDocs', { maxMode: 'decide-reversible', mode: 'decide-reversible', escalateDocs: ['docs/*.md'] }],
+    ['an unknown key', { maxMode: 'decide-reversible', mode: 'decide-reversible', other: 1 }],
+    ['a block that is no object', 'decide-reversible'],
+  ];
+  for (const [name, decisions] of cases) {
+    const { dir, git, write } = decisionsRepo(t, decisions);
+    git('switch', '-q', '-c', 'feature');
+    write({ maxMode: 'decide-reversible', mode: 'decide-reversible' });
+    git('commit', '-q', '-am', 'a clean working copy');
+    writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ decisions: { mode: 'decide-reversible' } }));
+    assert.equal(resolveCopy(dir).authority, 'ask', name);
+  }
+  const { dir, git, write } = decisionsRepo(t, { maxMode: 'decide-reversible', mode: 'decide-reversible' });
+  git('switch', '-q', '-c', 'feature');
+  write({ maxMode: 'decide-reversible', mode: 'decide-reversible' });
+  assert.equal(resolveCopy(dir).authority, 'decide', 'a clean base still decides');
+  const elsewhere = decisionsRepo(t, { maxMode: 'decide-reversible', mode: 'decide-reversible' });
+  writeFileSync(path.join(elsewhere.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, decisions: { maxMode: 'decide-reversible', mode: 'decide-reversible' }, github: { maxReviewRounds: 'ten' } }));
+  elsewhere.git('commit', '-q', '-am', 'a bad value in another group');
+  elsewhere.git('switch', '-q', '-c', 'feature');
+  writeFileSync(path.join(elsewhere.dir, '.aidrian/config.json'), JSON.stringify({ version: 1 }));
+  assert.equal(resolveCopy(elsewhere.dir).authority, 'decide', 'an error outside decisions leaves the block as written');
+});
+
+test('decisions resolve reads a relative --doc from the current folder and from the project root', (t) => {
+  const { dir } = decisionsRepo(t, { maxMode: 'decide-reversible', mode: 'decide-reversible', escalateDocs: ['docs/pricing.md', 'src/notes.md'] });
+  mkdirSync(path.join(dir, 'src'));
+  const src = path.join(dir, 'src');
+  const rule = (cwd, doc) => {
+    const out = resolveCopy(cwd, '--doc', doc);
+    return [out.authority, out.rule];
+  };
+  assert.deepEqual(rule(src, 'docs/pricing.md'), ['ask', 'escalate-doc'], 'the root reading matches, from below the root');
+  assert.deepEqual(rule(src, 'notes.md'), ['ask', 'escalate-doc'], 'the current-folder reading matches');
+  assert.deepEqual(rule(src, 'docs/guide.md'), ['decide', 'mode'], 'neither reading matches');
+  assert.deepEqual(rule(src, '../docs/pricing.md'), ['ask', 'escalate-doc'], 'a path that climbs has its current-folder reading');
+  assert.deepEqual(rule(src, '../docs/guide.md'), ['decide', 'mode'], 'and no root reading, which would leave the project');
+  assert.deepEqual(rule(src, 'x/../docs/pricing.md'), ['ask', 'escalate-doc'], 'the root reading of a spelled path');
+});
+
+test('decisions resolve takes the disk\'s spelling of a --doc, so another case of a listed doc asks on a disk that ignores case', (t) => {
+  const { dir } = decisionsRepo(t, { maxMode: 'decide-reversible', mode: 'decide-reversible', escalateDocs: ['docs/pricing.md'] });
+  mkdirSync(path.join(dir, 'docs'));
+  writeFileSync(path.join(dir, 'docs/pricing.md'), '# Pricing\n');
+  const ignoresCase = existsSync(path.join(dir, 'DOCS/PRICING.md'));
+  for (const doc of ['DOCS/PRICING.md', 'docs/Pricing.md#Plans', 'DOCS/new/../pricing.md']) {
+    assert.equal(resolveCopy(dir, '--doc', doc).authority, ignoresCase ? 'ask' : 'decide', doc);
+  }
+  assert.equal(resolveCopy(dir, '--doc', 'docs/pricing.md').authority, 'ask');
+  assert.equal(resolveCopy(dir, '--doc', 'docs/not-yet.md').authority, 'decide', 'a doc that does not exist yet still resolves');
+});
+
+test('in a clone, a local main never stands in for origin: no origin ref gives no-base', (t) => {
+  const source = decisionsRepo(t, { mode: 'ask' });
+  const dest = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-cli-')));
+  t.after(() => rmSync(dest, { recursive: true, force: true }));
+  assert.equal(spawnSync('git', ['clone', '-q', source.dir, dest], { encoding: 'utf8' }).status, 0);
+  const git = (...args) => {
+    const out = spawnSync('git', ['-C', dest, '-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' });
+    assert.equal(out.status, 0, out.stderr);
+    return out.stdout.trim();
+  };
+  const pushed = git('rev-parse', 'origin/main');
+  writeFileSync(path.join(dest, '.aidrian/config.json'), JSON.stringify({ version: 1, decisions: { maxMode: 'decide-reversible', mode: 'decide-reversible' } }));
+  git('commit', '-q', '-am', 'a local main no one reviewed');
+  assert.deepEqual(pick(resolveCopy(dest)).slice(0, 1).concat(resolveCopy(dest).base), ['ask', pushed], 'origin/HEAD is the base');
+  git('update-ref', '-d', 'refs/remotes/origin/main');
+  git('symbolic-ref', '--delete', 'refs/remotes/origin/HEAD');
+  assert.deepEqual(pick(resolveCopy(dest)), ['ask', 'no-base', null], 'the local main does not stand in');
+});
+
+test('decisions resolve --vocab lists the classes with definitions, and bad arguments exit 1 with the usage', (t) => {
+  const { dir } = decisionsRepo(t, {});
+  const vocab = JSON.parse(run(['decisions', 'resolve', '--vocab'], dir).stdout);
+  assert.deepEqual(Object.keys(vocab.classes).slice(0, 5), ['security', 'critical-flow', 'money', 'data-loss', 'unknown']);
+  assert.equal(vocab.classes.money.floor, true);
+  assert.equal(vocab.classes.copy.floor, false);
+  assert.match(vocab.classes.copy.definition, /words/u);
+  assert.deepEqual(Object.keys(vocab.reversibility), ['storedData', 'external', 'pricingOrContract', 'visibleBeforeReview']);
+
+  const bad = [
+    [['decisions'], /decisions takes resolve/u],
+    [['decisions', 'bogus'], /decisions takes resolve, not "bogus"/u],
+    [['decisions', 'resolve', '--class', 'copy'], /resolve needs --domain and --class/u],
+    [['decisions', 'resolve', '--domain', 'ux', '--class', 'copy', '--reversible', 'no,maybe'], /--reversible takes up to 4 answers/u],
+    [['decisions', 'resolve', '--domain', 'ux', '--class', 'copy', '--reversible', 'no,no,no,no,no'], /--reversible takes up to 4 answers/u],
+  ];
+  for (const [args, expected] of bad) {
+    const { status, stdout, stderr } = run(args, dir);
+    assert.deepEqual([status, stdout], [1, ''], args.join(' '));
+    assert.match(stderr, /^usage: aidrian decisions resolve /u);
+    assert.match(stderr, expected);
+  }
+});
+
+test('decisions resolve stops on an invalid config, keeping its error, instead of answering on defaults', (t) => {
+  const { dir, write } = decisionsRepo(t, {});
+  write({ mode: 'decide' });
+  const { status, stdout, stderr } = run(['decisions', 'resolve', '--domain', 'ux', '--class', 'copy', '--reversible', 'no,no,no,no'], dir);
+  assert.deepEqual([status, stdout], [1, '']);
+  assert.equal(stderr, '.aidrian/config.json: "decisions.mode" must be "ask" or "decide-reversible"\n');
+});
+
+test('check warns when decisions.unreviewed has neither a reminder nor a pause, and still passes', (t) => {
+  const { dir, write } = decisionsRepo(t, { unreviewed: { remind: 'off', pauseDomainAt: null } });
+  writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n.worktrees/\n');
+  const warned = run(['check'], dir);
+  assert.equal(warned.status, 0, warned.stderr);
+  assert.match(warned.stderr, /^warning: decisions\.unreviewed: "remind" is "off" and "pauseDomainAt" is null/mu);
+  write({ unreviewed: { remind: 'off' } });
+  assert.doesNotMatch(run(['check'], dir).stderr, /decisions\.unreviewed/u, 'the default pause still stops them');
 });
 
 // A git repository whose config.json still uses the old `pr` group, and a `gh` on the PATH that reports one skipped e2e

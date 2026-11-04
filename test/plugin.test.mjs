@@ -272,8 +272,8 @@ test('a skill that runs the pr-review-loop skill says when it marks the pull req
   const callers = [['autopilot', 'references/phases.md'], ['orchestration', 'SKILL.md']];
   const loop = readFileSync(path.join(PLUGIN, 'skills/pr-review-loop/SKILL.md'), 'utf8');
   assert.match(loop, /review of the current head signed off/, 'the loop marks ready only after the current head is reviewed');
-  assert.match(loop.replace(/\s+/g, ' '), /Run as a step of another skill or agent, never mark it ready: that is the caller's step, after all its reviews\./,
-    'the loop leaves ready to any caller, without naming one');
+  assert.match(loop.replace(/\s+/g, ' '), /Run as a step of another skill or agent, never mark it ready or merge: those are the caller's steps, after all its reviews\./,
+    'the loop leaves ready and merge to any caller, without naming one');
   for (const [skill, file] of callers) {
     const text = readFileSync(path.join(PLUGIN, 'skills', skill, file), 'utf8');
     assert.match(text, /gh pr ready <n>/, `${skill} marks the pull request ready`);
@@ -285,6 +285,69 @@ test('a skill that runs the pr-review-loop skill says when it marks the pull req
     const text = readFileSync(path.join(PLUGIN, 'skills', file), 'utf8').replace(/\s+/g, ' ');
     assert.match(text, /`github\.markReady` is `"auto"`, the default/, `${file} names "auto" as the markReady default`);
   }
+});
+
+test('each skill that marks a pull request ready merges only through pr-merge-when-green, under auto-merge', () => {
+  // A caller with no merge step leaves a signed-off pull request waiting under auto-merge; one with its own, or none of the
+  // conditions, merges what the setting never allowed.
+  const skill = (file) => readFileSync(path.join(PLUGIN, 'skills', file), 'utf8').replace(/\s+/g, ' ');
+  const between = (text, start, end) => {
+    const from = text.indexOf(start);
+    assert.notEqual(from, -1, `missing ${start}`);
+    const to = end ? text.indexOf(end, from) : text.length;
+    assert.notEqual(to, -1, `missing ${end}`);
+    return text.slice(from, to);
+  };
+  const readySteps = {
+    'pr-review-loop': between(skill('pr-review-loop/SKILL.md'), '## 7. Summary'),
+    orchestration: between(skill('orchestration/SKILL.md'), '7. **Ready.**', '## 4. Review findings'),
+    autopilot: between(skill('autopilot/references/phases.md'), '## 4. Stop at sign-off'),
+  };
+  for (const [name, step] of Object.entries(readySteps)) {
+    assert.match(step, /gh pr ready <n>/, `${name} marks it ready in this step`);
+    assert.match(step, /`pr-merge-when-green` skill when `aidrian pr auto-merge <n>`\s+exits 0/, `${name} merges through the skill when auto-merge is on`);
+    assert.ok(step.indexOf('`pr-merge-when-green`') > step.indexOf('gh pr ready <n>'), `${name} merges after it marks ready`);
+    assert.match(step, /Merge only through (?:that|this) step/, `${name} never merges otherwise`);
+    assert.match(step, /marked it ready in this run|this run marked the draft ready/, `${name} ties the merge to its own ready step`);
+  }
+
+  const callerTexts = {
+    'pr-review-loop': skill('pr-review-loop/SKILL.md'),
+    orchestration: skill('orchestration/SKILL.md'),
+    autopilot: skill('autopilot/SKILL.md'),
+    'autopilot phases': skill('autopilot/references/phases.md'),
+    orchestrator: readFileSync(path.join(PLUGIN, 'agents-src/coordination/orchestrator.md'), 'utf8').replace(/\s+/g, ' '),
+  };
+  for (const [name, text] of Object.entries(callerTexts)) {
+    assert.doesNotMatch(text, /Never merges?\b/, `${name} no longer says it never merges`);
+    assert.doesNotMatch(text, /Only the Human starts the `pr-merge-when-green`|which only the Human starts/, `${name} no longer reserves the merge to the Human`);
+    assert.match(text, /pr-merge-when-green/, `${name} names the merge skill`);
+  }
+  for (const [name, text] of [['autopilot', callerTexts.autopilot], ['orchestrator', callerTexts.orchestrator]]) {
+    assert.match(text, /`aidrian pr auto-merge <n>` exits 0/, `${name} names the auto-merge condition`);
+  }
+  assert.match(callerTexts.autopilot, /^---[^]*?description:[^\n]*Merges only when auto-merge is on\./, 'the listing says so too');
+  assert.match(callerTexts.autopilot, /stop line of the `pr-merge-when-green` skill/, 'the report names why a merge did not happen');
+  const hardRules = skill('issue-implement/references/hard-rules.md');
+  assert.match(hardRules, /This skill leaves a draft/, 'issue-implement itself still leaves a draft');
+  assert.match(hardRules, /`pr-merge-when-green` skill, started by the Human, or by the caller skill when `aidrian pr auto-merge <n>` exits 0/);
+});
+
+test('no plugin text runs gh pr merge --auto: it waits only for required checks', () => {
+  // pr-merge-when-green alone names it, to forbid it, so the text that explains why stays where the merge happens.
+  const hits = [];
+  for (const dir of ['skills', 'agents-src', 'agent-addons']) {
+    for (const file of allFiles(path.join(PLUGIN, dir))) {
+      readFileSync(file, 'utf8').split('\n').forEach((line, index) => {
+        if (/gh pr merge\b.*--auto\b/.test(line)) hits.push({ file: path.relative(PLUGIN, file), line: index + 1, text: line });
+      });
+    }
+  }
+  for (const hit of hits) {
+    assert.equal(hit.file, 'skills/pr-merge-when-green/SKILL.md', `${hit.file}:${hit.line} names gh pr merge --auto`);
+    assert.match(hit.text, /Never `gh pr merge --auto`|`gh pr merge --auto` waits only for the checks/, `line ${hit.line} forbids it`);
+  }
+  assert.equal(hits.length, 2, 'the merge skill still forbids it');
 });
 
 test('pr-write hands an opened or updated pull request to the review loop as github.reviewLoop says', () => {

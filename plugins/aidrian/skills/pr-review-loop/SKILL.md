@@ -108,16 +108,7 @@ The agent that made the fix verifies, commits, and pushes it, then returns the S
 - Review summary or conversation comment: one conversation comment that names the SHA.
 - Check the response of every post. A failed post means the thread is not addressed; say so in the summary.
 - A thread that does not apply gets the evidence and stays open for the reviewer to confirm.
-
-Reply shapes:
-
-```text
-Addressed in <sha>: <one line>.
-Not applicable: <evidence>. Leaving this open for you to confirm.
-Already handled in <sha>.
-Conflicts with <doc path>: <one-line citation>. Open to discussion.
-Accepted residual: <why the fix is not worth it now>; marked in <path>.
-```
+- Before the first post, read `references/replies.md`: one shape per verdict.
 
 ## 7. Summary
 
@@ -128,4 +119,6 @@ On a draft, when config.json `github.markReady` is `"auto"`, the default, or the
 mark it ready yourself with `gh pr ready <n>` once a review of the current head signed off with no blocked row,
 and `aidrian pr checks <n>` says ready. With `"ask"` and no such request, report convergence; the author marks it ready.
 A fix pushed after that review sends the loop back to step 1 first. Pending or failing: leave it a draft and say why.
-After `gh pr ready`, push nothing more. Run as a step of another skill or agent, never mark it ready: that is the caller's step, after all its reviews.
+After `gh pr ready`, push nothing more. Then run the `pr-merge-when-green` skill when `aidrian pr auto-merge <n>` exits 0;
+otherwise report the line it printed. Merge only through that step, and only after this run marked the draft ready.
+Run as a step of another skill or agent, never mark it ready or merge: those are the caller's steps, after all its reviews.

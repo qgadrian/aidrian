@@ -150,8 +150,16 @@ The `persona-audit-triage` skill takes each item of a report to a decision with 
 `Not reached` line (`N1`), each doc gap (`D1`), and each finding of a replaced report that the new run did not re-check.
 A decision is one of `issue`, `fix-now`, `duplicate`, `drop`, or `defer`. A report is fully triaged when every item
 has one. The skill sends a finding about a product rule, or an open question in a product doc, to `product-manager`
-first; it drafts an issue with `agent-issue-writer` and creates it in the project's tracker only after the Human
-approves the draft. It names owners in plain words, from each finding's `owner_description`.
+first; it drafts an issue with `agent-issue-writer` and creates it in the project's tracker. It names owners in plain
+words, from each finding's `owner_description`.
+
+[Audit triage](config.md#audit-triage) in config.json sets two things. `audits.triage.issueCreation` is `confirm` by
+default: each draft is shown, and no issue, route, or label is created until the Human says yes. `auto`
+creates issues without asking, for unsupervised runs: it files what it would recommend as an issue or a duplicate,
+defers everything else, including a finding `product-manager` does not settle, records every decision, and ends with
+the issues it created. `audits.triage.labels` gives every issue the `persona-audit` label, one per persona, and one
+for its severity by default; the duplicate search queries the plain label as well as the finding's words, and each
+issue body cites the report file and the finding id.
 
 The decisions live in `<state>/audits/triage.json`, never in the repository, keyed by report file and item id:
 
@@ -173,6 +181,7 @@ The decisions live in `<state>/audits/triage.json`, never in the repository, key
   one file in the report's folder that ends with it. `--write` validates the draft and writes it; it never overwrites a sidecar.
 - `pending <report> [--json]`: the untriaged items in the order the Human answers them: each blocker alone, the other
   findings grouped by severity and owner, the replaced report's findings not re-checked, `Not reached`, then doc gaps.
+  With `--json`, it also gives `issue_creation`, the mode, `search_labels`, the plain labels, and each item's `labels`.
 - `record <report> <id> <decision> [--issue KEY] [--url URL] [--reason TEXT]`: records one decision. `issue` and
   `duplicate` need `--issue` or `--url`, and `drop` needs `--reason`. A finding of a replaced report is recorded under
   that report. It refuses an id the report does not offer, and a `triage.json` it cannot read.

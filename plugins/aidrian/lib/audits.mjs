@@ -237,19 +237,19 @@ function loadReport(dir, report) {
     }
     if (value) base.problems.push(...sidecarProblems(value, { report }));
     if (!base.problems.length) {
-      return { ...base, status: 'ok', supersedes: value.supersedes, findings: value.findings, not_reached: value.not_reached, doc_gaps: value.doc_gaps, not_rechecked: value.not_rechecked };
+      return { ...base, status: 'ok', personas: value.personas, supersedes: value.supersedes, findings: value.findings, not_reached: value.not_reached, doc_gaps: value.doc_gaps, not_rechecked: value.not_rechecked };
     }
   }
   // No sidecar, or one that is invalid: the prose gives the counts and the report it replaces, never a decision's key.
   const parsed = parseReport(readFileSync(path.join(dir, report), 'utf8'), { report, dir });
-  return { ...base, status: base.problems.length ? 'invalid' : 'no-sidecar', supersedes: parsed.supersedes, findings: parsed.findings, not_reached: parsed.not_reached, doc_gaps: parsed.doc_gaps, not_rechecked: [] };
+  return { ...base, status: base.problems.length ? 'invalid' : 'no-sidecar', personas: parsed.personas, supersedes: parsed.supersedes, findings: parsed.findings, not_reached: parsed.not_reached, doc_gaps: parsed.doc_gaps, not_rechecked: [] };
 }
 
 // The untriaged items of one report, in the order the Human answers them: each blocker alone, then the other findings
 // grouped by owner and severity, then the replaced report's findings this run did not re-check, then Not reached
-// lines, then doc gaps. Each group: { kind, title, items }.
-export function pendingGroups(entry) {
-  const open = (entry.items ?? []).filter((item) => !item.decision);
+// lines, then doc gaps. Each group: { kind, title, items }, each item with the `labels` its issue would get.
+export function pendingGroups(entry, { labels = [], personas = entry.personas ?? [] } = {}) {
+  const open = (entry.items ?? []).filter((item) => !item.decision).map((item) => ({ ...item, labels: issueLabels(labels, item, personas) }));
   const groups = [];
   const findings = open.filter((item) => item.kind === 'finding');
   for (const item of findings.filter((one) => one.severity === 'blocker')) groups.push({ kind: 'blocker', title: `Blocker ${item.id}: ${item.title}`, items: [item] });
@@ -268,6 +268,21 @@ export function pendingGroups(entry) {
   if (gaps.length) groups.push({ kind: 'doc_gap', title: 'Persona doc gaps', items: gaps });
   return groups;
 }
+
+// The labels an issue filed for `item` gets, from config.json `audits.triage.labels`: each plain label as it is, and
+// each `{persona}` or `{severity}` label filled from the item, one label per persona. An item with no severity, such as
+// a Not reached line, skips the severity labels; one with no personas takes the report's.
+export function issueLabels(templates, item, personas = []) {
+  const values = { persona: item.personas?.length ? item.personas : personas, severity: item.severity ? [item.severity] : [] };
+  const labels = templates.flatMap((template) => {
+    const fields = [...template.matchAll(/\{(\w+)\}/gu)].map(([, field]) => field);
+    return fields.reduce((filled, field) => filled.flatMap((label) => values[field].map((value) => label.replaceAll(`{${field}}`, value))), [template]);
+  });
+  return [...new Set(labels)];
+}
+
+// The labels with no placeholder: the ones the duplicate search queries, since every audit issue carries them.
+export const searchLabels = (templates) => templates.filter((label) => !label.includes('{'));
 
 // The start line while the audits folder holds untriaged items, '' otherwise. A report to import counts its parsed
 // items. Never throws: a broken folder, report, or triage record prints nothing rather than break the session.

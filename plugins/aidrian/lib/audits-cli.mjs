@@ -9,7 +9,7 @@ import { parseArgs } from 'node:util';
 
 import { parseReport } from './audit-import.mjs';
 import {
-  decisionProblem, DECISIONS, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, sidecarName, sidecarProblems, today,
+  decisionProblem, DECISIONS, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, searchLabels, sidecarName, sidecarProblems, today,
 } from './audits.mjs';
 import { commandConfig } from './config.mjs';
 import { projectAt, stateDir } from './project.mjs';
@@ -40,8 +40,9 @@ export const commands = {
       const [action, ...rest] = positionals;
       if (!Object.hasOwn(ACTIONS, action ?? '')) return fail(usageLines('audits', commands.audits.usage, 'usage: ').join('\n'));
       const project = projectAt(path.resolve(values.project ?? '.'));
-      const dir = path.join(stateDir(project, { config: commandConfig(project) }), 'audits');
-      return ACTIONS[action]({ values, rest, dir });
+      const config = commandConfig(project);
+      const dir = path.join(stateDir(project, { config }), 'audits');
+      return ACTIONS[action]({ values, rest, dir, triage: config.audits.triage });
     },
   },
 };
@@ -130,21 +131,24 @@ function importReport({ values, rest: [name], dir }) {
   return 0;
 }
 
-function pending({ values, rest: [name], dir }) {
+// With --json: { issue_creation, search_labels, groups }, so the skill reads the mode and every issue's labels from
+// config.json in one call.
+function pending({ values, rest: [name], dir, triage }) {
   const { report, problem } = locate(dir, name);
   if (problem) return fail(problem);
   const entry = listAudits(dir).find((each) => each.report === report);
   if (entry.status === 'no-sidecar' || entry.status === 'invalid') return fail(`${report}: ${statusText(entry)}`);
   if (entry.status === 'replaced') return fail(`${report} is replaced by ${entry.replaced_by}: triage that report`);
-  const groups = pendingGroups(entry);
+  const groups = pendingGroups(entry, { labels: triage.labels });
   if (values.json) {
-    console.log(JSON.stringify(groups));
+    console.log(JSON.stringify({ issue_creation: triage.issueCreation, search_labels: searchLabels(triage.labels), groups }));
     return 0;
   }
   if (!groups.length) {
     console.log(`${report}: fully triaged`);
     return 0;
   }
+  console.log(`Issue creation: ${triage.issueCreation}. Duplicate search label: ${searchLabels(triage.labels).join(', ')}.`);
   for (const group of groups) {
     console.log(`## ${group.title}`);
     for (const item of group.items) console.log(`- ${item.report} ${item.id}: ${item.title ?? item.text}`);

@@ -92,7 +92,9 @@ On update, omitting `estimate` leaves it unchanged; passing `null` clears it.
 Do not add `priority:*` or `effort:*` labels — Linear's native fields are already filterable. `tracker_fields.labels` carries only domain/work-type labels (`bug`, `chore`, `feature`, etc.) and is optional.
 
 - Before creating a label, check `list_issue_labels(team: "<team>", name: "<label>")` for an existing match.
-- If no match exists, create it with `create_issue_label(name: "<label>", teamId: "<team id>")`.
+- If no match exists, create it with `create_issue_label(name: "<label>", teamId: "<team id>")`. A label a calling skill
+  passes, such as an audit label, is created only when the caller says the Human approved it; otherwise it is left out
+  and named in the result.
 - Pass label **names** (not ids) to `save_issue(labels: [...])`.
 - `save_issue`'s `labels` parameter **replaces the full label set** — it is not additive. When updating an existing issue, always pass the complete desired label list (existing labels to keep plus any new ones); omitting an existing label removes it.
 

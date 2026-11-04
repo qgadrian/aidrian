@@ -94,6 +94,7 @@ const SCHEMA = {
   agents: 'agents',
   requires: { aidrian: 'versionOrNull' },
   quorum: QUORUM_SCHEMA,
+  audits: { triage: { issueCreation: 'issueCreationMode', labels: 'auditLabels' } },
 };
 
 // Keys a format change renamed or moved, old name to new; a key inside a group is named with its group, "group.key".
@@ -129,6 +130,9 @@ const MODEL_CHOICES = {
 };
 
 const SEMVER = /^\d+\.\d+\.\d+$/u;
+// The placeholders an audit label may hold, filled per finding (lib/audits.mjs issueLabels).
+export const AUDIT_LABEL_FIELDS = ['persona', 'severity'];
+const isAuditLabel = (value) => isText(value) && [...value.matchAll(/[{}]/gu)].length === 2 * [...value.matchAll(/\{(\w+)\}/gu)].filter(([, field]) => AUDIT_LABEL_FIELDS.includes(field)).length;
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
 const isTexts = (value) => Array.isArray(value) && value.every(isText);
 // A regular expression a project writes as a string; `{types}` and `{issueKey}` are filled in before it compiles
@@ -180,6 +184,12 @@ const TYPES = {
   objectionCap: [(value) => Number.isInteger(value) && value >= 1 && value <= MAX_PLAN_OBJECTIONS, `a whole number from 1 to ${MAX_PLAN_OBJECTIONS}`],
   // The least a plan run needs: two objection dispatches, one ruling, one Codex fallback, and the reserved proportionality pass.
   dispatchCap: [(value) => Number.isInteger(value) && value >= 5, 'a whole number, 5 or more'],
+  issueCreationMode: [(value) => ['confirm', 'auto'].includes(value), '"confirm" or "auto"'],
+  // The duplicate search queries the labels with no placeholder, so at least one is fixed.
+  auditLabels: [
+    (value) => Array.isArray(value) && value.every(isAuditLabel) && value.some((label) => !label.includes('{')),
+    `a list of labels, each plain or holding ${AUDIT_LABEL_FIELDS.map((f) => `{${f}}`).join(' or ')}, with at least one plain label`,
+  ],
   versionOrNull: [(value) => value === null || (typeof value === 'string' && SEMVER.test(value)), 'a plugin version such as "0.17.0", or null'],
 };
 
@@ -271,6 +281,10 @@ export const DEFAULTS = deepFreeze({
       swap: true,
     },
   },
+  // How the persona-audit-triage skill files issues (lib/audits.mjs, docs/personas.md#triage): "confirm" shows each
+  // draft and creates nothing before the Human's yes; "auto" creates without asking, for unsupervised runs. Every issue
+  // gets each label, `{persona}` and `{severity}` filled from its finding.
+  audits: { triage: { issueCreation: 'confirm', labels: ['persona-audit', 'persona:{persona}', 'severity:{severity}'] } },
   reviewEngine: 'auto',
   reviewVisual: { baseUrl: null },
 });

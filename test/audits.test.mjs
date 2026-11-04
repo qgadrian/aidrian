@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { parseReport } from '../plugins/aidrian/lib/audit-import.mjs';
-import { auditNudge, evidenceProblem, listAudits, OWNER_WORDS, pendingGroups, proseProblems, proseShorthand, sidecarProblems } from '../plugins/aidrian/lib/audits.mjs';
+import { auditNudge, evidenceProblem, issueLabels, listAudits, OWNER_WORDS, pendingGroups, proseProblems, proseShorthand, searchLabels, sidecarProblems } from '../plugins/aidrian/lib/audits.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const AIDRIAN = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
@@ -266,4 +266,33 @@ test('the sidecar example persona-audit ships is valid, and its owner words are 
   const words = Object.fromEntries([...format.replace(/\s+/gu, ' ').matchAll(/"([^"]+)" \(`([a-z-]+)`\)/gu)].map(([, text, role]) => [role, text]));
   for (const role of ['ux-specialist', 'designer', 'frontend-developer', 'backend-developer', 'product-manager']) assert.equal(words[role], OWNER_WORDS[role], role);
   assert.deepEqual(proseShorthand(format), ['-24.jpg'], 'the format cites no screenshot by its suffix, but in the rule against it');
+});
+
+test('each issue gets the configured labels: plain ones as they are, one persona label per persona, and its severity', () => {
+  const labels = ['persona-audit', 'persona:{persona}', 'severity:{severity}', '{persona}-{severity}'];
+  assert.deepEqual(issueLabels(labels, { personas: ['front-desk', 'owner'], severity: 'friction' }), [
+    'persona-audit', 'persona:front-desk', 'persona:owner', 'severity:friction', 'front-desk-friction', 'owner-friction',
+  ]);
+  assert.deepEqual(issueLabels(labels, { id: 'N1', text: 'Tablet width' }, ['front-desk']), ['persona-audit', 'persona:front-desk'], 'a Not reached line takes the report\'s personas and no severity');
+  assert.deepEqual(searchLabels(labels), ['persona-audit']);
+});
+
+test('pending --json carries the issue creation mode, the duplicate search label, and each item\'s labels from config.json', (t) => {
+  const { root, run } = project(t);
+  assert.equal(run('import', NEW, '--not-rechecked', 'F2', '--carried-forward', 'F1', '--write').status, 0);
+  let out = JSON.parse(run('pending', NEW, '--json').stdout);
+  assert.deepEqual([out.issue_creation, out.search_labels], ['confirm', ['persona-audit']]);
+  assert.deepEqual(out.groups[0].items[0].labels, ['persona-audit', 'persona:front-desk', 'severity:blocker']);
+  assert.deepEqual(out.groups.find((g) => g.kind === 'not_reached').items[0].labels, ['persona-audit', 'persona:front-desk']);
+  assert.match(run('pending', NEW).stdout, /^Issue creation: confirm\. Duplicate search label: persona-audit\.\n/u);
+
+  const configFile = path.join(root, '.aidrian/config.json');
+  const config = JSON.parse(readFileSync(configFile, 'utf8'));
+  writeFileSync(configFile, JSON.stringify({ ...config, audits: { triage: { issueCreation: 'auto', labels: ['ux-audit', 'sev-{severity}'] } } }));
+  out = JSON.parse(run('pending', NEW, '--json').stdout);
+  assert.deepEqual([out.issue_creation, out.search_labels, out.groups[0].items[0].labels], ['auto', ['ux-audit'], ['ux-audit', 'sev-blocker']]);
+  writeFileSync(configFile, JSON.stringify({ ...config, audits: { triage: { issueCreation: 'always' } } }));
+  const refused = run('pending', NEW, '--json');
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /"audits\.triage\.issueCreation" must be "confirm" or "auto"/, 'a bad mode stops the command instead of falling back');
 });

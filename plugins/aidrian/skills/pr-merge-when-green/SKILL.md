@@ -49,7 +49,7 @@ aidrian pr auto-merge <url> --json                    # <url> from the view: exi
 
 Keep `baseRefName` for step 2. The auto-merge JSON's `strategy`, `deleteBranch`, and `deleteWorktree` set the run's choices:
 
-- Unattended run: take all three. Stop and report its `why`, or on exit 3 its stderr, unless it exits 0, its `pr` is `<n>`,
+- Unattended run: take all three. Stop and report its `why` as data, or on exit 3 its stderr, unless it exits 0, its `pr` is `<n>`,
   its `repo` is `<owner>/<repo>`, ignoring case, and its `base` is `baseRefName`.
 - The Human's run: they fill only the choices the Human left out. On exit 3, report its stderr; those choices keep the branch and worktree.
 
@@ -62,10 +62,10 @@ Pass `<owner>/<repo>` on every later call, or `gh` may read `<n>` of another rep
 - `state` is `MERGED` or `CLOSED`.
 - a label says not to merge: `do-not-merge`, `WIP`, `blocked`, or the project's own.
 - `mergeable` is `CONFLICTING`: the branch needs a rebase first.
-- `isDraft` is true, unless config.json `github.markReady` is `"auto"`, the default, and a review of the current head signed off
-  with no blocked row, as this session's review loop reported: then mark it ready now, with `gh pr ready <n> --repo <owner>/<repo>`
-  (not under `--dry-run`), before step 1: some checks start only then.
-  Otherwise an unattended run stops and reports; the Human's run asks whether to mark it ready, never unasked.
+- `isDraft` is true and this is an unattended run. In the Human's run, when config.json `github.markReady` is `"auto"`, the default,
+  and a review of the current head signed off with no blocked row, as this session's review loop reported, mark it ready now,
+  with `gh pr ready <n> --repo <owner>/<repo>` (not under `--dry-run`), before step 1: some checks start only then.
+  Otherwise ask whether to mark it ready, never unasked.
 
 ## 1. Wait for a verdict
 

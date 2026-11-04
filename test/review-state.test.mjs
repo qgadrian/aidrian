@@ -256,6 +256,24 @@ test('a non-member\'s repeated writes edit their own summary comment, which stil
     assert.deepEqual([unknown.length, unknown[0].body], [2, before], String(viewer));
   }
 
+  // A non-member with no comment of their own posts when GitHub refuses the member's; then edits their own. Other errors report.
+  const refused = [summary(1, 'maintainer', 'MEMBER', 12)];
+  const memberBody = refused[0].body;
+  const refusing = { ...io(refused, () => 'fork'), edit: (id, body) => {
+    if (id === 1) throw new Error('gh: Must have admin rights to Repository. (HTTP 403)');
+    refused.find((comment) => comment.id === id).body = body;
+  } };
+  assert.equal(publishState(state(2), refusing, 'x'), null);
+  assert.deepEqual([refused.length, refused[0].body], [2, memberBody]);
+  assert.equal(publishState(state(3), refusing, 'x'), null);
+  assert.deepEqual([refused.length, stateFromComment(refused[1].body, 7).revision], [2, 3]);
+  const outage = [summary(1, 'maintainer', 'MEMBER')];
+  assert.match(publishState(state(2), { ...io(outage, () => 'me'), edit: () => { throw new Error('HTTP 502'); } }, 'x'), /HTTP 502/u);
+  assert.equal(outage.length, 1);
+  const quoted = new Error('Command failed: gh api -f body=the bot said (HTTP 403)\ngh: Bad Gateway (HTTP 502)\n');
+  assert.match(publishState(state(2), { ...io(outage, () => 'me'), edit: () => { throw quoted; } }, 'x'), /HTTP 502/u);
+  assert.equal(outage.length, 1, 'a status the body only quotes posts nothing');
+
   // A member's write keeps the one comment readers take, and asks gh nothing with no non-member's summary comment there.
   const members = [summary(1, 'other-member', 'MEMBER')];
   assert.equal(publishState(state(2), io(members, () => assert.fail('no login is read')), 'x'), null);

@@ -241,6 +241,19 @@ export function summaryToEdit(comments, viewer) {
   return (login && outside.filter((comment) => comment.user?.login === login).at(-1)) || summaryComment(comments);
 }
 
+// Edits `summary`, or posts when there is none or GitHub refuses the edit: a non-member with no comment of their own can
+// edit no member's, and only GitHub knows who is one. The post supplies no record, and their next step edits it.
+export function writeSummary(summary, edit, post) {
+  if (!summary) return post();
+  try {
+    return edit(summary.id);
+  } catch (error) {
+    // gh's error ends with the status; the start of the message can quote the body, which may name one.
+    if (!/\(HTTP 403\)\s*$/u.test(error?.message ?? '')) throw error;
+    return post();
+  }
+}
+
 function currentLogin(viewer) {
   try {
     return viewer?.() ?? null;
@@ -300,12 +313,11 @@ export function refreshSummary(body, state) {
 
 // Writes `state`, already written to the state folder, to the pull request's summary comment, as the review step does,
 // so another machine reads the same record. `io` is { comments(), post(body), edit(id, body), viewer() }. With no summary
-// comment to edit (summaryToEdit), it posts one under `status`. Returns the error message, or null.
+// comment to edit (summaryToEdit), or none this user may edit, it posts one under `status`. Returns the error message, or null.
 export function publishState(state, io, status) {
   try {
     const summary = summaryToEdit(io.comments(), io.viewer);
-    if (summary) io.edit(summary.id, refreshSummary(summary.body, state));
-    else io.post(summaryBody(state, null, status));
+    writeSummary(summary, (id) => io.edit(id, refreshSummary(summary.body, state)), () => io.post(summaryBody(state, null, status)));
     return null;
   } catch (error) {
     return error.message;

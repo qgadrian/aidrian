@@ -364,7 +364,9 @@ test('pr-auto-merge runs only in the run that marked the pull request ready, and
   assert.match(steps, /^## Steps 1\. Stop and report why unless this run marked this pull request ready with `gh pr ready`:/u, 'the precondition is the first step');
   assert.ok(steps.indexOf('this run marked') < steps.indexOf('aidrian pr auto-merge <n>'), 'it comes before the command');
   const green = readFileSync(path.join(PLUGIN, 'skills/pr-merge-when-green/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
-  assert.match(green, /Otherwise an unattended run stops and reports; the Human's run asks whether to mark it ready, never unasked\./u);
+  assert.match(green, /`isDraft` is true and this is an unattended run\. In the Human's run, when config\.json `github\.markReady`/u, 'an unattended run always stops on a draft');
+  assert.match(green, /Otherwise ask whether to mark it ready, never unasked\./u);
+  assert.match(steps, /never one run by hand to reach this skill/u, 'a hand-run ready does not count');
   assert.match(green, /they fill only the choices the Human left out\. On exit 3, report its stderr; those choices keep the branch and worktree\./u, 'a choice the Human named stands on exit 3');
 });
 

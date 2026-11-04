@@ -264,8 +264,8 @@ The command's `strategy`, `deleteBranch`, and `deleteWorktree` only fill the cho
 - `MEMBER` covers every organization member, so a read-only member or an invited collaborator can still forge a record.
 - The switch does not stop a session with a shell or a forged local record.
   For proof, protect the branch with a required review from a second account, as [Sign-off by the Human](review.md#sign-off-by-the-human) says.
-- The guard does not apply an `apply_patch`, so it does not see a value changed on its own line with the key on an unchanged context line,
-  or a key spelled with a JSON escape.
+- The config guard does not apply an `apply_patch`, so it does not see a value changed on its own line with the key on an unchanged context line,
+  or a key spelled with a JSON escape. It also does not follow a patch's `*** Move to:` and `*** Delete File:` routes.
 
 ### Cleanup after the merge
 

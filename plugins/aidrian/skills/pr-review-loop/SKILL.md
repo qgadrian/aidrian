@@ -116,9 +116,9 @@ Report, in this order: the triage table; what changed per file with its triage n
 commands with pass or fail; the replies posted, and any that failed; and a sign-off naming the addressed,
 not applicable, accepted, and blocked rows, the residual risks, and whether the pull request is ready for another review.
 On a draft, when config.json `github.markReady` is `"auto"`, the default, or the Human asked in this session,
-mark it ready yourself with `gh pr ready <n>` once a review of the current head signed off with no blocked row,
+mark it ready with `gh pr ready <n>` once a review of the current head signed off with no blocked row,
 and `aidrian pr checks <n>` says ready. With `"ask"` and no such request, report convergence; the author marks it ready.
-A fix pushed after that review sends the loop back to step 1 first. Pending or failing: leave it a draft and say why.
-After `gh pr ready`, push nothing more. Then run the `pr-merge-when-green` skill when `aidrian pr auto-merge <n>` exits 0;
-otherwise report the line it printed. Merge only through that step, and only after this run marked the draft ready.
+A fix pushed after that review sends the loop back to step 1. Pending or failing: leave it a draft and say why.
+After `gh pr ready`, push nothing more. Then run the `pr-merge-when-green` skill when `aidrian pr auto-merge <n>` exits 0, with `--unattended`;
+otherwise report what it printed. Merge only through that step, and only after this run marked the draft ready.
 Run as a step of another skill or agent, never mark it ready or merge: those are the caller's steps, after all its reviews.

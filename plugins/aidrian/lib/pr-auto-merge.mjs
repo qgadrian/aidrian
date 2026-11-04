@@ -5,20 +5,25 @@
 //      folder override, or a local ref, so a pull request cannot raise its own ceiling, a feature base cannot raise the
 //      default branch's, a fork checkout reads the upstream's, and no stale fetch keeps an old one. The strategy and
 //      the cleanup come from the default branch.
-//   2. local: this machine opted in, `github.autoMerge: "on"` in the local file (project.localAutoMerge).
-//   3. author: the pull request is the gh user's own.
-//   4. review: this machine's review record (lib/review/state.mjs), scoped to the pull request's repository, holds a
+//   2. checks: the default branch names `github.requiredChecks`, and the working copy's three check lists are the
+//      default branch's. A named check that has not registered is pending, so naming them keeps a draft's partial set of
+//      checks from reading as ready. `aidrian pr checks` reads the working copy, so equal lists make its verdict the
+//      default branch's policy, and a branch cannot relax the checks that judge its own merge. A working copy config
+//      that cannot be read, or has errors, is off too.
+//   3. local: this machine opted in, `github.autoMerge: "on"` in the local file (project.localAutoMerge).
+//   4. author: the pull request is the gh user's own.
+//   5. review: this machine's review record (lib/review/state.mjs), scoped to the pull request's repository, holds a
 //      finished outcome (`received`, `none_needed`) on the pull request's current head, and nothing is owed.
 // gh reads: one `gh pr view` for the number, head, base, author, and URL; `gh api repos/<repo>` for the default
 // branch; each branch's folder override and config.json through the contents API, at `refs/heads/<branch>` (once when
-// the base is the default branch); and, only when the team and the machine both allow it, `gh api user` for the login.
+// the base is the default branch); and, only when the team, the checks, and the machine all allow it, `gh api user` for the login.
 // Every `gh api` call names the host of the pull request's URL. A gh failure prints gh's last line of stderr.
 // stdout: one line, or with --json { effective, reason, allow, local, strategy, deleteBranch, deleteWorktree, pr, head,
 // repo, base }: `allow` is true only when both branches allow it, and the other team values are the default branch's.
 // When the reason is local and the local file has errors, they go to stderr.
 // Exit 0 on, 1 off, 3 error (an argument, a gh read, or a pull request gh describes only in part).
 
-import { configFromText, resolveAutoMerge } from './config.mjs';
+import { configFromText, loadConfig, resolveAutoMerge } from './config.mjs';
 import { runGh } from './gh.mjs';
 import { configPathIn } from './project.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
@@ -27,6 +32,8 @@ import { scoped } from './rules/github/merge-review.mjs';
 
 const VIEW_FIELDS = 'number,headRefOid,baseRefName,author,url';
 const SHA = /^[0-9a-f]{40}$/iu;
+// The `github` keys `aidrian pr checks` judges by (pr-checks.mjs computeVerdict).
+const CHECK_LISTS = ['requiredChecks', 'conditionalChecks', 'ignoreCancelledChecks'];
 
 // What a failed gh call says: its last non-empty line of stderr, else the first line of the error's message.
 export const ghError = (error) => String(error?.stderr ?? '').split('\n').map((line) => line.trim()).filter(Boolean).at(-1) ??
@@ -108,6 +115,17 @@ export function reviewProblem(state, head) {
   return null;
 }
 
+// Why the check policy keeps auto-merge off, or null. `policy` is the default branch's `github` config, `working` is
+// loadConfig's answer for the checkout `aidrian pr checks` reads, and `where` names the default branch in the message.
+export function checksProblem(policy, working, where) {
+  if (!policy.requiredChecks.length) return `the default branch names no required checks (github.requiredChecks on ${where}), so a check that has not registered would read as passed`;
+  if (!working.current || working.errors.length) return `the working copy's config cannot be read, and aidrian pr checks reads it${working.errors.length ? `: ${working.errors[0]}` : ''}`;
+  const same = (a, b) => new Set(a).size === new Set(b).size && a.every((each) => b.includes(each));
+  const differing = CHECK_LISTS.filter((key) => !same(policy[key], working.config.github[key]));
+  if (differing.length) return `the working copy's ${differing.map((key) => `github.${key}`).join(' and ')} differ from ${where}, and aidrian pr checks reads the working copy`;
+  return null;
+}
+
 const cleanup = (team) => `${team.deleteBranch ? 'delete' : 'keep'} the branch, ${team.deleteWorktree ? 'delete' : 'keep'} the worktree`;
 
 // The CLI body. `gh` is the test seam: (args) → stdout, throwing as runGh does.
@@ -127,9 +145,12 @@ export function runAutoMerge(argv, project, { gh = (args) => runGh(args, { cwd: 
   if (typeof pr === 'string') return fail(pr);
   let team;
   let refusing;
+  let main;
+  let policy;
   try {
-    const main = defaultBranch(gh, pr);
-    const onDefault = branchConfig(gh, pr, main).github.autoMerge;
+    main = defaultBranch(gh, pr);
+    policy = branchConfig(gh, pr, main).github;
+    const onDefault = policy.autoMerge;
     const onBase = pr.base === main ? onDefault : branchConfig(gh, pr, pr.base).github.autoMerge;
     refusing = [...new Set([[main, onDefault], [pr.base, onBase]].filter(([, each]) => each.allow !== true).map(([name]) => name))];
     team = { ...onDefault, allow: refusing.length === 0 };
@@ -141,6 +162,10 @@ export function runAutoMerge(argv, project, { gh = (args) => runGh(args, { cwd: 
   let why = reason === 'team'
     ? `the team does not allow it (github.autoMerge.allow on ${pr.repo} ${refusing.join(' and ')})`
     : reason === 'local' ? `this machine has not opted in (github.autoMerge in ${project.paths.local})` : null;
+  if (reason !== 'team') {
+    const problem = checksProblem(policy, loadConfig(project), `${pr.repo} ${main}`);
+    if (problem) [effective, reason, why] = [false, 'checks', problem];
+  }
   if (effective) {
     let user;
     try {

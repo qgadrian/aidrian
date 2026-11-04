@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { parse } from 'yaml';
 
 import { pluginTags } from '../plugins/aidrian/lib/knowledge.mjs';
+import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
+import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { bannedPatterns } from '../scripts/banned-terms.mjs';
 import { CLAUDE_AGENTS, GROUPS, readAgents } from '../scripts/build.mjs';
 
@@ -331,6 +334,66 @@ test('each skill that marks a pull request ready merges only through pr-merge-wh
   const hardRules = skill('issue-implement/references/hard-rules.md');
   assert.match(hardRules, /This skill leaves a draft/, 'issue-implement itself still leaves a draft');
   assert.match(hardRules, /`pr-merge-when-green` skill, started by the Human, or by the caller skill when `aidrian pr auto-merge <n>` exits 0/);
+});
+
+test('pr-merge-when-green runs only on the Human\'s request or --unattended under auto-merge, and every caller passes it', () => {
+  const dir = path.join(PLUGIN, 'skills/pr-merge-when-green');
+  const text = readFileSync(path.join(dir, 'SKILL.md'), 'utf8');
+  // Other skills run it, so the model must be able to.
+  assert.doesNotMatch(text.split(/^---$/mu)[1], /disable-model-invocation/u);
+  const rule = text.slice(text.indexOf('\n1. Merge only'), text.indexOf('\n2. Never `gh pr merge --auto`')).replace(/\s+/g, ' ');
+  assert.match(rule, /the Human's explicit request/u);
+  assert.match(rule, /`--unattended` when `aidrian pr auto-merge` exits 0/u);
+  assert.match(rule, /Anything else.*stops the run/u);
+  for (const file of ['pr-review-loop/SKILL.md', 'orchestration/SKILL.md', 'autopilot/references/phases.md']) {
+    const caller = readFileSync(path.join(PLUGIN, 'skills', file), 'utf8').replace(/\s+/g, ' ');
+    assert.match(caller, /`pr-merge-when-green` skill when `aidrian pr auto-merge <n>` exits 0, with `--unattended`/u, `${file} passes --unattended`);
+  }
+});
+
+test('pr-merge-when-green pins each merge to the judged head, in order, and cleans up one worktree without --force', () => {
+  const dir = path.join(PLUGIN, 'skills/pr-merge-when-green');
+  const files = ['SKILL.md', ...readdirSync(path.join(dir, 'references')).map((file) => `references/${file}`)];
+  const fences = (text) => [...text.matchAll(/^```[a-z]*\n([\s\S]*?)^```$/gmu)].map((match) => match[1]);
+  const merges = files.flatMap((file) => fences(readFileSync(path.join(dir, file), 'utf8')).join('\n').split('\n').filter((line) => /\bgh pr merge\b/u.test(line)));
+  assert.equal(merges.length, 1, 'one merge command');
+  for (const line of merges) {
+    assert.match(line, /--match-head-commit <sha>/u);
+    assert.doesNotMatch(line, /--auto\b|--admin\b/u);
+  }
+  const text = readFileSync(path.join(dir, 'SKILL.md'), 'utf8');
+  const section = (start, end) => text.slice(text.indexOf(start), end ? text.indexOf(end) : undefined);
+  const merge = section('## 2. Merge', '## 3. Confirm');
+  const order = ['`aidrian pr auto-merge`', '`gh pr view`', 'gh pr merge <n>'].map((part) => merge.indexOf(part));
+  assert.ok(order.every((at) => at !== -1) && order[0] < order[1] && order[1] < order[2], `step 2 order: ${order}`);
+  assert.match(merge.replace(/\s+/g, ' '), /when `isDraft` is true \(no `gh pr ready` here\)/u, 'a draft at the merge always stops');
+  assert.match(merge, /`baseRefName` is not step 0's/u, 'every run compares the base');
+  const preflight = section('## 0. Preflight', '## 1. Wait');
+  const bullets = [...preflight.matchAll(/^- (`state`|a label|`mergeable`|`isDraft`)/gmu)].map((match) => match[1]);
+  assert.equal(bullets.at(-1), '`isDraft`', 'ready runs only after every other stop passed');
+  const cleanup = section('## 5. Cleanup');
+  const [command] = fences(cleanup);
+  assert.match(command, /aidrian worktree cleanup execute --only <path> --min-age 0\b/u);
+  assert.doesNotMatch(command, /--force/u);
+});
+
+test('the auto-merge JSON fields pr-merge-when-green names are keys of the result', (t) => {
+  const text = readFileSync(path.join(PLUGIN, 'skills/pr-merge-when-green/SKILL.md'), 'utf8');
+  const named = ['strategy', 'deleteBranch', 'deleteWorktree', 'pr', 'repo', 'base', 'head', 'reason'];
+  for (const field of named) assert.ok(text.includes(`\`${field}\``), `the skill names ${field}`);
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-merge-json-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const out = [];
+  t.mock.method(console, 'log', (line) => out.push(line));
+  const gh = (args) => {
+    if (args[0] === 'pr') return JSON.stringify({ number: 7, headRefOid: 'a'.repeat(40), baseRefName: 'main', author: { login: 'a' }, url: 'https://github.com/o/r/pull/7' });
+    if (args[3] === 'repos/o/r') return JSON.stringify({ default_branch: 'main' });
+    throw Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)' });
+  };
+  assert.equal(runAutoMerge(['7', '--json'], projectAt(dir), { gh }), 1);
+  t.mock.restoreAll();
+  const keys = Object.keys(JSON.parse(out[0]));
+  for (const field of named) assert.ok(keys.includes(field), `the result has ${field}`);
 });
 
 test('no plugin text runs gh pr merge --auto: it waits only for required checks', () => {

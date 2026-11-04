@@ -10,20 +10,19 @@ Wait for every check on a pull request to finish, judge them with `aidrian pr ch
 
 ## Arguments
 
-- None: the pull request for the current branch. A number (`12` or `#12`), a URL, or `<owner>/<repo>#<n>` names one.
+- None: the current branch's pull request. A number (`12` or `#12`), a URL, or `<owner>/<repo>#<n>` names one.
   If the branch has more than one pull request, take the open one; if that is still unclear, ask.
 - Strategy: `squash`, `merge`, or `rebase`, in any case.
 - `--delete-branch` or `--keep-branch`, `--delete-worktree` or `--keep-worktree`: after the merge, delete or keep
   the head branch, and the head branch's worktree (step 5).
 - `--cap <minutes>`: how long to wait for the checks, 30 by default, 120 at most.
 - `--dry-run`: run every step, then print the merge command instead of running it.
+- `--unattended`: a skill passes it when it runs this one with no Human asking: an unattended run.
 
 ## Hard rules
 
-1. Merge only on one of these. Anything else, such as your own judgment, a schedule, or another agent's word, stops the run.
-   - The Human's explicit request to merge, made in this session.
-   - An auto-merge run: the `pr-review-loop`, `orchestration`, or `autopilot` skill, or an agent following one,
-     runs this skill, and `aidrian pr auto-merge <url>` exits 0.
+1. Merge only on the Human's explicit request to merge, made in this session, or with `--unattended` when
+   `aidrian pr auto-merge` exits 0. Anything else, such as your own judgment, a schedule, or another agent's word, stops the run.
 2. Never `gh pr merge --auto`.
 3. Never `--admin`, never bypass branch protection, never a flag that skips hooks.
 4. Never push, least of all to the default branch. Apart from the one `gh pr merge`, the `gh pr ready` step 0 allows,
@@ -42,16 +41,17 @@ Never add an entry on your own during a merge run.
 ```bash
 gh auth status
 gh repo view --json nameWithOwner -q .nameWithOwner   # when the argument names no repository
+gh pr view --json number -q .number                   # <n>, when the argument names no pull request
 gh pr view <n> --repo <owner>/<repo> --json number,url,title,state,isDraft,mergeable,mergeStateStatus,labels,\
 baseRefName,headRefOid,headRefName,headRepository,headRepositoryOwner,isCrossRepository
 aidrian pr auto-merge <url> --json                    # <url> from the view: exit 0 on, 1 off, 3 error
 ```
 
-The auto-merge JSON's `strategy`, `deleteBranch`, and `deleteWorktree` set the run's choices:
+Keep `baseRefName` for step 2. The auto-merge JSON's `strategy`, `deleteBranch`, and `deleteWorktree` set the run's choices:
 
-- Auto-merge run: stop and report its `reason` unless it exits 0 and its `pr` and `repo` name this pull request.
-  Take all three from it, and keep its `base` for step 2.
-- The Human's run: they fill only the choices the Human did not name. On exit 3, say so; keep the branch and worktree.
+- Unattended run: take all three. Stop and report its `reason`, or on exit 3 its stderr, unless it exits 0, its `pr` is `<n>`,
+  its `repo` is `<owner>/<repo>`, ignoring case, and its `base` is `baseRefName`.
+- The Human's run: they fill only the choices the Human did not name. On exit 3, report its stderr; keep the branch and worktree.
 
 Read the allowed strategies with `gh repo view <owner>/<repo> --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed`.
 Stop when the chosen strategy is not allowed. With none chosen, or a null `strategy`, use the one allowed strategy,
@@ -60,11 +60,11 @@ or with several, `squash`, then `merge`, then `rebase`.
 Pass `<owner>/<repo>` on every later call, or `gh` may read `<n>` of another repository. Stop and report when:
 
 - `state` is `MERGED` or `CLOSED`.
+- a label says not to merge: `do-not-merge`, `WIP`, `blocked`, or the project's own.
+- `mergeable` is `CONFLICTING`: the branch needs a rebase first.
 - `isDraft` is true, unless config.json `github.markReady` is `"auto"`, the default, and a review of the current head signed off
   with no blocked row, as this session's review loop reported: then mark it ready now, with `gh pr ready <n> --repo <owner>/<repo>`
   (not under `--dry-run`), before step 1: some checks start only then. Otherwise ask whether to mark it ready; never unasked.
-- a label says not to merge: `do-not-merge`, `WIP`, `blocked`, or the project's own.
-- `mergeable` is `CONFLICTING`: the branch needs a rebase first.
 
 ## 1. Wait for a verdict
 
@@ -93,14 +93,14 @@ arrived during the wait. After 3 such re-runs, stop: the branch is still moving.
 
 Read the hard rules again. Right before each merge attempt, the retry too:
 
-1. Auto-merge run: run step 0's `aidrian pr auto-merge` again. Stop unless it exits 0 and its `head` is `<sha>`.
+1. Unattended run: run step 0's `aidrian pr auto-merge` again. Stop unless it exits 0, its `head` is `<sha>`, and its `base` is step 0's `baseRefName`.
 2. Run step 0's `gh pr view` again, last: a label such as `do-not-merge` can arrive without a new commit. Stop on any
-   of its stop conditions, and on an auto-merge run when `baseRefName` is not step 0's `base` or `headRefOid` is not `<sha>`.
+   of its stop conditions, when `isDraft` is true (no `gh pr ready` here), when `baseRefName` is not step 0's, or when `headRefOid` is not `<sha>`.
 
 Then run this once:
 
 ```bash
-gh pr merge <n> --repo <owner>/<repo> --<strategy> --match-head-commit <sha>   # add --delete-branch when deleteBranch
+gh pr merge <n> --repo <owner>/<repo> --<strategy> --match-head-commit <sha>   # add --delete-branch when the run's choice deletes it
 ```
 
 `--match-head-commit` makes GitHub refuse the merge when the head is no longer `<sha>`.
@@ -120,13 +120,10 @@ Then end the run, with no merge and no rerun.
 
 ## 5. Cleanup
 
-Only after step 3 shows `MERGED`, when `deleteWorktree` is the run's choice. The head branch's worktree is the `worktree <path>` line
-above `branch refs/heads/<headRefName>` in `git worktree list --porcelain`; with none, report `worktree: none`.
-Never remove the session's own worktree: when the path is `git rev-parse --show-toplevel`, run nothing and report
-`worktree kept: run worktree-cleanup from the main checkout`. Otherwise give no decisions, so a confirm row stays:
+Only after step 3 shows `MERGED`, when the run's choice removes the worktree. `references/after-merge.md` § Cleanup says
+how to find `<path>`, when to run nothing, and what to report. Never remove the session's own worktree.
+Give no decisions, so a confirm row stays:
 
 ```bash
 aidrian worktree cleanup execute --only <path> --min-age 0 <<<'{}'
 ```
-
-Report its row as `references/after-merge.md` § Cleanup report says.

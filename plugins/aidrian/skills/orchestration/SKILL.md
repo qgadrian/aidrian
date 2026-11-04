@@ -68,7 +68,7 @@ The stop hook sends a subagent back once when it stops with one still running.
    is `"auto"`, the default, or the Human asked for that, and `aidrian pr checks <n>` says ready; then push nothing more.
    Otherwise it stays a draft.
 8. **Merge.** Once step 7 marked it ready in this run, run the `pr-merge-when-green` skill when `aidrian pr auto-merge <n>`
-   exits 0; otherwise report the line it printed and stop. Merge only through this step, never otherwise.
+   exits 0, with `--unattended`; otherwise report the line it printed and stop. Merge only through this step, never otherwise.
 
 ## 4. Review findings
 

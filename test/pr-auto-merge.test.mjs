@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { commands } from '../plugins/aidrian/lib/pr.mjs';
+import { computeVerdict } from '../plugins/aidrian/lib/pr-checks.mjs';
 import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
@@ -14,19 +15,20 @@ const HEAD = 'abcdef1234567890abcdef1234567890abcdef12';
 const OLD = '1234567890abcdef1234567890abcdef12345678';
 const TEAM = { allow: true, strategy: 'squash', deleteBranch: true, deleteWorktree: false };
 const URL7 = 'https://github.com/acme/notes/pull/7';
-const configText = (autoMerge) => JSON.stringify({ version: 1, github: { autoMerge } });
+const CHECKS = { requiredChecks: ['e2e'], conditionalChecks: ['docs'], ignoreCancelledChecks: ['preview'] };
+const configText = (autoMerge, lists = CHECKS) => JSON.stringify({ version: 1, github: { ...lists, autoMerge } });
 
 // A temporary git repository (never a real one, and no GIT_DIR) whose working copy commits `working` as the team's
 // github.autoMerge, with origin at `origin`, and a `.aidrian.local.json` that sets the machine's switch to `local`.
 // The project's state folder is inside it.
-function repo(t, { working = { ...TEAM, allow: true }, local = 'on', origin = 'git@github.com:acme/notes.git' } = {}) {
+function repo(t, { working = { ...TEAM, allow: true }, lists = CHECKS, local = 'on', origin = 'git@github.com:acme/notes.git' } = {}) {
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-auto-merge-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
   git('init', '-q', '-b', 'main');
   git('remote', 'add', 'origin', origin);
   mkdirSync(path.join(dir, '.aidrian'));
-  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' }, github: { autoMerge: working } }));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' }, github: { ...lists, autoMerge: working } }));
   git('add', '.aidrian/config.json');
   git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'config');
   if (local !== null) writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify(typeof local === 'string' ? { github: { autoMerge: local } } : local));
@@ -235,10 +237,11 @@ test('review: a record for another repository with the same number is not this p
   assert.deepEqual(reasonOf(t, r), [1, 'review']);
 });
 
-test('the first failing reason wins, in the order team, local, author, review', (t) => {
+test('the first failing reason wins, in the order team, checks, local, author, review', (t) => {
   const r = repo(t, { local: 'off' });
   const other = { author: { login: 'someone-else' } };
   assert.equal(reasonOf(t, r, { view: other, files: { 'acme/notes@main:.aidrian/config.json': configText({ ...TEAM, allow: false }) } })[1], 'team');
+  assert.equal(reasonOf(t, r, { view: other, files: { 'acme/notes@main:.aidrian/config.json': configText(TEAM, {}) } })[1], 'checks');
   assert.equal(reasonOf(t, r, { view: other })[1], 'local');
 });
 
@@ -350,4 +353,67 @@ test('a default branch gh cannot name exits 3', (t) => {
     assert.deepEqual([result.code, result.out], [3, []]);
     assert.match(result.err.join('\n'), /default branch/u);
   }
+});
+
+test('no required checks named on the default branch is off (checks): a check that has not registered would read as passed', (t) => {
+  const r = repo(t, { lists: {} });
+  r.record((state) => finished(state));
+  const files = { 'acme/notes@main:.aidrian/config.json': configText(TEAM, {}) };
+  const result = run(t, r, ['7', '--json'], { files });
+  assert.deepEqual([result.code, json(result).reason, json(result).effective, userCalls(result.calls)], [1, 'checks', false, []]);
+  const human = run(t, r, ['7'], { files });
+  assert.match(human.out[0], /^auto-merge off for #7: the default branch names no required checks \(github\.requiredChecks on acme\/notes main\)/u);
+  // A feature base's list does not count: the default branch's policy judges the merge.
+  const onBase = { ...files, 'acme/notes@feat/stack:.aidrian/config.json': configText(TEAM) };
+  assert.deepEqual(reasonOf(t, r, { view: { baseRefName: 'feat/stack' }, files: onBase }), [1, 'checks']);
+});
+
+test('a working copy that relaxes a check list, committed or uncommitted, is off (checks)', (t) => {
+  for (const [key, weaker] of [['requiredChecks', ['unit']], ['conditionalChecks', ['docs', 'e2e']], ['ignoreCancelledChecks', ['preview', 'e2e']]]) {
+    const committed = repo(t, { lists: { ...CHECKS, [key]: weaker } });
+    committed.record((state) => finished(state));
+    assert.deepEqual(reasonOf(t, committed), [1, 'checks'], `committed ${key}`);
+    const human = run(t, committed, ['7']);
+    assert.match(human.out[0], new RegExp(`working copy's github\\.${key} differ from acme/notes main`, 'u'));
+
+    const uncommitted = repo(t);
+    uncommitted.record((state) => finished(state));
+    assert.deepEqual(reasonOf(t, uncommitted), [0, null], 'the lists match before the edit');
+    writeFileSync(path.join(uncommitted.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' }, github: { ...CHECKS, [key]: weaker, autoMerge: TEAM } }));
+    assert.deepEqual(reasonOf(t, uncommitted), [1, 'checks'], `uncommitted ${key}`);
+  }
+  // A list dropped altogether differs too.
+  const dropped = repo(t, { lists: { requiredChecks: ['e2e'] } });
+  dropped.record((state) => finished(state));
+  assert.deepEqual(reasonOf(t, dropped), [1, 'checks'], 'no conditionalChecks in the working copy');
+});
+
+test('matching check lists are on, compared as sets: order and repeats do not matter', (t) => {
+  const r = repo(t, { lists: { requiredChecks: ['unit', 'e2e', 'e2e'], conditionalChecks: ['docs'], ignoreCancelledChecks: ['preview'] } });
+  r.record((state) => finished(state));
+  const files = { 'acme/notes@main:.aidrian/config.json': configText(TEAM, { ...CHECKS, requiredChecks: ['e2e', 'unit'] }) };
+  assert.deepEqual(reasonOf(t, r, { files }), [0, null]);
+});
+
+test('a working copy config that cannot be read, or has errors, is off (checks), never a crash', (t) => {
+  const write = (r, text) => writeFileSync(path.join(r.dir, '.aidrian/config.json'), text);
+  for (const [name, text] of [['not JSON', '{'], ['another version', JSON.stringify({ version: 99 })], ['a bad value', JSON.stringify({ version: 1, github: { ...CHECKS, requiredChecks: 'e2e' } })]]) {
+    const r = repo(t);
+    r.record((state) => finished(state));
+    write(r, text);
+    assert.deepEqual(reasonOf(t, r), [1, 'checks'], name);
+  }
+  const gone = repo(t);
+  gone.record((state) => finished(state));
+  rmSync(path.join(gone.dir, '.aidrian/config.json'));
+  assert.deepEqual(reasonOf(t, gone), [1, 'checks'], 'no config file');
+  assert.match(run(t, gone, ['7']).out[0], /working copy's config cannot be read/u);
+});
+
+test('a required check missing from the rows is pending, so a draft\'s partial set of checks is not ready', () => {
+  const rows = [{ name: 'lint', state: 'SUCCESS' }];
+  const named = computeVerdict(rows, { requiredChecks: ['e2e'] });
+  assert.equal(named.verdict, 'pending');
+  assert.deepEqual(named.pending, ['e2e (required, not reported yet)']);
+  assert.equal(computeVerdict(rows, { requiredChecks: [] }).verdict, 'ready', 'why auto-merge needs named required checks');
 });

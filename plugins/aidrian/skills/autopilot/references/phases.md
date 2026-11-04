@@ -88,6 +88,6 @@ Then:
    the default, or the Human asked for that at launch, the loop ended at sign-off, and `aidrian pr checks <n>` says ready.
    Pending or failing: leave it a draft and say why.
    After `gh pr ready`, push nothing more: a later finding belongs in a new pull request.
-2. Once step 1 marked it ready in this run, run the `pr-merge-when-green` skill when `aidrian pr auto-merge <n>` exits 0.
+2. Once step 1 marked it ready in this run, run the `pr-merge-when-green` skill when `aidrian pr auto-merge <n>` exits 0, with `--unattended`.
    Otherwise keep the line it printed for the report, and stop. Merge only through that step, never otherwise.
 3. Write the last checkpoint when allowed, then the report of `SKILL.md` § Report.

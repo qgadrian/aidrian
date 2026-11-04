@@ -37,7 +37,8 @@ const ACTIONS = {
     }
   },
   checks: async (args) => (await import('./pr-checks.mjs')).runChecks(args, config(3)),
-  // `auto-merge` reads the team keys from the base branch, not the working copy, so it loads no working-copy config.
+  // `auto-merge` reads the team keys from GitHub, and loads the working copy's config only to compare its check lists,
+  // so a broken one is its off reason, never an error here.
   'auto-merge': async (args) => (await import('./pr-auto-merge.mjs')).runAutoMerge(args, projectAt(process.cwd())),
   disposition: async (args) => (await import('./finding-disposition.mjs')).runDisposition(args),
   request: async (args) => {

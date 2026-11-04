@@ -248,6 +248,9 @@ The command's `strategy`, `deleteBranch`, and `deleteWorktree` only fill the cho
 - A required check that runs only on ready pull requests keeps the caller's ready step from passing, so auto-merge will not fire for it.
 - `deleteBranch` conflicts with a merge queue.
 - The `paths` list is fixed: it misses a project folder that `.aidrian.json` moves elsewhere.
+  It also misses other files that instruct a session,
+  such as a knowledge doc under `docs/`, a doc `CLAUDE.md` imports, a nested `.claude` folder, or `CLAUDE.local.md`.
+  In a pull request that also changes code, only the review reads those.
 - A branch can still change what a workflow runs, such as `package.json` scripts or tests, and only the review reads that.
 - The `outsider` check reads only the pull request's comments and reviews, so text reaching a run by other routes, such as an issue, is not seen.
 - `MEMBER` covers every organization member, so a read-only member or an invited collaborator can still forge a record.

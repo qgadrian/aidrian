@@ -717,3 +717,49 @@ test('a key resolves only within the selected report and the run it replaces: an
   const { reports } = JSON.parse(readFileSync(triageFile, 'utf8'));
   assert.deepEqual([Object.keys(reports[NEW]), Object.keys(reports[OLD]).sort(), Object.keys(reports[other])], [['F4'], ['F2', 'F3'], ['F1']]);
 });
+
+test('a sidecar is checked against the report it replaces: that report exists, and each key it sorts names a finding of it', (t) => {
+  const { audits, run } = project(t);
+  const file = path.join(audits, 'front-desk-2026-05-02-2.json');
+  const write = (changes) => {
+    const draft = JSON.parse(run('import', NEW, '--json').stdout).draft;
+    writeFileSync(file, JSON.stringify({ ...draft, ...changes }));
+  };
+  const entry = () => JSON.parse(run('list', '--json').stdout).find((r) => r.report === NEW);
+
+  // import refuses an unknown key, naming no id.
+  let result = run('import', NEW, '--not-rechecked', 'F2,F999', '--carried-forward', 'F1', '--write');
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /carried_forward and not_rechecked: 1 key names no finding of the front-desk read-only run on 2026-05-02/u);
+  noIds(result.stderr);
+  assert.equal(existsSync(file), false);
+
+  // A sidecar already on disk with an unknown key is one invalid report: no placeholder finding, and the real items wait.
+  write({ not_rechecked: ['F2', 'F999'] });
+  assert.deepEqual([entry().status, entry().problems], ['invalid', ['carried_forward and not_rechecked: 1 key names no finding of the front-desk read-only run on 2026-05-02']]);
+  assert.doesNotMatch(run('list').stdout, /no longer holds/u);
+  assert.match(run('list').stdout, /replaced by the front-desk walk on 2026-05-02; its 3 findings have no decision yet/u, 'the replaced report\'s findings still wait for the sort');
+  assert.match(run('check', NEW).stderr, /- carried_forward and not_rechecked: 1 key names no finding/u);
+  assert.match(run('pending', NEW).stderr, /invalid sidecar: carried_forward and not_rechecked: 1 key names no finding/u);
+  assert.match(run('record', NEW, 'F1', 'defer').stderr, /invalid sidecar/u);
+
+  // The report it replaces is gone: a clear problem, and with no such report nothing is hidden.
+  write({ not_rechecked: ['F2', 'F3'], carried_forward: ['F1'] });
+  assert.equal(entry().status, 'ok', 'a real sidecar stays valid');
+  rmSync(path.join(audits, OLD));
+  const gone = /supersedes: names the front-desk audit on 2026-05-02, which is not in the audits folder: restore it, or write the sidecar with supersedes null/u;
+  assert.equal(entry().status, 'invalid');
+  assert.match(entry().problems[0], gone);
+  assert.match(run('check', NEW).stderr, gone);
+  rmSync(file);
+  result = run('import', NEW, '--write');
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, gone);
+  noIds(result.stderr);
+  // With supersedes null, through a draft file, it imports.
+  const draft = path.join(audits, 'draft.json');
+  const parsed = JSON.parse(run('import', NEW, '--json').stdout).draft;
+  writeFileSync(draft, JSON.stringify({ ...parsed, supersedes: null, not_reached: parsed.not_reached.map(({ covered_by: coveredBy, ...line }) => line) }));
+  assert.equal(run('import', NEW, '--from', draft, '--write').status, 0);
+  assert.equal(entry().status, 'ok');
+});

@@ -111,7 +111,7 @@ function locate(dir, name) {
 function context(dir, report, supersedes) {
   const reports = listAudits(dir);
   const entry = reports.find((each) => each.report === report);
-  const older = reports.find((each) => each.report === (supersedes ?? entry?.supersedes)) ?? null;
+  const older = reports.find((each) => each.report === (supersedes === undefined ? entry?.supersedes : supersedes)) ?? null;
   const replacedTitle = (id) => older?.findings.find((finding) => finding.id === id)?.title ?? null;
   return { entry, older, replacedTitle, title: entry?.title ?? reportTitle(report) };
 }
@@ -127,9 +127,9 @@ function check({ rest: [name], dir }) {
   } catch (error) {
     return fail(`${file}: invalid JSON (${error.message})`);
   }
-  const { title, replacedTitle } = context(dir, report, value?.supersedes);
+  const { older, title, replacedTitle } = context(dir, report, value?.supersedes ?? null);
   const prose = readFileSync(path.join(dir, report), 'utf8');
-  const problems = [...sidecarProblems(value, { dir, report, replacedTitle }), ...proseProblems(prose, value)];
+  const problems = [...sidecarProblems(value, { dir, report, replacedTitle, replaced: older }), ...proseProblems(prose, value)];
   if (problems.length) return fail([`The sidecar of ${title} (${file}):`, ...problems.map((each) => `- ${each}`)].join('\n'));
   // A warning, not a problem: a report written before this rule keeps its text, and the reader still gets it.
   for (const task of taskNumbers(prose)) console.error(`warning: the report says "${task}", which no reader can place: name the task by its title`);
@@ -157,7 +157,7 @@ function importReport({ values, rest: [name], dir }) {
   } else {
     ({ warnings, ...draft } = parseReport(readFileSync(path.join(dir, report), 'utf8'), { report, dir, ownerWords: OWNER_WORDS }));
   }
-  const { older, replacedTitle } = context(dir, report, draft.supersedes);
+  const { older, replacedTitle } = context(dir, report, draft.supersedes ?? null);
   const replaced = (older?.findings ?? []).map(({ id, title }) => ({ id, title }));
   if (draft.supersedes && !values.from) {
     const what = older ? older.title : reportTitle(draft.supersedes);
@@ -169,7 +169,7 @@ function importReport({ values, rest: [name], dir }) {
   for (const [option, key] of [['not-rechecked', 'not_rechecked'], ['carried-forward', 'carried_forward']]) {
     if (values[option] !== undefined) draft[key] = values[option].split(',').map((id) => id.trim()).filter(Boolean);
   }
-  const problems = sidecarProblems(draft, { dir, report, replacedTitle });
+  const problems = sidecarProblems(draft, { dir, report, replacedTitle, replaced: older });
   if (!values.write) {
     if (values.json) console.log(JSON.stringify({ draft, replaced, warnings, problems }));
     else {

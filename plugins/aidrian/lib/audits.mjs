@@ -123,7 +123,8 @@ export const today = (now = new Date()) => now.toISOString().slice(0, 10);
 // must also name a file there.
 // Every problem names a finding by its title, never by its id: the reader is a person fixing the file. `replacedTitle`
 // gives the title of a finding of the replaced report from its key, when the caller can read that report.
-export function sidecarProblems(value, { dir = null, report = null, replacedTitle = () => null } = {}) {
+// `replaced`, when the caller can read the folder, is the report `supersedes` names, or null when no such report exists.
+export function sidecarProblems(value, { dir = null, report = null, replacedTitle = () => null, replaced: older } = {}) {
   if (!isObject(value)) return ['the sidecar must be a JSON object'];
   const problems = [];
   const at = (where, problem) => problems.push(`${where}: ${problem}`);
@@ -154,6 +155,7 @@ export function sidecarProblems(value, { dir = null, report = null, replacedTitl
     const which = named.every(Boolean) ? named.map((title) => `"${title}"`).join(', ') : `${both.length} finding${both.length === 1 ? '' : 's'} of the replaced report`;
     at('not_rechecked', `${which} also in carried_forward: a finding is listed once`);
   }
+  if (older !== undefined) problems.push(...replacedProblems(value, older));
 
   if (!Array.isArray(value.findings)) at('findings', 'must be a list');
   else value.findings.forEach((finding, index) => findingProblems(finding, nonEmptyString(finding?.title) ? `finding "${finding.title}"` : `findings[${index}]`, at, dir));
@@ -177,6 +179,16 @@ export function sidecarProblems(value, { dir = null, report = null, replacedTitl
     if (twice.length) at(key, `${twice.map(itemWords).join(', ')} share one key: each item has its own`);
   }
   return problems;
+}
+
+// What a sidecar says of the report it replaces, against that report (`older`, null when the folder holds none): the
+// report exists, and each key it sorts names one of that report's findings.
+export function replacedProblems({ supersedes, carried_forward: carried, not_rechecked: rechecks }, older) {
+  if (!supersedes) return [];
+  if (!older) return [`supersedes: names ${reportTitle(supersedes)}, which is not in the audits folder: restore it, or write the sidecar with supersedes null and no findings to sort`];
+  const known = new Set(older.findings.map((finding) => finding.id));
+  const unknown = [...(Array.isArray(carried) ? carried : []), ...(Array.isArray(rechecks) ? rechecks : [])].filter((key) => !known.has(key));
+  return unknown.length ? [`carried_forward and not_rechecked: ${unknown.length} key${unknown.length === 1 ? '' : 's'} name${unknown.length === 1 ? 's' : ''} no finding of ${reportTitle(older.report, older.findings)}`] : [];
 }
 
 function findingProblems(finding, name, at, dir) {
@@ -319,6 +331,14 @@ export function listAudits(dir, { triage = readTriage(dir) } = {}) {
   const names = readdirSync(dir).filter((name) => REPORT.test(name) && isFile(path.join(dir, name))).sort(byRun);
   const reports = names.map((report) => loadReport(dir, report));
   const byName = new Map(reports.map((each) => [each.report, each]));
+  // A sidecar that is valid alone can still name a report the folder lacks, or a finding that report does not hold.
+  reports.forEach((each, index) => {
+    if (each.status !== 'ok') return;
+    const problems = replacedProblems(each, byName.get(each.supersedes) ?? null);
+    if (!problems.length) return;
+    reports[index] = fromProse(dir, each.report, problems);
+    byName.set(each.report, reports[index]);
+  });
   for (const each of reports) {
     const replaced = each.supersedes && byName.get(each.supersedes);
     if (replaced && replaced !== each) replaced.replaced_by = each.report;
@@ -331,9 +351,9 @@ export function listAudits(dir, { triage = readTriage(dir) } = {}) {
       .map((item) => ({ ...item, report: each.report, report_title: each.title, decision: decided(each.report, item.id) }));
     const older = each.supersedes ? byName.get(each.supersedes) : null;
     const offered = each.not_rechecked.map((id) => {
-      const olderTitle = older?.title ?? reportTitle(each.supersedes);
-      const finding = older?.findings.find((one) => one.id === id) ?? { id, title: `a finding ${olderTitle} no longer holds` };
-      return { kind: 'not_rechecked', ...finding, report: each.supersedes, report_title: olderTitle, decision: decided(each.supersedes, id) };
+      // replacedProblems above left only keys of findings the replaced report holds.
+      const finding = older.findings.find((one) => one.id === id);
+      return { kind: 'not_rechecked', ...finding, report: each.supersedes, report_title: older.title, decision: decided(each.supersedes, id) };
     });
     each.items = [...own, ...offered];
     // A report not imported yet that replaces another: that report's findings have no decision until the import sorts
@@ -379,12 +399,19 @@ function loadReport(dir, report) {
       base.problems.push(`invalid JSON (${error.message})`);
     }
     if (!base.problems.length) {
-      return { ...base, status: 'ok', personas: value.personas, supersedes: value.supersedes, findings: value.findings, not_reached: value.not_reached, doc_gaps: value.doc_gaps, not_rechecked: value.not_rechecked };
+      return { ...base, status: 'ok', personas: value.personas, supersedes: value.supersedes, findings: value.findings, not_reached: value.not_reached, doc_gaps: value.doc_gaps, carried_forward: value.carried_forward, not_rechecked: value.not_rechecked };
     }
   }
-  // No sidecar, or one that is invalid: the prose gives the counts and the report it replaces, never a decision's key.
+  return fromProse(dir, report, base.problems);
+}
+
+// No sidecar, or one that is invalid: the prose gives the counts and the report it replaces, never a decision's key.
+function fromProse(dir, report, problems) {
   const parsed = parseReport(readFileSync(path.join(dir, report), 'utf8'), { report, dir });
-  return { ...base, status: base.problems.length ? 'invalid' : 'no-sidecar', personas: parsed.personas, supersedes: parsed.supersedes, findings: parsed.findings, not_reached: parsed.not_reached, doc_gaps: parsed.doc_gaps, not_rechecked: [] };
+  return {
+    report, sidecar: sidecarName(report), problems, replaced_by: null, status: problems.length ? 'invalid' : 'no-sidecar', personas: parsed.personas,
+    supersedes: parsed.supersedes, findings: parsed.findings, not_reached: parsed.not_reached, doc_gaps: parsed.doc_gaps, carried_forward: [], not_rechecked: [],
+  };
 }
 
 // The untriaged items of one report, in the order the Human answers them: each blocker alone, then the other findings

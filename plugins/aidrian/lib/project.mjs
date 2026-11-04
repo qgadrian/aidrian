@@ -10,7 +10,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { loadConfig, pluginRepository } from './config.mjs';
-import { insidePath, isDirectory, isFile, isObject, isWithin, readJson } from './fs.mjs';
+import { insidePath, isDirectory, isFile, isObject, isWithin, joinedInside, readJson } from './fs.mjs';
 import { checkoutRoots, mainRoot, runGit } from './git.mjs';
 
 const DEFAULT_DIR = '.aidrian';
@@ -144,6 +144,18 @@ function folderDir(root, errors, unreadable) {
   return DEFAULT_DIR;
 }
 
+// The path of config.json in a tree that is not checked out, such as a base branch read through GitHub. `read(file)`
+// returns the text of `file` at the tree's root, or null when the tree has none, and may throw. As openProject does, a
+// missing or broken `.aidrian.json` keeps the default folder; the working copy's `.aidrian.json` is never read.
+export function configPathIn(read) {
+  const text = read(OVERRIDE);
+  let raw = null;
+  try {
+    raw = text === null ? null : JSON.parse(text);
+  } catch {}
+  return `${(isObject(raw) ? joinedInside('', raw.dir) : null) ?? DEFAULT_DIR}/config.json`;
+}
+
 // `root`, then, when it is in a git worktree, the same folder in the main checkout.
 function checkoutsOf(root, roots) {
   const main = inMainCheckout(root, roots);
@@ -166,7 +178,14 @@ function readLocal(checkouts, errors, unreadable) {
     if (!['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'github'].includes(key)) errors.push(`${LOCAL}: unknown key "${key}"`);
   }
   const { models, names, telemetry, agents, review } = raw;
-  return { sources: localSources(holder, raw, errors), models, names, telemetry, agents, review, autoMerge: localAutoMerge(raw, errors) };
+  let autoMerge = localAutoMerge(raw, errors);
+  // A local file git tracks travels with a branch, so it is no machine's own switch. Asked only when the switch is on,
+  // so a hook pays no git call for a file that keeps auto-merge off.
+  if (autoMerge === 'on' && runGit(['ls-files', '--error-unmatch', '--', LOCAL], holder).status === 0) {
+    errors.push(`${LOCAL}: git tracks it, so a branch could carry it; "github.autoMerge" reads "off" until it is untracked (git rm --cached ${LOCAL})`);
+    autoMerge = 'off';
+  }
+  return { sources: localSources(holder, raw, errors), models, names, telemetry, agents, review, autoMerge };
 }
 
 // The local file's `github.autoMerge`, "on" or "off". It is the only local `github` key: the team sets the strategy,

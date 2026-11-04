@@ -140,6 +140,23 @@ test('.aidrian.local.json github.autoMerge: "off" when unset; "on" or "off" opts
   assert.deepEqual([findProject(dir).errors, findProject(dir).localAutoMerge], [[], 'off']);
 });
 
+test('.aidrian.local.json that git tracks: a branch could carry it, so its auto-merge switch reads "off" with an error', (t) => {
+  const dir = tempDir(t);
+  // A temporary repository of its own: never GIT_DIR, never a real repository.
+  const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
+  git('init', '-q');
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}');
+  writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ github: { autoMerge: 'on' } }));
+  assert.deepEqual([findProject(dir).errors, findProject(dir).localAutoMerge], [[], 'on'], 'untracked: the machine\'s own switch');
+  git('add', '-f', '.aidrian.local.json');
+  const project = findProject(dir);
+  assert.equal(project.localAutoMerge, 'off');
+  assert.deepEqual(project.errors, ['.aidrian.local.json: git tracks it, so a branch could carry it; "github.autoMerge" reads "off" until it is untracked (git rm --cached .aidrian.local.json)']);
+  writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ github: { autoMerge: 'off' } }));
+  assert.deepEqual([findProject(dir).errors, findProject(dir).localAutoMerge], [[], 'off'], 'a tracked file that keeps it off is no error');
+});
+
 // The local file opts one machine in; it never sets what the team decides: strategy, cleanup, or the ceiling itself.
 const localGithubCases = [
   ['a strategy', { autoMerge: 'on', strategy: 'squash' }, ['.aidrian.local.json: unknown key "github.strategy"; only "github.autoMerge" is a machine setting']],

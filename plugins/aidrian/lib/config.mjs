@@ -317,16 +317,23 @@ export function loadConfig(project) {
 export function committedConfig(project, commit) {
   const shown = spawnSync('git', ['show', `${commit}:${project.paths.config}`], { cwd: project.root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 15_000 });
   if (shown.error || shown.signal) throw new Error(`git show ${commit}:${project.paths.config} failed: ${shown.error?.message ?? shown.signal}`);
-  if (shown.status !== 0) return DEFAULTS;
+  return configFromText(shown.status === 0 ? shown.stdout : null, project.paths.config);
+}
+
+// The project config committed as `text` at `file`, with no machine settings, by committedConfig's rules: null (no file)
+// or text that does not parse gives DEFAULTS, and a value that fails its check keeps its default. For a commit read
+// some other way, such as a base branch read through GitHub.
+export function configFromText(text, file) {
+  if (typeof text !== 'string') return DEFAULTS;
   let raw;
   try {
-    raw = JSON.parse(shown.stdout);
+    raw = JSON.parse(text);
   } catch {
     return DEFAULTS;
   }
-  if (!isObject(raw) || versionProblem(project.paths.config, raw.version)) return DEFAULTS;
+  if (!isObject(raw) || versionProblem(file, raw.version)) return DEFAULTS;
   const { version, ...rest } = raw;
-  const config = merge(SCHEMA, DEFAULTS, legacyHandoff(rest, project.paths.config, []), '', project.paths.config, [], []);
+  const config = merge(SCHEMA, DEFAULTS, legacyHandoff(rest, file, []), '', file, [], []);
   if (config.github.reviewer === NO_REVIEWER) config.github = { ...config.github, reviewer: null };
   return deepFreeze(config);
 }

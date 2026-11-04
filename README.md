@@ -142,6 +142,7 @@ Run `aidrian` or `aidrian-knowledge` with no arguments to list every subcommand 
 | `aidrian pr await-review` | Waits for the review bot. | [`pr-review-loop`](plugins/aidrian/skills/pr-review-loop/SKILL.md) |
 | `aidrian pr attest` | Records the review the review gate asks for before the bot. | [Review gate](docs/config.md#review-gate) |
 | `aidrian pr checks` | Gives a one-line verdict on the checks. | [`pr-merge-when-green`](plugins/aidrian/skills/pr-merge-when-green/SKILL.md) |
+| `aidrian pr auto-merge` | Says whether a session may merge a pull request unasked. | [Keys](docs/config.md#keys) |
 | `aidrian pr disposition` | Decides what to do with one review finding. | [`pr-review`](plugins/aidrian/skills/pr-review/SKILL.md) |
 | `aidrian commit-msg` | Checks a commit message. | [Commit messages](docs/hooks.md#commit-messages) |
 | `aidrian pre-commit` | Refuses a commit in the main checkout, or one that newly stages a git-ignored file, while `git.mainCheckout.guard` is on. | [Commit guard](docs/hooks.md#commit-guard) |

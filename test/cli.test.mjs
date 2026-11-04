@@ -1619,6 +1619,30 @@ function baseConfig(t, config) {
 const resolveFourth = (dir, answers = 'no,no,no,yes') => JSON.parse(run(['decisions', 'resolve', '--domain', 'ux', '--class', 'copy', '--reversible', answers], dir).stdout);
 const ALLOW = { autoMerge: { allow: true } };
 
+test('a feature branch that commits github.autoMerge.allow off a base without it still asks on a yes to the fourth question', (t) => {
+  const { dir, git } = baseConfig(t, { version: 1, decisions: OPTED });
+  git('switch', '-q', '-c', 'feature');
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, decisions: OPTED, github: ALLOW }));
+  git('add', '.');
+  git('commit', '-q', '-m', 'allow auto-merge on the branch');
+  const out = resolveFourth(dir);
+  assert.deepEqual([out.authority, out.rule, out.base], ['ask', 'reversibility', git('rev-parse', 'main')]);
+});
+
+test('a machine\'s github.autoMerge switch does not change the answer on an allowing base', (t) => {
+  const { dir } = baseConfig(t, { version: 1, decisions: OPTED, github: ALLOW });
+  const answer = () => {
+    const { authority, rule, reason } = resolveFourth(dir);
+    return [authority, rule, reason];
+  };
+  const unset = answer();
+  assert.deepEqual(unset.slice(0, 2), ['decide', 'mode']);
+  for (const enabled of [true, false]) {
+    writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ github: { autoMerge: { enabled } } }));
+    assert.deepEqual(answer(), unset, `enabled ${enabled}`);
+  }
+});
+
 test('resolve reads github.autoMerge.allow from the base commit, and prints why a yes on the fourth question did not ask', (t) => {
   const { dir } = baseConfig(t, { version: 1, decisions: OPTED, github: ALLOW });
   const out = resolveFourth(dir);

@@ -678,6 +678,7 @@ test('the agent answers the fourth question literally, and the command applies t
   }
   const config = readFileSync(docs.config, 'utf8').replace(/\s+/g, ' ');
   assert.match(config, /So where `github\.autoMerge\.allow` is true at the base branch, in the commit `resolve` reads,/u);
+  assert.match(config, /`resolve` reads the default branch's commit, since no pull request need exist when an agent decides\. A pull request aimed at a branch that does not allow auto-merge is still merged by a person, and a machine's `github\.autoMerge` switch does not change the answer\./u);
   const section = (start, end) => config.slice(config.indexOf(start), config.indexOf(end, config.indexOf(start)));
   const link = /`github\.autoMerge\.allow`.*base branch.*\[rule 3 under Decisions\]\(#decisions\)/u;
   assert.match(section('| `github.autoMerge.allow` |', '| `github.autoMerge.default` |'), /Read at the base branch, .*\[rule 3 under Decisions\]\(#decisions\)/u);

@@ -815,6 +815,9 @@ The first rule that matches wins:
    those two opt-ins are the acceptance.
    So where `github.autoMerge.allow` is true at the base branch, in the commit `resolve` reads,
    and the domain's mode, held to `maxMode`, is `decide-reversible`, a yes on `reachesUsersUnreviewed` does not ask, and `reason` says so.
+   `resolve` reads the default branch's commit, since no pull request need exist when an agent decides.
+   A pull request aimed at a branch that does not allow auto-merge is still merged by a person,
+   and a machine's `github.autoMerge` switch does not change the answer.
    Floor classes, the escalate lists, the other three questions, a missing answer, and the rules below still ask.
    A working-copy value counts for nothing, and no base, git absent included, or no readable block keeps asking.
 4. An unknown domain asks. A domain that is paused asks, with the rule `domain-paused`: its unreviewed decisions reach `pauseDomainAt.pending`,

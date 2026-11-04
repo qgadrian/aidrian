@@ -3,8 +3,10 @@
 # under test or the eval suite, as a fresh one-commit repository: no history to read the skill back from, so only the
 # plugin arm has it. Points the project's state folder at .eval-state in the run folder, so no audit outside the run is
 # read or written, and copies the synthetic bike-shop reports there: a walk that replaces a read-only run, both
-# written before sidecars, with the screenshots the walk cites. With `sidecar` as its argument it also imports the
-# walk, as the Human would have approved, so the run starts at the questions.
+# written before sidecars, with small valid images for the screenshots the walk cites. It gives the project a knowledge
+# bucket: the product-access doc the walk cites, and an issue tracker kept as files, so a search needs no network.
+# Arguments: `sidecar` also imports the walk, as the Human would have approved, so the run starts at the questions;
+# `no-tracker` leaves the tracker doc out, so the project names none.
 set -eu
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 git -C "$root" archive HEAD -- . ':(exclude)plugins/aidrian/skills/persona-audit-triage' ':(exclude)plugins/aidrian/evals' | tar -x -f -
@@ -15,6 +17,46 @@ const config = JSON.parse(fs.readFileSync(file, "utf8"));
 config.state = { ...config.state, dir: ".eval-state" };
 fs.writeFileSync(file, JSON.stringify(config, null, 2) + "\n");
 '
+case " $* " in *" no-tracker "*) tracker=no ;; *) tracker=yes ;; esac
+mkdir -p bike-shop
+cat > bike-shop/product-access.md <<'DOC'
+# Product access
+
+## Environments
+
+- Local: `http://localhost:3000`, signed in as a staff member.
+
+## Open questions
+
+- May the front desk book a time that has already passed? Not decided yet.
+DOC
+if [ "$tracker" = yes ]; then
+  mkdir -p tracker
+  cat > bike-shop/tracker.md <<'DOC'
+# Issue tracker
+
+Issues are Markdown files in `tracker/`, one per issue, named `<number>-<slug>.md`; the number is the issue's key. A
+`Labels:` line lists its labels, and any label may be used. Search with `grep -ril <words> tracker/`. Create an issue
+by adding a file.
+DOC
+  cat > tracker/1-repaint-the-waiting-area.md <<'DOC'
+# Repaint the waiting area
+
+Labels: chore
+
+Status: open.
+DOC
+fi
+node -e '
+const fs = require("node:fs");
+const tracker = process.argv[1] === "yes" ? { "tracker.md": { summary: "The issue tracker: files in tracker/, how to search and create them.", tags: ["issue_tracker"] } } : {};
+fs.writeFileSync(".aidrian/knowledge/20-bike-shop.json", JSON.stringify({
+  dir: "bike-shop",
+  description: "The bike shop product this run audits.",
+  always: [],
+  docs: { "product-access.md": { summary: "How a session reaches the product, and its open product questions.", tags: ["personas"] }, ...tracker },
+}, null, 2) + "\n");
+' "$tracker"
 git init -q
 echo .eval-state/ >> .git/info/exclude
 XDG_STATE_HOME="$(pwd)/.eval-state/root"
@@ -24,10 +66,17 @@ git -c user.name=eval -c user.email=eval@example.invalid commit -qm fixture
 audits=.eval-state/audits
 mkdir -p "$audits/front-desk-2026-05-02-2"
 cp test/fixtures/persona-audit/front-desk-2026-05-02.md test/fixtures/persona-audit/front-desk-2026-05-02-2.md "$audits/"
-# Every screenshot the walk cites, by full path or by suffix.
-for n in 10 13 15 20 23 24 25 27 28 29 30 31 32 33 38; do : > "$audits/front-desk-2026-05-02-2/shot-17000000000$n-$n.jpg"; done
-: > "$audits/front-desk-2026-05-02-2/shot-1700000000022-22.png"
-if [ "${1:-}" = sidecar ]; then
+# Every screenshot the walk cites, by full path or by suffix: one-pixel images, so a session can open each.
+node -e '
+const fs = require("node:fs");
+const folder = process.argv[1];
+const jpeg = Buffer.from("/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=", "base64");
+const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
+for (const n of [10, 13, 15, 20, 23, 24, 25, 27, 28, 29, 30, 31, 32, 33, 38]) fs.writeFileSync(`${folder}/shot-17000000000${n}-${n}.jpg`, jpeg);
+fs.writeFileSync(`${folder}/shot-1700000000022-22.png`, png);
+' "$audits/front-desk-2026-05-02-2"
+case " $* " in *" sidecar "*) sidecar=yes ;; *) sidecar=no ;; esac
+if [ "$sidecar" = yes ]; then
   plugins/aidrian/bin/aidrian audits import front-desk-2026-05-02-2.md --not-rechecked F2,F3 --carried-forward F1 --write >/dev/null
   test -f "$audits/front-desk-2026-05-02-2.json"
 fi

@@ -62,6 +62,8 @@ A correction the flags cannot carry: save the draft to `<state>/tmp/<report name
 
 ## 3. Read the batch
 
+Settle the tracker first, as [references/deciding.md](references/deciding.md) § The tracker says.
+
 ```bash
 aidrian audits pending <report> --json
 ```
@@ -83,12 +85,11 @@ decision. No issue is drafted before its answer. In `auto`, one it does not sett
 
 ## 5. Decide
 
-Read [references/deciding.md](references/deciding.md) before the first question: duplicates, conflicts, priorities,
-and delegated answers.
-In `auto`, ask nothing: take the recommended decision when it is `issue` or `duplicate`, and record any other as
-`defer` with the reason, for the Human. In `confirm`, ask the Human: blockers one at a time, then one question per
-group. Name the owner in plain words, from `owner_description`, never as an agent role. Each question lists its items
-(title and what was seen, one line each), recommends one decision with one reason, and takes per-item answers.
+Read references/deciding.md before the first question: how to ask, duplicates, conflicts, priorities, and delegated
+answers. In `auto`, ask nothing: take the recommended decision when it is `issue` or `duplicate`, and record any other
+as `defer` with the reason, for the Human. In `confirm`, ask one question, then stop: blockers one at a time, then one
+per group. Name the owner in plain words, from `owner_description`, never as an agent role. Each question lists its
+items (title and what was seen, one line each), recommends one decision with one reason, and takes per-item answers.
 
 | Decision | When | Then |
 | --- | --- | --- |
@@ -100,11 +101,6 @@ group. Name the owner in plain words, from `owner_description`, never as an agen
 | `defer` | Decided later | Record it |
 | `covered` | A `proposed: covered` line, once its group is decided | Record the reason |
 | `decided` | A product decision an issue needs first; not final | Record `--reason '<decision>' --by <who>` |
-
-- A Not reached line is a follow-up for a rerun: an `issue` or `defer` to walk that task again once what stopped it,
-  a width, a host, or an account, is solved.
-- A doc gap goes to `harness-librarian` for a persona or product-access doc in the knowledge, else to `doc-updater`.
-- A `needs_trace` finding's issue says the cause was not traced; a `likely_cause` goes in labelled as likely.
 
 **Done when** every item in the batch has a decision.
 

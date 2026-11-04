@@ -66,7 +66,9 @@ and `CLAUDE.md` it needs from `scaffold.sh`, never `fixture/`. A case that needs
 then seeds them with `aidrian lesson add`, so seeding writes no inbox outside it; the run's own `aidrian lesson` commands
 still resolve the plugin's inbox from the machine's state root. A case that needs persona audits, such as
 `persona-audit-triage-confirm`, sets the same `state.dir` and copies the synthetic reports of
-`test/fixtures/persona-audit/` into its `audits/` folder; `test/audits.test.mjs` runs those scaffolds, without a
+`test/fixtures/persona-audit/` into its `audits/` folder, with one-pixel images for their screenshots, and gives the
+project a small knowledge bucket: a product-access doc and an issue tracker kept as files, which needs no network and
+which `persona-audit-triage-no-tracker` leaves out. `test/audits.test.mjs` runs those scaffolds, without a
 model, to check they seed the run folder alone. A run's PATH can hold an installed plugin's `aidrian` before the
 branch's; the [start hook](hooks.md#start-lines) then names the branch's by its path, so the run exercises the branch.
 Commit first, then, from `plugins/aidrian`:

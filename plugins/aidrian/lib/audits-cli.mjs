@@ -207,6 +207,9 @@ function pending({ values, rest: [name], dir, triage }) {
     item.audit_key = `${item.report}#${item.id}`;
     // The exact command that records this item, through the report under triage, with the decision still to add.
     item.record = `aidrian audits record ${report} '${item.audit_key}'`;
+    // A line of an older report that names a task by its number: the session says which task in words.
+    const numbered = taskNumbers(item.title ?? item.text ?? '');
+    if (numbered.length) item.numbered_task = numbered;
   }
   if (values.json) {
     console.log(JSON.stringify({ issue_creation: triage.issueCreation, search_labels: searchLabels(triage.labels), groups }));
@@ -279,6 +282,7 @@ function notes(item) {
   if (priority) parts.push(`priority ${priority.value}, set by ${byWords(priority.set_by)}`);
   if (decision === 'decided') parts.push(`decided by ${byWords(by)}: ${reason}`);
   if (item.proposed === 'covered') parts.push('covered by the findings above');
+  if (taskNumbers(item.title ?? item.text ?? '').length) parts.push('as the report wrote it: say which task in words');
   return parts.length ? ` (${parts.join('; ')})` : '';
 }
 

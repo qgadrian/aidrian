@@ -1,7 +1,33 @@
 # Deciding an item
 
-Read before the first question of step 5: how to search for duplicates, re-rank, take a product decision, close a
-finding as documented, and adopt a recommendation the Human delegates.
+Read before the first question of step 5, and § The tracker at step 3: which tracker, how to ask, how to search for
+duplicates, re-rank, take a product decision, close a finding as documented, and adopt a recommendation the Human
+delegates.
+
+## The tracker
+
+The tracker is the one the `agent-issue-writer` skill uses: the one the project's `issue_tracker` knowledge names. Never
+guess it from a remote or a key. When that knowledge names none, the tracker is unresolved:
+
+- In `confirm`, ask it as its own question before any finding, and stop for the answer. Never put it in a question
+  about a finding, and never leave it for a later one.
+- In `auto`, no issue can be filed: record each item `defer`, with that reason, and say so in the summary.
+
+## How to ask
+
+- A question holds one decision. Lead with it: a fact that changes no decision, such as a screenshot that will not
+  open, gets one line at most.
+- After the question, at most one line on what comes next, such as "Then seven more groups, one at a time".
+  Never preview later groups or a leaning on them: each gets its recommendation when its turn comes.
+- A line of an older report may name a task by its number, such as "Task 2", and `pending` marks it `numbered_task`.
+  Say which task in plain words, from the report's task table; never write the number, and never change the stored line.
+
+## What follows a decision
+
+- A Not reached line is a follow-up for a rerun: an `issue` or `defer` to walk that task again once what stopped it,
+  a width, a host, or an account, is solved.
+- A doc gap goes to `harness-librarian` for a persona or product-access doc in the knowledge, else to `doc-updater`.
+- A `needs_trace` finding's issue says the cause was not traced; a `likely_cause` goes in labelled as likely.
 
 ## Search for an existing issue first
 

@@ -158,6 +158,9 @@ a final decision. A report is fully triaged when every item has a final one.
 A triage priority, `urgent`, `high`, `medium`, or `low`, is set apart from the audit's severity, which is never
 rewritten: a reviewer re-ranks a finding with it, and `pending` shows it beside the finding, first in its group.
 Each decision and priority records who made the pick, `human` or the role of the agent whose pick the Human adopted.
+The tracker is the one the project's `issue_tracker` knowledge names. With none, the skill asks for it as its own
+question before any finding, or, in `auto`, defers every item and says why. It asks one question at a time and stops,
+with at most a line on what comes next.
 The skill searches the tracker for an existing issue by the finding's words, the surface it touches, and the issues
 opened or updated since the audit, before the audit label, and shows the Human any open issue whose decision a
 triage decision would contradict before it drafts one. The skill sends a finding about a product rule, or an open question in a product doc, to `product-manager`
@@ -210,7 +213,8 @@ file names the other commands take.
   findings not re-checked with any `Not reached` line that restates them, proposed as `covered`, the other `Not
   reached` lines, then doc gaps.
   With `--json`, it also gives `issue_creation`, the mode, `search_labels`, the plain labels, and for each item its
-  `labels`, its `source` line for an issue body, and its `audit_key`.
+  `labels`, its `source` line for an issue body, and its `audit_key`. An older report's line that names a task by its
+  number is shown as stored, marked `numbered_task` and with a note, so the session says which task in words.
 - `record <report> <keys> <decision> [--issue KEY] [--url URL] [--reason TEXT] [--doc PATH#SECTION] [--by WHO]`:
   records one decision for each key, and keeps each item's priority. A key is the item's `audit_key`,
   `<report file>#<id>`, as `pending --json` gives it with the item's exact `record` command, or a bare id of the

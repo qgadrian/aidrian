@@ -141,7 +141,7 @@ test('a report written before sidecars parses into a draft: findings, the report
   assert.deepEqual(f6.tasks, ['All tasks']);
   assert.equal(f1.owner_description, OWNER_WORDS['frontend-developer']);
   assert.equal(draft.not_reached.length, 3);
-  assert.deepEqual(draft.doc_gaps, [{ id: 'D1', text: 'Task 2 joins check-in, hand-back and drop-in in one success line, so one missing label blocks the whole task.' }]);
+  assert.deepEqual(draft.doc_gaps, [{ id: 'D1', text: '"Check a bike in, and hand it back when it is done" joins check-in, hand-back and drop-in in one success line, so one missing label blocks the whole task.' }]);
   const { warnings, ...value } = draft;
   assert.deepEqual(sidecarProblems(value, { dir, report: NEW }), []);
 
@@ -411,8 +411,10 @@ test('no text a person reads holds a bare finding id or a file suffix: list, pen
 // The behaviour cases of the persona-audit-triage skill run with model calls, so not here; their scaffolds run here.
 test('the triage eval scaffolds seed the bike-shop reports in the run folder\'s own state, without the skill under test', (t) => {
   const evals = path.join(ROOT, 'plugins/aidrian/evals');
+  const dirs = [];
   const seed = (name) => {
     const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-audits-eval-'));
+    dirs.push(dir);
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     const result = spawnSync('sh', [path.join(evals, name, 'scaffold.sh')], { cwd: dir, encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
@@ -425,6 +427,20 @@ test('the triage eval scaffolds seed the bike-shop reports in the run folder\'s 
   assert.deepEqual(seed('persona-audit-triage-import'), [[OLD, 'replaced'], [NEW, 'no-sidecar']]);
   assert.deepEqual(seed('persona-audit-triage-confirm'), [[OLD, 'replaced'], [NEW, 'ok']]);
   assert.deepEqual(seed('persona-audit-triage-trigger'), [[OLD, 'replaced'], [NEW, 'ok']]);
+  assert.deepEqual(seed('persona-audit-triage-no-tracker'), [[OLD, 'replaced'], [NEW, 'ok']]);
+
+  // What the run reads: screenshots a session can open, the product doc the walk cites, and a tracker with no network.
+  const [confirm, noTracker] = dirs.slice(1, 2).concat(dirs[3]);
+  const shots = path.join(confirm, '.eval-state/audits/front-desk-2026-05-02-2');
+  assert.equal(readFileSync(path.join(shots, SHOTS[0])).subarray(0, 3).toString('hex'), 'ffd8ff', 'a JPEG');
+  assert.equal(readFileSync(path.join(shots, 'shot-1700000000022-22.png')).subarray(1, 4).toString(), 'PNG');
+  const route = (dir, tag) => spawnSync(path.join(dir, 'plugins/aidrian/bin/aidrian-knowledge'), ['route', tag], { cwd: dir, encoding: 'utf8' }).stdout;
+  assert.match(route(confirm, 'issue_tracker'), /bike-shop\/tracker\.md/u);
+  assert.match(route(confirm, 'personas'), /bike-shop\/product-access\.md/u);
+  assert.match(readFileSync(path.join(confirm, 'bike-shop/product-access.md'), 'utf8'), /## Open questions\n\n- May the front desk book a time that has already passed/u);
+  assert.ok(existsSync(path.join(confirm, 'tracker/1-repaint-the-waiting-area.md')));
+  assert.doesNotMatch(route(noTracker, 'issue_tracker'), /tracker\.md/u, 'this case\'s project names no tracker');
+  assert.equal(existsSync(path.join(noTracker, 'tracker')), false);
 });
 
 test('record: decided waits for a final outcome, documented cites a doc, rank sets a priority apart from the severity, and --by names who picked', (t) => {
@@ -523,4 +539,17 @@ test('record takes the audit_key pending prints, so a walk and the run it replac
   assert.equal(result.status, 1);
   assert.match(result.stderr, /--doc names no section "Closing hours" in docs\/rules\.md; its sections are: rules, known-gaps--do-not-infer, opening-hours\. It takes a file of the project, then # and its section, as the heading is written \("docs\/rules\.md#Known gaps \/ Do not infer"\) or as its slug/u);
   assert.match(run('record', NEW, 'F7', 'documented', '--doc', 'Known Gaps').stderr, /documented needs --doc <path#section>: a file of the project, then # and its section/u);
+});
+
+test('pending marks a line of an older report that names a task by its number, and leaves the stored line as it is', (t) => {
+  const { audits, run } = project(t);
+  const report = 'front-desk-2026-06-02.md';
+  const value = { ...sidecar(), report, date: '2026-06-02', findings: [], doc_gaps: [{ id: 'D1', text: 'Task 2 joins three outcomes in one success line.' }], not_reached: [{ id: 'N1', text: 'Tablet width.' }] };
+  writeFileSync(path.join(audits, report), '# Persona audit\n');
+  writeFileSync(path.join(audits, 'front-desk-2026-06-02.json'), JSON.stringify(value));
+  const items = JSON.parse(run('pending', report, '--json').stdout).groups.flatMap((g) => g.items);
+  assert.deepEqual(items.find((i) => i.id === 'D1').numbered_task, ['Task 2']);
+  assert.equal(items.find((i) => i.id === 'D1').text, 'Task 2 joins three outcomes in one success line.', 'the stored line is never rewritten');
+  assert.equal(items.find((i) => i.id === 'N1').numbered_task, undefined);
+  assert.match(run('pending', report).stdout, /- Task 2 joins three outcomes in one success line\. \(as the report wrote it: say which task in words\)\n/u);
 });

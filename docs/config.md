@@ -980,16 +980,20 @@ Every value comes from this key, so the plugin names no tracker of its own; the 
   "tracker": {
     "enabled": true,
     "workspace": { "expect": "https://linear.app/acme", "field": "url" },
-    "readTools": ["mcp__plugin_linear_linear__get_workspace", "mcp__linear__get_workspace"],
+    "readTools": ["mcp__plugin_linear_linear__get_workspace", "mcp__linear__get_workspace", "mcp__claude_ai_Linear__get_workspace"],
     "writeTools": [
       "mcp__plugin_linear_linear__save_*", "mcp__plugin_linear_linear__create_*", "mcp__plugin_linear_linear__delete_*",
       "mcp__plugin_linear_linear__share_*", "mcp__plugin_linear_linear__unshare_*", "mcp__plugin_linear_linear__update_*",
       "mcp__plugin_linear_linear__merge_*", "mcp__plugin_linear_linear__submit_*", "mcp__plugin_linear_linear__resolve_diff_thread",
-      "mcp__plugin_linear_linear__retire_*", "mcp__plugin_linear_linear__restore_*",
+      "mcp__plugin_linear_linear__retire_*", "mcp__plugin_linear_linear__restore_*", "mcp__plugin_linear_linear__prepare_*",
       "mcp__linear__save_*", "mcp__linear__create_*", "mcp__linear__delete_*",
       "mcp__linear__share_*", "mcp__linear__unshare_*", "mcp__linear__update_*",
       "mcp__linear__merge_*", "mcp__linear__submit_*", "mcp__linear__resolve_diff_thread",
-      "mcp__linear__retire_*", "mcp__linear__restore_*"
+      "mcp__linear__retire_*", "mcp__linear__restore_*", "mcp__linear__prepare_*",
+      "mcp__claude_ai_Linear__save_*", "mcp__claude_ai_Linear__create_*", "mcp__claude_ai_Linear__delete_*",
+      "mcp__claude_ai_Linear__share_*", "mcp__claude_ai_Linear__unshare_*", "mcp__claude_ai_Linear__update_*",
+      "mcp__claude_ai_Linear__merge_*", "mcp__claude_ai_Linear__submit_*", "mcp__claude_ai_Linear__resolve_diff_thread",
+      "mcp__claude_ai_Linear__retire_*", "mcp__claude_ai_Linear__restore_*", "mcp__claude_ai_Linear__prepare_*"
     ],
     "team": {
       "key": "NOTES",
@@ -1003,6 +1007,10 @@ Every value comes from this key, so the plugin names no tracker of its own; the 
 ```
 
 This is what the `harness-setup` skill writes for Linear, with `project` only when the Human names one.
+It lists `mcp__plugin_linear_linear__`, `mcp__linear__`, and `mcp__claude_ai_Linear__`, with the same patterns on each.
+These three server names are the known ones, and a connection under another name must be added by hand, in both lists.
+`prepare_*` counts as a write: those tools are the step before file bytes reach the connected workspace.
+`mark_notification` stays out of the patterns on purpose, so it is unguarded: it changes only one person's inbox state.
 Relation fields, such as `blocks`, `parentId`, and `duplicateOf`, are left out of `keyFields` on purpose, since a relation may cross teams.
 `createFields` holds the inputs that put a write in a team: `removeTeams` takes one out, and `teamId` takes a UUID, which skips the check.
 `id` stays in `keyFields` on every write tool, which has a limit: a non-issue whose name looks like an issue key, such as a label `Sev-1`,
@@ -1036,7 +1044,8 @@ is refused, and the agent retries with its UUID.
 
 A project that adopts the key sets [`requires.aidrian`](#plugin-version), since an older plugin rejects it.
 The `harness-setup` skill asks for the key only while setting a project up, so an existing project adds the key by hand.
-It uses the values above, and must match the patterns to the server name the project's connection shows.
+It uses the values above, and must match the patterns to the server name the project's connection shows,
+and the names in `readTools` with them.
 It raises [`requires.aidrian`](#plugin-version) to the plugin version that ships the key unless it is already higher,
 replaces the team in its `issue_tracker` doc and that doc's summary with a pointer to the key, and runs `aidrian check`.
 

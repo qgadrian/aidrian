@@ -141,6 +141,8 @@ test('the report relays the check and lint lines this session ran, and every onb
 
 const DISPATCHES = 'plugins/aidrian/skills/harness-setup/references/dispatches.md';
 const TRACKER_SECTION = 'The tracker key: Linear only';
+// The server names a Linear connection is known to show.
+const LINEAR_SERVERS = ['mcp__plugin_linear_linear__', 'mcp__linear__', 'mcp__claude_ai_Linear__'];
 
 // The `tracker` value and optional `project` group of the librarian's brief, with the Human's answers filled in.
 function briefTracker({ expect, key, name, project }) {
@@ -184,6 +186,21 @@ test('what setup writes for Linear passes validation, with and without a project
   assert.deepEqual(briefTracker({ ...answers, project: 'Launch' }).project, { values: ['Launch'], field: 'project' });
 });
 
+test('the key names every known Linear server, with the same read tool and write patterns on each', () => {
+  const { readTools, writeTools } = briefTracker({ expect: 'https://linear.app/example', key: 'ABC', name: 'Example team' });
+  assert.deepEqual(readTools, LINEAR_SERVERS.map((server) => `${server}get_workspace`));
+  const patterns = (server) => writeTools.filter((pattern) => pattern.startsWith(server)).map((pattern) => pattern.slice(server.length));
+  const [first, ...others] = LINEAR_SERVERS.map(patterns);
+  assert.ok(first.length > 0);
+  for (const other of others) assert.deepEqual(other, first);
+  assert.equal(writeTools.length, first.length * LINEAR_SERVERS.length, 'no pattern outside the known servers');
+
+  const config = read('docs/config.md').replace(/\s+/gu, ' ');
+  for (const server of LINEAR_SERVERS) assert.ok(config.includes(`\`${server}\``), server);
+  assert.match(config, /These three server names are the known ones, and a connection under another name must be added by hand/u);
+  assert.match(read(DISPATCHES).replace(/\s+/gu, ' '), /The block above holds the three known spellings, and a connection under another name must be added by hand/u);
+});
+
 test('the example project sets the key setup writes', () => {
   const { tracker } = json('examples/consumer/.aidrian/config.json');
   assert.ok(tracker, 'the example config sets tracker');
@@ -202,6 +219,7 @@ test('the key setup writes holds Linear writes to the team, and leaves relations
     save_comment: [{ issueId: 'OTHER-1' }],
     create_attachment: [{ issue: 'OTHER-1' }],
     create_attachment_from_upload: [{ issue: 'OTHER-1' }],
+    prepare_attachment_upload: [{ issue: 'OTHER-1' }],
     share_issue: [{ issue: 'OTHER-1' }],
     unshare_issue: [{ issue: 'OTHER-1' }],
     retire_issue_label: [{ id: 'OTHER-1' }],
@@ -214,6 +232,9 @@ test('the key setup writes holds Linear writes to the team, and leaves relations
     save_document: [{ issue: `${key}-1` }],
     save_comment: [{ issueId: `${key}-1` }],
     create_attachment: [{ issue: `${key}-1` }],
+    prepare_attachment_upload: [{ issue: `${key}-1` }],
+    // It names no issue, so it answers only to the workspace read.
+    prepare_file_upload: [{ filename: 'a.png', contentType: 'image/png', size: 1 }],
     share_issue: [{ issue: `${key}-1` }],
     retire_project_label: [{ id: '11111111-2222-4333-8444-555555555555' }],
     // A diff tool names no team and no issue in a field the guard reads, so it answers only to the workspace read.
@@ -234,13 +255,19 @@ test('the key setup writes holds Linear writes to the team, and leaves relations
 test('the write patterns cover the writes beyond save, create, and delete, and no read tool of the connector', () => {
   const { config } = loadConfig(findProject(path.join(ROOT, 'examples/consumer')));
   const { readTools, writeTools } = config.tracker;
-  const writes = ['share_issue', 'unshare_issue', 'update_diff', 'merge_diff', 'submit_diff_review', 'resolve_diff_thread', 'retire_issue_label', 'restore_issue_label', 'retire_project_label', 'restore_project_label'];
+  // A prepare tool counts as a write: its definition makes it the step before file bytes reach the connected workspace.
+  const writes = [
+    'share_issue', 'unshare_issue', 'update_diff', 'merge_diff', 'submit_diff_review', 'resolve_diff_thread', 'retire_issue_label', 'restore_issue_label', 'retire_project_label', 'restore_project_label',
+    'prepare_attachment_upload', 'prepare_file_upload',
+  ];
+  // Deliberately unguarded: it only changes one person's inbox state, never the workspace's data.
+  const unguarded = ['mark_notification'];
   // Every tool the Linear connector lists that only reads, so a prefix can never start refusing a lookup.
   const reads = [
     'get_agent_skill', 'get_attachment', 'get_diff', 'get_diff_threads', 'get_document', 'get_issue', 'get_issue_status', 'get_milestone', 'get_notifications', 'get_project', 'get_release',
     'get_release_note', 'get_status_updates', 'get_team', 'get_template', 'get_triage_responsibility', 'get_user', 'get_workspace', 'list_agent_skills', 'list_comments', 'list_custom_views',
     'list_cycles', 'list_diffs', 'list_documents', 'list_issue_labels', 'list_issue_statuses', 'list_issues', 'list_milestones', 'list_project_labels', 'list_projects', 'list_release_notes',
-    'list_release_pipelines', 'list_releases', 'list_teams', 'list_templates', 'list_users', 'search_documentation', 'whoami', 'extract_images', 'prepare_attachment_upload', 'prepare_file_upload',
+    'list_release_pipelines', 'list_releases', 'list_teams', 'list_templates', 'list_users', 'search_documentation', 'whoami', 'extract_images',
   ];
   for (const reader of readTools) {
     const server = serverPrefix(reader);
@@ -250,13 +277,15 @@ test('the write patterns cover the writes beyond save, create, and delete, and n
       assert.match(refusal?.match ?? '', /has not read the connected workspace/u, `${server}${tool}`);
     }
     for (const tool of reads) assert.ok(!writeTools.some((pattern) => nameMatches(pattern, `${server}${tool}`)), `${server}${tool} is a read`);
+    for (const tool of unguarded) assert.equal(judgeTrackerWrite(config, `${server}${tool}`, { id: 'OTHER-1' }, null), null, `${server}${tool} is unguarded`);
   }
+  assert.match(read('docs/config.md').replace(/\s+/gu, ' '), /`mark_notification` stays out of the patterns on purpose, so it is unguarded: it changes only one person's inbox state/u);
 });
 
 test('a tool outside writeTools passes unchecked, so setup and the manual route match the patterns to the connection', () => {
   const config = read('docs/config.md').replace(/\s+/gu, ' ');
   assert.match(config, /a tool that matches no pattern in `writeTools` passes unchecked, including every tool of a connection under another server name/u);
-  const match = /match the patterns to the server name the project's connection shows/u;
+  const match = /match the patterns to the server name the project's connection shows, and the names in `readTools` with them/u;
   assert.match(config, match, 'the manual route');
   assert.match(read(DISPATCHES).replace(/\s+/gu, ' '), match, 'setup');
 });

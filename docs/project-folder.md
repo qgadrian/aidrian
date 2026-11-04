@@ -480,6 +480,7 @@ Its JSON adds `settled`, each inherited marker whose status the branch changed, 
 A marker the merge base held in an unindexed file, which `HEAD` still holds in that file, is not `removed`.
 It also adds `pullRequest`, the branch's number from `gh`; `null` means no pull request, or `gh` could not say.
 With a number, a new marker still at `pr=none` is a `problem`.
+It adds `queue` too: [`decisions.record.queue`](config.md#recording-decisions) from the base branch, never the working copy.
 It exits 1 when git cannot compare the two.
 A repository with no project folder holds no markers: it prints the empty result and exits 0, and still exits 1 when git cannot compare the two.
 

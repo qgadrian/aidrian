@@ -44,6 +44,6 @@ Fixes <ISSUE-KEY, such as ABC-12 or #12>
   A bullet shows the status when it is not `unconfirmed`.
   When config.json `github.pullRequest.sections` is set without `Decisions`, the same list goes at the end of `## Summary`,
   or of the first section on the closed list when Summary is not on it, as a `Decisions:` line and its bullets.
-  When `decisions.record.queue` is `report`, it stays out of the body.
+  When the `queue` that `aidrian decisions list --added-since` prints is `report`, it stays out of the body.
 - **Accepted residuals** come from `aidrian pr disposition` verdicts of `accepted_residual`.
 - **Follow-up for a person** never lists a check CI runs, or work an agent can do now.

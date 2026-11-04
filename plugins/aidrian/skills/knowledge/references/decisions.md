@@ -1,7 +1,7 @@
 # Decisions: who settles one
 
 `knowledge/references/decisions.md` is the one rule for a decision the project's docs do not settle.
-Read it when you return such a decision, or dispatch or relay an agent that does.
+Read it when you return such a decision, dispatch or relay an agent that does, or write its marker.
 Every agent and skill that handles one points here and restates none of it.
 
 ## Who does what

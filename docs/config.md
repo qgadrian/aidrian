@@ -181,7 +181,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `decisions.escalateDocs` | Docs and folders, from the project root, whose decisions always go to the Human: `docs/pricing.md`, `docs/legal/` for everything in it, or `docs/terms.md#refunds` for one section. No glob characters, absolute paths, or `..`. |
 | `decisions.unattended.safeDefaults` | What an unattended `autopilot` run may settle with a safe default: `"outside-escalated"`, the default, or `"all"`: [Unattended runs](#unattended-runs). Team only. |
 | `decisions.secondLook` | The agent that must agree with a decision at or above `minSeverity`; `null` turns it off. |
-| `decisions.record.queue` | Where the decisions an agent made alone are listed: `"pr-body"`, the default, in the pull request body and the dispatcher's report; `"report"`, in the report alone. [Recording decisions](#recording-decisions). |
+| `decisions.record.queue` | Where the decisions an agent made alone are listed: `"pr-body"`, the default, in the pull request body and the dispatcher's report; `"report"`, in the report alone. Read at the base branch. [Recording decisions](#recording-decisions). |
 | `decisions.unreviewed.remind` | When the Human is reminded of unreviewed decisions: `"session-start"`, the default, or `"off"`. |
 | `decisions.unreviewed.pauseDomainAt` | The unreviewed `pending` count and `oldestDays` age at which a domain goes back to asking; `null` never pauses. |
 | `audits.triage.issueCreation` | Whether the persona-audit triage asks before it creates an issue: `"confirm"`, the default, or `"auto"`: [Audit triage](#audit-triage). |
@@ -893,6 +893,8 @@ the branch's decisions in the pull request body: in a `## Decisions` section, or
 under `## Summary` as a `Decisions:` sub-list.
 The [pull request body rule](#pull-request-contract) takes both, and a closed list still refuses the heading.
 Under `"report"`, the skill leaves them out of the body. The marker is written under either value.
+The skill reads the value from the `queue` that `aidrian decisions list --added-since <ref> --json` prints, from the commit `resolve` reads,
+so a working-copy edit, or a commit on the branch, cannot change it; with no readable block, or no project folder, it is `"pr-body"`.
 
 ### Which config it reads
 

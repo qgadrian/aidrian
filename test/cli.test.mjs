@@ -762,13 +762,33 @@ test('decisions list --added-since prints the empty result in a repository with 
   const env = { ...process.env, PATH: noGh(t) };
   const json = run(['decisions', 'list', '--added-since', 'main', '--json'], dir, env);
   assert.deepEqual([json.status, json.stderr], [0, '']);
-  assert.deepEqual(JSON.parse(json.stdout), { decisions: [], settled: [], removed: [], problems: [], pullRequest: null });
+  assert.deepEqual(JSON.parse(json.stdout), { decisions: [], settled: [], removed: [], problems: [], pullRequest: null, queue: 'pr-body' });
   assert.deepEqual([run(['decisions', 'list', '--added-since', 'main'], dir, env).stdout], ['no decisions added since main\n']);
 
   const unclear = run(['decisions', 'list', '--added-since', 'no-such-branch', '--json'], dir, env);
   assert.deepEqual([unclear.status, unclear.stdout], [1, ''], 'an unclear base still stops pr-write');
   assert.match(unclear.stderr, /cannot compare this branch with "no-such-branch"/u);
   assert.equal(run(['decisions', 'list', '--json'], dir, env).status, 1, 'the full list still needs a project');
+});
+
+test('decisions list --added-since prints the base branch\'s decisions.record.queue: no working-copy edit or branch commit changes it', (t) => {
+  const queue = (dir) => JSON.parse(run(['decisions', 'list', '--added-since', 'main', '--json'], dir, { ...process.env, PATH: noGh(t) }).stdout).queue;
+  const held = decisionsRepo(t, { record: { queue: 'report' } });
+  held.git('switch', '-q', '-c', 'feature');
+  assert.equal(queue(held.dir), 'report');
+  held.write({ record: { queue: 'pr-body' } });
+  assert.equal(queue(held.dir), 'report', 'an uncommitted edit');
+  held.git('add', '.');
+  held.git('commit', '-q', '-m', 'lower it');
+  assert.equal(queue(held.dir), 'report', 'a commit on the branch');
+
+  const listed = decisionsRepo(t, {});
+  listed.git('switch', '-q', '-c', 'feature');
+  assert.equal(queue(listed.dir), 'pr-body', 'the default');
+  listed.write({ record: { queue: 'report' } });
+  listed.git('add', '.');
+  listed.git('commit', '-q', '-m', 'hide them');
+  assert.equal(queue(listed.dir), 'pr-body', 'a branch cannot take its decisions out of the body');
 });
 
 test('decisions list --added-since flags a pr=none the branch added once its pull request exists, and only then', (t) => {
@@ -1585,7 +1605,7 @@ test('list --added-since with a class in neither list at the merge base: adding 
   writeFileSync(path.join(deletes.dir, 'docs/a.md'), 'Rule.\n');
   deletes.git('add', '.');
   deletes.git('commit', '-q', '-m', 'delete the marker');
-  assert.deepEqual(list(deletes.dir), { decisions: [], settled: [], removed: [{ id: 'old-class', status: 'unconfirmed', doc: 'docs/a.md' }], problems: [], pullRequest: null });
+  assert.deepEqual(list(deletes.dir), { decisions: [], settled: [], removed: [{ id: 'old-class', status: 'unconfirmed', doc: 'docs/a.md' }], problems: [], pullRequest: null, queue: 'pr-body' });
 });
 
 // A repository whose base commit holds `config` as config.json.

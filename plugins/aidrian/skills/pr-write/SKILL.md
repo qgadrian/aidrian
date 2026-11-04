@@ -58,7 +58,7 @@ from its list and the issue it went to, and each `residuals` item every field it
   `Assisted-by:` lines the attribution rule prints, as written. They are the one place agent names belong.
 - Flag a mixed-scope or oversized branch in the risk section instead of smoothing it over.
 - **Decisions.** Every run, run `aidrian decisions list --added-since origin/<base> --json`; exit 1 is the stop below for an unclear base.
-  Unless config.json `decisions.record.queue` is `report`, list each of its `decisions` in a `## Decisions` section,
+  Unless its `queue`, read at the base, is `report`, list each of its `decisions` in a `## Decisions` section,
   each of its `settled` as settled in this branch, and each of its `removed` as removed in this branch.
   The caller's report gives each new one's reason, revisit trigger, and how it reverts.
   When `github.pullRequest.sections` is set without `Decisions`, that closed list refuses the heading: the same list goes under `## Summary`,

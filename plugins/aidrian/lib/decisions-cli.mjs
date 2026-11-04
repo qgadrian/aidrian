@@ -4,7 +4,7 @@
 //   aidrian decisions resolve --domain ux --class copy --reversible no,no,no,no
 //   aidrian decisions resolve --vocab            # every class and reversibility question, defined
 //   aidrian decisions list [--json]              # every marker, and what is wrong with the malformed ones
-//   aidrian decisions list --added-since REF     # decisions, settled, and removed are the branch's; problems may also hold rows marked inherited
+//   aidrian decisions list --added-since REF     # decisions, settled, and removed are the branch's; problems may also hold rows marked inherited; --json adds queue, the base branch's decisions.record.queue
 //   aidrian decisions set ID confirmed|changed|rejected  # the Human's answer: rewrites that one marker in the working copy; changed confirms it
 //   aidrian decisions undo ID                    # the Human's undo: puts back the old wording and removes the decision's lines
 //
@@ -246,7 +246,7 @@ function pendingDecisions(project, base, classes) {
 const STATUS_VALUE = new RegExp(`(\\sstatus=)(?:${DECISION_STATUSES.join('|')})(?=\\s|-->)`, 'u');
 const sameLine = (line) => line.trim().replace(STATUS_VALUE, '$1').replace(/(\spr=)(?:[1-9]\d*|none)(?=\s|-->)/u, '$1');
 
-// What the branch committed since it left `ref`, parsed at both ends: { decisions, settled, removed, problems, pullRequest },
+// What the branch committed since it left `ref`, parsed at both ends: { decisions, settled, removed, problems, pullRequest, queue },
 // or null when git cannot compare them. A decision counts when its id is on no marker at the merge base, in any Markdown
 // file, so a moved marker is not new. `settled` holds each marker the base has whose status the branch changed, with
 // `was`. `removed` holds each id at the merge base, with its `status` and `doc` there, that no indexed doc at HEAD holds,
@@ -286,17 +286,19 @@ function addedSince(project, ref) {
   const removed = [...statuses].filter(([id]) => !held.has(id) && !outside.some((each) => each.id === id && each.doc === homes.get(id)))
     .map(([id, status]) => ({ id, status, doc: homes.get(id) }));
   const pullRequest = openPullRequest(project);
+  // From the commit `resolve` reads, so no working-copy edit or commit on the branch changes where the list goes.
+  const queue = decisionsInForce(project).decisions?.record.queue ?? DEFAULTS.decisions.record.queue;
   const unset = pullRequest === null ? [] : added.filter(({ pr }) => pr === null)
     .map(({ doc, line, id }) => ({ doc, line, problem: `"${id}" still says pr=none, but pull request #${pullRequest} exists: write its number on the marker` }));
   const marked = problems.map((each) => (each.line !== null && baseProblems.has(sameProblem(each, lineAt)) ? { ...each, inherited: true } : each));
-  return { decisions: added, settled, removed, problems: [...indexProblems(errors), ...marked, ...stray, ...unset], pullRequest };
+  return { decisions: added, settled, removed, problems: [...indexProblems(errors), ...marked, ...stray, ...unset], pullRequest, queue };
 }
 
 // What a branch added where no project folder exists, so no marker does: the empty result, so a repository that has not
 // adopted the plugin can still publish, or null when git cannot compare the branch with `ref`, which stays an unclear base.
 function addedWithNoFolder(start, ref) {
   const merged = ref.startsWith('-') ? null : runGit(['merge-base', ref, 'HEAD'], start, GIT_READ);
-  return merged?.status === 0 ? { decisions: [], settled: [], removed: [], problems: [], pullRequest: null } : null;
+  return merged?.status === 0 ? { decisions: [], settled: [], removed: [], problems: [], pullRequest: null, queue: DEFAULTS.decisions.record.queue } : null;
 }
 
 // `decisions.classes` as committed at `rev`, {} for a commit whose block cannot be read, or null when git fails.
@@ -343,9 +345,9 @@ function list(args) {
     console.error(`cannot compare this branch with "${ref}": git knows no such ref, or could not read it`);
     return 1;
   }
-  const { decisions, settled = [], removed = [], problems, notes = [], docs, pullRequest } = found;
+  const { decisions, settled = [], removed = [], problems, notes = [], docs, pullRequest, queue } = found;
   if (values.json) {
-    console.log(JSON.stringify(ref === undefined ? { decisions, problems, notes } : { decisions, settled, removed, problems, pullRequest }));
+    console.log(JSON.stringify(ref === undefined ? { decisions, problems, notes } : { decisions, settled, removed, problems, pullRequest, queue }));
     return 0;
   }
   const wording = (has, words) => (!has ? 'no' : words === null ? 'unreadable' : 'yes');

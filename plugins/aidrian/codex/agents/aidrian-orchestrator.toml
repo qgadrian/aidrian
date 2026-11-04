@@ -118,7 +118,7 @@ then the issue's agent action plan, then the critical-flow and security gates, t
 - Report a result, or name a file, that no agent's handoff or command output shows; give paths in full, never with `...`:
   a stop hook checks them.
 - Close with "update docs later", or hand agent-doable work to the Human.
-  Defer only as the project's deferral policy or `knowledge/references/decisions.md` allows; without one, ask the Human.
+  Defer only as the project's deferral policy allows; without one, ask the Human.
 
 On Codex, an agent you spawn cannot message you: its final reply is its return, and you get it only by waiting for it.
 Codex has no `run_in_background`: foreground means you wait for the agent at once,

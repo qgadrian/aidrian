@@ -483,7 +483,7 @@ test('pr-write and its body template name both forms of the decisions list', () 
   const skill = readFileSync(path.join(ROOT, 'plugins/aidrian/skills/pr-write/SKILL.md'), 'utf8');
   assert.match(skill, /aidrian decisions list --added-since origin\/<base>/u);
   assert.match(skill, /Every run, run `aidrian decisions list --added-since origin\/<base> --json`; exit 1 is the stop below for an unclear base\./u, 'the list runs whatever the queue');
-  assert.match(skill, /Unless config\.json `decisions\.record\.queue` is `report`, list each of its `decisions`/u, 'only the body listing depends on the queue');
+  assert.match(skill, /Unless its `queue`, read at the base, is `report`, list each of its `decisions`/u, 'only the body listing depends on the queue');
   assert.match(skill, /each of its `settled` as settled in this branch/u);
   assert.match(skill, /each of its `removed` as removed in this branch/u);
   assert.match(skill, /When one of its `decisions` has `pr` null, have `doc-updater` replace `pr=none` on that marker line with the pull request's number, commit, and push only that\.\s+Never on a `settled` entry\./u);

@@ -148,7 +148,7 @@ Run `aidrian` or `aidrian-knowledge` with no arguments to list every subcommand 
 | `aidrian pre-commit` | Refuses a commit in the main checkout, or one that newly stages a git-ignored file, while `git.mainCheckout.guard` is on. | [Commit guard](docs/hooks.md#commit-guard) |
 | `aidrian lesson` | Keeps the lesson inbox. | [Lessons](docs/lessons.md#commands) |
 | `aidrian handoff` | Checks a session handoff brief. | [`session-handoff`](plugins/aidrian/skills/session-handoff/SKILL.md) |
-| `aidrian quorum` | Runs Codex as a quorum adversary or advocate, checks a quorum ledger's citations, prints a mode's roles and caps from config.json, and says what happens to one product decision. | [Local state](docs/project-folder.md#local-state) |
+| `aidrian quorum` | Runs Codex as a quorum adversary or advocate, checks a quorum ledger's citations, prints a mode's roles and caps from config.json, says what happens to one product decision, and records work continuing on a product ruling. | [Local state](docs/project-folder.md#local-state) |
 | `aidrian decisions resolve` | Says whether an agent may settle one decision or must ask the Human. | [Decisions](docs/config.md#decisions) |
 | `aidrian decisions list` | Lists the decisions agents made alone, from the markers in the indexed docs. | [Decision markers](docs/project-folder.md#decision-markers) |
 | `aidrian decisions set` | Records the Human's answer on one decision. | [Decision markers](docs/project-folder.md#decision-markers) |

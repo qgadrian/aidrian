@@ -189,6 +189,9 @@ export const DECISION_STATUSES = ['unconfirmed', 'confirmed', 'rejected'];
 const MARKER_FIELDS = ['id', 'status', 'class', 'domain', 'date', 'pr'];
 // Long enough for a slug, and short enough that the longest marker stays on one screen, at the default `docs.wrapLimit`.
 const ID_MAX = 32;
+const ID_SHAPE = /^[a-z0-9][a-z0-9-]*$/u;
+// Whether a decision marker can hold `id`. The marker parser and a quorum ledger's `provisional.marker` both read it.
+export const isDecisionId = (id) => ID_SHAPE.test(id) && id.length <= ID_MAX;
 // A comment that means to be a marker or a line of its wording, whatever else is wrong with it.
 const MENTION = /<!--\s*aidrian:decision(?:-(old|new))?(?=\s|-->|$)/u;
 const MARKER_LINE = /^<!--\s+aidrian:decision\s+(.*?)\s*-->$/u;
@@ -305,8 +308,7 @@ function readMarker(line, classes) {
   const quoted = (key, value) => `${key} ${JSON.stringify(value)}`;
   const entry = classEntry(kind, classes);
   const wrong = [
-    !/^[a-z0-9][a-z0-9-]*$/u.test(id) && `${quoted('id', id)} takes lowercase letters, digits, and "-"`,
-    id.length > ID_MAX && `${quoted('id', id)} takes at most ${ID_MAX} characters`,
+    !isDecisionId(id) && (ID_SHAPE.test(id) ? `${quoted('id', id)} takes at most ${ID_MAX} characters` : `${quoted('id', id)} takes lowercase letters, digits, and "-"`),
     !DECISION_STATUSES.includes(status) && `${quoted('status', status)} is not one of ${DECISION_STATUSES.join(', ')}`,
     !entry && `${quoted('class', kind)} is no class of decisions.json or config.json decisions.classes`,
     entry?.floor && `${quoted('class', kind)} is a floor class: it always goes to the Human, so no agent decided it alone`,

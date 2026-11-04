@@ -1696,7 +1696,7 @@ test('quorum route logs resolve\'s row, with resolve\'s key, so the report count
   const asked = ['quorum', 'route', '--domain', 'ux', '--class', 'copy', '--reversible', 'no,no,no,no', '--hard', 'no,yes,no,no,no'];
   assert.equal(run(asked, dir, env).status, 0);
   const ledger = path.join(dir, '.git', 'ledger.json');
-  const ruled = { mode: 'product', status: 'complete', ruling: { decision: 'rule', winner: 'A', class: 'copy', reversible: 'no,no,no,no', docs: [] }, outcome: { conditions: [], flips_if: [], disputes: [] }, human_answer: null };
+  const ruled = { mode: 'product', status: 'complete', ruling: { decision: 'rule', winner: 'A', class: 'copy', reversible: 'no,no,no,no', docs: [], domain: 'ux' }, outcome: { conditions: [], flips_if: [], disputes: [] }, human_answer: null };
   writeFileSync(ledger, JSON.stringify(ruled));
   assert.equal(run(['quorum', 'route', '--ledger', ledger, '--domain', 'ux'], dir, env).status, 0);
   const rows = decisionRows(dir, env);
@@ -1710,6 +1710,12 @@ test('quorum route logs resolve\'s row, with resolve\'s key, so the report count
   writeFileSync(ledger, JSON.stringify({ ...ruled, ruling: { decision: 'rule', winner: 'A' } }));
   assert.equal(run(['quorum', 'route', '--ledger', ledger, '--domain', 'ux'], dir, env).status, 0);
   assert.equal(decisionRows(dir, env).length, 4, 'a ledger that asks no question logs nothing');
+
+  writeFileSync(ledger, JSON.stringify({ ...ruled, ruling: { ...ruled.ruling, domain: 'product' } }));
+  assert.equal(run(['quorum', 'route', '--ledger', ledger, '--domain', 'ux'], dir, env).status, 0);
+  assert.equal(decisionRows(dir, env).length, 4, 'a ruling outside the domain named logs no row under that domain');
+  assert.equal(run(['quorum', 'route', '--ledger', ledger, '--domain', 'architecture'], dir, env).status, 0);
+  assert.equal(decisionRows(dir, env).length, 4, 'nor under a domain no quorum routes');
 });
 
 test('check warns about quorum.product settings that have no effect, and stays quiet about those that do', (t) => {

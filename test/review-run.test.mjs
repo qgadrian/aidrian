@@ -383,6 +383,8 @@ test('citationProblem: a path:line must exist at the head, a test:<name> must ap
   assert.match(citationProblem('trust me', { root: r.dir, head }), /not path:line/u);
   assert.match(citationProblem('/src/app.js:1', { root: r.dir, head }), /is not in/u, 'a leading slash names no file of the commit');
   assert.equal(citationProblem('./src/app.js:1', { root: r.dir, head }), null);
+  for (const folder of ['src:1', './src:1', './:1', '.:1', '..:1', '/:1']) assert.notEqual(citationProblem(folder, { root: r.dir, head }), null, folder);
+  assert.match(citationProblem('src:1', { root: r.dir, head }), /is a folder/u);
 });
 
 test('flow evidence: a deleted flow test needs the Human, and the flow`s checks must pass on the head', async (t) => {

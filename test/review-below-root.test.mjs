@@ -411,3 +411,18 @@ test('a repository with a separate git folder, on an orphan branch, is guarded b
   assert.equal(refused.status, 1, refused.stderr);
   assert.match(refused.stderr, MAIN);
 });
+
+test('evidence below the root must name a file, and a file outside the project still counts', (t) => {
+  const dir = tempDir(t);
+  const git = gitIn(dir);
+  git('init', '-q', '-b', 'main');
+  mkdirSync(path.join(dir, 'apps/web/src'), { recursive: true });
+  mkdirSync(path.join(dir, 'packages/shared'), { recursive: true });
+  writeFileSync(path.join(dir, 'apps/web/src/a.js'), '1\n');
+  writeFileSync(path.join(dir, 'packages/shared/lock.js'), '1\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'init');
+  const options = { root: path.join(dir, 'apps/web'), head: git('rev-parse', 'HEAD').trim() };
+  for (const file of ['src/a.js:1', '../../packages/shared/lock.js:1']) assert.equal(citationProblem(file, options), null, file);
+  for (const folder of ['src:1', './:1', '.:1', '..:1', '../../packages:1']) assert.notEqual(citationProblem(folder, options), null, folder);
+});

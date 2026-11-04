@@ -345,6 +345,18 @@ export function listAudits(dir, { triage = readTriage(dir) } = {}) {
   return reports;
 }
 
+// The report that triages `entry` now: itself, or the end of its chain of replacements; null for a chain that loops.
+export function liveReport(reports, entry) {
+  const seen = new Set();
+  let current = entry;
+  while (current?.replaced_by) {
+    if (seen.has(current)) return null;
+    seen.add(current);
+    current = reports.find((each) => each.report === current.replaced_by);
+  }
+  return current ?? null;
+}
+
 // Oldest first: by personas and date, then the run of that day, so `x-2026-05-02.md` sorts before `x-2026-05-02-2.md`.
 function byRun(a, b) {
   const key = (name) => {

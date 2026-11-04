@@ -682,3 +682,38 @@ test('a sidecar that parses to anything but an object is one invalid report: lis
     assert.doesNotMatch(result.stderr, /\n\s+at /u, args.join(' '));
   }
 });
+
+test('a key resolves only within the selected report and the run it replaces: another report is never written, by record, rank, or verdict', (t) => {
+  const { root, audits, run } = project(t);
+  mkdirSync(path.join(root, 'docs'), { recursive: true });
+  writeFileSync(path.join(root, 'docs/rules.md'), '# Rules\n');
+  assert.equal(run('import', NEW, '--not-rechecked', 'F2,F3', '--carried-forward', 'F1', '--write').status, 0);
+  const other = 'floor-staff-2026-07-01.md';
+  writeFileSync(path.join(audits, other), '## Findings\n\n### polish: an unrelated label\n\n- Owner: `ux-specialist`.\n');
+  writeFileSync(path.join(audits, 'floor-staff-2026-07-01.json'), JSON.stringify({ ...sidecar(), report: other, personas: ['floor-staff'], date: '2026-07-01', findings: [{ ...sidecar().findings[0], id: 'F1', title: 'an unrelated label', severity: 'polish', evidence: [], cited: ['x.md:1'] }] }));
+  assert.equal(run('check', other).stderr, '');
+  const triageFile = path.join(audits, 'triage.json');
+
+  // A mixed batch with one key of an unrelated report writes nothing; the same key alone is refused too.
+  for (const args of [
+    ['record', NEW, `F4,${other}#F1`, 'drop', '--reason', 'x'],
+    ['record', NEW, `${other}#F1`, 'drop', '--reason', 'x'],
+    ['record', other, `${NEW}#F4`, 'drop', '--reason', 'x'],
+    ['rank', NEW, `F4,${other}#F1`, 'high', '--by', 'human'],
+    ['verdict', NEW, `F4,${other}#F1`, 'silent', '--by', 'product-manager', '--reason', 'searched'],
+  ]) {
+    const result = run(...args);
+    assert.equal(result.status, 1, args.join(' '));
+    assert.match(result.stderr, /key names? no item open to triage through/u, args.join(' '));
+    assert.equal(existsSync(triageFile), false, `${args.join(' ')} wrote nothing`);
+  }
+
+  // The selected report's own items and what it offers of the run it replaces still resolve.
+  assert.equal(run('record', other, `${other}#F1`, 'defer').status, 0);
+  assert.equal(run('record', NEW, `F4,${OLD}#F2`, 'defer').status, 0);
+  // A replaced report selects its own findings, through the report that offers them, and nothing of that report.
+  assert.equal(run('record', OLD, 'F3', 'defer').status, 0);
+  assert.match(run('record', OLD, `${NEW}#F5`, 'defer').stderr, /One key names no item open to triage through the front-desk read-only run/u);
+  const { reports } = JSON.parse(readFileSync(triageFile, 'utf8'));
+  assert.deepEqual([Object.keys(reports[NEW]), Object.keys(reports[OLD]).sort(), Object.keys(reports[other])], [['F4'], ['F2', 'F3'], ['F1']]);
+});

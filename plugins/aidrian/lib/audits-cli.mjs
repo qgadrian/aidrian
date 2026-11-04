@@ -12,7 +12,7 @@ import { parseArgs } from 'node:util';
 
 import { parseReport } from './audit-import.mjs';
 import {
-  allowedDecisions, TRIAGE_UNREADABLE, decisionProblem, DECISIONS, DOC_FORMS, held, verdictCitation, verdictProblem, VERDICTS, itemWords, slugOf, PRIORITIES, priorityProblem, untriaged, taskNumbers, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, reportTitle, searchLabels, sidecarName, sidecarProblems, today,
+  allowedDecisions, liveReport, TRIAGE_UNREADABLE, decisionProblem, DECISIONS, DOC_FORMS, held, verdictCitation, verdictProblem, VERDICTS, itemWords, slugOf, PRIORITIES, priorityProblem, untriaged, taskNumbers, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, reportTitle, searchLabels, sidecarName, sidecarProblems, today,
 } from './audits.mjs';
 import { commandConfig } from './config.mjs';
 import { isObject } from './fs.mjs';
@@ -326,14 +326,18 @@ function write(dir, name, keys, entry, said) {
   const reports = listAudits(dir, { triage });
   const owner = reports.find((each) => each.report === report);
   if (owner.status === 'no-sidecar' || owner.status === 'invalid') return fail(`${capital(owner.title)}: ${statusText(owner)}`);
+  // A key resolves only within the selected report: its own items and what it offers of the run it replaces. A replaced
+  // report selects only its own findings, through the report that offers them now. No other report is ever reached.
+  const live = liveReport(reports, owner);
+  const holder = live?.status === 'ok' ? live : null;
+  const open = (holder?.items ?? []).filter((item) => holder === owner || item.report === report);
   const targets = [];
   const missing = [];
   for (const key of keys.split(',').map((one) => one.trim()).filter(Boolean)) {
     const at = key.indexOf('#');
     const target = at === -1 ? { report, id: key } : { report: key.slice(0, at), id: key.slice(at + 1) };
-    // The item is a report's own, or a finding of the report it replaces, which that report offers as not re-checked.
-    const holder = reports.find((each) => each.status === 'ok' && each.items.some((item) => item.report === target.report && item.id === target.id));
-    if (holder) targets.push({ ...target, holder, item: holder.items.find((one) => one.report === target.report && one.id === target.id) });
+    const item = open.find((one) => one.report === target.report && one.id === target.id);
+    if (item) targets.push({ ...target, holder, item });
     else missing.push(key);
   }
   if (missing.length || !targets.length) {

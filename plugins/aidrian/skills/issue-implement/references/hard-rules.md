@@ -7,7 +7,8 @@ Read at the start of the run. These hold in every step.
 Report the blocker as **stop**, or **stop and ask** when the Human can settle it.
 
 - The acceptance criteria are silent, vague, or contradictory on a behaviour the code would have to invent.
-- `product-manager` returns `blocked` with `decision_options`: relay them to the Human, attributed.
+- `product-manager` or `architect` returns `decision_options`: run `aidrian decisions resolve` as `knowledge/references/decisions.md` says.
+  Under `ask`, stop and ask; under `decide`, follow its order to the end and record the `decided_provisional` in the report.
 - A slice would set an architecture precedent for other areas: `architect` first, then the Human.
 - A slice widens privileged access or changes a shared wrapper the project's knowledge protects: the Human authorizes it first.
 - A phase 0 guard fails: a closed, foreign-assigned, or blocked issue, or an unmerged merge dependency.
@@ -28,6 +29,7 @@ Report the blocker as **stop**, or **stop and ask** when the Human can settle it
 
 Note each in the report under decided alone.
 
+- A `decided_provisional` an agent returned under `authority: decide`, with its reason and revisit trigger.
 - Choosing between two equivalent names, the file a small helper lives in, or a test file path.
 - Creating the task worktree, or using an existing clean one at the branch tip.
 - Reusing a fresh plan instead of planning again.
@@ -42,7 +44,7 @@ Note each in the report under decided alone.
 - **No merge.** This skill leaves a draft, and its caller owns what follows (phase 8). Only the Human starts a merge, with the `pr-merge-when-green` skill.
 - **No hook bypass**: no `--no-verify`, `HUSKY=0`, or empty `core.hooksPath`. A failing hook is fixed at its cause, or the run stops.
 - **No invention.** Never make up an acceptance criterion id, a path, a function, a label, or issue context.
-- **No silent product or architecture call.** Stop and ask once, with every open question together.
+- **No silent product or architecture call.** Stop and ask once, with every open question together, unless the agent holds `authority: decide`.
 - **One slice, one commit.** Never batch slices into one commit, and never push a slice without its verification.
   The review-only `INTEGRATION-REVIEW` slice makes no commit.
 - **Run every task command in the worktree**, with `git -C <worktree>`, or check `git rev-parse --show-toplevel` first.

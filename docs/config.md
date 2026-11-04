@@ -164,8 +164,8 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `decisions.domains` | `mode` for one domain, `product`, `ux`, `architecture`, or `backlog`; `"inherit"`, the default, takes `decisions.mode`. |
 | `decisions.escalate` | Ordinary decision classes that always go to the Human in this project. |
 | `decisions.escalateDocs` | Docs and folders, from the project root, whose decisions always go to the Human: `docs/pricing.md`, `docs/legal/` for everything in it, or `docs/terms.md#refunds` for one section. No glob characters, absolute paths, or `..`. |
-| `decisions.secondLook` | The agent that takes a second look at a decision, and the least severity it reports; `null` turns it off. |
-| `decisions.record.queue` | Where agents list the decisions they settled: `"pr-body"`, the default, or `"report"`. |
+| `decisions.secondLook` | The agent that must agree with a decision at or above `minSeverity`; `null` turns it off. |
+| `decisions.record.queue` | `"pr-body"`, the default, or `"report"`. Every value means the report; nothing writes the pull request body. |
 | `decisions.unreviewed.remind` | When the Human is reminded of unreviewed decisions: `"session-start"`, the default, or `"off"`. |
 | `decisions.unreviewed.pauseDomainAt` | The unreviewed `pending` count and `oldestDays` age at which a domain goes back to asking; `null` never pauses. |
 
@@ -649,10 +649,11 @@ An agent may then settle the reversible, ordinary decisions.
 
 ```console
 $ aidrian decisions resolve --domain ux --class copy --reversible no,no,no,no
-{"authority":"ask","rule":"mode","reason":"mode is ask","base":"451dc4b8cce82671ae7afc534c0a7ab8c9604546"}
+{"authority":"ask","rule":"mode","reason":"mode is ask","secondLook":{"agent":"critic","minSeverity":"high"},"base":"451dc4b8cce82671ae7afc534c0a7ab8c9604546"}
 ```
 
 `authority` is `decide` or `ask`, and either one exits 0.
+`secondLook` is the block's `decisions.secondLook`, read as the rest is, so a working-copy edit cannot change it; it is `null` with the rule `no-base`.
 `--doc PATH`, repeated, names a doc the decision touches, with an optional `#section`. A relative path is read from the current folder and from the
 project root, and either reading can match. Any spelling of a path counts as the same doc, and a section matches by its heading's slug.
 Case does not count, on any disk: two docs that differ only by case both ask, which fails closed.
@@ -665,10 +666,25 @@ The first rule that matches wins:
 2. A class in `escalate` asks. A doc outside the project asks, and so does a doc `escalateDocs` covers.
    `docs/terms.md#refunds` covers that section and the file with no section named, but not `docs/terms.md#other`.
 3. Any reversibility answer that is yes or missing asks.
-   The four answers, in order: `storedData`, `external`, `pricingOrContract`, `visibleBeforeReview`.
+   The four answers, in order: `storedData`, `external`, `pricingOrContract`, `reachesUsersUnreviewed`.
+   The last asks whether the change reaches existing users with no human review of its pull request and no off switch.
 4. An unknown domain asks. A domain that is paused asks: its unreviewed decisions reach `pauseDomainAt.pending`, or the oldest reaches
    `pauseDomainAt.oldestDays` days. This rule takes effect when the resolver is given the pending list; `aidrian decisions resolve` gives it an empty one.
 5. `domains.<domain>`, unless it is `"inherit"`, then `mode`, each held to `maxMode`. Only `"decide-reversible"` decides.
+
+### How agents use the answer
+
+`plugins/aidrian/skills/knowledge/references/decisions.md` is the one rule the agents and skills follow.
+The agent that owns the decision, such as `product-manager` or `architect`, gives its class, four answers, and the docs it touches. A missing one is `ask`.
+The dispatcher runs the command and passes `authority: decide` or `authority: ask` in the agent's brief; the agent never computes it, and a brief with no such line is `ask`.
+
+- Under `ask`, the agent returns `decision_options` with an advisory recommendation, and the Human chooses.
+- Under `decide`, it returns `decided_provisional` ([the fields](../plugins/aidrian/skills/knowledge/references/handoff.md)), and the work goes on.
+  The dispatcher lists each one in its report. Every value of `decisions.record.queue` means the report; nothing writes the pull request body.
+- At or above `minSeverity` in the command's `secondLook`, or with no known severity, the agent it names must return `sign_off: approved` before the work goes on; anything else sends the decision to the Human.
+- A critical-flow sign-off or a security verdict is never self-approved, in any mode.
+
+### Which config it reads
 
 The command reads the team's block from the commit of the base branch: `origin/HEAD`, or else `main` on `origin`.
 A local `main` counts only in a repository with no remote at all.

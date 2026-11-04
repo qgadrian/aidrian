@@ -4,9 +4,10 @@
 //   aidrian decisions resolve --vocab            # every class and reversibility question, defined
 //
 // `--reversible` answers the questions of decisions.json in its order: storedData, external, pricingOrContract,
-// visibleBeforeReview. An answer left out asks. `--doc` names a doc, with an optional `#section`: from the current folder
+// reachesUsersUnreviewed. An answer left out asks. `--doc` names a doc, with an optional `#section`: from the current folder
 // and, when relative, from the project root too.
-// Output: { authority, rule, reason, base }, where `base` is the commit whose config was read, or null when none was.
+// Output: { authority, rule, reason, secondLook, base }, where `base` is the commit whose config was read, or null when
+// none was, and `secondLook` is that config's `decisions.secondLook`, or null when none was read.
 // Exit 0 on either answer; 1 on bad arguments or an invalid config. docs/config.md#decisions has the rules.
 
 import { existsSync, realpathSync } from 'node:fs';
@@ -47,7 +48,7 @@ export const commands = {
       const out = decisions === null
         ? { authority: 'ask', rule: 'no-base', reason: 'git could not give the base branch\'s config, so the decision goes to the Human' }
         : resolveAuthority({ decisions: withResolvedEntries(project, decisions) }, { domain: values.domain, class: values.class, reversible, docs });
-      console.log(JSON.stringify({ ...out, base }));
+      console.log(JSON.stringify({ ...out, secondLook: decisions?.secondLook ?? null, base }));
       return 0;
     },
   },

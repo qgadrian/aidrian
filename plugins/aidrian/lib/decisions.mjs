@@ -30,7 +30,7 @@ export const lowerMode = (a, b) => DECISION_MODES[Math.min(Math.max(DECISION_MOD
 
 // The decision on one question. `config` is a loaded config, or its `decisions` block. The question:
 // - `domain`: one of DECISION_DOMAINS; `class`: a class of decisions.json;
-// - `reversible`: { storedData, external, pricingOrContract, visibleBeforeReview }, each true (yes) or false (no);
+// - `reversible`: { storedData, external, pricingOrContract, reachesUsersUnreviewed }, each true (yes) or false (no);
 //   an answer that is missing, or anything but false, asks;
 // - `docs`: the doc paths the decision touches, from the project root, each with an optional `#section`, matched
 //   against `escalateDocs`; one outside the project asks;

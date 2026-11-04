@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { parse } from 'yaml';
 
+import { decisionClasses, VOCAB_PATH } from '../plugins/aidrian/lib/decisions.mjs';
 import { pluginTags } from '../plugins/aidrian/lib/knowledge.mjs';
 import { bannedPatterns } from '../scripts/banned-terms.mjs';
 import { CLAUDE_AGENTS, GROUPS, readAgents } from '../scripts/build.mjs';
@@ -391,6 +392,92 @@ test('the local banned terms file stays out of git', () => {
 test('only lib/project.mjs names the project folder; other plugin code asks it for paths', () => {
   const naming = allFiles(PLUGIN).filter((file) => file.endsWith('.mjs') && readFileSync(file, 'utf8').includes('.aidrian'));
   assert.deepEqual(naming.map((file) => path.relative(PLUGIN, file)), ['lib/project.mjs']);
+});
+
+const DECISION_RULE = 'knowledge/references/decisions.md';
+
+test('a file that names decision_options points to the shared decision rule', () => {
+  // Each relay site once restated who chooses, so a new mode would have had to change them all.
+  const exception = path.join(PLUGIN, 'skills/specialist-review/references/render.md');
+  assert.match(readFileSync(exception, 'utf8'), /decision_options/, 'render.md renders them; drop the exception when it stops');
+  const missing = allFiles(PLUGIN)
+    .filter((file) => file !== exception && /\.(md|toml)$/.test(file))
+    .filter((file) => {
+      const text = readFileSync(file, 'utf8');
+      return text.includes('decision_options') && !text.includes(DECISION_RULE);
+    })
+    .map((file) => path.relative(ROOT, file));
+  assert.deepEqual(missing, []);
+});
+
+test('the shared decision rule states who computes authority, and points at the vocabulary instead of restating it', () => {
+  const rule = readFileSync(path.join(PLUGIN, 'skills', DECISION_RULE), 'utf8').replace(/\s+/g, ' ');
+  for (const line of [
+    /The dispatcher with a shell\*\* runs the command and passes `authority: decide` or `authority: ask` in the specialist's brief/,
+    /The specialist never computes authority itself\.\*\* A brief with no `authority` line means `ask`/,
+    /`--doc` is required whenever a decision touches a written rule/,
+    /`aidrian decisions resolve --vocab` defines the classes/,
+    /A critical-flow sign-off or a security verdict is never self-approved, in any mode/,
+    /`aidrian decisions resolve` prints `secondLook` from the base branch's config.*Read it from that output, never from the working copy/,
+    /ask it for `sign_off`\. A missing or unknown `severity` counts as at or above `minSeverity`\. `approved` is agreement\. Anything else escalates/,
+    /A missing class, answer, or `docs` field, or a command that fails, means `ask`; `docs: \[\]` states it touches none/,
+    /--reversible <no\|yes>,<no\|yes>,<no\|yes>,<no\|yes>/,
+    /in the order `--vocab` gives/,
+    /when the host cannot reach it, dispatch a fresh one with `authority: decide` and the options/,
+    /already holds the class, answers, and docs may resolve first/,
+  ]) assert.match(rule, line);
+  for (const kind of decisionClasses()) assert.doesNotMatch(rule, new RegExp(`\`${kind}\``, 'u'), `the rule restates the class ${kind}`);
+  assert.ok(existsSync(path.join(PLUGIN, 'lib/decisions.json')), 'the path the rule gives an agent with no shell');
+  assert.ok(existsSync(VOCAB_PATH));
+  assert.equal(path.resolve(PLUGIN, 'skills/knowledge/references', '../../../lib/decisions.json'), VOCAB_PATH);
+});
+
+test('each dispatcher of a deciding agent runs the resolve, and each deciding agent returns by its brief', () => {
+  const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
+  for (const rel of [
+    'agents-src/coordination/orchestrator.md',
+    'agents-src/support-growth/marketing-orchestrator.md',
+    'skills/issue-implement/references/hard-rules.md',
+    'skills/specialist-review/references/lenses.md',
+    'skills/autopilot/SKILL.md',
+    'skills/planning-agent/SKILL.md',
+  ]) {
+    const text = read(rel);
+    assert.match(text, /run `aidrian decisions resolve`/i, rel);
+    assert.ok(text.includes(DECISION_RULE), rel);
+  }
+  for (const rel of ['agents-src/product-design/product-manager.md', 'agents-src/planning/architect.md']) {
+    assert.match(read(rel), /[Ww]ith `authority: decide` in your brief, return `decided_provisional`/, rel);
+  }
+  assert.match(read('agents-src/product-design/product-manager.md'), /Compute authority yourself/);
+  assert.match(read('agents-src/product-design/product-manager.md'), /No `authority` covers a sign-off/);
+  assert.match(read('skills/plan-review/SKILL.md'), /no `authority` covers this gate/);
+  assert.match(read('agents-src/coordination/orchestrator.md'), /On an owner's `decision_options`, run `aidrian decisions resolve` and pass `authority`: `knowledge\/references\/decisions\.md`; under `ask`, return `needs_input` with them, attributed/);
+  assert.match(read('skills/issue-implement/references/hard-rules.md'), /as `knowledge\/references\/decisions\.md` says\. Under `ask`, stop and ask; under `decide`, follow its order to the end/);
+  const planning = read('skills/planning-agent/SKILL.md');
+  const delegation = planning.slice(planning.indexOf('## Allowed Planning Delegation'), planning.indexOf('## Workflow'));
+  assert.match(delegation, /run `aidrian decisions resolve` as `knowledge\/references\/decisions\.md` says\. Under `ask`, the decision becomes an `Open questions` entry.*record the `decided_provisional` in `## Approach` and your handoff/);
+  assert.match(delegation, /You may also consult the agent the command's `secondLook` names, for that look only\./);
+  const lenses = read('skills/specialist-review/references/lenses.md');
+  const onOptions = lenses.slice(lenses.indexOf('## When an agent returns decision_options'), lenses.indexOf('## architect'));
+  assert.match(onOptions, /Under `ask`, or with no agent id, render the needs-input block/);
+  assert.match(onOptions, /send the kept agent `authority: decide` with the host's message tool, naming the decision/);
+  assert.match(onOptions, /when the rule's second look would apply, render the needs-input block as under `ask`/);
+  assert.match(read('skills/specialist-review/references/render.md'), /verbatim, leaving out `class`, `reversible`, and `docs`/);
+  assert.match(read('agents-src/planning/architect.md'), /you never compute authority/);
+  const handoff = read('skills/knowledge/references/handoff.md');
+  for (const field of ['decision', 'options_considered', 'reason', 'class', 'reversible', 'docs', 'severity', 'revisit_trigger', 'reverts_by']) {
+    assert.match(handoff.slice(handoff.indexOf('`decided_provisional`')), new RegExp(`\`${field}\``), field);
+  }
+});
+
+test('autopilot parks a decision only under ask, and reports what an agent decided', () => {
+  const autopilot = readFileSync(path.join(PLUGIN, 'skills/autopilot/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.ok(autopilot.includes(`as \`${DECISION_RULE}\` says. Under \`decide\`, follow its order to the end and record the \`decided_provisional\` in the report.`));
+  assert.match(autopilot, /Under `ask`, with a clearly safe default that can be undone, take it and flag it in the report, unless its `rule` is `escalate` or `escalate-doc`\. Otherwise park it/);
+  assert.match(autopilot, /Fold each parked decision, each `decided_provisional`, and each finding left open/);
+  assert.match(autopilot, /Decisions for the Human\*\*: each parked decision.*then each `decided_provisional`/);
+  assert.match(autopilot, /Never approve one yourself: park it/);
 });
 
 test('plugin text names no bare slash command', () => {

@@ -97,8 +97,10 @@ Return the machine handoff from the `knowledge` skill.
 - Use `deferred_refs` for the modules or docs to read next, in order.
 - Use `risks`, `acceptance_criteria`, and `open_questions` for non-trivial design consequences.
 - When `orchestrator` asks you to approve an implementation shape, add `sign_off`: `approved`, `blocked`, or `needs_evidence`.
-- A design that needs a missing decision returns `status: needs_input` with `decision_options`,
-  each option with `id`, `summary`, `tradeoffs`, and `recommended`.
+- A design that needs a missing decision follows `knowledge/references/decisions.md`; you never compute authority.
+  With `authority: decide` in your brief, return `decided_provisional`, with its class and answers.
+  Otherwise return `status: needs_input` with `decision_options`, each option with `id`, `summary`, `tradeoffs`, and `recommended`,
+  and the decision's `class`, `reversible` answers, and `docs`.
   That handoff is the evidence a `confirmed_missing_authority` deferral needs under the project's deferral policy.
 
 ## Do not

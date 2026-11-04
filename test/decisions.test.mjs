@@ -8,8 +8,8 @@ import { DECISION_DOMAINS, decisionClasses, decisionWarnings, escalateDocWarning
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const FLOOR = ['security', 'critical-flow', 'money', 'data-loss', 'unknown'];
-const ORDINARY = ['copy', 'layout', 'ordering', 'default-value', 'naming', 'module-boundary', 'backlog-rank'];
-const NO = { storedData: false, external: false, pricingOrContract: false, visibleBeforeReview: false };
+const ORDINARY = ['copy', 'layout', 'ordering', 'default-value', 'naming', 'module-boundary', 'backlog-rank', 'product-behaviour'];
+const NO = { storedData: false, external: false, pricingOrContract: false, reachesUsersUnreviewed: false };
 
 // DEFAULTS with `changes` over its `decisions`, for a team that opted in with a higher ceiling; nested keys are given whole.
 const config = (changes = {}) => ({ decisions: { ...DEFAULTS.decisions, maxMode: 'decide-reversible', ...changes } });
@@ -20,7 +20,8 @@ test('decisions.json is the class list: floor classes first, every class and que
   const { classes, reversibility } = loadVocab();
   assert.deepEqual(decisionClasses(), [...FLOOR, ...ORDINARY]);
   assert.deepEqual(classes.filter((each) => each.floor).map((each) => each.class), FLOOR);
-  assert.deepEqual(Object.keys(reversibility), ['storedData', 'external', 'pricingOrContract', 'visibleBeforeReview']);
+  assert.deepEqual(Object.keys(reversibility), ['storedData', 'external', 'pricingOrContract', 'reachesUsersUnreviewed']);
+  assert.match(reversibility.reachesUsersUnreviewed, /existing users.*no human review.*no off switch/u);
   for (const definition of [...classes.map((each) => each.definition), ...Object.values(reversibility)]) {
     assert.match(definition, /^[^\n]{10,}$/u);
   }
@@ -88,6 +89,13 @@ test('a project escalate class or doc asks before anything weighs reversibility'
   }
   const spelled = config({ mode: 'decide-reversible', escalateDocs: ['./docs//legal/', 'docs/x/../a.md'] });
   for (const doc of ['docs/legal/b.md', 'docs/a.md']) assert.deepEqual(pick(resolveAuthority(spelled, question({ docs: [doc] }))), ['ask', 'escalate-doc'], `entry spelling ${doc}`);
+});
+
+test('docMatches folds case in its folder and section branches', () => {
+  const folder = config({ mode: 'decide-reversible', escalateDocs: ['docs/a.md'] });
+  assert.deepEqual(pick(resolveAuthority(folder, question({ docs: ['DOCS'] }))), ['ask', 'escalate-doc'], 'a folder that holds the entry, in another case');
+  const section = config({ mode: 'decide-reversible', escalateDocs: ['docs/terms.md#refunds'] });
+  assert.deepEqual(pick(resolveAuthority(section, question({ docs: ['docs/TERMS.md#refunds'] }))), ['ask', 'escalate-doc'], 'a section of the entry\'s file, in another case');
 });
 
 test('a section matches by its heading\'s slug, as the review\'s sectionOf reads it', () => {

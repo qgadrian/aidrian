@@ -164,6 +164,20 @@ test('decisions resolve says ask with the matched rule, for a floor class, an un
   assert.equal(resolve('--domain', 'ux', '--class', 'copy').rule, 'reversibility', 'no answers at all');
 });
 
+test('decisions resolve prints the base branch\'s secondLook, so a working-copy edit cannot change it', (t) => {
+  const look = { agent: 'critic', minSeverity: 'low' };
+  const { dir, git, write } = decisionsRepo(t, { secondLook: look });
+  assert.deepEqual(resolveCopy(dir).secondLook, look, 'the committed block');
+  git('switch', '-q', '-c', 'feature');
+  write({ secondLook: null });
+  assert.deepEqual(resolveCopy(dir).secondLook, look, 'an uncommitted edit');
+  git('commit', '-q', '-am', 'turn it off');
+  assert.deepEqual(resolveCopy(dir).secondLook, look, 'a commit on the branch');
+  git('switch', '-q', 'main');
+  git('merge', '-q', '--ff-only', 'feature');
+  assert.equal(resolveCopy(dir).secondLook, null, 'once the base branch has it');
+});
+
 test('decisions resolve reads the base branch, so a branch cannot raise its own authority', (t) => {
   const { dir, git, write } = decisionsRepo(t, { mode: 'ask' });
   const main = git('rev-parse', 'main');
@@ -544,6 +558,7 @@ test('in a clone, a local main never stands in for origin: no origin ref gives n
   git('update-ref', '-d', 'refs/remotes/origin/main');
   git('symbolic-ref', '--delete', 'refs/remotes/origin/HEAD');
   assert.deepEqual(pick(resolveCopy(dest)), ['ask', 'no-base', null], 'the local main does not stand in');
+  assert.equal(resolveCopy(dest).secondLook, null, 'no base, no second look');
 });
 
 test('decisions resolve --vocab lists the classes with definitions, and bad arguments exit 1 with the usage', (t) => {
@@ -553,7 +568,7 @@ test('decisions resolve --vocab lists the classes with definitions, and bad argu
   assert.equal(vocab.classes.money.floor, true);
   assert.equal(vocab.classes.copy.floor, false);
   assert.match(vocab.classes.copy.definition, /words/u);
-  assert.deepEqual(Object.keys(vocab.reversibility), ['storedData', 'external', 'pricingOrContract', 'visibleBeforeReview']);
+  assert.deepEqual(Object.keys(vocab.reversibility), ['storedData', 'external', 'pricingOrContract', 'reachesUsersUnreviewed']);
 
   const bad = [
     [['decisions'], /decisions takes resolve/u],

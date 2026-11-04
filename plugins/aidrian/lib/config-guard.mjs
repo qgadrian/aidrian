@@ -85,7 +85,7 @@ export function autoMergeWriteDenial(input, project, { names: { human } }) {
 // Whether a Write, Edit, or apply_patch of the local `file` changes the switch. A Write or Edit changes it when its text
 // names `autoMerge`, or when the file it leaves parses to another `github.autoMerge` than the file on disk, which covers
 // `"off"` to `"on"`, a JSON escape, a removed key, and a file left unparsable. A patch changes it when a line it adds or
-// removes names `autoMerge`: a patch is not applied here, so a value on a line of its own without the key is not seen.
+// removes names `autoMerge`: a patch is not applied here, so a value on a line of its own without the key, or a key spelled with a JSON escape, is not seen.
 function changesAutoMerge({ tool_name: tool, tool_input: given }, file) {
   if (tool === 'apply_patch') return /^[+-].*autoMerge/mu.test(given.command);
   const written = { Write: given.content, Edit: given.new_string }[tool];

@@ -26,8 +26,9 @@
 // when the base is the default branch); and, only when the team, the checks, the paths, and the machine all allow it,
 // `gh api user` for the login, then the pull request's three comment lists.
 // Every `gh api` call names the host of the pull request's URL. A gh failure prints gh's last line of stderr.
-// stdout: one line, or with --json { effective, reason, allow, local, strategy, deleteBranch, deleteWorktree, pr, head,
-// repo, base }: `allow` is true only when both branches allow it, and the other team values are the default branch's.
+// stdout: one line, or with --json { effective, reason, why, allow, local, strategy, deleteBranch, deleteWorktree, pr, head,
+// repo, base }: `why` is the off line's sentence, null when on; `allow` is true only when both branches allow it, and the
+// other team values are the default branch's.
 // When the reason is local and the local file has errors, they go to stderr.
 // Exit 0 on, 1 off, 3 error (an argument, a gh read, or a pull request gh describes only in part).
 
@@ -237,7 +238,7 @@ export function runAutoMerge(argv, project, { gh = (args) => runGh(args, { cwd: 
   }
 
   const result = {
-    effective, reason, allow: team.allow, local: project.localAutoMerge, strategy: team.strategy, deleteBranch: team.deleteBranch,
+    effective, reason, why, allow: team.allow, local: project.localAutoMerge, strategy: team.strategy, deleteBranch: team.deleteBranch,
     deleteWorktree: team.deleteWorktree, pr: pr.number, head: pr.head, repo: pr.repo, base: pr.base,
   };
   console.log(asJson ? JSON.stringify(result)

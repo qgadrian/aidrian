@@ -29,7 +29,7 @@ Its `references/review-rules.md` defines a review round, when the bot is out, th
 ## What it is, and is not
 
 - It is a bounded runner: implementation, a draft pull request, review rounds, and a report. It cannot loop forever.
-- It is not a merge tool. It merges only when `aidrian pr auto-merge <n>` exits 0, through the `pr-auto-merge` skill
+- It merges only when `aidrian pr auto-merge <n>` exits 0, through the `pr-auto-merge` skill
   that `references/phases.md` § 4 runs. Any other merge needs the Human's explicit say-so.
 - It is not an interview. Questions need the Human present, so settle them before launch.
 

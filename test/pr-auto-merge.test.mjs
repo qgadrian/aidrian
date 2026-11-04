@@ -109,7 +109,7 @@ test('both layers on, the Human\'s own pull request, and a finished review on it
   const result = run(t, r, ['7', '--json']);
   assert.equal(result.code, 0);
   assert.deepEqual(json(result), {
-    effective: true, reason: null, allow: true, local: 'on', strategy: 'squash', deleteBranch: true, deleteWorktree: false,
+    effective: true, reason: null, why: null, allow: true, local: 'on', strategy: 'squash', deleteBranch: true, deleteWorktree: false,
     pr: 7, head: HEAD, repo: 'acme/notes', base: 'main',
   });
   assert.deepEqual(result.calls, [
@@ -147,7 +147,7 @@ test('the team keys come from the base on GitHub, never the working copy: a bran
   const result = run(t, r, ['--json'], { files: { 'acme/notes@main:.aidrian/config.json': configText({ ...TEAM, allow: false, strategy: 'rebase' }) } });
   assert.equal(result.code, 1);
   assert.deepEqual(json(result), {
-    effective: false, reason: 'team', allow: false, local: 'on', strategy: 'rebase', deleteBranch: true, deleteWorktree: false,
+    effective: false, reason: 'team', why: 'the team does not allow it (github.autoMerge.allow on acme/notes main)', allow: false, local: 'on', strategy: 'rebase', deleteBranch: true, deleteWorktree: false,
     pr: 7, head: HEAD, repo: 'acme/notes', base: 'main',
   });
   assert.deepEqual(result.calls[0], ['pr', 'view', '--json', 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews'], 'no argument: the current branch');
@@ -307,13 +307,16 @@ test('a changed file that instructs an AI session or decides CI, or a file list 
     'AGENTS.md', 'CLAUDE.md', 'packages/api/AGENTS.md', 'a/b/CLAUDE.md', 'packages/api/agents.md', '.claude/settings.json', '.claude/agents/x.md',
     '.codex/config.toml', '.aidrian/config.json', '.aidrian/knowledge/rules.md', '.aidrian.json', 'plugins/x/skills/y/SKILL.md', 'SKILL.md',
     '.github/workflows/ci.yml', '.github/actions/setup/action.yml', 'CODEOWNERS', '.github/CODEOWNERS', 'docs/CODEOWNERS',
+    '.aidrian.local.json', 'wt/.AIDRIAN.LOCAL.JSON', '.claude', '.codex', '.aidrian', '.github/workflows', '.github/actions',
   ]) {
     assert.deepEqual(reasonOf(t, r, changed('src/app.js', file)), [1, 'paths'], file);
   }
-  for (const file of ['docs/guide.md', 'README.md', 'src/app.js', 'docs/agents.mdx', '.github/dependabot.yml', 'src/.claude.js', 'x.aidrian/y', 'NOTSKILL.md']) {
+  for (const file of ['docs/guide.md', 'README.md', 'src/app.js', 'docs/agents.mdx', '.github/dependabot.yml', 'src/.claude.js', 'x.aidrian/y', 'NOTSKILL.md', '.claude.md', '.codexrc', '.aidrian.local.json.md', '.github/workflows-old/x.yml']) {
     assert.deepEqual(reasonOf(t, r, changed(file)), [0, null], file);
   }
   assert.match(run(t, r, ['7'], changed('docs/guide.md', '.github/workflows/ci.yml')).out[0], /it changes \.github\/workflows\/ci\.yml/u);
+  assert.match(JSON.parse(run(t, r, ['7', '--json'], changed('.github/workflows/ci.yml')).out[0]).why, /it changes \.github\/workflows\/ci\.yml/u, 'the JSON says why too');
+  assert.equal(JSON.parse(run(t, r, ['7', '--json'], changed('docs/guide.md')).out[0]).why, null, 'and nothing when on');
   for (const changeType of ['ADDED', 'CHANGED', 'COPIED', 'DELETED', 'MODIFIED']) {
     assert.deepEqual(reasonOf(t, r, { view: { files: [{ path: 'docs/guide.md', changeType }] } }), [0, null], changeType);
   }
@@ -438,7 +441,7 @@ test('the default branch must allow it too: a feature base that allows it under 
   const result = run(t, r, ['7', '--json'], { view, files });
   assert.equal(result.code, 1);
   assert.deepEqual(json(result), {
-    effective: false, reason: 'team', allow: false, local: 'on', strategy: 'rebase', deleteBranch: true, deleteWorktree: false,
+    effective: false, reason: 'team', why: 'the team does not allow it (github.autoMerge.allow on acme/notes main)', allow: false, local: 'on', strategy: 'rebase', deleteBranch: true, deleteWorktree: false,
     pr: 7, head: HEAD, repo: 'acme/notes', base: 'feat/stack',
   });
   assert.ok(result.calls.some((args) => args[3] === 'repos/acme/notes/contents/.aidrian/config.json?ref=refs%2Fheads%2Ffeat%2Fstack'), 'the base is read at its own ref');

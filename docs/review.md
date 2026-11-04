@@ -525,7 +525,7 @@ place: the rounds, each pass's result per head, the verdicts, the sign-offs, and
 reads it from the comment, and only from a comment whose `author_association` is `OWNER`, `MEMBER`, or `COLLABORATOR`:
 a stranger's comment supplies no record, and is never edited. It is the reviewers' word, not proof, and it is all visible on the pull request.
 A step run by a non-member edits the summary comment that `gh` user wrote, which still supplies no record.
-When the user cannot be read, the step posts a new comment rather than edit someone else's.
+When the user cannot be read, it attempts the last member's summary comment, or with none posts a new one; it never edits a non-member's.
 
 The comment carries the record brotli-compressed, in base64, in one `<!-- aidrian-review-state-br:... -->` marker.
 The older plain `<!-- aidrian-review-state:... -->` marker is still read. A reader takes the newer of every record

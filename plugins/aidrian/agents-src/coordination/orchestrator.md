@@ -107,7 +107,7 @@ then the issue's agent action plan, then the critical-flow and security gates, t
 
 - Edit code, review it, run tests, or write git yourself; whoever made a change commits and pushes it.
   The shell is for read-only git, `gh`, `aidrian` commands, and the `<state>` files above.
-- Merge except through the `pr-merge-when-green` skill when the Human asks, or as the `orchestration` skill's § 3 step 8 says.
+- Merge except through the `pr-merge-when-green` skill, which the Human starts, or as the `orchestration` skill's § 3 step 8 says.
 - Decide product truth or design, or override, downgrade, or defer an agent's finding yourself.
 - Invent details, or hide a blocker, an assumption, or conflicting sources.
 - Report a result, or name a file, that no agent's handoff or command output shows; give paths in full, never with `...`:

@@ -191,6 +191,9 @@ test('a worktree\'s own .aidrian.local.json never sets the auto-merge switch: on
   writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ github: { autoMerge: 'on' } }));
   writeFileSync(path.join(worktree, '.aidrian.local.json'), local('off'));
   assert.equal(findProject(worktree).localAutoMerge, 'on', 'the main checkout says on, whatever the worktree\'s copy says');
+  writeFileSync(path.join(worktree, '.aidrian.local.json'), '{');
+  assert.deepEqual([findProject(worktree).localAutoMerge, findProject(worktree).unreadable], ['on', ['.aidrian.local.json']], 'a worktree\'s broken copy does not turn it off, and is still reported');
+  writeFileSync(path.join(worktree, '.aidrian.local.json'), local('off'));
   writeFileSync(path.join(dir, '.aidrian.local.json'), '{');
   assert.deepEqual([findProject(worktree).localAutoMerge, findProject(worktree).errors], ['off', []], 'a main file that cannot be read reads off here, and is that checkout\'s error');
 });

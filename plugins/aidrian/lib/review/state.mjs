@@ -234,7 +234,7 @@ export const summaryComment = (comments) => (comments ?? []).filter((comment) =>
 // The summary comment a write edits, or null to post a new one. A non-member edits the last one they wrote, which still
 // supplies no record, so their steps keep one comment; everyone else edits the one readers take (summaryComment).
 // `viewer()` gives the current gh user's login, and is asked only when a non-member's summary comment is there. A login
-// it cannot give matches nobody, so no one else's comment is edited for it.
+// it cannot give matches nobody, so no non-member's comment is edited for it; a member's is still attempted.
 export function summaryToEdit(comments, viewer) {
   const outside = (comments ?? []).filter((comment) => isSummary(comment.body) && !MEMBER_ASSOCIATIONS.has(comment.author_association));
   const login = outside.length ? currentLogin(viewer) : null;

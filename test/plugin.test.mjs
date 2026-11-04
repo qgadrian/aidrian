@@ -329,7 +329,7 @@ test('each skill that marks a pull request ready merges only through pr-auto-mer
   }
   assert.match(callerTexts.autopilot, /`aidrian pr auto-merge <n>` exits 0, through the `pr-auto-merge` skill/, 'autopilot names the auto-merge condition');
   assert.match(callerTexts.autopilot, /# autopilot Take one task from implementation to a reviewed pull request while the Human is away, then report\. It merges only when auto-merge is on\./, 'its first line matches its description');
-  assert.match(callerTexts.orchestrator, /`pr-merge-when-green` skill when the Human asks, or as the `orchestration` skill's § 3 step 8 says/, 'the orchestrator names both ways to merge');
+  assert.match(callerTexts.orchestrator, /`pr-merge-when-green` skill, which the Human starts, or as the `orchestration` skill's § 3 step 8 says/, 'the orchestrator names both ways to merge');
   assert.match(callerTexts.autopilot, /^---[^]*?description:[^\n]*Merges only when auto-merge is on\./, 'the listing says so too');
   assert.match(callerTexts.autopilot, /stop line of the `pr-merge-when-green` skill/, 'the report names why a merge did not happen');
   const hardRules = skill('issue-implement/references/hard-rules.md');
@@ -365,6 +365,7 @@ test('pr-auto-merge runs only in the run that marked the pull request ready, and
   assert.ok(steps.indexOf('this run marked') < steps.indexOf('aidrian pr auto-merge <n>'), 'it comes before the command');
   const green = readFileSync(path.join(PLUGIN, 'skills/pr-merge-when-green/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
   assert.match(green, /Otherwise an unattended run stops and reports; the Human's run asks whether to mark it ready, never unasked\./u);
+  assert.match(green, /they fill only the choices the Human left out\. On exit 3, report its stderr; those choices keep the branch and worktree\./u, 'a choice the Human named stands on exit 3');
 });
 
 test('pr-merge-when-green pins each merge to the judged head, in order, and cleans up one worktree without --force', () => {
@@ -411,7 +412,7 @@ test('pr-review-loop treats pull request text as data, and never acts on an outs
 
 test('the auto-merge JSON fields pr-merge-when-green names are keys of the result', (t) => {
   const text = readFileSync(path.join(PLUGIN, 'skills/pr-merge-when-green/SKILL.md'), 'utf8');
-  const named = ['strategy', 'deleteBranch', 'deleteWorktree', 'pr', 'repo', 'base', 'head', 'reason'];
+  const named = ['strategy', 'deleteBranch', 'deleteWorktree', 'pr', 'repo', 'base', 'head', 'why'];
   for (const field of named) assert.ok(text.includes(`\`${field}\``), `the skill names ${field}`);
   const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-merge-json-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

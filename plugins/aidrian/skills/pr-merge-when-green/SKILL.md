@@ -49,9 +49,9 @@ aidrian pr auto-merge <url> --json                    # <url> from the view: exi
 
 Keep `baseRefName` for step 2. The auto-merge JSON's `strategy`, `deleteBranch`, and `deleteWorktree` set the run's choices:
 
-- Unattended run: take all three. Stop and report its `reason`, or on exit 3 its stderr, unless it exits 0, its `pr` is `<n>`,
+- Unattended run: take all three. Stop and report its `why`, or on exit 3 its stderr, unless it exits 0, its `pr` is `<n>`,
   its `repo` is `<owner>/<repo>`, ignoring case, and its `base` is `baseRefName`.
-- The Human's run: they fill only the choices the Human did not name. On exit 3, report its stderr; keep the branch and worktree.
+- The Human's run: they fill only the choices the Human left out. On exit 3, report its stderr; those choices keep the branch and worktree.
 
 Read the allowed strategies with `gh repo view <owner>/<repo> --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed`.
 Stop when the chosen strategy is not allowed. With none chosen, or a null `strategy`, use the one allowed strategy,

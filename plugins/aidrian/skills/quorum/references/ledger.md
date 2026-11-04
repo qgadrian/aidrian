@@ -235,6 +235,9 @@ fails `quorum check` on every invalid ruling or rebuttal, so it is not reused.
   - `witness.reactions`: at most one per position; hypotheses, which no one rules on.
     - `witness.reactions[].position`: `A`, `B`, `C`, or `D`.
     - `witness.reactions[].reaction`: the persona's words.
+  - `witness.answers`: the examiner's questions to the persona, at most 3; hypotheses too.
+    - `witness.answers[].question`: the question, in the persona's terms.
+    - `witness.answers[].answer`: the persona's words.
 - `cases`: each position's case, as in a decide ledger.
   - `cases[].position`: `A`, `B`, `C`, or `D`.
   - `cases[].claim`: the case, at most 200 words.

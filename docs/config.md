@@ -590,7 +590,7 @@ Two commands read the group, so the skill text never parses this file:
   so a cap lowered after a run finished never voids its ledger or the Human's answers.
 - `aidrian quorum roles plan` and `aidrian quorum roles decide` read the whole group, `maxObjections` included,
   and print that mode's roles, judge, and caps as one JSON line, which the coordinator follows. The decide caps are `3N + 2 + C` for each position count N
-  from 2 to 4, where C counts the first N positions whose runner is Codex: 9, 12, and 16 with the defaults. `aidrian quorum roles product` reads it too; the product caps are `N + 8` for 2 or 3 positions, plus N when advocates run on Codex.
+  from 2 to 4, where C counts the first N positions whose runner is Codex: 9, 12, and 16 with the defaults. `aidrian quorum roles product` reads it too; the product caps are `N + 9` for 2 or 3 positions, plus N when advocates run on Codex.
 
 Both stop on an invalid config.json, as every `aidrian` command does: they exit 1 naming each bad key, and never run
 on defaults the project did not choose.

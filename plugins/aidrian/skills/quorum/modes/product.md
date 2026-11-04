@@ -26,7 +26,7 @@ the project's docs say so. Start this mode only when the Human asks for it.
 - **Examiner**: `critic`, one run that attacks every case.
 - **Judge**: `product-manager`, in a fresh run that shaped nothing.
 
-The cap is `N + 8` dispatches for N positions, 11 for three: the trace, the frame, the second framing, the merge, the witness, N
+The cap is `N + 9` dispatches for N positions, 12 for three: the trace, the frame, the second framing, the merge, the witness, its answers, N
 cases, the examiner, the ruling, and one retry. Advocates on Codex add one fallback each.
 A missing trace, frame, merge, or ruling stops the run with `blocked`. With no second framing, go on with the frame alone. With no witness answer, `witness` stays `null`, and the report says so. With no examiner answer, `cross` stays empty, and the report says so.
 A second model is optional. `same_model` records when positions share a runner, and the report shows it.
@@ -59,10 +59,12 @@ answer (`null` again when deferred), and runs `quorum check`.
    `quorum check`. `persona_docs` lists every candidate of round 6. A `premise: invalid` line goes back to the framer once,
    on the retry; still invalid, or with the retry spent, stop with `blocked`.
 6. **Witness.** Each doc tagged `personas`, other than `product-access` and any with an `aidrian lint personas` problem, is a
-   candidate: pick the one whose tasks the decision changes most, and write its reactions to `witness`. With none, `witness` stays `null`, and the report says no persona reacted. Never invent one.
+   candidate: pick the end user the decision changes most, by their tasks, and write its reactions to `witness`. With none, `witness` stays `null`, and the report says no persona reacted. Never invent one.
 7. **Cases.** One advocate per position, in parallel; write each to `cases`. A position with no case stops the run with `blocked`.
-8. **Examiner.** The examiner, with every case. Number its points `X1` to `X9`, `by: X`, `status: pending`. Run `quorum check`.
-9. **Ruling.** The judge, on the cases, the backed points, and the persona's reactions. Write `ruling` and `outcome`, and run
+8. **Examiner.** The examiner, with every case and the persona's reactions. Number its points `X1` to `X9`, `by: X`,
+   `status: pending`, and run `quorum check`. With a witness and questions, the witness answers them, once, with the
+   Witness brief's rules, into `witness.answers`. With no answer, the report says so.
+9. **Ruling.** The judge, on the cases, the backed points, and the persona's reactions and answers. Write `ruling` and `outcome`, and run
    `quorum check`. One the check names invalid, or a missing one, goes back once, on the retry. Missing again, or with the retry spent, stop with `blocked`. Invalid again, or with the retry spent, write
    `{decision: escalate, winner: null, change_or_reason: <the line it printed, then the judge's last decision and winner>, citations: <its citations>, tested: [], inferences: []}`
    and `outcome: null`, and run `quorum check`.
@@ -87,7 +89,7 @@ After the core's Ledger item, which also names each role's agent and the questio
 2. **Recommendation**: the winner, or `escalated`; its conditions; and the Human's answer, or `deferred`.
 3. **What would flip it**: each fact and how to settle it.
 4. **Disputes left**: each topic and its owner.
-5. **Options**: each label, its case, the persona's reaction marked as a hypothesis, and each backed point against it.
+5. **Options**: each label, its case, the persona's reaction and answers marked as hypotheses, and each backed point against it.
 6. **Next**: on an approved option, the written rule to change, from its `Rule changed:` line, and the skill that writes it,
    `knowledge-update` or `adr-writer`. On a deferred one, `quorum product <question file>` asks the question again.
 
@@ -143,6 +145,8 @@ For each, say what this person would do and where they would get stuck. Say when
 Return one JSON object, in the handoff's artifacts: {"reactions": [{"position", "reaction"}]}. Change no file.
 ```
 
+For the examiner's questions, send the same role and doc with `Questions: <each>`, and return {"answers": [{"question", "answer"}]}, under the same rules.
+
 ## Case
 
 ```text
@@ -160,10 +164,12 @@ As an agent, put it in the handoff's artifacts. Change no file.
 ```text
 Role: examiner in a product decision. Argue for no position.
 Question: <plan>. The cases, word for word: <id, label, claim, and citations, per position>.
+The persona's reactions, hypotheses to test: <each, or none>.
 Return at most 9 points. Each names in "against" the position it attacks, and shows where its evidence does not hold,
 its claim does not follow, or a cost to a user goes unnamed.
 <evidence>
-Return one JSON object, in the handoff's artifacts: {"cross": [{"against", "claim", "citations": [{"kind", "ref", "quote"}]}]}.
+With a persona, also grill it: at most 3 questions, in its terms, that probe a reaction or a case's claim about what it would do. Never name a product rule.
+Return one JSON object, in the handoff's artifacts: {"cross": [{"against", "claim", "citations": [{"kind", "ref", "quote"}]}], "questions": ["<question>"]}.
 Change no file.
 ```
 
@@ -176,7 +182,7 @@ Question: <plan>. Ledger: <ledger>. The run is capped at <cap> dispatches, so a 
 The trace: <`trace`>. Open every file a case or point cites: a quote that exists may still not support the claim.
 To rule on: <each case and each backed point, with its id and citations>.
 Cases with no passing citation: <each `case X: no citation passes` line, or none>. Such a position cannot win.
-The persona's reactions, hypotheses only: <each, or none>. They may add a condition; they never decide the winner.
+The persona's reactions and answers, hypotheses only: <each, or none>. They may add a condition; they never decide the winner.
 Decisions:
 - rule: name the winner. In change_or_reason, name the losing case's strongest cited claim and the citation that
   defeats it. A rule rests on at least one citation of the winner's case that supports it, other than the persona doc.

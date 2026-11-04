@@ -357,7 +357,7 @@ export const PRODUCT_LEDGER_SCHEMA = Object.freeze({
     witness: {
       type: ['object', 'null'],
       additionalProperties: false,
-      required: ['persona', 'reactions'],
+      required: ['persona', 'reactions', 'answers'],
       properties: {
         persona: { type: 'string' },
         reactions: {
@@ -368,6 +368,11 @@ export const PRODUCT_LEDGER_SCHEMA = Object.freeze({
             required: ['position', 'reaction'],
             properties: { position: { type: 'string', enum: POSITION_IDS }, reaction: { type: 'string' } },
           },
+        },
+        answers: {
+          type: 'array',
+          maxItems: 3,
+          items: { type: 'object', additionalProperties: false, required: ['question', 'answer'], properties: { question: { type: 'string' }, answer: { type: 'string' } } },
         },
       },
     },
@@ -1212,11 +1217,11 @@ export function quorumRoles(mode, quorum) {
     return { mode, roles: { A: resolved({ provider: 'agent', agent: a.agent }), B: resolved(b) }, judge, caps: { maxObjections, maxDispatches } };
   }
   if (mode === 'product') {
-    // The trace, the frame, the second framing, the merge, the witness, one case per position, the examiner, the ruling, and one
+    // The trace, the frame, the second framing, the merge, the witness, its answers to the examiner, one case per position, the examiner, the ruling, and one
     // retry, plus one fallback per position when advocates run on Codex.
     const { framer, second, witness, advocate, examiner, judge: ruler } = quorum.product;
     const caps = {};
-    for (let n = 2; n <= MAX_PRODUCT_POSITIONS; n += 1) caps[n] = n + 8 + (advocate.provider === 'codex' ? n : 0);
+    for (let n = 2; n <= MAX_PRODUCT_POSITIONS; n += 1) caps[n] = n + 9 + (advocate.provider === 'codex' ? n : 0);
     return { mode, roles: { tracer: resolved({ provider: 'agent', agent: 'explorer' }), framer: resolved({ provider: 'agent', agent: framer.agent }), second: resolved({ provider: 'agent', agent: second.agent }), witness: resolved({ provider: 'agent', agent: witness.agent }), advocate: resolved(advocate), examiner: resolved({ provider: 'agent', agent: examiner.agent }) }, judge: { agent: ruler.agent }, caps };
   }
   const { odd, even, swap } = quorum.decide;

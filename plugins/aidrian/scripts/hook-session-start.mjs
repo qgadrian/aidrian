@@ -1,8 +1,10 @@
 // SessionStart and SubagentStart hook: one line that tells the agent which knowledge docs to read now and how to find
 // the rest, one line with the names to call the human and the AI, one voice line (push back with a reason; ask the human
 // plain, one-decision questions), in Claude Code a line that settles the pull request footer its attribution instructions
-// ask for (footerLine), and, for the main session only, a format line for chat replies, a line when the
-// lesson inbox holds open lessons, which escalates when the inbox needs triage, and a line when the plugin copy running
+// ask for (footerLine), a line when another copy of the plugin's `aidrian` comes first on PATH (commandsLine), and, for
+// the main session only, a format line for chat replies, a line when the
+// lesson inbox holds open lessons, which escalates when the inbox needs triage, a line while persona audits in the
+// state folder hold untriaged findings (lib/audits.mjs auditNudge), and a line when the plugin copy running
 // is older than the version the project requires (`requires` in config.json). Last, in the main session while
 // config.json `git.mainCheckout.guard` is on (lib/main-commits.mjs): a line when the session inherited the commit
 // guard's override, and up to three lines about the main checkout: local commits not on origin, a branch other than
@@ -11,17 +13,18 @@
 // At SessionStart it also saves the project's agent gates for the session (lib/gate-snapshot.mjs), which the gate hook
 // holds every subagent to until the session ends.
 
-import { readFileSync } from 'node:fs';
+import { accessSync, constants, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
+import { auditNudge } from '../lib/audits.mjs';
 import { loadConfig, versionFloorProblem } from '../lib/config.mjs';
 import { saveGateSnapshot } from '../lib/gate-snapshot.mjs';
 import { runHook } from '../lib/hook-io.mjs';
 import { indexRows, loadKnowledge } from '../lib/knowledge.mjs';
 import { inboxPath, nudge } from '../lib/lesson-inbox.mjs';
 import { inheritedOverrideLine, unpushedMainLine } from '../lib/main-commits.mjs';
-import { findProject } from '../lib/project.mjs';
+import { findProject, stateDir } from '../lib/project.mjs';
 
 const BIN = path.resolve(import.meta.dirname, '../bin');
 // The main session only: its replies are read by the human, while a subagent's report feeds commits and pull requests.
@@ -50,7 +53,8 @@ await runHook((input) => {
   const human = JSON.stringify(config.names.human);
   const names = `Names: call the human ${human} and yourself ${JSON.stringify(ai)}, in replies and questions alike; never "I", "me", "my", "you", or "your".`;
   const footer = footerLine(project.root, process.env);
-  const lines = `${line}\n${names}\n${voiceLine(human)}${footer ? `\n${footer}` : ''}`;
+  const commands = commandsLine(process.env);
+  const lines = `${line}\n${names}\n${voiceLine(human)}${footer ? `\n${footer}` : ''}${commands ? `\n${commands}` : ''}`;
 
   if (subagent) {
     console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: lines } }));
@@ -60,18 +64,32 @@ await runHook((input) => {
     if (floor) console.log(`Plugin too old: ${floor}. Its hooks and commands may reject this project's config until then.`);
     const lessons = nudge(inboxPath(project, config), { command: binCommand('aidrian'), config });
     if (lessons) console.log(lessons);
+    const audits = auditLine(project, config);
+    if (audits) console.log(audits);
     const inherited = inheritedOverrideLine(config);
     if (inherited) console.log(inherited);
     for (const warning of unpushedMainLine(project, config)) console.log(warning);
   }
 });
 
-// Every session and subagent: disagree out loud instead of going along, and ask questions the human can answer
-// without the session's context. A subagent reports to its coordinator, so the voice still applies to it.
+// The audit inbox line, or '': like auditNudge itself, a state folder it cannot find costs the line, never the session.
+function auditLine(project, config) {
+  try {
+    return auditNudge(path.join(stateDir(project, { config }), 'audits'));
+  } catch {
+    return '';
+  }
+}
+
+// Every session and subagent: disagree out loud instead of going along, ask questions the human can answer without the
+// session's context, and name things in what a person reads by plain words, never by an id only the session knows.
+// A subagent reports to its coordinator, and its words reach the human, so the voice still applies to it.
 function voiceLine(human) {
   return `Voice: when a request or premise looks wrong, or worse than an alternative, say so in one line with the reason ` +
     `before acting, then follow the call of ${human}. A question to ${human} says what goes wrong in their terms, asks ` +
-    'one decision, puts the recommended option first with one reason, and uses no internal IDs or labels.';
+    'one decision, and puts the recommended option first with one reason. In anything a person reads (replies, ' +
+    'questions, summaries, pull request and issue bodies), name each thing in plain words, such as its title, never by ' +
+    'a bare internal id like "F1" or "slice 3" or a file suffix like "-2"; a path or link only gives a location.';
 }
 
 // Claude Code tells every session and subagent to end a pull request body with its "Generated with [Claude Code]" line,
@@ -94,6 +112,31 @@ function footerLine(root, env) {
   const pr = settings.find((each) => each.attribution?.pr !== undefined)?.attribution.pr;
   if (pr !== undefined) return typeof pr === 'string' && /Generated with \[Claude Code\]/u.test(pr) ? FOOTER_LINE : null;
   return settings.find((each) => each.includeCoAuthoredBy !== undefined)?.includeCoAuthoredBy === false ? null : FOOTER_LINE;
+}
+
+// When the first `aidrian` on PATH is another copy of the plugin, such as an installed release while this copy is a
+// branch under test, a bare `aidrian` runs that copy's code and not this one's: one line names this copy's by its path.
+// Nothing when this copy's comes first, or when none is on PATH, where the knowledge line already names commands by path.
+function commandsLine(env) {
+  const real = (dir) => {
+    try {
+      return realpathSync(dir);
+    } catch {
+      return null;
+    }
+  };
+  const own = real(BIN);
+  for (const dir of (env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
+    try {
+      accessSync(path.join(dir, 'aidrian'), constants.X_OK);
+    } catch {
+      continue;
+    }
+    if (real(dir) === own) return null;
+    const full = path.join(BIN, 'aidrian');
+    return `Commands: the aidrian on PATH, in ${dir}, is another copy of this plugin; run this session's as ${/\s/.test(full) ? `"${full}"` : full}.`;
+  }
+  return null;
 }
 
 // The bare name when the plugin's bin/ is on PATH; the full path otherwise, so the line works on either host.

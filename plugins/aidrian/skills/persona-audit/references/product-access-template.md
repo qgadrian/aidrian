@@ -6,8 +6,8 @@ How a persona-audit session reaches the product. Copy it into a knowledge bucket
 Human once, then falls back to screenshots or code. Never write a real password or token here: name the variable,
 the password manager entry, or the seed command that provides it.
 Before a walk, Allowed changes, and Where each task lives are optional: a doc without them is read as before.
-Each account names its plan and the features it lacks. Where each task lives names the account on every line
-when Accounts lists more than one.
+Each account names its role and plan and the features it lacks, so a run signs in as each persona's role with a
+seeded account. Where each task lives names the account on every line when Accounts lists more than one.
 -->
 
 ## Environments
@@ -24,9 +24,10 @@ when Accounts lists more than one.
 
 ## Accounts
 
-- `demo-manager@example.com`, a demo account with a seeded restaurant, on the Starter plan: no online payments,
-  no second location. The password is in the `DEMO_PASSWORD` variable of the local settings file.
-- `demo-owner@example.com`, on the Pro plan, with every feature. Same password variable.
+- `demo-manager@example.com`, the manager role, a demo account with a seeded restaurant, on the Starter plan:
+  no online payments, no second location. The password is in the `DEMO_PASSWORD` variable of the local settings file.
+- `demo-owner@example.com`, the owner role, on the Pro plan, with every feature. Same password variable.
+- `demo-staff@example.com`, the staff role, seeded by `npm run seed:demo`. Same password variable.
 - Reset their data with `npm run seed:demo` before a run that changes bookings.
 
 ## Allowed changes

@@ -92,6 +92,9 @@ In a group such as `github`, set only the keys you change; the others keep their
       "even": { "provider": "codex", "agent": "code-reviewer" },
       "swap": true
     }
+  },
+  "audits": {
+    "triage": { "issueCreation": "confirm", "labels": ["persona-audit", "persona:{persona}", "severity:{severity}"] }
   }
 }
 ```
@@ -149,6 +152,8 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `telemetry.health` | The thresholds of `aidrian report health`: [Health thresholds](#health-thresholds). |
 | `agents` | The tools each agent may use in this project; `{}` gates none: [Agents](#agents). |
 | `quorum` | The roles, providers, judge, and caps of the `quorum` skill: [Quorum](#quorum). |
+| `audits.triage.issueCreation` | Whether the persona-audit triage asks before it creates an issue: `"confirm"`, the default, or `"auto"`: [Audit triage](#audit-triage). |
+| `audits.triage.labels` | The labels every issue from the persona-audit triage gets: [Audit triage](#audit-triage). |
 
 A path in `state.dir` or `git.worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
@@ -618,6 +623,27 @@ on defaults the project did not choose.
   Under 8, the default, rebuttals and the final ruling may not fit, and the objections they would answer escalate to the Human.
 - Every `agent` is an agent name, such as `code-reviewer` or a project's own agent; `"*"` and `"main"` name no one agent.
 - The number of decide positions is the question file's, 2 to 4, never a config value, so no option the Human gave is dropped.
+
+## Audit triage
+
+`audits.triage` sets how the `persona-audit-triage` skill files the issues it decides on
+([Triage](personas.md#triage)). `aidrian audits pending --json` reads it, so the skill never parses this file, and it
+stops on an invalid config.json as every `aidrian` command does.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `audits.triage.issueCreation` | `"confirm"` | `"confirm"` shows each drafted issue, or each batch the Human approved, and creates nothing until the Human says yes. `"auto"` creates issues without asking, for runs no one supervises. |
+| `audits.triage.labels` | `["persona-audit", "persona:{persona}", "severity:{severity}"]` | The labels of every issue from the triage. `{persona}` gives one label per persona of the finding, and `{severity}` its severity; a Not reached line or a doc gap takes the report's personas and no severity label. At least one label is plain. |
+
+- In both modes, a finding about a product rule, or an open question in a product doc, goes to `product-manager`
+  first. In `"auto"`, a finding it does not settle is deferred, never filed, and every decision is still recorded in
+  `triage.json`; the skill ends with a list of what it created.
+- `agent-issue-writer` applies the labels where the tracker has them. It creates a missing label only in `"confirm"`,
+  after the Human approves; in `"auto"` it leaves a missing label out and names it in the summary.
+- Before a finding is recorded as a duplicate, the tracker search also queries the plain labels, which every audit
+  issue carries, so an earlier audit's issue is found by its label as well as its words.
+- Each issue body names its source in words, the report by persona, kind, and date and the finding by its title, with
+  the report's path; the machine key the duplicate search can use stays in a footer, never in the title or first lines.
 
 ## Checking
 

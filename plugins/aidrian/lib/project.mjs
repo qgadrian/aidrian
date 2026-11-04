@@ -16,6 +16,9 @@ import { checkoutRoots, mainRoot, runGit } from './git.mjs';
 const DEFAULT_DIR = '.aidrian';
 const OVERRIDE = '.aidrian.json';
 const LOCAL = '.aidrian.local.json';
+// The changed files that keep auto-merge off, in any case (lib/pr-auto-merge.mjs): what instructs an AI session, and
+// what decides CI's verdict. Not configurable.
+export const GUARDED_PATHS = /(?:^|\/)(?:AGENTS\.md|CLAUDE\.md|SKILL\.md|CODEOWNERS|\.aidrian\.json)$|^(?:\.claude|\.codex|\.aidrian|\.github\/workflows|\.github\/actions)\//iu;
 
 // The project at or above `start`: the nearest folder that has `.aidrian.json` or `.aidrian/config.json`. Null when none.
 // In a git checkout the search stops at its top folder, so a worktree whose branch has no project folder has no project,
@@ -164,7 +167,8 @@ function checkoutsOf(root, roots) {
 
 // `.aidrian.local.json`: { sources, models, names, telemetry, agents, review, autoMerge }. A git worktree has no copy of that git-ignored file, so it is read
 // from the main checkout then: from the first of `checkouts` that has it. Each source is a folder with its own knowledge/
-// and, optionally, a config.json with `version`.
+// and, optionally, a config.json with `version`. The auto-merge switch alone comes only from the main checkout's file
+// (checkouts.at(-1)): a worktree's own copy never turns it on.
 function readLocal(checkouts, errors, unreadable) {
   const none = { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, autoMerge: 'off' };
   const holder = checkouts.find((dir) => isFile(path.join(dir, LOCAL)));
@@ -178,12 +182,17 @@ function readLocal(checkouts, errors, unreadable) {
     if (!['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'github'].includes(key)) errors.push(`${LOCAL}: unknown key "${key}"`);
   }
   const { models, names, telemetry, agents, review } = raw;
+  const main = checkouts.at(-1);
   let autoMerge = localAutoMerge(raw, errors);
+  if (holder !== main) {
+    const mainFile = isFile(path.join(main, LOCAL)) ? readJson(main, LOCAL, []) : null;
+    autoMerge = mainFile ? localAutoMerge(mainFile, []) : 'off';
+  }
   // A local file git tracks travels with a branch, so it is no machine's own switch. Only git's answer "untracked"
-  // (exit 1) keeps it on: tracked, a git that fails or stalls, or no repository at all reads "off". Asked only when the
-  // switch is on, so a hook pays no git call for a file that keeps auto-merge off.
+  // (exit 1) keeps it on: tracked under any case, a git that fails or stalls, or no repository at all reads "off". Asked
+  // only when the switch is on, so a hook pays no git call for a file that keeps auto-merge off.
   if (autoMerge === 'on') {
-    const { status } = runGit(['ls-files', '--error-unmatch', '--', LOCAL], holder);
+    const { status } = runGit(['ls-files', '--error-unmatch', '--', `:(icase)${LOCAL}`], main);
     if (status === 0) errors.push(`${LOCAL}: git tracks it, so a branch could carry it; "github.autoMerge" reads "off" until it is untracked (git rm --cached ${LOCAL})`);
     else if (status !== 1) errors.push(`${LOCAL}: git could not say whether it tracks it, so "github.autoMerge" reads "off"`);
     if (status !== 1) autoMerge = 'off';

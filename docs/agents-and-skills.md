@@ -98,7 +98,8 @@ Claude Code runs each skill as `/aidrian:<skill>`. In Codex, ask for it by name.
 | `pr-write` | Writes a pull request title and body from the real diff. |
 | `pr-screenshot` | Attaches screenshots or files to a pull request. |
 | `pr-review-loop` | Takes each review comment to a fix or a reply with evidence. |
-| `pr-merge-when-green` | Merges once every check is final and passes, when the Human asks or under [auto-merge](config.md#auto-merge). |
+| `pr-merge-when-green` | Merges once every check is final and passes. The Human starts it; only the Human, or `pr-auto-merge`, runs its steps. |
+| `pr-auto-merge` | Merges a pull request no Human asked to merge, only when [`aidrian pr auto-merge`](config.md#auto-merge) exits 0. |
 
 | Review and quality | What it does |
 | --- | --- |

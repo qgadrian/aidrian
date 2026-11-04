@@ -42,7 +42,7 @@ import { touchedCitations } from './cited.mjs';
 import { buildPlan, classify, detectFlows, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, pathPattern, validatePlan } from './plan.mjs';
 import { BUILT_IN, flowBaseBrief, resolveEngine, reviewerMap, runExec, satisfies, VERDICT_MEANING } from './reviewers.mjs';
 import { atCap, buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
-import { answerPending, emptyState, heldMessage, isSummary, mergePending, noteOutcome, prunePasses, readLocalState, readRecord, sameCommit, summaryBody, writeLocalState } from './state.mjs';
+import { answerPending, emptyState, heldMessage, mergePending, noteOutcome, prunePasses, readLocalState, readRecord, sameCommit, summaryBody, summaryComment, writeLocalState } from './state.mjs';
 import * as quota from './quota.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, ghImage, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput, visualMatrix, visualRoutes } from './visual.mjs';
 
@@ -259,7 +259,7 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
   // a record newer than this machine's stops the step before it writes anything: starting over would replace it.
   const onPr = config.review.record !== 'local';
   const comments = onPr ? gh.comments(repo, n) : [];
-  const summary = comments.filter((comment) => isSummary(comment.body)).at(-1) ?? null;
+  const summary = summaryComment(comments);
   const record = readRecord(project, n, comments, repo);
   if (record.held !== undefined) return { status: 'incomplete', pr: n, repo, head, reason: heldMessage(n, record.held), held: record.held, retry_recommended: false };
   let state = record.state;

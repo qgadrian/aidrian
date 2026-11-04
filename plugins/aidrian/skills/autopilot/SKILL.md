@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # autopilot
 
-Take one task from implementation to a reviewed draft pull request while the Human is away, then stop and report.
+Take one task from implementation to a reviewed pull request while the Human is away, then report. It merges only when auto-merge is on.
 This skill runs other skills and adds two things: what to do with a decision nobody is there to make, and a bound on the review loop.
 It never redoes what the skills it runs already do.
 
@@ -29,7 +29,7 @@ Its `references/review-rules.md` defines a review round, when the bot is out, th
 ## What it is, and is not
 
 - It is a bounded runner: implementation, a draft pull request, review rounds, and a report. It cannot loop forever.
-- It is not a merge tool. It merges only when `aidrian pr auto-merge <n>` exits 0, through the `pr-merge-when-green` skill
+- It is not a merge tool. It merges only when `aidrian pr auto-merge <n>` exits 0, through the `pr-auto-merge` skill
   that `references/phases.md` § 4 runs. Any other merge needs the Human's explicit say-so.
 - It is not an interview. Questions need the Human present, so settle them before launch.
 
@@ -100,7 +100,7 @@ Write the brief first when checkpoints are allowed.
 
 ## Hard rules
 
-1. Merge only through the `pr-merge-when-green` skill, as § 4 of the phases says: never `gh pr merge` yourself.
+1. Merge only through the `pr-auto-merge` skill, as § 4 of the phases says: never `gh pr merge` yourself.
 2. Leave the pull request a draft, unless `github.markReady` is `"auto"`, the default, or the Human asked at launch to mark it ready;
    § 4 of the phases says when.
 3. Never approve a product or security gate yourself, and never guess a critical decision that cannot be undone.

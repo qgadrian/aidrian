@@ -16,7 +16,8 @@ const OLD = '1234567890abcdef1234567890abcdef12345678';
 const TEAM = { allow: true, strategy: 'squash', deleteBranch: true, deleteWorktree: false };
 const URL7 = 'https://github.com/acme/notes/pull/7';
 const CHECKS = { requiredChecks: ['e2e'], conditionalChecks: ['docs'], ignoreCancelledChecks: ['preview'] };
-const configText = (autoMerge, lists = CHECKS) => JSON.stringify({ version: 1, github: { ...lists, autoMerge } });
+const STATE = { dir: 'state' };
+const configText = (autoMerge, lists = CHECKS, state = STATE) => JSON.stringify({ version: 1, state, github: { ...lists, autoMerge } });
 
 // A temporary git repository (never a real one, and no GIT_DIR) whose working copy commits `working` as the team's
 // github.autoMerge, with origin at `origin`, and a `.aidrian.local.json` that sets the machine's switch to `local`.
@@ -46,13 +47,14 @@ const finished = (state, head = HEAD, status = 'received') => (state.outcome = {
 // The gh seam. `files` maps `<repo>@<branch>:<path>` to a file's text on GitHub; any other contents read is a 404, and
 // a read whose ref is not `refs/heads/<branch>` is no call the command makes. `view` overrides fields of the
 // `gh pr view` answer; `defaultBranch` is every repository's default branch; `user` is the login, or a function
-// standing in for the call.
-function fakeGh({ files = { 'acme/notes@main:.aidrian/config.json': configText(TEAM) }, view = {}, user = 'Adrian', defaultBranch = 'main' } = {}) {
+// standing in for the call; `comments` holds the pull request's lists by the last part of their route, `issues`, `reviews`,
+// and `pulls`, each a list or a function standing in for the call.
+function fakeGh({ files = { 'acme/notes@main:.aidrian/config.json': configText(TEAM) }, view = {}, user = 'Adrian', defaultBranch = 'main', comments = {} } = {}) {
   const calls = [];
   const gh = (args) => {
     calls.push(args);
     if (args[0] === 'pr' && args[1] === 'view') {
-      return JSON.stringify({ number: 7, headRefOid: HEAD, baseRefName: 'main', author: { login: 'adrian' }, url: URL7, ...view });
+      return JSON.stringify({ number: 7, headRefOid: HEAD, baseRefName: 'main', author: { login: 'adrian' }, url: URL7, files: [{ path: 'src/app.js' }], changedFiles: 1, reviewDecision: '', latestReviews: [], ...view });
     }
     if (args[0] === 'api' && args[3] === 'user') {
       if (typeof user === 'function') return user();
@@ -61,6 +63,15 @@ function fakeGh({ files = { 'acme/notes@main:.aidrian/config.json': configText(T
     if (args[0] === 'api' && /^repos\/[^/]+\/[^/]+$/u.test(args[3] ?? '')) {
       if (typeof defaultBranch === 'function') return defaultBranch();
       return JSON.stringify({ default_branch: defaultBranch });
+    }
+    const list = args[0] === 'api' && /^repos\/[^/]+\/[^/]+\/(?:issues\/7\/comments|pulls\/7\/reviews|pulls\/7\/comments)$/u.exec(args[3] ?? '');
+    if (list) {
+      assert.deepEqual(args.slice(4), ['--paginate', '--slurp'], 'every page');
+      const [, kind, name] = /\/(issues|pulls)\/7\/(comments|reviews)$/u.exec(args[3]);
+      const key = name === 'reviews' ? 'reviews' : kind;
+      const value = comments[key] ?? [];
+      if (typeof value === 'function') return value();
+      return JSON.stringify([value]);
     }
     const match = args[0] === 'api' && /^repos\/([^/]+\/[^/]+)\/contents\/(.+)\?ref=refs%2Fheads%2F([^&]+)$/u.exec(args[3] ?? '');
     if (match) {
@@ -102,11 +113,14 @@ test('both layers on, the Human\'s own pull request, and a finished review on it
     pr: 7, head: HEAD, repo: 'acme/notes', base: 'main',
   });
   assert.deepEqual(result.calls, [
-    ['pr', 'view', '7', '--json', 'number,headRefOid,baseRefName,author,url'],
+    ['pr', 'view', '7', '--json', 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews'],
     ['api', '--hostname', 'github.com', 'repos/acme/notes'],
     ['api', '--hostname', 'github.com', 'repos/acme/notes/contents/.aidrian.json?ref=refs%2Fheads%2Fmain'],
     ['api', '--hostname', 'github.com', 'repos/acme/notes/contents/.aidrian/config.json?ref=refs%2Fheads%2Fmain'],
     ['api', '--hostname', 'github.com', 'user'],
+    ['api', '--hostname', 'github.com', 'repos/acme/notes/issues/7/comments', '--paginate', '--slurp'],
+    ['api', '--hostname', 'github.com', 'repos/acme/notes/pulls/7/reviews', '--paginate', '--slurp'],
+    ['api', '--hostname', 'github.com', 'repos/acme/notes/pulls/7/comments', '--paginate', '--slurp'],
   ], 'the base is the default branch: its config is read once');
   const human = run(t, r, ['7']);
   assert.equal(human.code, 0);
@@ -123,7 +137,7 @@ test('every gh api call names the host of the pull request\'s URL', (t) => {
   });
   assert.equal(result.code, 0);
   const api = result.calls.filter((args) => args[0] === 'api');
-  assert.equal(api.length, 4);
+  assert.equal(api.length, 7);
   for (const args of api) assert.deepEqual(args.slice(0, 3), ['api', '--hostname', 'ghe.acme.io']);
 });
 
@@ -136,7 +150,7 @@ test('the team keys come from the base on GitHub, never the working copy: a bran
     effective: false, reason: 'team', allow: false, local: 'on', strategy: 'rebase', deleteBranch: true, deleteWorktree: false,
     pr: 7, head: HEAD, repo: 'acme/notes', base: 'main',
   });
-  assert.deepEqual(result.calls[0], ['pr', 'view', '--json', 'number,headRefOid,baseRefName,author,url'], 'no argument: the current branch');
+  assert.deepEqual(result.calls[0], ['pr', 'view', '--json', 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews'], 'no argument: the current branch');
   assert.deepEqual(userCalls(result.calls), [], 'team off: no gh api user call');
   const missing = run(t, r, ['7', '--json'], { files: {} });
   assert.deepEqual([missing.code, json(missing).reason, json(missing).allow], [1, 'team', false], 'no config.json on the base: the defaults, off');
@@ -237,12 +251,108 @@ test('review: a record for another repository with the same number is not this p
   assert.deepEqual(reasonOf(t, r), [1, 'review']);
 });
 
-test('the first failing reason wins, in the order team, checks, local, author, review', (t) => {
+test('the first failing reason wins, in the order team, checks, paths, local, author, outsider, review', (t) => {
   const r = repo(t, { local: 'off' });
-  const other = { author: { login: 'someone-else' } };
-  assert.equal(reasonOf(t, r, { view: other, files: { 'acme/notes@main:.aidrian/config.json': configText({ ...TEAM, allow: false }) } })[1], 'team');
-  assert.equal(reasonOf(t, r, { view: other, files: { 'acme/notes@main:.aidrian/config.json': configText(TEAM, {}) } })[1], 'checks');
-  assert.equal(reasonOf(t, r, { view: other })[1], 'local');
+  const stranger = { user: { login: 'mallory' }, author_association: 'NONE' };
+  const everything = {
+    view: { author: { login: 'someone-else' }, files: [{ path: 'AGENTS.md' }], latestReviews: [{ author: { login: 'lead' }, state: 'CHANGES_REQUESTED' }] },
+    comments: { issues: [stranger] },
+  };
+  const named = (files) => ({ ...everything, files: { 'acme/notes@main:.aidrian/config.json': files } });
+  assert.equal(reasonOf(t, r, named(configText({ ...TEAM, allow: false })))[1], 'team');
+  assert.equal(reasonOf(t, r, named(configText(TEAM, {})))[1], 'checks');
+  assert.equal(reasonOf(t, r, everything)[1], 'paths');
+  const noPaths = { ...everything, view: { ...everything.view, files: [{ path: 'src/app.js' }] } };
+  assert.equal(reasonOf(t, r, noPaths)[1], 'local');
+  const on = repo(t);
+  assert.equal(reasonOf(t, on, noPaths)[1], 'author');
+  const own = { ...noPaths, view: { ...noPaths.view, author: { login: 'adrian' } } };
+  assert.equal(reasonOf(t, on, own)[1], 'outsider');
+  assert.equal(reasonOf(t, on, { ...own, comments: {} })[1], 'review');
+});
+
+test('a comment, review, or inline comment by anyone outside the repository is off (outsider), except the review bot', (t) => {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  const mallory = { user: { login: 'mallory' }, author_association: 'NONE' };
+  for (const key of ['issues', 'reviews', 'pulls']) {
+    assert.deepEqual(reasonOf(t, r, { comments: { [key]: [mallory] } }), [1, 'outsider'], key);
+    for (const association of ['CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'MANNEQUIN', undefined]) {
+      assert.deepEqual(reasonOf(t, r, { comments: { [key]: [{ user: { login: 'mallory' }, author_association: association }] } }), [1, 'outsider'], `${key} ${association}`);
+    }
+    for (const association of ['OWNER', 'MEMBER', 'COLLABORATOR']) {
+      assert.deepEqual(reasonOf(t, r, { comments: { [key]: [{ user: { login: 'lead' }, author_association: association }] } }), [0, null], `${key} ${association}`);
+    }
+  }
+  assert.match(run(t, r, ['7'], { comments: { pulls: [mallory] } }).out[0], /^auto-merge off for #7: mallory commented, and is no member of the repository$/u);
+  assert.deepEqual(reasonOf(t, r, { comments: { issues: [{ user: null, author_association: 'NONE' }] } }), [1, 'outsider'], 'a deleted account');
+
+  // The bot the default branch names is the one exception, in any case; the working copy cannot name another.
+  const named = (reviewer) => ({ 'acme/notes@main:.aidrian/config.json': JSON.stringify({ version: 1, state: STATE, github: { ...CHECKS, autoMerge: TEAM, reviewer } }) });
+  const bot = { user: { login: 'Review-Bot[bot]' }, author_association: 'NONE' };
+  assert.deepEqual(reasonOf(t, r, { files: named('review-bot[bot]'), comments: { reviews: [bot] } }), [0, null], 'the configured bot');
+  assert.deepEqual(reasonOf(t, r, { files: named('other[bot]'), comments: { reviews: [bot] } }), [1, 'outsider'], 'any other bot');
+  assert.deepEqual(reasonOf(t, r, { files: named(null), comments: { issues: [{ user: null, author_association: 'NONE' }] } }), [1, 'outsider'], 'no bot and no login match nothing');
+
+  const failing = run(t, r, ['7', '--json'], { comments: { reviews: () => { throw Object.assign(new Error('failed'), { stderr: 'gh: Forbidden (HTTP 403)\n' }); } } });
+  assert.deepEqual([failing.code, failing.out], [3, []]);
+  assert.match(failing.err.join('\n'), /could not read repos\/acme\/notes\/pulls\/7\/reviews with gh \(gh: Forbidden \(HTTP 403\)\)/u);
+});
+
+test('a changed file that instructs an AI session or decides CI, or a file list gh cuts short, is off (paths)', (t) => {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  const changed = (...paths) => ({ view: { files: paths.map((each) => ({ path: each })), changedFiles: paths.length } });
+  for (const file of [
+    'AGENTS.md', 'CLAUDE.md', 'packages/api/AGENTS.md', 'a/b/CLAUDE.md', 'packages/api/agents.md', '.claude/settings.json', '.claude/agents/x.md',
+    '.codex/config.toml', '.aidrian/config.json', '.aidrian/knowledge/rules.md', '.aidrian.json', 'plugins/x/skills/y/SKILL.md', 'SKILL.md',
+    '.github/workflows/ci.yml', '.github/actions/setup/action.yml', 'CODEOWNERS', '.github/CODEOWNERS', 'docs/CODEOWNERS',
+  ]) {
+    assert.deepEqual(reasonOf(t, r, changed('src/app.js', file)), [1, 'paths'], file);
+  }
+  for (const file of ['docs/guide.md', 'README.md', 'src/app.js', 'docs/agents.mdx', '.github/dependabot.yml', 'src/.claude.js', 'x.aidrian/y', 'NOTSKILL.md']) {
+    assert.deepEqual(reasonOf(t, r, changed(file)), [0, null], file);
+  }
+  assert.match(run(t, r, ['7'], changed('docs/guide.md', '.github/workflows/ci.yml')).out[0], /it changes \.github\/workflows\/ci\.yml/u);
+  const cut = { view: { files: [{ path: 'src/app.js' }], changedFiles: 101 } };
+  assert.deepEqual(reasonOf(t, r, cut), [1, 'paths'], 'a shorter list hides files');
+  assert.match(run(t, r, ['7'], cut).out[0], /gh listed 1 of its 101 changed files/u);
+});
+
+test('a pull request whose files or reviews gh does not describe exits 3', (t) => {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  for (const view of [{ files: undefined }, { files: [{}] }, { changedFiles: undefined }, { reviewDecision: undefined }, { latestReviews: undefined }]) {
+    assert.deepEqual([run(t, r, ['7', '--json'], { view }).code], [3], JSON.stringify(view));
+  }
+});
+
+test('a working copy whose state.dir differs from the default branch\'s is off (checks): a branch cannot pick the record', (t) => {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  const elsewhere = { 'acme/notes@main:.aidrian/config.json': configText(TEAM, CHECKS, { dir: null }) };
+  assert.deepEqual(reasonOf(t, r, { files: elsewhere }), [1, 'checks']);
+  assert.match(run(t, r, ['7'], { files: elsewhere }).out[0], /working copy's state\.dir differs from acme\/notes main/u);
+});
+
+test('review: requested changes are off, from the decision or from anyone\'s latest review, whatever the record says', (t) => {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  assert.deepEqual(reasonOf(t, r, { view: { reviewDecision: 'CHANGES_REQUESTED' } }), [1, 'review'], 'the decision');
+  const latestReviews = [{ author: { login: 'lead' }, state: 'APPROVED' }, { author: { login: 'second' }, state: 'CHANGES_REQUESTED' }];
+  assert.deepEqual(reasonOf(t, r, { view: { reviewDecision: 'APPROVED', latestReviews } }), [1, 'review'], 'one person\'s latest review');
+  assert.match(run(t, r, ['7'], { view: { latestReviews } }).out[0], /second requested changes/u);
+  for (const reviewDecision of ['', 'APPROVED', 'REVIEW_REQUIRED']) {
+    assert.deepEqual(reasonOf(t, r, { view: { reviewDecision, latestReviews: [{ author: { login: 'lead' }, state: 'APPROVED' }, { author: { login: 'second' }, state: 'DISMISSED' }] } }), [0, null], reviewDecision);
+  }
+});
+
+test('review: the record must name the exact head: a prefix a branch can grind for is no match', (t) => {
+  const r = repo(t);
+  r.record((state) => finished(state, HEAD.slice(0, 7)));
+  assert.deepEqual(reasonOf(t, r), [1, 'review']);
+  r.record((state) => finished(state, HEAD.slice(0, 39)));
+  assert.deepEqual(reasonOf(t, r), [1, 'review']);
 });
 
 test('gh api user that fails or names no login exits 3', (t) => {

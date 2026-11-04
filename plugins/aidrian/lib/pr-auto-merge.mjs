@@ -5,18 +5,24 @@
 //      folder override, or a local ref, so a pull request cannot raise its own ceiling, a feature base cannot raise the
 //      default branch's, a fork checkout reads the upstream's, and no stale fetch keeps an old one. The strategy and
 //      the cleanup come from the default branch.
-//   2. checks: the default branch names `github.requiredChecks`, and the working copy's three check lists are the
-//      default branch's. A named check that has not registered is pending, so naming them keeps a draft's partial set of
-//      checks from reading as ready. `aidrian pr checks` reads the working copy, so equal lists make its verdict the
-//      default branch's policy, and a branch cannot relax the checks that judge its own merge. A working copy config
+//   2. checks: the default branch names `github.requiredChecks`, and the working copy's three check lists and its
+//      `state.dir` are the default branch's. A named check that has not registered is pending, so naming them keeps a
+//      draft's partial set of checks from reading as ready. `aidrian pr checks` reads the working copy, so equal lists
+//      make its verdict the default branch's policy, and a branch cannot relax the lists that judge its own merge. The
+//      review record is read from `state.dir`, so a branch cannot point it at a record of its own. A working copy config
 //      that cannot be read, or has errors, is off too.
-//   3. local: this machine opted in, `github.autoMerge: "on"` in the local file (project.localAutoMerge).
-//   4. author: the pull request is the gh user's own.
-//   5. review: this machine's review record (lib/review/state.mjs), scoped to the pull request's repository, holds a
-//      finished outcome (`received`, `none_needed`) on the pull request's current head, and nothing is owed.
-// gh reads: one `gh pr view` for the number, head, base, author, and URL; `gh api repos/<repo>` for the default
-// branch; each branch's folder override and config.json through the contents API, at `refs/heads/<branch>` (once when
-// the base is the default branch); and, only when the team, the checks, and the machine all allow it, `gh api user` for the login.
+//   3. paths: gh lists every changed file, and none is one that instructs an AI session or runs in CI (GUARDED_PATHS).
+//   4. local: this machine opted in, `github.autoMerge: "on"` in the main checkout's local file (project.localAutoMerge).
+//   5. author: the pull request is the gh user's own.
+//   6. outsider: every issue comment, review, and inline comment is by a member of the repository, or by the default
+//      branch's `github.reviewer` bot: with no Human present, nobody acts on a stranger's text.
+//   7. review: nobody's latest review requests changes, and this machine's review record (lib/review/state.mjs), scoped
+//      to the pull request's repository, holds a finished outcome (`received`, `none_needed`) on exactly the pull
+//      request's current head, and nothing is owed.
+// gh reads: one `gh pr view` for the number, head, base, author, URL, files, and reviews; `gh api repos/<repo>` for the
+// default branch; each branch's folder override and config.json through the contents API, at `refs/heads/<branch>` (once
+// when the base is the default branch); and, only when the team, the checks, the paths, and the machine all allow it,
+// `gh api user` for the login, then the pull request's three comment lists.
 // Every `gh api` call names the host of the pull request's URL. A gh failure prints gh's last line of stderr.
 // stdout: one line, or with --json { effective, reason, allow, local, strategy, deleteBranch, deleteWorktree, pr, head,
 // repo, base }: `allow` is true only when both branches allow it, and the other team values are the default branch's.
@@ -25,12 +31,12 @@
 
 import { configFromText, loadConfig, resolveAutoMerge } from './config.mjs';
 import { runGh } from './gh.mjs';
-import { configPathIn } from './project.mjs';
+import { configPathIn, GUARDED_PATHS } from './project.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
-import { FINISHED, owed, readLocalState, sameCommit } from './review/state.mjs';
+import { FINISHED, MEMBER_ASSOCIATIONS, owed, readLocalState } from './review/state.mjs';
 import { scoped } from './rules/github/merge-review.mjs';
 
-const VIEW_FIELDS = 'number,headRefOid,baseRefName,author,url';
+const VIEW_FIELDS = 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews';
 const SHA = /^[0-9a-f]{40}$/iu;
 // The `github` keys `aidrian pr checks` judges by (pr-checks.mjs computeVerdict).
 const CHECK_LISTS = ['requiredChecks', 'conditionalChecks', 'ignoreCancelledChecks'];
@@ -52,10 +58,10 @@ export function parseArgs(argv) {
   };
 }
 
-// The pull request as `gh pr view` describes it: { number, head, base, author, repo, host }, or a string naming what is
-// missing.
+// The pull request as `gh pr view` describes it: { number, head, base, author, repo, host, files, changedFiles,
+// reviewDecision, latestReviews }, or a string naming what is missing.
 export function readView(view) {
-  const { number, headRefOid: head, baseRefName: base, url } = view ?? {};
+  const { number, headRefOid: head, baseRefName: base, url, files, changedFiles, reviewDecision, latestReviews } = view ?? {};
   const author = view?.author?.login;
   let host = null;
   try {
@@ -66,7 +72,10 @@ export function readView(view) {
     return 'gh returned no number, base branch, author, or URL for the pull request';
   }
   if (typeof head !== 'string' || !SHA.test(head)) return `gh returned ${JSON.stringify(head ?? null)} as the head, not a full commit SHA`;
-  return { number, head, base, author, repo, host };
+  if (!Array.isArray(files) || files.some((file) => typeof file?.path !== 'string') || !Number.isInteger(changedFiles) || typeof reviewDecision !== 'string' || !Array.isArray(latestReviews)) {
+    return 'gh returned no file list, changed-file count, review decision, or latest reviews for the pull request';
+  }
+  return { number, head, base, author, repo, host, files: files.map((file) => file.path), changedFiles, reviewDecision, latestReviews };
 }
 
 // The default branch of `repo` on GitHub. Throws when gh cannot say.
@@ -103,26 +112,57 @@ export function branchConfig(gh, { repo, host }, branch) {
   return configFromText(read(file), file);
 }
 
-// Why the review keeps auto-merge off, or null when the record holds a finished review of `head` and nothing is owed.
+// Why the changed files keep auto-merge off, or null. A list shorter than the count hides files, so it is off too.
+export function pathsProblem({ files, changedFiles }) {
+  if (files.length !== changedFiles) return `gh listed ${files.length} of its ${changedFiles} changed files`;
+  const guarded = files.find((file) => GUARDED_PATHS.test(file));
+  return guarded === undefined ? null : `it changes ${guarded}, which instructs AI sessions or decides CI's verdict`;
+}
+
+// Who keeps auto-merge off by commenting: the login of the first comment or review whose author is no member of the
+// repository and not the default branch's review bot, or null. Reads the three lists from GitHub; a failure throws.
+export function outsiderOn(gh, { repo, host, number }, reviewer) {
+  const routes = [`repos/${repo}/issues/${number}/comments`, `repos/${repo}/pulls/${number}/reviews`, `repos/${repo}/pulls/${number}/comments`];
+  const entries = routes.flatMap((route) => {
+    try {
+      return JSON.parse(gh(['api', '--hostname', host, route, '--paginate', '--slurp']) || '[]').flat();
+    } catch (error) {
+      throw new Error(`could not read ${route} with gh (${ghError(error)})`);
+    }
+  });
+  const isBot = (login) => typeof reviewer === 'string' && typeof login === 'string' && login.toLowerCase() === reviewer.toLowerCase();
+  const outsider = entries.find((entry) => !MEMBER_ASSOCIATIONS.has(entry?.author_association) && !isBot(entry?.user?.login));
+  return outsider ? outsider.user?.login ?? 'a deleted account' : null;
+}
+
+// Who requested changes, as a string, or null: the review decision, then anyone's latest review.
+export function changesRequested({ reviewDecision, latestReviews }) {
+  const reviewer = latestReviews.find((review) => review?.state === 'CHANGES_REQUESTED');
+  if (reviewer) return `${reviewer.author?.login ?? 'a reviewer'} requested changes`;
+  return reviewDecision === 'CHANGES_REQUESTED' ? 'its review decision is changes requested' : null;
+}
+
+// Why the review keeps auto-merge off, or null when the record holds a finished review of exactly `head` and nothing is owed.
 export function reviewProblem(state, head) {
   if (!state) return 'this machine holds no review record for it: run `aidrian pr review`';
   const owing = owed(state);
   if (owing.length) return `${owing.length} review ${owing.length === 1 ? 'entry is' : 'entries are'} still owed`;
   const outcome = state.outcome ?? null;
   if (outcome === null) return 'its review record holds no finished review';
-  if (!sameCommit(outcome.head, head)) return `the last review covered ${String(outcome.head).slice(0, 7)}, not head ${head.slice(0, 7)}`;
+  if (outcome.head !== head) return `the last review covered ${String(outcome.head).slice(0, 7)}, not head ${head.slice(0, 7)}`;
   if (!FINISHED.has(outcome.status)) return `the review of head ${head.slice(0, 7)} is \`${outcome.status}\``;
   return null;
 }
 
-// Why the check policy keeps auto-merge off, or null. `policy` is the default branch's `github` config, `working` is
-// loadConfig's answer for the checkout `aidrian pr checks` reads, and `where` names the default branch in the message.
-export function checksProblem(policy, working, where) {
+// Why the check policy keeps auto-merge off, or null. `config` is the default branch's config, `working` is loadConfig's
+// answer for the checkout `aidrian pr checks` and the review record read, and `where` names the default branch in the message.
+export function checksProblem({ github: policy, state }, working, where) {
   if (!policy.requiredChecks.length) return `the default branch names no required checks (github.requiredChecks on ${where}), so a check that has not registered would read as passed`;
   if (!working.current || working.errors.length) return `the working copy's config cannot be read, and aidrian pr checks reads it${working.errors.length ? `: ${working.errors[0]}` : ''}`;
   const same = (a, b) => new Set(a).size === new Set(b).size && a.every((each) => b.includes(each));
   const differing = CHECK_LISTS.filter((key) => !same(policy[key], working.config.github[key]));
   if (differing.length) return `the working copy's ${differing.map((key) => `github.${key}`).join(' and ')} differ from ${where}, and aidrian pr checks reads the working copy`;
+  if (working.config.state.dir !== state.dir) return `the working copy's state.dir differs from ${where}, and the review record is read from it`;
   return null;
 }
 
@@ -149,8 +189,8 @@ export function runAutoMerge(argv, project, { gh = (args) => runGh(args, { cwd: 
   let policy;
   try {
     main = defaultBranch(gh, pr);
-    policy = branchConfig(gh, pr, main).github;
-    const onDefault = policy.autoMerge;
+    policy = branchConfig(gh, pr, main);
+    const onDefault = policy.github.autoMerge;
     const onBase = pr.base === main ? onDefault : branchConfig(gh, pr, pr.base).github.autoMerge;
     refusing = [...new Set([[main, onDefault], [pr.base, onBase]].filter(([, each]) => each.allow !== true).map(([name]) => name))];
     team = { ...onDefault, allow: refusing.length === 0 };
@@ -164,7 +204,9 @@ export function runAutoMerge(argv, project, { gh = (args) => runGh(args, { cwd: 
     : reason === 'local' ? `this machine has not opted in (github.autoMerge in ${project.paths.local})` : null;
   if (reason !== 'team') {
     const problem = checksProblem(policy, loadConfig(project), `${pr.repo} ${main}`);
+    const paths = pathsProblem(pr);
     if (problem) [effective, reason, why] = [false, 'checks', problem];
+    else if (paths) [effective, reason, why] = [false, 'paths', paths];
   }
   if (effective) {
     let user;
@@ -177,8 +219,15 @@ export function runAutoMerge(argv, project, { gh = (args) => runGh(args, { cwd: 
     if (pr.author.toLowerCase() !== user.toLowerCase()) {
       [effective, reason, why] = [false, 'author', `it is ${pr.author}'s pull request, not ${user}'s`];
     } else {
-      const problem = reviewProblem(scoped(readLocalState(project, pr.number), project, pr.repo), pr.head);
-      if (problem) [effective, reason, why] = [false, 'review', problem];
+      let outsider;
+      try {
+        outsider = outsiderOn(gh, pr, policy.github.reviewer);
+      } catch (error) {
+        return fail(error.message);
+      }
+      const problem = changesRequested(pr) ?? reviewProblem(scoped(readLocalState(project, pr.number), project, pr.repo), pr.head);
+      if (outsider) [effective, reason, why] = [false, 'outsider', `${outsider} commented, and is no member of the repository`];
+      else if (problem) [effective, reason, why] = [false, 'review', problem];
     }
   }
 

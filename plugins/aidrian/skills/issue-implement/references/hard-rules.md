@@ -40,7 +40,7 @@ Note each in the report under decided alone.
 
 - **The tracker stays read-only**, except the writes § Tracker writes lists. Never close the issue.
 - **No merge.** This skill leaves a draft, and its caller owns what follows (phase 8). A merge runs only through the `pr-merge-when-green` skill,
-  started by the Human, or by the caller skill when `aidrian pr auto-merge <n>` exits 0.
+  started by the Human, or through the `pr-auto-merge` skill, run by the caller.
 - **No hook bypass**: no `--no-verify`, `HUSKY=0`, or empty `core.hooksPath`. A failing hook is fixed at its cause, or the run stops.
 - **No invention.** Never make up an acceptance criterion id, a path, a function, a label, or issue context.
 - **No silent product or architecture call.** Stop and ask once, with every open question together.

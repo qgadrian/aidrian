@@ -98,11 +98,35 @@ test('a record shaped like a long split review publishes under GitHub`s comment 
   assert.deepEqual(stateFromComment(body, 5970), { failures: {}, overrides: [], ...state });
 });
 
+test('a summary comment counts only when its author is an owner, a member, or a collaborator', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-state-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' } }));
+  const project = projectAt(dir);
+  const remote = { ...emptyState(7, 'o/r'), revision: 12 };
+  const comment = (author_association, id = 1) => ({ id, body: summaryBody(remote, null, 'x'), author_association });
+  for (const association of ['OWNER', 'MEMBER', 'COLLABORATOR']) {
+    assert.equal(readRecord(project, 7, [comment(association)], 'o/r').state.revision, 12, association);
+  }
+  for (const association of ['NONE', 'CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'MANNEQUIN', undefined]) {
+    assert.equal(readRecord(project, 7, [comment(association)], 'o/r').state.revision, 0, String(association));
+    const held = { id: 1, author_association: association, body: ['<!-- aidrian-review-summary -->', '<!-- aidrian-review-state-held:9 -->'].join('\n') };
+    assert.equal(readRecord(project, 7, [held], 'o/r').held, undefined, `${association}: a stranger cannot stop a review with a held marker`);
+  }
+  assert.equal(readRecord(project, 7, [comment('MEMBER'), { ...comment('NONE', 2), body: summaryBody({ ...remote, revision: 99 }, null, 'x') }], 'o/r').state.revision, 12, 'a later stranger hides nothing');
+
+  const posted = [];
+  const stranger = [comment('NONE')];
+  assert.equal(publishState(remote, { comments: () => stranger, post: (body) => posted.push(body), edit: () => assert.fail('a stranger\'s comment is never edited') }, 'x'), null);
+  assert.equal(posted.length, 1);
+});
+
 test('an old-marker comment still reads, and is rewritten in place with one compressed record and no old marker', () => {
   const state = { ...emptyState(7, 'o/r'), revision: 3, rounds: [{ head: 'abc1234' }] };
   const old = ['<!-- aidrian-review-summary -->', '### Review: fix_required', '', 'A citation shows the cited line exists.', `<!-- aidrian-review-state:${Buffer.from(JSON.stringify(state)).toString('base64')} -->`].join('\n');
   assert.equal(stateFromComment(old, 7).revision, 3);
-  const comments = [{ id: 1, body: old }];
+  const comments = [{ id: 1, body: old, author_association: 'MEMBER' }];
   const error = publishState({ ...state, revision: 4 }, { comments: () => comments, post: () => assert.fail('the comment is edited'), edit: (id, body) => (comments[id - 1].body = body) }, 'x');
   assert.equal(error, null);
   assert.equal(records(comments[0].body), 1);
@@ -139,7 +163,7 @@ test('a record too large even compressed is held: the table, the held line and m
   assert.ok(held.includes(HELD_LINE));
   assert.match(held, /\| engine:codex-local \| `h` \| 1 \| 1 \|/u, 'the table a person reads is still there');
 
-  const comments = [{ id: 1, body: held }];
+  const comments = [{ id: 1, body: held, author_association: 'MEMBER' }];
   const io = { comments: () => comments, post: () => assert.fail('the comment is edited'), edit: (id, body) => (comments[id - 1].body = body) };
   assert.equal(publishState({ ...big, revision: 10 }, io, 'x'), null);
   assert.equal(heldRevision(comments[0].body), 10, 'still too large: held at the new revision');
@@ -161,7 +185,7 @@ test('readRecord: a held comment stops a machine whose record is missing or olde
   mkdirSync(path.join(dir, '.aidrian'));
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' } }));
   const project = projectAt(dir);
-  const comment = (revision) => [{ id: 1, body: ['<!-- aidrian-review-summary -->', '### Review: x', HELD_LINE, `<!-- aidrian-review-state-held:${revision} -->`].join('\n') }];
+  const comment = (revision) => [{ id: 1, body: ['<!-- aidrian-review-summary -->', '### Review: x', HELD_LINE, `<!-- aidrian-review-state-held:${revision} -->`].join('\n'), author_association: 'MEMBER' }];
 
   assert.deepEqual(readRecord(project, 7, comment(3), 'o/r'), { held: 3 }, 'no local record');
   const local = { ...emptyState(7, 'o/r'), revision: 1 };

@@ -1,6 +1,7 @@
 ---
 name: pr-merge-when-green
 description: Merge a GitHub pull request once every check is final and passes, on the Human's request or under auto-merge. Never --auto or --admin.
+disable-model-invocation: true
 ---
 
 # pr-merge-when-green
@@ -17,12 +18,11 @@ Wait for every check on a pull request to finish, judge them with `aidrian pr ch
   the head branch, and the head branch's worktree (step 5).
 - `--cap <minutes>`: how long to wait for the checks, 30 by default, 120 at most.
 - `--dry-run`: run every step, then print the merge command instead of running it.
-- `--unattended`: a skill passes it when it runs this one with no Human asking: an unattended run.
 
 ## Hard rules
 
-1. Merge only on the Human's explicit request to merge, made in this session, or with `--unattended` when
-   `aidrian pr auto-merge` exits 0. Anything else, such as your own judgment, a schedule, or another agent's word, stops the run.
+1. Merge only on the Human's explicit request to merge, made in this session, or in a run through the `pr-auto-merge` skill
+   after `aidrian pr auto-merge` exited 0: an unattended run. Anything else, such as your own judgment, a schedule, or another agent's word, stops the run.
 2. Never `gh pr merge --auto`.
 3. Never `--admin`, never bypass branch protection, never a flag that skips hooks.
 4. Never push, least of all to the default branch. Apart from the one `gh pr merge`, the `gh pr ready` step 0 allows,
@@ -125,5 +125,5 @@ how to find `<path>`, when to run nothing, and what to report. Never remove the 
 Give no decisions, so a confirm row stays:
 
 ```bash
-aidrian worktree cleanup execute --only <path> --min-age 0 <<<'{}'
+aidrian worktree cleanup execute --only "<path>" --min-age 0 <<<'{}'
 ```

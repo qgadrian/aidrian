@@ -83,7 +83,7 @@ It writes nothing at all when a symlink would take a write outside the project, 
   and `github.autoMerge`, the machine's auto-merge opt-in: only `"on"` or `"off"`, `"off"` by default, and the only `github` key it takes.
   When it is `"on"` and config.json `github.autoMerge.allow` is false, check prints
   `warning: auto-merge is on locally but the team does not allow it`, and does not fail.
-  When git tracks `.aidrian.local.json`, a branch could carry it, so `github.autoMerge` reads `"off"` and check names the
+  When git tracks `.aidrian.local.json`, in any case, a branch could carry it, so `github.autoMerge` reads `"off"` and check names the
   error, with the fix `git rm --cached .aidrian.local.json`. So does a checkout where git cannot say whether it tracks the file.
 - `.gitignore`: git ignores `.aidrian.local.json`, and the worktrees and state folders when they are inside the repository.
 

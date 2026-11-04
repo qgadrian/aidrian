@@ -67,6 +67,20 @@ export function configWriteDenial(input, project, { names: { human } }, { also =
   return named ? blocked(input, shown(named), 'may change', human) : null;
 }
 
+// Why the subagent call in `input` may not set the machine's auto-merge switch, or null: { match, reason }. It targets
+// the project's local file and names `autoMerge` in a Write's content, an Edit's new text, or a Bash command. This holds
+// with no gates set, and other writes to that file stay allowed. Like the rest of this guard, it is for agents that cooperate.
+export function autoMergeWriteDenial(input, project, { names: { human } }) {
+  if (typeof input.agent_id !== 'string' || input.agent_id === '') return null;
+  const { content, new_string: newString, command } = input.tool_input ?? {};
+  const text = { Write: content, Edit: newString, Bash: command }[input.tool_name];
+  if (typeof text !== 'string' || !text.includes('autoMerge')) return null;
+  const { files, names } = writeTargets(input);
+  const local = project.paths.local;
+  if (!files.some((file) => path.basename(file).toLowerCase() === local) && !names.some((name) => name.toLowerCase().includes(local))) return null;
+  return { match: `sets github.autoMerge in ${local}`, reason: projectRuleReason(input, `it sets github.autoMerge in ${local}, and only the main session may turn merging without a Human on or off`, human) };
+}
+
 // What the call writes: { files, names }. `files` are absolute paths; `names` are texts that may name a file in a folder
 // no path gives: a relative target written after a `cd` to an unknown folder, and code an interpreter runs.
 function writeTargets(input) {

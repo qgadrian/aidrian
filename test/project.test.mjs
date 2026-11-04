@@ -159,6 +159,42 @@ test('.aidrian.local.json that git tracks: a branch could carry it, so its auto-
   assert.deepEqual([findProject(dir).errors, findProject(dir).localAutoMerge], [[], 'off'], 'a tracked file that keeps it off is no error');
 });
 
+test('.aidrian.local.json tracked under another case: a branch could carry it, so the switch reads "off"', (t) => {
+  const dir = tempDir(t);
+  const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
+  git('init', '-q');
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}');
+  const on = JSON.stringify({ github: { autoMerge: 'on' } });
+  writeFileSync(path.join(dir, '.AIDRIAN.LOCAL.JSON'), on);
+  git('add', '-f', '.AIDRIAN.LOCAL.JSON');
+  writeFileSync(path.join(dir, '.aidrian.local.json'), on);
+  assert.equal(findProject(dir).localAutoMerge, 'off');
+});
+
+test('a worktree\'s own .aidrian.local.json never sets the auto-merge switch: only the main checkout\'s does, and its other keys still apply', (t) => {
+  const dir = tempDir(t);
+  const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' });
+  git('init', '-q', '-b', 'main');
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}');
+  writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n');
+  git('add', '.');
+  git('-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init');
+  const worktree = path.join(dir, 'wt/task');
+  git('worktree', 'add', '-q', '-b', 'task', worktree);
+  const local = (autoMerge) => JSON.stringify({ names: { human: 'Own' }, github: { autoMerge } });
+  writeFileSync(path.join(worktree, '.aidrian.local.json'), local('on'));
+  assert.deepEqual([findProject(worktree).localAutoMerge, findProject(worktree).localNames], ['off', { human: 'Own' }], 'the main checkout has no file');
+  writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ github: { autoMerge: 'off' } }));
+  assert.deepEqual([findProject(worktree).localAutoMerge, findProject(worktree).localNames], ['off', { human: 'Own' }], 'the main checkout says off');
+  writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ github: { autoMerge: 'on' } }));
+  writeFileSync(path.join(worktree, '.aidrian.local.json'), local('off'));
+  assert.equal(findProject(worktree).localAutoMerge, 'on', 'the main checkout says on, whatever the worktree\'s copy says');
+  writeFileSync(path.join(dir, '.aidrian.local.json'), '{');
+  assert.deepEqual([findProject(worktree).localAutoMerge, findProject(worktree).errors], ['off', []], 'a main file that cannot be read reads off here, and is that checkout\'s error');
+});
+
 test('.aidrian.local.json github.autoMerge "on" where git cannot say it is untracked reads "off" with an error', (t) => {
   // No repository: git ls-files fails, which is no answer "untracked".
   const dir = tempDir(t);

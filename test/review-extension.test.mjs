@@ -350,7 +350,7 @@ function botProject(t, config = {}) {
   const log = t.mock.method(console, 'log', () => {});
   const T = (m) => `2026-08-23T07:${String(m).padStart(2, '0')}:00Z`;
   const issue = [];
-  const post = (body) => (issue.push({ id: issue.length + 1, user: { login: 'someone' }, created_at: T(20), body }), issue.at(-1));
+  const post = (body) => (issue.push({ id: issue.length + 1, user: { login: 'someone' }, author_association: 'MEMBER', created_at: T(20), body }), issue.at(-1));
   const edit = (id, body) => (issue.find((comment) => comment.id === id).body = body);
   let head = 'zzz';
   // `failRead`: the read of the bot's reviews, counted from 1 in this run, that fails as GitHub would.
@@ -591,7 +591,7 @@ function gitBot(t, config, { working = null } = {}) {
     currentPr: () => ({ number: 42 }),
     api: (p, { method, fields } = {}) => {
       if (method === 'POST' && p.endsWith('/issues/42/comments')) {
-        const comment = { id: issue.length + 1, user: { login: 'someone' }, created_at: at(), body: fields.body };
+        const comment = { id: issue.length + 1, user: { login: 'someone' }, author_association: 'MEMBER', created_at: at(), body: fields.body };
         issue.push(comment);
         if (fields.body.startsWith('@codex review')) requests.push(comment);
         return comment;

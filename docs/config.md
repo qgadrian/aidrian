@@ -203,7 +203,9 @@ Each machine opts in with this in `.aidrian.local.json`:
 
 `"on"` and `"off"` are the only values, and it is the only `github` key that file takes.
 `aidrian check` warns when the machine opts in and the team does not allow it.
-It fails when git tracks the file, and the switch then reads `"off"`: [Setting up](project-folder.md#setting-up-and-checking).
+It fails when git tracks the file, in any case, and the switch then reads `"off"`: [Setting up](project-folder.md#setting-up-and-checking).
+The switch counts only in the main checkout's file: a task worktree's own copy never turns it on or off, though its other keys apply as usual.
+A subagent may not write `autoMerge` into that file: [the config guard](hooks.md#agent-gates).
 
 A project that adopts `github.autoMerge` sets [`requires.aidrian`](#plugin-version) to the release that ships it,
 since an older plugin rejects the key.
@@ -213,30 +215,41 @@ since an older plugin rejects the key.
 `aidrian pr auto-merge [PR] [--json]` reports it for one pull request: a number, `#number`, or URL, or by default the
 current branch's. It exits 0 when on, 1 when off, and 3 on an error, such as a bad argument or a failed gh read.
 
-It is on only when all five of these hold, checked in this order. With `--json`, `reason` names the first that fails, and is `null` when on.
+It is on only when all seven of these hold, checked in this order. With `--json`, `reason` names the first that fails, and is `null` when on.
 
 | `reason` | What must hold |
 | --- | --- |
 | `team` | `github.autoMerge.allow` is true on both the repository's default branch and the pull request's base. Both are read from GitHub as each branch commits them now, never from the checkout. So a branch cannot raise it, and the pull request that turns it on does not merge itself. |
-| `checks` | The default branch names `github.requiredChecks`: a named check that has not reported is pending, so a draft's partial set of checks cannot read as ready. This checkout's `requiredChecks`, `conditionalChecks`, and `ignoreCancelledChecks` equal the default branch's as sets, committed or not: `aidrian pr checks` reads this checkout, so a branch cannot relax the checks that judge its own merge. A working-copy config that cannot be read, or has errors, is off too. |
+| `checks` | The default branch names `github.requiredChecks`: a named check that has not reported is pending, so a draft's partial set of checks cannot read as ready. This checkout's `requiredChecks`, `conditionalChecks`, and `ignoreCancelledChecks` equal the default branch's as sets, committed or not: `aidrian pr checks` reads this checkout, so a branch cannot relax the lists, and a branch that changes workflows stays off (`paths`). This checkout's `state.dir` equals the default branch's, since the review record is read from it. A working-copy config that cannot be read, or has errors, is off too. |
+| `paths` | gh lists every changed file (`files` matches `changedFiles`), and none is on this fixed list, in any case: `AGENTS.md`, `CLAUDE.md`, `SKILL.md`, `CODEOWNERS`, and `.aidrian.json` at any depth, and anything under `.claude/`, `.codex/`, `.aidrian/`, `.github/workflows/`, or `.github/actions/` at the repository root. These instruct AI sessions or decide CI, and a review of the change may not read them as behavior. Plain docs may still merge. |
 | `local` | This machine's switch is `"on"`. |
 | `author` | The pull request's author is the gh user. |
-| `review` | This machine's [review record](review.md#the-record) holds a finished review of the current head, `received` or `none_needed`, and nothing is owed. There is no looser mode: no record, a review of an earlier head, or an owed review keeps it off. |
+| `outsider` | Every issue comment, review, and inline comment on the pull request has the author association `OWNER`, `MEMBER`, or `COLLABORATOR`, or is by the default branch's `github.reviewer` bot. Any other bot, such as a CI or preview bot that comments, counts as an outsider. |
+| `review` | Nobody's latest review requests changes, and the review decision is not changes requested. This machine's [review record](review.md#the-record) holds a finished review of exactly the current head, `received` or `none_needed`, and nothing is owed. There is no looser mode: no record, a review of an earlier head, or an owed review keeps it off. |
 
 `strategy`, `deleteBranch`, `deleteWorktree`, and the check lists come from the default branch only. The base counts only for `allow`.
-So a pull request that changes a check list does not auto-merge, and a checkout behind the default branch's lists stays off until it catches up.
+So a checkout whose lists differ from the default branch's does not auto-merge, including one behind them until it catches up.
 
 ### What a run does
 
-The `pr-review-loop`, `orchestration`, and `autopilot` skills run `pr-merge-when-green` with `--unattended` when the
-command exits 0, and only after that same run marked the draft ready.
-`--unattended` tells the skill that no Human asked: without it, the skill merges only on the Human's request in the session.
+The `pr-review-loop`, `orchestration`, and `autopilot` skills run the `pr-auto-merge` skill, only after that same run marked the draft ready.
+`pr-auto-merge` stops unless the command exits 0, and otherwise reads `pr-merge-when-green` and follows its steps as an unattended run.
+The model cannot start `pr-merge-when-green` itself: the skill merges only on the Human's request in the session, or in that run.
 An unattended run waits for every check, runs the command again right before the merge, and stops unless it still
 exits 0 on the same head and base.
 The merge goes through the [merge guard](hooks.md#merge-guard), and never uses `--auto` or `--admin`.
 
-When the Human asks for the merge, `--unattended` is not passed and the command need not exit 0.
+When the Human asks for the merge, the command need not exit 0.
 The command's `strategy`, `deleteBranch`, and `deleteWorktree` only fill the choices the Human left out.
+
+### Limits
+
+- Name every check that matters in `requiredChecks`. An unnamed check that starts only once a pull request is ready is not waited for.
+- A required check that runs only on ready pull requests keeps the caller's ready step from passing, so auto-merge will not fire for it.
+- `deleteBranch` conflicts with a merge queue.
+- The `paths` list is fixed: it misses a project folder that `.aidrian.json` moves elsewhere, and the old name of a renamed file.
+- The switch does not stop a session with a shell or a forged local record.
+  For proof, protect the branch with a required review from a second account, as [Sign-off by the Human](review.md#sign-off-by-the-human) says.
 
 ### Cleanup after the merge
 

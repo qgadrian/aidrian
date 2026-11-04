@@ -110,6 +110,58 @@ test('check passes on a config without tracker, and names the key of each tracke
   }
 });
 
+test('check flags each write tool no read can clear, and only while the read rule applies', (t) => {
+  const dir = exampleRepo(t);
+  const check = (tracker) => {
+    writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, tracker }));
+    return run(['check'], dir);
+  };
+  const workspace = { expect: 'https://tracker.example/acme', field: 'url' };
+  const team = { key: 'NOTES', values: ['Notes'], createFields: ['team'], keyFields: ['id'] };
+  const readTools = ['mcp__a__read'];
+  const noRead = (pattern) => `.aidrian/config.json: "tracker.writeTools" has "${pattern}": no tool in "tracker.readTools" is on its server, so no read can clear it\n`;
+  const noServer = (pattern) => `.aidrian/config.json: "tracker.writeTools" has "${pattern}": it names no server, as in mcp__<server>__<tool>, so no read can clear it\n`;
+
+  for (const pattern of ['mcp__b__save', 'mcp__b__save_*', 'mcp__b__*', 'mcp__a_b__save', 'mcp__a_b__*']) {
+    const { status, stdout, stderr } = check({ enabled: true, workspace, readTools, writeTools: [pattern] });
+    assert.deepEqual([status, stdout, stderr], [1, '', noRead(pattern)], pattern);
+  }
+  for (const pattern of ['mcp__solo', 'mcp__solo_save', 'mcp__solo_']) {
+    const { status, stdout, stderr } = check({ enabled: true, workspace, readTools, writeTools: [pattern] });
+    assert.deepEqual([status, stdout, stderr], [1, '', noServer(pattern)], pattern);
+  }
+  const several = check({ workspace, readTools, writeTools: ['mcp__a__save_*', 'mcp__b__save_*', 'mcp__solo', 'mcp__c__*'] });
+  assert.deepEqual([several.status, several.stderr], [1, `${noRead('mcp__b__save_*')}${noServer('mcp__solo')}${noRead('mcp__c__*')}`], 'each entry that cannot pass, with enabled off too');
+
+  const passing = [
+    ['a write on a read tool\'s server', ['mcp__a__save', 'mcp__a__save_*']],
+    ['a * before the server name ends', ['mcp__b*', 'mcp__b_*']],
+  ];
+  for (const [label, writeTools] of passing) {
+    const { status, stderr } = check({ enabled: true, workspace, readTools, writeTools });
+    assert.deepEqual([status, stderr], [0, ''], label);
+  }
+  const noWorkspace = check({ enabled: true, team, writeTools: ['mcp__solo', 'mcp__b__save_*'] });
+  assert.deepEqual([noWorkspace.status, noWorkspace.stderr], [0, ''], 'with no workspace there is no read rule');
+  const badRead = check({ workspace, readTools: [...readTools, 'mcp__a__get_*'], writeTools: ['mcp__b__save'] });
+  assert.deepEqual([badRead.status, badRead.stderr], [1, '.aidrian/config.json: "tracker.readTools" has "mcp__a__get_*": a read tool is an exact tool name, with no "*"\n'], 'a bad read tool unsets the read rule, so it raises no second error');
+});
+
+test('check passes a tracker that lists both spellings of a server for reads and writes', (t) => {
+  const dir = exampleRepo(t);
+  const tracker = {
+    enabled: true,
+    workspace: { expect: 'https://linear.app/acme', field: 'url' },
+    readTools: ['mcp__plugin_linear_linear__get_workspace', 'mcp__linear__get_workspace'],
+    writeTools: ['mcp__plugin_linear_linear__save_*', 'mcp__plugin_linear_linear__create_*', 'mcp__plugin_linear_linear__delete_*', 'mcp__linear__save_*', 'mcp__linear__create_*', 'mcp__linear__delete_*'],
+    team: { key: 'NOTES', values: ['Notes'], createFields: ['team'], keyFields: ['id', 'issueId'] },
+    project: { values: ['Notes launch'], field: 'project' },
+  };
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, tracker }));
+  const { status, stderr } = run(['check'], dir);
+  assert.deepEqual([status, stderr], [0, '']);
+});
+
 test('state prints the state folder, with or without a project folder', (t) => {
   const dir = exampleRepo(t);
   const { status, stdout } = run(['state'], path.join(dir, 'docs'));

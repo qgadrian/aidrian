@@ -199,7 +199,7 @@ A signal with target `plugin` lands in the [plugin's inbox](#the-plugins-inbox).
   already sent it back once to wait. Key `idle-with-children:<agent type>`; P2, `gap`; target `plugin`.
   It stays quiet: the send-back is the check working; only the stop after it, with the task still running, counts.
 - **One of the plugin's [blocking rules](hooks.md#recorded-blocks) blocks one session 3 times.** Key `hook-deny:<rule>`; P2, `gap`;
-  target `project` for `agent-gates`, whose gates the project writes, `plugin` for any other.
+  target `project` for `agent-gates` and `tracker-guard`, whose gates and `tracker` key the project writes, `plugin` for any other.
   It stays quiet: one block is the rule doing its job; three in a session is an agent fighting it.
 - **`aidrian pr await-review --request` stops at the round limit**, config.json `github.maxReviewRounds`.
   Key `review-rounds`; P2, `project`.

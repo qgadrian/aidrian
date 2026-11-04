@@ -9,6 +9,7 @@ import path from 'node:path';
 import { agentNameProblem, ALL, MAIN, nameMatches, patternProblem } from './agent-gates.mjs';
 import { isFile, isObject, readJson } from './fs.mjs';
 import { checkLocalReview, checkLocalVisual, checkReview, REVIEW_DEFAULTS } from './review/config.mjs';
+import { serverPrefix } from './tracker-guard.mjs';
 
 // The project folder format this plugin reads. A format change raises it and documents the migration.
 export const VERSION = 1;
@@ -591,6 +592,12 @@ function checkTracker(value, file, errors, defaults) {
   }
   // A read tool left out may be the one the connector has, so the workspace check goes with it instead of refusing every write.
   const paired = workspace !== null && readTools.length > 0 && readTools.length === value.readTools.length;
+  if (paired) {
+    for (const pattern of writeTools) {
+      const bad = unclearedWriteProblem(pattern, readTools);
+      if (bad) errors.push(`${file}: "tracker.writeTools" has ${JSON.stringify(pattern)}: ${bad}`);
+    }
+  }
   return {
     enabled: value.enabled === true && writeTools.length > 0 && (paired || team !== null || project !== null),
     workspace: paired ? workspace : null,
@@ -632,6 +639,16 @@ function readToolProblem(name, writeTools) {
   if (problem) return problem;
   const covering = writeTools.find((pattern) => nameMatches(pattern, name));
   return covering === undefined ? null : `a read tool cannot also match "tracker.writeTools", and ${JSON.stringify(covering)} covers it`;
+}
+
+// Why no read could ever clear a write on `pattern`, as the guard counts a read only on the write's server, or null.
+// This is a report only: the entry stays, and the guard refuses those writes. A "*" before the server's name ends can match
+// a server that has a read tool, so it is not judged.
+function unclearedWriteProblem(pattern, readTools) {
+  const star = pattern.endsWith('*');
+  const server = serverPrefix(star ? pattern.slice(0, -1) : pattern);
+  if (server === null) return star ? null : 'it names no server, as in mcp__<server>__<tool>, so no read can clear it';
+  return readTools.some((name) => serverPrefix(name) === server) ? null : 'no tool in "tracker.readTools" is on its server, so no read can clear it';
 }
 
 // The good entries of one tool list of `tracker`; a bad one is an error and is left out, as in `agents`.

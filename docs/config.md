@@ -790,7 +790,7 @@ Every value comes from this key, so the plugin names no tracker of its own; the 
 | `tracker.enabled` | `false` | `true` turns the key on. It needs a pattern in `writeTools`, and one of `workspace`, `team`, or `project`. |
 | `tracker.workspace.expect` | | The workspace a write must belong to, as `readTools` report it. |
 | `tracker.workspace.field` | | The field of the read's response that holds that value. |
-| `tracker.readTools` | `[]` | The MCP tools that read the connected workspace, as exact tool names, with no `*`. |
+| `tracker.readTools` | `[]` | The MCP tools that read the connected workspace, as exact tool names, with no `*`; one on each server in `writeTools`. |
 | `tracker.writeTools` | `[]` | The MCP tools that write to the tracker, as [tool patterns](#agents) that start with `mcp__`. |
 | `tracker.team.key` | | The team's issue key prefix, such as `NOTES` in `NOTES-12`, with no hyphen or whitespace. |
 | `tracker.team.values` | | The team names a write may set; at least one. |
@@ -803,12 +803,67 @@ Every value comes from this key, so the plugin names no tracker of its own; the 
 - `workspace` and `readTools` are set together or not at all; a tracker with no tool that reads its workspace sets neither.
 - `*` and `Bash(...)` are not tracker tools: both lists take MCP tools only, so `"writeTools": ["mcp__*"]` is the widest.
 - A name in `readTools` must not match a pattern in `writeTools`, so that `"mcp__*"` works only with no read tools.
+- With `workspace` set, `aidrian check` reports each pattern in `writeTools` that no read can clear: one on a server no tool in `readTools` is on,
+  and one that names no server. It only reports: the guard stays on as written and refuses those writes.
+  A `*` before the server's name ends, as in `mcp__acme*`, can match a server with a read tool, so that pattern is not reported.
 - A group with any error falls back to unset, and a bad entry is left out of its list.
   A bad entry in `readTools`, even beside a good one, also unsets `workspace` and `readTools`.
   `enabled` falls back to `false` with no write tool or no group left, so the loaded key is never half set.
   `aidrian check` names each problem by its key.
 
 A project that adopts the key sets [`requires.aidrian`](#plugin-version), since an older plugin rejects it.
+
+### How a write is judged
+
+Two [hooks](hooks.md) run on every MCP tool call while `tracker.enabled` is true, and stop at once when it is not.
+A config.json that cannot be read leaves it false, so a broken config lets every call run.
+
+After a call of a tool in `readTools`, the first hook records what it reported in
+`$XDG_STATE_HOME/aidrian/sessions/<session id>.tracker.json`. The latest read replaces an earlier one, and the end of the session deletes the file.
+Before a call that matches `writeTools`, the second hook checks these rules in order, and the first the call breaks refuses it:
+
+1. With `workspace` set, the session's latest read must be on the write's server, the `mcp__<server>__` that starts both tool names.
+   Two servers can be connected to different workspaces, and the one record holds only the latest read,
+   so switching servers asks for a new read. The reason names the read tools on the write's server.
+   With none listed there, no read can clear the rule, so the reason tells the agent to ask the Human to add one and not to edit the key.
+   A write tool with no server in its name cannot be cleared either, so the reason says `tracker.writeTools` names a tool with no server,
+   and tells the agent to ask the Human to correct that entry and not to edit the key.
+   A session that can hold no record skips this rule and keeps the others: one with no id that can name a file,
+   or whose record folder cannot be written. In such a session, a record from the write's server is still judged,
+   and one from another server is skipped with the rule.
+2. That read must have returned a value in `workspace.field`. If not, the agent asks the Human to fix the connection or the key.
+3. That value must be `workspace.expect`. If not, the reason names both, and tells the agent to ask the Human whether the key is wrong
+   or the wrong workspace is connected, and not to edit the key.
+4. With `team` set, each field in `createFields` must name a listed team, and each field in `keyFields` must hold an issue of that team.
+   If not, the reason offers the way that passes, or telling the Human the write belongs elsewhere, and tells the agent not to edit the key.
+5. With `project` set, `project.field` must name a listed project.
+   If not, the reason offers a listed value, or telling the Human the write belongs elsewhere, and tells the agent not to edit the key.
+
+A server's name ends at the first double underscore in the tool name, so `mcp__plugin_a_b__save` is on `plugin_a_b`.
+A server whose own name holds a double underscore reads as the part before it, so `a__b` and `a` count as one server.
+
+The values compare like this:
+
+- **Exact text**: `workspace.expect`, `team.values`, and `project.values` compare with case and spaces counted.
+  The one exception is a single trailing `/`, ignored on either side of the workspace comparison.
+- **The team key**: in a `createFields` field the value of `team.key` passes too, in any case. An issue key's prefix also compares
+  in any case. The team key does not stand in for a project value.
+- **UUIDs**: a UUID, in either case, skips the check of that one field, in `createFields`, `keyFields`, or `project.field`,
+  since a UUID names no team or project by itself. The other rules still run.
+  A project's identifier or slug is no UUID, so it passes only when listed.
+- **Arrays**: in a `createFields` field or `project.field`, each entry is judged, and the first wrong one is named. An empty array names no value to check.
+- **Null**: an absent field or `null` names no value to check, so the rule passes.
+- **Other values**: in a `createFields` field or `project.field`, a number, an empty string, or any other value not listed refuses.
+- **`keyFields`**: they apply to every tool in `writeTools`, and read a single string of the form `<KEY>-<n>`.
+  A number, an array, or a string of any other shape skips the team check. A tool whose field of that name holds
+  something like an issue key but is no issue is refused too, and the reason tells the agent to pass the item's UUID.
+
+Only the fields this key names are read, so a project lists every field it wants checked:
+a tool that names its team in a field missing from `createFields` passes unchecked.
+
+A refused reason holds the workspace or input value it refused.
+While `telemetry.hookDenies` is on, that cause goes to the [`hook_deny` row](dispatch-log.md#hook_deny-when-one-of-the-plugins-rules-blocks-a-tool-call)
+of the local dispatch log, so the values may reach it, cut to 120 characters. The rest of the input does not.
 
 ## Checking
 
@@ -818,7 +873,8 @@ In `quorum`, that includes a `provider` on `quorum.plan.a`, a `provider` other t
 a `plan.maxObjections` outside 1 to 5, a `plan.maxDispatches` under 5 or not a whole number, and an `agent` that is no agent name.
 In `tracker`, it includes a bad tool pattern, one that does not start with `mcp__`, a `*` in `readTools`,
 a read tool that `writeTools` covers, a `team.key` with a hyphen or whitespace, a group missing a key,
-a `workspace` without `readTools`, `readTools` without a `workspace`, and `enabled: true` with no `writeTools`,
+a `workspace` without `readTools`, `readTools` without a `workspace`, a write tool no read can clear, and `enabled: true` with no `writeTools`,
 or with none of `workspace`, `team`, or `project`.
 Each message names the key, such as `quorum.plan.b.provider`.
-A key with a bad value falls back to its default, so the plugin's hooks keep working until the file is fixed.
+A key with a bad value falls back to its default, so the plugin's hooks keep working until the file is fixed,
+but for a write tool no read can clear, which stays and is refused at run time.

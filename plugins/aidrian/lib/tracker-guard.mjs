@@ -43,28 +43,40 @@ const text = (value) => (typeof value === 'string' && value.trim() !== '' ? valu
 
 // Why the call of `tool` with `input` may not run, as { match, reason } the way agent-gates.mjs gateDenial gives it, or
 // null when it may. `record` is the session's read of the workspace, { value, unreadable, tool, at }, or null when it has
-// none. Only a tool in `tracker.writeTools` is judged, and only while `tracker.enabled` is true. A caller that has no
-// session to hold a record passes `skipMissingRecord`.
+// none. Only a tool in `tracker.writeTools` is judged, and only while `tracker.enabled` is true. A record counts only for
+// a write on the server its read ran on, since two servers can be connected to different workspaces. A caller whose
+// session can hold no record passes `skipMissingRecord`.
 export function judgeTrackerWrite({ tracker, names }, tool, input, record, { skipMissingRecord = false } = {}) {
   if (tracker?.enabled !== true || typeof tool !== 'string') return null;
   if (!tracker.writeTools.some((pattern) => nameMatches(pattern, tool))) return null;
-  return workspaceRefusal(tracker, record, names.human, skipMissingRecord) ?? teamRefusal(tracker.team, input, names.human) ?? projectRefusal(tracker.project, input, names.human);
+  return workspaceRefusal(tracker, tool, record, names.human, skipMissingRecord) ?? teamRefusal(tracker.team, input, names.human) ?? projectRefusal(tracker.project, input, names.human);
 }
 
-function workspaceRefusal({ workspace, readTools }, record, human, skipMissingRecord) {
+// The `mcp__<server>__` that starts a tool's name, or null when it has none. The server ends at the first double
+// underscore, so a server such as plugin_a_b keeps its single underscores and a tool such as get__workspace its double
+// ones. A server whose own name holds a double underscore reads as the part before it.
+export const serverPrefix = (tool) => (typeof tool === 'string' ? (/^mcp__.+?__/u.exec(tool)?.[0] ?? null) : null);
+
+// What to do about a write on `server` with no read to count. config.mjs `checkTracker` reports the two cases no read clears.
+function nextRead(readTools, server, human) {
+  if (server === null) return `tracker.writeTools names this tool with no server, so no read can clear it. Ask ${human} to correct that entry, and do not edit the key`;
+  const reads = readTools.filter((name) => serverPrefix(name) === server);
+  return reads.length > 0 ? `Call ${reads.join(' or ')}, then write again` : `Ask ${human} to add a read tool on this server to tracker.readTools, and do not edit the key`;
+}
+
+function workspaceRefusal({ workspace, readTools }, tool, record, human, skipMissingRecord) {
   if (!workspace) return null;
-  const reads = readTools.join(' or ');
-  if (record === null || record === undefined) {
+  const server = serverPrefix(tool);
+  if (server === null || serverPrefix(record?.tool) !== server) {
     if (skipMissingRecord) return null;
-    return refused('this session has not read the connected workspace', `Call ${reads}, then write again`);
+    return refused('this session has not read the connected workspace', nextRead(readTools, server, human));
   }
   const value = record.unreadable === true ? null : text(record.value);
   if (value === null) {
-    const read = text(record.tool) ?? reads;
-    return refused(`the read returned no ${workspace.field} (${read})`, `Ask ${human} to fix the tracker connection or the key tracker.workspace.field`);
+    return refused(`the read returned no ${workspace.field} (${record.tool})`, `Ask ${human} to fix the tracker connection or the key tracker.workspace.field`);
   }
   if (withoutTrailingSlash(value) === withoutTrailingSlash(workspace.expect)) return null;
-  return refused(`the connected workspace is ${JSON.stringify(value)}, and tracker.workspace.expect is ${JSON.stringify(workspace.expect)}`, `Ask ${human} to connect the right workspace or change the key`);
+  return refused(`the connected workspace is ${JSON.stringify(value)}, and tracker.workspace.expect is ${JSON.stringify(workspace.expect)}`, `Ask ${human} whether tracker.workspace.expect is wrong or the wrong workspace is connected, and do not edit the key`);
 }
 
 const withoutTrailingSlash = (value) => (value.endsWith('/') ? value.slice(0, -1) : value);
@@ -79,7 +91,7 @@ function teamRefusal(team, input, human) {
     const value = input?.[field];
     const prefix = typeof value === 'string' ? ISSUE_KEY.exec(value)?.[1] : undefined;
     if (prefix !== undefined && !sameKey(prefix, team.key)) {
-      return refused(`${field} is ${JSON.stringify(value)}, whose prefix is not tracker.team.key ${JSON.stringify(team.key)}`, `Write to an issue of that team, pass the item's UUID when it is not an issue, or tell ${human} this write belongs elsewhere`);
+      return refused(`${field} is ${JSON.stringify(value)}, whose prefix is not tracker.team.key ${JSON.stringify(team.key)}`, `Write to an issue of that team, pass the item's UUID when it is not an issue, or tell ${human} this write belongs elsewhere, and do not edit the key`);
     }
   }
   return null;
@@ -101,7 +113,7 @@ function listRefusal({ field, value, allowed, key, human, teamKey }) {
   if (wrong.length === 0) return null;
   const listed = allowed.map((each) => JSON.stringify(each)).join(', ');
   const use = teamKey === undefined ? 'a listed value' : `a listed value or the team key ${JSON.stringify(teamKey)}`;
-  return refused(`${field} ${Array.isArray(value) ? 'has' : 'is'} ${JSON.stringify(wrong[0])}, and ${key} allows ${listed}`, `Use ${use}, or tell ${human} this write belongs elsewhere`);
+  return refused(`${field} ${Array.isArray(value) ? 'has' : 'is'} ${JSON.stringify(wrong[0])}, and ${key} allows ${listed}`, `Use ${use}, or tell ${human} this write belongs elsewhere, and do not edit the key`);
 }
 
 // `match` is the cause alone, with its values, for the deny row, which keeps 120 characters (dispatch-rows.mjs);

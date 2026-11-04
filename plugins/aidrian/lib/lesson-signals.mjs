@@ -69,8 +69,9 @@ export function idleChildrenSignal({ agentType, agentId = null, session = null, 
   };
 }
 
-// The rule whose patterns the project writes, config.json `agents`: a block that keeps recurring is the project's to fix.
-const PROJECT_RULES = new Set(['agent-gates']);
+// The rules whose values the project writes, config.json `agents` and `tracker`: a block that keeps recurring is the
+// project's to fix.
+const PROJECT_RULES = new Set(['agent-gates', 'tracker-guard']);
 
 // One of the plugin's blocking rules (lib/hook-deny.mjs) blocked one session REPEATED_DENIALS times.
 export function denialSignal({ rule, session = null, agent = null }) {

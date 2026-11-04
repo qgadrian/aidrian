@@ -79,6 +79,9 @@ export const OWNER_WORDS = {
   'harness-librarian': "the project's knowledge docs",
 };
 
+// A key a sidecar sorts: a finding of the report it replaces, or, for one that report still carried from an earlier
+// run, `<that run's file>#<key>`.
+const SORTED_KEY = /^(?:[^#\s,]+\.md#)?F[1-9]\d*$/u;
 const ID = { findings: /^F[1-9]\d*$/u, not_reached: /^N[1-9]\d*$/u, doc_gaps: /^D[1-9]\d*$/u };
 const DATE = /^\d{4}-\d{2}-\d{2}$/u;
 const ROLE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
@@ -124,7 +127,7 @@ export const today = (now = new Date()) => now.toISOString().slice(0, 10);
 // Every problem names a finding by its title, never by its id: the reader is a person fixing the file. `replacedTitle`
 // gives the title of a finding of the replaced report from its key, when the caller can read that report.
 // `replaced`, when the caller can read the folder, is the report `supersedes` names, or null when no such report exists.
-export function sidecarProblems(value, { dir = null, report = null, replacedTitle = () => null, replaced: older } = {}) {
+export function sidecarProblems(value, { dir = null, report = null, replacedTitle = () => null, replaced: older, reportNamed = () => null } = {}) {
   if (!isObject(value)) return ['the sidecar must be a JSON object'];
   const problems = [];
   const at = (where, problem) => problems.push(`${where}: ${problem}`);
@@ -141,7 +144,7 @@ export function sidecarProblems(value, { dir = null, report = null, replacedTitl
   const replaced = {};
   for (const key of ['carried_forward', 'not_rechecked']) {
     const list = value[key];
-    if (!Array.isArray(list) || list.some((id) => typeof id !== 'string' || !ID.findings.test(id))) {
+    if (!Array.isArray(list) || list.some((id) => typeof id !== 'string' || !SORTED_KEY.test(id))) {
       at(key, 'must be a list of the keys the replaced report\'s sidecar gives its findings');
       continue;
     }
@@ -155,7 +158,7 @@ export function sidecarProblems(value, { dir = null, report = null, replacedTitl
     const which = named.every(Boolean) ? named.map((title) => `"${title}"`).join(', ') : `${both.length} finding${both.length === 1 ? '' : 's'} of the replaced report`;
     at('not_rechecked', `${which} also in carried_forward: a finding is listed once`);
   }
-  if (older !== undefined) problems.push(...replacedProblems(value, older));
+  if (older !== undefined) problems.push(...replacedProblems(value, older, reportNamed));
 
   if (!Array.isArray(value.findings)) at('findings', 'must be a list');
   else value.findings.forEach((finding, index) => findingProblems(finding, nonEmptyString(finding?.title) ? `finding "${finding.title}"` : `findings[${index}]`, at, dir));
@@ -182,11 +185,17 @@ export function sidecarProblems(value, { dir = null, report = null, replacedTitl
 }
 
 // What a sidecar says of the report it replaces, against that report (`older`, null when the folder holds none): the
-// report exists, and each key it sorts names one of that report's findings.
-export function replacedProblems({ supersedes, carried_forward: carried, not_rechecked: rechecks }, older) {
+// report exists, and each key it sorts names a finding of it or, as `<file>#<key>`, of a run further back in the chain,
+// which `reportNamed` finds by its file name.
+export function replacedProblems({ supersedes, carried_forward: carried, not_rechecked: rechecks }, older, reportNamed = () => null) {
   if (!supersedes) return [];
   if (!older) return [`supersedes: names ${reportTitle(supersedes)}, which is not in the audits folder: restore it, or write the sidecar with supersedes null and no findings to sort`];
   const known = new Set(older.findings.map((finding) => finding.id));
+  const seen = new Set();
+  for (let run = older; run && !seen.has(run); run = run.supersedes ? reportNamed(run.supersedes) : null) {
+    seen.add(run);
+    for (const finding of run.findings) known.add(`${run.report}#${finding.id}`);
+  }
   const unknown = [...(Array.isArray(carried) ? carried : []), ...(Array.isArray(rechecks) ? rechecks : [])].filter((key) => !known.has(key));
   return unknown.length ? [`carried_forward and not_rechecked: ${unknown.length} key${unknown.length === 1 ? '' : 's'} name${unknown.length === 1 ? 's' : ''} no finding of ${reportTitle(older.report, older.findings)}`] : [];
 }
@@ -334,32 +343,61 @@ export function listAudits(dir, { triage = readTriage(dir) } = {}) {
   // A sidecar that is valid alone can still name a report the folder lacks, or a finding that report does not hold.
   reports.forEach((each, index) => {
     if (each.status !== 'ok') return;
-    const problems = replacedProblems(each, byName.get(each.supersedes) ?? null);
+    const problems = replacedProblems(each, byName.get(each.supersedes) ?? null, (name) => byName.get(name));
     if (!problems.length) return;
     reports[index] = fromProse(dir, each.report, problems);
     byName.set(each.report, reports[index]);
   });
+  const sorted = new Set(reports.filter((each) => each.status === 'ok'));
   for (const each of reports) {
     const replaced = each.supersedes && byName.get(each.supersedes);
-    if (replaced && replaced !== each) replaced.replaced_by = each.report;
+    // Never a loop of replacements: that would leave no live report to triage any of them.
+    if (replaced && replaced !== each && liveReport(reports, each) !== replaced) replaced.replaced_by = each.report;
   }
   const decided = (report, id) => triage.reports?.[report]?.[id] ?? null;
   nameReports(reports);
+  const olderOf = (each) => {
+    const older = each.supersedes ? byName.get(each.supersedes) : null;
+    return older && older !== each ? older : null;
+  };
+  const asItem = (run, finding) => ({ kind: 'not_rechecked', ...finding, report: run.report, report_title: run.title, decision: decided(run.report, finding.id) });
+  const keyOf = (item) => `${item.report}#${item.id}`;
+  // What each report takes over from the run it replaces: what its sidecar lists as not re-checked, and everything that
+  // run still carried with no final decision, unless its sidecar carries it forward. A finding is never lost because a
+  // later run did not name it.
+  const offers = new Map();
+  const offered = (each) => {
+    if (offers.has(each)) return offers.get(each);
+    offers.set(each, []);
+    const older = olderOf(each);
+    const listed = each.not_rechecked.map((key) => {
+      const at = key.indexOf('#');
+      const run = at === -1 ? older : byName.get(key.slice(0, at));
+      return asItem(run, run.findings.find((finding) => finding.id === key.slice(at + 1)));
+    }).filter((item) => item.id);
+    const dropped = new Set([...listed.map(keyOf), ...each.carried_forward.filter((key) => key.includes('#'))]);
+    const result = [...listed, ...unresolved(older).filter((item) => !dropped.has(keyOf(item)))];
+    offers.set(each, result);
+    return result;
+  };
+  // What a report replacing `each` must take over. A run with no sidecar sorted nothing, so all of what it replaced is open.
+  const unresolved = (each) => {
+    if (!each) return [];
+    if (sorted.has(each)) return offered(each).filter(untriaged);
+    const older = olderOf(each);
+    return older ? [...older.findings.map((finding) => asItem(older, finding)).filter(untriaged), ...offered(each).filter(untriaged)] : [];
+  };
   for (const each of reports) {
     if (each.replaced_by) each.status = 'replaced';
     const own = [...each.findings.map((finding) => ({ kind: 'finding', ...finding })), ...each.not_reached.map((item) => ({ kind: 'not_reached', ...item })), ...each.doc_gaps.map((item) => ({ kind: 'doc_gap', ...item }))]
       .map((item) => ({ ...item, report: each.report, report_title: each.title, decision: decided(each.report, item.id) }));
-    const older = each.supersedes ? byName.get(each.supersedes) : null;
-    const offered = each.not_rechecked.map((id) => {
-      // replacedProblems above left only keys of findings the replaced report holds.
-      const finding = older.findings.find((one) => one.id === id);
-      return { kind: 'not_rechecked', ...finding, report: each.supersedes, report_title: older.title, decision: decided(each.supersedes, id) };
-    });
-    each.items = [...own, ...offered];
+    const older = olderOf(each);
+    each.items = [...own, ...offered(each)];
+    each.unresolved = unresolved(each);
     // A report not imported yet that replaces another: that report's findings have no decision until the import sorts
     // them into carried forward and not re-checked, so they wait here, and count as untriaged.
-    each.awaiting_sort = older && older !== each && each.status !== 'ok' && !each.replaced_by ? older.findings.length : 0;
-    if (older && older !== each) older.awaiting_sort = each.awaiting_sort;
+    each.awaiting_sort = older && each.status !== 'ok' && !each.replaced_by ? older.findings.length : 0;
+    if (older) older.awaiting_sort = each.awaiting_sort;
     each.untriaged = each.status === 'replaced' ? 0 : each.items.filter(untriaged).length + each.awaiting_sort;
   }
   return reports;
@@ -438,7 +476,11 @@ export function pendingGroups(entry, { labels = [], personas = entry.personas ??
   // decides those findings once.
   const covered = open.filter((item) => item.kind === 'not_reached' && item.covered_by === 'not_rechecked').map((item) => ({ ...item, proposed: 'covered' }));
   const rechecks = open.filter((item) => item.kind === 'not_rechecked');
-  if (rechecks.length) groups.push({ kind: 'not_rechecked', title: `Not re-checked from ${rechecks[0].report_title ?? reportTitle(rechecks[0].report)}`, items: [...rechecks, ...covered] });
+  // One group per earlier run: a chain of replacements can carry findings from more than one.
+  for (const run of [...new Set(rechecks.map((item) => item.report))]) {
+    const items = rechecks.filter((item) => item.report === run);
+    groups.push({ kind: 'not_rechecked', title: `Not re-checked from ${items[0].report_title ?? reportTitle(run)}`, items: [...items, ...(run === rechecks[0].report ? covered : [])] });
+  }
   const reruns = [...open.filter((item) => item.kind === 'not_reached' && item.covered_by !== 'not_rechecked'), ...(rechecks.length ? [] : covered)];
   if (reruns.length) groups.push({ kind: 'not_reached', title: 'Not reached: follow-ups for a rerun', items: reruns });
   const gaps = open.filter((item) => item.kind === 'doc_gap');

@@ -131,7 +131,8 @@ report in words with its path, then its findings by title:
 ``Carried forward: <title>; <title>. Not re-checked: <title>; <title>.``
 Carried forward are those a finding of this run covers, the same problem seen again; not re-checked, those this run
 did not look at, which the triage offers again. A finding this run re-checked and did not see again is in neither,
-and none is in both. They are listed only here: `## Not reached` never restates them, such as "the earlier run's
+and none is in both. A finding the earlier report itself still carried as not re-checked, from a run before it, is
+one of its findings for this: its key is `<that run's file>#<key>`, and left unsorted it stays open. They are listed only here: `## Not reached` never restates them, such as "the earlier run's
 second-language findings stand unverified". In the sidecar, name the earlier report in `supersedes`, and list the same findings, by the keys
 the earlier sidecar gives them, in `carried_forward` and `not_rechecked`.
 

@@ -763,3 +763,72 @@ test('a sidecar is checked against the report it replaces: that report exists, a
   assert.equal(run('import', NEW, '--from', draft, '--write').status, 0);
   assert.equal(entry().status, 'ok');
 });
+
+test('a finding left open stays open down a chain of replacements: three runs, and a run with no sidecar in the middle', (t) => {
+  const { audits, run } = project(t);
+  const THIRD = 'front-desk-2026-05-02-3.md';
+  const prose = (replaces) => `# Persona audit\n\nThis run replaces the walk \`${replaces}\`.\n\n## Findings\n\n### polish: a third-run label\n\n- Persona: front-desk. Task: Take a repair. Evidence: walked. Label: observed.\n- Seen: a label (\`front-desk-2026-05-02-3/shot.png\`).\n- Owner: \`ux-specialist\`.\n`;
+  const draftOf = (report) => JSON.parse(run('import', report, '--json').stdout);
+  assert.equal(run('import', NEW, '--not-rechecked', 'F2,F3', '--carried-forward', 'F1', '--write').status, 0);
+  mkdirSync(path.join(audits, 'front-desk-2026-05-02-3'));
+  writeFileSync(path.join(audits, 'front-desk-2026-05-02-3/shot.png'), '');
+  writeFileSync(path.join(audits, THIRD), prose(NEW));
+
+  // Before the third run is imported, nothing of the first is lost from its count, and the sorter offers it.
+  let entry = JSON.parse(run('list', '--json').stdout).find((r) => r.report === THIRD);
+  assert.equal(entry.status, 'no-sidecar');
+  assert.equal(entry.untriaged, 1 + 11 + 2, 'its own finding, the walk\'s 11 awaiting the sort, and the 2 the walk carried');
+  const { replaced } = draftOf(THIRD);
+  assert.deepEqual(replaced.slice(-2), [
+    { id: `${OLD}#F2`, title: 'the second language names the drop-in three ways' },
+    { id: `${OLD}#F3`, title: 'the second language mixes formal and informal address' },
+  ], 'the sorter offers what the replaced run carried, by a key that says which run');
+  assert.match(run('import', THIRD).stderr, new RegExp(`- "the second language mixes formal and informal address": key ${OLD}#F3\n`, 'u'));
+
+  // A decision taken already takes a finding out of the chain.
+  rmSync(path.join(audits, THIRD));
+  assert.equal(run('record', NEW, `${OLD}#F3`, 'drop', '--reason', 'not worth it').status, 0);
+  writeFileSync(path.join(audits, THIRD), prose(NEW));
+  assert.deepEqual(draftOf(THIRD).replaced.slice(-1), [{ id: `${OLD}#F2`, title: 'the second language names the drop-in three ways' }]);
+
+  // A run that sorts only its own predecessor's findings loses nothing: the rest stays open, in a group of its own run.
+  const walkKeys = Array.from({ length: 11 }, (_, i) => `F${i + 1}`);
+  assert.equal(run('import', THIRD, '--not-rechecked', 'F1', '--carried-forward', walkKeys.slice(1).join(','), '--write').status, 0);
+  const groups = JSON.parse(run('pending', THIRD, '--json').stdout).groups.filter((g) => g.kind === 'not_rechecked');
+  assert.deepEqual(groups.map((g) => [g.title, g.items.map((i) => i.audit_key)]), [
+    ['Not re-checked from the front-desk walk on 2026-05-02', [`${NEW}#F1`]],
+    ['Not re-checked from the front-desk read-only run on 2026-05-02', [`${OLD}#F2`]],
+  ]);
+  entry = JSON.parse(run('list', '--json').stdout).find((r) => r.report === THIRD);
+  assert.equal(entry.untriaged, 1 + 2);
+  assert.match(run('list').stdout, new RegExp(`- ${OLD_TITLE}: replaced by the front-desk walk on 2026-05-02; the second front-desk walk on 2026-05-02 triages the 1 finding of it not re-checked\n`, 'u'));
+
+  // Recorded through the third run, it lands on the first run's finding, and the chain is done.
+  assert.equal(run('record', THIRD, `${OLD}#F2`, 'defer').status, 0);
+  assert.equal(JSON.parse(readFileSync(path.join(audits, 'triage.json'), 'utf8')).reports[OLD].F2.decision, 'defer');
+  assert.equal(JSON.parse(run('list', '--json').stdout).find((r) => r.report === THIRD).untriaged, 1 + 1);
+  assert.match(run('list').stdout, new RegExp(`- ${OLD_TITLE}: replaced by the front-desk walk on 2026-05-02; nothing of it is left to triage\n`, 'u'));
+
+  // Carried forward by its chain key, an inherited finding leaves; an unknown chain key is refused.
+  rmSync(path.join(audits, 'front-desk-2026-05-02-3.json'));
+  writeFileSync(path.join(audits, 'triage.json'), '{ "version": 1, "reports": {} }');
+  assert.match(run('import', THIRD, '--not-rechecked', `${OLD}#F99`, '--write').stderr, /1 key names no finding of/u);
+  assert.equal(run('import', THIRD, '--carried-forward', `${OLD}#F2,${OLD}#F3`, '--not-rechecked', walkKeys.join(','), '--write').status, 0);
+  assert.equal(run('check', THIRD).status, 0, 'the sidecar checks clean');
+  const keys = JSON.parse(run('pending', THIRD, '--json').stdout).groups.filter((g) => g.kind === 'not_rechecked').flatMap((g) => g.items.map((i) => i.audit_key));
+  assert.deepEqual(keys.filter((key) => key.startsWith(OLD)), []);
+  assert.equal(keys.length, 11);
+
+  // A run with no sidecar in the middle sorted nothing: all it replaced stays open for the run after it.
+  rmSync(path.join(audits, 'front-desk-2026-05-02-3.json'));
+  rmSync(path.join(audits, 'front-desk-2026-05-02-2.json'));
+  entry = JSON.parse(run('list', '--json').stdout).find((r) => r.report === THIRD);
+  assert.equal(entry.awaiting_sort, 11);
+  assert.deepEqual(draftOf(THIRD).replaced.slice(-3).map((one) => one.id), [`${OLD}#F1`, `${OLD}#F2`, `${OLD}#F3`]);
+  assert.equal(entry.untriaged, 1 + 11 + 3);
+
+  // A loop of replacements never leaves every report hidden.
+  writeFileSync(path.join(audits, OLD), `${readFileSync(path.join(audits, OLD), 'utf8')}\nThis run replaces the walk \`${THIRD}\`.\n`);
+  const reports = JSON.parse(run('list', '--json').stdout);
+  assert.ok(reports.some((r) => r.status !== 'replaced'), JSON.stringify(reports.map((r) => [r.report, r.status])));
+});

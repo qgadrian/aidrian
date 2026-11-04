@@ -197,13 +197,16 @@ file names the other commands take.
   <report>`, and its items count toward the report that replaced it: before that report's import, every finding of
   the replaced one, which has no decision until the import sorts it, and after it, those not re-checked. A report with no sidecar shows
   `no sidecar: import needed`; one whose sidecar is invalid names the first problem.
-- `check <report>`: warns, and still passes, on a task named by its number, such as "Task 2". It validates the sidecar: every required key, finding, `N` and `D` id, evidence paths that name
+- `check <report>`: refuses a sidecar whose `supersedes` names a report the folder lacks, or whose `carried_forward` or
+  `not_rechecked` names a finding that report does not hold; so do `import` and `list`, which shows it as invalid. It warns, and still passes, on a task named by its number, such as "Task 2". It validates the sidecar: every required key, finding, `N` and `D` id, evidence paths that name
   files and are never a suffix, a blocker only when walked and observed, no id in both `carried_forward` and
   `not_rechecked`, and the report's finding headings matching the sidecar's findings by title. It prints `ok` or each problem.
 - `import <report> [--not-rechecked IDS] [--carried-forward IDS] [--from FILE] [--write]`: drafts the sidecar of a
   report written without one, best effort, from its prose, and prints it with warnings for what the prose could not
   settle, such as the findings of a replaced report, by title, to sort into carried forward and not re-checked;
-  `--json` gives one object, with `replaced`, each of those titles with its key. A screenshot cited by a suffix becomes the
+  `--json` gives one object, with `replaced`, each of those titles with its key. Those include what the replaced report
+  still carries from a run before it, keyed `<file>#<id>`: a finding left open stays open down a chain of replacements,
+  whether or not a later run names it, until it has a final decision or a sidecar lists it in `carried_forward`. A screenshot cited by a suffix becomes the
   one file in the report's folder that ends with it. `--write` validates the draft and writes it; it never overwrites a sidecar.
   Without `--json`, it ends with the next step: each of the replaced report's findings, led by its title, with the key
   the flags take, and the `--write` command ready to edit.

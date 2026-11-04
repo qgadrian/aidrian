@@ -89,7 +89,7 @@ export function resolveAuthority(config, { domain, class: kind, reversible, docs
     if (answer !== false) return ask('reversibility', `${key} is ${answer === true ? 'yes' : 'unanswered'}: ${table.reversibility[key]}`);
   }
   if (!DECISION_DOMAINS.includes(domain)) return ask('unknown-domain', `${JSON.stringify(domain ?? null)} is not one of ${DECISION_DOMAINS.join(', ')}`);
-  const domainPending = pending.filter((each) => each?.domain === domain);
+  const domainPending = pending.filter((each) => (classDomain(each?.class) ?? each?.domain) === domain);
   const paused = pauseReason(block.unreviewed.pauseDomainAt, domainPending, now);
   if (paused) return ask('domain-paused', `${domain} is paused: ${paused}${docsClause(domainPending)}`);
   if (effective !== mode) return ask('maxMode', `${rule} is ${mode}, above decisions.maxMode ${block.maxMode}`);

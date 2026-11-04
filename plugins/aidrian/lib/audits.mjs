@@ -26,6 +26,12 @@ export const FINAL = DECISIONS.filter((decision) => decision !== 'decided');
 // A triage priority, apart from the audit's severity, which is never rewritten: a reviewer re-ranks a finding with it.
 // The words of the trackers' own priority fields.
 export const PRIORITIES = ['urgent', 'high', 'medium', 'low'];
+// A doc reference: a project file, then a section, as a slug or as the heading is written.
+const DOC = /^[^#\s][^#]*?\.[A-Za-z0-9]+#\s*\S.*$/u;
+export const DOC_FORMS = 'a file of the project, then # and its section, as the heading is written ("docs/rules.md#Known gaps / Do not infer") or as its slug ("docs/rules.md#known-gaps--do-not-infer")';
+// A heading's anchor, as GitHub writes it: lower case, punctuation dropped, each space a hyphen.
+export const slugOf = (heading) => heading.trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, '').replace(/\s/gu, '-');
+
 // Who made a pick: the Human, or the agent whose recommendation the Human adopted, by its role.
 const BY = /^(?:human|[a-z0-9]+(?:-[a-z0-9]+)*)$/u;
 // Whether an item still waits for a final outcome: no entry, a priority alone, or a decision that is not final.
@@ -223,16 +229,19 @@ export function readTriage(dir) {
   return value;
 }
 
-// Records one decision, under the lock of triage.json, read to write, and replaces the file in one rename. A decision
-// keeps the item's priority; a priority (`{ priority }`) keeps its decision: the two are set apart.
-export function recordDecision(dir, report, id, entry) {
+// Records one decision for every target, { report, id }, in one write: under the lock of triage.json, read to write,
+// and the file replaced in one rename, so a bulk record lands whole or not at all. A decision keeps the item's
+// priority; a priority (`{ priority }`) keeps its decision: the two are set apart.
+export function recordDecision(dir, targets, entry) {
   const file = path.join(dir, TRIAGE_FILE);
   mkdirSync(dir, { recursive: true });
   return withLocks([file], () => {
     const triage = readTriage(dir);
-    const before = triage.reports[report]?.[id] ?? {};
-    const next = entry.decision ? { ...entry, ...(before.priority ? { priority: before.priority } : {}) } : { ...before, ...entry };
-    triage.reports[report] = { ...triage.reports[report], [id]: next };
+    for (const { report, id } of targets) {
+      const before = triage.reports[report]?.[id] ?? {};
+      const next = entry.decision ? { ...entry, ...(before.priority ? { priority: before.priority } : {}) } : { ...before, ...entry };
+      triage.reports[report] = { ...triage.reports[report], [id]: next };
+    }
     const temporary = `${file}.${process.pid}.tmp`;
     writeFileSync(temporary, `${JSON.stringify(triage, null, 2)}\n`);
     renameSync(temporary, file);
@@ -247,7 +256,7 @@ export function decisionProblem({ decision, issue, url, reason, doc, by }) {
   if ((decision === 'issue' || decision === 'duplicate') && !issue && !url) return `${decision} needs --issue KEY or --url URL`;
   if ((decision === 'drop' || decision === 'covered' || decision === 'decided') && !reason) return `${decision} needs --reason${decision === 'decided' ? ', the decision itself' : ''}`;
   if (decision === 'decided' && !by) return 'decided needs --by, who made the decision';
-  if (decision === 'documented' && !/^[^#\s]+#\S+$/u.test(doc ?? '')) return 'documented needs --doc <path#section>, the doc that says the product works this way';
+  if (decision === 'documented' && !DOC.test(doc ?? '')) return `documented needs --doc <path#section>: ${DOC_FORMS}`;
   return null;
 }
 

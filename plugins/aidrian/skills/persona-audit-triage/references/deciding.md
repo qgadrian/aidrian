@@ -25,7 +25,7 @@ A reviewer, such as `product-manager`, may re-rank a finding: the audit's severi
 stays as the run wrote it; the triage priority says what to do first. Record it apart from the decision:
 
 ```bash
-aidrian audits rank <report> <id> urgent|high|medium|low --by <role or human> [--reason '<why>']
+aidrian audits rank <report> '<audit_key>' urgent|high|medium|low --by <role or human> [--reason '<why>']
 ```
 
 `pending` then shows the priority beside the finding and lists it first in its group. Pass it to `agent-issue-writer`
@@ -36,7 +36,7 @@ as the issue's priority.
 When a finding needs a product decision before an issue can be written, record the decision as it is taken:
 
 ```bash
-aidrian audits record <report> <id> decided --reason '<the decision>' --by <who decided>
+aidrian audits record <report> '<audit_key>' decided --reason '<the decision>' --by <who decided>
 ```
 
 `decided` is not final: the finding stays untriaged, and `pending` shows the decision beside it, until it reaches a
@@ -47,10 +47,12 @@ final outcome, usually `issue`, with the decision in the issue's body.
 When the product does what a doc says it should, record `documented`, not `drop`, with the doc's file and section:
 
 ```bash
-aidrian audits record <report> <id> documented --doc '<path#section>' --reason '<what the doc says>'
+aidrian audits record <report> '<audit_key>' documented --doc '<path#section>' --reason '<what the doc says>'
 ```
 
-The path is relative to the project root, and the command refuses one that names no file.
+The path is relative to the project root. The section is a heading of that doc, as it is written, such as
+`docs/rules.md#Known gaps / Do not infer`, or as its slug; the command checks it against the doc's headings, keeps
+the slug, and refuses a file or a section it cannot find.
 
 ## A delegated answer
 

@@ -117,14 +117,15 @@ In `confirm`, act on an item only after the Human's yes for it:
 - `duplicate`: comment on the existing issue with the finding and its evidence, when the Human asks.
 - `fix-now`: dispatch the owner with the finding, its evidence, and the project folder.
 
-Then record it, with the report the item names, which is the earlier report for a finding it did not re-check:
+Then record it: the item's `record` command from `pending --json`, plus the decision. Items with one decision share
+a call, their `audit_key`s joined by commas:
 
 ```bash
-aidrian audits record <report> <id> <decision> [--issue <key>] [--url <url>] [--reason '<why>']
+aidrian audits record <report> '<audit_key>,<audit_key>' <decision> [--issue <key>] [--reason '<why>']
 ```
 
-`issue` and `duplicate` need `--issue` or `--url`; `drop` and `covered` need `--reason`. `--by <role or human>`
-records whose pick it was. Never edit `triage.json` by hand.
+`issue` and `duplicate` need `--issue` or `--url`; `drop` and `covered`, `--reason`. `--by <role or human>`
+says whose pick it was. Never edit `triage.json` by hand.
 A route that fails records nothing: the item stays untriaged, with the failure in the summary.
 
 **Done when** `aidrian audits pending <report>` prints `fully triaged`, or the summary names what is left and why.

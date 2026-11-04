@@ -283,9 +283,9 @@ test('aidrian audits: list, import after review, pending, and record every decis
 
   assert.match(run('record', NEW, 'F1', 'issue').stderr, /issue needs --issue KEY or --url URL/);
   assert.match(run('record', NEW, 'F8', 'drop').stderr, /drop needs --reason/);
-  assert.match(run('record', NEW, 'F12', 'defer').stderr, /offers no item with that key to triage/);
+  assert.match(run('record', NEW, 'F12', 'defer').stderr, /^One key names no item open to triage through the front-desk walk on 2026-05-02, so nothing was recorded/u);
   result = run('record', OLD, 'F1', 'defer');
-  assert.match(result.stderr, /^The front-desk read-only run on 2026-05-02 offers no item with that key/u, 'only the findings the new run did not re-check');
+  assert.match(result.stderr, /^One key names no item open to triage through the front-desk read-only run on 2026-05-02/u, 'only the findings the new run did not re-check');
   noIds(result.stderr);
   const pendingJson = JSON.parse(run('pending', NEW, '--json').stdout);
   const [blocker] = pendingJson.groups[0].items;
@@ -294,7 +294,7 @@ test('aidrian audits: list, import after review, pending, and record every decis
   assert.match(run('record', NEW, 'F1', 'maybe').stderr, /decision must be issue, fix-now, duplicate, drop, defer/);
   result = run('record', NEW, 'F1', 'issue', '--issue', 'ABC-1', '--url', 'https://tracker.example.com/ABC-1');
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, `recorded "a drop-in is not shown as a drop-in": issue; 16 untriaged left in ${NEW_TITLE.toLowerCase()}\n`);
+  assert.equal(result.stdout, `recorded "a drop-in is not shown as a drop-in": issue\n16 untriaged left in ${NEW_TITLE.toLowerCase()}\n`);
   assert.equal(run('record', OLD, 'F2', 'duplicate', '--issue', 'ABC-2').status, 0);
   for (const id of ['F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'N1', 'N3', 'D1']) {
     assert.equal(run('record', NEW, id, 'defer').status, 0);
@@ -302,7 +302,7 @@ test('aidrian audits: list, import after review, pending, and record every decis
   assert.match(run('record', NEW, 'N2', 'covered').stderr, /covered needs --reason/);
   assert.equal(run('record', NEW, 'N2', 'covered', '--reason', 'decided with the findings the walk did not re-check').status, 0);
   result = run('record', OLD, 'F3', 'drop', '--reason', 'covered by the next second-language pass');
-  assert.equal(result.stdout, `recorded "the second language mixes formal and informal address": drop; ${NEW_TITLE} is fully triaged\n`);
+  assert.equal(result.stdout, `recorded "the second language mixes formal and informal address": drop\n${NEW_TITLE} is fully triaged\n`);
   noIds(result.stdout);
   const triage = JSON.parse(readFileSync(path.join(audits, 'triage.json'), 'utf8'));
   assert.deepEqual(triage.reports[NEW].F1, { decision: 'issue', issue: 'ABC-1', url: 'https://tracker.example.com/ABC-1', reason: null, doc: null, by: null, date: triage.reports[NEW].F1.date });
@@ -439,7 +439,7 @@ test('record: decided waits for a final outcome, documented cites a doc, rank se
   assert.match(run('record', NEW, 'F7', 'decided', '--reason', 'x', '--by', 'The PM').stderr, /--by names who made the pick: human, or the role/);
   let result = run('record', NEW, 'F7', 'decided', '--reason', 'staff may not book a time that has passed', '--by', 'product-manager');
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /^recorded "the desk can book a time that already passed, with no warning": decided by product-manager; /u);
+  assert.match(result.stdout, /^recorded "the desk can book a time that already passed, with no warning": decided by product-manager\n/u);
   assert.equal(untriagedCount(), start, 'a decided finding is still untriaged');
   assert.match(run('pending', NEW).stdout, /\n- the desk can book a time that already passed, with no warning \(decided by product-manager: staff may not book a time that has passed\)\n/u);
 
@@ -470,4 +470,57 @@ test('record: decided waits for a final outcome, documented cites a doc, rank se
   const sidecar = JSON.parse(readFileSync(path.join(audits, 'front-desk-2026-05-02-2.json'), 'utf8'));
   assert.equal(sidecar.findings[0].severity, 'blocker');
   noIds(text);
+});
+
+test('record takes the audit_key pending prints, so a walk and the run it replaces never mix up one id; several keys land whole or not at all', (t) => {
+  const { root, audits, run } = project(t);
+  assert.equal(run('import', NEW, '--not-rechecked', 'F2,F3', '--carried-forward', 'F1', '--write').status, 0);
+  const triage = () => JSON.parse(readFileSync(path.join(audits, 'triage.json'), 'utf8')).reports;
+
+  // pending --json gives each item its key and the exact command that records it.
+  const items = JSON.parse(run('pending', NEW, '--json').stdout).groups.flatMap((g) => g.items);
+  const older = items.find((i) => i.kind === 'not_rechecked' && i.id === 'F2');
+  assert.equal(older.audit_key, `${OLD}#F2`);
+  assert.equal(older.record, `aidrian audits record ${NEW} '${OLD}#F2'`);
+  assert.equal(items.find((i) => i.kind === 'finding' && i.id === 'F2').record, `aidrian audits record ${NEW} '${NEW}#F2'`);
+
+  // Both reports hold an F2: the key through the walk lands on the replaced run's, a bare id on the walk's own.
+  let result = run('record', NEW, `${OLD}#F2`, 'defer');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^recorded "the second language names the drop-in three ways": defer\n/u);
+  assert.deepEqual([triage()[OLD]?.F2?.decision, triage()[NEW]?.F2], ['defer', undefined], 'the replaced run\'s finding, not the walk\'s');
+  assert.equal(run('record', NEW, 'F2', 'drop', '--reason', 'seen once').status, 0);
+  assert.deepEqual([triage()[OLD].F2.decision, triage()[NEW].F2.decision], ['defer', 'drop']);
+  assert.match(run('record', NEW, `${OLD}#F1`, 'defer').stderr, /One key names no item open to triage/u, 'a carried-forward finding is offered by no report');
+
+  // Several keys in one call: every one valid, or nothing is written.
+  const before = readFileSync(path.join(audits, 'triage.json'), 'utf8');
+  result = run('record', NEW, `F8,F99,${OLD}#F7`, 'defer');
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /^2 keys name no item open to triage through the front-desk walk on 2026-05-02, so nothing was recorded/u);
+  assert.equal(readFileSync(path.join(audits, 'triage.json'), 'utf8'), before, 'nothing written');
+  result = run('record', NEW, `F8,F9, F10,${OLD}#F3`, 'issue', '--issue', 'ABC-7');
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.stdout.split('\n').filter(Boolean), [
+    'recorded "Fast entry has no place for a note": issue',
+    'recorded "the drop-in screen is titled "Fast entry"": issue',
+    'recorded "the Created message names no customer or bench": issue',
+    'recorded "the second language mixes formal and informal address": issue',
+    '11 untriaged left in the front-desk walk on 2026-05-02',
+  ]);
+  assert.deepEqual(['F8', 'F9', 'F10'].map((id) => triage()[NEW][id].issue).concat(triage()[OLD].F3.issue), ['ABC-7', 'ABC-7', 'ABC-7', 'ABC-7']);
+  assert.equal(run('rank', NEW, 'F4,F6', 'high', '--by', 'product-manager').status, 0, 'rank takes several keys too');
+  assert.deepEqual(['F4', 'F6'].map((id) => triage()[NEW][id].priority.value), ['high', 'high']);
+  noIds(result.stdout);
+
+  // --doc: the heading as written or its slug, checked against the doc's headings, stored as the slug.
+  mkdirSync(path.join(root, 'docs'), { recursive: true });
+  writeFileSync(path.join(root, 'docs/rules.md'), '# Rules\n\n## Known Gaps / Do Not Infer\n\n## Opening hours\n');
+  assert.equal(run('record', NEW, 'F11', 'documented', '--doc', 'docs/rules.md#Known Gaps / Do Not Infer').status, 0);
+  assert.equal(triage()[NEW].F11.doc, 'docs/rules.md#known-gaps--do-not-infer');
+  assert.equal(run('record', NEW, 'F5', 'documented', '--doc', 'docs/rules.md#opening-hours').status, 0, 'the slug works too');
+  result = run('record', NEW, 'F7', 'documented', '--doc', 'docs/rules.md#Closing hours');
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /--doc names no section "Closing hours" in docs\/rules\.md; its sections are: rules, known-gaps--do-not-infer, opening-hours\. It takes a file of the project, then # and its section, as the heading is written \("docs\/rules\.md#Known gaps \/ Do not infer"\) or as its slug/u);
+  assert.match(run('record', NEW, 'F7', 'documented', '--doc', 'Known Gaps').stderr, /documented needs --doc <path#section>: a file of the project, then # and its section/u);
 });

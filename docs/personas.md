@@ -211,12 +211,15 @@ file names the other commands take.
   reached` lines, then doc gaps.
   With `--json`, it also gives `issue_creation`, the mode, `search_labels`, the plain labels, and for each item its
   `labels`, its `source` line for an issue body, and its `audit_key`.
-- `record <report> <id> <decision> [--issue KEY] [--url URL] [--reason TEXT] [--doc PATH#SECTION] [--by WHO]`:
-  records one decision, and keeps the item's priority. `issue` and `duplicate` need `--issue` or `--url`; `drop` and
+- `record <report> <keys> <decision> [--issue KEY] [--url URL] [--reason TEXT] [--doc PATH#SECTION] [--by WHO]`:
+  records one decision for each key, and keeps each item's priority. A key is the item's `audit_key`,
+  `<report file>#<id>`, as `pending --json` gives it with the item's exact `record` command, or a bare id of the
+  report's own items; a key names one finding even when the walk and the run it replaces both hold the same id.
+  Several keys, joined by commas, are recorded in one write: when one names no item, nothing is written. `issue` and `duplicate` need `--issue` or `--url`; `drop` and
   `covered` need `--reason`; `decided` needs `--reason`, the decision, and `--by`; `documented` needs `--doc`, a file
-  of the project and a section. `--by` is `human` or an agent role. A finding of a replaced report is recorded under
+  of the project and one of its headings, as written or as its slug, kept as the slug. `--by` is `human` or an agent role. A finding of a replaced report is recorded under
   that report. It refuses an id the report does not offer, and a `triage.json` it cannot read.
-- `rank <report> <id> urgent|high|medium|low --by WHO [--reason TEXT]`: sets the item's triage priority, and keeps
+- `rank <report> <keys> urgent|high|medium|low --by WHO [--reason TEXT]`: sets the item's triage priority, and keeps
   its decision.
 
 While any report holds untriaged items, the main session's [start lines](hooks.md#start-lines) say how many, in how

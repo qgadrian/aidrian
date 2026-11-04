@@ -12,9 +12,10 @@ import { parseArgs } from 'node:util';
 
 import { parseReport } from './audit-import.mjs';
 import {
-  decisionProblem, DECISIONS, itemWords, PRIORITIES, priorityProblem, untriaged, taskNumbers, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, reportTitle, searchLabels, sidecarName, sidecarProblems, today,
+  decisionProblem, DECISIONS, DOC_FORMS, itemWords, slugOf, PRIORITIES, priorityProblem, untriaged, taskNumbers, listAudits, OWNER_WORDS, pendingGroups, proseProblems, readTriage, recordDecision, reportName, reportTitle, searchLabels, sidecarName, sidecarProblems, today,
 } from './audits.mjs';
 import { commandConfig } from './config.mjs';
+import { unfencedLines } from './markdown-sections.mjs';
 import { projectAt, stateDir } from './project.mjs';
 import { usageLines } from './usage.mjs';
 
@@ -38,8 +39,8 @@ export const commands = {
   audits: {
     usage:
       'list [--json] | check REPORT | import REPORT [--not-rechecked IDS] [--carried-forward IDS] [--from FILE] [--write] [--json] ' +
-      `| pending REPORT [--json] | record REPORT ID ${DECISIONS.join('|')} [--issue KEY] [--url URL] [--reason TEXT] [--doc PATH#SECTION] [--by WHO] ` +
-      `| rank REPORT ID ${PRIORITIES.join('|')} --by WHO [--reason TEXT]`,
+      `| pending REPORT [--json] | record REPORT KEYS ${DECISIONS.join('|')} [--issue KEY] [--url URL] [--reason TEXT] [--doc PATH#SECTION] [--by WHO] ` +
+      `| rank REPORT KEYS ${PRIORITIES.join('|')} --by WHO [--reason TEXT]`,
     about: 'list the persona audits in the state folder and what is untriaged, check or import a sidecar, and record triage decisions',
     async run(args) {
       const { values, positionals } = parseArgs({ args, allowPositionals: true, options: OPTIONS });
@@ -204,6 +205,8 @@ function pending({ values, rest: [name], dir, triage }) {
     const what = item.kind === 'not_reached' ? 'not reached' : item.kind === 'doc_gap' ? 'persona doc gap' : 'finding';
     item.source = `Source: ${item.report_title ?? reportTitle(item.report)}, ${what} ${itemWords(item)} (${path.join(dir, item.report)})`;
     item.audit_key = `${item.report}#${item.id}`;
+    // The exact command that records this item, through the report under triage, with the decision still to add.
+    item.record = `aidrian audits record ${report} '${item.audit_key}'`;
   }
   if (values.json) {
     console.log(JSON.stringify({ issue_creation: triage.issueCreation, search_labels: searchLabels(triage.labels), groups }));
@@ -223,25 +226,47 @@ function pending({ values, rest: [name], dir, triage }) {
   return 0;
 }
 
-function record({ values, rest: [name, id, decision], dir, root }) {
-  if (!id || !decision) return fail(usageLines('audits', commands.audits.usage, 'usage: ').join('\n'));
+// KEYS: one or more, comma-separated, each an item's `audit_key` as `pending --json` prints it, `<report file>#<id>`,
+// or a bare id of REPORT's own items. A key names one finding even when the walk and the run it replaces both hold
+// the same id; a bare id is always REPORT's own.
+function record({ values, rest: [name, keys, decision], dir, root }) {
+  if (!keys || !decision) return fail(usageLines('audits', commands.audits.usage, 'usage: ').join('\n'));
   const entry = {
     decision, issue: values.issue ?? null, url: values.url ?? null, reason: values.reason ?? null, doc: values.doc ?? null, by: values.by ?? null, date: today(),
   };
   const bad = decisionProblem(entry);
   if (bad) return fail(bad);
-  // A doc a `documented` outcome cites is a file of the project, so the Human can open the section it names.
-  if (entry.doc && !existsSync(path.join(root, entry.doc.split('#')[0]))) return fail(`--doc names no file in the project: ${path.join(root, entry.doc.split('#')[0])}`);
-  return write(dir, name, id, entry, (item) => (decision === 'decided' ? `decided by ${byWords(entry.by)}` : decision));
+  if (entry.doc) {
+    const doc = docReference(root, entry.doc);
+    if (doc.problem) return fail(doc.problem);
+    entry.doc = doc.reference;
+  }
+  return write(dir, name, keys, entry, () => (decision === 'decided' ? `decided by ${byWords(entry.by)}` : decision));
+}
+
+// A `documented` outcome's doc: a file of the project and one of its headings, as written or as its slug, stored as
+// `path#slug` so the Human can open the section it names.
+function docReference(root, doc) {
+  const at = doc.indexOf('#');
+  const [file, section] = [doc.slice(0, at), doc.slice(at + 1).trim()];
+  const full = path.join(root, file);
+  if (!existsSync(full)) return { problem: `--doc names no file in the project: ${full}. It takes ${DOC_FORMS}` };
+  // Every heading, of any level, outside code fences: each is a section a link can name.
+  const slugs = [...unfencedLines(readFileSync(full, 'utf8'))].map((line) => /^ {0,3}#{1,6}\s+(.+?)[\s#]*$/u.exec(line)?.[1]).filter(Boolean).map(slugOf);
+  const slug = slugs.includes(section) ? section : slugOf(section);
+  if (!slugs.includes(slug)) {
+    return { problem: `--doc names no section "${section}" in ${file}; its sections are: ${slugs.join(', ') || 'none'}. It takes ${DOC_FORMS}` };
+  }
+  return { reference: `${file}#${slug}` };
 }
 
 // `rank`: a triage priority for an item, apart from the audit's severity, which stays as the run wrote it.
-function rank({ values, rest: [name, id, value], dir }) {
-  if (!id || !value) return fail(usageLines('audits', commands.audits.usage, 'usage: ').join('\n'));
+function rank({ values, rest: [name, keys, value], dir }) {
+  if (!keys || !value) return fail(usageLines('audits', commands.audits.usage, 'usage: ').join('\n'));
   const bad = priorityProblem({ value, by: values.by });
   if (bad) return fail(bad);
   const priority = { value, set_by: values.by, reason: values.reason ?? null, date: today() };
-  return write(dir, name, id, { priority }, () => `priority ${value}, set by ${byWords(values.by)}`);
+  return write(dir, name, keys, { priority }, () => `priority ${value}, set by ${byWords(values.by)}`);
 }
 
 // Who made a pick, in words: "the Human", or the agent's role.
@@ -257,8 +282,9 @@ function notes(item) {
   return parts.length ? ` (${parts.join('; ')})` : '';
 }
 
-// Writes one change to an item's triage entry, once the item is one the report offers.
-function write(dir, name, id, entry, said) {
+// Writes one change to the triage entry of every item KEYS names, once each is one a report offers: every key valid,
+// or nothing is written.
+function write(dir, name, keys, entry, said) {
   const { report, problem } = locate(dir, name);
   if (problem) return fail(problem);
   let triage;
@@ -269,17 +295,28 @@ function write(dir, name, id, entry, said) {
   }
   const reports = listAudits(dir, { triage });
   const owner = reports.find((each) => each.report === report);
-  // The item is the report's own, or a finding of it that the report replacing it offers as not re-checked.
-  const holder = reports.find((each) => each.status === 'ok' && each.items.some((item) => item.report === report && item.id === id));
-  if (!holder) {
-    if (owner.status === 'no-sidecar' || owner.status === 'invalid') return fail(`${capital(owner.title)}: ${statusText(owner)}`);
-    return fail(`${capital(owner.title)} offers no item with that key to triage; \`aidrian audits pending <report> --json\` lists the keys`);
+  if (owner.status === 'no-sidecar' || owner.status === 'invalid') return fail(`${capital(owner.title)}: ${statusText(owner)}`);
+  const targets = [];
+  const missing = [];
+  for (const key of keys.split(',').map((one) => one.trim()).filter(Boolean)) {
+    const at = key.indexOf('#');
+    const target = at === -1 ? { report, id: key } : { report: key.slice(0, at), id: key.slice(at + 1) };
+    // The item is a report's own, or a finding of the report it replaces, which that report offers as not re-checked.
+    const holder = reports.find((each) => each.status === 'ok' && each.items.some((item) => item.report === target.report && item.id === target.id));
+    if (holder) targets.push({ ...target, holder, item: holder.items.find((one) => one.report === target.report && one.id === target.id) });
+    else missing.push(key);
   }
-  recordDecision(dir, report, id, entry);
-  const left = listAudits(dir).find((each) => each.report === holder.report).untriaged;
-  const item = holder.items.find((one) => one.report === report && one.id === id);
-  const where = holder.title;
-  console.log(`recorded ${itemWords(item)}: ${said(item)}; ${left ? `${left} untriaged left in ${where}` : `${capital(where)} is fully triaged`}`);
+  if (missing.length || !targets.length) {
+    const which = !missing.length ? 'No key was given' : missing.length > 1 ? `${missing.length} keys name no item` : 'One key names no item';
+    return fail(`${which} open to triage through ${owner.title}, so nothing was recorded; \`aidrian audits pending <report> --json\` gives each item's key and its record command`);
+  }
+  recordDecision(dir, targets, entry);
+  const after = listAudits(dir);
+  for (const { item } of targets) console.log(`recorded ${itemWords(item)}: ${said(item)}`);
+  for (const holder of [...new Set(targets.map((target) => target.holder.report))]) {
+    const { untriaged: left, title } = after.find((each) => each.report === holder);
+    console.log(left ? `${left} untriaged left in ${title}` : `${capital(title)} is fully triaged`);
+  }
   return 0;
 }
 

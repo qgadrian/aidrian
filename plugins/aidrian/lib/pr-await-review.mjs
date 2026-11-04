@@ -486,6 +486,7 @@ async function saveRecord(record, { project, config, gh, base, status }) {
     comments: () => record.comments,
     post: (body) => gh.api(`repos/${base.repo}/issues/${base.n}/comments`, { method: 'POST', fields: { body } }),
     edit: (id, body) => gh.api(`repos/${base.repo}/issues/comments/${id}`, { method: 'PATCH', fields: { body } }),
+    viewer: () => gh.api('user')?.login,
   }, status);
 }
 

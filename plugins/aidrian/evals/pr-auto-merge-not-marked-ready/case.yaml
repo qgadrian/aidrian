@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: pr-auto-merge-not-marked-ready
+context:
+  scaffold_script: scaffold.sh

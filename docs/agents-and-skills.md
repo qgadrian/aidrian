@@ -68,8 +68,8 @@ Claude Code runs each skill as `/aidrian:<skill>`. In Codex, ask for it by name.
 
 | Coordination | What it does |
 | --- | --- |
-| `orchestration` | The orchestrator's steps for worktrees, slices, and pull requests. |
-| `autopilot` | Runs one task unattended to a draft pull request. Never merges. |
+| `orchestration` | The orchestrator's steps for worktrees, slices, and pull requests. It merges only when this run marked the pull request ready and `aidrian pr auto-merge` exits 0. |
+| `autopilot` | Runs one task unattended to a reviewed pull request. Merges only when `aidrian pr auto-merge` exits 0. |
 | `session-handoff` | Writes a brief so a fresh session can resume the work. |
 | `session-continue` | Resumes work from a handoff brief. |
 
@@ -81,7 +81,7 @@ Claude Code runs each skill as `/aidrian:<skill>`. In Codex, ask for it by name.
 | `initiative-agent` | Breaks a broad goal into a project of ordered tracker issues. |
 | `agent-issue-writer` | Drafts or creates tracker issues for agents. |
 | `challenge` | Tests a plan against the docs and code, one question at a time. |
-| `quorum` | Stress-tests a plan, or decides between options, with cited cases and an architect's ruling. |
+| `quorum` | Stress-tests a plan, decides between options, or recommends a product decision for the Human to approve, with cited cases and a ruling. |
 | `adr-writer` | Writes an architecture decision record. |
 
 | Build | What it does |
@@ -97,8 +97,9 @@ Claude Code runs each skill as `/aidrian:<skill>`. In Codex, ask for it by name.
 | --- | --- |
 | `pr-write` | Writes a pull request title and body from the real diff. |
 | `pr-screenshot` | Attaches screenshots or files to a pull request. |
-| `pr-review-loop` | Takes each review comment to a fix or a reply with evidence. |
-| `pr-merge-when-green` | Merges once every check is final and passes. |
+| `pr-review-loop` | Takes each review comment to a fix or a reply with evidence. It merges only when this run marked the pull request ready and `aidrian pr auto-merge` exits 0. |
+| `pr-merge-when-green` | Merges once every check is final and passes. The Human starts it; only the Human, or `pr-auto-merge`, runs its steps. |
+| `pr-auto-merge` | Merges a pull request no Human asked to merge, only when this run marked it ready and [`aidrian pr auto-merge`](config.md#auto-merge) exits 0. |
 
 | Review and quality | What it does |
 | --- | --- |
@@ -107,6 +108,7 @@ Claude Code runs each skill as `/aidrian:<skill>`. In Codex, ask for it by name.
 | `specialist-review` | One agent reviews the current branch's changes. |
 | `issue-verify-ac` | Checks one issue's acceptance criteria against the code. |
 | `persona-audit` | Walks the product as one of its [personas](personas.md), like a user test, and reports what they hit, with owners. Read-only. |
+| `persona-audit-triage` | Takes each persona-audit finding to a decision with the Human: an issue, a fix, a duplicate, a drop, or later ([Triage](personas.md#triage)). |
 
 | Harness | What it does |
 | --- | --- |

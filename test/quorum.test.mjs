@@ -1022,7 +1022,7 @@ function fieldPaths(schema) {
 }
 
 // The section of ledger.md that lists each mode's ledger fields. A mode added to LEDGER_SCHEMAS needs its own section.
-const FIELD_SECTIONS = { plan: 'Fields', decide: 'Decide-mode fields' };
+const FIELD_SECTIONS = { plan: 'Fields', decide: 'Decide-mode fields', product: 'Product-mode fields' };
 
 // A fields section of ledger.md: each bullet starts with a field path in backticks; its text runs to the next bullet.
 function documentedFields(heading = 'Fields') {
@@ -2255,7 +2255,7 @@ test('quorum roles: a config sets the roles, judge, swap, and caps it prints; A 
     const bad = roles(dir, ...args);
     assert.equal(bad.status, 1, args.join(' '));
     assert.deepEqual(bad.lines, [], 'no JSON line');
-    assert.match(bad.stderr, /^aidrian quorum: roles takes one mode, plan or decide/u);
+    assert.match(bad.stderr, /^aidrian quorum: roles takes one mode, plan, decide, or product/u);
   }
 });
 
@@ -2373,4 +2373,173 @@ test('the objection cap is never hard-coded where the coordinator keeps objectio
   }
   const ledger = readFileSync(path.join(SKILL, 'references/ledger.md'), 'utf8').replace(/\s+/gu, ' ');
   assert.match(ledger, /the first `maxObjections` objections, as `aidrian quorum roles plan` prints it/u);
+});
+
+// Product mode: a recommendation the Human settles, with no rebuttal round and a persona no ruling may rest on alone.
+const PERSONA_REF = 'docs/waiter.md#Who';
+const productLedger = (over = {}) => {
+  const { mode, positions, cases, ruling: first, human_answer, status, plan, plan_hash, same_model, same_model_reason, trigger } = decideLedger({ cases: [stand('A', [PASSING.adr]), stand('B', [PASSING.code])], cross: [], ruling: decision({ tested: tested({ A: 1, B: 1 }, ['B']) }) });
+  return { mode: 'product', status, plan, plan_hash, same_model, same_model_reason, trigger, premise: { summary: 'open', citations: [PASSING.adr] }, trace: 't', persona_docs: [], draft: null, loops: [], positions, witness: null, cases, cross: [], ruling: first, outcome: { conditions: [], flips_if: [{ fact: 'f', how_to_settle: 'ask' }], disputes: [] }, human_answer, ...over };
+};
+
+test('product ledger: a complete rule passes with no rebuttal, and unanswered it stays deferred', (t) => {
+  const d = decideProject(t);
+  const result = d.check(productLedger());
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /checked: mode product, 2 cases, 0 cross points/u);
+});
+
+test('product ledger: the shape rules stop the check', (t) => {
+  const d = decideProject(t);
+  for (const [over, message] of [
+    [{ outcome: null }, /outcome is null under a rule/u],
+    [{ cross: [{ id: 'A1', by: 'U', against: 'A', claim: 'c', citations: [], status: 'pending' }] }, /not U1 to U5 or E1 to E5/u],
+    [{ ruling: null, outcome: null }, /ruling is null/u],
+    [{ draft: { winner: 'C', reason: 'r', walkthrough: 'w' } }, /draft names C/u],
+    [{ loops: [{ back_to: 'interview', reason: 'r' }] }, /no end user took part/u],
+    [{ positions: ['A', 'B', 'C', 'D'].map((id) => position(id, 'agent')), same_model: true, same_model_reason: 'all agents' }, /at most 3 positions/u],
+  ]) {
+    const result = d.check(productLedger(over));
+    assert.equal(result.status, 1, JSON.stringify(over));
+    assert.match(result.stderr, message);
+  }
+});
+
+test('product ledger: a Human answer is allowed on a rule, which a decide ledger refuses', (t) => {
+  const d = decideProject(t);
+  assert.equal(d.check(productLedger({ human_answer: 'approved' })).status, 0);
+  assert.equal(d.check(decideLedger({ human_answer: 'approved' })).status, 1);
+});
+
+test('product ledger: a winner resting only on the persona doc does not stand, and a premise needs a passing citation', (t) => {
+  const d = decideProject(t);
+  const persona = { persona: PASSING.adr.ref.split('#')[0], interview: [], walkthrough: null };
+  const rests = d.check(productLedger({ witness: persona }));
+  assert.equal(rests.status, 1, 'the only supporting citation is the persona doc');
+  assert.match(rests.stderr, /rests only on the persona doc/u);
+  const other = d.check(productLedger({ witness: { persona: PERSONA_REF.split('#')[0], interview: [{ question: 'q', answer: 'a' }], walkthrough: 'w' } }));
+  assert.equal(other.status, 0, other.stderr);
+  const premise = d.check(productLedger({ premise: { summary: 'open', citations: [cite('doc', 'docs/missing.md#x', 'nope')] } }));
+  assert.equal(premise.status, 1);
+  assert.match(premise.stderr, /premise: invalid/u);
+});
+
+test('quorum roles product: the end user, the grillers, and a fixed cap', (t) => {
+  const { out } = roles(temp(t, 'aidrian-quorum-roles-'), 'product');
+  assert.equal(out.judge.agent, 'product-manager');
+  assert.equal(out.roles.witness.agent, 'ux-researcher');
+  assert.equal(out.roles.engineer.agent, 'architect');
+  assert.deepEqual(out.caps, { maxLoops: 2, maxDispatches: 22 });
+});
+
+const xPoint = (id, citations, status = 'pending') => ({ id, by: id[0], against: 'B', claim: `point ${id}`, citations, status });
+
+test('product ledger: pending examiner points are relabeled on disk, and a ruling must test a backed one', (t) => {
+  const d = decideProject(t);
+  const open = { status: 'open', ruling: null, outcome: null, cross: [xPoint('U1', [PASSING.code]), xPoint('E2', [cite('doc', 'docs/missing.md#x', 'nope')])] };
+  const result = d.check(productLedger(open));
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(result.ledger.cross.map(({ status }) => status), ['backed', 'opinion']);
+  assert.ok(!Object.hasOwn(result.ledger, 'rebuttals'), 'the decide view stays out of the file');
+  const missed = d.check(productLedger({ status: 'open', cross: [xPoint('U1', [PASSING.code], 'backed')] }));
+  assert.match(missed.stdout, /ruling: invalid: .*U1/u);
+});
+
+test('product ledger: a coordinator-written escalate passes, answered or deferred, and an outcome on it does not', (t) => {
+  const d = decideProject(t);
+  const escalate = { decision: 'escalate', winner: null, change_or_reason: 'invalid twice', citations: [PASSING.adr], tested: [], inferences: [] };
+  assert.equal(d.check(productLedger({ ruling: escalate, outcome: null })).status, 0);
+  assert.equal(d.check(productLedger({ ruling: escalate, outcome: null, human_answer: 'A' })).status, 0);
+  assert.match(d.check(productLedger({ ruling: escalate })).stderr, /outcome: set but no ruling rules/u);
+});
+
+test('product ledger: an open rule with no outcome goes back, and repeats stop the check', (t) => {
+  const d = decideProject(t);
+  const open = d.check(productLedger({ status: 'open', outcome: null }));
+  assert.match(open.stdout, /ruling: invalid: a rule has no outcome/u);
+  const repeated = d.check(productLedger({ status: 'open', cross: [xPoint('U1', [PASSING.code]), xPoint('U1', [PASSING.code])] }));
+  assert.match(repeated.stderr, /U1 is used more than once/u);
+  assert.match(d.check(productLedger({ witness: { persona: '/abs/waiter.md', interview: [], walkthrough: null } })).stderr, /not a path inside the repository/u);
+  assert.match(d.check(productLedger({ ruling: null, outcome: null, status: 'open', human_answer: 'A' })).stderr, /nothing was ruled/u);
+});
+
+test('product ledger: the persona guard holds for a code citation, and an answer survives a lost citation', (t) => {
+  const d = decideProject(t);
+  const persona = PASSING.code.ref.split(':')[0];
+  const cases = [stand('A', [PASSING.code]), stand('B', [PASSING.adr])];
+  const rests = d.check(productLedger({ cases, witness: { persona, interview: [], walkthrough: null } }));
+  assert.match(rests.stderr, /rests only on the persona doc/u);
+  const lost = [stand('A', [cite('doc', 'docs/missing.md#x', 'nope')]), stand('B', [PASSING.code])];
+  assert.equal(d.check(productLedger({ cases: lost })).status, 1, 'unanswered, it is stale');
+  assert.equal(d.check(productLedger({ cases: lost, human_answer: 'approved' })).status, 0, 'answered, it stands');
+});
+
+test('quorum premise: only an open: false answer with passing citations ends a run', (t) => {
+  const p = project(t);
+  const run = (answer) => {
+    const file = path.join(p.state, 'premise.json');
+    writeFileSync(file, JSON.stringify(answer));
+    return spawnSync(CLI, ['quorum', 'premise', file], { cwd: p.root, encoding: 'utf8', timeout: 30_000 });
+  };
+  const premise = (citations) => ({ summary: 's', citations });
+  assert.equal(run({ open: false, premise: premise([PASSING.adr]) }).status, 0);
+  const open = run({ open: true, premise: premise([PASSING.adr]) });
+  assert.equal(open.status, 1);
+  assert.match(open.stdout, /only an answer with open: false/u);
+  assert.equal(run({ open: false, premise: premise([cite('doc', 'docs/missing.md#x', 'nope')]) }).status, 1);
+  const shapeless = run({ open: false });
+  assert.equal(shapeless.status, 1);
+  assert.match(shapeless.stdout, /premise/u);
+});
+
+test('product ledger: the guard covers every persona doc with no witness, and a premise never cites the question file', (t) => {
+  const d = decideProject(t);
+  const persona = PASSING.adr.ref.split('#')[0];
+  assert.match(d.check(productLedger({ persona_docs: [persona] })).stderr, /rests only on the persona doc/u);
+  assert.match(d.check(productLedger({ premise: { summary: 's', citations: [cite('plan', '#context', 'x')] } })).stderr, /cites the question file/u);
+});
+
+test('product ledger: an open run may loop up to the cap, and a complete one keeps the ceiling', (t) => {
+  const d = decideProject(t);
+  const loops = (n) => Array.from({ length: n }, () => ({ back_to: 'grill', reason: 'r' }));
+  assert.equal(d.check(productLedger({ status: 'open', loops: loops(2) })).status, 0);
+  assert.match(d.check(productLedger({ status: 'open', loops: loops(3) })).stderr, /loops: 3, more than the 2 allowed/u);
+  assert.equal(d.check(productLedger({ loops: loops(3) })).status, 0);
+});
+
+test('product ledger: a deferred question on dead evidence goes stale, under an escalation too', (t) => {
+  const d = decideProject(t);
+  const dead = cite('doc', 'docs/missing.md#x', 'nope');
+  const escalate = { decision: 'escalate', winner: null, change_or_reason: 'r', citations: [PASSING.adr], tested: [], inferences: [] };
+  const cases = [stand('A', [dead]), stand('B', [PASSING.code])];
+  assert.equal(d.check(productLedger({ ruling: escalate, outcome: null, cases })).status, 1);
+  assert.equal(d.check(productLedger({ ruling: escalate, outcome: null, cases, human_answer: 'A' })).status, 0);
+});
+
+test('product ledger: an unanswered escalation with an invalid ruling is not reused, and an answered one stands', (t) => {
+  const d = decideProject(t);
+  const escalate = { decision: 'escalate', winner: null, change_or_reason: 'r', citations: [PASSING.adr], tested: [], inferences: [] };
+  const noCitation = { ...escalate, citations: [] };
+  assert.match(d.check(productLedger({ ruling: noCitation, outcome: null })).stderr, /the ruling has no passing citation/u);
+  const partial = { ...escalate, tested: tested({ A: 1 }) };
+  assert.match(d.check(productLedger({ ruling: partial, outcome: null })).stderr, /ruling: invalid: tested names/u);
+  assert.equal(d.check(productLedger({ ruling: escalate, outcome: null })).status, 0, 'a coordinator-written escalate has no verdicts');
+  assert.equal(d.check(productLedger({ ruling: partial, outcome: null, human_answer: 'A' })).status, 0);
+});
+
+test('product ledger: a no-verdict escalation keeps only its coverage exemption', (t) => {
+  const d = decideProject(t);
+  const inferences = [{ statement: 's', holds: true, reason: 'r', citations: [] }];
+  const result = d.check(productLedger({ ruling: { decision: 'escalate', winner: null, change_or_reason: 'r', citations: [PASSING.adr], tested: [], inferences }, outcome: null }));
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /holds on no passing citation/u);
+});
+
+test('product ledger: an inference quoting the exempt words does not slip past the coverage exemption', (t) => {
+  const d = decideProject(t);
+  for (const statement of ['tested names are reliable', 'inference untested is harmless']) {
+    const inferences = [{ statement, holds: true, reason: 'r', citations: [] }];
+    const result = d.check(productLedger({ ruling: { decision: 'escalate', winner: null, change_or_reason: 'r', citations: [PASSING.adr], tested: [], inferences }, outcome: null }));
+    assert.equal(result.status, 1, statement);
+  }
 });

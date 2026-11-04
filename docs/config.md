@@ -49,7 +49,8 @@ In a group such as `github`, set only the keys you change; the others keep their
       "sharedTempBodyFile": true,
       "duplicateBody": false
     },
-    "reviewGate": { "enabled": false, "checklist": null }
+    "reviewGate": { "enabled": false, "checklist": null },
+    "autoMerge": { "allow": false, "default": "off", "strategy": null, "deleteBranch": false, "deleteWorktree": false }
   },
   "review": { "engine": null, "record": "comment", "rules": [], "ignore": ["<lockfiles, snapshots, generated, vendored, minified>"], "nonBehaviour": ["<docs and assets>"], "flows": {}, "planCommand": null, "reviewers": {} },
   "docs": { "wrapLimit": 155 },
@@ -102,6 +103,9 @@ In a group such as `github`, set only the keys you change; the others keep their
     "secondLook": { "agent": "critic", "minSeverity": "high" },
     "record": { "queue": "pr-body" },
     "unreviewed": { "remind": "session-start", "pauseDomainAt": { "pending": 10, "oldestDays": 7 } }
+  },
+  "audits": {
+    "triage": { "issueCreation": "confirm", "labels": ["persona-audit", "persona:{persona}", "severity:{severity}"] }
   }
 }
 ```
@@ -122,15 +126,21 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.maxReviewRounds` | The review rounds a pull request may get, 3 by default: the review loop and `aidrian pr await-review --request` stop there, unless `extraRounds` grants one more. They read it from the pull request's base branch, so an edit to the working copy does not raise it; `aidrian pr await-review` without `--request` posts nothing and reads no base branch. A `--max-rounds` above it runs only with `AIDRIAN_ALLOW_EXTRA_ROUNDS=1`, which the Human sets, and so does a higher cap an earlier bot request recorded in its comment; a Bash rule refuses an agent command that sets it, and any bot request made outside `aidrian pr`. |
 | `github.extraRounds` | What happens at that cap: [Extra rounds](review.md#extra-rounds). `"ask"`, the default: a read-only judge decides whether one more round is worth it, with any red flag of the round history (not converging, looping, drifting, bloating) as evidence, and the Human approves it. `"auto"`: the judge's word grants it, unless a red flag stands, when the Human approves it too. `"off"`: the cap stops, as `round_limit`. Read from the base branch, like the cap. |
 | `github.maxExtraRounds` | The most extra rounds `extraRounds` may grant one pull request, 2 by default; a hard ceiling, read from the base branch. `0` grants none. |
-| `github.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. |
+| `github.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. [Auto-merge](#auto-merge) stays off until the default branch names one. |
 | `github.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
 | `github.conditionalChecks` | Parts of check names whose `SKIPPED` or `NEUTRAL` result is routine, such as a job a path filter turns off. |
-| `github.markReady` | Who marks a draft pull request ready. `"auto"`, the default: the `pr-review-loop` skill, or `autopilot` and the `orchestrator` when they run it, mark it ready once a review of the current head signs off with no blocked row and `aidrian pr checks` says ready. `"ask"`: its author, or the review loop when the Human asks in the session. Either way, nothing is pushed after it is marked ready, and nothing merges it. The default was `"ask"` before; [Changed defaults](#changed-defaults) has the opt-out. |
+| `github.markReady` | Who marks a draft pull request ready. `"auto"`, the default: the `pr-review-loop` skill, or `autopilot` and the `orchestrator` when they run it, mark it ready once a review of the current head signs off with no blocked row and `aidrian pr checks` says ready. `"ask"`: its author, or the review loop when the Human asks in the session. Either way, nothing is pushed after it is marked ready. Marking it ready merges nothing: only the Human's request or [auto-merge](#auto-merge) does. The default was `"ask"` before; [Changed defaults](#changed-defaults) has the opt-out. |
 | `github.reviewLoop` | What follows the `pr-write` skill once it opens or updates a pull request. `"auto"`, the default: once `pr-write`, and any skill that ran it, has ended, the session starts the `pr-review-loop` skill on it right away, without asking. `"ask"`: the session offers the loop and runs it when the Human asks. Run inside a skill or agent that runs its own review loop, such as `autopilot` or the `orchestrator`, `pr-write` leaves the loop to it. |
 | `github.titleIssuePrefix` | `true` writes pull request titles as `[<issue key>] type(scope): subject`, or `[NOISSUE] type: subject`; `false`, the default, writes a plain Conventional Commits title. |
 | `github.pullRequest` | The project's [pull request contract](#pull-request-contract), beyond the required sections; off by default but for `sharedTempBodyFile`. |
 | `github.reviewGate.enabled` | `true` asks the review bot only once a review of the diff is on record: [Review gate](#review-gate). |
 | `github.reviewGate.checklist` | A file the reviewer reads the diff against, named in the gate's message; `null` names none. |
+| `github.autoMerge.allow` | `true` lets a machine opt in to [auto-merge](#auto-merge); `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. |
+| `github.autoMerge.default` | What a machine with no local setting does under `allow`: `"off"`, the default, stays out until it opts in; `"on"` takes part until it opts out. Read from the default branch. |
+| `github.autoMerge.strategy` | How auto-merge merges: `"squash"`, `"merge"`, or `"rebase"`. `null`, the default: the one strategy the repository allows, or with several, `squash`, then `merge`, then `rebase`. Read from the default branch. |
+| `github.autoMerge.deleteBranch` | `true` deletes the remote head branch with the merge. Read from the default branch. |
+| `github.autoMerge.deleteWorktree` | `true` removes the head branch's worktree after the merge, but never a session's own: [Cleanup](#cleanup-after-the-merge). Read from the default branch. |
+| `github.autoMerge` in `.aidrian.local.json` | This machine's choice, the same key with one field: `{ "enabled": true }` opts in under the team's `allow`, and `{ "enabled": false }` stays out. Unset follows `github.autoMerge.default`. The older `"on"` and `"off"` still work. |
 | `review.engine` | The project's [review engine](review.md#the-engine); it wins over the machine's. `null` leaves the choice to each machine. |
 | `review.record` | Where the [review record](review.md#the-record) goes: `"comment"` also writes a summary comment on the pull request; `"local"` keeps it in the state folder only. |
 | `terms.file` | The [terms file](#terms) of banned terms and their replacements, relative to the project root; `null` turns the rule off. |
@@ -168,6 +178,8 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `decisions.record.queue` | Where the decisions an agent made alone are listed: `"pr-body"`, the default, in the pull request body and the dispatcher's report; `"report"`, in the report alone. [Recording decisions](#recording-decisions). |
 | `decisions.unreviewed.remind` | When the Human is reminded of unreviewed decisions: `"session-start"`, the default, or `"off"`. |
 | `decisions.unreviewed.pauseDomainAt` | The unreviewed `pending` count and `oldestDays` age at which a domain goes back to asking; `null` never pauses. |
+| `audits.triage.issueCreation` | Whether the persona-audit triage asks before it creates an issue: `"confirm"`, the default, or `"auto"`: [Audit triage](#audit-triage). |
+| `audits.triage.labels` | The labels every issue from the persona-audit triage gets: [Audit triage](#audit-triage). |
 
 A path in `state.dir` or `git.worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
@@ -189,6 +201,112 @@ A project without the Codex review bot sets `"github": { "reviewer": null }`, or
   It runs no `gh`, posts no review request, and waits for nothing. `--reviewer none` does the same for one run.
 - `aidrian report reviews` and the Reviews line of `aidrian report health` say that no review bot is set.
 - The `orchestration` and `autopilot` skills then run the `pr-review` skill in every review round.
+
+## Auto-merge
+
+Auto-merge lets a session merge a pull request without asking. It is off unless the team allows it and the machine takes part.
+
+The team commits this in config.json, on the default branch and on any other branch pull requests target:
+
+```json
+{
+  "version": 1,
+  "github": {
+    "requiredChecks": ["test"],
+    "autoMerge": { "allow": true, "strategy": "squash", "deleteBranch": true, "deleteWorktree": true }
+  }
+}
+```
+
+`requiredChecks` is not optional here: without it on the default branch, auto-merge stays off.
+
+Each machine opts in with this in `.aidrian.local.json`:
+
+```json
+{ "github": { "autoMerge": { "enabled": true } } }
+```
+
+`enabled` is the only field, and `autoMerge` the only `github` key, that file takes. A machine never goes past `allow`,
+and `strategy` and the cleanup stay the team's. The older `"on"` and `"off"` still work.
+
+| Team | No local setting | `enabled: true` | `enabled: false` |
+| --- | --- | --- | --- |
+| `allow: false` | Off | Off | Off |
+| `allow: true`, `default: "off"` | Off | On | Off |
+| `allow: true`, `default: "on"` | On | On | Off |
+
+With `default: "on"`, every machine with no local setting merges without having chosen to, so a team sets it knowingly.
+A local file with an error, or one git tracks, counts as `enabled: false`.
+`aidrian check` warns when the machine opts in and the team does not allow it.
+It fails when git tracks the file, in any case, and the switch then reads `"off"`: [Setting up](project-folder.md#setting-up-and-checking).
+The switch counts only in the main checkout's file: a task worktree's own copy never turns it on or off, though its other keys apply as usual.
+A subagent may not write `autoMerge` into that file: [the config guard](hooks.md#agent-gates).
+
+A project that adopts `github.autoMerge` sets [`requires.aidrian`](#plugin-version) to the release that ships it,
+since an older plugin rejects the key.
+
+### When it is on
+
+`aidrian pr auto-merge [PR] [--json]` reports it for one pull request: a number, `#number`, or URL, or by default the
+current branch's. It exits 0 when on, 1 when off, and 3 on an error, such as a bad argument or a failed gh read.
+
+It is on only when all seven of these hold, checked in this order.
+With `--json`, `reason` names the first that fails and `why` says it in a sentence; both are `null` when on.
+
+| `reason` | What must hold |
+| --- | --- |
+| `team` | `github.autoMerge.allow` is true on both the repository's default branch and the pull request's base. Both are read from GitHub as each branch commits them now, never from the checkout. So a branch cannot raise it, and the pull request that turns it on does not merge itself. |
+| `checks` | The default branch names `github.requiredChecks`: a named check that has not reported is pending, so a draft's partial set of checks cannot read as ready. This checkout's `requiredChecks`, `conditionalChecks`, and `ignoreCancelledChecks` equal the default branch's as sets, committed or not: `aidrian pr checks` reads this checkout, so a branch cannot relax the lists, and a branch that changes workflows stays off (`paths`). This checkout's `state.dir` equals the default branch's, since the review record is read from it. A working-copy config that cannot be read, or has errors, is off too. |
+| `paths` | gh lists every changed file (`files` matches `changedFiles`) with its `changeType`, none is `RENAMED`, since gh does not give the old path, and none is on this fixed list, in any case: `AGENTS.md`, `CLAUDE.md`, `SKILL.md`, `CODEOWNERS`, `.aidrian.json`, and `.aidrian.local.json` at any depth, and `.claude`, `.codex`, `.aidrian`, `.github/workflows`, or `.github/actions` at the repository root, or anything under them. These instruct AI sessions or decide CI, and a review of the change may not read them as behavior. |
+| `local` | This machine's setting is on, or it has none and the default branch's `github.autoMerge.default` is `"on"`. |
+| `author` | The pull request's author is the gh user. |
+| `outsider` | Every issue comment, review, and inline comment on the pull request has the author association `OWNER`, `MEMBER`, or `COLLABORATOR`, or is by the default branch's `github.reviewer` bot. Any other bot, such as a CI or preview bot that comments, counts as an outsider. |
+| `review` | Nobody's latest review requests changes, and the review decision is not changes requested. This machine's [review record](review.md#the-record) holds a `received` review of exactly the current head, and nothing is owed. There is no looser mode: no record, a review of an earlier head, or an owed review keeps it off. A pull request that needed no review, `none_needed`, such as plain docs, waits for the Human. |
+
+`strategy`, `deleteBranch`, `deleteWorktree`, and the check lists come from the default branch only. The base counts only for `allow`.
+So a checkout whose lists differ from the default branch's does not auto-merge, including one behind them until it catches up.
+
+### What a run does
+
+The `pr-review-loop`, `orchestration`, and `autopilot` skills run the `pr-auto-merge` skill, only after that same run marked the draft ready.
+`pr-auto-merge` stops unless this run marked the pull request ready and the command exits 0,
+and otherwise reads `pr-merge-when-green` and follows its steps as an unattended run.
+The first condition is a step of the skill, not a check the command makes.
+The model cannot start `pr-merge-when-green` itself: the skill merges only on the Human's request in the session, or in that run.
+An unattended run waits for every check, runs the command again right before the merge, and stops unless it still
+exits 0 on the same head and base.
+The merge goes through the [merge guard](hooks.md#merge-guard), and never uses `--auto` or `--admin`.
+
+When the Human asks for the merge, the command need not exit 0.
+The command's `strategy`, `deleteBranch`, and `deleteWorktree` only fill the choices the Human left out.
+
+### Limits
+
+- Name every check that matters in `requiredChecks`. An unnamed check that starts only once a pull request is ready is not waited for.
+- A required check that runs only on ready pull requests keeps the caller's ready step from passing, so auto-merge will not fire for it.
+- `deleteBranch` conflicts with a merge queue.
+- The `paths` list is fixed: it misses a project folder that `.aidrian.json` moves elsewhere.
+  It also misses other files that instruct a session,
+  such as a knowledge doc under `docs/`, a doc `CLAUDE.md` imports, a nested `.claude` folder, or `CLAUDE.local.md`.
+  In a pull request that also changes code, only the review reads those.
+- A branch can still change what a workflow runs, such as `package.json` scripts or tests, and only the review reads that.
+- The `outsider` check reads only the pull request's comments and reviews, so text reaching a run by other routes, such as an issue, is not seen.
+- `MEMBER` covers every organization member, so a read-only member or an invited collaborator can still forge a record.
+- The switch does not stop a session with a shell or a forged local record.
+  For proof, protect the branch with a required review from a second account, as [Sign-off by the Human](review.md#sign-off-by-the-human) says.
+- The config guard does not apply an `apply_patch`, so it does not see a value changed on its own line with the key on an unchanged context line,
+  or a key spelled with a JSON escape. It also does not follow a patch's `*** Move to:` and `*** Delete File:` routes.
+
+### Cleanup after the merge
+
+`deleteWorktree` removes the head branch's worktree without asking only when the cleanup can prove the work merged.
+It runs nothing for a fork's pull request, since a local branch of that name is not the fork's, or for a worktree whose
+HEAD is not the merged head.
+A session's own worktree is never removed, and a session usually works in the pull request's worktree.
+That run reports the worktree kept: run the `worktree-cleanup` skill from the main checkout.
+
+`deleteBranch` means the remote branch; removing the worktree takes the local one with it.
+It does not reach a fork: gh never deletes a head branch in another repository.
 
 ## Pull request contract
 
@@ -413,6 +531,7 @@ version and the folder of the copy that runs, so the stale install shows at the 
 A project that adopts the `session.handoff` group (`mode`, `costRatio`, `maxTokens`) sets `requires.aidrian` to the
 release that ships it: an older plugin reads only a string `session.handoff` and rejects the group.
 [handoff.md](handoff.md#config) lists the old keys and where each went.
+A project that adopts [`github.autoMerge`](#auto-merge) does the same, since an older plugin rejects the key.
 
 ## Attribution
 
@@ -609,7 +728,7 @@ Two commands read the group, so the skill text never parses this file:
   so a cap lowered after a run finished never voids its ledger or the Human's answers.
 - `aidrian quorum roles plan` and `aidrian quorum roles decide` read the whole group, `maxObjections` included,
   and print that mode's roles, judge, and caps as one JSON line, which the coordinator follows. The decide caps are `3N + 2 + C` for each position count N
-  from 2 to 4, where C counts the first N positions whose runner is Codex: 9, 12, and 16 with the defaults.
+  from 2 to 4, where C counts the first N positions whose runner is Codex: 9, 12, and 16 with the defaults. `aidrian quorum roles product` reads it too; a product run makes at most 10 dispatches, plus 6 per loop: 22 with the defaults.
 
 Both stop on an invalid config.json, as every `aidrian` command does: they exit 1 naming each bad key, and never run
 on defaults the project did not choose.
@@ -627,6 +746,11 @@ on defaults the project did not choose.
 | `quorum.decide.even.provider` | `"codex"` | The runner of decide positions B and D: `"agent"` or `"codex"`. |
 | `quorum.decide.even.agent` | `"code-reviewer"` | Their agent on `"agent"`, and their fallback on `"codex"`. |
 | `quorum.decide.swap` | `true` | Whether a claim with an odd hash swaps the runners of positions A and B. |
+| `quorum.product.owner.agent` | `"product-manager"` | Interviews the end user, shapes options, and recommends one to the Human. `quorum.judge` does not apply to this mode. |
+| `quorum.product.witness.agent` | `"ux-researcher"` | Plays the end-user persona. |
+| `quorum.product.ux.agent` | `"ux-specialist"` | Grills the options for what a user would hit. |
+| `quorum.product.engineer.agent` | `"architect"` | Grills the options for cost and risk. |
+| `quorum.product.maxLoops` | `2` | How many times a product run may go back after a walkthrough, a whole number from 1 to 5. |
 
 - One `agent` field covers both cases: the role's agent when `provider` is `"agent"`, and the agent that takes over
   when `provider` is `"codex"` and Codex cannot run, the same brief in hand.
@@ -747,6 +871,27 @@ At the base commit, where no command reports it, it holds every decision at ask 
   A doc may be listed before it exists, so this is a warning and not an error.
 - A [decision marker](project-folder.md#decision-markers) it cannot read, an id on two markers, wording undo could no longer find,
   a stack whose wordings do not chain, or a marker in a tracked Markdown file no index lists.
+
+## Audit triage
+
+`audits.triage` sets how the `persona-audit-triage` skill files the issues it decides on
+([Triage](personas.md#triage)). `aidrian audits pending --json` reads it, so the skill never parses this file, and it
+stops on an invalid config.json as every `aidrian` command does.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `audits.triage.issueCreation` | `"confirm"` | `"confirm"` shows each drafted issue, or each batch the Human approved, and creates nothing until the Human says yes. `"auto"` creates issues without asking, for runs no one supervises. |
+| `audits.triage.labels` | `["persona-audit", "persona:{persona}", "severity:{severity}"]` | The labels of every issue from the triage. `{persona}` gives one label per persona of the finding, and `{severity}` its severity; a Not reached line or a doc gap takes the report's personas and no severity label. At least one label is plain. |
+
+- In both modes, a finding about a product rule, or an open question in a product doc, goes to `product-manager`
+  first. In `"auto"`, a finding it does not settle is deferred, never filed, and every decision is still recorded in
+  `triage.json`; the skill ends with a list of what it created.
+- `agent-issue-writer` applies the labels where the tracker has them. It creates a missing label only in `"confirm"`,
+  after the Human approves; in `"auto"` it leaves a missing label out and names it in the summary.
+- Before a finding is recorded as a duplicate, the tracker search also queries the plain labels, which every audit
+  issue carries, so an earlier audit's issue is found by its label as well as its words.
+- Each issue body names its source in words, the report by persona, kind, and date and the finding by its title, with
+  the report's path; the machine key the duplicate search can use stays in a footer, never in the title or first lines.
 
 ## Checking
 

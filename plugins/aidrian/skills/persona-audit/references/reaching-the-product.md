@@ -34,6 +34,33 @@ names are set, each checked without printing its value, such as `test -n "$NAME"
 app as it says, and confirm the URL answers and sign-in returns to its hosts.
 When the check fails, walk nothing: name what failed in the `Reached:` line and in `## Not reached`, and use `seen` or `read`.
 
+## Environment check
+
+Before the first walk, check that the session can reach what the tasks need. When a check fails, tell the Human
+before walking what the run will not check, and the fallback it takes; never discover it after the walk.
+
+- Width: each persona's width, the nearest one `product-access` lists. Resize, then read the real width back, such as
+  `window.innerWidth` in a browser. When it stays wider than asked, take the first fallback that reaches it:
+  1. Device emulation: the browser tool's device mode, or a headless browser, such as Playwright, at a set viewport.
+  2. A window opened at a set size: `window.open('<url>', '_blank', 'width=390,height=844')` from the page, then
+     walk in that window, and read its width back again.
+
+  None reaches it: walk at the width the session has, name it in the `Reached:` line, and list the persona's width
+  under `## Not reached`.
+- Hosts: each host the tasks pass through, such as a sign-in redirect or a public page on its own subdomain, loads in
+  the walking tool. One that does not: use the other URL `product-access` names for it, if any; else the tasks behind
+  it are Not reached lines, named before the walk.
+
+## Signing in as a role
+
+The persona signs in with the role `## Who` gives them, such as a staff member rather than the owner.
+
+1. A seeded account for that role in `product-access` `## Accounts`: sign in with it.
+2. None: set one up only within `## Allowed changes`, such as an invite from an account that has one, accepted from
+   the local mailbox. Write the setup in the `Reached:` line as steps the next run can repeat, and add a doc gap:
+   `product-access names no seeded <role> account; this run set one up: <steps>`.
+3. No allowed way: the tasks that need the role are Not reached lines, with that reason.
+
 ## Safety
 
 - The demo account for a task is the one `## Where each task lives` names for it, else the first one `## Accounts` lists.

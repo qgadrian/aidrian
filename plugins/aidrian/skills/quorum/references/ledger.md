@@ -3,10 +3,12 @@
 The ledger, `<state>/quorum/<name>-<plan-hash>.json`, and how each round fills it.
 `<name>` is the plan's file name without `.md`, or `<parent-folder>-plan` for a file named `plan.md`.
 In decide mode, `<name>` is the question file's name without `.md`, and `<plan-hash>` is `git hash-object` of it.
+A product ledger is named the same way, under `<state>/quorum/product/`.
 
 - [Schemas](#schemas): where the authoritative schemas live.
 - [Fields](#fields): every field of a plan-mode ledger.
 - [Decide-mode fields](#decide-mode-fields): every field of a decide-mode ledger.
+- [Product-mode fields](#product-mode-fields): every field of a product-mode ledger.
 - [Agent answers](#agent-answers): how an agent's answer is held to its schema before it is written.
 - [Settled answers](#settled-answers): the Human's answers from earlier runs on the same plan.
 - [Filling it](#filling-it): what the coordinator writes after each round of `modes/plan.md`.
@@ -24,6 +26,7 @@ The plugin's `lib/quorum.mjs` is the one source of truth, and this page keeps no
 - `CASE_SCHEMA`: an advocate's case, `{case: {claim, citations}}`.
 - `CROSS_SCHEMA`: an advocate's cross points, `{cross: [{against, claim, citations}]}`, at most 5.
 - `DECIDE_REBUTTAL_SCHEMA`: an advocate's rebuttal, `{rebuttal: {verdict, claim, citations}}`.
+- `PRODUCT_LEDGER_SCHEMA`: the product-mode ledger.
 
 `aidrian quorum check` refuses a ledger off its mode's schema, and `aidrian quorum codex` refuses a Codex answer off its
 schema. A test holds each fields list below to its schema: a field added there and not here, or here and not there,
@@ -201,6 +204,78 @@ fails `quorum check` on every invalid ruling or rebuttal, so it is not reused.
 - `human_answer`: the Human's answer to the escalated ruling, word for word, or `null`.
   `quorum check` exits 1 on an answer when no ruling, first or final, is `escalate`.
 
+## Product-mode fields
+
+`modes/product.md` says what each round writes. A product ledger holds no rebuttal round and no final ruling.
+
+- `mode`: `product`.
+- `status`: `open` while the rounds run, `complete` just before the Human is asked, and it stays so after the answer.
+- `plan`: the question file's absolute path.
+- `plan_hash`: `git hash-object` of the question file.
+- `same_model`: `true` exactly when two positions share a runner.
+- `same_model_reason`: which positions share one and why, or `null`.
+- `trigger`: what started the run, normally `the Human asked`.
+- `trace`: what the tracer found, word for word, for the report and the grillers.
+- `persona_docs`: every row of `aidrian-knowledge index` whose tags hold `personas`, inside the repository, other than `product-access`, from the repository root, whichever one took part. A winner resting only on these is invalid.
+- `premise`: why the decision is open.
+  - `premise.summary`: the framer's answer.
+  - `premise.citations`: its evidence, never a `plan` citation; with none passing, `quorum check` names the premise invalid.
+    - `premise.citations[].kind`: `doc`, `adr`, `code`, `plan`, or `absence`.
+    - `premise.citations[].ref`: where the evidence is, in the form its kind takes.
+    - `premise.citations[].quote`: the verbatim text, at most 200 characters.
+- `positions`: the options, 2 or 3; `quorum check` refuses more.
+  - `positions[].id`: `A`, `B`, `C`, or `D`, in order.
+  - `positions[].label`: the option's label.
+  - `positions[].runner`: `agent` or `codex`, as in a decide ledger.
+- `witness`: the end user's part, or `null` when no persona fits.
+  - `witness.persona`: the persona doc's path, from the repository root.
+  - `witness.interview`: the product owner's questions, at most 5; hypotheses, which no one rules on.
+    - `witness.interview[].question`: the question.
+    - `witness.interview[].answer`: the persona's words.
+  - `witness.walkthrough`: the persona's walk through the draft, or `null`.
+- `draft`: the product owner's recommendation before the walkthrough, or `null`.
+  - `draft.winner`: `A`, `B`, `C`, or `D`.
+  - `draft.reason`: why.
+  - `draft.walkthrough`: the description the end user was shown.
+- `loops`: each time the run went back; a new ledger after a reshape keeps them.
+  - `loops[].back_to`: `interview`, `shape`, or `grill`.
+  - `loops[].reason`: what the walkthrough or a griller exposed.
+- `cases`: each position's case, as in a decide ledger.
+  - `cases[].position`: `A`, `B`, `C`, or `D`.
+  - `cases[].claim`: the case, at most 200 words.
+  - `cases[].citations`: its evidence. A case with no passing citation cannot win.
+- `cross`: the grillers' points, at most 5 each.
+  - `cross[].id`: `U1` to `U5` or `E1` to `E5`, each once.
+  - `cross[].by`: `U` for UX or `E` for the engineer, the id's letter.
+  - `cross[].against`: `A`, `B`, `C`, or `D`.
+  - `cross[].claim`: the point.
+  - `cross[].citations`: its evidence.
+  - `cross[].status`: `pending` until the check runs; then `backed` or `opinion`.
+- `ruling`: the judge's recommendation, or `null` before it. A winner resting only on `persona_docs` or the `witness.persona` doc is invalid, as is a rule with no `outcome` on an open ledger.
+  - `ruling.decision`: `rule` or `escalate`.
+  - `ruling.winner`: `A`, `B`, `C`, or `D` on a rule; `null` on an escalate.
+  - `ruling.change_or_reason`: the losing case's strongest claim and what defeats it, or what would settle an escalation.
+  - `ruling.citations`: the ruling's own evidence.
+  - `ruling.tested`: one verdict per citation of every case and backed point.
+    - `ruling.tested[].of`: the position or point id.
+    - `ruling.tested[].citation`: the citation's index, from 0.
+    - `ruling.tested[].supports`: `true` or `false`.
+    - `ruling.tested[].reason`: why, in one line.
+  - `ruling.inferences`: one entry per `inference:` line.
+    - `ruling.inferences[].statement`: the line's text.
+    - `ruling.inferences[].holds`: `true` or `false`.
+    - `ruling.inferences[].reason`: why, in one line.
+    - `ruling.inferences[].citations`: the evidence that settles it.
+- `outcome`: what a rule leaves behind, required on a rule in a `complete` ledger, otherwise `null`.
+  - `outcome.conditions`: changes the winner needs.
+  - `outcome.flips_if`: unknowns that would change the winner.
+    - `outcome.flips_if[].fact`: the unknown.
+    - `outcome.flips_if[].how_to_settle`: the cheapest way to find out.
+  - `outcome.disputes`: smaller disagreements.
+    - `outcome.disputes[].topic`: the disagreement.
+    - `outcome.disputes[].owner`: who settles it.
+- `human_answer`: the Human's answer to the ruling, word for word, or `null` while deferred. Only this settles the decision, and it stands when the cited code later changes.
+
 ## Agent answers
 
 Codex's answers arrive held to their schema by `aidrian quorum codex`. An agent's answer does not, so before writing one
@@ -227,6 +302,9 @@ citations, and edits hold, and:
 - A ruling whose winner is not set exactly on `rule`, or is not a position in the ledger, is dropped, and counts as missing.
 - A cross point against the advocate's own position, or a position the ledger does not hold, is dropped.
 - Past 5 cross points, keep the first 5.
+
+In product mode, hold a case to `CASE_SCHEMA` and a ruling to the ledger's `ruling`, with `outcome` split from it; on an
+escalate, `outcome` is `null`. Write a draft answer as returned. Keep each griller's first 5 points and the first 5 interview answers; drop a point against a position the ledger does not hold. The rules above on missing fields, citations, and edits hold.
 
 When `quorum check` still exits 1, stop with `blocked`, quoting what it printed.
 

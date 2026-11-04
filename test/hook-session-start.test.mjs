@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -20,14 +20,18 @@ const EXAMPLE = path.join(mkdtempSync(path.join(tmpdir(), 'aidrian-start-example
 cpSync(path.join(ROOT, 'examples/consumer'), EXAMPLE, { recursive: true });
 test.after(() => rmSync(path.dirname(EXAMPLE), { recursive: true, force: true }));
 
-const WITHOUT_BIN = (process.env.PATH ?? '').split(path.delimiter).filter((dir) => dir !== BIN).join(path.delimiter);
+// The shell's PATH without this plugin's bin/, and without any folder that holds another `aidrian`, such as an installed
+// copy of the plugin: that one would add the commands line to every test.
+const WITHOUT_BIN = (process.env.PATH ?? '').split(path.delimiter).filter((dir) => dir !== BIN && !existsSync(path.join(dir, 'aidrian'))).join(path.delimiter);
 const LINE = (command) =>
   'Project knowledge: 2 buckets, 8 docs. Read now: docs/knowledge/engineering/working-agreement.md. ' +
   `For more, run \`${command} route <tag>\` for your tags or \`${command} search <words>\` for a topic.`;
 const NAMES = (ai, human = 'the Human') => `Names: call the human "${human}" and yourself "${ai}", in replies and questions alike; never "I", "me", "my", "you", or "your".`;
 const VOICE = (human = 'the Human') =>
   `Voice: when a request or premise looks wrong, or worse than an alternative, say so in one line with the reason before acting, then follow the call of "${human}". ` +
-  `A question to "${human}" says what goes wrong in their terms, asks one decision, puts the recommended option first with one reason, and uses no internal IDs or labels.`;
+  `A question to "${human}" says what goes wrong in their terms, asks one decision, and puts the recommended option first with one reason. ` +
+  'In anything a person reads (replies, questions, summaries, pull request and issue bodies), name each thing in plain words, such as its title, ' +
+  'never by a bare internal id like "F1" or "slice 3" or a file suffix like "-2"; a path or link only gives a location.';
 const FORMAT = 'Format: in chat replies, use headers, quotes, and a few emoji to aid scanning; never in commits, pull requests, docs, or code.';
 // What every main session starts with, after the knowledge line.
 const MAIN = (ai) => `${NAMES(ai)}\n${VOICE()}\n${FORMAT}\n`;
@@ -201,6 +205,62 @@ test('no reminder with nothing to review or with remind off, and a doc it cannot
   const quiet = hook({ input: JSON.stringify({ cwd: broken }) });
   assert.equal(quiet.status, 0);
   assert.doesNotMatch(quiet.stdout, REMINDER, 'a malformed marker counts for nothing');
+});
+
+test('the main session hears about untriaged persona audits only while some are; a subagent never, and bad state prints nothing', (t) => {
+  const project = path.join(mkdtempSync(path.join(tmpdir(), 'aidrian-start-')), 'consumer');
+  t.after(() => rmSync(path.dirname(project), { recursive: true, force: true }));
+  cpSync(EXAMPLE, project, { recursive: true });
+  const configFile = path.join(project, '.aidrian/config.json');
+  const state = path.join(path.dirname(project), 'state');
+  writeFileSync(configFile, JSON.stringify({ ...JSON.parse(readFileSync(configFile, 'utf8')), state: { dir: state } }));
+  const audits = path.join(state, 'audits');
+  const input = JSON.stringify({ cwd: project });
+  const run = (args = []) => hook({ input, args });
+  const LINE_RE = /^Audit inbox:/mu;
+
+  assert.doesNotMatch(run().stdout, LINE_RE, 'no audits folder');
+  mkdirSync(audits, { recursive: true });
+  assert.doesNotMatch(run().stdout, LINE_RE, 'an empty audits folder');
+
+  const fixtures = path.join(ROOT, 'test/fixtures/persona-audit');
+  for (const name of ['front-desk-2026-05-02.md', 'front-desk-2026-05-02-2.md']) cpSync(path.join(fixtures, name), path.join(audits, name));
+  const { status, stdout } = run();
+  assert.equal(status, 0);
+  assert.equal(stdout.split('\n')[4], 'Audit inbox: 18 untriaged findings in 1 report. The persona-audit-triage skill triages them.', 'after the format line');
+  assert.doesNotMatch(run(['--subagent']).stdout, /Audit inbox/);
+
+  writeFileSync(path.join(audits, 'triage.json'), '{ cut short');
+  const broken = run();
+  assert.equal(broken.status, 0);
+  assert.equal(broken.stdout, `${LINE(path.join(BIN, 'aidrian-knowledge'))}\n${MAIN('Codex')}`, 'an unreadable triage record costs the line, nothing else');
+
+  // Every item decided: the line goes away.
+  const sidecar = {
+    version: 1, report: 'front-desk-2026-05-02-2.md', personas: ['front-desk'], date: '2026-05-02', supersedes: 'front-desk-2026-05-02.md',
+    carried_forward: [], not_rechecked: [], not_reached: [], doc_gaps: [],
+    findings: [{ id: 'F1', title: 't', severity: 'polish', label: 'opinion', evidence_level: 'walked', personas: ['front-desk'], tasks: ['t'], owner: 'ux-specialist', owner_description: 'words', evidence: [], needs_trace: false }],
+  };
+  writeFileSync(path.join(audits, 'front-desk-2026-05-02-2.json'), JSON.stringify(sidecar));
+  writeFileSync(path.join(audits, 'triage.json'), JSON.stringify({ version: 1, reports: {} }));
+  assert.match(run().stdout, /^Audit inbox: 1 untriaged finding in 1 report\./mu);
+  writeFileSync(path.join(audits, 'triage.json'), JSON.stringify({ version: 1, reports: { 'front-desk-2026-05-02-2.md': { F1: { decision: 'defer', date: '2026-05-03' } } } }));
+  assert.doesNotMatch(run().stdout, LINE_RE, 'fully triaged');
+});
+
+test('when another copy of the plugin\'s aidrian comes first on PATH, one line names this copy\'s by its path', (t) => {
+  const other = mkdtempSync(path.join(tmpdir(), 'aidrian-start-other-'));
+  t.after(() => rmSync(other, { recursive: true, force: true }));
+  writeFileSync(path.join(other, 'aidrian'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const input = JSON.stringify({ cwd: EXAMPLE });
+  const line = `Commands: the aidrian on PATH, in ${other}, is another copy of this plugin; run this session's as ${path.join(BIN, 'aidrian')}.`;
+  const first = hook({ input, PATH: `${other}${path.delimiter}${BIN}${path.delimiter}${WITHOUT_BIN}` });
+  assert.equal(first.status, 0);
+  assert.deepEqual(first.stdout.split('\n').slice(3, 5), [line, FORMAT], 'after the voice line, in the main session');
+  const subagent = JSON.parse(hook({ input, args: ['--subagent'], PATH: `${other}${path.delimiter}${WITHOUT_BIN}` }).stdout);
+  assert.match(subagent.hookSpecificOutput.additionalContext, new RegExp(`\n${line.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}$`, 'u'), 'and in a subagent');
+  assert.doesNotMatch(hook({ input, PATH: `${BIN}${path.delimiter}${other}${path.delimiter}${WITHOUT_BIN}` }).stdout, /^Commands:/mu, 'this copy first: nothing');
+  assert.doesNotMatch(hook({ input }).stdout, /^Commands:/mu, 'no aidrian on PATH: nothing');
 });
 
 test('the gate snapshot is saved before the knowledge loads, so a knowledge folder that throws still leaves the gates held', (t) => {

@@ -90,7 +90,7 @@ test('the usage fits 100 columns, with one line for each form of a command and i
   const misuse = spawnSync(CLI, ['worktree', 'bogus'], { cwd: EXAMPLE, encoding: 'utf8' });
   assert.deepEqual(misuse.stderr.split('\n').slice(0, 2), [
     'usage: aidrian worktree new BRANCH [--base REF] [--slug NAME] [--fetch] [--plan] [--reuse-existing]',
-    '       aidrian worktree cleanup [plan|execute] [--min-age 24h] [--force]',
+    '       aidrian worktree cleanup [plan|execute] [--only PATH] [--min-age 24h] [--force]',
   ]);
 });
 

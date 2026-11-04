@@ -14,6 +14,7 @@ const COMMANDS = {
   'pre-commit': './main-commits.mjs',
   lint: './lint.mjs',
   lesson: './lesson-cli.mjs',
+  audits: './audits-cli.mjs',
   handoff: './handoff-brief.mjs',
   worktree: './worktree.mjs',
   pr: './pr.mjs',

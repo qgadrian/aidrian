@@ -1,11 +1,16 @@
 {
   "version": 1,
+  "requires": { "aidrian": "0.37.0" },
   "names": { "human": "the Human", "ai": "Aidrian" },
   "git": {
     "defaultBranch": "main",
     "worktrees": { "dir": ".worktrees" },
     "mainCheckout": { "guard": true }
   },
-  "github": { "extraRounds": "auto" },
+  "github": {
+    "extraRounds": "auto",
+    "requiredChecks": ["Check (Node 22)", "Check (Node 24)", "Check (Node 26)", "Conventional Commit title"],
+    "autoMerge": { "allow": true, "strategy": "squash", "deleteBranch": true }
+  },
   "review": { "engine": "codex-local", "record": "local" }
 }

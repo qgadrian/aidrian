@@ -41,18 +41,26 @@ At the start of every session and subagent, the hook prints:
 - one line naming the `always` knowledge docs and the commands that find the rest;
 - one line with the [names](config.md#names) for the human and the AI;
 - one `Voice:` line: say so, with the reason, when a request or premise looks wrong, then follow the human's call;
-  and ask the human questions they can answer without the session's context, one decision each, recommendation first;
+  ask the human questions they can answer without the session's context, one decision each, recommendation first;
+  and in anything a person reads, replies, questions, summaries, and pull request and issue bodies, name each thing in
+  plain words, such as its title, never by a bare internal id, such as a finding or slice number, or a file-name
+  suffix such as `-2`, with a path or link only as a location;
 - in Claude Code, one `Pull requests:` line: a body here never carries the "Generated with [Claude Code]" line, and this
   project rule takes precedence over the host's attribution instructions, which ask for it. It is left out when Claude
   Code's own settings drop the line: the `attribution.pr` of the first of `.claude/settings.local.json`,
   `.claude/settings.json`, and the user's `settings.json` that sets it holds no such line, or, with none set,
   `includeCoAuthoredBy` is `false`. `{ "attribution": { "pr": "" } }` in `.claude/settings.json` settles it for a project;
+- one `Commands:` line when the first `aidrian` on the PATH is another copy of the plugin, such as an installed
+  release while a branch is tried: it names this copy's `aidrian` by its path, so the session runs the code it loaded;
 - in the main session only, one `Format:` line: headers, quotes, and a few emoji in chat replies, never in commits,
   pull requests, docs, or code, which a subagent's report feeds, so a subagent does not get it;
 - in the main session only, one more line while the [lesson inbox](lessons.md#session-start) holds open lessons;
 - in the main session only, one `Decisions to review: N (oldest X days)` line while the indexed docs hold unconfirmed
   [decision markers](project-folder.md#decision-markers), unless [`decisions.unreviewed.remind`](config.md#decisions) is `"off"`.
   A doc it cannot read counts for nothing here, and never stops the hook. The line names the `decision-review` skill.
+- in the main session only, one more line while the persona audits in the state folder hold untriaged items
+  ([Triage](personas.md#triage)): `Audit inbox: N untriaged findings in M reports. The persona-audit-triage skill triages them.`
+  Nothing prints when every item has a decision, or when the audits folder, a report, or `triage.json` cannot be read.
 
 Last, in the main session only and while `git.mainCheckout.guard` is on ([commit guard](#commit-guard)),
 a line when the session inherited the commit guard's override, then up to three lines about the main checkout,
@@ -258,6 +266,13 @@ the session transcript holds the Human's AskUserQuestion answer to a question na
 with "Merge anyway", given at or after the head's outcome and every owed review. Without a transcript in that shape
 (Codex), the Human merges in their own shell.
 
+[Auto-merge](config.md#auto-merge) goes through this guard: the rule reads its `gh pr merge` like any other.
+The guard is not proof that a review happened, because no record lets a merge run (step 2 above).
+So `aidrian pr auto-merge` reads the record itself, and no record keeps auto-merge off.
+It also stays off for a changed instruction or workflow file (`paths`), a comment from outside the repository (`outsider`),
+and requested changes (`review`). Neither it nor this guard stops a session with a shell or a forged local record:
+for proof, protect the branch with a required review from a second account. [Limits](config.md#limits).
+
 Limits:
 
 - A record written on another machine is not read here.
@@ -387,6 +402,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - A write to a folder that holds one of the files, such as `rm -rf .aidrian`, counts; one to the project root, such as `cp notes.md .`, does not.
 - A call without `agent_id` is the main session's, which may still change them.
 - A block is [recorded](#recorded-blocks) as `config-guard`, with the file it changes as its reason.
+- With or without gates, a subagent may not target `.aidrian.local.json` with a Write, Edit, or apply_patch that changes the switch,
+  or a Bash command that names `autoMerge`:
+  the [auto-merge](config.md#auto-merge) switch is the main session's. Other writes to that file follow the rules above.
 - A write the rule cannot see, such as one by a script, `xargs`, or `eval`, or a file name the code builds, still runs.
   It changes the file, but lifts no gate before the session ends: see the session's gates below.
   Like the gates, the guard is for agents that cooperate, not a sandbox.

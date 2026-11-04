@@ -55,13 +55,21 @@ export function resolvedPath(file) {
   }
 }
 
-// `base` and `rel` are POSIX-style paths relative to `root`; returns the joined relative path, or null if it escapes,
-// either as text or through a symlink.
-export function insidePath(root, base, rel) {
+// `base` and `rel` joined as POSIX-style relative paths, or null when the text escapes `base`. It reads no disk, so it
+// also checks a path in a tree that is not checked out, such as a base branch read through GitHub.
+export function joinedInside(base, rel) {
   if (typeof rel !== 'string' || rel === '' || path.isAbsolute(rel) || rel.includes('\\')) return null;
   const joined = path.posix.normalize(path.posix.join(base || '.', rel)).replace(/\/$/, '');
   if (joined === '.' || joined.startsWith('../') || joined === '..') return null;
   if (base && !joined.startsWith(`${base}/`)) return null;
+  return joined;
+}
+
+// `base` and `rel` are POSIX-style paths relative to `root`; returns the joined relative path, or null if it escapes,
+// either as text or through a symlink.
+export function insidePath(root, base, rel) {
+  const joined = joinedInside(base, rel);
+  if (joined === null) return null;
   // path.relative uses the platform separator, "\" on Windows; `rel` cannot hold one, so mapping it back is safe.
   if (path.relative(root, path.join(root, joined)).replaceAll('\\', '/') !== joined) return null;
   return linksOutside(root, joined, base) ? null : joined;

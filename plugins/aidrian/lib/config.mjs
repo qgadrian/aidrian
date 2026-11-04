@@ -38,6 +38,7 @@ const QUORUM_SCHEMA = {
   judge: { agent: 'agentName' },
   plan: { a: { agent: 'agentName' }, b: QUORUM_RUNNER, maxObjections: 'objectionCap', maxDispatches: 'dispatchCap' },
   decide: { odd: QUORUM_RUNNER, even: QUORUM_RUNNER, swap: 'boolean' },
+  product: { owner: { agent: 'agentName' }, witness: { agent: 'agentName' }, ux: { agent: 'agentName' }, engineer: { agent: 'agentName' }, maxLoops: 'objectionCap' },
 };
 
 // The keys of the `decisions` group: how far agents may settle product and design decisions (lib/decisions.mjs).
@@ -81,6 +82,7 @@ const SCHEMA = {
       duplicateBody: 'boolean',
     },
     reviewGate: { enabled: 'boolean', checklist: 'textOrNull' },
+    autoMerge: { allow: 'boolean', default: 'onOff', strategy: 'mergeStrategy', deleteBranch: 'boolean', deleteWorktree: 'boolean' },
   },
   review: 'review',
   docs: { wrapLimit: 'zeroOrMore' },
@@ -112,6 +114,7 @@ const SCHEMA = {
   requires: { aidrian: 'versionOrNull' },
   quorum: QUORUM_SCHEMA,
   decisions: DECISIONS_SCHEMA,
+  audits: { triage: { issueCreation: 'issueCreationMode', labels: 'auditLabels' } },
 };
 
 // Keys a format change renamed or moved, old name to new; a key inside a group is named with its group, "group.key".
@@ -147,6 +150,9 @@ const MODEL_CHOICES = {
 };
 
 const SEMVER = /^\d+\.\d+\.\d+$/u;
+// The placeholders an audit label may hold, filled per finding (lib/audits.mjs issueLabels).
+export const AUDIT_LABEL_FIELDS = ['persona', 'severity'];
+const isAuditLabel = (value) => isText(value) && [...value.matchAll(/[{}]/gu)].length === 2 * [...value.matchAll(/\{(\w+)\}/gu)].filter(([, field]) => AUDIT_LABEL_FIELDS.includes(field)).length;
 const isText = (value) => typeof value === 'string' && value.trim() !== '';
 const isTexts = (value) => Array.isArray(value) && value.every(isText);
 // A regular expression a project writes as a string; `{types}` and `{issueKey}` are filled in before it compiles
@@ -200,12 +206,20 @@ const TYPES = {
   handoffMode: [(value) => HANDOFF_MODES.includes(value), '"off", "ask", or "auto"'],
   readyMode: [(value) => ['ask', 'auto'].includes(value), '"ask" or "auto"'],
   extraMode: [(value) => ['off', 'ask', 'auto'].includes(value), '"off", "ask", or "auto"'],
+  onOff: [(value) => ['on', 'off'].includes(value), '"on" or "off"'],
+  mergeStrategy: [(value) => [null, 'squash', 'merge', 'rebase'].includes(value), 'null, "squash", "merge", or "rebase"'],
   // One agent a dispatch names. "*" and "main" select gates in `agents`, every agent and the main session; neither is one agent.
   agentName: [(value) => isText(value) && value !== ALL && value !== MAIN && !agentNameProblem(value), 'an agent name such as code-reviewer'],
   quorumProvider: [(value) => ['agent', 'codex'].includes(value), '"agent" or "codex"'],
   objectionCap: [(value) => Number.isInteger(value) && value >= 1 && value <= MAX_PLAN_OBJECTIONS, `a whole number from 1 to ${MAX_PLAN_OBJECTIONS}`],
   // The least a plan run needs: two objection dispatches, one ruling, one Codex fallback, and the reserved proportionality pass.
   dispatchCap: [(value) => Number.isInteger(value) && value >= 5, 'a whole number, 5 or more'],
+  issueCreationMode: [(value) => ['confirm', 'auto'].includes(value), '"confirm" or "auto"'],
+  // The duplicate search queries the labels with no placeholder, so at least one is fixed.
+  auditLabels: [
+    (value) => Array.isArray(value) && value.every(isAuditLabel) && value.some((label) => !label.includes('{')),
+    `a list of labels, each plain or holding ${AUDIT_LABEL_FIELDS.map((f) => `{${f}}`).join(' or ')}, with at least one plain label`,
+  ],
   versionOrNull: [(value) => value === null || (typeof value === 'string' && SEMVER.test(value)), 'a plugin version such as "0.17.0", or null'],
   decisionMode: [(value) => DECISION_MODES.includes(value), '"ask" or "decide-reversible"'],
   domainMode: [(value) => value === 'inherit' || DECISION_MODES.includes(value), '"ask", "decide-reversible", or "inherit"'],
@@ -264,6 +278,10 @@ export const DEFAULTS = deepFreeze({
     pullRequest: { title: null, issueKey: null, sections: null, deferrals: null, residuals: null, sharedTempBodyFile: true, duplicateBody: false },
     // The review that must be on record before the review bot is asked (lib/review-gate.mjs).
     reviewGate: { enabled: false, checklist: null },
+    // The team's ceiling on auto-merge: no machine merges a pull request unless `allow` is true. `strategy: null` leaves
+    // the choice to pr-merge-when-green's order: squash, then merge, then rebase, among those the repository allows.
+    // A machine opts in under it from the local file (resolveAutoMerge).
+    autoMerge: { allow: false, default: 'off', strategy: null, deleteBranch: false, deleteWorktree: false },
   },
   // How a pull request is reviewed (lib/review/, docs/review.md).
   review: REVIEW_DEFAULTS,
@@ -316,6 +334,13 @@ export const DEFAULTS = deepFreeze({
       even: { provider: 'codex', agent: 'code-reviewer' },
       swap: true,
     },
+    product: {
+      owner: { agent: 'product-manager' },
+      witness: { agent: 'ux-researcher' },
+      ux: { agent: 'ux-specialist' },
+      engineer: { agent: 'architect' },
+      maxLoops: 2,
+    },
   },
   // How far agents may settle product and design decisions (lib/decisions.mjs, docs/config.md#decisions): every
   // decision goes to the Human, and nothing raises `mode` past `maxMode`, so a team opts in by committing a higher one.
@@ -329,6 +354,10 @@ export const DEFAULTS = deepFreeze({
     record: { queue: 'pr-body' },
     unreviewed: { remind: 'session-start', pauseDomainAt: { pending: 10, oldestDays: 7 } },
   },
+  // How the persona-audit-triage skill files issues (lib/audits.mjs, docs/personas.md#triage): "confirm" shows each
+  // draft and creates nothing before the Human's yes; "auto" creates without asking, for unsupervised runs. Every issue
+  // gets each label, `{persona}` and `{severity}` filled from its finding.
+  audits: { triage: { issueCreation: 'confirm', labels: ['persona-audit', 'persona:{persona}', 'severity:{severity}'] } },
   reviewEngine: 'auto',
   reviewVisual: { baseUrl: null },
 });
@@ -371,16 +400,23 @@ export function loadConfig(project) {
 export function committedConfig(project, commit, errors = []) {
   const shown = spawnSync('git', ['show', `${commit}:${project.paths.config}`], { cwd: project.root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 15_000 });
   if (shown.error || shown.signal) throw new Error(`git show ${commit}:${project.paths.config} failed: ${shown.error?.message ?? shown.signal}`);
-  if (shown.status !== 0) return DEFAULTS;
+  return configFromText(shown.status === 0 ? shown.stdout : null, project.paths.config, errors);
+}
+
+// The project config committed as `text` at `file`, with no machine settings, by committedConfig's rules: null (no file)
+// or text that does not parse gives DEFAULTS, and a value that fails its check keeps its default and goes to `errors`.
+// For a commit read some other way, such as a base branch read through GitHub.
+export function configFromText(text, file, errors = []) {
+  if (typeof text !== 'string') return DEFAULTS;
   let raw;
   try {
-    raw = JSON.parse(shown.stdout);
+    raw = JSON.parse(text);
   } catch {
     return DEFAULTS;
   }
-  if (!isObject(raw) || versionProblem(project.paths.config, raw.version)) return DEFAULTS;
+  if (!isObject(raw) || versionProblem(file, raw.version)) return DEFAULTS;
   const { version, ...rest } = raw;
-  const config = merge(SCHEMA, DEFAULTS, legacyHandoff(rest, project.paths.config, errors), '', project.paths.config, errors, []);
+  const config = merge(SCHEMA, DEFAULTS, legacyHandoff(rest, file, errors), '', file, errors, []);
   if (config.github.reviewer === NO_REVIEWER) config.github = { ...config.github, reviewer: null };
   return deepFreeze(config);
 }
@@ -433,6 +469,18 @@ export function committedDecisions(project, commit, file) {
   // `./`: the path from project.root, so a project below the repository root reads its own file.
   const committed = committedConfig({ ...project, paths: { ...project.paths, config: `./${file}` } }, commit, errors);
   return committed === DEFAULTS || errors.some((error) => /"decisions[".]/u.test(error)) ? askOnly : committed.decisions;
+}
+
+// Whether auto-merge is on, from a `github` config and the local file's switch (`project.localAutoMerge`, "on",
+// "off", or "unset"): { effective, reason }. It is on only when the team allows it and the machine's switch is "on", or
+// is "unset" under the team's `default` "on". A machine can lower the team's choice but never pass `allow`. `reason` names the
+// side that keeps it off, "team" or "local", and is null when it is on. A pure function of its inputs, so a caller may
+// pass the github config of any commit, such as committedConfig's, instead of the working copy's.
+export function resolveAutoMerge(github, local) {
+  if (github?.autoMerge?.allow !== true) return { effective: false, reason: 'team' };
+  const on = local === 'on' || (local === 'unset' && github.autoMerge.default === 'on');
+  if (!on) return { effective: false, reason: 'local' };
+  return { effective: true, reason: null };
 }
 
 // The `code` of the error commandConfig throws; cli.mjs prints its message and exits with its `exitCode`.

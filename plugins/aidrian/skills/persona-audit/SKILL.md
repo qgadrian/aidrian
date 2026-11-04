@@ -10,7 +10,7 @@ missing or wrong translations, dead ends, and whether each of their tasks can be
 The project writes its personas as knowledge docs; this skill is the run.
 
 Read-only: it never edits code, docs, or config, files an issue, posts to a pull request or opens one, and never
-signs anything off. It writes only under `<state>/audits/`: the report, and the screenshots it cites.
+signs anything off. It writes only under `<state>/audits/`: the report, its JSON sidecar, and the screenshots it cites.
 The Human picks what follows.
 
 Before you start, follow the `knowledge` skill. Knowledge tags: `i18n` when the product ships more than one language.
@@ -51,6 +51,10 @@ Read [references/reaching-the-product.md](references/reaching-the-product.md) be
 `walked`, `seen`, and `read`, the tools each needs, which build a `--pr` run may walk, and the safety rules.
 Use the best level the session has and record it on every task.
 
+Before the first walk, run that file's environment check: each persona's width and each product host the tasks need.
+When one fails, tell the Human what will not be checked and the fallback taken, before walking, not after.
+Sign in as each persona's role as its § Signing in as a role says.
+
 ## 3. Walk each task, as the persona
 
 For each persona, for each task in scope:
@@ -73,7 +77,8 @@ The walk stays within the tasks in scope. An idea that comes up in character, su
 try to...", is not walked and gets no finding: it is a suggested task under `## Persona doc gaps`.
 
 The persona judges only what it sees. After the walk, the session may read code to locate a finding for its owner,
-never to judge as the persona.
+never to judge as the persona. A defect seen more than once whose cause the session did not trace gets
+`needs_trace`; [report-format.md](references/report-format.md) says when an `explorer` trace may follow.
 
 ## 4. Write each finding
 
@@ -82,22 +87,20 @@ its label (`observed` with a citation, or `opinion`), its severity, and the tabl
 `knowledge` skill's agent rule. Never put words in a persona that its doc does not support.
 
 Several personas: walk once per persona, then merge. One finding two personas share is written once, naming both.
-A persona doc that is unclear or contradicts itself is a doc gap, with no owner; a task the product cannot do is a
-finding or a Not reached line, as [report-format.md](references/report-format.md) says:
-
-- Walked and `blocked`: the code read after the walk picks the owner. The capability exists and the persona did not
-  reach it: a dead end, `ux-specialist`. No screen, route, endpoint, or command for it: a missing capability,
-  `product-manager`. Either is `observed`, citing the screen or response, and a `blocker`.
-- At `seen` or `read`: no finding. The task stays `not walked`, and `## Not reached` lists it, with what was searched
-  and `product-manager` as the one to ask.
-- Behind a plan or feature the demo account lacks, as `product-access` says: not reached, with that reason, never a product gap.
+A persona doc that is unclear or contradicts itself is a doc gap, with no owner. A task the product cannot do is,
+walked and `blocked`, an `observed` `blocker`: a dead end for `ux-specialist`, or a missing capability for
+`product-manager`, as the code read after the walk shows. At `seen` or `read`, or behind a plan the demo account
+lacks, it is a Not reached line, never a finding: report-format.md § A task the product cannot do.
 
 ## 5. Report
 
 Write the report to `<state>/audits/<personas>-<date>.md`, where `<state>` is the folder `aidrian state` prints,
 `<personas>` the ids joined by `+`, or `all` when the run was given `all`, and `<date>` today as `YYYY-MM-DD`.
 When the file exists, add `-2`, `-3`. Its shape is in [references/report-format.md](references/report-format.md).
+Beside it, write its sidecar, the same name with `.json`, as § The sidecar there says; then run
+`aidrian audits check <report>.md` and fix the report or the sidecar until it prints `ok`.
+A run that repeats a report `aidrian audits list` shows replaces it: § A run that replaces a report.
 
-Then reply to the Human with the report's path, each persona's task table, the blockers, and what the run
+Then reply to the Human with the report's path, each persona's task table, the blockers by title, and what the run
 could not reach, and say that personas are synthetic and do not replace real users.
 With `--pr`, the report is input to the Human's review: it never approves, blocks, or posts to the pull request.

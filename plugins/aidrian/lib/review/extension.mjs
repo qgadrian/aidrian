@@ -511,7 +511,7 @@ function nextStep(entry, pr) {
 
 // The CLI body. It reads and writes the record where the review step does: this machine's state folder and, unless
 // config.json `review.record` is "local", the pull request's summary comment, so another machine continues from it.
-// `deps.gh` replaces the review step's gh (pr, comments, post, edit) and `deps.repo` the origin, in tests.
+// `deps.gh` replaces the review step's gh (pr, comments, post, edit, viewer) and `deps.repo` the origin, in tests.
 export async function runExtend(args, project, config, deps = {}) {
   const opts = parseExtend(args);
   const { originRepo } = await import('../review-gate.mjs');
@@ -540,7 +540,7 @@ export async function runExtend(args, project, config, deps = {}) {
     entry = recordHuman(state, { answer: opts.human, by, session: env.CLAUDE_CODE_SESSION_ID || null, current });
   }
   writeLocalState(project, state);
-  const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => gh.post(repo, opts.pr, body), edit: (id, body) => gh.edit(repo, id, body) }, `extension ${entry.status}`) : null;
+  const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => gh.post(repo, opts.pr, body), edit: (id, body) => gh.edit(repo, id, body), viewer: () => gh.viewer() }, `extension ${entry.status}`) : null;
   try {
     appendEvent(project, config, { ...rowOf(entry), ts: stamp(Date.now()), session_id: env.CLAUDE_CODE_SESSION_ID || null, pr: opts.pr, repo });
   } catch {}

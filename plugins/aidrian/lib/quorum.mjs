@@ -5,6 +5,7 @@
 //           CASE_SCHEMA (`--mode case`), to CROSS_SCHEMA and a decide ledger (`--mode cross`), or, to answer the
 //           architect's rulings in a ledger, to REBUTTALS_SCHEMA or DECIDE_REBUTTAL_SCHEMA by that ledger's mode
 //           (`--mode rebut`), and prints one { status, reason } line
+//   premise checks the citations of a product framer's open: false answer, which ends a run before any ledger.
 //   check   checks every citation of a ledger against the repository and the plan (the question file in decide mode),
 //           relabels a `pending` objection or cross point by whether a citation passes, removes a note with none, and
 //           names each ruling or rebuttal with no passing citation; on a ledger that carries `mode`, also the judge's
@@ -322,6 +323,99 @@ export const DECIDE_LEDGER_SCHEMA = Object.freeze({
   },
 });
 
+// A product-mode cross point comes from a griller, U for UX or E for the engineer, so its ids are U1 to E5.
+export const PRODUCT_CROSS_ID = /^[UE][1-5]$/u;
+// A run's dispatches with no loop, and what each loop may add: an interview or a reshape, two grills, a draft, a walkthrough, and a new ruling.
+export const PRODUCT_DISPATCHES = 10;
+export const PRODUCT_LOOP_DISPATCHES = 6;
+export const MAX_PRODUCT_POSITIONS = 3;
+
+// The product ledger: a decide ledger with no rebuttal round, plus the premise check, the end user's interview and walkthrough, and what
+// the ruling leaves behind. Its ruling is a recommendation: only `human_answer` settles it. See modes/product.md.
+export const PRODUCT_LEDGER_SCHEMA = Object.freeze({
+  type: 'object',
+  additionalProperties: false,
+  required: ['mode', 'status', 'plan', 'plan_hash', 'same_model', 'same_model_reason', 'trigger', 'premise', 'trace', 'persona_docs', 'positions', 'witness', 'draft', 'loops', 'cases', 'cross', 'ruling', 'outcome', 'human_answer'],
+  properties: {
+    mode: { type: 'string', enum: ['product'] },
+    status: DECIDE_LEDGER_SCHEMA.properties.status,
+    plan: { type: 'string' },
+    plan_hash: { type: 'string' },
+    same_model: { type: 'boolean' },
+    same_model_reason: { type: ['string', 'null'] },
+    trigger: { type: 'string' },
+    premise: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['summary', 'citations'],
+      properties: { summary: { type: 'string' }, citations: CITATIONS },
+    },
+    trace: { type: 'string' },
+    persona_docs: { type: 'array', items: { type: 'string' } },
+    positions: DECIDE_LEDGER_SCHEMA.properties.positions,
+    witness: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      required: ['persona', 'interview', 'walkthrough'],
+      properties: {
+        persona: { type: 'string' },
+        interview: {
+          type: 'array',
+          maxItems: 5,
+          items: { type: 'object', additionalProperties: false, required: ['question', 'answer'], properties: { question: { type: 'string' }, answer: { type: 'string' } } },
+        },
+        walkthrough: { type: ['string', 'null'] },
+      },
+    },
+    draft: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      required: ['winner', 'reason', 'walkthrough'],
+      properties: { winner: { type: 'string', enum: POSITION_IDS }, reason: { type: 'string' }, walkthrough: { type: 'string' } },
+    },
+    loops: {
+      type: 'array',
+      items: { type: 'object', additionalProperties: false, required: ['back_to', 'reason'], properties: { back_to: { type: 'string', enum: ['interview', 'shape', 'grill'] }, reason: { type: 'string' } } },
+    },
+    cases: DECIDE_LEDGER_SCHEMA.properties.cases,
+    cross: {
+      type: 'array',
+      maxItems: 10,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['id', 'by', 'against', 'claim', 'citations', 'status'],
+        properties: {
+          id: { type: 'string' },
+          by: { type: 'string', enum: ['U', 'E'] },
+          against: { type: 'string', enum: POSITION_IDS },
+          claim: { type: 'string' },
+          citations: CITATIONS,
+          status: { type: 'string', enum: CROSS_STATUSES },
+        },
+      },
+    },
+    ruling: DECIDE_RULING,
+    outcome: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      required: ['conditions', 'flips_if', 'disputes'],
+      properties: {
+        conditions: { type: 'array', items: { type: 'string' } },
+        flips_if: {
+          type: 'array',
+          items: { type: 'object', additionalProperties: false, required: ['fact', 'how_to_settle'], properties: { fact: { type: 'string' }, how_to_settle: { type: 'string' } } },
+        },
+        disputes: {
+          type: 'array',
+          items: { type: 'object', additionalProperties: false, required: ['topic', 'owner'], properties: { topic: { type: 'string' }, owner: { type: 'string' } } },
+        },
+      },
+    },
+    human_answer: { type: ['string', 'null'] },
+  },
+});
+
 // What a position run on Codex answers in decide mode: its opening case, its cross-examination points, and its
 // rebuttal or concession of the first ruling. Each is the ledger entry without the fields the coordinator writes.
 const claimOf = (extra = {}) => ({
@@ -345,7 +439,7 @@ export const DECIDE_REBUTTAL_SCHEMA = Object.freeze({
 });
 
 // The ledger schema of each mode. A ledger with no `mode` is a plan-mode ledger under the rules it was written with.
-export const LEDGER_SCHEMAS = Object.freeze({ plan: LEDGER_SCHEMA, decide: DECIDE_LEDGER_SCHEMA });
+export const LEDGER_SCHEMAS = Object.freeze({ plan: LEDGER_SCHEMA, decide: DECIDE_LEDGER_SCHEMA, product: PRODUCT_LEDGER_SCHEMA });
 export const modeOf = (ledger) => (isObject(ledger) ? ledger.mode ?? 'plan' : 'plan');
 // The schema a ledger is held to; a mode with no schema is held to the plan schema, whose `mode` enum refuses it.
 const schemaOf = (ledger) => {
@@ -549,7 +643,7 @@ export function idProblems(ledger) {
 // when they do, as its `positions` show; a plan ledger with `runners` why A and B share a runner exactly when they do;
 // and a plan ledger without it, written before `runners`, why B ran as an agent, which it cannot show.
 export function sameModelProblems(ledger) {
-  const decide = modeOf(ledger) === 'decide';
+  const decide = ['decide', 'product'].includes(modeOf(ledger));
   const runners = !decide && isObject(ledger.runners) ? ledger.runners : null;
   if (decide) {
     const ran = ledger.positions.map((position) => position.runner);
@@ -1021,6 +1115,77 @@ export function checkDecideLedger(ledger, ctx) {
   return { ledger, problems, escapes, stale };
 }
 
+// A product ledger as the decide rules see it: no rebuttal round, and no final ruling.
+const decideView = (ledger) => ({ ...ledger, rebuttals: [], final_ruling: null });
+
+// Why a product ledger does not fit, as lines that stop the check: the decide id rules on its positions, cases, and
+// ruling; at most three positions; griller points U1 to E5, each once, by the id's letter, against a position; a draft
+// for a position; an outcome only with a rule; and a Human answer only to a ruling. A complete ledger has a
+// case per position, a ruling, and, on a rule, an outcome. Its ruling never stands without `human_answer`, so an
+// unanswered one is complete and deferred.
+export function productProblems(ledger, maxLoops = MAX_PLAN_OBJECTIONS) {
+  const problems = decideIdProblems({ ...decideView(ledger), cross: [], human_answer: null });
+  if (ledger.positions.length > MAX_PRODUCT_POSITIONS) problems.push(`product mode holds at most ${MAX_PRODUCT_POSITIONS} positions, not ${ledger.positions.length}`);
+  const known = new Set(ledger.positions.map(({ id }) => id));
+  const seen = new Set();
+  for (const point of ledger.cross) {
+    if (!PRODUCT_CROSS_ID.test(point.id)) problems.push(`cross id "${shown(point.id)}" is not U1 to U5 or E1 to E5`);
+    else if (seen.has(point.id)) problems.push(`cross id ${point.id} is used more than once`);
+    seen.add(point.id);
+    if (point.by !== point.id[0]) problems.push(`cross ${shown(point.id)} is by ${point.by}, not ${shown(point.id[0])}`);
+    if (!known.has(point.against)) problems.push(`cross ${shown(point.id)} is against ${point.against}, not a position in this ledger`);
+  }
+  if (ledger.premise.citations.some(({ kind }) => kind === 'plan')) problems.push('premise cites the question file, which only repeats it');
+  const persona = ledger.witness?.persona;
+  if (persona !== undefined && (path.isAbsolute(persona) || path.normalize(persona).startsWith('..'))) problems.push(`witness.persona "${shown(persona)}" is not a path inside the repository`);
+  if (ledger.loops.length > maxLoops) problems.push(`loops: ${ledger.loops.length}, more than the ${maxLoops} allowed`);
+  if (ledger.witness === null && ledger.loops.some(({ back_to }) => back_to === 'interview')) problems.push('loops: back to an interview, but no end user took part');
+  if (ledger.draft && !known.has(ledger.draft.winner)) problems.push(`draft names ${ledger.draft.winner}, not a position in this ledger`);
+  if (ledger.outcome !== null && ledger.ruling?.decision !== 'rule') problems.push('outcome: set but no ruling rules');
+  if (ledger.human_answer !== null && ledger.ruling === null) problems.push('human_answer: set but nothing was ruled');
+  if (ledger.status === 'complete') {
+    const cased = new Set(ledger.cases.map(({ position }) => position));
+    for (const id of known) if (!cased.has(id)) problems.push(`position ${id} has no case in a complete ledger`);
+    if (ledger.ruling === null) problems.push('ruling is null in a complete ledger');
+    if (ledger.ruling?.decision === 'rule' && ledger.outcome === null) problems.push('outcome is null under a rule in a complete ledger');
+  }
+  return problems;
+}
+
+// Checks a product ledger in place: the decide checks with no rebuttal round; the premise needs a passing citation;
+// and a persona is a hypothesis, so a rule whose winner rests only on the persona's own doc goes back.
+export function checkProductLedger(ledger, ctx) {
+  const { problems, escapes, stale: decideStale } = checkDecideLedger(decideView(ledger), ctx);
+  // The Human's answer settles a product ledger, and acting on it often changes the code a case quoted.
+  const stale = ledger.human_answer === null ? decideStale : [];
+  const complete = ledger.status === 'complete';
+  const invalid = (line) => {
+    problems.push(line);
+    if (complete && ledger.human_answer === null) stale.push(line);
+  };
+  if (!passing(ledger.premise.citations, 'premise', ctx, problems, escapes).length) invalid('premise: invalid: no citation passes');
+  const personas = [...ledger.persona_docs, ...(ledger.witness ? [ledger.witness.persona] : [])].map((doc) => path.normalize(doc));
+  const { ruling } = ledger;
+  if (ruling?.decision === 'rule' && ledger.outcome === null && !complete) problems.push('ruling: invalid: a rule has no outcome');
+  if (personas.length && ruling?.decision === 'rule') {
+    const won = ledger.cases.find(({ position }) => position === ruling.winner);
+    const held = passing(won?.citations ?? [], `case ${ruling.winner}`, ctx, [], []);
+    const backing = ruling.tested
+      .filter((verdict) => verdict.of === ruling.winner && verdict.supports)
+      .map((verdict) => won?.citations[verdict.citation])
+      .filter((citation) => held.includes(citation));
+    if (backing.length && backing.every((citation) => personas.includes(path.normalize(refParts(citation).path ?? '')))) invalid('ruling: invalid: the winner rests only on the persona doc, which is a hypothesis');
+  }
+  // A deferred question must not be asked again on dead evidence, under a rule or an escalation alike.
+  if (complete && ledger.human_answer === null) {
+    // Only a coordinator-written escalate, with no verdicts, keeps the exemption from covering what it rules on.
+    const hasVerdicts = ledger.ruling?.tested.length > 0;
+    const dead = (line) => /citations\[\d+\]/u.test(line) || (line.startsWith('ruling: invalid: ') && (hasVerdicts || !/^ruling: invalid: (?:tested names|inference untested)/u.test(line)));
+    stale.push(...problems.filter((line) => dead(line) && !stale.includes(line)));
+  }
+  return { ledger, problems, escapes, stale };
+}
+
 // Reads a file under the root, or null when it is missing or not a regular file: a FIFO or a device would hang the read.
 const reader = (root) => (file) => {
   try {
@@ -1041,7 +1206,7 @@ export function checkoutTop(cwd) {
 }
 
 // The modes `aidrian quorum roles` resolves.
-export const ROLE_MODES = Object.freeze(['plan', 'decide']);
+export const ROLE_MODES = Object.freeze(['plan', 'decide', 'product']);
 
 // One configured role as the coordinator runs it: on `agent`, its agent and no fallback; on `codex`, no agent and the
 // agent that takes over, with the same brief, when Codex cannot run.
@@ -1057,6 +1222,11 @@ export function quorumRoles(mode, quorum) {
   if (mode === 'plan') {
     const { a, b, maxObjections, maxDispatches } = quorum.plan;
     return { mode, roles: { A: resolved({ provider: 'agent', agent: a.agent }), B: resolved(b) }, judge, caps: { maxObjections, maxDispatches } };
+  }
+  if (mode === 'product') {
+    const { owner, witness, ux, engineer, maxLoops } = quorum.product;
+    const agent = (name) => resolved({ provider: 'agent', agent: name });
+    return { mode, roles: { tracer: agent('code-reviewer'), owner: agent(owner.agent), witness: agent(witness.agent), ux: agent(ux.agent), engineer: agent(engineer.agent) }, judge: { agent: owner.agent }, caps: { maxLoops, maxDispatches: PRODUCT_DISPATCHES + maxLoops * PRODUCT_LOOP_DISPATCHES } };
   }
   const { odd, even, swap } = quorum.decide;
   const runnerOf = (i) => (i % 2 === 0 ? odd : even);
@@ -1103,6 +1273,7 @@ export async function codexAnswer({ plan, brief, out, root, mode = 'object', led
       fits = JSON.parse(readFileSync(ledger, 'utf8'));
       const invalid = schemaProblems(fits, schemaOf(fits));
       if (invalid.length) return { status: 'failed', reason: `the ledger does not follow the schema: ${invalid[0]}` };
+      if (modeOf(fits) === 'product') return { status: 'failed', reason: `--mode ${mode} does not answer a product ledger` };
       const decide = modeOf(fits) === 'decide';
       if (mode === 'cross' && !decide) return { status: 'failed', reason: '--mode cross answers a decide ledger, and this ledger is in plan mode' };
       if (mode === 'rebut' && decide) spec = DECIDE_REBUT;
@@ -1124,7 +1295,7 @@ export async function codexAnswer({ plan, brief, out, root, mode = 'object', led
   }
 }
 
-const USAGE = 'codex --plan PLAN --brief BRIEF --out FILE [--mode object|case] | codex --mode rebut|cross --ledger LEDGER --plan PLAN --brief BRIEF --out FILE | check LEDGER --plan PLAN | roles plan|decide';
+const USAGE = 'codex --plan PLAN --brief BRIEF --out FILE [--mode object|case] | codex --mode rebut|cross --ledger LEDGER --plan PLAN --brief BRIEF --out FILE | check LEDGER --plan PLAN | roles plan|decide|product | premise FILE';
 
 export const commands = {
   quorum: {
@@ -1140,7 +1311,7 @@ export const commands = {
       // key, and exits 1: a run never goes on with defaults the project did not choose.
       const quorum = () => commandConfig(projectAt(cwd)).quorum;
       if (action === 'roles') {
-        if (rest.length !== 1 || !ROLE_MODES.includes(rest[0])) return fail(`roles takes one mode, plan or decide${rest.length ? `, not "${shown(rest.join(' '))}"` : ''}`);
+        if (rest.length !== 1 || !ROLE_MODES.includes(rest[0])) return fail(`roles takes one mode, plan, decide, or product${rest.length ? `, not "${shown(rest.join(' '))}"` : ''}`);
         (deps.print ?? console.log)(JSON.stringify(quorumRoles(rest[0], quorum())));
         return 0;
       }
@@ -1154,6 +1325,28 @@ export const commands = {
         const result = await codexAnswer({ ...values, root }, deps);
         (deps.print ?? console.log)(JSON.stringify({ status: result.status, reason: result.reason }));
         return result.status === 'done' ? 0 : result.status === 'unavailable' ? 3 : 1;
+      }
+      if (action === 'premise') {
+        // Checks a framer's `open: false` answer, which ends a product run before any ledger exists.
+        if (rest.length !== 1) return fail('premise needs one FILE');
+        if (!root) return fail('run it inside a git repository');
+        const print = deps.print ?? console.log;
+        let answer;
+        try {
+          answer = JSON.parse(readFileSync(rest[0], 'utf8'));
+        } catch (error) {
+          return fail(error.message);
+        }
+        const shape = isObject(answer) && answer.open === false ? schemaProblems(answer.premise, PRODUCT_LEDGER_SCHEMA.properties.premise) : ['premise: only an answer with open: false ends a run'];
+        if (shape.length) {
+          for (const problem of shape) print(problem.startsWith('premise') ? problem : `premise: ${problem}`);
+          return 1;
+        }
+        const problems = [];
+        const held = passing(answer.premise.citations, 'premise', { root, plan: '', env, read: reader(root) }, problems, []);
+        for (const problem of problems) print(problem);
+        print(`checked: premise, ${held.length} citations pass, ${problems.length} problems`);
+        return held.length && !problems.length ? 0 : 1;
       }
       if (action === 'check') {
         const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { plan: { type: 'string' } } });
@@ -1172,10 +1365,12 @@ export const commands = {
         // or with the runners, a Human answer that fits no objection, a merge that does not fit, a mode rule broken, or a
         // complete ledger left unfinished stops the check before it writes anything. The ids are checked before any line
         // that prints one. A decide ledger is held to the decide rules only.
+        const product = modeOf(ledger) === 'product';
         const decide = modeOf(ledger) === 'decide';
         const invalid = schemaProblems(ledger, schemaOf(ledger));
-        if (!invalid.length) invalid.push(...(decide ? decideIdProblems(ledger) : idProblems(ledger)));
-        if (!invalid.length) {
+        if (!invalid.length) invalid.push(...(product ? productProblems(ledger, ledger.status === 'open' ? quorum().product.maxLoops : undefined) : decide ? decideIdProblems(ledger) : idProblems(ledger)));
+        if (!invalid.length && product) invalid.push(...sameModelProblems(ledger));
+        else if (!invalid.length) {
           // An open plan ledger that carries `mode` is held to the configured objection cap, so only it reads config.json.
           // A complete one keeps the ceiling: a lower cap set after it finished never voids it and the Human's answers.
           const cap = !decide && carriesMode(ledger) && ledger.status === 'open' ? quorum().plan.maxObjections : MAX_MODE_OBJECTIONS;
@@ -1186,7 +1381,7 @@ export const commands = {
           for (const problem of invalid) console.error(`${file}: ${problem}`);
           return 1;
         }
-        const { problems, escapes, stale } = (decide ? checkDecideLedger : checkLedger)(ledger, { root, plan, env, read: reader(root) });
+        const { problems, escapes, stale } = (product ? checkProductLedger : decide ? checkDecideLedger : checkLedger)(ledger, { root, plan, env, read: reader(root) });
         for (const escape of escapes) console.error(`${file}: warning: ${escape}`);
         // A complete ledger whose rulings lost their evidence is not settled any more: exit 1, unwritten, so it is not reused.
         if (stale.length) {
@@ -1196,9 +1391,9 @@ export const commands = {
         const print = deps.print ?? console.log;
         for (const problem of problems) print(problem);
         writeFileSync(file, `${JSON.stringify(ledger, null, 2)}\n`);
-        if (decide) {
+        if (decide || product) {
           const opinions = ledger.cross.filter((point) => point.status === 'opinion').length;
-          print(`checked: mode decide, ${ledger.cases.length} cases, ${ledger.cross.length} cross points, ${opinions} opinion, ${problems.length} problems`);
+          print(`checked: mode ${ledger.mode}, ${ledger.cases.length} cases, ${ledger.cross.length} cross points, ${opinions} opinion, ${problems.length} problems`);
           return 0;
         }
         const opinions = ledger.objections.filter((objection) => objection.status === 'opinion').length;

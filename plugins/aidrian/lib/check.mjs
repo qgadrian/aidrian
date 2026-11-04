@@ -45,6 +45,8 @@ export const commands = {
       for (const { line, gitignore } of unignored(project, config)) {
         errors.push(`${line} is not git-ignored: add the line "${line}" to ${gitignore}, or run aidrian init`);
       }
+      // A machine opted in under a ceiling the team keeps closed merges nothing: a warning, since the local file is valid.
+      if (project.localAutoMerge === 'on' && !config.github.autoMerge.allow) warnings.push('auto-merge is on locally but the team does not allow it');
       const tags = tagWarnings(buckets);
       // Only a project with no errors: an index problem is an error already, and scanDecisions stops on a bad config.
       const markers = errors.length ? [] : scanDecisions(project).problems.map((each) => `${place(each)}: ${each.problem}`);

@@ -98,11 +98,35 @@ test('a record shaped like a long split review publishes under GitHub`s comment 
   assert.deepEqual(stateFromComment(body, 5970), { failures: {}, overrides: [], ...state });
 });
 
+test('a summary comment counts only when its author is an owner, a member, or a collaborator', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-state-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' } }));
+  const project = projectAt(dir);
+  const remote = { ...emptyState(7, 'o/r'), revision: 12 };
+  const comment = (author_association, id = 1) => ({ id, body: summaryBody(remote, null, 'x'), author_association });
+  for (const association of ['OWNER', 'MEMBER', 'COLLABORATOR']) {
+    assert.equal(readRecord(project, 7, [comment(association)], 'o/r').state.revision, 12, association);
+  }
+  for (const association of ['NONE', 'CONTRIBUTOR', 'FIRST_TIME_CONTRIBUTOR', 'FIRST_TIMER', 'MANNEQUIN', undefined]) {
+    assert.equal(readRecord(project, 7, [comment(association)], 'o/r').state.revision, 0, String(association));
+    const held = { id: 1, author_association: association, body: ['<!-- aidrian-review-summary -->', '<!-- aidrian-review-state-held:9 -->'].join('\n') };
+    assert.equal(readRecord(project, 7, [held], 'o/r').held, undefined, `${association}: a stranger cannot stop a review with a held marker`);
+  }
+  assert.equal(readRecord(project, 7, [comment('MEMBER'), { ...comment('NONE', 2), body: summaryBody({ ...remote, revision: 99 }, null, 'x') }], 'o/r').state.revision, 12, 'a later stranger hides nothing');
+
+  const posted = [];
+  const stranger = [comment('NONE')];
+  assert.equal(publishState(remote, { comments: () => stranger, post: (body) => posted.push(body), edit: () => assert.fail('a stranger\'s comment is never edited') }, 'x'), null);
+  assert.equal(posted.length, 1);
+});
+
 test('an old-marker comment still reads, and is rewritten in place with one compressed record and no old marker', () => {
   const state = { ...emptyState(7, 'o/r'), revision: 3, rounds: [{ head: 'abc1234' }] };
   const old = ['<!-- aidrian-review-summary -->', '### Review: fix_required', '', 'A citation shows the cited line exists.', `<!-- aidrian-review-state:${Buffer.from(JSON.stringify(state)).toString('base64')} -->`].join('\n');
   assert.equal(stateFromComment(old, 7).revision, 3);
-  const comments = [{ id: 1, body: old }];
+  const comments = [{ id: 1, body: old, author_association: 'MEMBER' }];
   const error = publishState({ ...state, revision: 4 }, { comments: () => comments, post: () => assert.fail('the comment is edited'), edit: (id, body) => (comments[id - 1].body = body) }, 'x');
   assert.equal(error, null);
   assert.equal(records(comments[0].body), 1);
@@ -139,7 +163,7 @@ test('a record too large even compressed is held: the table, the held line and m
   assert.ok(held.includes(HELD_LINE));
   assert.match(held, /\| engine:codex-local \| `h` \| 1 \| 1 \|/u, 'the table a person reads is still there');
 
-  const comments = [{ id: 1, body: held }];
+  const comments = [{ id: 1, body: held, author_association: 'MEMBER' }];
   const io = { comments: () => comments, post: () => assert.fail('the comment is edited'), edit: (id, body) => (comments[id - 1].body = body) };
   assert.equal(publishState({ ...big, revision: 10 }, io, 'x'), null);
   assert.equal(heldRevision(comments[0].body), 10, 'still too large: held at the new revision');
@@ -161,7 +185,7 @@ test('readRecord: a held comment stops a machine whose record is missing or olde
   mkdirSync(path.join(dir, '.aidrian'));
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' } }));
   const project = projectAt(dir);
-  const comment = (revision) => [{ id: 1, body: ['<!-- aidrian-review-summary -->', '### Review: x', HELD_LINE, `<!-- aidrian-review-state-held:${revision} -->`].join('\n') }];
+  const comment = (revision) => [{ id: 1, body: ['<!-- aidrian-review-summary -->', '### Review: x', HELD_LINE, `<!-- aidrian-review-state-held:${revision} -->`].join('\n'), author_association: 'MEMBER' }];
 
   assert.deepEqual(readRecord(project, 7, comment(3), 'o/r'), { held: 3 }, 'no local record');
   const local = { ...emptyState(7, 'o/r'), revision: 1 };
@@ -194,4 +218,67 @@ test('the visible summary is bounded: a 100,000-character visual reason is clipp
   assert.ok(stateFromComment(compressible, 7), 'a reason that compresses keeps the record');
   const incompressible = summaryBody({ ...emptyState(7, 'o/r'), visual: { head: 'a', status: 'failed', reason: noise(next, 100_000), mode: 'none' } }, null, 'x');
   assert.equal(heldRevision(incompressible), 0, 'one that does not is held');
+});
+
+test('a non-member\'s repeated writes edit their own summary comment, which still supplies no record', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-state-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' } }));
+  const project = projectAt(dir);
+  const state = (revision) => ({ ...emptyState(7, 'o/r'), revision });
+  const summary = (id, login, author_association, revision = 1) => ({ id, user: { login }, author_association, body: summaryBody(state(revision), null, 'x') });
+  const io = (comments, viewer) => ({
+    comments: () => comments,
+    post: (body) => comments.push({ id: comments.length + 100, user: { login: 'fork' }, author_association: 'CONTRIBUTOR', body }),
+    edit: (id, body) => (comments.find((comment) => comment.id === id).body = body),
+    viewer,
+  });
+
+  const own = [];
+  for (const revision of [1, 2, 3, 4]) assert.equal(publishState(state(revision), io(own, () => 'fork'), 'x'), null);
+  assert.equal(own.length, 1, 'four writes leave one comment');
+  assert.equal(stateFromComment(own[0].body, 7).revision, 4);
+  assert.equal(readRecord(project, 7, own, 'o/r').state.revision, 0, 'it still supplies no record');
+
+  // Someone else's summary comment is never edited, a member's or a stranger's, whichever came last.
+  const mixed = [summary(1, 'fork', 'CONTRIBUTOR'), summary(2, 'mallory', 'NONE'), summary(3, 'maintainer', 'MEMBER', 12)];
+  const others = [mixed[1].body, mixed[2].body];
+  assert.equal(publishState(state(5), io(mixed, () => 'fork'), 'x'), null);
+  assert.deepEqual([mixed.length, stateFromComment(mixed[0].body, 7).revision, mixed[1].body, mixed[2].body], [3, 5, ...others]);
+  assert.equal(readRecord(project, 7, mixed, 'o/r').state.revision, 12, 'readers still take the member\'s');
+
+  // A login that cannot be read posts a new comment, even with the user's own comment there.
+  for (const viewer of [() => { throw new Error('HTTP 401'); }, () => null, () => '', undefined]) {
+    const unknown = [summary(1, 'fork', 'CONTRIBUTOR')];
+    const before = unknown[0].body;
+    assert.equal(publishState(state(2), io(unknown, viewer), 'x'), null);
+    assert.deepEqual([unknown.length, unknown[0].body], [2, before], String(viewer));
+  }
+
+  // A non-member with no comment of their own posts when GitHub refuses the member's; then edits their own. Other errors report.
+  const refused = [summary(1, 'maintainer', 'MEMBER', 12)];
+  const memberBody = refused[0].body;
+  const refusing = { ...io(refused, () => 'fork'), edit: (id, body) => {
+    if (id === 1) throw new Error('gh: Must have admin rights to Repository. (HTTP 403)');
+    refused.find((comment) => comment.id === id).body = body;
+  } };
+  assert.equal(publishState(state(2), refusing, 'x'), null);
+  assert.deepEqual([refused.length, refused[0].body], [2, memberBody]);
+  assert.equal(publishState(state(3), refusing, 'x'), null);
+  assert.deepEqual([refused.length, stateFromComment(refused[1].body, 7).revision], [2, 3]);
+  const outage = [summary(1, 'maintainer', 'MEMBER')];
+  assert.match(publishState(state(2), { ...io(outage, () => 'me'), edit: () => { throw new Error('HTTP 502'); } }, 'x'), /HTTP 502/u);
+  assert.equal(outage.length, 1);
+  const quoted = new Error('Command failed: gh api -f body=the bot said (HTTP 403)\ngh: Bad Gateway (HTTP 502)\n');
+  assert.match(publishState(state(2), { ...io(outage, () => 'me'), edit: () => { throw quoted; } }, 'x'), /HTTP 502/u);
+  assert.equal(outage.length, 1, 'a status the body only quotes posts nothing');
+
+  // A member's write keeps the one comment readers take, and asks gh nothing with no non-member's summary comment there.
+  const members = [summary(1, 'other-member', 'MEMBER')];
+  assert.equal(publishState(state(2), io(members, () => assert.fail('no login is read')), 'x'), null);
+  assert.deepEqual([members.length, stateFromComment(members[0].body, 7).revision], [1, 2]);
+  const member = [summary(1, 'other-member', 'MEMBER'), summary(2, 'mallory', 'NONE')];
+  assert.equal(publishState(state(2), io(member, () => 'me'), 'x'), null);
+  assert.deepEqual([member.length, stateFromComment(member[0].body, 7).revision, stateFromComment(member[1].body, 7).revision], [2, 2, 1]);
 });

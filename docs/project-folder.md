@@ -12,7 +12,7 @@ Task worktrees go in `.worktrees/` at the repository root, which git ignores.
 
 ```text
 .aidrian.json                    names another folder as the project folder (optional, committed)
-.aidrian.local.json              adds knowledge sources, model choices, names, telemetry settings, agent gates, and the auto-merge opt-in on one machine (optional, git-ignored)
+.aidrian.local.json              adds knowledge sources, model choices, names, telemetry settings, agent gates, decisions, and the auto-merge opt-in on one machine (optional, git-ignored)
 .worktrees/                      task worktrees, one folder per branch (git-ignored)
 .aidrian/
 ├── config.json                  the folder version and the project settings (committed)
@@ -376,7 +376,9 @@ without committing it. List the folders in `.aidrian.local.json` at the project 
 
 `aidrian init` adds the file to `.gitignore`, so it stays on one machine. In a git worktree, the plugin reads it from the main checkout.
 The same file can hold one developer's model and effort choices for the plugin's agents, [config.md](config.md#models),
-the [names](config.md#names) agents use for that developer and for themselves, and the [telemetry](config.md#telemetry) settings.
+the [names](config.md#names) agents use for that developer and for themselves, the [telemetry](config.md#telemetry) settings,
+and the [`decisions`](config.md#decisions) keys `mode`, `domains`, and `unreviewed`, which the team's `maxMode` and pause limits hold down.
+`decisions` is read only from the main checkout's copy.
 
 - A leading `~` is the home folder. Any other relative path starts at the folder that holds `.aidrian.local.json`.
 - Each source is a folder with the project folder's knowledge layout: `knowledge/<bucket-id>.json`, and optionally a `config.json`
@@ -396,6 +398,127 @@ docs/knowledge/engineering/working-agreement.md
 docs/knowledge/engineering/testing.md
 /home/you/kb/personal/notes/testing-habits.md	~/kb/personal
 ```
+
+## Decision markers
+
+A decision an agent made alone, under [`decisions`](config.md#decisions), stays on record in git, in the indexed knowledge doc that governs it.
+It is one HTML comment on a line of its own, directly below the rule's last line, the one place undo looks for that rule.
+A rule ending in a code block takes its marker directly below the closing fence.
+A table row's marker goes directly below the table, with the row as its old and new wording. Under a bullet, the marker is indented to the bullet's text.
+
+Every decision records the wording it wrote, in `decision-new` lines directly below the marker, so undo can find exactly that text.
+A decision that replaces a written rule also keeps the old wording, in `decision-old` lines above them. One that fills a gap has no such line:
+
+```md
+Refunds take five days.
+<!-- aidrian:decision id=refund-copy status=unconfirmed class=copy domain=ux date=2026-11-04 pr=41 -->
+<!-- aidrian:decision-old id=refund-copy text="Refunds take ten days.\nAsk support first." -->
+<!-- aidrian:decision-new id=refund-copy text="Refunds take five days." -->
+```
+
+- `id` is lowercase letters, digits, and `-`, unique across the docs.
+  It takes at most 32 characters, so the longest marker fits on one screen at the default `docs.wrapLimit`.
+- `status` is `unconfirmed`, `confirmed`, or `rejected`. An agent writes `unconfirmed`; only the Human moves it, and nothing settles a decision by time.
+- `class` is an ordinary class of `lib/decisions.json` or of [`decisions.classes`](config.md#project-classes), since a floor class never reaches an agent.
+- `domain` is `product`, `ux`, `architecture`, or `backlog`.
+- `pr` is `none` until the pull request exists; a writer on a branch whose pull request already exists writes the real number.
+  The [`pr-write`](../plugins/aidrian/skills/pr-write/SKILL.md) skill has `doc-updater` write the number on each marker the branch added with `none`, commit, and push.
+  That push moves the head, so it comes before the review of the new head, or the report says it did not.
+
+The slice's implementer writes the marker in its commit; else `doc-updater`.
+The dispatcher gives the writer the decision, its domain, and the doc that governs it.
+`product-manager` and `architect` decide, and neither writes.
+[`decisions.md`](../plugins/aidrian/skills/knowledge/references/decisions.md) is the rule they follow.
+
+`text` is a JSON string holding the lines exactly as in the doc, indentation and any fence lines included, so a line break or a quote stays on one line.
+`-->` would end the comment, so it is written `-\u002d>`.
+Wording may span several `decision-old` or `decision-new` lines, one piece each, joined with nothing between them.
+The [line-length check](hooks.md#markdown-line-length) skips marker and wording lines, since wrapping one would break it.
+
+A later decision on the same rule makes a stack: its lines go directly below the earlier decision's, oldest nearest the rule.
+Its old wording is the new wording of the marker above it, which makes the two a chain.
+Decisions on different rows of one table share the lines below that table with no chain between them.
+A stack is independent when it holds two chains or more, a lone marker counting as one, and the last marker of each has new wording
+that stands exactly once in the block, on lines no other takes, with every decision line of the stack readable.
+A gap-fill starts a chain of its own.
+
+`aidrian decisions list` reads the indexed docs of the working copy, so a decision on an unmerged branch lists only on that branch.
+Each row is the id, status, class, domain, age, doc and line, pull request, and whether it has old and new wording.
+`--json` adds the date, the wording, and `through`, the decision's last line:
+
+```json
+{ "decisions": [{ "id": "", "status": "", "class": "", "domain": "", "date": "", "pr": 41, "line": 2, "through": 4, "hasOldWording": true, "oldWording": "", "hasNewWording": true, "newWording": "", "doc": "", "ageDays": 0 }],
+  "problems": [{ "doc": "", "line": 2, "problem": "" }],
+  "notes": [] }
+```
+
+A marker it cannot read, or an id on two markers, is a `problem` and the list goes on, with exit 0.
+So is a marker out of place, which still lists: one inside a table, or one that, past the decision lines of its stack,
+is on a doc's first line or under a blank line or a heading.
+So is a marker with no `decision-new` line, and an old wording line below a new one.
+`hasOldWording` true with `oldWording` null means the old wording cannot be read, and `hasNewWording` true with `newWording` null the same of the new.
+Two more problems compare the wording with the doc.
+An unconfirmed marker at the bottom of its stack has drifted when its new wording is not in its block exactly once.
+A confirmed marker is exempt, since the Human may reword what they kept.
+A rejected marker is exempt too: `set rejected` changes no wording, so a later hand edit is expected.
+And in any stack that is not independent, each marker's old wording must be the new wording of the marker above it.
+A marker in a code fence or a code span is a quote, not a decision.
+A doc from a [local source](#local-knowledge-sources) lists too, but no other machine sees it, so markers belong in committed docs.
+A marker in a tracked Markdown file no index lists is a `problem` with its doc and line: it counts toward the
+[domain pause](config.md#decisions), and `set` and `undo` read only indexed docs, so move it to an indexed doc, or index its doc.
+A doc reached through a symlink is the file it reaches. At `--added-since` a doc indexed through a symlink is not read,
+and a new marker in it reports as stray. When `git grep` fails in a checkout, the list says those markers could not be scanned,
+as a `note` row, or in `notes` in the JSON, and still exits 0.
+`aidrian check` warns about each problem, and still passes.
+
+`aidrian decisions list --added-since <ref>` lists what the branch committed since it left `<ref>`, read from git at the merge base and at `HEAD`:
+`decisions`, `settled`, and `removed` are the branch's; `problems` may also hold rows marked `inherited`.
+A decision counts when no marker at the merge base has its id, whatever its status and however it is indented,
+so a moved marker or a changed status does not.
+A problem the merge base already has, the same text on the same line, stays in the list, marked `inherited: true`, and its row ends in `inherited`.
+A change to a valid `status` or `pr` alone does not make a line new, and an invalid value does.
+So a branch that rewords an inherited rule sees the drift as its own.
+A new decision in a Markdown file no index lists is a `problem`: markers belong in an indexed doc.
+Its JSON adds `settled`, each inherited marker whose status the branch changed, with `was`, the status at the merge base.
+`removed` holds each id at the merge base that no indexed doc at `HEAD` holds, such as one undone, with its `status` and `doc` there.
+A marker the merge base held in an unindexed file, which `HEAD` still holds in that file, is not `removed`.
+It also adds `pullRequest`, the branch's number from `gh`; `null` means no pull request, or `gh` could not say.
+With a number, a new marker still at `pr=none` is a `problem`.
+It adds `queue` too: [`decisions.record.queue`](config.md#recording-decisions) from the base branch, never the working copy.
+It exits 1 when git cannot compare the two.
+A repository with no project folder holds no markers: it prints the empty result and exits 0, and still exits 1 when git cannot compare the two.
+
+`aidrian decisions set <id> confirmed|changed|rejected` rewrites only that marker's `status`, every other byte as it was, and leaves the old wording in place.
+`changed` writes `confirmed`, for wording the Human replaced, and the [dispatch log](dispatch-log.md#decision_confirmed-and-decision_overridden-when-the-human-answers) counts it as an override.
+It changes the working copy, so run it in a task worktree and commit the change. It refuses an unknown id, an unreadable marker, and an id on two markers.
+With [`git.mainCheckout.guard`](hooks.md#main-checkout) on, it refuses a tracked doc in the main checkout, as an edit is refused,
+under the same `AIDRIAN_ALLOW_MAIN_WRITE=1` and `allowWrites`.
+
+`aidrian decisions undo <id>` takes a decision back in the working copy, guarded and run as `set` is.
+It finds the new wording in the marker's block, replaces it with the old wording, or deletes it when there is none.
+Then it removes the marker and its wording lines.
+Every other byte stays as it was; when removal leaves two adjacent blank lines, one stays. It prints the doc and the lines replaced or removed.
+The block runs up from the marker, past the decision lines of its stack,
+to a blank line outside a fence, a heading, another decision line, or the doc's start.
+Fenced lines are part of it. Lines compare with trailing whitespace trimmed and nothing else.
+Status is no gate, and `set rejected` keeps its meaning: it records the answer and changes no wording.
+
+Only the bottom marker of a chain can be undone, so a chain goes back bottom up, to the original wording.
+In an independent stack, the bottom marker of each chain can be undone on its own, in any order.
+A stack that is neither one chain nor independent cannot be undone until its lines are fixed.
+Undo refuses, exits 1, and writes nothing, whenever it cannot do this safely.
+For an unknown id it prints the reason alone.
+For a marker that does not parse, or one in a file no index lists, it prints the reason, the raw wording lines, and the block.
+Otherwise it prints the reason, both wordings, and the block, for: an id on two markers; any other problem on the marker's own lines;
+a decision line directly below the marker, a later decision or one it cannot read, such as an unterminated comment or a marker on a prose line,
+since only the bottom of a chain can go back; a decision line directly above whose new wording is not this marker's old wording, or cannot be read;
+new wording not found in the block, or found more than once; and a doc that is not valid UTF-8.
+In an independent stack, a readable decision directly below or above that does not chain to this marker is no refusal.
+
+The [`decisions-set` rule](hooks.md#bash-rules) denies both commands to a subagent: the main session runs them on the Human's word.
+The [`decision-review`](../plugins/aidrian/skills/decision-review/SKILL.md) skill goes through the unconfirmed decisions with the Human, in a batch.
+
+Markers count toward the [knowledge budgets](config.md#knowledge-budgets), as any line of a doc does.
 
 ## Migrating
 

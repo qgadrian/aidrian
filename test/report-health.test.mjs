@@ -118,7 +118,7 @@ test('summarizeHealth ranks the problems worst first, each with its value, thres
 test('summarizeHealth: each signal carries its sample, and a part under minSample is not enough data, never a problem', () => {
   const { signals } = mixed();
   assert.deepEqual(Object.fromEntries(Object.entries(signals).map(([name, signal]) => [name, signal.status])), {
-    budget: 'problem', docs: 'problem', agents: 'problem', reviews: 'problem', drafts: 'not_enough_data', denies: 'problem', cost: 'problem',
+    budget: 'problem', docs: 'problem', agents: 'problem', reviews: 'problem', drafts: 'not_enough_data', denies: 'problem', decisions: 'not_enough_data', cost: 'problem',
     lessons: 'problem',
   });
   assert.deepEqual(signals.agents.agents.map((agent) => [agent.agent_type, agent.redispatch, agent.sent_back]), [
@@ -139,7 +139,7 @@ test('summarizeHealth: every signal says not enough data, or unavailable, with n
   assert.deepEqual(health.problems, []);
   assert.deepEqual(Object.fromEntries(Object.entries(health.signals).map(([name, signal]) => [name, signal.status])), {
     budget: 'not_enough_data', docs: 'not_enough_data', agents: 'not_enough_data', reviews: 'unavailable', drafts: 'not_enough_data',
-    denies: 'not_enough_data', cost: 'not_enough_data', lessons: 'ok',
+    denies: 'not_enough_data', decisions: 'not_enough_data', cost: 'not_enough_data', lessons: 'ok',
   });
   assert.equal(health.signals.reviews.error, 'gh: not found');
   assert.match(formatHealth(health, { file: 'log', since: '30d' }), /Reviews: unavailable; gh could not read the pull requests/);
@@ -355,6 +355,7 @@ test('formatHealth prints the problems worst first, then each signal with its sa
     '  Reviews: problem; 3.5 rounds a pull request (n=6 reviewed, threshold 3); late findings not enough data (n=2, needs 5 checked)',
     '  Drafts: not enough data; no orchestrator or autopilot session opened a draft pull request',
     '  Hook denies: problem (n=12 sessions); 7 blocks: git-amend 6, process-kill 1 (5 or more by one rule is a hot spot)',
+    '  Decisions: not enough data (n=0, needs 5 reviewed); 0 made alone, 0 escalated (20% overridden or more is a problem)',
     '  Session cost: problem (n=6 sessions a half); 12 sessions, $19.00; $2.17 a session in the newer half against $1.00, up 117% (threshold 50%)',
     '  Lessons: problem; 3 open, 1 P1, the oldest 20 days; 1 fix in the window, 1 recurred',
   ].join('\n'));
@@ -372,6 +373,7 @@ test('formatHealth with no data says so on every signal', () => {
     '  Reviews: unavailable; gh could not read the pull requests: no GitHub remote, or gh is missing or not signed in (--json has its error)',
     '  Drafts: not enough data; no orchestrator or autopilot session opened a draft pull request',
     '  Hook denies: not enough data (n=0, needs 5 sessions); 0 blocks (5 or more by one rule is a hot spot)',
+    '  Decisions: not enough data (n=0, needs 5 reviewed); 0 made alone, 0 escalated (20% overridden or more is a problem)',
     '  Session cost: not enough data (n=0, needs 5 sessions a half); 0 sessions, $0.00',
     '  Lessons: ok; 0 open, 0 P1; 0 fixes in the window, 0 recurred',
   ].join('\n'));
@@ -385,6 +387,72 @@ test('formatHealth says reviews were not read when none were asked for, and the 
   } });
   assert.equal(failed.signals.reviews.error, 'Command failed: gh pr list --state merged --limit 20 --json number,reviews');
   assert.doesNotMatch(formatHealth(failed, { file: 'f', since: '30d', skipped: 0 }), /Command failed/);
+});
+
+// The Human's answers: `kept` confirmed, `undone` overridden, each as its own decision.
+const answered = (kept, undone) => [
+  ...Array.from({ length: kept }, (_, i) => ({ event: 'decision_confirmed', ts: at(10), session_id: 's1', id: `kept-${i}`, class: 'copy', domain: 'ux', action: 'confirmed', was: 'unconfirmed' })),
+  ...Array.from({ length: undone }, (_, i) => ({ event: 'decision_overridden', ts: at(10), session_id: 's1', id: `undone-${i}`, class: i ? 'layout' : 'naming', domain: 'ux', action: i % 2 ? 'undo' : 'rejected', was: 'unconfirmed' })),
+];
+const judged = (rows, health) => summarizeHealth({ rows, sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: null, config: configWith(health) });
+const overrideProblem = ({ problems }) => problems.find(({ kind }) => kind === 'decision-override');
+
+test('summarizeHealth ranks the override rate once it reaches its threshold, over at least decisionMinSample reviewed decisions', () => {
+  const reached = judged(answered(4, 1));
+  const problem = overrideProblem(reached);
+  assert.deepEqual([problem.value, problem.threshold, problem.sample, problem.fix, problem.subject], [20, 20, { n: 5, of: 'decisions the Human reviewed' }, 'decision-authority', null], 'reaching it counts');
+  assert.deepEqual(problem.lesson, { tier: 'P2', kind: 'improvement', target: 'project', key: 'health:decision-override' });
+  assert.equal(problem.summary, 'The Human overrode 1 of 5 decisions agents made alone (20%), at or over 20%; most often naming (1).');
+  assert.equal(reached.signals.decisions.status, 'problem');
+
+  assert.equal(judged(answered(3, 1)).signals.decisions.status, 'not_enough_data', '25% of 4 is not judged');
+  assert.equal(overrideProblem(judged(answered(3, 1))), undefined);
+  assert.equal(judged(answered(3, 1), { decisionMinSample: 4 }).signals.decisions.status, 'problem', 'its own minimum, not minSample');
+  assert.equal(judged(answered(3, 1), { minSample: 100, decisionMinSample: 4 }).signals.decisions.status, 'problem');
+  assert.equal(judged(answered(5, 1)).signals.decisions.status, 'ok', '17% is under it');
+  assert.equal(judged(answered(1, 1), { decisionMinSample: 2, decisionOverridePercent: 60 }).signals.decisions.status, 'ok');
+  const near = judged(answered(41, 10));
+  assert.deepEqual([near.signals.decisions.status, near.signals.decisions.percent], ['ok', 19.6], 'unrounded, and printed so it does not read as 20');
+});
+
+test('summarizeHealth counts a change of the agent\'s wording as an override, though its marker reads confirmed', () => {
+  const change = (id, kind) => ({ event: 'decision_overridden', ts: at(10), session_id: 's1', id, class: kind, domain: 'ux', action: 'changed', was: 'unconfirmed' });
+  const health = judged([...answered(3, 0), change('a', 'copy'), change('b', 'layout')]);
+  const { sample, overridden, percent } = health.signals.decisions;
+  assert.deepEqual([sample.n, overridden, percent, health.signals.decisions.status], [5, 2, 40, 'problem']);
+  assert.match(overrideProblem(health).summary, /^The Human overrode 2 of 5 decisions agents made alone \(40%\)/u);
+});
+
+test('summarizeHealth counts one decision once: a repeated resolve by its key, and a decision reviewed twice by its last answer', () => {
+  const asked = (event, key) => ({ event, ts: at(10), session_id: 's1', rule: 'mode', domain: 'ux', class: 'copy', key });
+  const repeats = [asked('decision_made', 'a'), asked('decision_made', 'a'), asked('decision_made', 'b'), asked('decision_escalated', 'c'), asked('decision_escalated', 'c')];
+  const { made, escalated } = judged(repeats).signals.decisions;
+  assert.deepEqual([made, escalated], [2, 1]);
+
+  const review = (event, id, action) => ({ event, ts: at(10), session_id: 's1', id, class: 'copy', domain: 'ux', action, was: 'unconfirmed' });
+  const twice = [...answered(4, 0), review('decision_confirmed', 'x', 'confirmed'), review('decision_overridden', 'x', 'undo'), review('decision_overridden', 'y', 'rejected'), review('decision_confirmed', 'y', 'confirmed'), review('decision_overridden', 'z', 'rejected'), review('decision_overridden', 'z', 'undo')];
+  const { sample, overridden } = judged(twice).signals.decisions;
+  assert.deepEqual([sample.n, overridden], [7, 2], 'x kept then undone, y rejected then kept, z rejected then undone');
+  const old = answered(4, 4).map((row) => ({ ...row, ts: at(24 * 40) }));
+  assert.equal(judged(old).signals.decisions.sample.n, 0, 'older than the window');
+});
+
+test('formatHealth prints the override rate, its sample, and its threshold', () => {
+  const text = formatHealth(judged(answered(3, 2)), { file: 'f', since: '30d', skipped: 0 });
+  assert.match(text, /\n {2}1\. The Human overrode 2 of 5 decisions agents made alone \(40%\), at or over 20%; most often layout \(1\)\. Fix: decision-authority\.\n/u);
+  assert.match(text, /\n {2}Decisions: problem \(n=5 reviewed\); 40% overridden, 0 made alone, 0 escalated \(20% overridden or more is a problem\)\n/u);
+});
+
+test('a resolved override lesson is judged again on the answers after it alone', () => {
+  const resolvedAt = at(5);
+  const { lessons } = fold([
+    { event: 'add', id: 'cccc0001', at: at(100), tier: 'P2', note: 'Too many overrides', key: 'health:decision-override' },
+    { event: 'resolve', id: 'cccc0001', at: resolvedAt, outcome: 'rule', link: 'abc1234' },
+  ]);
+  const health = summarizeHealth({ rows: answered(3, 2), sinceMs: SINCE, now: NOW, knowledge: EMPTY_KNOWLEDGE, reviews: null, lessons, config: configWith() });
+  const problem = overrideProblem(health);
+  assert.equal(problem.resolved.id, 'cccc0001');
+  assert.deepEqual(problem.since_resolution, { n: 0, status: 'not_enough_data' });
 });
 
 test('every fix the report names is a row of the harness-health skill`s fix table, and the table has no other', () => {
@@ -426,6 +494,6 @@ test('aidrian report health prints the page since 30d, --json all of it, takes -
   assert.deepEqual(Object.keys(json), ['file', 'rotated', 'since', 'skipped', 'coverage', 'thresholds', 'problems', 'signals']);
   assert.equal(json.coverage.runs_without_send_back, 1);
   assert.equal(json.since, '7d');
-  assert.deepEqual(Object.keys(json.signals), ['budget', 'docs', 'agents', 'reviews', 'drafts', 'denies', 'cost', 'lessons']);
+  assert.deepEqual(Object.keys(json.signals), ['budget', 'docs', 'agents', 'reviews', 'drafts', 'denies', 'decisions', 'cost', 'lessons']);
   assert.equal(json.signals.reviews.rounds.n, 0);
 });

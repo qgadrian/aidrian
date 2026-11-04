@@ -1,5 +1,6 @@
 // The dispatch log: `dispatch-log.jsonl` in the state folder, one row per subagent dispatch, per subagent stop, per
-// session end, and per block by one of the plugin's own hooks, appended unless config.json `telemetry` turns them off;
+// session end, per block by one of the plugin's own hooks, and per answer of `aidrian decisions`, appended unless
+// config.json `telemetry` turns them off;
 // `aidrian report` reads it. A row holds names, counts, durations, costs, and file paths; never a prompt, a command, or
 // tool output. docs/dispatch-log.md describes every field. Row keys are snake_case and config.json keys camelCase:
 // each layer keeps its own convention.

@@ -7,6 +7,8 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { agentNameProblem, ALL, MAIN, patternProblem } from './agent-gates.mjs';
+import { CLASS_MAX, DECISION_DOMAINS, DECISION_MODES, decisionClasses, isClassName, lowerMode, SAFE_DEFAULTS } from './decisions.mjs';
+import { loadTable as dispositionTable } from './finding-disposition.mjs';
 import { isFile, isObject, readJson } from './fs.mjs';
 import { checkLocalReview, checkLocalVisual, checkReview, REVIEW_DEFAULTS } from './review/config.mjs';
 
@@ -38,6 +40,23 @@ const QUORUM_SCHEMA = {
   decide: { odd: QUORUM_RUNNER, even: QUORUM_RUNNER, swap: 'boolean' },
   product: { owner: { agent: 'agentName' }, witness: { agent: 'agentName' }, ux: { agent: 'agentName' }, engineer: { agent: 'agentName' }, maxLoops: 'objectionCap' },
 };
+
+// The keys of the `decisions` group: how far agents may settle product and design decisions (lib/decisions.mjs).
+const DECISIONS_SCHEMA = {
+  mode: 'decisionMode',
+  maxMode: 'decisionMode',
+  domains: Object.fromEntries(DECISION_DOMAINS.map((domain) => [domain, 'domainMode'])),
+  classes: 'projectClasses',
+  escalate: 'decisionClasses',
+  escalateDocs: 'docPaths',
+  unattended: { safeDefaults: 'safeDefaults' },
+  secondLook: 'secondLookOrNull',
+  record: { queue: 'decisionQueue' },
+  unreviewed: { remind: 'remindMode', pauseDomainAt: 'pauseOrNull' },
+};
+
+// The `decisions` keys the local file may set; localDecisions holds each to the team's ceiling.
+const LOCAL_DECISIONS_SCHEMA = { mode: 'decisionMode', domains: DECISIONS_SCHEMA.domains, unreviewed: DECISIONS_SCHEMA.unreviewed };
 
 // The type of every key. A nested object is one group of keys; a project sets any subset of a group.
 const SCHEMA = {
@@ -91,11 +110,14 @@ const SCHEMA = {
       lateFindingPercent: 'percent',
       denyHotSpot: 'positive',
       costRisePercent: 'positive',
+      decisionOverridePercent: 'percent',
+      decisionMinSample: 'positive',
     },
   },
   agents: 'agents',
   requires: { aidrian: 'versionOrNull' },
   quorum: QUORUM_SCHEMA,
+  decisions: DECISIONS_SCHEMA,
   audits: { triage: { issueCreation: 'issueCreationMode', labels: 'auditLabels' } },
 };
 
@@ -148,6 +170,17 @@ const isPattern = (value) => {
     return false;
   }
 };
+// A doc, section, or folder from the project root, as `decisions.escalateDocs` lists them (lib/decisions.mjs).
+const isDocPath = (value) => {
+  if (!isText(value)) return false;
+  const [file, ...section] = value.split('#');
+  if (file === '' || /[*?[\]{}\\]/u.test(file) || path.isAbsolute(file) || file.startsWith('~') || file.split('/').includes('..')) return false;
+  if (section.length && file.endsWith('/')) return false;
+  return path.posix.normalize(file).replace(/\/$/u, '') !== '.';
+};
+// What `decisions.classes` holds: new names only, so a project can neither lift a floor class nor change a built-in's meaning.
+const isProjectClasses = (value) => isObject(value) && Object.entries(value).every(([name, definition]) =>
+  isClassName(name) && !decisionClasses().includes(name) && isText(definition) && !/[\r\n]/u.test(definition));
 const hasOnly = (value, keys) => isObject(value) && Object.keys(value).every((key) => keys.includes(key));
 const TYPES = {
   text: [isText, 'a non-empty string'],
@@ -195,6 +228,35 @@ const TYPES = {
     `a list of labels, each plain or holding ${AUDIT_LABEL_FIELDS.map((f) => `{${f}}`).join(' or ')}, with at least one plain label`,
   ],
   versionOrNull: [(value) => value === null || (typeof value === 'string' && SEMVER.test(value)), 'a plugin version such as "0.17.0", or null'],
+  decisionMode: [(value) => DECISION_MODES.includes(value), '"ask" or "decide-reversible"'],
+  domainMode: [(value) => value === 'inherit' || DECISION_MODES.includes(value), '"ask", "decide-reversible", or "inherit"'],
+  // `group` is the keys beside this one, so an `escalate` entry may name a class of a valid `classes` beside it.
+  decisionClasses: [
+    (value, group) => {
+      const own = isProjectClasses(group?.classes) ? Object.keys(group.classes) : [];
+      return Array.isArray(value) && value.every((kind) => decisionClasses().includes(kind) || own.includes(kind));
+    },
+    'a list of decision classes of lib/decisions.json or decisions.classes, which `aidrian decisions resolve --vocab` lists',
+  ],
+  projectClasses: [
+    (value) => isProjectClasses(value),
+    `an object of new class names, each lowercase letters, digits, and "-", at most ${CLASS_MAX} characters, to a one-line definition; a class of lib/decisions.json cannot be redefined or removed`,
+  ],
+  safeDefaults: [(value) => SAFE_DEFAULTS.includes(value), '"outside-escalated" or "all"'],
+  secondLookOrNull: [
+    (value) => value === null || (hasOnly(value, ['agent', 'minSeverity']) && TYPES.agentName[0](value.agent) && dispositionTable().severities.includes(value.minSeverity)),
+    () => `null, or { "agent": an agent name, "minSeverity": ${oneOf(dispositionTable().severities)} }`,
+  ],
+  docPaths: [
+    (value) => Array.isArray(value) && value.every(isDocPath),
+    'a list of paths from the project root, each a file, a "file#section", or a folder such as "docs/legal/" for everything in it; no glob characters, absolute path, or ".."',
+  ],
+  decisionQueue: [(value) => ['pr-body', 'report'].includes(value), '"pr-body" or "report"'],
+  remindMode: [(value) => ['session-start', 'off'].includes(value), '"session-start" or "off"'],
+  pauseOrNull: [
+    (value) => value === null || (hasOnly(value, ['pending', 'oldestDays']) && [value.pending, value.oldestDays].every((n) => Number.isInteger(n) && n > 0)),
+    'null, or { "pending", "oldestDays" }, each a whole number above 0',
+  ],
 };
 
 // `state.dir: null` is the per-project folder under `$XDG_STATE_HOME` (lib/project.mjs). Task worktrees sit beside the
@@ -270,6 +332,9 @@ export const DEFAULTS = deepFreeze({
       lateFindingPercent: 50,
       denyHotSpot: 5,
       costRisePercent: 50,
+      // The share of the decisions the Human reviewed that the Human overrode, over decisionMinSample of them.
+      decisionOverridePercent: 20,
+      decisionMinSample: 5,
     },
   },
   agents: {},
@@ -295,6 +360,21 @@ export const DEFAULTS = deepFreeze({
       engineer: { agent: 'architect' },
       maxLoops: 2,
     },
+  },
+  // How far agents may settle product and design decisions (lib/decisions.mjs, docs/config.md#decisions): every
+  // decision goes to the Human, and nothing raises `mode` past `maxMode`, so a team opts in by committing a higher one.
+  decisions: {
+    mode: 'ask',
+    maxMode: 'ask',
+    domains: Object.fromEntries(DECISION_DOMAINS.map((domain) => [domain, 'inherit'])),
+    classes: {},
+    escalate: [],
+    escalateDocs: [],
+    // What an unattended run may settle with a safe default (unattendedAnswer).
+    unattended: { safeDefaults: 'outside-escalated' },
+    secondLook: { agent: 'critic', minSeverity: 'high' },
+    record: { queue: 'pr-body' },
+    unreviewed: { remind: 'session-start', pauseDomainAt: { pending: 10, oldestDays: 7 } },
   },
   // How the persona-audit-triage skill files issues (lib/audits.mjs, docs/personas.md#triage): "confirm" shows each
   // draft and creates nothing before the Human's yes; "auto" creates without asking, for unsupervised runs. Every issue
@@ -331,22 +411,24 @@ export function loadConfig(project) {
   config.reviewEngine = project.localReview === undefined ? 'auto' : checkLocalReview(project.localReview, project.paths.local, errors);
   config.reviewVisual = checkLocalVisual(project.localReview, project.paths.local, errors);
   if (project.localAgents !== undefined) config.agents = checkAgents(project.localAgents, project.paths.local, errors, config.agents, gateErrors);
+  config.decisions = localDecisions(config.decisions, project, errors);
   return { config: deepFreeze(config), errors, gateErrors, current: true };
 }
 
 // The project config as committed at `commit`, with no machine settings: what a pull request cannot change from its
 // own working copy, such as github.maxReviewRounds. A commit with no config, or one that does not parse, gives
-// DEFAULTS; a value that fails its check keeps its default, as loadConfig does.
-export function committedConfig(project, commit) {
+// DEFAULTS; a value that fails its check keeps its default, as loadConfig does, and goes to `errors` when the caller
+// passes that list.
+export function committedConfig(project, commit, errors = []) {
   const shown = spawnSync('git', ['show', `${commit}:${project.paths.config}`], { cwd: project.root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 15_000 });
   if (shown.error || shown.signal) throw new Error(`git show ${commit}:${project.paths.config} failed: ${shown.error?.message ?? shown.signal}`);
-  return configFromText(shown.status === 0 ? shown.stdout : null, project.paths.config);
+  return configFromText(shown.status === 0 ? shown.stdout : null, project.paths.config, errors);
 }
 
 // The project config committed as `text` at `file`, with no machine settings, by committedConfig's rules: null (no file)
-// or text that does not parse gives DEFAULTS, and a value that fails its check keeps its default. For a commit read
-// some other way, such as a base branch read through GitHub.
-export function configFromText(text, file) {
+// or text that does not parse gives DEFAULTS, and a value that fails its check keeps its default and goes to `errors`.
+// For a commit read some other way, such as a base branch read through GitHub.
+export function configFromText(text, file, errors = []) {
   if (typeof text !== 'string') return DEFAULTS;
   let raw;
   try {
@@ -356,9 +438,67 @@ export function configFromText(text, file) {
   }
   if (!isObject(raw) || versionProblem(file, raw.version)) return DEFAULTS;
   const { version, ...rest } = raw;
-  const config = merge(SCHEMA, DEFAULTS, legacyHandoff(rest, file, []), '', file, [], []);
+  const config = merge(SCHEMA, DEFAULTS, legacyHandoff(rest, file, errors), '', file, errors, []);
   if (config.github.reviewer === NO_REVIEWER) config.github = { ...config.github, reviewer: null };
   return deepFreeze(config);
+}
+
+// `team`, the `decisions` of config.json, with the local file's `decisions` over it, as `project.localDecisions` holds
+// it. The local file may set `mode` and `domains`, each held to the team's `maxMode`; `unreviewed.remind`; and
+// `unreviewed.pauseDomainAt`, of which only a value lower than the team's applies, one limit at a time. Any other key
+// is an error, and keeps the team's value. A key the local file does not set stays as the team wrote it, even above
+// `maxMode`, so the resolver and `aidrian check` can say so. `errors` gets the problems; a caller that already reported
+// them passes [].
+export function localDecisions(team, project, errors) {
+  const local = project.localDecisions;
+  const file = project.paths.local;
+  if (local === undefined) return team;
+  if (!isObject(local)) {
+    errors.push(`${file}: "decisions" must be an object`);
+    return team;
+  }
+  const teamOnly = (key) => Object.hasOwn(DECISIONS_SCHEMA, key) && !Object.hasOwn(LOCAL_DECISIONS_SCHEMA, key);
+  for (const key of Object.keys(local).filter(teamOnly)) errors.push(`${file}: "decisions.${key}" is the team's: set it in config.json`);
+  const own = Object.fromEntries(Object.entries(local).filter(([key]) => !teamOnly(key)));
+  const read = merge(LOCAL_DECISIONS_SCHEMA, team, own, 'decisions.', file, errors);
+  // `merge` keeps the team's value for a key that is unset or refused, so `read` holds the local value only when `set` is it.
+  const capped = (set, mode) => (set !== mode || mode === 'inherit' ? mode : lowerMode(mode, team.maxMode));
+  return {
+    ...team,
+    mode: capped(own.mode, read.mode),
+    domains: Object.fromEntries(Object.entries(read.domains).map(([domain, mode]) => [domain, capped(own.domains?.[domain], mode)])),
+    unreviewed: { remind: read.unreviewed.remind, pauseDomainAt: lowerPause(team.unreviewed.pauseDomainAt, read.unreviewed.pauseDomainAt) },
+  };
+}
+
+// The pause limits a local value may set over the team's: each limit the lower of the two; a null team value has no
+// limits, so any local one is lower, and a null local value raises nothing.
+function lowerPause(team, local) {
+  if (local === null || local === team) return team;
+  if (team === null) return local;
+  return { pending: Math.min(team.pending, local.pending), oldestDays: Math.min(team.oldestDays, local.oldestDays) };
+}
+
+// The team's `decisions` at `commit`, from the config file `file` that commit names (project.mjs committedConfigFile),
+// with what committedConfig does not say: a commit where that file is missing, does not parse, or has another version,
+// or `file` null, has no team block to read, and one with an error under `decisions` has a block no one can read as the
+// team meant it. Either way the ceiling is "ask", spelled here so it does not follow the default, and the block's other
+// values are the defaults, not a partial block's. committedConfig returns DEFAULTS itself only in the first cases.
+// No one can say what such a block listed, so `safeDefaults` is null, which no config can set, and an unattended run parks:
+// a commit whose config.json is missing, does not parse, or has another version, and one with an error under `decisions`.
+// A config.json with no `decisions` key says nothing to misread: it takes the defaults, as any other unset group does.
+export const committedDecisions = (project, commit, file) => committedAuthority(project, commit, file).decisions;
+
+// committedDecisions' block and `autoMergeAllow`, whether that same commit sets `github.autoMerge.allow` true: false for a
+// block no one can read, since its team said nothing anyone can read. resolveAuthority takes it as the team's acceptance.
+export function committedAuthority(project, commit, file) {
+  const askOnly = { decisions: { ...DEFAULTS.decisions, maxMode: 'ask', unattended: { safeDefaults: null } }, autoMergeAllow: false };
+  if (file === null) return askOnly;
+  const errors = [];
+  // `./`: the path from project.root, so a project below the repository root reads its own file.
+  const committed = committedConfig({ ...project, paths: { ...project.paths, config: `./${file}` } }, commit, errors);
+  if (committed === DEFAULTS || errors.some((error) => /"decisions[".]/u.test(error))) return askOnly;
+  return { decisions: committed.decisions, autoMergeAllow: committed.github.autoMerge.allow === true };
 }
 
 // Whether auto-merge is on, from a `github` config and the local file's switch (`project.localAutoMerge`, "on",
@@ -455,10 +595,11 @@ function merge(schema, defaults, values, prefix, file, errors, gateErrors = []) 
       out[key] = checkReview(value, file, errors);
     } else if (type === 'agents') {
       out[key] = checkAgents(value, file, errors, defaults[key], gateErrors);
-    } else if (TYPES[type][0](value)) {
+    } else if (TYPES[type][0](value, values)) {
       out[key] = value;
     } else {
-      errors.push(`${file}: "${prefix}${key}" must be ${TYPES[type][1]}`);
+      const must = TYPES[type][1];
+      errors.push(`${file}: "${prefix}${key}" must be ${typeof must === 'function' ? must() : must}`);
     }
   }
   return out;

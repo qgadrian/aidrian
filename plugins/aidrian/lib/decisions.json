@@ -1,0 +1,24 @@
+{
+  "$comment": "Vocabulary for lib/decisions.mjs (aidrian decisions resolve): the one place the built-in decision classes and the reversibility questions live; config.json decisions.classes adds a project's own classes, and can change none of these. Authority on a floor class is always ask, whatever config.json says; so it is on a class in neither list. Every reversibility question must be answered no before an agent may decide, but for a yes on reachesUsersUnreviewed that the base branch's github.autoMerge.allow accepts (lib/decisions.mjs). Change the list here, not in a prompt.",
+  "classes": [
+    { "class": "security", "floor": true, "definition": "touches sign-in, permissions, secrets, tenant isolation, or another trust boundary" },
+    { "class": "critical-flow", "floor": true, "definition": "changes a flow people cannot work without, such as sign-up, sign-in, checkout, or a flow the project's review config lists" },
+    { "class": "money", "floor": true, "definition": "changes what anyone pays, is paid, or is entitled to: prices, charges, payouts, plans, or feature gates" },
+    { "class": "data-loss", "floor": true, "definition": "can delete, overwrite, or corrupt stored data, or drop data a migration should carry" },
+    { "class": "unknown", "floor": true, "definition": "the decision fits no other class, or its class is unclear" },
+    { "class": "copy", "floor": false, "definition": "the words people read: labels, messages, emails, and help text" },
+    { "class": "layout", "floor": false, "definition": "where things sit on a screen and how they look, with no change to what they do" },
+    { "class": "ordering", "floor": false, "definition": "the order of the items, steps, or options people see" },
+    { "class": "default-value", "floor": false, "definition": "the value a setting or field starts with, when anyone can still change it" },
+    { "class": "naming", "floor": false, "definition": "the name of a code symbol, file, flag, or other internal identifier" },
+    { "class": "module-boundary", "floor": false, "definition": "which module owns some code, or the interface between two modules inside the repository" },
+    { "class": "backlog-rank", "floor": false, "definition": "the order of work in the backlog, or which follow-up a finding becomes" },
+    { "class": "product-behaviour", "floor": false, "definition": "what the product does for its users, where no written rule settles it and no floor class fits" }
+  ],
+  "reversibility": {
+    "storedData": "does it write, migrate, or delete stored data that reverting the commit would not restore?",
+    "external": "does it reach outside the repository, such as a sent message, a published package, or a third-party setting?",
+    "pricingOrContract": "does it change a price, a contract, a public interface, or a promise made to users?",
+    "reachesUsersUnreviewed": "will it reach existing users with no human review of its pull request and no off switch?"
+  }
+}

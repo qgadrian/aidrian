@@ -255,6 +255,6 @@ mapping, or missing design intent.
   deleted, in `changed_surfaces`.
 - Surface unresolvable canonical-source choices in `blockers`, and the
   token-divergence flag and any product-sensitive flag in `open_questions`
-  or `decision_options` only.
+  or `decision_options` only, as `knowledge/references/decisions.md` says for `ask`.
 
 Load and follow the bundle spec from the project's `design_bundle` knowledge immediately.

@@ -1,12 +1,17 @@
 // Reads a Markdown body by its `## ` sections, outside code fences: a body may quote a heading or a list item as an
 // example, and a quoted example is neither a section nor an item. Used by the pull request body rule
 // (lib/rules/github/pr-body.mjs), the review gate (lib/review-gate.mjs), Markdown prose checks (lib/markdown-prose.mjs),
-// and review flows (lib/review/flows.mjs), which share its fence detection.
+// and review flows (lib/review/flows.mjs), which share its fence detection. It imports nothing of the plugin's.
 
 // An ATX level-2 heading: exactly two hashes, whitespace, then the title.
 const HEADING = /^ {0,3}##(?!#)\s+(.+?)\s*$/u;
 // A list item's first line: its indentation, then a bullet or an ordered marker.
 export const LIST_ITEM = /^(\s*)(?:[-*+]|\d+[.)])\s+/u;
+
+// The key two anchors are compared by: GitHub's anchor with `_` dropped and runs of spaces and hyphens collapsed, so
+// an anchor written by hand, copied from GitHub, or made by `anchor` in review/flows.mjs finds its heading. Never shown
+// as a link. Review flows and the decision resolver's `escalateDocs` (lib/decisions.mjs) read sections by it.
+export const slug = (text) => text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, '').replace(/[\s-]+/gu, '-').replace(/^-|-$/gu, '');
 
 // A fence line: its delimiter, and whether the line is the delimiter alone, which only a closing fence may be. An
 // opening fence may follow list markers, as in "- ```js"; such a line is never bare, so it never closes one, and `item`

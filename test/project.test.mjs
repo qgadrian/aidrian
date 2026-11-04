@@ -228,6 +228,25 @@ test('a worktree\'s own .aidrian.local.json never sets the auto-merge switch: on
   assert.deepEqual([findProject(worktree).localAutoMerge, findProject(worktree).errors], ['off', []], 'a main file that cannot be read reads off here, and is that checkout\'s error');
 });
 
+test('.aidrian.local.json takes github and decisions together, read from the main checkout in a worktree too', (t) => {
+  const dir = tempDir(t);
+  const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' });
+  git('init', '-q', '-b', 'main');
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}');
+  writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n');
+  git('add', '.');
+  git('-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init');
+  const worktree = path.join(dir, 'wt/task');
+  git('worktree', 'add', '-q', '-b', 'task', worktree);
+  const decisions = { mode: 'decide-reversible' };
+  writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ github: { autoMerge: { enabled: true } }, decisions }));
+  for (const at of [dir, worktree]) {
+    const project = findProject(at);
+    assert.deepEqual([project.errors, project.localAutoMerge, project.localDecisions], [[], 'on', decisions], at);
+  }
+});
+
 test('.aidrian.local.json github.autoMerge "on" where git cannot say it is untracked reads "off" with an error', (t) => {
   // No repository: git ls-files fails, which is no answer "untracked".
   const dir = tempDir(t);

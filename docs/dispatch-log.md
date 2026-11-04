@@ -2,14 +2,14 @@
 
 The dispatch log records which agents a session dispatched, what each cost, which knowledge docs it read,
 whether it delivered the files it said it wrote, what each session cost and whether it reviewed the drafts it opened,
-and which of the plugin's rules blocked a tool call.
+which of the plugin's rules blocked a tool call, and how often the Human overrode a decision an agent made alone.
 `aidrian report` reads it, and `aidrian report health` judges what it read against thresholds.
 
 It is `dispatch-log.jsonl` in the [state folder](project-folder.md#local-state): one JSON object per line,
 on this machine only, shared by every worktree of the repository.
 Three Claude Code hooks append the dispatch, stop, and session rows, the last through a worker
 (see [`session`](#session-when-a-session-ends)), the plugin's blocking hooks append a `hook_deny` row,
-and the review commands append a `review_extension` row,
+the review commands append a `review_extension` row, and `aidrian decisions` appends the decision rows,
 only inside a project folder, and only while config.json `telemetry.enabled` is on:
 [config.md](config.md#telemetry) has the switches.
 A row holds names, counts, durations, costs, and file paths. It never holds a prompt, a command, or tool output.
@@ -125,6 +125,39 @@ The row never holds the command. Its `reason` can name the file a write rule mat
 | `signals` | The signals that raised a red flag: `converging`, `looping`, `drifting`, `bloating`. |
 
 The judge's reason stays in the review record, not the row.
+
+### `decision_made` and `decision_escalated`: when `resolve` answers
+
+`aidrian decisions resolve` writes one row for each answer: `decision_made` under `decide`, `decision_escalated` under `ask`.
+`--vocab` writes none.
+
+| Field | Meaning |
+| --- | --- |
+| `ts`, `session_id` | When, and in which session; `session_id` is `null` where the host names none. |
+| `rule` | The rule that matched, as `resolve` prints it, such as `mode` or `escalate-doc`. |
+| `domain`, `class` | As the command was asked. Either is `null` when the argument is no name, so free text stays out. |
+| `key` | A hash of the question: its domain, class, answers, and docs, in that session, or on that day with no session id. |
+
+The row holds no reason, doc path, or doc text.
+The log has no way to take a row back, so a repeated `resolve` writes a second row, with the same `key`, and the report counts one decision per `key`.
+
+### `decision_confirmed` and `decision_overridden`: when the Human answers
+
+`aidrian decisions set` and `undo` write one row once the doc changed: `decision_confirmed` for `set confirmed`,
+and `decision_overridden` for `set rejected`, `set changed`, and `undo`.
+`set changed` is the `decision-review` skill's Change: the Human's wording replaces the agent's, so the marker reads `confirmed`, and the row counts it as overridden.
+A `set` that changes nothing, and an `undo` that refuses, write none.
+
+| Field | Meaning |
+| --- | --- |
+| `ts`, `session_id` | When, and in which session. |
+| `id`, `class`, `domain` | The decision, as its marker names it. |
+| `action` | `confirmed`, `rejected`, `changed`, or `undo`. |
+| `was` | The marker's status before: `unconfirmed`, `confirmed`, or `rejected`. |
+
+A decision reviewed twice counts once, by its last answer in the window.
+
+A row that cannot be written fails no command: `aidrian decisions` answers as it would with telemetry off.
 
 ### `rotate`: when the log rotates
 
@@ -340,6 +373,7 @@ Signals; n is the sample, and a signal under 5 (telemetry.health.minSample) is n
   Reviews: not enough data; rounds not enough data (n=0, needs 5 reviewed); late findings not enough data (n=0, needs 5 checked)
   Drafts: ok; 3 orchestrator or autopilot sessions opened a draft pull request, 0 with no review round
   Hook denies: problem (n=10 sessions); 6 blocks: git-amend 6 (5 or more by one rule is a hot spot)
+  Decisions: not enough data (n=2, needs 5 reviewed); 4 made alone, 7 escalated (20% overridden or more is a problem)
   Session cost: ok (n=5 sessions a half); 10 sessions, $22.50; $2.50 a session in the newer half against $2.00, up 25% (threshold 50%)
   Lessons: problem; 2 open, 1 P1, the oldest 6 days; 0 fixes in the window, 0 recurred
 ```
@@ -360,6 +394,9 @@ Each signal names its sample and is judged by config.json [`telemetry.health`](c
   Both flows end in a review loop, so such a session skipped it. The summary names up to three. Fix: `review-loop`.
 - **Hook denies**, over the sessions with a row in the window: a problem when one rule blocked `denyHotSpot` calls or more.
   Fix: `deny-rule`.
+- **Decisions**, over the decisions the Human reviewed in the window, with a `decision_confirmed` or `decision_overridden` row:
+  a problem when `decisionOverridePercent` of them or more were overridden, over at least `decisionMinSample`, which stands in for `minSample` here.
+  The line also counts the decisions made alone and escalated. Fix: `decision-authority`.
 - **Session cost**, over each half of the window's sessions, in the order they ended: a problem when the newer half costs
   over `costRisePercent` more a session than the older half. Fix: `cost`.
 - **Lessons**, over the open lessons in the project's inbox: a problem when a P1 is open, a fix resolved in the window recurred,
@@ -373,8 +410,8 @@ Each signal names its sample and is judged by config.json [`telemetry.health`](c
   the agent's line counts it as `N unknown`, and a `Partial:` line under the title counts them all.
 - **unavailable**: the reviews when `gh` cannot answer, and the hook denies while `telemetry.hookDenies` is off.
 - **Problems** are ranked by kind: a P1 lesson; a draft no review round saw; the knowledge budget; an agent re-dispatched, then sent back;
-  review rounds, then late findings; a hook-deny hot spot; a fix that recurred; rising cost; the doc with the most bytes read;
-  tagged docs nobody read; the lesson backlog. Within a kind, the one furthest over its threshold comes first.
+  review rounds, then late findings; decisions the Human overrides; a hook-deny hot spot; a fix that recurred; rising cost;
+  the doc with the most bytes read; tagged docs nobody read; the lesson backlog. Within a kind, the one furthest over its threshold comes first.
 - **Fix** names a row of the `harness-health` skill's fix table, which says what to do and who does it. A test holds the two lists equal.
 
 `--prs N` reads at most N pull requests merged in the window, 20 by default, through `gh` as the reviews view does.
@@ -399,6 +436,8 @@ would read as the threshold, and a cost under ten cents to two significant digit
   The Bash rules and the agent gates also run in Codex, so its blocks write `hook_deny` rows there too.
 - **Drafts come from the Bash tool.** A draft opened another way, such as through an MCP tool, is not counted.
   A session that hands its pull request to a fresh session before any review round is counted as unreviewed: the round ran elsewhere.
+- **Decisions on this machine.** The rows sit in this machine's log, so a decision another machine reviewed counts there,
+  and a marker edited by hand counts nowhere.
 - **Only the plugin's own blocks.** A block by Claude Code's permissions, or by another plugin's or the project's hook, writes no row.
 - **Costs are estimates** from list prices, read on the date in `lib/transcript.mjs`. A model missing from the price
   map counts as zero.

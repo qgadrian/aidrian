@@ -1,7 +1,7 @@
 # Lenses and briefs
 
 Read this file in step 3, before a spawn or a refresh.
-It holds the cold brief, the refresh message, and one lens per agent.
+It holds the cold brief, the refresh message, what the session does with `decision_options`, and one lens per agent.
 An agent with no section here gets the generic lens.
 
 ## Cold brief
@@ -64,6 +64,14 @@ Add any new finding the update brings, with state "open".
 
 Return the same handoff. Start decision with the counts: "<r> resolved, <o> still open, <n> new".
 ```
+
+## When an agent returns decision_options
+
+For the session, not the brief. Run `aidrian decisions resolve` as `knowledge/references/decisions.md` says.
+Under `ask`, or with no agent id, render the needs-input block.
+Under `decide`, send the kept agent `authority: decide` with the host's message tool, naming the decision.
+This skill runs no other agent, so it takes no second look: when the rule's second look would apply, render the needs-input block as under `ask`.
+Otherwise show the `decided_provisional` under the render's blockers and open questions.
 
 ## architect
 
@@ -131,8 +139,8 @@ Shape: `ac`.
 1. Acceptance criteria: does the change meet each one? With none found, review against the project's product rules
    and add a risk that no criteria were loaded; missing criteria alone are not a reason for `needs_input`.
 2. Product rules in the project's `product_sensitive` knowledge: does the change put one at risk?
-3. Missing product truth: name the exact decision a user-visible change needs and the docs do not settle,
-   and return `needs_input` with `decision_options`.
+3. Missing product truth: name the exact decision a user-visible change needs and the docs do not settle, and follow `knowledge/references/decisions.md`:
+   with `authority: decide` in your brief, return `decided_provisional`; otherwise return `needs_input` with `decision_options`.
 4. Copy: new or changed user-facing text fits the product's voice.
 5. Reach: other entry points, plans, or languages the change should also have covered.
 

@@ -16,4 +16,8 @@ Add a field only when your role emits it or the dispatch asks for it. Use these 
 - `commands_run` (developers, `integrator`, `e2e-runner`, `helper-scout`, `github-archaeologist`): the exact commands run.
 - `compliance` (developers: `not_bypassed` or `hook_failed`; `product-manager`, `architect`: each rule and whether it holds).
 - `defer_reason`: `non_goals_collision`, `confirmed_missing_authority`, `human_only`, or `user_chose`, on a finding deferred to a new issue.
-- `decision_options` (when the Human must choose): `id`, `summary`, `tradeoffs`, `recommended` (advisory).
+- `decision_options` (when the Human must choose): `id`, `summary`, `tradeoffs`, `recommended` (advisory), with the decision's `class`, `reversible`, and `docs`.
+  `knowledge/references/decisions.md` is the rule for it and for the next field.
+- `decided_provisional` (a specialist whose brief carries `authority: decide`): `decision`, `options_considered`, `reason`, `class`,
+  `reversible` (the four answers, by the names `aidrian decisions resolve --vocab` gives), `docs` (each written rule it touches), `severity` (the harm if it is wrong),
+  `revisit_trigger`, and `reverts_by`.

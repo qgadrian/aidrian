@@ -1,5 +1,5 @@
-// `aidrian report health`: one page over the other views. Eight signals (the knowledge budget, doc reads, agents, review
-// rounds, unreviewed drafts, hook denies, session cost, and the lesson inbox), each with its sample size and its
+// `aidrian report health`: one page over the other views. Nine signals (the knowledge budget, doc reads, agents, review
+// rounds, unreviewed drafts, hook denies, overridden decisions, session cost, and the lesson inbox), each with its sample size and its
 // threshold, mostly from config.json `telemetry.health`; then the problems, worst first, each naming the row of the
 // harness-health skill's fix table that answers it. A signal with fewer than `minSample` samples says "not enough data"
 // and is never a problem. Every verdict compares unrounded numbers; only what the view prints is rounded.
@@ -8,7 +8,7 @@
 import { summarize, summarizeDenies } from './report-agents.mjs';
 import { summarizeDocs } from './report-docs.mjs';
 import { NO_BOT } from './report-reviews.mjs';
-import { endedSessions } from './jsonl.mjs';
+import { endedSessions, latestRows } from './jsonl.mjs';
 import { lessonStats } from './lesson-inbox.mjs';
 import { deliverySignal, denialSignal, roundLimitSignal } from './lesson-signals.mjs';
 import { summarizeSessions } from './report-sessions.mjs';
@@ -24,6 +24,7 @@ export const FIXES = {
   'sent-back': 'agent-prompt',
   'review-rounds': 'round-cap',
   'late-findings': 'round-cap',
+  'decision-override': 'decision-authority',
   'deny-hot-spot': 'deny-rule',
   'fix-recurred': 'lesson-triage',
   'cost-rise': 'cost',
@@ -41,7 +42,8 @@ const labels = ({ tier, kind, target, key }) => ({ tier, kind, target, key });
 // The signal that finds each kind of problem a lesson can hold.
 const SIGNAL_OF = {
   'always-budget': 'budget', 'tagged-doc': 'budget', redispatch: 'agents', 'sent-back': 'agents', 'review-rounds': 'reviews',
-  'late-findings': 'reviews', 'unreviewed-draft': 'drafts', 'deny-hot-spot': 'denies', 'cost-rise': 'cost', 'top-doc': 'docs', 'never-read': 'docs',
+  'late-findings': 'reviews', 'unreviewed-draft': 'drafts', 'deny-hot-spot': 'denies', 'decision-override': 'decisions', 'cost-rise': 'cost', 'top-doc': 'docs',
+  'never-read': 'docs',
 };
 
 const OK = 'ok';
@@ -85,6 +87,7 @@ function judge({ rows, sinceMs = 0, now = Date.now(), knowledge, reviews, lesson
     reviews: reviewsSignal(reviews, limits, add),
     drafts: draftsSignal(rows, sinceMs, add),
     denies: deniesSignal(rows, sinceMs, limits, config.telemetry.hookDenies, add),
+    decisions: decisionsSignal(rows, sinceMs, limits, add),
     cost: costSignal(rows, sinceMs, limits, add),
     lessons: lessonsSignal(lessons, sinceMs, now, config.lessons, add),
   };
@@ -308,6 +311,34 @@ function deniesSignal(rows, sinceMs, { minSample, denyHotSpot }, recorded, add) 
   return { status: hot.length ? PROBLEM : OK, ...base };
 }
 
+// How often the Human overrode a decision agents made alone: the share of the decisions the Human reviewed that were
+// rejected, undone, or changed. A problem when it reaches decisionOverridePercent, over at least decisionMinSample reviewed; its own
+// minimum, since a project reviews far fewer decisions than it dispatches agents. One decision counts once, by its last
+// answer in the window, and a resolve asked again in a session once, by its key.
+function decisionsSignal(rows, sinceMs, { decisionMinSample, decisionOverridePercent }, add) {
+  const inWindow = rows.filter((row) => Date.parse(row.ts) >= sinceMs);
+  const answers = new Map(inWindow.filter((row) => ['decision_confirmed', 'decision_overridden'].includes(row.event)).map((row) => [row.id ?? Symbol('answer'), row]));
+  const reviewed = [...answers.values()];
+  const overridden = reviewed.filter((row) => row.event === 'decision_overridden');
+  const share = percentOf(overridden.length, reviewed.length);
+  const reached = share !== null && share >= decisionOverridePercent;
+  // The share as the view prints it: a whole number, or a tenth where rounding up would read as reaching the threshold.
+  const percent = share === null ? null : !reached && Math.round(share) >= decisionOverridePercent ? Math.floor(share * 10) / 10 : Math.round(share);
+  const sample = { n: reviewed.length, of: 'decisions the Human reviewed' };
+  const base = { sample, overridden: overridden.length, percent, made: latestRows(inWindow, 'decision_made', 'key').length, escalated: latestRows(inWindow, 'decision_escalated', 'key').length };
+  if (sample.n < decisionMinSample) return { status: NOT_ENOUGH, ...base };
+  if (!reached) return { status: OK, ...base };
+  const byClass = new Map();
+  for (const { class: kind } of overridden) byClass.set(kind, (byClass.get(kind) ?? 0) + 1);
+  const [top, topCount] = [...byClass].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))[0];
+  add('decision-override', {
+    value: percent, threshold: decisionOverridePercent, sample,
+    summary: `The Human overrode ${overridden.length} of ${plural(reviewed.length, 'decision')} agents made alone (${percent}%), at or over ${decisionOverridePercent}%; most often ${top} (${topCount}).`,
+    lesson: { tier: 'P2', kind: 'improvement', target: 'project', key: 'health:decision-override' },
+  });
+  return { status: PROBLEM, ...base };
+}
+
 // The cost a session of the newer half of the window's sessions against the older half, in the order they ended. The
 // averages are compared unrounded: rounded to the cent, $0.014 against $0.016 reads as a 100% rise, and $0.004 as nothing.
 function costSignal(rows, sinceMs, { minSample, costRisePercent }, add) {
@@ -385,7 +416,7 @@ export function formatHealth({ thresholds, problems, signals }, { file, since, s
     lines.push('Problems: none at these thresholds.');
   }
   lines.push(`Signals; n is the sample, and a signal under ${minSample} (telemetry.health.minSample) is not judged:`);
-  const { budget, docs, agents, reviews, drafts, denies, cost, lessons } = signals;
+  const { budget, docs, agents, reviews, drafts, denies, decisions, cost, lessons } = signals;
   const head = (name, signal) => `  ${name}: ${LABELS[signal.status]}`;
   lines.push(`${head('Knowledge budget', budget)}; always docs ${budget.always_bytes} of ${thresholds.budgets.alwaysBytes} bytes, ` +
     `${budget.oversized.length} of ${budget.sample.n} indexed docs tagged and over ${thresholds.budgets.taggedDocBytes} bytes`);
@@ -419,6 +450,9 @@ export function formatHealth({ thresholds, problems, signals }, { file, since, s
     lines.push(`${head('Hook denies', denies)} (${n(denies.sample.n, minSample)} sessions); ${denies.count} blocks${rules ? `: ${rules}` : ''} ` +
       `(${thresholds.health.denyHotSpot} or more by one rule is a hot spot)`);
   }
+  const overrides = decisions.status === NOT_ENOUGH ? '' : `${decisions.percent}% overridden, `;
+  lines.push(`${head('Decisions', decisions)} (${n(decisions.sample.n, thresholds.health.decisionMinSample)} reviewed); ${overrides}${decisions.made} made alone, ` +
+    `${decisions.escalated} escalated (${thresholds.health.decisionOverridePercent}% overridden or more is a problem)`);
   const trend = cost.change_percent === null ? '' : `; ${money(cost.newer.avg_usd)} a session in the newer half against ${money(cost.older.avg_usd)}, ` +
     `${cost.change_percent >= 0 ? 'up' : 'down'} ${Math.abs(cost.change_percent)}% (threshold ${thresholds.health.costRisePercent}%)`;
   lines.push(`${head('Session cost', cost)} (${n(cost.older.n, minSample)} sessions a half); ${plural(cost.sample.n, 'session')}, ${money(cost.cost_usd)}${trend}`);

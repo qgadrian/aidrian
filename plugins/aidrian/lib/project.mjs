@@ -1,8 +1,8 @@
 // Finds a project and its project folder: `.aidrian/` at the project root, or the folder the committed root file
 // `.aidrian.json` names. This is the only file that knows those names; every other file asks it for paths.
 // docs/project-folder.md describes the folder, the git-ignored `.aidrian.local.json` that adds local knowledge sources,
-// personal model choices, personal names, personal telemetry settings, and the machine's auto-merge opt-in, and the
-// machine-local state folder outside the repository.
+// personal model choices, personal names, personal telemetry settings, personal decision settings, and the machine's
+// auto-merge opt-in, and the machine-local state folder outside the repository.
 
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
@@ -86,12 +86,13 @@ export function projectAt(start) {
 }
 
 // The project rooted at `root`, whether or not its folder exists yet:
-// { root, dir, paths, sources, checkouts, localModels, localNames, localTelemetry, localAgents, localReview,
+// { root, dir, paths, sources, checkouts, localModels, localNames, localTelemetry, localAgents, localReview, localDecisions,
 // localAutoMerge, errors, unreadable }.
 // `dir` and every path are POSIX-style and relative to `root`. `sources` lists where knowledge indexes are read from:
 // the project folder first, then each local source. `checkouts` is `root`, then, when it is in a git worktree, the same
-// folder in the main checkout. `localModels`, `localNames`, `localTelemetry`, and `localAgents` are the `models`,
-// `names`, `telemetry`, and `agents` values of `.aidrian.local.json`, as written; config.mjs checks them. `localAutoMerge`
+// folder in the main checkout. `localModels`, `localNames`, `localTelemetry`, `localAgents`, `localReview`, and
+// `localDecisions` are the `models`, `names`, `telemetry`, `agents`, `review`, and `decisions` values of
+// `.aidrian.local.json`, as written; config.mjs checks them. `localAutoMerge`
 // is its `github.autoMerge`: "on" or "off", checked here, "unset" when no file sets it, and "off" for a file with an error; the team's
 // ceiling still decides (resolveAutoMerge). `errors` lists the problems in the root files; a broken
 // `.aidrian.json` leaves the default folder in place, and a broken local source is left out.
@@ -117,6 +118,7 @@ export function openProject(root, roots) {
     localTelemetry: local.telemetry,
     localAgents: local.agents,
     localReview: local.review,
+    localDecisions: local.decisions,
     localAutoMerge: local.autoMerge,
     errors,
     unreadable,
@@ -129,6 +131,24 @@ export function openProject(root, roots) {
 export function configFiles(project) {
   const names = [OVERRIDE, project.paths.config, `${DEFAULT_DIR}/config.json`, LOCAL];
   return [...new Set(project.checkouts.flatMap((base) => names.map((name) => path.join(base, name))))];
+}
+
+// The config.json path, from the project root, that `commit` names through its own `.aidrian.json`, or the default
+// folder's when that commit has none; null when its `.aidrian.json` cannot be read or names no usable folder. What a
+// working copy's `.aidrian.json` says, committed later or never, cannot move a lookup at the base branch. Throws when
+// git itself fails, stopped by a timeout or the like. 128 is git saying the commit has no such file.
+export function committedConfigFile(project, commit) {
+  const shown = runGit(['show', `${commit}:./${OVERRIDE}`], project.root);
+  if (shown.status === 128) return `${DEFAULT_DIR}/config.json`;
+  if (shown.status !== 0) throw new Error(`git show ${commit}:./${OVERRIDE} failed`);
+  let raw;
+  try {
+    raw = JSON.parse(shown.stdout);
+  } catch {
+    return null;
+  }
+  const dir = insidePath(project.root, '', raw?.dir);
+  return dir ? `${dir}/config.json` : null;
 }
 
 function folderDir(root, errors, unreadable) {
@@ -166,12 +186,12 @@ function checkoutsOf(root, roots) {
   return main && main !== realpathSync(root) ? [root, main] : [root];
 }
 
-const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'github'];
+const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'decisions', 'github'];
 
-// `.aidrian.local.json`: { sources, models, names, telemetry, agents, review, autoMerge }. A git worktree has no copy of that git-ignored file, so it is read
+// `.aidrian.local.json`: { sources, models, names, telemetry, agents, review, decisions, autoMerge }. A git worktree has no copy of that git-ignored file, so it is read
 // from the main checkout then: from the first of `checkouts` that has it. Each source is a folder with its own knowledge/
-// and, optionally, a config.json with `version`. The auto-merge switch alone comes only from the main checkout's file
-// (checkouts.at(-1)): a worktree's own copy never turns it on.
+// and, optionally, a config.json with `version`. `decisions` and the auto-merge switch come only from the main checkout's
+// file (checkouts.at(-1)): a copy a session writes in its own worktree raises nothing and never turns merging on.
 function readLocal(checkouts, errors, unreadable) {
   const none = { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, autoMerge: 'unset' };
   const holder = checkouts.find((dir) => isFile(path.join(dir, LOCAL)));
@@ -185,12 +205,20 @@ function readLocal(checkouts, errors, unreadable) {
   for (const key of Object.keys(raw)) {
     if (!LOCAL_KEYS.includes(key)) errors.push(`${LOCAL}: unknown key "${key}"`);
   }
-  const { models, names, telemetry, agents, review } = raw;
+  const { models, names, telemetry, agents, review, decisions } = raw;
   const sources = localSources(holder, raw, errors);
   const autoMerge = machineSwitch(raw, holder, main, errors);
   // A main-checkout file with any error never follows a team default of "on": a wrong local file never turns merging on.
   const broken = holder === main && autoMerge === 'unset' && errors.some((each) => each.startsWith(`${LOCAL}:`));
-  return { sources, models, names, telemetry, agents, review, autoMerge: broken ? 'off' : autoMerge };
+  return { sources, models, names, telemetry, agents, review, decisions: mainDecisions(main, holder, decisions), autoMerge: broken ? 'off' : autoMerge };
+}
+
+// The `decisions` of the local file in `main`, the main checkout; `held` when that file is the one already read. A main
+// file that cannot be read gives none, and is that checkout's error, as machineSwitch reads it.
+function mainDecisions(main, holder, held) {
+  if (main === holder) return held;
+  if (!isFile(path.join(main, LOCAL))) return undefined;
+  return readJson(main, LOCAL, [])?.decisions;
 }
 
 // This machine's auto-merge switch: the main checkout's. `raw` is the file read from `holder`, null when that could not

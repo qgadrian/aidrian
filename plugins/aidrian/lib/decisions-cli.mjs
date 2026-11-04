@@ -1,35 +1,49 @@
-// `aidrian decisions resolve`: who settles one decision, the agent or the Human (lib/decisions.mjs).
+// `aidrian decisions`: who settles one decision, the agent or the Human (lib/decisions.mjs), and the decisions agents
+// made alone, on record as marker lines in the indexed knowledge docs.
 //
 //   aidrian decisions resolve --domain ux --class copy --reversible no,no,no,no
 //   aidrian decisions resolve --vocab            # every class and reversibility question, defined
+//   aidrian decisions list [--json]              # every marker, and what is wrong with the malformed ones
+//   aidrian decisions list --added-since REF     # only what the branch committed since it left REF, new and settled
+//   aidrian decisions set ID confirmed|rejected  # the Human's answer: rewrites that one marker in the working copy
 //
 // `--reversible` answers the questions of decisions.json in its order: storedData, external, pricingOrContract,
 // reachesUsersUnreviewed. An answer left out asks. `--doc` names a doc, with an optional `#section`: from the current folder
 // and, when relative, from the project root too.
 // Output: { authority, rule, reason, secondLook, base }, where `base` is the commit whose config was read, or null when
 // none was, and `secondLook` is that config's `decisions.secondLook`, or null when none was read.
-// Exit 0 on either answer; 1 on bad arguments or an invalid config. docs/config.md#decisions has the rules.
+// Exit 0 on either answer; 1 on bad arguments or an invalid config. docs/config.md#decisions has the rules, and
+// docs/project-folder.md#decision-markers the marker. `list` exits 0 with problems: they are part of what it reports.
 
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { commandConfig, committedDecisions, DEFAULTS, localDecisions } from './config.mjs';
-import { loadVocab, resolveAuthority } from './decisions.mjs';
+import { ghJson } from './gh.mjs';
+import { ageDays, loadVocab, parseDecisions, resolveAuthority, setDecisionStatus } from './decisions.mjs';
 import { checkoutRoots, runGit } from './git.mjs';
-import { committedConfigFile, projectAt } from './project.mjs';
+import { loadKnowledge } from './knowledge.mjs';
+import { committedConfigFile, findProject, noProjectMessage, projectAt } from './project.mjs';
+import { checkTool as mainCheckoutDenial } from './rules/main-checkout.mjs';
 import { usageLines } from './usage.mjs';
 
-const USAGE = 'resolve --domain D --class C [--reversible A,B,C,D] [--doc PATH]... [--project DIR] | resolve --vocab';
+const USAGE = 'resolve --domain D --class C [--reversible A,B,C,D] [--doc PATH]... [--project DIR] | resolve --vocab ' +
+  '| list [--added-since REF] [--json] [--project DIR] | set ID confirmed|rejected [--project DIR]';
+const SETTLED = ['confirmed', 'rejected'];
+// A branch-scoped list reads whole docs from git, which can outlast git.mjs's default for a hook.
+const GIT_READ = { timeout: 30_000, maxBuffer: 64 * 1024 * 1024 };
 const ANSWERS = { no: false, yes: true };
 
 export const commands = {
   decisions: {
     usage: USAGE,
-    about: 'say whether an agent may settle one decision or must ask the Human, from config.json `decisions` at the base branch, with A,B,C,D the four reversibility answers, each no or yes; or print the decision classes',
+    about: 'say whether an agent may settle one decision or must ask the Human, from config.json `decisions` at the base branch, with A,B,C,D the four reversibility answers, each no or yes; print the decision classes; list the decisions on record in the indexed docs, or those a branch added since REF; or set the Human\'s answer on one',
     run(args) {
       const [action, ...rest] = args;
-      if (action !== 'resolve') return fail(`decisions takes resolve${action ? `, not "${action}"` : ''}`);
+      if (action === 'list') return list(rest);
+      if (action === 'set') return set(rest);
+      if (action !== 'resolve') return fail(`decisions takes resolve, list, or set${action ? `, not "${action}"` : ''}`);
       const word = { type: 'string' };
       const { values } = parseArgs({
         args: rest,
@@ -53,6 +67,179 @@ export const commands = {
     },
   },
 };
+
+// The markers of `docs`, each read by `read`, which may return null for a doc to pass over: { decisions, problems, lineAt },
+// where a decision adds { doc, ageDays }, a problem is { doc, line, problem }, and `lineAt` gives the trimmed text of the
+// line either names. An id on two markers is a problem on each.
+function readMarkers(docs, read) {
+  const decisions = [];
+  const problems = [];
+  const lines = new Map();
+  for (const doc of docs) {
+    let text;
+    try {
+      text = read(doc);
+    } catch (error) {
+      problems.push({ doc, line: null, problem: `cannot read the doc: ${error.code ?? error.message}` });
+      continue;
+    }
+    if (text === null) continue;
+    lines.set(doc, text.split(/\r?\n/u));
+    const found = parseDecisions(text);
+    decisions.push(...found.decisions.map((each) => ({ ...each, doc, ageDays: ageDays(each.date) })));
+    problems.push(...found.problems.map((each) => ({ doc, ...each })));
+  }
+  for (const decision of decisions) {
+    const others = decisions.filter((each) => each !== decision && each.id === decision.id);
+    if (others.length) problems.push({ doc: decision.doc, line: decision.line, problem: `id "${decision.id}" is also at ${others.map(place).join(', ')}` });
+  }
+  problems.sort((a, b) => docs.indexOf(a.doc) - docs.indexOf(b.doc) || a.line - b.line);
+  return { decisions, problems, lineAt: ({ doc, line }) => lines.get(doc)[line - 1].trim() };
+}
+
+const indexed = (buckets) => [...new Set(buckets.flatMap((bucket) => bucket.docs.map((doc) => doc.path)))];
+const indexProblems = (errors) => errors.map((problem) => ({ doc: null, line: null, problem }));
+
+// The markers of every indexed knowledge doc, as the working copy holds them, so a branch sees its own: { decisions,
+// problems, docs }, with `docs` the count of docs read. A problem of the indexes has a null doc and line; `aidrian check`
+// reports those as errors. A marker of a doc a local source indexes lists too, under its absolute path, though no other
+// machine sees it.
+export function scanDecisions(project) {
+  commandConfig(project);
+  const { buckets, errors } = loadKnowledge(project);
+  const docs = indexed(buckets);
+  const { decisions, problems } = readMarkers(docs, (doc) => readFileSync(path.resolve(project.root, doc), 'utf8'));
+  return { decisions, problems: [...indexProblems(errors), ...problems], docs: docs.length };
+}
+
+// What the branch committed since it left `ref`, parsed at both ends: { decisions, settled, problems, pullRequest }, or
+// null when git cannot compare them. A decision counts when its id is on no marker at the merge base, in any Markdown
+// file, so a moved marker is not new. `settled` holds each marker the base has whose status the branch changed, with
+// `was`. A problem counts when its line, status and pull request aside, is not there, so one the branch inherited is not
+// its own. A new decision in a Markdown file no index lists is a problem, and with a pull request open for the branch, so
+// is a `pr=none` the branch added.
+function addedSince(project, ref) {
+  commandConfig(project);
+  const { buckets, errors } = loadKnowledge(project);
+  const git = (...args) => runGit(args, project.root, GIT_READ);
+  const merged = ref.startsWith('-') ? null : git('merge-base', ref, 'HEAD');
+  if (merged?.status !== 0) return null;
+  const base = merged.stdout.trim();
+  const show = (rev, file) => {
+    const shown = git('show', `${rev}:./${file}`);
+    return shown.status === 0 ? shown.stdout : null;
+  };
+  // The Markdown files of `rev` that mention a marker, or null when git fails; 1 is git saying there are none.
+  const markerFiles = (rev) => {
+    const listed = git('grep', '-l', '-z', '-F', 'aidrian:decision', rev, '--', '*.md');
+    if (listed.status !== 0 && listed.status !== 1) return null;
+    return listed.stdout.split('\0').filter(Boolean).map((entry) => entry.slice(rev.length + 1));
+  };
+  const atBase = markerFiles(base);
+  const atHead = markerFiles('HEAD');
+  if (atBase === null || atHead === null) return null;
+  const sameLine = (line) => line.trim().replace(/(\s(?:status|pr)=)[^\s-]+/gu, '$1');
+  const statuses = new Map();
+  const lines = new Set();
+  for (const file of atBase) {
+    const text = show(base, file) ?? '';
+    for (const { id, status } of parseDecisions(text).decisions) statuses.set(id, status);
+    for (const line of text.split(/\r?\n/u)) if (line.includes('aidrian:decision')) lines.add(sameLine(line));
+  }
+  const docs = indexed(buckets).filter((doc) => !path.isAbsolute(doc));
+  const { decisions, problems, lineAt } = readMarkers(docs, (doc) => show('HEAD', doc));
+  const added = decisions.filter(({ id }) => !statuses.has(id));
+  const settled = decisions.filter(({ id, status }) => statuses.has(id) && statuses.get(id) !== status).map((each) => ({ ...each, was: statuses.get(each.id) }));
+  const stray = atHead.filter((file) => !docs.includes(file)).flatMap((doc) => parseDecisions(show('HEAD', doc) ?? '').decisions
+    .filter(({ id }) => !statuses.has(id))
+    .map(({ id, line }) => ({ doc, line, problem: `"${id}" is in a doc no knowledge index lists: markers belong in an indexed doc` })));
+  const pullRequest = openPullRequest(project);
+  const unset = pullRequest === null ? [] : added.filter(({ pr }) => pr === null)
+    .map(({ doc, line, id }) => ({ doc, line, problem: `"${id}" still says pr=none, but pull request #${pullRequest} exists: write its number on the marker` }));
+  const own = problems.filter((each) => each.line === null || !lines.has(sameLine(lineAt(each))));
+  return { decisions: added, settled, problems: [...indexProblems(errors), ...own, ...stray, ...unset], pullRequest };
+}
+
+// The number of the branch's pull request, or null when it has none or gh cannot say.
+function openPullRequest(project) {
+  try {
+    const { number } = ghJson(['pr', 'view', '--json', 'number'], { cwd: project.root });
+    return Number.isInteger(number) ? number : null;
+  } catch {
+    return null;
+  }
+}
+
+export const place = ({ doc, line }) => (line === null ? doc : `${doc}:${line}`);
+
+// The project at --project or the current folder, or null after saying there is none.
+function knownProject(start = process.cwd()) {
+  const project = findProject(start);
+  if (!project) console.error(noProjectMessage(path.resolve(start)));
+  return project;
+}
+
+function list(args) {
+  const { values } = parseArgs({ args, options: { 'added-since': { type: 'string' }, json: { type: 'boolean' }, project: { type: 'string' } } });
+  const project = knownProject(values.project);
+  if (!project) return 1;
+  const ref = values['added-since'];
+  const found = ref === undefined ? scanDecisions(project) : addedSince(project, ref);
+  if (!found) {
+    console.error(`cannot compare this branch with "${ref}": git knows no such ref, or could not read it`);
+    return 1;
+  }
+  const { decisions, settled = [], problems, docs, pullRequest } = found;
+  if (values.json) {
+    console.log(JSON.stringify(ref === undefined ? { decisions, problems } : { decisions, settled, problems, pullRequest }));
+    return 0;
+  }
+  const wording = ({ hasOldWording, oldWording }) => (!hasOldWording ? 'no' : oldWording === null ? 'unreadable' : 'yes');
+  const row = (each) => [each.id, each.status, each.class, each.domain, `${each.ageDays}d`, place(each), `pr=${each.pr ?? 'none'}`, `old wording: ${wording(each)}`];
+  const rows = [...decisions.map(row), ...settled.map((each) => [...row(each), `settled, was ${each.was}`])];
+  rows.push(...problems.map((each) => ['problem', ...(each.doc === null ? [] : [place(each)]), each.problem]));
+  console.log(rows.length ? rows.map((row) => row.join('\t')).join('\n') : ref === undefined ? `no decisions in ${docs} indexed doc${docs === 1 ? '' : 's'}` : `no decisions added since ${ref}`);
+  return 0;
+}
+
+function set(args) {
+  const { values, positionals } = parseArgs({ args, allowPositionals: true, options: { project: { type: 'string' } } });
+  const [id, status, ...extra] = positionals;
+  if (!id || !status || extra.length) return fail('set needs an id and confirmed or rejected');
+  if (!SETTLED.includes(status)) return fail(`set takes confirmed or rejected, not "${status}": nothing goes back to unconfirmed`);
+  const project = knownProject(values.project);
+  if (!project) return 1;
+  const { decisions, problems } = scanDecisions(project);
+  const found = decisions.filter((each) => each.id === id);
+  if (found.length !== 1) {
+    const count = problems.filter((each) => each.line !== null).length;
+    const hint = count ? ` ${count} marker problem${count === 1 ? '' : 's'}: run aidrian decisions list` : '';
+    console.error(found.length ? `id "${id}" is on ${found.length} markers: ${found.map(place).join(', ')}; fix the repeat first` : `no decision marker with id "${id}".${hint}`);
+    return 1;
+  }
+  const [{ doc }] = found;
+  const file = path.resolve(project.root, doc);
+  // Latin-1 maps each byte to one character and back, so a byte that is not UTF-8 survives; a marker is ASCII.
+  const before = readFileSync(file, 'latin1');
+  const out = setDecisionStatus(before, id, status);
+  if (!out) {
+    console.error(`${place(found[0])}: could not rewrite the marker of "${id}"`);
+    return 1;
+  }
+  if (out.from === status) {
+    console.log(`${doc}:${out.line}: ${id} already ${status}`);
+    return 0;
+  }
+  // The same answer the main-checkout rule gives an edit of this doc, with its override and `allowWrites`.
+  const denied = mainCheckoutDenial({ tool_name: 'Edit', tool_input: { file_path: file }, cwd: project.root });
+  if (denied) {
+    console.error(denied);
+    return 1;
+  }
+  writeFileSync(file, out.text, 'latin1');
+  console.log(`${doc}:${out.line}: ${id} ${status} (was ${out.from})`);
+  return 0;
+}
 
 const questions = () => Object.keys(loadVocab().reversibility);
 

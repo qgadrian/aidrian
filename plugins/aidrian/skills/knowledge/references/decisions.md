@@ -28,6 +28,7 @@ Every agent and skill that handles one points here and restates none of it.
 4. The specialist returns `decided_provisional`. When its class, answers, or docs differ from what was resolved, run the command again on what it returned.
    `ask` wins: send it back for `decision_options`.
 5. Take the second look below, then go on, and list each `decided_provisional` in the report, attributed.
+6. Give its writer the decision, its domain, and the doc that governs it, as [Record it](#record-it) says, so it goes on record in the same branch.
 
 A dispatcher that already holds the class, answers, and docs may resolve first, and send `authority` in the first brief.
 `authority` covers the one decision its brief names. Another decision the specialist meets starts again at step 1.
@@ -39,7 +40,40 @@ Return `decision_options` with an advisory recommendation. The Human chooses.
 ## Under decide
 
 Return `decided_provisional`, with status `done`: the recommendation is the decision. `handoff.md` lists its fields.
-It settles this change only, and becomes product truth only once the Human keeps it and a doc records it.
+It settles this change only, and becomes product truth only once the Human keeps it, with `aidrian decisions set <id> confirmed`.
+
+## Record it
+
+Every `decided_provisional` goes on record, so every machine and session can see it: one line in the indexed knowledge doc that governs it, committed.
+It is an HTML comment, so a reader of the rendered doc never sees it. It goes directly below the rule's last line, the one place undo looks for that rule.
+A table row's marker goes directly below the table, with the row named in the old wording. Under a bullet, the marker is indented to the bullet's text.
+A marker elsewhere still counts, and `aidrian decisions list` reports it.
+
+```md
+<!-- aidrian:decision id=<slug> status=unconfirmed class=<class> domain=<domain> date=YYYY-MM-DD pr=<n> -->
+```
+
+- `id`: lowercase letters, digits, and `-`, at most 32 characters, unique across the docs.
+- `pr`: `none` until the pull request exists. A writer on a branch whose pull request already exists writes the real number.
+  The `pr-write` skill writes the number on each marker the branch added with `none`, commits, and pushes.
+  That push moves the head, so it comes before the review of the new head, or the report says it did not.
+  `aidrian decisions list --added-since <ref>` flags any `pr=none` left once a pull request exists.
+- **The writer.** The slice's implementer, in its commit; else `doc-updater`.
+  `product-manager` and `architect` decide; neither writes. When no indexed doc covers the area, `harness-librarian` adds one.
+- **Old wording is required.** A decision that replaces a written rule keeps the old wording, in lines directly below its marker, so undo can restore it:
+
+  ```md
+  <!-- aidrian:decision-old id=<slug> text="<the old wording, as a JSON string>" -->
+  ```
+
+  `text` writes a line break as `\n`, a quote as `\"`, and `-->` as `-\u002d>`.
+  Wording may span several such lines, one piece each; they join with nothing between them. The line-length check skips these lines and the marker.
+  A decision that fills a gap has no such line.
+- **Only the Human settles one.** The main session runs `aidrian decisions set <id> confirmed|rejected`, on the Human's word.
+  A hook refuses a subagent.
+  It rewrites that one marker. Run it in a worktree and commit the change; with the main-checkout guard on, it refuses the main checkout.
+  Nothing settles a decision by time. `aidrian decisions list` prints each one, and each marker it cannot read; `aidrian check` warns about those.
+- **The pull request.** The `pr-write` skill lists the branch's decisions in the body.
 
 ## Never self-approved
 

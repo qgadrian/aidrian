@@ -1,8 +1,10 @@
 // The line-length check for Markdown files: one sentence per line reads well in every diff, and the limit
 // (config.json `docs.wrapLimit`) keeps a line on one screen. Text that wrapping would damage is never reported:
-// YAML frontmatter, fenced and indented code, table rows, and a line whose overflow is one unbreakable token, such as a URL.
+// YAML frontmatter, fenced and indented code, table rows, a decision marker line (lib/decisions.mjs), and a line whose
+// overflow is one unbreakable token, such as a URL.
 // Fenced code is what the shared detector in markdown-sections.mjs reads, so a fence opened after a list marker closes.
 
+import { isDecisionLine } from './decisions.mjs';
 import { fencedLines } from './markdown-sections.mjs';
 
 const FRONTMATTER = /^---\s*$/;
@@ -19,7 +21,7 @@ export function findWrapViolations(text, limit) {
   for (const [index, line] of lines.entries()) {
     if (index <= frontmatterEnd) continue;
     if (fenced[index]) continue;
-    if (line.trimStart().startsWith('|') || line.startsWith('    ') || line.startsWith('\t')) continue;
+    if (line.trimStart().startsWith('|') || line.startsWith('    ') || line.startsWith('\t') || isDecisionLine(line)) continue;
     // Wrapping breaks only at whitespace, so a line whose longest token is over the limit cannot be fixed.
     if (line.length > limit && line.split(/\s+/).every((token) => token.length <= limit)) violations.push({ line: index + 1, length: line.length });
   }

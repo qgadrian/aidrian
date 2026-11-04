@@ -6,6 +6,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { commandConfig, VERSION, versionFloorProblem } from './config.mjs';
+import { place, scanDecisions } from './decisions-cli.mjs';
 import { decisionWarnings, escalateDocWarnings } from './decisions.mjs';
 import { isWithin, linksOutside } from './fs.mjs';
 import { checkoutRoots, isIgnored, runGit } from './git.mjs';
@@ -45,7 +46,9 @@ export const commands = {
         errors.push(`${line} is not git-ignored: add the line "${line}" to ${gitignore}, or run aidrian init`);
       }
       const tags = tagWarnings(buckets);
-      const decisions = [...decisionWarnings(config), ...untrackedDocs(project, config)];
+      // Only a project with no errors: an index problem is an error already, and scanDecisions stops on a bad config.
+      const markers = errors.length ? [] : scanDecisions(project).problems.map((each) => `${place(each)}: ${each.problem}`);
+      const decisions = [...decisionWarnings(config), ...untrackedDocs(project, config), ...markers];
       const shown = [...budgets.warnings, ...warnings, ...tags.warnings, ...decisions].map((warning) => `warning: ${warning}`);
       if (shown.length || tags.notes.length) console.error([...shown, ...tags.notes.map((note) => `note: ${note}`)].join('\n'));
       if (errors.length) {

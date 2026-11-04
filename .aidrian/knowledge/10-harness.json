@@ -28,7 +28,7 @@
       "tags": []
     },
     "project-folder.md": {
-      "summary": "The .aidrian/ folder: aidrian init, check, and lint, the local state folder, task worktrees, local knowledge sources, migrating.",
+      "summary": "The .aidrian/ folder: aidrian init, check, lint, local state, task worktrees, local sources, decision markers, aidrian decisions list and set, migrating.",
       "tags": []
     },
     "personas.md": {

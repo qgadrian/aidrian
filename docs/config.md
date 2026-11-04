@@ -165,7 +165,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `decisions.escalate` | Ordinary decision classes that always go to the Human in this project. |
 | `decisions.escalateDocs` | Docs and folders, from the project root, whose decisions always go to the Human: `docs/pricing.md`, `docs/legal/` for everything in it, or `docs/terms.md#refunds` for one section. No glob characters, absolute paths, or `..`. |
 | `decisions.secondLook` | The agent that must agree with a decision at or above `minSeverity`; `null` turns it off. |
-| `decisions.record.queue` | `"pr-body"`, the default, or `"report"`. Every value means the report; nothing writes the pull request body. |
+| `decisions.record.queue` | Where the decisions an agent made alone are listed: `"pr-body"`, the default, in the pull request body and the dispatcher's report; `"report"`, in the report alone. [Recording decisions](#recording-decisions). |
 | `decisions.unreviewed.remind` | When the Human is reminded of unreviewed decisions: `"session-start"`, the default, or `"off"`. |
 | `decisions.unreviewed.pauseDomainAt` | The unreviewed `pending` count and `oldestDays` age at which a domain goes back to asking; `null` never pauses. |
 
@@ -680,9 +680,21 @@ The dispatcher runs the command and passes `authority: decide` or `authority: as
 
 - Under `ask`, the agent returns `decision_options` with an advisory recommendation, and the Human chooses.
 - Under `decide`, it returns `decided_provisional` ([the fields](../plugins/aidrian/skills/knowledge/references/handoff.md)), and the work goes on.
-  The dispatcher lists each one in its report. Every value of `decisions.record.queue` means the report; nothing writes the pull request body.
+  The dispatcher lists each one in its report, and it goes on record: [Recording decisions](#recording-decisions).
 - At or above `minSeverity` in the command's `secondLook`, or with no known severity, the agent it names must return `sign_off: approved` before the work goes on; anything else sends the decision to the Human.
 - A critical-flow sign-off or a security verdict is never self-approved, in any mode.
+
+### Recording decisions
+
+Each `decided_provisional` is committed as a marker line in the doc that governs it: [Decision markers](project-folder.md#decision-markers).
+`aidrian decisions list` prints them, and `aidrian decisions set <id> confirmed|rejected` records the Human's answer. Nothing settles one by time.
+The skill below reads the branch's own with `aidrian decisions list --added-since <ref>`.
+
+Under `decisions.record.queue` `"pr-body"`, the default, the [`pr-write`](../plugins/aidrian/skills/pr-write/SKILL.md) skill also lists
+the branch's decisions in the pull request body: in a `## Decisions` section, or, when `github.pullRequest.sections` is set without `Decisions`,
+under `## Summary` as a `Decisions:` sub-list.
+The [pull request body rule](#pull-request-contract) takes both, and a closed list still refuses the heading.
+Under `"report"`, the skill leaves them out of the body. The marker is written under either value.
 
 ### Which config it reads
 
@@ -724,6 +736,7 @@ At the base commit, where no command reports it, it holds every decision at ask 
   The command answers with the rule `maxMode`. A local value above it is held down, as above, with no warning.
 - An `escalateDocs` entry whose file or folder no tracked path matches exactly, case included, such as a typo.
   A doc may be listed before it exists, so this is a warning and not an error.
+- A [decision marker](project-folder.md#decision-markers) it cannot read, or an id on two markers.
 
 ## Checking
 

@@ -6,6 +6,7 @@
 
 import { block, runHook } from '../lib/hook-io.mjs';
 import * as attribution from '../lib/rules/attribution.mjs';
+import * as decisionsSet from '../lib/rules/decisions-set.mjs';
 import * as gitAmend from '../lib/rules/git-amend.mjs';
 import * as gitHookBypass from '../lib/rules/git-hook-bypass.mjs';
 import * as mergeReview from '../lib/rules/github/merge-review.mjs';
@@ -30,6 +31,7 @@ const RULES = [
   ['review-gate', reviewRequest],
   ['review-rounds', reviewRounds],
   ['review-signoff', reviewSignoff],
+  ['decisions-set', decisionsSet],
   ['review-extend', reviewExtend],
   ['review-fallback', reviewFallback],
   ['merge-review', mergeReview],

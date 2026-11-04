@@ -6,7 +6,8 @@ description: Draft, create, or update a GitHub pull request title and body from 
 # pr-write
 
 Write a pull request a reviewer understands in 30 seconds: what changed, why, how risky it is, and what proves it works.
-This skill writes the title and body and publishes them. It never edits code, pushes, or merges.
+This skill writes the title and body and publishes them. It never edits code or merges.
+Its one commit and push write the pull request's number on the branch's decision markers, as Publish says.
 
 Before you start, follow the `knowledge` skill. Load your `issue_tracker` docs for the issue key format and closing keyword.
 
@@ -56,6 +57,12 @@ from its list and the issue it went to, and each `residuals` item every field it
 - **Attribution, when config.json `attribution.pullRequest` is set:** end a new body with the `Authored-with:` and
   `Assisted-by:` lines the attribution rule prints, as written. They are the one place agent names belong.
 - Flag a mixed-scope or oversized branch in the risk section instead of smoothing it over.
+- **Decisions.** Every run, run `aidrian decisions list --added-since origin/<base> --json`; exit 1 is the stop below for an unclear base.
+  Unless config.json `decisions.record.queue` is `report`, list each of its `decisions` in a `## Decisions` section,
+  and each of its `settled` as settled in this branch.
+  The caller's report gives each new one's reason, revisit trigger, and how it reverts.
+  When `github.pullRequest.sections` is set without `Decisions`, that closed list refuses the heading: the same list goes under `## Summary`,
+  or the first section on the closed list when Summary is not on it, as a `Decisions:` sub-list.
 
 ## Publish
 
@@ -76,6 +83,8 @@ gh pr edit <n> --title "<title>" --body-file <file>                       # exis
 - Draft by default: the review loop runs on the draft, and marks it ready as config.json `github.markReady` says. Open it ready only when asked.
 - Before an edit, read the live body again (`gh pr view <n> --json body`) and keep what is still true.
 - After publishing, read it back and confirm each closing line is plain text on its own line.
+- When a marker that list shows has `pr` null, replace `pr=none` on that marker line with the pull request's number, then commit and push only that.
+  That push moves the head: it comes before the review of the new head, or the report says it did not.
 
 ## Then the review loop
 
@@ -93,4 +102,6 @@ Return the drafted title and body, the reason, and the next step, instead of pub
 
 - the branch is not pushed, or `gh auth status` fails;
 - the branch has no diff against the base, or the base is unclear;
-- a doc the branch makes wrong is not updated in the branch: route it back to the owner of the change first.
+- a doc the branch makes wrong is not updated in the branch: route it back to the owner of the change first;
+- a `decided_provisional` the caller names has no marker in the branch: route it back to its writer (the `knowledge` skill's `references/decisions.md`);
+- that list reports a problem in a marker the branch added, other than the `pr=none` Publish fixes: route it back to the same writer.

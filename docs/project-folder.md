@@ -380,6 +380,79 @@ docs/knowledge/engineering/testing.md
 /home/you/kb/personal/notes/testing-habits.md	~/kb/personal
 ```
 
+## Decision markers
+
+A decision an agent made alone, under [`decisions`](config.md#decisions), stays on record in git, in the indexed knowledge doc that governs it.
+It is one HTML comment on a line of its own, directly below the rule's last line, the one place undo looks for that rule.
+A table row's marker goes directly below the table, with the row named in the old wording. Under a bullet, the marker is indented to the bullet's text:
+
+```md
+Refunds take five days.
+<!-- aidrian:decision id=refund-copy status=unconfirmed class=copy domain=ux date=2026-11-04 pr=41 -->
+```
+
+- `id` is lowercase letters, digits, and `-`, unique across the docs.
+  It takes at most 32 characters, so the longest marker fits on one screen at the default `docs.wrapLimit`.
+- `status` is `unconfirmed`, `confirmed`, or `rejected`. An agent writes `unconfirmed`; only the Human moves it, and nothing settles a decision by time.
+- `class` is an ordinary class of `lib/decisions.json`, since a floor class never reaches an agent.
+- `domain` is `product`, `ux`, `architecture`, or `backlog`.
+- `pr` is `none` until the pull request exists; a writer on a branch whose pull request already exists writes the real number.
+  The [`pr-write`](../plugins/aidrian/skills/pr-write/SKILL.md) skill writes the number on each marker the branch added with `none`, commits, and pushes.
+  That push moves the head, so it comes before the review of the new head, or the report says it did not.
+
+The slice's implementer writes the marker in its commit; else `doc-updater`.
+The dispatcher gives the writer the decision, its domain, and the doc that governs it.
+`product-manager` and `architect` decide, and neither writes.
+[`decisions.md`](../plugins/aidrian/skills/knowledge/references/decisions.md) is the rule they follow.
+
+A decision that replaces a written rule must keep the old wording, in lines directly below its marker, so undo can restore it.
+One that fills a gap has no such line:
+
+```md
+Refunds take five days.
+<!-- aidrian:decision id=refund-copy status=unconfirmed class=copy domain=ux date=2026-11-04 pr=41 -->
+<!-- aidrian:decision-old id=refund-copy text="Refunds take ten days.\nAsk support first." -->
+```
+
+`text` is a JSON string, so a line break or a quote stays on one line. `-->` would end the comment, so it is written `-\u002d>`.
+Wording may span several `decision-old` lines, one piece each, joined with nothing between them.
+The [line-length check](hooks.md#markdown-line-length) skips marker and `decision-old` lines, since wrapping one would break it.
+
+`aidrian decisions list` reads the indexed docs of the working copy, so a decision on an unmerged branch lists only on that branch.
+Each row is the id, status, class, domain, age, doc and line, pull request, and whether it has old wording.
+`--json` adds the date and the wording:
+
+```json
+{ "decisions": [{ "id": "", "status": "", "class": "", "domain": "", "date": "", "pr": 41, "line": 2, "hasOldWording": true, "oldWording": "", "doc": "", "ageDays": 0 }],
+  "problems": [{ "doc": "", "line": 2, "problem": "" }] }
+```
+
+A marker it cannot read, or an id on two markers, is a `problem` and the list goes on, with exit 0.
+So is a marker out of place, which still lists: one on a doc's first line, one inside a table,
+or one under a blank line, a heading, a code fence, or another decision line.
+`hasOldWording` true with `oldWording` null means the old wording cannot be read.
+A marker in a code fence or a code span is a quote, not a decision.
+A doc from a [local source](#local-knowledge-sources) lists too, but no other machine sees it, so markers belong in committed docs.
+`aidrian check` warns about each problem, and still passes.
+
+`aidrian decisions list --added-since <ref>` lists only what the branch committed since it left `<ref>`, read from git at the merge base and at `HEAD`.
+A decision counts when no marker at the merge base has its id, whatever its status and however it is indented,
+so a moved marker or a changed status does not.
+A problem counts when its line is new, so one the branch inherited does not.
+A new decision in a Markdown file no index lists is a `problem`: markers belong in an indexed doc.
+Its JSON adds `settled`, each inherited marker whose status the branch changed, with `was`, the status at the merge base.
+It also adds `pullRequest`, the branch's number from `gh`; `null` means no pull request, or `gh` could not say.
+With a number, a new marker still at `pr=none` is a `problem`.
+It exits 1 when git cannot compare the two.
+
+`aidrian decisions set <id> confirmed|rejected` rewrites only that marker's `status`, every other byte as it was, and leaves the old wording in place.
+It changes the working copy, so run it in a task worktree and commit the change. It refuses an unknown id, an unreadable marker, and an id on two markers.
+With [`git.mainCheckout.guard`](hooks.md#main-checkout) on, it refuses a tracked doc in the main checkout, as an edit is refused,
+under the same `AIDRIAN_ALLOW_MAIN_WRITE=1` and `allowWrites`.
+The [`decisions-set` rule](hooks.md#bash-rules) denies it to a subagent: the main session runs it on the Human's word.
+
+Markers count toward the [knowledge budgets](config.md#knowledge-budgets), as any line of a doc does.
+
 ## Migrating
 
 Version 1 is the first version of the folder, so there is nothing to migrate.

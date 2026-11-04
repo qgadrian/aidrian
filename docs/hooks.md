@@ -250,6 +250,10 @@ the session transcript holds the Human's AskUserQuestion answer to a question na
 with "Merge anyway", given at or after the head's outcome and every owed review. Without a transcript in that shape
 (Codex), the Human merges in their own shell.
 
+[Auto-merge](config.md#auto-merge) goes through this guard: the rule reads its `gh pr merge` like any other.
+The guard is not proof that a review happened, because no record lets a merge run (step 2 above).
+So `aidrian pr auto-merge` reads the record itself, and no record keeps auto-merge off.
+
 Limits:
 
 - A record written on another machine is not read here.

@@ -116,12 +116,17 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.requiredChecks` | Parts of check names that must be present and pass before `aidrian pr checks` says ready. |
 | `github.ignoreCancelledChecks` | Parts of check names whose `CANCELLED` result is routine and not a failure. |
 | `github.conditionalChecks` | Parts of check names whose `SKIPPED` or `NEUTRAL` result is routine, such as a job a path filter turns off. |
-| `github.markReady` | Who marks a draft pull request ready. `"auto"`, the default: the `pr-review-loop` skill, or `autopilot` and the `orchestrator` when they run it, mark it ready once a review of the current head signs off with no blocked row and `aidrian pr checks` says ready. `"ask"`: its author, or the review loop when the Human asks in the session. Either way, nothing is pushed after it is marked ready, and nothing merges it. The default was `"ask"` before; [Changed defaults](#changed-defaults) has the opt-out. |
+| `github.markReady` | Who marks a draft pull request ready. `"auto"`, the default: the `pr-review-loop` skill, or `autopilot` and the `orchestrator` when they run it, mark it ready once a review of the current head signs off with no blocked row and `aidrian pr checks` says ready. `"ask"`: its author, or the review loop when the Human asks in the session. Either way, nothing is pushed after it is marked ready. Marking it ready merges nothing: only the Human's request or [auto-merge](#auto-merge) does. The default was `"ask"` before; [Changed defaults](#changed-defaults) has the opt-out. |
 | `github.reviewLoop` | What follows the `pr-write` skill once it opens or updates a pull request. `"auto"`, the default: once `pr-write`, and any skill that ran it, has ended, the session starts the `pr-review-loop` skill on it right away, without asking. `"ask"`: the session offers the loop and runs it when the Human asks. Run inside a skill or agent that runs its own review loop, such as `autopilot` or the `orchestrator`, `pr-write` leaves the loop to it. |
 | `github.titleIssuePrefix` | `true` writes pull request titles as `[<issue key>] type(scope): subject`, or `[NOISSUE] type: subject`; `false`, the default, writes a plain Conventional Commits title. |
 | `github.pullRequest` | The project's [pull request contract](#pull-request-contract), beyond the required sections; off by default but for `sharedTempBodyFile`. |
 | `github.reviewGate.enabled` | `true` asks the review bot only once a review of the diff is on record: [Review gate](#review-gate). |
 | `github.reviewGate.checklist` | A file the reviewer reads the diff against, named in the gate's message; `null` names none. |
+| `github.autoMerge.allow` | `true` lets a machine opt in to [auto-merge](#auto-merge); `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. |
+| `github.autoMerge.strategy` | How auto-merge merges: `"squash"`, `"merge"`, or `"rebase"`. `null`, the default: the one strategy the repository allows, or with several, `squash`, then `merge`, then `rebase`. Read from the default branch. |
+| `github.autoMerge.deleteBranch` | `true` deletes the head branch with the merge. Read from the default branch. |
+| `github.autoMerge.deleteWorktree` | `true` removes the head branch's worktree after the merge, but never a session's own: [Cleanup](#cleanup-after-the-merge). Read from the default branch. |
+| `github.autoMerge` in `.aidrian.local.json` | This machine's switch: `"on"` opts in under the team's `allow`; `"off"`, the default, stays out. It is not a config.json key. |
 | `review.engine` | The project's [review engine](review.md#the-engine); it wins over the machine's. `null` leaves the choice to each machine. |
 | `review.record` | Where the [review record](review.md#the-record) goes: `"comment"` also writes a summary comment on the pull request; `"local"` keeps it in the state folder only. |
 | `terms.file` | The [terms file](#terms) of banned terms and their replacements, relative to the project root; `null` turns the rule off. |
@@ -171,6 +176,63 @@ A project without the Codex review bot sets `"github": { "reviewer": null }`, or
   It runs no `gh`, posts no review request, and waits for nothing. `--reviewer none` does the same for one run.
 - `aidrian report reviews` and the Reviews line of `aidrian report health` say that no review bot is set.
 - The `orchestration` and `autopilot` skills then run the `pr-review` skill in every review round.
+
+## Auto-merge
+
+Auto-merge lets a session merge a pull request without asking. It is off until both the team and the machine turn it on.
+
+The team commits this in config.json, on the default branch and on any other branch pull requests target:
+
+```json
+{ "version": 1, "github": { "autoMerge": { "allow": true, "strategy": "squash", "deleteBranch": true, "deleteWorktree": true } } }
+```
+
+Each machine opts in with this in `.aidrian.local.json`:
+
+```json
+{ "github": { "autoMerge": "on" } }
+```
+
+`"on"` and `"off"` are the only values, and it is the only `github` key that file takes.
+`aidrian check` warns when the machine opts in and the team does not allow it.
+It fails when git tracks the file, and the switch then reads `"off"`: [Setting up](project-folder.md#setting-up-and-checking).
+
+A project that adopts `github.autoMerge` sets [`requires.aidrian`](#plugin-version) to the release that ships it,
+since an older plugin rejects the key.
+
+### When it is on
+
+`aidrian pr auto-merge [PR] [--json]` reports it for one pull request: a number, `#number`, or URL, or by default the
+current branch's. It exits 0 when on, 1 when off, and 3 on an error, such as a bad argument or a failed gh read.
+
+It is on only when all four of these hold. With `--json`, `reason` names the first that fails, and is `null` when on.
+
+| `reason` | What must hold |
+| --- | --- |
+| `team` | `github.autoMerge.allow` is true on both the repository's default branch and the pull request's base. Both are read from GitHub as each branch commits them now, never from the checkout. So a branch cannot raise it, and the pull request that turns it on does not merge itself. |
+| `local` | This machine's switch is `"on"`. |
+| `author` | The pull request's author is the gh user. |
+| `review` | This machine's [review record](review.md#the-record) holds a finished review of the current head, `received` or `none_needed`, and nothing is owed. There is no looser mode: no record, a review of an earlier head, or an owed review keeps it off. |
+
+`strategy`, `deleteBranch`, and `deleteWorktree` come from the default branch only. The base counts only for `allow`.
+
+### What a run does
+
+The `pr-review-loop`, `orchestration`, and `autopilot` skills run `pr-merge-when-green` when the command exits 0, and
+only after that same run marked the draft ready. The skill waits for every check, runs the command again right before
+the merge, and stops unless it still exits 0 on the same head.
+The merge goes through the [merge guard](hooks.md#merge-guard), and never uses `--auto` or `--admin`.
+
+When the Human starts `pr-merge-when-green`, the command need not exit 0.
+The command's `strategy`, `deleteBranch`, and `deleteWorktree` only fill the choices the Human left out.
+
+### Cleanup after the merge
+
+`deleteWorktree` removes the head branch's worktree without asking only when the cleanup can prove the work merged.
+A session's own worktree is never removed, and a session usually works in the pull request's worktree.
+That run reports the worktree kept: run the `worktree-cleanup` skill from the main checkout.
+
+`deleteBranch` does not reach a fork: gh never deletes a head branch in another repository.
 
 ## Pull request contract
 
@@ -395,6 +457,7 @@ version and the folder of the copy that runs, so the stale install shows at the 
 A project that adopts the `session.handoff` group (`mode`, `costRatio`, `maxTokens`) sets `requires.aidrian` to the
 release that ships it: an older plugin reads only a string `session.handoff` and rejects the group.
 [handoff.md](handoff.md#config) lists the old keys and where each went.
+A project that adopts [`github.autoMerge`](#auto-merge) does the same, since an older plugin rejects the key.
 
 ## Attribution
 

@@ -69,7 +69,7 @@ Claude Code runs each skill as `/aidrian:<skill>`. In Codex, ask for it by name.
 | Coordination | What it does |
 | --- | --- |
 | `orchestration` | The orchestrator's steps for worktrees, slices, and pull requests. |
-| `autopilot` | Runs one task unattended to a draft pull request. Never merges. |
+| `autopilot` | Runs one task unattended to a reviewed pull request. Merges only when `aidrian pr auto-merge` exits 0. |
 | `session-handoff` | Writes a brief so a fresh session can resume the work. |
 | `session-continue` | Resumes work from a handoff brief. |
 
@@ -98,7 +98,7 @@ Claude Code runs each skill as `/aidrian:<skill>`. In Codex, ask for it by name.
 | `pr-write` | Writes a pull request title and body from the real diff. |
 | `pr-screenshot` | Attaches screenshots or files to a pull request. |
 | `pr-review-loop` | Takes each review comment to a fix or a reply with evidence. |
-| `pr-merge-when-green` | Merges once every check is final and passes. |
+| `pr-merge-when-green` | Merges once every check is final and passes, when the Human asks or under [auto-merge](config.md#auto-merge). |
 
 | Review and quality | What it does |
 | --- | --- |

@@ -95,6 +95,13 @@ Do not add `priority:*` or `effort:*` labels — Linear's native fields are alre
 - If no match exists, create it with `create_issue_label(name: "<label>", teamId: "<team id>")`. A label a calling skill
   passes, such as an audit label, is created only when the caller says the Human approved it; otherwise it is left out
   and named in the result.
+
+## A caller's source line and machine key
+
+A calling skill, such as `persona-audit-triage`, may pass a `Source:` line, which names what the issue came from in
+words with its path as a location: keep it in the description as given. A machine key it passes for dedupe, such as an
+`audit_key`, never goes in the title or the first lines: put it on its own line inside the closing Agent notes section
+(`+++ Agent notes` ... `+++`), the one place in a Linear description a person reads last.
 - Pass label **names** (not ids) to `save_issue(labels: [...])`.
 - `save_issue`'s `labels` parameter **replaces the full label set** — it is not additive. When updating an existing issue, always pass the complete desired label list (existing labels to keep plus any new ones); omitting an existing label removes it.
 

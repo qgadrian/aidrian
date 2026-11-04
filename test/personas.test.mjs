@@ -43,7 +43,7 @@ Success: the dish shows as ready on the waiter's screen within five seconds.
 
 ## Context
 
-Phone, Spanish, the whole shift.
+Phone, the product's second language, the whole shift.
 `;
 
 // A git project with one bucket whose docs map name -> text, every doc tagged `personas`.

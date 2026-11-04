@@ -14,6 +14,7 @@ const PRE = path.join(PLUGIN, 'scripts/hook-tracker-pre.mjs');
 const POST = path.join(PLUGIN, 'scripts/hook-tracker-post.mjs');
 const END = path.join(PLUGIN, 'scripts/hook-session-end.mjs');
 const CLI = path.join(PLUGIN, 'bin/aidrian');
+const PROBE = path.resolve(import.meta.dirname, 'fixtures/tracker-probe-mcp.mjs');
 
 const EXPECT = 'https://tracker.example/acme';
 const READ = 'mcp__x__get_workspace';
@@ -54,6 +55,14 @@ test('the reader takes the value from a content-block array', () => {
 test('the reader takes the value from the shape observed on Codex', () => {
   assert.equal(readTrackerValue({ content: [text(JSON.stringify(OK))] }, 'url'), EXPECT);
   assert.equal(readTrackerValue(JSON.stringify({ content: [text(JSON.stringify(OK))] }), 'url'), EXPECT);
+});
+
+// What Claude Code 2.1.318 sent to a PostToolUse hook for a real get_workspace call, with the values replaced: the same
+// shape on the plugin's server and on the claude.ai connector.
+const CLAUDE_CODE_READ = [text(JSON.stringify({ id: 'redacted-id', name: 'Redacted', url: EXPECT }))];
+
+test('the reader takes the value from the shape observed on Claude Code', () => {
+  assert.equal(readTrackerValue(CLAUDE_CODE_READ, 'url'), EXPECT);
 });
 
 test('the reader parses the first text block holding JSON, past blocks that hold none', () => {
@@ -493,6 +502,47 @@ test('a write is refused before a read, allowed after a matching one, and refuse
 
   assertRuns(read());
   assertRuns(write());
+});
+
+test('a read in the shape observed on Claude Code clears the write', (t) => {
+  const { file, read, write } = project(t);
+  assertRuns(read(CLAUDE_CODE_READ));
+  assert.deepEqual(JSON.parse(readFileSync(file(), 'utf8')).value, EXPECT);
+  assertRuns(write());
+});
+
+test('no tracker hook runs on a failed read, so it leaves the record as it was', () => {
+  const { hooks } = JSON.parse(readFileSync(path.join(PLUGIN, 'hooks/hooks.json'), 'utf8'));
+  assert.ok(JSON.stringify(hooks.PostToolUse).includes('hook-tracker-post.mjs'));
+  assert.ok(!JSON.stringify(hooks.PostToolUseFailure ?? []).includes('hook-tracker-post.mjs'));
+});
+
+test('the probe server speaks MCP: initialize, tools/list, a read, a write that does nothing, and a failed read', () => {
+  const lines = [
+    { id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '0' } } },
+    { method: 'notifications/initialized' },
+    { id: 2, method: 'tools/list' },
+    { id: 3, method: 'tools/call', params: { name: 'get_workspace', arguments: {} } },
+    { id: 4, method: 'tools/call', params: { name: 'save_issue', arguments: { team: 'Notes', title: 'x' } } },
+    { id: 5, method: 'tools/call', params: { name: 'get_workspace', arguments: { fail: true } } },
+  ].map((line) => JSON.stringify({ jsonrpc: '2.0', ...line })).join('\n');
+  const env = { ...process.env, TRACKER_PROBE_URL: EXPECT };
+  delete env.NODE_TEST_CONTEXT;
+  const { status, stdout } = spawnSync(process.execPath, [PROBE], { input: `${lines}\n`, encoding: 'utf8', env });
+  assert.equal(status, 0);
+  const answers = stdout.trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(answers.map(({ id }) => id), [1, 2, 3, 4, 5], 'the notification gets no answer');
+  assert.equal(answers[0].result.protocolVersion, '2025-06-18');
+  assert.deepEqual(answers[1].result.tools.map(({ name }) => name), ['get_workspace', 'save_issue']);
+  assert.equal(readTrackerValue(answers[2].result.content, 'url'), EXPECT);
+  assert.match(answers[3].result.content[0].text, /did nothing/);
+  assert.equal(answers[4].result.isError, true);
+});
+
+test('the probe server exits at once under the test runner, which holds its stdin open', () => {
+  const line = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' });
+  const { status, stdout } = spawnSync(process.execPath, [PROBE], { input: `${line}\n`, encoding: 'utf8', env: { ...process.env, NODE_TEST_CONTEXT: 'child-v8' } });
+  assert.deepEqual([status, stdout], [0, '']);
 });
 
 test('the post hook records { value, unreadable, tool, at }, and the latest read replaces an earlier one', (t) => {

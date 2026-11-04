@@ -64,6 +64,8 @@ export PATH="${aidrian_dir}bin:$PATH"
 ## Hooks
 
 - Codex runs the plugin's hooks only after you trust them in `/hooks`, after each install and each update.
+  The [tracker write guard](../config.md#tracker) needs that trust too: without it, every tracker write passes unchecked.
+  No live session has run the guard with that trust yet, so [hooks.md](../hooks.md) marks it Claude Code.
 - Codex has no Edit, Write, or Agent tool, so the hooks on those tools never run. [hooks.md](../hooks.md) marks them Claude Code.
 - Shell commands reach the hooks as `Bash`, file edits as `apply_patch`, and MCP tools as `mcp__<server>__<tool>`.
 - Hosted tools, such as web search, never reach a hook.

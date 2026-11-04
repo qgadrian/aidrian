@@ -843,7 +843,15 @@ Two [hooks](hooks.md) run on every MCP tool call while `tracker.enabled` is true
 A config.json that cannot be read leaves it false, so a broken config lets every call run.
 
 After a call of a tool in `readTools`, the first hook records what it reported in
-`$XDG_STATE_HOME/aidrian/sessions/<session id>.tracker.json`. The latest read replaces an earlier one, and the end of the session deletes the file.
+`$XDG_STATE_HOME/aidrian/sessions/<session id>.tracker.json`. The latest read replaces an earlier one.
+On Claude Code the end of the session deletes the file.
+The end of each `claude -p` process counts as that end, so a later `--resume` has to read again.
+On Codex, whether the session's end deletes the file is not verified.
+
+On Claude Code, a read that fails counts as no read. It goes to `PostToolUseFailure`, where no tracker hook runs, so it leaves the record as it was.
+With no earlier read, the next write is refused as a session that has not read, with no word of the failure.
+After a good read, that read stays in force, and writes keep passing.
+
 Before a call that matches `writeTools`, the second hook checks these rules in order, and the first the call breaks refuses it:
 
 1. With `workspace` set, the session's latest read must be on the write's server, the `mcp__<server>__` that starts both tool names.

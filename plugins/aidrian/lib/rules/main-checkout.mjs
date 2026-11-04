@@ -638,8 +638,10 @@ export function toolTargets(input) {
 }
 
 // A write target as the shell reads a leading `~`: `~` and `~/x` are in the home folder, not in the shell's folder.
-// `~user` stays as written. Accepted residual: the lexer drops quotes, so a quoted "~/x", a literal folder named `~`, reads the same.
-const expandHome = (text) => (text === '~' || text.startsWith('~/') ? path.join(homedir(), text.slice(1)) : text);
+// `~user` stays as written, and so does a token marked `literal`, cut from inside a word or built by this rule: the shell
+// expands `~` only at a word's start, so `-t~/x` and `of=~/x` name a folder called `~`. Accepted residual: the lexer drops quotes, so a quoted "~/x", a literal folder named `~`, reads the same.
+const isHomeWord = ({ text, literal = false }) => !literal && (text === '~' || text.startsWith('~/'));
+const expandHome = (token) => (isHomeWord(token) ? path.join(homedir(), token.text.slice(1)) : token.text);
 
 // Every path a Bash command writes with certainty, resolved against `cwd`. Commands are read in the order they run: a
 // relative target after a `cd` is dropped, and one before it stays. A command substitution runs in a shell of its own,
@@ -690,8 +692,9 @@ export function bashWrites(command, cwd, { followCd = false, shells = false, res
   visit(command, { dirs: [cwd], unsure: false, cds: [], via: [] }, 0);
   return targets
     .filter(({ token }) => (!token.dynamic || (globs && !/[$`]/u.test(token.text))) && token.text !== '')
-    .map(({ token: { text: written, dynamic }, place: { dirs, unsure, cds, via } }) => {
-      const text = expandHome(written);
+    .map(({ token, place: { dirs, unsure, cds, via } }) => {
+      const { dynamic } = token;
+      const text = expandHome(token);
       if (dynamic) return { text, files: [], dirs, unsure, glob: true, cds, via };
       if (path.isAbsolute(text)) return { text, files: [text], unsure: false, cds, via };
       return { text, files: dirs.map((dir) => path.resolve(dir, text)), unsure, cds, via };
@@ -772,10 +775,10 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
       if (SCRIPT_OPTIONS.has(program) && value?.option === '-i') suffix = { text: value.attached ?? '', dynamic: args[i].dynamic };
       if (CHANGES_FOLDER.get(program)?.includes(value?.option)) {
         // ruby changes folder at each option, so `ruby -C one -C two` runs in one/two; perl keeps only its last -x.
-        const next = value.attached === null ? args[i + 1] ?? null : { text: value.attached, dynamic: args[i].dynamic };
-        const compose = program === 'ruby' && folder !== null && next && !path.isAbsolute(next.text);
+        const next = value.attached === null ? args[i + 1] ?? null : { text: value.attached, dynamic: args[i].dynamic, literal: true };
+        const compose = program === 'ruby' && folder !== null && next && !path.isAbsolute(next.text) && !isHomeWord(next);
         // A bare perl -x keeps the folder an earlier -x chose.
-        if (next && next.text !== '') folder = compose ? { text: path.join(folder.text, next.text), dynamic: folder.dynamic || next.dynamic } : next;
+        if (next && next.text !== '') folder = compose ? { text: path.join(folder.text, next.text), dynamic: folder.dynamic || next.dynamic, literal: folder.literal } : next;
       }
       if (value?.attached === null) i += 1;
     } else if (text !== '') {
@@ -784,7 +787,7 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
       if (SCRIPT_OPTIONS.has(program)) ended = true;
     }
   }
-  if (program === 'dd') return operands.filter(({ text }) => text.startsWith('of=')).map((token) => ({ ...token, text: token.text.slice(3) }));
+  if (program === 'dd') return operands.filter(({ text }) => text.startsWith('of=')).map((token) => ({ ...token, text: token.text.slice(3), literal: true }));
   if (program === 'install' && flags.some((flag) => flag === '-d' || isLongOption(flag, '--directory', '--d'))) return operands;
   if (COPIERS.has(program) || program === 'mv') {
     const directory = targetDirectory(args);
@@ -802,11 +805,11 @@ function written(program, args, valueFlags = WRITERS.get(program)) {
     if (!flags.includes('-i') || flags.includes('-c')) return [];
     const edited = flags.some((flag) => SCRIPT_OPTIONS.get(program).includes(flag)) ? operands : operands.slice(1);
     // A suffix also writes a backup: `-i.bak` beside each file, `-i'old/*'` with `*` for the file's name.
-    const backups = suffix?.text ? edited.map((token) => ({ ...token, dynamic: token.dynamic || suffix.dynamic, text: backupOf(program, token.text, suffix.text) })) : [];
+    const backups = suffix?.text ? edited.map((token) => ({ ...token, dynamic: token.dynamic || suffix.dynamic, text: backupOf(program, token.text, suffix.text), literal: !isHomeWord(token) })) : [];
     const files = [...edited, ...backups];
     // ruby -C and -x, and perl -x, run in the folder they name: a relative file is read from there.
     if (folder === null || folder.text === '') return files;
-    return files.map((token) => (path.isAbsolute(token.text) ? token : { ...token, text: path.join(folder.text, token.text), dynamic: token.dynamic || folder.dynamic }));
+    return files.map((token) => (path.isAbsolute(token.text) || isHomeWord(token) ? token : { ...token, text: path.join(folder.text, token.text), dynamic: token.dynamic || folder.dynamic, literal: folder.literal }));
   }
   if (program !== 'sed') return operands;
   // GNU sed takes a prefix of a long option: `--i` is `--in-place`, `--e` is `--expression`, `--fi` is `--file`.
@@ -850,12 +853,12 @@ function targetDirectory(args) {
     if (text.startsWith('--')) {
       if (!isLongOption(text, '--target-directory', '--t')) continue;
       const equals = text.indexOf('=');
-      return equals === -1 ? args[i + 1] ?? null : { text: text.slice(equals + 1), dynamic };
+      return equals === -1 ? args[i + 1] ?? null : { text: text.slice(equals + 1), dynamic, literal: true };
     }
     if (!/^-./u.test(text)) continue;
     // In a cluster, -S takes the rest as its suffix, and -t takes the rest, or the next word, as the directory.
     const { value } = readShortOptions(text, WRITERS.get('cp'));
-    if (value?.option === '-t') return value.attached === null ? args[i + 1] ?? null : { text: value.attached, dynamic };
+    if (value?.option === '-t') return value.attached === null ? args[i + 1] ?? null : { text: value.attached, dynamic, literal: true };
   }
   return null;
 }

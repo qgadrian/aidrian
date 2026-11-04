@@ -18,6 +18,7 @@ Every agent and skill that handles one points here and restates none of it.
 
   `--reversible` answers the questions in the order `--vocab` gives. `--doc` is required whenever a decision touches a written rule, once per doc.
   `--domain` follows the owner: `product` for `product-manager`, `backlog` for `product-manager` on the order of work, `architecture` for `architect`, and `ux` for `ux-specialist` or `designer`.
+  A class `--vocab` gives a `domain` is always in that domain, whoever raises it: the command judges it there, and its marker names that domain.
 - **The specialist never computes authority itself.** A brief with no `authority` line means `ask`.
 - **The fourth question.** The deciding agent answers it literally, whatever the team has opted in to, and the command applies the team's acceptance.
   Where a team has both `decide-reversible` and auto-merge allowed, at the base branch, a change may reach users

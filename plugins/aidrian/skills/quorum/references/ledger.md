@@ -219,7 +219,7 @@ fails `quorum check` on every invalid ruling or rebuttal, so it is not reused.
 - `dropped`: each option the merge dropped.
   - `dropped[].label`: its label.
   - `dropped[].reason`: why.
-- `persona_docs`: every persona doc's path, from the repository root, whichever one reacted. A winner resting only on these is invalid.
+- `persona_docs`: every doc tagged `personas` other than `product-access`, as the knowledge index prints it, whichever one reacted. A winner resting only on these is invalid.
 - `premise`: why the decision is open.
   - `premise.summary`: the framer's answer.
   - `premise.citations`: its evidence, never a `plan` citation; with none passing, `quorum check` names the premise invalid.
@@ -302,7 +302,7 @@ citations, and edits hold, and:
 - Past 5 cross points, keep the first 5.
 
 In product mode, hold a case to `CASE_SCHEMA` and a ruling to the ledger's `ruling`, with `outcome` split from it; on an
-escalate, `outcome` is `null`. Keep the first 9 examiner points; drop a point against, or a reaction to, a position the ledger does not hold, and a
+escalate, `outcome` is `null`. Keep the first 9 examiner points and the first 3 questions and answers; drop a point against, or a reaction to, a position the ledger does not hold, and a
 second reaction to one. The rules above on missing fields, citations, and edits hold.
 
 When `quorum check` still exits 1, stop with `blocked`, quoting what it printed.

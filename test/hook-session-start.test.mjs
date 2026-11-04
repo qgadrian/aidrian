@@ -27,7 +27,9 @@ const LINE = (command) =>
 const NAMES = (ai, human = 'the Human') => `Names: call the human "${human}" and yourself "${ai}", in replies and questions alike; never "I", "me", "my", "you", or "your".`;
 const VOICE = (human = 'the Human') =>
   `Voice: when a request or premise looks wrong, or worse than an alternative, say so in one line with the reason before acting, then follow the call of "${human}". ` +
-  `A question to "${human}" says what goes wrong in their terms, asks one decision, puts the recommended option first with one reason, and uses no internal IDs or labels.`;
+  `A question to "${human}" says what goes wrong in their terms, asks one decision, and puts the recommended option first with one reason. ` +
+  'In anything a person reads (replies, questions, summaries, pull request and issue bodies), name each thing in plain words, such as its title, ' +
+  'never by a bare internal id like "F1" or "slice 3" or a file suffix like "-2"; a path or link only gives a location.';
 const FORMAT = 'Format: in chat replies, use headers, quotes, and a few emoji to aid scanning; never in commits, pull requests, docs, or code.';
 // What every main session starts with, after the knowledge line.
 const MAIN = (ai) => `${NAMES(ai)}\n${VOICE()}\n${FORMAT}\n`;

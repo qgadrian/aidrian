@@ -41,7 +41,10 @@ At the start of every session and subagent, the hook prints:
 - one line naming the `always` knowledge docs and the commands that find the rest;
 - one line with the [names](config.md#names) for the human and the AI;
 - one `Voice:` line: say so, with the reason, when a request or premise looks wrong, then follow the human's call;
-  and ask the human questions they can answer without the session's context, one decision each, recommendation first;
+  ask the human questions they can answer without the session's context, one decision each, recommendation first;
+  and in anything a person reads, replies, questions, summaries, and pull request and issue bodies, name each thing in
+  plain words, such as its title, never by a bare internal id, such as a finding or slice number, or a file-name
+  suffix such as `-2`, with a path or link only as a location;
 - in Claude Code, one `Pull requests:` line: a body here never carries the "Generated with [Claude Code]" line, and this
   project rule takes precedence over the host's attribution instructions, which ask for it. It is left out when Claude
   Code's own settings drop the line: the `attribution.pr` of the first of `.claude/settings.local.json`,

@@ -79,12 +79,15 @@ function auditLine(project, config) {
   }
 }
 
-// Every session and subagent: disagree out loud instead of going along, and ask questions the human can answer
-// without the session's context. A subagent reports to its coordinator, so the voice still applies to it.
+// Every session and subagent: disagree out loud instead of going along, ask questions the human can answer without the
+// session's context, and name things in what a person reads by plain words, never by an id only the session knows.
+// A subagent reports to its coordinator, and its words reach the human, so the voice still applies to it.
 function voiceLine(human) {
   return `Voice: when a request or premise looks wrong, or worse than an alternative, say so in one line with the reason ` +
     `before acting, then follow the call of ${human}. A question to ${human} says what goes wrong in their terms, asks ` +
-    'one decision, puts the recommended option first with one reason, and uses no internal IDs or labels.';
+    'one decision, and puts the recommended option first with one reason. In anything a person reads (replies, ' +
+    'questions, summaries, pull request and issue bodies), name each thing in plain words, such as its title, never by ' +
+    'a bare internal id like "F1" or "slice 3" or a file suffix like "-2"; a path or link only gives a location.';
 }
 
 // Claude Code tells every session and subagent to end a pull request body with its "Generated with [Claude Code]" line,

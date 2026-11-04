@@ -5,6 +5,7 @@
 //           CASE_SCHEMA (`--mode case`), to CROSS_SCHEMA and a decide ledger (`--mode cross`), or, to answer the
 //           architect's rulings in a ledger, to REBUTTALS_SCHEMA or DECIDE_REBUTTAL_SCHEMA by that ledger's mode
 //           (`--mode rebut`), and prints one { status, reason } line
+//   premise checks the citations of a product framer's open: false answer, which ends a run before any ledger.
 //   check   checks every citation of a ledger against the repository and the plan (the question file in decide mode),
 //           relabels a `pending` objection or cross point by whether a citation passes, removes a note with none, and
 //           names each ruling or rebuttal with no passing citation; on a ledger that carries `mode`, also the judge's
@@ -331,7 +332,7 @@ export const MAX_PRODUCT_POSITIONS = 3;
 export const PRODUCT_LEDGER_SCHEMA = Object.freeze({
   type: 'object',
   additionalProperties: false,
-  required: ['mode', 'status', 'plan', 'plan_hash', 'same_model', 'same_model_reason', 'trigger', 'premise', 'positions', 'witness', 'cases', 'cross', 'ruling', 'outcome', 'human_answer'],
+  required: ['mode', 'status', 'plan', 'plan_hash', 'same_model', 'same_model_reason', 'trigger', 'premise', 'trace', 'dropped', 'persona_docs', 'positions', 'witness', 'cases', 'cross', 'ruling', 'outcome', 'human_answer'],
   properties: {
     mode: { type: 'string', enum: ['product'] },
     status: DECIDE_LEDGER_SCHEMA.properties.status,
@@ -346,6 +347,12 @@ export const PRODUCT_LEDGER_SCHEMA = Object.freeze({
       required: ['summary', 'citations'],
       properties: { summary: { type: 'string' }, citations: CITATIONS },
     },
+    trace: { type: 'string' },
+    dropped: {
+      type: 'array',
+      items: { type: 'object', additionalProperties: false, required: ['label', 'reason'], properties: { label: { type: 'string' }, reason: { type: 'string' } } },
+    },
+    persona_docs: { type: 'array', items: { type: 'string' } },
     positions: DECIDE_LEDGER_SCHEMA.properties.positions,
     witness: {
       type: ['object', 'null'],
@@ -1121,6 +1128,7 @@ export function productProblems(ledger) {
     seen.add(point.id);
     if (!known.has(point.against)) problems.push(`cross ${shown(point.id)} is against ${point.against}, not a position in this ledger`);
   }
+  if (ledger.premise.citations.some(({ kind }) => kind === 'plan')) problems.push('premise cites the question file, which only repeats it');
   const persona = ledger.witness?.persona;
   if (persona !== undefined && (path.isAbsolute(persona) || path.normalize(persona).startsWith('..'))) problems.push(`witness.persona "${shown(persona)}" is not a path inside the repository`);
   const reacted = (ledger.witness?.reactions ?? []).map(({ position }) => position);
@@ -1151,17 +1159,17 @@ export function checkProductLedger(ledger, ctx) {
     if (complete && ledger.human_answer === null) stale.push(line);
   };
   if (!passing(ledger.premise.citations, 'premise', ctx, problems, escapes).length) invalid('premise: invalid: no citation passes');
-  const persona = ledger.witness?.persona;
+  const personas = [...ledger.persona_docs, ...(ledger.witness ? [ledger.witness.persona] : [])].map((doc) => path.normalize(doc));
   const { ruling } = ledger;
   if (ruling?.decision === 'rule' && ledger.outcome === null && !complete) problems.push('ruling: invalid: a rule has no outcome');
-  if (persona && ruling?.decision === 'rule') {
+  if (personas.length && ruling?.decision === 'rule') {
     const won = ledger.cases.find(({ position }) => position === ruling.winner);
     const held = passing(won?.citations ?? [], `case ${ruling.winner}`, ctx, [], []);
     const backing = ruling.tested
       .filter((verdict) => verdict.of === ruling.winner && verdict.supports)
       .map((verdict) => won?.citations[verdict.citation])
       .filter((citation) => held.includes(citation));
-    if (backing.length && backing.every((citation) => path.normalize(refParts(citation).path ?? '') === path.normalize(persona))) invalid('ruling: invalid: the winner rests only on the persona doc, which is a hypothesis');
+    if (backing.length && backing.every((citation) => personas.includes(path.normalize(refParts(citation).path ?? '')))) invalid('ruling: invalid: the winner rests only on the persona doc, which is a hypothesis');
   }
   return { ledger, problems, escapes, stale };
 }
@@ -1313,15 +1321,20 @@ export const commands = {
         // Checks a framer's `open: false` answer, which ends a product run before any ledger exists.
         if (rest.length !== 1) return fail('premise needs one FILE');
         if (!root) return fail('run it inside a git repository');
-        let citations;
+        const print = deps.print ?? console.log;
+        let answer;
         try {
-          ({ citations } = JSON.parse(readFileSync(rest[0], 'utf8')).premise);
+          answer = JSON.parse(readFileSync(rest[0], 'utf8'));
         } catch (error) {
           return fail(error.message);
         }
+        const shape = isObject(answer) && answer.open === false ? schemaProblems(answer.premise, PRODUCT_LEDGER_SCHEMA.properties.premise) : ['premise: only an answer with open: false ends a run'];
+        if (shape.length) {
+          for (const problem of shape) print(problem.startsWith('premise') ? problem : `premise: ${problem}`);
+          return 1;
+        }
         const problems = [];
-        const held = passing(Array.isArray(citations) ? citations : [], 'premise', { root, plan: '', env, read: reader(root) }, problems, []);
-        const print = deps.print ?? console.log;
+        const held = passing(answer.premise.citations, 'premise', { root, plan: '', env, read: reader(root) }, problems, []);
         for (const problem of problems) print(problem);
         print(`checked: premise, ${held.length} citations pass, ${problems.length} problems`);
         return held.length && !problems.length ? 0 : 1;

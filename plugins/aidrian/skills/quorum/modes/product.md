@@ -20,7 +20,7 @@ the project's docs say so. Start this mode only when the Human asks for it.
 - **Tracer**: `explorer`, the current behavior, from the code and docs.
 - **Framer**: `product-manager`, the premise and its options. **Second framer**: `ux-specialist`, options on its own.
 - **Witness**: `ux-researcher`, as a persona. It never loads `product_sensitive` knowledge or the product's rules.
-  Its reactions are hypotheses from a doc, never evidence about real users: they carry no citation, and no one rules on them.
+  Its brief loads no product rule, though a project's `always` docs still reach it. Its reactions are hypotheses from a doc, never evidence about real users: they carry no citation, and no one rules on them.
 - **Advocate**: `product-manager`, one fresh run per position, on `agent` by default. On `codex`, it runs
   `aidrian quorum codex --mode case`, with its fallback as the core's Roles section says.
 - **Examiner**: `critic`, one run that attacks every case.
@@ -38,8 +38,8 @@ The input is the Human's text, or a question file of an earlier product run. Wit
 The question file is `<state>/quorum/product/questions/<slug>-<h7>.md`, named as in decide mode, and the ledger
 `<state>/quorum/product/<name>-<plan-hash>.json`, so the two modes never reuse each other's. The core's rule to write
 the question file before round 1 does not apply: round 4 writes it.
-A question file has `## Context` and `## Options`, with one `### A: <label>` per option, holding its description and a
-`Rule changed:` line. A run on an earlier question file with no ledger starts at round 5, after the trace and the premise.
+A `plan` citation anchors on a heading of the question file, as in decide mode. A question file has `## Context` and `## Options`, with one `### A: <label>` per option, holding its description and a
+`Rule changed:` line. An earlier question file with no reusable ledger is read as the Human's text, and the run starts at round 1.
 
 A complete ledger the core reuses with `human_answer` `null` asks the one question before reporting, writes the
 answer (`null` again when deferred), and runs `quorum check`.
@@ -48,21 +48,22 @@ answer (`null` again when deferred), and runs `quorum check`.
 
 1. **Trace.** The tracer, with the Trace brief.
 2. **Frame.** The framer and the second framer, in parallel, each without the other's answer.
-3. **Premise.** The framer answers `open: false` when the written rules settle the question, or when it is not a
-   product decision. Write its answer to a file, and run `aidrian quorum premise <file>`. Exit 0: stop before any ledger,
+3. **Premise.** With `open: true`, go to round 4. With `open: false`, the written rules settle the question, or it is not a
+   product decision: write the answer to a file, and run `aidrian quorum premise <file>`. Exit 0: stop before any ledger,
    and report the answer with its citations: there is nothing to decide. Exit 1: send it back once, with what the command
-   printed, within the retry; still 1, ask the Human whether the decision is open, naming the failure. Answered yes, go on.
+   printed, on the retry; still 1, stop with `blocked`, quoting it.
 4. **Freeze.** The framer, with the Merge brief and both lists, returns 2 or 3 options that differ in what a user gets.
    Fewer than 2: stop before any ledger, and report that there is no choice to make. Write the question file as § Files
-   says, with the Human's text word for word and the premise in `## Context`, and show the Human the path. It never changes from here: a later change is a condition on the ruling.
+   says, with the Human's text word for word and the premise's summary in `## Context`, and show the Human the path. It never changes from here: a later change is a condition on the ruling.
 5. **Open the ledger.** Write every field `references/ledger.md` § Product-mode fields lists, `status: open`, and run
-   `quorum check`. A `premise: invalid` line goes back to the framer once, in the retry; still invalid, stop with `blocked`.
-6. **Witness.** Each doc tagged `personas`, other than `product-access` and any `aidrian lint personas` names, is a
+   `quorum check`. `persona_docs` lists every candidate of round 6. A `premise: invalid` line goes back to the framer once,
+   on the retry; still invalid, or with the retry spent, stop with `blocked`.
+6. **Witness.** Each doc tagged `personas`, other than `product-access` and any with an `aidrian lint personas` problem, is a
    candidate: pick the one whose tasks the decision changes most, and write its reactions to `witness`. With none, `witness` stays `null`, and the report says no persona reacted. Never invent one.
 7. **Cases.** One advocate per position, in parallel; write each to `cases`. A position with no case stops the run with `blocked`.
 8. **Examiner.** The examiner, with every case. Number its points `X1` to `X9`, `by: X`, `status: pending`. Run `quorum check`.
 9. **Ruling.** The judge, on the cases, the backed points, and the persona's reactions. Write `ruling` and `outcome`, and run
-   `quorum check`. One the check names invalid, or a missing one, goes back once. Missing again, stop with `blocked`. Invalid again, write
+   `quorum check`. One the check names invalid, or a missing one, goes back once, on the retry. Missing again, or with the retry spent, stop with `blocked`. Invalid again, or with the retry spent, write
    `{decision: escalate, winner: null, change_or_reason: <the line it printed, then the judge's last decision and winner>, citations: <its citations>, tested: [], inferences: []}`
    and `outcome: null`, and run `quorum check`.
 10. **Ask the Human**, then write `human_answer`, `status: complete`, and run `quorum check`.
@@ -80,13 +81,15 @@ A session that acts on the answer records it where the project keeps product rul
 
 ## Report
 
-After the core's Ledger item, which also names each role's agent:
+After the core's Ledger item, which also names each role's agent and the question file:
 
 1. **Premise**: what the trace found, why the decision is open, and each option the merge dropped.
 2. **Recommendation**: the winner, or `escalated`; its conditions; and the Human's answer, or `deferred`.
 3. **What would flip it**: each fact and how to settle it.
 4. **Disputes left**: each topic and its owner.
 5. **Options**: each label, its case, the persona's reaction marked as a hypothesis, and each backed point against it.
+6. **Next**: on an approved option, the written rule to change, from its `Rule changed:` line, and the skill that writes it,
+   `knowledge-update` or `adr-writer`. On a deferred one, `quorum product <question file>` asks the question again.
 
 ## Trace
 
@@ -144,7 +147,7 @@ Return one JSON object, in the handoff's artifacts: {"reactions": [{"position", 
 
 ```text
 Role: advocate for position <id>, "<label>", in a product decision. Argue your position only.
-Question: <plan>. Positions: <id and label of every position>.
+Question: <plan>. The trace: <`trace`>. Positions: <id and label of every position>.
 Make the strongest case, in at most 200 words, from the product's docs, decision records, code, and data committed to the repository.
 A persona's reaction is not evidence. A fact you cannot cite goes on an `inference:` line.
 <evidence>
@@ -170,7 +173,7 @@ Change no file.
 Role: product owner recommending one option to the Human. Never split the difference, and never merge options.
 The docs not settling the point does not block you here: recommend on the evidence and the product's stated goals, and the Human approves.
 Question: <plan>. Ledger: <ledger>. The run is capped at <cap> dispatches, so a ruling may get no second chance.
-Open every file a case or point cites: a quote that exists may still not support the claim.
+The trace: <`trace`>. Open every file a case or point cites: a quote that exists may still not support the claim.
 To rule on: <each case and each backed point, with its id and citations>.
 Cases with no passing citation: <each `case X: no citation passes` line, or none>. Such a position cannot win.
 The persona's reactions, hypotheses only: <each, or none>. They may add a condition; they never decide the winner.

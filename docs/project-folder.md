@@ -128,7 +128,8 @@ $XDG_STATE_HOME/aidrian/projects/<project-id>/
 ├── dispatch/             machine handoffs that dispatched agents write for the orchestrator and the skills it runs
 ├── reviews/              review manifests, and the agents the specialist-review skill keeps warm
 ├── quorum/               quorum ledgers, one per plan or question file and its hash
-│   └── questions/        the question files of the quorum's decide and product modes
+│   ├── questions/        the question files of the quorum's decide mode
+│   └── product/          the product mode's question files, in questions/, and its ledgers
 ├── audits/               persona-audit reports, and the screenshots each cites
 ├── lessons/inbox.jsonl   the lesson inbox, and its inbox.jsonl.lock.<n> lock files
 ├── tmp/                  pull request bodies and review comments that skills draft
@@ -205,8 +206,8 @@ Two commands keep a ledger honest, and `roles` tells the skill who runs each rol
   plan caps are `maxObjections` and `maxDispatches`. Decide prints the `odd` runner of positions A and C and the
   `even` one of B and D, `swap`, and `caps`, the dispatch cap for each position count from 2 to 4. It reads nothing
   else and writes nothing. An invalid config.json, or a mode other than `plan`, `decide`, or `product`, exits 1.
-- `aidrian quorum premise FILE` checks the `premise.citations` of a framer's answer, which ends a product run before any
-  ledger exists: exit 0 when every citation passes, and 1 otherwise, printing each problem.
+- `aidrian quorum premise FILE` checks a framer's `open: false` answer, which ends a product run before any ledger exists:
+  exit 0 when every citation passes, and 1 otherwise, printing each problem. Any other `open`, or a bad shape, is a problem.
 - `aidrian quorum check LEDGER --plan PLAN` checks every citation. `doc` and `adr` cite `path#anchor`, and the quote
   must be in that section; `code` cites `path:line`, and the quote must be in the file; `plan` cites `#anchor` in PLAN;
   `absence` cites a path, and the quote must be in no regular file `git ls-files` lists there; a path with no tracked file fails.

@@ -2379,7 +2379,7 @@ test('the objection cap is never hard-coded where the coordinator keeps objectio
 const PERSONA_REF = 'docs/waiter.md#Who';
 const productLedger = (over = {}) => {
   const { mode, positions, cases, ruling: first, human_answer, status, plan, plan_hash, same_model, same_model_reason, trigger } = decideLedger({ cases: [stand('A', [PASSING.adr]), stand('B', [PASSING.code])], cross: [], ruling: decision({ tested: tested({ A: 1, B: 1 }, ['B']) }) });
-  return { mode: 'product', status, plan, plan_hash, same_model, same_model_reason, trigger, premise: { summary: 'open', citations: [PASSING.adr] }, positions, witness: null, cases, cross: [], ruling: first, outcome: { conditions: [], flips_if: [{ fact: 'f', how_to_settle: 'ask' }], disputes: [] }, human_answer, ...over };
+  return { mode: 'product', status, plan, plan_hash, same_model, same_model_reason, trigger, premise: { summary: 'open', citations: [PASSING.adr] }, trace: 't', dropped: [], persona_docs: [], positions, witness: null, cases, cross: [], ruling: first, outcome: { conditions: [], flips_if: [{ fact: 'f', how_to_settle: 'ask' }], disputes: [] }, human_answer, ...over };
 };
 
 test('product ledger: a complete rule passes with no rebuttal, and unanswered it stays deferred', (t) => {
@@ -2475,4 +2475,29 @@ test('product ledger: the persona guard holds for a code citation, and an answer
   const lost = [stand('A', [cite('doc', 'docs/missing.md#x', 'nope')]), stand('B', [PASSING.code])];
   assert.equal(d.check(productLedger({ cases: lost })).status, 1, 'unanswered, it is stale');
   assert.equal(d.check(productLedger({ cases: lost, human_answer: 'approved' })).status, 0, 'answered, it stands');
+});
+
+test('quorum premise: only an open: false answer with passing citations ends a run', (t) => {
+  const p = project(t);
+  const run = (answer) => {
+    const file = path.join(p.state, 'premise.json');
+    writeFileSync(file, JSON.stringify(answer));
+    return spawnSync(CLI, ['quorum', 'premise', file], { cwd: p.root, encoding: 'utf8', timeout: 30_000 });
+  };
+  const premise = (citations) => ({ summary: 's', citations });
+  assert.equal(run({ open: false, premise: premise([PASSING.adr]) }).status, 0);
+  const open = run({ open: true, premise: premise([PASSING.adr]) });
+  assert.equal(open.status, 1);
+  assert.match(open.stdout, /only an answer with open: false/u);
+  assert.equal(run({ open: false, premise: premise([cite('doc', 'docs/missing.md#x', 'nope')]) }).status, 1);
+  const shapeless = run({ open: false });
+  assert.equal(shapeless.status, 1);
+  assert.match(shapeless.stdout, /premise/u);
+});
+
+test('product ledger: the guard covers every persona doc with no witness, and a premise never cites the question file', (t) => {
+  const d = decideProject(t);
+  const persona = PASSING.adr.ref.split('#')[0];
+  assert.match(d.check(productLedger({ persona_docs: [persona] })).stderr, /rests only on the persona doc/u);
+  assert.match(d.check(productLedger({ premise: { summary: 's', citations: [cite('plan', '#context', 'x')] } })).stderr, /cites the question file/u);
 });

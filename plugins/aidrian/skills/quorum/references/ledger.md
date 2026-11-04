@@ -215,9 +215,14 @@ fails `quorum check` on every invalid ruling or rebuttal, so it is not reused.
 - `same_model`: `true` exactly when two positions share a runner.
 - `same_model_reason`: which positions share one and why, or `null`.
 - `trigger`: what started the run, normally `the Human asked`.
+- `trace`: what the tracer found, word for word, for the report and the advocates.
+- `dropped`: each option the merge dropped.
+  - `dropped[].label`: its label.
+  - `dropped[].reason`: why.
+- `persona_docs`: every persona doc's path, from the repository root, whichever one reacted. A winner resting only on these is invalid.
 - `premise`: why the decision is open.
   - `premise.summary`: the framer's answer.
-  - `premise.citations`: its evidence; with none passing, `quorum check` names the premise invalid.
+  - `premise.citations`: its evidence, never a `plan` citation; with none passing, `quorum check` names the premise invalid.
     - `premise.citations[].kind`: `doc`, `adr`, `code`, `plan`, or `absence`.
     - `premise.citations[].ref`: where the evidence is, in the form its kind takes.
     - `premise.citations[].quote`: the verbatim text, at most 200 characters.
@@ -241,7 +246,7 @@ fails `quorum check` on every invalid ruling or rebuttal, so it is not reused.
   - `cross[].claim`: the point.
   - `cross[].citations`: its evidence.
   - `cross[].status`: `pending` until the check runs; then `backed` or `opinion`.
-- `ruling`: the judge's recommendation, or `null` before it. A winner resting only on the `witness.persona` doc is invalid, as is a rule with no `outcome` on an open ledger.
+- `ruling`: the judge's recommendation, or `null` before it. A winner resting only on `persona_docs` or the `witness.persona` doc is invalid, as is a rule with no `outcome` on an open ledger.
   - `ruling.decision`: `rule` or `escalate`.
   - `ruling.winner`: `A`, `B`, `C`, or `D` on a rule; `null` on an escalate.
   - `ruling.change_or_reason`: the losing case's strongest claim and what defeats it, or what would settle an escalation.

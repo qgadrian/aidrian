@@ -33,7 +33,7 @@ Modes: [modes/plan.md](modes/plan.md), [modes/decide.md](modes/decide.md), [mode
 A calling skill also passes the gate verdicts and the trigger, the plan line or gate that started the run;
 run by the Human, the trigger is `the Human asked`.
 
-In decide and product mode, the input is a question file, and `<plan>` in every command and brief means it.
+In decide mode, the input is a question file, and `<plan>` in every command and brief means it.
 The file is `<state>/quorum/questions/<slug>-<h7>.md`, shaped and named as the decide mode file § Question file says.
 Before round 1, write question text to that path by that section's rule, and show the Human the path.
 Never overwrite a question file. An edited question file is a new question, and inherits no earlier answer.

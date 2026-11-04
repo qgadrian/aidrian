@@ -218,7 +218,7 @@ test('the machine has not opted in: off (local), with no gh api user call, and a
   const human = run(t, broken, ['7']);
   assert.equal(human.code, 1);
   assert.match(human.out[0], /^auto-merge off for #7: this machine has not opted in/);
-  assert.deepEqual(human.err, ['.aidrian.local.json: "github.autoMerge" must be "on" or "off"']);
+  assert.deepEqual(human.err, ['.aidrian.local.json: "github.autoMerge" must be { "enabled": true } or { "enabled": false }']);
 });
 
 test('another author\'s pull request is off (author), before the review; the login compares without case', (t) => {

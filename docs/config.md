@@ -50,7 +50,7 @@ In a group such as `github`, set only the keys you change; the others keep their
       "duplicateBody": false
     },
     "reviewGate": { "enabled": false, "checklist": null },
-    "autoMerge": { "allow": false, "strategy": null, "deleteBranch": false, "deleteWorktree": false }
+    "autoMerge": { "allow": false, "default": "off", "strategy": null, "deleteBranch": false, "deleteWorktree": false }
   },
   "review": { "engine": null, "record": "comment", "rules": [], "ignore": ["<lockfiles, snapshots, generated, vendored, minified>"], "nonBehaviour": ["<docs and assets>"], "flows": {}, "planCommand": null, "reviewers": {} },
   "docs": { "wrapLimit": 155 },
@@ -126,10 +126,11 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.reviewGate.enabled` | `true` asks the review bot only once a review of the diff is on record: [Review gate](#review-gate). |
 | `github.reviewGate.checklist` | A file the reviewer reads the diff against, named in the gate's message; `null` names none. |
 | `github.autoMerge.allow` | `true` lets a machine opt in to [auto-merge](#auto-merge); `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. |
+| `github.autoMerge.default` | What a machine with no local setting does under `allow`: `"off"`, the default, stays out until it opts in; `"on"` takes part until it opts out. Read from the default branch. |
 | `github.autoMerge.strategy` | How auto-merge merges: `"squash"`, `"merge"`, or `"rebase"`. `null`, the default: the one strategy the repository allows, or with several, `squash`, then `merge`, then `rebase`. Read from the default branch. |
 | `github.autoMerge.deleteBranch` | `true` deletes the remote head branch with the merge. Read from the default branch. |
 | `github.autoMerge.deleteWorktree` | `true` removes the head branch's worktree after the merge, but never a session's own: [Cleanup](#cleanup-after-the-merge). Read from the default branch. |
-| `github.autoMerge` in `.aidrian.local.json` | This machine's switch: `"on"` opts in under the team's `allow`; `"off"`, the default, stays out. It is not a config.json key. |
+| `github.autoMerge` in `.aidrian.local.json` | This machine's choice, the same key with one field: `{ "enabled": true }` opts in under the team's `allow`, and `{ "enabled": false }` stays out. Unset follows `github.autoMerge.default`. The older `"on"` and `"off"` still work. |
 | `review.engine` | The project's [review engine](review.md#the-engine); it wins over the machine's. `null` leaves the choice to each machine. |
 | `review.record` | Where the [review record](review.md#the-record) goes: `"comment"` also writes a summary comment on the pull request; `"local"` keeps it in the state folder only. |
 | `terms.file` | The [terms file](#terms) of banned terms and their replacements, relative to the project root; `null` turns the rule off. |
@@ -184,7 +185,7 @@ A project without the Codex review bot sets `"github": { "reviewer": null }`, or
 
 ## Auto-merge
 
-Auto-merge lets a session merge a pull request without asking. It is off until both the team and the machine turn it on.
+Auto-merge lets a session merge a pull request without asking. It is off unless the team allows it and the machine takes part.
 
 The team commits this in config.json, on the default branch and on any other branch pull requests target:
 
@@ -203,10 +204,19 @@ The team commits this in config.json, on the default branch and on any other bra
 Each machine opts in with this in `.aidrian.local.json`:
 
 ```json
-{ "github": { "autoMerge": "on" } }
+{ "github": { "autoMerge": { "enabled": true } } }
 ```
 
-`"on"` and `"off"` are the only values, and it is the only `github` key that file takes.
+`enabled` is the only field, and `autoMerge` the only `github` key, that file takes. A machine never goes past `allow`,
+and `strategy` and the cleanup stay the team's. The older `"on"` and `"off"` still work.
+
+| Team | No local setting | `enabled: true` | `enabled: false` |
+| --- | --- | --- | --- |
+| `allow: false` | Off | Off | Off |
+| `allow: true`, `default: "off"` | Off | On | Off |
+| `allow: true`, `default: "on"` | On | On | Off |
+
+With `default: "on"`, every machine with no local setting merges without having chosen to, so a team sets it knowingly.
 `aidrian check` warns when the machine opts in and the team does not allow it.
 It fails when git tracks the file, in any case, and the switch then reads `"off"`: [Setting up](project-folder.md#setting-up-and-checking).
 The switch counts only in the main checkout's file: a task worktree's own copy never turns it on or off, though its other keys apply as usual.
@@ -228,7 +238,7 @@ With `--json`, `reason` names the first that fails and `why` says it in a senten
 | `team` | `github.autoMerge.allow` is true on both the repository's default branch and the pull request's base. Both are read from GitHub as each branch commits them now, never from the checkout. So a branch cannot raise it, and the pull request that turns it on does not merge itself. |
 | `checks` | The default branch names `github.requiredChecks`: a named check that has not reported is pending, so a draft's partial set of checks cannot read as ready. This checkout's `requiredChecks`, `conditionalChecks`, and `ignoreCancelledChecks` equal the default branch's as sets, committed or not: `aidrian pr checks` reads this checkout, so a branch cannot relax the lists, and a branch that changes workflows stays off (`paths`). This checkout's `state.dir` equals the default branch's, since the review record is read from it. A working-copy config that cannot be read, or has errors, is off too. |
 | `paths` | gh lists every changed file (`files` matches `changedFiles`) with its `changeType`, none is `RENAMED`, since gh does not give the old path, and none is on this fixed list, in any case: `AGENTS.md`, `CLAUDE.md`, `SKILL.md`, `CODEOWNERS`, `.aidrian.json`, and `.aidrian.local.json` at any depth, and `.claude`, `.codex`, `.aidrian`, `.github/workflows`, or `.github/actions` at the repository root, or anything under them. These instruct AI sessions or decide CI, and a review of the change may not read them as behavior. |
-| `local` | This machine's switch is `"on"`. |
+| `local` | This machine's setting is on, or it has none and the default branch's `github.autoMerge.default` is `"on"`. |
 | `author` | The pull request's author is the gh user. |
 | `outsider` | Every issue comment, review, and inline comment on the pull request has the author association `OWNER`, `MEMBER`, or `COLLABORATOR`, or is by the default branch's `github.reviewer` bot. Any other bot, such as a CI or preview bot that comments, counts as an outsider. |
 | `review` | Nobody's latest review requests changes, and the review decision is not changes requested. This machine's [review record](review.md#the-record) holds a `received` review of exactly the current head, and nothing is owed. There is no looser mode: no record, a review of an earlier head, or an owed review keeps it off. A pull request that needed no review, `none_needed`, such as plain docs, waits for the Human. |

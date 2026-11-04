@@ -13,7 +13,8 @@
 //      that cannot be read, or has errors, is off too.
 //   3. paths: gh lists every changed file with its change type, none is a rename, whose old path gh does not give, and
 //      none is one that instructs an AI session or runs in CI (GUARDED_PATHS).
-//   4. local: this machine opted in, `github.autoMerge: "on"` in the main checkout's local file (project.localAutoMerge).
+//   4. local: the main checkout's local file turns it on (project.localAutoMerge), or sets nothing under the default
+//      branch's `github.autoMerge.default` "on".
 //   5. author: the pull request is the gh user's own.
 //   6. outsider: every issue comment, review, and inline comment is by a member of the repository, or by the default
 //      branch's `github.reviewer` bot. It reads only these lists, so text that reaches a run another way, such as an

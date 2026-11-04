@@ -64,7 +64,7 @@ const SCHEMA = {
       duplicateBody: 'boolean',
     },
     reviewGate: { enabled: 'boolean', checklist: 'textOrNull' },
-    autoMerge: { allow: 'boolean', strategy: 'mergeStrategy', deleteBranch: 'boolean', deleteWorktree: 'boolean' },
+    autoMerge: { allow: 'boolean', default: 'onOff', strategy: 'mergeStrategy', deleteBranch: 'boolean', deleteWorktree: 'boolean' },
   },
   review: 'review',
   docs: { wrapLimit: 'zeroOrMore' },
@@ -179,6 +179,7 @@ const TYPES = {
   handoffMode: [(value) => HANDOFF_MODES.includes(value), '"off", "ask", or "auto"'],
   readyMode: [(value) => ['ask', 'auto'].includes(value), '"ask" or "auto"'],
   extraMode: [(value) => ['off', 'ask', 'auto'].includes(value), '"off", "ask", or "auto"'],
+  onOff: [(value) => ['on', 'off'].includes(value), '"on" or "off"'],
   mergeStrategy: [(value) => [null, 'squash', 'merge', 'rebase'].includes(value), 'null, "squash", "merge", or "rebase"'],
   // One agent a dispatch names. "*" and "main" select gates in `agents`, every agent and the main session; neither is one agent.
   agentName: [(value) => isText(value) && value !== ALL && value !== MAIN && !agentNameProblem(value), 'an agent name such as code-reviewer'],
@@ -233,7 +234,7 @@ export const DEFAULTS = deepFreeze({
     // The team's ceiling on auto-merge: no machine merges a pull request unless `allow` is true. `strategy: null` leaves
     // the choice to pr-merge-when-green's order: squash, then merge, then rebase, among those the repository allows.
     // A machine opts in under it from the local file (resolveAutoMerge).
-    autoMerge: { allow: false, strategy: null, deleteBranch: false, deleteWorktree: false },
+    autoMerge: { allow: false, default: 'off', strategy: null, deleteBranch: false, deleteWorktree: false },
   },
   // How a pull request is reviewed (lib/review/, docs/review.md).
   review: REVIEW_DEFAULTS,
@@ -352,13 +353,15 @@ export function configFromText(text, file) {
   return deepFreeze(config);
 }
 
-// Whether auto-merge is on, from a `github` config and the local file's switch (`project.localAutoMerge`, "on" or
-// "off"): { effective, reason }. It is on only when the team allows it and the machine opts in; `reason` names the
+// Whether auto-merge is on, from a `github` config and the local file's switch (`project.localAutoMerge`, "on",
+// "off", or "unset"): { effective, reason }. It is on only when the team allows it and the machine's switch is "on", or
+// is "unset" under the team's `default` "on". A machine can lower the team's choice but never pass `allow`. `reason` names the
 // side that keeps it off, "team" or "local", and is null when it is on. A pure function of its inputs, so a caller may
 // pass the github config of any commit, such as committedConfig's, instead of the working copy's.
 export function resolveAutoMerge(github, local) {
   if (github?.autoMerge?.allow !== true) return { effective: false, reason: 'team' };
-  if (local !== 'on') return { effective: false, reason: 'local' };
+  const on = local === 'on' || (local === 'unset' && github.autoMerge.default === 'on');
+  if (!on) return { effective: false, reason: 'local' };
   return { effective: true, reason: null };
 }
 

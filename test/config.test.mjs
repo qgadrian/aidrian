@@ -101,14 +101,14 @@ test('github.reviewLoop: "auto" by default, so the review loop starts after pr-w
 });
 
 test('github.autoMerge: the team ceiling is off by default, with no strategy and no cleanup', () => {
-  assert.deepEqual(DEFAULTS.github.autoMerge, { allow: false, strategy: null, deleteBranch: false, deleteWorktree: false });
+  assert.deepEqual(DEFAULTS.github.autoMerge, { allow: false, default: 'off', strategy: null, deleteBranch: false, deleteWorktree: false });
   assert.deepEqual(resolveAutoMerge(DEFAULTS.github, 'off'), { effective: false, reason: 'team' });
 });
 
 test('github.autoMerge: strategy is null, "squash", "merge", or "rebase"; a team sets any key of the group', (t) => {
   for (const strategy of [null, 'squash', 'merge', 'rebase']) {
     const { config, errors } = loadConfig(project(t, { version: 1, github: { autoMerge: { allow: true, strategy } } }));
-    assert.deepEqual([errors, config.github.autoMerge], [[], { allow: true, strategy, deleteBranch: false, deleteWorktree: false }]);
+    assert.deepEqual([errors, config.github.autoMerge], [[], { allow: true, default: 'off', strategy, deleteBranch: false, deleteWorktree: false }]);
   }
   const bad = loadConfig(project(t, { version: 1, github: { autoMerge: { strategy: 'fast-forward', deleteBranch: 'yes', when: 'green' } } }));
   assert.deepEqual(bad.errors, [
@@ -125,6 +125,11 @@ test('github.autoMerge: on only when the team allows it and the machine opts in;
   assert.deepEqual(resolveAutoMerge(allowed, 'off'), { effective: false, reason: 'local' }, 'team allow alone');
   assert.deepEqual(resolveAutoMerge(DEFAULTS.github, 'on'), { effective: false, reason: 'team' }, 'local on alone');
   assert.deepEqual(resolveAutoMerge(allowed, 'on'), { effective: true, reason: null }, 'both on');
+  const byDefault = { ...DEFAULTS.github, autoMerge: { ...DEFAULTS.github.autoMerge, allow: true, default: 'on' } };
+  assert.deepEqual(resolveAutoMerge(allowed, 'unset'), { effective: false, reason: 'local' }, 'unset under default off');
+  assert.deepEqual(resolveAutoMerge(byDefault, 'unset'), { effective: true, reason: null }, 'unset under default on');
+  assert.deepEqual(resolveAutoMerge(byDefault, 'off'), { effective: false, reason: 'local' }, 'a machine opts out of default on');
+  assert.deepEqual(resolveAutoMerge({ autoMerge: { allow: false, default: 'on' } }, 'unset'), { effective: false, reason: 'team' }, 'default on never passes allow');
   const team = project(t, { version: 1, github: { autoMerge: { allow: true } } });
   writeFileSync(path.join(team.root, '.aidrian.local.json'), JSON.stringify({ github: { autoMerge: 'on' } }));
   const { config, errors } = loadConfig(findProject(team.root));

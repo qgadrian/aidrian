@@ -92,7 +92,7 @@ export function projectAt(start) {
 // the project folder first, then each local source. `checkouts` is `root`, then, when it is in a git worktree, the same
 // folder in the main checkout. `localModels`, `localNames`, `localTelemetry`, and `localAgents` are the `models`,
 // `names`, `telemetry`, and `agents` values of `.aidrian.local.json`, as written; config.mjs checks them. `localAutoMerge`
-// is its `github.autoMerge`, "on" or "off", checked here and "off" unless the file sets it to "on" correctly; the team's
+// is its `github.autoMerge`: "on" or "off", checked here, "unset" when no file sets it, and "off" for a file with an error; the team's
 // ceiling still decides (resolveAutoMerge). `errors` lists the problems in the root files; a broken
 // `.aidrian.json` leaves the default folder in place, and a broken local source is left out.
 // `unreadable` names each of `.aidrian.json` and `.aidrian.local.json` that is there but whose settings are not in force,
@@ -171,7 +171,7 @@ function checkoutsOf(root, roots) {
 // and, optionally, a config.json with `version`. The auto-merge switch alone comes only from the main checkout's file
 // (checkouts.at(-1)): a worktree's own copy never turns it on.
 function readLocal(checkouts, errors, unreadable) {
-  const none = { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, autoMerge: 'off' };
+  const none = { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, autoMerge: 'unset' };
   const holder = checkouts.find((dir) => isFile(path.join(dir, LOCAL)));
   if (!holder) return none;
   const raw = readJson(holder, LOCAL, errors);
@@ -184,7 +184,11 @@ function readLocal(checkouts, errors, unreadable) {
     if (!['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'github'].includes(key)) errors.push(`${LOCAL}: unknown key "${key}"`);
   }
   const { models, names, telemetry, agents, review } = raw;
-  return { sources: localSources(holder, raw, errors), models, names, telemetry, agents, review, autoMerge: machineSwitch(raw, holder, main, errors) };
+  const sources = localSources(holder, raw, errors);
+  const autoMerge = machineSwitch(raw, holder, main, errors);
+  // A main-checkout file with any error never follows a team default of "on": a wrong local file never turns merging on.
+  const broken = holder === main && autoMerge === 'unset' && errors.some((each) => each.startsWith(`${LOCAL}:`));
+  return { sources, models, names, telemetry, agents, review, autoMerge: broken ? 'off' : autoMerge };
 }
 
 // This machine's auto-merge switch: the main checkout's. `raw` is the file read from `holder`, null when that could not
@@ -193,7 +197,7 @@ function machineSwitch(raw, holder, main, errors) {
   let autoMerge = raw ? localAutoMerge(raw, errors) : 'off';
   if (holder !== main) {
     const mainFile = isFile(path.join(main, LOCAL)) ? readJson(main, LOCAL, []) : null;
-    autoMerge = mainFile ? localAutoMerge(mainFile, []) : 'off';
+    autoMerge = !isFile(path.join(main, LOCAL)) ? 'unset' : mainFile ? localAutoMerge(mainFile, []) : 'off';
   }
   // A local file git tracks travels with a branch, so it is no machine's own switch. Only git's answer "untracked"
   // (exit 1) keeps it on: tracked under any case, a git that fails or stalls, or no repository at all reads "off". Asked
@@ -207,11 +211,12 @@ function machineSwitch(raw, holder, main, errors) {
   return autoMerge;
 }
 
-// The local file's `github.autoMerge`, "on" or "off". It is the only local `github` key: the team sets the strategy,
-// the cleanup, and the ceiling in config.json, and no machine can change them. Unset is "off", and so is a `github`
-// group with any error, so a wrong local file never turns merging on.
+// The local file's `github.autoMerge` as "on", "off", or "unset": `{ "enabled": true | false }`, the shape of the team's
+// key, or the older "on" and "off". It is the only local `github` key: the team sets the strategy,
+// the cleanup, the default, and the ceiling in config.json, and no machine can change them. Unset follows the team's
+// default; a `github` group with any error, so a wrong local file never turns merging on.
 function localAutoMerge(raw, errors) {
-  if (!Object.hasOwn(raw, 'github')) return 'off';
+  if (!Object.hasOwn(raw, 'github')) return 'unset';
   if (!isObject(raw.github)) {
     errors.push(`${LOCAL}: "github" must be an object`);
     return 'off';
@@ -220,8 +225,9 @@ function localAutoMerge(raw, errors) {
   for (const key of Object.keys(raw.github)) {
     if (key !== 'autoMerge') errors.push(`${LOCAL}: unknown key "github.${key}"; only "github.autoMerge" is a machine setting`);
   }
-  const value = Object.hasOwn(raw.github, 'autoMerge') ? raw.github.autoMerge : 'off';
-  if (value !== 'on' && value !== 'off') errors.push(`${LOCAL}: "github.autoMerge" must be "on" or "off"`);
+  const given = Object.hasOwn(raw.github, 'autoMerge') ? raw.github.autoMerge : 'unset';
+  const value = isObject(given) && Object.keys(given).length === 1 && typeof given.enabled === 'boolean' ? (given.enabled ? 'on' : 'off') : given;
+  if (!['on', 'off', 'unset'].includes(value) || given === 'unset' && Object.hasOwn(raw.github, 'autoMerge')) errors.push(`${LOCAL}: "github.autoMerge" must be { "enabled": true } or { "enabled": false }`);
   return errors.length === before ? value : 'off';
 }
 

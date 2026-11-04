@@ -634,6 +634,11 @@ test('persona audit triage resolves a held item and reports it, and still asks t
   assert.match(text, /the answer also gives the product decision's `class`, `reversible`, and `docs`/);
 });
 
+test('orchestration names each provisional decision when it opens the draft itself', () => {
+  const text = readFileSync(path.join(PLUGIN, 'skills/orchestration/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(text, /Open a draft with the `pr-write` skill.*Name each `decided_provisional` the run's agents returned/);
+});
+
 test('each dispatcher of a deciding agent runs the resolve, and each deciding agent returns by its brief', () => {
   const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
   for (const rel of [

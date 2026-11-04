@@ -12,7 +12,7 @@ Task worktrees go in `.worktrees/` at the repository root, which git ignores.
 
 ```text
 .aidrian.json                    names another folder as the project folder (optional, committed)
-.aidrian.local.json              adds knowledge sources, model choices, names, telemetry settings, and agent gates on one machine (optional, git-ignored)
+.aidrian.local.json              adds knowledge sources, model choices, names, telemetry settings, agent gates, and the auto-merge opt-in on one machine (optional, git-ignored)
 .worktrees/                      task worktrees, one folder per branch (git-ignored)
 .aidrian/
 ├── config.json                  the folder version and the project settings (committed)
@@ -79,7 +79,10 @@ It writes nothing at all when a symlink would take a write outside the project, 
 - `config.json`: the version first, then every key and value.
 - Every knowledge index, as [knowledge.md](knowledge.md#checks) describes.
 - `.aidrian.local.json`, when present: every source, as [Local knowledge sources](#local-knowledge-sources) describes,
-  `models`, as [config.md](config.md#models) describes, and `names`, as [config.md](config.md#names) describes.
+  `models`, as [config.md](config.md#models) describes, `names`, as [config.md](config.md#names) describes,
+  and `github.autoMerge`, the machine's auto-merge opt-in: only `"on"` or `"off"`, `"off"` by default, and the only `github` key it takes.
+  When it is `"on"` and config.json `github.autoMerge.allow` is false, check prints
+  `warning: auto-merge is on locally but the team does not allow it`, and does not fail.
 - `.gitignore`: git ignores `.aidrian.local.json`, and the worktrees and state folders when they are inside the repository.
 
 On success it also prints the state folder, and the size of the `always` docs against their [budget](config.md#knowledge-budgets):

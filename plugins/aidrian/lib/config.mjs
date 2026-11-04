@@ -64,6 +64,7 @@ const SCHEMA = {
       duplicateBody: 'boolean',
     },
     reviewGate: { enabled: 'boolean', checklist: 'textOrNull' },
+    autoMerge: { allow: 'boolean', strategy: 'mergeStrategy', deleteBranch: 'boolean', deleteWorktree: 'boolean' },
   },
   review: 'review',
   docs: { wrapLimit: 'zeroOrMore' },
@@ -174,6 +175,7 @@ const TYPES = {
   handoffMode: [(value) => HANDOFF_MODES.includes(value), '"off", "ask", or "auto"'],
   readyMode: [(value) => ['ask', 'auto'].includes(value), '"ask" or "auto"'],
   extraMode: [(value) => ['off', 'ask', 'auto'].includes(value), '"off", "ask", or "auto"'],
+  mergeStrategy: [(value) => [null, 'squash', 'merge', 'rebase'].includes(value), 'null, "squash", "merge", or "rebase"'],
   // One agent a dispatch names. "*" and "main" select gates in `agents`, every agent and the main session; neither is one agent.
   agentName: [(value) => isText(value) && value !== ALL && value !== MAIN && !agentNameProblem(value), 'an agent name such as code-reviewer'],
   quorumProvider: [(value) => ['agent', 'codex'].includes(value), '"agent" or "codex"'],
@@ -218,6 +220,10 @@ export const DEFAULTS = deepFreeze({
     pullRequest: { title: null, issueKey: null, sections: null, deferrals: null, residuals: null, sharedTempBodyFile: true, duplicateBody: false },
     // The review that must be on record before the review bot is asked (lib/review-gate.mjs).
     reviewGate: { enabled: false, checklist: null },
+    // The team's ceiling on auto-merge: no machine merges a pull request unless `allow` is true. `strategy: null` leaves
+    // the choice to pr-merge-when-green's order: squash, then merge, then rebase, among those the repository allows.
+    // A machine opts in under it from the local file (resolveAutoMerge).
+    autoMerge: { allow: false, strategy: null, deleteBranch: false, deleteWorktree: false },
   },
   // How a pull request is reviewed (lib/review/, docs/review.md).
   review: REVIEW_DEFAULTS,
@@ -323,6 +329,16 @@ export function committedConfig(project, commit) {
   const config = merge(SCHEMA, DEFAULTS, legacyHandoff(rest, project.paths.config, []), '', project.paths.config, [], []);
   if (config.github.reviewer === NO_REVIEWER) config.github = { ...config.github, reviewer: null };
   return deepFreeze(config);
+}
+
+// Whether auto-merge is on, from a `github` config and the local file's switch (`project.localAutoMerge`, "on" or
+// "off"): { effective, reason }. It is on only when the team allows it and the machine opts in; `reason` names the
+// side that keeps it off, "team" or "local", and is null when it is on. A pure function of its inputs, so a caller may
+// pass the github config of any commit, such as committedConfig's, instead of the working copy's.
+export function resolveAutoMerge(github, local) {
+  if (github?.autoMerge?.allow !== true) return { effective: false, reason: 'team' };
+  if (local !== 'on') return { effective: false, reason: 'local' };
+  return { effective: true, reason: null };
 }
 
 // The `code` of the error commandConfig throws; cli.mjs prints its message and exits with its `exitCode`.

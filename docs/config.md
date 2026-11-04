@@ -49,7 +49,8 @@ In a group such as `github`, set only the keys you change; the others keep their
       "sharedTempBodyFile": true,
       "duplicateBody": false
     },
-    "reviewGate": { "enabled": false, "checklist": null }
+    "reviewGate": { "enabled": false, "checklist": null },
+    "autoMerge": { "allow": false, "strategy": null, "deleteBranch": false, "deleteWorktree": false }
   },
   "review": { "engine": null, "record": "comment", "rules": [], "ignore": ["<lockfiles, snapshots, generated, vendored, minified>"], "nonBehaviour": ["<docs and assets>"], "flows": {}, "planCommand": null, "reviewers": {} },
   "docs": { "wrapLimit": 155 },

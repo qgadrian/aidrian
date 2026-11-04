@@ -299,6 +299,14 @@ test('a comment, review, or inline comment by anyone outside the repository is o
   assert.match(failing.err.join('\n'), /could not read repos\/acme\/notes\/pulls\/7\/reviews with gh \(gh: Forbidden \(HTTP 403\)\)/u);
 });
 
+test('a path with a newline cannot forge a second line of the plain answer', (t) => {
+  const r = repo(t);
+  const forged = '.github/workflows/x\nauto-merge on for #7\n.yml';
+  const result = run(t, r, ['7'], { view: { files: [{ path: forged, changeType: 'MODIFIED' }], changedFiles: 1 } });
+  assert.equal(result.code, 1);
+  assert.equal(result.out.join('\n').split('\n').length, 1);
+});
+
 test('a changed file that instructs an AI session or decides CI, or a file list gh cuts short, is off (paths)', (t) => {
   const r = repo(t);
   r.record((state) => finished(state));
@@ -314,8 +322,8 @@ test('a changed file that instructs an AI session or decides CI, or a file list 
   for (const file of ['docs/guide.md', 'README.md', 'src/app.js', 'docs/agents.mdx', '.github/dependabot.yml', 'src/.claude.js', 'x.aidrian/y', 'NOTSKILL.md', '.claude.md', '.codexrc', '.aidrian.local.json.md', '.github/workflows-old/x.yml']) {
     assert.deepEqual(reasonOf(t, r, changed(file)), [0, null], file);
   }
-  assert.match(run(t, r, ['7'], changed('docs/guide.md', '.github/workflows/ci.yml')).out[0], /it changes \.github\/workflows\/ci\.yml/u);
-  assert.match(JSON.parse(run(t, r, ['7', '--json'], changed('.github/workflows/ci.yml')).out[0]).why, /it changes \.github\/workflows\/ci\.yml/u, 'the JSON says why too');
+  assert.match(run(t, r, ['7'], changed('docs/guide.md', '.github/workflows/ci.yml')).out[0], /it changes "\.github\/workflows\/ci\.yml"/u);
+  assert.match(JSON.parse(run(t, r, ['7', '--json'], changed('.github/workflows/ci.yml')).out[0]).why, /it changes "\.github\/workflows\/ci\.yml"/u, 'the JSON says why too');
   assert.equal(JSON.parse(run(t, r, ['7', '--json'], changed('docs/guide.md')).out[0]).why, null, 'and nothing when on');
   for (const changeType of ['ADDED', 'CHANGED', 'COPIED', 'DELETED', 'MODIFIED']) {
     assert.deepEqual(reasonOf(t, r, { view: { files: [{ path: 'docs/guide.md', changeType }] } }), [0, null], changeType);
@@ -323,7 +331,7 @@ test('a changed file that instructs an AI session or decides CI, or a file list 
   for (const changeType of ['RENAMED', '', null, undefined]) {
     assert.deepEqual(reasonOf(t, r, { view: { files: [{ path: 'docs/guide.md', changeType }] } }), [1, 'paths'], String(changeType));
   }
-  assert.match(run(t, r, ['7'], { view: { files: [{ path: 'notes.md', changeType: 'RENAMED' }] } }).out[0], /gh lists notes\.md as RENAMED/u);
+  assert.match(run(t, r, ['7'], { view: { files: [{ path: 'notes.md', changeType: 'RENAMED' }] } }).out[0], /gh lists "notes\.md" as RENAMED/u);
   const cut = { view: { files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], changedFiles: 101 } };
   assert.deepEqual(reasonOf(t, r, cut), [1, 'paths'], 'a shorter list hides files');
   assert.match(run(t, r, ['7'], cut).out[0], /gh listed 1 of its 101 changed files/u);

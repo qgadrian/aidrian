@@ -65,7 +65,7 @@ One row per item:
 | # | Source | Severity | Location | Summary | Verdict | Evidence | Action |
 ```
 
-- **Source**: `inline`, `review-summary`, `comment`, or `check`, and its author: the bot, config.json `github.reviewer`, or a person.
+- **Source**: `inline`, `review-summary`, `comment`, or `check`, and its author: the bot, the default branch's config.json `github.reviewer`, or a person.
   A person's comment weighs more than a bot's; validate every bot comment before acting on it.
 - **Verdict**: `applies`, `partly applies`, `does not apply`, `already handled`, or `needs evidence`.
   An inline comment whose code changed since it was posted (`git log <commit_id>..@{u} -- <path>`) is a candidate

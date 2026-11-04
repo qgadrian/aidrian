@@ -115,14 +115,15 @@ export function branchConfig(gh, { repo, host }, branch) {
   return configFromText(read(file), file);
 }
 
-// Why the changed files keep auto-merge off, or null. A list shorter than the count hides files, and a rename, or a file
+// Why the changed files keep auto-merge off, or null. A path is the branch's text, so it is quoted: it cannot break the line.
+// A list shorter than the count hides files, and a rename, or a file
 // with no change type, may hide the path it replaced, so those are off too.
 export function pathsProblem({ files, changedFiles }) {
   if (files.length !== changedFiles) return `gh listed ${files.length} of its ${changedFiles} changed files`;
   const hidden = files.find(({ changeType }) => changeType === 'RENAMED' || !changeType);
-  if (hidden) return `gh lists ${hidden.path} as ${hidden.changeType || 'no change type'}, which may hide the path it replaced`;
+  if (hidden) return `gh lists ${JSON.stringify(hidden.path)} as ${hidden.changeType || 'no change type'}, which may hide the path it replaced`;
   const guarded = files.find(({ path }) => GUARDED_PATHS.test(path));
-  return guarded ? `it changes ${guarded.path}, which instructs AI sessions or decides CI's verdict` : null;
+  return guarded ? `it changes ${JSON.stringify(guarded.path)}, which instructs AI sessions or decides CI's verdict` : null;
 }
 
 // Who keeps auto-merge off by commenting: the login of the first comment or review whose author is no member of the
@@ -164,7 +165,7 @@ export function reviewProblem(state, head) {
 // answer for the checkout `aidrian pr checks` and the review record read, and `where` names the default branch in the message.
 export function checksProblem({ github: policy, state }, working, where) {
   if (!policy.requiredChecks.length) return `the default branch names no required checks (github.requiredChecks on ${where}), so a check that has not registered would read as passed`;
-  if (!working.current || working.errors.length) return `the working copy's config cannot be read, and aidrian pr checks reads it${working.errors.length ? `: ${working.errors[0]}` : ''}`;
+  if (!working.current || working.errors.length) return `the working copy's config cannot be read, and aidrian pr checks reads it${working.errors.length ? `: ${JSON.stringify(working.errors[0])}` : ''}`;
   const same = (a, b) => new Set(a).size === new Set(b).size && a.every((each) => b.includes(each));
   const differing = CHECK_LISTS.filter((key) => !same(policy[key], working.config.github[key]));
   if (differing.length) return `the working copy's ${differing.map((key) => `github.${key}`).join(' and ')} differ from ${where}, and aidrian pr checks reads the working copy`;

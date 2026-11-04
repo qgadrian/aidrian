@@ -750,6 +750,27 @@ test('decisions list --added-since parses both ends: new markers, however writte
   }
 });
 
+test('decisions list --added-since prints the empty result in a repository with no project folder, so pr-write publishes there', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-cli-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const git = (...args) => assert.equal(spawnSync('git', ['-C', dir, '-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).status, 0);
+  git('init', '-q', '-b', 'main');
+  writeFileSync(path.join(dir, 'README.md'), 'No project folder here.\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'first');
+  git('switch', '-q', '-c', 'feature');
+  const env = { ...process.env, PATH: noGh(t) };
+  const json = run(['decisions', 'list', '--added-since', 'main', '--json'], dir, env);
+  assert.deepEqual([json.status, json.stderr], [0, '']);
+  assert.deepEqual(JSON.parse(json.stdout), { decisions: [], settled: [], removed: [], problems: [], pullRequest: null });
+  assert.deepEqual([run(['decisions', 'list', '--added-since', 'main'], dir, env).stdout], ['no decisions added since main\n']);
+
+  const unclear = run(['decisions', 'list', '--added-since', 'no-such-branch', '--json'], dir, env);
+  assert.deepEqual([unclear.status, unclear.stdout], [1, ''], 'an unclear base still stops pr-write');
+  assert.match(unclear.stderr, /cannot compare this branch with "no-such-branch"/u);
+  assert.equal(run(['decisions', 'list', '--json'], dir, env).status, 1, 'the full list still needs a project');
+});
+
 test('decisions list --added-since flags a pr=none the branch added once its pull request exists, and only then', (t) => {
   const { dir, git } = decisionRepo(t, { 'a.md': 'Rule.\n' });
   git('checkout', '-q', '-b', 'feature');

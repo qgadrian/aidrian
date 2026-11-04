@@ -481,6 +481,7 @@ A marker the merge base held in an unindexed file, which `HEAD` still holds in t
 It also adds `pullRequest`, the branch's number from `gh`; `null` means no pull request, or `gh` could not say.
 With a number, a new marker still at `pr=none` is a `problem`.
 It exits 1 when git cannot compare the two.
+A repository with no project folder holds no markers: it prints the empty result and exits 0, and still exits 1 when git cannot compare the two.
 
 `aidrian decisions set <id> confirmed|rejected` rewrites only that marker's `status`, every other byte as it was, and leaves the old wording in place.
 It changes the working copy, so run it in a task worktree and commit the change. It refuses an unknown id, an unreadable marker, and an id on two markers.

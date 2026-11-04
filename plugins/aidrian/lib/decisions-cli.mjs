@@ -17,6 +17,7 @@
 // says what an unattended run does with an `ask`, "park" or "safe-default", from that config, and is null under `decide`.
 // Exit 0 on either answer; 1 on bad arguments or an invalid config. docs/config.md#decisions has the rules, and
 // docs/project-folder.md#decision-markers the marker. `list` exits 0 with problems: they are part of what it reports.
+// `list --added-since` in a repository with no project folder prints the empty result and exits 0: no folder, no markers.
 // `undo` exits 1 and writes nothing when it refuses, after printing why, both wordings, and the block it searched.
 // `resolve`, `set`, and `undo` each add a row to the dispatch log (logDecision); docs/dispatch-log.md describes them.
 
@@ -289,6 +290,13 @@ function addedSince(project, ref) {
   return { decisions: added, settled, removed, problems: [...indexProblems(errors), ...marked, ...stray, ...unset], pullRequest };
 }
 
+// What a branch added where no project folder exists, so no marker does: the empty result, so a repository that has not
+// adopted the plugin can still publish, or null when git cannot compare the branch with `ref`, which stays an unclear base.
+function addedWithNoFolder(start, ref) {
+  const merged = ref.startsWith('-') ? null : runGit(['merge-base', ref, 'HEAD'], start, GIT_READ);
+  return merged?.status === 0 ? { decisions: [], settled: [], removed: [], problems: [], pullRequest: null } : null;
+}
+
 // `decisions.classes` as committed at `rev`, {} for a commit whose block cannot be read, or null when git fails.
 function classesAt(project, rev) {
   try {
@@ -319,10 +327,16 @@ function knownProject(start = process.cwd()) {
 
 function list(args) {
   const { values } = parseArgs({ args, options: { 'added-since': { type: 'string' }, json: { type: 'boolean' }, project: { type: 'string' } } });
-  const project = knownProject(values.project);
-  if (!project) return 1;
+  const start = values.project ?? process.cwd();
   const ref = values['added-since'];
-  const found = ref === undefined ? scanDecisions(project) : addedSince(project, ref);
+  let found;
+  if (ref !== undefined && !findProject(start)) {
+    found = addedWithNoFolder(start, ref);
+  } else {
+    const project = knownProject(start);
+    if (!project) return 1;
+    found = ref === undefined ? scanDecisions(project) : addedSince(project, ref);
+  }
   if (!found) {
     console.error(`cannot compare this branch with "${ref}": git knows no such ref, or could not read it`);
     return 1;

@@ -92,7 +92,11 @@ The product owner has no shell: for the Evidence block's `route` and `search`, i
    - `shape`: no option survives. The Shape brief with the reason; a new question file and ledger, carrying `trace`, `premise`, `witness`, and `loops`; then round 6.
    Then rule again. With no loop left, rule on what exists, and put what stays open in `outcome.flips_if`, or escalate.
 9. **Ask the Human.** First write `status: complete` with `human_answer: null`, and run `quorum check`, so a session that
-   ends here leaves a deferred ledger. Then ask, write `human_answer`, and run `quorum check`.
+   ends here leaves a deferred ledger.
+   **Resolve.** Run `aidrian decisions resolve` as `knowledge/references/decisions.md` says, in the `product` domain,
+   with the Ruling's `class`, `reversible`, and `docs`; those three stay out of the ledger. A missing field, or a command that fails, means `ask`.
+   **Ask.** Ask, write `human_answer`, and run `quorum check`. A run always asks, under `ask` and `decide` alike: `decide` settles nothing here,
+   no `authority` line goes back to the product owner, and no `decided_provisional` or marker follows.
 
 ## Asking the Human
 
@@ -101,6 +105,7 @@ Each position is an option named by its label, with its citations in the descrip
 with the one reason that decides it; on an escalation with no leaning, say that no option is recommended.
 Say which written rule would change, from the option's `Rule changed:` line, what the end user said, marked as simulated,
 and each fact that would flip the ruling and how to settle it.
+Report `resolve`'s `authority` and `reason` beside the question, or `ask` and why it did not answer.
 The answer goes into `human_answer`, word for word. Deferred, it stays `null`, the report's Open questions carries the
 question, and nothing is decided.
 
@@ -218,7 +223,8 @@ On a rule, also return `outcome`: "conditions", changes the winner needs, each a
 each unknown that would change the winner, with what only a real user could confirm; "disputes": [{"topic", "owner"}], smaller disagreements and who settles each.
 <evidence>
 Return one JSON object, in the handoff's artifacts:
-{"decision": "rule|escalate", "winner", "change_or_reason", "citations": [{"kind", "ref", "quote"}], "tested": [...], "inferences": [...], "outcome"}.
+{"decision": "rule|escalate", "winner", "change_or_reason", "citations": [{"kind", "ref", "quote"}], "tested": [...], "inferences": [...], "outcome", "class", "reversible", "docs"}.
+`class`, `reversible`, and `docs` are as `knowledge/references/decisions.md` defines them, for this decision. They do not change who approves: the Human does.
 With loops left (<loops left>) and a problem only another pass could settle, return instead {"loop": {"back_to": "<interview|shape|grill, leaving out interview with no end user>", "reason"}}. Never loop for polish.
 Change no file.
 ```

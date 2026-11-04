@@ -610,6 +610,18 @@ test('the shared decision rule states who computes authority, and points at the 
   assert.equal(path.resolve(PLUGIN, 'skills/knowledge/references', '../../../lib/decisions.json'), VOCAB_PATH);
 });
 
+test('product mode round 9 runs the resolve and reports it, and still asks the Human under decide', () => {
+  const text = readFileSync(path.join(PLUGIN, 'skills/quorum/modes/product.md'), 'utf8').replace(/\s+/g, ' ');
+  const round = text.slice(text.indexOf('9. **Ask the Human.**'), text.indexOf('## Asking the Human'));
+  assert.match(round, /\*\*Resolve\.\*\* Run `aidrian decisions resolve` as `knowledge\/references\/decisions\.md` says, in the `product` domain/);
+  assert.match(round, /A missing field, or a command that fails, means `ask`\./);
+  assert.match(round, /A run always asks, under `ask` and `decide` alike: `decide` settles nothing here/);
+  assert.match(round, /no `authority` line goes back to the product owner, and no `decided_provisional` or marker follows/);
+  assert.ok(round.indexOf('`status: complete`') < round.indexOf('aidrian decisions resolve'), 'a session that ends at the resolve still leaves a deferred ledger');
+  assert.match(text, /Report `resolve`'s `authority` and `reason` beside the question/);
+  assert.match(text, /"outcome", "class", "reversible", "docs"\}/);
+});
+
 test('each dispatcher of a deciding agent runs the resolve, and each deciding agent returns by its brief', () => {
   const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
   for (const rel of [

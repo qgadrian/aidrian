@@ -35,6 +35,7 @@ Run the `pr-write` skill with:
   such as `Fixes #123` on GitHub, where a bare `Fixes 123` links nothing;
 - the slices and their commit subjects, the verification commands with their outcomes, and the acceptance criteria covered;
 - the residual risks, and the accepted residuals;
+- each `decided_provisional`, with its reason, revisit trigger, and how it reverts;
 - draft, unless the Human asked for a pull request ready for review.
 
 The `pr-write` skill owns the title, the body, and the publishing.
@@ -43,7 +44,8 @@ The `pr-write` skill owns the title, the body, and the publishing.
 the `pr-review` skill on the assembled branch, then the `pr-review-fix` skill for its `fix_now` findings, one commit per fix, pushed.
 The review itself commits nothing. Set the slice's `status: complete`, with the review's verdict in `notes`.
 When git tracks the plan, `planning-agent` makes that edit under the `orchestrator`, and `doc-updater` commits it alone
-with a `docs` subject and pushes it: the only commit no slice owns.
+with a `docs` subject and pushes it. `doc-updater` also makes the `pr-write` skill's commit of the pull request's number on the decision markers.
+No slice owns either commit, and no other commit goes without an owning slice.
 
 **Estimate correction.** Only when phase 4 recorded a re-size, after the pull request opens, make two tracker writes,
 with the tools the `knowledge` skill's `references/tracker.md` maps:

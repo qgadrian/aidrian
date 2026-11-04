@@ -7,7 +7,7 @@ description: Draft, create, or update a GitHub pull request title and body from 
 
 Write a pull request a reviewer understands in 30 seconds: what changed, why, how risky it is, and what proves it works.
 This skill writes the title and body and publishes them. It never edits code or merges.
-Its one commit and push write the pull request's number on the branch's decision markers, as Publish says.
+`doc-updater` commits the pull request's number on the branch's decision markers, as Publish says.
 
 Before you start, follow the `knowledge` skill. Load your `issue_tracker` docs for the issue key format and closing keyword.
 
@@ -83,7 +83,7 @@ gh pr edit <n> --title "<title>" --body-file <file>                       # exis
 - Draft by default: the review loop runs on the draft, and marks it ready as config.json `github.markReady` says. Open it ready only when asked.
 - Before an edit, read the live body again (`gh pr view <n> --json body`) and keep what is still true.
 - After publishing, read it back and confirm each closing line is plain text on its own line.
-- When one of its `decisions` has `pr` null, replace `pr=none` on that marker line with the pull request's number, then commit and push only that.
+- When one of its `decisions` has `pr` null, have `doc-updater` replace `pr=none` on that marker line with the pull request's number, commit, and push only that.
   Never on a `settled` entry.
   That push moves the head: it comes before the review of the new head, or the report says it did not.
 

@@ -62,7 +62,7 @@ A marker elsewhere still counts, and `aidrian decisions list` reports it.
 
 - `id`: lowercase letters, digits, and `-`, at most 32 characters, unique across the docs.
 - `pr`: `none` until the pull request exists. A writer on a branch whose pull request already exists writes the real number.
-  The `pr-write` skill writes the number on each marker the branch added with `none`, commits, and pushes.
+  The `pr-write` skill has `doc-updater` write the number on each marker the branch added with `none`, commit, and push.
   That push moves the head, so it comes before the review of the new head, or the report says it did not.
   `aidrian decisions list --added-since <ref>` flags any `pr=none` left once a pull request exists.
 - **The writer.** The slice's implementer, in its commit; else `doc-updater`.

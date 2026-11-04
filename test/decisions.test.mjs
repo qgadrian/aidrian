@@ -486,7 +486,12 @@ test('pr-write and its body template name both forms of the decisions list', () 
   assert.match(skill, /Unless config\.json `decisions\.record\.queue` is `report`, list each of its `decisions`/u, 'only the body listing depends on the queue');
   assert.match(skill, /each of its `settled` as settled in this branch/u);
   assert.match(skill, /each of its `removed` as removed in this branch/u);
-  assert.match(skill, /When one of its `decisions` has `pr` null, replace `pr=none` on that marker line with the pull request's number, then commit and push only that\.\s+Never on a `settled` entry\./u);
+  assert.match(skill, /When one of its `decisions` has `pr` null, have `doc-updater` replace `pr=none` on that marker line with the pull request's number, commit, and push only that\.\s+Never on a `settled` entry\./u);
+  assert.match(skill, /`doc-updater` commits the pull request's number on the branch's decision markers/u, 'the coordinator that runs this skill may not edit or commit');
+  const close = readFileSync(path.join(ROOT, 'plugins/aidrian/skills/issue-implement/steps/phases-5-8-close.md'), 'utf8').replace(/\s+/gu, ' ');
+  assert.match(close, /- each `decided_provisional`, with its reason, revisit trigger, and how it reverts;/u, 'pr-write takes these from its caller');
+  assert.match(close, /`doc-updater` also makes the `pr-write` skill's commit of the pull request's number on the decision markers\. No slice owns either commit/u);
+  assert.doesNotMatch(close, /the only commit no slice owns/u);
   assert.match(skill, /That push moves the head: it comes before the review of the new head, or the report says it did not\./u);
   assert.match(skill.replace(/\s+/gu, ' '), /A row marked `inherited` was there before this branch, so leave it out; an unmarked problem on a marker the merge base has goes under Risk and stops nothing\./u);
   assert.doesNotMatch(skill, /A problem on an inherited marker/u);

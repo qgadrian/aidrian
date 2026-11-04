@@ -422,7 +422,7 @@ Refunds take five days.
 - `class` is an ordinary class of `lib/decisions.json` or of [`decisions.classes`](config.md#project-classes), since a floor class never reaches an agent.
 - `domain` is `product`, `ux`, `architecture`, or `backlog`.
 - `pr` is `none` until the pull request exists; a writer on a branch whose pull request already exists writes the real number.
-  The [`pr-write`](../plugins/aidrian/skills/pr-write/SKILL.md) skill writes the number on each marker the branch added with `none`, commits, and pushes.
+  The [`pr-write`](../plugins/aidrian/skills/pr-write/SKILL.md) skill has `doc-updater` write the number on each marker the branch added with `none`, commit, and push.
   That push moves the head, so it comes before the review of the new head, or the report says it did not.
 
 The slice's implementer writes the marker in its commit; else `doc-updater`.

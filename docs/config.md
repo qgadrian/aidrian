@@ -798,6 +798,7 @@ Case does not count, on any disk: two docs that differ only by case both ask, wh
 A symlink counts as both its own path and its target's, in `--doc` and in `escalateDocs`; a link whose target is outside the project asks.
 `aidrian decisions resolve --vocab` prints every class and reversibility question with its definition;
 `lib/decisions.json` is the one place the built-in ones live, and the base branch's [`decisions.classes`](#project-classes) adds the project's.
+The `quorum` skill's product mode runs `resolve` on its ruling and reports the answer, but always asks the Human, under `decide` too.
 
 The first rule that matches wins:
 

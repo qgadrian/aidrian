@@ -17,7 +17,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { runGh } from '../gh.mjs';
-import { runGit } from '../git.mjs';
+import { runGit, showPrefix } from '../git.mjs';
 import { commandConfig } from '../config.mjs';
 import { projectAt } from '../project.mjs';
 import { changedFiles, mergeBase } from './diff.mjs';
@@ -78,17 +78,26 @@ function knownProblems(root, repo, n, bot, info) {
   }
   // The earliest commit any resolved thread was opened on, bot or person: the code before any reported bug was fixed.
   const first = seen.find((oid) => seen.every((other) => other === oid || runGit(['merge-base', '--is-ancestor', oid, other], root).status === 0)) ?? seen[0] ?? null;
-  const files = new Set(changedFiles(root, info.base, info.head).map((change) => change.file));
-  if (info.mergedAt) {
-    const until = new Date(Date.parse(info.mergedAt) + ESCAPE_DAYS * 86_400_000).toISOString();
-    const log = runGit(['log', `origin/${info.baseRefName}`, `--since=${info.mergedAt}`, `--until=${until}`, '--format=%H %s', '--name-only'], root, { timeout: 60_000 });
-    let fixing = false;
-    for (const line of log.stdout.split('\n')) {
-      if (/^[0-9a-f]{40} /u.test(line)) fixing = /^[0-9a-f]{40} (fix|revert)(\(|:|!)/iu.test(line);
-      else if (fixing && files.has(line)) problems.push({ source: 'escaped', file: line, line: null });
-    }
-  }
+  problems.push(...escapedFixes(root, info));
   return { problems, reviewedAt: first ?? info.head };
+}
+
+// The files a fix or revert touched on the base branch within ESCAPE_DAYS of the merge, of those the pull request changed.
+// Each is a path from the top of the repository, as `git log`, review threads, and a replay at the worktree's top give it;
+// `changedFiles` gives a path from the project root, so a project below the root adds its prefix.
+export function escapedFixes(root, info) {
+  if (!info.mergedAt) return [];
+  const prefix = showPrefix(root);
+  const files = new Set(changedFiles(root, info.base, info.head).map((change) => `${prefix}${change.file}`));
+  const until = new Date(Date.parse(info.mergedAt) + ESCAPE_DAYS * 86_400_000).toISOString();
+  const log = runGit(['log', `origin/${info.baseRefName}`, `--since=${info.mergedAt}`, `--until=${until}`, '--format=%H %s', '--name-only'], root, { timeout: 60_000 });
+  const found = [];
+  let fixing = false;
+  for (const line of log.stdout.split('\n')) {
+    if (/^[0-9a-f]{40} /u.test(line)) fixing = /^[0-9a-f]{40} (fix|revert)(\(|:|!)/iu.test(line);
+    else if (fixing && files.has(line)) found.push({ source: 'escaped', file: line, line: null });
+  }
+  return found;
 }
 
 // One review of a commit, as one pass or split: the findings of every pass.

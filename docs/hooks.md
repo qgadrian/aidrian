@@ -171,7 +171,7 @@ What each rule matches:
   and a `gh pr create` body without the configured `Authored-with:` and `Assisted-by:` lines.
 - Review gate: `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose body
   asks `@codex review`; `gh pr create --reviewer` and `gh pr edit --add-reviewer` naming `github.reviewer`.
-- Review sign-off: `aidrian pr signoff`, with `--overrule` too, also as `node …/cli.mjs` or `node …/bin/aidrian`. In a Claude Code session the
+- Review sign-off: `aidrian pr signoff`, with `--overrule` too, also as `node …/cli.mjs` or `node …/bin/aidrian`, and inside a substitution, `sh -c`, `eval`, or a heredoc or pipe fed to a shell. In a Claude Code session the
   Human runs it with `!`; if a host routes `!` through the hooks too, the Human runs it from another terminal.
 - Decision answer: `aidrian decisions set` and `aidrian decisions undo`, also as `node …/cli.mjs` or `node …/bin/aidrian`,
   and in `sh -c`, `eval`, or a heredoc fed to a shell,

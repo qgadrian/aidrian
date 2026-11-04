@@ -7,7 +7,7 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
-import { CASE_SCHEMA, CODEX_TIMEOUT_SEC, CROSS_SCHEMA, DECIDE_LEDGER_SCHEMA, DECIDE_REBUTTAL_SCHEMA, GROUNDS, LEDGER_SCHEMA, LEDGER_SCHEMAS, MAX_MODE_OBJECTIONS, MAX_OBJECTIONS, OBJECTIONS_SCHEMA, REBUTTALS_SCHEMA, codexAnswer, commands, governingWinner, modeOf, rebuttalProblems, schemaProblems } from '../plugins/aidrian/lib/quorum.mjs';
+import { inferenceProblems, CASE_SCHEMA, CODEX_TIMEOUT_SEC, CROSS_SCHEMA, DECIDE_LEDGER_SCHEMA, DECIDE_REBUTTAL_SCHEMA, GROUNDS, LEDGER_SCHEMA, LEDGER_SCHEMAS, MAX_MODE_OBJECTIONS, MAX_OBJECTIONS, OBJECTIONS_SCHEMA, REBUTTALS_SCHEMA, codexAnswer, commands, governingWinner, modeOf, rebuttalProblems, schemaProblems } from '../plugins/aidrian/lib/quorum.mjs';
 import { slug } from '../plugins/aidrian/lib/review/flows.mjs';
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
 import { FINDINGS_SCHEMA, runCodex, runExec } from '../plugins/aidrian/lib/review/reviewers.mjs';
@@ -2554,4 +2554,11 @@ test('product ledger: a malformed citation beside a passing one does not void a 
   assert.match(result.stdout, /cross U1\.citations\[1\]/u, 'the bad citation is still named');
   const dead = d.check(productLedger({ cross: [{ ...cross[0], citations: [bad] }], ruling: decision({ tested: [...tested({ A: 1, B: 1 }, ['B']), { of: 'U1', citation: 0, supports: false, reason: 'r' }] }) }));
   assert.equal(dead.status, 1, 'a point left with no passing citation still goes stale');
+});
+
+test('an inference line matches past a curly or straight quote, and still fails on a real difference', () => {
+  const claim = 'inference: The Human\u2019s \u201Cview\u201D is unclear.';
+  assert.deepEqual(inferenceProblems([claim], [{ statement: 'The Human\'s "view" is unclear.' }]), []);
+  assert.deepEqual(inferenceProblems(['inference: The Human\'s view is unclear.'], [{ statement: 'The Human\u2019s view is unclear.' }]), []);
+  assert.equal(inferenceProblems([claim], [{ statement: 'The Human\'s "view" is clear.' }]).length, 1);
 });

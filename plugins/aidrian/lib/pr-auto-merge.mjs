@@ -1,17 +1,21 @@
 // `aidrian pr auto-merge [PR] [--json]`: whether a session may merge this pull request without asking. It is on only
 // when all of these hold, and the first that fails is the reason it is off:
-//   1. team: the base branch allows it. `github.autoMerge` is read from GitHub, as the pull request's repository commits
-//      it on its base branch now: never from the working copy, its folder override, or a local ref, so a pull request
-//      cannot raise its own ceiling, a fork checkout reads the upstream's, and no stale fetch keeps an old one.
+//   1. team: both the repository's default branch and the pull request's base allow it. `github.autoMerge` is read
+//      from GitHub, as the pull request's repository commits it on each branch now: never from the working copy, its
+//      folder override, or a local ref, so a pull request cannot raise its own ceiling, a feature base cannot raise the
+//      default branch's, a fork checkout reads the upstream's, and no stale fetch keeps an old one. The strategy and
+//      the cleanup come from the default branch.
 //   2. local: this machine opted in, `github.autoMerge: "on"` in the local file (project.localAutoMerge).
 //   3. author: the pull request is the gh user's own.
 //   4. review: this machine's review record (lib/review/state.mjs), scoped to the pull request's repository, holds a
 //      finished outcome (`received`, `none_needed`) on the pull request's current head, and nothing is owed.
-// gh reads: one `gh pr view` for the number, head, base, author, and URL; the base's folder override and config.json
-// through the contents API; and, only when the team and the machine both allow it, `gh api user` for the login. Every
-// `gh api` call names the host of the pull request's URL.
+// gh reads: one `gh pr view` for the number, head, base, author, and URL; `gh api repos/<repo>` for the default
+// branch; each branch's folder override and config.json through the contents API, at `refs/heads/<branch>` (once when
+// the base is the default branch); and, only when the team and the machine both allow it, `gh api user` for the login.
+// Every `gh api` call names the host of the pull request's URL. A gh failure prints gh's last line of stderr.
 // stdout: one line, or with --json { effective, reason, allow, local, strategy, deleteBranch, deleteWorktree, pr, head,
-// repo }, the team values from the base. When the reason is local and the local file has errors, they go to stderr.
+// repo, base }: `allow` is true only when both branches allow it, and the other team values are the default branch's.
+// When the reason is local and the local file has errors, they go to stderr.
 // Exit 0 on, 1 off, 3 error (an argument, a gh read, or a pull request gh describes only in part).
 
 import { configFromText, resolveAutoMerge } from './config.mjs';
@@ -24,7 +28,9 @@ import { scoped } from './rules/github/merge-review.mjs';
 const VIEW_FIELDS = 'number,headRefOid,baseRefName,author,url';
 const SHA = /^[0-9a-f]{40}$/iu;
 
-const firstLine = (error) => String(error?.message ?? error).split('\n')[0];
+// What a failed gh call says: its last non-empty line of stderr, else the first line of the error's message.
+export const ghError = (error) => String(error?.stderr ?? '').split('\n').map((line) => line.trim()).filter(Boolean).at(-1) ??
+  String(error?.message ?? error).split('\n')[0];
 const notFound = (error) => /HTTP 404/u.test(`${error?.stderr ?? ''}\n${error?.message ?? ''}`);
 
 // [PR] [--json], where PR is a number, `#number`, or a pull request URL: { target, asJson, unknown }.
@@ -56,20 +62,33 @@ export function readView(view) {
   return { number, head, base, author, repo, host };
 }
 
-// The config the base branch `base` of `repo` commits on GitHub now, by committedConfig's rules: its folder override
-// first, then that folder's config.json. A file GitHub does not have (404) is no file; any other failure throws.
-export function baseConfig(gh, { repo, base, host }) {
+// The default branch of `repo` on GitHub. Throws when gh cannot say.
+export function defaultBranch(gh, { repo, host }) {
+  let name;
+  try {
+    name = JSON.parse(gh(['api', '--hostname', host, `repos/${repo}`]))?.default_branch;
+  } catch (error) {
+    throw new Error(`could not read the default branch of ${repo} with gh (${ghError(error)})`);
+  }
+  if (typeof name !== 'string' || name === '') throw new Error(`gh returned no default branch for ${repo}`);
+  return name;
+}
+
+// The config the branch `branch` of `repo` commits on GitHub now, by committedConfig's rules: its folder override
+// first, then that folder's config.json. The ref is `refs/heads/<branch>`, so a tag of the same name never answers.
+// A file GitHub does not have (404) is no file; any other failure throws.
+export function branchConfig(gh, { repo, host }, branch) {
   const read = (file) => {
-    const route = `repos/${repo}/contents/${file.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(base)}`;
+    const route = `repos/${repo}/contents/${file.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(`refs/heads/${branch}`)}`;
     let body;
     try {
       body = JSON.parse(gh(['api', '--hostname', host, route]));
     } catch (error) {
       if (notFound(error)) return null;
-      throw new Error(`could not read ${file} on ${repo} ${base} with gh (${firstLine(error)})`);
+      throw new Error(`could not read ${file} on ${repo} ${branch} with gh (${ghError(error)})`);
     }
     if (body?.type !== 'file' || body.encoding !== 'base64' || typeof body.content !== 'string') {
-      throw new Error(`gh returned no file content for ${file} on ${repo} ${base}`);
+      throw new Error(`gh returned no file content for ${file} on ${repo} ${branch}`);
     }
     return Buffer.from(body.content, 'base64').toString('utf8');
   };
@@ -103,26 +122,31 @@ export function runAutoMerge(argv, project, { gh = (args) => runGh(args, { cwd: 
   try {
     pr = readView(JSON.parse(gh(['pr', 'view', ...(target === null ? [] : [target]), '--json', VIEW_FIELDS])));
   } catch (error) {
-    return fail(`could not read the pull request with gh (${firstLine(error)})`);
+    return fail(`could not read the pull request with gh (${ghError(error)})`);
   }
   if (typeof pr === 'string') return fail(pr);
   let team;
+  let refusing;
   try {
-    team = baseConfig(gh, pr).github.autoMerge;
+    const main = defaultBranch(gh, pr);
+    const onDefault = branchConfig(gh, pr, main).github.autoMerge;
+    const onBase = pr.base === main ? onDefault : branchConfig(gh, pr, pr.base).github.autoMerge;
+    refusing = [...new Set([[main, onDefault], [pr.base, onBase]].filter(([, each]) => each.allow !== true).map(([name]) => name))];
+    team = { ...onDefault, allow: refusing.length === 0 };
   } catch (error) {
     return fail(error.message);
   }
 
   let { effective, reason } = resolveAutoMerge({ autoMerge: team }, project.localAutoMerge);
   let why = reason === 'team'
-    ? `the team does not allow it (github.autoMerge.allow on ${pr.repo} ${pr.base})`
+    ? `the team does not allow it (github.autoMerge.allow on ${pr.repo} ${refusing.join(' and ')})`
     : reason === 'local' ? `this machine has not opted in (github.autoMerge in ${project.paths.local})` : null;
   if (effective) {
     let user;
     try {
       user = JSON.parse(gh(['api', '--hostname', pr.host, 'user']))?.login;
     } catch (error) {
-      return fail(`could not read the gh user (${firstLine(error)})`);
+      return fail(`could not read the gh user (${ghError(error)})`);
     }
     if (typeof user !== 'string' || user === '') return fail('gh api user returned no login');
     if (pr.author.toLowerCase() !== user.toLowerCase()) {
@@ -135,7 +159,7 @@ export function runAutoMerge(argv, project, { gh = (args) => runGh(args, { cwd: 
 
   const result = {
     effective, reason, allow: team.allow, local: project.localAutoMerge, strategy: team.strategy, deleteBranch: team.deleteBranch,
-    deleteWorktree: team.deleteWorktree, pr: pr.number, head: pr.head, repo: pr.repo,
+    deleteWorktree: team.deleteWorktree, pr: pr.number, head: pr.head, repo: pr.repo, base: pr.base,
   };
   console.log(asJson ? JSON.stringify(result)
     : effective ? `auto-merge on for #${pr.number} at ${pr.head.slice(0, 7)}: ${team.strategy ?? 'no strategy set'}, ${cleanup(team)}`

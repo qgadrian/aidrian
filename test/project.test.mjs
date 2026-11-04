@@ -125,6 +125,8 @@ test('.aidrian.local.json may hold telemetry alone; the project passes it on as 
 
 test('.aidrian.local.json github.autoMerge: "off" when unset; "on" or "off" opts in or out', (t) => {
   const dir = tempDir(t);
+  // A temporary repository of its own, where git can say the local file is untracked: never GIT_DIR.
+  execFileSync('git', ['init', '-q'], { cwd: dir });
   mkdirSync(path.join(dir, '.aidrian'));
   writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}');
   assert.equal(findProject(dir).localAutoMerge, 'off', 'no local file');
@@ -155,6 +157,16 @@ test('.aidrian.local.json that git tracks: a branch could carry it, so its auto-
   assert.deepEqual(project.errors, ['.aidrian.local.json: git tracks it, so a branch could carry it; "github.autoMerge" reads "off" until it is untracked (git rm --cached .aidrian.local.json)']);
   writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ github: { autoMerge: 'off' } }));
   assert.deepEqual([findProject(dir).errors, findProject(dir).localAutoMerge], [[], 'off'], 'a tracked file that keeps it off is no error');
+});
+
+test('.aidrian.local.json github.autoMerge "on" where git cannot say it is untracked reads "off" with an error', (t) => {
+  // No repository: git ls-files fails, which is no answer "untracked".
+  const dir = tempDir(t);
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}');
+  writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ github: { autoMerge: 'on' } }));
+  const project = findProject(dir);
+  assert.deepEqual([project.errors, project.localAutoMerge], [['.aidrian.local.json: git could not say whether it tracks it, so "github.autoMerge" reads "off"'], 'off']);
 });
 
 // The local file opts one machine in; it never sets what the team decides: strategy, cleanup, or the ceiling itself.

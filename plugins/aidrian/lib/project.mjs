@@ -179,11 +179,14 @@ function readLocal(checkouts, errors, unreadable) {
   }
   const { models, names, telemetry, agents, review } = raw;
   let autoMerge = localAutoMerge(raw, errors);
-  // A local file git tracks travels with a branch, so it is no machine's own switch. Asked only when the switch is on,
-  // so a hook pays no git call for a file that keeps auto-merge off.
-  if (autoMerge === 'on' && runGit(['ls-files', '--error-unmatch', '--', LOCAL], holder).status === 0) {
-    errors.push(`${LOCAL}: git tracks it, so a branch could carry it; "github.autoMerge" reads "off" until it is untracked (git rm --cached ${LOCAL})`);
-    autoMerge = 'off';
+  // A local file git tracks travels with a branch, so it is no machine's own switch. Only git's answer "untracked"
+  // (exit 1) keeps it on: tracked, a git that fails or stalls, or no repository at all reads "off". Asked only when the
+  // switch is on, so a hook pays no git call for a file that keeps auto-merge off.
+  if (autoMerge === 'on') {
+    const { status } = runGit(['ls-files', '--error-unmatch', '--', LOCAL], holder);
+    if (status === 0) errors.push(`${LOCAL}: git tracks it, so a branch could carry it; "github.autoMerge" reads "off" until it is untracked (git rm --cached ${LOCAL})`);
+    else if (status !== 1) errors.push(`${LOCAL}: git could not say whether it tracks it, so "github.autoMerge" reads "off"`);
+    if (status !== 1) autoMerge = 'off';
   }
   return { sources: localSources(holder, raw, errors), models, names, telemetry, agents, review, autoMerge };
 }

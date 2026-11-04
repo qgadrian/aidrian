@@ -135,6 +135,8 @@ test('github.autoMerge: on only when the team allows it and the machine opts in;
 
 test('github.autoMerge: aidrian check warns, and still passes, when the machine opts in and the team does not allow it', (t) => {
   const team = project(t, { version: 1 });
+  // A temporary repository of its own, so git can say the local file is untracked: never GIT_DIR.
+  spawnSync('git', ['init', '-q'], { cwd: team.root });
   writeFileSync(path.join(team.root, '.gitignore'), '.aidrian.local.json\n.worktrees/\n');
   const local = path.join(team.root, '.aidrian.local.json');
   const check = () => spawnSync(path.join(ROOT, 'plugins/aidrian/bin/aidrian'), ['check'], { cwd: team.root, encoding: 'utf8' });

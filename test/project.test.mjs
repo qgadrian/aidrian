@@ -129,17 +129,41 @@ test('.aidrian.local.json github.autoMerge: "off" when unset; "on" or "off" opts
   execFileSync('git', ['init', '-q'], { cwd: dir });
   mkdirSync(path.join(dir, '.aidrian'));
   writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}');
-  assert.equal(findProject(dir).localAutoMerge, 'off', 'no local file');
+  assert.equal(findProject(dir).localAutoMerge, 'unset', 'no local file');
   const local = path.join(dir, '.aidrian.local.json');
   writeFileSync(local, JSON.stringify({ names: { human: 'the owner' } }));
-  assert.equal(findProject(dir).localAutoMerge, 'off', 'a local file without github');
+  assert.equal(findProject(dir).localAutoMerge, 'unset', 'a local file without github');
   for (const value of ['on', 'off']) {
     writeFileSync(local, JSON.stringify({ github: { autoMerge: value } }));
     const project = findProject(dir);
     assert.deepEqual([project.errors, project.localAutoMerge], [[], value]);
   }
   writeFileSync(local, JSON.stringify({ github: {} }));
-  assert.deepEqual([findProject(dir).errors, findProject(dir).localAutoMerge], [[], 'off']);
+  assert.deepEqual([findProject(dir).errors, findProject(dir).localAutoMerge], [[], 'unset']);
+  for (const [enabled, value] of [[true, 'on'], [false, 'off']]) {
+    writeFileSync(local, JSON.stringify({ github: { autoMerge: { enabled } } }));
+    const project = findProject(dir);
+    assert.deepEqual([project.errors, project.localAutoMerge], [[], value], 'the object form');
+  }
+  for (const wrong of [{ enabled: 'yes' }, { enabled: true, strategy: 'merge' }, { allow: true }, {}, true, 'unset', null]) {
+    writeFileSync(local, JSON.stringify({ github: { autoMerge: wrong } }));
+    const project = findProject(dir);
+    assert.equal(project.localAutoMerge, 'off', JSON.stringify(wrong));
+    assert.equal(project.errors.length, 1, JSON.stringify(wrong));
+  }
+});
+
+test('.aidrian.local.json with an error reads "off", never "unset", so it cannot follow a team default of "on"', (t) => {
+  const dir = tempDir(t);
+  execFileSync('git', ['init', '-q'], { cwd: dir });
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}');
+  for (const broken of [{ stray: 1 }, { sources: 'no-list' }, { github: 1 }, { github: { other: 1 } }]) {
+    writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify(broken));
+    assert.equal(findProject(dir).localAutoMerge, 'off', JSON.stringify(broken));
+  }
+  writeFileSync(path.join(dir, '.aidrian.local.json'), '{ not json');
+  assert.equal(findProject(dir).localAutoMerge, 'off', 'unparsable');
 });
 
 test('.aidrian.local.json that git tracks: a branch could carry it, so its auto-merge switch reads "off" with an error', (t) => {
@@ -185,7 +209,13 @@ test('a worktree\'s own .aidrian.local.json never sets the auto-merge switch: on
   git('worktree', 'add', '-q', '-b', 'task', worktree);
   const local = (autoMerge) => JSON.stringify({ names: { human: 'Own' }, github: { autoMerge } });
   writeFileSync(path.join(worktree, '.aidrian.local.json'), local('on'));
-  assert.deepEqual([findProject(worktree).localAutoMerge, findProject(worktree).localNames], ['off', { human: 'Own' }], 'the main checkout has no file');
+  assert.deepEqual([findProject(worktree).localAutoMerge, findProject(worktree).localNames], ['unset', { human: 'Own' }], 'the main checkout has no file');
+  for (const broken of [{ stray: 1 }, { sources: 'no-list' }]) {
+    writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify(broken));
+    assert.equal(findProject(worktree).localAutoMerge, 'off', `a worktree's copy hides no error: ${JSON.stringify(broken)}`);
+  }
+  writeFileSync(path.join(dir, '.aidrian.local.json'), '{}');
+  assert.equal(findProject(worktree).localAutoMerge, 'unset', 'a valid main file with no setting');
   writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ github: { autoMerge: 'off' } }));
   assert.deepEqual([findProject(worktree).localAutoMerge, findProject(worktree).localNames], ['off', { human: 'Own' }], 'the main checkout says off');
   writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ github: { autoMerge: 'on' } }));
@@ -212,8 +242,8 @@ test('.aidrian.local.json github.autoMerge "on" where git cannot say it is untra
 const localGithubCases = [
   ['a strategy', { autoMerge: 'on', strategy: 'squash' }, ['.aidrian.local.json: unknown key "github.strategy"; only "github.autoMerge" is a machine setting']],
   ['the ceiling', { allow: true }, ['.aidrian.local.json: unknown key "github.allow"; only "github.autoMerge" is a machine setting']],
-  ['a team group', { autoMerge: { allow: true } }, ['.aidrian.local.json: "github.autoMerge" must be "on" or "off"']],
-  ['a boolean', { autoMerge: true }, ['.aidrian.local.json: "github.autoMerge" must be "on" or "off"']],
+  ['a team group', { autoMerge: { allow: true } }, ['.aidrian.local.json: "github.autoMerge" must be { "enabled": true } or { "enabled": false }']],
+  ['a boolean', { autoMerge: true }, ['.aidrian.local.json: "github.autoMerge" must be { "enabled": true } or { "enabled": false }']],
 ];
 for (const [name, github, errors] of localGithubCases) {
   test(`.aidrian.local.json github rejects ${name}, and auto-merge stays off`, (t) => {

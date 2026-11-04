@@ -13,7 +13,8 @@
 //      that cannot be read, or has errors, is off too.
 //   3. paths: gh lists every changed file with its change type, none is a rename, whose old path gh does not give, and
 //      none is one that instructs an AI session or runs in CI (GUARDED_PATHS).
-//   4. local: this machine opted in, `github.autoMerge: "on"` in the main checkout's local file (project.localAutoMerge).
+//   4. local: the main checkout's local file turns it on (project.localAutoMerge), or sets nothing under the default
+//      branch's `github.autoMerge.default` "on".
 //   5. author: the pull request is the gh user's own.
 //   6. outsider: every issue comment, review, and inline comment is by a member of the repository, or by the default
 //      branch's `github.reviewer` bot. It reads only these lists, so text that reaches a run another way, such as an
@@ -34,7 +35,7 @@
 
 import { configFromText, loadConfig, resolveAutoMerge } from './config.mjs';
 import { runGh } from './gh.mjs';
-import { configPathIn, GUARDED_PATHS } from './project.mjs';
+import { configPathIn, GUARDED_PATHS, mayFollowTeamDefault } from './project.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
 import { MEMBER_ASSOCIATIONS, owed, readLocalState } from './review/state.mjs';
 import { scoped } from './rules/github/merge-review.mjs';
@@ -205,7 +206,10 @@ export function runAutoMerge(argv, project, { gh = (args) => runGh(args, { cwd: 
     return fail(error.message);
   }
 
-  let { effective, reason } = resolveAutoMerge({ autoMerge: team }, project.localAutoMerge);
+  // A tracked local file is no machine's own, so it follows no default of "on". Read only when that default would apply.
+  const followsDefault = project.localAutoMerge === 'unset' && team.allow && team.default === 'on';
+  const local = followsDefault && !mayFollowTeamDefault(project) ? 'off' : project.localAutoMerge;
+  let { effective, reason } = resolveAutoMerge({ autoMerge: team }, local);
   let why = reason === 'team'
     ? `the team does not allow it (github.autoMerge.allow on ${pr.repo} ${refusing.join(' and ')})`
     : reason === 'local' ? `this machine has not opted in (github.autoMerge in ${project.paths.local})` : null;
@@ -239,7 +243,7 @@ export function runAutoMerge(argv, project, { gh = (args) => runGh(args, { cwd: 
   }
 
   const result = {
-    effective, reason, why, allow: team.allow, local: project.localAutoMerge, strategy: team.strategy, deleteBranch: team.deleteBranch,
+    effective, reason, why, allow: team.allow, local, strategy: team.strategy, deleteBranch: team.deleteBranch,
     deleteWorktree: team.deleteWorktree, pr: pr.number, head: pr.head, repo: pr.repo, base: pr.base,
   };
   console.log(asJson ? JSON.stringify(result)

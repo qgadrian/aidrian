@@ -31,7 +31,7 @@ Never add an entry on your own during a merge run.
   A config this checkout cannot read is off too.
 - `paths`: gh lists every changed file with its change type, none is a rename, and none instructs an AI session or decides CI: `AGENTS.md`, `CLAUDE.md`, `SKILL.md`,
   `CODEOWNERS`, `.aidrian.json`, or a file under `.claude/`, `.codex/`, `.aidrian/`, `.github/workflows/`, or `.github/actions/`.
-- `local`: this machine opted in, with `"github": { "autoMerge": "on" }` in the main checkout's `.aidrian.local.json`, which git must not track.
+- `local`: this machine opted in, with `"github": { "autoMerge": { "enabled": true } }` in the main checkout's `.aidrian.local.json`, which git must not track, or it has no setting and the default branch's `github.autoMerge.default` is `"on"`.
 - `author`: the pull request is the gh user's own.
 - `outsider`: every comment and review on the pull request is by an owner, member, or collaborator, or by the `github.reviewer` bot.
 - `review`: nobody's latest review requests changes, and this machine's review record holds a `received` review of exactly the current head, with nothing owed. A pull request that needed no review waits for the Human.

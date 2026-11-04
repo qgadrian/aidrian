@@ -80,8 +80,8 @@ It writes nothing at all when a symlink would take a write outside the project, 
 - Every knowledge index, as [knowledge.md](knowledge.md#checks) describes.
 - `.aidrian.local.json`, when present: every source, as [Local knowledge sources](#local-knowledge-sources) describes,
   `models`, as [config.md](config.md#models) describes, `names`, as [config.md](config.md#names) describes,
-  and `github.autoMerge`, the machine's auto-merge opt-in: only `"on"` or `"off"`, `"off"` by default, and the only `github` key it takes.
-  When it is `"on"` and config.json `github.autoMerge.allow` is false, check prints
+  and `github.autoMerge`, the machine's auto-merge choice: `{ "enabled": true }` or `{ "enabled": false }`, or the older `"on"` or `"off"`, and the only `github` key it takes.
+  Unset follows the team's `github.autoMerge.default`. When it turns auto-merge on and config.json `github.autoMerge.allow` is false, check prints
   `warning: auto-merge is on locally but the team does not allow it`, and does not fail.
   When git tracks `.aidrian.local.json`, in any case, a branch could carry it, so `github.autoMerge` reads `"off"` and check names the
   error, with the fix `git rm --cached .aidrian.local.json`. So does a checkout where git cannot say whether it tracks the file.

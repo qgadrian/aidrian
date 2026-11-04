@@ -1,6 +1,6 @@
 ---
 name: pr-auto-merge
-description: Merge a pull request with no Human asking, only when aidrian pr auto-merge exits 0. Never when only asked whether it is green.
+description: Merge a pull request this run marked ready, with no Human asking, only when aidrian pr auto-merge exits 0. Never when only asked whether it is green.
 ---
 
 # pr-auto-merge
@@ -15,6 +15,7 @@ The pull request: a number (`12` or `#12`) or a URL. None: the current branch's.
 
 ## Steps
 
-1. Run `aidrian pr auto-merge <n>`. Unless it exits 0, stop and report the line it printed, or on exit 3 its stderr.
-2. Read `../pr-merge-when-green/SKILL.md`, in that skill's folder from this one, and follow its steps for this pull request
+1. Stop and report why unless this run marked this pull request ready with `gh pr ready`: one already ready may be waiting for a person's review.
+2. Run `aidrian pr auto-merge <n>`. Unless it exits 0, stop and report the line it printed, or on exit 3 its stderr.
+3. Read `../pr-merge-when-green/SKILL.md`, in that skill's folder from this one, and follow its steps for this pull request
    as an unattended run. Its `references/` files are in that folder too.

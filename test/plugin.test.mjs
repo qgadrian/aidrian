@@ -357,6 +357,16 @@ test('pr-merge-when-green is the Human\'s to start; pr-auto-merge is the one way
   assert.ok(flat.indexOf('aidrian pr auto-merge <n>') < flat.indexOf('../pr-merge-when-green/SKILL.md'), 'the command comes first');
 });
 
+test('pr-auto-merge runs only in the run that marked the pull request ready, and an unattended run on a draft stops', () => {
+  const auto = readFileSync(path.join(PLUGIN, 'skills/pr-auto-merge/SKILL.md'), 'utf8');
+  assert.match(auto.split(/^---$/mu)[1], /^description: Merge a pull request this run marked ready,/mu, 'the listing names the precondition');
+  const steps = auto.slice(auto.indexOf('## Steps')).replace(/\s+/g, ' ');
+  assert.match(steps, /^## Steps 1\. Stop and report why unless this run marked this pull request ready with `gh pr ready`:/u, 'the precondition is the first step');
+  assert.ok(steps.indexOf('this run marked') < steps.indexOf('aidrian pr auto-merge <n>'), 'it comes before the command');
+  const green = readFileSync(path.join(PLUGIN, 'skills/pr-merge-when-green/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(green, /Otherwise an unattended run stops and reports; the Human's run asks whether to mark it ready, never unasked\./u);
+});
+
 test('pr-merge-when-green pins each merge to the judged head, in order, and cleans up one worktree without --force', () => {
   const dir = path.join(PLUGIN, 'skills/pr-merge-when-green');
   const files = ['SKILL.md', ...readdirSync(path.join(dir, 'references')).map((file) => `references/${file}`)];

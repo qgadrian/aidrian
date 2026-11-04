@@ -64,7 +64,8 @@ Pass `<owner>/<repo>` on every later call, or `gh` may read `<n>` of another rep
 - `mergeable` is `CONFLICTING`: the branch needs a rebase first.
 - `isDraft` is true, unless config.json `github.markReady` is `"auto"`, the default, and a review of the current head signed off
   with no blocked row, as this session's review loop reported: then mark it ready now, with `gh pr ready <n> --repo <owner>/<repo>`
-  (not under `--dry-run`), before step 1: some checks start only then. Otherwise ask whether to mark it ready; never unasked.
+  (not under `--dry-run`), before step 1: some checks start only then.
+  Otherwise an unattended run stops and reports; the Human's run asks whether to mark it ready, never unasked.
 
 ## 1. Wait for a verdict
 

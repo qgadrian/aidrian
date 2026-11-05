@@ -181,6 +181,7 @@ A class `--vocab` gives a `domain` resolves in that domain, whatever the ruling'
   a run the Human started, or one whose route asked, prints `human` or waits, whatever the settings.
 - **It waits**, on `wait` true with an empty `settle`. With the Human present, round 9 of the mode asks as usual.
   With the Human absent, the ledger stays deferred, the question goes in the report with the recommendation and the simulated-user caveat,
+  or that no end user took part,
   and independent work continues.
   Dependent code keeps no guess at the answer.
 - **It continues**, on `wait` false or a non-empty `settle`: the order below.

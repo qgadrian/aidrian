@@ -767,7 +767,7 @@ test('autopilot and the pull request carry a quorum\'s ruling, and each skill st
   assert.match(autopilot, /the count of automatic quorum runs/);
   const phases = flat('plugins/aidrian/skills/autopilot/references/phases.md');
   const section = phases.slice(phases.indexOf('## Product decisions'), phases.indexOf('## 1. Implement'));
-  assert.match(section, /the ledger stays deferred, the question goes in the report with the recommendation and the simulated-user caveat, and independent work continues/);
+  assert.match(section, /the ledger stays deferred, the question goes in the report with the recommendation and the simulated-user caveat, or that no end user took part, and independent work continues/);
   assert.match(section, /Count this session's automatic runs/);
   const write = flat('plugins/aidrian/skills/pr-write/SKILL.md');
   assert.match(write, /for a quorum's ruling, what would flip it, any settled fact's result, and that winners have varied between runs/);

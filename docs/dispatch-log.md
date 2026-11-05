@@ -91,13 +91,17 @@ can land out of order and still count the right one.
 
 ### `hook_deny`: when one of the plugin's rules blocks a tool call
 
-The Bash rules, the main-checkout rule for writes, the [agent gates](hooks.md#agent-gates), the config guard, and the question names check write one row
-per block, while config.json `telemetry.hookDenies` is on. The call is still blocked when it is off.
+The Bash rules, the main-checkout rule for writes, the [agent gates](hooks.md#agent-gates), the config guard,
+the [tracker write guard](config.md#tracker), and the question names check write one row per block, while config.json `telemetry.hookDenies` is on.
+The call is still blocked when it is off.
+The tracker write guard's refusal of a write with no read yet, when it names a read to call, writes no row when it happens,
+since every session that writes meets it.
+It writes one row at the end of a session with no read recorded, on a host with SessionEnd: [config.md](config.md#how-a-write-is-judged) has the rule.
 
 | Field | Meaning |
 | --- | --- |
 | `ts`, `session_id` | When, and in which session. |
-| `rule` | Its name: `git-hook-bypass`, `git-amend`, `process-kill`, `grep-exit-chain`, `attribution`, `pr-body`, `main-checkout`, `agent-gates`, `config-guard`, or `ask-names`. |
+| `rule` | Its name: `git-hook-bypass`, `git-amend`, `process-kill`, `grep-exit-chain`, `attribution`, `pr-body`, `main-checkout`, `agent-gates`, `config-guard`, `tracker-guard`, or `ask-names`. |
 | `tool` | The tool it blocked, such as `Bash`, `Edit`, or a tool an agent gate names. |
 | `agent_type` | The agent that made the call, named as a `dispatch` row names its dispatcher: `main` for the main session. |
 | `reason` | What the rule matched, at most 120 characters, as the list below says. |
@@ -105,10 +109,13 @@ per block, while config.json `telemetry.hookDenies` is on. The call is still blo
 The `reason` is:
 
 - for a gate, the gate itself, such as `agents.explorer.deny has "WebFetch"`;
+- for `tracker-guard`, the cause of the refusal, with the value refused, such as `team is "Other", and tracker.team.values allows "Notes"`,
+  or, for the row at a session's end, `this session was refused for no read of the connected workspace, and no read landed`;
 - for any other rule, the first sentence of its message, such as `this skips a git hook.`;
 - never a parenthesized absolute path, such as the main checkout's folder, which is left out.
 
-The row never holds the command. Its `reason` can name the file a write rule matched, as the message the agent reads does.
+The row never holds the command. Its `reason` can name the file a write rule matched, as the message the agent reads does,
+and the workspace or tool input value the tracker write guard refused.
 
 ### `review_extension`: when a check at the round cap decides
 

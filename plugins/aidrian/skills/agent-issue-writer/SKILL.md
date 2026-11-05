@@ -11,7 +11,7 @@ Create tracker artifacts for coding agents, not summaries for humans.
 
 The result must let an execution agent complete the task in one pass and verify it without making hidden scope, testing, or ownership decisions.
 
-The project's `issue_tracker` knowledge names the tracker and owns its rules (team, transition rules, magic-word grammar, status taxonomy).
+The project's `issue_tracker` knowledge names the tracker and owns its rules (team unless config.json sets `tracker.team`, transition rules, magic-word grammar, status taxonomy).
 Read the `knowledge` skill's `references/tracker.md` for each step's tool, and on Linear also this skill's `references/linear.md`
 before creating or updating Linear-native artifacts.
 

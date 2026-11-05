@@ -8,8 +8,8 @@ The one exception is the [merge guard](#merge-guard): a merge whose pull request
 as the review gate refuses a request whose pull request it cannot read, and the reason says how to name both.
 A git call a hook makes is stopped after 2 seconds and counts as git not answering; the hook's later git calls then do not wait.
 A blocking hook exits 2 and tells the agent why on stderr.
-The Bash rules, the main-checkout rule, the terms rule, the GitHub MCP hook, the agent gates, the config guard, and the question names check also record each block:
-see [Recorded blocks](#recorded-blocks).
+The Bash rules, the main-checkout rule, the terms rule, the GitHub MCP hook, the agent gates, the config guard,
+the tracker write guard, and the question names check also record each block: see [Recorded blocks](#recorded-blocks).
 
 | When | What runs | Host | Blocks |
 | --- | --- | --- | --- |
@@ -22,6 +22,8 @@ see [Recorded blocks](#recorded-blocks).
 | Before `AskUserQuestion` | A block when a question or option says "I", "me", "my", "you", or "your" (or a form of them, such as "I'm" or "yourself") outside code and quotes: [Names](config.md#names) | Claude Code | yes |
 | Before a GitHub MCP comment | The [review gate](config.md#review-gate), when the project turns it on, and the review-round rule | both | yes |
 | Before a GitHub MCP merge | The [merge guard](#merge-guard) | both | yes |
+| Before any MCP tool call | The [tracker write guard](config.md#tracker), when the project turns it on, on a tool in `tracker.writeTools` | Claude Code | yes |
+| After any MCP tool call | The tracker write guard's record of the connected workspace, on a tool in `tracker.readTools`, and its note of a [tool neither list names](config.md#how-a-write-is-judged) | Claude Code | no |
 | Before an Agent tool call | The project's [model and effort](config.md#models) for that agent | Claude Code | no |
 | After a Markdown write | The [line-length check](#markdown-line-length) | Claude Code | feedback |
 | Before compaction | A checklist of what the summary must keep | both | no |
@@ -90,6 +92,7 @@ that line alone, and a git that hangs past the timeout drops its own line and th
 | Pull request contract | Off unless config.json sets `github.pullRequest`, but for `"sharedTempBodyFile": false` |
 | Review gate | Off unless config.json sets `"github": { "reviewGate": { "enabled": true } }` |
 | Terms rule | Off unless config.json sets `"terms": { "file": "…" }` |
+| [Tracker write guard](config.md#tracker) | Off unless config.json sets `"tracker": { "enabled": true }`, with the keys that key needs |
 | Session-length reminder and plan handoff offer | `"session": { "handoff": { "mode": "off" } }` |
 | Dispatch log rows | `"telemetry": { "enabled": false }`, in config.json or `.aidrian.local.json`; the delivery and background checks still run |
 | `hook_deny` rows alone | `"telemetry": { "hookDenies": false }`; the rules still block |
@@ -220,7 +223,8 @@ A command reached only through a script or an interpreter such as `python -c` is
 
 ## Recorded blocks
 
-Every block by a Bash rule, the main-checkout rule, an [agent gate](#agent-gates), the config guard, or the question names check is recorded twice,
+Every block by a Bash rule, the main-checkout rule, an [agent gate](#agent-gates), the config guard,
+the [tracker write guard](config.md#tracker), or the question names check is recorded twice,
 in `plugins/aidrian/lib/hook-deny.mjs`, after the hook writes its reason and before it exits 2.
 Neither record waits on a lock, so a block stays well inside the host's 5-second hook timeout:
 
@@ -231,9 +235,15 @@ Neither record waits on a lock, so a block stays well inside the host's 5-second
   an agent that keeps trying was not shown the allowed way. The count does not depend on telemetry.
 
 The rules are named in the rows and lessons as `git-hook-bypass`, `git-amend`, `process-kill` (both the kill and the listing rule),
-`grep-exit-chain`, `pr-body`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`, `decisions-set`, `review-extend`, `review-fallback`, `merge-review` (the Bash rule and the MCP hook), `main-checkout`, `terms`, `agent-gates`, `config-guard`, and `ask-names`.
+`grep-exit-chain`, `pr-body`, `review-gate` (the Bash rule and the MCP hook), `review-rounds` (the Bash rule and the MCP hook), `review-signoff`,
+`decisions-set`, `review-extend`, `review-fallback`, `merge-review` (the Bash rule and the MCP hook), `main-checkout`, `terms`, `agent-gates`,
+`config-guard`, `tracker-guard`, and `ask-names`.
 The hooks load the recorder only when they block, so a call they let run costs no more than before.
 When the recorder fails, the call is still blocked.
+One refusal is not recorded when it happens: the tracker write guard's [first refusal](config.md#how-a-write-is-judged) of a write with no read yet,
+when it names a read to call. Every session that writes meets it, so recording each would make a healthy flow read as a hot spot.
+The session-end hook records it instead, once, through the same recorder, when the session ends with no read recorded.
+On a host with no SessionEnd it is never recorded.
 
 ## Merge guard
 

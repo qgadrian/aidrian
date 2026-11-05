@@ -6,11 +6,12 @@ import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { agentNameProblem, ALL, MAIN, patternProblem } from './agent-gates.mjs';
+import { agentNameProblem, ALL, MAIN, nameMatches, patternProblem } from './agent-gates.mjs';
 import { CLASS_MAX, DECISION_DOMAINS, DECISION_MODES, decisionClasses, isClassName, lowerMode, SAFE_DEFAULTS } from './decisions.mjs';
 import { loadTable as dispositionTable } from './finding-disposition.mjs';
 import { isFile, isObject, readJson } from './fs.mjs';
 import { checkLocalReview, checkLocalVisual, checkReview, REVIEW_DEFAULTS } from './review/config.mjs';
+import { serverPrefix } from './tracker-guard.mjs';
 
 // The project folder format this plugin reads. A format change raises it and documents the migration.
 export const VERSION = 1;
@@ -39,6 +40,13 @@ const QUORUM_SCHEMA = {
   plan: { a: { agent: 'agentName' }, b: QUORUM_RUNNER, maxObjections: 'objectionCap', maxDispatches: 'dispatchCap' },
   decide: { odd: QUORUM_RUNNER, even: QUORUM_RUNNER, swap: 'boolean' },
   product: { owner: { agent: 'agentName' }, witness: { agent: 'agentName' }, ux: { agent: 'agentName' }, engineer: { agent: 'agentName' }, maxLoops: 'objectionCap', autoStart: 'boolean', approval: 'quorumApproval', maxAutoRuns: 'autoRuns' },
+};
+
+// The keys of each group of `tracker`. Unlike a group of SCHEMA, one of these is set whole or not at all (checkTracker).
+const TRACKER_GROUPS = {
+  workspace: { expect: 'text', field: 'text' },
+  team: { key: 'teamKey', values: 'someTexts', createFields: 'someTexts', keyFields: 'someTexts' },
+  project: { values: 'someTexts', field: 'text' },
 };
 
 // The keys of the `decisions` group: how far agents may settle product and design decisions (lib/decisions.mjs).
@@ -119,6 +127,7 @@ const SCHEMA = {
   quorum: QUORUM_SCHEMA,
   decisions: DECISIONS_SCHEMA,
   audits: { triage: { issueCreation: 'issueCreationMode', labels: 'auditLabels' } },
+  tracker: 'tracker',
 };
 
 // Keys a format change renamed or moved, old name to new; a key inside a group is named with its group, "group.key".
@@ -230,6 +239,8 @@ const TYPES = {
     `a list of labels, each plain or holding ${AUDIT_LABEL_FIELDS.map((f) => `{${f}}`).join(' or ')}, with at least one plain label`,
   ],
   versionOrNull: [(value) => value === null || (typeof value === 'string' && SEMVER.test(value)), 'a plugin version such as "0.17.0", or null'],
+  // The part of an issue key before its "-<n>", so a hyphen or a space would never match a key.
+  teamKey: [(value) => isText(value) && !/[-\s]/u.test(value), 'a non-empty string with no hyphen or whitespace, such as NOTES'],
   decisionMode: [(value) => DECISION_MODES.includes(value), '"ask" or "decide-reversible"'],
   domainMode: [(value) => value === 'inherit' || DECISION_MODES.includes(value), '"ask", "decide-reversible", or "inherit"'],
   // `group` is the keys beside this one, so an `escalate` entry may name a class of a valid `classes` beside it.
@@ -387,6 +398,8 @@ export const DEFAULTS = deepFreeze({
   // draft and creates nothing before the Human's yes; "auto" creates without asking, for unsupervised runs. Every issue
   // gets each label, `{persona}` and `{severity}` filled from its finding.
   audits: { triage: { issueCreation: 'confirm', labels: ['persona-audit', 'persona:{persona}', 'severity:{severity}'] } },
+  // The tracker write guard's values (docs/config.md#tracker): off until a project sets them; a null group is unset.
+  tracker: { enabled: false, workspace: null, readTools: [], writeTools: [], team: null, project: null },
   reviewEngine: 'auto',
   reviewVisual: { baseUrl: null },
 });
@@ -612,6 +625,8 @@ function merge(schema, defaults, values, prefix, file, errors, gateErrors = []) 
       out[key] = checkReview(value, file, errors);
     } else if (type === 'agents') {
       out[key] = checkAgents(value, file, errors, defaults[key], gateErrors);
+    } else if (type === 'tracker') {
+      out[key] = checkTracker(value, file, errors, defaults[key]);
     } else if (TYPES[type][0](value, values)) {
       out[key] = value;
     } else {
@@ -705,6 +720,108 @@ function checkAgents(value, file, errors, base, gateErrors = []) {
     }
   }
   return out;
+}
+
+// `tracker` from config.json over its defaults. The result never holds what a hook cannot act on: a group with any error
+// is unset, `workspace` and `readTools` are both set or both empty, and both go when any read tool has an error, and
+// `enabled` needs a write tool to watch and a group to hold it to.
+// A pairing error reads what the file set, and only a key of the right type counts as set or unset, so a key that has its
+// own error raises no second one, about itself or about what depends on it.
+function checkTracker(value, file, errors, defaults) {
+  if (!isObject(value)) {
+    errors.push(`${file}: "tracker" must be an object`);
+    return defaults;
+  }
+  for (const key of Object.keys(value)) if (!Object.hasOwn(defaults, key)) errors.push(`${file}: unknown key "tracker.${key}"`);
+  if (Object.hasOwn(value, 'enabled') && typeof value.enabled !== 'boolean') errors.push(`${file}: "tracker.enabled" must be ${TYPES.boolean[1]}`);
+  const workspace = checkTrackerGroup('workspace', value.workspace, file, errors);
+  const writeTools = checkToolList('writeTools', 'patterns', value.writeTools, trackerToolProblem, file, errors);
+  const readTools = checkToolList('readTools', 'names', value.readTools, (name) => readToolProblem(name, writeTools), file, errors);
+  const team = checkTrackerGroup('team', value.team, file, errors);
+  const project = checkTrackerGroup('project', value.project, file, errors);
+  const listUnset = (raw) => raw === undefined || (Array.isArray(raw) && raw.length === 0);
+  const listSet = (raw) => Array.isArray(raw) && raw.length > 0;
+  const groupUnset = (raw) => raw === undefined || raw === null;
+  if (isObject(value.workspace) && listUnset(value.readTools)) errors.push(`${file}: "tracker.workspace" needs "tracker.readTools", the tools that read the connected workspace`);
+  if (listSet(value.readTools) && groupUnset(value.workspace)) errors.push(`${file}: "tracker.readTools" needs "tracker.workspace", the value those tools must report`);
+  if (value.enabled === true && listUnset(value.writeTools)) errors.push(`${file}: "tracker.enabled" needs "tracker.writeTools", the tools the guard watches`);
+  if (value.enabled === true && listSet(value.writeTools) && [value.workspace, value.team, value.project].every(groupUnset)) {
+    errors.push(`${file}: "tracker.enabled" needs one of "tracker.workspace", "tracker.team", or "tracker.project", the values a write is held to`);
+  }
+  // A read tool left out may be the one the connector has, so the workspace check goes with it instead of refusing every write.
+  const paired = workspace !== null && readTools.length > 0 && readTools.length === value.readTools.length;
+  if (paired) {
+    for (const pattern of writeTools) {
+      const bad = unclearedWriteProblem(pattern, readTools);
+      if (bad) errors.push(`${file}: "tracker.writeTools" has ${JSON.stringify(pattern)}: ${bad}`);
+    }
+  }
+  return {
+    enabled: value.enabled === true && writeTools.length > 0 && (paired || team !== null || project !== null),
+    workspace: paired ? workspace : null,
+    readTools: paired ? readTools : [],
+    writeTools,
+    team,
+    project,
+  };
+}
+
+// One group of `tracker`, or null when it is unset or has any error: the guard cannot run on part of one.
+function checkTrackerGroup(name, value, file, errors) {
+  if (value === undefined || value === null) return null;
+  const at = `tracker.${name}`;
+  if (!isObject(value)) {
+    errors.push(`${file}: "${at}" must be an object, or null`);
+    return null;
+  }
+  const before = errors.length;
+  const group = merge(TRACKER_GROUPS[name], {}, value, `${at}.`, file, errors);
+  for (const key of Object.keys(TRACKER_GROUPS[name])) if (!Object.hasOwn(value, key)) errors.push(`${file}: "${at}.${key}" is missing`);
+  return errors.length === before ? group : null;
+}
+
+// Why `pattern` cannot name a tracker tool, or null. The guard's hooks match only MCP calls, so "*" or Bash(...) would
+// pass the check of `agents` patterns and never fire.
+function trackerToolProblem(pattern) {
+  if (typeof pattern === 'string' && pattern !== '' && !pattern.startsWith('mcp__')) return 'a tracker tool is an MCP tool, so its pattern starts with "mcp__"';
+  return patternProblem(pattern);
+}
+
+// Why `name` cannot be a read tool, or null. A read names one tool, and a write pattern that covers it would refuse the
+// read the workspace check asks for, so no write could ever pass. The `*` check comes first, since patternProblem's
+// answer to a mid-name `*` would suggest a trailing one.
+function readToolProblem(name, writeTools) {
+  if (typeof name !== 'string' || !name.startsWith('mcp__')) return trackerToolProblem(name);
+  if (name.includes('*')) return 'a read tool is an exact tool name, with no "*"';
+  const problem = patternProblem(name);
+  if (problem) return problem;
+  const covering = writeTools.find((pattern) => nameMatches(pattern, name));
+  return covering === undefined ? null : `a read tool cannot also match "tracker.writeTools", and ${JSON.stringify(covering)} covers it`;
+}
+
+// Why no read could ever clear a write on `pattern`, as the guard counts a read only on the write's server, or null.
+// This is a report only: the entry stays, and the guard refuses those writes. A "*" before the server's name ends can match
+// a server that has a read tool, so it is not judged.
+function unclearedWriteProblem(pattern, readTools) {
+  const star = pattern.endsWith('*');
+  const server = serverPrefix(star ? pattern.slice(0, -1) : pattern);
+  if (server === null) return star ? null : 'it names no server, as in mcp__<server>__<tool>, so no read can clear it';
+  return readTools.some((name) => serverPrefix(name) === server) ? null : 'no tool in "tracker.readTools" is on its server, so no read can clear it';
+}
+
+// The good entries of one tool list of `tracker`; a bad one is an error and is left out, as in `agents`.
+function checkToolList(name, noun, value, problemOf, file, errors) {
+  if (value === undefined) return [];
+  const at = `tracker.${name}`;
+  if (!Array.isArray(value)) {
+    errors.push(`${file}: "${at}" must be a list of tool ${noun}`);
+    return [];
+  }
+  return value.filter((entry) => {
+    const bad = problemOf(entry);
+    if (bad) errors.push(`${file}: "${at}" has ${JSON.stringify(entry)}: ${bad}`);
+    return !bad;
+  });
 }
 
 // The first of loadConfig's `gateErrors`, as { file, problem }, or null. Without that gate the hook treats the file

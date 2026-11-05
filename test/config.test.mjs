@@ -30,6 +30,7 @@ test('the example consumer config is valid, turns its rules on, and gets every o
     git: { ...DEFAULTS.git, mainCheckout: { ...DEFAULTS.git.mainCheckout, guard: true } },
     github: { ...DEFAULTS.github, pullRequest, reviewGate: { enabled: true, checklist: 'docs/knowledge/engineering/testing.md' } },
     terms: { file: '.aidrian/terms.json' },
+    tracker: { ...DEFAULTS.tracker, ...JSON.parse(readFileSync(path.join(EXAMPLE, '.aidrian/config.json'), 'utf8')).tracker },
   });
   assert.equal(DEFAULTS.git.mainCheckout.guard, false, 'a project opts in; a fresh one is never blocked');
 });
@@ -165,6 +166,209 @@ test('docs/config.md shows the github defaults as DEFAULTS holds them', () => {
   const doc = readFileSync(path.join(ROOT, 'docs/config.md'), 'utf8');
   const example = JSON.parse(doc.match(/## Keys[\s\S]*?```json\n([\s\S]*?)```/)[1]);
   assert.deepEqual(example.github, DEFAULTS.github);
+  assert.deepEqual(example.tracker, DEFAULTS.tracker);
+});
+
+const FILE = '.aidrian/config.json';
+const WORKSPACE = { expect: 'https://linear.app/acme', field: 'url' };
+const READ = ['mcp__plugin_linear_linear__get_workspace'];
+const WRITE = ['mcp__plugin_linear_linear__save_*'];
+const TEAM = { key: 'NOTES', values: ['Notes'], createFields: ['team'], keyFields: ['id', 'issueId'] };
+const PROJECT = { values: ['Notes launch'], field: 'project' };
+const TEAM_KEY = 'a non-empty string with no hyphen or whitespace, such as NOTES';
+const EXACT = 'a read tool is an exact tool name, with no "*"';
+
+test('tracker: off by default, with no groups and no tools, so a config without it loads as before', (t) => {
+  assert.deepEqual(DEFAULTS.tracker, { enabled: false, workspace: null, readTools: [], writeTools: [], team: null, project: null });
+  const { config, errors } = loadConfig(project(t, { version: 1 }));
+  assert.deepEqual([errors, config.tracker], [[], DEFAULTS.tracker]);
+});
+
+test('tracker: the whole key loads as written and frozen; a project with no workspace read sets only team or project', (t) => {
+  const tracker = { enabled: true, workspace: WORKSPACE, readTools: READ, writeTools: WRITE, team: TEAM, project: PROJECT };
+  const whole = loadConfig(project(t, { version: 1, tracker }));
+  assert.deepEqual([whole.errors, whole.config.tracker], [[], tracker]);
+  assert.ok(Object.isFrozen(whole.config.tracker.team.values));
+  const noRead = loadConfig(project(t, { version: 1, tracker: { enabled: true, writeTools: WRITE, team: TEAM, workspace: null } }));
+  assert.deepEqual([noRead.errors, noRead.config.tracker], [[], { ...DEFAULTS.tracker, enabled: true, writeTools: WRITE, team: TEAM }]);
+  assert.deepEqual(loadConfig(project(t, { version: 1, tracker: DEFAULTS.tracker })).errors, [], 'the defaults, written out, are valid');
+});
+
+test('tracker: a wrong type names its key, and keeps the default', (t) => {
+  const cases = [
+    ['main', ['"tracker" must be an object']],
+    [{ enabled: 'yes' }, ['"tracker.enabled" must be true or false']],
+    [{ workspace: 'acme', readTools: READ }, ['"tracker.workspace" must be an object, or null']],
+    [{ readTools: 'get_workspace', workspace: WORKSPACE }, ['"tracker.readTools" must be a list of tool names']],
+    [{ writeTools: { save: true } }, ['"tracker.writeTools" must be a list of tool patterns']],
+    [{ team: ['Notes'] }, ['"tracker.team" must be an object, or null']],
+    [{ project: 1 }, ['"tracker.project" must be an object, or null']],
+    [{ team: { ...TEAM, key: 1 } }, [`"tracker.team.key" must be ${TEAM_KEY}`]],
+    [{ team: { ...TEAM, key: '' } }, [`"tracker.team.key" must be ${TEAM_KEY}`]],
+    [{ team: { ...TEAM, key: 'NOTES-12' } }, [`"tracker.team.key" must be ${TEAM_KEY}`]],
+    [{ team: { ...TEAM, key: 'NO TES' } }, [`"tracker.team.key" must be ${TEAM_KEY}`]],
+    [{ team: { ...TEAM, key: 'NOTES\t' } }, [`"tracker.team.key" must be ${TEAM_KEY}`]],
+    [{ team: { ...TEAM, values: [] } }, ['"tracker.team.values" must be a non-empty list of non-empty strings']],
+    [{ team: { ...TEAM, createFields: 'team' } }, ['"tracker.team.createFields" must be a non-empty list of non-empty strings']],
+    [{ team: { ...TEAM, keyFields: [''] } }, ['"tracker.team.keyFields" must be a non-empty list of non-empty strings']],
+    [{ project: { ...PROJECT, field: '' } }, ['"tracker.project.field" must be a non-empty string']],
+    [{ workspace: { ...WORKSPACE, expect: null }, readTools: READ }, ['"tracker.workspace.expect" must be a non-empty string']],
+    [{ channel: 'linear' }, ['unknown key "tracker.channel"']],
+    [{ team: { ...TEAM, labels: [] } }, ['unknown key "tracker.team.labels"']],
+    [{ readTools: null }, ['"tracker.readTools" must be a list of tool names']],
+    [{ readTools: null, workspace: WORKSPACE }, ['"tracker.readTools" must be a list of tool names']],
+    [{ writeTools: null }, ['"tracker.writeTools" must be a list of tool patterns']],
+    [{ enabled: true, writeTools: null }, ['"tracker.writeTools" must be a list of tool patterns']],
+    [{ workspace: [] }, ['"tracker.workspace" must be an object, or null']],
+    [{ workspace: [], readTools: READ }, ['"tracker.workspace" must be an object, or null']],
+    [{ workspace: 'acme' }, ['"tracker.workspace" must be an object, or null']],
+    [{ readTools: 'get_workspace' }, ['"tracker.readTools" must be a list of tool names']],
+  ];
+  for (const [tracker, problems] of cases) {
+    const { config, errors } = loadConfig(project(t, { version: 1, tracker }));
+    assert.deepEqual(errors, problems.map((problem) => `${FILE}: ${problem}`), JSON.stringify(tracker));
+    assert.deepEqual(config.tracker, DEFAULTS.tracker, JSON.stringify(tracker));
+  }
+});
+
+test('tracker: a group needs every one of its keys, each named, because a guard cannot run on part of one', (t) => {
+  const { config, errors } = loadConfig(project(t, { version: 1, tracker: { workspace: { field: 'url' }, readTools: READ, team: { key: 'NOTES' }, project: {} } }));
+  assert.deepEqual(errors, [
+    '"tracker.workspace.expect" is missing',
+    '"tracker.team.values" is missing',
+    '"tracker.team.createFields" is missing',
+    '"tracker.team.keyFields" is missing',
+    '"tracker.project.values" is missing',
+    '"tracker.project.field" is missing',
+  ].map((problem) => `${FILE}: ${problem}`));
+  assert.deepEqual(config.tracker, DEFAULTS.tracker, 'no group is half set, and a read tool without a workspace falls back with it');
+});
+
+test('tracker: a bad tool pattern names its key and pattern, and the other patterns still apply', (t) => {
+  const { config, errors } = loadConfig(project(t, { version: 1, tracker: { enabled: true, team: TEAM, writeTools: ['mcp__*__save', ...WRITE, 7] } }));
+  assert.deepEqual(errors, [
+    `${FILE}: "tracker.writeTools" has "mcp__*__save": a "*" can only end a pattern, as in mcp__github__*`,
+    `${FILE}: "tracker.writeTools" has 7: a pattern is a non-empty string`,
+  ]);
+  assert.deepEqual([config.tracker.enabled, config.tracker.writeTools], [true, WRITE]);
+});
+
+test('tracker: a read tool with an error disarms the workspace check, even beside a good read tool', (t) => {
+  for (const readTools of [['mcp__x(y'], [...READ, 'mcp__x(y']]) {
+    const { config, errors } = loadConfig(project(t, { version: 1, tracker: { enabled: true, team: TEAM, writeTools: WRITE, workspace: WORKSPACE, readTools } }));
+    assert.equal(errors.length, 1, JSON.stringify(readTools));
+    assert.match(errors[0], /"tracker\.readTools" has "mcp__x\(y": a pattern is a tool name/u, JSON.stringify(readTools));
+    assert.deepEqual([config.tracker.workspace, config.tracker.readTools], [null, []], JSON.stringify(readTools));
+    assert.deepEqual([config.tracker.enabled, config.tracker.team], [true, TEAM], 'the rest of the key still applies');
+  }
+});
+
+test('tracker: a read tool is an exact tool name; any "*" is an error that unsets workspace and readTools', (t) => {
+  for (const name of ['mcp__tracker__get_*', 'mcp__*', 'mcp__*__read']) {
+    for (const readTools of [[name], [...READ, name]]) {
+      const { config, errors } = loadConfig(project(t, { version: 1, tracker: { enabled: true, team: TEAM, writeTools: WRITE, workspace: WORKSPACE, readTools } }));
+      assert.deepEqual(errors, [`${FILE}: "tracker.readTools" has ${JSON.stringify(name)}: ${EXACT}`], JSON.stringify(readTools));
+      assert.deepEqual([config.tracker.workspace, config.tracker.readTools], [null, []], JSON.stringify(readTools));
+      assert.deepEqual([config.tracker.enabled, config.tracker.writeTools, config.tracker.team], [true, WRITE, TEAM], 'the rest of the key still applies');
+    }
+  }
+  const star = loadConfig(project(t, { version: 1, tracker: { writeTools: ['mcp__*__save'] } }));
+  assert.match(star.errors[0], /a "\*" can only end a pattern/u, 'writeTools still take a trailing "*"');
+  assert.deepEqual(loadConfig(project(t, { version: 1, tracker: { writeTools: WRITE } })).errors, []);
+});
+
+test('tracker: a read tool a writeTools pattern covers is an error that unsets workspace and readTools', (t) => {
+  const [name] = READ;
+  const covers = (pattern) => `a read tool cannot also match "tracker.writeTools", and ${JSON.stringify(pattern)} covers it`;
+  for (const pattern of [name, 'mcp__*', 'mcp__plugin_linear_linear__get_*']) {
+    // "mcp__*" covers every read tool, so it has no good read tool to sit beside.
+    for (const readTools of pattern === 'mcp__*' ? [READ] : [READ, ['mcp__tracker__get_workspace', name]]) {
+      const { config, errors } = loadConfig(project(t, { version: 1, tracker: { enabled: true, team: TEAM, writeTools: [...WRITE, pattern], workspace: WORKSPACE, readTools } }));
+      assert.deepEqual(errors, [`${FILE}: "tracker.readTools" has ${JSON.stringify(name)}: ${covers(pattern)}`], `${pattern} ${readTools}`);
+      assert.deepEqual([config.tracker.workspace, config.tracker.readTools], [null, []], pattern);
+      assert.deepEqual([config.tracker.enabled, config.tracker.writeTools], [true, [...WRITE, pattern]], 'the write tools stay');
+    }
+  }
+  const everyTool = { enabled: true, team: TEAM, writeTools: ['mcp__*'] };
+  const valid = loadConfig(project(t, { version: 1, tracker: everyTool }));
+  assert.deepEqual([valid.errors, valid.config.tracker], [[], { ...DEFAULTS.tracker, ...everyTool }], 'with no read tools, every MCP tool may be a write tool');
+  const nearby = { workspace: WORKSPACE, readTools: READ, writeTools: [`${name}_all`, 'mcp__plugin_linear_linear__save_*'] };
+  assert.deepEqual(loadConfig(project(t, { version: 1, tracker: nearby })).errors, [], 'a longer name, or another prefix, does not cover it');
+  const leftOut = loadConfig(project(t, { version: 1, tracker: { workspace: WORKSPACE, readTools: READ, writeTools: ['Bash(git push)'] } }));
+  assert.equal(leftOut.errors.length, 1, 'a write pattern left out covers nothing');
+  assert.deepEqual(leftOut.config.tracker.readTools, READ);
+});
+
+test('tracker: tool patterns name MCP tools, because the guard only sees MCP calls; any other is an error naming the key', (t) => {
+  const problem = 'a tracker tool is an MCP tool, so its pattern starts with "mcp__"';
+  for (const pattern of ['*', 'Bash(git push)', 'Bash(git *)', 'Bash()', 'Read', 'mcp_*', 'mcp*', 'tracker__save_*']) {
+    const write = loadConfig(project(t, { version: 1, tracker: { writeTools: [pattern] } }));
+    assert.deepEqual(write.errors, [`${FILE}: "tracker.writeTools" has ${JSON.stringify(pattern)}: ${problem}`], pattern);
+    assert.deepEqual(write.config.tracker.writeTools, [], pattern);
+    const read = loadConfig(project(t, { version: 1, tracker: { workspace: WORKSPACE, readTools: [pattern] } }));
+    assert.deepEqual(read.errors, [`${FILE}: "tracker.readTools" has ${JSON.stringify(pattern)}: ${problem}`], pattern);
+    assert.deepEqual(read.config.tracker, DEFAULTS.tracker, pattern);
+  }
+  assert.deepEqual(loadConfig(project(t, { version: 1, tracker: { writeTools: ['mcp__*'] } })).errors, [], 'every MCP tool is still an MCP pattern');
+});
+
+test('tracker: workspace and readTools are set together or not at all, whatever enabled says', (t) => {
+  const cases = [
+    [{ workspace: WORKSPACE }, '"tracker.workspace" needs "tracker.readTools", the tools that read the connected workspace'],
+    [{ workspace: WORKSPACE, readTools: [] }, '"tracker.workspace" needs "tracker.readTools", the tools that read the connected workspace'],
+    [{ readTools: READ }, '"tracker.readTools" needs "tracker.workspace", the value those tools must report'],
+    [{ readTools: READ, workspace: null }, '"tracker.readTools" needs "tracker.workspace", the value those tools must report'],
+    [{ enabled: true, writeTools: WRITE, workspace: WORKSPACE }, '"tracker.workspace" needs "tracker.readTools", the tools that read the connected workspace'],
+  ];
+  for (const [tracker, problem] of cases) {
+    const { config, errors } = loadConfig(project(t, { version: 1, tracker }));
+    assert.deepEqual(errors, [`${FILE}: ${problem}`], JSON.stringify(tracker));
+    assert.deepEqual([config.tracker.workspace, config.tracker.readTools], [null, []], 'a hook never reads one without the other');
+  }
+});
+
+test('tracker: enabled true needs writeTools, and turns off without them so no hook reads a guard that watches nothing', (t) => {
+  for (const tracker of [{ enabled: true }, { enabled: true, writeTools: [] }]) {
+    const { config, errors } = loadConfig(project(t, { version: 1, tracker }));
+    assert.deepEqual(errors, [`${FILE}: "tracker.enabled" needs "tracker.writeTools", the tools the guard watches`], JSON.stringify(tracker));
+    assert.equal(config.tracker.enabled, false);
+  }
+  assert.deepEqual(loadConfig(project(t, { version: 1, tracker: { enabled: false, writeTools: [] } })).errors, []);
+});
+
+test('tracker: enabled true with write tools needs a workspace, team, or project, and turns off with none to check', (t) => {
+  const problem = `${FILE}: "tracker.enabled" needs one of "tracker.workspace", "tracker.team", or "tracker.project", the values a write is held to`;
+  for (const tracker of [{ enabled: true, writeTools: WRITE }, { enabled: true, writeTools: WRITE, workspace: null, team: null, project: null }]) {
+    const { config, errors } = loadConfig(project(t, { version: 1, tracker }));
+    assert.deepEqual(errors, [problem], JSON.stringify(tracker));
+    assert.deepEqual([config.tracker.enabled, config.tracker.writeTools], [false, WRITE]);
+  }
+  for (const group of [{ team: TEAM }, { project: PROJECT }, { workspace: WORKSPACE, readTools: READ }]) {
+    const { config, errors } = loadConfig(project(t, { version: 1, tracker: { enabled: true, writeTools: WRITE, ...group } }));
+    assert.deepEqual([errors, config.tracker.enabled], [[], true], JSON.stringify(group));
+  }
+  assert.deepEqual(loadConfig(project(t, { version: 1, tracker: { enabled: false, writeTools: WRITE } })).errors, [], 'off: nothing to check yet');
+});
+
+test('tracker: a group with its own error raises no second error about enabled, and enabled turns off with no group left', (t) => {
+  const cases = [
+    [{ team: 'Notes' }, '"tracker.team" must be an object, or null'],
+    [{ project: { field: 'project' } }, '"tracker.project.values" is missing'],
+    [{ workspace: [] }, '"tracker.workspace" must be an object, or null'],
+  ];
+  for (const [group, problem] of cases) {
+    const { config, errors } = loadConfig(project(t, { version: 1, tracker: { enabled: true, writeTools: WRITE, ...group } }));
+    assert.deepEqual(errors, [`${FILE}: ${problem}`], JSON.stringify(group));
+    assert.equal(config.tracker.enabled, false, JSON.stringify(group));
+  }
+});
+
+test('tracker: a key with its own error raises no second error about what depends on it', (t) => {
+  const errors = (tracker) => loadConfig(project(t, { version: 1, tracker })).errors;
+  const star = 'a "*" can only end a pattern, as in mcp__github__*';
+  assert.deepEqual(errors({ workspace: 'acme', readTools: READ }), [`${FILE}: "tracker.workspace" must be an object, or null`], 'readTools does not lack a workspace');
+  assert.deepEqual(errors({ workspace: WORKSPACE, readTools: ['mcp__*__read'] }), [`${FILE}: "tracker.readTools" has "mcp__*__read": ${EXACT}`], 'the workspace does not lack read tools');
+  assert.deepEqual(errors({ enabled: true, team: TEAM, writeTools: ['mcp__*__save'] }), [`${FILE}: "tracker.writeTools" has "mcp__*__save": ${star}`], 'enabled does not lack write tools');
 });
 
 test('audits.triage: issues wait for the Human by default, with the audit, persona, and severity labels; "auto" opts in', (t) => {

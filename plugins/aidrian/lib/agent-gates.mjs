@@ -127,7 +127,8 @@ function allows(allow, tool, toolInput) {
   return prefixes.length > 0 && found.length > 0 && found.every((words) => prefixes.some((prefix) => startsWith(words, prefix)));
 }
 
-function nameMatches(pattern, tool) {
+// Whether a tool name matches a pattern: exactly, or by the start of a pattern that ends in `*`.
+export function nameMatches(pattern, tool) {
   return pattern.endsWith('*') ? tool.startsWith(pattern.slice(0, -1)) : tool === pattern;
 }
 

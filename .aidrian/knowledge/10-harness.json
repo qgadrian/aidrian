@@ -24,7 +24,7 @@
       "tags": ["docs"]
     },
     "hooks.md": {
-      "summary": "Hooks, Bash rules: pr-body, main-checkout start lines, commit guard (pre-commit), commit messages, review gate, rounds, merge guard, kill, amend, terms, gates.",
+      "summary": "Hooks, Bash rules: pr-body, main-checkout, commit guard, commit messages, review gate, merge guard, tracker write guard (MCP), kill, amend, terms, gates.",
       "tags": []
     },
     "project-folder.md": {
@@ -52,7 +52,7 @@
       "tags": []
     },
     "config.md": {
-      "summary": "config.json: pull request title, body, names, review plan/gate, auto-merge, terms, models, attribution, quorum roles/caps/autoStart, decisions, authority.",
+      "summary": "config.json: pull request body, names, review gate, auto-merge, terms, models, attribution, quorum roles/autoStart, decisions, authority, tracker write guard.",
       "tags": []
     },
     "dispatch-log.md": {

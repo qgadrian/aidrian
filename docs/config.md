@@ -120,7 +120,8 @@ In a group such as `github`, set only the keys you change; the others keep their
   },
   "audits": {
     "triage": { "issueCreation": "confirm", "labels": ["persona-audit", "persona:{persona}", "severity:{severity}"] }
-  }
+  },
+  "tracker": { "enabled": false, "workspace": null, "readTools": [], "writeTools": [], "team": null, "project": null }
 }
 ```
 
@@ -196,6 +197,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `decisions.unreviewed.pauseDomainAt` | The unreviewed `pending` count and `oldestDays` age at which a domain goes back to asking; `null` never pauses. |
 | `audits.triage.issueCreation` | Whether the persona-audit triage asks before it creates an issue: `"confirm"`, the default, or `"auto"`: [Audit triage](#audit-triage). |
 | `audits.triage.labels` | The labels every issue from the persona-audit triage gets: [Audit triage](#audit-triage). |
+| `tracker` | The workspace, team, and project MCP tracker writes belong to, off by default: [Tracker](#tracker). |
 
 A path in `state.dir` or `git.worktrees.dir` may start with `~`, the home folder, or be relative to the repository root.
 The other local state has fixed places in the state folder; [project-folder.md](project-folder.md#local-state) lists them.
@@ -552,7 +554,7 @@ version and the folder of the copy that runs, so the stale install shows at the 
 A project that adopts the `session.handoff` group (`mode`, `costRatio`, `maxTokens`) sets `requires.aidrian` to the
 release that ships it: an older plugin reads only a string `session.handoff` and rejects the group.
 [handoff.md](handoff.md#config) lists the old keys and where each went.
-A project that adopts [`github.autoMerge`](#auto-merge) does the same, since an older plugin rejects the key.
+A project that adopts [`github.autoMerge`](#auto-merge) or [`tracker`](#tracker) does the same, since an older plugin rejects the key.
 
 ## Attribution
 
@@ -626,6 +628,8 @@ A team sets `telemetry` in `config.json`, and one developer in the git-ignored `
   The two files hold about twice `maxMb` at most, and `aidrian report` reads both.
 - `hookDenies: false`: the Bash rules, the main-checkout rule, the agent gates, and the config guard still block,
   and write no `hook_deny` row ([hooks.md](hooks.md#recorded-blocks)). A rule that keeps blocking one session still becomes a lesson.
+  The exception is the tracker write guard's [no-read refusal](#how-a-write-is-judged): with this key or `enabled` off,
+  a session stuck on it leaves no row and no lesson, though the agent still sees each refusal.
 
 The last three keys were `doc_reads`, `max_mb`, and `hook_denies`; a file that still sets one gets an error naming the new key.
 
@@ -1058,11 +1062,182 @@ stops on an invalid config.json as every `aidrian` command does.
 - Each issue body names its source in words, the report by persona, kind, and date and the finding by its title, with
   the report's path; the machine key the duplicate search can use stays in a footer, never in the title or first lines.
 
+## Tracker
+
+`tracker` names the workspace, team, and project that MCP tracker writes belong to, and the tools that read and write them.
+It is off by default, and `aidrian check` validates it.
+Every value comes from this key, so the plugin names no tracker of its own; the values below are Linear's.
+
+```json
+{
+  "tracker": {
+    "enabled": true,
+    "workspace": { "expect": "https://linear.app/acme", "field": "url" },
+    "readTools": ["mcp__plugin_linear_linear__get_workspace", "mcp__linear__get_workspace", "mcp__linear-server__get_workspace", "mcp__claude_ai_Linear__get_workspace"],
+    "writeTools": [
+      "mcp__plugin_linear_linear__save_*", "mcp__plugin_linear_linear__create_*", "mcp__plugin_linear_linear__delete_*",
+      "mcp__plugin_linear_linear__share_*", "mcp__plugin_linear_linear__unshare_*", "mcp__plugin_linear_linear__update_*",
+      "mcp__plugin_linear_linear__merge_*", "mcp__plugin_linear_linear__submit_*", "mcp__plugin_linear_linear__resolve_diff_thread",
+      "mcp__plugin_linear_linear__retire_*", "mcp__plugin_linear_linear__restore_*", "mcp__plugin_linear_linear__prepare_*",
+      "mcp__linear__save_*", "mcp__linear__create_*", "mcp__linear__delete_*",
+      "mcp__linear__share_*", "mcp__linear__unshare_*", "mcp__linear__update_*",
+      "mcp__linear__merge_*", "mcp__linear__submit_*", "mcp__linear__resolve_diff_thread",
+      "mcp__linear__retire_*", "mcp__linear__restore_*", "mcp__linear__prepare_*",
+      "mcp__linear-server__save_*", "mcp__linear-server__create_*", "mcp__linear-server__delete_*",
+      "mcp__linear-server__share_*", "mcp__linear-server__unshare_*", "mcp__linear-server__update_*",
+      "mcp__linear-server__merge_*", "mcp__linear-server__submit_*", "mcp__linear-server__resolve_diff_thread",
+      "mcp__linear-server__retire_*", "mcp__linear-server__restore_*", "mcp__linear-server__prepare_*",
+      "mcp__claude_ai_Linear__save_*", "mcp__claude_ai_Linear__create_*", "mcp__claude_ai_Linear__delete_*",
+      "mcp__claude_ai_Linear__share_*", "mcp__claude_ai_Linear__unshare_*", "mcp__claude_ai_Linear__update_*",
+      "mcp__claude_ai_Linear__merge_*", "mcp__claude_ai_Linear__submit_*", "mcp__claude_ai_Linear__resolve_diff_thread",
+      "mcp__claude_ai_Linear__retire_*", "mcp__claude_ai_Linear__restore_*", "mcp__claude_ai_Linear__prepare_*"
+    ],
+    "team": {
+      "key": "NOTES",
+      "values": ["Notes"],
+      "createFields": ["team", "addTeams", "setTeams", "leadTeam"],
+      "keyFields": ["id", "issueId", "issue"]
+    },
+    "project": { "values": ["Notes launch"], "field": "project" }
+  }
+}
+```
+
+This is what the `harness-setup` skill writes for Linear, with `project` only when the Human names one.
+It lists `mcp__plugin_linear_linear__`, `mcp__linear__`, `mcp__linear-server__`, and `mcp__claude_ai_Linear__`, with the same patterns on each.
+These four server names are the known ones, and a connection under another name must be added by hand, in both lists.
+`prepare_*` counts as a write: those tools are the step before file bytes reach the connected workspace.
+`mark_notification` stays out of the patterns on purpose, so it is unguarded: it changes only one person's inbox state.
+Relation fields, such as `blocks`, `parentId`, and `duplicateOf`, are left out of `keyFields` on purpose, since a relation may cross teams.
+`createFields` holds the inputs that put a write in a team: `removeTeams` takes one out, and `teamId` takes a UUID, which skips the check.
+`id` stays in `keyFields` on every write tool, which has a limit: a non-issue whose name looks like an issue key, such as a label `Sev-1`,
+is refused, and the agent retries with its UUID.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `tracker.enabled` | `false` | `true` turns the key on. It needs a pattern in `writeTools`, and one of `workspace`, `team`, or `project`. |
+| `tracker.workspace.expect` | | The workspace a write must belong to, as `readTools` report it. |
+| `tracker.workspace.field` | | The field of the read's response that holds that value. |
+| `tracker.readTools` | `[]` | The MCP tools that read the connected workspace, as exact tool names, with no `*`; one on each server in `writeTools`. |
+| `tracker.writeTools` | `[]` | The MCP tools that write to the tracker, as [tool patterns](#agents) that start with `mcp__`. |
+| `tracker.team.key` | | The team's issue key prefix, such as `NOTES` in `NOTES-12`, with no hyphen or whitespace. |
+| `tracker.team.values` | | The team names a write may set; at least one. |
+| `tracker.team.createFields` | | The tool input fields that name a team; at least one. |
+| `tracker.team.keyFields` | | The tool input fields that hold an issue key; at least one. |
+| `tracker.project.values` | | The project names a write may set; at least one. |
+| `tracker.project.field` | | The tool input field that names a project. |
+
+- `workspace`, `team`, and `project` are `null` by default, which leaves them unset. One that is set needs every key of its group.
+- `workspace` and `readTools` are set together or not at all; a tracker with no tool that reads its workspace sets neither.
+- `*` and `Bash(...)` are not tracker tools: both lists take MCP tools only, so `"writeTools": ["mcp__*"]` is the widest.
+- A name in `readTools` must not match a pattern in `writeTools`, so that `"mcp__*"` works only with no read tools.
+- With `workspace` set, `aidrian check` reports each pattern in `writeTools` that no read can clear: one on a server no tool in `readTools` is on,
+  and one that names no server. It only reports: the guard stays on as written and refuses those writes.
+  A `*` before the server's name ends, as in `mcp__acme*`, can match a server with a read tool, so that pattern is not reported.
+- A group with any error falls back to unset, and a bad entry is left out of its list.
+  A bad entry in `readTools`, even beside a good one, also unsets `workspace` and `readTools`.
+  `enabled` falls back to `false` with no write tool or no group left, so the loaded key is never half set.
+  `aidrian check` names each problem by its key.
+
+A project that adopts the key sets [`requires.aidrian`](#plugin-version), since an older plugin rejects it.
+The `harness-setup` skill asks for the key only while setting a project up, so an existing project adds the key by hand.
+It uses the values above, and must match the patterns to the server name the project's connection shows,
+and the names in `readTools` with them.
+It raises [`requires.aidrian`](#plugin-version) to the plugin version that ships the key unless it is already higher,
+replaces the team in its `issue_tracker` doc and that doc's summary with a pointer to the key, and runs `aidrian check`.
+
+### How a write is judged
+
+Two [hooks](hooks.md) run on every MCP tool call while `tracker.enabled` is true, and stop at once when it is not.
+A config.json that cannot be read leaves it false, so a broken config lets every call run.
+
+After a call of a tool in `readTools`, the first hook records what it reported in
+`$XDG_STATE_HOME/aidrian/sessions/<session id>.tracker.json`. The latest read replaces an earlier one.
+On Claude Code the end of the session deletes the file.
+The end of each `claude -p` process counts as that end, so a later `--resume` has to read again.
+On Codex, whether the session's end deletes the file is not verified.
+
+On Claude Code, a read that fails counts as no read. It goes to `PostToolUseFailure`, where no tracker hook runs, so it leaves the record as it was.
+With no earlier read, the next write is refused as a session that has not read, with no word of the failure.
+After a good read, that read stays in force, and writes keep passing.
+
+Before a call that matches `writeTools`, the second hook checks these rules in order, and the first the call breaks refuses it:
+
+1. With `workspace` set, the session's latest read must be on the write's server, the `mcp__<server>__` that starts both tool names.
+   Two servers can be connected to different workspaces, and the one record holds only the latest read,
+   so switching servers asks for a new read. The reason names the read tools on the write's server.
+   With none listed there, no read can clear the rule, so the reason tells the agent to ask the Human to add one and not to edit the key.
+   A write tool with no server in its name cannot be cleared either, so the reason says `tracker.writeTools` names a tool with no server,
+   and tells the agent to ask the Human to correct that entry and not to edit the key.
+   A session that can hold no record skips this rule and keeps the others: one with no id that can name a file,
+   or whose record folder cannot be written. In such a session, a record from the write's server is still judged,
+   and one from another server is skipped with the rule.
+2. That read must have returned a value in `workspace.field`. If not, the agent asks the Human to fix the connection or the key.
+3. That value must be `workspace.expect`. If not, the reason names both, and tells the agent to ask the Human whether the key is wrong
+   or the wrong workspace is connected, and not to edit the key.
+4. With `team` set, each field in `createFields` must name a listed team, and each field in `keyFields` must hold an issue of that team.
+   If not, the reason offers the way that passes, or telling the Human the write belongs elsewhere, and tells the agent not to edit the key.
+5. With `project` set, `project.field` must name a listed project.
+   If not, the reason offers a listed value, or telling the Human the write belongs elsewhere, and tells the agent not to edit the key.
+
+A server's name ends at the first double underscore in the tool name, so `mcp__plugin_a_b__save` is on `plugin_a_b`.
+A server whose own name holds a double underscore reads as the part before it, so `a__b` and `a` count as one server.
+
+The values compare like this:
+
+- **Exact text**: `workspace.expect`, `team.values`, and `project.values` compare with case and spaces counted.
+  The one exception is a single trailing `/`, ignored on either side of the workspace comparison.
+- **The team key**: in a `createFields` field the value of `team.key` passes too, in any case. An issue key's prefix also compares
+  in any case. The team key does not stand in for a project value.
+- **UUIDs**: a UUID, in either case, skips the check of that one field, in `createFields`, `keyFields`, or `project.field`,
+  since a UUID names no team or project by itself. The other rules still run.
+  A project's identifier or slug is no UUID, so it passes only when listed.
+- **Arrays**: in a `createFields` field or `project.field`, each entry is judged, and the first wrong one is named. An empty array names no value to check.
+- **Null**: an absent field or `null` names no value to check, so the rule passes.
+- **Other values**: in a `createFields` field or `project.field`, a number, an empty string, or any other value not listed refuses.
+- **`keyFields`**: they apply to every tool in `writeTools`, and read a single string of the form `<KEY>-<n>`.
+  A number, an array, or a string of any other shape skips the team check. A tool whose field of that name holds
+  something like an issue key but is no issue is refused too, and the reason tells the agent to pass the item's UUID.
+
+Only the fields this key names are read, so a project lists every field it wants checked:
+a tool that names its team in a field missing from `createFields` passes unchecked.
+The same holds for tools: a tool that matches no pattern in `writeTools` passes unchecked, including every tool of a connection under another server name.
+
+Both lists are copied into the project, so a tool the tracker adds later is on neither.
+After a call of a tool on a server either list names, when neither list names the tool,
+the first hook files an [automatic lesson](lessons.md#automatic-lessons), `tracker-unlisted:<tool>`, in the project's inbox.
+It never refuses the call. The lesson asks for the tool in `writeTools` when it writes.
+A tool that only reads is told apart by its name's first word:
+`get`, `list`, `search`, `read`, `find`, `fetch`, `query`, `view`, `show`, `describe`, or `whoami`.
+That has two limits. A write tool named that way, such as `get_or_create_item`, is not noted.
+A read tool named otherwise is noted, and rejecting its lesson ends that, since the same tool never reopens it.
+A tool on a server neither list names is not noted, so a connection under another server name stays out of sight.
+
+A refused reason holds the workspace or input value it refused.
+While `telemetry.hookDenies` is on, that cause goes to the [`hook_deny` row](dispatch-log.md#hook_deny-when-one-of-the-plugins-rules-blocks-a-tool-call)
+of the local dispatch log, so the values may reach it, cut to 120 characters. The rest of the input does not.
+
+The refusal of rule 1 that names a read to call is the guard's normal flow: a session that writes meets it once, reads, and goes on.
+When it happens it writes no `hook_deny` row and adds no block count, so healthy sessions and a batch of first writes read as no hot spot.
+It leaves a marker in the system's temporary folder instead, and the session's end settles it.
+A session that ends with no read recorded writes one `hook_deny` row, whichever way the read was lost: failing, renamed upstream, or never tried.
+Over several sessions those rows raise the usual hot spot in `aidrian report health`, and the row counts once toward the session's block count.
+With `telemetry.enabled` or `telemetry.hookDenies` off, a session stuck on this refusal leaves no row and no lesson,
+though the agent still sees each refusal.
+A session with any recorded read writes none, even when the read was on another server than the refused write.
+Every other refusal is recorded when it happens, including rule 1's two that no read clears, which need the key corrected.
+This depends on the session-end hook: on a host with no SessionEnd, and in a session that crashes, the refusal stays uncounted.
+
 ## Checking
 
 `aidrian check` validates this file with the rest of the project folder.
 It lists every problem: a missing file, invalid JSON, a missing or other `version`, an unknown key, or a value of the wrong type.
 In `quorum`, that includes a `provider` on `quorum.plan.a`, a `provider` other than `"agent"` or `"codex"`,
 a `plan.maxObjections` outside 1 to 5, a `plan.maxDispatches` under 5 or not a whole number, and an `agent` that is no agent name.
+In `tracker`, it includes a bad tool pattern, one that does not start with `mcp__`, a `*` in `readTools`,
+a read tool that `writeTools` covers, a `team.key` with a hyphen or whitespace, a group missing a key,
+a `workspace` without `readTools`, `readTools` without a `workspace`, a write tool no read can clear, and `enabled: true` with no `writeTools`,
+or with none of `workspace`, `team`, or `project`.
 Each message names the key, such as `quorum.plan.b.provider`.
-A key with a bad value falls back to its default, so the plugin's hooks keep working until the file is fixed.
+A key with a bad value falls back to its default, so the plugin's hooks keep working until the file is fixed,
+but for a write tool no read can clear, which stays and is refused at run time.

@@ -69,8 +69,9 @@ export function idleChildrenSignal({ agentType, agentId = null, session = null, 
   };
 }
 
-// The rule whose patterns the project writes, config.json `agents`: a block that keeps recurring is the project's to fix.
-const PROJECT_RULES = new Set(['agent-gates']);
+// The rules whose values the project writes, config.json `agents` and `tracker`: a block that keeps recurring is the
+// project's to fix.
+const PROJECT_RULES = new Set(['agent-gates', 'tracker-guard']);
 
 // One of the plugin's blocking rules (lib/hook-deny.mjs) blocked one session REPEATED_DENIALS times.
 export function denialSignal({ rule, session = null, agent = null }) {
@@ -83,6 +84,25 @@ export function denialSignal({ rule, session = null, agent = null }) {
     note:
       `Agents tried ${REPEATED_DENIALS} times in one session what the ${rule} rule blocks. ` +
       'Neither their instructions nor the rule\'s message showed them the allowed way.',
+    evidence: session ? [`session ${session}`] : [],
+    session,
+    agent,
+  };
+}
+
+// A tool the tracker write guard let run unjudged (tracker-guard.mjs unlistedTool). `once` makes it one occurrence per tool
+// for good: a tool that only reads under a name the guard cannot tell, once its lesson is rejected, never reopens it.
+export function unlistedToolSignal({ tool, session = null, agent = null }) {
+  return {
+    key: `tracker-unlisted:${tool}`,
+    once: tool,
+    tier: 'P2',
+    kind: 'gap',
+    target: 'project',
+    title: `The tracker write guard did not judge ${tool}`,
+    note:
+      `${tool} ran on a server that tracker.readTools or tracker.writeTools names, and neither list names the tool, so the guard let it run. ` +
+      'If it writes to the tracker, add it to tracker.writeTools. If it only reads, reject this lesson: this tool will not reopen it.',
     evidence: session ? [`session ${session}`] : [],
     session,
     agent,
@@ -108,10 +128,12 @@ export function roundLimitSignal({ repo, pr, maxRounds, rounds, session = null, 
 
 // A session id or rule name that may name a file.
 const FILE_NAME_PART = /^[\w-]+$/;
-// The temporary folder of one session's block counts, `<prefix><session>`, holds a `<rule>` file per rule and
-// `<rule>.recorded` after one that fired. One folder per session lets the session's end delete them by path alone.
+// The temporary folder of one session's block counts, `<prefix><session>`, holds a `<rule>` file per rule,
+// `<rule>.recorded` after one that fired, and `<tool>.noted` per tool noted (noteUnlistedTool). One folder per session lets
+// the session's end delete them by path alone.
 const DENIALS_PREFIX = 'aidrian-denials-';
 const denialsDir = (dir, session) => path.join(dir, `${DENIALS_PREFIX}${session}`);
+const agentOf = (input, env) => (typeof input.agent_type === 'string' && input.agent_type ? input.agent_type : env.CLAUDE_CODE_AGENT || null);
 
 // Counts one block by `rule` for the hook payload's session, and records the signal once the count reaches
 // REPEATED_DENIALS, once per session and rule. Parallel subagents share their parent's session and may block at once,
@@ -133,10 +155,33 @@ export function noteDenial(input, rule, { dir = tmpdir(), env = process.env, now
     }
     const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
     if (!project) return null;
-    const agent = typeof input.agent_type === 'string' && input.agent_type ? input.agent_type : env.CLAUDE_CODE_AGENT || null;
-    const row = recordSignal(project, denialSignal({ rule, session, agent }), { now });
+    const row = recordSignal(project, denialSignal({ rule, session, agent: agentOf(input, env) }), { now });
     // Not recorded, such as when the inbox's lock was held: the next block of the rule in this session tries again.
     if (!row) unlinkSync(`${file}.recorded`);
+    return row;
+  } catch {
+    return null;
+  }
+}
+
+// Records the signal of the unlisted tool in the hook payload, once per session and tool: the hook runs on every call of the
+// tool, and the `<tool>.noted` marker keeps the inbox from growing a row per call. Parallel subagents share their parent's
+// session, so the call that creates the marker first is the one that records. Never throws.
+export function noteUnlistedTool(input, project, config, { dir = tmpdir(), env = process.env, now = new Date() } = {}) {
+  try {
+    const { session_id: session, tool_name: tool } = input;
+    if (!config.lessons.auto || typeof session !== 'string' || !FILE_NAME_PART.test(session) || !FILE_NAME_PART.test(tool)) return null;
+    const folder = denialsDir(dir, session);
+    mkdirSync(folder, { recursive: true });
+    const marker = path.join(folder, `${tool}.noted`);
+    try {
+      closeSync(openSync(marker, 'wx'));
+    } catch {
+      return null; // Another call already noted it.
+    }
+    const row = recordSignal(project, unlistedToolSignal({ tool, session, agent: agentOf(input, env) }), { config, now });
+    // Not recorded, such as when the inbox's lock was held: the next call of the tool in this session tries again.
+    if (!row) unlinkSync(marker);
     return row;
   } catch {
     return null;

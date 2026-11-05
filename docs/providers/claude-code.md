@@ -52,8 +52,10 @@ There is nothing to trust or turn on.
 [hooks.md](../hooks.md) lists each hook; the ones marked Claude Code run only here.
 
 Claude Code cancels a SessionEnd hook that runs longer than a short budget as it exits, and reports `Hook cancelled`.
-The session-end hook only deletes the session's temporary files itself, and hands the [`session` row](../dispatch-log.md#session-when-a-session-ends)
+The session-end hook deletes the session's temporary files itself, and hands the [`session` row](../dispatch-log.md#session-when-a-session-ends)
 to a detached worker, so a long session's transcripts never hold up the exit.
+For a session holding a [tracker refusal marker](../config.md#how-a-write-is-judged), it also writes one `hook_deny` row in process.
+That row reads no transcript and waits on no lock, so the hook stays within its budget.
 
 ## Models and effort
 

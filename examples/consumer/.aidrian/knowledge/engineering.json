@@ -16,7 +16,7 @@
       "tags": ["testing"]
     },
     "issue-tracker.md": {
-      "summary": "The Linear team, estimates, labels, and acceptance criteria for every issue.",
+      "summary": "Where the Linear workspace and team are set, plus estimates, labels, and acceptance criteria for every issue.",
       "tags": ["issue_tracker"]
     },
     "branches-and-reviews.md": {

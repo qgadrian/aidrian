@@ -9,7 +9,7 @@ disable-model-invocation: true
 Before you start, follow the `knowledge` skill.
 
 Take a project from no aidrian setup to a checked one in one session, or, on a set-up project, say what to fix.
-This skill asks its questions before any write, and shows the docs before they are written.
+It asks its questions before any write, and shows the docs before they are written.
 It writes no project file itself: `harness-librarian` makes every setup write; in step 6, the owner the fix table names.
 It never commits, pushes, opens a pull request, or files an issue, in the project's tracker or the plugin's repository.
 It never sets `AIDRIAN_ALLOW_MAIN_WRITE` or adds a `git.mainCheckout.allowWrites` entry. No dispatch passes a model or effort.
@@ -18,7 +18,7 @@ print the exact config.json or `.aidrian.local.json` lines for the Human to add,
 
 The project root is `git rev-parse --show-toplevel`. The plugin root is this skill's folder plus `../..`, as an absolute path.
 Run `aidrian` and `aidrian-knowledge` from the PATH; when they are not on it, run them from `<plugin root>/bin/`.
-Read `references/dispatches.md` before the first dispatch: it holds every librarian brief, each with the plugin root.
+Read `references/dispatches.md` before the first dispatch: it holds every librarian brief.
 
 ## 1. Readiness
 
@@ -43,12 +43,12 @@ with their fixes, and say to run this skill again from a task worktree (`aidrian
 
 ## 2. Ask
 
-Take each answer the request already gives as given. Ask only the missing ones, one at a time:
+Take each answer the request gives as given. Ask only the missing ones, one at a time:
 AskUserQuestion in Claude Code, one question in the reply in Codex. Skip a question whose answer already holds.
 
 | Question | Holds when | Choices, default | Where the answer goes |
 | --- | --- | --- | --- |
-| Q1 Tracker | `aidrian-knowledge tags` lists `issue_tracker` | Linear with its team key, GitHub Issues with `owner/repo`, or none | A doc tagged `issue_tracker`, through `knowledge-update`. None: no doc. Never a config key. |
+| Q1 Tracker | `aidrian-knowledge tags` lists `issue_tracker`. Linear: config.json has `tracker` | Linear with its workspace URL, team key, and team name; GitHub Issues with `owner/repo`; or none | Conventions: a doc tagged `issue_tracker`, through `knowledge-update`. Linear also: config.json `tracker`, step 3 brief. None: no doc. |
 | Q2 Review bot | R4 ok | Does the Codex GitHub connector review this repository's pull requests? Default yes | No: `github.reviewer: null`. Yes: nothing written; R4 counts as confirmed. |
 | Q3 Docs folder | R2 ok | A folder of Markdown docs; default `docs` when it holds `.md` files; or none | `aidrian-knowledge init <folder>`. None: new docs go to `docs/knowledge/`. Never a config key. |
 | Q4 Names | config.json or `.aidrian.local.json` sets `names` | Two names and a scope, asked as written below; default `the Human` and the host's name | Team: config.json `names`. One developer: the git-ignored `.aidrian.local.json`. Default: nothing written. |

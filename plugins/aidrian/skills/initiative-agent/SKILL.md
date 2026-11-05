@@ -11,7 +11,7 @@ Turn a broad goal into a tracker-ready initiative blueprint.
 
 You own planning-time decomposition, not issue publishing and not runtime execution orchestration.
 
-The project's `issue_tracker` knowledge names the tracker and owns its rules (team, transition rules, topology mapping).
+The project's `issue_tracker` knowledge names the tracker and owns its rules (team unless config.json sets `tracker.team`, transition rules, topology mapping).
 Read the `knowledge` skill's `references/tracker.md` before deciding the topology, and on Linear also the `agent-issue-writer` skill's `references/linear.md`.
 
 ## Responsibility Boundary

@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -37,6 +37,32 @@ test('every hooks.json command runs a script in this plugin, through $CLAUDE_PLU
   const commands = hookCommands();
   assert.equal(commands.length, Object.values(HOOKS).flat().flatMap((group) => group.hooks).length, 'every command has the one shape');
   for (const { script } of commands) assert.ok(readFileSync(path.join(PLUGIN, script)), script);
+});
+
+test('the tracker hooks run on every MCP tool, and on nothing else', () => {
+  const groupOf = (event, script) => HOOKS[event].filter((group) => group.hooks.some(({ command }) => command.includes(script)));
+  for (const [event, script] of [['PreToolUse', 'hook-tracker-pre.mjs'], ['PostToolUse', 'hook-tracker-post.mjs']]) {
+    assert.deepEqual(groupOf(event, script).map((group) => group.matcher), ['mcp__.*'], script);
+  }
+});
+
+test('the tracker hooks, with the tracker on, let input they cannot use run and write no file', (t) => {
+  const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-hooks-tracker-')));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+  const state = path.join(base, 'state');
+  const cwd = path.join(base, 'repo');
+  spawnSync('git', ['init', '-q', '-b', 'main', cwd]);
+  mkdirSync(path.join(cwd, '.aidrian'));
+  const tracker = { enabled: true, workspace: { expect: 'acme', field: 'url' }, readTools: ['mcp__x__read'], writeTools: ['mcp__x__write'] };
+  writeFileSync(path.join(cwd, '.aidrian/config.json'), JSON.stringify({ version: 1, tracker }));
+  const env = { ...process.env, XDG_STATE_HOME: state };
+  for (const script of ['scripts/hook-tracker-pre.mjs', 'scripts/hook-tracker-post.mjs']) {
+    for (const input of HOSTILE) {
+      const { status, stderr } = spawnSync(process.execPath, [path.join(PLUGIN, script)], { input, cwd, env, encoding: 'utf8' });
+      assert.deepEqual([status, stderr], [0, ''], `${script}: ${input}`);
+    }
+  }
+  assert.equal(existsSync(state), false);
 });
 
 test('every hook exits 0 with nothing on stderr for input it cannot use, inside a project and outside one', (t) => {

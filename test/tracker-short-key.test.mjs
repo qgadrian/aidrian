@@ -286,3 +286,13 @@ test('a key written out in full loads exactly as before, with no provider in it'
   assert.deepEqual(errors, []);
   assert.deepEqual(config.tracker, tracker);
 });
+
+test('a bad provider or servers value beside written lists reports the error and keeps the guard', (t) => {
+  const written = { enabled: true, workspace: { expect: 'https://linear.app/acme', field: 'url' }, readTools: ['mcp__linear__get_workspace'], writeTools: ['mcp__linear__save_*'] };
+  for (const bad of [{ provider: 'Linear' }, { provider: 'linear', servers: ['my__linear'] }]) {
+    const { config, errors } = load(t, { ...written, ...bad });
+    assert.ok(errors.some((error) => error.includes('tracker.')), JSON.stringify(bad));
+    assert.equal(config.tracker.enabled, true, JSON.stringify(bad));
+    assert.ok(judgeTrackerWrite({ tracker: config.tracker, names: config.names }, 'mcp__linear__save_issue', {}, null), JSON.stringify(bad));
+  }
+});

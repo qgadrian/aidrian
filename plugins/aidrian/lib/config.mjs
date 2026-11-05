@@ -738,7 +738,7 @@ function checkTracker(raw, file, errors, defaults) {
     return defaults;
   }
   const provided = checkTrackerProvider(raw, file, errors);
-  if (provided === undefined) return defaults;
+  if (provided === undefined && raw.writeTools === undefined) return defaults;
   const value = provided ? expandTracker(raw, provided) : raw;
   for (const key of Object.keys(value)) if (!Object.hasOwn(defaults, key) && !TRACKER_SHORT_KEYS.includes(key)) errors.push(`${file}: unknown key "tracker.${key}"`);
   for (const key of ['workspaceInput', 'idHint']) if (raw[key] !== undefined && !isText(raw[key])) errors.push(`${file}: "tracker.${key}" must be a non-empty string`);
@@ -876,7 +876,7 @@ function readToolReport(name, writeTools) {
 function unreachableWriteProblem(pattern) {
   const stem = pattern.endsWith('*') ? pattern.slice(0, -1) : null;
   const reaches = stem === null ? reachesAHook(pattern) : hookForms(`${stem}x`).some((form) => form.startsWith(stem));
-  return reaches ? null : 'no host sends a name this matches, as it is the form only a model sees, so a write it means runs unjudged';
+  return reaches ? null : 'no host sends a name this matches, as it is the form only a model sees, so a write it means runs unjudged, unless it names a connector whose own name holds an underscore';
 }
 
 // Why no read could ever clear a write on `pattern`, as the guard counts a read only on the write's server, or null.

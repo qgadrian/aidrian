@@ -1166,7 +1166,8 @@ A host that is not set up here, or that no adapter can find, gets no warning, wh
 - A group with any error falls back to unset, and a bad entry is left out of its list.
   A bad entry in `readTools`, even beside a good one, also unsets `workspace` and `readTools`, except what the reports above keep.
   `enabled` falls back to `false` with no write tool or no group left, so the loaded key is never half set.
-  An unknown `provider` leaves the whole key at its defaults, with one error, since nothing else in it can be judged without its tracker.
+  An unknown `provider` or a bad `servers` value leaves a key with no `writeTools` at its defaults, with one error, since nothing else in it can be judged without its tracker.
+  A key that writes out `writeTools` keeps its guard and reports the error.
   `aidrian check` names each problem by its key.
 
 While `tracker.enabled` is true, `aidrian check` also warns of what would leave the guard silent:

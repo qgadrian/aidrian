@@ -3,7 +3,7 @@
 // A merge is:
 //   - `gh pr merge` (but `--disable-auto`), `--auto` included;
 //   - `gh api repos/<owner>/<name>/pulls/<n>/merge` sent as a PUT or a POST;
-//   - the MCP tool `mcp__github__merge_pull_request` (scripts/hook-mcp-github.mjs).
+//   - the MCP tool `mcp__github__merge_pull_request`, or a host connector's call that stands for it (scripts/hook-mcp-github.mjs).
 // Each is read wherever it runs (shell-lex walkCommands): in a substitution, `sh -c`, `eval`, or a heredoc fed to a shell.
 // A shell fed text the rule cannot read as commands, such as a pipe into `bash`, is refused when that text names a merge.
 // It reads only this machine's review record (lib/review/state.mjs), scoped to the merge's repository when the call names

@@ -44,6 +44,16 @@ export const normalizeHookInput = (raw, env = process.env) => detectHost({ env, 
 // so a gate or the guard matches both: it is the pattern a project wrote before the layer existed that must not stop matching.
 export const toolNames = ({ tool_name: name, raw_tool_name: raw }) => [name, raw].filter((each) => typeof each === 'string' && each !== '');
 
+// A GitHub tool call as { tool, given }, in the terms of the GitHub MCP server's tool: what a host's connector stands for, from the
+// adapter's `githubTools`, with its repository split into `owner` and `repo`. `name` is the standard name; any other call stays as it is.
+export function githubCall(name, given) {
+  const tool = HOSTS.map((host) => host.githubTools?.[name]).find(Boolean);
+  if (!tool) return { tool: name, given };
+  const [, owner, repo] = /^([^/]+)\/([^/]+)$/u.exec(given[tool.repo]) ?? [];
+  const fields = Object.entries(tool.fields).map(([standard, own]) => [standard, given[own]]);
+  return { tool: tool.as, given: { owner, repo, ...Object.fromEntries(fields) } };
+}
+
 // The forms the tool `name` reaches a hook in: the standard one, and as each host sends it.
 export const hookForms = (name, hosts = HOSTS) => {
   const standard = UNKNOWN_HOST.toolName(name);

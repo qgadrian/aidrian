@@ -31,6 +31,19 @@ const STANDARD_APP_TOOL = /^mcp__codex_apps_(.+?)__(.+)$/u;
 // `sanitize_responses_api_tool_name`), so the server linear-server reaches a hook as mcp__linear_server__<tool>.
 const serverSpelling = (server) => server.replace(/[^A-Za-z0-9_]/gu, '_');
 
+// The GitHub connector's merge and comment tools, and the GitHub MCP server's tool each stands for, with `fields` as
+// { its field: the connector's }. The names and inputs come from the connector catalog a 0.166.0 install cached; OpenAI's
+// servers serve that catalog, so a new name there passes unchecked. hooks.json lists each one, as Codex sends it and in the flat form.
+// `enable_auto_merge` is a merge, as `gh pr merge --auto` is, and names no head. docs/providers/codex.md#github-through-the-app-connector.
+const MERGE = 'mcp__github__merge_pull_request';
+const githubTools = {
+  mcp__codex_apps_github__merge_pull_request: { as: MERGE, repo: 'repository_full_name', fields: { pullNumber: 'pr_number', sha: 'expected_head_sha' } },
+  mcp__codex_apps_github__enable_auto_merge: { as: MERGE, repo: 'repository_full_name', fields: { pullNumber: 'pr_number' } },
+  mcp__codex_apps_github__add_comment_to_issue: { as: 'mcp__github__add_issue_comment', repo: 'repo_full_name', fields: { issue_number: 'pr_number', body: 'comment' } },
+  mcp__codex_apps_github__reply_to_review_comment: { as: 'mcp__github__add_reply_to_pull_request_comment', repo: 'repo_full_name', fields: { pullNumber: 'pr_number', body: 'comment' } },
+  mcp__codex_apps_github__add_review_to_pr: { as: 'mcp__github__pull_request_review_write', repo: 'repo_full_name', fields: { pullNumber: 'pr_number', body: 'review' } },
+};
+
 // A `*** ... File:` line opens a section of the patch, and `*** Move to:` renames the one above.
 const PATCH_TARGET = /^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gmu;
 
@@ -121,6 +134,7 @@ export default {
   pluginAgentPrefix: 'aidrian-',
   agentAliases: (type) => (type.startsWith('aidrian-') ? [type.slice('aidrian-'.length)] : []),
   toolName,
+  githubTools,
   serverSpelling,
   // The name the model calls a tool by: the namespace and the name it sees, run together, with one underscore here.
   nativeToolName(standard) {

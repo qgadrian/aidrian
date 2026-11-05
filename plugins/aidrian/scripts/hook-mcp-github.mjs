@@ -4,10 +4,12 @@
 // through `aidrian pr`, which counts rounds first, never through a comment tool.
 // It also holds the merge guard (lib/rules/github/merge-review.mjs) for `mcp__github__merge_pull_request`, which refuses
 // a merge whose head it cannot read rather than let it run unchecked.
-// Anything else this hook cannot read lets the call run.
+// A host's own GitHub connector reaches this hook too: `githubCall` gives its call in the terms of the tool it stands for,
+// so this file reads one shape. Anything else this hook cannot read lets the call run.
 
 import { loadConfig } from '../lib/config.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
+import { githubCall } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { asksForReview, judgeRequests, markersIn } from '../lib/review-gate.mjs';
 import { checkMcp } from '../lib/rules/github/merge-review.mjs';
@@ -21,13 +23,13 @@ const PR_FIELD = {
 };
 
 await runHook(async (input) => {
-  if (input.tool_name === 'mcp__github__merge_pull_request') {
-    const reason = checkMcp(input.tool_input ?? {}, { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), input });
+  const { tool, given: toolInput } = githubCall(input.tool_name, input.tool_input ?? {});
+  if (tool === 'mcp__github__merge_pull_request') {
+    const reason = checkMcp(toolInput, { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), input });
     if (reason) await block(input, 'merge-review', reason);
     return;
   }
-  const field = PR_FIELD[input.tool_name];
-  const toolInput = input.tool_input ?? {};
+  const field = PR_FIELD[tool];
   if (!field || !asksForReview(toolInput.body)) return;
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;

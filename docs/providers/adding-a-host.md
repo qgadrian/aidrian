@@ -18,10 +18,11 @@ The adapter's required `delivery` field names which of these three the host is:
 | `delivery` | The host | What it takes |
 | --- | --- | --- |
 | `hooks-json` | Reads `hooks/hooks.json` as it is, as Claude Code and Codex do | Its raw names fire each matcher, or it adds them to the matchers; the conformance suite holds that |
-| `installer` | Runs command hooks from a config of its own, as Kimi Code's docs describe | An installer that writes that config from `hooks.json`, as `codex/install-agents.mjs` writes roles |
-| `bridge` | Runs hooks in process, as OpenCode's docs describe | A bridge plugin that maps each call, runs the matching `scripts/hook-*.mjs`, and turns exit 2 into a throw |
+| `installer` | Runs command hooks from a config of its own, as Kimi Code is reported to | An installer that writes that config from `hooks.json`, as `codex/install-agents.mjs` writes roles |
+| `bridge` | Runs hooks in process, as OpenCode is reported to | A bridge plugin that maps each call, runs the matching `scripts/hook-*.mjs`, and turns exit 2 into a throw |
 
-OpenCode and Kimi Code are examples of the shape, read from their docs and not run here: neither is supported, and their cases have no code yet.
+OpenCode and Kimi Code are examples of the shape, as a review of this page reported them. Check each against the host before relying on it:
+neither was run here, neither is supported, and their cases have no code yet.
 
 ### Files
 

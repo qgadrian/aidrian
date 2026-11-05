@@ -32,7 +32,8 @@ function check(t, tracker, codexConfig) {
 }
 
 const INSTALLED = '[plugins."aidrian@aidrian-harness"]\nenabled = true\n';
-const TRUSTED = `${INSTALLED}[hooks.state."aidrian@aidrian-harness:hooks/hooks.json:pre_tool_use:6:0"]\ntrusted_hash = "sha256:x"\n`;
+const trust = (key) => `[hooks.state."aidrian@aidrian-harness:hooks/hooks.json:${key}"]\ntrusted_hash = "sha256:x"\n`;
+const TRUSTED = `${INSTALLED}${trust('pre_tool_use:5:0')}${trust('post_tool_use:3:0')}`;
 const WRITTEN_OUT = {
   enabled: true,
   workspace: { expect: 'https://linear.app/acme', field: 'url' },
@@ -48,6 +49,12 @@ test('aidrian check warns while Codex has the plugin and no trust on record, and
   assert.match(untrusted.stderr, /\/hooks/u, 'it says the step');
   const trusted = check(t, SHORT, TRUSTED);
   assert.doesNotMatch(trusted.stderr, /no trust on record/u);
+});
+
+test('aidrian check still warns when only an unrelated or one tracker hook is trusted', (t) => {
+  for (const partial of [trust('pre_tool_use:6:0'), trust('pre_tool_use:5:0'), trust('post_tool_use:3:0')]) {
+    assert.match(check(t, SHORT, INSTALLED + partial).stderr, /no trust on record/u, partial);
+  }
 });
 
 test('aidrian check says nothing of a Codex that is absent, or a tracker that is off', (t) => {

@@ -52,7 +52,21 @@ function hookTrust(env) {
     return 'absent';
   }
   if (!/^\[plugins\."aidrian@[^"]+"\]/mu.test(text)) return 'absent';
-  return /^\[hooks\.state\."[^"]*aidrian[^"]*hooks\/hooks\.json:pre_tool_use:/mu.test(text) ? 'trusted' : 'untrusted';
+  const has = (key) => text.split('\n').some((line) => /^\[hooks\.state\."[^"]*aidrian[^"]*hooks\/hooks\.json:/u.test(line) && line.includes(`:${key}"]`));
+  return trackerHookKeys().every(has) ? 'trusted' : 'untrusted';
+}
+
+// The trust keys of the tracker hooks, `<event>:<group>:<handler>`, read from hooks.json so a reordered file cannot go stale.
+// Trust is per hook, so trust in another of this plugin's hooks says nothing about these.
+function trackerHookKeys() {
+  const { hooks } = JSON.parse(readFileSync(new URL('../../hooks/hooks.json', import.meta.url), 'utf8'));
+  const keys = [];
+  for (const [event, script] of [['PreToolUse', 'hook-tracker-pre.mjs'], ['PostToolUse', 'hook-tracker-post.mjs']]) {
+    hooks[event].forEach((group, at) => group.hooks.forEach((hook, handler) => {
+      if (hook.command.includes(script)) keys.push(`${event === 'PreToolUse' ? 'pre_tool_use' : 'post_tool_use'}:${at}:${handler}`);
+    }));
+  }
+  return keys;
 }
 
 // Every event of hooks.json has a Codex event of the same name (hooks/src/events/common.rs at rust-v0.166.0).

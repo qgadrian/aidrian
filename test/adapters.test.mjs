@@ -12,10 +12,11 @@ import test from 'node:test';
 import { nameMatches } from '../plugins/aidrian/lib/agent-gates.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { GUARDED_PATHS } from '../plugins/aidrian/lib/project.mjs';
-import { agentAliases, detectHost, HOSTS, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { agentAliases, detectHost, HOSTS, normalizeHookInput, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { trackerWarnings } from '../plugins/aidrian/lib/tracker-check.mjs';
 import { judgeTrackerWrite, readTrackerValue, serverPrefix } from '../plugins/aidrian/lib/tracker-guard.mjs';
-import { expandTracker, knownServers, readToolsOf, TRACKERS, writeToolsOf } from '../plugins/aidrian/lib/trackers/index.mjs';
+import { expandTracker, knownServers, readToolsOf, TRACKERS, withProjectServers, writeToolsOf } from '../plugins/aidrian/lib/trackers/index.mjs';
+import fakeBridge from './fixtures/adapters/fake-bridge-host.mjs';
 import fakeHost from './fixtures/adapters/fake-host.mjs';
 import fakeTracker from './fixtures/adapters/fake-tracker.mjs';
 
@@ -27,16 +28,38 @@ const VERIFIED = new Set(['live', 'source', 'none']);
 
 const recorded = (host) => JSON.parse(readFileSync(path.join(ROOT, 'test/fixtures/hosts', host.id, 'tracker.json'), 'utf8'));
 
-for (const host of [...HOSTS, fakeHost]) {
+const DELIVERIES = new Set(['hooks-json', 'installer', 'bridge']);
+const script = (event, name) => HOOKS[event].find((group) => group.hooks.some(({ command }) => command.includes(name)));
+const fires = (matcher, name) => matcher === '*' || new RegExp(`^(?:${matcher})$`, 'u').test(name);
+
+// What a host's raw names fail to fire. A hooks-json host's matchers run on the raw name, before any mapping reaches a hook, so a
+// name that misses one means that hook never runs and the guard fails open with no word.
+function matcherProblems(host) {
+  const raw = (standard) => host.rawToolName(standard);
+  const samples = [
+    ['PreToolUse', 'hook-bash.mjs', raw('Bash')],
+    ['PreToolUse', 'hook-write.mjs', raw('Edit')],
+    ['PreToolUse', 'hook-write.mjs', raw('Write')],
+    ...host.fileEditTools.map((tool) => ['PreToolUse', 'hook-write.mjs', tool]),
+    ['PreToolUse', 'hook-tracker-pre.mjs', raw('mcp__linear__save_issue')],
+    ['PostToolUse', 'hook-tracker-post.mjs', raw('mcp__linear__get_workspace')],
+    ['PreToolUse', 'hook-agent-gates.mjs', raw('Bash')],
+    ['PreToolUse', 'hook-agent-gates.mjs', raw('mcp__linear__save_issue')],
+  ];
+  return samples.filter(([event, name, tool]) => !fires(script(event, name).matcher, tool)).map(([event, name, tool]) => `${event} ${name} misses ${tool}`);
+}
+
+for (const host of [...HOSTS, fakeHost, fakeBridge]) {
   test(`host ${host.id} declares every field of an adapter`, () => {
     for (const field of ['id', 'name', 'ai', 'modelsKey', 'pluginAgentPrefix']) assert.ok(typeof host[field] === 'string' && host[field] !== '', field);
     assert.notEqual(host.id, UNKNOWN_HOST.id);
-    for (const field of ['detect', 'sessionId', 'agentName', 'effort', 'runEnv', 'agentAliases', 'toolName', 'serverSpelling', 'nativeToolName', 'toolResponse', 'hookInput', 'fileEdit']) {
+    for (const field of ['detect', 'sessionId', 'agentName', 'effort', 'runEnv', 'agentAliases', 'toolName', 'serverSpelling', 'nativeToolName', 'rawToolName', 'toolResponse', 'hookInput', 'fileEdit']) {
       assert.equal(typeof host[field], 'function', field);
     }
     for (const field of ['identityVars', 'detectVars', 'fileEditTools']) assert.ok(Array.isArray(host[field]) && host[field].every((each) => typeof each === 'string'), field);
     assert.ok(host.fileEditTools.length > 0);
     assert.equal(typeof host.capabilities.transcripts, 'boolean');
+    assert.ok(DELIVERIES.has(host.delivery), `delivery names one of the three cases: ${host.delivery}`);
     assert.ok(typeof host.projectFolders === 'object' && host.projectFolders !== null);
     assert.ok(typeof host.modelChoices === 'object' && host.modelChoices !== null);
   });
@@ -74,9 +97,16 @@ for (const host of [...HOSTS, fakeHost]) {
     if (guard.hookTrust) assert.ok(typeof guard.trustStep === 'string' && guard.trustStep !== '', 'a host whose hooks wait on trust says the step');
   });
 
-  test(`host ${host.id} maps every event hooks.json uses`, () => {
-    assert.deepEqual(Object.keys(host.hookEvents).sort(), Object.keys(HOOKS).sort());
-    for (const event of Object.values(host.hookEvents)) assert.ok(event === null || typeof event === 'string');
+  test(`host ${host.id} undoes its raw name for an MCP tool on a known server`, () => {
+    const options = { servers: ['linear', 'linear_server'] };
+    for (const standard of ['mcp__linear__save_issue', 'mcp__linear_server__save_issue']) {
+      assert.equal(host.toolName(host.rawToolName(standard), options), standard);
+    }
+  });
+
+  test(`host ${host.id}'s spelling of a server is itself a spelling that stays, so a second pass changes nothing`, () => {
+    const once = host.serverSpelling('acme-linear');
+    assert.equal(host.serverSpelling(once), once);
   });
 }
 
@@ -115,6 +145,41 @@ for (const host of HOSTS) {
     assert.ok(agentAliases(`${host.pluginAgentPrefix}explorer`).has('explorer'));
   });
 }
+
+for (const host of [...HOSTS, fakeHost]) {
+  test(`host ${host.id}'s raw names fire each hooks.json matcher, as it reads hooks.json as it is`, () => {
+    assert.equal(host.delivery, 'hooks-json');
+    assert.deepEqual(matcherProblems(host), []);
+  });
+}
+
+test('a host whose raw names miss the matchers is told apart: it fails that check, and has to name another delivery', () => {
+  assert.notDeepEqual(matcherProblems(fakeBridge), [], 'what a bridge host needs a bridge for');
+  assert.equal(fakeBridge.delivery, 'bridge');
+  const lowerCase = { ...fakeHost, rawToolName: (standard) => standard.toLowerCase() };
+  assert.match(matcherProblems(lowerCase).join('\n'), /hook-bash\.mjs misses bash/u);
+});
+
+test('a host that joins server and tool with one underscore finds the longest known server', () => {
+  const servers = ['linear', 'linear_server'];
+  assert.equal(fakeBridge.toolName('linear_server_save_issue', { servers }), 'mcp__linear_server__save_issue');
+  assert.equal(fakeBridge.toolName('linear_save_issue', { servers }), 'mcp__linear__save_issue');
+  assert.equal(fakeBridge.toolName('other_save_issue', { servers }), 'other_save_issue', 'an unknown server is left alone, so no name is invented');
+  assert.equal(fakeHost.toolName('mcp__linear_server_save_issue', { servers }), 'mcp__linear_server__save_issue');
+});
+
+test('a project\'s own servers reach a host whose names need them, from what the host sent', () => {
+  const env = { FAKEBRIDGE: '1' };
+  const hosts = [fakeBridge];
+  const first = normalizeHookInput({ tool_name: 'acme_tracker_save_issue' }, env, ['linear'], hosts);
+  assert.equal(first.tool_name, 'acme_tracker_save_issue');
+  const second = withProjectServers(first, { servers: ['acme_tracker'] }, env, hosts);
+  assert.equal(second.tool_name, 'mcp__acme_tracker__save_issue');
+  assert.equal(second.raw_tool_name, 'acme_tracker_save_issue');
+  const again = withProjectServers(second, { servers: ['acme_tracker'] }, env, hosts);
+  assert.deepEqual(again, second, 'a second pass starts from what the host sent');
+  assert.equal(withProjectServers(first, {}, env, hosts), first, 'with none set, nothing runs');
+});
 
 test('an unknown host is reported as unknown, on what no adapter claims', () => {
   const host = detectHost({ env: {}, input: {} });
@@ -175,9 +240,10 @@ test('a new host works through the registry with no change to shared code', () =
 test('a new host and a new tracker run the guard end to end, from its own payload', () => {
   const tracker = { ...expandTracker({ enabled: true, workspace: { expect: 'https://x.example/a' }, team: { key: 'ABC', values: ['Alpha'] } }, fakeTracker), project: null };
   const settings = { tracker, names: { human: 'the Human' } };
-  const input = fakeHost.hookInput({ fakeTurn: 't', sessionId: 's', tool: 'faketracker/add_ticket', args: { projectKey: 'Beta' }, cwd: '/x' });
+  const servers = knownServers(fakeTracker);
+  const input = fakeHost.hookInput({ fakeTurn: 't', sessionId: 's', tool: 'mcp__faketracker_add_ticket', args: { projectKey: 'Beta' }, cwd: '/x' }, { servers });
   assert.equal(input.tool_name, 'mcp__faketracker__add_ticket');
-  const read = fakeHost.hookInput({ fakeTurn: 't', sessionId: 's', tool: 'faketracker/site_info', args: {}, result: { baseUrl: 'https://x.example/a' }, cwd: '/x' });
+  const read = fakeHost.hookInput({ fakeTurn: 't', sessionId: 's', tool: 'mcp__faketracker_site_info', args: {}, result: { baseUrl: 'https://x.example/a' }, cwd: '/x' }, { servers });
   assert.ok(tracker.readTools.includes(read.tool_name));
   const value = readTrackerValue(read.tool_response, 'baseUrl', fakeHost);
   assert.equal(value, 'https://x.example/a');

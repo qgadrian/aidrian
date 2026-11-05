@@ -775,6 +775,7 @@ function checkTracker(raw, file, errors, defaults) {
     team,
     project,
     ...(provided ? { provider: provided.id } : {}),
+    ...(provided && Array.isArray(raw.servers) && raw.servers.length ? { servers: raw.servers } : {}),
   };
 }
 

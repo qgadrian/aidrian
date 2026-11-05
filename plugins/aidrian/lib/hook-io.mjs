@@ -4,6 +4,7 @@
 import { readFileSync, writeSync } from 'node:fs';
 
 import { normalizeHookInput } from './hosts/index.mjs';
+import { allTrackerServers } from './trackers/index.mjs';
 
 // The hook payload, or {} when stdin is empty or not a JSON object.
 export function readHookInput() {
@@ -44,7 +45,7 @@ export async function block(input, rule, reason, options) {
 // shape this hook does not know, must never stop a session.
 export async function runHook(body) {
   try {
-    await body(normalizeHookInput(readHookInput()));
+    await body(normalizeHookInput(readHookInput(), process.env, allTrackerServers()));
   } catch {
     process.exit(0);
   }

@@ -9,12 +9,12 @@ import { responseObjects } from './response.mjs';
 // CLAUDECODE=1 marks its hooks and its Bash tool; the others say the same for a process that lost that one.
 const MARKERS = ['CLAUDE_CODE_SESSION_ID', 'CLAUDE_CODE_AGENT', 'CLAUDE_CODE_REMOTE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_EFFORT'];
 
-const EVENTS = ['SessionStart', 'SubagentStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PreCompact', 'Stop', 'SubagentStop', 'SessionEnd'];
-
 export default {
   id: 'claude-code',
   name: 'Claude Code',
   ai: 'Claude',
+  // How the plugin's hooks reach it: it reads hooks/hooks.json as it is (docs/providers/adding-a-host.md).
+  delivery: 'hooks-json',
   // The `models` key of config.json, and what the Agent tool takes for it. docs/config.md#models cites both.
   modelsKey: 'claude',
   modelChoices: { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] },
@@ -31,9 +31,10 @@ export default {
   toolName: (name) => name,
   serverSpelling: (server) => server,
   nativeToolName: (standard) => standard,
+  // Its names are the standard, which is what hooks.json matches.
+  rawToolName: (standard) => standard,
   toolResponse: responseObjects,
   hookInput: (input) => input,
-  hookEvents: Object.fromEntries(EVENTS.map((event) => [event, event])),
   fileEditTools: ['Edit', 'Write', 'NotebookEdit'],
   fileEdit(tool, given) {
     const targets = [given.file_path ?? given.notebook_path];

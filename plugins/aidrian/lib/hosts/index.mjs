@@ -18,11 +18,12 @@ export const UNKNOWN_HOST = Object.freeze({
   agentName: () => null,
   effort: () => null,
   runEnv: () => null,
-  toolName: (name) => HOSTS.reduce((each, host) => host.toolName(each), name),
+  toolName: (name, options) => HOSTS.reduce((each, host) => host.toolName(each, options), name),
   serverSpelling: (server) => server,
   nativeToolName: (standard) => standard,
+  rawToolName: (standard) => standard,
   toolResponse: (response) => HOSTS.flatMap((host) => host.toolResponse(response)),
-  hookInput: (input) => HOSTS.reduce((each, host) => host.hookInput(each), input),
+  hookInput: (input, options) => HOSTS.reduce((each, host) => host.hookInput(each, options), input),
   capabilities: Object.freeze({}),
 });
 
@@ -37,7 +38,13 @@ export function sessionIdentity(env = process.env) {
 }
 
 // `raw`, a hook's payload, in the standard names the shared code reads: `tool_name` as mcp__<server>__<tool> for an MCP tool.
-export const normalizeHookInput = (raw, env = process.env) => detectHost({ env, input: raw }).hookInput(raw);
+// `servers` are the server names known so far, for a host that joins server and tool with one underscore, whose names alone do
+// not say where the server ends. A later call with more of them starts from what the host sent, so it can only name more.
+export function normalizeHookInput(raw, env = process.env, servers = [], hosts = HOSTS) {
+  const host = detectHost({ env, input: raw }, hosts);
+  const sent = typeof raw.raw_tool_name === 'string' ? { ...raw, tool_name: raw.raw_tool_name } : raw;
+  return host.hookInput(sent, { servers });
+}
 
 // The names a call goes by: the standard one, and what the host sent when that differs. A project's pattern may name either,
 // so a gate or the guard matches both: it is the pattern a project wrote before the layer existed that must not stop matching.

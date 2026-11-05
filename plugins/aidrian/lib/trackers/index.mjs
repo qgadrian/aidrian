@@ -2,7 +2,7 @@
 // guard reads (docs/config.md#tracker). docs/providers/adding-a-host.md#adding-a-tracker says what an adapter declares;
 // test/adapters.test.mjs checks each one. config.mjs loads this on every hook, so it stays small and reads no file.
 
-import { serverSpellings } from '../hosts/index.mjs';
+import { normalizeHookInput, serverSpellings } from '../hosts/index.mjs';
 import linear from './linear.mjs';
 
 export const TRACKERS = Object.freeze([linear]);
@@ -13,6 +13,14 @@ export const trackerById = (id, trackers = TRACKERS) => trackers.find((each) => 
 
 // Every server name an adapter knows, on any host, in its own order, plus a project's own, as each host may spell it.
 export const knownServers = (adapter, extra = []) => [...new Set([...Object.values(adapter.servers).flat(), ...extra].flatMap((server) => serverSpellings(server)))];
+
+// The server names of every tracker, for a host whose tool names do not say where the server ends.
+export const allTrackerServers = (trackers = TRACKERS) => trackers.flatMap((adapter) => knownServers(adapter));
+
+// A hook's payload read again with the project's own `tracker.servers`, which only a loaded config knows.
+export const withProjectServers = (input, tracker, env = process.env, hosts) => (tracker.servers
+  ? normalizeHookInput(input, env, [...allTrackerServers(), ...tracker.servers.flatMap((server) => serverSpellings(server))], hosts)
+  : input);
 
 export const readToolsOf = (adapter, servers) => (adapter.readTool ? servers.map((server) => `mcp__${server}__${adapter.readTool}`) : []);
 export const writeToolsOf = (adapter, servers) => servers.flatMap((server) => adapter.writeVerbs.map((verb) => `mcp__${server}__${verb}`));

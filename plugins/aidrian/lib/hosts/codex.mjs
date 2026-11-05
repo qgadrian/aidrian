@@ -21,6 +21,9 @@ const toolName = (name) => {
   return match ? `mcp__codex_apps_${match[1]}__${match[2]}` : name;
 };
 
+// Its file edits all go through one tool (codex-rs/core/src/tools/hook_names.rs at rust-v0.166.0).
+const RAW_TOOLS = { Edit: 'apply_patch', Write: 'apply_patch', NotebookEdit: 'apply_patch' };
+
 // A connector's tool in the standard form, as the two names above undo it.
 const STANDARD_APP_TOOL = /^mcp__codex_apps_(.+?)__(.+)$/u;
 
@@ -92,13 +95,12 @@ function trackerHookKeys() {
   return keys;
 }
 
-// Every event of hooks.json has a Codex event of the same name (hooks/src/events/common.rs at rust-v0.166.0).
-const EVENTS = ['SessionStart', 'SubagentStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PreCompact', 'Stop', 'SubagentStop', 'SessionEnd'];
-
 export default {
   id: 'codex',
   name: 'Codex',
   ai: 'Codex',
+  // How the plugin's hooks reach it: it reads hooks/hooks.json as it is, and has an event of each name (docs/providers/adding-a-host.md).
+  delivery: 'hooks-json',
   modelsKey: 'codex',
   // Codex reads any model name and names these efforts. docs/config.md#models cites both.
   modelChoices: { model: null, effort: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'persistent'] },
@@ -125,6 +127,12 @@ export default {
     const match = STANDARD_APP_TOOL.exec(standard);
     return match ? `mcp__codex_apps__${match[1]}_${match[2]}` : standard;
   },
+  // What a tool reaches a hook's matcher as, before any mapping.
+  rawToolName(standard) {
+    if (RAW_TOOLS[standard]) return RAW_TOOLS[standard];
+    const match = STANDARD_APP_TOOL.exec(standard);
+    return match ? `mcp__codex_apps__${match[1]}__${match[2]}` : standard;
+  },
   // The MCP result as it comes off the wire: `content`, and sometimes `structuredContent`, which is that tool's own object.
   toolResponse(response) {
     const [direct, ...rest] = responseObjects(response);
@@ -136,7 +144,6 @@ export default {
     const name = toolName(input.tool_name);
     return name === input.tool_name ? input : { ...input, tool_name: name, raw_tool_name: input.tool_name };
   },
-  hookEvents: Object.fromEntries(EVENTS.map((event) => [event, event])),
   fileEditTools: ['apply_patch'],
   fileEdit(_tool, given) {
     const text = String(given.command ?? given.input ?? '');

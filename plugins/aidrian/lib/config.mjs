@@ -10,8 +10,10 @@ import { agentNameProblem, ALL, MAIN, nameMatches, patternProblem } from './agen
 import { CLASS_MAX, DECISION_DOMAINS, DECISION_MODES, decisionClasses, isClassName, lowerMode, SAFE_DEFAULTS } from './decisions.mjs';
 import { loadTable as dispositionTable } from './finding-disposition.mjs';
 import { isFile, isObject, readJson } from './fs.mjs';
+import { hookForms, modelChoices, reachesAHook, UNKNOWN_HOST } from './hosts/index.mjs';
 import { checkLocalReview, checkLocalVisual, checkReview, REVIEW_DEFAULTS } from './review/config.mjs';
-import { serverPrefix } from './tracker-guard.mjs';
+import { keyServer, serverPrefix } from './tracker-guard.mjs';
+import { expandTracker, knownServers, TRACKERS, trackerById } from './trackers/index.mjs';
 
 // The project folder format this plugin reads. A format change raises it and documents the migration.
 export const VERSION = 1;
@@ -42,6 +44,11 @@ const QUORUM_SCHEMA = {
   product: { owner: { agent: 'agentName' }, witness: { agent: 'agentName' }, ux: { agent: 'agentName' }, engineer: { agent: 'agentName' }, maxLoops: 'objectionCap', autoStart: 'boolean', approval: 'quorumApproval', maxAutoRuns: 'autoRuns' },
 };
 
+// The keys of `tracker` with no default: `provider` and `servers` say how to fill the rest, and the others come from an adapter
+// or a key written out (checkTracker).
+const TRACKER_SHORT_KEYS = ['provider', 'servers', 'workspaceInput', 'readVerbs', 'idHint'];
+// A server's name in mcp__<server>__<tool>: it holds no `*`, and a double underscore would end it early (tracker-guard.mjs).
+const SERVER_NAME = /^(?!.*__)[\w-]+$/u;
 // The keys of each group of `tracker`. Unlike a group of SCHEMA, one of these is set whole or not at all (checkTracker).
 const TRACKER_GROUPS = {
   workspace: { expect: 'text', field: 'text' },
@@ -155,12 +162,8 @@ const HANDOFF_MODES = ['off', 'ask', 'auto'];
 export const COMMIT_FIELDS = ['agent', 'model', 'effort', 'tool', 'env'];
 export const PR_FIELDS = ['tool', 'model', 'effort', 'env', 'agents'];
 
-// Claude Code's Agent tool takes only these model aliases. Codex reads any model name and names these efforts.
-// docs/config.md#models cites both.
-const MODEL_CHOICES = {
-  claude: { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] },
-  codex: { model: null, effort: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'persistent'] },
-};
+// Each host's adapter says what it takes (lib/hosts/); docs/config.md#models cites them.
+const MODEL_CHOICES = modelChoices();
 
 const SEMVER = /^\d+\.\d+\.\d+$/u;
 // The placeholders an audit label may hold, filled per finding (lib/audits.mjs issueLabels).
@@ -323,7 +326,7 @@ export const DEFAULTS = deepFreeze({
   // what it would in a fresh session; `maxTokens` is an optional ceiling on the context, 0 for off.
   session: { handoff: { mode: 'ask', costRatio: 2, maxTokens: 0 } },
   lessons: { auto: true, maxOpen: 20, maxAgeDays: 14 },
-  models: { claude: { agents: {} }, codex: { agents: {} } },
+  models: Object.fromEntries(Object.keys(MODEL_CHOICES).map((key) => [key, { agents: {} }])),
   names: { human: 'the Human', ai: null },
   // The oldest plugin the project's config needs; null asks for none (versionFloorProblem).
   requires: { aidrian: null },
@@ -727,44 +730,97 @@ function checkAgents(value, file, errors, base, gateErrors = []) {
 // `enabled` needs a write tool to watch and a group to hold it to.
 // A pairing error reads what the file set, and only a key of the right type counts as set or unset, so a key that has its
 // own error raises no second one, about itself or about what depends on it.
-function checkTracker(value, file, errors, defaults) {
-  if (!isObject(value)) {
+// `provider` names a tracker adapter (lib/trackers/), which fills in the lists and fields the file leaves out, and a list
+// or field the file sets overrides it. A key with no `provider` holds every list itself, as it always has.
+function checkTracker(raw, file, errors, defaults) {
+  if (!isObject(raw)) {
     errors.push(`${file}: "tracker" must be an object`);
     return defaults;
   }
-  for (const key of Object.keys(value)) if (!Object.hasOwn(defaults, key)) errors.push(`${file}: unknown key "tracker.${key}"`);
+  const provided = checkTrackerProvider(raw, file, errors);
+  if (provided === undefined && raw.writeTools === undefined) return defaults;
+  const value = provided ? expandTracker(raw, provided) : raw;
+  for (const key of Object.keys(value)) if (!Object.hasOwn(defaults, key) && !TRACKER_SHORT_KEYS.includes(key)) errors.push(`${file}: unknown key "tracker.${key}"`);
+  for (const key of ['workspaceInput', 'idHint']) if (raw[key] !== undefined && !isText(raw[key])) errors.push(`${file}: "tracker.${key}" must be a non-empty string`);
+  if (raw.readVerbs !== undefined && !isTexts(raw.readVerbs)) errors.push(`${file}: "tracker.readVerbs" must be a list of tool patterns after the server`);
+  const perCall = isText(value.workspaceInput);
   if (Object.hasOwn(value, 'enabled') && typeof value.enabled !== 'boolean') errors.push(`${file}: "tracker.enabled" must be ${TYPES.boolean[1]}`);
   const workspace = checkTrackerGroup('workspace', value.workspace, file, errors);
   const writeTools = checkToolList('writeTools', 'patterns', value.writeTools, trackerToolProblem, file, errors);
   const readTools = checkToolList('readTools', 'names', value.readTools, (name) => readToolProblem(name, writeTools), file, errors);
+  for (const pattern of writeTools) {
+    const bad = unreachableWriteProblem(pattern);
+    if (bad) errors.push(`${file}: "tracker.writeTools" has ${JSON.stringify(pattern)}: ${bad}`);
+  }
+  for (const name of readTools) {
+    const bad = readToolReport(name, writeTools);
+    if (bad) errors.push(`${file}: "tracker.readTools" has ${JSON.stringify(name)}: ${bad}`);
+  }
   const team = checkTrackerGroup('team', value.team, file, errors);
   const project = checkTrackerGroup('project', value.project, file, errors);
   const listUnset = (raw) => raw === undefined || (Array.isArray(raw) && raw.length === 0);
   const listSet = (raw) => Array.isArray(raw) && raw.length > 0;
   const groupUnset = (raw) => raw === undefined || raw === null;
-  if (isObject(value.workspace) && listUnset(value.readTools)) errors.push(`${file}: "tracker.workspace" needs "tracker.readTools", the tools that read the connected workspace`);
+  if (isObject(value.workspace) && listUnset(value.readTools) && !perCall) errors.push(`${file}: "tracker.workspace" needs "tracker.readTools", the tools that read the connected workspace`);
   if (listSet(value.readTools) && groupUnset(value.workspace)) errors.push(`${file}: "tracker.readTools" needs "tracker.workspace", the value those tools must report`);
   if (value.enabled === true && listUnset(value.writeTools)) errors.push(`${file}: "tracker.enabled" needs "tracker.writeTools", the tools the guard watches`);
   if (value.enabled === true && listSet(value.writeTools) && [value.workspace, value.team, value.project].every(groupUnset)) {
     errors.push(`${file}: "tracker.enabled" needs one of "tracker.workspace", "tracker.team", or "tracker.project", the values a write is held to`);
   }
   // A read tool left out may be the one the connector has, so the workspace check goes with it instead of refusing every write.
-  const paired = workspace !== null && readTools.length > 0 && readTools.length === value.readTools.length;
-  if (paired) {
-    for (const pattern of writeTools) {
-      const bad = unclearedWriteProblem(pattern, readTools);
-      if (bad) errors.push(`${file}: "tracker.writeTools" has ${JSON.stringify(pattern)}: ${bad}`);
+  const readPaired = workspace !== null && readTools.length > 0 && readTools.length === value.readTools.length;
+  const paired = perCall ? workspace !== null : readPaired;
+  if (readPaired) {
+    const uncleared = writeTools.map((pattern) => [pattern, unclearedWriteProblem(pattern, readTools)]).filter(([, bad]) => bad);
+    // With the adapter's patterns under a file's read tools, what is wrong is that one key, however many patterns it strands.
+    if (provided && raw.writeTools === undefined && uncleared.length > 0) {
+      const servers = [...new Set(uncleared.map(([pattern]) => serverPrefix(pattern)))].join(', ');
+      errors.push(raw.readTools === undefined
+        ? `${file}: "tracker.servers" gives writes with no read the guard can count on ${servers}, so no write there can pass`
+        : `${file}: "tracker.readTools" replaces the adapter's and leaves no read on ${servers}, so no write there can pass: drop "tracker.readTools", or add a read on each`);
+    } else {
+      for (const [pattern, bad] of uncleared) errors.push(`${file}: "tracker.writeTools" has ${JSON.stringify(pattern)}: ${bad}`);
     }
   }
   return {
     enabled: value.enabled === true && writeTools.length > 0 && (paired || team !== null || project !== null),
     workspace: paired ? workspace : null,
-    readTools: paired ? readTools : [],
+    readTools: readPaired ? readTools : [],
     writeTools,
     team,
     project,
+    ...(provided ? { provider: provided.id } : {}),
+    ...(perCall && paired ? { workspaceInput: value.workspaceInput } : {}),
+    ...(isText(value.idHint) ? { idHint: value.idHint } : {}),
+    ...(isTexts(value.readVerbs) ? { readVerbs: value.readVerbs } : {}),
   };
 }
+
+// The adapter `tracker.provider` names, null when the key sets none, or undefined when it names none we have, whose error
+// is the only one the key raises: nothing else in it can be judged without knowing the tracker.
+function checkTrackerProvider(value, file, errors) {
+  if (value.provider === undefined) {
+    if (value.servers !== undefined) errors.push(`${file}: "tracker.servers" needs "tracker.provider", the tracker those servers connect to`);
+    return null;
+  }
+  const adapter = trackerById(value.provider);
+  if (!adapter) {
+    errors.push(`${file}: "tracker.provider" must be ${oneOfTrackers()}`);
+    return undefined;
+  }
+  const named = value.servers ?? [];
+  if (!Array.isArray(named) || !named.every((each) => typeof each === 'string' && SERVER_NAME.test(each))) {
+    errors.push(`${file}: "tracker.servers" must be a list of server names, such as "my-linear" in mcp__my-linear__save_issue`);
+    return undefined;
+  }
+  // The file's list replaces the adapter's, which is what `servers` adds to, so the server would go unwatched with no word.
+  if (value.writeTools !== undefined) {
+    for (const server of named) errors.push(`${file}: "tracker.servers" has ${JSON.stringify(server)}, but "tracker.writeTools" replaces the list it adds to, so no write on it is watched: add its patterns there, or drop "tracker.writeTools"`);
+  }
+  return adapter;
+}
+
+const oneOfTrackers = () => (TRACKERS.length === 1 ? JSON.stringify(TRACKERS[0].id) : oneOf(TRACKERS.map((each) => each.id)));
 
 // One group of `tracker`, or null when it is unset or has any error: the guard cannot run on part of one.
 function checkTrackerGroup(name, value, file, errors) {
@@ -796,7 +852,31 @@ function readToolProblem(name, writeTools) {
   const problem = patternProblem(name);
   if (problem) return problem;
   const covering = writeTools.find((pattern) => nameMatches(pattern, name));
-  return covering === undefined ? null : `a read tool cannot also match "tracker.writeTools", and ${JSON.stringify(covering)} covers it`;
+  return covering === undefined ? null : coveredProblem(covering);
+}
+
+const coveredProblem = (pattern) => `a read tool cannot also match "tracker.writeTools", and ${JSON.stringify(pattern)} covers it`;
+
+// What is wrong with a read tool that stays in the list. This is a report only, as unclearedWriteProblem is: leaving it out would
+// unset `workspace` for every host, and the guard that keeps it refuses writes on that server, which is the safe way to be wrong.
+function readToolReport(name, writeTools) {
+  if (!reachesAHook(name)) {
+    // Where a flat name's connector ends cannot be told from it, so the name to use is given only for a server a tracker knows.
+    const standard = UNKNOWN_HOST.toolName(name);
+    const known = TRACKERS.some((tracker) => knownServers(tracker).some((server) => keyServer(standard) === `mcp__${server}__`));
+    return `no host sends this name, which is the form only a model sees, so no read would ever count${known ? `; name it as ${JSON.stringify(standard)}` : ''}`;
+  }
+  const covering = writeTools.find((pattern) => hookForms(name).some((form) => nameMatches(pattern, form)));
+  return covering === undefined ? null : coveredProblem(covering);
+}
+
+// Why no call a hook sees can match `pattern`, or null. A pattern ending in `*` is tried on a name it would match: it can match
+// a call when the standard or raw form of that name still starts with the pattern's stem. This is a report only, and it matters
+// because a pattern that matches nothing lets every write run unjudged.
+function unreachableWriteProblem(pattern) {
+  const stem = pattern.endsWith('*') ? pattern.slice(0, -1) : null;
+  const reaches = stem === null ? reachesAHook(pattern) : hookForms(`${stem}x`).some((form) => form.startsWith(stem));
+  return reaches ? null : 'no host sends a name this matches, as it is the form only a model sees, so a write it means runs unjudged, unless it names a connector whose own name holds an underscore';
 }
 
 // Why no read could ever clear a write on `pattern`, as the guard counts a read only on the write's server, or null.
@@ -804,9 +884,9 @@ function readToolProblem(name, writeTools) {
 // a server that has a read tool, so it is not judged.
 function unclearedWriteProblem(pattern, readTools) {
   const star = pattern.endsWith('*');
-  const server = serverPrefix(star ? pattern.slice(0, -1) : pattern);
+  const server = keyServer(star ? pattern.slice(0, -1) : pattern);
   if (server === null) return star ? null : 'it names no server, as in mcp__<server>__<tool>, so no read can clear it';
-  return readTools.some((name) => serverPrefix(name) === server) ? null : 'no tool in "tracker.readTools" is on its server, so no read can clear it';
+  return readTools.some((name) => keyServer(name) === server) ? null : 'no tool in "tracker.readTools" is on its server, so no read can clear it';
 }
 
 // The good entries of one tool list of `tracker`; a bad one is an error and is left out, as in `agents`.

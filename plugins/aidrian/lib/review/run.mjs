@@ -26,6 +26,7 @@ import path from 'node:path';
 
 import { committedConfig } from '../config.mjs';
 import { runGh } from '../gh.mjs';
+import { sessionIdentity } from '../hosts/index.mjs';
 import { roundCapProblem, ROUNDS_OVERRIDE } from '../pr-await-review.mjs';
 import { currentRoot, runGit, showPrefix } from '../git.mjs';
 import { markerFor } from '../review-gate.mjs';
@@ -915,8 +916,7 @@ export async function runReview(args, config, project, deps = {}) {
     const result = await reviewStep(opts, { project, config, ...deps });
     if (result.status === 'round_limit') {
       const { recordSignal, roundLimitSignal } = await import('../lesson-signals.mjs');
-      const env = deps.env ?? process.env;
-      recordSignal(project, roundLimitSignal({ repo: result.repo, pr: result.pr, maxRounds: result.max_rounds, rounds: result.round, session: env.CLAUDE_CODE_SESSION_ID || null, agent: env.CLAUDE_CODE_AGENT || null }), { config });
+      recordSignal(project, roundLimitSignal({ repo: result.repo, pr: result.pr, maxRounds: result.max_rounds, rounds: result.round, ...sessionIdentity(deps.env ?? process.env) }), { config });
     }
     console.log(JSON.stringify(result, null, 2));
     return EXIT[result.status] ?? 1;

@@ -23,6 +23,7 @@ const run = (toolInput, fields = {}) =>
   spawnSync(process.execPath, [HOOK], {
     input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'AskUserQuestion', cwd: PROJECT, tool_input: toolInput, ...fields }),
     encoding: 'utf8',
+    env: { ...process.env, CLAUDECODE: '1' },
   });
 const ask = (question, extra = {}, fields = {}) =>
   run({ questions: [{ question, header: 'Next', options: OPTIONS, multiSelect: false, ...extra }] }, fields);

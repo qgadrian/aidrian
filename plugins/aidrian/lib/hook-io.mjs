@@ -3,6 +3,8 @@
 
 import { readFileSync, writeSync } from 'node:fs';
 
+import { normalizeHookInput } from './hosts/index.mjs';
+
 // The hook payload, or {} when stdin is empty or not a JSON object.
 export function readHookInput() {
   try {
@@ -38,11 +40,11 @@ export async function block(input, rule, reason, options) {
   process.exit(2);
 }
 
-// Runs a hook body with the payload. An error lets the action run and prints nothing: a broken hook, or a payload
+// Runs a hook body with the payload, in the standard names (lib/hosts/). An error lets the action run and prints nothing: a broken hook, or a payload
 // shape this hook does not know, must never stop a session.
 export async function runHook(body) {
   try {
-    await body(readHookInput());
+    await body(normalizeHookInput(readHookInput()));
   } catch {
     process.exit(0);
   }

@@ -18,6 +18,7 @@
 
 import { appendEvent, stamp } from '../dispatch-log.mjs';
 import { runGit } from '../git.mjs';
+import { sessionIdentity } from '../hosts/index.mjs';
 import { changedFiles, diffLines, mergeBase, resolve } from './diff.mjs';
 import { classify } from './plan.mjs';
 import { heldMessage, publishState, readRecord, sameCommit, writeLocalState } from './state.mjs';
@@ -537,12 +538,12 @@ export async function runExtend(args, project, config, deps = {}) {
   if (opts.verdict) entry = recordVerdict(state, { verdict: opts.verdict, reason: opts.reason, head: opts.head, current });
   else {
     const by = runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown';
-    entry = recordHuman(state, { answer: opts.human, by, session: env.CLAUDE_CODE_SESSION_ID || null, current });
+    entry = recordHuman(state, { answer: opts.human, by, session: sessionIdentity(env).session, current });
   }
   writeLocalState(project, state);
   const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => gh.post(repo, opts.pr, body), edit: (id, body) => gh.edit(repo, id, body), viewer: () => gh.viewer() }, `extension ${entry.status}`) : null;
   try {
-    appendEvent(project, config, { ...rowOf(entry), ts: stamp(Date.now()), session_id: env.CLAUDE_CODE_SESSION_ID || null, pr: opts.pr, repo });
+    appendEvent(project, config, { ...rowOf(entry), ts: stamp(Date.now()), session_id: sessionIdentity(env).session, pr: opts.pr, repo });
   } catch {}
   console.log(JSON.stringify({ status: 'recorded', pr: opts.pr, extension: { source: entry.source, round: entry.round, head: entry.head, status: entry.status, by: entry.by, reasons: entry.reasons }, next: nextStep(entry, opts.pr), ...(summaryError ? { summary_error: summaryError } : {}) }, null, 2));
   return 0;
@@ -551,6 +552,6 @@ export async function runExtend(args, project, config, deps = {}) {
 // The dispatch-log row writer the review commands share.
 export const extensionLogger = (project, config, { pr, repo, env = process.env }) => (row) => {
   try {
-    appendEvent(project, config, { ...row, ts: stamp(Date.now()), session_id: env.CLAUDE_CODE_SESSION_ID || null, pr, repo });
+    appendEvent(project, config, { ...row, ts: stamp(Date.now()), session_id: sessionIdentity(env).session, pr, repo });
   } catch {}
 };

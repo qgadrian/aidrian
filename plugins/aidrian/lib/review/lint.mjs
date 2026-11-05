@@ -9,6 +9,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { projectFolders } from '../hosts/index.mjs';
 import { pathPattern } from './plan.mjs';
 import { runGit } from '../git.mjs';
 import { focusBlocks, focusesOf, invariantsOf, sectionOf, sourceOf } from './flows.mjs';
@@ -90,7 +91,7 @@ export function lintReview(project, config) {
     }
     for (const word of flow.require ?? []) {
       if (word.startsWith('agent:') && !agentExists(project.root, word.slice('agent:'.length))) {
-        warnings.push(`flow ${id} requires agent ${word.slice('agent:'.length)}, which is not in .claude/agents or the plugin`);
+        warnings.push(`flow ${id} requires agent ${word.slice('agent:'.length)}, which is not in ${projectFolders('agents').join(' or ')} or the plugin`);
       }
     }
   }
@@ -103,7 +104,7 @@ export function lintReview(project, config) {
 }
 
 function agentExists(root, name) {
-  const local = read(root)(`.claude/agents/${name}.md`) !== null;
+  const local = projectFolders('agents').some((folder) => read(root)(`${folder}/${name}.md`) !== null);
   const plugin = read(path.join(import.meta.dirname, '../../agents'))(`${name}.md`) !== null;
   return local || plugin;
 }

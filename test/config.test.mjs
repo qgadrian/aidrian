@@ -9,6 +9,7 @@ import { commandConfig, committedConfig, committedDecisions, committedQuorumProd
 import { linksOutside } from '../plugins/aidrian/lib/fs.mjs';
 import { loadVocab } from '../plugins/aidrian/lib/decisions.mjs';
 import { committedConfigFile, findProject } from '../plugins/aidrian/lib/project.mjs';
+import { expandTracker, trackerById } from '../plugins/aidrian/lib/trackers/index.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const EXAMPLE = path.join(ROOT, 'examples/consumer');
@@ -30,7 +31,7 @@ test('the example consumer config is valid, turns its rules on, and gets every o
     git: { ...DEFAULTS.git, mainCheckout: { ...DEFAULTS.git.mainCheckout, guard: true } },
     github: { ...DEFAULTS.github, pullRequest, reviewGate: { enabled: true, checklist: 'docs/knowledge/engineering/testing.md' } },
     terms: { file: '.aidrian/terms.json' },
-    tracker: { ...DEFAULTS.tracker, ...JSON.parse(readFileSync(path.join(EXAMPLE, '.aidrian/config.json'), 'utf8')).tracker },
+    tracker: { ...DEFAULTS.tracker, ...expandTracker(JSON.parse(readFileSync(path.join(EXAMPLE, '.aidrian/config.json'), 'utf8')).tracker, trackerById('linear')) },
   });
   assert.equal(DEFAULTS.git.mainCheckout.guard, false, 'a project opts in; a fresh one is never blocked');
 });

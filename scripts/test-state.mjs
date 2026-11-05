@@ -15,11 +15,14 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { DETECT_VARS } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { isolate } from '../plugins/aidrian/lib/review/env.mjs';
 
 export { isolate };
 
 isolate(process.env);
+// Which host runs the suite changes no answer, so a test that needs a host names it.
+for (const name of DETECT_VARS) delete process.env[name];
 
 if (!process.env.AIDRIAN_TEST_STATE) {
   const state = mkdtempSync(path.join(tmpdir(), 'aidrian-test-state-'));
@@ -27,6 +30,8 @@ if (!process.env.AIDRIAN_TEST_STATE) {
   mkdirSync(temp);
   process.env.AIDRIAN_TEST_STATE = state;
   process.env.XDG_STATE_HOME = state;
+  // Which host this machine has installed changes no answer either: `aidrian check` reads Codex's config (lib/hosts/codex.mjs).
+  process.env.CODEX_HOME = path.join(state, 'codex');
   process.env.TMPDIR = temp;
   process.on('exit', () => rmSync(state, { recursive: true, force: true }));
 }

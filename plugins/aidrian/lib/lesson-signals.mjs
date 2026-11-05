@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { loadConfig } from './config.mjs';
+import { sessionIdentity } from './hosts/index.mjs';
 import { appendRow, withLocks } from './jsonl.mjs';
 import { addRow, homeInbox } from './lesson-inbox.mjs';
 import { findProject } from './project.mjs';
@@ -102,7 +103,7 @@ export function unlistedToolSignal({ tool, session = null, agent = null }) {
     title: `The tracker write guard did not judge ${tool}`,
     note:
       `${tool} ran on a server that tracker.readTools or tracker.writeTools names, and neither list names the tool, so the guard let it run. ` +
-      'If it writes to the tracker, add it to tracker.writeTools. If it only reads, reject this lesson: this tool will not reopen it.',
+      'If it writes to the tracker, add it to tracker.writeTools; with tracker.provider set, that key replaces the adapter\'s whole list, so the fix is the adapter in the plugin. If it only reads, reject this lesson: this tool will not reopen it.',
     evidence: session ? [`session ${session}`] : [],
     session,
     agent,
@@ -133,7 +134,7 @@ const FILE_NAME_PART = /^[\w-]+$/;
 // the session's end delete them by path alone.
 const DENIALS_PREFIX = 'aidrian-denials-';
 const denialsDir = (dir, session) => path.join(dir, `${DENIALS_PREFIX}${session}`);
-const agentOf = (input, env) => (typeof input.agent_type === 'string' && input.agent_type ? input.agent_type : env.CLAUDE_CODE_AGENT || null);
+const agentOf = (input, env) => (typeof input.agent_type === 'string' && input.agent_type ? input.agent_type : sessionIdentity(env).agent);
 
 // Counts one block by `rule` for the hook payload's session, and records the signal once the count reaches
 // REPEATED_DENIALS, once per session and rule. Parallel subagents share their parent's session and may block at once,

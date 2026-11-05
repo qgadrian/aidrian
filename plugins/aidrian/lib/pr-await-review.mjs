@@ -43,6 +43,7 @@
 import { committedConfig, DEFAULTS as CONFIG_DEFAULTS, NO_REVIEWER } from './config.mjs';
 import { runGh } from './gh.mjs';
 import { runGit } from './git.mjs';
+import { sessionIdentity } from './hosts/index.mjs';
 
 export const DEFAULT_REVIEWER = CONFIG_DEFAULTS.github.reviewer;
 export const REQUEST_COMMENT = '@codex review';
@@ -606,7 +607,7 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     }
     if (result.status === 'round_limit' && project) {
       const { recordSignal, roundLimitSignal } = await import('./lesson-signals.mjs');
-      const where = { session: process.env.CLAUDE_CODE_SESSION_ID || null, agent: process.env.CLAUDE_CODE_AGENT || null };
+      const where = sessionIdentity();
       const signal = roundLimitSignal({ repo: result.repo, pr: result.pr, maxRounds: result.max_rounds, rounds: result.codex_rounds, ...where });
       recordSignal(project, signal, { config });
     }

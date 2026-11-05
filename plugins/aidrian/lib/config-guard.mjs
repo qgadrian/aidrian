@@ -13,11 +13,11 @@ import path from 'node:path';
 
 import { projectRuleReason } from './agent-gates.mjs';
 import { isWithin } from './fs.mjs';
+import { fileEditOf, isFileEditTool } from './hosts/index.mjs';
 import { configFiles } from './project.mjs';
 import { bashWrites, canonical, toolTargets } from './rules/main-checkout.mjs';
 import { commandLines, inlineShellCommand, lexInputs, readInvocation, readShortOptions, SUBSTITUTION_DEPTH_LIMIT } from './shell-lex.mjs';
 
-const WRITE_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit', 'apply_patch']);
 // A quoted text with no quote, backslash, `$`, or backtick in it, such as a path.
 const TEXT = String.raw`(?:'[^'"\\$\x60\n]*'|"[^'"\\$\x60\n]*")`;
 const FS = String.raw`(?:'(?:node:)?fs'|"(?:node:)?fs")`;
@@ -87,12 +87,13 @@ export function autoMergeWriteDenial(input, project, { names: { human } }) {
 // `"off"` to `"on"`, a JSON escape, a removed key, and a file left unparsable. A patch changes it when a line it adds or
 // removes names `autoMerge`: a patch is not applied here, so a value on a line of its own without the key, or a key spelled with a JSON escape, is not seen.
 function changesAutoMerge({ tool_name: tool, tool_input: given }, file) {
-  if (tool === 'apply_patch') return /^[+-].*autoMerge/mu.test(given.command);
-  const written = { Write: given.content, Edit: given.new_string }[tool];
+  const edit = fileEditOf({ tool_name: tool, tool_input: given });
+  if (edit?.shape === 'patch') return /^[+-].*autoMerge/mu.test(edit.text);
+  const written = edit?.shape === 'write' ? edit.content : edit?.shape === 'edit' ? edit.newText : undefined;
   if (typeof written !== 'string') return false;
   if (written.includes('autoMerge')) return true;
   const before = readText(file);
-  return switchIn(before) !== switchIn(tool === 'Write' ? written : editedText(before, given));
+  return switchIn(before) !== switchIn(edit.shape === 'write' ? written : editedText(before, given));
 }
 
 // `text` after an Edit, with its new text taken literally: a replacer function keeps `$&` from meaning what it replaces.
@@ -123,7 +124,7 @@ function switchIn(text) {
 // no path gives: a relative target written after a `cd` to an unknown folder, and code an interpreter runs.
 function writeTargets(input) {
   const cwd = typeof input.cwd === 'string' ? input.cwd : process.cwd();
-  if (WRITE_TOOLS.has(input.tool_name)) return { files: toolTargets(input).map((target) => path.resolve(cwd, target)), names: [], globs: [] };
+  if (isFileEditTool(input.tool_name)) return { files: toolTargets(input).map((target) => path.resolve(cwd, target)), names: [], globs: [] };
   const command = input.tool_input?.command;
   if (input.tool_name !== 'Bash' || typeof command !== 'string') return { files: [], names: [], globs: [] };
   const writes = bashWrites(command, cwd, { followCd: true, shells: true, restores: true, globs: true });

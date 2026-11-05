@@ -65,32 +65,9 @@ GitHub Issues writes no key, and neither does none.
 {
   "tracker": {
     "enabled": true,
-    "workspace": { "expect": "<workspace URL>", "field": "url" },
-    "readTools": ["mcp__plugin_linear_linear__get_workspace", "mcp__linear__get_workspace", "mcp__linear-server__get_workspace", "mcp__claude_ai_Linear__get_workspace"],
-    "writeTools": [
-      "mcp__plugin_linear_linear__save_*", "mcp__plugin_linear_linear__create_*", "mcp__plugin_linear_linear__delete_*",
-      "mcp__plugin_linear_linear__share_*", "mcp__plugin_linear_linear__unshare_*", "mcp__plugin_linear_linear__update_*",
-      "mcp__plugin_linear_linear__merge_*", "mcp__plugin_linear_linear__submit_*", "mcp__plugin_linear_linear__resolve_diff_thread",
-      "mcp__plugin_linear_linear__retire_*", "mcp__plugin_linear_linear__restore_*", "mcp__plugin_linear_linear__prepare_*",
-      "mcp__linear__save_*", "mcp__linear__create_*", "mcp__linear__delete_*",
-      "mcp__linear__share_*", "mcp__linear__unshare_*", "mcp__linear__update_*",
-      "mcp__linear__merge_*", "mcp__linear__submit_*", "mcp__linear__resolve_diff_thread",
-      "mcp__linear__retire_*", "mcp__linear__restore_*", "mcp__linear__prepare_*",
-      "mcp__linear-server__save_*", "mcp__linear-server__create_*", "mcp__linear-server__delete_*",
-      "mcp__linear-server__share_*", "mcp__linear-server__unshare_*", "mcp__linear-server__update_*",
-      "mcp__linear-server__merge_*", "mcp__linear-server__submit_*", "mcp__linear-server__resolve_diff_thread",
-      "mcp__linear-server__retire_*", "mcp__linear-server__restore_*", "mcp__linear-server__prepare_*",
-      "mcp__claude_ai_Linear__save_*", "mcp__claude_ai_Linear__create_*", "mcp__claude_ai_Linear__delete_*",
-      "mcp__claude_ai_Linear__share_*", "mcp__claude_ai_Linear__unshare_*", "mcp__claude_ai_Linear__update_*",
-      "mcp__claude_ai_Linear__merge_*", "mcp__claude_ai_Linear__submit_*", "mcp__claude_ai_Linear__resolve_diff_thread",
-      "mcp__claude_ai_Linear__retire_*", "mcp__claude_ai_Linear__restore_*", "mcp__claude_ai_Linear__prepare_*"
-    ],
-    "team": {
-      "key": "<team key>",
-      "values": ["<team name>"],
-      "createFields": ["team", "addTeams", "setTeams", "leadTeam"],
-      "keyFields": ["id", "issueId", "issue"]
-    }
+    "provider": "linear",
+    "workspace": { "expect": "<workspace URL>" },
+    "team": { "key": "<team key>", "values": ["<team name>"] }
   }
 }
 ```
@@ -99,19 +76,14 @@ GitHub Issues writes no key, and neither does none.
   a write compares it as exact text.
 - `<team key>` is the prefix of the team's issues, such as `ABC` in `ABC-123`.
   `<team name>` is the name Linear shows, with its case and spaces.
-- A tool that matches no pattern in `writeTools` passes unchecked, so match the patterns to the server name the project's connection shows,
-  and the names in `readTools` with them. The block above holds the four known spellings,
-  and a connection under another name must be added by hand.
-- The guard reads only the fields listed, so keep both field lists whole. `createFields` lists the Linear inputs that put a write in a team.
-  `keyFields` lists the single-string inputs that name the issue a write lands on.
-  A relation such as `blocks`, `parentId`, or `duplicateOf` may cross teams, so it stays out.
-- `id` is read on every write tool, which has a limit: a non-issue whose name looks like an issue key, such as a label `Sev-1`,
-  is refused, and the agent retries with its UUID.
+- `"provider": "linear"` holds the tools and fields, so write none of them:
+  `readTools`, `writeTools`, `field`, `createFields`, and `keyFields` all come from it.
+  A connection under a server name the plugin does not know goes in `"servers": ["<name>"]`, when the Human names one.
 
 Only when the Human names a project, add this group to `tracker`:
 
 ```json
-{ "project": { "values": ["<project name>"], "field": "project" } }
+{ "project": { "values": ["<project name>"] } }
 ```
 
 Writing the key also sets `requires.aidrian`, since an older plugin rejects the key.

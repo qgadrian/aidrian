@@ -12,6 +12,7 @@ import path from 'node:path';
 import { loadConfig } from '../lib/config.mjs';
 import { snapshotPath } from '../lib/gate-snapshot.mjs';
 import { runHook } from '../lib/hook-io.mjs';
+import { detectHost, toolNames } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { readTrackerValue, unlistedTool } from '../lib/tracker-guard.mjs';
 
@@ -21,14 +22,14 @@ await runHook(async (input) => {
   const { config } = loadConfig(project);
   const { tracker } = config;
   if (tracker.enabled !== true) return;
-  if (!tracker.readTools.includes(input.tool_name)) {
+  if (!toolNames(input).some((name) => tracker.readTools.includes(name))) {
     // Loaded only for a tool it notes, so the other MCP calls pay nothing for it.
-    if (unlistedTool(tracker, input.tool_name)) (await import('../lib/lesson-signals.mjs')).noteUnlistedTool(input, project, config);
+    if (unlistedTool(tracker, input.tool_name, input.raw_tool_name)) (await import('../lib/lesson-signals.mjs')).noteUnlistedTool(input, project, config);
     return;
   }
   const file = snapshotPath(input.session_id)?.replace(/\.json$/u, '.tracker.json');
   if (!file) return;
-  const value = readTrackerValue(input.tool_response, tracker.workspace.field);
+  const value = readTrackerValue(input.tool_response, tracker.workspace.field, detectHost({ input }));
   mkdirSync(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.tmp`;
   writeFileSync(temporary, `${JSON.stringify({ value, unreadable: value === null, tool: input.tool_name, at: new Date().toISOString() })}\n`);

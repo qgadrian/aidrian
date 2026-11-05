@@ -1,0 +1,36 @@
+{
+  "live": false,
+  "provenance": "NOT LIVE: no hook has received these payloads, because a hook on Codex runs only after a person trusts it. The hook fields and the tool names come from the source of Codex rust-v0.166.0: codex-rs/hooks/src/schema.rs (PreToolUseCommandInput, PostToolUseCommandInput) and codex-rs/core/src/tools/handlers/mcp.rs (hook_tool_name, post_tool_use_payload). The tool_response body is what a live `codex exec --json` on 0.166.0 returned for linear.get_workspace on 2026-11-05, with the values replaced. Its event named server codex_apps and tool linear.get_workspace, which is the route these payloads stand for.",
+  "env": { "PLUGIN_ROOT": "/plugins/cache/aidrian-harness/aidrian/0.0.0", "CLAUDE_PLUGIN_ROOT": "/plugins/cache/aidrian-harness/aidrian/0.0.0" },
+  "workspace": "https://linear.app/acme",
+  "standard": { "read": "mcp__codex_apps_linear__get_workspace", "write": "mcp__codex_apps_linear__save_issue" },
+  "native": { "read": "mcp__codex_apps__linear_get_workspace" },
+  "post": {
+    "session_id": "01a1f000-0000-7000-8000-000000000001",
+    "turn_id": "01a1f000-0000-7000-8000-000000000002",
+    "transcript_path": null,
+    "cwd": "<cwd>",
+    "hook_event_name": "PostToolUse",
+    "model": "gpt-5.5",
+    "permission_mode": "default",
+    "tool_name": "mcp__codex_apps__linear__get_workspace",
+    "tool_input": {},
+    "tool_response": {
+      "content": [{ "type": "text", "text": "{\"id\":\"0153df69-0000-4000-8000-000000000000\",\"name\":\"Acme\",\"url\":\"https://linear.app/acme\"}" }],
+      "_meta": { "io.modelcontextprotocol/serverInfo": {} }
+    },
+    "tool_use_id": "call_read"
+  },
+  "pre": {
+    "session_id": "01a1f000-0000-7000-8000-000000000001",
+    "turn_id": "01a1f000-0000-7000-8000-000000000003",
+    "transcript_path": null,
+    "cwd": "<cwd>",
+    "hook_event_name": "PreToolUse",
+    "model": "gpt-5.5",
+    "permission_mode": "default",
+    "tool_name": "mcp__codex_apps__linear__save_issue",
+    "tool_input": { "team": "Notes", "title": "A title" },
+    "tool_use_id": "call_write"
+  }
+}

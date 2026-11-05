@@ -1,43 +1,54 @@
 {
   "version": 1,
-  "git": { "mainCheckout": { "guard": true } },
-  "github": {
-    "requiredSections": ["Summary", "Tests run"],
-    "pullRequest": {
-      "sections": ["Summary", "Risk", "Tests run", "Deferred to issues"],
-      "issueKey": "NOTES-\\d+",
-      "deferrals": { "section": "Deferred to issues", "field": "defer_reason", "reasons": ["needs_owner_decision", "user_chose"], "neverValid": ["out of scope"] }
-    },
-    "reviewGate": { "enabled": true, "checklist": "docs/knowledge/engineering/testing.md" }
+  "git": {
+    "mainCheckout": {
+      "guard": true
+    }
   },
-  "terms": { "file": ".aidrian/terms.json" },
+  "github": {
+    "requiredSections": [
+      "Summary",
+      "Tests run"
+    ],
+    "pullRequest": {
+      "sections": [
+        "Summary",
+        "Risk",
+        "Tests run",
+        "Deferred to issues"
+      ],
+      "issueKey": "NOTES-\\d+",
+      "deferrals": {
+        "section": "Deferred to issues",
+        "field": "defer_reason",
+        "reasons": [
+          "needs_owner_decision",
+          "user_chose"
+        ],
+        "neverValid": [
+          "out of scope"
+        ]
+      }
+    },
+    "reviewGate": {
+      "enabled": true,
+      "checklist": "docs/knowledge/engineering/testing.md"
+    }
+  },
+  "terms": {
+    "file": ".aidrian/terms.json"
+  },
   "tracker": {
     "enabled": true,
-    "workspace": { "expect": "https://linear.app/acme", "field": "url" },
-    "readTools": ["mcp__plugin_linear_linear__get_workspace", "mcp__linear__get_workspace", "mcp__linear-server__get_workspace", "mcp__claude_ai_Linear__get_workspace"],
-    "writeTools": [
-      "mcp__plugin_linear_linear__save_*", "mcp__plugin_linear_linear__create_*", "mcp__plugin_linear_linear__delete_*",
-      "mcp__plugin_linear_linear__share_*", "mcp__plugin_linear_linear__unshare_*", "mcp__plugin_linear_linear__update_*",
-      "mcp__plugin_linear_linear__merge_*", "mcp__plugin_linear_linear__submit_*", "mcp__plugin_linear_linear__resolve_diff_thread",
-      "mcp__plugin_linear_linear__retire_*", "mcp__plugin_linear_linear__restore_*", "mcp__plugin_linear_linear__prepare_*",
-      "mcp__linear__save_*", "mcp__linear__create_*", "mcp__linear__delete_*",
-      "mcp__linear__share_*", "mcp__linear__unshare_*", "mcp__linear__update_*",
-      "mcp__linear__merge_*", "mcp__linear__submit_*", "mcp__linear__resolve_diff_thread",
-      "mcp__linear__retire_*", "mcp__linear__restore_*", "mcp__linear__prepare_*",
-      "mcp__linear-server__save_*", "mcp__linear-server__create_*", "mcp__linear-server__delete_*",
-      "mcp__linear-server__share_*", "mcp__linear-server__unshare_*", "mcp__linear-server__update_*",
-      "mcp__linear-server__merge_*", "mcp__linear-server__submit_*", "mcp__linear-server__resolve_diff_thread",
-      "mcp__linear-server__retire_*", "mcp__linear-server__restore_*", "mcp__linear-server__prepare_*",
-      "mcp__claude_ai_Linear__save_*", "mcp__claude_ai_Linear__create_*", "mcp__claude_ai_Linear__delete_*",
-      "mcp__claude_ai_Linear__share_*", "mcp__claude_ai_Linear__unshare_*", "mcp__claude_ai_Linear__update_*",
-      "mcp__claude_ai_Linear__merge_*", "mcp__claude_ai_Linear__submit_*", "mcp__claude_ai_Linear__resolve_diff_thread",
-      "mcp__claude_ai_Linear__retire_*", "mcp__claude_ai_Linear__restore_*", "mcp__claude_ai_Linear__prepare_*"
-    ],
+    "provider": "linear",
+    "workspace": {
+      "expect": "https://linear.app/acme"
+    },
     "team": {
       "key": "NOTES",
-      "values": ["Notes"],
-      "createFields": ["team", "addTeams", "setTeams", "leadTeam"],
-      "keyFields": ["id", "issueId", "issue"]
+      "values": [
+        "Notes"
+      ]
     }
   }
 }

@@ -6,40 +6,21 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { nameMatches } from './agent-gates.mjs';
-import { isObject } from './fs.mjs';
+import { UNKNOWN_HOST } from './hosts/index.mjs';
 
 // An issue key, <KEY>-<n>. The prefix follows config.mjs `teamKey`: no hyphen and no whitespace.
 const ISSUE_KEY = /^([^\s-]+)-\d+$/u;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
-// The value of `field` in a tool's `tool_response`, or null when it gives none, which is an unreadable read. The response
-// is an object, a JSON string, a content-block array, or `{content: [...]}`, as Codex sends it. The field of an object wins
-// over its blocks; otherwise the first text block holding JSON is the one read.
-export function readTrackerValue(response, field) {
-  const parsed = typeof response === 'string' ? parseJson(response) : response;
-  const direct = isObject(parsed) ? text(parsed[field]) : null;
-  if (direct !== null) return direct;
-  const held = firstJsonBlock(Array.isArray(parsed) ? parsed : parsed?.content);
-  return isObject(held) ? text(held[field]) : null;
-}
-
-function firstJsonBlock(blocks) {
-  if (!Array.isArray(blocks)) return undefined;
-  for (const block of blocks) {
-    if (isObject(block) && block.type === 'text' && typeof block.text === 'string') {
-      const json = parseJson(block.text);
-      if (json !== undefined) return json;
-    }
+// The value of `field` in a tool's `tool_response`, or null when it gives none, which is an unreadable read. `host` says
+// where its shape holds that value (lib/hosts/): its adapter lists the objects, the most direct first, and the first that
+// has the field answers. An unknown host, or none given, tries every adapter's way.
+export function readTrackerValue(response, field, host = UNKNOWN_HOST) {
+  for (const held of host.toolResponse(response)) {
+    const value = text(held[field]);
+    if (value !== null) return value;
   }
-  return undefined;
-}
-
-function parseJson(body) {
-  try {
-    return JSON.parse(body);
-  } catch {
-    return undefined;
-  }
+  return null;
 }
 
 const text = (value) => (typeof value === 'string' && value.trim() !== '' ? value : null);
@@ -50,10 +31,14 @@ const text = (value) => (typeof value === 'string' && value.trim() !== '' ? valu
 // a write on the server its read ran on, since two servers can be connected to different workspaces. A caller whose
 // session can hold no record passes `skipMissingRecord`. A refusal with `routine: true` is the step every writing session
 // takes, which alone says nothing about the session: the caller counts it only when the session ends with no read recorded.
-export function judgeTrackerWrite({ tracker, names }, tool, input, record, { skipMissingRecord = false } = {}) {
+// `rawTool` is what the host sent when it differs from `tool`, since a pattern may name either (lib/hosts/index.mjs toolNames),
+// and `host` names the read a refusal asks for as its model sees that tool.
+export function judgeTrackerWrite({ tracker, names }, tool, input, record, { skipMissingRecord = false, rawTool, host = UNKNOWN_HOST } = {}) {
   if (tracker?.enabled !== true || typeof tool !== 'string') return null;
-  if (!tracker.writeTools.some((pattern) => nameMatches(pattern, tool))) return null;
-  return workspaceRefusal(tracker, tool, record, names.human, skipMissingRecord) ?? teamRefusal(tracker.team, input, names.human) ?? projectRefusal(tracker.project, input, names.human);
+  const called = rawTool ? [tool, rawTool] : [tool];
+  if (!tracker.writeTools.some((pattern) => called.some((name) => nameMatches(pattern, name)))) return null;
+  const workspace = tracker.workspaceInput ? inputWorkspaceRefusal(tracker, input, names.human) : workspaceRefusal(tracker, tool, record, names.human, skipMissingRecord, host);
+  return workspace ?? teamRefusal(tracker, input, names.human) ?? projectRefusal(tracker.project, input, names.human);
 }
 
 // The `mcp__<server>__` that starts a tool's name, or null when it has none. The server ends at the first double
@@ -61,22 +46,26 @@ export function judgeTrackerWrite({ tracker, names }, tool, input, record, { ski
 // ones. A server whose own name holds a double underscore reads as the part before it.
 export const serverPrefix = (tool) => (typeof tool === 'string' ? (/^mcp__.+?__/u.exec(tool)?.[0] ?? null) : null);
 
+// The server of a name from the key, which a project may have written as its host sends it. config.mjs reads a key by this too,
+// so its check and the guard agree on which read clears which write.
+export const keyServer = (name) => serverPrefix(UNKNOWN_HOST.toolName(name));
+
 // The refusal of a write on `server` with no read to count. Only one that a listed read clears is routine: the two cases no
 // read clears, which config.mjs `checkTracker` reports, are a key to correct, and repeat until someone does.
-function noReadRefusal(readTools, server, human) {
+function noReadRefusal(readTools, server, human, host) {
   const why = 'this session has not read the connected workspace';
   if (server === null) return refused(why, `tracker.writeTools names this tool with no server, so no read can clear it. Ask ${human} to correct that entry, and do not edit the key`);
-  const reads = readTools.filter((name) => serverPrefix(name) === server);
+  const reads = readTools.filter((name) => keyServer(name) === server).map((name) => host.nativeToolName(UNKNOWN_HOST.toolName(name)));
   if (reads.length === 0) return refused(why, `Ask ${human} to add a read tool on this server to tracker.readTools, and do not edit the key`);
   return { ...refused(why, `Call ${reads.join(' or ')}, then write again`), routine: true };
 }
 
-function workspaceRefusal({ workspace, readTools }, tool, record, human, skipMissingRecord) {
+function workspaceRefusal({ workspace, readTools }, tool, record, human, skipMissingRecord, host) {
   if (!workspace) return null;
   const server = serverPrefix(tool);
   if (server === null || serverPrefix(record?.tool) !== server) {
     if (skipMissingRecord) return null;
-    return noReadRefusal(readTools, server, human);
+    return noReadRefusal(readTools, server, human, host);
   }
   const value = record.unreadable === true ? null : text(record.value);
   if (value === null) {
@@ -84,6 +73,16 @@ function workspaceRefusal({ workspace, readTools }, tool, record, human, skipMis
   }
   if (withoutTrailingSlash(value) === withoutTrailingSlash(workspace.expect)) return null;
   return refused(`the connected workspace is ${JSON.stringify(value)}, and tracker.workspace.expect is ${JSON.stringify(workspace.expect)}`, `Ask ${human} whether tracker.workspace.expect is wrong or the wrong workspace is connected, and do not edit the key`);
+}
+
+// The same rule for a tracker whose every write names its workspace (`tracker.workspaceInput`), judged on the call, so no read is
+// asked for. A write that names none cannot be told apart from one to the wrong workspace, so it is refused too.
+function inputWorkspaceRefusal({ workspace, workspaceInput }, input, human) {
+  const value = text(input?.[workspaceInput]);
+  const expect = JSON.stringify(workspace.expect);
+  if (value === null) return refused(`it names no ${workspaceInput}`, `Pass ${workspaceInput} ${expect}, or tell ${human} this write belongs elsewhere, and do not edit the key`);
+  if (withoutTrailingSlash(value) === withoutTrailingSlash(workspace.expect)) return null;
+  return refused(`${workspaceInput} is ${JSON.stringify(value)}, and tracker.workspace.expect is ${expect}`, `Write to that workspace, or ask ${human} whether tracker.workspace.expect is wrong, and do not edit the key`);
 }
 
 // The file a routine refusal leaves for the end of its session, or null when the session id cannot name one. A refusal
@@ -101,16 +100,21 @@ const READ_NAME = /^(?:get|list|search|read|find|fetch|query|view|show|describe|
 // Whether `tool` ran on a server that `tracker.readTools` or `tracker.writeTools` names with neither list naming it, and
 // with a name that does not say it only reads: the guard let it run unjudged, and it may be a write the lists have not
 // caught up with.
-export function unlistedTool({ readTools, writeTools }, tool) {
+export function unlistedTool({ readTools, writeTools, readVerbs = [] }, tool, rawTool) {
   const server = serverPrefix(tool);
-  if (server === null || readTools.includes(tool) || writeTools.some((pattern) => nameMatches(pattern, tool))) return false;
-  if (READ_NAME.test(tool.slice(server.length))) return false;
-  return [...readTools, ...writeTools].some((name) => serverPrefix(name) === server);
+  const called = rawTool ? [tool, rawTool] : [tool];
+  if (server === null || called.some((name) => readTools.includes(name) || writeTools.some((pattern) => nameMatches(pattern, name)))) return false;
+  const short = tool.slice(server.length);
+  if (READ_NAME.test(short) || readVerbs.some((pattern) => nameMatches(pattern, short))) return false;
+  return [...readTools, ...writeTools].some((name) => keyServer(name.replace(/\*$/u, '')) === server);
 }
 
 const withoutTrailingSlash = (value) => (value.endsWith('/') ? value.slice(0, -1) : value);
 
-function teamRefusal(team, input, human) {
+// What a refused issue key tells the agent to do when the write is on something else (`tracker.idHint`, from the adapter).
+const ID_HINT = "pass the item's UUID when it is not an issue";
+
+function teamRefusal({ team, idHint = ID_HINT }, input, human) {
   if (!team) return null;
   for (const field of team.createFields) {
     const refusal = listRefusal({ field, value: input?.[field], allowed: team.values, key: 'tracker.team.values', human, teamKey: team.key });
@@ -120,7 +124,7 @@ function teamRefusal(team, input, human) {
     const value = input?.[field];
     const prefix = typeof value === 'string' ? ISSUE_KEY.exec(value)?.[1] : undefined;
     if (prefix !== undefined && !sameKey(prefix, team.key)) {
-      return refused(`${field} is ${JSON.stringify(value)}, whose prefix is not tracker.team.key ${JSON.stringify(team.key)}`, `Write to an issue of that team, pass the item's UUID when it is not an issue, or tell ${human} this write belongs elsewhere, and do not edit the key`);
+      return refused(`${field} is ${JSON.stringify(value)}, whose prefix is not tracker.team.key ${JSON.stringify(team.key)}`, `Write to an issue of that team, ${idHint}, or tell ${human} this write belongs elsewhere, and do not edit the key`);
     }
   }
   return null;

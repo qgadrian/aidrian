@@ -2,14 +2,13 @@
 // config.mjs checks the patterns with patternProblem; scripts/hook-agent-gates.mjs asks gateDenial before every tool
 // call. docs/config.md#agents gives the rules.
 
+import { agentAliases, toolNames } from './hosts/index.mjs';
 import { commandLines, inlineShellCommand, lexInputs, readGit, readInvocation, readsShellInput, SUBSTITUTION_DEPTH_LIMIT } from './shell-lex.mjs';
 
 // The entry that applies to every agent, and the one for the main session, which has no `agent_id`. Both select gates;
 // neither is an agent a dispatch can name (config.mjs `agentName`).
 export const ALL = '*';
 export const MAIN = 'main';
-// Codex installs this plugin's agents as roles named `aidrian-<agent>`; Claude Code names them `aidrian:<agent>`.
-const CODEX_PREFIX = 'aidrian-';
 
 const AGENT_NAME = /^[\w.:-]+$/u;
 const TOOL_NAME = /^[\w.:-]*$/u;
@@ -47,30 +46,27 @@ export function patternProblem(pattern) {
 export function gateDenial(input, { agents, names: { human } }, paths, { started = false } = {}) {
   const tool = input.tool_name;
   if (typeof tool !== 'string' || tool === '') return null;
+  const called = toolNames(input);
   const caller = callerNames(input);
   const entries = Object.entries(agents).filter(([name]) => caller.has(name));
   const where = { human, paths, started };
   for (const [name, { deny = [] }] of entries) {
-    const hit = deny.find((pattern) => denies(pattern, tool, input.tool_input));
+    const hit = deny.find((pattern) => called.some((name) => denies(pattern, name, input.tool_input)));
     if (hit) return blocked(input, `agents.${name}.deny has "${hit}"`, where);
   }
   for (const [name, { allow }] of entries) {
-    if (allow && !allows(allow, tool, input.tool_input)) return blocked(input, `agents.${name}.allow does not list it`, where);
+    if (allow && !called.some((name) => allows(allow, name, input.tool_input))) return blocked(input, `agents.${name}.allow does not list it`, where);
   }
   return null;
 }
 
-// The `agents` keys that name the caller. A plugin agent answers to its short name too: `aidrian:explorer` and Codex's
-// `aidrian-explorer` are both `explorer`.
+// The `agents` keys that name the caller. A plugin agent answers to its short name too, in each host's form of it
+// (lib/hosts/): `explorer` for what one host calls `aidrian:explorer` and another `aidrian-explorer`.
 function callerNames(input) {
   const names = new Set([ALL]);
   if (typeof input.agent_id !== 'string' || input.agent_id === '') names.add(MAIN);
   const type = input.agent_type;
-  if (typeof type === 'string' && type !== '') {
-    const short = type.slice(type.lastIndexOf(':') + 1);
-    names.add(type).add(short);
-    if (short.startsWith(CODEX_PREFIX)) names.add(short.slice(CODEX_PREFIX.length));
-  }
+  if (typeof type === 'string' && type !== '') for (const name of agentAliases(type)) names.add(name);
   return names;
 }
 

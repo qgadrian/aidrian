@@ -21,6 +21,8 @@ plugins/aidrian/
 ├── hooks/hooks.json                the plugin's hooks, for both hosts
 ├── scripts/hook-*.mjs              the programs those hooks run
 ├── lib/                            the code behind the commands and hooks
+│   ├── hosts/                      one adapter per host and their registry; what shared code calls instead of a host's names
+│   ├── trackers/                   one adapter per tracker and their registry; what expands the short tracker key
 │   └── rules/                      the rules the Bash and write hooks run; rules/github/ holds those that read only gh
 └── codex/
     ├── agents/aidrian-*.toml       generated Codex roles; never edit
@@ -44,6 +46,8 @@ test/                               node --test suites
   A test holds the rule for the plugin's callers, and the `skill-writer` checklist for new skills.
 - **Hooks**: `hooks/hooks.json` names the events. Each event runs one `scripts/hook-*.mjs`.
   The Bash and write rules live in `lib/rules/`. [hooks.md](hooks.md) describes each one.
+- **Hosts and trackers**: hook payloads pass through `lib/hosts/` on their way in, so the hooks read one standard, and config.json's short `tracker` key
+  expands through `lib/trackers/`. [Adding a host or a tracker](providers/adding-a-host.md) has the files.
 - **Commands**: `bin/aidrian` and `bin/aidrian-knowledge` are shell scripts.
   They run `lib/cli.mjs` and `lib/knowledge-cli.mjs` with `node`.
 - **Codex agents**: Codex plugins cannot carry agents, so `codex/install-agents.mjs` copies the generated roles into Codex.

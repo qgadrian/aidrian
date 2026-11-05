@@ -21,12 +21,13 @@ const reply = (...blocks) => ({ type: 'assistant', isSidechain: false, message: 
 const text = (t) => ({ type: 'text', text: t });
 const jsonl = (...entries) => entries.map((e) => JSON.stringify(e)).join('\n') + '\n';
 
-function run(transcript, fields = {}) {
+function run(transcript, fields = {}, env = {}) {
   const file = path.join(PROJECT, `t-${Math.random().toString(36).slice(2)}.jsonl`);
   writeFileSync(file, transcript);
   return spawnSync(process.execPath, [HOOK], {
     input: JSON.stringify({ hook_event_name: 'UserPromptSubmit', transcript_path: file, cwd: PROJECT, prompt: 'next', ...fields }),
     encoding: 'utf8',
+    env: { ...process.env, CLAUDECODE: '1', ...env },
   });
 }
 

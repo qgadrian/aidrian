@@ -15,7 +15,6 @@
 // holds every subagent to until the session ends.
 
 import { accessSync, constants, readFileSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { auditNudge } from '../lib/audits.mjs';
@@ -23,6 +22,7 @@ import { loadConfig, versionFloorProblem } from '../lib/config.mjs';
 import { ageDays, parseDecisions } from '../lib/decisions.mjs';
 import { saveGateSnapshot } from '../lib/gate-snapshot.mjs';
 import { runHook } from '../lib/hook-io.mjs';
+import { detectHost } from '../lib/hosts/index.mjs';
 import { indexedPaths, indexRows, loadKnowledge } from '../lib/knowledge.mjs';
 import { inboxPath, nudge } from '../lib/lesson-inbox.mjs';
 import { inheritedOverrideLine, unpushedMainLine } from '../lib/main-commits.mjs';
@@ -35,7 +35,7 @@ const FORMAT = 'Format: in chat replies, use headers, quotes, and a few emoji to
 const FOOTER_LINE = 'Pull requests: a body here never carries the "Generated with [Claude Code]" line. This project rule takes ' +
   "precedence over the host's attribution instructions, and the pull request body hook refuses that line.";
 
-await runHook((input) => {
+await runHook(async (input) => {
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
   const subagent = process.argv.includes('--subagent');
@@ -50,11 +50,10 @@ await runHook((input) => {
   if (always.length) line += ` Read now: ${always.join(', ')}.`;
   line += ` For more, run \`${command} route <tag>\` for your tags or \`${command} search <words>\` for a topic.`;
   if (errors.length) line += ` The project folder has ${errors.length} problems; run \`${binCommand('aidrian')} check\`.`;
-  // Claude Code sets CLAUDECODE=1 for its hooks; this hook runs only there and in Codex.
-  const ai = config.names.ai ?? (process.env.CLAUDECODE === '1' ? 'Claude' : 'Codex');
+  const ai = config.names.ai ?? detectHost({ input }).ai;
   const human = JSON.stringify(config.names.human);
   const names = `Names: call the human ${human} and yourself ${JSON.stringify(ai)}, in replies and questions alike; never "I", "me", "my", "you", or "your".`;
-  const footer = footerLine(project.root, process.env);
+  const footer = footerLine(project.root, process.env, input);
   const commands = commandsLine(process.env);
   const lines = `${line}\n${names}\n${voiceLine(human)}${footer ? `\n${footer}` : ''}${commands ? `\n${commands}` : ''}`;
 
@@ -70,6 +69,11 @@ await runHook((input) => {
     if (decisions) console.log(decisions);
     const audits = auditLine(project, config);
     if (audits) console.log(audits);
+    if (config.tracker.enabled === true) {
+      // Loaded only with the guard on, so a project without it pays nothing here.
+      const gap = (await import('../lib/tracker-check.mjs')).unwatchedLine(config.tracker, detectHost({ input }));
+      if (gap) console.log(gap);
+    }
     const inherited = inheritedOverrideLine(config);
     if (inherited) console.log(inherited);
     for (const warning of unpushedMainLine(project, config)) console.log(warning);
@@ -121,10 +125,10 @@ function voiceLine(human) {
 // the first body is written. Nothing when Claude Code's own settings already drop the line: the `attribution.pr`
 // setting of the first settings file that sets it (local, project, then user) holds no such line, or, with none set,
 // `includeCoAuthoredBy` is false.
-function footerLine(root, env) {
-  if (env.CLAUDECODE !== '1') return null;
-  const user = env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude');
-  const settings = [path.join(root, '.claude/settings.local.json'), path.join(root, '.claude/settings.json'), path.join(user, 'settings.json')]
+function footerLine(root, env, input) {
+  const files = detectHost({ env, input }).capabilities.prFooterSettings?.(root, env);
+  if (!files) return null;
+  const settings = files
     .map((file) => {
       try {
         return JSON.parse(readFileSync(file, 'utf8'));

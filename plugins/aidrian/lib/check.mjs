@@ -7,11 +7,12 @@ import { parseArgs } from 'node:util';
 
 import { commandConfig, VERSION, versionFloorProblem } from './config.mjs';
 import { place, scanDecisions } from './decisions-cli.mjs';
-import { decisionWarnings, escalateDocWarnings } from './decisions.mjs';
-import { isWithin, linksOutside } from './fs.mjs';
+import { decisionWarnings, escalateDocWarnings, lowerMode } from './decisions.mjs';
+import { isWithin, linksOutside, readJson } from './fs.mjs';
 import { checkoutRoots, isIgnored, runGit } from './git.mjs';
 import { checkBudgets, indexRows, loadKnowledge, tagWarnings } from './knowledge.mjs';
 import { findProject, noProjectMessage, projectAt, stateDir, worktreesDir } from './project.mjs';
+import { ROUTED_DOMAINS } from './quorum.mjs';
 import { loadTerms } from './terms.mjs';
 
 const OPTIONS = { project: { type: 'string' } };
@@ -23,6 +24,25 @@ function untrackedDocs(project, config) {
   if (!entries.length) return [];
   const listed = runGit(['ls-files', '-z'], project.root, { maxBuffer: 64 * 1024 * 1024 });
   return listed.status === 0 ? escalateDocWarnings(entries, listed.stdout.split('\0').filter(Boolean)) : [];
+}
+
+// The warnings for `quorum.product` settings that have no effect. "Set" reads the file itself, since a key set to its
+// default looks unset once merged. As decisionWarnings does, this reads the working copy, the local file's `decisions` over it.
+function quorumProductWarnings(project, { quorum: { product }, decisions }) {
+  const written = readJson(project.root, project.paths.config, [])?.quorum?.product ?? {};
+  const warnings = [];
+  const asks = (domain) => {
+    const own = decisions.domains[domain];
+    return lowerMode(own === undefined || own === 'inherit' ? decisions.mode : own, decisions.maxMode) === 'ask';
+  };
+  if (product.approval === 'review-later' && ROUTED_DOMAINS.every(asks)) {
+    warnings.push('quorum.product.approval: "review-later" can never apply while the product and ux domains both resolve to "ask"; commit decisions.maxMode "decide-reversible" with a mode, domains.product, or domains.ux of the same, or set approval to "first"');
+  }
+  if (product.autoStart) return warnings;
+  for (const key of ['approval', 'maxAutoRuns']) {
+    if (Object.hasOwn(written, key)) warnings.push(`quorum.product.${key} is set, but quorum.product.autoStart is off, so it has no effect`);
+  }
+  return warnings;
 }
 
 export const commands = {
@@ -50,7 +70,7 @@ export const commands = {
       const tags = tagWarnings(buckets);
       // Only a project with no errors: an index problem is an error already, and scanDecisions stops on a bad config.
       const markers = errors.length ? [] : scanDecisions(project).problems.map((each) => `${place(each)}: ${each.problem}`);
-      const decisions = [...decisionWarnings(config), ...untrackedDocs(project, config), ...markers];
+      const decisions = [...decisionWarnings(config), ...quorumProductWarnings(project, config), ...untrackedDocs(project, config), ...markers];
       const shown = [...budgets.warnings, ...warnings, ...tags.warnings, ...decisions].map((warning) => `warning: ${warning}`);
       if (shown.length || tags.notes.length) console.error([...shown, ...tags.notes.map((note) => `note: ${note}`)].join('\n'));
       if (errors.length) {

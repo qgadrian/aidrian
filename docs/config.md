@@ -94,6 +94,16 @@ In a group such as `github`, set only the keys you change; the others keep their
       "odd": { "provider": "agent", "agent": "code-reviewer" },
       "even": { "provider": "codex", "agent": "code-reviewer" },
       "swap": true
+    },
+    "product": {
+      "owner": { "agent": "product-manager" },
+      "witness": { "agent": "ux-researcher" },
+      "ux": { "agent": "ux-specialist" },
+      "engineer": { "agent": "architect" },
+      "maxLoops": 2,
+      "autoStart": false,
+      "approval": "first",
+      "maxAutoRuns": 3
     }
   },
   "decisions": {
@@ -270,7 +280,7 @@ With `--json`, `reason` names the first that fails and `why` says it in a senten
 | --- | --- |
 | `team` | `github.autoMerge.allow` is true on both the repository's default branch and the pull request's base. Both are read from GitHub as each branch commits them now, never from the checkout. So a branch cannot raise it, and the pull request that turns it on does not merge itself. |
 | `checks` | The default branch names `github.requiredChecks`: a named check that has not reported is pending, so a draft's partial set of checks cannot read as ready. This checkout's `requiredChecks`, `conditionalChecks`, and `ignoreCancelledChecks` equal the default branch's as sets, committed or not: `aidrian pr checks` reads this checkout, so a branch cannot relax the lists, and a branch that changes workflows stays off (`paths`). This checkout's `state.dir` equals the default branch's, since the review record is read from it. A working-copy config that cannot be read, or has errors, is off too. |
-| `paths` | gh lists every changed file (`files` matches `changedFiles`) with its `changeType`, none is `RENAMED`, since gh does not give the old path, and none is on this fixed list, in any case: `AGENTS.md`, `CLAUDE.md`, `SKILL.md`, `CODEOWNERS`, `.aidrian.json`, and `.aidrian.local.json` at any depth, and `.claude`, `.codex`, `.aidrian`, `.github/workflows`, or `.github/actions` at the repository root, or anything under them. These instruct AI sessions or decide CI, and a review of the change may not read them as behavior. |
+| `paths` | gh lists every changed file (`files` matches `changedFiles`) with its `changeType`, none is `RENAMED`, since gh does not give the old path, and none is on this fixed list, in any case: `AGENTS.md`, `CLAUDE.md`, `SKILL.md`, `CODEOWNERS`, `.aidrian.json`, and `.aidrian.local.json` at any depth, and `.claude`, `.codex`, `.aidrian`, `.github/workflows`, or `.github/actions` at the repository root or the project root, or anything under them. These instruct AI sessions or decide CI, and a review of the change may not read them as behavior. The plugin's own code that decides auto-merge is on the list too, so the gate never approves a change to itself: under `plugins/aidrian/`, `bin/`, `lib/cli.mjs`, `pr.mjs`, `pr-auto-merge.mjs`, `pr-checks.mjs`, `project.mjs`, `config.mjs`, `fs.mjs`, `git.mjs`, `gh.mjs`, `review-gate.mjs`, and `shell-lex.mjs`, `lib/rules/`, `lib/review/`, `scripts/hook-*`, and `hooks/`. For a project below the repository root, the setting is read from its own folder, and no file may be outside that folder, since [its review does not cover those](review.md#paths). |
 | `local` | This machine's setting is on, or it has none and the default branch's `github.autoMerge.default` is `"on"`. |
 | `author` | The pull request's author is the gh user. |
 | `outsider` | Every issue comment, review, and inline comment on the pull request has the author association `OWNER`, `MEMBER`, or `COLLABORATOR`, or is by the default branch's `github.reviewer` bot. Any other bot, such as a CI or preview bot that comments, counts as an outsider. |
@@ -738,16 +748,19 @@ A bad pattern is left out and the rest of its list still applies, so a bad `allo
 `quorum` sets who the `quorum` skill dispatches, and how far a plan run may go.
 Set only the keys you change; the defaults are the roles and caps the skill names.
 
-Two commands read the group, so the skill text never parses this file:
+Three commands read the group, so the skill text never parses this file:
 
 - `aidrian quorum check` reads `quorum.plan.maxObjections`: on an `open` plan ledger that carries `mode`, it exits 1
   when one adversary raised more objections than that. A `complete` ledger is held to the ceiling, 5, instead,
   so a cap lowered after a run finished never voids its ledger or the Human's answers.
 - `aidrian quorum roles plan` and `aidrian quorum roles decide` read the whole group, `maxObjections` included,
   and print that mode's roles, judge, and caps as one JSON line, which the coordinator follows. The decide caps are `3N + 2 + C` for each position count N
-  from 2 to 4, where C counts the first N positions whose runner is Codex: 9, 12, and 16 with the defaults. `aidrian quorum roles product` reads it too; a product run makes at most 10 dispatches, plus 6 per loop: 22 with the defaults.
+  from 2 to 4, where C counts the first N positions whose runner is Codex: 9, 12, and 16 with the defaults.
+  `aidrian quorum roles product` reads it too; a product run makes at most 10 dispatches, plus 6 per loop: 22 with the defaults.
+- `aidrian quorum route` reads `quorum.product.autoStart`, `approval`, and `maxAutoRuns` from the base branch:
+  [Automatic product quorums](#automatic-product-quorums).
 
-Both stop on an invalid config.json, as every `aidrian` command does: they exit 1 naming each bad key, and never run
+All three stop on an invalid config.json, as every `aidrian` command does: they exit 1 naming each bad key, and never run
 on defaults the project did not choose.
 
 | Key | Default | Meaning and range |
@@ -764,10 +777,13 @@ on defaults the project did not choose.
 | `quorum.decide.even.agent` | `"code-reviewer"` | Their agent on `"agent"`, and their fallback on `"codex"`. |
 | `quorum.decide.swap` | `true` | Whether a claim with an odd hash swaps the runners of positions A and B. |
 | `quorum.product.owner.agent` | `"product-manager"` | Interviews the end user, shapes options, and recommends one to the Human. `quorum.judge` does not apply to this mode. |
-| `quorum.product.witness.agent` | `"ux-researcher"` | Plays the end-user persona. |
+| `quorum.product.witness.agent` | `"ux-researcher"` | The agent that plays the end-user persona. It does not turn a persona on, or choose one: [who takes part](#who-plays-the-end-user). |
 | `quorum.product.ux.agent` | `"ux-specialist"` | Grills the options for what a user would hit. |
 | `quorum.product.engineer.agent` | `"architect"` | Grills the options for cost and risk. |
 | `quorum.product.maxLoops` | `2` | How many times a product run may go back after a walkthrough, a whole number from 1 to 5. |
+| `quorum.product.autoStart` | `false` | Whether a hard product call runs the quorum with no Human asking for it. A run the Human starts always asks; only a run the route started continues provisionally. |
+| `quorum.product.approval` | `"first"` | `"first"`: the Human approves, and work on that decision waits. `"review-later"`: work continues on the recommendation, recorded as provisional and reviewed in a batch. |
+| `quorum.product.maxAutoRuns` | `3` | The most automatic runs in one session, a whole number from 1 to 10. Beyond it, a hard call waits for the Human with no quorum. |
 
 - One `agent` field covers both cases: the role's agent when `provider` is `"agent"`, and the agent that takes over
   when `provider` is `"codex"` and Codex cannot run, the same brief in hand.
@@ -778,6 +794,80 @@ on defaults the project did not choose.
   Under 8, the default, rebuttals and the final ruling may not fit, and the objections they would answer escalate to the Human.
 - Every `agent` is an agent name, such as `code-reviewer` or a project's own agent; `"*"` and `"main"` name no one agent.
 - The number of decide positions is the question file's, 2 to 4, never a config value, so no option the Human gave is dropped.
+
+### Who plays the end user
+
+No key turns a persona on, and none names one. In a product run a persona takes part whenever the project has a usable one:
+each doc the knowledge index tags `personas`, other than `product-access` and any with an `aidrian lint personas` problem, is a candidate,
+and the run picks the one the decision changes most.
+With no candidate, no end user takes part, and the report warns about it. To add a persona, add its doc: see [Personas](personas.md).
+`aidrian-knowledge route personas` lists the docs tagged `personas` before a run starts.
+
+### Automatic product quorums
+
+`aidrian quorum route` says what happens to one product decision, so a session need not ask the Human to start a quorum on a hard call.
+It starts nothing itself: it prints the route, as [project-folder.md](project-folder.md#local-state) describes.
+It reads all three keys from the base branch's tip, as `resolve` reads `decisions`, so a branch cannot raise them.
+No readable base, git absent included, counts as off, and so does an error under `quorum.product` at the base.
+Only a `product` or `ux` call routes: under any other domain, `resolve`'s answer stands, as with `autoStart` off.
+
+The deciding agent answers five yes/no questions, each from the decision in front of it, as `--hard`, in this order:
+
+1. **Open options:** are there two or more options that differ in what a user gets, each still viable after reading the project's docs?
+2. **No written answer:** does no doc, decision record, or committed data favour one option, so that the pick rests on an inference?
+3. **Conflict:** do two written rules disagree, or do the docs and the code disagree on this behaviour?
+4. **Disagreement:** did a specialist, a reviewer, or `secondLook` object to the pick with a citation?
+5. **Reach:** does it change a step of a flow a persona doc describes, rather than only copy, layout, ordering, a default value, or naming?
+
+All five `no` is small and clear. Any `yes`, or a missing or unknown answer, makes the call hard.
+Questions 1 and 2 are read together: wording with one obvious option stays small.
+
+| `autoStart` | Call | `resolve` | `approval` | `route` | `wait` | What happens |
+| --- | --- | --- | --- | --- | --- | --- |
+| off | any | any | any | `as-today` | `true` under `ask` | `resolve`'s answer stands |
+| on | small, clear | `decide` | any | `agent` | `false` | The agent decides alone |
+| on | small, clear | `ask` | any | `human` | `true` | It asks, with no quorum, and an unattended run follows `unattended` |
+| on | hard | `decide` | `review-later` | `quorum` | `false` | The quorum runs, and work continues on its recommendation as provisional |
+| on | hard | `decide` | `first` | `quorum` | `true` | The quorum runs, then the Human approves |
+| on | hard | `ask` | any | `quorum` | `true` | The quorum runs, then the Human approves |
+| on | hard, at `maxAutoRuns` | any | any | `human` | `true` | It waits, with no quorum |
+
+`resolve` remains the one authority, and the stricter setting wins.
+So `autoStart` alone decides nothing while `decisions` resolves to `ask`, as it does by default:
+a small, clear call still goes to the Human, and a hard one runs the quorum and then waits.
+For this to change anything but who starts the quorum, a team commits `decide-reversible` for a small, clear decision to be the agent's alone,
+through `decisions.maxMode` with `decisions.mode` or `decisions.domains.product`.
+A call that is hard to undo, or of a class that must reach the Human, reaches the `ask` rows through `resolve`'s
+[rules](#decisions), so `approval` never lets it through.
+With `autoStart` on, the quorum route replaces `unattended`'s `safe-default` on a hard call, since it is the stricter path;
+`as-today` keeps `unattended` as ever.
+
+After a ruling, `aidrian quorum route --ledger` applies the same answer to the ruling's flipping facts.
+Under `review-later` and `decide`, work waits for the Human when the ruling escalates, when a fact could make the decision harder to undo,
+when a fact the repository can settle does not keep the winner once a read-only `explorer` dispatch settles it,
+or, on a ledger already provisional, when its marker was rejected, was settled, or is not on record.
+A run whose starting route had `resolve.authority` `ask` waits, whatever the Ruling's answers resolve to, and so does a run the Human started:
+`route --ledger`, `aidrian quorum provisional`, and `quorum check` on a provisional ledger read the ledger's `trigger`, and only `the route, with resolve's decide` continues.
+At or above `secondLook`'s `minSeverity`, or with an unknown severity, the writer refuses until the ledger's `second_look` holds `sign_off: approved` from the agent `secondLook` names.
+With `autoStart` on, a `ux` ruling of class `product-behaviour` continues where `domains.product` decides, whatever `domains.ux` says,
+since `resolve` judges that class under `product`.
+Every other flipping fact goes in the record for the batch review, and work continues. Under `first`, the Human sees them all before deciding.
+[decisions.md](../plugins/aidrian/skills/knowledge/references/decisions.md) holds the order: the check, the route, the settle step, the writer,
+the marker in the slice's commit, and a last `aidrian decisions list --added-since`, whose missing marker makes the decision wait.
+A continued ruling always gets a marker, even with `Rule changed: none`,
+so the pull request's Decisions section and the `decision-review` skill both show it, with its pull request number.
+
+Before turning `autoStart` on:
+
+- **Cost.** One run makes at most 22 dispatches with the default `maxLoops`, plus one read-only `explorer` dispatch for the settle step.
+  At the default `maxAutoRuns` an unsupervised session can spend 69 dispatches this way.
+- **Unreviewed choices.** `review-later` with auto-merge can ship a choice no person reviewed: the work continues on the recommendation,
+  and the pull request can merge before the batch review reaches it.
+- **Different winners.** Winners have varied between runs: three blind runs on one question chose two different winners.
+  A recommendation is the evidence weighed once, not a settled answer.
+
+`aidrian check` warns when `approval` is `"review-later"` and the product and ux domains both resolve to `ask`, since review later could then never apply,
+and when `approval` or `maxAutoRuns` is set while `autoStart` is off.
 
 ## Decisions
 
@@ -802,8 +892,9 @@ Case does not count, on any disk: two docs that differ only by case both ask, wh
 A symlink counts as both its own path and its target's, in `--doc` and in `escalateDocs`; a link whose target is outside the project asks.
 `aidrian decisions resolve --vocab` prints every class and reversibility question with its definition;
 `lib/decisions.json` is the one place the built-in ones live, and the base branch's [`decisions.classes`](#project-classes) adds the project's.
-The `quorum` skill's product mode runs `resolve` on its ruling and reports the answer, but always asks the Human, under `decide` too.
-The `persona-audit-triage` skill does the same for a held finding's product decision.
+The `quorum` skill's product mode runs `resolve` on its ruling and reports the answer, and asks the Human, under `decide` too,
+unless the route after the ruling lets work continue: [Automatic product quorums](#automatic-product-quorums).
+The `persona-audit-triage` skill runs `resolve` on a held finding's product decision, reports the answer, and always asks.
 
 The first rule that matches wins:
 

@@ -71,11 +71,19 @@ project a small knowledge bucket: a product-access doc and an issue tracker kept
 which `persona-audit-triage-no-tracker` leaves out. `test/audits.test.mjs` runs those scaffolds, without a
 model, to check they seed the run folder alone. A run's PATH can hold an installed plugin's `aidrian` before the
 branch's; the [start hook](hooks.md#start-lines) then names the branch's by its path, so the run exercises the branch.
-Commit first, then, from `plugins/aidrian`:
+The `product-quorum-auto-start-*` cases share the fixture of `product-quorum-auto-start-off`, and their scaffolds copy it from the working tree,
+so they run before a commit.
+Every other case reads HEAD, so commit first. Then, from the worktree root:
 
 ```sh
-claude plugin eval . --scaffold --trust-plugin --no-publish --runs 1 --allow-tools Bash --model <haiku|sonnet|opus>
+claude plugin eval plugins/aidrian --case <name> --model <model> --no-publish --scaffold --trust-plugin --runs 1 --allow-tools Bash Write Edit
 ```
+
+`--scaffold` runs the case's `scaffold.sh`; without it the run folder is empty. `--allow-tools` grants the tools a run may use:
+without Bash no case reaches a command, and a case that writes a doc also needs `Write` and `Edit`. Add `--keep-temp` to keep each run's trace.
+On macOS, the eval's sandbox can make Node's spawn of a bare `git` fail with EPERM when PATH holds a folder it denies.
+Then `aidrian` reads no base, and a case on routing prints the rule `no-base`.
+Put a `git` the sandbox can run first on PATH, such as `PATH="/opt/homebrew/bin:$PATH"`.
 
 A case earns its place when it passes with the plugin and fails without it. Results go to `evals/**/results/`, which git ignores.
 

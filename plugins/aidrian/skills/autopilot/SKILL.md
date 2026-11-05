@@ -51,6 +51,7 @@ the pull request, and review fixes.
 2. **A critical decision**, such as an open product trade-off, an architecture choice with lasting effects, a trust-boundary
    question, a risky refactor, or scope growth: never guess anything that cannot be undone.
    Run `aidrian decisions resolve` as `knowledge/references/decisions.md` says. Under `decide`, follow its order to the end and record the `decided_provisional` in the report.
+   A `product` or `ux` decision goes through that file's route first: `references/phases.md` § Product decisions.
    Under `ask`, read its `unattended`, which the base branch's config sets: never the working copy's.
    With `safe-default` and a clearly safe default that can be undone, take it and flag it in the report.
    Otherwise park it: record it with its options and the safest recommendation, and go on with all work that does not depend on it.
@@ -66,7 +67,8 @@ With `"ask"`, the default, or `"off"`, write none: the report carries what a res
 
 When allowed, write it with the `session-handoff` skill, in this session and never through an agent, which knows nothing of the run.
 Checkpoint after the implementation is committed, after the draft opens, after each review round, and at any stop, before the report.
-Fold each parked decision, each `decided_provisional`, and each finding left open into the brief as it arises. A failed write never blocks the run.
+Fold each parked decision, each `decided_provisional`, and each finding left open into the brief as it arises,
+with the count of automatic quorum runs. A failed write never blocks the run.
 
 ## Phases
 
@@ -107,7 +109,7 @@ by the names the start hook gives, never "you" or "I". In this order:
    `aidrian pr auto-merge` printed or the stop line of the `pr-merge-when-green` skill.
 2. **Checks**: verification and CI status, and the bot review state of each round:
    `received`, `already_present`, `timed_out`, `blocked_quota`, `round_limit`, `extension_ask`, or `no_reviewer`.
-3. **Decisions for the Human**: each parked decision, with its options and the safest recommendation;
+3. **Decisions for the Human**: each parked decision, with its options and the safest recommendation; each quorum recommendation left waiting;
    then each `decided_provisional`, with its reason, revisit trigger, and how it reverts.
 4. **Left open**: findings closed as rare edge cases, each with its reason, findings still open at the cap,
    and fixes the last round pushed that no review has seen.

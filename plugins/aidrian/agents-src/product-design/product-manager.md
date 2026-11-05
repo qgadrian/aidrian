@@ -85,6 +85,7 @@ Return the machine handoff from the `knowledge` skill, lean: the evidence the ve
   with the decision's `class`, `reversible` answers, and `docs`, so the dispatcher can resolve it; `knowledge/references/decisions.md` says where they are defined.
   A `needs_input` handoff with them is the evidence a `confirmed_missing_authority` deferral needs under the project's deferral policy.
 - `decided_provisional` when your brief carries `authority: decide`, with the fields `knowledge/references/handoff.md` lists: the recommendation is the decision.
+- `hardness`, on a `product` or `ux` decision, beside `decision_options` or `decided_provisional`: `knowledge/references/handoff.md` lists its keys.
 
 ## Do not
 

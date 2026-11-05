@@ -28,7 +28,7 @@
       "tags": []
     },
     "project-folder.md": {
-      "summary": "The .aidrian/ folder: aidrian init, check, lint, local state, task worktrees, local sources, decision markers, aidrian decisions list and set, migrating.",
+      "summary": "The .aidrian/ folder: init, check, lint, state, worktrees, local sources, decision markers, decisions list/set, quorum route, quorum provisional, migrating.",
       "tags": []
     },
     "personas.md": {
@@ -52,7 +52,7 @@
       "tags": []
     },
     "config.md": {
-      "summary": "config.json: pull request body, review gate, auto-merge, terms/names, models, attribution, telemetry, quorum roles, decisions, authority, tracker write guard.",
+      "summary": "config.json: pull request body, names, review gate, auto-merge, terms, models, attribution, quorum roles/autoStart, decisions, authority, tracker write guard.",
       "tags": []
     },
     "dispatch-log.md": {

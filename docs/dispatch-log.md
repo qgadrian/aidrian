@@ -137,6 +137,7 @@ The judge's reason stays in the review record, not the row.
 
 `aidrian decisions resolve` writes one row for each answer: `decision_made` under `decide`, `decision_escalated` under `ask`.
 `--vocab` writes none.
+`aidrian quorum route` and `aidrian quorum provisional` write the same row, with the same `key`, whenever they ask `resolve`'s question.
 
 | Field | Meaning |
 | --- | --- |

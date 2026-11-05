@@ -21,3 +21,5 @@ Add a field only when your role emits it or the dispatch asks for it. Use these 
 - `decided_provisional` (a specialist whose brief carries `authority: decide`): `decision`, `options_considered`, `reason`, `class`,
   `reversible` (the four answers, by the names `aidrian decisions resolve --vocab` gives), `docs` (each written rule it touches), `severity` (the harm if it is wrong),
   `revisit_trigger`, and `reverts_by`.
+- `hardness` (`product-manager`, `designer`, and `ux-specialist`, on a `product` or `ux` decision, beside `decision_options` or `decided_provisional`):
+  `open_options`, `no_written_answer`, `conflict`, `disagreement`, and `reach`, each `yes` or `no`. `decisions.md` asks the five questions.

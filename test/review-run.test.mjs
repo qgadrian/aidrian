@@ -22,7 +22,7 @@ function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = 
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-review-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const git = (...args) => {
-    const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
+    const r = spawnSync('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8' });
     if (r.status !== 0) throw new Error(r.stderr);
     return r.stdout.trim();
   };
@@ -383,6 +383,8 @@ test('citationProblem: a path:line must exist at the head, a test:<name> must ap
   assert.match(citationProblem('trust me', { root: r.dir, head }), /not path:line/u);
   assert.match(citationProblem('/src/app.js:1', { root: r.dir, head }), /is not in/u, 'a leading slash names no file of the commit');
   assert.equal(citationProblem('./src/app.js:1', { root: r.dir, head }), null);
+  for (const folder of ['src:1', './src:1', './:1', '.:1', '..:1', '/:1']) assert.notEqual(citationProblem(folder, { root: r.dir, head }), null, folder);
+  assert.match(citationProblem('src:1', { root: r.dir, head }), /is a folder/u);
 });
 
 test('flow evidence: a deleted flow test needs the Human, and the flow`s checks must pass on the head', async (t) => {

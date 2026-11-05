@@ -207,6 +207,7 @@ fails `quorum check` on every invalid ruling or rebuttal, so it is not reused.
 ## Product-mode fields
 
 `modes/product.md` says what each round writes. A product ledger holds no rebuttal round and no final ruling.
+The fields marked optional are absent on a ledger written before them, which stays valid. The route after a ruling sends a ledger that lacks one of the Ruling's fields or a `flips_if` boolean to the Human.
 
 - `mode`: `product`.
 - `status`: `open` while the rounds run, `complete` just before the Human is asked, and it stays so after the answer.
@@ -214,7 +215,7 @@ fails `quorum check` on every invalid ruling or rebuttal, so it is not reused.
 - `plan_hash`: `git hash-object` of the question file.
 - `same_model`: `true` exactly when two positions share a runner.
 - `same_model_reason`: which positions share one and why, or `null`.
-- `trigger`: what started the run, normally `the Human asked`.
+- `trigger`: what started the run: `the Human asked`, or, on a run the route started, `the route, with resolve's <authority>`. The route after a ruling, `aidrian quorum provisional`, and `quorum check` on a provisional ledger read it, and only `the route, with resolve's decide` continues. With no `provisional`, any value stays valid under `quorum check`.
 - `trace`: what the tracer found, word for word, for the report and the grillers.
 - `persona_docs`: every row of `aidrian-knowledge index` whose tags hold `personas`, inside the repository, other than `product-access`, from the repository root, whichever one took part. A winner resting only on these is invalid.
 - `premise`: why the decision is open.
@@ -266,15 +267,30 @@ fails `quorum check` on every invalid ruling or rebuttal, so it is not reused.
     - `ruling.inferences[].holds`: `true` or `false`.
     - `ruling.inferences[].reason`: why, in one line.
     - `ruling.inferences[].citations`: the evidence that settles it.
+  - `ruling.class`: optional. The decision's class, as `knowledge/references/decisions.md` defines it.
+  - `ruling.reversible`: optional. The four reversibility answers, `no` or `yes`, in the order `decisions.md` gives, as one comma-separated string or a list of those words.
+  - `ruling.docs`: optional. Each written rule the decision touches, as a path from the repository root.
+  - `ruling.domain`: optional. The decision's domain. The route after a ruling continues only when this matches the domain the caller names,
+    and `resolve` judges the class, so `product-behaviour` resolves under `product` whatever this says.
+  - `ruling.severity`: optional. The harm if the decision is wrong, as `knowledge/references/handoff.md` defines it. An unknown word counts as at or above `minSeverity`, as `decisions.md` says.
+  - `ruling.reverts_by`: optional. How to undo the decision.
 - `outcome`: what a rule leaves behind, required on a rule in a `complete` ledger, otherwise `null`.
   - `outcome.conditions`: changes the winner needs.
   - `outcome.flips_if`: unknowns that would change the winner.
     - `outcome.flips_if[].fact`: the unknown.
     - `outcome.flips_if[].how_to_settle`: the cheapest way to find out.
+    - `outcome.flips_if[].settles_from_repo`: optional. `true` when reading the repository could settle the fact.
+    - `outcome.flips_if[].could_harden_undo`: optional. `true` when the fact could make the decision harder to undo.
   - `outcome.disputes`: smaller disagreements.
     - `outcome.disputes[].topic`: the disagreement.
     - `outcome.disputes[].owner`: who settles it.
 - `human_answer`: the Human's answer to the ruling, word for word, or `null` while deferred. Only this settles the decision, and it stands when the cited code later changes.
+- `provisional`: optional, on a `rule` only, and written only by `aidrian quorum provisional`, which refuses a ledger that fails `quorum check` with no exemption, or that the base branch's settings keep waiting, or whose second look is missing or not approved. Work continued on the recommendation, which settles nothing but stands when the cited code later changes while its marker is `unconfirmed` or `confirmed`, since implementing it changes that code. Once the marker is rejected or not on record, `quorum check` holds the ledger to its citations again. `quorum check` reads no settings, and exits 1 on it where no setting could let the route after a ruling continue, or on a ruling whose verdicts miss what it rules on. Beside a `human_answer`, both stay on record and the answer governs.
+  - `provisional.marker`: the `id` of the decision marker that records it. Once that marker is `confirmed`, `rejected`, or gone, the route after a ruling waits for the Human.
+- `second_look`: optional, the agent's answer to the second look on this ruling, as `knowledge/references/decisions.md` says. `aidrian quorum provisional` refuses when `aidrian decisions resolve` prints a `secondLook`, `ruling.severity` is at or above its `minSeverity` or unknown, and this is missing, its `agent` is not the one `secondLook` names, or its `sign_off` is not `approved`.
+  - `second_look.agent`: the agent that looked, spelled as `secondLook` names it.
+  - `second_look.sign_off`: its answer, `approved` when it agrees.
+  - `second_look.reason`: why, in its words.
 
 ## Agent answers
 

@@ -12,6 +12,9 @@
 //           verdicts and, in plan mode, the moderation lines and, on an open ledger, the objection cap from
 //           config.json `quorum.plan.maxObjections`
 //   roles   prints the roles, judge, and caps of one mode from config.json `quorum`, as one JSON line
+//   route   says what happens to one product decision, from the base branch's `quorum.product` and `decisions resolve`'s
+//           answer, or, with `--ledger`, what happens after a product ruling, as one JSON line; docs/config.md has the table
+//   provisional records that work continues on a product ruling, only on a ledger that passes `check` with no exemption
 // The schemas below are the one source of truth for these files. `check` runs no command but `git ls-files`, and
 // never executes what a citation names.
 
@@ -20,10 +23,13 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFile
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { commandConfig, MAX_PLAN_OBJECTIONS } from './config.mjs';
+import { commandConfig, committedQuorumProduct, DEFAULTS, MAX_PLAN_OBJECTIONS } from './config.mjs';
+import { answers as reversibleAnswers, resolveQuestion, reversibleProblem, scanDecisions } from './decisions-cli.mjs';
+import { DECISION_STATUSES, isDecisionId } from './decisions.mjs';
+import { loadTable as severityTable } from './finding-disposition.mjs';
 import { insidePath, isFile, isObject, linksOutside } from './fs.mjs';
 import { runGit } from './git.mjs';
-import { projectAt } from './project.mjs';
+import { committedConfigFile, projectAt } from './project.mjs';
 import { isolate } from './review/env.mjs';
 import { anchor as anchorOf, sectionOf, slug } from './review/flows.mjs';
 import { codexAvailable, runCodex } from './review/reviewers.mjs';
@@ -330,8 +336,24 @@ export const PRODUCT_DISPATCHES = 10;
 export const PRODUCT_LOOP_DISPATCHES = 6;
 export const MAX_PRODUCT_POSITIONS = 3;
 
+// A product ruling: a decide ruling, plus the Ruling's answers on the decision itself. Each is optional, so a ledger written
+// before them stays valid, and `aidrian quorum route` reads one without them as the Human's.
+const PRODUCT_RULING = Object.freeze({
+  ...DECIDE_RULING,
+  properties: {
+    ...DECIDE_RULING.properties,
+    class: { type: 'string' },
+    reversible: { type: ['string', 'array'], items: { type: 'string' } },
+    docs: { type: 'array', items: { type: 'string' } },
+    domain: { type: 'string' },
+    severity: { type: 'string' },
+    reverts_by: { type: 'string' },
+  },
+});
+
 // The product ledger: a decide ledger with no rebuttal round, plus the premise check, the end user's interview and walkthrough, and what
-// the ruling leaves behind. Its ruling is a recommendation: only `human_answer` settles it. See modes/product.md.
+// the ruling leaves behind. Its ruling is a recommendation: only `human_answer` settles it, and `provisional` records work
+// continuing on it until then. See modes/product.md.
 export const PRODUCT_LEDGER_SCHEMA = Object.freeze({
   type: 'object',
   additionalProperties: false,
@@ -395,7 +417,7 @@ export const PRODUCT_LEDGER_SCHEMA = Object.freeze({
         },
       },
     },
-    ruling: DECIDE_RULING,
+    ruling: PRODUCT_RULING,
     outcome: {
       type: ['object', 'null'],
       additionalProperties: false,
@@ -404,7 +426,7 @@ export const PRODUCT_LEDGER_SCHEMA = Object.freeze({
         conditions: { type: 'array', items: { type: 'string' } },
         flips_if: {
           type: 'array',
-          items: { type: 'object', additionalProperties: false, required: ['fact', 'how_to_settle'], properties: { fact: { type: 'string' }, how_to_settle: { type: 'string' } } },
+          items: { type: 'object', additionalProperties: false, required: ['fact', 'how_to_settle'], properties: { fact: { type: 'string' }, how_to_settle: { type: 'string' }, settles_from_repo: { type: 'boolean' }, could_harden_undo: { type: 'boolean' } } },
         },
         disputes: {
           type: 'array',
@@ -413,6 +435,8 @@ export const PRODUCT_LEDGER_SCHEMA = Object.freeze({
       },
     },
     human_answer: { type: ['string', 'null'] },
+    provisional: { type: 'object', additionalProperties: false, required: ['marker'], properties: { marker: { type: 'string' } } },
+    second_look: { type: 'object', additionalProperties: false, required: ['agent', 'sign_off', 'reason'], properties: { agent: { type: 'string' }, sign_off: { type: 'string' }, reason: { type: 'string' } } },
   },
 });
 
@@ -824,9 +848,11 @@ function coverageProblem(named, count, of = '') {
 const supported = (tested, citations, proof) => tested.some((verdict) => verdict.supports === true && Number.isInteger(verdict.citation) && proof.includes(citations[verdict.citation]));
 
 // One line for each `inference:` line of `claims` that no distinct `inferences` statement tests.
-function inferenceProblems(claims, inferences) {
-  const statements = (inferences ?? []).map((inference) => collapse(inference.statement)).filter(Boolean);
-  const lines = claims.flatMap((claim) => [...String(claim).matchAll(INFERENCE)].map(([, line]) => collapse(line)));
+export function inferenceProblems(claims, inferences) {
+  // A judge retypes these lines, so a curly quote may come back straight. Only here: a citation's quote stays exact.
+  const plain = (text) => collapse(text).replace(/[\u2018\u2019]/gu, "'").replace(/[\u201C\u201D]/gu, '"');
+  const statements = (inferences ?? []).map((inference) => plain(inference.statement)).filter(Boolean);
+  const lines = claims.flatMap((claim) => [...String(claim).matchAll(INFERENCE)].map(([, line]) => plain(line)));
   return untestedLines(lines, statements).map((text) => shown(`inference untested: "${text.slice(0, 60)}"`));
 }
 
@@ -1034,6 +1060,13 @@ function decideVerdictProblems(value, entries) {
   return problems;
 }
 
+const ruledEntry = (of, label, { citations, claim }) => ({ of, label, citations, claim });
+// What a first ruling rules on: every case and every backed cross point.
+const firstRulingEntries = (ledger) => [
+  ...ledger.cases.map((each) => ruledEntry(each.position, `case ${each.position}`, each)),
+  ...ledger.cross.filter((point) => point.status === 'backed').map((point) => ruledEntry(point.id, `cross ${point.id}`, point)),
+];
+
 // Checks a decide ledger in place, as checkLedger checks a plan ledger: { ledger, problems, escapes, stale }. A pending
 // cross point becomes `backed` or `opinion` by whether a citation passes; a case with none is named. A ruling, final
 // ruling, rebuttal, or concession with no passing citation is invalid, as is a rebuttal that cites nothing the cases,
@@ -1068,15 +1101,10 @@ export function checkDecideLedger(ledger, ctx) {
       if (!proof.length) problems.push(`${where}: relabeled opinion (was pending): no citation passes`);
     } else if (point.status === 'backed' && !proof.length) problems.push(`${where}: no citation passes; kept backed`);
   }
-  const entry = (of, label, { citations, claim }) => ({ of, label, citations, claim });
   const { ruling, final_ruling: final } = ledger;
   if (ruling) {
     if (!pass(ruling.citations, 'ruling').length) invalid('ruling: invalid: the ruling has no passing citation');
-    const entries = [
-      ...ledger.cases.map((each) => entry(each.position, `case ${each.position}`, each)),
-      ...ledger.cross.filter((point) => point.status === 'backed').map((point) => entry(point.id, `cross ${point.id}`, point)),
-    ];
-    for (const reason of decideVerdictProblems(ruling, entries)) invalid(`ruling: invalid: ${reason}`);
+    for (const reason of decideVerdictProblems(ruling, firstRulingEntries(ledger))) invalid(`ruling: invalid: ${reason}`);
     for (const reason of inferenceEvidenceProblems(ruling.inferences, 'ruling', pass)) invalid(`ruling: invalid: ${reason}`);
     if (ruling.decision === 'rule') {
       // A position wins on evidence or not at all, so a rule for one whose case has no passing citation goes back.
@@ -1103,7 +1131,7 @@ export function checkDecideLedger(ledger, ctx) {
     // short, so only a final rule is held to its verdicts.
     if (final.decision === 'rule') {
       if (!backed.has(final.winner)) invalid("final ruling: invalid: the winner's case has no passing citation");
-      const entries = ledger.rebuttals.map((each) => entry(each.position, `rebuttal ${each.position}`, each));
+      const entries = ledger.rebuttals.map((each) => ruledEntry(each.position, `rebuttal ${each.position}`, each));
       for (const reason of decideVerdictProblems(final, entries)) invalid(`final ruling: invalid: ${reason}`);
       // A flip overturns the first ruling, so it rests on the evidence of the rebuttal it upholds.
       const won = ledger.rebuttals.find((each) => each.position === final.winner);
@@ -1120,7 +1148,8 @@ const decideView = (ledger) => ({ ...ledger, rebuttals: [], final_ruling: null }
 
 // Why a product ledger does not fit, as lines that stop the check: the decide id rules on its positions, cases, and
 // ruling; at most three positions; griller points U1 to E5, each once, by the id's letter, against a position; a draft
-// for a position; an outcome only with a rule; and a Human answer only to a ruling. A complete ledger has a
+// for a position; an outcome only with a rule; a Human answer only to a ruling; and a provisional record only on a ledger
+// `route --ledger` could continue on, naming an id a marker can hold. A complete ledger has a
 // case per position, a ruling, and, on a rule, an outcome. Its ruling never stands without `human_answer`, so an
 // unanswered one is complete and deferred.
 export function productProblems(ledger, maxLoops = MAX_PLAN_OBJECTIONS) {
@@ -1143,6 +1172,11 @@ export function productProblems(ledger, maxLoops = MAX_PLAN_OBJECTIONS) {
   if (ledger.draft && !known.has(ledger.draft.winner)) problems.push(`draft names ${ledger.draft.winner}, not a position in this ledger`);
   if (ledger.outcome !== null && ledger.ruling?.decision !== 'rule') problems.push('outcome: set but no ruling rules');
   if (ledger.human_answer !== null && ledger.ruling === null) problems.push('human_answer: set but nothing was ruled');
+  if (ledger.provisional !== undefined) {
+    const gap = rulingGap(ledger) ?? continueGap(ledger);
+    if (gap) problems.push(`provisional: ${gap}`);
+    if (!isDecisionId(ledger.provisional.marker)) problems.push(`provisional: marker ${JSON.stringify(ledger.provisional.marker)} is no decision marker's id`);
+  }
   if (ledger.status === 'complete') {
     const cased = new Set(ledger.cases.map(({ position }) => position));
     for (const id of known) if (!cased.has(id)) problems.push(`position ${id} has no case in a complete ledger`);
@@ -1152,16 +1186,34 @@ export function productProblems(ledger, maxLoops = MAX_PLAN_OBJECTIONS) {
   return problems;
 }
 
+// A first ruling's faults no code change can cause, since they read only what it wrote: verdicts that miss what it rules on,
+// and a rule with no verdict supporting its winner. Implementing a recommendation cannot excuse them.
+function verdictFaults(ledger) {
+  const { ruling } = ledger;
+  if (!ruling) return [];
+  const faults = decideVerdictProblems(ruling, firstRulingEntries(ledger));
+  if (ruling.decision === 'rule' && !ruling.tested.some((verdict) => verdict.of === ruling.winner && verdict.supports === true)) faults.push("no verdict on the winner's case supports it");
+  return faults.map((reason) => `ruling: invalid: ${reason}`);
+}
+
+// The marker statuses that keep a provisional ledger's stale exemption. Rejected or off the record, as after the Human's undo,
+// the recommendation no longer stands, so a rerun must not ask on dead citations. A marker the writer has yet to see written reads as off the record.
+const MARKER_KEEPS_EXEMPTION = Object.freeze(['unconfirmed', 'confirmed']);
+
 // Checks a product ledger in place: the decide checks with no rebuttal round; the premise needs a passing citation;
 // and a persona is a hypothesis, so a rule whose winner rests only on the persona's own doc goes back.
+// `ctx.markerStatus` is what the docs on record say of a provisional ledger's marker, or null with none.
 export function checkProductLedger(ledger, ctx) {
   const { problems, escapes, stale: decideStale } = checkDecideLedger(decideView(ledger), ctx);
-  // The Human's answer settles a product ledger, and acting on it often changes the code a case quoted.
-  const stale = ledger.human_answer === null ? decideStale : [];
+  // The Human's answer settles a product ledger, and acting on it often changes the code a case quoted. So does
+  // implementing a provisional recommendation, which settles nothing and yet must not void itself, while its marker stands.
+  const exempt = ledger.provisional !== undefined && MARKER_KEEPS_EXEMPTION.includes(ctx.markerStatus);
+  const holdsToEvidence = ledger.human_answer === null && !exempt;
+  const stale = holdsToEvidence ? decideStale : [];
   const complete = ledger.status === 'complete';
   const invalid = (line) => {
     problems.push(line);
-    if (complete && ledger.human_answer === null) stale.push(line);
+    if (complete && holdsToEvidence) stale.push(line);
   };
   if (!passing(ledger.premise.citations, 'premise', ctx, problems, escapes).length) invalid('premise: invalid: no citation passes');
   const personas = [...ledger.persona_docs, ...(ledger.witness ? [ledger.witness.persona] : [])].map((doc) => path.normalize(doc));
@@ -1177,14 +1229,25 @@ export function checkProductLedger(ledger, ctx) {
     if (backing.length && backing.every((citation) => personas.includes(path.normalize(refParts(citation).path ?? '')))) invalid('ruling: invalid: the winner rests only on the persona doc, which is a hypothesis');
   }
   // A deferred question must not be asked again on dead evidence, under a rule or an escalation alike.
-  if (complete && ledger.human_answer === null) {
+  if (complete && holdsToEvidence) {
     // Only a coordinator-written escalate, with no verdicts, keeps the exemption from covering what it rules on.
     const hasVerdicts = ledger.ruling?.tested.length > 0;
     // One bad citation beside a passing one leaves a case or point standing: only an entry left with none is dead.
     const dead = (line) => /^(?:ruling|final ruling|premise)\.citations\[\d+\]/u.test(line) || /^(?:case|cross) \S+: no citation passes/u.test(line) || (line.startsWith('ruling: invalid: ') && (hasVerdicts || !/^ruling: invalid: (?:tested names|inference untested)/u.test(line)));
     stale.push(...problems.filter((line) => dead(line) && !stale.includes(line)));
   }
+  // The exemption covers what implementing the recommendation can change, and only the Human's answer lifts the rest.
+  if (complete && ledger.human_answer === null && ledger.provisional !== undefined) stale.push(...verdictFaults(ledger).filter((line) => !stale.includes(line)));
   return { ledger, problems, escapes, stale };
+}
+
+// A product ledger's lines that stop `check` before it reads a citation. `maxLoops` is asked for only on a ledger that fits its
+// schema, since reading it can read config.json.
+function productStops(ledger, maxLoops = () => undefined) {
+  const stops = schemaProblems(ledger, PRODUCT_LEDGER_SCHEMA);
+  if (!stops.length) stops.push(...productProblems(ledger, maxLoops()));
+  if (!stops.length) stops.push(...sameModelProblems(ledger));
+  return stops;
 }
 
 // Reads a file under the root, or null when it is missing or not a regular file: a FIFO or a device would hang the read.
@@ -1239,10 +1302,287 @@ export function quorumRoles(mode, quorum) {
   return { mode, roles: { odd: { positions: positions(0), ...resolved(odd) }, even: { positions: positions(1), ...resolved(even) } }, swap, judge, caps };
 }
 
+// The deciding agent's five answers on how hard a call is, in the order docs/config.md gives them.
+const HARDNESS_QUESTIONS = 5;
+
+// Whether `--hard` says a call is small and clear: all five answers no. Any yes, any word that is no answer, and any
+// answer missing leaves it hard.
+export const isClearCall = (value) => {
+  const words = String(value ?? '').split(',').map((word) => word.trim().toLowerCase());
+  return words.length === HARDNESS_QUESTIONS && words.every((word) => word === 'no');
+};
+
+// The domains an automatic quorum may run in. Any other, an unknown one included, keeps resolve's answer as it is.
+export const ROUTED_DOMAINS = Object.freeze(['product', 'ux']);
+const otherDomain = (domain, answered = true) => `${JSON.stringify(domain ?? null)} is not a domain a quorum routes${answered ? ', so resolve\'s answer stands as it is' : ''}`;
+
+// Why auto-start does not apply. Under resolve's `no-base`, something at the base could not be read, so the setting may
+// be unknown: it counts as off, and resolve's own reason says what failed.
+const autoStartOff = (answer) => (answer?.rule === 'no-base' ? `quorum.product.autoStart counts as off, because ${answer.reason}` : 'quorum.product.autoStart is off at the base branch');
+
+// What happens to one product decision: { route, wait, reason }. `settings` is the base branch's `quorum.product`, `call`
+// is { hard, runs, domain }, and `answer` is resolve's. Only `authority: "decide"` counts as a decision the agent may make, and only
+// `approval: "review-later"` lets work go on, so a value this code does not know waits. `wait` is true when work on the
+// decision waits for the Human. A quorum with `wait` false is the provisional one, and it needs resolve's decide:
+// an ask under any setting stays with the Human.
+export function routeFor({ autoStart, approval, maxAutoRuns }, { hard, runs = 0, domain }, answer) {
+  const decides = answer.authority === 'decide';
+  if (!ROUTED_DOMAINS.includes(domain)) return { route: 'as-today', wait: !decides, reason: otherDomain(domain) };
+  if (!autoStart) return { route: 'as-today', wait: !decides, reason: `${autoStartOff(answer)}, so resolve\'s answer stands as it is` };
+  if (!hard) {
+    return decides
+      ? { route: 'agent', wait: false, reason: `a small, clear call, and resolve says decide: ${answer.reason}` }
+      : { route: 'human', wait: true, reason: `a small, clear call, and resolve says ask, so it runs no quorum: ${answer.reason}` };
+  }
+  if (runs >= maxAutoRuns) return { route: 'human', wait: true, reason: `a hard call, and this session has made ${runs} automatic runs, at quorum.product.maxAutoRuns ${maxAutoRuns}, so it waits with no quorum` };
+  if (!decides) return { route: 'quorum', wait: true, reason: `a hard call, and resolve says ask, so the quorum recommends and the Human approves: ${answer.reason}` };
+  if (approval === 'review-later') return { route: 'quorum', wait: false, reason: 'a hard call, and review-later with resolve\'s decide: work continues on the recommendation, recorded as provisional' };
+  return { route: 'quorum', wait: true, reason: 'a hard call under approval first: the quorum recommends and the Human approves' };
+}
+
+const isBoolean = (value) => typeof value === 'boolean';
+const isText = (value) => typeof value === 'string' && value.trim() !== '';
+
+// The Ruling's question for `decisions resolve`, from a ledger read as JSON: { class, reversible, docs }, or null when any
+// of the three is missing or holds no answer. `reversible` is as `--reversible` spells it, or a list of those words.
+function rulingQuestion(ledger) {
+  const ruling = isObject(ledger) ? ledger.ruling : null;
+  if (!isObject(ruling)) return null;
+  const { class: kind, reversible, docs } = ruling;
+  const words = Array.isArray(reversible) ? reversible.join(',') : reversible;
+  const parsed = typeof words === 'string' ? reversibleAnswers(words) : null;
+  if (!isText(kind) || parsed === null || !Array.isArray(docs) || !docs.every(isText)) return null;
+  return { class: kind, reversible: parsed, docs };
+}
+
+// Why no setting could let work continue on this ruling, as one line, or null. `route --ledger` waits on it, and `quorum check`
+// holds a provisional ledger to it, so the two cannot drift.
+function rulingGap(ledger) {
+  const { ruling, outcome } = ledger;
+  if (ledger.status !== 'complete') return 'the ledger is not complete';
+  if (!isObject(ruling)) return 'the ledger holds no ruling';
+  if (ruling.decision === 'escalate') return 'the ruling escalates';
+  if (ruling.decision !== 'rule') return 'the ruling neither rules nor escalates';
+  if (!isText(ruling.domain)) return 'the ruling names no domain';
+  if (rulingQuestion(ledger) === null) return 'the ledger lacks the Ruling\'s class, reversible, or docs';
+  if (!isText(ruling.winner)) return 'the ruling names no winner';
+  // A continued ruling needs these for its record, as handoff.md's decided_provisional does, though resolve asks neither.
+  if (!isText(ruling.severity) || !isText(ruling.reverts_by)) return 'the ledger lacks the Ruling\'s severity or reverts_by';
+  const flips = isObject(outcome) ? outcome.flips_if : null;
+  if (!Array.isArray(flips)) return 'the ledger lacks outcome.flips_if';
+  if (!flips.every((entry) => isObject(entry) && isBoolean(entry.settles_from_repo) && isBoolean(entry.could_harden_undo))) return 'a flips_if entry lacks settles_from_repo or could_harden_undo';
+  if (!flips.every((entry) => isText(entry.fact) && isText(entry.how_to_settle))) return 'a flips_if entry lacks its fact or how_to_settle';
+  return null;
+}
+
+// The one `trigger` that lets work continue. A ledger written before the route existed, or a run the Human started, holds another and stays valid: it asks.
+const CONTINUING_TRIGGER = "the route, with resolve's decide";
+
+// The line that stops review later on a ledger with no rulingGap, or null. It stops only there: under first or ask, the Human
+// sees the fact, and a hard-to-undo ruling keeps resolve's own answer. `route --ledger`, the writer, and `quorum check` on a provisional ledger all read it.
+function continueGap(ledger) {
+  if (ledger.trigger !== CONTINUING_TRIGGER) return `only a run the route started under resolve's decide continues, and this ledger's trigger is ${JSON.stringify(ledger.trigger ?? null)}`;
+  return ledger.outcome.flips_if.some((entry) => entry.could_harden_undo) ? 'a flipping fact could make the decision harder to undo' : null;
+}
+
+// Why the writer waits for the second look on a ruling, as one line, or null: `look` is resolve's `secondLook`, null when it is off.
+// An unknown severity counts as at or above `minSeverity`, as a missing one does for a specialist's decision.
+function secondLookGap({ ruling, second_look: taken }, look) {
+  if (!look) return null;
+  const { severities, severitySynonyms } = severityTable();
+  const word = ruling.severity.trim().toLowerCase();
+  const rank = severities.indexOf(severitySynonyms[word] ?? word);
+  if (rank > severities.indexOf(look.minSeverity) || (taken?.agent === look.agent && taken.sign_off === 'approved')) return null;
+  const said = !taken ? 'is missing' : taken.agent !== look.agent ? `is from ${JSON.stringify(taken.agent)}` : `says ${JSON.stringify(taken.sign_off)}`;
+  return `second look: ${look.agent} must approve a ruling of severity ${shown(ruling.severity)}, at or above ${look.minSeverity} or unknown, and second_look ${said}`;
+}
+
+// Why a provisional ledger's marker no longer carries it, as one line, or null. `status` is what the docs on record say, or
+// null with no such marker, as after the Human's undo. Only `unconfirmed` carries it: `decisions set` writes `confirmed` for
+// `changed` too, so a settled marker may hold wording that replaced the recommendation. A ledger with no provisional has nothing to look up.
+function markerGap(ledger, status) {
+  if (ledger.provisional === undefined || status === 'unconfirmed') return null;
+  const id = shown(String(ledger.provisional?.marker));
+  if (status === 'confirmed') return `the Human settled its marker ${id}, so read the rule in its doc`;
+  if (status === 'rejected') return `its marker ${id} was rejected in the batch review`;
+  return `its marker ${id} is not on record, as after the Human's undo`;
+}
+
+// What happens after a product ruling: { route, wait, reason, settle, listed }. `answer` is resolve's on the Ruling's
+// question, or null when the ledger asks none, and `domain` the one the caller named. A missing field reads as the Human's,
+// whatever the settings, and so does a ledger the Human answered, one not complete, a ruling outside `domain`, or a provisional
+// ledger whose marker, in `markerStatus`, is no longer unconfirmed: `wait` stays true there, so no caller goes on with the
+// recommendation. Under review-later and resolve's decide, a fact that could make the decision
+// harder to undo waits; one the repository can settle waits in `settle` for its one read-only dispatch; and every other
+// is `listed`, for the batch review, as work continues. Anywhere else the Human sees all of them in `listed` before deciding.
+export function routeAfterRuling({ autoStart, approval }, ledger, answer, domain, markerStatus = null) {
+  const flips = isObject(ledger) && isObject(ledger.outcome) ? ledger.outcome.flips_if : null;
+  const entries = Array.isArray(flips) ? flips.filter(isObject) : [];
+  const shown = ({ fact, how_to_settle }) => ({ fact, how_to_settle });
+  const waits = (route, reason, settle = [], listed = entries) => ({ route, wait: true, reason, settle: settle.map(shown), listed: listed.map(shown) });
+  const human = (reason) => waits('human', reason);
+  if (!ROUTED_DOMAINS.includes(domain)) return waits('as-today', otherDomain(domain, answer !== null));
+  if (!isObject(ledger) || ledger.mode !== 'product') return human('this is no product ledger');
+  if (ledger.human_answer === undefined) return human('the ledger lacks human_answer');
+  if (ledger.human_answer !== null) return human('the Human has answered, so the Human\'s answer governs, not the recommendation');
+  const gap = rulingGap(ledger);
+  if (gap) return human(gap);
+  if (ledger.ruling.domain !== domain) return human(`the ruling is in the domain ${JSON.stringify(ledger.ruling.domain)}, not ${JSON.stringify(domain)}, so the route continues only when they match, and resolve judges the class`);
+  if (answer === null) return human('resolve gave no answer on the Ruling\'s question');
+  const lost = markerGap(ledger, markerStatus);
+  if (lost) return human(lost);
+  if (!autoStart) return waits('as-today', `${autoStartOff(answer)}, so the Human answers a product ruling`);
+  if (answer.authority !== 'decide') return waits('quorum', `resolve says ask, so the Human approves: ${answer.reason}`);
+  if (approval !== 'review-later') return waits('quorum', 'approval is first, so the Human approves');
+  const held = continueGap(ledger);
+  if (held) return human(held);
+  const settle = entries.filter((entry) => entry.settles_from_repo);
+  const listed = entries.filter((entry) => !entry.settles_from_repo);
+  if (settle.length) return waits('quorum', 'settle the facts in `settle` from the repository first: a result that keeps the winner is recorded and work continues, and any other waits for the Human', settle, listed);
+  return { route: 'quorum', wait: false, reason: 'review-later with resolve\'s decide: work continues on the recommendation, recorded as provisional', settle: [], listed: listed.map(shown) };
+}
+
+// What the docs on record say of one marker, the furthest status any copy holds, or null with no such marker or none that can be read.
+function markerOnRecord(project, id) {
+  try {
+    const { decisions, unlisted } = scanDecisions(project);
+    const found = [...decisions, ...unlisted].filter((each) => each.id === id);
+    return DECISION_STATUSES.findLast((status) => found.some((each) => each.status === status)) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// The `quorum.product` of the commit resolve read: `base` is null with no readable base, and git failing reads the same.
+function productInForce(project, base) {
+  if (base === null) return DEFAULTS.quorum.product;
+  try {
+    return committedQuorumProduct(project, base, committedConfigFile(project, base));
+  } catch {
+    return DEFAULTS.quorum.product;
+  }
+}
+
+// What `route --ledger` says of one ledger under `domain`, for that command and the writer alike: routeAfterRuling's answer, and `resolve`.
+// A writer runs before its marker exists, so with `writing` no marker on record is what it expects, and a settled or rejected one still stops it.
+function ledgerRoute(project, ledger, domain, { writing = false } = {}) {
+  const asked = rulingQuestion(ledger);
+  // A ruling outside the domain named asks nothing there, so resolve logs no row under a domain it was never in.
+  const outside = ledger?.ruling?.domain !== domain;
+  const resolve = asked === null || outside ? null : resolveQuestion(project, { domain, ...asked });
+  const settings = productInForce(project, resolve?.base ?? null);
+  const found = ledger?.provisional === undefined ? null : markerOnRecord(project, ledger.provisional?.marker);
+  return { ...routeAfterRuling(settings, ledger, resolve, domain, found ?? (writing ? 'unconfirmed' : null)), resolve };
+}
+
+const ROUTE_EXIT_BAD = 3;
+const LEDGER_TAKES_NO = ['class', 'reversible', 'hard', 'doc', 'runs'];
+// Each printed on a bad argument and beside USAGE. USAGE holds exactly the flags the quorum skill's text names, a test says so,
+// and these belong to knowledge/references/decisions.md, so they stay out of it.
+const ROUTE_USAGE = 'route --domain D --class C [--reversible A,B,C,D] [--hard A,B,C,D,E] [--doc PATH]... [--runs N] | route --ledger LEDGER --domain D';
+const PROVISIONAL_USAGE = 'provisional LEDGER --plan PLAN --marker ID';
+
+// `aidrian quorum route`: one JSON line, and exit 0; a bad argument exits 3 with nothing on stdout, and an invalid
+// config.json stops it on every path, as it stops every command.
+function routeCommand(args, { cwd, print }) {
+  const project = projectAt(cwd);
+  commandConfig(project);
+  const bad = (problem) => {
+    console.error(`usage: aidrian quorum ${ROUTE_USAGE}\n\naidrian quorum route: ${problem}`);
+    return ROUTE_EXIT_BAD;
+  };
+  const word = { type: 'string' };
+  let values;
+  try {
+    ({ values } = parseArgs({ args, options: { domain: word, class: word, reversible: word, hard: word, doc: { type: 'string', multiple: true }, runs: word, ledger: word } }));
+  } catch (error) {
+    if (!error.code?.startsWith('ERR_PARSE_ARGS')) throw error;
+    return bad(error.message);
+  }
+  if (values.ledger !== undefined) {
+    const extra = LEDGER_TAKES_NO.find((key) => values[key] !== undefined);
+    if (extra) return bad(`--ledger takes no --${extra}: the ledger holds the Ruling's answers`);
+    if (!values.domain) return bad('--ledger needs --domain: a ruling resolves under its own domain\'s answer');
+    let ledger;
+    try {
+      // Read as JSON and never checked: `quorum check` holds a ledger to the schema, and this reads only what it names.
+      ledger = JSON.parse(readFileSync(path.resolve(cwd, values.ledger), 'utf8'));
+    } catch (error) {
+      return bad(`cannot read ${values.ledger}: ${error.message}`);
+    }
+    const { route, wait, reason, resolve, settle, listed } = ledgerRoute(project, ledger, values.domain);
+    print(JSON.stringify({ route, wait, reason, resolve, settle, listed }));
+    return 0;
+  }
+  if (!values.domain || !values.class) return bad('route needs --domain and --class, or --ledger');
+  const reversible = reversibleAnswers(values.reversible);
+  if (!reversible) return bad(reversibleProblem());
+  if (values.runs !== undefined && !/^\d+$/u.test(values.runs)) return bad(`--runs takes a whole number, 0 or more, not "${shown(values.runs)}"`);
+  const answer = resolveQuestion(project, { domain: values.domain, class: values.class, reversible, docs: values.doc ?? [] });
+  const call = { hard: !isClearCall(values.hard), runs: Number(values.runs ?? 0), domain: values.domain };
+  const { route, wait, reason } = routeFor(productInForce(project, answer.base), call, answer);
+  print(JSON.stringify({ route, wait, reason, resolve: answer }));
+  return 0;
+}
+
 const fail = (problem) => {
   console.error(`aidrian quorum: ${problem}`);
   return 1;
 };
+
+// `aidrian quorum provisional`, the one writer of `provisional`: it holds the ledger to `check` with the field left out, so
+// no exemption applies, to the field's own rules, to what `route --ledger` says under the ruling's domain, the base branch's
+// settings, and resolve's answer, and to the second look resolve asks for, and writes only when every one passes. Any refusal exits 1, unwritten.
+function provisionalCommand(args, { cwd, root, env, print }) {
+  const bad = (problem) => {
+    console.error(`usage: aidrian quorum ${PROVISIONAL_USAGE}\n\naidrian quorum provisional: ${problem}`);
+    return 1;
+  };
+  let parsed;
+  try {
+    parsed = parseArgs({ args, allowPositionals: true, options: { plan: { type: 'string' }, marker: { type: 'string' } } });
+  } catch (error) {
+    if (!error.code?.startsWith('ERR_PARSE_ARGS')) throw error;
+    return bad(error.message);
+  }
+  const { values, positionals } = parsed;
+  if (positionals.length !== 1 || !values.plan || values.marker === undefined) return bad('it needs one LEDGER, --plan, and --marker');
+  if (!root) return fail('run it inside a git repository');
+  const project = projectAt(cwd);
+  commandConfig(project);
+  const [file] = positionals;
+  let ledger;
+  let plan;
+  try {
+    ledger = JSON.parse(readFileSync(file, 'utf8'));
+    plan = readFileSync(values.plan, 'utf8');
+  } catch (error) {
+    return fail(error.message);
+  }
+  const refuse = (lines) => {
+    for (const line of lines) console.error(`${file}: ${line}`);
+    return 1;
+  };
+  if (modeOf(ledger) !== 'product') return refuse(['only a product ledger takes provisional']);
+  const { provisional: held, ...bare } = ledger;
+  if (held !== undefined && held?.marker !== values.marker) return refuse([`the ledger already records ${shown(String(held?.marker))}`]);
+  const marked = { ...bare, provisional: { marker: values.marker } };
+  const stops = productStops(marked);
+  if (stops.length) return refuse(stops);
+  if (bare.human_answer !== null) return refuse(['the Human has answered, so that answer governs and no work continues provisionally']);
+  const { problems, escapes, stale } = checkProductLedger(bare, { root, plan, env, read: reader(root) });
+  for (const escape of escapes) console.error(`${file}: warning: ${escape}`);
+  if (stale.length) return refuse(stale.map((line) => `${line} in a complete ledger`));
+  // The stops above hold the Ruling's fields, so its question is there to ask, and this adds resolve's row with resolve's key.
+  const { route, wait, reason, settle, resolve } = ledgerRoute(project, marked, bare.ruling.domain, { writing: true });
+  if (route !== 'quorum' || (wait && !settle.length)) return refuse([`the route is ${route}, with wait ${wait}, so no work continues: ${reason}`]);
+  const look = secondLookGap(bare, resolve.secondLook);
+  if (look) return refuse([look]);
+  for (const problem of problems) print(problem);
+  writeFileSync(file, `${JSON.stringify(marked, null, 2)}\n`);
+  print(`provisional: marker ${values.marker}`);
+  return 0;
+}
 
 // `aidrian quorum codex --mode`: the schema Codex's answer is held to, the field the done line counts (`noun` names
 // what it counts), whether the answer must fit a ledger, and how it must fit one. `rebut` on a decide ledger is
@@ -1301,7 +1641,7 @@ const USAGE = 'codex --plan PLAN --brief BRIEF --out FILE [--mode object|case] |
 export const commands = {
   quorum: {
     usage: USAGE,
-    about: 'run Codex as a quorum adversary or position, to object, argue a case, cross-examine, or rebut, and print one {status, reason} line; check a ledger\'s citations against the repository and the plan; or print one mode\'s roles and caps from config.json',
+    about: 'run Codex as a quorum adversary or position, to object, argue a case, cross-examine, or rebut, and print one {status, reason} line; check a ledger\'s citations against the repository and the plan; print one mode\'s roles and caps from config.json; with route, say what happens to one product decision, before a quorum or after its ruling; or, with provisional, record that work continues on a product ruling',
     async run(args, deps = {}) {
       const [action, ...rest] = args;
       // Git and Codex run without the variables a git hook sets, so they act on the repository of this folder.
@@ -1316,6 +1656,8 @@ export const commands = {
         (deps.print ?? console.log)(JSON.stringify(quorumRoles(rest[0], quorum())));
         return 0;
       }
+      if (action === 'route') return routeCommand(rest, { cwd, print: deps.print ?? console.log });
+      if (action === 'provisional') return provisionalCommand(rest, { cwd, root, env, print: deps.print ?? console.log });
       if (action === 'codex') {
         const { values } = parseArgs({ args: rest, options: { plan: { type: 'string' }, brief: { type: 'string' }, out: { type: 'string' }, mode: { type: 'string', default: 'object' }, ledger: { type: 'string' } } });
         if (!values.plan || !values.brief || !values.out) return fail('codex needs --plan, --brief, and --out');
@@ -1368,10 +1710,9 @@ export const commands = {
         // that prints one. A decide ledger is held to the decide rules only.
         const product = modeOf(ledger) === 'product';
         const decide = modeOf(ledger) === 'decide';
-        const invalid = schemaProblems(ledger, schemaOf(ledger));
-        if (!invalid.length) invalid.push(...(product ? productProblems(ledger, ledger.status === 'open' ? quorum().product.maxLoops : undefined) : decide ? decideIdProblems(ledger) : idProblems(ledger)));
-        if (!invalid.length && product) invalid.push(...sameModelProblems(ledger));
-        else if (!invalid.length) {
+        const invalid = product ? productStops(ledger, () => (ledger.status === 'open' ? quorum().product.maxLoops : undefined)) : schemaProblems(ledger, schemaOf(ledger));
+        if (!invalid.length && !product) invalid.push(...(decide ? decideIdProblems(ledger) : idProblems(ledger)));
+        if (!invalid.length && !product) {
           // An open plan ledger that carries `mode` is held to the configured objection cap, so only it reads config.json.
           // A complete one keeps the ceiling: a lower cap set after it finished never voids it and the Human's answers.
           const cap = !decide && carriesMode(ledger) && ledger.status === 'open' ? quorum().plan.maxObjections : MAX_MODE_OBJECTIONS;
@@ -1382,7 +1723,8 @@ export const commands = {
           for (const problem of invalid) console.error(`${file}: ${problem}`);
           return 1;
         }
-        const { problems, escapes, stale } = (product ? checkProductLedger : decide ? checkDecideLedger : checkLedger)(ledger, { root, plan, env, read: reader(root) });
+        const markerStatus = product && ledger.provisional !== undefined ? markerOnRecord(projectAt(cwd), ledger.provisional.marker) : null;
+        const { problems, escapes, stale } = (product ? checkProductLedger : decide ? checkDecideLedger : checkLedger)(ledger, { root, plan, env, read: reader(root), markerStatus });
         for (const escape of escapes) console.error(`${file}: warning: ${escape}`);
         // A complete ledger whose rulings lost their evidence is not settled any more: exit 1, unwritten, so it is not reused.
         if (stale.length) {
@@ -1401,7 +1743,7 @@ export const commands = {
         print(`checked: mode ${modeOf(ledger)}, ${ledger.objections.length} objections, ${opinions} opinion, ${problems.length} problems`);
         return 0;
       }
-      return fail(`usage: aidrian quorum ${USAGE}`);
+      return fail(`usage: aidrian quorum ${USAGE} | ${ROUTE_USAGE} | ${PROVISIONAL_USAGE}`);
     },
   },
 };

@@ -1,0 +1,56 @@
+{
+  "mode": "product",
+  "status": "complete",
+  "plan": "__PLAN__",
+  "plan_hash": "__HASH__",
+  "same_model": true,
+  "same_model_reason": "every role runs on the host's model",
+  "trigger": "the route, with resolve's ask",
+  "premise": {
+    "summary": "The booking doc says a cancelled booking leaves a line on the sheet, and says nothing of its slot, so the decision is open.",
+    "citations": [{ "kind": "doc", "ref": "docs/booking.md#cancelling", "quote": "A cancelled booking leaves a line on the front desk's daily sheet." }]
+  },
+  "trace": "src/booking.js marks the booking cancelled and leaves its slot taken; docs/booking.md says nothing of the slot.",
+  "persona_docs": ["docs/front-desk.md"],
+  "positions": [
+    { "id": "A", "label": "Release at once", "runner": "agent" },
+    { "id": "B", "label": "Hold for the desk", "runner": "agent" }
+  ],
+  "witness": {
+    "persona": "docs/front-desk.md",
+    "interview": [{ "question": "A customer cancels this morning's 11:00. What do you do?", "answer": "I want to see that 11:00 is free, so I can give it to whoever walks in." }],
+    "walkthrough": "The slot shows free the moment it is cancelled, and I book the walk-in. I would ask what happens if the customer rings back."
+  },
+  "draft": { "winner": "A", "reason": "The desk's goal is a full calendar.", "walkthrough": "A cancelled slot shows as free right away." },
+  "loops": [],
+  "cases": [
+    { "position": "A", "claim": "The calendar shows a slot as free or taken, so a cancelled slot that stays taken cannot be given to a walk-in.", "citations": [{ "kind": "code", "ref": "src/desk.js:3", "quote": "state: booking ? 'taken' : 'free'" }] },
+    { "position": "B", "claim": "The front desk runs the day's calendar, so the desk should decide when a slot is released.", "citations": [{ "kind": "doc", "ref": "docs/booking.md#slots", "quote": "Each repair takes one slot on the shop's calendar." }] }
+  ],
+  "cross": [],
+  "ruling": {
+    "decision": "rule",
+    "winner": "A",
+    "change_or_reason": "B's strongest claim is that the desk runs the calendar. The calendar has no held state, so a hold would add a state the desk cannot see.",
+    "citations": [{ "kind": "code", "ref": "src/desk.js:1", "quote": "there is no held state" }],
+    "tested": [
+      { "of": "A", "citation": 0, "supports": true, "reason": "The calendar shows only free and taken." },
+      { "of": "B", "citation": 0, "supports": false, "reason": "One slot per repair says nothing of who releases it." }
+    ],
+    "inferences": [],
+    "class": "product-behaviour",
+    "reversible": "no,no,no,no",
+    "docs": ["docs/booking.md"],
+    "domain": "product",
+    "severity": "low",
+    "reverts_by": "Undo the marker and put the slot back to staying taken."
+  },
+  "outcome": {
+    "conditions": ["The daily sheet keeps its cancelled line."],
+    "flips_if": [
+      { "fact": "Whether real customers ring back after cancelling and expect the slot.", "how_to_settle": "Ask real customers.", "settles_from_repo": false, "could_harden_undo": false }
+    ],
+    "disputes": []
+  },
+  "human_answer": null
+}

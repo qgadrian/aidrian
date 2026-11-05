@@ -27,6 +27,7 @@ export const REVIEW_DEFAULTS = Object.freeze({
   reviewers: {},
   split: SPLIT_DEFAULTS,
   visual: null,
+  productFeedback: Object.freeze({ maxPersonas: 2 }),
 });
 
 // The visual review's limits: images one route may ask for across viewports, locales, and variants (a config error
@@ -83,6 +84,22 @@ export function checkReview(value, file, errors) {
   if (Object.hasOwn(value, 'reviewers')) out.reviewers = checkReviewers(value.reviewers, bad);
   if (Object.hasOwn(value, 'split')) out.split = checkSplit(value.split, bad);
   if (Object.hasOwn(value, 'visual')) out.visual = value.visual === null ? null : checkVisual(value.visual, bad);
+  if (Object.hasOwn(value, 'productFeedback')) out.productFeedback = checkProductFeedback(value.productFeedback, bad);
+  return out;
+}
+
+// `review.productFeedback`: how many personas persona-audit picks for a pull request. A bad value keeps the default.
+function checkProductFeedback(feedback, bad) {
+  const out = { ...REVIEW_DEFAULTS.productFeedback };
+  if (!isObject(feedback)) {
+    bad('"review.productFeedback" must be an object');
+    return out;
+  }
+  for (const [key, value] of Object.entries(feedback)) {
+    if (key !== 'maxPersonas') bad(`unknown key "review.productFeedback.${key}"`);
+    else if (Number.isInteger(value) && value >= 1 && value <= 10) out.maxPersonas = value;
+    else bad('"review.productFeedback.maxPersonas" must be a whole number from 1 to 10');
+  }
   return out;
 }
 

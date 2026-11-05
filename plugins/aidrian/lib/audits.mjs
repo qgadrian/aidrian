@@ -87,6 +87,28 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/u;
 const ROLE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 // A report file name: `<personas>-<YYYY-MM-DD>.md`, with `-2`, `-3` for a second and third run that day.
 const REPORT = /^(.+)-(\d{4}-\d{2}-\d{2})(?:-\d+)?\.md$/u;
+// A pull request run's keys: the pull request, as `<owner/name>#<n>`, and its head at the walk's start.
+const SIDECAR_PR = /^([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)#[1-9]\d*$/u;
+const SIDECAR_HEAD = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
+const pullRequestProblem = (value) => {
+  const [, owner, name] = (typeof value === 'string' && SIDECAR_PR.exec(value)) || [];
+  return owner && name && ![owner, name].some((part) => part === '.' || part === '..') ? null : 'must be <owner/name>#<number>, the repo and number aidrian pr resolve prints';
+};
+// Why a run, `pr` of a sidecar or undefined, may not replace `older`, or null. A run with a `pr` replaces only a report
+// of the same pull request. A report naming a pull request can be replaced only by a run of it, or by a whole-product
+// run with a valid sidecar (`validSidecar`), so a run with no sidecar, or a `pr` that is no string, never replaces it.
+// Whole-product runs and the reports that name no pull request replace each other as they always did.
+function replacementRefusal(pr, older, { validSidecar }) {
+  if (!older) return null;
+  const words = reportTitle(older.report, older.findings);
+  if (older.pr !== undefined && pr !== undefined && typeof pr !== 'string') return `names ${words}, of pull request ${older.pr}, and a run with no readable pull request never replaces it`;
+  if (typeof pr === 'string') {
+    if (older.pr === undefined) return `names ${words}, which names no pull request, and this run is of ${pr}: a pull request run replaces only a report of the same pull request`;
+    if (typeof older.pr !== 'string' || pr.toLowerCase() !== older.pr.toLowerCase()) return `names ${words}, of pull request ${older.pr}, and this run is of ${pr}: a run never replaces another pull request's report`;
+    return null;
+  }
+  return older.pr !== undefined && !validSidecar ? `names ${words}, of pull request ${older.pr}: only a run of it, or a whole-product run with a valid sidecar, replaces it` : null;
+}
 // A backticked span that names a screenshot by its suffix alone, such as `-24.jpg`: the reader cannot open it.
 const SHORTHAND = /`(-[^`/\s]*\.(?:png|jpe?g|gif|webp))`/giu;
 
@@ -140,6 +162,9 @@ export function sidecarProblems(value, { dir = null, report = null, replacedTitl
   if (value.supersedes !== null && (typeof value.supersedes !== 'string' || !REPORT.test(value.supersedes) || value.supersedes.includes('/'))) {
     at('supersedes', 'must be null or the file name of the report this run replaces');
   } else if (value.supersedes && value.supersedes === value.report) at('supersedes', 'a report cannot replace itself');
+  if (value.pr !== undefined && pullRequestProblem(value.pr)) at('pr', pullRequestProblem(value.pr));
+  if (value.head !== undefined && (typeof value.head !== 'string' || !SIDECAR_HEAD.test(value.head))) at('head', 'must be the full commit hash of the pull request\'s head at the walk\'s start, from aidrian pr resolve');
+  if ((value.pr === undefined) !== (value.head === undefined)) at(value.pr === undefined ? 'pr' : 'head', 'a pull request run names both pr and head; any other run names neither');
 
   // A finding of the replaced report has two spellings, `F1` and `<that report>#F1`: one finding, so one key here.
   const oneSpelling = (key) => (key.startsWith(`${value.supersedes}#`) ? key.slice(value.supersedes.length + 1) : key);
@@ -188,11 +213,13 @@ export function sidecarProblems(value, { dir = null, report = null, replacedTitl
 }
 
 // What a sidecar says of the report it replaces, against that report (`older`, null when the folder holds none): the
-// report exists, and each key it sorts names a finding of it or, as `<file>#<key>`, of a run further back in the chain,
-// which `reportNamed` finds by its file name.
-export function replacedProblems({ supersedes, carried_forward: carried, not_rechecked: rechecks }, older, reportNamed = () => null) {
+// report exists, this run may replace it (replacementRefusal), and each key it sorts names a finding of it or, as
+// `<file>#<key>`, of a run further back in the chain, which `reportNamed` finds by its file name.
+export function replacedProblems({ supersedes, carried_forward: carried, not_rechecked: rechecks, pr }, older, reportNamed = () => null) {
   if (!supersedes) return [];
   if (!older) return [`supersedes: names ${reportTitle(supersedes)}, which is not in the audits folder: restore it, or write the sidecar with supersedes null and no findings to sort`];
+  const refusal = replacementRefusal(pr, older, { validSidecar: true });
+  if (refusal) return [`supersedes: ${refusal}, so write the sidecar with supersedes null and no findings to sort`];
   const known = new Set(older.findings.map((finding) => finding.id));
   const seen = new Set();
   for (let run = older; run && !seen.has(run); run = run.supersedes ? reportNamed(run.supersedes) : null) {
@@ -348,9 +375,11 @@ export function listAudits(dir, { triage = readTriage(dir) } = {}) {
     if (each.status !== 'ok') return;
     const problems = replacedProblems(each, byName.get(each.supersedes) ?? null, (name) => byName.get(name));
     if (!problems.length) return;
-    reports[index] = fromProse(dir, each.report, problems);
+    reports[index] = fromProse(dir, each.report, problems, each);
     byName.set(each.report, reports[index]);
   });
+  // Whatever its prose says, a run that may not replace a report leaves it live, with its own items.
+  for (const each of reports) if (replacementRefusal(each.pr, byName.get(each.supersedes), { validSidecar: each.status === 'ok' })) each.supersedes = null;
   const sorted = new Set(reports.filter((each) => each.status === 'ok'));
   for (const each of reports) {
     const replaced = each.supersedes && byName.get(each.supersedes);
@@ -440,17 +469,19 @@ function loadReport(dir, report) {
       base.problems.push(`invalid JSON (${error.message})`);
     }
     if (!base.problems.length) {
-      return { ...base, status: 'ok', personas: value.personas, supersedes: value.supersedes, findings: value.findings, not_reached: value.not_reached, doc_gaps: value.doc_gaps, carried_forward: value.carried_forward, not_rechecked: value.not_rechecked };
+      return { ...base, status: 'ok', personas: value.personas, supersedes: value.supersedes, findings: value.findings, not_reached: value.not_reached, doc_gaps: value.doc_gaps, carried_forward: value.carried_forward, not_rechecked: value.not_rechecked, pr: value.pr, head: value.head };
     }
+    return fromProse(dir, report, base.problems, isObject(value) ? value : {});
   }
   return fromProse(dir, report, base.problems);
 }
 
 // No sidecar, or one that is invalid: the prose gives the counts and the report it replaces, never a decision's key.
-function fromProse(dir, report, problems) {
+// `sidecar`, what an invalid one still says, gives the pull request it names, so another run cannot replace it.
+function fromProse(dir, report, problems, { pr, head } = {}) {
   const parsed = parseReport(readFileSync(path.join(dir, report), 'utf8'), { report, dir });
   return {
-    report, sidecar: sidecarName(report), problems, replaced_by: null, status: problems.length ? 'invalid' : 'no-sidecar', personas: parsed.personas,
+    report, sidecar: sidecarName(report), problems, replaced_by: null, status: problems.length ? 'invalid' : 'no-sidecar', personas: parsed.personas, pr, head,
     supersedes: parsed.supersedes, findings: parsed.findings, not_reached: parsed.not_reached, doc_gaps: parsed.doc_gaps, carried_forward: [], not_rechecked: [],
   };
 }

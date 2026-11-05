@@ -6,6 +6,9 @@ How a persona-audit session reaches the product. Copy it into a knowledge bucket
 Human once, then falls back to screenshots or code. Never write a real password or token here: name the variable,
 the password manager entry, or the seed command that provides it.
 Before a walk, Allowed changes, and Where each task lives are optional: a doc without them is read as before.
+A Preview line names the host of the previews a pull request run may walk, once GitHub's deployment for its head reports one;
+with none, a run walks no preview. A star needs at least two labels after it, and a Preview line trusts everything able to
+create deployments, so a project whose workflow deploys fork builds with a write token names no Preview line until that is fixed.
 Each account names its role and plan and the features it lacks, so a run signs in as each persona's role with a
 seeded account. Where each task lives names the account on every line when Accounts lists more than one.
 -->
@@ -14,6 +17,7 @@ seeded account. Where each task lives names the account on every line when Accou
 
 - Local: run `npm run dev`, then open `http://localhost:3000`.
 - Staging: `https://staging.example.com`. Never production.
+- Preview: `*.preview.example.com`, one per pull request. One `*.` stands for exactly one label.
 
 ## Before a walk
 

@@ -442,6 +442,23 @@ test('quorum.product: automatic start is off, approval comes first, and three ru
   assert.deepEqual(loadConfig(project(t, { version: 1, quorum: { product: { maxAutoRuns: 1 } } })).errors, []);
 });
 
+test('review.productFeedback.maxPersonas is a whole number from 1 to 10, 2 by default', (t) => {
+  const at = (productFeedback) => loadConfig(project(t, { version: 1, review: { productFeedback } }));
+  assert.equal(DEFAULTS.review.productFeedback.maxPersonas, 2);
+  assert.equal(loadConfig(project(t, { version: 1 })).config.review.productFeedback.maxPersonas, 2);
+  for (const value of [1, 3, 10]) {
+    const { config, errors } = at({ maxPersonas: value });
+    assert.deepEqual([errors, config.review.productFeedback.maxPersonas], [[], value], `${value}`);
+  }
+  for (const value of [0, 11, 2.5, '2', null, -1]) {
+    const { config, errors } = at({ maxPersonas: value });
+    assert.deepEqual(errors, ['.aidrian/config.json: "review.productFeedback.maxPersonas" must be a whole number from 1 to 10'], `${value}`);
+    assert.equal(config.review.productFeedback.maxPersonas, 2, `${value} keeps the default`);
+  }
+  assert.deepEqual(at({ maxPersona: 3 }).errors, ['.aidrian/config.json: unknown key "review.productFeedback.maxPersona"']);
+  for (const value of ['x', [], null]) assert.deepEqual(at(value).errors, ['.aidrian/config.json: "review.productFeedback" must be an object'], `${value}`);
+});
+
 test('quorum.product: a value outside its range is an error, and keeps the default', (t) => {
   for (const [key, value, message] of [
     ['autoStart', 'yes', /"quorum\.product\.autoStart" must be true or false$/u],

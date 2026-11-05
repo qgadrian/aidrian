@@ -1120,6 +1120,7 @@ test('aidrian pr prints its usage for an unknown action, and await-review report
     '       aidrian pr attest PR --check',
     '       aidrian pr checks [PR] [-R OWNER/REPO] [--json]',
     '       aidrian pr auto-merge [PR] [--json]',
+    '       aidrian pr resolve URL|NUMBER',
     '       aidrian pr disposition --severity S [--likelihood L --affects A] [--cost C]',
     '               [--source bot [--round N]] [--vocab]',
     '',

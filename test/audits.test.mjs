@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -97,6 +97,173 @@ test('a complete sidecar is valid, and each field it gets wrong is named', () =>
     /"the part note is hidden" also in carried_forward/, 'named by title when the replaced report can be read');
   assert.match(sidecarProblems(finding({ owner: 'The UX team' })).join('\n'), /^finding "the saved bench differs from the one shown": owner must be/mu);
   assert.match(sidecarProblems(sidecar(), { report: 'other-2026-06-01.md' }).join('\n'), /names front-desk-2026-06-01\.md, but the sidecar belongs to other/);
+});
+
+test('a pull request run names its pull request and head, both or neither, and an older sidecar carries neither', () => {
+  const pr = 'acme/notes#123';
+  const head = 'a'.repeat(40);
+  assert.deepEqual(sidecarProblems(sidecar()), [], 'an older sidecar or a whole-product run');
+  assert.deepEqual(sidecarProblems(sidecar({ pr, head })), []);
+  assert.deepEqual(sidecarProblems(sidecar({ pr: 'my.org/my_app-1#7', head: 'f'.repeat(64) })), [], 'a sha-256 head');
+  for (const bad of ['acme/notes', '#123', 'acme/notes#0', 'acme/notes#12a', 'github.com/acme/notes#1', '../notes#1', 'acme/..#1', './notes#1', 'acme/notes#1\n', 123, null, '']) {
+    assert.match(sidecarProblems(sidecar({ pr: bad, head })).join('\n'), /^pr: must be <owner\/name>#<number>/mu, JSON.stringify(bad));
+  }
+  for (const bad of ['main', 'A'.repeat(40), 'a'.repeat(39), 'a'.repeat(41), 123, null, '']) {
+    assert.match(sidecarProblems(sidecar({ pr, head: bad })).join('\n'), /^head: must be the full commit hash of the pull request's head at the walk's start/mu, JSON.stringify(bad));
+  }
+  assert.match(sidecarProblems(sidecar({ pr })).join('\n'), /^head: a pull request run names both/mu);
+  assert.match(sidecarProblems(sidecar({ head })).join('\n'), /^pr: a pull request run names both/mu);
+});
+
+test('a run never replaces another pull request\'s report: check refuses the sidecar, list keeps the other report live', (t) => {
+  const state = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-audits-pr-')));
+  t.after(() => rmSync(state, { recursive: true, force: true }));
+  const audits = path.join(state, 'audits');
+  mkdirSync(path.join(state, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(state, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '.' } }));
+  const report = '# Persona audit\n\n## Tasks\n\n## Findings\n';
+  const head = 'a'.repeat(40);
+  const write = (name, fields) => {
+    mkdirSync(audits, { recursive: true });
+    writeFileSync(path.join(audits, name), report);
+    writeFileSync(path.join(audits, name.replace(/\.md$/u, '.json')), JSON.stringify(sidecar({ report: name, date: '2026-06-01', findings: [], not_reached: [], doc_gaps: [], ...fields })));
+  };
+  const run = (...args) => spawnSync(AIDRIAN, ['audits', ...args], { cwd: state, encoding: 'utf8' });
+  const older = 'front-desk-2026-06-01.md';
+  const newer = 'front-desk-2026-06-01-2.md';
+  const list = () => Object.fromEntries(JSON.parse(run('list', '--json').stdout).map((each) => [each.report, each]));
+
+  write(older, { pr: 'acme/notes#5', head });
+  write(newer, { pr: 'acme/notes#6', head, supersedes: older });
+  const refused = run('check', newer);
+  assert.notEqual(refused.status, 0);
+  assert.match(`${refused.stdout}${refused.stderr}`, /supersedes: .*acme\/notes#5.*acme\/notes#6.*a run never replaces another pull request's report/u);
+  let reports = list();
+  assert.equal(reports[newer].status, 'invalid');
+  assert.match(reports[newer].problems.join('\n'), /a run never replaces another pull request's report/u);
+  assert.deepEqual([reports[older].status, reports[older].replaced_by], ['ok', null], 'the other pull request\'s report stays live');
+
+  write(newer, { pr: 'Acme/Notes#5', head, supersedes: older });
+  const same = run('check', newer);
+  assert.equal(same.status, 0, same.stderr);
+  assert.equal(list()[older].status, 'replaced', 'the same pull request, in another case, replaces as before');
+
+  // A pull request run replaces only a report of the same pull request, so never one that names none.
+  write(older, {});
+  write(newer, { pr: 'acme/notes#6', head, supersedes: older });
+  const noneNamed = run('check', newer);
+  assert.notEqual(noneNamed.status, 0);
+  assert.match(`${noneNamed.stdout}${noneNamed.stderr}`, /supersedes: .*names no pull request.*acme\/notes#6.*replaces only a report of the same pull request/u);
+  assert.equal(list()[older].replaced_by, null);
+
+  // A report naming a pull request can be replaced by a whole-product run with a valid sidecar, as before.
+  write(older, { pr: 'acme/notes#5', head });
+  write(newer, { supersedes: older });
+  assert.equal(run('check', newer).status, 0, 'a whole-product run carries no pull request, and is unchanged');
+  assert.equal(list()[older].status, 'replaced');
+  write(older, {});
+  write(newer, { supersedes: older });
+  assert.equal(run('check', newer).status, 0);
+  assert.equal(list()[older].status, 'replaced', 'whole-product runs replace each other, as before');
+
+  // A pr that is no string names no pull request a run could be of, so it never replaces a report that names one.
+  for (const pr of [123, null, ['acme/notes#5']]) {
+    write(older, { pr: 'acme/notes#5', head });
+    write(newer, { pr, head, supersedes: older });
+    assert.match(`${run('check', newer).stdout}${run('check', newer).stderr}`, /supersedes: .*acme\/notes#5.*a run with no readable pull request never replaces it/u, JSON.stringify(pr));
+    assert.equal(list()[older].replaced_by, null, JSON.stringify(pr));
+  }
+
+  // An older sidecar whose pr is no string still claims a pull request, so no pull request run replaces it.
+  write(older, { pr: 123, head });
+  write(newer, { pr: 'acme/notes#6', head, supersedes: older });
+  assert.match(`${run('check', newer).stdout}${run('check', newer).stderr}`, /supersedes: .*of pull request 123.*a run never replaces another pull request's report/u);
+  assert.equal(list()[older].replaced_by, null);
+
+  // An older sidecar broken for another reason still names its pull request.
+  write(older, { pr: 'acme/notes#5', head, date: 'soon' });
+  write(newer, { pr: 'acme/notes#6', head, supersedes: older });
+  assert.match(`${run('check', newer).stdout}${run('check', newer).stderr}`, /a run never replaces another pull request's report/u);
+  reports = list();
+  assert.equal(reports[older].replaced_by, null);
+});
+
+test('aidrian audits list gives each report\'s pull request, in its JSON and its text', (t) => {
+  const state = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-audits-pr-')));
+  t.after(() => rmSync(state, { recursive: true, force: true }));
+  const audits = path.join(state, 'audits');
+  mkdirSync(audits, { recursive: true });
+  mkdirSync(path.join(state, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(state, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '.' } }));
+  const write = (name, fields) => {
+    writeFileSync(path.join(audits, name), '# Persona audit\n\n## Findings\n');
+    writeFileSync(path.join(audits, name.replace(/\.md$/u, '.json')), JSON.stringify(sidecar({ report: name, date: '2026-06-01', findings: [], not_reached: [], doc_gaps: [], ...fields })));
+  };
+  const named = 'front-desk-2026-06-01.md';
+  const plain = 'owner-2026-06-01.md';
+  write(named, { pr: 'acme/notes#5', head: 'a'.repeat(40) });
+  write(plain, {});
+  const run = (...args) => spawnSync(AIDRIAN, ['audits', 'list', ...args], { cwd: state, encoding: 'utf8' }).stdout;
+  assert.deepEqual(Object.fromEntries(JSON.parse(run('--json')).map((each) => [each.report, each.pr])), { [named]: 'acme/notes#5', [plain]: null });
+  const lines = run().split('\n');
+  assert.match(lines.find((line) => line.includes('front-desk')), /^- The front-desk audit on 2026-06-01, of pull request acme\/notes#5: /u);
+  assert.doesNotMatch(lines.find((line) => line.includes('owner')), /pull request/u);
+});
+
+test('a report stays live, with its items, when the run whose prose says it replaces it may not', (t) => {
+  const state = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-audits-pr-')));
+  t.after(() => rmSync(state, { recursive: true, force: true }));
+  const audits = path.join(state, 'audits');
+  mkdirSync(audits, { recursive: true });
+  mkdirSync(path.join(state, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(state, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: '.' } }));
+  const older = 'front-desk-2026-06-01.md';
+  const newer = 'front-desk-2026-06-01-2.md';
+  const line = 'the bench is hidden';
+  const olderProse = `# Persona audit\n\n## Findings\n\n### friction: ${line}\n\n- Personas: front-desk. Task: Check a bike in. Evidence: read. Label: opinion.\n- Owner: \`ux-specialist\`.\n`;
+  const newerProse = `# Persona audit\n\nThis run replaces the front-desk read-only run on 2026-06-01 (\`${older}\`).\n\n## Findings\n`;
+  const finding = { ...sidecar().findings[1], title: line, evidence: [], cited: ['the bench'] };
+  const head = 'a'.repeat(40);
+  const write = (name, prose, fields) => {
+    writeFileSync(path.join(audits, name), prose);
+    const file = path.join(audits, name.replace(/\.md$/u, '.json'));
+    rmSync(file, { force: true });
+    if (fields) writeFileSync(file, JSON.stringify(sidecar({ report: name, date: '2026-06-01', findings: [], not_reached: [], doc_gaps: [], ...fields })));
+  };
+  const list = () => Object.fromEntries(JSON.parse(spawnSync(AIDRIAN, ['audits', 'list', '--json'], { cwd: state, encoding: 'utf8' }).stdout).map((each) => [each.report, each]));
+  const live = (why) => {
+    const reports = list();
+    assert.equal(reports[older].replaced_by, null, why);
+    assert.equal(reports[older].items, 1, `${why}: its finding stays its own item`);
+    assert.equal(reports[older].untriaged, 1, why);
+    assert.equal(reports[newer].awaiting_sort, 0, `${why}: the run takes over nothing`);
+    assert.equal(reports[newer].untriaged, 0, why);
+  };
+
+  // The older sidecar is valid; the run's prose still says it replaces that report.
+  write(older, olderProse, { pr: 'acme/notes#5', head, findings: [finding] });
+  write(newer, newerProse, { pr: 'acme/notes#6', head, supersedes: older });
+  live('another pull request');
+  write(newer, newerProse, null);
+  live('a run with no sidecar, against a report that names a pull request');
+  write(newer, newerProse, { pr: 123, head, supersedes: older });
+  live('a run whose pr is no string');
+  write(newer, newerProse, { supersedes: older, date: 'soon' });
+  live('a whole-product run whose sidecar is invalid');
+
+  // The older sidecar is broken, and what it still says names its pull request.
+  write(older, olderProse, { pr: 'acme/notes#5', head, findings: [finding], date: 'soon' });
+  write(newer, newerProse, null);
+  live('a run with no sidecar, against a broken sidecar that still names a pull request');
+
+  // The run's own sidecar is dropped for the prose, and what it said still counts.
+  write(older, olderProse, { findings: [finding] });
+  write(newer, newerProse, { pr: 'acme/notes#6', head, supersedes: older });
+  live('a pull request run, against a report that names none');
+
+  // A run with no sidecar and a report that names none: as before, the prose replaces.
+  write(newer, newerProse, null);
+  assert.equal(list()[older].replaced_by, newer);
 });
 
 test('with the audits folder, evidence must name a file there', (t) => {

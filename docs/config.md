@@ -158,6 +158,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.autoMerge` in `.aidrian.local.json` | This machine's choice, the same key with one field: `{ "enabled": true }` opts in under the team's `allow`, and `{ "enabled": false }` stays out. Unset follows `github.autoMerge.default`. The older `"on"` and `"off"` still work. |
 | `review.engine` | The project's [review engine](review.md#the-engine); it wins over the machine's. `null` leaves the choice to each machine. |
 | `review.record` | Where the [review record](review.md#the-record) goes: `"comment"` also writes a summary comment on the pull request; `"local"` keeps it in the state folder only. |
+| `review.productFeedback.maxPersonas` | How many personas `persona-audit` [picks for a pull request](personas.md#a-pull-request-link-alone): a whole number from 1 to 10, 2 by default. A run that names personas, or `all`, has no cap. |
 | `terms.file` | The [terms file](#terms) of banned terms and their replacements, relative to the project root; `null` turns the rule off. |
 | `docs.wrapLimit` | The longest line, in characters, allowed in a Markdown file an agent writes; `0` turns the check off. |
 | `knowledge.budgets.alwaysBytes` | The bytes all `always` knowledge docs may add up to: [Knowledge budgets](#knowledge-budgets). |
@@ -369,7 +370,7 @@ In `neverValid`, a `<word>` stands for any one word, so `needs <specialist> over
 
 `review` decides how `aidrian pr review` reviews a pull request: its depth, its stages, the critical flows it holds
 to their invariants, the reviewers a project adds, and the [visual capture](review.md#visual-review).
-[review.md](review.md) describes every key. Two machine settings live in `.aidrian.local.json`: the engine,
+[review.md](review.md) describes every key but `review.productFeedback`, which [personas.md](personas.md#a-pull-request-link-alone) does. Two machine settings live in `.aidrian.local.json`: the engine,
 `review.engine`, unless the project sets it here, and the visual capture's base URL, `review.visual.baseUrl`.
 
 ## Review gate

@@ -21,6 +21,14 @@ How to build, check, and release a change is in [contributing.md](contributing.m
 - What a script can check becomes a test or a check, not a sentence in a skill or agent.
 - A hook lets the action run when it cannot read its input: a hook never breaks a session.
 - Plugin text names no project, project path, person, or bare slash command; a project's rules live in its own `.aidrian/`.
+- The harness is provider agnostic: shared rules, code, and config assume no one host.
+  Claude Code and Codex are today's hosts; others, such as opencode, DeepSeek Code, or Kimi Code, may follow.
+- `mcp__<server>__<tool>` is the standard format for naming an MCP tool in permissions and config.
+  A host that names tools or events differently gets a translation layer that maps to the standard;
+  the difference never spreads into shared code.
+- A host-specific behavior lives in a translation layer. For agents that is `providers/`, `agent-addons/`,
+  and a generator in `scripts/build.mjs` ([Adding a provider](agent-sources.md#adding-a-provider)); hooks have none yet.
+  A doc states which hosts a feature is verified on, as the Host column of [hooks.md](hooks.md) and `docs/providers/` do.
 - A change to a surface updates that surface's doc in the same branch, and [agents-and-skills.md](agents-and-skills.md)
   when an agent or skill is added, renamed, or removed.
 - A pull request never changes the version: the release workflow raises it on main after the merge, at the level

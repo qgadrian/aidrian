@@ -1106,6 +1106,8 @@ Every value comes from this key, so the plugin names no tracker of its own; the 
 This is what the `harness-setup` skill writes for Linear, with `project` only when the Human names one.
 It lists `mcp__plugin_linear_linear__`, `mcp__linear__`, `mcp__linear-server__`, and `mcp__claude_ai_Linear__`, with the same patterns on each.
 These four server names are the known ones, and a connection under another name must be added by hand, in both lists.
+`mcp__<server>__<tool>` is the [standard format](working-agreement.md#rules-for-every-change) for naming an MCP tool in permissions and config.
+A server name, such as a plugin's `plugin_linear_linear` or a connector's `claude_ai_Linear`, is a host-specific value of `<server>`.
 `prepare_*` counts as a write: those tools are the step before file bytes reach the connected workspace.
 `mark_notification` stays out of the patterns on purpose, so it is unguarded: it changes only one person's inbox state.
 Relation fields, such as `blocks`, `parentId`, and `duplicateOf`, are left out of `keyFields` on purpose, since a relation may cross teams.

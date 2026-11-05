@@ -78,7 +78,7 @@ export function trackerWarnings(tracker, { env = process.env, hosts = HOSTS, tra
     }
     if (!adapter) continue;
     for (const { server, verbs } of unwatchedOn(tracker, adapter, host)) {
-      const fix = `set "provider": ${JSON.stringify(adapter.id)} and drop both tool lists, and raise requires.aidrian to this plugin's version, or add its patterns and read tool`;
+      const fix = `set "provider": ${JSON.stringify(adapter.id)} and drop both tool lists, and raise "aidrian" under "requires" to this plugin's version, or add its patterns and read tool`;
       warnings.push(`tracker.writeTools: no pattern covers ${verbs.join(', ')} on ${adapter.name}'s server ${JSON.stringify(server)} on ${host.name}, so a write through it passes unchecked; ${fix}`);
     }
   }

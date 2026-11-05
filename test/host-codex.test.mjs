@@ -68,7 +68,7 @@ test('aidrian check warns an adopted key that leaves out Codex\'s app route, and
   const { status, stderr } = check(t, WRITTEN_OUT, TRUSTED);
   assert.equal(status, 0, stderr);
   assert.match(stderr, /warning: tracker\.writeTools: no pattern covers .* on Linear's server "codex_apps_linear" on Codex/u);
-  assert.match(stderr, /set "provider": "linear" and drop both tool lists, and raise requires\.aidrian to this plugin's version/u);
+  assert.match(stderr, /set "provider": "linear" and drop both tool lists, and raise "aidrian" under "requires" to this plugin's version/u);
   assert.doesNotMatch(check(t, SHORT, TRUSTED).stderr, /tracker\.writeTools/u);
   assert.doesNotMatch(check(t, WRITTEN_OUT).stderr, /tracker/u, 'with no Codex here, nothing');
 });

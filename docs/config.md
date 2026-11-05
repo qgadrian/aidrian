@@ -1128,7 +1128,7 @@ the adapter lists for any host counted on every host. A hyphenated server the li
 spells it another way. A write through any of these passes unchecked. Replacing both lists with `"provider"`, and raising
 [`requires.aidrian`](#plugin-version) to this plugin's version, ends the warning.
 The host a session runs on gets one `Tracker guard:` line about it at [session start](hooks.md#start-lines).
-A host that is not set up here, or that no adapter can find, gets no warning, which is the limit of this check. Replacing both lists with `"provider"` ends the warning.
+A host that is not set up here, or that no adapter can find, gets no warning, which is the limit of this check.
 
 | Key | Default | Meaning |
 | --- | --- | --- |

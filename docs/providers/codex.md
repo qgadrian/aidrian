@@ -73,7 +73,8 @@ export PATH="${aidrian_dir}bin:$PATH"
   `codex mcp list` does not list them. They arrive as `mcp__codex_apps__<connector>__<tool>`,
   and the [adapter](../../plugins/aidrian/lib/hosts/codex.mjs) gives the hooks `mcp__codex_apps_<connector>__<tool>`,
   so a connector counts as a server of its own. The model sees `mcp__codex_apps__<connector>_<tool>`, with one underscore there.
-- Codex replaces each character outside `[A-Za-z0-9_]` in a tool's name, so an MCP server `linear-server` reaches the hooks as `mcp__linear_server__<tool>`.
+- Codex replaces each character outside `[A-Za-z0-9_]` in a tool's name,
+  so an MCP server `linear-server` reaches the hooks as `mcp__linear_server__<tool>`.
 - Hosted tools, such as web search, never reach a hook. No tracker write goes through one.
 - The names reminder runs on each prompt but prints nothing: it reads only Claude Code transcripts.
 - The stop, subagent-stop, and session-end inputs are not verified.
@@ -90,7 +91,8 @@ in a project with `"tracker": { "enabled": true, "provider": "linear", ... }`:
 
 1. Trust the plugin's hooks in `/hooks`.
 2. In a Codex session, ask for a Linear write through the Linear app.
-3. The write is refused with `this session has not read the connected workspace`, and the reason names `mcp__codex_apps__linear_get_workspace`, as the model sees that tool.
+3. The write is refused with `this session has not read the connected workspace`,
+   and the reason names `mcp__codex_apps__linear_get_workspace`, as the model sees that tool.
    That refusal proves the name and the hook. After the read, a write to another team is refused, and one to the project's team runs.
 
 A write that runs with no refusal means the hook did not fire or the name differs: `mcp__codex_apps__` in `hookInput` is where to look,
@@ -120,7 +122,8 @@ In Codex, only `*` and `main` [agent gates](../hooks.md#agent-gates) are sure to
 
 - A named agent's gates hold only when Codex sends the call's `agent_type`, which no live session has confirmed yet.
 - Codex names this plugin's roles `aidrian-<agent>`; the gates read that as `<agent>`.
-- A tool pattern matches a call by its standard name or by what Codex sends: `mcp__codex_apps_linear__*` and `mcp__codex_apps__linear__*` hold the same tools,
+- A tool pattern matches a call by its standard name or by what Codex sends:
+  `mcp__codex_apps_linear__*` and `mcp__codex_apps__linear__*` hold the same tools,
   and `mcp__codex_apps__*` holds every connector. The model's flat form, `mcp__codex_apps__linear_*`, matches nothing, since no hook sees it.
   A server's name is matched as Codex spells it, so a gate on `mcp__linear-server__*` does not hold here, and one on `mcp__linear_server__*` does.
 - A call without `agent_id` counts as the main session's: `main` gates apply,

@@ -13,6 +13,7 @@ import { checkoutRoots, isIgnored, runGit } from './git.mjs';
 import { checkBudgets, indexRows, loadKnowledge, tagWarnings } from './knowledge.mjs';
 import { findProject, noProjectMessage, projectAt, stateDir, worktreesDir } from './project.mjs';
 import { ROUTED_DOMAINS } from './quorum.mjs';
+import { trackerWarnings } from './tracker-check.mjs';
 import { loadTerms } from './terms.mjs';
 
 const OPTIONS = { project: { type: 'string' } };
@@ -70,7 +71,7 @@ export const commands = {
       const tags = tagWarnings(buckets);
       // Only a project with no errors: an index problem is an error already, and scanDecisions stops on a bad config.
       const markers = errors.length ? [] : scanDecisions(project).problems.map((each) => `${place(each)}: ${each.problem}`);
-      const decisions = [...decisionWarnings(config), ...quorumProductWarnings(project, config), ...untrackedDocs(project, config), ...markers];
+      const decisions = [...decisionWarnings(config), ...quorumProductWarnings(project, config), ...untrackedDocs(project, config), ...markers, ...trackerWarnings(config.tracker)];
       const shown = [...budgets.warnings, ...warnings, ...tags.warnings, ...decisions].map((warning) => `warning: ${warning}`);
       if (shown.length || tags.notes.length) console.error([...shown, ...tags.notes.map((note) => `note: ${note}`)].join('\n'));
       if (errors.length) {

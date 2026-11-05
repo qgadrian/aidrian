@@ -22,8 +22,8 @@ the tracker write guard, and the question names check also record each block: se
 | Before `AskUserQuestion` | A block when a question or option says "I", "me", "my", "you", or "your" (or a form of them, such as "I'm" or "yourself") outside code and quotes: [Names](config.md#names) | Claude Code | yes |
 | Before a GitHub MCP comment | The [review gate](config.md#review-gate), when the project turns it on, and the review-round rule | both | yes |
 | Before a GitHub MCP merge | The [merge guard](#merge-guard) | both | yes |
-| Before any MCP tool call | The [tracker write guard](config.md#tracker), when the project turns it on, on a tool in `tracker.writeTools` | Claude Code | yes |
-| After any MCP tool call | The tracker write guard's record of the connected workspace, on a tool in `tracker.readTools`, and its note of a [tool neither list names](config.md#how-a-write-is-judged) | Claude Code | no |
+| Before any MCP tool call | The [tracker write guard](config.md#tracker), when the project turns it on, on a tool in `tracker.writeTools` | both, [not live on Codex](#where-the-tracker-guard-is-verified) | yes |
+| After any MCP tool call | The tracker write guard's record of the connected workspace, on a tool in `tracker.readTools`, and its note of a [tool neither list names](config.md#how-a-write-is-judged) | both, [not live on Codex](#where-the-tracker-guard-is-verified) | no |
 | Before an Agent tool call | The project's [model and effort](config.md#models) for that agent | Claude Code | no |
 | After a Markdown write | The [line-length check](#markdown-line-length) | Claude Code | feedback |
 | Before compaction | A checklist of what the summary must keep | both | no |
@@ -79,6 +79,29 @@ wherever the session started, with `<db>` the `git.defaultBranch`:
 They compare local refs only, with no fetch, so a stale `origin/<db>` can count commits that are already pushed.
 An untracked file alone prints nothing. Each line is one git call: a missing `origin/<db>` or a failing git drops
 that line alone, and a git that hangs past the timeout drops its own line and the ones after it.
+
+## Where the tracker guard is verified
+
+Hook payloads pass through `lib/hosts/` first, so the guard reads every tool as `mcp__<server>__<tool>`.
+
+| On | Live | Not live |
+| --- | --- | --- |
+| Claude Code | The `PostToolUse` payload of a real `get_workspace` call on 2.1.318, kept as `test/fixtures/hosts/claude-code/tracker.json` | The payload of a write, which the same fixture builds from the documented shape |
+| Codex | On 0.166.0, `codex exec --json` called `linear.get_workspace` through the Linear app, with server `codex_apps`, and returned the `url` the guard reads | Any hook on Codex: no session has run the guard with a person's trust. The names and payload come from the source and `test/fixtures/hosts/codex/tracker.json` |
+
+What the Codex source says, at `rust-v0.166.0`:
+
+- An app connector's tool runs through the same MCP handler as a server's, and its `PreToolUse` and `PostToolUse` hooks fire on it:
+  `codex-rs/core/src/tools/registry.rs` and `handlers/mcp.rs`.
+- Its hook name is `mcp__codex_apps__<connector>__<tool>`, as `hook_tool_name` joins it.
+  The model sees one underscore in the same place, such as `mcp__codex_apps__linear_get_workspace`.
+  The Codex adapter takes either, and gives the standard `mcp__codex_apps_linear__get_workspace`, so each connector counts as its own server.
+- Exit 2 with a reason on stderr blocks the call: `codex-rs/hooks/src/events/pre_tool_use.rs`. A call that fails fires no `PostToolUse`, as on Claude Code.
+
+The tests run those payloads through the real hooks, but they are not live.
+[The Codex page](providers/codex.md#prove-the-tracker-guard) has the one step a person takes to prove it, and what to look for.
+A hook on Codex runs only after that person's trust, so while `tracker.enabled` is true,
+`aidrian check` warns when Codex has the plugin and no trust on record.
 
 ## Turning hooks off
 

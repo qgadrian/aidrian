@@ -64,16 +64,36 @@ export PATH="${aidrian_dir}bin:$PATH"
 ## Hooks
 
 - Codex runs the plugin's hooks only after you trust them in `/hooks`, after each install and each update.
-  The [tracker write guard](../config.md#tracker) needs that trust too: without it, every tracker write passes unchecked.
-  No live session has run the guard with that trust yet, so [hooks.md](../hooks.md) marks it Claude Code.
+  The [tracker write guard](../config.md#tracker) needs that trust too: without it, every tracker write passes unchecked,
+  and `aidrian check` warns of it while `tracker.enabled` is true and Codex has the plugin with no trust on record.
+  A trust that an update made stale keeps its entry in Codex's config, so only `/hooks` shows that one.
 - Codex has no Edit, Write, or Agent tool, so the hooks on those tools never run. [hooks.md](../hooks.md) marks them Claude Code.
 - Shell commands reach the hooks as `Bash`, file edits as `apply_patch`, and MCP tools as `mcp__<server>__<tool>`.
-- Hosted tools, such as web search, never reach a hook.
+- An app connector, such as Linear's, runs through the host's own MCP server, `codex_apps`, so its tools reach the hooks too.
+  `codex mcp list` does not list them. They arrive as `mcp__codex_apps__<connector>__<tool>`,
+  and the [adapter](../../plugins/aidrian/lib/hosts/codex.mjs) gives the hooks `mcp__codex_apps_<connector>__<tool>`,
+  so a connector counts as a server of its own.
+- Hosted tools, such as web search, never reach a hook. No tracker write goes through one.
 - The names reminder runs on each prompt but prints nothing: it reads only Claude Code transcripts.
 - The stop, subagent-stop, and session-end inputs are not verified.
   Those hooks run, write nothing they cannot read, and never send a Codex agent back.
 
 To check that the hooks run, open a session, run `git commit --amend --dry-run`, and check that the Bash hook blocks it.
+
+## Prove the tracker guard
+
+Everything below the hook is verified, and no live hook has run:
+see [Where the tracker guard is verified](../hooks.md#where-the-tracker-guard-is-verified).
+The one thing that takes a person is the trust step, so a person runs this once,
+in a project with `"tracker": { "enabled": true, "provider": "linear", ... }`:
+
+1. Trust the plugin's hooks in `/hooks`.
+2. In a Codex session, ask for a Linear write through the Linear app.
+3. The write is refused with `this session has not read the connected workspace`, and the reason names `mcp__codex_apps_linear__get_workspace`.
+   That refusal proves the name and the hook. After the read, a write to another team is refused, and one to the project's team runs.
+
+A write that runs with no refusal means the hook did not fire or the name differs: `mcp__codex_apps__` in `hookInput` is where to look,
+and a collision between two connectors of one name, which Codex suffixes with a hash, is the one known way the name can differ.
 
 ## Models and effort
 

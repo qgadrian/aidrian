@@ -1,0 +1,24 @@
+{
+  "live": true,
+  "provenance": "The tool_response is what Claude Code 2.1.318 sent to a PostToolUse hook for a real get_workspace call, with the values replaced. The other hook fields follow Claude Code's documented payload. The write's payload was not recorded from a live call.",
+  "env": { "CLAUDECODE": "1", "CLAUDE_PLUGIN_ROOT": "/plugins/cache/aidrian-harness/aidrian/0.0.0" },
+  "workspace": "https://linear.app/acme",
+  "standard": { "read": "mcp__plugin_linear_linear__get_workspace", "write": "mcp__plugin_linear_linear__save_issue" },
+  "post": {
+    "session_id": "2f6c1e0a-9b3d-4c7e-8a15-6d0f4b2c9e11",
+    "transcript_path": "/nowhere/transcript.jsonl",
+    "cwd": "<cwd>",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "mcp__plugin_linear_linear__get_workspace",
+    "tool_input": {},
+    "tool_response": [{ "type": "text", "text": "{\"id\":\"redacted-id\",\"name\":\"Redacted\",\"url\":\"https://linear.app/acme\"}" }]
+  },
+  "pre": {
+    "session_id": "2f6c1e0a-9b3d-4c7e-8a15-6d0f4b2c9e11",
+    "transcript_path": "/nowhere/transcript.jsonl",
+    "cwd": "<cwd>",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "mcp__plugin_linear_linear__save_issue",
+    "tool_input": { "team": "Notes", "title": "A title" }
+  }
+}

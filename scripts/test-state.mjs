@@ -30,6 +30,8 @@ if (!process.env.AIDRIAN_TEST_STATE) {
   mkdirSync(temp);
   process.env.AIDRIAN_TEST_STATE = state;
   process.env.XDG_STATE_HOME = state;
+  // Which host this machine has installed changes no answer either: `aidrian check` reads Codex's config (lib/hosts/codex.mjs).
+  process.env.CODEX_HOME = path.join(state, 'codex');
   process.env.TMPDIR = temp;
   process.on('exit', () => rmSync(state, { recursive: true, force: true }));
 }

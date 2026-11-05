@@ -50,6 +50,9 @@ export PATH="$plugin/bin:$PATH"
 Claude Code runs every hook in [`hooks.json`](../../plugins/aidrian/hooks/hooks.json) once the plugin is enabled.
 There is nothing to trust or turn on.
 [hooks.md](../hooks.md) lists each hook; the ones marked Claude Code run only here.
+The [host adapter](../../plugins/aidrian/lib/hosts/claude-code.mjs) holds what the shared code reads from this host:
+its payloads need no mapping, since their names are the standard.
+[Where the tracker guard is verified](../hooks.md#where-the-tracker-guard-is-verified) has the evidence.
 
 Claude Code cancels a SessionEnd hook that runs longer than a short budget as it exits, and reports `Hook cancelled`.
 The session-end hook deletes the session's temporary files itself, and hands the [`session` row](../dispatch-log.md#session-when-a-session-ends)

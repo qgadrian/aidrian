@@ -3708,16 +3708,12 @@ test('an inference line matches past a curly or straight quote, and still fails 
   assert.equal(inferenceProblems([claim], [{ statement: 'The Human\'s "view" is clear.' }]).length, 1);
 });
 
-test('the route says no base could be read, rather than that auto-start is off', () => {
+test('the route gives resolve\'s reason when something at the base could not be read, rather than saying auto-start is off', () => {
   const off = { autoStart: false, approval: 'first', maxAutoRuns: 1 };
   const call = { hard: true, domain: 'product' };
-  const noBase = { authority: 'ask', rule: 'no-base', reason: 'r', base: null };
-  const noInventory = { authority: 'ask', rule: 'no-base', reason: 'r', base: 'abc1234' };
-  assert.match(routeFor(off, call, noBase).reason, /^no base branch could be read/u);
-  assert.match(routeFor(off, call, { authority: 'ask', rule: 'mode', reason: 'r' }).reason, /^quorum\.product\.autoStart is off at the base branch/u);
-  assert.match(routeFor(off, call, noInventory).reason, /^quorum\.product\.autoStart is off at the base branch/u, 'the base read, and only the decisions failed');
+  const unread = { authority: 'ask', rule: 'no-base', reason: 'git could not give the unreviewed decisions', base: 'abc1234' };
+  const set = { authority: 'ask', rule: 'mode', reason: 'r' };
   const ledger = routeLedger();
-  assert.match(routeAfterRuling(off, ledger, noInventory, 'product').reason, /^quorum\.product\.autoStart is off/u);
-  assert.match(routeAfterRuling(off, ledger, noBase, 'product').reason, /^no base branch could be read/u);
-  assert.match(routeAfterRuling(off, ledger, { authority: 'ask', rule: 'mode', reason: 'r' }, 'product').reason, /^quorum\.product\.autoStart is off/u);
+  for (const reason of [routeFor(off, call, unread).reason, routeAfterRuling(off, ledger, unread, 'product').reason]) assert.match(reason, /^quorum\.product\.autoStart counts as off, because git could not give the unreviewed decisions/u);
+  for (const reason of [routeFor(off, call, set).reason, routeAfterRuling(off, ledger, set, 'product').reason]) assert.match(reason, /^quorum\.product\.autoStart is off at the base branch/u);
 });

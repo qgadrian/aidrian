@@ -185,7 +185,9 @@ What each rule matches:
   a body file in a shared temp folder, and a body identical to another open pull request's.
   These rules and the attribution rule's pull request lines follow the repository the call targets.
   The project is the one found from the folder gh runs in: `env -C`, a leading `cd`, or a later `cd` joined to gh by `&&`
-  alone (`x; cd /other && gh …`), and the session's only where that folder cannot be known (`cd "$WT"`, `cd /other; gh …`).
+  alone (`x; cd /other && gh …`). It is the session's where that folder cannot be known (`cd "$WT"`, `x; cd /other; gh …`),
+  and where the `cd` may not have moved the shell gh runs in: after `||` or in a pipe, negated, in a subshell, under a
+  wrapper such as `env`, in a list sent to the background, or a leading `cd` to a missing folder with no `&&` up to gh.
   A call that names a repository other than that checkout's remotes, through `-R`, a pull request URL, or `GH_REPO`,
   gets none of these rules: that repository's config cannot be found from there, so its rules go unchecked.
   A `-R` that names a remote of the checkout, a fork's parent included, keeps them; so does a value the rule cannot read

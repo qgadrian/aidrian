@@ -126,6 +126,40 @@ test("a cd gh may run without leaves the session's rules", () => {
   refuses(`true; cd ${OWN} && gh pr edit 1 --body-file ${WHY}`, noSummary);
 });
 
+test("a cd that may not move the shell gh runs in leaves the session's rules", () => {
+  const footer = /carries the "Generated with \[Claude Code\]" footer/;
+  const judged = [
+    `true || cd ${PLAIN} &&`, // skipped: `true` already succeeded
+    `true | cd ${PLAIN} &&`, // in a pipeline's own process
+    `true |& cd ${PLAIN} &&`,
+    `cd ${OTHER} || cd ${PLAIN} &&`, // the second is skipped when the first works
+    `true || cd ${PLAIN} && true &&`,
+    `! cd ${PLAIN} &&`, // gh runs only when the cd failed
+    `(cd ${PLAIN}) > /dev/null &&`, // a subshell, with a redirect after it
+    `(cd ${PLAIN} && true) 2>&1 &&`,
+    `cd ${PLAIN} && true & true;`, // the list before `&` runs in the background
+    `cd ${PLAIN} && true &`,
+    `true; cd ${PLAIN} & true &&`,
+    `env cd ${PLAIN} &&`, // a wrapper runs the cd in its own process
+    `nohup cd ${PLAIN} &&`,
+    `cd ${path.join(ROOT, 'missing')} && true;`, // a cd that fails leaves gh where it was
+    `cd ${path.join(ROOT, 'missing')} && true ||`,
+  ].filter((before) => !footer.test(hook(`${before} gh pr edit 1 --body-file ${FOOTER}`).stderr));
+  assert.deepEqual(judged.map((before) => before.replaceAll(ROOT, '')), [], 'each of these must keep the session\'s rules');
+  const attribution = /^Blocked: the pull request body lacks its attribution/;
+  refuses(`true || cd ${PLAIN} && gh pr create --title 'feat: x' --body-file ${SUMMARY}`, attribution);
+  refuses(`true | cd ${PLAIN} && gh pr create --title 'feat: x' --body-file ${SUMMARY}`, attribution);
+});
+
+test('a leading cd into a folder that exists holds past a newline, as a body written first needs', () => {
+  const body = path.join(OTHER, 'c.md');
+  passes(`cd ${OTHER} && cat > ${body} <<'EOF'\n## Why\nThe reason.\nEOF\ngh pr edit 1 --body-file ${body}`);
+  refuses(`cd ${OTHER} && true; gh pr edit 1 --body-file ${SUMMARY}`, noWhy);
+  passes(`cd ${OTHER} && true | cat; gh pr edit 1 --body-file ${WHY}`);
+  passes(`true || cd ${PLAIN} && cd ${OTHER} && gh pr edit 1 --body-file ${WHY}`);
+  passes(`cd ${OTHER} && sh -c 'true; gh pr edit 1 --body-file ${WHY}'`);
+});
+
 test('a -R naming the repository of the folder the call runs in takes that project\'s rules', () => {
   passes(`env -C ${OTHER} gh pr edit 1 -R acme/other --body-file ${WHY}`);
   refuses(`env -C ${OTHER} gh pr edit 1 -R acme/other --body-file ${SUMMARY}`, noWhy);

@@ -6,7 +6,7 @@
 // descriptor a redirection names before it, as written (`2` of `2>`, `{x}` of `{x}<`), absent when it names none;
 // `fdDup` for the `&1` of `2>&1`. Everything a rule cannot read is meant to fail open: an unknown shape yields no match, never a deny.
 
-import { realpathSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 const CONTINUATION = '\n';
@@ -719,8 +719,10 @@ const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
 // after `;` or `||`, a second one) leaves it unknown for the commands after it. A wrapper's own directory (`env -C`)
 // and git's `-C` apply to their command only. Directory changes themselves are left out.
 // `chained` is the folder the command runs in whenever it runs at all, for a rule that asks which project a command
-// answers to: `folder` when known, and also after a `cd` joined to it by `&&` alone, as in `x; cd /y && gh`, where the
-// command runs only once that `cd` worked. It is null past `;`, `||`, a pipe, or the end of a subshell, unless `folder` is known.
+// answers to. It follows a `cd` joined to the command by `&&` alone, as in `x; cd /y && gh`, where the command runs only
+// once that `cd` worked. It is null, and the rule falls back on its default, where the `cd` may not have moved this shell:
+// one after `||` or in a pipe, negated, in a subshell, under a wrapper such as `env`, or in a list sent to the background.
+// Past `;`, `||`, or a pipe, a leading `cd` holds only when its folder exists, since that `cd` cannot then fail.
 // `unread` is the text of the commands a shell or `eval` runs that the walk could not read as command lines: what a pipe
 // feeds a shell (`echo 'git push' | bash`) with the shell itself, a shell's script or unreadable options, or a body
 // nested past SUBSTITUTION_DEPTH_LIMIT. A rule that must not miss a command fails closed on it when it names one.
@@ -742,15 +744,24 @@ export function walkCommands(command, cwd) {
     };
     let here = start;
     let chain = chainStart;
+    // The folder this shell stands in whatever ran before: where `chain` resumes when no `&&` joins a command to the last.
+    let settled = chainStart;
+    let moved = false;
     segments.forEach((segment, index) => {
-      if (index > 0 && separators[index - 1] !== '&&') chain = here;
+      const after = separators[index - 1];
+      if (after === '&' && moved) settled = null;
+      if (index > 0 && after !== '&&') chain = settled;
       for (const body of substitutions.slice(ends[index - 1] ?? 0, ends[index])) nested(body, here, chain);
       const invocation = readInvocation(segment);
-      const closes = segment.at(-1)?.text.endsWith(')');
+      // Any word may end the subshell: a redirect can follow it, as in `(cd x) > log`.
+      const closes = segment.some((token) => !token.operator && token.text.endsWith(')'));
       if (CHANGES_DIRECTORY.has(invocation.program)) {
         const leading = index === 0 && separators[0] === '&&' && !segment[0]?.text.startsWith('(');
         here = leading ? folderAfter(start, invocation) : null;
-        chain = closes ? null : folderAfter(chain, invocation);
+        const movesThisShell = !closes && !invocation.negated && !runsInOwnProcess(segment) && !['||', '|', '|&'].includes(after);
+        chain = movesThisShell ? folderAfter(chain, invocation) : null;
+        settled = leading && movesThisShell && chain !== null && isDirectory(chain) ? chain : null;
+        moved = true;
         return;
       }
       let folder = invocation.chdir ? folderAfter(here, { program: 'cd', args: [invocation.chdir] }) : here;
@@ -765,7 +776,6 @@ export function walkCommands(command, cwd) {
           if (GIT_VALUE_GLOBALS.has(args[i].text)) i += 1;
         }
       }
-      chained = folder ?? chained;
       const own = heredocs.filter((each) => each.segment === index).map(({ body, expands, fd }) => ({ body, expands, ...(fd === undefined ? {} : { fd }) }));
       const inputs = [
         ...own.map((each) => each.body),
@@ -786,13 +796,28 @@ export function walkCommands(command, cwd) {
         } else unread.push(piped(index));
       }
       if (unread.length) entry.unread = unread.join('\n');
-      if (closes) chain = here;
+      if (closes) chain = settled;
     });
     for (const body of substitutions.slice(ends.at(-1) ?? 0)) nested(body, here, chain);
   };
   walk(command, cwd, 0);
   return out;
 }
+
+// Whether a directory change sits under a wrapper that gives it a process of its own, as `env cd x` does, so this shell
+// stays where it was. `command` and `time` run it in this shell.
+function runsInOwnProcess(segment) {
+  const at = segment.findIndex((token) => CHANGES_DIRECTORY.has(path.basename(token.text.replace(/^\(+/u, ''))));
+  return segment.slice(0, at).some(({ text }) => WRAPPERS.has(path.basename(text)) && text !== 'command' && text !== 'time');
+}
+
+const isDirectory = (dir) => {
+  try {
+    return statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+};
 
 // The folder a `cd`, `pushd`, or `popd` invocation reaches from `here`, or null when it cannot be known. It is the
 // physical folder, as the kernel resolves a file's `..` from it: `cd link && cat ../f` reads beside the link's target.

@@ -107,6 +107,13 @@ export function originRepo(project) {
   return status === 0 ? repoName(stdout) : null;
 }
 
+// The `owner/name` of every remote of this checkout, so a fork's parent counts with its origin. Empty when it has none.
+export function remoteRepos(project) {
+  const { status, stdout } = runGit(['config', '--get-regexp', '^remote\\..*\\.url$'], project.root);
+  if (status !== 0) return [];
+  return stdout.split('\n').map((line) => repoName(line.slice(line.indexOf(' ') + 1))).filter(Boolean);
+}
+
 // The deny reason for the requests in one tool call, each { pr, repo, markers }, or null. `pr` null is a request whose
 // pull request could not be read; `repo` null is this repository. A request to another repository passes. The override
 // records itself for the pull request, so a person who waived the review once is not asked again.

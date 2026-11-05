@@ -322,6 +322,8 @@ function lexSegments(command) {
 
     const token = start();
     token.text += ch;
+    // An unquoted parenthesis is syntax, such as a subshell's; a quoted one reached the word through the branches above.
+    if (ch === '(' || ch === ')') token.paren = true;
     if (ch === '$' || ch === '`' || ch === '*' || ch === '?') token.dynamic = true;
     if (ch === '$') token.splits = true;
   }
@@ -718,17 +720,22 @@ const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
 // here-string words fed to its input; `heredocs` its heredocs alone, as { body, expands, fd? }. A leading `cd <dir> &&` moves the folder; any other directory change (in a subshell, a pipe,
 // after `;` or `||`, a second one) leaves it unknown for the commands after it. A wrapper's own directory (`env -C`)
 // and git's `-C` apply to their command only. Directory changes themselves are left out.
+// `chained` is the folder the command runs in whenever it runs at all, for a rule that asks which project a command
+// answers to. It follows a `cd` only when every link from that `cd` to the command is `&&` in the same shell, as in
+// `x; cd /y && gh`, where the command runs only once that `cd` worked. Past a `;`, newline, `||`, pipe, `&`, `!`, or
+// subshell boundary it is null, and the rule falls back on its default; so it is for a `cd` that may not run in this shell:
+// one after `||` or in a pipe, negated, in a subshell, or under a wrapper such as `env`.
 // `unread` is the text of the commands a shell or `eval` runs that the walk could not read as command lines: what a pipe
 // feeds a shell (`echo 'git push' | bash`) with the shell itself, a shell's script or unreadable options, or a body
 // nested past SUBSTITUTION_DEPTH_LIMIT. A rule that must not miss a command fails closed on it when it names one.
 export function walkCommands(command, cwd) {
   const out = [];
-  const walk = (line, start, depth) => {
+  const walk = (line, start, depth, chainStart = start) => {
     const { segments, separators, substitutions, ends, heredocs, spans } = lexSegments(line);
     // Whether the body was walked: past the depth limit it is not.
-    const nested = (body, folder) => {
+    const nested = (body, folder, chainFolder) => {
       if (depth >= SUBSTITUTION_DEPTH_LIMIT) return false;
-      walk(body, folder, depth + 1);
+      walk(body, folder, depth + 1, chainFolder);
       return true;
     };
     // Segment `index` with the segments that pipe into it, as written.
@@ -738,19 +745,37 @@ export function walkCommands(command, cwd) {
       return line.slice(spans[first][0], spans[index][1]);
     };
     let here = start;
+    let chain = chainStart;
+    // Whether a `cd` on this line touched `chain`: until one does, nothing on the line can break it.
+    let moved = false;
+    const breakChain = () => {
+      chain = moved ? null : chainStart;
+    };
     segments.forEach((segment, index) => {
-      for (const body of substitutions.slice(ends[index - 1] ?? 0, ends[index])) nested(body, here);
+      const after = separators[index - 1];
       const invocation = readInvocation(segment);
+      // In any word: a redirect can follow the parenthesis that ends a subshell, as in `(cd x) > log`.
+      const holds = (paren) => segment.some((token) => token.paren && token.text.includes(paren));
+      if ((index > 0 && after !== '&&') || holds('(') || invocation.negated) breakChain();
+      for (const body of substitutions.slice(ends[index - 1] ?? 0, ends[index])) nested(body, here, chain);
+      const closes = holds(')');
       if (CHANGES_DIRECTORY.has(invocation.program)) {
         const leading = index === 0 && separators[0] === '&&' && !segment[0]?.text.startsWith('(');
         here = leading ? folderAfter(start, invocation) : null;
+        const movesThisShell = !closes && !invocation.negated && !runsInOwnProcess(segment) && !['||', '|', '|&'].includes(after);
+        chain = movesThisShell ? folderAfter(chain, invocation) : null;
+        moved = true;
         return;
       }
       let folder = invocation.chdir ? folderAfter(here, { program: 'cd', args: [invocation.chdir] }) : here;
+      let chained = invocation.chdir ? folderAfter(chain, { program: 'cd', args: [invocation.chdir] }) : chain;
       if (invocation.program === 'git') {
         const { args } = invocation;
         for (let i = 0; i < args.length && args[i].text.startsWith('-'); i += 1) {
-          if (args[i].text === '-C') folder = folderAfter(folder, { program: 'cd', args: [args[i + 1]] });
+          if (args[i].text === '-C') {
+            folder = folderAfter(folder, { program: 'cd', args: [args[i + 1]] });
+            chained = folderAfter(chained, { program: 'cd', args: [args[i + 1]] });
+          }
           if (GIT_VALUE_GLOBALS.has(args[i].text)) i += 1;
         }
       }
@@ -759,7 +784,7 @@ export function walkCommands(command, cwd) {
         ...own.map((each) => each.body),
         ...segment.flatMap((token, at) => (token.operator && token.text === '<<<' && segment[at + 1] ? [segment[at + 1].text] : [])),
       ];
-      const entry = { segment, invocation, folder, line, inputs, heredocs: own };
+      const entry = { segment, invocation, folder, chained, line, inputs, heredocs: own };
       out.push(entry);
       const unread = [];
       // eval joins its words with spaces and runs the result as a command line; a leading `--` only ends its options.
@@ -767,18 +792,26 @@ export function walkCommands(command, cwd) {
       const evaluated = evalWords.length > 0 ? evalWords.map((token) => token.text).join(' ') : null;
       const inner = inlineShellCommand(invocation) ?? evaluated;
       if (inner !== null) {
-        if (!nested(inner, folder)) unread.push(inner);
+        if (!nested(inner, folder, chained)) unread.push(inner);
       } else if (SHELLS.has(invocation.program)) {
         if (readsShellInput(invocation) && inputs.length > 0) {
-          for (const body of inputs) if (!nested(body, folder)) unread.push(body);
+          for (const body of inputs) if (!nested(body, folder, chained)) unread.push(body);
         } else unread.push(piped(index));
       }
       if (unread.length) entry.unread = unread.join('\n');
+      if (closes) breakChain();
     });
-    for (const body of substitutions.slice(ends.at(-1) ?? 0)) nested(body, here);
+    for (const body of substitutions.slice(ends.at(-1) ?? 0)) nested(body, here, chain);
   };
   walk(command, cwd, 0);
   return out;
+}
+
+// Whether a directory change sits under a wrapper that gives it a process of its own, as `env cd x` does, so this shell
+// stays where it was. `command` and `time` run it in this shell.
+function runsInOwnProcess(segment) {
+  const at = segment.findIndex((token) => CHANGES_DIRECTORY.has(path.basename(token.text.replace(/^\(+/u, ''))));
+  return segment.slice(0, at).some(({ text }) => WRAPPERS.has(path.basename(text)) && text !== 'command' && text !== 'time');
 }
 
 // The folder a `cd`, `pushd`, or `popd` invocation reaches from `here`, or null when it cannot be known. It is the

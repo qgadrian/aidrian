@@ -52,7 +52,7 @@
       "tags": []
     },
     "config.md": {
-      "summary": "config.json: pull request title, review plan/gate, auto-merge, terms, models/effort, attribution, telemetry, quorum roles/caps/autoStart, decisions, authority.",
+      "summary": "config.json: pull request title, body, names, review plan/gate, auto-merge, terms, models, attribution, quorum roles/caps/autoStart, decisions, authority.",
       "tags": []
     },
     "dispatch-log.md": {

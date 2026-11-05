@@ -1122,8 +1122,13 @@ and its key keeps working as written, with the tools of any tracker:
 ```
 
 Such a key does not grow with the adapter, and a list that replaces an adapter's replaces all of it.
-When a host is known to be set up here, and such lists name a known server of a tracker but leave out that host's,
-`aidrian check` warns of each one left out, since a write through it passes unchecked. Replacing both lists with `"provider"` ends the warning.
+When a host is known to be here, because it runs the command or its adapter finds it set up, and such lists name a known server
+of a tracker, `aidrian check` warns of each known server on that host they leave out, or leave a write verb of, with the servers
+the adapter lists for any host counted on every host. A hyphenated server the lists name gets the same warning when that host
+spells it another way. A write through any of these passes unchecked. Replacing both lists with `"provider"`, and raising
+[`requires.aidrian`](#plugin-version) to this plugin's version, ends the warning.
+The host a session runs on gets one `Tracker guard:` line about it at [session start](hooks.md#start-lines).
+A host that is not set up here, or that no adapter can find, gets no warning, which is the limit of this check. Replacing both lists with `"provider"` ends the warning.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -1157,11 +1162,12 @@ When a host is known to be set up here, and such lists name a known server of a 
   `aidrian check` names each problem by its key.
 
 While `tracker.enabled` is true, `aidrian check` also warns of what would leave the guard silent:
-a route a [host adapter](providers/adding-a-host.md#adding-a-host) says no hook reaches,
-and a host whose hooks wait on a person's trust with none on record.
+a route a [host](providers/adding-a-host.md#adding-a-host) or [tracker](providers/adding-a-host.md#adding-a-tracker) adapter says no hook reaches,
+a host whose hooks wait on a person's trust with none on record or are turned off, and a host set up here whose guard nobody has verified.
 [Where the tracker guard is verified](hooks.md#where-the-tracker-guard-is-verified) says what was checked on each host.
 
 A project that adopts the key sets [`requires.aidrian`](#plugin-version), since an older plugin rejects it, and `provider` needs a plugin that ships it.
+On an older plugin, the short key is an unknown key with its groups missing fields, so the whole guard turns off, with no word in a session.
 The `harness-setup` skill asks for the key only while setting a project up, so an existing project adds the key by hand, in the short form above.
 It raises [`requires.aidrian`](#plugin-version) to the plugin version that ships the key unless it is already higher,
 replaces the team in its `issue_tracker` doc and that doc's summary with a pointer to the key, and runs `aidrian check`.

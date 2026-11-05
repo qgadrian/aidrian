@@ -31,6 +31,7 @@ function check(t, tracker, codexConfig) {
   return spawnSync(CLI, ['check', '--project', dir], { encoding: 'utf8', env: { ...process.env, CODEX_HOME: home } });
 }
 
+const LINEAR_VERBS = ['save_*', 'create_*', 'delete_*', 'share_*', 'unshare_*', 'update_*', 'merge_*', 'submit_*', 'resolve_diff_thread', 'retire_*', 'restore_*', 'prepare_*'];
 const INSTALLED = '[plugins."aidrian@aidrian-harness"]\nenabled = true\n';
 const trust = (key) => `[hooks.state."aidrian@aidrian-harness:hooks/hooks.json:${key}"]\ntrusted_hash = "sha256:x"\n`;
 const TRUSTED = `${INSTALLED}${trust('pre_tool_use:5:0')}${trust('post_tool_use:3:0')}`;
@@ -66,8 +67,8 @@ test('aidrian check says nothing of a Codex that is absent, or a tracker that is
 test('aidrian check warns an adopted key that leaves out Codex\'s app route, and keeps it working', (t) => {
   const { status, stderr } = check(t, WRITTEN_OUT, TRUSTED);
   assert.equal(status, 0, stderr);
-  assert.match(stderr, /warning: tracker\.writeTools: no pattern covers Linear's server "codex_apps_linear" on Codex/u);
-  assert.match(stderr, /set "provider": "linear" and drop both tool lists/u);
+  assert.match(stderr, /warning: tracker\.writeTools: no pattern covers .* on Linear's server "codex_apps_linear" on Codex/u);
+  assert.match(stderr, /set "provider": "linear" and drop both tool lists, and raise requires\.aidrian to this plugin's version/u);
   assert.doesNotMatch(check(t, SHORT, TRUSTED).stderr, /tracker\.writeTools/u);
   assert.doesNotMatch(check(t, WRITTEN_OUT).stderr, /tracker/u, 'with no Codex here, nothing');
 });
@@ -90,6 +91,27 @@ test('a hook trusted and then turned off is off, and a header with no hash is no
 
   const later = `${INSTALLED}${bare('pre_tool_use:5:0', '')}[other]\nenabled = false\ntrusted_hash = "sha256:x"\n${trust('post_tool_use:3:0')}`;
   assert.match(check(t, SHORT, later).stderr, /no trust on record/u, 'a value of the next section is not this one');
+});
+
+test('a key written in the raw form covers the app route, so the check does not call it left out', (t) => {
+  const raw = { ...WRITTEN_OUT, readTools: ['mcp__codex_apps__linear__get_workspace'], writeTools: LINEAR_VERBS.map((verb) => `mcp__codex_apps__linear__${verb}`) };
+  assert.doesNotMatch(check(t, raw, TRUSTED).stderr, /"codex_apps_linear"/u);
+});
+
+test('a key covering only some write verbs on a server is warned of the rest', (t) => {
+  const { stderr } = check(t, { ...WRITTEN_OUT, readTools: ['mcp__codex_apps_linear__get_workspace'], writeTools: ['mcp__codex_apps_linear__save_*'] }, TRUSTED);
+  assert.match(stderr, /no pattern covers create_\*, .* on Linear's server "codex_apps_linear"/u);
+  assert.doesNotMatch(stderr.split('\n').find((line) => line.includes('codex_apps_linear')) ?? '', /save_\*/u);
+});
+
+test('a written-out key with a hyphenated server is warned of Codex\'s spelling, on any tracker', (t) => {
+  const tracker = { ...WRITTEN_OUT, readTools: ['mcp__acme-tracker__get_workspace'], writeTools: ['mcp__acme-tracker__save_*'] };
+  const { status, stderr } = check(t, tracker, TRUSTED);
+  assert.equal(status, 0);
+  assert.match(stderr, /Codex spells server "acme-tracker" as "acme_tracker", and no pattern covers that/u);
+  const both = { ...tracker, readTools: [...tracker.readTools, 'mcp__acme_tracker__get_workspace'], writeTools: [...tracker.writeTools, 'mcp__acme_tracker__save_*'] };
+  assert.doesNotMatch(check(t, both, TRUSTED).stderr, /spells server/u);
+  assert.doesNotMatch(check(t, tracker).stderr, /spells server/u, 'with no Codex here, nothing');
 });
 
 test('hook trust reads only the sections it needs, and never returns the file\'s values', (t) => {

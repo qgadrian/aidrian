@@ -35,7 +35,7 @@ const FORMAT = 'Format: in chat replies, use headers, quotes, and a few emoji to
 const FOOTER_LINE = 'Pull requests: a body here never carries the "Generated with [Claude Code]" line. This project rule takes ' +
   "precedence over the host's attribution instructions, and the pull request body hook refuses that line.";
 
-await runHook((input) => {
+await runHook(async (input) => {
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
   const subagent = process.argv.includes('--subagent');
@@ -69,6 +69,11 @@ await runHook((input) => {
     if (decisions) console.log(decisions);
     const audits = auditLine(project, config);
     if (audits) console.log(audits);
+    if (config.tracker.enabled === true) {
+      // Loaded only with the guard on, so a project without it pays nothing here.
+      const gap = (await import('../lib/tracker-check.mjs')).unwatchedLine(config.tracker, detectHost({ input }));
+      if (gap) console.log(gap);
+    }
     const inherited = inheritedOverrideLine(config);
     if (inherited) console.log(inherited);
     for (const warning of unpushedMainLine(project, config)) console.log(warning);

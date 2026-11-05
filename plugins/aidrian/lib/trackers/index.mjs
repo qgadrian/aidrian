@@ -47,12 +47,5 @@ export function trackerOfTools(names, trackers = TRACKERS) {
   return trackers.find((each) => knownServers(each).some((server) => servers.has(server))) ?? null;
 }
 
-// The servers of `adapter` a loaded key leaves unwatched, as { server, hosts }: no pattern in `matches` covers a write on
-// them, so a write through that connection passes unchecked. `matches(pattern, tool)` is the guard's own test.
-export function unwatchedServers(adapter, writeTools, matches) {
-  const verb = adapter.writeVerbs[0].replace(/\*$/u, 'probe');
-  const hostsOf = (server) => Object.entries(adapter.servers).filter(([, names]) => names.includes(server)).map(([host]) => host);
-  return knownServers(adapter)
-    .filter((server) => !writeTools.some((pattern) => matches(pattern, `mcp__${server}__${verb}`)))
-    .map((server) => ({ server, hosts: hostsOf(server) }));
-}
+// The server names `adapter` knows on one host, as written: those it lists for every host, then that host's own.
+export const serversOn = (adapter, hostId) => [...new Set([...(adapter.servers.any ?? []), ...(adapter.servers[hostId] ?? [])])];

@@ -13,7 +13,7 @@ import { nameMatches } from '../plugins/aidrian/lib/agent-gates.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { GUARDED_PATHS } from '../plugins/aidrian/lib/project.mjs';
 import { agentAliases, detectHost, HOSTS, normalizeHookInput, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
-import { trackerWarnings } from '../plugins/aidrian/lib/tracker-check.mjs';
+import { trackerWarnings, unwatchedLine } from '../plugins/aidrian/lib/tracker-check.mjs';
 import { judgeTrackerWrite, readTrackerValue, serverPrefix } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import { expandTracker, knownServers, readToolsOf, TRACKERS, withProjectServers, writeToolsOf } from '../plugins/aidrian/lib/trackers/index.mjs';
 import fakeBridge from './fixtures/adapters/fake-bridge-host.mjs';
@@ -256,23 +256,36 @@ test('a new host and a new tracker run the guard end to end, from its own payloa
   assert.match(judgeTrackerWrite(settings, input.tool_name, { ticketKey: 'XYZ-1' }, record).reason, /ticketKey is "XYZ-1"/u);
 });
 
+test('the host running the check counts as here, and a server listed for any host counts on it, with no trust check needed', () => {
+  const running = { ...fakeHost, id: 'running', name: 'Running', detect: ({ env }) => env.RUNNING === '1', rawToolName: (standard) => standard, capabilities: { trackerGuard: { unguardedRoutes: [] } } };
+  const tracker = { enabled: true, readTools: ['mcp__codex_apps_faketracker__site_info'], writeTools: writeToolsOf(fakeTracker, ['codex_apps_faketracker']) };
+  const options = (env) => ({ env, hosts: [running], trackers: [fakeTracker] });
+  assert.match(trackerWarnings(tracker, options({ RUNNING: '1' })).join('\n'), /Fake Tracker's server "faketracker" on Running/u);
+  assert.deepEqual(trackerWarnings(tracker, options({})), [], 'not running, and nothing finds it set up');
+  assert.match(unwatchedLine(tracker, running, [fakeTracker]), /^Tracker guard: on Running, tracker\.writeTools leaves out Fake Tracker tools on faketracker/u);
+  assert.equal(unwatchedLine({ ...tracker, writeTools: writeToolsOf(fakeTracker, ['faketracker', 'codex_apps_faketracker']) }, running, [fakeTracker]), null);
+  assert.equal(unwatchedLine({ ...tracker, enabled: false }, running, [fakeTracker]), null);
+  assert.equal(unwatchedLine(tracker, UNKNOWN_HOST, [fakeTracker]), null, 'an unknown host has no servers to name');
+});
+
 test('a host that declares a route it cannot guard makes it visible, and so does hook trust not given', () => {
   const tracker = { enabled: true, readTools: [], writeTools: ['mcp__x__save_*'], team: { key: 'A', values: ['A'], createFields: ['team'], keyFields: ['id'] } };
   const warnings = trackerWarnings(tracker, { env: {}, hosts: [fakeHost] });
-  assert.equal(warnings.length, 2);
+  assert.equal(warnings.length, 3);
   assert.match(warnings[0], /on Fake Host, a write through its hosted connectors passes unchecked: they run on its servers/u);
   assert.match(warnings[1], /Fake Host has no trust on record .* run fakehost trust/u);
+  assert.match(warnings[2], /nobody has verified the guard on Fake Host/u, 'set up here, and verified none');
   assert.deepEqual(trackerWarnings({ ...tracker, enabled: false }, { env: {}, hosts: [fakeHost] }), [], 'silent while the guard is off');
 });
 
 test('the check warns of a known connection the lists leave out on a host set up here, with what to do, whatever the tracker', () => {
   const adapter = fakeTracker;
-  const here = { ...fakeHost, id: 'codex', name: 'A Host', capabilities: { trackerGuard: { unguardedRoutes: [], hookTrust: () => 'trusted' } } };
+  const here = { ...fakeHost, id: 'codex', name: 'A Host', detect: () => false, rawToolName: (standard) => standard, capabilities: { trackerGuard: { unguardedRoutes: [], hookTrust: () => 'trusted' } } };
   const notHere = { ...here, capabilities: { trackerGuard: { unguardedRoutes: [], hookTrust: () => 'absent' } } };
   const written = { enabled: true, readTools: readToolsOf(adapter, ['faketracker']), writeTools: writeToolsOf(adapter, ['faketracker']) };
   const warnings = trackerWarnings(written, { env: {}, hosts: [here], trackers: [adapter] });
   assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /no pattern covers Fake Tracker's server "codex_apps_faketracker" on A Host/u);
+  assert.match(warnings[0], /no pattern covers add_\*, .* on Fake Tracker's server "codex_apps_faketracker" on A Host/u);
   assert.match(warnings[0], /set "provider": "faketracker" and drop both tool lists/u);
   assert.deepEqual(trackerWarnings(written, { env: {}, hosts: [notHere], trackers: [adapter] }), [], 'a host not set up here says nothing');
   const whole = knownServers(adapter);

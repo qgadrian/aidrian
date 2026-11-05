@@ -111,6 +111,25 @@ test('a PLUGIN_ROOT inherited by a Claude Code session does not make it Codex', 
   assert.match(stdout, /Pull requests:/u);
 });
 
+test('the main session hears when its host reaches a known tracker server the key leaves out, and a subagent does not', (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-start-tracker-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  const write = (tracker) => writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, tracker }));
+  const team = { key: 'NOTES', values: ['Notes'], createFields: ['team'], keyFields: ['id'] };
+  const workspace = { expect: 'https://linear.app/acme', field: 'url' };
+  write({ enabled: true, workspace, readTools: ['mcp__plugin_linear_linear__get_workspace'], writeTools: ['mcp__plugin_linear_linear__save_*'], team });
+  const input = JSON.stringify({ cwd: dir });
+  const line = hook({ input, CLAUDECODE: '1' }).stdout.split('\n').find((each) => each.startsWith('Tracker guard:'));
+  assert.match(line, /on Claude Code, tracker\.writeTools leaves out Linear tools on linear, linear-server, plugin_linear_linear, claude_ai_Linear/u);
+  const onCodex = hook({ input }).stdout.split('\n').find((each) => each.startsWith('Tracker guard:'));
+  assert.match(onCodex, /on Codex, .* linear, linear_server, codex_apps_linear/u, 'in the host\'s spelling, and only its own servers');
+  assert.doesNotMatch(hook({ input, args: ['--subagent'], CLAUDECODE: '1' }).stdout, /Tracker guard:/u);
+  write({ enabled: true, provider: 'linear', workspace: { expect: workspace.expect }, team: { key: 'NOTES' } });
+  assert.doesNotMatch(hook({ input, CLAUDECODE: '1' }).stdout, /Tracker guard:/u, 'the short key covers them all');
+  assert.doesNotMatch(hook({ input }).stdout, /Tracker guard:/u);
+});
+
 test('a host no adapter claims is called the AI, neither Claude nor Codex', () => {
   const { stdout } = hook({ input: JSON.stringify({ cwd: EXAMPLE }), PLUGIN_ROOT: null });
   assert.equal(stdout.split('\n')[1], NAMES('the AI'));

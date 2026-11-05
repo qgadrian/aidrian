@@ -60,6 +60,8 @@ At the start of every session and subagent, the hook prints:
 - in the main session only, one `Decisions to review: N (oldest X days)` line while the indexed docs hold unconfirmed
   [decision markers](project-folder.md#decision-markers), unless [`decisions.unreviewed.remind`](config.md#decisions) is `"off"`.
   A doc it cannot read counts for nothing here, and never stops the hook. The line names the `decision-review` skill.
+- in the main session only, one `Tracker guard:` line while the guard is on and the host this session runs on reaches a known server of
+  the tracker that `tracker.writeTools` leaves out, so a write through it passes unchecked. `aidrian check` says the fix.
 - in the main session only, one more line while the persona audits in the state folder hold untriaged items
   ([Triage](personas.md#triage)): `Audit inbox: N untriaged findings in M reports. The persona-audit-triage skill triages them.`
   Nothing prints when every item has a decision, or when the audits folder, a report, or `triage.json` cannot be read.

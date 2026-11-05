@@ -5,6 +5,8 @@ developer. The project writes each one as a knowledge doc, and the `persona-audi
 person and reports what they would hit: friction, confusing copy, missing or wrong translations, dead ends, and
 whether each of their tasks can be done. Personas are synthetic: a run is a lead for the Human, not a substitute for real users.
 The `quorum` skill's product mode also interviews one before a decision's options exist, and walks it through the recommendation, as a hypothesis no ruling may rest on alone.
+A team that sets [review later](config.md#automatic-product-quorums) lets work continue on such a recommendation until the Human reviews it,
+so the report says the end user was simulated.
 
 ## The persona contract
 

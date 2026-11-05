@@ -1394,7 +1394,7 @@ export function routeAfterRuling({ autoStart, approval }, ledger, answer, domain
   if (ledger.human_answer !== null) return human('the Human has answered, so the Human\'s answer governs, not the recommendation');
   const gap = rulingGap(ledger);
   if (gap) return human(gap);
-  if (ledger.ruling.domain !== domain) return human(`the ruling is in the domain ${JSON.stringify(ledger.ruling.domain)}, not ${JSON.stringify(domain)}, so it never resolves under that domain's answer`);
+  if (ledger.ruling.domain !== domain) return human(`the ruling is in the domain ${JSON.stringify(ledger.ruling.domain)}, not ${JSON.stringify(domain)}, so the route continues only when they match, and resolve judges the class`);
   if (answer === null) return human('resolve gave no answer on the Ruling\'s question');
   const lost = markerGap(ledger, markerStatus);
   if (lost) return human(lost);

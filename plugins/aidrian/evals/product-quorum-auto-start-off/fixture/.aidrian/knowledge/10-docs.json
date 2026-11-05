@@ -1,0 +1,8 @@
+{
+  "dir": "docs",
+  "description": "How the bike shop's booking app behaves, and who uses it.",
+  "docs": {
+    "booking.md": { "summary": "Booking a repair slot, cancelling one, the calendar, and how the app's copy reads", "tags": ["product_sensitive"] },
+    "front-desk.md": { "summary": "The front desk clerk: who they are, their tasks, and what they care about", "tags": ["personas"] }
+  }
+}

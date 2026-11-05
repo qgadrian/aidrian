@@ -777,7 +777,7 @@ on defaults the project did not choose.
 | `quorum.product.ux.agent` | `"ux-specialist"` | Grills the options for what a user would hit. |
 | `quorum.product.engineer.agent` | `"architect"` | Grills the options for cost and risk. |
 | `quorum.product.maxLoops` | `2` | How many times a product run may go back after a walkthrough, a whole number from 1 to 5. |
-| `quorum.product.autoStart` | `false` | Whether a hard product call runs the quorum with no Human asking for it. |
+| `quorum.product.autoStart` | `false` | Whether a hard product call runs the quorum with no Human asking for it. A run the Human starts always asks; only a run the route started continues provisionally. |
 | `quorum.product.approval` | `"first"` | `"first"`: the Human approves, and work on that decision waits. `"review-later"`: work continues on the recommendation, recorded as provisional and reviewed in a batch. |
 | `quorum.product.maxAutoRuns` | `3` | The most automatic runs in one session, a whole number from 1 to 10. Beyond it, a hard call waits for the Human with no quorum. |
 
@@ -827,12 +827,21 @@ For this to change anything but who starts the quorum, a team commits `decide-re
 through `decisions.maxMode` with `decisions.mode` or `decisions.domains.product`.
 A call that is hard to undo, or of a class that must reach the Human, reaches the `ask` rows through `resolve`'s
 [rules](#decisions), so `approval` never lets it through.
-On a hard call the quorum route replaces `unattended`'s `safe-default`, since it is the stricter path.
+With `autoStart` on, the quorum route replaces `unattended`'s `safe-default` on a hard call, since it is the stricter path;
+`as-today` keeps `unattended` as ever.
 
 After a ruling, `aidrian quorum route --ledger` applies the same answer to the ruling's flipping facts.
 Under `review-later` and `decide`, work waits for the Human when the ruling escalates, when a fact could make the decision harder to undo,
-or when a fact the repository can settle does not keep the winner once a read-only `explorer` dispatch settles it.
+when a fact the repository can settle does not keep the winner once a read-only `explorer` dispatch settles it,
+or, on a ledger already provisional, when its marker was rejected, was settled, or is not on record.
+A run whose starting route had `resolve.authority` `ask` waits, whatever the Ruling's answers resolve to.
+With `autoStart` on, a `ux` ruling of class `product-behaviour` continues where `domains.product` decides, whatever `domains.ux` says,
+since `resolve` judges that class under `product`.
 Every other flipping fact goes in the record for the batch review, and work continues. Under `first`, the Human sees them all before deciding.
+[decisions.md](../plugins/aidrian/skills/knowledge/references/decisions.md) holds the order: the check, the route, the settle step, the writer,
+the marker in the slice's commit, and a last `aidrian decisions list --added-since`, whose missing marker makes the decision wait.
+A continued ruling always gets a marker, even with `Rule changed: none`,
+so the pull request's Decisions section and the `decision-review` skill both show it, with its pull request number.
 
 Before turning `autoStart` on:
 
@@ -869,7 +878,8 @@ Case does not count, on any disk: two docs that differ only by case both ask, wh
 A symlink counts as both its own path and its target's, in `--doc` and in `escalateDocs`; a link whose target is outside the project asks.
 `aidrian decisions resolve --vocab` prints every class and reversibility question with its definition;
 `lib/decisions.json` is the one place the built-in ones live, and the base branch's [`decisions.classes`](#project-classes) adds the project's.
-The `quorum` skill's product mode runs `resolve` on its ruling and reports the answer, but always asks the Human, under `decide` too.
+The `quorum` skill's product mode runs `resolve` on its ruling and reports the answer, and asks the Human, under `decide` too,
+unless the route after the ruling lets work continue: [Automatic product quorums](#automatic-product-quorums).
 The `persona-audit-triage` skill does the same for a held finding's product decision.
 
 The first rule that matches wins:

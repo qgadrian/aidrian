@@ -232,7 +232,8 @@ Two commands keep a ledger honest, `roles` tells the skill who runs each role, `
   list of those words), `ruling.docs`, `ruling.domain`, `ruling.severity`, and `ruling.reverts_by`, and each entry's `settles_from_repo` and `could_harden_undo` from `outcome.flips_if`.
   Those are optional fields of the product ledger, which `check` holds to their shapes.
   For `--domain product` or `ux`, the route is `human` when `ruling.domain` is missing or differs from `--domain`, and work continues only when they match,
-  so a `ux` ruling never resolves under `product`'s answer. Any other domain stays `as-today`.
+  and `resolve` judges the class, so a `product-behaviour` ruling resolves under `product` whatever `--domain` says.
+  Any other domain stays `as-today`.
   On a ledger with `provisional`, work continues only while its marker is `unconfirmed`. So the route is `human` when its marker is `confirmed`, as after `aidrian decisions set` with `confirmed` or `changed`,
   since the Human settled it and the rule to read is in its doc, and when its marker was rejected or is not on record in the indexed docs, as after `aidrian decisions undo`.
   The route is `human`, whatever the settings, for a ledger of another mode, a `status` other than `complete`, and a ruling that escalates.

@@ -1,12 +1,13 @@
 # Product mode
 
 A product owner interviews the end user, shapes options, grills them with UX and an engineer, walks the end user through
-its recommendation, and recommends one option. The Human approves it.
+its recommendation, and recommends one option. The Human approves it, unless a run the route started continues provisionally.
 Read this file once the mode is `product`. Here `<plan>` is the question file.
 
 The end user is a persona: a simulated user from a doc. Its answers are hypotheses, never evidence about real users, and
-the report names what only a real user could confirm. The ruling never stands without the Human's answer, and it never
-becomes a product rule until the project's docs say so. Start this mode only when the Human asks for it.
+the report names what only a real user could confirm. The ruling stands only on the Human's answer, or provisionally where
+the route in `knowledge/references/decisions.md` lets work continue, and it never becomes a product rule until the Human
+keeps it and the project's docs say so. Start this mode when the Human asks for it, or when the route says `quorum`.
 
 - [Roles](#roles), [Files](#files), [Rounds](#rounds), [Asking the Human](#asking-the-human), and [Report](#report).
 - Briefs: [Trace](#trace), [Prepare](#prepare), [Interview](#interview), [Shape](#shape), [Grill](#grill),
@@ -51,7 +52,11 @@ When the core finds no reusable ledger for an input question file:
 - An open ledger: say the earlier run did not finish, and do the same.
 - No ledger at this hash: say the file has no run at its current content, read the whole file as the Human's text, and start at round 1.
 
-A complete ledger the core reuses with `human_answer` `null` asks the one question before reporting, writes the
+A complete ledger the core reuses with `provisional` set and `human_answer` `null` asks nothing while the route lets work continue:
+it resumes the continue path of `knowledge/references/decisions.md` at the first step not yet done,
+and never reruns the writer when `provisional` already holds this marker.
+When the route waits, that file's § After a ruling applies.
+Any other complete ledger the core reuses with `human_answer` `null` asks the one question before reporting, writes the
 answer (`null` again when deferred), and runs `quorum check`.
 
 ## Filling a brief
@@ -60,6 +65,8 @@ When the project is not the working directory, a brief's first line is `Project 
 An input over 2 KB, such as the trace or the cases, may be the path of its exact copy in `<state>`, never a summary.
 `against` and `winner` always name a position's id, `A` to `C`.
 The product owner has no shell: for the Evidence block's `route` and `search`, it reads `.aidrian/knowledge/*.json`.
+`<the decision's domain>` is the one the route named when it started this run; otherwise `product`, or `ux` for how the product looks and reads.
+`<the starting route's class, answers, and docs, or none>` is what the coordinator sent the route; on a run the Human started, `none`.
 
 ## Rounds
 
@@ -74,33 +81,42 @@ The product owner has no shell: for the Evidence block's `route` and `search`, i
    any ledger, and report that there is no choice to make. Write the question file as § Files says, and show the Human the
    path. It never changes from here: a later change is a condition on the ruling.
 5. **Open the ledger.** Write every field `references/ledger.md` § Product-mode fields lists, `status: open`, and run
-   `quorum check`. `persona_docs` lists every such row, other than `product-access`, from the repository root, whether or not it lints clean. A `premise: invalid` line goes back to the product owner once, on
+   `quorum check`. `trigger` is `the Human asked`, or, on a run the route started, `the route, with resolve's <authority>`.
+   `persona_docs` lists every such row, other than `product-access`, from the repository root, whether or not it lints clean.
+   A `premise: invalid` line goes back to the product owner once, on
    the retry; still invalid, stop with `blocked`. A retry that answers `open: false` follows round 2's exit.
 6. **Grill.** The two grillers in parallel, each without the other's answer. Number UX's points `U1` to `U5` and the
    engineer's `E1` to `E5`, `by: U` or `E`, `status: pending`. Run `quorum check`.
 7. **Draft and walk through.** The product owner, with the Draft brief; write `draft`. Then the end user, with the Walkthrough
    brief; write `witness.walkthrough`. Run `quorum check`.
 8. **Ruling.** With no dispatch left for it, write the coordinator's escalate below, with the premise's citations, and ask.
-   Otherwise the product owner, with the Ruling brief. It may keep the draft, change the winner, add conditions, or return `loop`. Write
-   `ruling` and `outcome`, and run `quorum check`. One the check names invalid, or a missing one, goes back once, on the retry.
+   Otherwise the product owner, with the Ruling brief. It may keep the draft, change the winner, add conditions, or return `loop`.
+   Write `ruling`, with its `class`, `reversible`, `docs`, `domain`, `severity`, and `reverts_by`, and `outcome`, and run `quorum check`.
+   One the check names invalid, or a missing one, goes back once, on the retry.
    Missing again, or with the retry spent, stop with `blocked`, unless a loop was spent: then write the escalate. Invalid again, or with the retry spent, write
    `{decision: escalate, winner: null, change_or_reason: <the line it printed, then the last decision and winner>, citations: <the premise's citations, since an invalid ruling's may not pass>, tested: [], inferences: []}`
    and `outcome: null`, and run `quorum check`.
    **Loop.** The Ruling can return `loop` while loops remain. Add it to `loops`, then:
    - `interview`: ask the end user the new question; add the answer to `witness.interview`, up to its limit; then round 7. With no witness, a `loop` of `interview` counts as a missing ruling.
    - `grill`: round 6 with the reason, new points taking the next free ids, and with none free the griller's first ones stand; then round 7.
-   - `shape`: no option survives. The Shape brief with the reason; a new question file and ledger, carrying `trace`, `premise`, `witness`, and `loops`; then round 6.
+   - `shape`: no option survives. The Shape brief with the reason;
+     a new question file and ledger, carrying `trace`, `premise`, `witness`, `loops`, and `trigger`; then round 6.
    Then rule again. With no loop left, rule on what exists, and put what stays open in `outcome.flips_if`, or escalate.
 9. **Ask the Human.** First write `status: complete` with `human_answer: null`, and run `quorum check`, so a session that
    ends here leaves a deferred ledger.
-   **Resolve.** Run `aidrian decisions resolve` as `knowledge/references/decisions.md` says, in the `product` domain,
-   with the Ruling's `class`, `reversible`, and `docs`; those three stay out of the ledger. A missing field, or a command that fails, means `ask`.
-   **Ask.** Ask, write `human_answer`, and run `quorum check`. A run always asks, under `ask` and `decide` alike: `decide` settles nothing here,
+   **Resolve.** Run `aidrian decisions resolve` as `knowledge/references/decisions.md` says, in the ruling's own domain,
+   with the Ruling's `class`, `reversible`, and `docs`. A missing field, or a command that fails, means `ask`.
+   **Route.** Run the route on the ledger, as that file's § After a ruling says.
+   A run whose starting route had `resolve.authority` `ask` waits, whatever the Ruling's answers resolve to.
+   Only a run the route started, with `quorum.product.autoStart` on, `approval: "review-later"`, and `resolve`'s `decide`, can let work continue:
+   then follow its continue path, ask nothing, and report.
+   **Ask.** Otherwise ask, write `human_answer`, and run `quorum check`. A run that waits always asks, under `ask` and `decide` alike:
+   `decide` settles nothing here,
    no `authority` line goes back to the product owner, and no `decided_provisional` or marker follows.
 
 ## Asking the Human
 
-A run asks one question, on a rule and on an escalation alike.
+A run the Human started, or one whose route waits, asks one question, on a rule and on an escalation alike.
 Each position is an option named by its label, with its citations in the description, and the recommended one first
 with the one reason that decides it; on an escalation with no leaning, say that no option is recommended.
 Say which written rule would change, from the option's `Rule changed:` line, what the end user said, marked as simulated,
@@ -115,12 +131,14 @@ After the core's Ledger item, which also names each role's agent and the questio
 
 1. **Premise**: what the trace found, and why the decision is open.
 2. **End user (simulated)**: the interview's main answers, the walkthrough, and what only a real user could confirm.
-3. **Recommendation**: the winner, or `escalated`; whether it moved from the draft; its conditions; and the Human's answer, or `deferred`.
+3. **Recommendation**: the winner, or `escalated`; whether it moved from the draft; its conditions;
+   and the Human's answer, `provisional` with its marker, or `deferred`.
 4. **What would flip it**: each fact and how to settle it.
 5. **Disputes left**: each topic and its owner.
 6. **Options**: each label, its case, and each backed point against it.
 7. **Next**: on an approved option, the written rule to change, from its `Rule changed:` line, and the skill that writes it,
    `knowledge-update` or `adr-writer`. On a deferred one, `quorum product <question file>` asks again while its citations hold, and otherwise reruns.
+   On a provisional one, the same line resumes that continue path while the route lets work continue, and otherwise follows § After a ruling.
 
 ## Trace
 
@@ -219,12 +237,20 @@ Decisions:
 Verdicts: `tested`, one entry per citation of each entry you rule on, each index once, from 0:
 {"of": the position or point id, "citation", "supports": true|false, "reason"}.
 `inferences`, one entry per `inference:` line: {"statement", "holds": true|false, "reason", "citations"}.
-On a rule, also return `outcome`: "conditions", changes the winner needs, each a sentence; "flips_if": [{"fact", "how_to_settle"}],
-each unknown that would change the winner, with what only a real user could confirm; "disputes": [{"topic", "owner"}], smaller disagreements and who settles each.
+On a rule, also return `outcome`: "conditions", changes the winner needs, each a sentence; "flips_if":
+[{"fact", "how_to_settle", "settles_from_repo", "could_harden_undo"}],
+each unknown that would change the winner, with what only a real user could confirm,
+`settles_from_repo` true when reading the repository could settle it, and `could_harden_undo` true when it could make the decision harder to undo;
+a value you cannot answer is true; "disputes": [{"topic", "owner"}], smaller disagreements and who settles each.
 <evidence>
 Return one JSON object, in the handoff's artifacts:
-{"decision": "rule|escalate", "winner", "change_or_reason", "citations": [{"kind", "ref", "quote"}], "tested": [...], "inferences": [...], "outcome", "class", "reversible", "docs"}.
-`class`, `reversible`, and `docs` are as `knowledge/references/decisions.md` defines them, for this decision. They do not change who approves: the Human does.
+{"decision": "rule|escalate", "winner", "change_or_reason", "citations": [{"kind", "ref", "quote"}], "tested": [...], "inferences":
+[...], "outcome", "class", "reversible", "docs", "domain", "severity", "reverts_by"}.
+`class`, `reversible`, and `docs` are as `knowledge/references/decisions.md` defines them, for this decision:
+`reversible` is one comma-separated string or a list of the four words, `no` or `yes`, in that file's order.
+The starting route asked on: <the starting route's class, answers, and docs, or none>. A `yes` among those answers stands.
+`domain` is <the decision's domain>. `severity` is the harm if it is wrong. `reverts_by` is how to undo it.
+Any of these missing means the decision waits for the Human.
 With loops left (<loops left>) and a problem only another pass could settle, return instead {"loop": {"back_to": "<interview|shape|grill, leaving out interview with no end user>", "reason"}}. Never loop for polish.
 Change no file.
 ```

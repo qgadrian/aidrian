@@ -215,7 +215,7 @@ The fields marked optional are absent on a ledger written before them, which sta
 - `plan_hash`: `git hash-object` of the question file.
 - `same_model`: `true` exactly when two positions share a runner.
 - `same_model_reason`: which positions share one and why, or `null`.
-- `trigger`: what started the run, normally `the Human asked`.
+- `trigger`: what started the run: `the Human asked`, or, on a run the route started, `the route, with resolve's <authority>`.
 - `trace`: what the tracer found, word for word, for the report and the grillers.
 - `persona_docs`: every row of `aidrian-knowledge index` whose tags hold `personas`, inside the repository, other than `product-access`, from the repository root, whichever one took part. A winner resting only on these is invalid.
 - `premise`: why the decision is open.
@@ -270,7 +270,8 @@ The fields marked optional are absent on a ledger written before them, which sta
   - `ruling.class`: optional. The decision's class, as `knowledge/references/decisions.md` defines it.
   - `ruling.reversible`: optional. The four reversibility answers, `no` or `yes`, in the order `decisions.md` gives, as one comma-separated string or a list of those words.
   - `ruling.docs`: optional. Each written rule the decision touches, as a path from the repository root.
-  - `ruling.domain`: optional. The decision's domain. The route after a ruling continues only when this matches the domain the caller names, so a ruling in one domain never resolves under another's answer.
+  - `ruling.domain`: optional. The decision's domain. The route after a ruling continues only when this matches the domain the caller names,
+    and `resolve` judges the class, so `product-behaviour` resolves under `product` whatever this says.
   - `ruling.severity`: optional. The harm if the decision is wrong, as `knowledge/references/handoff.md` defines it. An unknown word counts as at or above `minSeverity`, as `decisions.md` says.
   - `ruling.reverts_by`: optional. How to undo the decision.
 - `outcome`: what a rule leaves behind, required on a rule in a `complete` ledger, otherwise `null`.

@@ -18,6 +18,19 @@ and config.json `github.maxReviewRounds`, the `orchestration` skill's round cap,
   as the review rules define it. Its state is recorded every round.
 - **Fix passes**: the review rules' cap of 2 per finding or failing check; then it is parked. An agent blocked twice is parked too.
 
+## Product decisions
+
+A `product` or `ux` decision takes the route of `knowledge/references/decisions.md` § Hard product calls, with the Human away.
+With `autoStart` off, `as-today` keeps `unattended` as ever, on a hard call too.
+With `autoStart` on, only the small, clear row follows `unattended`, as § Who decides says of `ask`.
+
+- Count this session's automatic runs, for the route. A hard call past `quorum.product.maxAutoRuns` is parked with no quorum.
+- `quorum` runs the `quorum` skill's product mode in this session. One run can spend 22 dispatches.
+- When the route waits, the ledger stays deferred, the question goes in the report with the recommendation and the simulated-user caveat,
+  and independent work continues.
+  Its dependent work is parked.
+- When the route continues, follow that file's continue path, and record the `decided_provisional` in the report, with the ledger's path.
+
 ## 1. Implement
 
 Pick the engine by the input:

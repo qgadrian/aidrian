@@ -116,7 +116,8 @@ A run the Human starts always asks; only a run the route started continues provi
 each key `yes` or `no`, from the decision in front of them:
 
 1. `open_options`: are two or more options that differ in what a user gets each still viable after reading the project's docs?
-2. `no_written_answer`: does no doc, decision record, or committed data favour one option, so that the pick rests on an inference?
+2. `no_written_answer`: with `open_options` `yes`, does no doc, decision record, or committed data favour one option, so the pick rests on an inference?
+   With `open_options` `no`, answer `no`: a call with one viable option has no pick to rest on an inference.
 3. `conflict`: do two written rules disagree, or the docs and the code on this behaviour?
 4. `disagreement`: did a specialist, a reviewer, or `secondLook` object to the pick with a citation?
 5. `reach`: does it change a step of a flow a persona doc describes, rather than only copy, layout, ordering, a default value, or naming?

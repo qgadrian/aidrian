@@ -132,6 +132,24 @@ test('a null list under a provider is the same error as without one, and fills n
   }
 });
 
+test('the keys an adapter can fill are checked when written by hand', (t) => {
+  const written = { enabled: true, workspace: { expect: 'x', field: 'cloudId' }, writeTools: ['mcp__x__save_*'], workspaceInput: 'cloudId', readVerbs: ['get*'], idHint: 'use its key' };
+  const { config, errors } = load(t, written);
+  assert.deepEqual(errors, []);
+  assert.equal(config.tracker.enabled, true);
+  assert.equal(config.tracker.workspaceInput, 'cloudId');
+  assert.deepEqual(config.tracker.readVerbs, ['get*']);
+  assert.equal(config.tracker.idHint, 'use its key');
+  assert.match(load(t, { ...written, workspaceInput: 1 }).errors.join('\n'), /"tracker\.workspaceInput" must be a non-empty string/u);
+  assert.match(load(t, { ...written, readVerbs: 'get*' }).errors.join('\n'), /"tracker\.readVerbs" must be a list/u);
+});
+
+test('a team written by its key alone holds that key as its one value, under a provider', (t) => {
+  const { config, errors } = load(t, { enabled: true, provider: 'linear', team: { key: 'X' } });
+  assert.deepEqual(errors, []);
+  assert.deepEqual(config.tracker.team.values, ['X']);
+});
+
 test('a key written out in full loads exactly as before, with no provider in it', (t) => {
   const tracker = {
     enabled: true,

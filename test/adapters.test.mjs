@@ -14,10 +14,11 @@ import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { GUARDED_PATHS } from '../plugins/aidrian/lib/project.mjs';
 import { agentAliases, detectHost, HOSTS, normalizeHookInput, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { trackerWarnings, unwatchedLine } from '../plugins/aidrian/lib/tracker-check.mjs';
-import { judgeTrackerWrite, readTrackerValue, serverPrefix } from '../plugins/aidrian/lib/tracker-guard.mjs';
+import { judgeTrackerWrite, readTrackerValue, serverPrefix, unlistedTool } from '../plugins/aidrian/lib/tracker-guard.mjs';
 import { expandTracker, knownServers, readToolsOf, TRACKERS, withProjectServers, writeToolsOf } from '../plugins/aidrian/lib/trackers/index.mjs';
 import fakeBridge from './fixtures/adapters/fake-bridge-host.mjs';
 import fakeHost from './fixtures/adapters/fake-host.mjs';
+import fakePerCall from './fixtures/adapters/fake-per-call-tracker.mjs';
 import fakeTracker from './fixtures/adapters/fake-tracker.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -195,13 +196,25 @@ test('an unknown host still normalises what a known one sends, so a detection ca
   }
 });
 
-for (const tracker of [...TRACKERS, fakeTracker]) {
+for (const tracker of [...TRACKERS, fakeTracker, fakePerCall]) {
   test(`tracker ${tracker.id} declares every field of an adapter`, () => {
-    for (const field of ['id', 'name', 'readTool', 'workspaceField']) assert.ok(typeof tracker[field] === 'string' && tracker[field] !== '', field);
-    assert.ok(!tracker.readTool.includes('*'), 'a read tool is an exact name');
+    for (const field of ['id', 'name', 'opaqueIdLimit']) assert.ok(typeof tracker[field] === 'string' && tracker[field] !== '', field);
+    if (tracker.workspaceInput === undefined) {
+      assert.ok(typeof tracker.readTool === 'string' && !tracker.readTool.includes('*'), 'a read tool is an exact name');
+      assert.ok(typeof tracker.workspaceField === 'string', 'and it reports the workspace in this field');
+    } else {
+      assert.ok(typeof tracker.workspaceInput === 'string', 'each call names its workspace in this field');
+    }
     assert.ok(tracker.writeVerbs.length > 0);
     assert.ok(tracker.team.createFields.length > 0 && tracker.team.keyFields.length > 0);
-    assert.ok(typeof tracker.project.field === 'string');
+    if (tracker.project !== undefined) assert.ok(typeof tracker.project.field === 'string');
+    assert.ok(Array.isArray(tracker.unguardedRoutes), 'it says which writes no hook reaches, even when none');
+    for (const route of tracker.unguardedRoutes) assert.ok(route.name && route.reason);
+    for (const verb of tracker.readVerbs ?? []) assert.ok(!tracker.writeVerbs.includes(verb), verb);
+  });
+
+  test(`tracker ${tracker.id} names a server list for every shipped host, from a live connection or an empty one`, () => {
+    for (const host of HOSTS) assert.ok(Object.hasOwn(tracker.servers, host.id), `${host.id} has no entry: a new host needs a live look at what this tracker's connection shows there`);
   });
 
   test(`tracker ${tracker.id} has a server on every host, under names the guard can read`, () => {
@@ -214,11 +227,13 @@ for (const tracker of [...TRACKERS, fakeTracker]) {
   });
 
   test(`tracker ${tracker.id} expands to a key the guard accepts, with no read covered by a write`, (t) => {
-    const value = expandTracker({ enabled: true, workspace: { expect: 'https://x.example/a' }, team: { key: 'ABC', values: ['A'] }, project: { values: ['P'] } }, tracker);
+    const project = tracker.project ? { project: { values: ['P'] } } : {};
+    const value = expandTracker({ enabled: true, workspace: { expect: 'https://x.example/a' }, team: { key: 'ABC', values: ['A'] }, ...project }, tracker);
     const servers = knownServers(tracker);
-    assert.deepEqual(value.readTools, readToolsOf(tracker, servers));
+    if (tracker.workspaceInput === undefined) assert.deepEqual(value.readTools, readToolsOf(tracker, servers));
+    else assert.equal(value.readTools, undefined);
     assert.deepEqual(value.writeTools, writeToolsOf(tracker, servers));
-    for (const read of value.readTools) assert.ok(!value.writeTools.some((pattern) => nameMatches(pattern, read)), read);
+    for (const read of value.readTools ?? []) assert.ok(!value.writeTools.some((pattern) => nameMatches(pattern, read)), read);
     const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-adapters-'));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     mkdirSync(path.join(dir, '.aidrian'));
@@ -266,6 +281,48 @@ test('the host running the check counts as here, and a server listed for any hos
   assert.equal(unwatchedLine({ ...tracker, writeTools: writeToolsOf(fakeTracker, ['faketracker', 'codex_apps_faketracker']) }, running, [fakeTracker]), null);
   assert.equal(unwatchedLine({ ...tracker, enabled: false }, running, [fakeTracker]), null);
   assert.equal(unwatchedLine(tracker, UNKNOWN_HOST, [fakeTracker]), null, 'an unknown host has no servers to name');
+});
+
+test('a tracker whose calls name their workspace judges each call, with no session read and no read tool', (t) => {
+  const expect = '11111111-1111-1111-1111-111111111111';
+  const tracker = expandTracker({ enabled: true, workspace: { expect }, team: { key: 'NOTES' } }, fakePerCall);
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-per-call-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, tracker }));
+  const { config, errors } = loadConfig({ root: dir, paths: { config: '.aidrian/config.json' } });
+  assert.deepEqual(errors, []);
+  assert.equal(config.tracker.enabled, true);
+  assert.equal(config.tracker.workspaceInput, 'cloudId');
+  assert.deepEqual(config.tracker.readTools, []);
+  assert.deepEqual(config.tracker.team.values, ['NOTES'], 'a team may be written by its key alone');
+
+  const settings = { tracker: config.tracker, names: { human: 'the Human' } };
+  const write = 'mcp__faketickets__createTicket';
+  const judge = (input) => judgeTrackerWrite(settings, write, input, null);
+  assert.equal(judge({ cloudId: expect, projectKey: 'NOTES' }), null, 'no read is asked for');
+  assert.match(judge({ cloudId: '22222222-2222-2222-2222-222222222222', projectKey: 'NOTES' }).reason, /cloudId is "22222222/u);
+  assert.match(judge({ projectKey: 'NOTES' }).reason, /it names no cloudId/u, 'one that names none cannot be told from the wrong one');
+  assert.match(judge({ cloudId: expect, projectKey: 'OTHER' }).reason, /projectKey is "OTHER"/u);
+
+  const edit = 'mcp__faketickets__editTicket';
+  assert.equal(judgeTrackerWrite(settings, edit, { cloudId: expect, ticketIdOrKey: '10042' }, null), null, fakePerCall.opaqueIdLimit);
+  const wrong = judgeTrackerWrite(settings, edit, { cloudId: expect, ticketIdOrKey: 'OTHER-1' }, null);
+  assert.match(wrong.reason, /use the ticket's key, or its number when it has none/u, 'the adapter\'s own hint');
+  assert.doesNotMatch(wrong.reason, /UUID/u);
+
+  for (const name of ['getTicket', 'listSites', 'lookupAccountId', 'executeRead']) assert.equal(unlistedTool(config.tracker, `mcp__faketickets__${name}`), false, name);
+  assert.equal(unlistedTool({ ...config.tracker, writeTools: ['mcp__faketickets__createTicket*'] }, 'mcp__faketickets__archiveTicket'), true);
+  assert.match(trackerWarnings(config.tracker, { env: {}, hosts: [], trackers: [fakePerCall] }).join('\n'), /on Fake Tickets, a write through executeWrite passes unchecked/u);
+});
+
+test('Linear\'s key keeps its read, its hint, and its stated limit', () => {
+  const [linear] = TRACKERS;
+  const value = expandTracker({ enabled: true, workspace: { expect: 'https://linear.app/acme' }, team: { key: 'A' } }, linear);
+  assert.equal(value.workspaceInput, undefined);
+  assert.deepEqual(value.team.values, ['A']);
+  assert.match(value.idHint, /UUID/u);
+  assert.match(linear.opaqueIdLimit, /UUID/u);
 });
 
 test('a host that declares a route it cannot guard makes it visible, and so does hook trust not given', () => {

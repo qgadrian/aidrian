@@ -44,8 +44,9 @@ const QUORUM_SCHEMA = {
   product: { owner: { agent: 'agentName' }, witness: { agent: 'agentName' }, ux: { agent: 'agentName' }, engineer: { agent: 'agentName' }, maxLoops: 'objectionCap', autoStart: 'boolean', approval: 'quorumApproval', maxAutoRuns: 'autoRuns' },
 };
 
-// The keys of `tracker` that only a project's file holds: `provider` and `servers` say how to fill the rest (checkTracker).
-const TRACKER_SHORT_KEYS = ['provider', 'servers'];
+// The keys of `tracker` with no default: `provider` and `servers` say how to fill the rest, and the others come from an adapter
+// or a key written out (checkTracker).
+const TRACKER_SHORT_KEYS = ['provider', 'servers', 'workspaceInput', 'readVerbs', 'idHint'];
 // A server's name in mcp__<server>__<tool>: it holds no `*`, and a double underscore would end it early (tracker-guard.mjs).
 const SERVER_NAME = /^(?!.*__)[\w-]+$/u;
 // The keys of each group of `tracker`. Unlike a group of SCHEMA, one of these is set whole or not at all (checkTracker).
@@ -740,6 +741,9 @@ function checkTracker(raw, file, errors, defaults) {
   if (provided === undefined) return defaults;
   const value = provided ? expandTracker(raw, provided) : raw;
   for (const key of Object.keys(value)) if (!Object.hasOwn(defaults, key) && !TRACKER_SHORT_KEYS.includes(key)) errors.push(`${file}: unknown key "tracker.${key}"`);
+  for (const key of ['workspaceInput', 'idHint']) if (value[key] !== undefined && !isText(value[key])) errors.push(`${file}: "tracker.${key}" must be a non-empty string`);
+  if (value.readVerbs !== undefined && !isTexts(value.readVerbs)) errors.push(`${file}: "tracker.readVerbs" must be a list of tool patterns after the server`);
+  const perCall = isText(value.workspaceInput);
   if (Object.hasOwn(value, 'enabled') && typeof value.enabled !== 'boolean') errors.push(`${file}: "tracker.enabled" must be ${TYPES.boolean[1]}`);
   const workspace = checkTrackerGroup('workspace', value.workspace, file, errors);
   const writeTools = checkToolList('writeTools', 'patterns', value.writeTools, trackerToolProblem, file, errors);
@@ -749,15 +753,16 @@ function checkTracker(raw, file, errors, defaults) {
   const listUnset = (raw) => raw === undefined || (Array.isArray(raw) && raw.length === 0);
   const listSet = (raw) => Array.isArray(raw) && raw.length > 0;
   const groupUnset = (raw) => raw === undefined || raw === null;
-  if (isObject(value.workspace) && listUnset(value.readTools)) errors.push(`${file}: "tracker.workspace" needs "tracker.readTools", the tools that read the connected workspace`);
+  if (isObject(value.workspace) && listUnset(value.readTools) && !perCall) errors.push(`${file}: "tracker.workspace" needs "tracker.readTools", the tools that read the connected workspace`);
   if (listSet(value.readTools) && groupUnset(value.workspace)) errors.push(`${file}: "tracker.readTools" needs "tracker.workspace", the value those tools must report`);
   if (value.enabled === true && listUnset(value.writeTools)) errors.push(`${file}: "tracker.enabled" needs "tracker.writeTools", the tools the guard watches`);
   if (value.enabled === true && listSet(value.writeTools) && [value.workspace, value.team, value.project].every(groupUnset)) {
     errors.push(`${file}: "tracker.enabled" needs one of "tracker.workspace", "tracker.team", or "tracker.project", the values a write is held to`);
   }
   // A read tool left out may be the one the connector has, so the workspace check goes with it instead of refusing every write.
-  const paired = workspace !== null && readTools.length > 0 && readTools.length === value.readTools.length;
-  if (paired) {
+  const readPaired = workspace !== null && readTools.length > 0 && readTools.length === value.readTools.length;
+  const paired = perCall ? workspace !== null : readPaired;
+  if (readPaired) {
     const uncleared = writeTools.map((pattern) => [pattern, unclearedWriteProblem(pattern, readTools)]).filter(([, bad]) => bad);
     // With the adapter's patterns under a file's read tools, what is wrong is that one key, however many patterns it strands.
     if (provided && raw.writeTools === undefined && uncleared.length > 0) {
@@ -770,12 +775,15 @@ function checkTracker(raw, file, errors, defaults) {
   return {
     enabled: value.enabled === true && writeTools.length > 0 && (paired || team !== null || project !== null),
     workspace: paired ? workspace : null,
-    readTools: paired ? readTools : [],
+    readTools: readPaired ? readTools : [],
     writeTools,
     team,
     project,
     ...(provided ? { provider: provided.id } : {}),
     ...(provided && Array.isArray(raw.servers) && raw.servers.length ? { servers: raw.servers } : {}),
+    ...(perCall && paired ? { workspaceInput: value.workspaceInput } : {}),
+    ...(isText(value.idHint) ? { idHint: value.idHint } : {}),
+    ...(isTexts(value.readVerbs) ? { readVerbs: value.readVerbs } : {}),
   };
 }
 

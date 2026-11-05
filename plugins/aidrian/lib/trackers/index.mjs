@@ -28,16 +28,22 @@ export const writeToolsOf = (adapter, servers) => servers.flatMap((server) => ad
 // `value`, the file's `tracker` key, with what `adapter` knows filled in where the file says nothing. A list or field the
 // file sets stays as written, so it overrides the adapter. `readTools` goes in only with a `workspace` to hold them to,
 // since the key pairs the two; each group is left out when unset, so a project's choice to leave one out stands.
+// A tracker whose writes each name their workspace needs no read: `workspaceInput` is that field, judged on the call itself.
+// A team named only by its key may be written by that key alone, since the guard takes the key as a value anyway.
 export function expandTracker(value, adapter) {
   const servers = knownServers(adapter, Array.isArray(value.servers) ? value.servers : []);
   const expanded = { ...value };
   if (value.writeTools === undefined) expanded.writeTools = writeToolsOf(adapter, servers);
   if (isObject(value.workspace)) {
-    expanded.workspace = { field: adapter.workspaceField, ...value.workspace };
-    if (value.readTools === undefined) expanded.readTools = readToolsOf(adapter, servers);
+    const field = adapter.workspaceInput ?? adapter.workspaceField;
+    expanded.workspace = { ...(field ? { field } : {}), ...value.workspace };
+    if (adapter.workspaceInput) expanded.workspaceInput = expanded.workspace.field;
+    else if (value.readTools === undefined) expanded.readTools = readToolsOf(adapter, servers);
   }
-  if (isObject(value.team)) expanded.team = { ...adapter.team, ...value.team };
+  if (isObject(value.team)) expanded.team = { ...(typeof value.team.key === 'string' ? { values: [value.team.key] } : {}), ...adapter.team, ...value.team };
   if (isObject(value.project)) expanded.project = { ...adapter.project, ...value.project };
+  if (adapter.idHint) expanded.idHint = adapter.idHint;
+  if (adapter.readVerbs) expanded.readVerbs = adapter.readVerbs;
   return expanded;
 }
 

@@ -6,6 +6,7 @@ export default {
   name: 'Fake Tracker',
   servers: {
     any: ['faketracker'],
+    'claude-code': [],
     codex: ['codex_apps_faketracker'],
   },
   readTool: 'site_info',
@@ -13,4 +14,6 @@ export default {
   workspaceField: 'baseUrl',
   team: { createFields: ['projectKey'], keyFields: ['ticketKey'] },
   project: { field: 'board' },
+  opaqueIdLimit: 'A fixture holds none.',
+  unguardedRoutes: [],
 };

@@ -27,7 +27,7 @@ With `autoStart` on, only the small, clear row follows `unattended`, as § Who d
 - Count this session's automatic runs, for the route. A hard call past `quorum.product.maxAutoRuns` is parked with no quorum.
 - `quorum` runs the `quorum` skill's product mode in this session. One run can spend 22 dispatches.
 - When the route waits, the ledger stays deferred, the question goes in the report with the recommendation and the simulated-user caveat,
-or that no end user took part,
+  or that no end user took part,
   and independent work continues.
   Its dependent work is parked.
 - When the route continues, follow that file's continue path, and record the `decided_provisional` in the report, with the ledger's path.

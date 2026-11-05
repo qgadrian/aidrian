@@ -1,0 +1,49 @@
+// The trackers the plugin knows, one adapter a file, and what turns a project's short `tracker` key into the lists the
+// guard reads (docs/config.md#tracker). docs/providers/adding-a-host.md#adding-a-tracker says what an adapter declares;
+// test/adapters.test.mjs checks each one. config.mjs loads this on every hook, so it stays small and reads no file.
+
+import linear from './linear.mjs';
+
+export const TRACKERS = Object.freeze([linear]);
+
+const isObject = (value) => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+export const trackerById = (id, trackers = TRACKERS) => trackers.find((each) => each.id === id) ?? null;
+
+// Every server name an adapter knows, on any host, in its own order, plus a project's own.
+export const knownServers = (adapter, extra = []) => [...new Set([...Object.values(adapter.servers).flat(), ...extra])];
+
+export const readToolsOf = (adapter, servers) => (adapter.readTool ? servers.map((server) => `mcp__${server}__${adapter.readTool}`) : []);
+export const writeToolsOf = (adapter, servers) => servers.flatMap((server) => adapter.writeVerbs.map((verb) => `mcp__${server}__${verb}`));
+
+// `value`, the file's `tracker` key, with what `adapter` knows filled in where the file says nothing. A list or field the
+// file sets stays as written, so it overrides the adapter. `readTools` goes in only with a `workspace` to hold them to,
+// since the key pairs the two; each group is left out when unset, so a project's choice to leave one out stands.
+export function expandTracker(value, adapter) {
+  const servers = knownServers(adapter, Array.isArray(value.servers) ? value.servers : []);
+  const expanded = { ...value };
+  expanded.writeTools = value.writeTools ?? writeToolsOf(adapter, servers);
+  if (isObject(value.workspace)) {
+    expanded.workspace = { field: adapter.workspaceField, ...value.workspace };
+    expanded.readTools = value.readTools ?? readToolsOf(adapter, servers);
+  }
+  if (isObject(value.team)) expanded.team = { ...adapter.team, ...value.team };
+  if (isObject(value.project)) expanded.project = { ...adapter.project, ...value.project };
+  return expanded;
+}
+
+// The adapter whose known servers a project's lists name, for a key written out with no `provider`, or null.
+export function trackerOfTools(names, trackers = TRACKERS) {
+  const servers = new Set(names.map((name) => /^mcp__(.+?)__/u.exec(name)?.[1]).filter(Boolean));
+  return trackers.find((each) => knownServers(each).some((server) => servers.has(server))) ?? null;
+}
+
+// The servers of `adapter` a loaded key leaves unwatched, as { server, hosts }: no pattern in `matches` covers a write on
+// them, so a write through that connection passes unchecked. `matches(pattern, tool)` is the guard's own test.
+export function unwatchedServers(adapter, writeTools, matches) {
+  const verb = adapter.writeVerbs[0].replace(/\*$/u, 'probe');
+  const hostsOf = (server) => Object.entries(adapter.servers).filter(([, names]) => names.includes(server)).map(([host]) => host);
+  return knownServers(adapter)
+    .filter((server) => !writeTools.some((pattern) => matches(pattern, `mcp__${server}__${verb}`)))
+    .map((server) => ({ server, hosts: hostsOf(server) }));
+}

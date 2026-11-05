@@ -103,7 +103,7 @@ export function unlistedToolSignal({ tool, session = null, agent = null }) {
     title: `The tracker write guard did not judge ${tool}`,
     note:
       `${tool} ran on a server that tracker.readTools or tracker.writeTools names, and neither list names the tool, so the guard let it run. ` +
-      'If it writes to the tracker, add it to tracker.writeTools. If it only reads, reject this lesson: this tool will not reopen it.',
+      'If it writes to the tracker, add it to tracker.writeTools; with tracker.provider set, that key replaces the adapter\'s whole list, so the fix is the adapter in the plugin. If it only reads, reject this lesson: this tool will not reopen it.',
     evidence: session ? [`session ${session}`] : [],
     session,
     agent,

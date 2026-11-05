@@ -1064,48 +1064,33 @@ stops on an invalid config.json as every `aidrian` command does.
 
 ## Tracker
 
-`tracker` names the workspace, team, and project that MCP tracker writes belong to, and the tools that read and write them.
+`tracker` names the workspace, team, and project that MCP tracker writes belong to.
 It is off by default, and `aidrian check` validates it.
-Every value comes from this key, so the plugin names no tracker of its own; the values below are Linear's.
+`provider` names the tracker, and its [adapter](providers/adding-a-host.md#adding-a-tracker) knows the tools and fields,
+so a project writes only what a person knows:
 
 ```json
 {
   "tracker": {
     "enabled": true,
-    "workspace": { "expect": "https://linear.app/acme", "field": "url" },
-    "readTools": ["mcp__plugin_linear_linear__get_workspace", "mcp__linear__get_workspace", "mcp__linear-server__get_workspace", "mcp__claude_ai_Linear__get_workspace"],
-    "writeTools": [
-      "mcp__plugin_linear_linear__save_*", "mcp__plugin_linear_linear__create_*", "mcp__plugin_linear_linear__delete_*",
-      "mcp__plugin_linear_linear__share_*", "mcp__plugin_linear_linear__unshare_*", "mcp__plugin_linear_linear__update_*",
-      "mcp__plugin_linear_linear__merge_*", "mcp__plugin_linear_linear__submit_*", "mcp__plugin_linear_linear__resolve_diff_thread",
-      "mcp__plugin_linear_linear__retire_*", "mcp__plugin_linear_linear__restore_*", "mcp__plugin_linear_linear__prepare_*",
-      "mcp__linear__save_*", "mcp__linear__create_*", "mcp__linear__delete_*",
-      "mcp__linear__share_*", "mcp__linear__unshare_*", "mcp__linear__update_*",
-      "mcp__linear__merge_*", "mcp__linear__submit_*", "mcp__linear__resolve_diff_thread",
-      "mcp__linear__retire_*", "mcp__linear__restore_*", "mcp__linear__prepare_*",
-      "mcp__linear-server__save_*", "mcp__linear-server__create_*", "mcp__linear-server__delete_*",
-      "mcp__linear-server__share_*", "mcp__linear-server__unshare_*", "mcp__linear-server__update_*",
-      "mcp__linear-server__merge_*", "mcp__linear-server__submit_*", "mcp__linear-server__resolve_diff_thread",
-      "mcp__linear-server__retire_*", "mcp__linear-server__restore_*", "mcp__linear-server__prepare_*",
-      "mcp__claude_ai_Linear__save_*", "mcp__claude_ai_Linear__create_*", "mcp__claude_ai_Linear__delete_*",
-      "mcp__claude_ai_Linear__share_*", "mcp__claude_ai_Linear__unshare_*", "mcp__claude_ai_Linear__update_*",
-      "mcp__claude_ai_Linear__merge_*", "mcp__claude_ai_Linear__submit_*", "mcp__claude_ai_Linear__resolve_diff_thread",
-      "mcp__claude_ai_Linear__retire_*", "mcp__claude_ai_Linear__restore_*", "mcp__claude_ai_Linear__prepare_*"
-    ],
-    "team": {
-      "key": "NOTES",
-      "values": ["Notes"],
-      "createFields": ["team", "addTeams", "setTeams", "leadTeam"],
-      "keyFields": ["id", "issueId", "issue"]
-    },
-    "project": { "values": ["Notes launch"], "field": "project" }
+    "provider": "linear",
+    "workspace": { "expect": "https://linear.app/acme" },
+    "team": { "key": "NOTES", "values": ["Notes"] },
+    "project": { "values": ["Notes launch"] }
   }
 }
 ```
 
 This is what the `harness-setup` skill writes for Linear, with `project` only when the Human names one.
-It lists `mcp__plugin_linear_linear__`, `mcp__linear__`, `mcp__linear-server__`, and `mcp__claude_ai_Linear__`, with the same patterns on each.
-These four server names are the known ones, and a connection under another name must be added by hand, in both lists.
+`linear` is the one provider that ships. For it, the adapter gives:
+
+- `readTools` and `writeTools` on the known server names: `mcp__linear__` and `mcp__linear-server__` on any host,
+  `mcp__plugin_linear_linear__` and `mcp__claude_ai_Linear__` on Claude Code, and `mcp__codex_apps_linear__` on Codex.
+- `get_workspace` as the read tool on each, and the write patterns `save_*`, `create_*`, `delete_*`, `share_*`, `unshare_*`,
+  `update_*`, `merge_*`, `submit_*`, `resolve_diff_thread`, `retire_*`, `restore_*`, and `prepare_*`.
+- `url` as `workspace.field`, `project` as `project.field`, `team`, `addTeams`, `setTeams`, and `leadTeam` as `team.createFields`,
+  and `id`, `issueId`, and `issue` as `team.keyFields`.
+
 `mcp__<server>__<tool>` is the [standard format](working-agreement.md#rules-for-every-change) for naming an MCP tool in permissions and config.
 A server name, such as a plugin's `plugin_linear_linear` or a connector's `claude_ai_Linear`, is a host-specific value of `<server>`.
 `prepare_*` counts as a write: those tools are the step before file bytes reach the connected workspace.
@@ -1115,22 +1100,48 @@ Relation fields, such as `blocks`, `parentId`, and `duplicateOf`, are left out o
 `id` stays in `keyFields` on every write tool, which has a limit: a non-issue whose name looks like an issue key, such as a label `Sev-1`,
 is refused, and the agent retries with its UUID.
 
+A connection under another server name goes in `servers`, and gets the same tools: `"servers": ["acme-linear"]`.
+
+Anything else the adapter gives is a default: a list or field the file sets replaces it.
+A project that has written out `readTools`, `writeTools`, and every field needs no `provider`,
+and its key keeps working as written, with the tools of any tracker:
+
+```json
+{
+  "tracker": {
+    "enabled": true,
+    "workspace": { "expect": "https://tracker.example/acme", "field": "url" },
+    "readTools": ["mcp__tracker__get_workspace"],
+    "writeTools": ["mcp__tracker__save_*"],
+    "team": { "key": "NOTES", "values": ["Notes"], "createFields": ["team"], "keyFields": ["id"] }
+  }
+}
+```
+
+Such a key does not grow with the adapter, and a list that replaces an adapter's replaces all of it.
+When a host is known to be set up here, and such lists name a known server of a tracker but leave out that host's,
+`aidrian check` warns of each one left out, since a write through it passes unchecked. Replacing both lists with `"provider"` ends the warning.
+
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `tracker.enabled` | `false` | `true` turns the key on. It needs a pattern in `writeTools`, and one of `workspace`, `team`, or `project`. |
+| `tracker.provider` | | The [tracker adapter](providers/adding-a-host.md#adding-a-tracker) that fills in what the file leaves out, such as `linear`. |
+| `tracker.servers` | `[]` | With `provider`: more server names, beside the ones the adapter knows, such as `acme-linear`. |
 | `tracker.workspace.expect` | | The workspace a write must belong to, as `readTools` report it. |
-| `tracker.workspace.field` | | The field of the read's response that holds that value. |
-| `tracker.readTools` | `[]` | The MCP tools that read the connected workspace, as exact tool names, with no `*`; one on each server in `writeTools`. |
-| `tracker.writeTools` | `[]` | The MCP tools that write to the tracker, as [tool patterns](#agents) that start with `mcp__`. |
+| `tracker.workspace.field` | the adapter's | The field of the read's response that holds that value. |
+| `tracker.readTools` | the adapter's, or `[]` | The MCP tools that read the connected workspace, as exact tool names, with no `*`; one on each server in `writeTools`. |
+| `tracker.writeTools` | the adapter's, or `[]` | The MCP tools that write to the tracker, as [tool patterns](#agents) that start with `mcp__`. |
 | `tracker.team.key` | | The team's issue key prefix, such as `NOTES` in `NOTES-12`, with no hyphen or whitespace. |
 | `tracker.team.values` | | The team names a write may set; at least one. |
-| `tracker.team.createFields` | | The tool input fields that name a team; at least one. |
-| `tracker.team.keyFields` | | The tool input fields that hold an issue key; at least one. |
+| `tracker.team.createFields` | the adapter's | The tool input fields that name a team; at least one. |
+| `tracker.team.keyFields` | the adapter's | The tool input fields that hold an issue key; at least one. |
 | `tracker.project.values` | | The project names a write may set; at least one. |
-| `tracker.project.field` | | The tool input field that names a project. |
+| `tracker.project.field` | the adapter's | The tool input field that names a project. |
 
-- `workspace`, `team`, and `project` are `null` by default, which leaves them unset. One that is set needs every key of its group.
+- `workspace`, `team`, and `project` are `null` by default, which leaves them unset.
+  One that is set needs every key of its group, after the adapter fills it in.
 - `workspace` and `readTools` are set together or not at all; a tracker with no tool that reads its workspace sets neither.
+  With `provider`, the adapter's read tools come only with a `workspace`.
 - `*` and `Bash(...)` are not tracker tools: both lists take MCP tools only, so `"writeTools": ["mcp__*"]` is the widest.
 - A name in `readTools` must not match a pattern in `writeTools`, so that `"mcp__*"` works only with no read tools.
 - With `workspace` set, `aidrian check` reports each pattern in `writeTools` that no read can clear: one on a server no tool in `readTools` is on,
@@ -1139,12 +1150,16 @@ is refused, and the agent retries with its UUID.
 - A group with any error falls back to unset, and a bad entry is left out of its list.
   A bad entry in `readTools`, even beside a good one, also unsets `workspace` and `readTools`.
   `enabled` falls back to `false` with no write tool or no group left, so the loaded key is never half set.
+  An unknown `provider` leaves the whole key at its defaults, with one error, since nothing else in it can be judged without its tracker.
   `aidrian check` names each problem by its key.
 
-A project that adopts the key sets [`requires.aidrian`](#plugin-version), since an older plugin rejects it.
-The `harness-setup` skill asks for the key only while setting a project up, so an existing project adds the key by hand.
-It uses the values above, and must match the patterns to the server name the project's connection shows,
-and the names in `readTools` with them.
+While `tracker.enabled` is true, `aidrian check` also warns of what would leave the guard silent:
+a route a [host adapter](providers/adding-a-host.md#adding-a-host) says no hook reaches,
+and a host whose hooks wait on a person's trust with none on record.
+[Where the tracker guard is verified](hooks.md#where-the-tracker-guard-is-verified) says what was checked on each host.
+
+A project that adopts the key sets [`requires.aidrian`](#plugin-version), since an older plugin rejects it, and `provider` needs a plugin that ships it.
+The `harness-setup` skill asks for the key only while setting a project up, so an existing project adds the key by hand, in the short form above.
 It raises [`requires.aidrian`](#plugin-version) to the plugin version that ships the key unless it is already higher,
 replaces the team in its `issue_tracker` doc and that doc's summary with a pointer to the key, and runs `aidrian check`.
 
@@ -1205,7 +1220,8 @@ Only the fields this key names are read, so a project lists every field it wants
 a tool that names its team in a field missing from `createFields` passes unchecked.
 The same holds for tools: a tool that matches no pattern in `writeTools` passes unchecked, including every tool of a connection under another server name.
 
-Both lists are copied into the project, so a tool the tracker adds later is on neither.
+An adapter's lists move with the plugin, and a key written out is copied into the project,
+so a tool the tracker adds later is on neither until they change.
 After a call of a tool on a server either list names, when neither list names the tool,
 the first hook files an [automatic lesson](lessons.md#automatic-lessons), `tracker-unlisted:<tool>`, in the project's inbox.
 It never refuses the call. The lesson asks for the tool in `writeTools` when it writes.
@@ -1236,7 +1252,7 @@ This depends on the session-end hook: on a host with no SessionEnd, and in a ses
 It lists every problem: a missing file, invalid JSON, a missing or other `version`, an unknown key, or a value of the wrong type.
 In `quorum`, that includes a `provider` on `quorum.plan.a`, a `provider` other than `"agent"` or `"codex"`,
 a `plan.maxObjections` outside 1 to 5, a `plan.maxDispatches` under 5 or not a whole number, and an `agent` that is no agent name.
-In `tracker`, it includes a bad tool pattern, one that does not start with `mcp__`, a `*` in `readTools`,
+In `tracker`, it includes a `provider` no adapter has, a bad tool pattern, one that does not start with `mcp__`, a `*` in `readTools`,
 a read tool that `writeTools` covers, a `team.key` with a hyphen or whitespace, a group missing a key,
 a `workspace` without `readTools`, `readTools` without a `workspace`, a write tool no read can clear, and `enabled: true` with no `writeTools`,
 or with none of `workspace`, `team`, or `project`.

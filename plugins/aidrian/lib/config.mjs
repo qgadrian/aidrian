@@ -13,6 +13,7 @@ import { isFile, isObject, readJson } from './fs.mjs';
 import { modelChoices } from './hosts/index.mjs';
 import { checkLocalReview, checkLocalVisual, checkReview, REVIEW_DEFAULTS } from './review/config.mjs';
 import { serverPrefix } from './tracker-guard.mjs';
+import { expandTracker, TRACKERS, trackerById } from './trackers/index.mjs';
 
 // The project folder format this plugin reads. A format change raises it and documents the migration.
 export const VERSION = 1;
@@ -43,6 +44,10 @@ const QUORUM_SCHEMA = {
   product: { owner: { agent: 'agentName' }, witness: { agent: 'agentName' }, ux: { agent: 'agentName' }, engineer: { agent: 'agentName' }, maxLoops: 'objectionCap', autoStart: 'boolean', approval: 'quorumApproval', maxAutoRuns: 'autoRuns' },
 };
 
+// The keys of `tracker` that only a project's file holds: `provider` and `servers` say how to fill the rest (checkTracker).
+const TRACKER_SHORT_KEYS = ['provider', 'servers'];
+// A server's name in mcp__<server>__<tool>: it holds no `*`, and a double underscore would end it early (tracker-guard.mjs).
+const SERVER_NAME = /^(?!.*__)[\w-]+$/u;
 // The keys of each group of `tracker`. Unlike a group of SCHEMA, one of these is set whole or not at all (checkTracker).
 const TRACKER_GROUPS = {
   workspace: { expect: 'text', field: 'text' },
@@ -724,12 +729,17 @@ function checkAgents(value, file, errors, base, gateErrors = []) {
 // `enabled` needs a write tool to watch and a group to hold it to.
 // A pairing error reads what the file set, and only a key of the right type counts as set or unset, so a key that has its
 // own error raises no second one, about itself or about what depends on it.
-function checkTracker(value, file, errors, defaults) {
-  if (!isObject(value)) {
+// `provider` names a tracker adapter (lib/trackers/), which fills in the lists and fields the file leaves out, and a list
+// or field the file sets overrides it. A key with no `provider` holds every list itself, as it always has.
+function checkTracker(raw, file, errors, defaults) {
+  if (!isObject(raw)) {
     errors.push(`${file}: "tracker" must be an object`);
     return defaults;
   }
-  for (const key of Object.keys(value)) if (!Object.hasOwn(defaults, key)) errors.push(`${file}: unknown key "tracker.${key}"`);
+  const provided = checkTrackerProvider(raw, file, errors);
+  if (provided === undefined) return defaults;
+  const value = provided ? expandTracker(raw, provided) : raw;
+  for (const key of Object.keys(value)) if (!Object.hasOwn(defaults, key) && !TRACKER_SHORT_KEYS.includes(key)) errors.push(`${file}: unknown key "tracker.${key}"`);
   if (Object.hasOwn(value, 'enabled') && typeof value.enabled !== 'boolean') errors.push(`${file}: "tracker.enabled" must be ${TYPES.boolean[1]}`);
   const workspace = checkTrackerGroup('workspace', value.workspace, file, errors);
   const writeTools = checkToolList('writeTools', 'patterns', value.writeTools, trackerToolProblem, file, errors);
@@ -760,8 +770,31 @@ function checkTracker(value, file, errors, defaults) {
     writeTools,
     team,
     project,
+    ...(provided ? { provider: provided.id } : {}),
   };
 }
+
+// The adapter `tracker.provider` names, null when the key sets none, or undefined when it names none we have, whose error
+// is the only one the key raises: nothing else in it can be judged without knowing the tracker.
+function checkTrackerProvider(value, file, errors) {
+  if (value.provider === undefined) {
+    if (value.servers !== undefined) errors.push(`${file}: "tracker.servers" needs "tracker.provider", the tracker those servers connect to`);
+    return null;
+  }
+  const adapter = trackerById(value.provider);
+  if (!adapter) {
+    errors.push(`${file}: "tracker.provider" must be ${oneOfTrackers()}`);
+    return undefined;
+  }
+  const named = value.servers ?? [];
+  if (!Array.isArray(named) || !named.every((each) => typeof each === 'string' && SERVER_NAME.test(each))) {
+    errors.push(`${file}: "tracker.servers" must be a list of server names, such as "my-linear" in mcp__my-linear__save_issue`);
+    return undefined;
+  }
+  return adapter;
+}
+
+const oneOfTrackers = () => (TRACKERS.length === 1 ? JSON.stringify(TRACKERS[0].id) : oneOf(TRACKERS.map((each) => each.id)));
 
 // One group of `tracker`, or null when it is unset or has any error: the guard cannot run on part of one.
 function checkTrackerGroup(name, value, file, errors) {

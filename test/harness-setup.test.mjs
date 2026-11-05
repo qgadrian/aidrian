@@ -141,8 +141,8 @@ test('the report relays the check and lint lines this session ran, and every onb
 
 const DISPATCHES = 'plugins/aidrian/skills/harness-setup/references/dispatches.md';
 const TRACKER_SECTION = 'The tracker key: Linear only';
-// The server names a Linear connection is known to show.
-const LINEAR_SERVERS = ['mcp__plugin_linear_linear__', 'mcp__linear__', 'mcp__linear-server__', 'mcp__claude_ai_Linear__'];
+// The server names a Linear connection is known to show, on either host.
+const LINEAR_SERVERS = ['mcp__plugin_linear_linear__', 'mcp__linear__', 'mcp__linear-server__', 'mcp__claude_ai_Linear__', 'mcp__codex_apps_linear__'];
 
 // The `tracker` value and optional `project` group of the librarian's brief, with the Human's answers filled in.
 function briefTracker({ expect, key, name, project }) {
@@ -180,15 +180,27 @@ test('what setup writes for Linear passes validation, with and without a project
     const { config, errors } = loadConfig({ root: dir, paths: { config: '.aidrian/config.json' } });
     assert.deepEqual(errors, []);
     assert.equal(config.tracker.enabled, true);
-    assert.deepEqual(config.tracker.team, tracker.team);
-    assert.deepEqual(config.tracker.project ?? undefined, tracker.project);
+    assert.equal(config.tracker.workspace.expect, answers.expect);
+    assert.equal(config.tracker.workspace.field, 'url');
+    assert.equal(config.tracker.team.key, answers.key);
+    assert.deepEqual(config.tracker.team.values, [answers.name]);
+    assert.deepEqual(config.tracker.project?.values, tracker.project?.values);
   }
-  assert.deepEqual(briefTracker({ ...answers, project: 'Launch' }).project, { values: ['Launch'], field: 'project' });
+  assert.deepEqual(briefTracker({ ...answers, project: 'Launch' }).project, { values: ['Launch'] });
 });
 
-test('the key names every known Linear server, with the same read tool and write patterns on each', () => {
-  const { readTools, writeTools } = briefTracker({ expect: 'https://linear.app/example', key: 'ABC', name: 'Example team' });
-  assert.deepEqual(readTools, LINEAR_SERVERS.map((server) => `${server}get_workspace`));
+test('setup writes only what a person knows, and the adapter gives every known Linear server the same tools', (t) => {
+  const answers = { expect: 'https://linear.app/example', key: 'ABC', name: 'Example team' };
+  const brief = briefTracker(answers);
+  assert.deepEqual(Object.keys(brief).sort(), ['enabled', 'provider', 'team', 'workspace']);
+  assert.deepEqual(brief, { enabled: true, provider: 'linear', workspace: { expect: answers.expect }, team: { key: answers.key, values: [answers.name] } });
+
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-setup-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, tracker: brief }));
+  const { readTools, writeTools } = loadConfig({ root: dir, paths: { config: '.aidrian/config.json' } }).config.tracker;
+  assert.deepEqual([...readTools].sort(), LINEAR_SERVERS.map((server) => `${server}get_workspace`).sort());
   const patterns = (server) => writeTools.filter((pattern) => pattern.startsWith(server)).map((pattern) => pattern.slice(server.length));
   const [first, ...others] = LINEAR_SERVERS.map(patterns);
   assert.ok(first.length > 0);
@@ -197,8 +209,8 @@ test('the key names every known Linear server, with the same read tool and write
 
   const config = read('docs/config.md').replace(/\s+/gu, ' ');
   for (const server of LINEAR_SERVERS) assert.ok(config.includes(`\`${server}\``), server);
-  assert.match(config, /These four server names are the known ones, and a connection under another name must be added by hand/u);
-  assert.match(read(DISPATCHES).replace(/\s+/gu, ' '), /The block above holds the four known spellings, and a connection under another name must be added by hand/u);
+  assert.match(config, /A connection under another server name goes in `servers`/u);
+  assert.match(read(DISPATCHES).replace(/\s+/gu, ' '), /A connection under a server name the plugin does not know goes in/u);
 });
 
 test('the example project sets the key setup writes', () => {
@@ -285,9 +297,8 @@ test('the write patterns cover the writes beyond save, create, and delete, and n
 test('a tool outside writeTools passes unchecked, so setup and the manual route match the patterns to the connection', () => {
   const config = read('docs/config.md').replace(/\s+/gu, ' ');
   assert.match(config, /a tool that matches no pattern in `writeTools` passes unchecked, including every tool of a connection under another server name/u);
-  const match = /match the patterns to the server name the project's connection shows, and the names in `readTools` with them/u;
-  assert.match(config, match, 'the manual route');
-  assert.match(read(DISPATCHES).replace(/\s+/gu, ' '), match, 'setup');
+  assert.match(config, /A connection under another server name goes in `servers`/u, 'the manual route');
+  assert.match(read(DISPATCHES).replace(/\s+/gu, ' '), /A connection under a server name the plugin does not know goes in `"servers": \["<name>"\]`/u, 'setup');
 });
 
 test('id is read on every write tool: a non-issue named like an issue key is refused, and its UUID passes', () => {
@@ -303,16 +314,14 @@ test('id is read on every write tool: a non-issue named like an issue key is ref
   assert.equal(judge({ id: '11111111-2222-4333-8444-555555555555' }), null);
 
   const limit = /a non-issue whose name looks like an issue key, such as a label `Sev-1`, is refused, and the agent retries with its UUID/u;
-  for (const rel of [DISPATCHES, 'docs/config.md']) assert.match(read(rel).replace(/\s+/gu, ' '), limit, rel);
+  assert.match(read('docs/config.md').replace(/\s+/gu, ' '), limit);
 });
 
 test('createFields holds only the inputs that put a write in a team', () => {
-  const { createFields } = briefTracker({ expect: 'https://linear.app/example', key: 'ABC', name: 'Example team' }).team;
-  assert.deepEqual(createFields, ['team', 'addTeams', 'setTeams', 'leadTeam']);
-  const dispatches = read(DISPATCHES);
-  assert.match(dispatches, /`createFields` lists the Linear inputs that put a write in a team/u);
-  assert.match(dispatches, /`keyFields` lists the single-string inputs that name the issue a write lands on/u);
-  assert.doesNotMatch(dispatches, /every Linear input|every single-string input/u, 'teamId and removeTeams are left out on purpose');
+  const { config } = loadConfig(findProject(path.join(ROOT, 'examples/consumer')));
+  assert.deepEqual(config.tracker.team.createFields, ['team', 'addTeams', 'setTeams', 'leadTeam']);
+  assert.deepEqual(config.tracker.team.keyFields, ['id', 'issueId', 'issue']);
+  assert.match(read('docs/config.md'), /`createFields` holds the inputs that put a write in a team: `removeTeams` takes one out, and `teamId` takes a UUID/u);
 });
 
 test('an existing project has a written route to the key, since setup asks only while setting a project up', () => {
@@ -359,8 +368,9 @@ test('the tracker reference and the example doc point at the key', () => {
 });
 
 test('the config doc shows what setup writes, and says relation fields stay out on purpose', () => {
-  const [example, ...extra] = blocks('docs/config.md').filter((block) => block.section === 'Tracker' && block.lang === 'json');
-  assert.equal(extra.length, 0, 'one json block in the Tracker section');
+  const [example, written, ...extra] = blocks('docs/config.md').filter((block) => block.section === 'Tracker' && block.lang === 'json');
+  assert.equal(extra.length, 0, 'two json blocks in the Tracker section: what setup writes, and a key written out');
+  assert.ok(JSON.parse(written.body).tracker.writeTools.length > 0, 'the second shows the lists, which stay valid');
   const { tracker } = JSON.parse(example.body);
   assert.deepEqual(tracker, briefTracker({ expect: tracker.workspace.expect, key: tracker.team.key, name: tracker.team.values[0], project: tracker.project.values[0] }));
   const config = read('docs/config.md');

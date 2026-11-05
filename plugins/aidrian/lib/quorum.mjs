@@ -1316,6 +1316,10 @@ export const isClearCall = (value) => {
 export const ROUTED_DOMAINS = Object.freeze(['product', 'ux']);
 const otherDomain = (domain, answered = true) => `${JSON.stringify(domain ?? null)} is not a domain a quorum routes${answered ? ', so resolve\'s answer stands as it is' : ''}`;
 
+// Why auto-start does not apply. Under resolve's `no-base`, something at the base could not be read, so the setting may
+// be unknown: it counts as off, and resolve's own reason says what failed.
+const autoStartOff = (answer) => (answer?.rule === 'no-base' ? `quorum.product.autoStart counts as off, because ${answer.reason}` : 'quorum.product.autoStart is off at the base branch');
+
 // What happens to one product decision: { route, wait, reason }. `settings` is the base branch's `quorum.product`, `call`
 // is { hard, runs, domain }, and `answer` is resolve's. Only `authority: "decide"` counts as a decision the agent may make, and only
 // `approval: "review-later"` lets work go on, so a value this code does not know waits. `wait` is true when work on the
@@ -1324,7 +1328,7 @@ const otherDomain = (domain, answered = true) => `${JSON.stringify(domain ?? nul
 export function routeFor({ autoStart, approval, maxAutoRuns }, { hard, runs = 0, domain }, answer) {
   const decides = answer.authority === 'decide';
   if (!ROUTED_DOMAINS.includes(domain)) return { route: 'as-today', wait: !decides, reason: otherDomain(domain) };
-  if (!autoStart) return { route: 'as-today', wait: !decides, reason: 'quorum.product.autoStart is off at the base branch, so resolve\'s answer stands as it is' };
+  if (!autoStart) return { route: 'as-today', wait: !decides, reason: `${autoStartOff(answer)}, so resolve\'s answer stands as it is` };
   if (!hard) {
     return decides
       ? { route: 'agent', wait: false, reason: `a small, clear call, and resolve says decide: ${answer.reason}` }
@@ -1427,7 +1431,7 @@ export function routeAfterRuling({ autoStart, approval }, ledger, answer, domain
   if (answer === null) return human('resolve gave no answer on the Ruling\'s question');
   const lost = markerGap(ledger, markerStatus);
   if (lost) return human(lost);
-  if (!autoStart) return waits('as-today', 'quorum.product.autoStart is off at the base branch, so the Human answers a product ruling');
+  if (!autoStart) return waits('as-today', `${autoStartOff(answer)}, so the Human answers a product ruling`);
   if (answer.authority !== 'decide') return waits('quorum', `resolve says ask, so the Human approves: ${answer.reason}`);
   if (approval !== 'review-later') return waits('quorum', 'approval is first, so the Human approves');
   const held = continueGap(ledger);

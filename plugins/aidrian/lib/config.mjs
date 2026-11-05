@@ -10,10 +10,10 @@ import { agentNameProblem, ALL, MAIN, nameMatches, patternProblem } from './agen
 import { CLASS_MAX, DECISION_DOMAINS, DECISION_MODES, decisionClasses, isClassName, lowerMode, SAFE_DEFAULTS } from './decisions.mjs';
 import { loadTable as dispositionTable } from './finding-disposition.mjs';
 import { isFile, isObject, readJson } from './fs.mjs';
-import { modelChoices, reachesAHook, toolForms, UNKNOWN_HOST } from './hosts/index.mjs';
+import { hookForms, modelChoices, reachesAHook, UNKNOWN_HOST } from './hosts/index.mjs';
 import { checkLocalReview, checkLocalVisual, checkReview, REVIEW_DEFAULTS } from './review/config.mjs';
 import { keyServer, serverPrefix } from './tracker-guard.mjs';
-import { expandTracker, TRACKERS, trackerById } from './trackers/index.mjs';
+import { expandTracker, knownServers, TRACKERS, trackerById } from './trackers/index.mjs';
 
 // The project folder format this plugin reads. A format change raises it and documents the migration.
 export const VERSION = 1;
@@ -741,13 +741,21 @@ function checkTracker(raw, file, errors, defaults) {
   if (provided === undefined) return defaults;
   const value = provided ? expandTracker(raw, provided) : raw;
   for (const key of Object.keys(value)) if (!Object.hasOwn(defaults, key) && !TRACKER_SHORT_KEYS.includes(key)) errors.push(`${file}: unknown key "tracker.${key}"`);
-  for (const key of ['workspaceInput', 'idHint']) if (value[key] !== undefined && !isText(value[key])) errors.push(`${file}: "tracker.${key}" must be a non-empty string`);
-  if (value.readVerbs !== undefined && !isTexts(value.readVerbs)) errors.push(`${file}: "tracker.readVerbs" must be a list of tool patterns after the server`);
+  for (const key of ['workspaceInput', 'idHint']) if (raw[key] !== undefined && !isText(raw[key])) errors.push(`${file}: "tracker.${key}" must be a non-empty string`);
+  if (raw.readVerbs !== undefined && !isTexts(raw.readVerbs)) errors.push(`${file}: "tracker.readVerbs" must be a list of tool patterns after the server`);
   const perCall = isText(value.workspaceInput);
   if (Object.hasOwn(value, 'enabled') && typeof value.enabled !== 'boolean') errors.push(`${file}: "tracker.enabled" must be ${TYPES.boolean[1]}`);
   const workspace = checkTrackerGroup('workspace', value.workspace, file, errors);
   const writeTools = checkToolList('writeTools', 'patterns', value.writeTools, trackerToolProblem, file, errors);
   const readTools = checkToolList('readTools', 'names', value.readTools, (name) => readToolProblem(name, writeTools), file, errors);
+  for (const pattern of writeTools) {
+    const bad = unreachableWriteProblem(pattern);
+    if (bad) errors.push(`${file}: "tracker.writeTools" has ${JSON.stringify(pattern)}: ${bad}`);
+  }
+  for (const name of readTools) {
+    const bad = readToolReport(name, writeTools);
+    if (bad) errors.push(`${file}: "tracker.readTools" has ${JSON.stringify(name)}: ${bad}`);
+  }
   const team = checkTrackerGroup('team', value.team, file, errors);
   const project = checkTrackerGroup('project', value.project, file, errors);
   const listUnset = (raw) => raw === undefined || (Array.isArray(raw) && raw.length === 0);
@@ -767,7 +775,9 @@ function checkTracker(raw, file, errors, defaults) {
     // With the adapter's patterns under a file's read tools, what is wrong is that one key, however many patterns it strands.
     if (provided && raw.writeTools === undefined && uncleared.length > 0) {
       const servers = [...new Set(uncleared.map(([pattern]) => serverPrefix(pattern)))].join(', ');
-      errors.push(`${file}: "tracker.readTools" replaces the adapter's and leaves no read on ${servers}, so no write there can pass: drop "tracker.readTools", or add a read on each`);
+      errors.push(raw.readTools === undefined
+        ? `${file}: "tracker.servers" gives writes with no read the guard can count on ${servers}, so no write there can pass`
+        : `${file}: "tracker.readTools" replaces the adapter's and leaves no read on ${servers}, so no write there can pass: drop "tracker.readTools", or add a read on each`);
     } else {
       for (const [pattern, bad] of uncleared) errors.push(`${file}: "tracker.writeTools" has ${JSON.stringify(pattern)}: ${bad}`);
     }
@@ -841,9 +851,32 @@ function readToolProblem(name, writeTools) {
   if (name.includes('*')) return 'a read tool is an exact tool name, with no "*"';
   const problem = patternProblem(name);
   if (problem) return problem;
-  if (!reachesAHook(name)) return `no host sends this name, which is the form only a model sees, so no read would ever count; name it as ${JSON.stringify(UNKNOWN_HOST.toolName(name))}`;
-  const covering = writeTools.find((pattern) => toolForms(name).some((form) => nameMatches(pattern, form)));
-  return covering === undefined ? null : `a read tool cannot also match "tracker.writeTools", and ${JSON.stringify(covering)} covers it`;
+  const covering = writeTools.find((pattern) => nameMatches(pattern, name));
+  return covering === undefined ? null : coveredProblem(covering);
+}
+
+const coveredProblem = (pattern) => `a read tool cannot also match "tracker.writeTools", and ${JSON.stringify(pattern)} covers it`;
+
+// What is wrong with a read tool that stays in the list. This is a report only, as unclearedWriteProblem is: leaving it out would
+// unset `workspace` for every host, and the guard that keeps it refuses writes on that server, which is the safe way to be wrong.
+function readToolReport(name, writeTools) {
+  if (!reachesAHook(name)) {
+    // Where a flat name's connector ends cannot be told from it, so the name to use is given only for a server a tracker knows.
+    const standard = UNKNOWN_HOST.toolName(name);
+    const known = TRACKERS.some((tracker) => knownServers(tracker).some((server) => keyServer(standard) === `mcp__${server}__`));
+    return `no host sends this name, which is the form only a model sees, so no read would ever count${known ? `; name it as ${JSON.stringify(standard)}` : ''}`;
+  }
+  const covering = writeTools.find((pattern) => hookForms(name).some((form) => nameMatches(pattern, form)));
+  return covering === undefined ? null : coveredProblem(covering);
+}
+
+// Why no call a hook sees can match `pattern`, or null. A pattern ending in `*` is tried on a name it would match: it can match
+// a call when the standard or raw form of that name still starts with the pattern's stem. This is a report only, and it matters
+// because a pattern that matches nothing lets every write run unjudged.
+function unreachableWriteProblem(pattern) {
+  const stem = pattern.endsWith('*') ? pattern.slice(0, -1) : null;
+  const reaches = stem === null ? reachesAHook(pattern) : hookForms(`${stem}x`).some((form) => form.startsWith(stem));
+  return reaches ? null : 'no host sends a name this matches, as it is the form only a model sees, so a write it means runs unjudged';
 }
 
 // Why no read could ever clear a write on `pattern`, as the guard counts a read only on the write's server, or null.
@@ -851,11 +884,8 @@ function readToolProblem(name, writeTools) {
 // a server that has a read tool, so it is not judged.
 function unclearedWriteProblem(pattern, readTools) {
   const star = pattern.endsWith('*');
-  const stem = star ? pattern.slice(0, -1) : pattern;
-  const server = keyServer(stem);
+  const server = keyServer(star ? pattern.slice(0, -1) : pattern);
   if (server === null) return star ? null : 'it names no server, as in mcp__<server>__<tool>, so no read can clear it';
-  // A pattern as wide as a host's raw prefix spans servers, some of which a read clears, as a "*" before the name ends does.
-  if (star && readTools.some((name) => toolForms(name).some((form) => form.startsWith(stem)))) return null;
   return readTools.some((name) => keyServer(name) === server) ? null : 'no tool in "tracker.readTools" is on its server, so no read can clear it';
 }
 

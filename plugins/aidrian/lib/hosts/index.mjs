@@ -44,17 +44,14 @@ export const normalizeHookInput = (raw, env = process.env) => detectHost({ env, 
 // so a gate or the guard matches both: it is the pattern a project wrote before the layer existed that must not stop matching.
 export const toolNames = ({ tool_name: name, raw_tool_name: raw }) => [name, raw].filter((each) => typeof each === 'string' && each !== '');
 
-// Every form a tool a project wrote down can reach a hook in: as written, as the standard, and as each host sends that.
-export const toolForms = (name, hosts = HOSTS) => {
+// The forms the tool `name` reaches a hook in: the standard one, and as each host sends it.
+export const hookForms = (name, hosts = HOSTS) => {
   const standard = UNKNOWN_HOST.toolName(name);
-  return [...new Set([name, standard, ...hosts.map((host) => host.rawToolName(standard))])];
+  return [...new Set([standard, ...hosts.map((host) => host.rawToolName(standard))])];
 };
 
-// Whether some host sends `name` as it is written, or it is the standard. The form only a model sees reaches no hook.
-export const reachesAHook = (name, hosts = HOSTS) => {
-  const standard = UNKNOWN_HOST.toolName(name);
-  return name === standard || hosts.some((host) => host.rawToolName(standard) === name);
-};
+// Whether `name` as written is one of those. The form only a model sees reaches no hook.
+export const reachesAHook = (name, hosts = HOSTS) => hookForms(name, hosts).includes(name);
 
 // Every way hosts spell a server's name, the written one first.
 export const serverSpellings = (server, hosts = HOSTS) => [...new Set([server, ...hosts.map((host) => host.serverSpelling(server))])];

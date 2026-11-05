@@ -27,10 +27,12 @@ export function expandTracker(value, adapter) {
   const expanded = { ...value };
   if (value.writeTools === undefined) expanded.writeTools = writeToolsOf(adapter, servers);
   if (isObject(value.workspace)) {
-    const input = value.workspaceInput ?? adapter.workspaceInput;
+    // A value that is no text is config.mjs's error, and must not turn a tracker with a read into one with none.
+    const written = typeof value.workspaceInput === 'string' && value.workspaceInput.trim() !== '' ? value.workspaceInput : undefined;
+    const input = written ?? adapter.workspaceInput;
     const field = input ?? adapter.workspaceField;
     expanded.workspace = { ...(field ? { field } : {}), ...value.workspace };
-    if (input) expanded.workspaceInput = value.workspaceInput ?? expanded.workspace.field;
+    if (input) expanded.workspaceInput = written ?? expanded.workspace.field;
     else if (value.readTools === undefined) expanded.readTools = readToolsOf(adapter, servers);
   }
   if (isObject(value.team)) expanded.team = { ...(typeof value.team.key === 'string' ? { values: [value.team.key] } : {}), ...adapter.team, ...value.team };

@@ -145,9 +145,9 @@ for (const host of HOSTS) {
   });
 }
 
-// `delivery` says which of these checks a host answers to: an `installer` or `bridge` host maps a call before any matcher sees it.
-for (const host of [...HOSTS, fakeHost].filter(({ delivery }) => delivery === 'hooks-json')) {
+for (const host of [...HOSTS, fakeHost]) {
   test(`host ${host.id}'s raw names fire each hooks.json matcher, as it reads hooks.json as it is`, () => {
+    assert.equal(host.delivery, 'hooks-json');
     assert.deepEqual(matcherProblems(host), []);
   });
 }

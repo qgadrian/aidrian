@@ -1154,15 +1154,17 @@ A host that is not set up here, or that no adapter can find, gets no warning, wh
 - `workspace` and `readTools` are set together or not at all; a tracker with no tool that reads its workspace sets neither.
   With `provider`, the adapter's read tools come only with a `workspace`.
 - `*` and `Bash(...)` are not tracker tools: both lists take MCP tools only, so `"writeTools": ["mcp__*"]` is the widest.
-- A name in `readTools` must not match a pattern in `writeTools`, in any form a host sends it, so that `"mcp__*"` works only with no read tools.
-- A name in `readTools` must be one a hook can see. `mcp__codex_apps__linear_get_workspace` is the form only Codex's model sees,
-  so it is an error that names the form to use.
+- A name in `readTools` must not match a pattern in `writeTools`, so that `"mcp__*"` works only with no read tools.
+- `aidrian check` also reports a name in `readTools` that a pattern in `writeTools` matches in another form a host sends it, and a name in `readTools`
+  or a pattern in `writeTools` no host sends, such as `mcp__codex_apps__linear_get_workspace`, the form only Codex's model sees.
+  It only reports: each entry stays, so a read that can never count leaves the guard refusing writes on that server.
+  A write pattern that matches nothing runs its writes unjudged, so fix it first.
 - With `workspace` set, `aidrian check` reports each pattern in `writeTools` that no read can clear: one on a server no tool in `readTools` is on,
   and one that names no server. It only reports: the guard stays on as written and refuses those writes.
   Both lists' names count by their standard server, so a read and a write on one connector pair in either form, and one on another connector does not.
-  A `*` before the server's name ends, as in `mcp__acme*` or `mcp__codex_apps__*`, can match a server with a read tool, so that pattern is not reported.
+  A `*` before the server's name ends, as in `mcp__acme*`, can match a server with a read tool, so that pattern is not reported.
 - A group with any error falls back to unset, and a bad entry is left out of its list.
-  A bad entry in `readTools`, even beside a good one, also unsets `workspace` and `readTools`.
+  A bad entry in `readTools`, even beside a good one, also unsets `workspace` and `readTools`, except what the reports above keep.
   `enabled` falls back to `false` with no write tool or no group left, so the loaded key is never half set.
   An unknown `provider` leaves the whole key at its defaults, with one error, since nothing else in it can be judged without its tracker.
   `aidrian check` names each problem by its key.

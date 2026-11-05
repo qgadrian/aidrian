@@ -8,6 +8,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
+import codex from '../plugins/aidrian/lib/hosts/codex.mjs';
 import { judgeTrackerWrite } from '../plugins/aidrian/lib/tracker-guard.mjs';
 
 const SHORT = { enabled: true, provider: 'linear', workspace: { expect: 'https://linear.app/acme' }, team: { key: 'NOTES', values: ['Notes'] } };
@@ -154,24 +155,91 @@ test('a write on one connector with a read on another is an error, as the guard 
   assert.match(errors[0], /"mcp__codex_apps__github__save_\*": no tool in "tracker\.readTools" is on its server/u);
 });
 
-test('a pattern as wide as the raw prefix is no error while a read falls under it, in either form', (t) => {
-  for (const read of ['mcp__codex_apps__linear__get_workspace', 'mcp__codex_apps_linear__get_workspace']) {
-    assert.ok(!load(t, written([read], ['mcp__codex_apps__*'])).errors.some((each) => each.includes('is on its server')), read);
+test('a pattern as wide as the raw prefix over a read is an error, and with the read in the other form the guard still holds', (t) => {
+  const wide = ['mcp__codex_apps__*'];
+  const same = load(t, written(['mcp__codex_apps__linear__get_workspace'], wide));
+  assert.match(same.errors.join('\n'), /covers it/u, 'in one form the read goes, as on main');
+  assert.equal(same.config.tracker.workspace, null);
+
+  const other = load(t, written(['mcp__codex_apps_linear__get_workspace'], wide));
+  assert.match(other.errors.join('\n'), /covers it/u);
+  assert.equal(other.config.tracker.enabled, true);
+  assert.equal(other.config.tracker.workspace.expect, WS.expect);
+  const settings = { tracker: other.config.tracker, names: { human: 'the Human' } };
+  for (const raw of ['mcp__codex_apps__github__save_file', 'mcp__codex_apps__linear__save_issue']) {
+    assert.ok(judgeTrackerWrite(settings, codex.toolName(raw), {}, null, { rawTool: raw }), raw);
   }
-  assert.match(load(t, written(['mcp__linear__get_workspace'], ['mcp__codex_apps__*'])).errors.join('\n'), /is on its server/u, 'with no read under it, none can clear it');
+  assert.match(load(t, written(['mcp__linear__get_workspace'], wide)).errors.join('\n'), /is on its server/u, 'with no read under it, none can clear it');
 });
 
-test('a read a write pattern covers in another form is the same error as in one form', (t) => {
-  const { errors } = load(t, written(['mcp__codex_apps__linear__get_workspace'], ['mcp__codex_apps_linear__get_*']));
+test('a write pattern no host can send is reported, and one that reaches a raw name is not', (t) => {
+  const read = ['mcp__codex_apps_linear__get_workspace'];
+  for (const pattern of ['mcp__codex_apps__linear_save_*', 'mcp__codex_apps__jira_save_*', 'mcp__codex_apps__linear_save_issue']) {
+    const { errors, config } = load(t, written(read, [pattern]));
+    assert.match(errors.join('\n'), /no host sends a name this matches/u, pattern);
+    assert.deepEqual(config.tracker.writeTools, [pattern], 'it stays, as a report');
+  }
+  for (const pattern of ['mcp__codex_apps__linear_*', 'mcp__codex_apps__linear__save_*', 'mcp__codex_apps_linear__save_*', 'mcp__codex_apps__linear__save_issue', 'mcp__linear__save_*', 'mcp__*', 'mcp__codex_apps__*', 'mcp__codex_apps_*']) {
+    assert.doesNotMatch(load(t, written(read, [pattern])).errors.join('\n'), /no host sends/u, pattern);
+  }
+});
+
+test('a read a write pattern covers in another form is reported, and stays, so the guard stays on', (t) => {
+  const { errors, config } = load(t, written(['mcp__codex_apps__linear__get_workspace'], ['mcp__codex_apps_linear__get_*']));
   assert.match(errors.join('\n'), /a read tool cannot also match "tracker\.writeTools", and "mcp__codex_apps_linear__get_\*" covers it/u);
+  assert.equal(config.tracker.enabled, true);
+  assert.equal(config.tracker.workspace.expect, WS.expect);
   const raw = load(t, written(['mcp__codex_apps_linear__get_workspace'], ['mcp__codex_apps__linear__get_*']));
   assert.match(raw.errors.join('\n'), /covers it/u);
 });
 
 test('the flat form only a model sees is reported as matching nothing, with the name to use', (t) => {
-  const { errors, config } = load(t, written(['mcp__codex_apps__linear_get_workspace'], ['mcp__codex_apps__linear__save_*']));
+  const { errors } = load(t, written(['mcp__codex_apps__linear_get_workspace'], ['mcp__codex_apps__linear__save_*']));
   assert.match(errors.join('\n'), /"mcp__codex_apps__linear_get_workspace": no host sends this name, .* name it as "mcp__codex_apps_linear__get_workspace"/u);
-  assert.equal(config.tracker.workspace, null);
+});
+
+test('a flat read beside a working one keeps the guard on for every host', (t) => {
+  const { errors, config } = load(t, written(['mcp__linear__get_workspace', 'mcp__codex_apps__linear_get_workspace'], ['mcp__linear__save_*', 'mcp__codex_apps__linear__save_*']));
+  assert.match(errors.join('\n'), /no host sends this name/u);
+  assert.equal(config.tracker.enabled, true);
+  assert.equal(config.tracker.readTools.length, 2);
+  const settings = { tracker: config.tracker, names: { human: 'the Human' } };
+  assert.match(judgeTrackerWrite(settings, 'mcp__linear__save_issue', {}, null).reason, /Call mcp__linear__get_workspace, then write again/u, 'a Claude Code write is still refused');
+  assert.equal(judgeTrackerWrite(settings, 'mcp__linear__save_issue', {}, { value: WS.expect, tool: 'mcp__linear__get_workspace' }), null);
+  assert.ok(judgeTrackerWrite(settings, 'mcp__codex_apps_linear__save_issue', {}, null, { rawTool: 'mcp__codex_apps__linear__save_issue' }));
+});
+
+test('no name to use is offered when the flat form does not say where the connector ends', (t) => {
+  const { errors } = load(t, written(['mcp__codex_apps__google_drive_get_workspace'], ['mcp__codex_apps__google_drive__save_*']));
+  const line = errors.find((each) => each.includes('no host sends this name'));
+  assert.ok(line, errors.join('\n'));
+  assert.doesNotMatch(line, /name it as/u);
+});
+
+test('servers codex_apps offers no name for the read it generates, and the guard stays on', (t) => {
+  const { errors, config } = load(t, { enabled: true, provider: 'linear', workspace: { expect: WS.expect }, servers: ['codex_apps'] });
+  const line = errors.find((each) => each.includes('"mcp__codex_apps__get_workspace"'));
+  assert.ok(line, errors.join('\n'));
+  assert.doesNotMatch(line, /name it as/u);
+  assert.doesNotMatch(errors.join('\n'), /"tracker\.readTools" replaces/u, 'the file set none');
+  assert.match(errors.join('\n'), /"tracker\.servers" gives writes with no read the guard can count/u);
+  assert.equal(config.tracker.enabled, true);
+  assert.ok(config.tracker.readTools.includes('mcp__plugin_linear_linear__get_workspace'));
+  const settings = { tracker: config.tracker, names: { human: 'the Human' } };
+  assert.ok(judgeTrackerWrite(settings, 'mcp__plugin_linear_linear__save_issue', {}, null), 'a Claude Code write is still refused');
+});
+
+test('a workspaceInput that is no text is an error, and the key keeps its read and its guard', (t) => {
+  for (const workspaceInput of [1, '', '  ', null]) {
+    const { errors, config } = load(t, { enabled: true, provider: 'linear', workspace: { expect: WS.expect }, workspaceInput });
+    assert.match(errors.join('\n'), /"tracker\.workspaceInput" must be a non-empty string/u, JSON.stringify(workspaceInput));
+    assert.equal(config.tracker.enabled, true);
+    assert.equal(config.tracker.workspace.field, 'url');
+    assert.ok(config.tracker.readTools.length > 0);
+    assert.equal(config.tracker.workspaceInput, undefined);
+    const settings = { tracker: config.tracker, names: { human: 'the Human' } };
+    assert.match(judgeTrackerWrite(settings, 'mcp__linear__save_issue', {}, null).reason, /has not read the connected workspace/u);
+  }
 });
 
 test('a value the file sets for what the adapter fills stays as written', (t) => {

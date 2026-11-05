@@ -17,6 +17,7 @@ import { isObject } from '../lib/fs.mjs';
 import { loadConfig } from '../lib/config.mjs';
 import { snapshotPath } from '../lib/gate-snapshot.mjs';
 import { block, deny, runHook } from '../lib/hook-io.mjs';
+import { detectHost } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { judgeTrackerWrite, refusalMarker } from '../lib/tracker-guard.mjs';
 
@@ -26,7 +27,7 @@ await runHook(async (input) => {
   const { config } = loadConfig(project);
   if (config.tracker.enabled !== true) return;
   const file = snapshotPath(input.session_id)?.replace(/\.json$/u, '.tracker.json');
-  const denial = judgeTrackerWrite(config, input.tool_name, input.tool_input, file ? readRecord(file) : null, { skipMissingRecord: !file || !canHoldRecord(file) });
+  const denial = judgeTrackerWrite(config, input.tool_name, input.tool_input, file ? readRecord(file) : null, { skipMissingRecord: !file || !canHoldRecord(file), rawTool: input.raw_tool_name, host: detectHost({ input }) });
   if (!denial) return;
   if (denial.routine) {
     markRefusal(input);

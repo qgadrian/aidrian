@@ -31,10 +31,13 @@ const text = (value) => (typeof value === 'string' && value.trim() !== '' ? valu
 // a write on the server its read ran on, since two servers can be connected to different workspaces. A caller whose
 // session can hold no record passes `skipMissingRecord`. A refusal with `routine: true` is the step every writing session
 // takes, which alone says nothing about the session: the caller counts it only when the session ends with no read recorded.
-export function judgeTrackerWrite({ tracker, names }, tool, input, record, { skipMissingRecord = false } = {}) {
+// `rawTool` is what the host sent when it differs from `tool`, since a pattern may name either (lib/hosts/index.mjs toolNames),
+// and `host` names the read a refusal asks for as its model sees that tool.
+export function judgeTrackerWrite({ tracker, names }, tool, input, record, { skipMissingRecord = false, rawTool, host = UNKNOWN_HOST } = {}) {
   if (tracker?.enabled !== true || typeof tool !== 'string') return null;
-  if (!tracker.writeTools.some((pattern) => nameMatches(pattern, tool))) return null;
-  return workspaceRefusal(tracker, tool, record, names.human, skipMissingRecord) ?? teamRefusal(tracker.team, input, names.human) ?? projectRefusal(tracker.project, input, names.human);
+  const called = rawTool ? [tool, rawTool] : [tool];
+  if (!tracker.writeTools.some((pattern) => called.some((name) => nameMatches(pattern, name)))) return null;
+  return workspaceRefusal(tracker, tool, record, names.human, skipMissingRecord, host) ?? teamRefusal(tracker.team, input, names.human) ?? projectRefusal(tracker.project, input, names.human);
 }
 
 // The `mcp__<server>__` that starts a tool's name, or null when it has none. The server ends at the first double
@@ -42,22 +45,25 @@ export function judgeTrackerWrite({ tracker, names }, tool, input, record, { ski
 // ones. A server whose own name holds a double underscore reads as the part before it.
 export const serverPrefix = (tool) => (typeof tool === 'string' ? (/^mcp__.+?__/u.exec(tool)?.[0] ?? null) : null);
 
+// The server of a name from the key, which a project may have written as its host sends it.
+const keyServer = (name) => serverPrefix(UNKNOWN_HOST.toolName(name));
+
 // The refusal of a write on `server` with no read to count. Only one that a listed read clears is routine: the two cases no
 // read clears, which config.mjs `checkTracker` reports, are a key to correct, and repeat until someone does.
-function noReadRefusal(readTools, server, human) {
+function noReadRefusal(readTools, server, human, host) {
   const why = 'this session has not read the connected workspace';
   if (server === null) return refused(why, `tracker.writeTools names this tool with no server, so no read can clear it. Ask ${human} to correct that entry, and do not edit the key`);
-  const reads = readTools.filter((name) => serverPrefix(name) === server);
+  const reads = readTools.filter((name) => keyServer(name) === server).map((name) => host.nativeToolName(UNKNOWN_HOST.toolName(name)));
   if (reads.length === 0) return refused(why, `Ask ${human} to add a read tool on this server to tracker.readTools, and do not edit the key`);
   return { ...refused(why, `Call ${reads.join(' or ')}, then write again`), routine: true };
 }
 
-function workspaceRefusal({ workspace, readTools }, tool, record, human, skipMissingRecord) {
+function workspaceRefusal({ workspace, readTools }, tool, record, human, skipMissingRecord, host) {
   if (!workspace) return null;
   const server = serverPrefix(tool);
   if (server === null || serverPrefix(record?.tool) !== server) {
     if (skipMissingRecord) return null;
-    return noReadRefusal(readTools, server, human);
+    return noReadRefusal(readTools, server, human, host);
   }
   const value = record.unreadable === true ? null : text(record.value);
   if (value === null) {
@@ -82,11 +88,12 @@ const READ_NAME = /^(?:get|list|search|read|find|fetch|query|view|show|describe|
 // Whether `tool` ran on a server that `tracker.readTools` or `tracker.writeTools` names with neither list naming it, and
 // with a name that does not say it only reads: the guard let it run unjudged, and it may be a write the lists have not
 // caught up with.
-export function unlistedTool({ readTools, writeTools }, tool) {
+export function unlistedTool({ readTools, writeTools }, tool, rawTool) {
   const server = serverPrefix(tool);
-  if (server === null || readTools.includes(tool) || writeTools.some((pattern) => nameMatches(pattern, tool))) return false;
+  const called = rawTool ? [tool, rawTool] : [tool];
+  if (server === null || called.some((name) => readTools.includes(name) || writeTools.some((pattern) => nameMatches(pattern, name)))) return false;
   if (READ_NAME.test(tool.slice(server.length))) return false;
-  return [...readTools, ...writeTools].some((name) => serverPrefix(name) === server);
+  return [...readTools, ...writeTools].some((name) => keyServer(name.replace(/\*$/u, '')) === server);
 }
 
 const withoutTrailingSlash = (value) => (value.endsWith('/') ? value.slice(0, -1) : value);

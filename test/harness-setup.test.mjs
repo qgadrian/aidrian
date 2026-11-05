@@ -142,7 +142,7 @@ test('the report relays the check and lint lines this session ran, and every onb
 const DISPATCHES = 'plugins/aidrian/skills/harness-setup/references/dispatches.md';
 const TRACKER_SECTION = 'The tracker key: Linear only';
 // The server names a Linear connection is known to show, on either host.
-const LINEAR_SERVERS = ['mcp__plugin_linear_linear__', 'mcp__linear__', 'mcp__linear-server__', 'mcp__claude_ai_Linear__', 'mcp__codex_apps_linear__'];
+const LINEAR_SERVERS = ['mcp__plugin_linear_linear__', 'mcp__linear__', 'mcp__linear-server__', 'mcp__linear_server__', 'mcp__claude_ai_Linear__', 'mcp__codex_apps_linear__'];
 
 // The `tracker` value and optional `project` group of the librarian's brief, with the Human's answers filled in.
 function briefTracker({ expect, key, name, project }) {

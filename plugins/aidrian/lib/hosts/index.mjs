@@ -19,6 +19,8 @@ export const UNKNOWN_HOST = Object.freeze({
   effort: () => null,
   runEnv: () => null,
   toolName: (name) => HOSTS.reduce((each, host) => host.toolName(each), name),
+  serverSpelling: (server) => server,
+  nativeToolName: (standard) => standard,
   toolResponse: (response) => HOSTS.flatMap((host) => host.toolResponse(response)),
   hookInput: (input) => HOSTS.reduce((each, host) => host.hookInput(each), input),
   capabilities: Object.freeze({}),
@@ -36,6 +38,13 @@ export function sessionIdentity(env = process.env) {
 
 // `raw`, a hook's payload, in the standard names the shared code reads: `tool_name` as mcp__<server>__<tool> for an MCP tool.
 export const normalizeHookInput = (raw, env = process.env) => detectHost({ env, input: raw }).hookInput(raw);
+
+// The names a call goes by: the standard one, and what the host sent when that differs. A project's pattern may name either,
+// so a gate or the guard matches both: it is the pattern a project wrote before the layer existed that must not stop matching.
+export const toolNames = ({ tool_name: name, raw_tool_name: raw }) => [name, raw].filter((each) => typeof each === 'string' && each !== '');
+
+// Every way hosts spell a server's name, the written one first.
+export const serverSpellings = (server, hosts = HOSTS) => [...new Set([server, ...hosts.map((host) => host.serverSpelling(server))])];
 
 // The variables that say which session a process belongs to. A reviewer or a test runs without them.
 export const IDENTITY_VARS = Object.freeze([...new Set(HOSTS.flatMap((host) => host.identityVars))]);

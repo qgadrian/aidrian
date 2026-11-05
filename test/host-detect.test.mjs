@@ -25,7 +25,9 @@ test('a host payload is normalised on its way into a hook, and a Claude Code pay
 
 test('host detection: a payload or plugin hook variable tells Codex even inside a Claude Code shell', () => {
   assert.equal(detectHost({ env: { CLAUDECODE: '1' }, input: { turn_id: 't' } }).id, 'codex');
-  assert.equal(detectHost({ env: { CLAUDECODE: '1', PLUGIN_ROOT: '/p' } }).id, 'codex');
+  assert.equal(detectHost({ env: { CLAUDECODE: '1', PLUGIN_ROOT: '/p', CLAUDE_PLUGIN_ROOT: '/p' } }).id, 'codex', 'Codex sets both to one value');
+  assert.equal(detectHost({ env: { CLAUDECODE: '1', PLUGIN_ROOT: '/somewhere', CLAUDE_PLUGIN_ROOT: '/p' } }).id, 'claude-code', 'a PLUGIN_ROOT the shell inherited');
+  assert.equal(detectHost({ env: { PLUGIN_ROOT: '/p' } }).id, 'unknown', 'PLUGIN_ROOT alone names no host');
   assert.equal(detectHost({ env: { CLAUDECODE: '1', CODEX_THREAD_ID: 't' } }).id, 'claude-code', 'a Claude Code started from a Codex shell');
   assert.equal(detectHost({ env: { CODEX_THREAD_ID: 't' } }).id, 'codex');
   assert.equal(detectHost({ env: { CLAUDE_CODE_SESSION_ID: 's' } }).id, 'claude-code');

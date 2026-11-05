@@ -12,7 +12,7 @@ import path from 'node:path';
 import { loadConfig } from '../lib/config.mjs';
 import { snapshotPath } from '../lib/gate-snapshot.mjs';
 import { runHook } from '../lib/hook-io.mjs';
-import { detectHost } from '../lib/hosts/index.mjs';
+import { detectHost, toolNames } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { readTrackerValue, unlistedTool } from '../lib/tracker-guard.mjs';
 
@@ -22,9 +22,9 @@ await runHook(async (input) => {
   const { config } = loadConfig(project);
   const { tracker } = config;
   if (tracker.enabled !== true) return;
-  if (!tracker.readTools.includes(input.tool_name)) {
+  if (!toolNames(input).some((name) => tracker.readTools.includes(name))) {
     // Loaded only for a tool it notes, so the other MCP calls pay nothing for it.
-    if (unlistedTool(tracker, input.tool_name)) (await import('../lib/lesson-signals.mjs')).noteUnlistedTool(input, project, config);
+    if (unlistedTool(tracker, input.tool_name, input.raw_tool_name)) (await import('../lib/lesson-signals.mjs')).noteUnlistedTool(input, project, config);
     return;
   }
   const file = snapshotPath(input.session_id)?.replace(/\.json$/u, '.tracker.json');

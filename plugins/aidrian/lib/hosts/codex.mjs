@@ -21,6 +21,13 @@ const toolName = (name) => {
   return match ? `mcp__codex_apps_${match[1]}__${match[2]}` : name;
 };
 
+// A connector's tool in the standard form, as the two names above undo it.
+const STANDARD_APP_TOOL = /^mcp__codex_apps_(.+?)__(.+)$/u;
+
+// Codex replaces every character outside [A-Za-z0-9_] in a tool's qualified name (codex-mcp/src/mcp/mod.rs at rust-v0.166.0,
+// `sanitize_responses_api_tool_name`), so the server linear-server reaches a hook as mcp__linear_server__<tool>.
+const serverSpelling = (server) => server.replace(/[^A-Za-z0-9_]/gu, '_');
+
 // A `*** ... File:` line opens a section of the patch, and `*** Move to:` renames the one above.
 const PATCH_TARGET = /^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gmu;
 
@@ -81,10 +88,13 @@ export default {
   modelChoices: { model: null, effort: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'persistent'] },
   identityVars: ['CODEX_THREAD_ID'],
   detectVars: ['CODEX_THREAD_ID', 'PLUGIN_ROOT'],
-  // A tool hook's payload holds `turn_id`, a plugin hook has PLUGIN_ROOT, and a shell Codex runs has CODEX_THREAD_ID
-  // (hooks/src/schema.rs, hooks/src/engine/discovery.rs, core/src/exec_env.rs at rust-v0.166.0). CODEX_THREAD_ID alone
-  // is inherited by a Claude Code started from a Codex shell, which CLAUDECODE tells apart.
-  detect: ({ env, input }) => typeof input?.turn_id === 'string' || Boolean(env.PLUGIN_ROOT) || (Boolean(env.CODEX_THREAD_ID) && env.CLAUDECODE !== '1'),
+  // A tool hook's payload holds `turn_id`, a plugin hook has PLUGIN_ROOT equal to CLAUDE_PLUGIN_ROOT, and a shell Codex runs
+  // has CODEX_THREAD_ID (hooks/src/schema.rs, hooks/src/engine/discovery.rs:314-316, core/src/exec_env.rs at rust-v0.166.0).
+  // PLUGIN_ROOT alone may be inherited from anywhere, and CODEX_THREAD_ID alone by a Claude Code started from a Codex shell,
+  // which CLAUDECODE tells apart.
+  detect: ({ env, input }) => typeof input?.turn_id === 'string'
+    || (Boolean(env.PLUGIN_ROOT) && env.PLUGIN_ROOT === env.CLAUDE_PLUGIN_ROOT)
+    || (Boolean(env.CODEX_THREAD_ID) && env.CLAUDECODE !== '1'),
   sessionId: (env) => env.CODEX_THREAD_ID || null,
   agentName: () => null,
   effort: () => null,
@@ -93,13 +103,23 @@ export default {
   pluginAgentPrefix: 'aidrian-',
   agentAliases: (type) => (type.startsWith('aidrian-') ? [type.slice('aidrian-'.length)] : []),
   toolName,
+  serverSpelling,
+  // The name the model calls a tool by: the namespace and the name it sees, run together, with one underscore here.
+  nativeToolName(standard) {
+    const match = STANDARD_APP_TOOL.exec(standard);
+    return match ? `mcp__codex_apps__${match[1]}_${match[2]}` : standard;
+  },
   // The MCP result as it comes off the wire: `content`, and sometimes `structuredContent`, which is that tool's own object.
   toolResponse(response) {
     const [direct, ...rest] = responseObjects(response);
     const structured = direct?.structuredContent ?? direct?.structured_content;
     return [direct, ...(isObject(structured) ? [structured] : []), ...rest].filter(Boolean);
   },
-  hookInput: (input) => (typeof input.tool_name === 'string' ? { ...input, tool_name: toolName(input.tool_name) } : input),
+  // `raw_tool_name` keeps what Codex sent, so a pattern a project wrote in that form still matches (lib/hosts/index.mjs toolNames).
+  hookInput(input) {
+    const name = toolName(input.tool_name);
+    return name === input.tool_name ? input : { ...input, tool_name: name, raw_tool_name: input.tool_name };
+  },
   hookEvents: Object.fromEntries(EVENTS.map((event) => [event, event])),
   fileEditTools: ['apply_patch'],
   fileEdit(_tool, given) {

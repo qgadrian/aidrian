@@ -4,6 +4,7 @@
   "env": { "PLUGIN_ROOT": "/plugins/cache/aidrian-harness/aidrian/0.0.0", "CLAUDE_PLUGIN_ROOT": "/plugins/cache/aidrian-harness/aidrian/0.0.0" },
   "workspace": "https://linear.app/acme",
   "standard": { "read": "mcp__codex_apps_linear__get_workspace", "write": "mcp__codex_apps_linear__save_issue" },
+  "native": { "read": "mcp__codex_apps__linear_get_workspace" },
   "post": {
     "session_id": "01a1f000-0000-7000-8000-000000000001",
     "turn_id": "01a1f000-0000-7000-8000-000000000002",

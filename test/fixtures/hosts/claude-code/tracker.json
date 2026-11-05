@@ -4,6 +4,7 @@
   "env": { "CLAUDECODE": "1", "CLAUDE_PLUGIN_ROOT": "/plugins/cache/aidrian-harness/aidrian/0.0.0" },
   "workspace": "https://linear.app/acme",
   "standard": { "read": "mcp__plugin_linear_linear__get_workspace", "write": "mcp__plugin_linear_linear__save_issue" },
+  "native": { "read": "mcp__plugin_linear_linear__get_workspace" },
   "post": {
     "session_id": "2f6c1e0a-9b3d-4c7e-8a15-6d0f4b2c9e11",
     "transcript_path": "/nowhere/transcript.jsonl",

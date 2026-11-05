@@ -24,6 +24,8 @@ export default {
   pluginAgentPrefix: 'aidrian/',
   agentAliases: (type) => (type.startsWith('aidrian/') ? [type.slice('aidrian/'.length)] : []),
   toolName,
+  serverSpelling: (server) => server,
+  nativeToolName: (standard) => standard,
   toolResponse: (response) => (typeof response?.result === 'object' && response.result !== null ? [response.result] : []),
   hookInput(input) {
     if (typeof input.fakeTurn !== 'string') return input;

@@ -1086,6 +1086,7 @@ This is what the `harness-setup` skill writes for Linear, with `project` only wh
 
 - `readTools` and `writeTools` on the known server names: `mcp__linear__` and `mcp__linear-server__` on any host,
   `mcp__plugin_linear_linear__` and `mcp__claude_ai_Linear__` on Claude Code, and `mcp__codex_apps_linear__` on Codex.
+  Each also comes in every host's spelling: Codex replaces a hyphen in a server's name, so `linear-server` also gives `mcp__linear_server__`.
 - `get_workspace` as the read tool on each, and the write patterns `save_*`, `create_*`, `delete_*`, `share_*`, `unshare_*`,
   `update_*`, `merge_*`, `submit_*`, `resolve_diff_thread`, `retire_*`, `restore_*`, and `prepare_*`.
 - `url` as `workspace.field`, `project` as `project.field`, `team`, `addTeams`, `setTeams`, and `leadTeam` as `team.createFields`,
@@ -1100,9 +1101,11 @@ Relation fields, such as `blocks`, `parentId`, and `duplicateOf`, are left out o
 `id` stays in `keyFields` on every write tool, which has a limit: a non-issue whose name looks like an issue key, such as a label `Sev-1`,
 is refused, and the agent retries with its UUID.
 
-A connection under another server name goes in `servers`, and gets the same tools: `"servers": ["acme-linear"]`.
+A connection under another server name goes in `servers`, and gets the same tools: `"servers": ["acme-linear"]`, in each host's spelling.
 
 Anything else the adapter gives is a default: a list or field the file sets replaces it.
+A pattern may name a tool as the host sends it or in the standard form, such as `mcp__codex_apps__linear__save_*` or `mcp__codex_apps_linear__save_*`,
+and the guard and the [agent gates](#agents) match either.
 A project that has written out `readTools`, `writeTools`, and every field needs no `provider`,
 and its key keeps working as written, with the tools of any tracker:
 

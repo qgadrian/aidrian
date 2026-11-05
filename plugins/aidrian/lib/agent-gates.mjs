@@ -2,7 +2,7 @@
 // config.mjs checks the patterns with patternProblem; scripts/hook-agent-gates.mjs asks gateDenial before every tool
 // call. docs/config.md#agents gives the rules.
 
-import { agentAliases } from './hosts/index.mjs';
+import { agentAliases, toolNames } from './hosts/index.mjs';
 import { commandLines, inlineShellCommand, lexInputs, readGit, readInvocation, readsShellInput, SUBSTITUTION_DEPTH_LIMIT } from './shell-lex.mjs';
 
 // The entry that applies to every agent, and the one for the main session, which has no `agent_id`. Both select gates;
@@ -46,15 +46,16 @@ export function patternProblem(pattern) {
 export function gateDenial(input, { agents, names: { human } }, paths, { started = false } = {}) {
   const tool = input.tool_name;
   if (typeof tool !== 'string' || tool === '') return null;
+  const called = toolNames(input);
   const caller = callerNames(input);
   const entries = Object.entries(agents).filter(([name]) => caller.has(name));
   const where = { human, paths, started };
   for (const [name, { deny = [] }] of entries) {
-    const hit = deny.find((pattern) => denies(pattern, tool, input.tool_input));
+    const hit = deny.find((pattern) => called.some((name) => denies(pattern, name, input.tool_input)));
     if (hit) return blocked(input, `agents.${name}.deny has "${hit}"`, where);
   }
   for (const [name, { allow }] of entries) {
-    if (allow && !allows(allow, tool, input.tool_input)) return blocked(input, `agents.${name}.allow does not list it`, where);
+    if (allow && !called.some((name) => allows(allow, name, input.tool_input))) return blocked(input, `agents.${name}.allow does not list it`, where);
   }
   return null;
 }

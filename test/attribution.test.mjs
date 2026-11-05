@@ -63,7 +63,7 @@ test('currentAuthor reads the last request; a subagent reads its own transcript 
   assert.equal(currentAuthor(input, { CLAUDE_CODE_AGENT: 'aidrian:orchestrator' }).agent, 'orchestrator');
   assert.equal(currentAuthor(input, { CODEX_THREAD_ID: 't' }).tool, 'Codex');
   assert.equal(currentAuthor({ ...input, turn_id: 't' }, {}).tool, 'Codex', 'a Codex tool hook names itself in its payload');
-  assert.equal(currentAuthor(input, { PLUGIN_ROOT: '/p' }).tool, 'Codex', 'a Codex plugin hook has PLUGIN_ROOT');
+  assert.equal(currentAuthor(input, { PLUGIN_ROOT: '/p', CLAUDE_PLUGIN_ROOT: '/p' }).tool, 'Codex', 'a Codex plugin hook sets both to one value');
   assert.equal(currentAuthor(input, { CLAUDECODE: '1' }).tool, 'Claude Code');
 });
 

@@ -31,7 +31,7 @@ for (const host of [...HOSTS, fakeHost]) {
   test(`host ${host.id} declares every field of an adapter`, () => {
     for (const field of ['id', 'name', 'ai', 'modelsKey', 'pluginAgentPrefix']) assert.ok(typeof host[field] === 'string' && host[field] !== '', field);
     assert.notEqual(host.id, UNKNOWN_HOST.id);
-    for (const field of ['detect', 'sessionId', 'agentName', 'effort', 'runEnv', 'agentAliases', 'toolName', 'toolResponse', 'hookInput', 'fileEdit']) {
+    for (const field of ['detect', 'sessionId', 'agentName', 'effort', 'runEnv', 'agentAliases', 'toolName', 'serverSpelling', 'nativeToolName', 'toolResponse', 'hookInput', 'fileEdit']) {
       assert.equal(typeof host[field], 'function', field);
     }
     for (const field of ['identityVars', 'detectVars', 'fileEditTools']) assert.ok(Array.isArray(host[field]) && host[field].every((each) => typeof each === 'string'), field);
@@ -217,7 +217,7 @@ test('the check warns of a known connection the lists leave out on a host set up
 // and that a refusal reaches the host as exit 2 with its reason on stderr.
 for (const host of HOSTS) {
   test(`host ${host.id}: a recorded read then write run through the real tracker hooks`, (t) => {
-    const { env, post, pre, workspace, standard } = recorded(host);
+    const { env, post, pre, workspace, native } = recorded(host);
     const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-adapters-')));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     mkdirSync(path.join(dir, '.aidrian'));
@@ -233,7 +233,7 @@ for (const host of HOSTS) {
 
     const first = run('hook-tracker-pre.mjs', pre);
     assert.equal(first.status, 2, 'no read yet');
-    assert.ok(first.stderr.includes(`Call ${standard.read}`) || first.stderr.includes(standard.read), first.stderr);
+    assert.ok(first.stderr.includes(`Call ${native.read}, then write again`), `the refusal names the read as the model sees it: ${first.stderr}`);
 
     assert.equal(run('hook-tracker-post.mjs', post).status, 0);
     assert.equal(run('hook-tracker-pre.mjs', pre).status, 0, 'the read clears the write');

@@ -29,6 +29,8 @@ export default {
   pluginAgentPrefix: 'aidrian:',
   agentAliases: (type) => [type.slice(type.lastIndexOf(':') + 1)],
   toolName: (name) => name,
+  serverSpelling: (server) => server,
+  nativeToolName: (standard) => standard,
   toolResponse: responseObjects,
   hookInput: (input) => input,
   hookEvents: Object.fromEntries(EVENTS.map((event) => [event, event])),

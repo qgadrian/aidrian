@@ -10,6 +10,11 @@
 // file` fed a heredoc or a `cp` of a file the rule can read, is read as that command writes it (`lineWrites`), and
 // `--body-file -` reads the heredoc fed to gh itself: the file does not exist yet when the hook runs.
 //
+// A call answers to the repository it targets. The project is the one the folder gh runs in finds (`chained` in
+// shell-lex walkCommands), and the session's only where that folder cannot be known. A call that names a repository
+// other than that checkout's remotes, by -R, a pull request URL, or GH_REPO, answers to no rule here
+// (`targetsAnotherRepo`): the machine cannot find that repository's config.
+//
 // `github.pullRequest` adds the project's contract (docs/config.md#pull-request-contract), each part off until set:
 // the title pattern, an issue key outside the title's leading bracket, the closed list of sections, the items of the
 // deferral and residual sections, a body file in a shared temp folder, and a body identical to another open pull
@@ -29,7 +34,9 @@ import { runGh } from '../../gh.mjs';
 import { runGit } from '../../git.mjs';
 import { headings, sectionItems, unfencedLines } from '../../markdown-sections.mjs';
 import { findProject, stateDir } from '../../project.mjs';
+import { remoteRepos, repoName } from '../../review-gate.mjs';
 import { lexCommand, readInvocation, readShortOptions, walkCommands } from '../../shell-lex.mjs';
+import { invocationRepo } from './review-request.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_PR_BODY';
 
@@ -54,12 +61,13 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
   if (env[OVERRIDE] === '1') return null;
   // Each gh call with the folder it runs in (shell-lex `walkCommands`), in substitutions and inline shells too:
   // `cd <worktree> && gh pr create --body-file b.md` reads that worktree's b.md and project. In a folder this rule
-  // cannot know, the project is the session's and a relative body file is unreadable. Each call takes its own heredoc
-  // from readPrCalls on its line.
+  // cannot know, the project is the session's and a relative body file is unreadable. After a later `cd` joined by
+  // `&&`, `chained` still names the project, though a relative body file stays unreadable. Each call takes its own
+  // heredoc from readPrCalls on its line.
   const pending = new Map();
   const writes = lineWrites(command);
   for (const entry of walkCommands(command, cwd)) {
-    const { segment, folder, line } = entry;
+    const { segment, folder, chained, line } = entry;
     if (!readPrCall(segment)) {
       writes.note(entry);
       continue;
@@ -71,7 +79,7 @@ export function check(command, { cwd = process.cwd(), env = process.env, listOpe
       call.stdin = stdinBody(entry);
       call.bodyFile = writes.token(call.bodyFile, entry);
       call.bodyOverwritten = writes.overwrites(entry, call.bodyFile);
-      const reason = judge(call, line, { cwd: folder ?? cwd, folderKnown: folder !== null, env, written: writes.files, listOpenPrs: folder === null || folder === cwd ? listOpenPrs : openPrBodies(folder) });
+      const reason = judge(call, line, { cwd: folder ?? cwd, projectFolder: chained ?? cwd, ghRepo: invocationRepo(entry.invocation.environment, env), folderKnown: folder !== null, env, written: writes.files, listOpenPrs: chained === null || chained === cwd ? listOpenPrs : openPrBodies(chained) });
       if (reason) return reason;
     }
     // Its own output can rewrite a body file a later gh call reads: `gh pr create … > b.md`.
@@ -304,6 +312,18 @@ export function readPrCall(segment) {
   return call;
 }
 
+// Whether the call names a repository other than those of `project`'s checkout: by -R, a pull request URL an edit names,
+// or else `ghRepo`, the GH_REPO in force (review-request `invocationRepo`). A value the rule cannot read, or a checkout
+// with no remote to compare, is not another repository, so the project's rules hold.
+export function targetsAnotherRepo(call, project, ghRepo) {
+  const url = call.subcommand === 'edit' && call.target && !call.target.dynamic && /\/pull\/\d+/u.test(call.target.text) ? call.target : null;
+  const named = call.repo ?? url ?? { text: ghRepo, dynamic: false };
+  const repo = named.dynamic ? null : repoName(named.text);
+  if (repo === null) return false;
+  const own = remoteRepos(project);
+  return own.length > 0 && !own.includes(repo);
+}
+
 // A boolean option's value as gh (pflag) reads it: bare or a pflag true word is on, a false word is off. A value the
 // rule cannot read is neither, so it grants no exemption.
 const isTrue = (inline, dynamic = false) => inline === null || (!dynamic && /^(?:true|1|t|TRUE|True|T)$/u.test(inline));
@@ -316,9 +336,9 @@ const LONG_VALUES = new Set([
   '--add-reviewer', '--remove-reviewer',
 ]);
 
-function judge(call, command, { cwd, folderKnown = true, env, written = new Map(), listOpenPrs }) {
-  const project = findProject(cwd);
-  if (!project) return null;
+function judge(call, command, { cwd, projectFolder, ghRepo, folderKnown = true, env, written = new Map(), listOpenPrs }) {
+  const project = findProject(projectFolder);
+  if (!project || targetsAnotherRepo(call, project, ghRepo)) return null;
   const { config } = loadConfig(project);
   const contract = config.github.pullRequest;
   if (call.help) return null;
@@ -327,7 +347,7 @@ function judge(call, command, { cwd, folderKnown = true, env, written = new Map(
   if (call.fill && call.subcommand === 'create') {
     return deny(`\`--fill\` writes the body from the commit messages, without the sections config.json \`github.requiredSections\` asks for. ${steps()}`);
   }
-  if (contract.sharedTempBodyFile && call.bodyFile && call.bodyFile.text !== '-' && isSharedTemp(call.bodyFile.text, cwd, env, project.root, state)) {
+  if (contract.sharedTempBodyFile && call.bodyFile && call.bodyFile.text !== '-' && isSharedTemp(call.bodyFile.text, projectFolder, env, project.root, state)) {
     return deny(`the body file \`${call.bodyFile.text}\` is in a shared temp folder, which concurrent sessions overwrite. ${steps()} ` +
       "The host's scratchpad and the system temp folder are such folders: another session's body can publish under this pull request " +
       '(config.json `github.pullRequest.sharedTempBodyFile`).');

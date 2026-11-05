@@ -718,17 +718,20 @@ const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
 // here-string words fed to its input; `heredocs` its heredocs alone, as { body, expands, fd? }. A leading `cd <dir> &&` moves the folder; any other directory change (in a subshell, a pipe,
 // after `;` or `||`, a second one) leaves it unknown for the commands after it. A wrapper's own directory (`env -C`)
 // and git's `-C` apply to their command only. Directory changes themselves are left out.
+// `chained` is the folder the command runs in whenever it runs at all, for a rule that asks which project a command
+// answers to: `folder` when known, and also after a `cd` joined to it by `&&` alone, as in `x; cd /y && gh`, where the
+// command runs only once that `cd` worked. It is null past `;`, `||`, a pipe, or the end of a subshell, unless `folder` is known.
 // `unread` is the text of the commands a shell or `eval` runs that the walk could not read as command lines: what a pipe
 // feeds a shell (`echo 'git push' | bash`) with the shell itself, a shell's script or unreadable options, or a body
 // nested past SUBSTITUTION_DEPTH_LIMIT. A rule that must not miss a command fails closed on it when it names one.
 export function walkCommands(command, cwd) {
   const out = [];
-  const walk = (line, start, depth) => {
+  const walk = (line, start, depth, chainStart = start) => {
     const { segments, separators, substitutions, ends, heredocs, spans } = lexSegments(line);
     // Whether the body was walked: past the depth limit it is not.
-    const nested = (body, folder) => {
+    const nested = (body, folder, chainFolder) => {
       if (depth >= SUBSTITUTION_DEPTH_LIMIT) return false;
-      walk(body, folder, depth + 1);
+      walk(body, folder, depth + 1, chainFolder);
       return true;
     };
     // Segment `index` with the segments that pipe into it, as written.
@@ -738,28 +741,37 @@ export function walkCommands(command, cwd) {
       return line.slice(spans[first][0], spans[index][1]);
     };
     let here = start;
+    let chain = chainStart;
     segments.forEach((segment, index) => {
-      for (const body of substitutions.slice(ends[index - 1] ?? 0, ends[index])) nested(body, here);
+      if (index > 0 && separators[index - 1] !== '&&') chain = here;
+      for (const body of substitutions.slice(ends[index - 1] ?? 0, ends[index])) nested(body, here, chain);
       const invocation = readInvocation(segment);
+      const closes = segment.at(-1)?.text.endsWith(')');
       if (CHANGES_DIRECTORY.has(invocation.program)) {
         const leading = index === 0 && separators[0] === '&&' && !segment[0]?.text.startsWith('(');
         here = leading ? folderAfter(start, invocation) : null;
+        chain = closes ? null : folderAfter(chain, invocation);
         return;
       }
       let folder = invocation.chdir ? folderAfter(here, { program: 'cd', args: [invocation.chdir] }) : here;
+      let chained = invocation.chdir ? folderAfter(chain, { program: 'cd', args: [invocation.chdir] }) : chain;
       if (invocation.program === 'git') {
         const { args } = invocation;
         for (let i = 0; i < args.length && args[i].text.startsWith('-'); i += 1) {
-          if (args[i].text === '-C') folder = folderAfter(folder, { program: 'cd', args: [args[i + 1]] });
+          if (args[i].text === '-C') {
+            folder = folderAfter(folder, { program: 'cd', args: [args[i + 1]] });
+            chained = folderAfter(chained, { program: 'cd', args: [args[i + 1]] });
+          }
           if (GIT_VALUE_GLOBALS.has(args[i].text)) i += 1;
         }
       }
+      chained = folder ?? chained;
       const own = heredocs.filter((each) => each.segment === index).map(({ body, expands, fd }) => ({ body, expands, ...(fd === undefined ? {} : { fd }) }));
       const inputs = [
         ...own.map((each) => each.body),
         ...segment.flatMap((token, at) => (token.operator && token.text === '<<<' && segment[at + 1] ? [segment[at + 1].text] : [])),
       ];
-      const entry = { segment, invocation, folder, line, inputs, heredocs: own };
+      const entry = { segment, invocation, folder, chained, line, inputs, heredocs: own };
       out.push(entry);
       const unread = [];
       // eval joins its words with spaces and runs the result as a command line; a leading `--` only ends its options.
@@ -767,15 +779,16 @@ export function walkCommands(command, cwd) {
       const evaluated = evalWords.length > 0 ? evalWords.map((token) => token.text).join(' ') : null;
       const inner = inlineShellCommand(invocation) ?? evaluated;
       if (inner !== null) {
-        if (!nested(inner, folder)) unread.push(inner);
+        if (!nested(inner, folder, chained)) unread.push(inner);
       } else if (SHELLS.has(invocation.program)) {
         if (readsShellInput(invocation) && inputs.length > 0) {
-          for (const body of inputs) if (!nested(body, folder)) unread.push(body);
+          for (const body of inputs) if (!nested(body, folder, chained)) unread.push(body);
         } else unread.push(piped(index));
       }
       if (unread.length) entry.unread = unread.join('\n');
+      if (closes) chain = here;
     });
-    for (const body of substitutions.slice(ends.at(-1) ?? 0)) nested(body, here);
+    for (const body of substitutions.slice(ends.at(-1) ?? 0)) nested(body, here, chain);
   };
   walk(command, cwd, 0);
   return out;

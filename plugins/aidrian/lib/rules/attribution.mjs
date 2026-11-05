@@ -10,7 +10,8 @@
 // heredoc of a -m `$(cat <<'EOF' … EOF)`, or its -F file, cleaned as git cleans it, with its --trailer values; then
 // `git interpret-trailers` in that folder says which trailers the commit gets. A help, dry-run, or status call passes.
 // A `gh pr create` body the rule cannot read is refused. `gh pr edit` passes: another session would attribute the same
-// pull request differently.
+// pull request differently. A `gh pr create` that names a repository other than its checkout's asks for no lines
+// (pr-body `targetsAnotherRepo`).
 
 import path from 'node:path';
 
@@ -21,7 +22,8 @@ import { runGit } from '../git.mjs';
 import { findProject } from '../project.mjs';
 import { isLongOption, lexCommand, readGit, walkCommands } from '../shell-lex.mjs';
 import { readText } from '../transcript.mjs';
-import { lineWrites, readBody, stdinBody, readPrCall, readPrCalls, unchangedHeredoc } from './github/pr-body.mjs';
+import { lineWrites, readBody, stdinBody, readPrCall, readPrCalls, targetsAnotherRepo, unchangedHeredoc } from './github/pr-body.mjs';
+import { invocationRepo } from './github/review-request.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_UNATTRIBUTED';
 
@@ -64,8 +66,8 @@ export function check(command, { cwd = process.cwd(), env = process.env, input, 
   if (env[OVERRIDE] === '1' || typeof input?.transcript_path !== 'string') return null;
   const { gitCommits, prCreates } = readCalls(command, cwd);
   if (!gitCommits.length && !prCreates.length) return null;
-  // Each call answers to the project it runs in, as its own folder finds it; in a folder the rule cannot know, the
-  // session's.
+  // Each call answers to the project it runs in, as its own folder finds it (`at`, shell-lex `chained`); in a folder the
+  // rule cannot know, the session's.
   const projects = new Map();
   const settings = (dir) => {
     const at = dir ?? cwd;
@@ -77,18 +79,18 @@ export function check(command, { cwd = process.cwd(), env = process.env, input, 
   };
   let author;
   const who = () => (author ??= currentAuthor(input, env));
-  for (const { messages, trailers, cleanup, dir, config } of gitCommits) {
-    const fields = settings(dir)?.config.attribution.commit ?? [];
+  for (const { messages, trailers, cleanup, dir, at, config } of gitCommits) {
+    const fields = settings(at)?.config.attribution.commit ?? [];
     if (!fields.length) continue;
     const expected = expectedTrailers(fields, who());
     const carried = commitTrailers(messages.length ? messages.join('\n\n') : null, trailers, dir, config, cleanup);
     const missing = expected.filter((trailer) => !carried.has(trailer));
     if (missing.length) return commitReason(expected, missing);
   }
-  for (const { call, dir, written } of prCreates) {
-    const found = settings(dir);
+  for (const { call, dir, at, environment, written } of prCreates) {
+    const found = settings(at);
     const prFields = found?.config.attribution.pullRequest ?? [];
-    if (!prFields.length) continue;
+    if (!prFields.length || targetsAnotherRepo(call, found.project, invocationRepo(environment, env))) continue;
     const { project, config } = found;
     const body = readBody(call, dir, written);
     if (body === null) {
@@ -111,8 +113,9 @@ export function check(command, { cwd = process.cwd(), env = process.env, input, 
   return null;
 }
 
-// The command's commits, as { messages, trailers, cleanup, dir, config }, and its `gh pr create` calls, as
-// { call, dir, written }, `written` the files the line wrote before the call (pr-body `lineWrites`),
+// The command's commits, as { messages, trailers, cleanup, dir, at, config }, and its `gh pr create` calls, as
+// { call, dir, at, environment, written }, `at` the folder that names its project, `environment` the changes its
+// invocation makes to its environment, `written` the files the line wrote before the call (pr-body `lineWrites`),
 // in the order they run, with the folder each runs in from shell-lex `walkCommands`: substitutions, `sh -c`, and scripts
 // fed to a shell included, and a folder it cannot know as null, where a relative file is not read. A help or dry-run
 // commit writes nothing and is left out.
@@ -126,13 +129,13 @@ function readCalls(command, cwd) {
   };
   const writes = lineWrites(command);
   for (const entry of walkCommands(command, cwd)) {
-    const { segment, folder, line } = entry;
+    const { segment, folder, chained, line } = entry;
     const git = readGit(segment);
     if (git?.subcommand === 'commit') {
       // `git -c key=value` holds for this commit only, so the rule's own git calls take it too.
       const config = git.globals.flatMap((token, i) => (token.text === '-c' && git.globals[i + 1] && !git.globals[i + 1].dynamic ? ['-c', git.globals[i + 1].text] : []));
       const read = commitMessage(git.rest, folder, config);
-      Object.assign(read, { dir: folder, config });
+      Object.assign(read, { dir: folder, at: chained, config });
       // A commit that writes nothing still holds its heredoc, so the later ones keep their own.
       if (read.holdsHeredoc) state(line).pending.push(read);
       if (!read.writesNothing) gitCommits.push(read);
@@ -147,7 +150,7 @@ function readCalls(command, cwd) {
         call.stdin = stdinBody(entry);
         call.bodyFile = writes.token(call.bodyFile, entry);
         call.bodyOverwritten = writes.overwrites(entry, call.bodyFile);
-        prCreates.push({ call, dir: folder, written: new Map(writes.files) });
+        prCreates.push({ call, dir: folder, at: chained, environment: entry.invocation.environment, written: new Map(writes.files) });
       }
     }
     // Every command, a gh call too, may write a body file a later gh call reads.

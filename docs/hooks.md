@@ -183,6 +183,13 @@ What each rule matches:
   and, when sections are configured, a non-web `gh pr create` with no `--body` or `--body-file`.
   With `github.pullRequest` set, also the title, the closed list of sections, the deferral and residual items,
   a body file in a shared temp folder, and a body identical to another open pull request's.
+  These rules and the attribution rule's pull request lines follow the repository the call targets.
+  The project is the one found from the folder gh runs in: `env -C`, a leading `cd`, or a later `cd` joined to gh by `&&`
+  alone (`x; cd /other && gh …`), and the session's only where that folder cannot be known (`cd "$WT"`, `cd /other; gh …`).
+  A call that names a repository other than that checkout's remotes, through `-R`, a pull request URL, or `GH_REPO`,
+  gets none of these rules: that repository's config cannot be found from there, so its rules go unchecked.
+  A `-R` that names a remote of the checkout, a fork's parent included, keeps them; so does a value the rule cannot read
+  (`-R "$REPO"`), a checkout with no remote to compare, and a `GH_REPO` exported earlier on the same command line.
   A body file the same command writes first is read as that command writes it: `cat > file` or `tee file` fed a quoted
   heredoc, or a `cp` of a file the rule reads, also through a variable the line sets to a literal path (`F=…; cat > "$F"`).
   `--body-file -` reads the heredoc fed to gh. The rule fails closed where the shell could change what it read:

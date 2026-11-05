@@ -3707,3 +3707,14 @@ test('an inference line matches past a curly or straight quote, and still fails 
   assert.deepEqual(inferenceProblems(['inference: The Human\'s view is unclear.'], [{ statement: 'The Human\u2019s view is unclear.' }]), []);
   assert.equal(inferenceProblems([claim], [{ statement: 'The Human\'s "view" is clear.' }]).length, 1);
 });
+
+test('the route says no base could be read, rather than that auto-start is off', () => {
+  const off = { autoStart: false, approval: 'first', maxAutoRuns: 1 };
+  const call = { hard: true, domain: 'product' };
+  const noBase = { authority: 'ask', rule: 'no-base', reason: 'r' };
+  assert.match(routeFor(off, call, noBase).reason, /^no base branch could be read/u);
+  assert.match(routeFor(off, call, { authority: 'ask', rule: 'mode', reason: 'r' }).reason, /^quorum\.product\.autoStart is off at the base branch/u);
+  const ledger = routeLedger();
+  assert.match(routeAfterRuling(off, ledger, noBase, 'product').reason, /^no base branch could be read/u);
+  assert.match(routeAfterRuling(off, ledger, { authority: 'ask', rule: 'mode', reason: 'r' }, 'product').reason, /^quorum\.product\.autoStart is off/u);
+});

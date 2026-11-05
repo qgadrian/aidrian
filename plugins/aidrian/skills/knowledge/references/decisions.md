@@ -38,6 +38,7 @@ Every agent and skill that handles one points here and restates none of it.
 
 A dispatcher that already holds the class, answers, and docs may resolve first, and send `authority` in the first brief.
 `authority` covers the one decision its brief names. Another decision the specialist meets starts again at step 1.
+In the `product` and `ux` domains, [Hard product calls](#hard-product-calls) changes step 2.
 
 ## Under ask
 
@@ -101,3 +102,126 @@ Read it from that output, never from the working copy.
 When the decision's `severity` is at or above `minSeverity`, send the `decided_provisional` to the named agent before going on, and ask it for `sign_off`.
 A missing or unknown `severity` counts as at or above `minSeverity`.
 `approved` is agreement. Anything else escalates: the decision goes to the Human as under `ask`, with both positions.
+
+## Hard product calls
+
+A team may let a session start the `quorum` skill's product mode on a hard call,
+with `quorum.product.autoStart`, `approval`, and `maxAutoRuns` at the base branch.
+The route reads them, so a branch cannot raise them. With `autoStart` off it prints `as-today`, and nothing else changes.
+A run the Human starts always asks; only a run the route started continues provisionally.
+
+### The five answers
+
+`product-manager`, `designer`, and `ux-specialist` return `hardness` with every `product` or `ux` decision,
+each key `yes` or `no`, from the decision in front of them:
+
+1. `open_options`: are two or more options that differ in what a user gets each still viable after reading the project's docs?
+2. `no_written_answer`: does no doc, decision record, or committed data favour one option, so that the pick rests on an inference?
+3. `conflict`: do two written rules disagree, or the docs and the code on this behaviour?
+4. `disagreement`: did a specialist, a reviewer, or `secondLook` object to the pick with a citation?
+5. `reach`: does it change a step of a flow a persona doc describes, rather than only copy, layout, ordering, a default value, or naming?
+
+All five `no` is small and clear. Any `yes`, or a missing answer, makes the call hard.
+Read the first two together: wording with one obvious option stays small.
+These are facts a reviewer can check against the cited docs, not a confidence score.
+A `backlog` decision carries no answers and never routes.
+Neither does any domain other than `product` and `ux`: [The order](#the-order) applies as written.
+
+### The route
+
+`aidrian quorum route` takes the place of `aidrian decisions resolve` at step 2 of the order, and a dispatcher that resolved first routes at step 4.
+A dispatcher holding a `decided_provisional` from any of those agents routes it before anyone commits it.
+
+```bash
+aidrian quorum route --domain <domain> --class <class> --reversible <no|yes>,<no|yes>,<no|yes>,<no|yes> --hard <a,b,c,d,e> [--doc <path>]... [--runs <n>]
+```
+
+`--hard` takes the five answers in the order above.
+`--runs` is this session's automatic quorum runs so far: the coordinator counts them, and a handoff brief carries the count.
+It prints one JSON line, `{ route, wait, reason, resolve }`.
+`resolve` is what `aidrian decisions resolve` prints, so `authority` and `secondLook` come from there.
+It logs `resolve`'s dispatch row, sharing its key, so no separate `resolve` runs for the log.
+Exit 3, or any other non-zero exit, waits for the Human.
+
+| `route` | What happens |
+| --- | --- |
+| `as-today` | `resolve`'s answer stands, whatever the five answers say: step 3 of the order, by its `authority`, and `unattended` as ever. |
+| `agent` | A small, clear call the agent decides: step 3 under `decide`. |
+| `human` | Step 3 under `ask`, with no quorum. This is the small, clear call under `ask`, or a hard call at `maxAutoRuns`, which waits. |
+| `quorum` | Run the `quorum` skill's product mode on the decision, with `product` or `ux` as its domain, then [After a ruling](#after-a-ruling). |
+
+With `autoStart` off, `as-today` keeps `unattended` as ever, on a hard call too: the five answers change nothing there.
+With `autoStart` on, only the small, clear row follows `unattended`; every other route is the stricter path, so a hard call takes no `safe-default`.
+Under `resolve`'s `ask` or `approval: "first"`, `wait` is true, and the quorum only recommends.
+
+**Who runs a quorum.** The main session, or a subagent coordinator such as `orchestrator`.
+A coordinator that is itself a subagent stays running while it waits, never ends its turn to wait,
+and brings any question for the Human back in its handoff.
+When it cannot stay running to the end of the run, it starts no quorum, and returns the decision and its answers for the main session to run.
+
+### After a ruling
+
+Run `aidrian quorum check <ledger> --plan <question>` before `route --ledger`, which checks no schema. A check that exits 1 waits.
+
+```bash
+aidrian quorum route --ledger <ledger> --domain <the ruling's domain>
+```
+
+It prints `{ route, wait, reason, resolve, settle, listed }`.
+A class `--vocab` gives a `domain` resolves in that domain, whatever the ruling's own says:
+`resolve` judges the class, and the route only holds the ruling to the domain named.
+
+- On `human` for a ledger with `human_answer` set, act on `human_answer` rather than ask again.
+- A `human` whose reason names a settled marker means read the rule in its doc, not ask again.
+- A `secondLook` disagreement or a `blocked` run waits for the Human.
+- A run whose starting route had `resolve.authority` `ask` waits, whatever the Ruling's answers resolve to.
+  Give the Ruling that route's class, answers, and docs, and write the authority in the ledger's `trigger`.
+  `route --ledger`, the writer, and `quorum check` on a provisional ledger read it, and only `the route, with resolve's decide` continues:
+  a run the Human started, or one whose route asked, prints `human` or waits, whatever the settings.
+- **It waits**, on `wait` true with an empty `settle`. With the Human present, round 9 of the mode asks as usual.
+  With the Human absent, the ledger stays deferred, the question goes in the report with the recommendation and the simulated-user caveat,
+  and independent work continues.
+  Dependent code keeps no guess at the answer.
+- **It continues**, on `wait` false or a non-empty `settle`: the order below.
+  Each fact in `listed` goes in the record for the batch review.
+
+### The continue path
+
+In this order. Each step that fails waits for the Human.
+
+1. `aidrian quorum check <ledger> --plan <question>`.
+2. `aidrian quorum route --ledger <ledger> --domain <domain>`.
+   Then pick the indexed doc that governs the behaviour, for the marker, and send it through the plain form:
+   `aidrian quorum route --domain <domain> --class <class> --reversible <answers> --doc <marker doc>`, with no `--runs`,
+   since `--ledger` takes no `--doc` and no script catches a marker there.
+   On `wait` true, a continued ruling whose marker doc `escalateDocs` covers waits. A floor class such as money waits the same way.
+   When no indexed doc covers the area, `harness-librarian` adds one first, as [Record it](#record-it) says.
+3. **Settle** each fact in `settle` with one read-only `explorer` dispatch, in all. A result that flips the winner, or settles nothing, waits.
+   No ledger field records a settled fact, so `route` still lists it, with `wait` true, and the writer accepts that:
+   the result, with its citation, goes in the report and the pull request's Decisions section, and the coordinator holds it for the session.
+   Then, with or without a fact to settle, take the [second look](#second-look) on the ruling's `severity`;
+   its answer goes in the ledger's `second_look`, as `{ agent, sign_off, reason }`, with `agent` spelled as `secondLook` names it.
+4. **The writer**, `aidrian quorum provisional <ledger> --plan <question> --marker <id>`.
+   It refuses until a second look the ruling's `severity` calls for holds `sign_off: approved` from the agent `secondLook` names, an unknown severity included.
+   It runs before the implementing commit, since afterwards it can refuse on a changed citation, its check having no exemption.
+   It runs before the marker, since each committed marker counts toward the domain's pause and could make the route wait.
+   After it, `route --ledger` prints `human` until the marker exists in the working copy, so a resume in that window waits.
+5. **The marker**, in the slice's commit, by the writer [Record it](#record-it) names, and `outcome.conditions` join the task.
+   Write it before changing anything a case cites: until it is on record, `quorum check` holds the ledger to its citations.
+6. **The guard.** Before dependent work goes on, `aidrian decisions list --added-since <base>` must show the committed marker with no unmarked `problems`.
+   Plain `list` reads the working copy, so it would pass an uncommitted one.
+   An uncommitted marker, or a problem on it, makes the decision wait, so no continued ruling can miss the batch review.
+
+**The record.** The ruling becomes a `decided_provisional`: `decision` is the winner, `options_considered` the positions,
+`reason` its `change_or_reason`, `revisit_trigger` its `flips_if`, and the rest come from `ruling` by name.
+
+- Every continued ruling gets a marker, even with `Rule changed: none`: that line means no existing rule changes, so the ruling fills a gap.
+  The winner goes in as one line of wording in the indexed doc, with its marker and `decision-new` line.
+- That line goes directly below a non-blank line of prose, never as a heading's or a doc's first line, with its text once in that block, so undo works.
+- A ruling that is not lasting starts its wording with the change it covers, such as `Only for <the change>: <winner>`.
+  Keep confirms the marker and leaves the line as a scoped record, not a standing rule, and a later run reads it as prior context for that change only.
+- As `decisions.record.queue` says, the recommendation, what would flip it, any settled fact's result, and the note that winners have varied between runs
+  go in the pull request's Decisions section or the report.
+  No ledger path goes in a doc or a pull request body, since it means nothing on another machine: the report names it.
+  `decision-review` reaches the ruling through the marker's `pr=<n>`.
+- A later Human answer wins, and both stay on record.

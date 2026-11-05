@@ -458,3 +458,45 @@ test('undo reads the line above as it reads the line below: an unterminated deci
   const fence = '```\n<!-- aidrian:decision id=earlier\n```';
   assert.equal(undoDecision(`${rule}\n${fence}\n${good}\n`, 'refund-copy').text, `Ten days.\n${fence}\n`, 'a fenced marker is a quote');
 });
+
+// A continued product ruling, as `knowledge/references/decisions.md` § The continue path places it: a gap filled with one line of
+// wording directly below a line of prose, its marker directly below that, under `pr=<n>`.
+const SCOPED = 'Only for the booking rewrite: a cancelled slot goes back on the calendar at once.';
+const scoped = (pr = 41) => [`<!-- aidrian:decision id=refund-copy status=unconfirmed class=copy domain=ux date=2026-11-01 pr=${pr} -->`, wording('new', SCOPED)];
+
+test('a change-scoped line placed as the shared rule says undoes cleanly, and its text twice in the block is reported and refused', () => {
+  const before = ['# Booking', '', 'A customer cancels from the booking page.', SCOPED, ...scoped(), '', 'Next.', ''].join('\n');
+  assert.deepEqual(parseDecisions(before).problems, []);
+  assert.deepEqual(wordingProblems(before), []);
+  assert.equal(undone(before), '# Booking\n\nA customer cancels from the booking page.\n\nNext.\n');
+  const twice = [SCOPED, 'A customer cancels from the booking page.', SCOPED, ...scoped(), ''].join('\n');
+  assert.match(undoDecision(twice, 'refund-copy').refused, /found 2 times in the block/u);
+  assert.equal(wordingProblems(twice).length, 1, 'the guard sees it before any undo');
+});
+
+test('list --added-since shows a gap-filling ruling once committed, with its number, so an uncommitted one waits and a drifted one reports', (t) => {
+  const { dir, file } = project(t, '# Booking\n\nA customer cancels from the booking page.\n');
+  const git = (...args) => execFileSync('git', ['-C', dir, '-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' });
+  git('init', '-q', '-b', 'main');
+  git('add', '.');
+  git('commit', '-q', '-m', 'docs');
+  git('switch', '-q', '-c', 'task');
+  const added = () => {
+    const out = run(['decisions', 'list', '--added-since', 'main', '--json'], dir);
+    assert.equal(out.status, 0, out.stderr);
+    return JSON.parse(out.stdout);
+  };
+  writeFileSync(file, `${readFileSync(file, 'utf8')}${[SCOPED, ...scoped()].join('\n')}\n`);
+  assert.equal(JSON.parse(run(['decisions', 'list', '--json'], dir).stdout).decisions.length, 1, 'plain list reads the working copy, so it would pass');
+  assert.deepEqual(added().decisions, [], 'the guard reads the commit: an uncommitted marker is not there');
+  git('add', '.');
+  git('commit', '-q', '-m', 'the ruling');
+  const [listed, ...more] = added().decisions;
+  assert.deepEqual([listed.id, listed.pr, listed.hasOldWording, listed.newWording, more], ['refund-copy', 41, false, SCOPED, []], 'a ruling with Rule changed none shows with its number');
+  assert.match(run(['decisions', 'list'], dir).stdout, /refund-copy\tunconfirmed.*\tpr=41\t/u, 'and decision-review reads the same record');
+  assert.deepEqual(added().problems, []);
+  writeFileSync(file, readFileSync(file, 'utf8').replace(SCOPED, 'Only for the rewrite: something else.'));
+  git('add', '.');
+  git('commit', '-q', '-m', 'drift');
+  assert.ok(added().problems.some((each) => !each.inherited && /refund-copy|wording/u.test(each.problem)), 'an unmarked problem on the marker makes the decision wait');
+});

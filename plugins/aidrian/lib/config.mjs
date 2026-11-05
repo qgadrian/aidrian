@@ -38,7 +38,7 @@ const QUORUM_SCHEMA = {
   judge: { agent: 'agentName' },
   plan: { a: { agent: 'agentName' }, b: QUORUM_RUNNER, maxObjections: 'objectionCap', maxDispatches: 'dispatchCap' },
   decide: { odd: QUORUM_RUNNER, even: QUORUM_RUNNER, swap: 'boolean' },
-  product: { owner: { agent: 'agentName' }, witness: { agent: 'agentName' }, ux: { agent: 'agentName' }, engineer: { agent: 'agentName' }, maxLoops: 'objectionCap' },
+  product: { owner: { agent: 'agentName' }, witness: { agent: 'agentName' }, ux: { agent: 'agentName' }, engineer: { agent: 'agentName' }, maxLoops: 'objectionCap', autoStart: 'boolean', approval: 'quorumApproval', maxAutoRuns: 'autoRuns' },
 };
 
 // The keys of the `decisions` group: how far agents may settle product and design decisions (lib/decisions.mjs).
@@ -221,6 +221,8 @@ const TYPES = {
   objectionCap: [(value) => Number.isInteger(value) && value >= 1 && value <= MAX_PLAN_OBJECTIONS, `a whole number from 1 to ${MAX_PLAN_OBJECTIONS}`],
   // The least a plan run needs: two objection dispatches, one ruling, one Codex fallback, and the reserved proportionality pass.
   dispatchCap: [(value) => Number.isInteger(value) && value >= 5, 'a whole number, 5 or more'],
+  quorumApproval: [(value) => ['first', 'review-later'].includes(value), '"first" or "review-later"'],
+  autoRuns: [(value) => Number.isInteger(value) && value >= 1 && value <= 10, 'a whole number from 1 to 10'],
   issueCreationMode: [(value) => ['confirm', 'auto'].includes(value), '"confirm" or "auto"'],
   // The duplicate search queries the labels with no placeholder, so at least one is fixed.
   auditLabels: [
@@ -359,6 +361,11 @@ export const DEFAULTS = deepFreeze({
       ux: { agent: 'ux-specialist' },
       engineer: { agent: 'architect' },
       maxLoops: 2,
+      // What `aidrian quorum route` reads, always from the base branch (committedQuorumProduct): nobody gets an
+      // automatic run, or work that continues before the Human approves, without committing to it.
+      autoStart: false,
+      approval: 'first',
+      maxAutoRuns: 3,
     },
   },
   // How far agents may settle product and design decisions (lib/decisions.mjs, docs/config.md#decisions): every
@@ -499,6 +506,16 @@ export function committedAuthority(project, commit, file) {
   const committed = committedConfig({ ...project, paths: { ...project.paths, config: file } }, commit, errors);
   if (committed === DEFAULTS || errors.some((error) => /"decisions[".]/u.test(error))) return askOnly;
   return { decisions: committed.decisions, autoMergeAllow: committed.github.autoMerge.allow === true };
+}
+
+// The team's `quorum.product` at `commit`, from the config file `file` that commit names, as committedAuthority finds it:
+// the defaults, which are off, for a commit with no readable config, `file` null, or an error in this block, which no one
+// can read as the team meant it. An error elsewhere in the config leaves this block readable.
+export function committedQuorumProduct(project, commit, file) {
+  if (file === null) return DEFAULTS.quorum.product;
+  const errors = [];
+  const committed = committedConfig({ ...project, paths: { ...project.paths, config: file } }, commit, errors);
+  return errors.some((error) => /"quorum(?:"|\.product[".])/u.test(error)) ? DEFAULTS.quorum.product : committed.quorum.product;
 }
 
 // Whether auto-merge is on, from a `github` config and the local file's switch (`project.localAutoMerge`, "on",

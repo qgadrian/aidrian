@@ -13,7 +13,7 @@ Before you start, follow the `knowledge` skill. Load your `issue_tracker` docs f
 
 ## Read the branch, not your memory
 
-Derive everything from the branch as it is now, even when you think you know its scope.
+Derive everything from the branch as it is now.
 
 ```bash
 git fetch origin <base>
@@ -22,8 +22,8 @@ git diff --stat origin/<base>...HEAD
 ```
 
 - `<base>` is the branch the pull request targets: the one the caller names, else config.json `git.defaultBranch`.
-  Always the `origin/` ref, because a local branch can be days behind.
-- Read a large diff by its stat, then open only the files that matter. Never dump the whole diff.
+  Always the `origin/` ref: a local branch can be days behind.
+- Read a large diff by its stat, then open only the files that matter.
 - When a pull request already exists, `gh pr view <n> --json number,title,body,commits,baseRefName` must agree with the
   commit count above; if it does not, fetch again before you write.
 - Find the issues the branch implements in its name, its commits, and the existing pull request.
@@ -56,11 +56,12 @@ from its list and the issue it went to, and each `residuals` item every field it
   No `--fill` either: gh would write the body from commit messages.
 - **Attribution, when config.json `attribution.pullRequest` is set:** end a new body with the `Authored-with:` and
   `Assisted-by:` lines the attribution rule prints, as written. They are the one place agent names belong.
-- Flag a mixed-scope or oversized branch in the risk section instead of smoothing it over.
+- Flag a mixed-scope or oversized branch in the risk section.
 - **Decisions.** Every run, run `aidrian decisions list --added-since origin/<base> --json`; exit 1 is the stop below for an unclear base.
   Unless its `queue`, read at the base, is `report`, list each of its `decisions` in a `## Decisions` section,
   each of its `settled` as settled in this branch, and each of its `removed` as removed in this branch.
-  The caller's report gives each new one's reason, revisit trigger, and how it reverts.
+  The caller's report gives each new one's reason, revisit trigger, how it reverts, and, for a quorum's ruling,
+  what would flip it, any settled fact's result, and that winners have varied between runs.
   When `github.pullRequest.sections` is set without `Decisions`, that closed list refuses the heading: the same list goes under `## Summary`,
   or the first section on the closed list when Summary is not on it, as a `Decisions:` sub-list.
 

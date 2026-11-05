@@ -1,0 +1,13 @@
+{
+  "status": "needs_input",
+  "role": "product-manager",
+  "decision": "The docs do not say what happens to a slot when a customer cancels within 24 hours of it, so the Human must choose.",
+  "decision_options": [
+    { "id": "A", "summary": "The slot goes back on the calendar at once.", "tradeoffs": "A walk-in can take it, and a customer who changes their mind may lose it.", "recommended": true },
+    { "id": "B", "summary": "The slot stays held until the front desk releases it.", "tradeoffs": "The desk keeps control, and adds a step to a busy counter.", "recommended": false }
+  ],
+  "class": "product-behaviour",
+  "reversible": { "storedData": "no", "external": "no", "pricingOrContract": "no", "reachesUsersUnreviewed": "no" },
+  "docs": ["docs/booking.md"],
+  "hardness": { "open_options": "yes", "no_written_answer": "yes", "conflict": "no", "disagreement": "no", "reach": "yes" }
+}

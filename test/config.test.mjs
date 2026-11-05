@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { commandConfig, committedConfig, committedDecisions, CONFIG_ERROR, DEFAULTS, loadConfig, malformedGates, resolveAutoMerge } from '../plugins/aidrian/lib/config.mjs';
+import { commandConfig, committedConfig, committedDecisions, committedQuorumProduct, CONFIG_ERROR, DEFAULTS, loadConfig, malformedGates, resolveAutoMerge } from '../plugins/aidrian/lib/config.mjs';
 import { linksOutside } from '../plugins/aidrian/lib/fs.mjs';
 import { loadVocab } from '../plugins/aidrian/lib/decisions.mjs';
 import { committedConfigFile, findProject } from '../plugins/aidrian/lib/project.mjs';
@@ -225,6 +225,68 @@ test('the committed config reads a string session.handoff as its mode too', (t) 
   git('add', '.aidrian/config.json');
   assert.equal(git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', 'config').status, 0);
   assert.deepEqual(committedConfig(findProject(dir), 'HEAD').session.handoff, { ...DEFAULTS.session.handoff, mode: 'off' });
+});
+
+test('quorum.product: automatic start is off, approval comes first, and three runs is the cap, by default', (t) => {
+  const { autoStart, approval, maxAutoRuns } = DEFAULTS.quorum.product;
+  assert.deepEqual([autoStart, approval, maxAutoRuns], [false, 'first', 3]);
+  const product = { autoStart: true, approval: 'review-later', maxAutoRuns: 10 };
+  const { config, errors } = loadConfig(project(t, { version: 1, quorum: { product } }));
+  assert.deepEqual(errors, []);
+  assert.deepEqual(config.quorum.product, { ...DEFAULTS.quorum.product, ...product });
+  assert.deepEqual(loadConfig(project(t, { version: 1, quorum: { product: { maxAutoRuns: 1 } } })).errors, []);
+});
+
+test('quorum.product: a value outside its range is an error, and keeps the default', (t) => {
+  for (const [key, value, message] of [
+    ['autoStart', 'yes', /"quorum\.product\.autoStart" must be true or false$/u],
+    ['approval', 'later', /"quorum\.product\.approval" must be "first" or "review-later"$/u],
+    ['approval', 'always', /"quorum\.product\.approval" must be "first" or "review-later"$/u],
+    ['maxAutoRuns', 0, /"quorum\.product\.maxAutoRuns" must be a whole number from 1 to 10$/u],
+    ['maxAutoRuns', 11, /"quorum\.product\.maxAutoRuns" must be a whole number from 1 to 10$/u],
+    ['maxAutoRuns', 2.5, /"quorum\.product\.maxAutoRuns" must be a whole number from 1 to 10$/u],
+  ]) {
+    const { config, errors } = loadConfig(project(t, { version: 1, quorum: { product: { [key]: value } } }));
+    assert.match(errors.join('\n'), message, `${key}: ${value}`);
+    assert.equal(config.quorum.product[key], DEFAULTS.quorum.product[key], `${key}: ${value}`);
+  }
+});
+
+test('docs/config.md shows the quorum defaults as DEFAULTS holds them', () => {
+  const doc = readFileSync(path.join(ROOT, 'docs/config.md'), 'utf8');
+  const example = JSON.parse(doc.match(/## Keys[\s\S]*?```json\n([\s\S]*?)```/)[1]);
+  assert.deepEqual(example.quorum, DEFAULTS.quorum);
+});
+
+test('committedQuorumProduct reads the commit\'s block, and is off for a commit no one can read as the team meant it', (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-config-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, '.aidrian'));
+  const git = (...args) => {
+    const out = spawnSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' });
+    assert.equal(out.status, 0, out.stderr);
+    return out.stdout.trim();
+  };
+  git('init', '-q');
+  const at = (config) => {
+    writeFileSync(path.join(dir, '.aidrian/config.json'), typeof config === 'string' ? config : JSON.stringify(config));
+    git('add', '.');
+    git('commit', '-q', '--allow-empty', '-m', 'config');
+    const known = findProject(dir);
+    return committedQuorumProduct(known, 'HEAD', committedConfigFile(known, 'HEAD'));
+  };
+  const on = { autoStart: true, approval: 'review-later', maxAutoRuns: 2 };
+  assert.deepEqual(at({ version: 1, quorum: { product: on } }), { ...DEFAULTS.quorum.product, ...on });
+  const off = DEFAULTS.quorum.product;
+  assert.deepEqual(at({ version: 1 }), off, 'a config with no block takes the defaults');
+  assert.deepEqual(at('{ not json'), off, 'text that does not parse');
+  assert.deepEqual(at({ version: 99, quorum: { product: on } }), off, 'another version');
+  assert.deepEqual(at({ version: 1, quorum: { product: { ...on, approval: 'later' } } }), off, 'an error beside autoStart true');
+  assert.deepEqual(at({ version: 1, quorum: { product: { ...on, extra: 1 } } }), off, 'an unknown key');
+  assert.deepEqual(at({ version: 1, quorum: { product: 'on' } }), off, 'a block that is no object');
+  assert.deepEqual(at({ version: 1, quorum: 'on' }), off, 'a group that is no object');
+  assert.deepEqual(at({ version: 1, quorum: { product: on, plan: { maxDispatches: 1 } } }), { ...DEFAULTS.quorum.product, ...on }, 'an error elsewhere in quorum leaves this block readable');
+  assert.deepEqual(committedQuorumProduct(findProject(dir), 'HEAD', null), off, 'no config file named');
 });
 
 test('the committed decisions of a project below the repository root are its own file\'s, not the ask-only block', (t) => {
@@ -477,6 +539,9 @@ test('quorum: the defaults are today\'s roles and caps; plan adversary A holds o
       ux: { agent: 'ux-specialist' },
       engineer: { agent: 'architect' },
       maxLoops: 2,
+      autoStart: false,
+      approval: 'first',
+      maxAutoRuns: 3,
     },
   });
 });

@@ -62,6 +62,7 @@ Written: <UTC timestamp> | Phase completed: <plan | implement | review | ...> | 
 ## Current state
 - Worktree: <path> | Branch: <name> | Pull request: <url or none>
 - Verification already run: <exact commands>
+- Product quorums: the count of automatic quorum runs this session, for `aidrian quorum route --runs`, when any ran
 
 ## Decisions locked (do not relitigate)
 - <decision>: <one-line reason, and who decided>

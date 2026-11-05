@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -610,16 +610,338 @@ test('the shared decision rule states who computes authority, and points at the 
   assert.equal(path.resolve(PLUGIN, 'skills/knowledge/references', '../../../lib/decisions.json'), VOCAB_PATH);
 });
 
-test('product mode round 9 runs the resolve and reports it, and still asks the Human under decide', () => {
+test('product mode round 9 runs the resolve in the ruling\'s own domain, and asks the Human under decide unless the route lets work continue', () => {
   const text = readFileSync(path.join(PLUGIN, 'skills/quorum/modes/product.md'), 'utf8').replace(/\s+/g, ' ');
   const round = text.slice(text.indexOf('9. **Ask the Human.**'), text.indexOf('## Asking the Human'));
-  assert.match(round, /\*\*Resolve\.\*\* Run `aidrian decisions resolve` as `knowledge\/references\/decisions\.md` says, in the `product` domain/);
+  assert.match(round, /\*\*Resolve\.\*\* Run `aidrian decisions resolve` as `knowledge\/references\/decisions\.md` says, in the ruling's own domain/);
+  assert.doesNotMatch(round, /in the `product` domain|those three stay out of the ledger/, 'a ux ruling read as product would read the wrong domain');
   assert.match(round, /A missing field, or a command that fails, means `ask`\./);
-  assert.match(round, /A run always asks, under `ask` and `decide` alike: `decide` settles nothing here/);
+  assert.match(round, /\*\*Route\.\*\* Run the route on the ledger, as that file's § After a ruling says/);
+  assert.match(round, /A run that waits always asks, under `ask` and `decide` alike: `decide` settles nothing here/);
   assert.match(round, /no `authority` line goes back to the product owner, and no `decided_provisional` or marker follows/);
   assert.ok(round.indexOf('`status: complete`') < round.indexOf('aidrian decisions resolve'), 'a session that ends at the resolve still leaves a deferred ledger');
   assert.match(text, /Report `resolve`'s `authority` and `reason` beside the question/);
-  assert.match(text, /"outcome", "class", "reversible", "docs"\}/);
+  assert.match(text, /"outcome", "class", "reversible", "docs", "domain", "severity", "reverts_by"\}/);
+});
+
+const AUTO_CASES = ['off', 'small-clear', 'hard-first', 'hard-review-later', 'hard-to-undo', 'human-started', 'started-on-ask'].map((name) => `product-quorum-auto-start-${name}`);
+const flat = (rel) => readFileSync(path.join(ROOT, rel), 'utf8').replace(/\s+/g, ' ');
+const AIDRIAN = path.join(PLUGIN, 'bin/aidrian');
+const RULE_FILE = `plugins/aidrian/skills/${DECISION_RULE}`;
+
+test('the shared rule states the route: who answers hardness, what each route does, and when work waits', () => {
+  const rule = flat(RULE_FILE);
+  const handoff = flat('plugins/aidrian/skills/knowledge/references/handoff.md');
+  // The five answers: one field, in the order the route takes them, in the handoff and the rule alike.
+  for (const text of [rule, handoff]) {
+    const at = ['open_options', 'no_written_answer', 'conflict', 'disagreement', 'reach'].map((key) => text.indexOf(`\`${key}\``));
+    assert.ok(at.every((each) => each !== -1), JSON.stringify(at));
+    assert.deepEqual(at, [...at].sort((a, b) => a - b), 'in the order the route takes them');
+  }
+  assert.match(handoff, /`hardness`.*beside `decision_options` or `decided_provisional`/);
+  assert.match(rule, /`product-manager`, `designer`, and `ux-specialist` return `hardness`/);
+  assert.match(rule, /A `backlog` decision carries no answers and never routes/);
+  assert.match(rule, /Any `yes`, or a missing answer, makes the call hard/);
+  for (const rel of ['product-design/product-manager', 'product-design/designer', 'product-design/ux-specialist', 'coordination/orchestrator']) {
+    assert.ok(readFileSync(path.join(PLUGIN, 'agents-src', `${rel}.md`), 'utf8').includes(DECISION_RULE), `${rel} reaches the questions through the rule`);
+  }
+  // A missing answer reads as hard, so an agent that never heard of the field could start a costly quorum.
+  for (const name of ['product-manager', 'designer', 'ux-specialist']) {
+    const source = readFileSync(path.join(PLUGIN, 'agents-src/product-design', `${name}.md`), 'utf8').replace(/\s+/g, ' ');
+    assert.match(source, /`hardness`, on a `product` or `ux` decision, beside `decision_options` or `decided_provisional`/, name);
+    for (const built of [path.join(CLAUDE_AGENTS, `${name}.md`)]) assert.ok(readFileSync(built, 'utf8').includes('`hardness`'), `${name}: built`);
+  }
+  for (const line of [
+    /`aidrian quorum route` takes the place of `aidrian decisions resolve` at step 2 of the order, and a dispatcher that resolved first routes at step 4/,
+    /Run `aidrian quorum check <ledger> --plan <question>` before `route --ledger`, which checks no schema/,
+    /On `human` for a ledger with `human_answer` set, act on `human_answer` rather than ask again/,
+    /Exit 3, or any other non-zero exit, waits for the Human/,
+    /It logs `resolve`'s dispatch row, sharing its key, so no separate `resolve` runs for the log/,
+    /A `secondLook` disagreement or a `blocked` run waits for the Human/,
+    /Dependent code keeps no guess at the answer/,
+  ]) assert.match(rule, line);
+});
+
+test('the shared rule states the continue path in its order, and why the writer comes before the commit and the marker', () => {
+  const rule = flat(RULE_FILE);
+  const section = rule.slice(rule.indexOf('### The continue path'));
+  const steps = ['1. `aidrian quorum check <ledger> --plan <question>`', '2. `aidrian quorum route --ledger <ledger> --domain <domain>`', '3. **Settle', '4. **The writer', '5. **The marker', '6. **The guard'];
+  const at = steps.map((step) => section.indexOf(step));
+  assert.ok(at.every((each) => each !== -1), JSON.stringify(at));
+  assert.deepEqual(at, [...at].sort((a, b) => a - b));
+  for (const line of [
+    /`aidrian quorum provisional <ledger> --plan <question> --marker <id>`/,
+    /before the implementing commit, since afterwards it can refuse on a changed citation/,
+    /before the marker, since each committed marker counts toward the domain's pause/,
+    /prints `human` until the marker exists in the working copy, so a resume in that window waits/,
+    /each committed marker counts toward the domain's pause and could make the route wait/,
+    /its answer goes in the ledger's `second_look`/,
+    /Write it before changing anything a case cites: until it is on record, `quorum check` holds the ledger to its citations/,
+    /refuses until a second look the ruling's `severity` calls for holds `sign_off: approved` from the agent `secondLook` names/,
+    /goes in the report and the pull request's Decisions section, and the coordinator holds it for the session/,
+    // resolve asks on a doc escalateDocs covers, and `--ledger` takes no `--doc`.
+    /a continued ruling whose marker doc `escalateDocs` covers waits/,
+    /`aidrian quorum route --domain <domain> --class <class> --reversible <answers> --doc <marker doc>`, with no `--runs`/,
+    /`aidrian decisions list --added-since <base>` must show the committed marker with no unmarked `problems`/,
+    /An uncommitted marker, or a problem on it, makes the decision wait/,
+    /Every continued ruling gets a marker, even with `Rule changed: none`/,
+    /directly below a non-blank line of prose, never as a heading's or a doc's first line/,
+    /`Only for <the change>: <winner>`/,
+    /the recommendation, what would flip it, any settled fact's result, and the note that winners have varied between runs/,
+    /`outcome\.conditions` join the task/,
+    /No ledger path goes in a doc or a pull request body/,
+    /winners have varied between runs/,
+  ]) assert.match(section, line);
+});
+
+test('a reused ledger reaches what a settled marker means, the handoff carries the run count, and search finds the route', () => {
+  const rule = flat(RULE_FILE);
+  const after = rule.slice(rule.indexOf('### After a ruling'), rule.indexOf('### The continue path'));
+  assert.match(after, /A `human` whose reason names a settled marker means read the rule in its doc, not ask again/);
+  assert.doesNotMatch(rule.slice(rule.indexOf('### The continue path')), /names a settled marker/);
+  assert.doesNotMatch(rule, /could turn the route to `human`/);
+  assert.match(flat('plugins/aidrian/skills/session-handoff/SKILL.md'), /the count of automatic quorum runs/);
+  assert.match(flat('docs/config.md'), /The `persona-audit-triage` skill runs `resolve` on a held finding's product decision, reports the answer, and always asks/);
+  const row = /`aidrian quorum route` and `aidrian quorum provisional` write the same row, with the same `key`/;
+  assert.match(flat('docs/dispatch-log.md'), row);
+  assert.match(readFileSync(path.join(PLUGIN, 'lib/decisions-cli.mjs'), 'utf8'), /`quorum route` and `quorum provisional` add `resolve`'s/);
+  const { docs } = JSON.parse(readFileSync(path.join(ROOT, '.aidrian/knowledge/10-harness.json'), 'utf8'));
+  assert.match(docs['config.md'].summary, /autoStart/);
+  for (const words of ['quorum route', 'quorum provisional']) assert.ok(docs['project-folder.md'].summary.includes(words), words);
+});
+
+test('no eval prompt sets its own run count: the documented --runs flag covers it', () => {
+  for (const name of readdirSync(path.join(PLUGIN, 'evals'))) {
+    const prompt = path.join(PLUGIN, 'evals', name, 'prompt.md');
+    if (existsSync(prompt)) assert.doesNotMatch(readFileSync(prompt, 'utf8'), /^runs:/mu, name);
+  }
+});
+
+test('the flags of route and the writer are the command\'s, named in the shared rule and in no quorum skill file', () => {
+  const flags = (text) => new Set([...text.matchAll(/(?<![\w-])--[a-z][a-z-]*/gu)].map((match) => match[0]));
+  const usage = spawnSync(AIDRIAN, ['quorum', 'nope'], { cwd: ROOT, encoding: 'utf8' }).stderr.split(' | ');
+  const takes = (command) => flags(usage.filter((part) => part.trim().startsWith(command)).join(' '));
+  const shared = flags(usage.filter((part) => !/^\s*(route|provisional)\b/u.test(part)).join(' '));
+  const rule = readFileSync(path.join(ROOT, RULE_FILE), 'utf8');
+  for (const command of ['route', 'provisional']) {
+    const spans = [...rule.matchAll(new RegExp(`aidrian quorum ${command}[^\`\\n]*`, 'gu'))].map((match) => match[0]);
+    assert.ok(spans.length, command);
+    for (const flag of flags(spans.join(' '))) assert.ok(takes(command).has(flag), `${command} takes no ${flag}`);
+  }
+  const only = [...takes('route'), ...takes('provisional')].filter((flag) => !shared.has(flag));
+  assert.deepEqual(only.sort(), ['--class', '--doc', '--domain', '--hard', '--marker', '--reversible', '--runs']);
+  for (const file of allFiles(path.join(PLUGIN, 'skills/quorum')).filter((each) => each.endsWith('.md'))) {
+    const named = flags(readFileSync(file, 'utf8'));
+    for (const flag of only) assert.ok(!named.has(flag), `${path.relative(ROOT, file)} names ${flag}`);
+  }
+});
+
+test('product mode starts on the Human\'s word or the route\'s, and the Ruling returns what the route reads', () => {
+  const text = flat('plugins/aidrian/skills/quorum/modes/product.md');
+  assert.match(text, /Start this mode when the Human asks for it, or when the route says `quorum`/);
+  assert.doesNotMatch(text, /Start this mode only when the Human asks/);
+  assert.match(text, /Write `ruling`, with its `class`, `reversible`, `docs`, `domain`, `severity`, and `reverts_by`, and `outcome`/, 'the route waits on any of them missing');
+  const brief = text.slice(text.indexOf('## Ruling '));
+  assert.match(brief, /"flips_if": \[\{"fact", "how_to_settle", "settles_from_repo", "could_harden_undo"\}\]/);
+  assert.match(brief, /`reversible` is one comma-separated string or a list of the four words/);
+  assert.match(brief, /`domain` is <the decision's domain>/);
+  assert.match(brief, /`severity` is the harm if it is wrong/);
+  assert.match(brief, /`reverts_by` is how to undo it/);
+  assert.doesNotMatch(brief, /They do not change who approves: the Human does/);
+});
+
+test('autopilot and the pull request carry a quorum\'s ruling, and each skill stays in its size', () => {
+  const autopilot = flat('plugins/aidrian/skills/autopilot/SKILL.md');
+  assert.match(autopilot, /A `product` or `ux` decision goes through that file's route first: `references\/phases\.md` § Product decisions/);
+  assert.match(autopilot, /the count of automatic quorum runs/);
+  const phases = flat('plugins/aidrian/skills/autopilot/references/phases.md');
+  const section = phases.slice(phases.indexOf('## Product decisions'), phases.indexOf('## 1. Implement'));
+  assert.match(section, /the ledger stays deferred, the question goes in the report with the recommendation and the simulated-user caveat, and independent work continues/);
+  assert.match(section, /Count this session's automatic runs/);
+  const write = flat('plugins/aidrian/skills/pr-write/SKILL.md');
+  assert.match(write, /for a quorum's ruling, what would flip it, any settled fact's result, and that winners have varied between runs/);
+  assert.match(write, /No plan paths, handoff files, agent names, worktree paths, or local paths/, 'a ledger path stays out of the body');
+  for (const skill of ['autopilot', 'pr-write']) assert.ok(statSync(path.join(PLUGIN, 'skills', skill, 'SKILL.md')).size <= MAX_SKILL_BYTES, skill);
+});
+
+test('the docs say what the route does to a provisional ruling, a marker, and a ux ruling of a product class', () => {
+  const config = flat('docs/config.md');
+  assert.match(config, /The `quorum` skill's product mode runs `resolve` on its ruling and reports the answer, and asks the Human, under `decide` too, unless the route after the ruling lets work continue/);
+  assert.doesNotMatch(config, /but always asks the Human, under `decide` too/);
+  assert.match(config, /when its marker was rejected, was settled, or is not on record/);
+  assert.match(config, /a `ux` ruling of class `product-behaviour` continues where `domains\.product` decides, whatever `domains\.ux` says, since `resolve` judges that class under `product`/);
+  const ledger = flat('plugins/aidrian/skills/quorum/references/ledger.md');
+  assert.doesNotMatch(ledger, /never resolves under another's answer/);
+  assert.match(ledger, /`ruling\.domain`: optional\. The decision's domain\. The route after a ruling continues only when this matches the domain the caller names, and `resolve` judges the class/);
+  assert.doesNotMatch(flat('docs/project-folder.md'), /a `ux` ruling never resolves under `product`'s answer/);
+  const code = readFileSync(path.join(PLUGIN, 'lib/quorum.mjs'), 'utf8');
+  assert.doesNotMatch(code, /so it never resolves under that domain's answer/);
+  assert.match(code, /the route continues only when they match, and resolve judges the class/);
+  assert.match(flat('docs/personas.md'), /review later/);
+  assert.match(flat('docs/agents-and-skills.md'), /\| `quorum` \|[^|]*review later/);
+});
+
+test('a first route of ask stands, whatever the Ruling answers, and the Ruling is told so', () => {
+  const rule = flat(RULE_FILE);
+  const mode = flat('plugins/aidrian/skills/quorum/modes/product.md');
+  const config = flat('docs/config.md');
+  for (const [where, text] of [['rule', rule], ['mode', mode], ['config', config]]) {
+    assert.match(text, /A run whose starting route had `resolve\.authority` `ask` waits, whatever the Ruling's answers resolve to/, where);
+  }
+  const brief = mode.slice(mode.indexOf('## Ruling '));
+  assert.match(brief, /The starting route asked on: <the starting route's class, answers, and docs, or none>\. A `yes` among those answers stands\./);
+  assert.match(mode, /`<the starting route's class, answers, and docs, or none>` is what the coordinator sent the route; on a run the Human started, `none`/);
+  assert.match(mode, /`trigger` is `the Human asked`, or, on a run the route started, `the route, with resolve's <authority>`/);
+  assert.match(mode, /a new question file and ledger, carrying `trace`, `premise`, `witness`, `loops`, and `trigger`/, 'a reshape keeps who started the run');
+});
+
+test('as-today keeps unattended, and only with autoStart on does a hard call lose it, in every copy of the rule', () => {
+  const rule = flat(RULE_FILE);
+  assert.match(rule, /With `autoStart` off, `as-today` keeps `unattended` as ever, on a hard call too: the five answers change nothing there\. With `autoStart` on, only the small, clear row follows `unattended`; every other route is the stricter path/);
+  assert.match(flat('plugins/aidrian/skills/autopilot/references/phases.md'), /With `autoStart` off, `as-today` keeps `unattended` as ever, on a hard call too\. With `autoStart` on, only the small, clear row follows `unattended`/);
+  assert.match(flat('docs/config.md'), /With `autoStart` on, the quorum route replaces `unattended`'s `safe-default` on a hard call/);
+  for (const file of [RULE_FILE, 'plugins/aidrian/skills/autopilot/references/phases.md']) {
+    assert.doesNotMatch(flat(file), /(^|[.:] )Only (the|its) small, clear row follows `unattended`/, file);
+  }
+  const grader = flat('plugins/aidrian/evals/product-quorum-auto-start-off/graders/as-today-unattended.md');
+  assert.match(grader, /does not apply the hard-call rule/);
+});
+
+test('a provisional ledger resumes at the first step not done, and the second look stands apart from settling', () => {
+  const mode = flat('plugins/aidrian/skills/quorum/modes/product.md');
+  assert.match(mode, /A complete ledger the core reuses with `provisional` set and `human_answer` `null` asks nothing while the route lets work continue: it resumes the continue path of `knowledge\/references\/decisions\.md` at the first step not yet done, and never reruns the writer when `provisional` already holds this marker\. When the route waits, that file's § After a ruling applies\./);
+  assert.match(mode, /On a provisional one, the same line resumes that continue path while the route lets work continue, and otherwise follows § After a ruling\./);
+  assert.match(flat(RULE_FILE), /Then, with or without a fact to settle, take the \[second look\]\(#second-look\)/);
+});
+
+test('a run the Human starts always asks, and only a run the route started continues provisionally', () => {
+  const mode = flat('plugins/aidrian/skills/quorum/modes/product.md');
+  assert.match(mode, /A run the Human started, or one whose route waits, asks one question/);
+  assert.match(mode, /The Human approves it, unless a run the route started continues provisionally\./);
+  assert.match(mode, /Only a run the route started, with `quorum\.product\.autoStart` on, `approval: "review-later"`, and `resolve`'s `decide`, can let work continue/);
+  for (const file of [RULE_FILE, 'docs/config.md']) {
+    assert.match(flat(file), /A run the Human starts always asks; only a run the route started continues provisionally/, file);
+  }
+  for (const [name, want] of [['hard-review-later', "the route, with resolve's decide"], ['hard-to-undo', "the route, with resolve's ask"], ['human-started', 'the Human asked'], ['started-on-ask', "the route, with resolve's ask"]]) {
+    const { trigger } = JSON.parse(readFileSync(path.join(PLUGIN, 'evals', `product-quorum-auto-start-${name}`, 'ledger.json'), 'utf8'));
+    assert.equal(trigger, want, name);
+  }
+  // A script holds a run to how it started, so no doc says only the text does.
+  const holds = /only `the route, with resolve's decide` continues/;
+  for (const file of [RULE_FILE, 'plugins/aidrian/skills/quorum/modes/product.md', 'plugins/aidrian/skills/quorum/references/ledger.md', 'docs/project-folder.md', 'docs/config.md']) {
+    assert.match(flat(file), holds, file);
+  }
+});
+
+test('the docs give the eval form that runs, its grants, the PATH note, and the shared fixture', () => {
+  const form = /claude plugin eval plugins\/aidrian --case <name> --model <model> --no-publish --scaffold --trust-plugin --runs 1 --allow-tools Bash Write Edit/;
+  const contributing = flat('docs/contributing.md');
+  const running = flat('plugins/aidrian/skills/skill-writer/references/running-cases.md');
+  for (const [where, text] of [['contributing', contributing], ['running-cases', running]]) {
+    assert.match(text, form, where);
+    assert.match(text, /--scaffold.*runs? (each|the) case's `scaffold\.sh`|`--scaffold` runs/, where);
+    assert.match(text, /`Write` and `Edit`/, where);
+    assert.match(text, /EPERM/, where);
+    assert.match(text, /no-base/, where);
+  }
+  assert.match(contributing, /The `product-quorum-auto-start-\*` cases share the fixture of `product-quorum-auto-start-off`, and their scaffolds copy it from the working tree, so they run before a commit/);
+});
+
+test('the eval graders hold what the review asked: a real base, the marker doc\'s route, an anchored note, and no named field', () => {
+  const evals = 'plugins/aidrian/evals/product-quorum-auto-start-';
+  assert.match(flat(`${evals}off/graders/as-today.md`), /"route":\\s\*"as-today"\.\*"base":\\s\*"\[0-9a-f\]/);
+  const order = flat(`${evals}hard-review-later/graders/order.md`);
+  assert.ok(order.indexOf('--doc') !== -1 && order.indexOf('--doc') < order.indexOf('aidrian quorum provisional'), 'the plain route comes before the writer');
+  assert.match(flat(`${evals}hard-review-later/graders/winners-vary.md`), /Decisions section\[\\s\\S\]\*winners\?/);
+  assert.doesNotMatch(flat(`${evals}small-clear/prompt.md`), /hardness/);
+  assert.match(flat(`${evals}small-clear/graders/hardness.md`), /open_options/);
+  assert.match(flat(`${evals}hard-first/graders/finished.md`), /from approval first, or from `resolve`'s `ask`/);
+  assert.ok(!existsSync(path.join(ROOT, `${evals}hard-first/The`)));
+});
+
+test('the writer refuses once the implementing commit changed a citation, though check still passes the provisional ledger', (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-auto-eval-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const scaffold = spawnSync('sh', [path.join(PLUGIN, 'evals/product-quorum-auto-start-hard-review-later/scaffold.sh')], { cwd: dir, encoding: 'utf8' });
+  assert.equal(scaffold.status, 0, scaffold.stderr);
+  const led = path.join(dir, '.eval-state/quorum/product');
+  const ledger = path.join(led, readdirSync(led).find((file) => file.endsWith('.json')));
+  const { plan } = JSON.parse(readFileSync(ledger, 'utf8'));
+  const quorum = (...args) => spawnSync(AIDRIAN, ['quorum', ...args], { cwd: dir, encoding: 'utf8' });
+  const writer = ['provisional', ledger, '--plan', plan, '--marker', 'release-slot'];
+  assert.equal(quorum(...writer).status, 0, 'before the commit it writes');
+  writeFileSync(path.join(dir, 'src/desk.js'), 'export const today = (slots) => slots;\n');
+  const doc = path.join(dir, 'docs/booking.md');
+  writeFileSync(doc, `${readFileSync(doc, 'utf8')}\nA cancelled slot goes back at once.\n<!-- aidrian:decision id=release-slot status=unconfirmed class=product-behaviour domain=product date=2026-11-05 pr=none -->\n<!-- aidrian:decision-new id=release-slot text="A cancelled slot goes back at once." -->\n`);
+  execFileSync('git', ['-C', dir, 'add', '.'], { encoding: 'utf8' });
+  execFileSync('git', ['-C', dir, 'commit', '-q', '-m', 'implement'], { encoding: 'utf8' });
+  assert.equal(quorum('check', ledger, '--plan', plan).status, 0, 'the exemption holds for check');
+  const refused = quorum(...writer);
+  assert.equal(refused.status, 1, 'the writer has no exemption, so a resume never reruns it');
+  assert.match(refused.stderr, /in a complete ledger/);
+});
+
+// The cases run with model calls, so not here; their scaffolds run here, and what a fixture must print is what its graders grade.
+test('the automatic product quorum eval cases are whole, and each scaffold seeds what its graders grade, in the run folder alone', (t) => {
+  const seed = (name) => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-auto-eval-'));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const home = path.join(PLUGIN, 'evals', name);
+    for (const file of ['case.yaml', 'prompt.md', 'scaffold.sh']) assert.ok(existsSync(path.join(home, file)), `${name}/${file}`);
+    assert.ok(readdirSync(path.join(home, 'graders')).some((file) => file.endsWith('.md')), name);
+    const scaffold = spawnSync('sh', [path.join(home, 'scaffold.sh')], { cwd: dir, encoding: 'utf8' });
+    assert.equal(scaffold.status, 0, scaffold.stderr);
+    // No copy of the plugin in the run folder, so the baseline arm has no route step to read.
+    assert.ok(!existsSync(path.join(dir, 'plugins')) && !existsSync(path.join(dir, 'skills')), `${name}: the route step stays out of the run folder`);
+    const raw = (...args) => spawnSync(AIDRIAN, args, { cwd: dir, encoding: 'utf8' });
+    const check = raw('check');
+    assert.equal(check.status, 0, `${name}: ${check.stdout}${check.stderr}`);
+    const led = path.join(dir, '.eval-state/quorum/product');
+    const ledger = existsSync(led) ? path.join(led, readdirSync(led).find((file) => file.endsWith('.json'))) : null;
+    return { dir, raw, ledger, route: (...args) => JSON.parse(raw('quorum', 'route', ...args).stdout) };
+  };
+  const pick = ({ route, wait }) => [route, wait];
+  const behaviour = (hard) => ['--domain', 'product', '--class', 'product-behaviour', '--reversible', 'no,no,no,no', '--hard', hard, '--doc', 'docs/booking.md'];
+  const [offCase, smallCase, firstCase, laterCase, undoCase, humanCase, onAskCase] = AUTO_CASES;
+
+  const off = seed(offCase);
+  const { hardness } = JSON.parse(readFileSync(path.join(off.dir, 'handoff.json'), 'utf8'));
+  const answers = ['open_options', 'no_written_answer', 'conflict', 'disagreement', 'reach'].map((key) => hardness[key]).join(',');
+  assert.match(answers, /yes/, 'a hard call, so only the setting keeps the quorum from starting');
+  assert.deepEqual(pick(off.route(...behaviour(answers))), ['as-today', true]);
+
+  const small = seed(smallCase);
+  assert.deepEqual(pick(small.route('--domain', 'product', '--class', 'copy', '--reversible', 'no,no,no,no', '--hard', 'no,no,no,no,no')), ['agent', false]);
+
+  const first = seed(firstCase);
+  assert.deepEqual(pick(first.route(...behaviour('yes,yes,no,no,yes'))), ['quorum', true]);
+
+  const later = seed(laterCase);
+  const plan = (run) => JSON.parse(readFileSync(run.ledger, 'utf8')).plan;
+  assert.equal(later.raw('quorum', 'check', later.ledger, '--plan', plan(later)).status, 0);
+  const continued = later.route('--ledger', later.ledger, '--domain', 'product');
+  assert.deepEqual([...pick(continued), continued.settle.length, continued.listed.length], ['quorum', true, 1, 1], 'one fact to settle, one for the batch review');
+  assert.deepEqual(pick(later.route(...behaviour('yes,yes,no,no,yes'))), ['quorum', false], 'the marker doc\'s plain route continues');
+  const written = later.raw('quorum', 'provisional', later.ledger, '--plan', plan(later), '--marker', 'release-slot');
+  assert.equal(written.status, 0, written.stderr);
+
+  const undo = seed(undoCase);
+  assert.equal(undo.raw('quorum', 'check', undo.ledger, '--plan', plan(undo)).status, 0);
+  const asked = undo.route('--ledger', undo.ledger, '--domain', 'product');
+  assert.deepEqual([...pick(asked), asked.resolve.authority], ['quorum', true, 'ask'], 'a yes on stored data asks, under review later too');
+  assert.equal(undo.raw('quorum', 'provisional', undo.ledger, '--plan', plan(undo), '--marker', 'hold-slot').status, 1, 'and the writer refuses it');
+
+  // A ruling resolve would let an agent decide: only how the run started keeps it with the Human.
+  for (const [name, why] of [[humanCase, 'the Human asked'], [onAskCase, "the route, with resolve's ask"]]) {
+    const run = seed(name);
+    assert.equal(run.raw('quorum', 'check', run.ledger, '--plan', plan(run)).status, 0, name);
+    const out = run.route('--ledger', run.ledger, '--domain', 'product');
+    assert.deepEqual([...pick(out), out.resolve.authority], ['human', true, 'decide'], name);
+    assert.ok(out.reason.includes(why), name);
+    const refused = run.raw('quorum', 'provisional', run.ledger, '--plan', plan(run), '--marker', 'release-slot');
+    assert.equal(refused.status, 1, `${name}: the writer refuses`);
+    assert.ok(!Object.hasOwn(JSON.parse(readFileSync(run.ledger, 'utf8')), 'provisional'), name);
+  }
 });
 
 test('persona audit triage resolves a held item and reports it, and still asks the Human under decide', () => {

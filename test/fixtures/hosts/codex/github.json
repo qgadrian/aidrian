@@ -1,0 +1,28 @@
+{
+  "live": false,
+  "provenance": "NOT LIVE: no hook has received these payloads, and no merge or comment went through the connector. The hook fields and how a name is joined come from the source of Codex rust-v0.166.0: codex-rs/hooks/src/schema.rs (PreToolUseCommandInput) and codex-rs/core/src/tools/handlers/mcp.rs (hook_tool_name, join_tool_name). The tool names and input fields come from the GitHub entries of the connector catalog a Codex 0.166.0 install cached on 2026-11-05: server codex_apps, tool_namespace codex_apps__github, tool_name _merge_pull_request and its kin. The input values are made up. OpenAI's servers serve that catalog, so no version of Codex pins it.",
+  "env": { "PLUGIN_ROOT": "/plugins/cache/aidrian-harness/aidrian/0.0.0", "CLAUDE_PLUGIN_ROOT": "/plugins/cache/aidrian-harness/aidrian/0.0.0" },
+  "pre": {
+    "session_id": "01a1f000-0000-7000-8000-000000000001",
+    "turn_id": "01a1f000-0000-7000-8000-000000000002",
+    "transcript_path": null,
+    "cwd": "<cwd>",
+    "hook_event_name": "PreToolUse",
+    "model": "gpt-5.5",
+    "permission_mode": "default",
+    "tool_use_id": "call_github"
+  },
+  "merge": {
+    "tool_name": "mcp__codex_apps__github__merge_pull_request",
+    "tool_input": { "repository_full_name": "acme/notes", "pr_number": 5, "merge_method": "squash", "expected_head_sha": "abcdef1234567890abcdef1234567890abcdef12" }
+  },
+  "autoMerge": {
+    "tool_name": "mcp__codex_apps__github__enable_auto_merge",
+    "tool_input": { "repository_full_name": "acme/notes", "pr_number": 5 }
+  },
+  "comments": [
+    { "field": "comment", "tool_name": "mcp__codex_apps__github__add_comment_to_issue", "tool_input": { "repo_full_name": "acme/notes", "pr_number": 5 } },
+    { "field": "comment", "tool_name": "mcp__codex_apps__github__reply_to_review_comment", "tool_input": { "repo_full_name": "acme/notes", "pr_number": 5, "comment_id": 901 } },
+    { "field": "review", "tool_name": "mcp__codex_apps__github__add_review_to_pr", "tool_input": { "repo_full_name": "acme/notes", "pr_number": 5, "action": "COMMENT" } }
+  ]
+}

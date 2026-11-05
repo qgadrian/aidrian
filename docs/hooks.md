@@ -20,8 +20,8 @@ the tracker write guard, and the question names check also record each block: se
 | Before a file edit | The [main-checkout rule](#main-checkout), when the project turns it on, then the [terms rule](#terms) | Claude Code, Codex | yes |
 | Before `EnterWorktree` in a subagent | A block: the tool would move the whole session into the worktree | Claude Code | yes |
 | Before `AskUserQuestion` | A block when a question or option says "I", "me", "my", "you", or "your" (or a form of them, such as "I'm" or "yourself") outside code and quotes: [Names](config.md#names) | Claude Code | yes |
-| Before a GitHub MCP comment | The [review gate](config.md#review-gate), when the project turns it on, and the review-round rule | Claude Code, Codex | yes |
-| Before a GitHub MCP merge | The [merge guard](#merge-guard) | Claude Code, Codex | yes |
+| Before a GitHub MCP comment | The [review gate](config.md#review-gate), when the project turns it on, and the review-round rule | Claude Code, Codex (its [GitHub connector is not live](providers/codex.md#github-through-the-app-connector)) | yes |
+| Before a GitHub MCP merge | The [merge guard](#merge-guard) | Claude Code, Codex (its [GitHub connector is not live](providers/codex.md#github-through-the-app-connector)) | yes |
 | Before any MCP tool call | The [tracker write guard](config.md#tracker), when the project turns it on, on a tool in `tracker.writeTools` | Claude Code, Codex ([not live](#where-the-tracker-guard-is-verified)) | yes |
 | After any MCP tool call | The tracker write guard's record of the connected workspace, on a tool in `tracker.readTools`, and its note of a [tool neither list names](config.md#how-a-write-is-judged) | Claude Code, Codex ([not live](#where-the-tracker-guard-is-verified)) | no |
 | Before an Agent tool call | The project's [model and effort](config.md#models) for that agent | Claude Code | no |
@@ -279,7 +279,8 @@ On a host with no SessionEnd it is never recorded.
 
 A session must not merge a pull request while a review of its head is still open, or while a review the Human asked for
 was never sent. The rule, `plugins/aidrian/lib/rules/github/merge-review.mjs`, reads `gh pr merge`, a `gh api` PUT or POST
-to `repos/<owner>/<name>/pulls/<n>/merge`, and the MCP tool `mcp__github__merge_pull_request`. It is on in every project,
+to `repos/<owner>/<name>/pulls/<n>/merge`, the MCP tool `mcp__github__merge_pull_request`, and on Codex
+[the GitHub connector's merge tools](providers/codex.md#github-through-the-app-connector). It is on in every project,
 reads only this machine's [review record](review.md#the-record), and decides in this order:
 
 1. An owed review, one `aidrian pr request` recorded and no answer has marked since, refuses the merge, whatever the

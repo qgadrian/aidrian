@@ -45,6 +45,8 @@ function matcherProblems(host) {
     ['PostToolUse', 'hook-tracker-post.mjs', raw('mcp__linear__get_workspace')],
     ['PreToolUse', 'hook-agent-gates.mjs', raw('Bash')],
     ['PreToolUse', 'hook-agent-gates.mjs', raw('mcp__linear__save_issue')],
+    ['PreToolUse', 'hook-mcp-github.mjs', raw('mcp__github__merge_pull_request')],
+    ...Object.keys(host.githubTools ?? {}).map((standard) => ['PreToolUse', 'hook-mcp-github.mjs', raw(standard)]),
   ];
   return samples.filter(([event, name, tool]) => !fires(script(event, name).matcher, tool)).map(([event, name, tool]) => `${event} ${name} misses ${tool}`);
 }

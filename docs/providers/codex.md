@@ -98,6 +98,35 @@ in a project with `"tracker": { "enabled": true, "provider": "linear", ... }`:
 A write that runs with no refusal means the hook did not fire or the name differs: `mcp__codex_apps__` in `hookInput` is where to look,
 and a collision between two connectors of one name, which Codex suffixes with a hash, is the one known way the name can differ.
 
+## GitHub through the app connector
+
+GitHub's app connector merges and comments under names and inputs of its own, so the [merge guard](../hooks.md#merge-guard)
+and the [review gate](../config.md#review-gate) read these five tools. `hooks.json` lists each as Codex sends it and in the
+model's flat form, and `githubTools` of the [adapter](../../plugins/aidrian/lib/hosts/codex.mjs) maps its inputs:
+
+| `mcp__codex_apps__github__<tool>` | Read as | Pull request, repository, and text or head |
+| --- | --- | --- |
+| `merge_pull_request` | a merge | `pr_number`, `repository_full_name`, `expected_head_sha` |
+| `enable_auto_merge` | a merge, as `gh pr merge --auto` is | `pr_number`, `repository_full_name`; it names no head, so the guard asks `gh` |
+| `add_comment_to_issue` | a comment | `pr_number`, `repo_full_name`, `comment` |
+| `reply_to_review_comment` | a comment | `pr_number`, `repo_full_name`, `comment` |
+| `add_review_to_pr` | a comment | `pr_number`, `repo_full_name`, `review` |
+
+This is not proven live. No hook on Codex has received these calls, and no merge went through the connector to test it:
+the tests run a recorded shape, `test/fixtures/hosts/codex/github.json`, through the real hook.
+How the name is joined comes from the source at `rust-v0.166.0`, as for [Linear](../hooks.md#where-the-tracker-guard-is-verified).
+The tool names and inputs come from the connector catalog a Codex 0.166.0 install cached on 2026-11-05.
+
+- OpenAI's servers serve that catalog, so no Codex version pins it. A tool renamed or added there passes these two rules unchecked.
+- The text the gate reads is the body of the comment, reply, or review. The inline `file_comments` of `add_review_to_pr`,
+  and an edit through `update_issue_comment` or `update_review_comment`, are not read, as the GitHub MCP server's are not.
+- Two connectors of one name get a hash suffix from Codex, and then the name differs, as for any connector.
+- A hook runs only after a person trusts it in `/hooks`, and `aidrian check` looks only at the tracker hooks' trust.
+
+To prove it, a person trusts the hooks, records an owed review on a throwaway pull request with `aidrian pr request <PR>`,
+and asks in a Codex session for a merge of it through the GitHub app. The merge is refused, with a reason naming
+`aidrian pr await-review`. If it runs, the hook did not fire or the name differs.
+
 ## Models and effort
 
 A shipped Codex role inherits the session's model. Only each agent's reasoning effort carries over.

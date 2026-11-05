@@ -55,6 +55,7 @@ neither was run here, neither is supported, and their cases have no code yet.
 | `rawToolName(standard)` | What a standard tool reaches a hook's matcher as, before any mapping |
 | `nativeToolName(standard)` | What its model calls that tool, for a refusal to name |
 | `serverSpelling(server)` | How it spells a server's name, such as a hyphen as an underscore |
+| `githubTools` | Optional: a GitHub connector's merge and comment tools by standard name, each with `as`, the GitHub MCP server's tool it stands for, `repo`, its `owner/name` input, and `fields`. `hooks.json` lists each by its raw name |
 | `toolResponse(response)` | The objects a tool's response holds, the most direct first |
 | `hookInput(input)` | The hook payload in the standard field names, with `raw_tool_name` holding what it sent when that differs. A standard payload stays as it is |
 | `fileEditTools`, `fileEdit(tool, input)` | Its file edit tools, and each call in a shape `fileEditOf` in `lib/hosts/index.mjs` lists |

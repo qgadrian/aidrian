@@ -151,12 +151,44 @@ test("a cd that may not move the shell gh runs in leaves the session's rules", (
   refuses(`true | cd ${PLAIN} && gh pr create --title 'feat: x' --body-file ${SUMMARY}`, attribution);
 });
 
-test('a leading cd into a folder that exists holds past a newline, as a body written first needs', () => {
+test('a cd holds only when every link to gh is && in the same shell: a folder that exists can still refuse entry', () => {
+  // The hook never tries the cd, so any folder shows it: gh would stay in the session's checkout if this cd failed.
+  const footer = /carries the "Generated with \[Claude Code\]" footer/;
+  const judged = [
+    `cd ${PLAIN} && true;`,
+    `cd ${PLAIN} && true\n`,
+    `cd ${PLAIN} && true ||`,
+    `cd ${PLAIN} && true | cat &&`,
+    `cd ${PLAIN} && (true) &&`,
+    `cd ${PLAIN} && ! true &&`,
+    `true; cd ${PLAIN} && true;`,
+  ].filter((before) => !footer.test(hook(`${before} gh pr edit 1 --body-file ${FOOTER}`).stderr));
+  assert.deepEqual(judged.map((before) => before.replaceAll(ROOT, '')), [], 'each of these must keep the session\'s rules');
+  refuses(`cd ${OTHER} && true; gh pr edit 1 --body-file ${WHY}`, noSummary);
+  refuses(`cd ${OTHER} && true | cat; gh pr edit 1 --body-file ${WHY}`, noSummary);
+});
+
+test('gh on a new line after a heredoc write answers to the session; joined on its first line, or by env -C or -R, it does not', () => {
   const body = path.join(OTHER, 'c.md');
-  passes(`cd ${OTHER} && cat > ${body} <<'EOF'\n## Why\nThe reason.\nEOF\ngh pr edit 1 --body-file ${body}`);
-  refuses(`cd ${OTHER} && true; gh pr edit 1 --body-file ${SUMMARY}`, noWhy);
-  passes(`cd ${OTHER} && true | cat; gh pr edit 1 --body-file ${WHY}`);
+  const write = `cat > ${body} <<'EOF'`;
+  refuses(`cd ${OTHER} && ${write}\n## Why\nThe reason.\nEOF\ngh pr edit 1 --body-file ${body}`, noSummary);
+  passes(`cd ${OTHER} && ${write} && gh pr edit 1 --body-file ${body}\n## Why\nThe reason.\nEOF`);
+  refuses(`cd ${OTHER} && ${write} && gh pr edit 1 --body-file ${body}\n## Summary\nThe change.\nEOF`, noWhy);
+  passes(`${write}\n## Why\nThe reason.\nEOF\nenv -C ${OTHER} gh pr edit 1 --body-file ${body}`);
+  passes(`cd ${OTHER} && ${write}\n## Why\nThe reason.\nEOF\ngh pr edit 1 -R acme/other --body-file ${body}`);
+});
+
+test('a parenthesis in a quoted or escaped word ends no subshell', () => {
+  for (const word of [`'ready (ok)'`, `"ready (ok)"`, 'ready\\)']) {
+    passes(`true; cd ${OTHER} && printf '%s' ${word} extra && gh pr edit 1 --body-file ${WHY}`);
+    refuses(`true; cd ${OTHER} && printf '%s' ${word} extra && gh pr edit 1 --body-file ${SUMMARY}`, noWhy);
+  }
+});
+
+test('a cd joined by && holds whatever ran before it, and into the shell it starts', () => {
   passes(`true || cd ${PLAIN} && cd ${OTHER} && gh pr edit 1 --body-file ${WHY}`);
+  passes(`true & cd ${OTHER} && gh pr edit 1 --body-file ${WHY}`);
+  passes(`(cd ${OTHER} && gh pr edit 1 --body-file ${WHY})`);
   passes(`cd ${OTHER} && sh -c 'true; gh pr edit 1 --body-file ${WHY}'`);
 });
 

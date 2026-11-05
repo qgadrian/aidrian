@@ -6,7 +6,7 @@
 // descriptor a redirection names before it, as written (`2` of `2>`, `{x}` of `{x}<`), absent when it names none;
 // `fdDup` for the `&1` of `2>&1`. Everything a rule cannot read is meant to fail open: an unknown shape yields no match, never a deny.
 
-import { realpathSync, statSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 
 const CONTINUATION = '\n';
@@ -322,6 +322,8 @@ function lexSegments(command) {
 
     const token = start();
     token.text += ch;
+    // An unquoted parenthesis is syntax, such as a subshell's; a quoted one reached the word through the branches above.
+    if (ch === '(' || ch === ')') token.paren = true;
     if (ch === '$' || ch === '`' || ch === '*' || ch === '?') token.dynamic = true;
     if (ch === '$') token.splits = true;
   }
@@ -719,10 +721,10 @@ const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
 // after `;` or `||`, a second one) leaves it unknown for the commands after it. A wrapper's own directory (`env -C`)
 // and git's `-C` apply to their command only. Directory changes themselves are left out.
 // `chained` is the folder the command runs in whenever it runs at all, for a rule that asks which project a command
-// answers to. It follows a `cd` joined to the command by `&&` alone, as in `x; cd /y && gh`, where the command runs only
-// once that `cd` worked. It is null, and the rule falls back on its default, where the `cd` may not have moved this shell:
-// one after `||` or in a pipe, negated, in a subshell, under a wrapper such as `env`, or in a list sent to the background.
-// Past `;`, `||`, or a pipe, a leading `cd` holds only when its folder exists, since that `cd` cannot then fail.
+// answers to. It follows a `cd` only when every link from that `cd` to the command is `&&` in the same shell, as in
+// `x; cd /y && gh`, where the command runs only once that `cd` worked. Past a `;`, newline, `||`, pipe, `&`, `!`, or
+// subshell boundary it is null, and the rule falls back on its default; so it is for a `cd` that may not run in this shell:
+// one after `||` or in a pipe, negated, in a subshell, or under a wrapper such as `env`.
 // `unread` is the text of the commands a shell or `eval` runs that the walk could not read as command lines: what a pipe
 // feeds a shell (`echo 'git push' | bash`) with the shell itself, a shell's script or unreadable options, or a body
 // nested past SUBSTITUTION_DEPTH_LIMIT. A rule that must not miss a command fails closed on it when it names one.
@@ -744,23 +746,24 @@ export function walkCommands(command, cwd) {
     };
     let here = start;
     let chain = chainStart;
-    // The folder this shell stands in whatever ran before: where `chain` resumes when no `&&` joins a command to the last.
-    let settled = chainStart;
+    // Whether a `cd` on this line touched `chain`: until one does, nothing on the line can break it.
     let moved = false;
+    const breakChain = () => {
+      chain = moved ? null : chainStart;
+    };
     segments.forEach((segment, index) => {
       const after = separators[index - 1];
-      if (after === '&' && moved) settled = null;
-      if (index > 0 && after !== '&&') chain = settled;
-      for (const body of substitutions.slice(ends[index - 1] ?? 0, ends[index])) nested(body, here, chain);
       const invocation = readInvocation(segment);
-      // Any word may end the subshell: a redirect can follow it, as in `(cd x) > log`.
-      const closes = segment.some((token) => !token.operator && token.text.endsWith(')'));
+      // In any word: a redirect can follow the parenthesis that ends a subshell, as in `(cd x) > log`.
+      const holds = (paren) => segment.some((token) => token.paren && token.text.includes(paren));
+      if ((index > 0 && after !== '&&') || holds('(') || invocation.negated) breakChain();
+      for (const body of substitutions.slice(ends[index - 1] ?? 0, ends[index])) nested(body, here, chain);
+      const closes = holds(')');
       if (CHANGES_DIRECTORY.has(invocation.program)) {
         const leading = index === 0 && separators[0] === '&&' && !segment[0]?.text.startsWith('(');
         here = leading ? folderAfter(start, invocation) : null;
         const movesThisShell = !closes && !invocation.negated && !runsInOwnProcess(segment) && !['||', '|', '|&'].includes(after);
         chain = movesThisShell ? folderAfter(chain, invocation) : null;
-        settled = leading && movesThisShell && chain !== null && isDirectory(chain) ? chain : null;
         moved = true;
         return;
       }
@@ -796,7 +799,7 @@ export function walkCommands(command, cwd) {
         } else unread.push(piped(index));
       }
       if (unread.length) entry.unread = unread.join('\n');
-      if (closes) chain = settled;
+      if (closes) breakChain();
     });
     for (const body of substitutions.slice(ends.at(-1) ?? 0)) nested(body, here, chain);
   };
@@ -810,14 +813,6 @@ function runsInOwnProcess(segment) {
   const at = segment.findIndex((token) => CHANGES_DIRECTORY.has(path.basename(token.text.replace(/^\(+/u, ''))));
   return segment.slice(0, at).some(({ text }) => WRAPPERS.has(path.basename(text)) && text !== 'command' && text !== 'time');
 }
-
-const isDirectory = (dir) => {
-  try {
-    return statSync(dir).isDirectory();
-  } catch {
-    return false;
-  }
-};
 
 // The folder a `cd`, `pushd`, or `popd` invocation reaches from `here`, or null when it cannot be known. It is the
 // physical folder, as the kernel resolves a file's `..` from it: `cd link && cat ../f` reads beside the link's target.

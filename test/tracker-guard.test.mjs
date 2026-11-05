@@ -6,13 +6,15 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { nameMatches } from '../plugins/aidrian/lib/agent-gates.mjs';
-import { judgeTrackerWrite, readTrackerValue } from '../plugins/aidrian/lib/tracker-guard.mjs';
+import { fold } from '../plugins/aidrian/lib/lesson-inbox.mjs';
+import { judgeTrackerWrite, readTrackerValue, unlistedTool } from '../plugins/aidrian/lib/tracker-guard.mjs';
 
 const PLUGIN = path.resolve(import.meta.dirname, '../plugins/aidrian');
 const MODULE = path.join(PLUGIN, 'lib/tracker-guard.mjs');
 const PRE = path.join(PLUGIN, 'scripts/hook-tracker-pre.mjs');
 const POST = path.join(PLUGIN, 'scripts/hook-tracker-post.mjs');
 const END = path.join(PLUGIN, 'scripts/hook-session-end.mjs');
+const AGENT_POST = path.join(PLUGIN, 'scripts/hook-agent-post.mjs');
 const CLI = path.join(PLUGIN, 'bin/aidrian');
 const PROBE = path.resolve(import.meta.dirname, 'fixtures/tracker-probe-mcp.mjs');
 
@@ -327,18 +329,18 @@ test('the fields and values come from the config, so another tracker\'s names wo
   assert.equal(on({ team: 'Other', id: 'OTHER-1', project: 'Other' }), null);
 });
 
-test('a refusal is { match, reason }: match is the cause alone, and fits a deny row with its values', () => {
+test('a refusal is { match, reason }, and routine when it says so: match is the cause alone, and fits a deny row with its values', () => {
   const REPORT_ROW_CHARS = 120;
   const causes = [
-    [denial({}, null), /^this session has not read the connected workspace$/],
+    [denial({}, null), /^this session has not read the connected workspace$/, ['match', 'reason', 'routine']],
     [denial({}, unreadable), /^the read returned no url \(mcp__x__get_workspace\)$/],
     [denial({}, record('https://other.example')), /^the connected workspace is "https:\/\/other\.example", and tracker\.workspace\.expect is "https:\/\/tracker\.example\/acme"$/],
     [denial({ team: 'Other' }), /^team is "Other", and tracker\.team\.values allows "Notes"$/],
     [denial({ id: 'OTHER-1' }), /^id is "OTHER-1", whose prefix is not tracker\.team\.key "NOTES"$/],
     [denial({ project: 'Other' }), /^project is "Other", and tracker\.project\.values allows "Notes launch"$/],
   ];
-  for (const [refusal, cause] of causes) {
-    assert.deepEqual(Object.keys(refusal), ['match', 'reason']);
+  for (const [refusal, cause, keys = ['match', 'reason']] of causes) {
+    assert.deepEqual(Object.keys(refusal), keys);
     assert.match(refusal.match, cause);
     assert.ok(refusal.match.length <= REPORT_ROW_CHARS, refusal.match);
     assert.ok(refusal.reason.startsWith(`aidrian: this tracker write is refused because ${refusal.match}. `), refusal.reason);
@@ -433,6 +435,41 @@ test('skipMissingRecord also covers a record from another server, which no read 
   assert.match(judge({}, seen, { settings: twoServers, tool: 'mcp__a__write', options }), /tracker\.workspace\.expect/);
 });
 
+test('the only routine refusal is the no-read one a listed read clears', () => {
+  assert.equal(denial({}, null).routine, true);
+  assert.equal(denial({}, readOn('mcp__a__read'), { settings: twoServers, tool: 'mcp__b__write' }).routine, true, 'a read on another server asks for the same step');
+  const others = [
+    denial({}, unreadable),
+    denial({}, record('https://other.example')),
+    denial({ team: 'Other' }),
+    denial({ id: 'OTHER-1' }),
+    denial({ project: 'Other' }),
+    denial({}, null, { settings: config({ readTools: ['mcp__a__read'], writeTools: ['mcp__b__write'] }), tool: 'mcp__b__write' }),
+    denial({}, null, { settings: config({ writeTools: ['mcp__solo'] }), tool: 'mcp__solo' }),
+  ];
+  for (const refusal of others) assert.equal(refusal.routine, undefined, refusal.match);
+});
+
+test('an unlisted tool is on a server the lists name, in neither list, with no name that says it reads', () => {
+  const unlisted = (tool, settings = tracker) => unlistedTool(settings, tool);
+  for (const tool of ['mcp__x__archive_issue', 'mcp__x__mark_notification', 'mcp__x__getter', 'mcp__x__listen', 'mcp__x__set_list', 'mcp__x__Get_issue']) {
+    assert.equal(unlisted(tool), true, tool);
+  }
+  for (const tool of [
+    READ, WRITE, 'mcp__x__delete_issue',
+    'mcp__x__get_issue', 'mcp__x__getIssue', 'mcp__x__get-issue', 'mcp__x__list_issues', 'mcp__x__search', 'mcp__x__read_file', 'mcp__x__find_user',
+    'mcp__x__fetch_page', 'mcp__x__query_items', 'mcp__x__view_item', 'mcp__x__show_item', 'mcp__x__describe_item', 'mcp__x__whoami',
+    'mcp__other__archive_issue', 'mcp__xy__archive_issue', 'mcp__solo', 'Bash', '', undefined, 42, ['mcp__x__archive_issue'],
+  ]) {
+    assert.equal(unlisted(tool), false, String(tool));
+  }
+  assert.equal(unlisted('mcp__b__archive', { readTools: ['mcp__b__read'], writeTools: [] }), true, 'a read tool alone names the server');
+  assert.equal(unlisted('mcp__b__archive', { readTools: [], writeTools: ['mcp__b__save_*'] }), true, 'a write pattern alone names the server');
+  assert.equal(unlisted('mcp__b__archive', { readTools: [], writeTools: ['mcp__*'] }), false, 'the widest pattern lists every tool');
+  assert.equal(unlisted('mcp__b__archive', { readTools: [], writeTools: ['mcp__b*'] }), false, 'a pattern with no server still lists what it matches');
+  assert.equal(unlisted('mcp__c__archive', { readTools: [], writeTools: ['mcp__b*'] }), false, 'and names no server');
+});
+
 test('the module and its hooks name no tracker', () => {
   for (const file of [MODULE, PRE, POST]) {
     assert.doesNotMatch(readFileSync(file, 'utf8'), /linear|jira|github|gitlab|asana|trello|notion|clickup|youtrack/iu, file);
@@ -457,24 +494,25 @@ function project(t, settings = { version: 1, tracker }) {
   const env = { ...process.env, XDG_STATE_HOME: state, TMPDIR: temp };
   const session = `session-${sessions += 1}`;
   const run = (script, input) => spawnSync(process.execPath, [script], { input: JSON.stringify({ cwd: dir, session_id: session, ...input }), encoding: 'utf8', env });
+  // The project's state folder, found on disk: `aidrian state` exits 1 on a config whose problems `check` reports.
+  const stateRows = (file) => {
+    const projects = path.join(state, 'aidrian/projects');
+    const found = existsSync(projects) ? readdirSync(projects).map((id) => path.join(projects, id, file)).find(existsSync) : null;
+    return found ? readFileSync(found, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line)) : [];
+  };
   return {
     base,
     dir,
     temp,
     state,
     session,
-    log: () => {
-      try {
-        const folder = spawnSync(CLI, ['state'], { cwd: dir, env, encoding: 'utf8' }).stdout.trim();
-        return readFileSync(path.join(folder, 'dispatch-log.jsonl'), 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
-      } catch {
-        return [];
-      }
-    },
+    env,
+    log: () => stateRows('dispatch-log.jsonl'),
     file: (id = session) => path.join(state, 'aidrian/sessions', `${id}.tracker.json`),
     read: (response = OK, input = {}) => run(POST, { tool_name: READ, tool_response: response, ...input }),
     write: (input = {}, extra = {}) => run(PRE, { tool_name: WRITE, tool_input: input, ...extra }),
     end: (extra = {}) => run(END, extra),
+    inbox: () => stateRows('lessons/inbox.jsonl'),
     run,
     stateFiles: () => (existsSync(state) ? readdirSync(state, { recursive: true }) : []),
     report: (args) => spawnSync(CLI, ['report', ...args], { cwd: dir, env, encoding: 'utf8' }),
@@ -728,16 +766,283 @@ test('input a hook cannot read lets the call run and writes no file', (t) => {
 });
 
 test('a refusal appears as a tracker-guard row in the report, naming the cause and never the rest of the input', (t) => {
-  const { report, write } = project(t, { version: 1, tracker, telemetry: { enabled: true, hookDenies: true } });
-  assert.equal(write({ title: 'SECRET title' }).status, 2);
+  const { read, report, write } = project(t, { version: 1, tracker, telemetry: { enabled: true, hookDenies: true } });
+  assertRuns(read());
+  assert.equal(write({ team: 'Other', title: 'SECRET title' }).status, 2);
   const { status, stdout } = report(['--json']);
   assert.equal(status, 0);
   const denies = JSON.parse(stdout).hook_denies;
   assert.equal(denies.count, 1);
   assert.deepEqual(denies.by_rule.map((rule) => rule.rule), ['tracker-guard']);
   assert.doesNotMatch(stdout, /SECRET/);
-  assert.match(stdout, /this session has not read the connected workspace/);
+  assert.match(stdout, /team is \\"Other\\", and tracker\.team\.values allows \\"Notes\\"/);
   assert.match(report([]).stdout, /tracker-guard/);
+});
+
+const TELEMETRY = { version: 1, tracker, telemetry: { enabled: true, hookDenies: true } };
+
+const NO_READ_LANDED = 'this session was refused for no read of the connected workspace, and no read landed';
+const denyRows = ({ log }) => log().filter((row) => row.event === 'hook_deny');
+
+test('a batch of first writes is refused with its reason, adds no row and no block count, and files no lesson', (t) => {
+  const { inbox, log, session, temp, write } = project(t, TELEMETRY);
+  for (let call = 0; call < 5; call += 1) {
+    const refused = write();
+    assert.equal(refused.status, 2);
+    assert.match(refused.stderr, /has not read the connected workspace/);
+    assert.match(refused.stderr, /Call mcp__x__get_workspace, then write again/);
+  }
+  assert.deepEqual(log().filter((row) => row.event === 'hook_deny'), []);
+  assert.equal(existsSync(path.join(temp, `aidrian-denials-${session}`)), false);
+  assert.deepEqual(inbox(), []);
+});
+
+test('a session refused for no read whose read never lands writes one row at its end, and cleans up', (t) => {
+  const refused = project(t, TELEMETRY);
+  const { end, inbox, session, temp, write } = refused;
+  for (let call = 0; call < 3; call += 1) assert.equal(write({}, { agent_type: 'worker' }).status, 2);
+  const marker = path.join(temp, `aidrian-tracker-refused-${session}`);
+  assert.equal(existsSync(marker), true);
+  assert.deepEqual(denyRows(refused), [], 'nothing counts before the end');
+
+  assertRuns(end());
+  const rows = denyRows(refused);
+  assert.deepEqual(rows.map((row) => [row.rule, row.tool, row.agent_type, row.session_id, row.reason]), [['tracker-guard', WRITE, 'worker', session, NO_READ_LANDED]]);
+  assert.ok(NO_READ_LANDED.length <= 120);
+  assert.equal(existsSync(marker), false);
+  assert.equal(existsSync(path.join(temp, `aidrian-denials-${session}`)), false, 'the recorder\'s count goes with the session');
+  assert.deepEqual(inbox(), [], 'one block is no lesson');
+
+  assertRuns(end());
+  assert.equal(denyRows(refused).length, 1, 'a second end writes no second row');
+});
+
+test('the first refusal of a session keeps its marker, so the row names that call', (t) => {
+  const refused = project(t, TELEMETRY);
+  assert.equal(refused.write({}, { agent_type: 'first' }).status, 2);
+  assert.equal(refused.write({}, { agent_type: 'second' }).status, 2);
+  assertRuns(refused.end());
+  assert.deepEqual(denyRows(refused).map((row) => row.agent_type), ['first']);
+});
+
+test('with telemetry.enabled or telemetry.hookDenies off, a session stuck on the no-read refusal is refused and leaves no row and no lesson', (t) => {
+  for (const telemetry of [{ enabled: true, hookDenies: false }, { enabled: false, hookDenies: true }]) {
+    const stuck = project(t, { version: 1, tracker, telemetry });
+    for (let call = 0; call < 5; call += 1) {
+      const refused = stuck.write();
+      assert.equal(refused.status, 2, JSON.stringify(telemetry));
+      assert.match(refused.stderr, /has not read the connected workspace/);
+    }
+    assertRuns(stuck.end());
+    assert.deepEqual(denyRows(stuck), [], JSON.stringify(telemetry));
+    assert.deepEqual(stuck.inbox(), [], JSON.stringify(telemetry));
+  }
+});
+
+test('a session with a recorded read writes no row at its end, whatever the read returned', (t) => {
+  for (const response of [OK, { url: 'https://other.example' }, { name: 'no url' }]) {
+    const session = project(t, TELEMETRY);
+    assert.equal(session.write().status, 2);
+    assertRuns(session.read(response));
+    const before = denyRows(session).length;
+    assertRuns(session.end());
+    assert.equal(denyRows(session).length, before);
+    assert.equal(existsSync(path.join(session.temp, `aidrian-tracker-refused-${session.session}`)), false);
+  }
+});
+
+test('the row at a session\'s end respects the switches and goes to the project that refused, wherever the session ends', (t) => {
+  for (const telemetry of [{ enabled: true, hookDenies: false }, { enabled: false, hookDenies: true }]) {
+    const off = project(t, { version: 1, tracker, telemetry });
+    assert.equal(off.write().status, 2);
+    assertRuns(off.end());
+    assert.deepEqual(denyRows(off), []);
+    assert.equal(existsSync(path.join(off.temp, `aidrian-tracker-refused-${off.session}`)), false);
+  }
+  const moved = project(t, TELEMETRY);
+  assert.equal(moved.write().status, 2);
+  assertRuns(moved.end({ cwd: moved.base }));
+  assert.deepEqual(denyRows(moved).map((row) => row.reason), [NO_READ_LANDED]);
+});
+
+test('a refusal whose marker cannot be written is still refused', (t) => {
+  const { temp, write } = project(t, TELEMETRY);
+  rmSync(temp, { recursive: true });
+  const refused = write();
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /has not read the connected workspace/);
+});
+
+test('session end still deletes and hands off when the refusal cannot be settled', async (t) => {
+  const failures = [
+    ['a marker that cannot be read', ({ session, temp }) => {
+      const marker = path.join(temp, `aidrian-tracker-refused-${session}`);
+      mkdirSync(marker);
+      writeFileSync(path.join(marker, 'held'), '');
+    }],
+    ['a marker that is no record', ({ session, temp }) => writeFileSync(path.join(temp, `aidrian-tracker-refused-${session}`), 'not json')],
+  ];
+  for (const [label, arrange] of failures) {
+    const failing = project(t, TELEMETRY);
+    const { base, end, log, session, temp } = failing;
+    arrange(failing);
+    const length = path.join(temp, `aidrian-session-length-${session}`);
+    writeFileSync(length, '{}\n');
+    const transcript = path.join(base, 'transcript.jsonl');
+    writeFileSync(transcript, JSON.stringify({ type: 'assistant', timestamp: '2026-11-04T10:00:00Z', message: { id: 'm1', model: 'claude-opus-5-5', usage: { input_tokens: 10, output_tokens: 5 }, content: [] } }));
+    assertRuns(end({ transcript_path: transcript }), label);
+    assert.equal(existsSync(length), false, label);
+    for (const deadline = Date.now() + 15_000; !log().some((row) => row.event === 'session'); await sleep(25)) {
+      if (Date.now() > deadline) assert.fail(`the session row never landed: ${label}`);
+    }
+  }
+});
+
+test('a row that cannot be written at session end costs nothing else', (t) => {
+  const { end, session, state, temp, write } = project(t, TELEMETRY);
+  assert.equal(write().status, 2);
+  const length = path.join(temp, `aidrian-session-length-${session}`);
+  writeFileSync(length, '{}\n');
+  writeFileSync(state, 'a plain file, so no state folder can be made under it');
+  assertRuns(end());
+  assert.equal(existsSync(length), false);
+  assert.equal(existsSync(path.join(temp, `aidrian-tracker-refused-${session}`)), false);
+});
+
+test('every refusal but the routine one still counts: its rows, and the lesson at three in a session', (t) => {
+  const refusals = [
+    ['a read with no value', TELEMETRY, ({ read, write }) => { assertRuns(read({ name: 'acme' })); return write; }, WRITE],
+    ['another workspace', TELEMETRY, ({ read, write }) => { assertRuns(read({ url: 'https://other.example' })); return write; }, WRITE],
+    ['a wrong team', TELEMETRY, ({ read, write }) => { assertRuns(read()); return () => write({ team: 'Other' }); }, WRITE],
+    ['a server with no read tool', { ...TELEMETRY, tracker: { ...tracker, readTools: ['mcp__a__read'], writeTools: ['mcp__b__write'] } }, ({ write }) => () => write({}, { tool_name: 'mcp__b__write' }), 'mcp__b__write'],
+    ['a write tool with no server', { ...TELEMETRY, tracker: { ...tracker, writeTools: ['mcp__solo'] } }, ({ write }) => () => write({}, { tool_name: 'mcp__solo' }), 'mcp__solo'],
+  ];
+  for (const [label, settings, arrange, tool] of refusals) {
+    const session = project(t, settings);
+    const refuse = arrange(session);
+    for (let call = 0; call < 3; call += 1) assert.equal(refuse().status, 2, label);
+    assert.deepEqual(session.log().filter((row) => row.event === 'hook_deny').map((row) => [row.rule, row.tool]), Array(3).fill(['tracker-guard', tool]), label);
+    assert.deepEqual(fold(session.inbox()).lessons.map((lesson) => [lesson.key, lesson.target]), [['hook-deny:tracker-guard', 'project']], label);
+  }
+});
+
+// What aidrian report health says of `sessions` sessions that each dispatch an agent, so the log sees them, and then take `flow`.
+function healthAfter({ base, dir, env, run }, sessions, flow) {
+  for (let each = 0; each < sessions; each += 1) {
+    const session_id = `flow-${each}`;
+    assertRuns(run(AGENT_POST, { session_id, tool_name: 'Agent', tool_input: { subagent_type: 'worker', description: `task ${each}` }, tool_response: { agentId: `agent-${each}`, status: 'completed' } }));
+    flow(session_id);
+  }
+  // No GitHub for the reviews signal to reach.
+  const bin = path.join(base, 'bin');
+  mkdirSync(bin);
+  writeFileSync(path.join(bin, 'gh'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const { status, stdout, stderr } = spawnSync(CLI, ['report', 'health', '--json', '--project', dir], { cwd: base, env: { ...env, PATH: `${bin}${path.delimiter}${env.PATH}` }, encoding: 'utf8' });
+  assert.equal(status, 0, stderr);
+  return JSON.parse(stdout);
+}
+
+test('report health: sessions that read after the first refusal show no hot spot, and refusals of another kind do', (t) => {
+  const SESSIONS = 6;
+  const healthy = project(t, TELEMETRY);
+  const flowing = healthAfter(healthy, SESSIONS, (session_id) => {
+    assert.equal(healthy.write({}, { session_id }).status, 2);
+    assertRuns(healthy.read(OK, { session_id }));
+    assertRuns(healthy.write({}, { session_id }));
+    assertRuns(healthy.end({ session_id }));
+  });
+  assert.deepEqual([flowing.signals.denies.status, flowing.signals.denies.count, flowing.signals.denies.sample.n], ['ok', 0, SESSIONS]);
+  assert.deepEqual(flowing.problems.filter((problem) => problem.kind === 'deny-hot-spot'), []);
+  assert.deepEqual(healthy.inbox(), []);
+
+  const wrong = project(t, TELEMETRY);
+  const refused = healthAfter(wrong, SESSIONS, (session_id) => {
+    assertRuns(wrong.read({ url: 'https://other.example' }, { session_id }));
+    assert.equal(wrong.write({}, { session_id }).status, 2);
+  });
+  const [hot] = refused.problems.filter((problem) => problem.kind === 'deny-hot-spot');
+  assert.deepEqual([hot?.subject, hot?.value], ['tracker-guard', SESSIONS]);
+});
+
+test('report health: sessions whose listed read never records raise the hot spot, one row a session, with no new lesson', (t) => {
+  const SESSIONS = 6;
+  const broken = project(t, TELEMETRY);
+  const health = healthAfter(broken, SESSIONS, (session_id) => {
+    for (let call = 0; call < 4; call += 1) assert.equal(broken.write({}, { session_id }).status, 2);
+    // A read that fails, or a read tool renamed upstream, reaches no hook-tracker-post.mjs record.
+    assertRuns(broken.end({ session_id }));
+  });
+  assert.deepEqual([health.signals.denies.status, health.signals.denies.count], ['problem', SESSIONS]);
+  const [hot] = health.problems.filter((problem) => problem.kind === 'deny-hot-spot');
+  assert.deepEqual([hot?.subject, hot?.value, hot?.lesson.key], ['tracker-guard', SESSIONS, 'hook-deny:tracker-guard']);
+  assert.ok(hot.summary.includes(NO_READ_LANDED), hot.summary);
+  assert.deepEqual(broken.inbox(), []);
+});
+
+const UNLISTED = 'mcp__x__archive_issue';
+
+test('an unlisted tool on a guarded server files one project lesson, a row per session, and the call runs', (t) => {
+  const { inbox, run } = project(t);
+  const call = (tool = UNLISTED, extra = {}) => assertRuns(run(POST, { tool_name: tool, tool_response: { body: 'SECRET output' }, agent_type: 'worker', ...extra }));
+  for (let each = 0; each < 3; each += 1) call();
+  assert.equal(inbox().length, 1, 'once per session and tool');
+  const [lesson] = fold(inbox()).lessons;
+  assert.deepEqual([lesson.key, lesson.target, lesson.tier, lesson.kind, lesson.source, lesson.agent], [`tracker-unlisted:${UNLISTED}`, 'project', 'P2', 'gap', 'auto', 'worker']);
+  assert.match(lesson.title, /mcp__x__archive_issue/);
+  assert.match(lesson.note, /add it to tracker\.writeTools/);
+  assert.doesNotMatch(JSON.stringify(inbox()), /SECRET/);
+
+  call(UNLISTED, { session_id: 'another-session' });
+  assert.equal(inbox().length, 2, 'another session adds its row');
+  assert.equal(fold(inbox()).lessons[0].seen, 1, 'and it is the same event');
+
+  call('mcp__x__merge_diff');
+  assert.deepEqual(fold(inbox()).lessons.map((each) => each.key), [`tracker-unlisted:${UNLISTED}`, 'tracker-unlisted:mcp__x__merge_diff']);
+});
+
+test('a rejected unlisted tool stays rejected in later sessions, so it is noted once and gone', (t) => {
+  const { dir, env, inbox, run } = project(t);
+  assertRuns(run(POST, { tool_name: UNLISTED }));
+  const [{ id }] = fold(inbox()).lessons;
+  const resolved = spawnSync(CLI, ['lesson', 'resolve', id, '--outcome', 'rejected', '--link', 'it only reads'], { cwd: dir, env, encoding: 'utf8' });
+  assert.equal(resolved.status, 0, resolved.stderr);
+  assertRuns(run(POST, { tool_name: UNLISTED, session_id: 'a-later-session' }));
+  assert.equal(fold(inbox()).lessons[0].status, 'resolved');
+});
+
+test('no note for a listed tool, a read by its name, another server, no session id, lessons off, or the tracker off', (t) => {
+  const quiet = project(t);
+  for (const tool_name of [READ, WRITE, 'mcp__x__delete_issue', 'mcp__x__get_issue', 'mcp__x__list_issues', 'mcp__other__archive_issue', 'Bash']) {
+    assertRuns(quiet.run(POST, { tool_name, tool_response: OK }), tool_name);
+  }
+  for (const session_id of [undefined, '', 42, '../escape']) assertRuns(quiet.run(POST, { tool_name: UNLISTED, session_id }), String(session_id));
+  assert.deepEqual(quiet.inbox(), []);
+
+  const off = [{ version: 1, tracker, lessons: { auto: false } }, { version: 1, tracker: { ...tracker, enabled: false } }];
+  for (const settings of off) {
+    const { inbox, run } = project(t, settings);
+    assertRuns(run(POST, { tool_name: UNLISTED }));
+    assert.deepEqual(inbox(), []);
+  }
+});
+
+test('a note that cannot be saved lets the call run, and a later call in the session tries again', (t) => {
+  const { inbox, run, state } = project(t);
+  writeFileSync(state, 'a plain file, so no inbox can be made under it');
+  assertRuns(run(POST, { tool_name: UNLISTED }));
+  rmSync(state);
+  assert.deepEqual(inbox(), []);
+  assertRuns(run(POST, { tool_name: UNLISTED }));
+  assert.equal(inbox().length, 1);
+});
+
+test('session end forgets which tools the session noted', (t) => {
+  const { end, run, session, temp } = project(t);
+  assertRuns(run(POST, { tool_name: UNLISTED }));
+  const folder = path.join(temp, `aidrian-denials-${session}`);
+  assert.equal(existsSync(path.join(folder, `${UNLISTED}.noted`)), true);
+  assertRuns(end());
+  assert.equal(existsSync(folder), false);
 });
 
 test('a refusal\'s row holds the whole cause with both values, and no lead from the reason the agent reads', (t) => {

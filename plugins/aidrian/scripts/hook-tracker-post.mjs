@@ -1,4 +1,5 @@
-// PostToolUse hook for every MCP tool: the read half of the tracker write guard (docs/config.md#tracker). After a call of
+// PostToolUse hook for every MCP tool: the read half of the tracker write guard (docs/config.md#tracker), and its note of
+// a tool the guard's lists have not caught up with (tracker-guard.mjs unlistedTool), which never refuses. After a call of
 // a tool in `tracker.readTools`, it records what that tool reported as the connected workspace, so hook-tracker-pre.mjs
 // can judge the session's writes against it. The record is `<session id>.tracker.json` beside the session's gate
 // snapshot (lib/gate-snapshot.mjs), { value, unreadable, tool, at }; the latest read replaces an earlier one, and
@@ -12,13 +13,19 @@ import { loadConfig } from '../lib/config.mjs';
 import { snapshotPath } from '../lib/gate-snapshot.mjs';
 import { runHook } from '../lib/hook-io.mjs';
 import { findProject } from '../lib/project.mjs';
-import { readTrackerValue } from '../lib/tracker-guard.mjs';
+import { readTrackerValue, unlistedTool } from '../lib/tracker-guard.mjs';
 
-await runHook((input) => {
+await runHook(async (input) => {
   const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
-  const { tracker } = loadConfig(project).config;
-  if (tracker.enabled !== true || !tracker.readTools.includes(input.tool_name)) return;
+  const { config } = loadConfig(project);
+  const { tracker } = config;
+  if (tracker.enabled !== true) return;
+  if (!tracker.readTools.includes(input.tool_name)) {
+    // Loaded only for a tool it notes, so the other MCP calls pay nothing for it.
+    if (unlistedTool(tracker, input.tool_name)) (await import('../lib/lesson-signals.mjs')).noteUnlistedTool(input, project, config);
+    return;
+  }
   const file = snapshotPath(input.session_id)?.replace(/\.json$/u, '.tracker.json');
   if (!file) return;
   const value = readTrackerValue(input.tool_response, tracker.workspace.field);

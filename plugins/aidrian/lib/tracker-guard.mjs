@@ -2,6 +2,9 @@
 // `tracker` in config.json (docs/config.md#tracker). It touches no file and names no tracker: every tool, field, and
 // value comes from the config, which config.mjs `checkTracker` has already validated.
 
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
 import { nameMatches } from './agent-gates.mjs';
 import { isObject } from './fs.mjs';
 
@@ -45,7 +48,8 @@ const text = (value) => (typeof value === 'string' && value.trim() !== '' ? valu
 // null when it may. `record` is the session's read of the workspace, { value, unreadable, tool, at }, or null when it has
 // none. Only a tool in `tracker.writeTools` is judged, and only while `tracker.enabled` is true. A record counts only for
 // a write on the server its read ran on, since two servers can be connected to different workspaces. A caller whose
-// session can hold no record passes `skipMissingRecord`.
+// session can hold no record passes `skipMissingRecord`. A refusal with `routine: true` is the step every writing session
+// takes, which alone says nothing about the session: the caller counts it only when the session ends with no read recorded.
 export function judgeTrackerWrite({ tracker, names }, tool, input, record, { skipMissingRecord = false } = {}) {
   if (tracker?.enabled !== true || typeof tool !== 'string') return null;
   if (!tracker.writeTools.some((pattern) => nameMatches(pattern, tool))) return null;
@@ -57,11 +61,14 @@ export function judgeTrackerWrite({ tracker, names }, tool, input, record, { ski
 // ones. A server whose own name holds a double underscore reads as the part before it.
 export const serverPrefix = (tool) => (typeof tool === 'string' ? (/^mcp__.+?__/u.exec(tool)?.[0] ?? null) : null);
 
-// What to do about a write on `server` with no read to count. config.mjs `checkTracker` reports the two cases no read clears.
-function nextRead(readTools, server, human) {
-  if (server === null) return `tracker.writeTools names this tool with no server, so no read can clear it. Ask ${human} to correct that entry, and do not edit the key`;
+// The refusal of a write on `server` with no read to count. Only one that a listed read clears is routine: the two cases no
+// read clears, which config.mjs `checkTracker` reports, are a key to correct, and repeat until someone does.
+function noReadRefusal(readTools, server, human) {
+  const why = 'this session has not read the connected workspace';
+  if (server === null) return refused(why, `tracker.writeTools names this tool with no server, so no read can clear it. Ask ${human} to correct that entry, and do not edit the key`);
   const reads = readTools.filter((name) => serverPrefix(name) === server);
-  return reads.length > 0 ? `Call ${reads.join(' or ')}, then write again` : `Ask ${human} to add a read tool on this server to tracker.readTools, and do not edit the key`;
+  if (reads.length === 0) return refused(why, `Ask ${human} to add a read tool on this server to tracker.readTools, and do not edit the key`);
+  return { ...refused(why, `Call ${reads.join(' or ')}, then write again`), routine: true };
 }
 
 function workspaceRefusal({ workspace, readTools }, tool, record, human, skipMissingRecord) {
@@ -69,7 +76,7 @@ function workspaceRefusal({ workspace, readTools }, tool, record, human, skipMis
   const server = serverPrefix(tool);
   if (server === null || serverPrefix(record?.tool) !== server) {
     if (skipMissingRecord) return null;
-    return refused('this session has not read the connected workspace', nextRead(readTools, server, human));
+    return noReadRefusal(readTools, server, human);
   }
   const value = record.unreadable === true ? null : text(record.value);
   if (value === null) {
@@ -77,6 +84,28 @@ function workspaceRefusal({ workspace, readTools }, tool, record, human, skipMis
   }
   if (withoutTrailingSlash(value) === withoutTrailingSlash(workspace.expect)) return null;
   return refused(`the connected workspace is ${JSON.stringify(value)}, and tracker.workspace.expect is ${JSON.stringify(workspace.expect)}`, `Ask ${human} whether tracker.workspace.expect is wrong or the wrong workspace is connected, and do not edit the key`);
+}
+
+// The file a routine refusal leaves for the end of its session, or null when the session id cannot name one. A refusal
+// alone cannot tell a session about to read from one whose read cannot succeed; hook-session-end.mjs can.
+export const refusalMarker = (session) =>
+  (typeof session === 'string' && /^[\w-]{1,128}$/u.test(session) ? path.join(tmpdir(), `aidrian-tracker-refused-${session}`) : null);
+
+// The cause on the `hook_deny` row of a session that ended that way.
+export const NO_READ_LANDED = 'this session was refused for no read of the connected workspace, and no read landed';
+
+// The first word of a tool name that only reads. It keeps the tools every session reads with out of the note below; a
+// write tool named this way, such as get_or_create_item, is the limit, which docs/config.md#tracker states.
+const READ_NAME = /^(?:get|list|search|read|find|fetch|query|view|show|describe|whoami)(?![a-z])/u;
+
+// Whether `tool` ran on a server that `tracker.readTools` or `tracker.writeTools` names with neither list naming it, and
+// with a name that does not say it only reads: the guard let it run unjudged, and it may be a write the lists have not
+// caught up with.
+export function unlistedTool({ readTools, writeTools }, tool) {
+  const server = serverPrefix(tool);
+  if (server === null || readTools.includes(tool) || writeTools.some((pattern) => nameMatches(pattern, tool))) return false;
+  if (READ_NAME.test(tool.slice(server.length))) return false;
+  return [...readTools, ...writeTools].some((name) => serverPrefix(name) === server);
 }
 
 const withoutTrailingSlash = (value) => (value.endsWith('/') ? value.slice(0, -1) : value);

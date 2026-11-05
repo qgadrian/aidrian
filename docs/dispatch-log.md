@@ -94,6 +94,9 @@ can land out of order and still count the right one.
 The Bash rules, the main-checkout rule for writes, the [agent gates](hooks.md#agent-gates), the config guard,
 the [tracker write guard](config.md#tracker), and the question names check write one row per block, while config.json `telemetry.hookDenies` is on.
 The call is still blocked when it is off.
+The tracker write guard's refusal of a write with no read yet, when it names a read to call, writes no row when it happens,
+since every session that writes meets it.
+It writes one row at the end of a session with no read recorded, on a host with SessionEnd: [config.md](config.md#how-a-write-is-judged) has the rule.
 
 | Field | Meaning |
 | --- | --- |
@@ -106,7 +109,8 @@ The call is still blocked when it is off.
 The `reason` is:
 
 - for a gate, the gate itself, such as `agents.explorer.deny has "WebFetch"`;
-- for `tracker-guard`, the cause of the refusal, with the value refused, such as `team is "Other", and tracker.team.values allows "Notes"`;
+- for `tracker-guard`, the cause of the refusal, with the value refused, such as `team is "Other", and tracker.team.values allows "Notes"`,
+  or, for the row at a session's end, `this session was refused for no read of the connected workspace, and no read landed`;
 - for any other rule, the first sentence of its message, such as `this skips a git hook.`;
 - never a parenthesized absolute path, such as the main checkout's folder, which is left out.
 

@@ -618,6 +618,8 @@ A team sets `telemetry` in `config.json`, and one developer in the git-ignored `
   The two files hold about twice `maxMb` at most, and `aidrian report` reads both.
 - `hookDenies: false`: the Bash rules, the main-checkout rule, the agent gates, and the config guard still block,
   and write no `hook_deny` row ([hooks.md](hooks.md#recorded-blocks)). A rule that keeps blocking one session still becomes a lesson.
+  The exception is the tracker write guard's [no-read refusal](#how-a-write-is-judged): with this key or `enabled` off,
+  a session stuck on it leaves no row and no lesson, though the agent still sees each refusal.
 
 The last three keys were `doc_reads`, `max_mb`, and `hook_denies`; a file that still sets one gets an error naming the new key.
 
@@ -1110,9 +1112,30 @@ Only the fields this key names are read, so a project lists every field it wants
 a tool that names its team in a field missing from `createFields` passes unchecked.
 The same holds for tools: a tool that matches no pattern in `writeTools` passes unchecked, including every tool of a connection under another server name.
 
+Both lists are copied into the project, so a tool the tracker adds later is on neither.
+After a call of a tool on a server either list names, when neither list names the tool,
+the first hook files an [automatic lesson](lessons.md#automatic-lessons), `tracker-unlisted:<tool>`, in the project's inbox.
+It never refuses the call. The lesson asks for the tool in `writeTools` when it writes.
+A tool that only reads is told apart by its name's first word:
+`get`, `list`, `search`, `read`, `find`, `fetch`, `query`, `view`, `show`, `describe`, or `whoami`.
+That has two limits. A write tool named that way, such as `get_or_create_item`, is not noted.
+A read tool named otherwise is noted, and rejecting its lesson ends that, since the same tool never reopens it.
+A tool on a server neither list names is not noted, so a connection under another server name stays out of sight.
+
 A refused reason holds the workspace or input value it refused.
 While `telemetry.hookDenies` is on, that cause goes to the [`hook_deny` row](dispatch-log.md#hook_deny-when-one-of-the-plugins-rules-blocks-a-tool-call)
 of the local dispatch log, so the values may reach it, cut to 120 characters. The rest of the input does not.
+
+The refusal of rule 1 that names a read to call is the guard's normal flow: a session that writes meets it once, reads, and goes on.
+When it happens it writes no `hook_deny` row and adds no block count, so healthy sessions and a batch of first writes read as no hot spot.
+It leaves a marker in the system's temporary folder instead, and the session's end settles it.
+A session that ends with no read recorded writes one `hook_deny` row, whichever way the read was lost: failing, renamed upstream, or never tried.
+Over several sessions those rows raise the usual hot spot in `aidrian report health`, and the row counts once toward the session's block count.
+With `telemetry.enabled` or `telemetry.hookDenies` off, a session stuck on this refusal leaves no row and no lesson,
+though the agent still sees each refusal.
+A session with any recorded read writes none, even when the read was on another server than the refused write.
+Every other refusal is recorded when it happens, including rule 1's two that no read clears, which need the key corrected.
+This depends on the session-end hook: on a host with no SessionEnd, and in a session that crashes, the refusal stays uncounted.
 
 ## Checking
 

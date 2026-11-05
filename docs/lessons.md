@@ -186,7 +186,7 @@ A limit of `0` turns that reason off. [config.md](config.md) lists the keys.
 
 ## Automatic lessons
 
-The plugin records four signals it already sees as lessons of its own, with `source: auto`.
+The plugin records five signals it already sees as lessons of its own, with `source: auto`.
 Each has a key, so it dedupes by itself: one lesson per signal, one occurrence per event,
 and an occurrence after its fix reopens it like any other.
 
@@ -201,13 +201,21 @@ A signal with target `plugin` lands in the [plugin's inbox](#the-plugins-inbox).
 - **One of the plugin's [blocking rules](hooks.md#recorded-blocks) blocks one session 3 times.** Key `hook-deny:<rule>`; P2, `gap`;
   target `project` for `agent-gates` and `tracker-guard`, whose gates and `tracker` key the project writes, `plugin` for any other.
   It stays quiet: one block is the rule doing its job; three in a session is an agent fighting it.
+  The tracker write guard's [refusal of a write with no read yet](config.md#how-a-write-is-judged) counts once at most, at the session's end,
+  and only when no read was recorded, so a batch of first writes never fires this, and a session stuck on that refusal files no lesson by itself.
+  With `telemetry.enabled` or `telemetry.hookDenies` off, such a session leaves no row either, though the agent still sees each refusal.
 - **`aidrian pr await-review --request` stops at the round limit**, config.json `github.maxReviewRounds`.
   Key `review-rounds`; P2, `project`.
   It stays quiet: it fires once per pull request and round count, and a re-run at the same count adds nothing.
+- **A tool runs on a server the [tracker](config.md#tracker) lists name, and neither list names the tool.**
+  Key `tracker-unlisted:<tool>`; P2, `gap`; target `project`.
+  It stays quiet: a tool whose name says it only reads is left out, a session writes one row per tool,
+  and a tool is one occurrence for good, so a lesson rejected because the tool only reads never reopens.
 
 A row holds names, counts, paths, and ids, never a prompt, a command, or tool output; the `session` id finds the rest.
 The block counts live in the system's temporary folder, in one folder per session with a small file per rule, which grows
 a byte per block, so subagents that block at the same time all count; the session-end hook deletes the session's folder.
+That folder also holds a marker per tool noted, so a session notes each tool once.
 
 Not recorded: the session-length reminder fires in most long sessions by design, and its numbers are already in the dispatch log.
 Another producer, such as a script that reads `aidrian report`, can add its own signal with `aidrian lesson add --key <key>`.
@@ -216,7 +224,7 @@ a sent-back agent, a blocking rule, and review rounds take the keys above, so ea
 and the other problems take `health:<kind>`, followed by `:<agent or doc>` when the problem has one.
 A problem whose key belongs to a resolved lesson is captured only when the rows dated after that resolution show it again,
 so the failures that led to a fix never reopen it.
-`"lessons": { "auto": false }` in config.json turns all three off.
+`"lessons": { "auto": false }` in config.json turns all of them off.
 
 ## Rows from the first version
 

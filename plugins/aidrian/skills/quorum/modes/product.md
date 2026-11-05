@@ -108,7 +108,8 @@ The product owner has no shell: for the Evidence block's `route` and `search`, i
    with the Ruling's `class`, `reversible`, and `docs`. A missing field, or a command that fails, means `ask`.
    **Route.** Run the route on the ledger, as that file's § After a ruling says.
    A run whose starting route had `resolve.authority` `ask` waits, whatever the Ruling's answers resolve to.
-   Only a run the route started, with `quorum.product.autoStart` on, `approval: "review-later"`, and `resolve`'s `decide`, can let work continue:
+   Only a run the route started, with `quorum.product.autoStart` on, `approval: "review-later"`, and `resolve`'s `decide`, can let work continue.
+   The route and the writer read `trigger`, and only `the route, with resolve's decide` continues:
    then follow its continue path, ask nothing, and report.
    **Ask.** Otherwise ask, write `human_answer`, and run `quorum check`. A run that waits always asks, under `ask` and `decide` alike:
    `decide` settles nothing here,

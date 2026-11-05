@@ -842,7 +842,9 @@ After a ruling, `aidrian quorum route --ledger` applies the same answer to the r
 Under `review-later` and `decide`, work waits for the Human when the ruling escalates, when a fact could make the decision harder to undo,
 when a fact the repository can settle does not keep the winner once a read-only `explorer` dispatch settles it,
 or, on a ledger already provisional, when its marker was rejected, was settled, or is not on record.
-A run whose starting route had `resolve.authority` `ask` waits, whatever the Ruling's answers resolve to.
+A run whose starting route had `resolve.authority` `ask` waits, whatever the Ruling's answers resolve to, and so does a run the Human started:
+`route --ledger`, `aidrian quorum provisional`, and `quorum check` on a provisional ledger read the ledger's `trigger`, and only `the route, with resolve's decide` continues.
+At or above `secondLook`'s `minSeverity`, or with an unknown severity, the writer refuses until the ledger's `second_look` holds `sign_off: approved`.
 With `autoStart` on, a `ux` ruling of class `product-behaviour` continues where `domains.product` decides, whatever `domains.ux` says,
 since `resolve` judges that class under `product`.
 Every other flipping fact goes in the record for the batch review, and work continues. Under `first`, the Human sees them all before deciding.

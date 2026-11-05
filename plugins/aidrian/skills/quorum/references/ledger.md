@@ -215,7 +215,7 @@ The fields marked optional are absent on a ledger written before them, which sta
 - `plan_hash`: `git hash-object` of the question file.
 - `same_model`: `true` exactly when two positions share a runner.
 - `same_model_reason`: which positions share one and why, or `null`.
-- `trigger`: what started the run: `the Human asked`, or, on a run the route started, `the route, with resolve's <authority>`.
+- `trigger`: what started the run: `the Human asked`, or, on a run the route started, `the route, with resolve's <authority>`. The route after a ruling, `aidrian quorum provisional`, and `quorum check` on a provisional ledger read it, and only `the route, with resolve's decide` continues. With no `provisional`, any value stays valid under `quorum check`.
 - `trace`: what the tracer found, word for word, for the report and the grillers.
 - `persona_docs`: every row of `aidrian-knowledge index` whose tags hold `personas`, inside the repository, other than `product-access`, from the repository root, whichever one took part. A winner resting only on these is invalid.
 - `premise`: why the decision is open.
@@ -285,8 +285,12 @@ The fields marked optional are absent on a ledger written before them, which sta
     - `outcome.disputes[].topic`: the disagreement.
     - `outcome.disputes[].owner`: who settles it.
 - `human_answer`: the Human's answer to the ruling, word for word, or `null` while deferred. Only this settles the decision, and it stands when the cited code later changes.
-- `provisional`: optional, on a `rule` only, and written only by `aidrian quorum provisional`, which refuses a ledger that fails `quorum check` with no exemption, or that the base branch's settings keep waiting. Work continued on the recommendation, which settles nothing but stands when the cited code later changes, since implementing it changes that code. `quorum check` reads no settings, and exits 1 on it where no setting could let the route after a ruling continue, or on a ruling whose verdicts miss what it rules on. Beside a `human_answer`, both stay on record and the answer governs.
+- `provisional`: optional, on a `rule` only, and written only by `aidrian quorum provisional`, which refuses a ledger that fails `quorum check` with no exemption, or that the base branch's settings keep waiting, or whose second look is missing or not approved. Work continued on the recommendation, which settles nothing but stands when the cited code later changes, since implementing it changes that code. `quorum check` reads no settings, and exits 1 on it where no setting could let the route after a ruling continue, or on a ruling whose verdicts miss what it rules on. Beside a `human_answer`, both stay on record and the answer governs.
   - `provisional.marker`: the `id` of the decision marker that records it. Once that marker is `confirmed`, `rejected`, or gone, the route after a ruling waits for the Human.
+- `second_look`: optional, the agent's answer to the second look on this ruling, as `knowledge/references/decisions.md` says. `aidrian quorum provisional` refuses when `aidrian decisions resolve` prints a `secondLook`, `ruling.severity` is at or above its `minSeverity` or unknown, and this is missing or its `sign_off` is not `approved`.
+  - `second_look.agent`: the agent that looked.
+  - `second_look.sign_off`: its answer, `approved` when it agrees.
+  - `second_look.reason`: why, in its words.
 
 ## Agent answers
 

@@ -174,12 +174,14 @@ A class `--vocab` gives a `domain` resolves in that domain, whatever the ruling'
 - On `human` for a ledger with `human_answer` set, act on `human_answer` rather than ask again.
 - A `secondLook` disagreement or a `blocked` run waits for the Human.
 - A run whose starting route had `resolve.authority` `ask` waits, whatever the Ruling's answers resolve to.
-  Give the Ruling that route's class, answers, and docs, and write the authority in the ledger's `trigger`, so a resume reads it.
+  Give the Ruling that route's class, answers, and docs, and write the authority in the ledger's `trigger`.
+  `route --ledger`, the writer, and `quorum check` on a provisional ledger read it, and only `the route, with resolve's decide` continues:
+  a run the Human started, or one whose route asked, prints `human` or waits, whatever the settings.
 - **It waits**, on `wait` true with an empty `settle`. With the Human present, round 9 of the mode asks as usual.
   With the Human absent, the ledger stays deferred, the question goes in the report with the recommendation and the simulated-user caveat,
   and independent work continues.
   Dependent code keeps no guess at the answer.
-- **It continues**, on a run the route started and on `wait` false or a non-empty `settle`: the order below.
+- **It continues**, on `wait` false or a non-empty `settle`: the order below.
   Each fact in `listed` goes in the record for the batch review.
 
 ### The continue path
@@ -196,8 +198,10 @@ In this order. Each step that fails waits for the Human.
 3. **Settle** each fact in `settle` with one read-only `explorer` dispatch, in all. A result that flips the winner, or settles nothing, waits.
    No ledger field records a settled fact, so `route` still lists it, with `wait` true, and the writer accepts that:
    the result, with its citation, goes in the report and the pull request's Decisions section, and the coordinator holds it for the session.
-   Then, with or without a fact to settle, take the [second look](#second-look) on the ruling's `severity`.
+   Then, with or without a fact to settle, take the [second look](#second-look) on the ruling's `severity`;
+   its answer goes in the ledger's `second_look`, as `{ agent, sign_off, reason }`.
 4. **The writer**, `aidrian quorum provisional <ledger> --plan <question> --marker <id>`.
+   It refuses until a second look the ruling's `severity` calls for holds `sign_off: approved`, an unknown severity included.
    It runs before the implementing commit, since afterwards it can refuse on a changed citation, its check having no exemption.
    It runs before the marker, since each committed marker counts toward the domain's pause and could turn the route to `human`.
    After it, `route --ledger` prints `human` until the marker exists in the working copy, so a resume in that window waits.

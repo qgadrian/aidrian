@@ -624,7 +624,7 @@ test('product mode round 9 runs the resolve in the ruling\'s own domain, and ask
   assert.match(text, /"outcome", "class", "reversible", "docs", "domain", "severity", "reverts_by"\}/);
 });
 
-const AUTO_CASES = ['off', 'small-clear', 'hard-first', 'hard-review-later', 'hard-to-undo'].map((name) => `product-quorum-auto-start-${name}`);
+const AUTO_CASES = ['off', 'small-clear', 'hard-first', 'hard-review-later', 'hard-to-undo', 'human-started', 'started-on-ask'].map((name) => `product-quorum-auto-start-${name}`);
 const flat = (rel) => readFileSync(path.join(ROOT, rel), 'utf8').replace(/\s+/g, ' ');
 const AIDRIAN = path.join(PLUGIN, 'bin/aidrian');
 const RULE_FILE = `plugins/aidrian/skills/${DECISION_RULE}`;
@@ -669,6 +669,8 @@ test('the shared rule states the continue path in its order, and why the writer 
     /before the marker, since each committed marker counts toward the domain's pause/,
     /prints `human` until the marker exists in the working copy, so a resume in that window waits/,
     /A `human` whose reason names a settled marker means read the rule in its doc, not ask again/,
+    /its answer goes in the ledger's `second_look`/,
+    /refuses until a second look the ruling's `severity` calls for holds `sign_off: approved`/,
     /goes in the report and the pull request's Decisions section, and the coordinator holds it for the session/,
     // resolve asks on a doc escalateDocs covers, and `--ledger` takes no `--doc`.
     /a continued ruling whose marker doc `escalateDocs` covers waits/,
@@ -790,9 +792,14 @@ test('a run the Human starts always asks, and only a run the route started conti
   for (const file of [RULE_FILE, 'docs/config.md']) {
     assert.match(flat(file), /A run the Human starts always asks; only a run the route started continues provisionally/, file);
   }
-  for (const name of ['hard-review-later', 'hard-to-undo']) {
+  for (const [name, want] of [['hard-review-later', "the route, with resolve's decide"], ['hard-to-undo', "the route, with resolve's ask"], ['human-started', 'the Human asked'], ['started-on-ask', "the route, with resolve's ask"]]) {
     const { trigger } = JSON.parse(readFileSync(path.join(PLUGIN, 'evals', `product-quorum-auto-start-${name}`, 'ledger.json'), 'utf8'));
-    assert.match(trigger, /^the route, with resolve's (decide|ask)$/, name);
+    assert.equal(trigger, want, name);
+  }
+  // A script holds a run to how it started, so no doc says only the text does.
+  const holds = /only `the route, with resolve's decide` continues/;
+  for (const file of [RULE_FILE, 'plugins/aidrian/skills/quorum/modes/product.md', 'plugins/aidrian/skills/quorum/references/ledger.md', 'docs/project-folder.md', 'docs/config.md']) {
+    assert.match(flat(file), holds, file);
   }
 });
 
@@ -863,7 +870,7 @@ test('the automatic product quorum eval cases are whole, and each scaffold seeds
   };
   const pick = ({ route, wait }) => [route, wait];
   const behaviour = (hard) => ['--domain', 'product', '--class', 'product-behaviour', '--reversible', 'no,no,no,no', '--hard', hard, '--doc', 'docs/booking.md'];
-  const [offCase, smallCase, firstCase, laterCase, undoCase] = AUTO_CASES;
+  const [offCase, smallCase, firstCase, laterCase, undoCase, humanCase, onAskCase] = AUTO_CASES;
 
   const off = seed(offCase);
   const { hardness } = JSON.parse(readFileSync(path.join(off.dir, 'handoff.json'), 'utf8'));
@@ -891,6 +898,18 @@ test('the automatic product quorum eval cases are whole, and each scaffold seeds
   const asked = undo.route('--ledger', undo.ledger, '--domain', 'product');
   assert.deepEqual([...pick(asked), asked.resolve.authority], ['quorum', true, 'ask'], 'a yes on stored data asks, under review later too');
   assert.equal(undo.raw('quorum', 'provisional', undo.ledger, '--plan', plan(undo), '--marker', 'hold-slot').status, 1, 'and the writer refuses it');
+
+  // A ruling resolve would let an agent decide: only how the run started keeps it with the Human.
+  for (const [name, why] of [[humanCase, 'the Human asked'], [onAskCase, "the route, with resolve's ask"]]) {
+    const run = seed(name);
+    assert.equal(run.raw('quorum', 'check', run.ledger, '--plan', plan(run)).status, 0, name);
+    const out = run.route('--ledger', run.ledger, '--domain', 'product');
+    assert.deepEqual([...pick(out), out.resolve.authority], ['human', true, 'decide'], name);
+    assert.ok(out.reason.includes(why), name);
+    const refused = run.raw('quorum', 'provisional', run.ledger, '--plan', plan(run), '--marker', 'release-slot');
+    assert.equal(refused.status, 1, `${name}: the writer refuses`);
+    assert.ok(!Object.hasOwn(JSON.parse(readFileSync(run.ledger, 'utf8')), 'provisional'), name);
+  }
 });
 
 test('persona audit triage resolves a held item and reports it, and still asks the Human under decide', () => {

@@ -26,6 +26,7 @@ import { parseArgs } from 'node:util';
 import { commandConfig, committedQuorumProduct, DEFAULTS, MAX_PLAN_OBJECTIONS } from './config.mjs';
 import { answers as reversibleAnswers, resolveQuestion, reversibleProblem, scanDecisions } from './decisions-cli.mjs';
 import { DECISION_STATUSES, isDecisionId } from './decisions.mjs';
+import { loadTable as severityTable } from './finding-disposition.mjs';
 import { insidePath, isFile, isObject, linksOutside } from './fs.mjs';
 import { runGit } from './git.mjs';
 import { committedConfigFile, projectAt } from './project.mjs';
@@ -435,6 +436,7 @@ export const PRODUCT_LEDGER_SCHEMA = Object.freeze({
     },
     human_answer: { type: ['string', 'null'] },
     provisional: { type: 'object', additionalProperties: false, required: ['marker'], properties: { marker: { type: 'string' } } },
+    second_look: { type: 'object', additionalProperties: false, required: ['agent', 'sign_off', 'reason'], properties: { agent: { type: 'string' }, sign_off: { type: 'string' }, reason: { type: 'string' } } },
   },
 });
 
@@ -1171,7 +1173,7 @@ export function productProblems(ledger, maxLoops = MAX_PLAN_OBJECTIONS) {
   if (ledger.outcome !== null && ledger.ruling?.decision !== 'rule') problems.push('outcome: set but no ruling rules');
   if (ledger.human_answer !== null && ledger.ruling === null) problems.push('human_answer: set but nothing was ruled');
   if (ledger.provisional !== undefined) {
-    const gap = rulingGap(ledger) ?? undoGap(ledger);
+    const gap = rulingGap(ledger) ?? continueGap(ledger);
     if (gap) problems.push(`provisional: ${gap}`);
     if (!isDecisionId(ledger.provisional.marker)) problems.push(`provisional: marker ${JSON.stringify(ledger.provisional.marker)} is no decision marker's id`);
   }
@@ -1363,8 +1365,26 @@ function rulingGap(ledger) {
   return null;
 }
 
-// The line that stops review later on a ledger with no rulingGap, or null. It stops only there: under first or ask, the Human sees the fact.
-const undoGap = (ledger) => (ledger.outcome.flips_if.some((entry) => entry.could_harden_undo) ? 'a flipping fact could make the decision harder to undo' : null);
+// The one `trigger` that lets work continue. A ledger written before the route existed, or a run the Human started, holds another and stays valid: it asks.
+const CONTINUING_TRIGGER = "the route, with resolve's decide";
+
+// The line that stops review later on a ledger with no rulingGap, or null. It stops only there: under first or ask, the Human
+// sees the fact, and a hard-to-undo ruling keeps resolve's own answer. `route --ledger`, the writer, and `quorum check` on a provisional ledger all read it.
+function continueGap(ledger) {
+  if (ledger.trigger !== CONTINUING_TRIGGER) return `only a run the route started under resolve's decide continues, and this ledger's trigger is ${JSON.stringify(ledger.trigger ?? null)}`;
+  return ledger.outcome.flips_if.some((entry) => entry.could_harden_undo) ? 'a flipping fact could make the decision harder to undo' : null;
+}
+
+// Why the writer waits for the second look on a ruling, as one line, or null: `look` is resolve's `secondLook`, null when it is off.
+// An unknown severity counts as at or above `minSeverity`, as a missing one does for a specialist's decision.
+function secondLookGap({ ruling, second_look: taken }, look) {
+  if (!look) return null;
+  const { severities, severitySynonyms } = severityTable();
+  const word = ruling.severity.trim().toLowerCase();
+  const rank = severities.indexOf(severitySynonyms[word] ?? word);
+  if (rank > severities.indexOf(look.minSeverity) || taken?.sign_off === 'approved') return null;
+  return `second look: ${look.agent} must approve a ruling of severity ${shown(ruling.severity)}, at or above ${look.minSeverity} or unknown, and second_look ${taken ? `says ${JSON.stringify(taken.sign_off)}` : 'is missing'}`;
+}
 
 // Why a provisional ledger's marker no longer carries it, as one line, or null. `status` is what the docs on record say, or
 // null with no such marker, as after the Human's undo. Only `unconfirmed` carries it: `decisions set` writes `confirmed` for
@@ -1403,8 +1423,8 @@ export function routeAfterRuling({ autoStart, approval }, ledger, answer, domain
   if (!autoStart) return waits('as-today', 'quorum.product.autoStart is off at the base branch, so the Human answers a product ruling');
   if (answer.authority !== 'decide') return waits('quorum', `resolve says ask, so the Human approves: ${answer.reason}`);
   if (approval !== 'review-later') return waits('quorum', 'approval is first, so the Human approves');
-  const harder = undoGap(ledger);
-  if (harder) return human(harder);
+  const held = continueGap(ledger);
+  if (held) return human(held);
   const settle = entries.filter((entry) => entry.settles_from_repo);
   const listed = entries.filter((entry) => !entry.settles_from_repo);
   if (settle.length) return waits('quorum', 'settle the facts in `settle` from the repository first: a result that keeps the winner is recorded and work continues, and any other waits for the Human', settle, listed);
@@ -1430,6 +1450,18 @@ function productInForce(project, base) {
   } catch {
     return DEFAULTS.quorum.product;
   }
+}
+
+// What `route --ledger` says of one ledger under `domain`, for that command and the writer alike: routeAfterRuling's answer, and `resolve`.
+// A writer runs before its marker exists, so with `writing` no marker on record is what it expects, and a settled or rejected one still stops it.
+function ledgerRoute(project, ledger, domain, { writing = false } = {}) {
+  const asked = rulingQuestion(ledger);
+  // A ruling outside the domain named asks nothing there, so resolve logs no row under a domain it was never in.
+  const outside = ledger?.ruling?.domain !== domain;
+  const resolve = asked === null || outside ? null : resolveQuestion(project, { domain, ...asked });
+  const settings = productInForce(project, resolve?.base ?? null);
+  const found = ledger?.provisional === undefined ? null : markerOnRecord(project, ledger.provisional?.marker);
+  return { ...routeAfterRuling(settings, ledger, resolve, domain, found ?? (writing ? 'unconfirmed' : null)), resolve };
 }
 
 const ROUTE_EXIT_BAD = 3;
@@ -1467,14 +1499,8 @@ function routeCommand(args, { cwd, print }) {
     } catch (error) {
       return bad(`cannot read ${values.ledger}: ${error.message}`);
     }
-    const asked = rulingQuestion(ledger);
-    // A ruling outside the domain named asks nothing there, so resolve logs no row under a domain it was never in.
-    const outside = ledger?.ruling?.domain !== values.domain;
-    const answer = asked === null || outside ? null : resolveQuestion(project, { domain: values.domain, ...asked });
-    const settings = productInForce(project, answer?.base ?? null);
-    const status = ledger?.provisional === undefined ? null : markerOnRecord(project, ledger.provisional?.marker);
-    const { route, wait, reason, settle, listed } = routeAfterRuling(settings, ledger, answer, values.domain, status);
-    print(JSON.stringify({ route, wait, reason, resolve: answer, settle, listed }));
+    const { route, wait, reason, resolve, settle, listed } = ledgerRoute(project, ledger, values.domain);
+    print(JSON.stringify({ route, wait, reason, resolve, settle, listed }));
     return 0;
   }
   if (!values.domain || !values.class) return bad('route needs --domain and --class, or --ledger');
@@ -1494,8 +1520,8 @@ const fail = (problem) => {
 };
 
 // `aidrian quorum provisional`, the one writer of `provisional`: it holds the ledger to `check` with the field left out, so
-// no exemption applies, to the field's own rules, and to what `route --ledger` says under the ruling's domain, the base branch's
-// settings, and resolve's answer, and writes only when every one passes. Any refusal exits 1, unwritten.
+// no exemption applies, to the field's own rules, to what `route --ledger` says under the ruling's domain, the base branch's
+// settings, and resolve's answer, and to the second look resolve asks for, and writes only when every one passes. Any refusal exits 1, unwritten.
 function provisionalCommand(args, { cwd, root, env, print }) {
   const bad = (problem) => {
     console.error(`usage: aidrian quorum ${PROVISIONAL_USAGE}\n\naidrian quorum provisional: ${problem}`);
@@ -1537,10 +1563,10 @@ function provisionalCommand(args, { cwd, root, env, print }) {
   for (const escape of escapes) console.error(`${file}: warning: ${escape}`);
   if (stale.length) return refuse(stale.map((line) => `${line} in a complete ledger`));
   // The stops above hold the Ruling's fields, so its question is there to ask, and this adds resolve's row with resolve's key.
-  const { domain } = bare.ruling;
-  const answer = resolveQuestion(project, { domain, ...rulingQuestion(bare) });
-  const { route, wait, reason, settle } = routeAfterRuling(productInForce(project, answer.base), bare, answer, domain);
+  const { route, wait, reason, settle, resolve } = ledgerRoute(project, marked, bare.ruling.domain, { writing: true });
   if (route !== 'quorum' || (wait && !settle.length)) return refuse([`the route is ${route}, with wait ${wait}, so no work continues: ${reason}`]);
+  const look = secondLookGap(bare, resolve.secondLook);
+  if (look) return refuse([look]);
   for (const problem of problems) print(problem);
   writeFileSync(file, `${JSON.stringify(marked, null, 2)}\n`);
   print(`provisional: marker ${values.marker}`);

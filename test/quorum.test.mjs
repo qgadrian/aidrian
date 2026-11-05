@@ -2786,7 +2786,8 @@ test('quorum route prints resolve\'s own answer, pause and doc rules included', 
 
 const flip = (fact, settles_from_repo, could_harden_undo) => ({ fact, how_to_settle: `check ${fact}`, ...(settles_from_repo === undefined ? {} : { settles_from_repo }), ...(could_harden_undo === undefined ? {} : { could_harden_undo }) });
 const ruled = (over = {}) => ({ decision: 'rule', winner: 'A', class: 'copy', reversible: 'no,no,no,no', docs: [], domain: 'product', severity: 'low', reverts_by: 'revert the commit', ...over });
-const routeLedger = (flips = [], { ruling = ruled(), ...over } = {}) => ({ mode: 'product', status: 'complete', ruling, outcome: { conditions: [], flips_if: flips, disputes: [] }, human_answer: null, ...over });
+const ROUTE_DECIDE = "the route, with resolve's decide";
+const routeLedger = (flips = [], { ruling = ruled(), ...over } = {}) => ({ mode: 'product', status: 'complete', trigger: ROUTE_DECIDE, ruling, outcome: { conditions: [], flips_if: flips, disputes: [] }, human_answer: null, ...over });
 
 // `route --ledger` on `ledger`, written to a file outside the repository, which the command must leave as it found it.
 function ledgerRoute(t, repo, ledger, ...more) {
@@ -3060,6 +3061,9 @@ test('routeAfterRuling: no combination with a resolve answer of ask, or a wait c
     routeLedger([], { ruling: noWinner }),
     routeLedger([], { outcome: null }),
     routeLedger([], { mode: 'decide' }),
+    routeLedger([], { trigger: 'the Human asked' }),
+    routeLedger([], { trigger: "the route, with resolve's ask" }),
+    routeLedger([], { trigger: undefined }),
     null,
     [],
     'a word',
@@ -3096,6 +3100,7 @@ const MARKED = { provisional: { marker: 'keep-one-ledger' } };
 const carrying = (over = {}) => {
   const { ruling, outcome } = productLedger();
   return productLedger({
+    trigger: ROUTE_DECIDE,
     ruling: { ...ruling, class: 'copy', reversible: 'no,no,no,no', docs: ['docs/rules.md'], domain: 'product', severity: 'low', reverts_by: 'revert the commit' },
     outcome: { ...outcome, flips_if: [{ fact: 'real users want it', how_to_settle: 'ask them', settles_from_repo: false, could_harden_undo: false }] },
     ...MARKED,
@@ -3141,6 +3146,10 @@ test('product ledger: a new field off its shape stops the check, and a decide le
     [{ provisional: {} }, /\$\.provisional\.marker is missing/u],
     [{ provisional: { marker: 1 } }, /\$\.provisional\.marker must be string/u],
     [{ provisional: { marker: 'a', why: 'b' } }, /\$\.provisional\.why is not a known field/u],
+    [{ second_look: 'approved' }, /\$\.second_look must be object/u],
+    [{ second_look: { agent: 'critic', sign_off: 'approved' } }, /\$\.second_look\.reason is missing/u],
+    [{ second_look: { agent: 'critic', sign_off: 1, reason: 'r' } }, /\$\.second_look\.sign_off must be string/u],
+    [{ second_look: { agent: 'critic', sign_off: 'approved', reason: 'r', by: 'x' } }, /\$\.second_look\.by is not a known field/u],
   ]) {
     const result = d.check(carrying(over));
     assert.equal(result.status, 1, JSON.stringify(over));
@@ -3350,6 +3359,90 @@ test('quorum provisional reads the base branch\'s settings: it writes only where
   const stopped = provisionalOn(invalid, bare());
   assert.deepEqual([stopped.status, stopped.untouched], [1, true], 'an invalid config.json stops it');
   assert.match(stopped.stderr, /"quorum\.product\.approval" must be/u);
+});
+
+// Every value of `trigger` but the one, for a run the Human started, one whose route asked, and near misses.
+const OTHER_TRIGGERS = ['the Human asked', "the route, with resolve's ask", 'the route, with resolve\u2019s decide', "The route, with resolve's decide", `${ROUTE_DECIDE} `, 'the route', ''];
+
+test('only a run the route started under decide continues: check on a provisional ledger, route --ledger, and the writer agree on each other trigger', (t) => {
+  const d = markedProject(t);
+  for (const trigger of OTHER_TRIGGERS) {
+    const held = d.check(carrying({ trigger }));
+    assert.equal(held.status, 1, `check: ${trigger}`);
+    assert.match(held.stderr, /provisional: only a run the route started under resolve's decide continues/u, trigger);
+    writeFileSync(d.file, JSON.stringify(bare({ trigger })));
+    const routed = d.route();
+    assert.deepEqual([...pickRoute(routed), routed.resolve.authority], ['human', true, 'decide'], `route: ${trigger}`);
+    assert.match(routed.reason, /only a run the route started under resolve's decide continues/u, trigger);
+    const written = provisionalOn(d, bare({ trigger }));
+    assert.deepEqual([written.status, written.untouched], [1, true], `writer: ${trigger}`);
+    assert.match(written.stderr, /only a run the route started under resolve's decide continues/u, trigger);
+    assert.equal(d.check(bare({ trigger })).status, 0, `with no provisional, a ledger stays valid: ${trigger}`);
+  }
+  const { trigger: _, ...noTrigger } = bare();
+  writeFileSync(d.file, JSON.stringify(noTrigger));
+  assert.deepEqual(pickRoute(d.route()), ['human', true], 'read as JSON, no trigger at all continues nothing');
+  assert.equal(d.check(carrying()).status, 0, 'the one value continues');
+  assert.deepEqual(pickRoute(d.route()), ['quorum', false]);
+});
+
+test('a ledger of another trigger waits under every setting, and a hard-to-undo seed keeps resolve\'s own answer', (t) => {
+  const decide = { authority: 'decide', rule: 'mode', reason: 'r' };
+  for (const trigger of OTHER_TRIGGERS) {
+    const ledger = routeLedger([flip('users', false, false)], { trigger });
+    for (const autoStart of [false, true]) {
+      for (const approval of ['first', 'review-later']) {
+        assert.equal(routeAfterRuling({ autoStart, approval, maxAutoRuns: 3 }, ledger, decide, 'product').wait, true, `${trigger}, ${autoStart}, ${approval}`);
+      }
+    }
+  }
+  const repo = routeRepo(t, productConfig({ autoStart: true, approval: 'review-later' }));
+  const asks = ledgerRoute(t, repo, routeLedger([], { trigger: "the route, with resolve's ask", ruling: ruled({ reversible: 'yes,no,no,no' }) }));
+  assert.deepEqual([...pickRoute(asks), asks.resolve.authority], ['quorum', true, 'ask']);
+});
+
+test('quorum provisional refuses a ruling at or above the second look with no approved sign-off, and an unknown severity counts as above', (t) => {
+  const approved = { agent: 'critic', sign_off: 'approved', reason: 'it holds' };
+  const at = (severity, second_look) => {
+    const { ruling } = carrying();
+    return bare({ ruling: { ...ruling, severity }, ...(second_look ? { second_look } : {}) });
+  };
+  const d = markedProject(t);
+  for (const severity of ['high', 'critical', 'major', 'blocker', 'dire']) {
+    const refused = provisionalOn(d, at(severity));
+    assert.deepEqual([refused.status, refused.untouched], [1, true], severity);
+    assert.match(refused.stderr, /second look: critic must approve/u, severity);
+    assert.equal(provisionalOn(d, at(severity, approved)).status, 0, `${severity}, approved`);
+  }
+  for (const sign_off of ['rejected', 'Approved', '']) {
+    const refused = provisionalOn(d, at('high', { ...approved, sign_off }));
+    assert.deepEqual([refused.status, refused.untouched], [1, true], sign_off);
+    assert.match(refused.stderr, /second look: critic must approve/u, sign_off);
+  }
+  for (const severity of ['medium', 'low', 'nit']) assert.equal(provisionalOn(d, at(severity)).status, 0, `${severity} is below high`);
+  const review = { autoStart: true, approval: 'review-later' };
+  assert.equal(provisionalOn(markedProject(t, productConfig(review, { ...OPEN_DECISIONS, secondLook: null })), at('critical')).status, 0, 'null turns it off');
+  const stricter = markedProject(t, productConfig(review, { ...OPEN_DECISIONS, secondLook: { agent: 'architect', minSeverity: 'medium' } }));
+  const named = provisionalOn(stricter, at('medium'));
+  assert.equal(named.status, 1);
+  assert.match(named.stderr, /second look: architect must approve/u, 'the agent and the level come from the base branch');
+  assert.equal(provisionalOn(stricter, at('low')).status, 0);
+});
+
+test('the writer and route --ledger share one route: the writer refuses a marker the Human settled or rejected, and takes one not yet on record', (t) => {
+  for (const [answer, message] of [['confirmed', /the Human settled its marker keep-one-ledger/u], ['changed', /the Human settled its marker keep-one-ledger/u], ['rejected', /marker keep-one-ledger was rejected/u]]) {
+    const d = markedProject(t);
+    assert.equal(d.decisions('set', MARKED.provisional.marker, answer).status, 0, answer);
+    for (const [name, ledger] of [['first write', bare()], ['already held', carrying()]]) {
+      const refused = provisionalOn(d, ledger);
+      assert.deepEqual([refused.status, refused.untouched], [1, true], `${answer}, ${name}`);
+      assert.match(refused.stderr, message, `${answer}, ${name}`);
+    }
+  }
+  const d = markedProject(t);
+  const first = provisionalOn(d, bare(), '--plan', d.question, '--marker', 'not-written-yet');
+  assert.equal(first.status, 0, first.stderr);
+  assert.deepEqual(pickRoute(d.route()), ['human', true], 'and route waits until that marker exists');
 });
 
 test('quorum provisional logs resolve\'s row with resolve\'s key, and a ledger the check refuses logs none', (t) => {

@@ -234,6 +234,7 @@ Two commands keep a ledger honest, `roles` tells the skill who runs each role, `
   For `--domain product` or `ux`, the route is `human` when `ruling.domain` is missing or differs from `--domain`, and work continues only when they match,
   and `resolve` judges the class, so a `product-behaviour` ruling resolves under `product` whatever `--domain` says.
   Any other domain stays `as-today`.
+  Under `review-later` and `decide`, the route is `human` unless `trigger` is exactly `the route, with resolve's decide`, so only `the route, with resolve's decide` continues: a run the Human started, one whose route asked, and a ledger with no `trigger` wait. A script holds this, here, in the writer, and in `check` on a provisional ledger.
   On a ledger with `provisional`, work continues only while its marker is `unconfirmed`. So the route is `human` when its marker is `confirmed`, as after `aidrian decisions set` with `confirmed` or `changed`,
   since the Human settled it and the rule to read is in its doc, and when its marker was rejected or is not on record in the indexed docs, as after `aidrian decisions undo`.
   The route is `human`, whatever the settings, for a ledger of another mode, a `status` other than `complete`, and a ruling that escalates.
@@ -249,7 +250,8 @@ Two commands keep a ledger honest, `roles` tells the skill who runs each role, `
   An invalid config.json exits 1 on every path.
 - `aidrian quorum provisional LEDGER --plan PLAN --marker ID` is the one writer of `provisional`. It holds a product LEDGER to `check` as if the field were absent, so no exemption applies,
   and to the field's own rules below. It then applies `route --ledger`'s rule under `ruling.domain`, the base branch's settings, and `resolve`'s answer, which adds `resolve`'s row with the same `key`,
-  and refuses unless the route is `quorum` with `wait` false or a `settle` list. It writes `provisional: { marker: ID }` and exits 0 only when each passes and the Human has not answered.
+  and refuses unless the route is `quorum` with `wait` false or a `settle` list. A marker the Human settled or rejected stops it, as it stops the route, and one not yet on record does not, since the writer runs first.
+  It refuses too when `resolve` prints a `secondLook`, `ruling.severity` is at or above its `minSeverity` or unknown, and `second_look` is missing or its `sign_off` is not `approved`. It writes `provisional: { marker: ID }` and exits 0 only when each passes and the Human has not answered.
   Otherwise it exits 1, naming each problem, and leaves the file as it was. A LEDGER that records another marker is refused.
   `check` cannot tell who wrote the field, so one written by hand is held only to the rules `check` applies.
   Its one extra flag stays out of the quorum skill's text, as `route`'s do.
@@ -308,8 +310,9 @@ A product-mode ledger carries `mode: product`: a premise, 2 or 3 options, the en
 a ruling, and an `outcome`. It has no rebuttal round, and only `human_answer` settles it, on a rule or an escalation.
 The ruling may also hold `class`, `reversible`, `docs`, `domain`, `severity`, and `reverts_by`, and each `outcome.flips_if` entry `settles_from_repo` and `could_harden_undo`.
 An optional `provisional: { marker }` records work continuing on the recommendation under the decision marker `marker` names.
+An optional `second_look: { agent, sign_off, reason }` records the second look on the ruling, which the writer reads.
 `provisional` is valid on a `rule` and never on an `escalate`. `check` reads no settings, so it exits 1 on it only in these cases, where no setting could let `route --ledger` continue: a ledger not `complete`, a ruling that does not rule,
-a missing Ruling field or `flips_if` boolean, or a fact with `could_harden_undo` true. `settles_from_repo` true stays allowed. It also exits 1 on a `marker` no decision marker can hold.
+a missing Ruling field or `flips_if` boolean, a `trigger` other than `the route, with resolve's decide`, or a fact with `could_harden_undo` true. With no `provisional`, any `trigger` stays valid. `settles_from_repo` true stays allowed. It also exits 1 on a `marker` no decision marker can hold.
 Product files live under `quorum/product/`. `check` exits 1 when a `complete` ledger misses a case, the ruling, or a rule's outcome.
 On an unanswered `complete` ledger, it also exits 1 on an invalid premise, a winner resting only on the persona doc, or a winner whose case lost its evidence; on an open one it prints each as a line.
 A `provisional` ledger is exempt from those exits, as an answered one is, since implementing the recommendation can change the code its cases quote, and it prints each as a line.

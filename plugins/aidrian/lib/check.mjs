@@ -12,6 +12,7 @@ import { isWithin, linksOutside, readJson } from './fs.mjs';
 import { checkoutRoots, isIgnored, runGit } from './git.mjs';
 import { checkBudgets, indexRows, loadKnowledge, tagWarnings } from './knowledge.mjs';
 import { findProject, noProjectMessage, projectAt, stateDir, worktreesDir } from './project.mjs';
+import { ROUTED_DOMAINS } from './quorum.mjs';
 import { loadTerms } from './terms.mjs';
 
 const OPTIONS = { project: { type: 'string' } };
@@ -30,9 +31,12 @@ function untrackedDocs(project, config) {
 function quorumProductWarnings(project, { quorum: { product }, decisions }) {
   const written = readJson(project.root, project.paths.config, [])?.quorum?.product ?? {};
   const warnings = [];
-  const own = decisions.domains.product;
-  if (product.approval === 'review-later' && lowerMode(own === 'inherit' ? decisions.mode : own, decisions.maxMode) === 'ask') {
-    warnings.push('quorum.product.approval: "review-later" can never apply while the product domain resolves to "ask"; commit decisions.maxMode "decide-reversible" with a mode or domains.product of the same, or set approval to "first"');
+  const asks = (domain) => {
+    const own = decisions.domains[domain];
+    return lowerMode(own === undefined || own === 'inherit' ? decisions.mode : own, decisions.maxMode) === 'ask';
+  };
+  if (product.approval === 'review-later' && ROUTED_DOMAINS.every(asks)) {
+    warnings.push('quorum.product.approval: "review-later" can never apply while the product and ux domains both resolve to "ask"; commit decisions.maxMode "decide-reversible" with a mode, domains.product, or domains.ux of the same, or set approval to "first"');
   }
   if (product.autoStart) return warnings;
   for (const key of ['approval', 'maxAutoRuns']) {

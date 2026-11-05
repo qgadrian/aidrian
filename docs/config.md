@@ -862,7 +862,7 @@ Before turning `autoStart` on:
 - **Different winners.** Winners have varied between runs: three blind runs on one question chose two different winners.
   A recommendation is the evidence weighed once, not a settled answer.
 
-`aidrian check` warns when `approval` is `"review-later"` and the product domain resolves to `ask`, since review later could then never apply,
+`aidrian check` warns when `approval` is `"review-later"` and the product and ux domains both resolve to `ask`, since review later could then never apply,
 and when `approval` or `maxAutoRuns` is set while `autoStart` is off.
 
 ## Decisions

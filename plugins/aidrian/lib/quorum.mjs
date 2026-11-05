@@ -1313,7 +1313,7 @@ export const isClearCall = (value) => {
 };
 
 // The domains an automatic quorum may run in. Any other, an unknown one included, keeps resolve's answer as it is.
-const ROUTED_DOMAINS = Object.freeze(['product', 'ux']);
+export const ROUTED_DOMAINS = Object.freeze(['product', 'ux']);
 const otherDomain = (domain, answered = true) => `${JSON.stringify(domain ?? null)} is not a domain a quorum routes${answered ? ', so resolve\'s answer stands as it is' : ''}`;
 
 // What happens to one product decision: { route, wait, reason }. `settings` is the base branch's `quorum.product`, `call`

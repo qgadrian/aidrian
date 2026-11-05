@@ -1740,7 +1740,7 @@ test('check warns about quorum.product settings that have no effect, and stays q
     return out.stderr;
   };
   const OPEN = { maxMode: 'decide-reversible', mode: 'decide-reversible' };
-  const NEVER = /^warning: quorum\.product\.approval: "review-later" can never apply while the product domain resolves to "ask"/mu;
+  const NEVER = /^warning: quorum\.product\.approval: "review-later" can never apply while the product and ux domains both resolve to "ask"/mu;
   const APPROVAL = /^warning: quorum\.product\.approval is set, but quorum\.product\.autoStart is off, so it has no effect/mu;
   const RUNS = /^warning: quorum\.product\.maxAutoRuns is set, but quorum\.product\.autoStart is off, so it has no effect/mu;
   const product = (settings, decisions) => ({ quorum: { product: settings }, ...(decisions ? { decisions } : {}) });
@@ -1752,7 +1752,10 @@ test('check warns about quorum.product settings that have no effect, and stays q
 
   assert.match(check(product({ autoStart: true, approval: 'review-later' })), NEVER, 'the default ask');
   assert.match(check(product({ autoStart: true, approval: 'review-later' }, { maxMode: 'ask', mode: 'decide-reversible' })), NEVER, 'held down by maxMode');
-  assert.match(check(product({ autoStart: true, approval: 'review-later' }, { ...OPEN, domains: { product: 'ask' } })), NEVER, 'the product domain alone asks');
+  assert.match(check(product({ autoStart: true, approval: 'review-later' }, { ...OPEN, domains: { product: 'ask', ux: 'ask' } })), NEVER, 'both routed domains ask');
+  assert.doesNotMatch(check(product({ autoStart: true, approval: 'review-later' }, { ...OPEN, domains: { product: 'ask' } })), NEVER, 'the product domain alone asks, and ux can still continue');
+  assert.doesNotMatch(check(product({ autoStart: true, approval: 'review-later' }, { maxMode: 'decide-reversible', domains: { ux: 'decide-reversible' } })), NEVER, 'a ux-only setup');
+  assert.doesNotMatch(check(product({ autoStart: true, approval: 'review-later' }, { ...OPEN, domains: { ux: 'ask' } })), NEVER, 'the ux domain alone asks');
   assert.doesNotMatch(check(product({ autoStart: true, approval: 'review-later' }, { maxMode: 'decide-reversible', domains: { product: 'decide-reversible' } })), NEVER, 'the product domain alone decides');
   assert.doesNotMatch(check(product({ autoStart: true, approval: 'first' })), NEVER, 'first never needs decide');
 

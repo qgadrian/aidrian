@@ -670,6 +670,7 @@ test('the shared rule states the continue path in its order, and why the writer 
     /prints `human` until the marker exists in the working copy, so a resume in that window waits/,
     /A `human` whose reason names a settled marker means read the rule in its doc, not ask again/,
     /its answer goes in the ledger's `second_look`/,
+    /Write it before changing anything a case cites: until it is on record, `quorum check` holds the ledger to its citations/,
     /refuses until a second look the ruling's `severity` calls for holds `sign_off: approved`/,
     /goes in the report and the pull request's Decisions section, and the coordinator holds it for the session/,
     // resolve asks on a doc escalateDocs covers, and `--ledger` takes no `--doc`.
@@ -841,6 +842,8 @@ test('the writer refuses once the implementing commit changed a citation, though
   const writer = ['provisional', ledger, '--plan', plan, '--marker', 'release-slot'];
   assert.equal(quorum(...writer).status, 0, 'before the commit it writes');
   writeFileSync(path.join(dir, 'src/desk.js'), 'export const today = (slots) => slots;\n');
+  const doc = path.join(dir, 'docs/booking.md');
+  writeFileSync(doc, `${readFileSync(doc, 'utf8')}\nA cancelled slot goes back at once.\n<!-- aidrian:decision id=release-slot status=unconfirmed class=product-behaviour domain=product date=2026-11-05 pr=none -->\n<!-- aidrian:decision-new id=release-slot text="A cancelled slot goes back at once." -->\n`);
   execFileSync('git', ['-C', dir, 'add', '.'], { encoding: 'utf8' });
   execFileSync('git', ['-C', dir, 'commit', '-q', '-m', 'implement'], { encoding: 'utf8' });
   assert.equal(quorum('check', ledger, '--plan', plan).status, 0, 'the exemption holds for check');

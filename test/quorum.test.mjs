@@ -3160,7 +3160,7 @@ test('product ledger: a new field off its shape stops the check, and a decide le
 });
 
 test('product ledger: a provisional ledger stays valid after a cited file changes, and an unmarked one does not', (t) => {
-  const d = decideProject(t);
+  const d = markedProject(t);
   assert.equal(d.check(productLedger()).status, 0);
   assert.equal(d.check(carrying()).status, 0);
   // The one file behind the winner's case, the ruling, and the premise, so each stale rule has a line to name.
@@ -3172,6 +3172,49 @@ test('product ledger: a provisional ledger stays valid after a cited file change
   assert.equal(marked.status, 0, marked.stderr);
   assert.match(marked.stdout, /premise: invalid: no citation passes/u, 'what stopped passing is still named');
   assert.equal(d.check(carrying({ human_answer: 'approved' })).status, 0, 'and with the Human\'s answer too');
+});
+
+test('product ledger: the stale exemption stays for an unconfirmed or confirmed marker, and ends when it is rejected or not on record', (t) => {
+  const { marker } = MARKED.provisional;
+  const dead = /premise: invalid: no citation passes in a complete ledger/u;
+  const changeCitation = (d) => write(d.root, 'docs/decisions/0001-store.md', '# 1. Store\n\n## Decision\nImplementing it changed this.\n');
+  for (const [name, verb, holds, reason] of [
+    ['unconfirmed', null, true, null],
+    ['confirmed', 'confirmed', true, /the Human settled its marker/u],
+    ['changed', 'changed', true, /the Human settled its marker/u],
+    ['rejected', 'rejected', false, /was rejected/u],
+    ['undone', 'undo', false, /is not on record/u],
+  ]) {
+    const d = markedProject(t);
+    assert.equal(d.check(carrying()).status, 0, `${name}: before the change`);
+    changeCitation(d);
+    assert.equal(d.check(carrying()).status, 0, `${name}: the code changed, with the marker unconfirmed`);
+    if (verb) {
+      const moved = verb === 'undo' ? d.decisions('undo', marker) : d.decisions('set', marker, verb);
+      assert.equal(moved.status, 0, moved.stderr);
+    }
+    const after = d.check(carrying());
+    assert.equal(after.status, holds ? 0 : 1, `${name}: ${after.stderr}`);
+    if (!holds) assert.match(after.stderr, dead, name);
+    assert.match(readFileSync(d.file, 'utf8'), /"provisional"/u, 'a refused ledger stays on disk as it was');
+    if (reason) {
+      const routed = d.route();
+      assert.deepEqual(pickRoute(routed), ['human', true], name);
+      assert.match(routed.reason, reason, name);
+    }
+    assert.equal(d.check(carrying({ human_answer: 'approved' })).status, 0, `${name}: the Human's answer lifts it all`);
+  }
+
+  // The window the continue path uses: the writer has run, and its marker does not exist yet.
+  const d = markedProject(t);
+  const written = provisionalOn(d, bare(), '--plan', d.question, '--marker', 'not-written-yet');
+  assert.equal(written.status, 0, written.stderr);
+  assert.equal(d.check(written.ledger).status, 0, 'with its citations holding, a ledger with no marker yet still passes');
+  assert.deepEqual(pickRoute(d.route()), ['human', true], 'and the route waits');
+  changeCitation(d);
+  const early = d.check(written.ledger);
+  assert.equal(early.status, 1, 'a citation changed before the marker is on record');
+  assert.match(early.stderr, dead);
 });
 
 test('product ledger: under provisional alone, a ruling no code change could break still stops the check, and an answer lifts even that', (t) => {

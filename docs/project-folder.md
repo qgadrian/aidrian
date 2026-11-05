@@ -315,7 +315,8 @@ An optional `second_look: { agent, sign_off, reason }` records the second look o
 a missing Ruling field or `flips_if` boolean, a `trigger` other than `the route, with resolve's decide`, or a fact with `could_harden_undo` true. With no `provisional`, any `trigger` stays valid. `settles_from_repo` true stays allowed. It also exits 1 on a `marker` no decision marker can hold.
 Product files live under `quorum/product/`. `check` exits 1 when a `complete` ledger misses a case, the ruling, or a rule's outcome.
 On an unanswered `complete` ledger, it also exits 1 on an invalid premise, a winner resting only on the persona doc, or a winner whose case lost its evidence; on an open one it prints each as a line.
-A `provisional` ledger is exempt from those exits, as an answered one is, since implementing the recommendation can change the code its cases quote, and it prints each as a line.
+A `provisional` ledger whose marker is `unconfirmed` or `confirmed` is exempt from those exits, as an answered one is, since implementing the recommendation can change the code its cases quote, and it prints each as a line.
+`check` looks the marker up in the indexed docs: once it is rejected or not on record, as after `aidrian decisions undo` or before the marker is written, the exemption ends, and dead citations exit 1 as on any unanswered ledger, so the next run starts over. A ledger whose citations hold still passes.
 What no code change can cause still exits 1 on a `provisional` ledger: a ruling whose `tested` or `inferences` miss what it rules on, or a rule with no supporting verdict on its winner's case.
 A ledger holding both passes with the full exemption, and `human_answer` governs.
 

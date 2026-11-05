@@ -1196,13 +1196,19 @@ function verdictFaults(ledger) {
   return faults.map((reason) => `ruling: invalid: ${reason}`);
 }
 
+// The marker statuses that keep a provisional ledger's stale exemption. Rejected or off the record, as after the Human's undo,
+// the recommendation no longer stands, so a rerun must not ask on dead citations. A marker the writer has yet to see written reads as off the record.
+const MARKER_KEEPS_EXEMPTION = Object.freeze(['unconfirmed', 'confirmed']);
+
 // Checks a product ledger in place: the decide checks with no rebuttal round; the premise needs a passing citation;
 // and a persona is a hypothesis, so a rule whose winner rests only on the persona's own doc goes back.
+// `ctx.markerStatus` is what the docs on record say of a provisional ledger's marker, or null with none.
 export function checkProductLedger(ledger, ctx) {
   const { problems, escapes, stale: decideStale } = checkDecideLedger(decideView(ledger), ctx);
   // The Human's answer settles a product ledger, and acting on it often changes the code a case quoted. So does
-  // implementing a provisional recommendation, which settles nothing and yet must not void itself.
-  const holdsToEvidence = ledger.human_answer === null && ledger.provisional === undefined;
+  // implementing a provisional recommendation, which settles nothing and yet must not void itself, while its marker stands.
+  const exempt = ledger.provisional !== undefined && MARKER_KEEPS_EXEMPTION.includes(ctx.markerStatus);
+  const holdsToEvidence = ledger.human_answer === null && !exempt;
   const stale = holdsToEvidence ? decideStale : [];
   const complete = ledger.status === 'complete';
   const invalid = (line) => {
@@ -1231,7 +1237,7 @@ export function checkProductLedger(ledger, ctx) {
     stale.push(...problems.filter((line) => dead(line) && !stale.includes(line)));
   }
   // The exemption covers what implementing the recommendation can change, and only the Human's answer lifts the rest.
-  if (complete && ledger.human_answer === null && ledger.provisional !== undefined) stale.push(...verdictFaults(ledger));
+  if (complete && ledger.human_answer === null && ledger.provisional !== undefined) stale.push(...verdictFaults(ledger).filter((line) => !stale.includes(line)));
   return { ledger, problems, escapes, stale };
 }
 
@@ -1712,7 +1718,8 @@ export const commands = {
           for (const problem of invalid) console.error(`${file}: ${problem}`);
           return 1;
         }
-        const { problems, escapes, stale } = (product ? checkProductLedger : decide ? checkDecideLedger : checkLedger)(ledger, { root, plan, env, read: reader(root) });
+        const markerStatus = product && ledger.provisional !== undefined ? markerOnRecord(projectAt(cwd), ledger.provisional.marker) : null;
+        const { problems, escapes, stale } = (product ? checkProductLedger : decide ? checkDecideLedger : checkLedger)(ledger, { root, plan, env, read: reader(root), markerStatus });
         for (const escape of escapes) console.error(`${file}: warning: ${escape}`);
         // A complete ledger whose rulings lost their evidence is not settled any more: exit 1, unwritten, so it is not reused.
         if (stale.length) {

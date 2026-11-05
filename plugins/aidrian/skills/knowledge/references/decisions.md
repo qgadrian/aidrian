@@ -207,6 +207,7 @@ In this order. Each step that fails waits for the Human.
    After it, `route --ledger` prints `human` until the marker exists in the working copy, so a resume in that window waits.
    A `human` whose reason names a settled marker means read the rule in its doc, not ask again.
 5. **The marker**, in the slice's commit, by the writer [Record it](#record-it) names, and `outcome.conditions` join the task.
+   Write it before changing anything a case cites: until it is on record, `quorum check` holds the ledger to its citations.
 6. **The guard.** Before dependent work goes on, `aidrian decisions list --added-since <base>` must show the committed marker with no unmarked `problems`.
    Plain `list` reads the working copy, so it would pass an uncommitted one.
    An uncommitted marker, or a problem on it, makes the decision wait, so no continued ruling can miss the batch review.

@@ -1,56 +1,95 @@
 # Adding a host or a tracker
 
-A new host, such as OpenCode, DeepSeek Code, or Kimi Code, or a new tracker, such as Jira, is one adapter file and its registration.
-Shared code calls `lib/hosts/index.mjs` and `lib/trackers/index.mjs`, and never reads a host's variables or names a host's tools.
+The adapter covers the differences behind the hook contract: how a host names its tools, what its payload holds, and who it says is calling.
+It does not get the plugin into a host: how a host's hooks are delivered, installed, and put on its PATH is separate work, which depends on the host.
+So a host that reads `hooks.json` as it is, as Claude Code and Codex do, is close to one adapter file.
+A host that does not needs that delivery built first, and neither host here has needed it, so none of it is proven.
+
+Shared code calls `lib/hosts/index.mjs` and `lib/trackers/index.mjs`, and never reads a host's variables or names a host's own tools.
 `test/adapters.test.mjs` iterates both registries, so an adapter added to one is checked by that alone,
-and `test/host-coupling.test.mjs` fails when shared code reads a host variable or branches on a host's tool.
+and `test/host-coupling.test.mjs` fails when shared code reads a host variable or branches on a host's tool or name.
 
 ## Adding a host
+
+### Delivery comes first
+
+The adapter's required `delivery` field names which of these three the host is:
+
+| `delivery` | The host | What it takes |
+| --- | --- | --- |
+| `hooks-json` | Reads `hooks/hooks.json` as it is, as Claude Code and Codex do | Its raw names fire each matcher, or it adds them to the matchers; the conformance suite holds that |
+| `installer` | Runs command hooks from a config of its own, as Kimi Code's docs describe | An installer that writes that config from `hooks.json`, as `codex/install-agents.mjs` writes roles |
+| `bridge` | Runs hooks in process, as OpenCode's docs describe | A bridge plugin that maps each call, runs the matching `scripts/hook-*.mjs`, and turns exit 2 into a throw |
+
+OpenCode and Kimi Code are examples of the shape, read from their docs and not run here: neither is supported, and their cases have no code yet.
+
+### Files
 
 | File | What it holds |
 | --- | --- |
 | `plugins/aidrian/lib/hosts/<id>.mjs` | The adapter, with the fields below |
 | `plugins/aidrian/lib/hosts/index.mjs` | The adapter in `HOSTS`; order is detection order, the host a shell can start inside another first |
+| `plugins/aidrian/hooks/hooks.json` | The host's raw names, where they miss a matcher. Matchers run on the raw name, before any mapping reaches a hook |
 | `test/fixtures/hosts/<id>/tracker.json` | Recorded payloads, with `live` and `provenance` saying where they came from |
 | `plugins/aidrian/providers/<id>.json` and a `GENERATORS` entry in `scripts/build.mjs` | The agents: [Adding a provider](../agent-sources.md#adding-a-provider) |
+| A plugin manifest and marketplace file, and their entry in `scripts/version.mjs` | How the host installs the plugin, and the version it reads |
+| An installer, when the host needs one | Whatever the plugin's install format leaves out, such as agents or hooks |
+| The way `aidrian` gets on its PATH | The host's own, or the step its docs give, as [Running aidrian](codex.md#running-aidrian) does |
+| `test/hosts.test.mjs` | A check against the real command, as each host has, with no model run |
+| `lib/agent-models.mjs` | How `models.<key>` reaches a dispatched agent on this host: a call it rewrites, or a role it installs |
+| `plugins/aidrian/lib/trackers/<tracker>.mjs` | An entry in each tracker's `servers` for this host, read from a live connection. The conformance suite fails without one |
 | `docs/providers/<id>.md` and its index entry | How it installs, and what was verified on it |
 
-An adapter declares:
+### The adapter's fields
 
 | Field | What it says |
 | --- | --- |
 | `id`, `name`, `ai` | Its id in the registries, what attribution records, and what the names line calls the AI |
+| `delivery` | Which delivery case above it is |
 | `detect({ env, input })` | Whether this process runs under it. It is false on an empty environment and a plain payload |
 | `identityVars`, `detectVars` | The variables a reviewer and a test run without, and those a test run also drops |
 | `sessionId(env)`, `agentName(env)`, `effort(env)`, `runEnv(env)` | What its environment says, null where it says nothing |
 | `pluginAgentPrefix`, `agentAliases(type)` | How it names this plugin's agents, and the short names a type answers to |
-| `toolName(name)` | A tool's name in the standard `mcp__<server>__<tool>`. A standard name stays as it is |
+| `toolName(name, { servers })` | A tool's name in the standard `mcp__<server>__<tool>`, taking the known servers, since a name joined by one underscore does not say where the server ends. A standard name stays as it is |
+| `rawToolName(standard)` | What a standard tool reaches a hook's matcher as, before any mapping |
+| `nativeToolName(standard)` | What its model calls that tool, for a refusal to name |
+| `serverSpelling(server)` | How it spells a server's name, such as a hyphen as an underscore |
 | `toolResponse(response)` | The objects a tool's response holds, the most direct first |
-| `hookInput(input)` | The hook payload in the standard field names. A standard payload stays as it is |
-| `hookEvents` | Each event of `hooks.json` as this host names it, or null when it has none |
+| `hookInput(input, { servers })` | The hook payload in the standard field names, with `raw_tool_name` holding what it sent when that differs. A standard payload stays as it is |
 | `fileEditTools`, `fileEdit(tool, input)` | Its file edit tools, and each call in a shape `fileEditOf` in `lib/hosts/index.mjs` lists |
 | `projectFolders` | Where a project keeps its skills and agents for it, if the plugin's lint can read them |
 | `modelsKey`, `modelChoices` | Its key under `models` in config.json, and what that key takes |
 | `capabilities.transcripts` | Whether `lib/transcript.mjs` reads its transcripts: cost rows, the names reminder, and the session-length reminder need it |
 | `capabilities.prFooterSettings` | The settings files that say whether it asks for a generated-by footer, when it does |
-| `capabilities.trackerGuard` | `verified` (`live`, `source`, or `none`), `evidence`, `unguardedRoutes`, and, when its hooks wait on a person, `hookTrust` and `trustStep` |
+| `capabilities.trackerGuard` | `verified` (`live`, `source`, or `none`), `evidence`, `unguardedRoutes`, and, when its hooks wait on a person, `hookTrust`, `trustStep`, and `offStep` |
 
 `unguardedRoutes` is how a host says what cannot be held: `[{ name, reason }]`, one per way a tracker write reaches no hook.
-`aidrian check` warns of each, and of a `hookTrust` that answers `untrusted`, while `tracker.enabled` is true.
+While `tracker.enabled` is true, `aidrian check` warns of each, of a `hookTrust` that answers `untrusted` or `off`,
+and of `verified: 'none'` on a host set up here.
 
 The standard the shared code reads is what `hooks.json` matches: `Bash`, `Agent`, the events as Claude Code names them, and `mcp__<server>__<tool>`.
-A host that differs maps to it in `hookInput` and `toolName`, as `test/fixtures/adapters/fake-host.mjs` does for a host that differs in every field.
+`test/host-coupling.test.mjs` lists each use of those tool names.
+`apply_patch` is not one of them: it is one host's file edit, read through `fileEditOf`.
+A host that differs maps to the standard in `hookInput` and `toolName`, as `test/fixtures/adapters/fake-host.mjs` does.
+A project's pattern may name a tool either way, since the gates and the guard match `tool_name` and `raw_tool_name`.
 Keep the adapter small and let it read no file when it loads: every hook loads it.
 
-### What a new host still has to check by hand
+### What the fixtures do not prove
 
-- **The hook manifest.** Both hosts read `hooks/hooks.json` as it is, and Codex sets `CLAUDE_PLUGIN_ROOT` for compatibility.
-  A host that reads another format or sets no such variable needs a generated manifest,
-  which `scripts/build.mjs` writes from `hooks.json` and `hookEvents`, as it writes agents.
-  No host needs one yet, so that generator is not built.
+`fake-host.mjs` and `fake-bridge-host.mjs` show that the shared code takes a host with other names through its registry functions.
+They run no host, so they prove nothing about a real host's payload, its matchers, its trust, or its delivery.
+A recorded payload in `test/fixtures/hosts/<id>/` proves only that the hooks judge that payload as expected,
+and its `live` field says whether a real host ever sent it.
+Only a live session with the hooks running proves a guard holds.
+[Where the tracker guard is verified](../hooks.md#where-the-tracker-guard-is-verified) says how far each host has come.
+
+### What else a new host has to check by hand
+
 - **The auto-merge guard.** `GUARDED_PATHS` in `lib/project.mjs` lists the folders that instruct a host, such as `.codex/`.
   A change to one keeps auto-merge off.
   It takes the host's folder by hand, since it is one rule over every path. The conformance suite fails on a `projectFolders` entry it does not cover.
+- **The agent names in skills.** The `knowledge` skill's sentence on `aidrian:<name>` and `aidrian-<name>` names each host's prefix.
+  A new host adds its prefix to that sentence. It stays text, since a start line for it would change what every session reads.
 - **Skills.** They are one text for every host, and some name a host's tool, such as `AskUserQuestion`.
 - **Quorum.** `quorum.*.provider` takes `agent` or `codex`.
   That names a second-opinion command the plugin runs, whichever host is running, so a new host needs nothing there.
@@ -61,18 +100,37 @@ Keep the adapter small and let it read no file when it loads: every hook loads i
 | --- | --- |
 | `plugins/aidrian/lib/trackers/<id>.mjs` | The adapter, with the fields below |
 | `plugins/aidrian/lib/trackers/index.mjs` | The adapter in `TRACKERS` |
-| `plugins/aidrian/skills/knowledge/references/tracker.md` | Its column: which tool each issue step uses |
-| `plugins/aidrian/skills/harness-setup/references/dispatches.md` | The answers setup asks for it, when setup should offer it |
 
 | Field | What it says |
 | --- | --- |
 | `id`, `name` | What `tracker.provider` takes, and how a message names it |
-| `servers` | The server names a connection shows: `any` on every host, then one list per host id, as that host's `toolName` gives them |
-| `readTool` | The tool that reports the connected workspace, an exact name |
+| `servers` | The server names a connection shows: `any` on every host, then one list per host id, as written. Each host's `serverSpelling` gives its own spelling. The conformance suite needs an entry for every shipped host, even an empty one, so each is looked at on a live connection |
+| `readTool`, `workspaceField` | The tool that reports the connected workspace, an exact name, and the field of its response that holds it |
+| `workspaceInput` | Instead of those two: the input field each write names its workspace in, judged on the call with no session read, for a tracker whose one read lists every workspace |
 | `writeVerbs` | Its write tools, as patterns after `mcp__<server>__` |
-| `workspaceField` | The field of the read's response that holds the workspace |
+| `readVerbs` | Optional: tools that only read under names the plugin's first-word check does not know, so no lesson asks about them |
 | `team` | `createFields`, the inputs that put a write in a team, and `keyFields`, the inputs that name an issue |
-| `project` | `field`, the input that names a project |
+| `project` | Optional: `field`, the input that names a project |
+| `idHint` | Optional: what a refused issue key tells the agent to do when the write is on something else |
+| `opaqueIdLimit` | The limit its opaque ids set: a UUID or a bare number names no team, so a write by one to another team passes |
+| `unguardedRoutes` | `[{ name, reason }]`: each way a write reaches no judgment, such as a tool whose arguments nest the real one. `aidrian check` warns of each |
 
 A project then writes `"tracker": { "enabled": true, "provider": "<id>", ... }` ([Tracker](../config.md#tracker)) and asks a person for no tool name.
-`test/fixtures/adapters/fake-tracker.mjs` shows one, and `test/adapters.test.mjs` runs it through the guard with no change to shared code.
+`test/fixtures/adapters/fake-tracker.mjs` and `fake-per-call-tracker.mjs` show both shapes,
+and `test/adapters.test.mjs` runs them through the guard with no change to shared code.
+Those fixtures name tools that do not exist, so a real tracker's names come from a live connection, and they prove nothing of its write tools.
+
+### The text a tracker such as Jira needs
+
+An adapter makes the guard hold. The skills that act on a tracker are text, and name Linear and GitHub Issues today, so each of these needs its branch:
+
+| Where | What it needs |
+| --- | --- |
+| `skills/knowledge/references/tracker.md` | A column: which tool each issue step uses, the key's form, and how a body closes one |
+| `skills/harness-setup/SKILL.md`, its Q1 Tracker row | The tracker as a choice, and the answers a person knows for it |
+| `skills/harness-setup/references/dispatches.md`, its tracker key section | The short key it writes, which is Linear's alone today |
+| `skills/agent-issue-writer/`: `SKILL.md`, `references/linear.md`, `references/issue-body.md`, `references/examples.md` | How an issue is written and published on it |
+| `skills/initiative-agent/`: `SKILL.md`, `references/initiative-contract.md` | How a group of issues is made on it |
+| `skills/issue-implement/`: `SKILL.md`, `steps/phase-0-resolve.md`, `steps/phases-1-4-implement.md` | How an issue is read and moved on it |
+| `skills/persona-audit-triage/references/issues.md`, `skills/planning-agent/references/plan-file.md`, `skills/pr-write/SKILL.md`, `skills/knowledge/SKILL.md` | The places that name Linear in passing |
+| `agents-src/planning/agent-issue-writer.md`, `agents-src/planning/initiative-agent.md` | The agents' own wording of the above |

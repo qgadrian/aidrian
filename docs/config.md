@@ -1134,17 +1134,20 @@ A host that is not set up here, or that no adapter can find, gets no warning, wh
 | --- | --- | --- |
 | `tracker.enabled` | `false` | `true` turns the key on. It needs a pattern in `writeTools`, and one of `workspace`, `team`, or `project`. |
 | `tracker.provider` | | The [tracker adapter](providers/adding-a-host.md#adding-a-tracker) that fills in what the file leaves out, such as `linear`. |
-| `tracker.servers` | `[]` | With `provider`: more server names, beside the ones the adapter knows, such as `acme-linear`. |
+| `tracker.servers` | `[]` | With `provider`: more server names, beside the ones the adapter knows, such as `acme-linear`. An error beside a file's `writeTools`, which replaces the list it adds to. |
 | `tracker.workspace.expect` | | The workspace a write must belong to, as `readTools` report it. |
 | `tracker.workspace.field` | the adapter's | The field of the read's response that holds that value. |
 | `tracker.readTools` | the adapter's, or `[]` | The MCP tools that read the connected workspace, as exact tool names, with no `*`; one on each server in `writeTools`. |
 | `tracker.writeTools` | the adapter's, or `[]` | The MCP tools that write to the tracker, as [tool patterns](#agents) that start with `mcp__`. |
 | `tracker.team.key` | | The team's issue key prefix, such as `NOTES` in `NOTES-12`, with no hyphen or whitespace. |
-| `tracker.team.values` | | The team names a write may set; at least one. |
+| `tracker.team.values` | with `provider`, the team's key | The team names a write may set; at least one. |
 | `tracker.team.createFields` | the adapter's | The tool input fields that name a team; at least one. |
 | `tracker.team.keyFields` | the adapter's | The tool input fields that hold an issue key; at least one. |
 | `tracker.project.values` | | The project names a write may set; at least one. |
 | `tracker.project.field` | the adapter's | The tool input field that names a project. |
+| `tracker.workspaceInput` | the adapter's | For a tracker whose every write names its workspace: that input field. It needs no read tool. |
+| `tracker.readVerbs` | the adapter's | Tools that only read under names the [first-word check](#how-a-write-is-judged) does not know, as patterns after the server. |
+| `tracker.idHint` | the adapter's | What a refused issue key tells the agent to do when the write is on something else. |
 
 - `workspace`, `team`, and `project` are `null` by default, which leaves them unset.
   One that is set needs every key of its group, after the adapter fills it in.
@@ -1187,11 +1190,13 @@ On Claude Code, a read that fails counts as no read. It goes to `PostToolUseFail
 With no earlier read, the next write is refused as a session that has not read, with no word of the failure.
 After a good read, that read stays in force, and writes keep passing.
 
+A tracker with `workspaceInput` takes no read: rules 1 to 3 become one, on the call, that the input must be present and be `workspace.expect`.
+
 Before a call that matches `writeTools`, the second hook checks these rules in order, and the first the call breaks refuses it:
 
 1. With `workspace` set, the session's latest read must be on the write's server, the `mcp__<server>__` that starts both tool names.
    Two servers can be connected to different workspaces, and the one record holds only the latest read,
-   so switching servers asks for a new read. The reason names the read tools on the write's server.
+   so switching servers asks for a new read. The reason names the read tools on the write's server, as the host's model sees them.
    With none listed there, no read can clear the rule, so the reason tells the agent to ask the Human to add one and not to edit the key.
    A write tool with no server in its name cannot be cleared either, so the reason says `tracker.writeTools` names a tool with no server,
    and tells the agent to ask the Human to correct that entry and not to edit the key.

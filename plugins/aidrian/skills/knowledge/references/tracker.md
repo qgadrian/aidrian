@@ -4,7 +4,8 @@ The project's `issue_tracker` knowledge names the tracker and its details: key f
 estimate scale, labels, and closing keyword. This file maps each issue step to the tool of the two trackers the plugin knows.
 For another tracker, use the tools that knowledge names for the same steps; with none, write nothing and return a draft.
 
-When the knowledge names no tracker, the reference decides: `ABC-123` or a `linear.app` URL is Linear;
+When the knowledge names no tracker, config.json `tracker.provider` names it, read before any reference: an `ABC-123` means another tracker's issue when it names another.
+With neither, the reference decides: `ABC-123` or a `linear.app` URL is Linear;
 `#123`, `owner/repo#123`, or a `github.com/<owner>/<repo>/issues/<n>` URL is GitHub Issues.
 Never search a tracker to guess a key.
 

@@ -13,20 +13,20 @@ the tracker write guard, and the question names check also record each block: se
 
 | When | What runs | Host | Blocks |
 | --- | --- | --- | --- |
-| A session or subagent starts | The [start lines](#start-lines) | both | no |
-| Before any tool call | The [agent gates](#agent-gates), when the project sets any | both | yes |
+| A session or subagent starts | The [start lines](#start-lines) | Claude Code, Codex | no |
+| Before any tool call | The [agent gates](#agent-gates), when the project sets any | Claude Code, Codex | yes |
 | A new turn starts: a prompt, a background agent's report, or a scheduled run | The [names reminder](config.md#names), when the last reply said "I" or "you" | Claude Code | no |
-| Before a Bash command | The [Bash rules](#bash-rules) | both | yes |
-| Before a file edit | The [main-checkout rule](#main-checkout), when the project turns it on, then the [terms rule](#terms) | both | yes |
+| Before a Bash command | The [Bash rules](#bash-rules) | Claude Code, Codex | yes |
+| Before a file edit | The [main-checkout rule](#main-checkout), when the project turns it on, then the [terms rule](#terms) | Claude Code, Codex | yes |
 | Before `EnterWorktree` in a subagent | A block: the tool would move the whole session into the worktree | Claude Code | yes |
 | Before `AskUserQuestion` | A block when a question or option says "I", "me", "my", "you", or "your" (or a form of them, such as "I'm" or "yourself") outside code and quotes: [Names](config.md#names) | Claude Code | yes |
-| Before a GitHub MCP comment | The [review gate](config.md#review-gate), when the project turns it on, and the review-round rule | both | yes |
-| Before a GitHub MCP merge | The [merge guard](#merge-guard) | both | yes |
-| Before any MCP tool call | The [tracker write guard](config.md#tracker), when the project turns it on, on a tool in `tracker.writeTools` | both, [not live on Codex](#where-the-tracker-guard-is-verified) | yes |
-| After any MCP tool call | The tracker write guard's record of the connected workspace, on a tool in `tracker.readTools`, and its note of a [tool neither list names](config.md#how-a-write-is-judged) | both, [not live on Codex](#where-the-tracker-guard-is-verified) | no |
+| Before a GitHub MCP comment | The [review gate](config.md#review-gate), when the project turns it on, and the review-round rule | Claude Code, Codex | yes |
+| Before a GitHub MCP merge | The [merge guard](#merge-guard) | Claude Code, Codex | yes |
+| Before any MCP tool call | The [tracker write guard](config.md#tracker), when the project turns it on, on a tool in `tracker.writeTools` | Claude Code, Codex ([not live](#where-the-tracker-guard-is-verified)) | yes |
+| After any MCP tool call | The tracker write guard's record of the connected workspace, on a tool in `tracker.readTools`, and its note of a [tool neither list names](config.md#how-a-write-is-judged) | Claude Code, Codex ([not live](#where-the-tracker-guard-is-verified)) | no |
 | Before an Agent tool call | The project's [model and effort](config.md#models) for that agent | Claude Code | no |
 | After a Markdown write | The [line-length check](#markdown-line-length) | Claude Code | feedback |
-| Before compaction | A checklist of what the summary must keep | both | no |
+| Before compaction | A checklist of what the summary must keep | Claude Code, Codex | no |
 | The Human approves a plan | The [plan handoff offer](#session-length), when the main session already costs more per call | Claude Code | no |
 | After an Agent tool call | A `dispatch` row in the [dispatch log](dispatch-log.md) | Claude Code | no |
 | The main session ends a turn | The [session-length reminder](#session-length) | Claude Code | once per step |
@@ -96,14 +96,19 @@ What the Codex source says, at `rust-v0.166.0`:
 - An app connector's tool runs through the same MCP handler as a server's, and its `PreToolUse` and `PostToolUse` hooks fire on it:
   `codex-rs/core/src/tools/registry.rs` and `handlers/mcp.rs`.
 - Its hook name is `mcp__codex_apps__<connector>__<tool>`, as `hook_tool_name` joins it.
-  The model sees one underscore in the same place, such as `mcp__codex_apps__linear_get_workspace`.
+  The model sees one underscore in the same place, such as `mcp__codex_apps__linear_get_workspace`, and a refusal names that form.
   The Codex adapter takes either, and gives the standard `mcp__codex_apps_linear__get_workspace`, so each connector counts as its own server.
+  `raw_tool_name` keeps what Codex sent, and a project's pattern may name either.
+- Every character outside `[A-Za-z0-9_]` in a tool's name becomes `_`, so the server `linear-server` reaches a hook as `mcp__linear_server__<tool>`:
+  `codex-rs/codex-mcp/src/mcp/mod.rs`.
+- A hook runs only when its entry holds a `trusted_hash` and `enabled` is not false: `codex-rs/hooks/src/engine/discovery.rs`.
 - Exit 2 with a reason on stderr blocks the call: `codex-rs/hooks/src/events/pre_tool_use.rs`. A call that fails fires no `PostToolUse`, as on Claude Code.
 
 The tests run those payloads through the real hooks, but they are not live.
 [The Codex page](providers/codex.md#prove-the-tracker-guard) has the one step a person takes to prove it, and what to look for.
 A hook on Codex runs only after that person's trust, so while `tracker.enabled` is true,
-`aidrian check` warns when Codex has the plugin and no trust on record.
+`aidrian check` warns when Codex has the plugin and no trust on record for both tracker hooks, or has either of them turned off.
+A session that reaches a known server the key leaves out hears it at the start.
 
 ## Turning hooks off
 

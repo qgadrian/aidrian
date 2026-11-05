@@ -18,12 +18,12 @@ export const UNKNOWN_HOST = Object.freeze({
   agentName: () => null,
   effort: () => null,
   runEnv: () => null,
-  toolName: (name, options) => HOSTS.reduce((each, host) => host.toolName(each, options), name),
+  toolName: (name) => HOSTS.reduce((each, host) => host.toolName(each), name),
   serverSpelling: (server) => server,
   nativeToolName: (standard) => standard,
   rawToolName: (standard) => standard,
   toolResponse: (response) => HOSTS.flatMap((host) => host.toolResponse(response)),
-  hookInput: (input, options) => HOSTS.reduce((each, host) => host.hookInput(each, options), input),
+  hookInput: (input) => HOSTS.reduce((each, host) => host.hookInput(each), input),
   capabilities: Object.freeze({}),
 });
 
@@ -38,17 +38,23 @@ export function sessionIdentity(env = process.env) {
 }
 
 // `raw`, a hook's payload, in the standard names the shared code reads: `tool_name` as mcp__<server>__<tool> for an MCP tool.
-// `servers` are the server names known so far, for a host that joins server and tool with one underscore, whose names alone do
-// not say where the server ends. A later call with more of them starts from what the host sent, so it can only name more.
-export function normalizeHookInput(raw, env = process.env, servers = [], hosts = HOSTS) {
-  const host = detectHost({ env, input: raw }, hosts);
-  const sent = typeof raw.raw_tool_name === 'string' ? { ...raw, tool_name: raw.raw_tool_name } : raw;
-  return host.hookInput(sent, { servers });
-}
+export const normalizeHookInput = (raw, env = process.env) => detectHost({ env, input: raw }).hookInput(raw);
 
 // The names a call goes by: the standard one, and what the host sent when that differs. A project's pattern may name either,
 // so a gate or the guard matches both: it is the pattern a project wrote before the layer existed that must not stop matching.
 export const toolNames = ({ tool_name: name, raw_tool_name: raw }) => [name, raw].filter((each) => typeof each === 'string' && each !== '');
+
+// Every form a tool a project wrote down can reach a hook in: as written, as the standard, and as each host sends that.
+export const toolForms = (name, hosts = HOSTS) => {
+  const standard = UNKNOWN_HOST.toolName(name);
+  return [...new Set([name, standard, ...hosts.map((host) => host.rawToolName(standard))])];
+};
+
+// Whether some host sends `name` as it is written, or it is the standard. The form only a model sees reaches no hook.
+export const reachesAHook = (name, hosts = HOSTS) => {
+  const standard = UNKNOWN_HOST.toolName(name);
+  return name === standard || hosts.some((host) => host.rawToolName(standard) === name);
+};
 
 // Every way hosts spell a server's name, the written one first.
 export const serverSpellings = (server, hosts = HOSTS) => [...new Set([server, ...hosts.map((host) => host.serverSpelling(server))])];

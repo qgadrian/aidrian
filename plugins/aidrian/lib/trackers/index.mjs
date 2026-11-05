@@ -2,7 +2,7 @@
 // guard reads (docs/config.md#tracker). docs/providers/adding-a-host.md#adding-a-tracker says what an adapter declares;
 // test/adapters.test.mjs checks each one. config.mjs loads this on every hook, so it stays small and reads no file.
 
-import { normalizeHookInput, serverSpellings } from '../hosts/index.mjs';
+import { serverSpellings } from '../hosts/index.mjs';
 import linear from './linear.mjs';
 
 export const TRACKERS = Object.freeze([linear]);
@@ -14,14 +14,6 @@ export const trackerById = (id, trackers = TRACKERS) => trackers.find((each) => 
 // Every server name an adapter knows, on any host, in its own order, plus a project's own, as each host may spell it.
 export const knownServers = (adapter, extra = []) => [...new Set([...Object.values(adapter.servers).flat(), ...extra].flatMap((server) => serverSpellings(server)))];
 
-// The server names of every tracker, for a host whose tool names do not say where the server ends.
-export const allTrackerServers = (trackers = TRACKERS) => trackers.flatMap((adapter) => knownServers(adapter));
-
-// A hook's payload read again with the project's own `tracker.servers`, which only a loaded config knows.
-export const withProjectServers = (input, tracker, env = process.env, hosts) => (tracker.servers
-  ? normalizeHookInput(input, env, [...allTrackerServers(), ...tracker.servers.flatMap((server) => serverSpellings(server))], hosts)
-  : input);
-
 export const readToolsOf = (adapter, servers) => (adapter.readTool ? servers.map((server) => `mcp__${server}__${adapter.readTool}`) : []);
 export const writeToolsOf = (adapter, servers) => servers.flatMap((server) => adapter.writeVerbs.map((verb) => `mcp__${server}__${verb}`));
 
@@ -29,21 +21,22 @@ export const writeToolsOf = (adapter, servers) => servers.flatMap((server) => ad
 // file sets stays as written, so it overrides the adapter. `readTools` goes in only with a `workspace` to hold them to,
 // since the key pairs the two; each group is left out when unset, so a project's choice to leave one out stands.
 // A tracker whose writes each name their workspace needs no read: `workspaceInput` is that field, judged on the call itself.
-// A team named only by its key may be written by that key alone, since the guard takes the key as a value anyway.
+// Each of those a file sets stays as written. A team named only by its key may be written by that key alone, since the guard takes the key as a value anyway.
 export function expandTracker(value, adapter) {
   const servers = knownServers(adapter, Array.isArray(value.servers) ? value.servers : []);
   const expanded = { ...value };
   if (value.writeTools === undefined) expanded.writeTools = writeToolsOf(adapter, servers);
   if (isObject(value.workspace)) {
-    const field = adapter.workspaceInput ?? adapter.workspaceField;
+    const input = value.workspaceInput ?? adapter.workspaceInput;
+    const field = input ?? adapter.workspaceField;
     expanded.workspace = { ...(field ? { field } : {}), ...value.workspace };
-    if (adapter.workspaceInput) expanded.workspaceInput = expanded.workspace.field;
+    if (input) expanded.workspaceInput = value.workspaceInput ?? expanded.workspace.field;
     else if (value.readTools === undefined) expanded.readTools = readToolsOf(adapter, servers);
   }
   if (isObject(value.team)) expanded.team = { ...(typeof value.team.key === 'string' ? { values: [value.team.key] } : {}), ...adapter.team, ...value.team };
   if (isObject(value.project)) expanded.project = { ...adapter.project, ...value.project };
-  if (adapter.idHint) expanded.idHint = adapter.idHint;
-  if (adapter.readVerbs) expanded.readVerbs = adapter.readVerbs;
+  if (value.idHint === undefined && adapter.idHint) expanded.idHint = adapter.idHint;
+  if (value.readVerbs === undefined && adapter.readVerbs) expanded.readVerbs = adapter.readVerbs;
   return expanded;
 }
 

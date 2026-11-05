@@ -106,8 +106,8 @@ test('`servers` is a list of server names, and needs a provider', (t) => {
     assert.match(errors.join('\n'), /"tracker\.servers" must be a list of server names/u, JSON.stringify(servers));
     assert.equal(config.tracker.enabled, false);
   }
-  const written = { enabled: true, writeTools: ['mcp__x__save_*'], team: { key: 'A', values: ['A'], createFields: ['team'], keyFields: ['id'] }, servers: ['acme'] };
-  assert.match(load(t, written).errors.join('\n'), /"tracker\.servers" needs "tracker\.provider"/u);
+  const noProvider = { enabled: true, writeTools: ['mcp__x__save_*'], team: { key: 'A', values: ['A'], createFields: ['team'], keyFields: ['id'] }, servers: ['acme'] };
+  assert.match(load(t, noProvider).errors.join('\n'), /"tracker\.servers" needs "tracker\.provider"/u);
 });
 
 test('`servers` beside a file\'s writeTools is an error that names the server, since it would go unwatched', (t) => {
@@ -132,16 +132,71 @@ test('a null list under a provider is the same error as without one, and fills n
   }
 });
 
+const WS = { expect: 'https://linear.app/acme', field: 'url' };
+const written = (readTools, writeTools) => ({ enabled: true, workspace: WS, readTools, writeTools });
+
+test('a read and a write on one Codex connector pair in any mix of its forms', (t) => {
+  for (const [reads, writes] of [
+    [['mcp__codex_apps__linear__get_workspace'], ['mcp__codex_apps_linear__save_*']],
+    [['mcp__codex_apps_linear__get_workspace'], ['mcp__codex_apps__linear__save_*']],
+    [['mcp__codex_apps__linear__get_workspace'], ['mcp__codex_apps__linear__save_*']],
+    [['mcp__codex_apps__linear__get_workspace'], ['mcp__codex_apps_linear__save_issue']],
+  ]) {
+    const { errors, config } = load(t, written(reads, writes));
+    assert.deepEqual(errors, [], JSON.stringify([reads, writes]));
+    assert.equal(config.tracker.workspace.expect, WS.expect);
+  }
+});
+
+test('a write on one connector with a read on another is an error, as the guard would refuse it', (t) => {
+  const { errors } = load(t, written(['mcp__codex_apps__linear__get_workspace'], ['mcp__codex_apps__github__save_*']));
+  assert.equal(errors.length, 1, errors.join('\n'));
+  assert.match(errors[0], /"mcp__codex_apps__github__save_\*": no tool in "tracker\.readTools" is on its server/u);
+});
+
+test('a pattern as wide as the raw prefix is no error while a read falls under it, in either form', (t) => {
+  for (const read of ['mcp__codex_apps__linear__get_workspace', 'mcp__codex_apps_linear__get_workspace']) {
+    assert.ok(!load(t, written([read], ['mcp__codex_apps__*'])).errors.some((each) => each.includes('is on its server')), read);
+  }
+  assert.match(load(t, written(['mcp__linear__get_workspace'], ['mcp__codex_apps__*'])).errors.join('\n'), /is on its server/u, 'with no read under it, none can clear it');
+});
+
+test('a read a write pattern covers in another form is the same error as in one form', (t) => {
+  const { errors } = load(t, written(['mcp__codex_apps__linear__get_workspace'], ['mcp__codex_apps_linear__get_*']));
+  assert.match(errors.join('\n'), /a read tool cannot also match "tracker\.writeTools", and "mcp__codex_apps_linear__get_\*" covers it/u);
+  const raw = load(t, written(['mcp__codex_apps_linear__get_workspace'], ['mcp__codex_apps__linear__get_*']));
+  assert.match(raw.errors.join('\n'), /covers it/u);
+});
+
+test('the flat form only a model sees is reported as matching nothing, with the name to use', (t) => {
+  const { errors, config } = load(t, written(['mcp__codex_apps__linear_get_workspace'], ['mcp__codex_apps__linear__save_*']));
+  assert.match(errors.join('\n'), /"mcp__codex_apps__linear_get_workspace": no host sends this name, .* name it as "mcp__codex_apps_linear__get_workspace"/u);
+  assert.equal(config.tracker.workspace, null);
+});
+
+test('a value the file sets for what the adapter fills stays as written', (t) => {
+  const { config, errors } = load(t, { ...SHORT, idHint: 'use the issue key, never a UUID', readVerbs: ['triage*'] });
+  assert.deepEqual(errors, []);
+  assert.equal(config.tracker.idHint, 'use the issue key, never a UUID');
+  assert.deepEqual(config.tracker.readVerbs, ['triage*']);
+});
+
+test('a provider key may name its reads in a host\'s raw form', (t) => {
+  const servers = ['mcp__linear__', 'mcp__linear-server__', 'mcp__linear_server__', 'mcp__plugin_linear_linear__', 'mcp__claude_ai_Linear__', 'mcp__codex_apps__linear__'];
+  const { errors } = load(t, { ...SHORT, readTools: servers.map((server) => `${server}get_workspace`) });
+  assert.deepEqual(errors, []);
+});
+
 test('the keys an adapter can fill are checked when written by hand', (t) => {
-  const written = { enabled: true, workspace: { expect: 'x', field: 'cloudId' }, writeTools: ['mcp__x__save_*'], workspaceInput: 'cloudId', readVerbs: ['get*'], idHint: 'use its key' };
-  const { config, errors } = load(t, written);
+  const whole = { enabled: true, workspace: { expect: 'x', field: 'cloudId' }, writeTools: ['mcp__x__save_*'], workspaceInput: 'cloudId', readVerbs: ['get*'], idHint: 'use its key' };
+  const { config, errors } = load(t, whole);
   assert.deepEqual(errors, []);
   assert.equal(config.tracker.enabled, true);
   assert.equal(config.tracker.workspaceInput, 'cloudId');
   assert.deepEqual(config.tracker.readVerbs, ['get*']);
   assert.equal(config.tracker.idHint, 'use its key');
-  assert.match(load(t, { ...written, workspaceInput: 1 }).errors.join('\n'), /"tracker\.workspaceInput" must be a non-empty string/u);
-  assert.match(load(t, { ...written, readVerbs: 'get*' }).errors.join('\n'), /"tracker\.readVerbs" must be a list/u);
+  assert.match(load(t, { ...whole, workspaceInput: 1 }).errors.join('\n'), /"tracker\.workspaceInput" must be a non-empty string/u);
+  assert.match(load(t, { ...whole, readVerbs: 'get*' }).errors.join('\n'), /"tracker\.readVerbs" must be a list/u);
 });
 
 test('a team written by its key alone holds that key as its one value, under a provider', (t) => {

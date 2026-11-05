@@ -10,9 +10,9 @@ import { agentNameProblem, ALL, MAIN, nameMatches, patternProblem } from './agen
 import { CLASS_MAX, DECISION_DOMAINS, DECISION_MODES, decisionClasses, isClassName, lowerMode, SAFE_DEFAULTS } from './decisions.mjs';
 import { loadTable as dispositionTable } from './finding-disposition.mjs';
 import { isFile, isObject, readJson } from './fs.mjs';
-import { modelChoices } from './hosts/index.mjs';
+import { modelChoices, reachesAHook, toolForms, UNKNOWN_HOST } from './hosts/index.mjs';
 import { checkLocalReview, checkLocalVisual, checkReview, REVIEW_DEFAULTS } from './review/config.mjs';
-import { serverPrefix } from './tracker-guard.mjs';
+import { keyServer, serverPrefix } from './tracker-guard.mjs';
 import { expandTracker, TRACKERS, trackerById } from './trackers/index.mjs';
 
 // The project folder format this plugin reads. A format change raises it and documents the migration.
@@ -780,7 +780,6 @@ function checkTracker(raw, file, errors, defaults) {
     team,
     project,
     ...(provided ? { provider: provided.id } : {}),
-    ...(provided && Array.isArray(raw.servers) && raw.servers.length ? { servers: raw.servers } : {}),
     ...(perCall && paired ? { workspaceInput: value.workspaceInput } : {}),
     ...(isText(value.idHint) ? { idHint: value.idHint } : {}),
     ...(isTexts(value.readVerbs) ? { readVerbs: value.readVerbs } : {}),
@@ -842,7 +841,8 @@ function readToolProblem(name, writeTools) {
   if (name.includes('*')) return 'a read tool is an exact tool name, with no "*"';
   const problem = patternProblem(name);
   if (problem) return problem;
-  const covering = writeTools.find((pattern) => nameMatches(pattern, name));
+  if (!reachesAHook(name)) return `no host sends this name, which is the form only a model sees, so no read would ever count; name it as ${JSON.stringify(UNKNOWN_HOST.toolName(name))}`;
+  const covering = writeTools.find((pattern) => toolForms(name).some((form) => nameMatches(pattern, form)));
   return covering === undefined ? null : `a read tool cannot also match "tracker.writeTools", and ${JSON.stringify(covering)} covers it`;
 }
 
@@ -851,9 +851,12 @@ function readToolProblem(name, writeTools) {
 // a server that has a read tool, so it is not judged.
 function unclearedWriteProblem(pattern, readTools) {
   const star = pattern.endsWith('*');
-  const server = serverPrefix(star ? pattern.slice(0, -1) : pattern);
+  const stem = star ? pattern.slice(0, -1) : pattern;
+  const server = keyServer(stem);
   if (server === null) return star ? null : 'it names no server, as in mcp__<server>__<tool>, so no read can clear it';
-  return readTools.some((name) => serverPrefix(name) === server) ? null : 'no tool in "tracker.readTools" is on its server, so no read can clear it';
+  // A pattern as wide as a host's raw prefix spans servers, some of which a read clears, as a "*" before the name ends does.
+  if (star && readTools.some((name) => toolForms(name).some((form) => form.startsWith(stem)))) return null;
+  return readTools.some((name) => keyServer(name) === server) ? null : 'no tool in "tracker.readTools" is on its server, so no read can clear it';
 }
 
 // The good entries of one tool list of `tracker`; a bad one is an error and is left out, as in `agents`.

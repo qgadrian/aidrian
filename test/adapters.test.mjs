@@ -12,11 +12,10 @@ import test from 'node:test';
 import { nameMatches } from '../plugins/aidrian/lib/agent-gates.mjs';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { GUARDED_PATHS } from '../plugins/aidrian/lib/project.mjs';
-import { agentAliases, detectHost, HOSTS, normalizeHookInput, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
+import { agentAliases, detectHost, HOSTS, UNKNOWN_HOST } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { trackerWarnings, unwatchedLine } from '../plugins/aidrian/lib/tracker-check.mjs';
 import { judgeTrackerWrite, readTrackerValue, serverPrefix, unlistedTool } from '../plugins/aidrian/lib/tracker-guard.mjs';
-import { expandTracker, knownServers, readToolsOf, TRACKERS, withProjectServers, writeToolsOf } from '../plugins/aidrian/lib/trackers/index.mjs';
-import fakeBridge from './fixtures/adapters/fake-bridge-host.mjs';
+import { expandTracker, knownServers, readToolsOf, TRACKERS, writeToolsOf } from '../plugins/aidrian/lib/trackers/index.mjs';
 import fakeHost from './fixtures/adapters/fake-host.mjs';
 import fakePerCall from './fixtures/adapters/fake-per-call-tracker.mjs';
 import fakeTracker from './fixtures/adapters/fake-tracker.mjs';
@@ -50,7 +49,7 @@ function matcherProblems(host) {
   return samples.filter(([event, name, tool]) => !fires(script(event, name).matcher, tool)).map(([event, name, tool]) => `${event} ${name} misses ${tool}`);
 }
 
-for (const host of [...HOSTS, fakeHost, fakeBridge]) {
+for (const host of [...HOSTS, fakeHost]) {
   test(`host ${host.id} declares every field of an adapter`, () => {
     for (const field of ['id', 'name', 'ai', 'modelsKey', 'pluginAgentPrefix']) assert.ok(typeof host[field] === 'string' && host[field] !== '', field);
     assert.notEqual(host.id, UNKNOWN_HOST.id);
@@ -98,10 +97,9 @@ for (const host of [...HOSTS, fakeHost, fakeBridge]) {
     if (guard.hookTrust) assert.ok(typeof guard.trustStep === 'string' && guard.trustStep !== '', 'a host whose hooks wait on trust says the step');
   });
 
-  test(`host ${host.id} undoes its raw name for an MCP tool on a known server`, () => {
-    const options = { servers: ['linear', 'linear_server'] };
+  test(`host ${host.id} undoes its raw name for an MCP tool`, () => {
     for (const standard of ['mcp__linear__save_issue', 'mcp__linear_server__save_issue']) {
-      assert.equal(host.toolName(host.rawToolName(standard), options), standard);
+      assert.equal(host.toolName(host.rawToolName(standard)), standard);
     }
   });
 
@@ -147,39 +145,16 @@ for (const host of HOSTS) {
   });
 }
 
-for (const host of [...HOSTS, fakeHost]) {
+// `delivery` says which of these checks a host answers to: an `installer` or `bridge` host maps a call before any matcher sees it.
+for (const host of [...HOSTS, fakeHost].filter(({ delivery }) => delivery === 'hooks-json')) {
   test(`host ${host.id}'s raw names fire each hooks.json matcher, as it reads hooks.json as it is`, () => {
-    assert.equal(host.delivery, 'hooks-json');
     assert.deepEqual(matcherProblems(host), []);
   });
 }
 
 test('a host whose raw names miss the matchers is told apart: it fails that check, and has to name another delivery', () => {
-  assert.notDeepEqual(matcherProblems(fakeBridge), [], 'what a bridge host needs a bridge for');
-  assert.equal(fakeBridge.delivery, 'bridge');
   const lowerCase = { ...fakeHost, rawToolName: (standard) => standard.toLowerCase() };
   assert.match(matcherProblems(lowerCase).join('\n'), /hook-bash\.mjs misses bash/u);
-});
-
-test('a host that joins server and tool with one underscore finds the longest known server', () => {
-  const servers = ['linear', 'linear_server'];
-  assert.equal(fakeBridge.toolName('linear_server_save_issue', { servers }), 'mcp__linear_server__save_issue');
-  assert.equal(fakeBridge.toolName('linear_save_issue', { servers }), 'mcp__linear__save_issue');
-  assert.equal(fakeBridge.toolName('other_save_issue', { servers }), 'other_save_issue', 'an unknown server is left alone, so no name is invented');
-  assert.equal(fakeHost.toolName('mcp__linear_server_save_issue', { servers }), 'mcp__linear_server__save_issue');
-});
-
-test('a project\'s own servers reach a host whose names need them, from what the host sent', () => {
-  const env = { FAKEBRIDGE: '1' };
-  const hosts = [fakeBridge];
-  const first = normalizeHookInput({ tool_name: 'acme_tracker_save_issue' }, env, ['linear'], hosts);
-  assert.equal(first.tool_name, 'acme_tracker_save_issue');
-  const second = withProjectServers(first, { servers: ['acme_tracker'] }, env, hosts);
-  assert.equal(second.tool_name, 'mcp__acme_tracker__save_issue');
-  assert.equal(second.raw_tool_name, 'acme_tracker_save_issue');
-  const again = withProjectServers(second, { servers: ['acme_tracker'] }, env, hosts);
-  assert.deepEqual(again, second, 'a second pass starts from what the host sent');
-  assert.equal(withProjectServers(first, {}, env, hosts), first, 'with none set, nothing runs');
 });
 
 test('an unknown host is reported as unknown, on what no adapter claims', () => {
@@ -198,7 +173,7 @@ test('an unknown host still normalises what a known one sends, so a detection ca
 
 for (const tracker of [...TRACKERS, fakeTracker, fakePerCall]) {
   test(`tracker ${tracker.id} declares every field of an adapter`, () => {
-    for (const field of ['id', 'name', 'opaqueIdLimit']) assert.ok(typeof tracker[field] === 'string' && tracker[field] !== '', field);
+    for (const field of ['id', 'name']) assert.ok(typeof tracker[field] === 'string' && tracker[field] !== '', field);
     if (tracker.workspaceInput === undefined) {
       assert.ok(typeof tracker.readTool === 'string' && !tracker.readTool.includes('*'), 'a read tool is an exact name');
       assert.ok(typeof tracker.workspaceField === 'string', 'and it reports the workspace in this field');
@@ -255,10 +230,9 @@ test('a new host works through the registry with no change to shared code', () =
 test('a new host and a new tracker run the guard end to end, from its own payload', () => {
   const tracker = { ...expandTracker({ enabled: true, workspace: { expect: 'https://x.example/a' }, team: { key: 'ABC', values: ['Alpha'] } }, fakeTracker), project: null };
   const settings = { tracker, names: { human: 'the Human' } };
-  const servers = knownServers(fakeTracker);
-  const input = fakeHost.hookInput({ fakeTurn: 't', sessionId: 's', tool: 'mcp__faketracker_add_ticket', args: { projectKey: 'Beta' }, cwd: '/x' }, { servers });
+  const input = fakeHost.hookInput({ fakeTurn: 't', sessionId: 's', tool: 'mcp__faketracker__add_ticket', args: { projectKey: 'Beta' }, cwd: '/x' });
   assert.equal(input.tool_name, 'mcp__faketracker__add_ticket');
-  const read = fakeHost.hookInput({ fakeTurn: 't', sessionId: 's', tool: 'mcp__faketracker_site_info', args: {}, result: { baseUrl: 'https://x.example/a' }, cwd: '/x' }, { servers });
+  const read = fakeHost.hookInput({ fakeTurn: 't', sessionId: 's', tool: 'mcp__faketracker__site_info', args: {}, result: { baseUrl: 'https://x.example/a' }, cwd: '/x' });
   assert.ok(tracker.readTools.includes(read.tool_name));
   const value = readTrackerValue(read.tool_response, 'baseUrl', fakeHost);
   assert.equal(value, 'https://x.example/a');
@@ -306,7 +280,7 @@ test('a tracker whose calls name their workspace judges each call, with no sessi
   assert.match(judge({ cloudId: expect, projectKey: 'OTHER' }).reason, /projectKey is "OTHER"/u);
 
   const edit = 'mcp__faketickets__editTicket';
-  assert.equal(judgeTrackerWrite(settings, edit, { cloudId: expect, ticketIdOrKey: '10042' }, null), null, fakePerCall.opaqueIdLimit);
+  assert.equal(judgeTrackerWrite(settings, edit, { cloudId: expect, ticketIdOrKey: '10042' }, null), null, 'a bare number names no project: that tracker\'s stated limit');
   const wrong = judgeTrackerWrite(settings, edit, { cloudId: expect, ticketIdOrKey: 'OTHER-1' }, null);
   assert.match(wrong.reason, /use the ticket's key, or its number when it has none/u, 'the adapter\'s own hint');
   assert.doesNotMatch(wrong.reason, /UUID/u);
@@ -321,7 +295,20 @@ test('the page on adding a host says what the adapter does not cover, and names 
   for (const delivery of DELIVERIES) assert.ok(text.includes(`\`${delivery}\``), delivery);
   for (const name of ['plugins/aidrian/hooks/hooks.json', 'scripts/version.mjs', 'test/hosts.test.mjs', 'lib/agent-models.mjs', 'What the fixtures do not prove']) assert.ok(text.includes(name), name);
   assert.doesNotMatch(text, /hookEvents/u);
-  for (const field of ['serverSpelling', 'nativeToolName', 'rawToolName', 'delivery', 'workspaceInput', 'opaqueIdLimit', 'unguardedRoutes']) assert.ok(text.includes(`\`${field}`), field);
+  for (const field of ['serverSpelling', 'nativeToolName', 'rawToolName', 'delivery', 'workspaceInput', 'unguardedRoutes']) assert.ok(text.includes(`\`${field}`), field);
+});
+
+test('a value the file sets for what an adapter fills stays as written', () => {
+  const value = expandTracker({ enabled: true, workspace: { expect: 'x' }, idHint: 'mine', readVerbs: ['mine*'], workspaceInput: 'siteId' }, fakePerCall);
+  assert.equal(value.idHint, 'mine');
+  assert.deepEqual(value.readVerbs, ['mine*']);
+  assert.equal(value.workspaceInput, 'siteId');
+  assert.equal(value.workspace.field, 'siteId');
+  assert.equal(expandTracker({ enabled: true, workspace: { expect: 'x', field: 'siteId' } }, fakePerCall).workspaceInput, 'siteId', 'a field the file names is that input');
+  const filled = expandTracker({ enabled: true, workspace: { expect: 'x' } }, fakePerCall);
+  assert.equal(filled.workspaceInput, fakePerCall.workspaceInput);
+  assert.equal(filled.idHint, fakePerCall.idHint);
+  assert.deepEqual(filled.readVerbs, fakePerCall.readVerbs);
 });
 
 test('the tracker reference reads tracker.provider before a key routes to Linear', () => {
@@ -329,13 +316,12 @@ test('the tracker reference reads tracker.provider before a key routes to Linear
   assert.ok(text.indexOf('tracker.provider') < text.indexOf('`ABC-123` or a `linear.app` URL is Linear'));
 });
 
-test('Linear\'s key keeps its read, its hint, and its stated limit', () => {
+test('Linear\'s key keeps its read and its hint', () => {
   const [linear] = TRACKERS;
   const value = expandTracker({ enabled: true, workspace: { expect: 'https://linear.app/acme' }, team: { key: 'A' } }, linear);
   assert.equal(value.workspaceInput, undefined);
   assert.deepEqual(value.team.values, ['A']);
   assert.match(value.idHint, /UUID/u);
-  assert.match(linear.opaqueIdLimit, /UUID/u);
 });
 
 test('a host that declares a route it cannot guard makes it visible, and so does hook trust not given', () => {

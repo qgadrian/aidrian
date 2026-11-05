@@ -15,7 +15,7 @@ export default {
   writeVerbs: ['createTicket*', 'editTicket*', 'transitionTicket*', 'executeWrite'],
   readVerbs: ['getTicket*', 'listSites', 'lookupAccount*', 'executeRead'],
   team: { createFields: ['projectKey'], keyFields: ['ticketIdOrKey'] },
+  // A bare number such as 10042 names no project, so the team check skips it: a write by number to another project passes.
   idHint: 'use the ticket\'s key, or its number when it has none',
-  opaqueIdLimit: 'A bare number such as 10042 names no project, so the team check skips it: a write by number to another project passes.',
   unguardedRoutes: [{ name: 'executeWrite', reason: 'its arguments nest the real tool and its fields, which the guard does not read' }],
 };

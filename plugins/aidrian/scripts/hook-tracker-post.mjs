@@ -15,15 +15,13 @@ import { runHook } from '../lib/hook-io.mjs';
 import { detectHost, toolNames } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { readTrackerValue, unlistedTool } from '../lib/tracker-guard.mjs';
-import { withProjectServers } from '../lib/trackers/index.mjs';
 
-await runHook(async (given) => {
-  const project = findProject(typeof given.cwd === 'string' ? given.cwd : process.cwd());
+await runHook(async (input) => {
+  const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
   const { config } = loadConfig(project);
   const { tracker } = config;
   if (tracker.enabled !== true) return;
-  const input = withProjectServers(given, tracker);
   if (!toolNames(input).some((name) => tracker.readTools.includes(name))) {
     // Loaded only for a tool it notes, so the other MCP calls pay nothing for it.
     if (unlistedTool(tracker, input.tool_name, input.raw_tool_name)) (await import('../lib/lesson-signals.mjs')).noteUnlistedTool(input, project, config);

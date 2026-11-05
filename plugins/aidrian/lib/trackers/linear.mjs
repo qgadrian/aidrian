@@ -19,7 +19,6 @@ export default {
   team: { createFields: ['team', 'addTeams', 'setTeams', 'leadTeam'], keyFields: ['id', 'issueId', 'issue'] },
   project: { field: 'project' },
   idHint: "pass the item's UUID when it is not an issue",
-  opaqueIdLimit: 'A UUID names no team, so the team check skips it: a write by UUID to another team passes.',
   // Every write tool of its connection is a named tool that reaches the hooks.
   unguardedRoutes: [],
 };

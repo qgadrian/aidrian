@@ -51,12 +51,12 @@ neither was run here, neither is supported, and their cases have no code yet.
 | `identityVars`, `detectVars` | The variables a reviewer and a test run without, and those a test run also drops |
 | `sessionId(env)`, `agentName(env)`, `effort(env)`, `runEnv(env)` | What its environment says, null where it says nothing |
 | `pluginAgentPrefix`, `agentAliases(type)` | How it names this plugin's agents, and the short names a type answers to |
-| `toolName(name, { servers })` | A tool's name in the standard `mcp__<server>__<tool>`, taking the known servers, since a name joined by one underscore does not say where the server ends. A standard name stays as it is |
+| `toolName(name)` | A tool's name in the standard `mcp__<server>__<tool>`. A standard name stays as it is |
 | `rawToolName(standard)` | What a standard tool reaches a hook's matcher as, before any mapping |
 | `nativeToolName(standard)` | What its model calls that tool, for a refusal to name |
 | `serverSpelling(server)` | How it spells a server's name, such as a hyphen as an underscore |
 | `toolResponse(response)` | The objects a tool's response holds, the most direct first |
-| `hookInput(input, { servers })` | The hook payload in the standard field names, with `raw_tool_name` holding what it sent when that differs. A standard payload stays as it is |
+| `hookInput(input)` | The hook payload in the standard field names, with `raw_tool_name` holding what it sent when that differs. A standard payload stays as it is |
 | `fileEditTools`, `fileEdit(tool, input)` | Its file edit tools, and each call in a shape `fileEditOf` in `lib/hosts/index.mjs` lists |
 | `projectFolders` | Where a project keeps its skills and agents for it, if the plugin's lint can read them |
 | `modelsKey`, `modelChoices` | Its key under `models` in config.json, and what that key takes |
@@ -77,8 +77,8 @@ Keep the adapter small and let it read no file when it loads: every hook loads i
 
 ### What the fixtures do not prove
 
-`fake-host.mjs` and `fake-bridge-host.mjs` show that the shared code takes a host with other names through its registry functions.
-They run no host, so they prove nothing about a real host's payload, its matchers, its trust, or its delivery.
+`fake-host.mjs` shows that the shared code takes a host with another payload through its registry functions.
+It runs no host, so it proves nothing about a real host's payload, its matchers, its trust, or its delivery.
 A recorded payload in `test/fixtures/hosts/<id>/` proves only that the hooks judge that payload as expected,
 and its `live` field says whether a real host ever sent it.
 Only a live session with the hooks running proves a guard holds.
@@ -89,6 +89,9 @@ Only a live session with the hooks running proves a guard holds.
 - **The auto-merge guard.** `GUARDED_PATHS` in `lib/project.mjs` lists the folders that instruct a host, such as `.codex/`.
   A change to one keeps auto-merge off.
   It takes the host's folder by hand, since it is one rule over every path. The conformance suite fails on a `projectFolders` entry it does not cover.
+- **A separator that does not say where the server ends.** A host that joins server and tool with one underscore needs the known server names to find it,
+  longest first. No shipped host does, so `toolName` takes only the name, and such a host adds that lookup with its adapter:
+  the servers from `lib/trackers/`, passed through `normalizeHookInput` and, for `tracker.servers`, again once the config is loaded.
 - **The agent names in skills.** The `knowledge` skill's sentence on `aidrian:<name>` and `aidrian-<name>` names each host's prefix.
   A new host adds its prefix to that sentence. It stays text, since a start line for it would change what every session reads.
 - **Skills.** They are one text for every host, and some name a host's tool, such as `AskUserQuestion`.
@@ -113,13 +116,15 @@ Only a live session with the hooks running proves a guard holds.
 | `team` | `createFields`, the inputs that put a write in a team, and `keyFields`, the inputs that name an issue |
 | `project` | Optional: `field`, the input that names a project |
 | `idHint` | Optional: what a refused issue key tells the agent to do when the write is on something else |
-| `opaqueIdLimit` | The limit its opaque ids set: a UUID or a bare number names no team, so a write by one to another team passes |
 | `unguardedRoutes` | `[{ name, reason }]`: each way a write reaches no judgment, such as a tool whose arguments nest the real one. `aidrian check` warns of each |
 
 A project then writes `"tracker": { "enabled": true, "provider": "<id>", ... }` ([Tracker](../config.md#tracker)) and asks a person for no tool name.
 `test/fixtures/adapters/fake-tracker.mjs` and `fake-per-call-tracker.mjs` show both shapes,
 and `test/adapters.test.mjs` runs them through the guard with no change to shared code.
 Those fixtures name tools that do not exist, so a real tracker's names come from a live connection, and they prove nothing of its write tools.
+
+An opaque id names no team: a UUID, or a bare number on a tracker that takes one, skips the team check, so a write by one to another team passes.
+State that limit for the tracker in [How a write is judged](../config.md#how-a-write-is-judged), and in a comment on its `idHint`.
 
 ### The text a tracker such as Jira needs
 

@@ -1103,7 +1103,7 @@ is refused, and the agent retries with its UUID.
 
 A connection under another server name goes in `servers`, and gets the same tools: `"servers": ["acme-linear"]`, in each host's spelling.
 
-Anything else the adapter gives is a default: a list or field the file sets replaces it.
+Anything else the adapter gives is a default: a list, field, `workspaceInput`, `readVerbs`, or `idHint` the file sets replaces it.
 A pattern may name a tool as the host sends it or in the standard form, such as `mcp__codex_apps__linear__save_*` or `mcp__codex_apps_linear__save_*`,
 and the guard and the [agent gates](#agents) match either.
 A project that has written out `readTools`, `writeTools`, and every field needs no `provider`,
@@ -1154,10 +1154,13 @@ A host that is not set up here, or that no adapter can find, gets no warning, wh
 - `workspace` and `readTools` are set together or not at all; a tracker with no tool that reads its workspace sets neither.
   With `provider`, the adapter's read tools come only with a `workspace`.
 - `*` and `Bash(...)` are not tracker tools: both lists take MCP tools only, so `"writeTools": ["mcp__*"]` is the widest.
-- A name in `readTools` must not match a pattern in `writeTools`, so that `"mcp__*"` works only with no read tools.
+- A name in `readTools` must not match a pattern in `writeTools`, in any form a host sends it, so that `"mcp__*"` works only with no read tools.
+- A name in `readTools` must be one a hook can see. `mcp__codex_apps__linear_get_workspace` is the form only Codex's model sees,
+  so it is an error that names the form to use.
 - With `workspace` set, `aidrian check` reports each pattern in `writeTools` that no read can clear: one on a server no tool in `readTools` is on,
   and one that names no server. It only reports: the guard stays on as written and refuses those writes.
-  A `*` before the server's name ends, as in `mcp__acme*`, can match a server with a read tool, so that pattern is not reported.
+  Both lists' names count by their standard server, so a read and a write on one connector pair in either form, and one on another connector does not.
+  A `*` before the server's name ends, as in `mcp__acme*` or `mcp__codex_apps__*`, can match a server with a read tool, so that pattern is not reported.
 - A group with any error falls back to unset, and a bad entry is left out of its list.
   A bad entry in `readTools`, even beside a good one, also unsets `workspace` and `readTools`.
   `enabled` falls back to `false` with no write tool or no group left, so the loaded key is never half set.

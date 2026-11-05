@@ -46,8 +46,9 @@ export function judgeTrackerWrite({ tracker, names }, tool, input, record, { ski
 // ones. A server whose own name holds a double underscore reads as the part before it.
 export const serverPrefix = (tool) => (typeof tool === 'string' ? (/^mcp__.+?__/u.exec(tool)?.[0] ?? null) : null);
 
-// The server of a name from the key, which a project may have written as its host sends it.
-const keyServer = (name) => serverPrefix(UNKNOWN_HOST.toolName(name));
+// The server of a name from the key, which a project may have written as its host sends it. config.mjs reads a key by this too,
+// so its check and the guard agree on which read clears which write.
+export const keyServer = (name) => serverPrefix(UNKNOWN_HOST.toolName(name));
 
 // The refusal of a write on `server` with no read to count. Only one that a listed read clears is routine: the two cases no
 // read clears, which config.mjs `checkTracker` reports, are a key to correct, and repeat until someone does.

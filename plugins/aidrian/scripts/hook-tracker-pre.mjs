@@ -20,14 +20,12 @@ import { block, deny, runHook } from '../lib/hook-io.mjs';
 import { detectHost } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { judgeTrackerWrite, refusalMarker } from '../lib/tracker-guard.mjs';
-import { withProjectServers } from '../lib/trackers/index.mjs';
 
-await runHook(async (given) => {
-  const project = findProject(typeof given.cwd === 'string' ? given.cwd : process.cwd());
+await runHook(async (input) => {
+  const project = findProject(typeof input.cwd === 'string' ? input.cwd : process.cwd());
   if (!project) return;
   const { config } = loadConfig(project);
   if (config.tracker.enabled !== true) return;
-  const input = withProjectServers(given, config.tracker);
   const file = snapshotPath(input.session_id)?.replace(/\.json$/u, '.tracker.json');
   const denial = judgeTrackerWrite(config, input.tool_name, input.tool_input, file ? readRecord(file) : null, { skipMissingRecord: !file || !canHoldRecord(file), rawTool: input.raw_tool_name, host: detectHost({ input }) });
   if (!denial) return;

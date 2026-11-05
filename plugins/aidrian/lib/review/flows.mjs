@@ -261,6 +261,8 @@ export function citationProblem(evidence, { root, head, captures = new Set() }) 
   const named = /^\.\.?\//u.test(place[1]) ? place[1] : `${showPrefix(root)}${place[1]}`;
   const shown = runGit(['show', `${head}:${named}`], root, { timeout: 15_000 });
   if (shown.status !== 0) return `${place[1]} is not in ${head.slice(0, 7)}`;
+  // `git show` also prints a folder, and a citation names a file.
+  if (runGit(['cat-file', '-t', `${head}:${named}`], root, { timeout: 15_000 }).stdout.trim() !== 'blob') return `${place[1]} is a folder, not a file, in ${head.slice(0, 7)}`;
   const lines = shown.stdout.split('\n').length;
   return Number(place[2]) >= 1 && Number(place[2]) <= lines ? null : `${place[1]} has no line ${place[2]}`;
 }

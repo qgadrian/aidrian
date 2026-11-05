@@ -35,6 +35,7 @@
 
 import { configFromText, loadConfig, resolveAutoMerge } from './config.mjs';
 import { runGh } from './gh.mjs';
+import { runGit } from './git.mjs';
 import { configPathIn, GUARDED_PATHS, mayFollowTeamDefault } from './project.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
 import { MEMBER_ASSOCIATIONS, owed, readLocalState } from './review/state.mjs';
@@ -96,9 +97,11 @@ export function defaultBranch(gh, { repo, host }) {
 
 // The config the branch `branch` of `repo` commits on GitHub now, by committedConfig's rules: its folder override
 // first, then that folder's config.json. The ref is `refs/heads/<branch>`, so a tag of the same name never answers.
-// A file GitHub does not have (404) is no file; any other failure throws.
-export function branchConfig(gh, { repo, host }, branch) {
-  const read = (file) => {
+// A file GitHub does not have (404) is no file; any other failure throws. `prefix` is the project's folder from the top of the
+// repository, with its trailing slash: GitHub's paths start at the top, and config paths at the project root.
+export function branchConfig(gh, { repo, host }, branch, prefix = '') {
+  const read = (name) => {
+    const file = `${prefix}${name}`;
     const route = `repos/${repo}/contents/${file.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(`refs/heads/${branch}`)}`;
     let body;
     try {
@@ -119,12 +122,17 @@ export function branchConfig(gh, { repo, host }, branch) {
 // Why the changed files keep auto-merge off, or null. A path is the branch's text, so it is quoted: it cannot break the line.
 // A list shorter than the count hides files, and a rename, or a file
 // with no change type, may hide the path it replaced, so those are off too.
-export function pathsProblem({ files, changedFiles }) {
+// A project below the root reviews only its own folder, so a file outside it has had no review, and its own folder's files
+// are guarded by their path from the project root.
+export function pathsProblem({ files, changedFiles }, prefix = '') {
+  if (prefix === null) return 'git could not give the project\'s folder in the repository';
   if (files.length !== changedFiles) return `gh listed ${files.length} of its ${changedFiles} changed files`;
   const hidden = files.find(({ changeType }) => changeType === 'RENAMED' || !changeType);
   if (hidden) return `gh lists ${JSON.stringify(hidden.path)} as ${hidden.changeType || 'no change type'}, which may hide the path it replaced`;
-  const guarded = files.find(({ path }) => GUARDED_PATHS.test(path));
-  return guarded ? `it changes ${JSON.stringify(guarded.path)}, which instructs AI sessions or decides CI's verdict` : null;
+  const outside = files.find(({ path }) => !path.startsWith(prefix));
+  if (outside) return `it changes ${JSON.stringify(outside.path)}, outside this project's folder, which its review does not cover`;
+  const guarded = files.find(({ path }) => GUARDED_PATHS.test(path) || GUARDED_PATHS.test(path.slice(prefix.length)));
+  return guarded ? `it changes ${JSON.stringify(guarded.path)}, which instructs AI sessions, or decides CI's verdict or auto-merge` : null;
 }
 
 // Who keeps auto-merge off by commenting: the login of the first comment or review whose author is no member of the
@@ -192,14 +200,17 @@ export function runAutoMerge(argv, project, { gh = (args) => runGh(args, { cwd: 
   }
   if (typeof pr === 'string') return fail(pr);
   let team;
+  // An empty prefix is the repository root, so a failed lookup is null, which the paths check refuses, never the root.
+  const shown = runGit(['rev-parse', '--show-prefix'], project.root);
+  const prefix = shown.status === 0 ? shown.stdout.trim() : null;
   let refusing;
   let main;
   let policy;
   try {
     main = defaultBranch(gh, pr);
-    policy = branchConfig(gh, pr, main);
+    policy = branchConfig(gh, pr, main, prefix ?? '');
     const onDefault = policy.github.autoMerge;
-    const onBase = pr.base === main ? onDefault : branchConfig(gh, pr, pr.base).github.autoMerge;
+    const onBase = pr.base === main ? onDefault : branchConfig(gh, pr, pr.base, prefix ?? '').github.autoMerge;
     refusing = [...new Set([[main, onDefault], [pr.base, onBase]].filter(([, each]) => each.allow !== true).map(([name]) => name))];
     team = { ...onDefault, allow: refusing.length === 0 };
   } catch (error) {
@@ -215,7 +226,7 @@ export function runAutoMerge(argv, project, { gh = (args) => runGh(args, { cwd: 
     : reason === 'local' ? `this machine has not opted in (github.autoMerge in ${project.paths.local})` : null;
   if (reason !== 'team') {
     const problem = checksProblem(policy, loadConfig(project), `${pr.repo} ${main}`);
-    const paths = pathsProblem(pr);
+    const paths = pathsProblem(pr, prefix);
     if (problem) [effective, reason, why] = [false, 'checks', problem];
     else if (paths) [effective, reason, why] = [false, 'paths', paths];
   }

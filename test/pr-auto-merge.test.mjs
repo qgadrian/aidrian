@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { commands } from '../plugins/aidrian/lib/pr.mjs';
 import { computeVerdict } from '../plugins/aidrian/lib/pr-checks.mjs';
-import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
+import { pathsProblem, runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
 
@@ -574,4 +574,44 @@ test('a required check missing from the rows is pending, so a draft\'s partial s
   assert.equal(named.verdict, 'pending');
   assert.deepEqual(named.pending, ['e2e (required, not reported yet)']);
   assert.equal(computeVerdict(rows, { requiredChecks: [] }).verdict, 'ready', 'why auto-merge needs named required checks');
+});
+
+test('a project below the root reads its own auto-merge setting, and a file outside its folder or guarded inside it keeps auto-merge off', (t) => {
+  const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-auto-merge-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const web = path.join(dir, 'apps/web');
+  const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
+  git('init', '-q', '-b', 'main');
+  git('remote', 'add', 'origin', 'git@github.com:acme/notes.git');
+  mkdirSync(path.join(web, '.aidrian'), { recursive: true });
+  writeFileSync(path.join(web, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' }, github: { ...CHECKS, autoMerge: { ...TEAM, allow: true } } }));
+  git('add', 'apps/web/.aidrian/config.json');
+  git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'config');
+  writeFileSync(path.join(web, '.aidrian.local.json'), JSON.stringify({ github: { autoMerge: 'on' } }));
+  const project = projectAt(web);
+  const state = emptyState(7, 'acme/notes');
+  finished(state);
+  writeLocalState(project, state);
+  const r = { project };
+  const own = { 'acme/notes@main:apps/web/.aidrian/config.json': configText(TEAM) };
+  const changing = (file) => ({ files: own, view: { files: [{ path: file, changeType: 'MODIFIED' }] } });
+  assert.deepEqual(reasonOf(t, r, changing('apps/web/src/a.js')), [0, null], 'its own setting, read below the root');
+  assert.deepEqual(reasonOf(t, r, { ...changing('apps/web/src/a.js'), files: { 'acme/notes@main:.aidrian/config.json': configText(TEAM) } }), [1, 'team'], 'the root\'s setting is not this project\'s');
+  for (const file of ['apps/api/b.js', 'README.md', 'apps/web/.aidrian/config.json', 'apps/web/.claude/settings.json', 'apps/web/.github/workflows/ci.yml', '.github/workflows/ci.yml']) {
+    assert.deepEqual(reasonOf(t, r, changing(file)), [1, 'paths'], file);
+  }
+  const rootAllows = { 'acme/notes@main:.aidrian/config.json': configText(TEAM) };
+  const lost = { project: { ...project, root: path.join(dir, 'gone') } };
+  assert.equal(reasonOf(t, lost, { files: rootAllows, view: changing('apps/api/a.js').view })[0], 1, 'a folder git cannot read is never taken for the root');
+  assert.match(pathsProblem({ files: [], changedFiles: 0 }, null), /git could not give/u);
+});
+
+test('the gate never approves a change to what decides auto-merge', () => {
+  const lib = 'plugins/aidrian/lib';
+  const off = (file) => pathsProblem({ files: [{ path: file, changeType: 'MODIFIED' }], changedFiles: 1 });
+  for (const file of ['plugins/aidrian/bin/aidrian', `${lib}/cli.mjs`, `${lib}/pr.mjs`, `${lib}/fs.mjs`, `${lib}/pr-auto-merge.mjs`, `${lib}/pr-checks.mjs`, `${lib}/project.mjs`, `${lib}/config.mjs`, `${lib}/git.mjs`, `${lib}/gh.mjs`, `${lib}/review-gate.mjs`, `${lib}/shell-lex.mjs`, `${lib}/rules/github/merge-review.mjs`, `${lib}/rules/main-checkout.mjs`, `${lib}/review/state.mjs`, 'plugins/aidrian/scripts/hook-bash.mjs', 'plugins/aidrian/scripts/hook-mcp-github.mjs', 'plugins/aidrian/hooks/hooks.json']) {
+    assert.match(off(file) ?? '', /instructs AI sessions, or decides CI's verdict or auto-merge/u, file);
+    assert.ok(existsSync(path.join(import.meta.dirname, '..', file)), `${file} is a real file, so the list has not gone stale`);
+  }
+  for (const file of [`${lib}/report-health.mjs`, 'plugins/aidrian/scripts/session-row.mjs', 'docs/config.md', 'test/pr-auto-merge.test.mjs', 'src/lib/review/a.js']) assert.equal(off(file), null, file);
 });

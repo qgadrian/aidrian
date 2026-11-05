@@ -8,7 +8,7 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import test from 'node:test';
 
-import { CASE_SCHEMA, CODEX_TIMEOUT_SEC, CROSS_SCHEMA, DECIDE_LEDGER_SCHEMA, DECIDE_REBUTTAL_SCHEMA, GROUNDS, LEDGER_SCHEMA, LEDGER_SCHEMAS, MAX_MODE_OBJECTIONS, MAX_OBJECTIONS, OBJECTIONS_SCHEMA, REBUTTALS_SCHEMA, codexAnswer, commands, governingWinner, isClearCall, modeOf, rebuttalProblems, routeAfterRuling, routeFor, schemaProblems } from '../plugins/aidrian/lib/quorum.mjs';
+import { CASE_SCHEMA, CODEX_TIMEOUT_SEC, CROSS_SCHEMA, DECIDE_LEDGER_SCHEMA, DECIDE_REBUTTAL_SCHEMA, GROUNDS, LEDGER_SCHEMA, LEDGER_SCHEMAS, MAX_MODE_OBJECTIONS, MAX_OBJECTIONS, OBJECTIONS_SCHEMA, REBUTTALS_SCHEMA, codexAnswer, commands, governingWinner, inferenceProblems, isClearCall, modeOf, rebuttalProblems, routeAfterRuling, routeFor, schemaProblems } from '../plugins/aidrian/lib/quorum.mjs';
 import { isDecisionId, parseDecisions } from '../plugins/aidrian/lib/decisions.mjs';
 import { slug } from '../plugins/aidrian/lib/review/flows.mjs';
 import { DEFAULTS } from '../plugins/aidrian/lib/config.mjs';
@@ -3554,4 +3554,11 @@ test('the docs state what automatic product quorums cost and what they can ship'
   const log = readFileSync(path.resolve(import.meta.dirname, '../docs/dispatch-log.md'), 'utf8').replace(/\s+/gu, ' ');
   assert.ok(log.includes('`aidrian quorum route` writes the same row, with the same `key`'));
   assert.match(readFileSync(path.resolve(import.meta.dirname, '../README.md'), 'utf8'), /\| `aidrian quorum` \|[^|]*one product decision/u);
+});
+
+test('an inference line matches past a curly or straight quote, and still fails on a real difference', () => {
+  const claim = 'inference: The Human\u2019s \u201Cview\u201D is unclear.';
+  assert.deepEqual(inferenceProblems([claim], [{ statement: 'The Human\'s "view" is unclear.' }]), []);
+  assert.deepEqual(inferenceProblems(['inference: The Human\'s view is unclear.'], [{ statement: 'The Human\u2019s view is unclear.' }]), []);
+  assert.equal(inferenceProblems([claim], [{ statement: 'The Human\'s "view" is clear.' }]).length, 1);
 });

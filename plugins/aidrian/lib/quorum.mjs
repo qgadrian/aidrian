@@ -846,9 +846,11 @@ function coverageProblem(named, count, of = '') {
 const supported = (tested, citations, proof) => tested.some((verdict) => verdict.supports === true && Number.isInteger(verdict.citation) && proof.includes(citations[verdict.citation]));
 
 // One line for each `inference:` line of `claims` that no distinct `inferences` statement tests.
-function inferenceProblems(claims, inferences) {
-  const statements = (inferences ?? []).map((inference) => collapse(inference.statement)).filter(Boolean);
-  const lines = claims.flatMap((claim) => [...String(claim).matchAll(INFERENCE)].map(([, line]) => collapse(line)));
+export function inferenceProblems(claims, inferences) {
+  // A judge retypes these lines, so a curly quote may come back straight. Only here: a citation's quote stays exact.
+  const plain = (text) => collapse(text).replace(/[\u2018\u2019]/gu, "'").replace(/[\u201C\u201D]/gu, '"');
+  const statements = (inferences ?? []).map((inference) => plain(inference.statement)).filter(Boolean);
+  const lines = claims.flatMap((claim) => [...String(claim).matchAll(INFERENCE)].map(([, line]) => plain(line)));
   return untestedLines(lines, statements).map((text) => shown(`inference untested: "${text.slice(0, 60)}"`));
 }
 

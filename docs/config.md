@@ -278,7 +278,7 @@ With `--json`, `reason` names the first that fails and `why` says it in a senten
 | --- | --- |
 | `team` | `github.autoMerge.allow` is true on both the repository's default branch and the pull request's base. Both are read from GitHub as each branch commits them now, never from the checkout. So a branch cannot raise it, and the pull request that turns it on does not merge itself. |
 | `checks` | The default branch names `github.requiredChecks`: a named check that has not reported is pending, so a draft's partial set of checks cannot read as ready. This checkout's `requiredChecks`, `conditionalChecks`, and `ignoreCancelledChecks` equal the default branch's as sets, committed or not: `aidrian pr checks` reads this checkout, so a branch cannot relax the lists, and a branch that changes workflows stays off (`paths`). This checkout's `state.dir` equals the default branch's, since the review record is read from it. A working-copy config that cannot be read, or has errors, is off too. |
-| `paths` | gh lists every changed file (`files` matches `changedFiles`) with its `changeType`, none is `RENAMED`, since gh does not give the old path, and none is on this fixed list, in any case: `AGENTS.md`, `CLAUDE.md`, `SKILL.md`, `CODEOWNERS`, `.aidrian.json`, and `.aidrian.local.json` at any depth, and `.claude`, `.codex`, `.aidrian`, `.github/workflows`, or `.github/actions` at the repository root, or anything under them. These instruct AI sessions or decide CI, and a review of the change may not read them as behavior. |
+| `paths` | gh lists every changed file (`files` matches `changedFiles`) with its `changeType`, none is `RENAMED`, since gh does not give the old path, and none is on this fixed list, in any case: `AGENTS.md`, `CLAUDE.md`, `SKILL.md`, `CODEOWNERS`, `.aidrian.json`, and `.aidrian.local.json` at any depth, and `.claude`, `.codex`, `.aidrian`, `.github/workflows`, or `.github/actions` at the repository root or the project root, or anything under them. These instruct AI sessions or decide CI, and a review of the change may not read them as behavior. The plugin's own code that decides auto-merge is on the list too, so the gate never approves a change to itself: under `plugins/aidrian/`, `bin/`, `lib/cli.mjs`, `pr.mjs`, `pr-auto-merge.mjs`, `pr-checks.mjs`, `project.mjs`, `config.mjs`, `fs.mjs`, `git.mjs`, `gh.mjs`, `review-gate.mjs`, and `shell-lex.mjs`, `lib/rules/`, `lib/review/`, `scripts/hook-*`, and `hooks/`. For a project below the repository root, the setting is read from its own folder, and no file may be outside that folder, since [its review does not cover those](review.md#paths). |
 | `local` | This machine's setting is on, or it has none and the default branch's `github.autoMerge.default` is `"on"`. |
 | `author` | The pull request's author is the gh user. |
 | `outsider` | Every issue comment, review, and inline comment on the pull request has the author association `OWNER`, `MEMBER`, or `COLLABORATOR`, or is by the default branch's `github.reviewer` bot. Any other bot, such as a CI or preview bot that comments, counts as an outsider. |
@@ -773,7 +773,7 @@ on defaults the project did not choose.
 | `quorum.decide.even.agent` | `"code-reviewer"` | Their agent on `"agent"`, and their fallback on `"codex"`. |
 | `quorum.decide.swap` | `true` | Whether a claim with an odd hash swaps the runners of positions A and B. |
 | `quorum.product.owner.agent` | `"product-manager"` | Interviews the end user, shapes options, and recommends one to the Human. `quorum.judge` does not apply to this mode. |
-| `quorum.product.witness.agent` | `"ux-researcher"` | Plays the end-user persona. |
+| `quorum.product.witness.agent` | `"ux-researcher"` | The agent that plays the end-user persona. It does not turn a persona on, or choose one: [who takes part](#who-plays-the-end-user). |
 | `quorum.product.ux.agent` | `"ux-specialist"` | Grills the options for what a user would hit. |
 | `quorum.product.engineer.agent` | `"architect"` | Grills the options for cost and risk. |
 | `quorum.product.maxLoops` | `2` | How many times a product run may go back after a walkthrough, a whole number from 1 to 5. |
@@ -790,6 +790,14 @@ on defaults the project did not choose.
   Under 8, the default, rebuttals and the final ruling may not fit, and the objections they would answer escalate to the Human.
 - Every `agent` is an agent name, such as `code-reviewer` or a project's own agent; `"*"` and `"main"` name no one agent.
 - The number of decide positions is the question file's, 2 to 4, never a config value, so no option the Human gave is dropped.
+
+### Who plays the end user
+
+No key turns a persona on, and none names one. In a product run a persona takes part whenever the project has a usable one:
+each doc the knowledge index tags `personas`, other than `product-access` and any with an `aidrian lint personas` problem, is a candidate,
+and the run picks the one the decision changes most.
+With no candidate, no end user takes part, and the report warns about it. To add a persona, add its doc: see [Personas](personas.md).
+`aidrian-knowledge route personas` lists the docs tagged `personas` before a run starts.
 
 ### Automatic product quorums
 

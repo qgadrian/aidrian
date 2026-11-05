@@ -8,6 +8,7 @@ import test from 'node:test';
 import { loadConfig } from '../plugins/aidrian/lib/config.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { reviewStep } from '../plugins/aidrian/lib/review/run.mjs';
+import { escapedFixes } from '../plugins/aidrian/lib/review/bench.mjs';
 import { dedupe, packageRoots, partition, sliceKey, splitPasses } from '../plugins/aidrian/lib/review/split.mjs';
 
 const change = (file, lines = 10) => ({ file, added: lines, removed: 0, status: 'M' });
@@ -54,7 +55,7 @@ test('dedupe: one finding per mistake across passes, at its highest severity', (
 function repo(t, review = {}, github = {}) {
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-split-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const git = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' }).stdout.trim();
+  const git = (...args) => spawnSync('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8' }).stdout.trim();
   const write = (file, text) => {
     mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
     writeFileSync(path.join(dir, file), text);
@@ -208,7 +209,7 @@ test('a plan command that raises the depth to split gets slices and a cross pass
   const planner = "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>console.log(JSON.stringify({depth:'split',stages:[]})))";
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-split-pc-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const git = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' }).stdout.trim();
+  const git = (...args) => spawnSync('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8' }).stdout.trim();
   const write = (file, text) => (mkdirSync(path.dirname(path.join(dir, file)), { recursive: true }), writeFileSync(path.join(dir, file), text));
   git('init', '-q', '-b', 'main');
   git('config', 'user.email', 't@example.com');
@@ -251,4 +252,34 @@ test('extra rounds: a mistake a slice and the cross pass both report is one open
   assert.equal(capped.status, 'extension_check', JSON.stringify(capped.extension?.reasons));
   assert.deepEqual(capped.extension.history.map((each) => [each.open, each.findings.length]), [[3, 3], [2, 2]], 'the cross pass`s copy is not a third finding');
   assert.equal(capped.extension.signals.converging, true);
+});
+
+test('bench: an escaped fix is found for a project at the root and below it, by its path from the repository top', (t) => {
+  for (const prefix of ['', 'apps/web/']) {
+    const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-escaped-')));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    const git = (...args) => {
+      const run = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8', env: { ...process.env, GIT_COMMITTER_DATE: '2026-01-02T00:00:00Z', GIT_AUTHOR_DATE: '2026-01-02T00:00:00Z' } });
+      assert.equal(run.status, 0, run.stderr);
+      return run.stdout.trim();
+    };
+    git('init', '-q', '-b', 'main');
+    const project = path.join(dir, prefix);
+    mkdirSync(path.join(project, 'src'), { recursive: true });
+    const file = (name, text) => writeFileSync(path.join(project, name), text);
+    file('src/a.js', '1\n');
+    file('src/other.js', '1\n');
+    git('add', '-A');
+    git('commit', '-qm', 'base');
+    const base = git('rev-parse', 'HEAD');
+    file('src/a.js', '2\n');
+    git('commit', '-qam', 'feat: the change');
+    const head = git('rev-parse', 'HEAD');
+    file('src/a.js', '3\n');
+    file('src/other.js', '2\n');
+    git('commit', '-qam', 'fix: what it broke');
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+    const found = escapedFixes(project, { base, head, baseRefName: 'main', mergedAt: '2026-01-01T00:00:00Z' });
+    assert.deepEqual(found, [{ source: 'escaped', file: `${prefix}src/a.js`, line: null }], prefix || 'root');
+  }
 });

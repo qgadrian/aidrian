@@ -890,7 +890,7 @@ A symlink counts as both its own path and its target's, in `--doc` and in `escal
 `lib/decisions.json` is the one place the built-in ones live, and the base branch's [`decisions.classes`](#project-classes) adds the project's.
 The `quorum` skill's product mode runs `resolve` on its ruling and reports the answer, and asks the Human, under `decide` too,
 unless the route after the ruling lets work continue: [Automatic product quorums](#automatic-product-quorums).
-The `persona-audit-triage` skill does the same for a held finding's product decision.
+The `persona-audit-triage` skill runs `resolve` on a held finding's product decision, reports the answer, and always asks.
 
 The first rule that matches wins:
 

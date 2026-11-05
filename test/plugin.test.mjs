@@ -674,7 +674,7 @@ test('the shared rule states the continue path in its order, and why the writer 
     /before the implementing commit, since afterwards it can refuse on a changed citation/,
     /before the marker, since each committed marker counts toward the domain's pause/,
     /prints `human` until the marker exists in the working copy, so a resume in that window waits/,
-    /A `human` whose reason names a settled marker means read the rule in its doc, not ask again/,
+    /each committed marker counts toward the domain's pause and could make the route wait/,
     /its answer goes in the ledger's `second_look`/,
     /Write it before changing anything a case cites: until it is on record, `quorum check` holds the ledger to its citations/,
     /refuses until a second look the ruling's `severity` calls for holds `sign_off: approved`/,
@@ -692,6 +692,22 @@ test('the shared rule states the continue path in its order, and why the writer 
     /No ledger path goes in a doc or a pull request body/,
     /winners have varied between runs/,
   ]) assert.match(section, line);
+});
+
+test('a reused ledger reaches what a settled marker means, the handoff carries the run count, and search finds the route', () => {
+  const rule = flat(RULE_FILE);
+  const after = rule.slice(rule.indexOf('### After a ruling'), rule.indexOf('### The continue path'));
+  assert.match(after, /A `human` whose reason names a settled marker means read the rule in its doc, not ask again/);
+  assert.doesNotMatch(rule.slice(rule.indexOf('### The continue path')), /names a settled marker/);
+  assert.doesNotMatch(rule, /could turn the route to `human`/);
+  assert.match(flat('plugins/aidrian/skills/session-handoff/SKILL.md'), /the count of automatic quorum runs/);
+  assert.match(flat('docs/config.md'), /The `persona-audit-triage` skill runs `resolve` on a held finding's product decision, reports the answer, and always asks/);
+  const row = /`aidrian quorum route` and `aidrian quorum provisional` write the same row, with the same `key`/;
+  assert.match(flat('docs/dispatch-log.md'), row);
+  assert.match(readFileSync(path.join(PLUGIN, 'lib/decisions-cli.mjs'), 'utf8'), /`quorum route` and `quorum provisional` add `resolve`'s/);
+  const { docs } = JSON.parse(readFileSync(path.join(ROOT, '.aidrian/knowledge/10-harness.json'), 'utf8'));
+  assert.match(docs['config.md'].summary, /autoStart/);
+  for (const words of ['quorum route', 'quorum provisional']) assert.ok(docs['project-folder.md'].summary.includes(words), words);
 });
 
 test('the flags of route and the writer are the command\'s, named in the shared rule and in no quorum skill file', () => {

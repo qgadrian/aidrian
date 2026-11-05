@@ -172,6 +172,7 @@ A class `--vocab` gives a `domain` resolves in that domain, whatever the ruling'
 `resolve` judges the class, and the route only holds the ruling to the domain named.
 
 - On `human` for a ledger with `human_answer` set, act on `human_answer` rather than ask again.
+- A `human` whose reason names a settled marker means read the rule in its doc, not ask again.
 - A `secondLook` disagreement or a `blocked` run waits for the Human.
 - A run whose starting route had `resolve.authority` `ask` waits, whatever the Ruling's answers resolve to.
   Give the Ruling that route's class, answers, and docs, and write the authority in the ledger's `trigger`.
@@ -203,9 +204,8 @@ In this order. Each step that fails waits for the Human.
 4. **The writer**, `aidrian quorum provisional <ledger> --plan <question> --marker <id>`.
    It refuses until a second look the ruling's `severity` calls for holds `sign_off: approved`, an unknown severity included.
    It runs before the implementing commit, since afterwards it can refuse on a changed citation, its check having no exemption.
-   It runs before the marker, since each committed marker counts toward the domain's pause and could turn the route to `human`.
+   It runs before the marker, since each committed marker counts toward the domain's pause and could make the route wait.
    After it, `route --ledger` prints `human` until the marker exists in the working copy, so a resume in that window waits.
-   A `human` whose reason names a settled marker means read the rule in its doc, not ask again.
 5. **The marker**, in the slice's commit, by the writer [Record it](#record-it) names, and `outcome.conditions` join the task.
    Write it before changing anything a case cites: until it is on record, `quorum check` holds the ledger to its citations.
 6. **The guard.** Before dependent work goes on, `aidrian decisions list --added-since <base>` must show the committed marker with no unmarked `problems`.

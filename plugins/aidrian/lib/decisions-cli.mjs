@@ -19,7 +19,7 @@
 // docs/project-folder.md#decision-markers the marker. `list` exits 0 with problems: they are part of what it reports.
 // `list --added-since` in a repository with no project folder prints the empty result and exits 0: no folder, no markers.
 // `undo` exits 1 and writes nothing when it refuses, after printing why, both wordings, and the block it searched.
-// `resolve`, `set`, and `undo` each add a row to the dispatch log (logDecision), and `quorum route` adds `resolve`'s;
+// `resolve`, `set`, and `undo` each add a row to the dispatch log (logDecision), and `quorum route` and `quorum provisional` add `resolve`'s;
 // docs/dispatch-log.md describes them.
 
 import { createHash } from 'node:crypto';

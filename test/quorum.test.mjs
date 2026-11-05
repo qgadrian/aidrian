@@ -3688,7 +3688,7 @@ test('the docs state what automatic product quorums cost and what they can ship'
   assert.ok(folder.includes('refuses unless the route is `quorum` with `wait` false or a `settle` list'));
   assert.ok(config.includes('Only a `product` or `ux` call routes'));
   const log = readFileSync(path.resolve(import.meta.dirname, '../docs/dispatch-log.md'), 'utf8').replace(/\s+/gu, ' ');
-  assert.ok(log.includes('`aidrian quorum route` writes the same row, with the same `key`'));
+  assert.ok(log.includes('`aidrian quorum route` and `aidrian quorum provisional` write the same row, with the same `key`'));
   assert.match(readFileSync(path.resolve(import.meta.dirname, '../README.md'), 'utf8'), /\| `aidrian quorum` \|[^|]*one product decision/u);
 });
 

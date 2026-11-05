@@ -1316,8 +1316,9 @@ export const isClearCall = (value) => {
 export const ROUTED_DOMAINS = Object.freeze(['product', 'ux']);
 const otherDomain = (domain, answered = true) => `${JSON.stringify(domain ?? null)} is not a domain a quorum routes${answered ? ', so resolve\'s answer stands as it is' : ''}`;
 
-// Why auto-start does not apply: resolve's `no-base` means no setting could be read at all, which is no setting of off.
-const autoStartOff = (answer) => (answer?.rule === 'no-base' ? 'no base branch could be read, so quorum.product.autoStart counts as off' : 'quorum.product.autoStart is off at the base branch');
+// Why auto-start does not apply: resolve's `no-base` with no `base` means no setting could be read at all, which is no
+// setting of off. With a `base`, only the unreviewed decisions could not be read, so the setting is real.
+const autoStartOff = (answer) => (answer?.rule === 'no-base' && !answer.base ? 'no base branch could be read, so quorum.product.autoStart counts as off' : 'quorum.product.autoStart is off at the base branch');
 
 // What happens to one product decision: { route, wait, reason }. `settings` is the base branch's `quorum.product`, `call`
 // is { hard, runs, domain }, and `answer` is resolve's. Only `authority: "decide"` counts as a decision the agent may make, and only

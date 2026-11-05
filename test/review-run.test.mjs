@@ -22,7 +22,7 @@ function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = 
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-review-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const git = (...args) => {
-    const r = spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
+    const r = spawnSync('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8' });
     if (r.status !== 0) throw new Error(r.stderr);
     return r.stdout.trim();
   };

@@ -710,6 +710,13 @@ test('a reused ledger reaches what a settled marker means, the handoff carries t
   for (const words of ['quorum route', 'quorum provisional']) assert.ok(docs['project-folder.md'].summary.includes(words), words);
 });
 
+test('no eval prompt sets its own run count: the documented --runs flag covers it', () => {
+  for (const name of readdirSync(path.join(PLUGIN, 'evals'))) {
+    const prompt = path.join(PLUGIN, 'evals', name, 'prompt.md');
+    if (existsSync(prompt)) assert.doesNotMatch(readFileSync(prompt, 'utf8'), /^runs:/mu, name);
+  }
+});
+
 test('the flags of route and the writer are the command\'s, named in the shared rule and in no quorum skill file', () => {
   const flags = (text) => new Set([...text.matchAll(/(?<![\w-])--[a-z][a-z-]*/gu)].map((match) => match[0]));
   const usage = spawnSync(AIDRIAN, ['quorum', 'nope'], { cwd: ROOT, encoding: 'utf8' }).stderr.split(' | ');

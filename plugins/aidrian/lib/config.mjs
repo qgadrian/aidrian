@@ -514,7 +514,7 @@ export function committedAuthority(project, commit, file) {
 export function committedQuorumProduct(project, commit, file) {
   if (file === null) return DEFAULTS.quorum.product;
   const errors = [];
-  const committed = committedConfig({ ...project, paths: { ...project.paths, config: `./${file}` } }, commit, errors);
+  const committed = committedConfig({ ...project, paths: { ...project.paths, config: file } }, commit, errors);
   return errors.some((error) => /"quorum(?:"|\.product[".])/u.test(error)) ? DEFAULTS.quorum.product : committed.quorum.product;
 }
 

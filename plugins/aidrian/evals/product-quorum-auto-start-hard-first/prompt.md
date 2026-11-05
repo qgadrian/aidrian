@@ -2,7 +2,6 @@
 name: product-quorum-auto-start-hard-first
 max_turns: 30
 timeout_seconds: 3400
-runs: 1
 allowed_tools: [Read, Glob, Grep, Skill, Bash, Agent]
 ---
 

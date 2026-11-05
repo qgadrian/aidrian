@@ -15,6 +15,6 @@ Dispatch the plugin's `orchestrator` agent, in the foreground, with this task, a
 > and says whether every nested agent's answer reached the coordinator directly, or any had to be read back from a transcript.
 
 When it returns, read that ledger. End the reply with, in this order and word for word where a command printed it:
-the route line; the last check line; the ledger's `status`, `ruling.decision`, `ruling.winner`, and `human_answer`;
+the route line; the last check line; the ledger's `status`, `trigger`, `ruling.decision`, `ruling.winner`, and `human_answer`;
 the question for the Human, with the recommendation and what the handoff says of the end user;
 and the handoff's sentence on how the nested agents' answers reached the coordinator.

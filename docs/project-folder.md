@@ -236,6 +236,7 @@ Two commands keep a ledger honest, `roles` tells the skill who runs each role, `
   Any other domain stays `as-today`.
   Under `review-later` and `decide`, the route is `human` unless `trigger` is exactly `the route, with resolve's decide`, so only `the route, with resolve's decide` continues: a run the Human started, one whose route asked, and a ledger with no `trigger` wait. A script holds this, here, in the writer, and in `check` on a provisional ledger.
   On a ledger with `provisional`, work continues only while its marker is `unconfirmed`. So the route is `human` when its marker is `confirmed`, as after `aidrian decisions set` with `confirmed` or `changed`,
+  An invalid config.json reads as no marker on record, so while it is broken a provisional ledger with dead citations loses its exemption, and `quorum check` names them. That fails closed: fix the config and check again.
   since the Human settled it and the rule to read is in its doc, and when its marker was rejected or is not on record in the indexed docs, as after `aidrian decisions undo`.
   The route is `human`, whatever the settings, for a ledger of another mode, a `status` other than `complete`, and a ruling that escalates.
   So it is for no `human_answer`, ruling, class, reversible, docs, winner, severity, `reverts_by`, or `outcome.flips_if`,

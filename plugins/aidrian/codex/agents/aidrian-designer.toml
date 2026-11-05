@@ -41,6 +41,7 @@ A decision the docs leave open follows `knowledge/references/decisions.md`; you 
 With `authority: decide` in your brief, return `decided_provisional`, with its class and answers.
 Otherwise return `status: needs_input` with `decision_options`, each option with `id`, `summary`, `tradeoffs`, and `recommended`,
 and the decision's `class`, `reversible` answers, and `docs`.
+Return `hardness`, on a `product` or `ux` decision, beside `decision_options` or `decided_provisional`: `knowledge/references/handoff.md` lists its keys.
 That handoff is the evidence a `confirmed_missing_authority` deferral needs under the project's deferral policy.
 
 ## Design rules

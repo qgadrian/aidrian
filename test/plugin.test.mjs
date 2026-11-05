@@ -645,6 +645,12 @@ test('the shared rule states the route: who answers hardness, what each route do
   for (const rel of ['product-design/product-manager', 'product-design/designer', 'product-design/ux-specialist', 'coordination/orchestrator']) {
     assert.ok(readFileSync(path.join(PLUGIN, 'agents-src', `${rel}.md`), 'utf8').includes(DECISION_RULE), `${rel} reaches the questions through the rule`);
   }
+  // A missing answer reads as hard, so an agent that never heard of the field could start a costly quorum.
+  for (const name of ['product-manager', 'designer', 'ux-specialist']) {
+    const source = readFileSync(path.join(PLUGIN, 'agents-src/product-design', `${name}.md`), 'utf8').replace(/\s+/g, ' ');
+    assert.match(source, /`hardness`, on a `product` or `ux` decision, beside `decision_options` or `decided_provisional`/, name);
+    for (const built of [path.join(CLAUDE_AGENTS, `${name}.md`)]) assert.ok(readFileSync(built, 'utf8').includes('`hardness`'), `${name}: built`);
+  }
   for (const line of [
     /`aidrian quorum route` takes the place of `aidrian decisions resolve` at step 2 of the order, and a dispatcher that resolved first routes at step 4/,
     /Run `aidrian quorum check <ledger> --plan <question>` before `route --ledger`, which checks no schema/,

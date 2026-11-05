@@ -46,21 +46,37 @@ function patchFiles(text) {
 
 const configFile = (env) => path.join(env.CODEX_HOME || path.join(homedir(), '.codex'), 'config.toml');
 
-// Whether Codex holds the person's trust in this plugin's hooks, from the headers of its config file alone: 'trusted',
-// 'untrusted', or 'absent' when no Codex here has the plugin installed. Codex keeps one `[hooks.state."<plugin
-// id>:hooks/hooks.json:<event>:<group>:<handler>"]` per trusted hook (hooks/src/declarations.rs). A trust that an update
-// made stale keeps its header, so this cannot see it: only `/hooks` can. Only the header lines are read here and the file's
-// other values never leave this function.
+// The lines of the first section whose header `matches`, without the header, or null when there is none.
+function section(lines, matches) {
+  const at = lines.findIndex(matches);
+  if (at < 0) return null;
+  const after = lines.slice(at + 1);
+  const end = after.findIndex((line) => line.startsWith('['));
+  return end < 0 ? after : after.slice(0, end);
+}
+
+const turnedOff = (lines) => lines.some((line) => /^\s*enabled\s*=\s*false\b/u.test(line));
+const holdsHash = (lines) => lines.some((line) => /^\s*trusted_hash\s*=\s*(?:"[^"]+"|'[^']+')/u.test(line));
+
+// Whether Codex would run this plugin's tracker hooks: 'trusted'; 'untrusted'; 'off', when the plugin or one of those hooks is
+// turned off; or 'absent' when no Codex here has the plugin installed. Codex keeps one `[hooks.state."<plugin
+// id>:hooks/hooks.json:<event>:<group>:<handler>"]` per hook, and a hook runs when that holds a `trusted_hash` and
+// `enabled` is not false (hooks/src/engine/discovery.rs:1000-1020 at rust-v0.166.0). A hash an update made stale still reads
+// as trusted: only `/hooks` can tell, since that takes hashing the hook as Codex does.
+// The answer is one of those four words, so no value of the file, which holds a token, leaves this function.
 function hookTrust(env) {
-  let text;
+  let lines;
   try {
-    text = readFileSync(configFile(env), 'utf8');
+    lines = readFileSync(configFile(env), 'utf8').split(/\r?\n/u);
   } catch {
     return 'absent';
   }
-  if (!/^\[plugins\."aidrian@[^"]+"\]/mu.test(text)) return 'absent';
-  const has = (key) => text.split('\n').some((line) => /^\[hooks\.state\."[^"]*aidrian[^"]*hooks\/hooks\.json:/u.test(line) && line.includes(`:${key}"]`));
-  return trackerHookKeys().every(has) ? 'trusted' : 'untrusted';
+  const plugin = section(lines, (line) => /^\[plugins\."aidrian@[^"]+"\]/u.test(line));
+  if (plugin === null) return 'absent';
+  if (turnedOff(plugin)) return 'off';
+  const states = trackerHookKeys().map((key) => section(lines, (line) => /^\[hooks\.state\."[^"]*aidrian[^"]*hooks\/hooks\.json:/u.test(line) && line.trimEnd().endsWith(`:${key}"]`)));
+  if (states.some((state) => state !== null && turnedOff(state))) return 'off';
+  return states.every((state) => state !== null && holdsHash(state)) ? 'trusted' : 'untrusted';
 }
 
 // The trust keys of the tracker hooks, `<event>:<group>:<handler>`, read from hooks.json so a reordered file cannot go stale.
@@ -138,6 +154,7 @@ export default {
       unguardedRoutes: [],
       hookTrust,
       trustStep: 'open Codex and trust them in its hooks panel, /hooks, after each install and update',
+      offStep: 'open Codex and turn them back on in its hooks panel, /hooks, or enable the plugin',
     },
   },
 };

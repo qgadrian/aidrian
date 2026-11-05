@@ -72,7 +72,27 @@ test('aidrian check warns an adopted key that leaves out Codex\'s app route, and
   assert.doesNotMatch(check(t, WRITTEN_OUT).stderr, /tracker/u, 'with no Codex here, nothing');
 });
 
-test('hook trust reads only the headers of Codex\'s config, and never returns its values', (t) => {
+test('a hook trusted and then turned off is off, and a header with no hash is no trust', (t) => {
+  const bare = (key, body) => `[hooks.state."aidrian@aidrian-harness:hooks/hooks.json:${key}"]\n${body}`;
+  const off = check(t, SHORT, `${INSTALLED}${bare('pre_tool_use:5:0', 'trusted_hash = "sha256:x"\nenabled = false\n')}${trust('post_tool_use:3:0')}`);
+  assert.match(off.stderr, /warning: tracker\.enabled: Codex has this plugin or its tracker hooks turned off/u);
+  assert.match(off.stderr, /turn them back on/u);
+  assert.doesNotMatch(off.stderr, /no trust on record/u);
+
+  const noHash = check(t, SHORT, `${INSTALLED}${bare('pre_tool_use:5:0', 'enabled = true\n')}${bare('post_tool_use:3:0', 'enabled = true\n')}`);
+  assert.match(noHash.stderr, /no trust on record/u);
+
+  const pluginOff = check(t, SHORT, '[plugins."aidrian@aidrian-harness"]\nenabled = false\n');
+  assert.match(pluginOff.stderr, /turned off/u);
+
+  const emptyHash = check(t, SHORT, `${INSTALLED}${bare('pre_tool_use:5:0', 'trusted_hash = ""\n')}${trust('post_tool_use:3:0')}`);
+  assert.match(emptyHash.stderr, /no trust on record/u);
+
+  const later = `${INSTALLED}${bare('pre_tool_use:5:0', '')}[other]\nenabled = false\ntrusted_hash = "sha256:x"\n${trust('post_tool_use:3:0')}`;
+  assert.match(check(t, SHORT, later).stderr, /no trust on record/u, 'a value of the next section is not this one');
+});
+
+test('hook trust reads only the sections it needs, and never returns the file\'s values', (t) => {
   const home = folder(t);
   const read = codex.capabilities.trackerGuard.hookTrust;
   assert.equal(read({ CODEX_HOME: home }), 'absent', 'no config');
@@ -80,8 +100,9 @@ test('hook trust reads only the headers of Codex\'s config, and never returns it
   assert.equal(read({ CODEX_HOME: home }), 'untrusted');
   writeFileSync(path.join(home, 'config.toml'), `[hooks.state."/x/.codex/hooks.json:pre_tool_use:0:0"]\n${INSTALLED}`);
   assert.equal(read({ CODEX_HOME: home }), 'untrusted', 'a hook of another source is not this plugin\'s');
-  writeFileSync(path.join(home, 'config.toml'), TRUSTED);
+  writeFileSync(path.join(home, 'config.toml'), `token = "a-secret"\n${TRUSTED}`);
   assert.equal(read({ CODEX_HOME: home }), 'trusted');
+  assert.deepEqual(['absent', 'untrusted', 'off', 'trusted'].includes(read({ CODEX_HOME: home })), true, 'one of four words, never a value');
 });
 
 test('Codex: an app connector\'s tool reads as a server of its own, in the hook form and the flat form', () => {

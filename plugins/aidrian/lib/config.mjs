@@ -758,9 +758,13 @@ function checkTracker(raw, file, errors, defaults) {
   // A read tool left out may be the one the connector has, so the workspace check goes with it instead of refusing every write.
   const paired = workspace !== null && readTools.length > 0 && readTools.length === value.readTools.length;
   if (paired) {
-    for (const pattern of writeTools) {
-      const bad = unclearedWriteProblem(pattern, readTools);
-      if (bad) errors.push(`${file}: "tracker.writeTools" has ${JSON.stringify(pattern)}: ${bad}`);
+    const uncleared = writeTools.map((pattern) => [pattern, unclearedWriteProblem(pattern, readTools)]).filter(([, bad]) => bad);
+    // With the adapter's patterns under a file's read tools, what is wrong is that one key, however many patterns it strands.
+    if (provided && raw.writeTools === undefined && uncleared.length > 0) {
+      const servers = [...new Set(uncleared.map(([pattern]) => serverPrefix(pattern)))].join(', ');
+      errors.push(`${file}: "tracker.readTools" replaces the adapter's and leaves no read on ${servers}, so no write there can pass: drop "tracker.readTools", or add a read on each`);
+    } else {
+      for (const [pattern, bad] of uncleared) errors.push(`${file}: "tracker.writeTools" has ${JSON.stringify(pattern)}: ${bad}`);
     }
   }
   return {
@@ -790,6 +794,10 @@ function checkTrackerProvider(value, file, errors) {
   if (!Array.isArray(named) || !named.every((each) => typeof each === 'string' && SERVER_NAME.test(each))) {
     errors.push(`${file}: "tracker.servers" must be a list of server names, such as "my-linear" in mcp__my-linear__save_issue`);
     return undefined;
+  }
+  // The file's list replaces the adapter's, which is what `servers` adds to, so the server would go unwatched with no word.
+  if (value.writeTools !== undefined) {
+    for (const server of named) errors.push(`${file}: "tracker.servers" has ${JSON.stringify(server)}, but "tracker.writeTools" replaces the list it adds to, so no write on it is watched: add its patterns there, or drop "tracker.writeTools"`);
   }
   return adapter;
 }

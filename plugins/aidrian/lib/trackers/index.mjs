@@ -23,10 +23,10 @@ export const writeToolsOf = (adapter, servers) => servers.flatMap((server) => ad
 export function expandTracker(value, adapter) {
   const servers = knownServers(adapter, Array.isArray(value.servers) ? value.servers : []);
   const expanded = { ...value };
-  expanded.writeTools = value.writeTools ?? writeToolsOf(adapter, servers);
+  if (value.writeTools === undefined) expanded.writeTools = writeToolsOf(adapter, servers);
   if (isObject(value.workspace)) {
     expanded.workspace = { field: adapter.workspaceField, ...value.workspace };
-    expanded.readTools = value.readTools ?? readToolsOf(adapter, servers);
+    if (value.readTools === undefined) expanded.readTools = readToolsOf(adapter, servers);
   }
   if (isObject(value.team)) expanded.team = { ...adapter.team, ...value.team };
   if (isObject(value.project)) expanded.project = { ...adapter.project, ...value.project };

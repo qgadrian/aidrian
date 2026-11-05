@@ -110,6 +110,28 @@ test('`servers` is a list of server names, and needs a provider', (t) => {
   assert.match(load(t, written).errors.join('\n'), /"tracker\.servers" needs "tracker\.provider"/u);
 });
 
+test('`servers` beside a file\'s writeTools is an error that names the server, since it would go unwatched', (t) => {
+  const { errors, config } = load(t, { ...SHORT, servers: ['acme-linear', 'other'], writeTools: ['mcp__linear__save_*'], readTools: ['mcp__linear__get_workspace'] });
+  assert.equal(errors.length, 2);
+  assert.match(errors[0], /"tracker\.servers" has "acme-linear", but "tracker\.writeTools" replaces the list it adds to/u);
+  assert.match(errors[1], /"other"/u);
+  assert.deepEqual(config.tracker.writeTools, ['mcp__linear__save_*'], 'the guard keeps what is written');
+});
+
+test('read tools alone under a provider give one clear error, not one per pattern', (t) => {
+  const { errors } = load(t, { ...SHORT, readTools: ['mcp__plugin_linear_linear__get_workspace'] });
+  assert.equal(errors.length, 1, errors.join('\n'));
+  assert.match(errors[0], /"tracker\.readTools" replaces the adapter's and leaves no read on mcp__linear__/u);
+  assert.match(errors[0], /drop "tracker\.readTools"/u);
+});
+
+test('a null list under a provider is the same error as without one, and fills nothing in', (t) => {
+  for (const key of ['writeTools', 'readTools']) {
+    const { errors } = load(t, { ...SHORT, [key]: null });
+    assert.ok(errors.some((each) => each.includes(`"tracker.${key}" must be a list`)), `${key}: ${errors.join('\n')}`);
+  }
+});
+
 test('a key written out in full loads exactly as before, with no provider in it', (t) => {
   const tracker = {
     enabled: true,

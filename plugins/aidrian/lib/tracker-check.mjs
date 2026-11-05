@@ -11,12 +11,15 @@ export function trackerWarnings(tracker, { env = process.env, hosts = HOSTS, tra
   if (tracker?.enabled !== true) return [];
   const warnings = [];
   const here = new Set();
-  for (const { host, unguardedRoutes = [], hookTrust, trustStep } of trackerGuards(hosts)) {
+  for (const { host, unguardedRoutes = [], hookTrust, trustStep, offStep } of trackerGuards(hosts)) {
     for (const { name, reason } of unguardedRoutes) {
       warnings.push(`tracker.enabled: on ${host.name}, a write through ${name} passes unchecked: ${reason}`);
     }
     const trust = hookTrust?.(env) ?? 'absent';
     if (trust !== 'absent') here.add(host.id);
+    if (trust === 'off') {
+      warnings.push(`tracker.enabled: ${host.name} has this plugin or its tracker hooks turned off, so each of its tracker writes passes unchecked until a person turns them on: ${offStep}`);
+    }
     if (trust === 'untrusted') {
       warnings.push(`tracker.enabled: ${host.name} has no trust on record for this plugin's hooks, so each of its tracker writes passes unchecked until a person gives it: ${trustStep}`);
     }

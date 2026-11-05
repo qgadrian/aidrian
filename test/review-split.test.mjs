@@ -55,7 +55,7 @@ test('dedupe: one finding per mistake across passes, at its highest severity', (
 function repo(t, review = {}, github = {}) {
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-split-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const git = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' }).stdout.trim();
+  const git = (...args) => spawnSync('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8' }).stdout.trim();
   const write = (file, text) => {
     mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
     writeFileSync(path.join(dir, file), text);
@@ -209,7 +209,7 @@ test('a plan command that raises the depth to split gets slices and a cross pass
   const planner = "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>console.log(JSON.stringify({depth:'split',stages:[]})))";
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-split-pc-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const git = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' }).stdout.trim();
+  const git = (...args) => spawnSync('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: dir, encoding: 'utf8' }).stdout.trim();
   const write = (file, text) => (mkdirSync(path.dirname(path.join(dir, file)), { recursive: true }), writeFileSync(path.join(dir, file), text));
   git('init', '-q', '-b', 'main');
   git('config', 'user.email', 't@example.com');

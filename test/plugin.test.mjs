@@ -677,7 +677,7 @@ test('the shared rule states the continue path in its order, and why the writer 
     /each committed marker counts toward the domain's pause and could make the route wait/,
     /its answer goes in the ledger's `second_look`/,
     /Write it before changing anything a case cites: until it is on record, `quorum check` holds the ledger to its citations/,
-    /refuses until a second look the ruling's `severity` calls for holds `sign_off: approved`/,
+    /refuses until a second look the ruling's `severity` calls for holds `sign_off: approved` from the agent `secondLook` names/,
     /goes in the report and the pull request's Decisions section, and the coordinator holds it for the session/,
     // resolve asks on a doc escalateDocs covers, and `--ledger` takes no `--doc`.
     /a continued ruling whose marker doc `escalateDocs` covers waits/,

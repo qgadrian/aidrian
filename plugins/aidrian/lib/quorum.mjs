@@ -1388,8 +1388,9 @@ function secondLookGap({ ruling, second_look: taken }, look) {
   const { severities, severitySynonyms } = severityTable();
   const word = ruling.severity.trim().toLowerCase();
   const rank = severities.indexOf(severitySynonyms[word] ?? word);
-  if (rank > severities.indexOf(look.minSeverity) || taken?.sign_off === 'approved') return null;
-  return `second look: ${look.agent} must approve a ruling of severity ${shown(ruling.severity)}, at or above ${look.minSeverity} or unknown, and second_look ${taken ? `says ${JSON.stringify(taken.sign_off)}` : 'is missing'}`;
+  if (rank > severities.indexOf(look.minSeverity) || (taken?.agent === look.agent && taken.sign_off === 'approved')) return null;
+  const said = !taken ? 'is missing' : taken.agent !== look.agent ? `is from ${JSON.stringify(taken.agent)}` : `says ${JSON.stringify(taken.sign_off)}`;
+  return `second look: ${look.agent} must approve a ruling of severity ${shown(ruling.severity)}, at or above ${look.minSeverity} or unknown, and second_look ${said}`;
 }
 
 // Why a provisional ledger's marker no longer carries it, as one line, or null. `status` is what the docs on record say, or

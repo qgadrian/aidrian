@@ -251,7 +251,7 @@ Two commands keep a ledger honest, `roles` tells the skill who runs each role, `
 - `aidrian quorum provisional LEDGER --plan PLAN --marker ID` is the one writer of `provisional`. It holds a product LEDGER to `check` as if the field were absent, so no exemption applies,
   and to the field's own rules below. It then applies `route --ledger`'s rule under `ruling.domain`, the base branch's settings, and `resolve`'s answer, which adds `resolve`'s row with the same `key`,
   and refuses unless the route is `quorum` with `wait` false or a `settle` list. A marker the Human settled or rejected stops it, as it stops the route, and one not yet on record does not, since the writer runs first.
-  It refuses too when `resolve` prints a `secondLook`, `ruling.severity` is at or above its `minSeverity` or unknown, and `second_look` is missing or its `sign_off` is not `approved`. It writes `provisional: { marker: ID }` and exits 0 only when each passes and the Human has not answered.
+  It refuses too when `resolve` prints a `secondLook`, `ruling.severity` is at or above its `minSeverity` or unknown, and `second_look` is missing, its `agent` is not the one `secondLook` names, or its `sign_off` is not `approved`. It writes `provisional: { marker: ID }` and exits 0 only when each passes and the Human has not answered.
   Otherwise it exits 1, naming each problem, and leaves the file as it was. A LEDGER that records another marker is refused.
   `check` cannot tell who wrote the field, so one written by hand is held only to the rules `check` applies.
   Its one extra flag stays out of the quorum skill's text, as `route`'s do.

@@ -3462,7 +3462,14 @@ test('quorum provisional refuses a ruling at or above the second look with no ap
     assert.deepEqual([refused.status, refused.untouched], [1, true], sign_off);
     assert.match(refused.stderr, /second look: critic must approve/u, sign_off);
   }
+  for (const agent of ['architect', 'Critic', 'aidrian:critic', '']) {
+    const refused = provisionalOn(d, at('high', { ...approved, agent }));
+    assert.deepEqual([refused.status, refused.untouched], [1, true], `approved by ${JSON.stringify(agent)}`);
+    assert.match(refused.stderr, /second look: critic must approve/u, agent);
+    assert.ok(refused.stderr.includes(`second_look is from ${JSON.stringify(agent)}`), agent);
+  }
   for (const severity of ['medium', 'low', 'nit']) assert.equal(provisionalOn(d, at(severity)).status, 0, `${severity} is below high`);
+  assert.equal(provisionalOn(d, at('low', { ...approved, agent: 'architect' })).status, 0, 'below the bar, no agent is required');
   const review = { autoStart: true, approval: 'review-later' };
   assert.equal(provisionalOn(markedProject(t, productConfig(review, { ...OPEN_DECISIONS, secondLook: null })), at('critical')).status, 0, 'null turns it off');
   const stricter = markedProject(t, productConfig(review, { ...OPEN_DECISIONS, secondLook: { agent: 'architect', minSeverity: 'medium' } }));
@@ -3470,6 +3477,8 @@ test('quorum provisional refuses a ruling at or above the second look with no ap
   assert.equal(named.status, 1);
   assert.match(named.stderr, /second look: architect must approve/u, 'the agent and the level come from the base branch');
   assert.equal(provisionalOn(stricter, at('low')).status, 0);
+  assert.equal(provisionalOn(stricter, at('medium', approved)).status, 1, 'the default agent\'s approval does not count where the base branch names another');
+  assert.equal(provisionalOn(stricter, at('medium', { ...approved, agent: 'architect' })).status, 0, 'the agent the base branch names');
 });
 
 test('the writer and route --ledger share one route: the writer refuses a marker the Human settled or rejected, and takes one not yet on record', (t) => {

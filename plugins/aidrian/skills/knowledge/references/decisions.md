@@ -200,9 +200,9 @@ In this order. Each step that fails waits for the Human.
    No ledger field records a settled fact, so `route` still lists it, with `wait` true, and the writer accepts that:
    the result, with its citation, goes in the report and the pull request's Decisions section, and the coordinator holds it for the session.
    Then, with or without a fact to settle, take the [second look](#second-look) on the ruling's `severity`;
-   its answer goes in the ledger's `second_look`, as `{ agent, sign_off, reason }`.
+   its answer goes in the ledger's `second_look`, as `{ agent, sign_off, reason }`, with `agent` spelled as `secondLook` names it.
 4. **The writer**, `aidrian quorum provisional <ledger> --plan <question> --marker <id>`.
-   It refuses until a second look the ruling's `severity` calls for holds `sign_off: approved`, an unknown severity included.
+   It refuses until a second look the ruling's `severity` calls for holds `sign_off: approved` from the agent `secondLook` names, an unknown severity included.
    It runs before the implementing commit, since afterwards it can refuse on a changed citation, its check having no exemption.
    It runs before the marker, since each committed marker counts toward the domain's pause and could make the route wait.
    After it, `route --ledger` prints `human` until the marker exists in the working copy, so a resume in that window waits.

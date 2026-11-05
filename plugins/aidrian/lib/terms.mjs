@@ -14,6 +14,7 @@ import path from 'node:path';
 
 import { codeName, identifiers, maskCode } from './code-words.mjs';
 import { globPattern, isObject } from './fs.mjs';
+import { fileEditOf } from './hosts/index.mjs';
 import { proseLines } from './markdown-prose.mjs';
 
 export const TERMS_VERSION = 1;
@@ -243,8 +244,8 @@ function editedLines(file, edits) {
 // apply_patch, whose numbers count within the patch, so its file text is never known.
 export function addedLines(input, cwd) {
   const tool = input.tool_input ?? {};
-  const name = input.tool_name;
-  if (name === 'Write' && typeof tool.file_path === 'string' && typeof tool.content === 'string') {
+  const edit = fileEditOf(input);
+  if (edit?.shape === 'write' && typeof tool.file_path === 'string' && typeof tool.content === 'string') {
     let before = null;
     try {
       before = readFileSync(path.resolve(cwd, tool.file_path), 'utf8');
@@ -254,20 +255,11 @@ export function addedLines(input, cwd) {
     const old = new Set(before?.split(/\r?\n/u) ?? []);
     return [{ file: tool.file_path, lines: numbered(tool.content).filter(({ text }) => !old.has(text)), text: tool.content, before, reliable: true }];
   }
-  if (name === 'Edit' && typeof tool.file_path === 'string') {
-    return [{ file: tool.file_path, ...editedLines(path.resolve(cwd, tool.file_path), Array.isArray(tool.edits) ? tool.edits : [tool]) }];
+  if (edit?.shape === 'edit' && typeof tool.file_path === 'string') {
+    return [{ file: tool.file_path, ...editedLines(path.resolve(cwd, tool.file_path), edit.edits) }];
   }
-  if (name === 'apply_patch') {
-    const files = [];
-    for (const line of String(tool.command ?? tool.input ?? '').split(/\r?\n/u)) {
-      const header = /^\*\*\* (?:Add|Update) File: (.+)$/u.exec(line);
-      const move = /^\*\*\* Move to: (.+)$/u.exec(line);
-      if (header) files.push({ file: header[1].trim(), lines: [], text: null, before: null, reliable: false });
-      else if (move && files.at(-1)?.file) files.at(-1).file = move[1].trim();
-      else if (/^\*\*\* /u.test(line)) files.push({ file: null, lines: [], text: null, before: null, reliable: false });
-      else if (line.startsWith('+') && files.at(-1)?.file) files.at(-1).lines.push({ number: files.at(-1).lines.length + 1, text: line.slice(1) });
-    }
-    return files.filter(({ file }) => file);
+  if (edit?.shape === 'patch') {
+    return edit.files.map(({ file, added }) => ({ file, lines: added.map((text, index) => ({ number: index + 1, text })), text: null, before: null, reliable: false }));
   }
   return [];
 }

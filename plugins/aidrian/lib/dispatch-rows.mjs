@@ -11,6 +11,7 @@ import path from 'node:path';
 import { stamp } from './dispatch-log.mjs';
 import { fileBytes } from './fs.mjs';
 import { checkoutRoots } from './git.mjs';
+import { sessionIdentity } from './hosts/index.mjs';
 import { loadKnowledge } from './knowledge.mjs';
 import {
   aggregateUsage, estimateCostUsd, filesRead, partOf, readText, sessionActions, subagentTranscripts, sumTokens, launchedTaskIds,
@@ -36,7 +37,7 @@ export function dispatchRow(input, { env = process.env, now = Date.now() } = {})
     event: 'dispatch',
     ts: stamp(now),
     session_id: text(input.session_id),
-    dispatcher: text(input.agent_type) ?? text(env.CLAUDE_CODE_AGENT) ?? 'main',
+    dispatcher: text(input.agent_type) ?? text(sessionIdentity(env).agent) ?? 'main',
     agent_id: text(response.agentId),
     agent_type: text(toolInput.subagent_type) ?? 'general-purpose',
     name: text(toolInput.name),
@@ -99,7 +100,7 @@ export function denyRow(input, rule, match, { env = process.env, now = Date.now(
     session_id: text(input.session_id),
     rule,
     tool: text(input.tool_name),
-    agent_type: text(input.agent_type) ?? text(env.CLAUDE_CODE_AGENT) ?? 'main',
+    agent_type: text(input.agent_type) ?? text(sessionIdentity(env).agent) ?? 'main',
     reason: text(match, REASON_CHARS),
   };
 }
@@ -180,7 +181,7 @@ export function sessionRow(input, project, { env = process.env, now = Date.now()
     event: 'session',
     ts: stamp(now),
     session_id: text(input.session_id),
-    agent: text(env.CLAUDE_CODE_AGENT),
+    agent: text(sessionIdentity(env).agent),
     reason: text(input.reason),
     duration_min: minutes,
     effort,

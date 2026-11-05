@@ -8,6 +8,7 @@ import path from 'node:path';
 
 import { COMMIT_FIELDS, PR_FIELDS } from './config.mjs';
 import { runGit } from './git.mjs';
+import { detectHost, HOSTS, pluginAgentName } from './hosts/index.mjs';
 import { aggregateUsage } from './transcript.mjs';
 
 export { COMMIT_FIELDS, PR_FIELDS };
@@ -20,8 +21,8 @@ const TAIL_BYTES = 1024 * 1024;
 const SAFE = /^[\w.:@/[\] -]+$/u;
 const text = (value) => (typeof value === 'string' && value.trim() !== '' ? value.trim() : null);
 
-// An agent's name without the plugin's prefix: Claude Code says `aidrian:<agent>`, Codex `aidrian-<agent>`.
-export const agentName = (name) => text(name)?.replace(/^aidrian[:-]/u, '') ?? null;
+// An agent's name without the plugin's prefix, in any host's form.
+export const agentName = (name) => (text(name) ? pluginAgentName(text(name)) : null);
 
 // The last `bytes` of `file`, from its first whole line; null when it cannot be read.
 export function readTail(file, bytes = TAIL_BYTES) {
@@ -41,17 +42,20 @@ export function readTail(file, bytes = TAIL_BYTES) {
   }
 }
 
-// Where the session runs: `cloud` in a Claude Code cloud session, `ci` on a CI runner, else `local`.
+// Where the session runs: `cloud` in a host's cloud session, `ci` on a CI runner, else `local`.
 export function runEnv(env) {
-  if (env.CLAUDE_CODE_REMOTE === 'true') return 'cloud';
+  const hosted = HOSTS.map((host) => host.runEnv(env)).find(Boolean);
+  if (hosted) return hosted;
   if (env.GITHUB_ACTIONS === 'true' || (text(env.CI) && env.CI !== 'false' && env.CI !== '0')) return 'ci';
   return 'local';
 }
 
 // { agent, model, effort, tool, env } of the agent making this tool call; null where nothing tells.
 // A subagent's call names it (`agent_id`, `agent_type`), and its own transcript sits beside the session's. It inherits the
-// session's environment, so CLAUDE_EFFORT and CLAUDE_CODE_AGENT speak only for the main session.
+// session's environment, so what the host's environment says of effort and agent speaks only for the main session.
+// A process no host adapter claims records the tool as `unknown`, never as a host it may not be.
 export function currentAuthor(input, env = process.env) {
+  const host = detectHost({ env, input });
   const agentId = text(input.agent_id);
   const main = text(input.transcript_path);
   const subagent = Boolean(agentId);
@@ -60,14 +64,14 @@ export function currentAuthor(input, env = process.env) {
       ? path.join(path.dirname(main), input.session_id, 'subagents', `agent-${agentId}.jsonl`)
       : null
     : main;
-  const transcript = file ? readTail(file) : null;
+  const transcript = file && host.capabilities.transcripts !== false ? readTail(file) : null;
   const usage = transcript ? aggregateUsage(transcript) : null;
   const last = usage ? [...usage.requests.values()].at(-1) : null;
   return {
-    agent: agentName(input.agent_type) ?? (subagent ? null : agentName(env.CLAUDE_CODE_AGENT) ?? 'main'),
+    agent: agentName(input.agent_type) ?? (subagent ? null : agentName(host.agentName(env)) ?? 'main'),
     model: text(last?.model),
-    effort: text(usage?.effort) ?? (subagent ? null : text(env.CLAUDE_EFFORT)),
-    tool: env.CODEX_THREAD_ID ? 'Codex' : 'Claude Code',
+    effort: text(usage?.effort) ?? (subagent ? null : text(host.effort(env))),
+    tool: host.name,
     env: runEnv(env),
   };
 }

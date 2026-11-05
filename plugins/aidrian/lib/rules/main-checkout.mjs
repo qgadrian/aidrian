@@ -22,12 +22,12 @@ import { globPattern } from '../fs.mjs';
 
 import { loadConfig } from '../config.mjs';
 import { checkoutRoots, isIgnored, runGit } from '../git.mjs';
+import { fileEditOf } from '../hosts/index.mjs';
 import { findProject, worktreesDir } from '../project.mjs';
 import { GIT_VALUE_GLOBALS, inlineShellCommand, isLongOption, lexInputs, lexSteps, readGit, readInvocation, readShortOptions, readsShellInput, SUBSTITUTION_DEPTH_LIMIT } from '../shell-lex.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_MAIN_WRITE';
 
-const PATCH_TARGET = /^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$/gmu;
 const CHANGES_DIRECTORY = new Set(['cd', 'pushd', 'popd']);
 // Programs whose every operand is written, and the options of each that take a value: the rest of a short option's
 // word (`-e's/a/b/'`), or else the next word. A long one also matches by a prefix, as getopt_long reads it:
@@ -632,8 +632,7 @@ export function checkTool(input, { env = process.env } = {}) {
 // Every path an Edit, Write, NotebookEdit, or apply_patch payload writes, as it names them: relative to its cwd or absolute.
 export function toolTargets(input) {
   const toolInput = input.tool_input ?? {};
-  let targets = [toolInput.file_path ?? toolInput.notebook_path];
-  if (input.tool_name === 'apply_patch') targets = [...String(toolInput.command ?? '').matchAll(PATCH_TARGET)].map((match) => match[1].trim());
+  const targets = fileEditOf(input)?.targets ?? [toolInput.file_path ?? toolInput.notebook_path];
   return targets.filter((target) => typeof target === 'string' && target !== '');
 }
 

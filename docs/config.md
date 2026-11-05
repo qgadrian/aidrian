@@ -172,7 +172,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `lessons.maxAgeDays` | The age, in days, of the oldest open lesson past which the session-start line asks for triage; `0` turns this limit off. |
 | `models` | The model and effort of the plugin's agents, per host, in place of the ones the plugin ships: [Models](#models). |
 | `names.human` | What agents call the person they work for: [Names](#names). |
-| `names.ai` | What agents call themselves; `null` is the host's name, Claude or Codex: [Names](#names). |
+| `names.ai` | What agents call themselves; `null` is the host's name, Claude or Codex, or `the AI` on a host no adapter claims: [Names](#names). |
 | `requires.aidrian` | The oldest plugin version the project's config needs, such as `"0.17.0"`; `null` asks for none: [Plugin version](#plugin-version). |
 | `attribution.commit` | The trailers an agent's commit must carry: [Attribution](#attribution). `[]`, the default, is off. |
 | `attribution.pullRequest` | The lines a pull request body an agent opens must end with: [Attribution](#attribution). `[]` is off. |
@@ -568,7 +568,7 @@ and prints the exact lines to add. Both lists are empty by default, which turns 
 | `agent` | `backend-developer`, or `main` | The subagent making the call, else the session's `--agent`; without the `aidrian:` prefix | `Agent:` |
 | `model` | `claude-opus-5-5` | The agent's last API request in its own transcript | `Agent-Model:` |
 | `effort` | `high` | That request, else `CLAUDE_EFFORT` in the main session only: a subagent inherits it | `Agent-Effort:` |
-| `tool` | `Claude Code` or `Codex` | `CODEX_THREAD_ID` | `Agent-Tool:` |
+| `tool` | The host's name, such as `Claude Code` or `Codex`, or `unknown` | The [host adapter](providers/adding-a-host.md) that claims the process | `Agent-Tool:` |
 | `env` | `local`, `cloud`, or `ci` | `CLAUDE_CODE_REMOTE=true` is `cloud`; `GITHUB_ACTIONS` or `CI` is `ci` | `Agent-Env:` |
 
 `commit` takes any of these fields. A commit carries a trailer as a `--trailer` option, or in its message's trailer

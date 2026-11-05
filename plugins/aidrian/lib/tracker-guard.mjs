@@ -6,40 +6,21 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { nameMatches } from './agent-gates.mjs';
-import { isObject } from './fs.mjs';
+import { UNKNOWN_HOST } from './hosts/index.mjs';
 
 // An issue key, <KEY>-<n>. The prefix follows config.mjs `teamKey`: no hyphen and no whitespace.
 const ISSUE_KEY = /^([^\s-]+)-\d+$/u;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
-// The value of `field` in a tool's `tool_response`, or null when it gives none, which is an unreadable read. The response
-// is an object, a JSON string, a content-block array, or `{content: [...]}`, as Codex sends it. The field of an object wins
-// over its blocks; otherwise the first text block holding JSON is the one read.
-export function readTrackerValue(response, field) {
-  const parsed = typeof response === 'string' ? parseJson(response) : response;
-  const direct = isObject(parsed) ? text(parsed[field]) : null;
-  if (direct !== null) return direct;
-  const held = firstJsonBlock(Array.isArray(parsed) ? parsed : parsed?.content);
-  return isObject(held) ? text(held[field]) : null;
-}
-
-function firstJsonBlock(blocks) {
-  if (!Array.isArray(blocks)) return undefined;
-  for (const block of blocks) {
-    if (isObject(block) && block.type === 'text' && typeof block.text === 'string') {
-      const json = parseJson(block.text);
-      if (json !== undefined) return json;
-    }
+// The value of `field` in a tool's `tool_response`, or null when it gives none, which is an unreadable read. `host` says
+// where its shape holds that value (lib/hosts/): its adapter lists the objects, the most direct first, and the first that
+// has the field answers. An unknown host, or none given, tries every adapter's way.
+export function readTrackerValue(response, field, host = UNKNOWN_HOST) {
+  for (const held of host.toolResponse(response)) {
+    const value = text(held[field]);
+    if (value !== null) return value;
   }
-  return undefined;
-}
-
-function parseJson(body) {
-  try {
-    return JSON.parse(body);
-  } catch {
-    return undefined;
-  }
+  return null;
 }
 
 const text = (value) => (typeof value === 'string' && value.trim() !== '' ? value : null);

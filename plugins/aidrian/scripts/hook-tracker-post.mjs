@@ -12,6 +12,7 @@ import path from 'node:path';
 import { loadConfig } from '../lib/config.mjs';
 import { snapshotPath } from '../lib/gate-snapshot.mjs';
 import { runHook } from '../lib/hook-io.mjs';
+import { detectHost } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { readTrackerValue, unlistedTool } from '../lib/tracker-guard.mjs';
 
@@ -28,7 +29,7 @@ await runHook(async (input) => {
   }
   const file = snapshotPath(input.session_id)?.replace(/\.json$/u, '.tracker.json');
   if (!file) return;
-  const value = readTrackerValue(input.tool_response, tracker.workspace.field);
+  const value = readTrackerValue(input.tool_response, tracker.workspace.field, detectHost({ input }));
   mkdirSync(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.tmp`;
   writeFileSync(temporary, `${JSON.stringify({ value, unreadable: value === null, tool: input.tool_name, at: new Date().toISOString() })}\n`);

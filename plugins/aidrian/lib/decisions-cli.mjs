@@ -32,6 +32,7 @@ import { appendEvent, stamp } from './dispatch-log.mjs';
 import { ghJson } from './gh.mjs';
 import { ageDays, blockOf, classDomain, DECISION_STATUSES, isClassName, loadVocab, parseDecisions, recordAt, resolveAuthority, setDecisionStatus, unattendedAnswer, undoDecision, wordingProblems } from './decisions.mjs';
 import { checkoutRoots, runGit } from './git.mjs';
+import { sessionIdentity } from './hosts/index.mjs';
 import { indexedPaths, loadKnowledge } from './knowledge.mjs';
 import { committedConfigFile, findProject, noProjectMessage, projectAt } from './project.mjs';
 import { checkTool as mainCheckoutDenial } from './rules/main-checkout.mjs';
@@ -101,7 +102,7 @@ export function resolveQuestion(project, { domain, class: kind, reversible, docs
 // log holds names; so is the rule's `reason`, which can quote a doc, left out. `key` is one question, asked in one session
 // (or, with no session id, one day): the same words again carry the same key, and `aidrian report health` counts them once.
 function resolveRow({ authority, rule }, { domain, class: kind, reversible, docs }, { env = process.env, now = Date.now() } = {}) {
-  const asked = [env.CLAUDE_CODE_SESSION_ID || stamp(now).slice(0, 10), domain, kind, questions().map((key) => reversible[key] ?? null), [...docs].sort()];
+  const asked = [sessionIdentity(env).session || stamp(now).slice(0, 10), domain, kind, questions().map((key) => reversible[key] ?? null), [...docs].sort()];
   return {
     event: authority === 'decide' ? 'decision_made' : 'decision_escalated',
     rule,
@@ -116,7 +117,7 @@ function resolveRow({ authority, rule }, { domain, class: kind, reversible, docs
 function logDecision(project, row, { env = process.env } = {}) {
   try {
     if (!findProject(project.root)) return;
-    appendEvent(project, loadConfig(project).config, { event: row.event, ts: stamp(Date.now()), session_id: env.CLAUDE_CODE_SESSION_ID || null, ...row });
+    appendEvent(project, loadConfig(project).config, { event: row.event, ts: stamp(Date.now()), session_id: sessionIdentity(env).session, ...row });
   } catch {
     // The state folder is out of reach, or a disk is full: the log says less, and the decision is still on record.
   }

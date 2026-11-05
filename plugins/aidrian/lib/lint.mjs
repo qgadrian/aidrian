@@ -22,6 +22,7 @@ import { parseArgs } from 'node:util';
 import { commandConfig } from './config.mjs';
 import { isDirectory, isFile } from './fs.mjs';
 import { runGit } from './git.mjs';
+import { projectFolders } from './hosts/index.mjs';
 import { checkBudgets, loadKnowledge } from './knowledge.mjs';
 import { lintPersonas } from './personas.mjs';
 import { projectAt } from './project.mjs';
@@ -72,8 +73,8 @@ export const commands = {
       const { buckets } = loadKnowledge(project);
       const at = (rel) => path.join(project.root, rel);
       const runs = {
-        skills: () => lintSkills(dirs.length ? dirs : [at('.claude/skills')], config.skills),
-        agents: () => lintAgents(dirs.length ? dirs : [at('.claude/agents')], config.skills),
+        skills: () => lintSkills(dirs.length ? dirs : projectFolders('skills').map(at), config.skills),
+        agents: () => lintAgents(dirs.length ? dirs : projectFolders('agents').map(at), config.skills),
         paths: () => lintPaths(project.root, values.staged),
         budget: () => checkBudgets(project.root, buckets, config.knowledge.budgets),
         terms: () => lintTerms(project, config, values.staged, values.rule ?? null),

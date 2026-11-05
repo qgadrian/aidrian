@@ -11,6 +11,7 @@ import { GIT_TIMEOUT_MS } from '../plugins/aidrian/lib/git.mjs';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const BIN = path.join(ROOT, 'plugins/aidrian/bin');
 const HOOK = path.join(ROOT, 'plugins/aidrian/scripts/hook-session-start.mjs');
+const PLUGIN_DIR = path.join(ROOT, 'plugins/aidrian');
 // An empty state folder, so a developer's own lesson inbox never reaches these tests.
 const XDG = mkdtempSync(path.join(tmpdir(), 'aidrian-start-state-'));
 test.after(() => rmSync(XDG, { recursive: true, force: true }));
@@ -41,11 +42,15 @@ const FOOTER = 'Pull requests: a body here never carries the "Generated with [Cl
 const USER_SETTINGS = mkdtempSync(path.join(tmpdir(), 'aidrian-start-claude-'));
 test.after(() => rmSync(USER_SETTINGS, { recursive: true, force: true }));
 
-// Without CLAUDECODE=1, which Claude Code sets for its hooks, the host is Codex. `CLAUDECODE: '1'` makes it Claude Code.
+// Without CLAUDECODE=1, which Claude Code sets for its hooks, this runs as Codex's plugin hook, which has PLUGIN_ROOT.
+// `CLAUDECODE: '1'` makes it Claude Code, and `PLUGIN_ROOT: null` a host no adapter claims.
 // AIDRIAN_ALLOW_MAIN_COMMIT is unset unless a test passes it, whatever the shell running the tests holds.
-function hook({ input = '{}', args = [], cwd = ROOT, PATH = WITHOUT_BIN, XDG_STATE_HOME = XDG, CLAUDECODE, AIDRIAN_ALLOW_MAIN_COMMIT, CLAUDE_CONFIG_DIR = USER_SETTINGS } = {}) {
+// A host no adapter claims is called neither Claude nor Codex.
+function hook({ input = '{}', args = [], cwd = ROOT, PATH = WITHOUT_BIN, XDG_STATE_HOME = XDG, CLAUDECODE, AIDRIAN_ALLOW_MAIN_COMMIT, CLAUDE_CONFIG_DIR = USER_SETTINGS, PLUGIN_ROOT = CLAUDECODE === undefined ? PLUGIN_DIR : null } = {}) {
   const env = { ...process.env, PATH, XDG_STATE_HOME, CLAUDECODE, AIDRIAN_ALLOW_MAIN_COMMIT, CLAUDE_CONFIG_DIR };
   if (CLAUDECODE === undefined) delete env.CLAUDECODE;
+  if (PLUGIN_ROOT === null) delete env.PLUGIN_ROOT;
+  else env.PLUGIN_ROOT = PLUGIN_ROOT;
   if (AIDRIAN_ALLOW_MAIN_COMMIT === undefined) delete env.AIDRIAN_ALLOW_MAIN_COMMIT;
   return spawnSync(process.execPath, [HOOK, ...args], { input, cwd, encoding: 'utf8', env });
 }
@@ -93,6 +98,12 @@ test('in Claude Code, a line settles the pull request footer, unless its own att
   assert.doesNotMatch(run(), /Pull requests:/, 'the older switch turns it off too');
   writeFileSync(path.join(user, 'settings.json'), 'not json');
   assert.match(run(), /\nPull requests: /, 'a settings file it cannot read changes nothing');
+});
+
+test('a host no adapter claims is called the AI, neither Claude nor Codex', () => {
+  const { stdout } = hook({ input: JSON.stringify({ cwd: EXAMPLE }), PLUGIN_ROOT: null });
+  assert.equal(stdout.split('\n')[1], NAMES('the AI'));
+  assert.doesNotMatch(stdout, /Pull requests:/u, 'the footer line is Claude Code\'s to need');
 });
 
 test('the names line calls the AI by its host unless config.json or .aidrian.local.json names it, the local file winning', (t) => {

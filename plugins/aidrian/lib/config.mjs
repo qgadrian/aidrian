@@ -10,6 +10,7 @@ import { agentNameProblem, ALL, MAIN, nameMatches, patternProblem } from './agen
 import { CLASS_MAX, DECISION_DOMAINS, DECISION_MODES, decisionClasses, isClassName, lowerMode, SAFE_DEFAULTS } from './decisions.mjs';
 import { loadTable as dispositionTable } from './finding-disposition.mjs';
 import { isFile, isObject, readJson } from './fs.mjs';
+import { modelChoices } from './hosts/index.mjs';
 import { checkLocalReview, checkLocalVisual, checkReview, REVIEW_DEFAULTS } from './review/config.mjs';
 import { serverPrefix } from './tracker-guard.mjs';
 
@@ -155,12 +156,8 @@ const HANDOFF_MODES = ['off', 'ask', 'auto'];
 export const COMMIT_FIELDS = ['agent', 'model', 'effort', 'tool', 'env'];
 export const PR_FIELDS = ['tool', 'model', 'effort', 'env', 'agents'];
 
-// Claude Code's Agent tool takes only these model aliases. Codex reads any model name and names these efforts.
-// docs/config.md#models cites both.
-const MODEL_CHOICES = {
-  claude: { model: ['sonnet', 'opus', 'haiku', 'fable'], effort: ['low', 'medium', 'high', 'xhigh', 'max'] },
-  codex: { model: null, effort: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra', 'persistent'] },
-};
+// Each host's adapter says what it takes (lib/hosts/); docs/config.md#models cites them.
+const MODEL_CHOICES = modelChoices();
 
 const SEMVER = /^\d+\.\d+\.\d+$/u;
 // The placeholders an audit label may hold, filled per finding (lib/audits.mjs issueLabels).
@@ -323,7 +320,7 @@ export const DEFAULTS = deepFreeze({
   // what it would in a fresh session; `maxTokens` is an optional ceiling on the context, 0 for off.
   session: { handoff: { mode: 'ask', costRatio: 2, maxTokens: 0 } },
   lessons: { auto: true, maxOpen: 20, maxAgeDays: 14 },
-  models: { claude: { agents: {} }, codex: { agents: {} } },
+  models: Object.fromEntries(Object.keys(MODEL_CHOICES).map((key) => [key, { agents: {} }])),
   names: { human: 'the Human', ai: null },
   // The oldest plugin the project's config needs; null asks for none (versionFloorProblem).
   requires: { aidrian: null },

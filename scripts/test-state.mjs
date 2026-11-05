@@ -15,11 +15,14 @@ import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { DETECT_VARS } from '../plugins/aidrian/lib/hosts/index.mjs';
 import { isolate } from '../plugins/aidrian/lib/review/env.mjs';
 
 export { isolate };
 
 isolate(process.env);
+// Which host runs the suite changes no answer, so a test that needs a host names it.
+for (const name of DETECT_VARS) delete process.env[name];
 
 if (!process.env.AIDRIAN_TEST_STATE) {
   const state = mkdtempSync(path.join(tmpdir(), 'aidrian-test-state-'));

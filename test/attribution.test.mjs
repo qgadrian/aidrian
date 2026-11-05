@@ -34,7 +34,7 @@ function setup(t, attribution = {}) {
   ];
   writeFileSync(path.join(dir, 'state/dispatch-log.jsonl'), `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`);
   const input = { session_id: 's1', transcript_path: transcript };
-  const run = (command, { env = {}, payload = input, commits = () => [] } = {}) => check(command, { cwd: dir, env, input: payload, commits });
+  const run = (command, { env = { CLAUDECODE: '1' }, payload = input, commits = () => [] } = {}) => check(command, { cwd: dir, env, input: payload, commits });
   return { dir, input, run };
 }
 
@@ -62,6 +62,9 @@ test('currentAuthor reads the last request; a subagent reads its own transcript 
   assert.equal(currentAuthor({ ...input, agent_id: 'nope' }, {}).model, null, 'a missing subagent transcript is unknown, not the parent model');
   assert.equal(currentAuthor(input, { CLAUDE_CODE_AGENT: 'aidrian:orchestrator' }).agent, 'orchestrator');
   assert.equal(currentAuthor(input, { CODEX_THREAD_ID: 't' }).tool, 'Codex');
+  assert.equal(currentAuthor({ ...input, turn_id: 't' }, {}).tool, 'Codex', 'a Codex tool hook names itself in its payload');
+  assert.equal(currentAuthor(input, { PLUGIN_ROOT: '/p' }).tool, 'Codex', 'a Codex plugin hook has PLUGIN_ROOT');
+  assert.equal(currentAuthor(input, { CLAUDECODE: '1' }).tool, 'Claude Code');
 });
 
 test('readTail starts at a whole line', (t) => {
@@ -187,7 +190,7 @@ test('each call answers to the project it runs in', (t) => {
   const { dir, input } = setup(t);
   mkdirSync(path.join(dir, 'other/.aidrian'), { recursive: true });
   writeFileSync(path.join(dir, 'other/.aidrian/config.json'), JSON.stringify({ version: 1, attribution: { commit: ['agent'] } }));
-  const run = (command) => check(command, { cwd: dir, env: {}, input, commits: () => [] });
+  const run = (command) => check(command, { cwd: dir, env: { CLAUDECODE: '1' }, input, commits: () => [] });
   assert.equal(run('git commit -m unsigned'), null, 'this project has it off');
   assert.match(run('cd other && git commit -m unsigned') ?? '', /Agent: main/);
   assert.match(run('git -C other commit -m unsigned') ?? '', /Agent: main/);

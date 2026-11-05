@@ -72,7 +72,11 @@
       "tags": []
     },
     "providers/codex.md": {
-      "summary": "Codex host: install, update, from a local checkout, running aidrian, hooks, models and effort, agent gates, limits.",
+      "summary": "Codex host: install, update, local checkout, running aidrian, hooks, trust, app connector tool names, proving the tracker guard, models, effort, gates, limits.",
+      "tags": []
+    },
+    "providers/adding-a-host.md": {
+      "summary": "Adding a host or a tracker: the adapter files, their fields, lib/hosts and lib/trackers registries, conformance and coupling tests, what still needs a hand.",
       "tags": []
     }
   }

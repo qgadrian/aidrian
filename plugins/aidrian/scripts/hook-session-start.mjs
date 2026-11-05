@@ -15,7 +15,6 @@
 // holds every subagent to until the session ends.
 
 import { accessSync, constants, readFileSync, realpathSync } from 'node:fs';
-import { homedir } from 'node:os';
 import path from 'node:path';
 
 import { auditNudge } from '../lib/audits.mjs';
@@ -23,6 +22,7 @@ import { loadConfig, versionFloorProblem } from '../lib/config.mjs';
 import { ageDays, parseDecisions } from '../lib/decisions.mjs';
 import { saveGateSnapshot } from '../lib/gate-snapshot.mjs';
 import { runHook } from '../lib/hook-io.mjs';
+import { detectHost } from '../lib/hosts/index.mjs';
 import { indexedPaths, indexRows, loadKnowledge } from '../lib/knowledge.mjs';
 import { inboxPath, nudge } from '../lib/lesson-inbox.mjs';
 import { inheritedOverrideLine, unpushedMainLine } from '../lib/main-commits.mjs';
@@ -50,11 +50,10 @@ await runHook((input) => {
   if (always.length) line += ` Read now: ${always.join(', ')}.`;
   line += ` For more, run \`${command} route <tag>\` for your tags or \`${command} search <words>\` for a topic.`;
   if (errors.length) line += ` The project folder has ${errors.length} problems; run \`${binCommand('aidrian')} check\`.`;
-  // Claude Code sets CLAUDECODE=1 for its hooks; this hook runs only there and in Codex.
-  const ai = config.names.ai ?? (process.env.CLAUDECODE === '1' ? 'Claude' : 'Codex');
+  const ai = config.names.ai ?? detectHost({ input }).ai;
   const human = JSON.stringify(config.names.human);
   const names = `Names: call the human ${human} and yourself ${JSON.stringify(ai)}, in replies and questions alike; never "I", "me", "my", "you", or "your".`;
-  const footer = footerLine(project.root, process.env);
+  const footer = footerLine(project.root, process.env, input);
   const commands = commandsLine(process.env);
   const lines = `${line}\n${names}\n${voiceLine(human)}${footer ? `\n${footer}` : ''}${commands ? `\n${commands}` : ''}`;
 
@@ -121,10 +120,10 @@ function voiceLine(human) {
 // the first body is written. Nothing when Claude Code's own settings already drop the line: the `attribution.pr`
 // setting of the first settings file that sets it (local, project, then user) holds no such line, or, with none set,
 // `includeCoAuthoredBy` is false.
-function footerLine(root, env) {
-  if (env.CLAUDECODE !== '1') return null;
-  const user = env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude');
-  const settings = [path.join(root, '.claude/settings.local.json'), path.join(root, '.claude/settings.json'), path.join(user, 'settings.json')]
+function footerLine(root, env, input) {
+  const files = detectHost({ env, input }).capabilities.prFooterSettings?.(root, env);
+  if (!files) return null;
+  const settings = files
     .map((file) => {
       try {
         return JSON.parse(readFileSync(file, 'utf8'));

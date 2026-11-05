@@ -15,6 +15,7 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 
 import { runGit } from './git.mjs';
+import { sessionIdentity } from './hosts/index.mjs';
 import { appendRow, readRows, realFile, sameFile, withLocks } from './jsonl.mjs';
 import { pluginProjectId, projectId, stateDir, stateRoot } from './project.mjs';
 
@@ -97,8 +98,7 @@ export function origin({ cwd = process.cwd(), env = process.env } = {}) {
     return status === 0 ? stdout.trim() || null : null;
   };
   return {
-    session: env.CLAUDE_CODE_SESSION_ID || null,
-    agent: env.CLAUDE_CODE_AGENT || null,
+    ...sessionIdentity(env),
     branch: git(['branch', '--show-current']),
     worktree: git(['rev-parse', '--show-toplevel']),
   };

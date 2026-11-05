@@ -5,6 +5,7 @@
 
 import { loadConfig } from '../lib/config.mjs';
 import { block, runHook } from '../lib/hook-io.mjs';
+import { detectHost } from '../lib/hosts/index.mjs';
 import { personalWords } from '../lib/names.mjs';
 import { findProject } from '../lib/project.mjs';
 
@@ -31,7 +32,7 @@ await runHook(async (input) => {
   if (!words.length) return;
   const { config } = loadConfig(project);
   const human = config.names.human;
-  const ai = config.names.ai ?? 'Claude';
+  const ai = config.names.ai ?? detectHost({ input }).ai;
   await block(input, 'ask-names', `Blocked: the question says ${words.map((w) => JSON.stringify(w)).join(', ')}. ` +
     `${human} may see only the dialog, so name both sides: call the human ${JSON.stringify(human)} and yourself ` +
     `${JSON.stringify(ai)}, for example "How should ${ai} finish?" or "This needs approval from ${human}.". ` +

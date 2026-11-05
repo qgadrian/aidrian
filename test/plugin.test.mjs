@@ -629,6 +629,17 @@ const flat = (rel) => readFileSync(path.join(ROOT, rel), 'utf8').replace(/\s+/g,
 const AIDRIAN = path.join(PLUGIN, 'bin/aidrian');
 const RULE_FILE = `plugins/aidrian/skills/${DECISION_RULE}`;
 
+test('no_written_answer applies only with open options, so a call with one viable option stays small', () => {
+  assert.match(flat(RULE_FILE), /`no_written_answer`: with `open_options` `yes`, .*With `open_options` `no`, answer `no`/);
+  assert.match(flat('docs/config.md'), /\*\*No written answer:\*\* with open options, .*With no open options, the answer is no/);
+});
+
+test('a product quorum question names the persona, or says no end user took part', () => {
+  const product = flat('plugins/aidrian/skills/quorum/modes/product.md');
+  assert.match(product, /which persona played the end user and what it said, marked as simulated, or, with `witness` `null`, that no end user took part/);
+  assert.match(flat('docs/config.md'), /question to the Human names the persona, or says no end user took part/);
+});
+
 test('the shared rule states the route: who answers hardness, what each route does, and when work waits', () => {
   const rule = flat(RULE_FILE);
   const handoff = flat('plugins/aidrian/skills/knowledge/references/handoff.md');
@@ -756,7 +767,7 @@ test('autopilot and the pull request carry a quorum\'s ruling, and each skill st
   assert.match(autopilot, /the count of automatic quorum runs/);
   const phases = flat('plugins/aidrian/skills/autopilot/references/phases.md');
   const section = phases.slice(phases.indexOf('## Product decisions'), phases.indexOf('## 1. Implement'));
-  assert.match(section, /the ledger stays deferred, the question goes in the report with the recommendation and the simulated-user caveat, and independent work continues/);
+  assert.match(section, /the ledger stays deferred, the question goes in the report with the recommendation and the simulated-user caveat, or that no end user took part, and independent work continues/);
   assert.match(section, /Count this session's automatic runs/);
   const write = flat('plugins/aidrian/skills/pr-write/SKILL.md');
   assert.match(write, /for a quorum's ruling, what would flip it, any settled fact's result, and that winners have varied between runs/);

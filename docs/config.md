@@ -800,7 +800,9 @@ on defaults the project did not choose.
 No key turns a persona on, and none names one. In a product run a persona takes part whenever the project has a usable one:
 each doc the knowledge index tags `personas`, other than `product-access` and any with an `aidrian lint personas` problem, is a candidate,
 and the run picks the one the decision changes most.
-With no candidate, no end user takes part, and the report warns about it. To add a persona, add its doc: see [Personas](personas.md).
+With no candidate, no end user takes part, and the report warns about it.
+The question to the Human names the persona, or says no end user took part.
+To add a persona, add its doc: see [Personas](personas.md).
 `aidrian-knowledge route personas` lists the docs tagged `personas` before a run starts.
 
 ### Automatic product quorums
@@ -814,7 +816,8 @@ Only a `product` or `ux` call routes: under any other domain, `resolve`'s answer
 The deciding agent answers five yes/no questions, each from the decision in front of it, as `--hard`, in this order:
 
 1. **Open options:** are there two or more options that differ in what a user gets, each still viable after reading the project's docs?
-2. **No written answer:** does no doc, decision record, or committed data favour one option, so that the pick rests on an inference?
+2. **No written answer:** with open options, does no doc, decision record, or committed data favour one option, so that the pick rests on an inference?
+   With no open options, the answer is no.
 3. **Conflict:** do two written rules disagree, or do the docs and the code disagree on this behaviour?
 4. **Disagreement:** did a specialist, a reviewer, or `secondLook` object to the pick with a citation?
 5. **Reach:** does it change a step of a flow a persona doc describes, rather than only copy, layout, ordering, a default value, or naming?

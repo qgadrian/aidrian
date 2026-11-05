@@ -120,8 +120,8 @@ The product owner has no shell: for the Evidence block's `route` and `search`, i
 A run the Human started, or one whose route waits, asks one question, on a rule and on an escalation alike.
 Each position is an option named by its label, with its citations in the description, and the recommended one first
 with the one reason that decides it; on an escalation with no leaning, say that no option is recommended.
-Say which written rule would change, from the option's `Rule changed:` line, what the end user said, marked as simulated,
-and each fact that would flip the ruling and how to settle it.
+Say which written rule would change, from the option's `Rule changed:` line, which persona played the end user and what it said,
+marked as simulated, or, with `witness` `null`, that no end user took part, and each fact that would flip the ruling and how to settle it.
 Report `resolve`'s `authority` and `reason` beside the question, or `ask` and why it did not answer.
 The answer goes into `human_answer`, word for word. Deferred, it stays `null`, the report's Open questions carries the
 question, and nothing is decided.

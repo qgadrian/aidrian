@@ -102,13 +102,19 @@ test('a stranger\'s summary comment supplies no record: the reviewer still runs,
 
   const lines = [];
   t.mock.method(console, 'log', (line) => lines.push(line));
-  const exit = runAutoMerge(['--json'], projectAt(r.dir), { gh: (args) => {
-    if (args[0] === 'pr') return JSON.stringify({ number: 7, headRefOid: head, baseRefName: 'main', author: { login: 'a' }, url: 'https://github.com/o/r/pull/7', files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], changedFiles: 1, reviewDecision: '', latestReviews: [] });
-    if (args[3] === 'user') return JSON.stringify({ login: 'a' });
-    if (args[3] === 'repos/o/r') return JSON.stringify({ default_branch: 'main' });
-    if (args[3].includes('/contents/.aidrian/config.json')) return JSON.stringify({ type: 'file', encoding: 'base64', content: Buffer.from(JSON.stringify(team)).toString('base64') });
-    if (args[3].includes('/contents/')) throw Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)' });
-    return '[[]]'; // The comment lists come back empty, so this reads the review record alone, not the outsider reason.
+  // The comment lists come back empty, so this reads the review record alone, not the outsider reason.
+  const none = () => [];
+  const exit = runAutoMerge(['--json'], projectAt(r.dir), { forge: {
+    change: () => ({ number: 7, headRefOid: head, baseRefName: 'main', author: { login: 'a' }, url: 'https://github.com/o/r/pull/7', files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], changedFiles: 1, reviewDecision: '', latestReviews: [] }),
+    viewer: () => 'a',
+    repository: (repo) => (repo === 'o/r' ? { default_branch: 'main' } : assert.fail(repo)),
+    contents: (_repo, file) => {
+      if (file === '.aidrian/config.json') return { type: 'file', encoding: 'base64', content: Buffer.from(JSON.stringify(team)).toString('base64') };
+      throw Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)' });
+    },
+    issueComments: none,
+    reviews: none,
+    reviewComments: none,
   } });
   t.mock.restoreAll();
   assert.deepEqual([exit, JSON.parse(lines[0]).reason], [1, 'review']);
@@ -834,9 +840,9 @@ test('the visual capture runs before the visual reviewers, attaches on a private
   };
   const uploads = [];
   r.forge.visibility = () => 'PRIVATE';
-  const image = (_repo, files) => (uploads.push(files.length), { status: 0, stdout: files.map((file) => `![${path.basename(file, '.png')}](https://github.com/user-attachments/assets/u-${path.basename(file, '.png')})`).join('\n') });
-  // Every step of this pull request uploads through `image`, as the gh-image extension would.
-  const step = (deps = {}) => r.step({ image, ...deps });
+  // Every step of this pull request uploads through the step's forge, as the gh-image extension would: no `image` is given.
+  r.forge.uploadImages = (_repo, files) => (uploads.push(files.length), files.map((file) => `![${path.basename(file, '.png')}](https://github.com/user-attachments/assets/u-${path.basename(file, '.png')})`).join('\n'));
+  const step = (deps = {}) => r.step(deps);
   const first = await step({ exec: clean, captureSpawn });
   assert.equal(first.status, 'dispatch');
   const [pass] = first.dispatch;

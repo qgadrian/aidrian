@@ -21,10 +21,9 @@
 // a question naming `#<PR>` and the head's first 7 characters, whose chosen option starts with "Merge anyway". Without a
 // transcript the host writes in that shape (Codex), the Human merges in their own shell.
 
-import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
-import { runGh } from '../../forges/github-cli.mjs';
+import { forgeFor } from '../../forges/index.mjs';
 import { findProject } from '../../project.mjs';
 import { originRepo, prNumber, repoName } from '../../review-gate.mjs';
 import { FINISHED, owed, readLocalState, sameCommit } from '../../review/state.mjs';
@@ -40,13 +39,16 @@ const MERGE_VALUES = ['-b', '--body', '-F', '--body-file', '-t', '--subject', '-
 const API_VALUES = ['-f', '--raw-field', '-F', '--field', '-X', '--method', '-H', '--header', '-q', '--jq', '-t', '--template', '--input',
   '-p', '--preview', '--hostname', '--cache'];
 
+// The forge the head lookup reads through: every call bounded at VIEW_TIMEOUT_MS. `options` are the adapter's, such as
+// its `run` in a test.
+export const viewForge = (cwd, options = {}) => forgeFor(cwd, { ...options, timeoutMs: VIEW_TIMEOUT_MS });
+
 // `{ number, headRefOid }` of the pull request gh finds for `target` (a number, URL, or branch; null for the current
 // branch) in `repo` (null for this one), or null when gh cannot answer in time. The test seam of the one network call.
-export function viewPrAt(cwd) {
+export function viewPrAt(cwd, forge = viewForge(cwd)) {
   return (target, repo) => {
-    const args = ['pr', 'view', ...(target === null ? [] : [String(target)]), '--json', 'number,headRefOid', ...(repo ? ['--repo', repo] : [])];
     try {
-      const view = JSON.parse(runGh(args, { cwd, exec: (file, argv, options) => execFileSync(file, argv, { ...options, timeout: VIEW_TIMEOUT_MS }) }));
+      const view = forge.change(target, 'number,headRefOid', { repo });
       return Number.isInteger(view?.number) && typeof view.headRefOid === 'string' ? view : null;
     } catch {
       return null;

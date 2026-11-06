@@ -14,7 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { isObject } from '../fs.mjs';
-import { runGh } from '../forges/github-cli.mjs';
+import { forgeFor } from '../forges/index.mjs';
 import { stateDir } from '../project.mjs';
 import { pathPattern } from './plan.mjs';
 import { VISUAL_PER_RUN } from './config.mjs';
@@ -255,10 +255,10 @@ export const attachMode = (visual, visibility) => visual.attach ?? (['PRIVATE', 
 // { uploaded: { sha256: url }, error }. Only entries whose file is in this head's capture folder, whose bytes still hash
 // to the manifest's sha256, and that start with the PNG signature go up. A missing gh-image is an error to show, never
 // a blocked review.
-// `image(repo, files)` runs `gh image` and returns its spawn result.
-export function ghImage(repo, files) {
+// `image(repo, files)` runs `gh image` through the forge facade's uploadImages and returns its spawn result.
+export function ghImage(repo, files, forge = forgeFor(undefined)) {
   try {
-    return { status: 0, stdout: runGh(['image', '--repo', repo, ...files], { timeoutMs: 10 * 60_000 }) };
+    return { status: 0, stdout: forge.uploadImages(repo, files) };
   } catch (error) {
     return { status: error.status ?? 1, stdout: String(error.stdout ?? ''), stderr: String(error.stderr ?? error.message ?? '') };
   }

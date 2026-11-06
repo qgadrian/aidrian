@@ -14,21 +14,18 @@
 // (readRecord) rather than start over.
 //
 // Anyone can comment on a pull request, so a summary comment counts only when GitHub says its author belongs to the
-// repository (MEMBER_ASSOCIATIONS, summaryComment): a stranger's comment never supplies a record.
+// repository (isTrustedCommenter, summaryComment): a stranger's comment never supplies a record.
 
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
 
-import { MEMBER_ASSOCIATIONS } from '../forges/github.mjs';
+import { isTrustedCommenter } from '../forges/github.mjs';
 import { isObject } from '../fs.mjs';
 import { stateDir } from '../project.mjs';
 import { summaryLines as quotaLines } from './quota.mjs';
 import { splitPasses } from './split.mjs';
-
-// The author associations GitHub gives the people who belong to a repository, kept by the GitHub forge adapter.
-export { MEMBER_ASSOCIATIONS };
 
 export const SUMMARY_MARKER = '<!-- aidrian-review-summary -->';
 const STATE = /<!--\s*aidrian-review-state:([A-Za-z0-9+/=]+)\s*-->/u;
@@ -231,14 +228,14 @@ const RECORD_LINE = (line) => STATE.test(line) || STATE_BR.test(line) || HELD.te
 export const isSummary = (body) => typeof body === 'string' && body.startsWith(SUMMARY_MARKER);
 
 // The last summary comment among `comments`, as GitHub's REST API returns them, by a member of the repository, or null.
-export const summaryComment = (comments) => (comments ?? []).filter((comment) => isSummary(comment.body) && MEMBER_ASSOCIATIONS.has(comment.author_association)).at(-1) ?? null;
+export const summaryComment = (comments) => (comments ?? []).filter((comment) => isSummary(comment.body) && isTrustedCommenter(comment)).at(-1) ?? null;
 
 // The summary comment a write edits, or null to post a new one. A non-member edits the last one they wrote, which still
 // supplies no record, so their steps keep one comment; everyone else edits the one readers take (summaryComment).
 // `viewer()` gives the current gh user's login, and is asked only when a non-member's summary comment is there. A login
 // it cannot give matches nobody, so no non-member's comment is edited for it; a member's is still attempted.
 export function summaryToEdit(comments, viewer) {
-  const outside = (comments ?? []).filter((comment) => isSummary(comment.body) && !MEMBER_ASSOCIATIONS.has(comment.author_association));
+  const outside = (comments ?? []).filter((comment) => isSummary(comment.body) && !isTrustedCommenter(comment));
   const login = outside.length ? currentLogin(viewer) : null;
   return (login && outside.filter((comment) => comment.user?.login === login).at(-1)) || summaryComment(comments);
 }

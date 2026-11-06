@@ -437,12 +437,12 @@ test('the auto-merge JSON fields pr-merge-when-green names are keys of the resul
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const out = [];
   t.mock.method(console, 'log', (line) => out.push(line));
-  const gh = (args) => {
-    if (args[0] === 'pr') return JSON.stringify({ number: 7, headRefOid: 'a'.repeat(40), baseRefName: 'main', author: { login: 'a' }, url: 'https://github.com/o/r/pull/7', files: [], changedFiles: 0, reviewDecision: '', latestReviews: [] });
-    if (args[3] === 'repos/o/r') return JSON.stringify({ default_branch: 'main' });
-    throw Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)' });
+  const forge = {
+    change: () => ({ number: 7, headRefOid: 'a'.repeat(40), baseRefName: 'main', author: { login: 'a' }, url: 'https://github.com/o/r/pull/7', files: [], changedFiles: 0, reviewDecision: '', latestReviews: [] }),
+    repository: (repo) => (repo === 'o/r' ? { default_branch: 'main' } : assert.fail(repo)),
+    contents: () => { throw Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)' }); },
   };
-  assert.equal(runAutoMerge(['7', '--json'], projectAt(dir), { gh }), 1);
+  assert.equal(runAutoMerge(['7', '--json'], projectAt(dir), { forge }), 1);
   t.mock.restoreAll();
   const keys = Object.keys(JSON.parse(out[0]));
   for (const field of named) assert.ok(keys.includes(field), `the result has ${field}`);

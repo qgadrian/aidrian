@@ -212,7 +212,7 @@ export async function reviewStep(opts, deps = {}) {
   }
 }
 
-async function stepOnce(opts, { project, config, env = process.env, forge = forgeFor(undefined), image = ghImage, exec = runExec, awaitBot = null, codex, captureSpawn } = {}, run) {
+async function stepOnce(opts, { project, config, env = process.env, forge = forgeFor(undefined), image = (repo, files) => ghImage(repo, files, forge), exec = runExec, awaitBot = null, codex, captureSpawn } = {}, run) {
   const root = project.root;
   const cleanEnv = isolate({ ...env });
   const info = forge.change(opts.pr, CHANGE_FIELDS);

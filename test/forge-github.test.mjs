@@ -2,16 +2,18 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { runGh } from '../plugins/aidrian/lib/forges/github-cli.mjs';
-import { createGithubForge, GITHUB_JSON, isTrustedCommenter, MEMBER_ASSOCIATIONS, repoIdentity } from '../plugins/aidrian/lib/forges/github.mjs';
+import { createGithubForge, GITHUB_JSON, isTrustedCommenter, repoIdentity, UPLOAD_TIMEOUT_MS } from '../plugins/aidrian/lib/forges/github.mjs';
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
-import { MEMBER_ASSOCIATIONS as STATE_MEMBER_ASSOCIATIONS } from '../plugins/aidrian/lib/review/state.mjs';
+import * as reviewState from '../plugins/aidrian/lib/review/state.mjs';
+import { listForge, openPrBodies } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
+import { viewForge, viewPrAt } from '../plugins/aidrian/lib/rules/github/merge-review.mjs';
 
 // Every name the facade gives its callers.
 const FACADE = [
   'id', 'cwd', 'isTrustedCommenter', 'repoIdentity',
-  'change', 'mergedChanges', 'repo', 'visibility', 'viewer',
+  'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'contents', 'visibility', 'viewer',
   'issueComments', 'postComment', 'editComment', 'reactions',
-  'pull', 'reviews', 'reviewComments', 'reviewsWithComments', 'commit', 'checkRuns', 'compare',
+  'pull', 'reviews', 'reviewComments', 'reviewsWithComments', 'reviewThreads', 'commit', 'checkRuns', 'compare', 'uploadImages',
 ];
 
 // The adapter over a recording gh: `answer(args)` is what gh prints for one call. Each call is kept with its options.
@@ -41,7 +43,7 @@ test('isTrustedCommenter: only the people GitHub says belong to the repository',
     assert.equal(isTrustedCommenter({ author_association: association }), false, String(association));
   }
   for (const comment of [null, undefined, {}, 'OWNER']) assert.equal(isTrustedCommenter(comment), false, String(comment));
-  assert.equal(STATE_MEMBER_ASSOCIATIONS, MEMBER_ASSOCIATIONS, 'review/state.mjs re-exports the adapter\'s set, so its users keep working');
+  assert.ok(!('MEMBER_ASSOCIATIONS' in reviewState), 'review/state.mjs asks isTrustedCommenter, and hands out no set of its own');
 });
 
 test('repoIdentity reads every form of a repository to its host and full path', () => {
@@ -95,6 +97,7 @@ test('change: gh pr view as each caller ran it, in the adapter`s folder', () => 
   forge.change(5, 'headRefOid,url');
   forge.change(5, 'url');
   forge.change(0, 'url');
+  forge.change('', 'number,headRefOid', { repo: 'acme/notes' });
   assert.deepEqual(calls.map((call) => call.args), [
     ['pr', 'view', '7', '--json', 'number,url'],
     // The review step and extend.
@@ -106,6 +109,8 @@ test('change: gh pr view as each caller ran it, in the adapter`s folder', () => 
     ['pr', 'view', '5', '--json', 'headRefOid,url'],
     ['pr', 'view', '5', '--json', 'url'],
     ['pr', 'view', '0', '--json', 'url'],
+    // The merge guard's view with a repository: an empty target still goes to gh.
+    ['pr', 'view', '', '--json', 'number,headRefOid', '--repo', 'acme/notes'],
   ]);
   assert.ok(calls.every((call) => call.options.cwd === '/repo'), 'gh reads the repository at the adapter`s folder');
   const options = [];
@@ -215,4 +220,108 @@ test('a gh failure reaches the caller as gh threw it', () => {
   for (const call of [() => failing.change(5, 'url'), () => failing.issueComments('o/r', 5), () => failing.postComment('o/r', 5, 'x'), () => failing.repo()]) {
     assert.throws(call, /HTTP 404/u);
   }
+});
+
+test('checks: gh pr checks as aidrian pr checks ran it, and the rows gh prints while it exits 8 for a pending check', () => {
+  const { forge, args } = recorded(() => '[{"name":"e2e","state":"SUCCESS"}]');
+  assert.deepEqual(forge.checks('7', { repo: 'github.com/acme/notes' }), [{ name: 'e2e', state: 'SUCCESS' }]);
+  forge.checks('7', { repo: null });
+  forge.checks(null);
+  assert.deepEqual(args(), [
+    ['pr', 'checks', '7', '--repo', 'github.com/acme/notes', '--json', 'name,state'],
+    ['pr', 'checks', '7', '--json', 'name,state'],
+    ['pr', 'checks', '--json', 'name,state'],
+  ]);
+  const pending = [{ name: 'e2e', state: 'PENDING' }];
+  const exit8 = createGithubForge({ run: () => { throw Object.assign(new Error('exit 8'), { status: 8, stdout: JSON.stringify(pending) }); } });
+  assert.deepEqual(exit8.checks('7'), pending, 'exit 8 with the rows on stdout is an answer');
+  const missing = createGithubForge({ run: () => { throw new Error('gh: not found'); } });
+  assert.throws(() => missing.checks('7'), /gh: not found/u, 'no rows on stdout: gh\'s own error');
+  assert.throws(() => recorded(() => 'not json').forge.checks('7'), SyntaxError, 'a success that prints no JSON throws');
+});
+
+test('aidrian pr auto-merge`s calls: --hostname on every REST call, the contents route encoded, and every page of the lists', () => {
+  const H = ['--hostname', 'ghe.acme.io'];
+  const { forge, args } = recorded((call) => (call.includes('--slurp') ? '[[{"id":1}],[{"id":2}]]' : '{"login":"me","default_branch":"main"}'));
+  forge.change('7', 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews');
+  forge.change(null, 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews');
+  assert.equal(forge.repository('acme/notes', { host: 'ghe.acme.io' }).default_branch, 'main');
+  forge.contents('acme/notes', '.aidrian.json', 'refs/heads/main', { host: 'ghe.acme.io' });
+  forge.contents('acme/notes', 'sub dir/.aidrian/config.json', 'refs/heads/feat/stack', { host: 'ghe.acme.io' });
+  assert.equal(forge.viewer({ host: 'ghe.acme.io' }), 'me');
+  for (const read of [forge.issueComments, forge.reviews, forge.reviewComments]) assert.deepEqual(read('acme/notes', 7, { host: 'ghe.acme.io' }), [{ id: 1 }, { id: 2 }]);
+  assert.deepEqual(args(), [
+    ['pr', 'view', '7', '--json', 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews'],
+    ['pr', 'view', '--json', 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews'],
+    ['api', ...H, 'repos/acme/notes'],
+    ['api', ...H, 'repos/acme/notes/contents/.aidrian.json?ref=refs%2Fheads%2Fmain'],
+    ['api', ...H, 'repos/acme/notes/contents/sub%20dir/.aidrian/config.json?ref=refs%2Fheads%2Ffeat%2Fstack'],
+    ['api', ...H, 'user'],
+    ['api', ...H, 'repos/acme/notes/issues/7/comments', '--paginate', '--slurp'],
+    ['api', ...H, 'repos/acme/notes/pulls/7/reviews', '--paginate', '--slurp'],
+    ['api', ...H, 'repos/acme/notes/pulls/7/comments', '--paginate', '--slurp'],
+  ]);
+  const empty = recorded(() => '').forge;
+  assert.deepEqual(empty.reviews('acme/notes', 7, { host: 'ghe.acme.io' }), [], 'an empty answer is no entries');
+  assert.throws(() => recorded(() => 'not json').forge.viewer({ host: 'github.com' }), SyntaxError, 'an answer that is no JSON throws');
+});
+
+test('the hooks` calls: the merge guard`s view and the pull request body rule`s open list, each bounded at 3 s inside the hook`s 5', () => {
+  const calls = [];
+  const run = (answer) => (args, options) => (calls.push({ args, options }), answer);
+  const view = viewPrAt('/repo', viewForge('/repo', { run: run('{"number":5,"headRefOid":"abc"}') }));
+  assert.deepEqual(view(null, null), { number: 5, headRefOid: 'abc' });
+  view(5, 'acme/notes');
+  view('feat/x', null);
+  // `gh pr merge "" -R acme/notes`: the empty target goes to gh, which reads it as the current branch's pull request.
+  view('', 'acme/notes');
+  const bodies = openPrBodies('/repo', listForge('/repo', { run: run('[{"number":1,"body":"b"}]') }));
+  assert.deepEqual(bodies(null), [{ number: 1, body: 'b' }]);
+  bodies('acme/notes');
+  assert.deepEqual(calls.map((call) => call.args), [
+    ['pr', 'view', '--json', 'number,headRefOid'],
+    ['pr', 'view', '5', '--json', 'number,headRefOid', '--repo', 'acme/notes'],
+    ['pr', 'view', 'feat/x', '--json', 'number,headRefOid'],
+    ['pr', 'view', '', '--json', 'number,headRefOid', '--repo', 'acme/notes'],
+    ['pr', 'list', '--state', 'open', '--limit', '200', '--json', 'number,body'],
+    ['pr', 'list', '--state', 'open', '--limit', '200', '--json', 'number,body', '--repo', 'acme/notes'],
+  ]);
+  assert.deepEqual(calls.map((call) => call.options), calls.map(() => ({ cwd: '/repo', timeoutMs: 3000 })), 'every call carries the hook`s bound');
+  // A hook lets the action run: a gh that fails or times out is no answer, never an error.
+  const failing = () => { throw new Error('gh pr view did not finish in 3 s and was stopped.'); };
+  assert.equal(viewPrAt('/repo', viewForge('/repo', { run: failing }))(5, null), null);
+  assert.equal(openPrBodies('/repo', listForge('/repo', { run: failing }))(null), null);
+});
+
+test('the worktree cleanup`s merged heads, the decisions record`s pull request, and the review bench`s reads', () => {
+  const { forge, args } = recorded((call) => (call[0] === 'repo' ? '{"nameWithOwner":"acme/notes"}' : call[0] === 'pr' && call[1] === 'list' ? '[]' : '{"data":{},"base":{"sha":"b"}}'));
+  forge.mergedChanges(100, { fields: 'headRefName,headRefOid' });
+  forge.change(null, 'number');
+  assert.equal(forge.repo(), 'acme/notes');
+  forge.change(12, 'headRefOid,baseRefName,mergedAt', { repo: 'acme/notes' });
+  assert.equal(forge.pull('acme/notes', 12).base.sha, 'b');
+  forge.reviewThreads('acme/notes', 12);
+  forge.reviewThreads('acme/notes', 12, 'Y3Vyc29y');
+  const query = 'query($o:String!,$r:String!,$n:Int!,$after:String){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:1){nodes{path line originalLine originalCommit{oid} author{login}}}}}}}}';
+  const graphql = ['api', 'graphql', '-f', `query=${query}`, '-F', 'o=acme', '-F', 'r=notes', '-F', 'n=12'];
+  assert.deepEqual(args(), [
+    ['pr', 'list', '--state', 'merged', '--limit', '100', '--json', 'headRefName,headRefOid'],
+    ['pr', 'view', '--json', 'number'],
+    ['repo', 'view', '--json', 'nameWithOwner'],
+    // The bench named the repository as `-R` before `--json`; gh reads `-R` and `--repo` alike, in any place.
+    ['pr', 'view', '12', '--json', 'headRefOid,baseRefName,mergedAt', '--repo', 'acme/notes'],
+    ['api', 'repos/acme/notes/pulls/12'],
+    graphql,
+    [...graphql, '-f', 'after=Y3Vyc29y'],
+  ]);
+});
+
+test('uploadImages: gh image for the captures, with ten minutes to finish, and what it prints', () => {
+  const { forge, calls } = recorded(() => '![a](https://github.com/user-attachments/assets/a)');
+  assert.equal(UPLOAD_TIMEOUT_MS, 10 * 60_000);
+  assert.equal(forge.uploadImages('acme/notes', ['/c/a.png', '/c/b.png']), '![a](https://github.com/user-attachments/assets/a)');
+  assert.deepEqual(calls, [{ args: ['image', '--repo', 'acme/notes', '/c/a.png', '/c/b.png'], options: { cwd: '/repo', timeoutMs: UPLOAD_TIMEOUT_MS } }]);
+  const bounded = recorded(() => '', { timeoutMs: 3000 });
+  bounded.forge.uploadImages('acme/notes', ['/c/a.png']);
+  assert.equal(bounded.calls[0].options.timeoutMs, UPLOAD_TIMEOUT_MS, 'the upload`s own limit, over the adapter`s');
 });

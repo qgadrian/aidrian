@@ -49,9 +49,11 @@ test/                               node --test suites
   The Bash and write rules live in `lib/rules/`. [hooks.md](hooks.md) describes each one.
 - **Hosts and trackers**: hook payloads pass through `lib/hosts/` on their way in, so the hooks read one standard, and config.json's short `tracker` key
   expands through `lib/trackers/`. [Adding a host or a tracker](providers/adding-a-host.md) has the files.
-- **Forges**: the review step, `aidrian pr await-review`, `request`, `attest`, `signoff`, `extend`, and the reviews report
-  read and write pull requests through `forgeFor(cwd)` in `lib/forges/`, whose named methods hold gh's commands and routes.
-  Their tests stub those methods; `test/forge-github.test.mjs` holds the gh command behind each one.
+- **Forges**: every command, hook, and step that reads or writes a pull request, its checks, or its repository on the
+  forge does it through `forgeFor(cwd)` in `lib/forges/`, whose named methods hold gh's commands and routes; no other
+  file runs gh. An option bounds a hook's calls (`timeoutMs`), and `{ host }` names the host of a pull request's URL.
+  `repoIdentity` reads a repository to its host and full path, and `isTrustedCommenter` says who belongs to it.
+  Callers' tests stub those methods; `test/forge-github.test.mjs` holds the gh command behind each one.
 - **Commands**: `bin/aidrian` and `bin/aidrian-knowledge` are shell scripts.
   They run `lib/cli.mjs` and `lib/knowledge-cli.mjs` with `node`.
 - **Codex agents**: Codex plugins cannot carry agents, so `codex/install-agents.mjs` copies the generated roles into Codex.

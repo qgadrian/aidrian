@@ -22,10 +22,10 @@
 //   7. review: nobody's latest review requests changes, and this machine's review record (lib/review/state.mjs), scoped
 //      to the pull request's repository, holds the outcome `received` on exactly the pull request's current head,
 //      and nothing is owed. `none_needed` is no review, so a pull request that needed none waits for the Human.
-// gh reads: one `gh pr view` for the number, head, base, author, URL, files, and reviews; `gh api repos/<repo>` for the
-// default branch; each branch's folder override and config.json through the contents API, at `refs/heads/<branch>` (once
-// when the base is the default branch); and, only when the team, the checks, the paths, and the machine all allow it,
-// `gh api user` for the login, then the pull request's three comment lists.
+// gh reads, each through the forge facade (lib/forges): one `gh pr view` for the number, head, base, author, URL, files,
+// and reviews; `gh api repos/<repo>` for the default branch; each branch's folder override and config.json through the
+// contents API, at `refs/heads/<branch>` (once when the base is the default branch); and, only when the team, the checks,
+// the paths, and the machine all allow it, `gh api user` for the login, then the pull request's three comment lists.
 // Every `gh api` call names the host of the pull request's URL. A gh failure prints gh's last line of stderr.
 // stdout: one line, or with --json { effective, reason, why, allow, local, strategy, deleteBranch, deleteWorktree, pr, head,
 // repo, base }: `why` is the off line's sentence, null when on; `allow` is true only when both branches allow it, and the
@@ -34,11 +34,12 @@
 // Exit 0 on, 1 off, 3 error (an argument, a gh read, or a pull request gh describes only in part).
 
 import { configFromText, loadConfig, resolveAutoMerge } from './config.mjs';
-import { runGh } from './forges/github-cli.mjs';
+import { isTrustedCommenter } from './forges/github.mjs';
+import { forgeFor } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { configPathIn, GUARDED_PATHS, mayFollowTeamDefault } from './project.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
-import { MEMBER_ASSOCIATIONS, owed, readLocalState } from './review/state.mjs';
+import { owed, readLocalState } from './review/state.mjs';
 import { scoped } from './rules/github/merge-review.mjs';
 
 const VIEW_FIELDS = 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews';
@@ -83,11 +84,11 @@ export function readView(view) {
   return { number, head, base, author, repo, host, files: files.map(({ path, changeType }) => ({ path, changeType })), changedFiles, reviewDecision, latestReviews };
 }
 
-// The default branch of `repo` on GitHub. Throws when gh cannot say.
-export function defaultBranch(gh, { repo, host }) {
+// The default branch of `repo` on GitHub, through the forge facade. Throws when gh cannot say.
+export function defaultBranch(forge, { repo, host }) {
   let name;
   try {
-    name = JSON.parse(gh(['api', '--hostname', host, `repos/${repo}`]))?.default_branch;
+    name = forge.repository(repo, { host })?.default_branch;
   } catch (error) {
     throw new Error(`could not read the default branch of ${repo} with gh (${ghError(error)})`);
   }
@@ -99,13 +100,12 @@ export function defaultBranch(gh, { repo, host }) {
 // first, then that folder's config.json. The ref is `refs/heads/<branch>`, so a tag of the same name never answers.
 // A file GitHub does not have (404) is no file; any other failure throws. `prefix` is the project's folder from the top of the
 // repository, with its trailing slash: GitHub's paths start at the top, and config paths at the project root.
-export function branchConfig(gh, { repo, host }, branch, prefix = '') {
+export function branchConfig(forge, { repo, host }, branch, prefix = '') {
   const read = (name) => {
     const file = `${prefix}${name}`;
-    const route = `repos/${repo}/contents/${file.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(`refs/heads/${branch}`)}`;
     let body;
     try {
-      body = JSON.parse(gh(['api', '--hostname', host, route]));
+      body = forge.contents(repo, file, `refs/heads/${branch}`, { host });
     } catch (error) {
       if (notFound(error)) return null;
       throw new Error(`could not read ${file} on ${repo} ${branch} with gh (${ghError(error)})`);
@@ -136,18 +136,23 @@ export function pathsProblem({ files, changedFiles }, prefix = '') {
 }
 
 // Who keeps auto-merge off by commenting: the login of the first comment or review whose author is no member of the
-// repository and not the default branch's review bot, or null. Reads the three lists from GitHub; a failure throws.
-export function outsiderOn(gh, { repo, host, number }, reviewer) {
-  const routes = [`repos/${repo}/issues/${number}/comments`, `repos/${repo}/pulls/${number}/reviews`, `repos/${repo}/pulls/${number}/comments`];
-  const entries = routes.flatMap((route) => {
+// repository and not the default branch's review bot, or null. Reads the three lists from GitHub, every page; a failure
+// throws, naming the list's route.
+export function outsiderOn(forge, { repo, host, number }, reviewer) {
+  const lists = [
+    [`repos/${repo}/issues/${number}/comments`, () => forge.issueComments(repo, number, { host })],
+    [`repos/${repo}/pulls/${number}/reviews`, () => forge.reviews(repo, number, { host })],
+    [`repos/${repo}/pulls/${number}/comments`, () => forge.reviewComments(repo, number, { host })],
+  ];
+  const entries = lists.flatMap(([route, read]) => {
     try {
-      return JSON.parse(gh(['api', '--hostname', host, route, '--paginate', '--slurp']) || '[]').flat();
+      return read();
     } catch (error) {
       throw new Error(`could not read ${route} with gh (${ghError(error)})`);
     }
   });
   const isBot = (login) => typeof reviewer === 'string' && typeof login === 'string' && login.toLowerCase() === reviewer.toLowerCase();
-  const outsider = entries.find((entry) => !MEMBER_ASSOCIATIONS.has(entry?.author_association) && !isBot(entry?.user?.login));
+  const outsider = entries.find((entry) => !isTrustedCommenter(entry) && !isBot(entry?.user?.login));
   return outsider ? outsider.user?.login ?? 'a deleted account' : null;
 }
 
@@ -184,8 +189,8 @@ export function checksProblem({ github: policy, state }, working, where) {
 
 const cleanup = (team) => `${team.deleteBranch ? 'delete' : 'keep'} the branch, ${team.deleteWorktree ? 'delete' : 'keep'} the worktree`;
 
-// The CLI body. `gh` is the test seam: (args) → stdout, throwing as runGh does.
-export function runAutoMerge(argv, project, { gh = (args) => runGh(args, { cwd: project.root }) } = {}) {
+// The CLI body. `forge` is the test seam: the forge facade (lib/forges), whose methods throw as gh does.
+export function runAutoMerge(argv, project, { forge = forgeFor(project.root) } = {}) {
   const fail = (message) => {
     console.error(`aidrian pr auto-merge: ${message}`);
     return 3;
@@ -194,7 +199,7 @@ export function runAutoMerge(argv, project, { gh = (args) => runGh(args, { cwd: 
   if (unknown) return fail(`unknown argument: ${unknown}`);
   let pr;
   try {
-    pr = readView(JSON.parse(gh(['pr', 'view', ...(target === null ? [] : [target]), '--json', VIEW_FIELDS])));
+    pr = readView(forge.change(target, VIEW_FIELDS));
   } catch (error) {
     return fail(`could not read the pull request with gh (${ghError(error)})`);
   }
@@ -207,10 +212,10 @@ export function runAutoMerge(argv, project, { gh = (args) => runGh(args, { cwd: 
   let main;
   let policy;
   try {
-    main = defaultBranch(gh, pr);
-    policy = branchConfig(gh, pr, main, prefix ?? '');
+    main = defaultBranch(forge, pr);
+    policy = branchConfig(forge, pr, main, prefix ?? '');
     const onDefault = policy.github.autoMerge;
-    const onBase = pr.base === main ? onDefault : branchConfig(gh, pr, pr.base, prefix ?? '').github.autoMerge;
+    const onBase = pr.base === main ? onDefault : branchConfig(forge, pr, pr.base, prefix ?? '').github.autoMerge;
     refusing = [...new Set([[main, onDefault], [pr.base, onBase]].filter(([, each]) => each.allow !== true).map(([name]) => name))];
     team = { ...onDefault, allow: refusing.length === 0 };
   } catch (error) {
@@ -233,7 +238,7 @@ export function runAutoMerge(argv, project, { gh = (args) => runGh(args, { cwd: 
   if (effective) {
     let user;
     try {
-      user = JSON.parse(gh(['api', '--hostname', pr.host, 'user']))?.login;
+      user = forge.viewer({ host: pr.host });
     } catch (error) {
       return fail(`could not read the gh user (${ghError(error)})`);
     }
@@ -243,7 +248,7 @@ export function runAutoMerge(argv, project, { gh = (args) => runGh(args, { cwd: 
     } else {
       let outsider;
       try {
-        outsider = outsiderOn(gh, pr, policy.github.reviewer);
+        outsider = outsiderOn(forge, pr, policy.github.reviewer);
       } catch (error) {
         return fail(error.message);
       }

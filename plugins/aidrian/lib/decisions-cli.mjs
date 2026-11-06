@@ -29,7 +29,7 @@ import { parseArgs } from 'node:util';
 
 import { commandConfig, committedAuthority, committedDecisions, DEFAULTS, loadConfig, localDecisions } from './config.mjs';
 import { appendEvent, stamp } from './dispatch-log.mjs';
-import { ghJson } from './forges/github-cli.mjs';
+import { forgeFor } from './forges/index.mjs';
 import { ageDays, blockOf, classDomain, DECISION_STATUSES, isClassName, loadVocab, parseDecisions, recordAt, resolveAuthority, setDecisionStatus, unattendedAnswer, undoDecision, wordingProblems } from './decisions.mjs';
 import { checkoutRoots, runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
@@ -324,7 +324,7 @@ function classesAt(project, rev) {
 // The number of the branch's pull request, or null when it has none or gh cannot say.
 function openPullRequest(project) {
   try {
-    const { number } = ghJson(['pr', 'view', '--json', 'number'], { cwd: project.root });
+    const { number } = forgeFor(project.root).change(null, 'number');
     return Number.isInteger(number) ? number : null;
   } catch {
     return null;

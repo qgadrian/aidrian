@@ -44,44 +44,47 @@ function repo(t, { working = { ...TEAM, allow: true }, lists = CHECKS, local = '
 
 const finished = (state, head = HEAD, status = 'received') => (state.outcome = { status, head, at: '2026-11-03T14:00:00.000Z' });
 
-// The gh seam. `files` maps `<repo>@<branch>:<path>` to a file's text on GitHub; any other contents read is a 404, and
-// a read whose ref is not `refs/heads/<branch>` is no call the command makes. `view` overrides fields of the
-// `gh pr view` answer; `defaultBranch` is every repository's default branch; `user` is the login, or a function
-// standing in for the call; `comments` holds the pull request's lists by the last part of their route, `issues`, `reviews`,
-// and `pulls`, each a list or a function standing in for the call.
-function fakeGh({ files = { 'acme/notes@main:.aidrian/config.json': configText(TEAM) }, view = {}, user = 'Adrian', defaultBranch = 'main', comments = {} } = {}) {
+const VIEW_FIELDS = 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews';
+
+// The forge facade seam, with each call kept as [method, ...arguments, host]. `files` maps `<repo>@<branch>:<path>` to a
+// file's text on GitHub; any other contents read is a 404, and a read whose ref is not `refs/heads/<branch>` is no call
+// the command makes. `view` overrides fields of the pull request `change` gives; `defaultBranch` is every repository's
+// default branch, or a function standing in for `repository`; `user` is the login, or a function standing in for
+// `viewer`; `comments` holds the pull request's lists, `issues` (issueComments), `reviews`, and `pulls` (reviewComments),
+// each a list or a function standing in for the call. What gh prints and how each call reads it is the adapter's
+// (test/forge-github.test.mjs).
+function fakeForge({ files = { 'acme/notes@main:.aidrian/config.json': configText(TEAM) }, view = {}, user = 'Adrian', defaultBranch = 'main', comments = {} } = {}) {
   const calls = [];
-  const gh = (args) => {
-    calls.push(args);
-    if (args[0] === 'pr' && args[1] === 'view') {
-      return JSON.stringify({ number: 7, headRefOid: HEAD, baseRefName: 'main', author: { login: 'adrian' }, url: URL7, files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], changedFiles: 1, reviewDecision: '', latestReviews: [], ...view });
-    }
-    if (args[0] === 'api' && args[3] === 'user') {
-      if (typeof user === 'function') return user();
-      return JSON.stringify({ login: user });
-    }
-    if (args[0] === 'api' && /^repos\/[^/]+\/[^/]+$/u.test(args[3] ?? '')) {
-      if (typeof defaultBranch === 'function') return defaultBranch();
-      return JSON.stringify({ default_branch: defaultBranch });
-    }
-    const list = args[0] === 'api' && /^repos\/[^/]+\/[^/]+\/(?:issues\/7\/comments|pulls\/7\/reviews|pulls\/7\/comments)$/u.exec(args[3] ?? '');
-    if (list) {
-      assert.deepEqual(args.slice(4), ['--paginate', '--slurp'], 'every page');
-      const [, kind, name] = /\/(issues|pulls)\/7\/(comments|reviews)$/u.exec(args[3]);
-      const key = name === 'reviews' ? 'reviews' : kind;
-      const value = comments[key] ?? [];
-      if (typeof value === 'function') return value();
-      return JSON.stringify([value]);
-    }
-    const match = args[0] === 'api' && /^repos\/([^/]+\/[^/]+)\/contents\/(.+)\?ref=refs%2Fheads%2F([^&]+)$/u.exec(args[3] ?? '');
-    if (match) {
-      const key = `${match[1]}@${decodeURIComponent(match[3])}:${match[2].split('/').map(decodeURIComponent).join('/')}`;
-      if (!Object.hasOwn(files, key)) throw Object.assign(new Error(`Command failed: gh ${args.join(' ')}\ngh: Not Found (HTTP 404)`), { stderr: 'gh: Not Found (HTTP 404)\n' });
-      return JSON.stringify({ type: 'file', encoding: 'base64', content: Buffer.from(files[key]).toString('base64') });
-    }
-    throw new Error(`unexpected gh ${args.join(' ')}`);
+  const list = (method, key) => (repo, n, { host } = {}) => {
+    calls.push([method, repo, n, host]);
+    const value = comments[key] ?? [];
+    return typeof value === 'function' ? value() : value;
   };
-  return { gh, calls };
+  const forge = {
+    change: (target, fields) => {
+      calls.push(['change', target, fields]);
+      return { number: 7, headRefOid: HEAD, baseRefName: 'main', author: { login: 'adrian' }, url: URL7, files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], changedFiles: 1, reviewDecision: '', latestReviews: [], ...view };
+    },
+    repository: (repo, { host } = {}) => {
+      calls.push(['repository', repo, host]);
+      return typeof defaultBranch === 'function' ? defaultBranch() : { default_branch: defaultBranch };
+    },
+    contents: (repo, file, ref, { host } = {}) => {
+      calls.push(['contents', repo, file, ref, host]);
+      assert.match(ref, /^refs\/heads\/./u, 'a branch, never a tag of the same name');
+      const key = `${repo}@${ref.slice('refs/heads/'.length)}:${file}`;
+      if (!Object.hasOwn(files, key)) throw Object.assign(new Error(`Command failed: gh api ${repo} ${file}\ngh: Not Found (HTTP 404)`), { stderr: 'gh: Not Found (HTTP 404)\n' });
+      return { type: 'file', encoding: 'base64', content: Buffer.from(files[key]).toString('base64') };
+    },
+    viewer: ({ host } = {}) => {
+      calls.push(['viewer', host]);
+      return typeof user === 'function' ? user() : user;
+    },
+    issueComments: list('issueComments', 'issues'),
+    reviews: list('reviews', 'reviews'),
+    reviewComments: list('reviewComments', 'pulls'),
+  };
+  return { forge, calls };
 }
 
 // Runs the command and returns { code, out, err, calls }.
@@ -90,8 +93,8 @@ function run(t, r, argv, ghOptions) {
   const err = [];
   t.mock.method(console, 'log', (line) => out.push(line));
   t.mock.method(console, 'error', (line) => err.push(line));
-  const { gh, calls } = fakeGh(ghOptions);
-  const code = runAutoMerge(argv, r.project, { gh });
+  const { forge, calls } = fakeForge(ghOptions);
+  const code = runAutoMerge(argv, r.project, { forge });
   t.mock.restoreAll();
   return { code, out, err, calls };
 }
@@ -101,7 +104,8 @@ const reasonOf = (t, r, ghOptions, argv = ['7', '--json']) => {
   const result = run(t, r, argv, ghOptions);
   return [result.code, json(result).reason];
 };
-const userCalls = (calls) => calls.filter((args) => args[0] === 'api' && args[3] === 'user');
+const userCalls = (calls) => calls.filter((call) => call[0] === 'viewer');
+const contentsReads = (calls) => calls.filter((call) => call[0] === 'contents');
 
 test('both layers on, the Human\'s own pull request, and a finished review on its head: on, exit 0', (t) => {
   const r = repo(t);
@@ -113,14 +117,14 @@ test('both layers on, the Human\'s own pull request, and a finished review on it
     pr: 7, head: HEAD, repo: 'acme/notes', base: 'main',
   });
   assert.deepEqual(result.calls, [
-    ['pr', 'view', '7', '--json', 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews'],
-    ['api', '--hostname', 'github.com', 'repos/acme/notes'],
-    ['api', '--hostname', 'github.com', 'repos/acme/notes/contents/.aidrian.json?ref=refs%2Fheads%2Fmain'],
-    ['api', '--hostname', 'github.com', 'repos/acme/notes/contents/.aidrian/config.json?ref=refs%2Fheads%2Fmain'],
-    ['api', '--hostname', 'github.com', 'user'],
-    ['api', '--hostname', 'github.com', 'repos/acme/notes/issues/7/comments', '--paginate', '--slurp'],
-    ['api', '--hostname', 'github.com', 'repos/acme/notes/pulls/7/reviews', '--paginate', '--slurp'],
-    ['api', '--hostname', 'github.com', 'repos/acme/notes/pulls/7/comments', '--paginate', '--slurp'],
+    ['change', '7', VIEW_FIELDS],
+    ['repository', 'acme/notes', 'github.com'],
+    ['contents', 'acme/notes', '.aidrian.json', 'refs/heads/main', 'github.com'],
+    ['contents', 'acme/notes', '.aidrian/config.json', 'refs/heads/main', 'github.com'],
+    ['viewer', 'github.com'],
+    ['issueComments', 'acme/notes', 7, 'github.com'],
+    ['reviews', 'acme/notes', 7, 'github.com'],
+    ['reviewComments', 'acme/notes', 7, 'github.com'],
   ], 'the base is the default branch: its config is read once');
   const human = run(t, r, ['7']);
   assert.equal(human.code, 0);
@@ -128,7 +132,7 @@ test('both layers on, the Human\'s own pull request, and a finished review on it
   assert.match(human.out[0], /^auto-merge on for #7 at abcdef1: squash, delete the branch, keep the worktree$/);
 });
 
-test('every gh api call names the host of the pull request\'s URL', (t) => {
+test('every forge call after the view names the host of the pull request\'s URL', (t) => {
   const r = repo(t);
   r.record((state) => finished(state));
   const result = run(t, r, ['7', '--json'], {
@@ -136,9 +140,9 @@ test('every gh api call names the host of the pull request\'s URL', (t) => {
     files: { 'acme/notes@main:.aidrian/config.json': configText(TEAM) },
   });
   assert.equal(result.code, 0);
-  const api = result.calls.filter((args) => args[0] === 'api');
+  const api = result.calls.filter((call) => call[0] !== 'change');
   assert.equal(api.length, 7);
-  for (const args of api) assert.deepEqual(args.slice(0, 3), ['api', '--hostname', 'ghe.acme.io']);
+  for (const call of api) assert.equal(call.at(-1), 'ghe.acme.io', call[0]);
 });
 
 test('the team keys come from the base on GitHub, never the working copy: a branch allowing it over a base that does not is off (team)', (t) => {
@@ -150,7 +154,7 @@ test('the team keys come from the base on GitHub, never the working copy: a bran
     effective: false, reason: 'team', why: 'the team does not allow it (github.autoMerge.allow on acme/notes main)', allow: false, local: 'on', strategy: 'rebase', deleteBranch: true, deleteWorktree: false,
     pr: 7, head: HEAD, repo: 'acme/notes', base: 'main',
   });
-  assert.deepEqual(result.calls[0], ['pr', 'view', '--json', 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews'], 'no argument: the current branch');
+  assert.deepEqual(result.calls[0], ['change', null, VIEW_FIELDS], 'no argument: the current branch');
   assert.deepEqual(userCalls(result.calls), [], 'team off: no gh api user call');
   const missing = run(t, r, ['7', '--json'], { files: {} });
   assert.deepEqual([missing.code, json(missing).reason, json(missing).allow], [1, 'team', false], 'no config.json on the base: the defaults, off');
@@ -172,7 +176,7 @@ test('a fork checkout reads the ceiling of the pull request\'s repository, not o
   };
   const result = run(t, r, [URL7, '--json'], { files });
   assert.deepEqual([result.code, json(result).repo], [0, 'acme/notes']);
-  assert.ok(result.calls.filter((args) => args[0] === 'api' && args[3] !== 'user').every((args) => /^repos\/acme\/notes(?:\/|$)/u.test(args[3])));
+  assert.ok(result.calls.filter((call) => !['change', 'viewer'].includes(call[0])).every((call) => call[1] === 'acme/notes'));
   const upstreamOff = run(t, r, [URL7, '--json'], { files: { ...files, 'acme/notes@main:.aidrian/config.json': configText({ ...TEAM, allow: false }), 'me/notes@main:.aidrian/config.json': configText(TEAM) } });
   assert.deepEqual([upstreamOff.code, json(upstreamOff).reason], [1, 'team']);
 });
@@ -203,7 +207,7 @@ test('the base\'s .aidrian.json folder override is read at the base, never the w
   };
   const result = run(t, r, ['7', '--json'], { files });
   assert.deepEqual([result.code, json(result).strategy], [0, 'merge']);
-  assert.ok(result.calls.some((args) => args[3] === 'repos/acme/notes/contents/harness/config.json?ref=refs%2Fheads%2Fmain'));
+  assert.ok(contentsReads(result.calls).some((call) => call[2] === 'harness/config.json' && call[3] === 'refs/heads/main'));
   const escaping = { ...files, 'acme/notes@main:.aidrian.json': JSON.stringify({ dir: '../out' }) };
   assert.deepEqual(reasonOf(t, r, { files: escaping }), [1, 'team'], 'an override that escapes keeps the default folder');
 });
@@ -406,7 +410,8 @@ test('review: the record must name the exact head: a prefix a branch can grind f
 test('gh api user that fails or names no login exits 3', (t) => {
   const r = repo(t);
   r.record((state) => finished(state));
-  for (const user of [() => { throw new Error('gh: HTTP 401'); }, () => '{}', () => 'not json', '']) {
+  // A login gh cannot give: a failure, an answer with no login, an answer that is no JSON, and an empty login.
+  for (const user of [() => { throw new Error('gh: HTTP 401'); }, () => undefined, () => { throw new SyntaxError('Unexpected token \'o\', "not json" is not valid JSON'); }, '']) {
     const result = run(t, r, ['7', '--json'], { user });
     assert.deepEqual([result.code, result.out], [3, []]);
     assert.match(result.err.join('\n'), /gh user|no login/);
@@ -432,36 +437,34 @@ test('a gh read that fails, a contents read other than a 404, or an unknown argu
   assert.equal(run(t, r, ['7', '--watch']).code, 3);
   assert.equal(run(t, r, ['7', '8']).code, 3);
   assert.equal(run(t, r, ['main']).code, 3);
-  const call = (gh) => {
+  // The fake forge with `methods` in place of its own.
+  const call = (methods) => {
     const err = [];
     t.mock.method(console, 'error', (line) => err.push(line));
-    const code = runAutoMerge(['7'], r.project, { gh });
+    const code = runAutoMerge(['7'], r.project, { forge: { ...fakeForge().forge, ...methods } });
     t.mock.restoreAll();
     return [code, err.join('\n')];
   };
-  const [viewCode, viewErr] = call(() => { throw new Error('gh: no pull requests found'); });
+  const [viewCode, viewErr] = call({ change: () => { throw new Error('gh: no pull requests found'); } });
   assert.equal(viewCode, 3);
   assert.match(viewErr, /no pull requests found/);
-  const { gh } = fakeGh();
-  const [contentsCode, contentsErr] = call((args) => {
-    if (args[0] === 'api' && args[3].includes('/contents/')) {
-      throw Object.assign(new Error('Command failed: gh api ...\nfirst stderr line'), { stderr: 'first stderr line\ngh: Bad credentials (HTTP 401)\n\n' });
-    }
-    return gh(args);
+  const { forge } = fakeForge();
+  const [contentsCode, contentsErr] = call({
+    contents: () => { throw Object.assign(new Error('Command failed: gh api ...\nfirst stderr line'), { stderr: 'first stderr line\ngh: Bad credentials (HTTP 401)\n\n' }); },
   });
   assert.equal(contentsCode, 3);
   assert.match(contentsErr, /could not read \.aidrian\.json on acme\/notes main with gh \(gh: Bad credentials \(HTTP 401\)\)$/u, 'gh\'s last stderr line');
-  const [plainCode, plainErr] = call(() => { throw new Error('spawn gh ENOENT\nmore'); });
+  const [plainCode, plainErr] = call({ change: () => { throw new Error('spawn gh ENOENT\nmore'); } });
   assert.deepEqual([plainCode, plainErr], [3, 'aidrian pr auto-merge: could not read the pull request with gh (spawn gh ENOENT)'], 'no stderr: the message\'s first line');
-  const [dirCode] = call((args) => (args[0] === 'api' && args[3].includes('contents/.aidrian/config.json') ? '[]' : gh(args)));
+  const [dirCode] = call({ contents: (repo, file, ...rest) => (file === '.aidrian/config.json' ? [] : forge.contents(repo, file, ...rest)) });
   assert.equal(dirCode, 3, 'a folder where config.json should be is no file');
 });
 
-test('a pull request URL or #number is passed to gh as the target', (t) => {
+test('a pull request URL or #number is passed to the forge as the target', (t) => {
   const r = repo(t);
   r.record((state) => finished(state));
-  assert.deepEqual(run(t, r, [URL7]).calls[0].slice(0, 3), ['pr', 'view', URL7]);
-  assert.deepEqual(run(t, r, ['#7']).calls[0].slice(0, 3), ['pr', 'view', '7']);
+  assert.deepEqual(run(t, r, [URL7]).calls[0], ['change', URL7, VIEW_FIELDS]);
+  assert.deepEqual(run(t, r, ['#7']).calls[0], ['change', '7', VIEW_FIELDS]);
 });
 
 test('aidrian --help lists the auto-merge action', () => {
@@ -482,7 +485,7 @@ test('the default branch must allow it too: a feature base that allows it under 
     effective: false, reason: 'team', why: 'the team does not allow it (github.autoMerge.allow on acme/notes main)', allow: false, local: 'on', strategy: 'rebase', deleteBranch: true, deleteWorktree: false,
     pr: 7, head: HEAD, repo: 'acme/notes', base: 'feat/stack',
   });
-  assert.ok(result.calls.some((args) => args[3] === 'repos/acme/notes/contents/.aidrian/config.json?ref=refs%2Fheads%2Ffeat%2Fstack'), 'the base is read at its own ref');
+  assert.ok(contentsReads(result.calls).some((call) => call[2] === '.aidrian/config.json' && call[3] === 'refs/heads/feat/stack'), 'the base is read at its own ref');
   const human = run(t, r, ['7'], { view, files });
   assert.match(human.out[0], /not allow it \(github\.autoMerge\.allow on acme\/notes main\)$/u, 'names the branch that refuses');
   const baseOff = { ...files, 'acme/notes@main:.aidrian/config.json': configText(TEAM), 'acme/notes@feat/stack:.aidrian/config.json': configText({ ...TEAM, allow: false }) };
@@ -500,13 +503,13 @@ test('both branches allow it: on, with the strategy and cleanup of the default b
   assert.equal(result.code, 0);
   const out = json(result);
   assert.deepEqual([out.allow, out.strategy, out.deleteBranch, out.deleteWorktree, out.base], [true, 'rebase', false, true, 'main']);
-  assert.equal(result.calls.filter((args) => args[3]?.includes('/contents/')).length, 4, 'two branches: each read once');
+  assert.equal(contentsReads(result.calls).length, 4, 'two branches: each read once');
 });
 
 test('a default branch gh cannot name exits 3', (t) => {
   const r = repo(t);
   r.record((state) => finished(state));
-  for (const defaultBranch of [() => '{}', () => { throw Object.assign(new Error('Command failed'), { stderr: 'gh: Not Found (HTTP 404)\n' }); }]) {
+  for (const defaultBranch of [() => ({}), () => { throw Object.assign(new Error('Command failed'), { stderr: 'gh: Not Found (HTTP 404)\n' }); }]) {
     const result = run(t, r, ['7', '--json'], { defaultBranch });
     assert.deepEqual([result.code, result.out], [3, []]);
     assert.match(result.err.join('\n'), /default branch/u);

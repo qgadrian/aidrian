@@ -25,7 +25,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { committedConfig } from '../config.mjs';
-import { runGh } from '../forges/github-cli.mjs';
+import { forgeFor } from '../forges/index.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
 import { roundCapProblem, ROUNDS_OVERRIDE } from '../pr-await-review.mjs';
 import { currentRoot, runGit, showPrefix } from '../git.mjs';
@@ -62,20 +62,11 @@ const HARNESS_INVARIANT = Object.freeze({
   text: 'The change does not weaken how this project is reviewed: no flow, rule, required reviewer, ignore pattern, plan command, or invariant is removed or loosened.',
 });
 
-export const defaultGh = {
-  pr: (ref) => JSON.parse(runGh(['pr', 'view', ...(ref ? [String(ref)] : []), '--json', 'number,headRefOid,baseRefName,url,title,body'])),
-  repo: () => JSON.parse(runGh(['repo', 'view', '--json', 'nameWithOwner'])).nameWithOwner,
-  comments: (repo, n) => JSON.parse(runGh(['api', `repos/${repo}/issues/${n}/comments`, '--paginate', '--slurp']) || '[]').flat(),
-  post: (repo, n, body) => JSON.parse(runGh(['api', `repos/${repo}/issues/${n}/comments`, '--method', 'POST', '-f', `body=${body}`])),
-  edit: (repo, id, body) => JSON.parse(runGh(['api', `repos/${repo}/issues/comments/${id}`, '--method', 'PATCH', '-f', `body=${body}`])),
-  viewer: () => JSON.parse(runGh(['api', 'user'])).login,
-  visibility: (repo) => JSON.parse(runGh(['repo', 'view', repo, '--json', 'visibility'])).visibility,
-  image: ghImage,
-  // The check runs of one commit, as `gh pr checks` rows: the evidence must be for the head under review.
-  checks: (repo, sha) => JSON.parse(runGh(['api', `repos/${repo}/commits/${sha}/check-runs`, '--paginate', '--slurp']) || '[]')
-    .flatMap((page) => page.check_runs ?? [])
-    .map((run) => ({ name: run.name, state: run.status === 'completed' ? String(run.conclusion ?? 'unknown').toUpperCase() : 'PENDING' })),
-};
+// The fields the review step reads of its pull request.
+const CHANGE_FIELDS = 'number,headRefOid,baseRefName,url,title,body';
+
+// The check runs of one commit as `gh pr checks` rows: the evidence must be for the head under review.
+const checkRows = (runs) => runs.map((run) => ({ name: run.name, state: run.status === 'completed' ? String(run.conclusion ?? 'unknown').toUpperCase() : 'PENDING' }));
 
 // The `review` config in force: the base branch's, which a pull request cannot weaken, plus what the head adds.
 // `changed` lists the review settings the head changes, which trigger the harness-config flow.
@@ -205,7 +196,7 @@ function trackedAt(root, commit) {
 // Whether the change from `from` to `to` touches `files` (null: any reviewed file).
 const touches = (changes, files) => (files === null ? changes.length > 0 : changes.some((change) => files.includes(change.file)));
 
-// The whole step. `deps` replaces gh, the engine check, the reviewers, and the bot wait in tests.
+// The whole step. `deps` replaces the forge, the image upload, the engine check, the reviewers, and the bot wait in tests.
 // A step that throws after it marked its head `running`, such as a plan command that fails or a bot wait that errs,
 // leaves `error` as the head's outcome, so the merge guard keeps refusing the head.
 export async function reviewStep(opts, deps = {}) {
@@ -221,11 +212,11 @@ export async function reviewStep(opts, deps = {}) {
   }
 }
 
-async function stepOnce(opts, { project, config, env = process.env, gh = defaultGh, exec = runExec, awaitBot = null, codex, captureSpawn } = {}, run) {
+async function stepOnce(opts, { project, config, env = process.env, forge = forgeFor(undefined), image = ghImage, exec = runExec, awaitBot = null, codex, captureSpawn } = {}, run) {
   const root = project.root;
   const cleanEnv = isolate({ ...env });
-  const info = gh.pr(opts.pr);
-  const repo = opts.repo ?? gh.repo();
+  const info = forge.change(opts.pr, CHANGE_FIELDS);
+  const repo = opts.repo ?? forge.repo();
   const n = info.number;
   const head = info.headRefOid;
   if (!resolve(root, head)) throw new Error(`the head ${head.slice(0, 7)} of pull request #${n} is not in this checkout: git fetch first`);
@@ -266,8 +257,8 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
   // the pull request is never read or written: the record is this machine's state folder only. A comment that holds
   // a record newer than this machine's stops the step before it writes anything: starting over would replace it.
   const onPr = config.review.record !== 'local';
-  const comments = onPr ? gh.comments(repo, n) : [];
-  const summary = summaryToEdit(comments, () => gh.viewer());
+  const comments = onPr ? forge.issueComments(repo, n) : [];
+  const summary = summaryToEdit(comments, () => forge.viewer());
   const record = readRecord(project, n, comments, repo);
   if (record.held !== undefined) return { status: 'incomplete', pr: n, repo, head, reason: heldMessage(n, record.held), held: record.held, retry_recommended: false };
   let state = record.state;
@@ -592,7 +583,7 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
   if (unaccepted.length) return lastRound ? capReached({ stage: 'evidence', tests_removed: unaccepted }) : finish('fix_required', { stage: 'evidence', tests_removed: unaccepted });
   const wanted = [...new Set(plan.flows.flatMap((flow) => review.flows[flow.id]?.checks ?? []))];
   if (wanted.length) {
-    const rows = gh.checks(repo, head).filter((row) => wanted.some((part) => row.name.includes(part)));
+    const rows = checkRows(forge.checkRuns(repo, head)).filter((row) => wanted.some((part) => row.name.includes(part)));
     const verdict = computeVerdict(rows, { requiredChecks: wanted });
     if (verdict.verdict === 'pending') return finish('checks_pending', { checks: verdict.pending });
     if (verdict.verdict === 'failing') {
@@ -618,14 +609,14 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
     });
     let visibility = null;
     try {
-      visibility = gh.visibility(repo);
+      visibility = forge.visibility(repo);
     } catch {}
     const mode = attachMode(visual, visibility);
     let uploadError = null;
     // The captured keys of the last few heads go in the review record, which the summary comment carries.
     state.captured = Object.fromEntries([...Object.entries(state.captured ?? {}).filter(([at]) => at !== head), [head, [...captureKeys(manifest)]]].slice(-5));
     if (mode === 'auto' && ['captured', 'partial'].includes(manifest.status)) {
-      const up = uploadCaptures({ project, pr: n, manifest, uploaded: state.captures ?? {}, repo, image: gh.image ?? ghImage });
+      const up = uploadCaptures({ project, pr: n, manifest, uploaded: state.captures ?? {}, repo, image });
       state.captures = keepUploaded(state.captures ?? {}, up.uploaded);
       uploadError = up.error;
     }
@@ -633,8 +624,8 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
       const body = capturesBody(manifest, state.captures ?? {}, { mode, visibility, error: uploadError });
       try {
         const known = comments.find((comment) => typeof comment.body === 'string' && comment.body.startsWith(VISUAL_MARKER));
-        if (known) gh.edit(repo, known.id, body);
-        else gh.post(repo, n, body);
+        if (known) forge.editComment(repo, known.id, body);
+        else forge.postComment(repo, n, body);
       } catch (error) {
         uploadError = uploadError ?? `the captures comment was not written: ${error.message}`;
       }
@@ -790,7 +781,7 @@ async function stepOnce(opts, { project, config, env = process.env, gh = default
     if (onPr) {
       const body = summaryBody(state, { ...plan, flows: plan.flows.map((flow) => ({ ...flow, signed: flowStatus(flow).signed, humanSigned: keptSignoffs.has(flow.id) })) }, status);
       try {
-        writeSummary(summary, (id) => gh.edit(repo, id, body), () => gh.post(repo, n, body));
+        writeSummary(summary, (id) => forge.editComment(repo, id, body), () => forge.postComment(repo, n, body));
       } catch (error) {
         result.summary_error = error.message;
       }
@@ -812,10 +803,10 @@ function current(project, pr, repo, remote) {
 // The pull request's comments, where its summary comment carries the record, or null when they cannot be read
 // (offline: the local record). With config.json `review.record: "local"` there is no summary comment, and the pull
 // request is not read.
-export function remoteState(repo, pr, gh = defaultGh, config = null) {
+export function remoteState(repo, pr, forge = forgeFor(undefined), config = null) {
   if (config?.review.record === 'local') return null;
   try {
-    return gh.comments(repo, pr);
+    return forge.issueComments(repo, pr);
   } catch {
     return null;
   }

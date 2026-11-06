@@ -17,6 +17,7 @@
 // log. docs/review.md#extra-rounds describes it.
 
 import { appendEvent, stamp } from '../dispatch-log.mjs';
+import { forgeFor } from '../forges/index.mjs';
 import { runGit } from '../git.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
 import { changedFiles, diffLines, mergeBase, resolve } from './diff.mjs';
@@ -512,17 +513,18 @@ function nextStep(entry, pr) {
 
 // The CLI body. It reads and writes the record where the review step does: this machine's state folder and, unless
 // config.json `review.record` is "local", the pull request's summary comment, so another machine continues from it.
-// `deps.gh` replaces the review step's gh (pr, comments, post, edit, viewer) and `deps.repo` the origin, in tests.
+// `deps.forge` replaces the forge (change, issueComments, postComment, editComment, viewer) and `deps.repo` the origin,
+// in tests.
 export async function runExtend(args, project, config, deps = {}) {
   const opts = parseExtend(args);
   const { originRepo } = await import('../review-gate.mjs');
-  const gh = deps.gh ?? (await import('./run.mjs')).defaultGh;
+  const forge = deps.forge ?? forgeFor(undefined);
   const repo = deps.repo ?? originRepo(project);
   const onPr = config.review.record !== 'local';
   let comments = [];
   if (onPr) {
     try {
-      comments = gh.comments(repo, opts.pr);
+      comments = forge.issueComments(repo, opts.pr);
     } catch {}
   }
   const record = readRecord(project, opts.pr, comments, repo);
@@ -532,7 +534,7 @@ export async function runExtend(args, project, config, deps = {}) {
   // The pull request's head now: a decision is for the head its signals were read on.
   let current = null;
   try {
-    current = gh.pr(String(opts.pr)).headRefOid ?? null;
+    current = forge.change(String(opts.pr), 'number,headRefOid,baseRefName,url,title,body').headRefOid ?? null;
   } catch {}
   let entry;
   if (opts.verdict) entry = recordVerdict(state, { verdict: opts.verdict, reason: opts.reason, head: opts.head, current });
@@ -541,7 +543,7 @@ export async function runExtend(args, project, config, deps = {}) {
     entry = recordHuman(state, { answer: opts.human, by, session: sessionIdentity(env).session, current });
   }
   writeLocalState(project, state);
-  const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => gh.post(repo, opts.pr, body), edit: (id, body) => gh.edit(repo, id, body), viewer: () => gh.viewer() }, `extension ${entry.status}`) : null;
+  const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => forge.postComment(repo, opts.pr, body), edit: (id, body) => forge.editComment(repo, id, body), viewer: () => forge.viewer() }, `extension ${entry.status}`) : null;
   try {
     appendEvent(project, config, { ...rowOf(entry), ts: stamp(Date.now()), session_id: sessionIdentity(env).session, pr: opts.pr, repo });
   } catch {}

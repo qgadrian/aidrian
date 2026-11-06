@@ -7,6 +7,7 @@ import { parseArgs } from 'node:util';
 
 import { commandConfig } from './config.mjs';
 import { coverage, coverageLines, readLog } from './dispatch-log.mjs';
+import { forgeFor } from './forges/index.mjs';
 import { projectAt } from './project.mjs';
 import { formatReport, summarize } from './report-agents.mjs';
 import { formatDocs, knowledgeOf, summarizeDocs } from './report-docs.mjs';
@@ -69,8 +70,8 @@ export const commands = {
       if (view === 'reviews') {
         // The pull requests are the last N merged, or those merged since --since when it is given. The log adds only the
         // checks at the round cap, since --since (7d by default).
-        const { extensionSummary, formatExtensions, formatReviews, ghAt, reviewRounds } = await import('./report-reviews.mjs');
-        const reviews = reviewRounds(prs, config.github.reviewer, ghAt(project.root), { sinceMs: values.since === undefined ? null : sinceMs });
+        const { extensionSummary, formatExtensions, formatReviews, reviewRounds } = await import('./report-reviews.mjs');
+        const reviews = reviewRounds(prs, config.github.reviewer, forgeFor(project.root), { sinceMs: values.since === undefined ? null : sinceMs });
         const extensions = extensionSummary(readLog(project, config).rows, { sinceMs });
         const label = values.since ?? null;
         const extra = formatExtensions(extensions, { since });
@@ -82,7 +83,7 @@ export const commands = {
       if (view === 'health') {
         // Every other view's numbers, each against its threshold; the reviews are those merged in the same window.
         const { formatHealth, summarizeHealth } = await import('./report-health.mjs');
-        const { ghAt, reviewRounds } = await import('./report-reviews.mjs');
+        const { reviewRounds } = await import('./report-reviews.mjs');
         const { inboxPath, lessons, pluginInboxPath } = await import('./lesson-inbox.mjs');
         const own = inboxPath(project, config);
         const plugin = pluginInboxPath() ?? own;
@@ -90,7 +91,7 @@ export const commands = {
           rows,
           sinceMs,
           knowledge: knowledgeOf(project, config),
-          reviews: reviewRounds(prs, config.github.reviewer, ghAt(project.root), { sinceMs }),
+          reviews: reviewRounds(prs, config.github.reviewer, forgeFor(project.root), { sinceMs }),
           lessons: lessons(own),
           pluginLessons: plugin === own ? null : lessons(plugin),
           config,
@@ -116,8 +117,8 @@ export const commands = {
       const text = () => formatReport(summary, { file, since, skipped, notes: coverageLines(cover, { hookDenies: true, sendBacks: true }) });
       if (values.prs !== undefined) {
         // The alias the reviews view grew from: the default view, then the reviews of the last N merged pull requests.
-        const { formatReviews, ghAt, reviewRounds } = await import('./report-reviews.mjs');
-        summary.reviews = reviewRounds(prs, config.github.reviewer, ghAt(project.root));
+        const { formatReviews, reviewRounds } = await import('./report-reviews.mjs');
+        summary.reviews = reviewRounds(prs, config.github.reviewer, forgeFor(project.root));
         if (!values.json) console.log(`${text()}\n${formatReviews(summary.reviews)}`);
       } else if (!values.json) {
         console.log(text());

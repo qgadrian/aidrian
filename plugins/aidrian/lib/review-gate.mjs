@@ -14,7 +14,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { ghJson } from './forges/github-cli.mjs';
+import { forgeFor } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { unfencedLines } from './markdown-sections.mjs';
 import { normalizeRemote, stateDir } from './project.mjs';
@@ -153,9 +153,9 @@ export function denyReason(pr, checklist) {
 }
 
 // The repository of pull request `pr`, as `owner/name`: `--repo` (`given`), else the one `gh pr view` names, gh's
-// default repository, which in a fork checkout is the upstream, else origin, so it works offline. `viewPr(pr)` returns
-// { url }; it is the test seam of the gh call.
-export function prRepo(project, pr, given, viewPr = (n) => ghJson(['pr', 'view', String(n), '--json', 'url'], { cwd: project.root })) {
+// default repository, which in a fork checkout is the upstream, else origin, so it works offline. `forge` reads the pull
+// request; it is the test seam.
+export function prRepo(project, pr, given, forge = forgeFor(project.root)) {
   if (given !== undefined && given !== null) {
     const name = repoName(given);
     if (!name) throw new Error(`--repo ${given} is not OWNER/NAME`);
@@ -163,7 +163,7 @@ export function prRepo(project, pr, given, viewPr = (n) => ghJson(['pr', 'view',
   }
   let url = null;
   try {
-    url = viewPr(pr)?.url ?? null;
+    url = forge.change(pr, 'url')?.url ?? null;
   } catch {}
   const name = repoName(url) ?? originRepo(project);
   if (!name) throw new Error("cannot read this repository's origin; the marker must name it: pass --repo OWNER/NAME");
@@ -173,7 +173,7 @@ export function prRepo(project, pr, given, viewPr = (n) => ghJson(['pr', 'view',
 // `aidrian pr attest <PR> --head <sha> --reviewer <who> --findings <n> --fixed <n> [--note <text>] [--repo OWNER/NAME]`, or `--check`.
 // With --pass, `--findings-file <file>` replaces the counts with the findings one by one (lib/review/findings.mjs).
 // Exit 0 recorded, 3 not recorded (--check), 1 a usage error.
-export async function runAttest(args, project, config = null, { viewPr } = {}) {
+export async function runAttest(args, project, config = null, { forge } = {}) {
   const [ref, ...rest] = args;
   const pr = prNumber(ref);
   if (pr === null) throw new Error('attest needs a pull request number');
@@ -209,7 +209,7 @@ export async function runAttest(args, project, config = null, { viewPr } = {}) {
   if (!SHA.test(flags.head) || runGit(['cat-file', '-e', `${flags.head}^{commit}`], project.root).status !== 0) {
     throw new Error(`--head ${flags.head} is not a commit in this repository`);
   }
-  const repo = prRepo(project, pr, flags.repo, viewPr);
+  const repo = prRepo(project, pr, flags.repo, forge);
   if (flags.pass !== undefined) {
     const { recordPass, remoteState } = await import('./review/run.mjs');
     const verdictsText = flags.verdicts === undefined ? null : readFileSync(flags.verdicts, 'utf8');
@@ -242,7 +242,7 @@ export function attestation(project, pr, repo = null, origin = originRepo(projec
 // `--stage <name>` in place of `--flow` signs off a review stage the Human chose to review because its reviewer ran out
 // of quota on that head (lib/review/quota.mjs). `--flow <id> --overrule <invariant> --reason <text>` settles a dispute
 // between reviewers on that head.
-export async function runSignoff(args, project, config = null, { viewPr } = {}) {
+export async function runSignoff(args, project, config = null, { forge } = {}) {
   const [ref, ...rest] = args;
   const pr = prNumber(ref);
   if (pr === null) throw new Error('signoff needs a pull request number');
@@ -256,7 +256,7 @@ export async function runSignoff(args, project, config = null, { viewPr } = {}) 
   }
   if (!flags.head || Boolean(flags.flow) === Boolean(flags.stage)) throw new Error('--head and one of --flow or --stage are required');
   if (!SHA.test(flags.head) || runGit(['cat-file', '-e', `${flags.head}^{commit}`], project.root).status !== 0) throw new Error(`--head ${flags.head} is not a commit in this repository`);
-  const repo = prRepo(project, pr, flags.repo, viewPr);
+  const repo = prRepo(project, pr, flags.repo, forge);
   const by = runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown';
   if ((flags.overrule || flags.reason) && !(flags.flow && flags.overrule && flags.reason)) throw new Error('--overrule needs --flow and --reason');
   const { recordOverrule, recordSignoff, recordStageSignoff, remoteState } = await import('./review/run.mjs');

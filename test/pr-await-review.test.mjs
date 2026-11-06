@@ -172,12 +172,12 @@ test('acknowledgedAt: 👀 on the trigger comment counts', () => {
 
 test('awaitReview --request: an acknowledged 👀 trigger is not re-requested', async () => {
   const ackedTrigger = { user: { login: 'someone' }, body: '@codex review', created_at: T(5), reactions: { eyes: 1 } };
-  const gh = fakeGh([{ issueComments: [ackedTrigger] }], { head: 'bbb' });
+  const forge = fakeForge([{ issueComments: [ackedTrigger] }], { head: 'bbb' });
   const c = clock();
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { gh, ...c });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { forge, ...c });
   assert.equal(r.status, 'timed_out');
   assert.equal(r.acknowledged_at, T(5));
-  assert.equal(gh.posts.length, 0, 'no second @codex review while the bot is mid-review');
+  assert.equal(forge.posts.length, 0, 'no second @codex review while the bot is mid-review');
 });
 
 test('requestCommentBody / triggerHeadSha: the trigger records its head without changing what the bot reads', () => {
@@ -244,18 +244,18 @@ test('awaitReview --request: an acknowledgement for head A does not cover head B
   // wait could not end in a review. The trigger names 'bbb', so it covers
   // 'bbb' and nothing else.
   const triggerForA = { user: { login: 'someone' }, body: requestCommentBody('bbb'), created_at: T(5), reactions: { eyes: 1 } };
-  const gh = fakeGh(
+  const forge = fakeForge(
     [{ issueComments: [triggerForA] }, { head: 'ccc', headCommittedAt: T(3), issueComments: [triggerForA] }],
     { head: 'bbb', headCommittedAt: T(1) },
   );
   const c = clock();
-  const sleep = async (s) => { await c.sleep(s); gh.advance(); };
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { gh, now: c.now, sleep });
+  const sleep = async (s) => { await c.sleep(s); forge.advance(); };
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { forge, now: c.now, sleep });
   assert.equal(r.status, 'timed_out');
   assert.equal(r.head_sha, 'ccc');
   assert.equal(r.requested, true);
-  assert.equal(gh.posts.length, 1, 'the head the bot never saw gets its own @codex review');
-  assert.equal(gh.posts[0].fields.body, requestCommentBody('ccc'), 'and that request names the head it was made for');
+  assert.equal(forge.posts.length, 1, 'the head the bot never saw gets its own @codex review');
+  assert.equal(forge.posts[0].fields.body, requestCommentBody('ccc'), 'and that request names the head it was made for');
   assert.equal(r.retry_recommended, false, 'no acknowledgement covers ccc, so a re-run without --request cannot help');
 });
 
@@ -264,10 +264,10 @@ test('awaitReview --request: an acknowledged trigger naming the CURRENT head sup
   // acknowledgement, which the date proxy alone calls stale — but the trigger
   // names this exact SHA, so the review in flight is this head's.
   const triggerForB = { user: { login: 'someone' }, body: requestCommentBody('ccc'), created_at: T(5), reactions: { eyes: 1 } };
-  const gh = fakeGh([{ issueComments: [triggerForB] }], { head: 'ccc', headCommittedAt: T(9) });
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { gh, ...clock() });
+  const forge = fakeForge([{ issueComments: [triggerForB] }], { head: 'ccc', headCommittedAt: T(9) });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { forge, ...clock() });
   assert.equal(r.status, 'timed_out');
-  assert.equal(gh.posts.length, 0, 'the bot is mid-review on this exact head; a second ask costs a run and buys nothing');
+  assert.equal(forge.posts.length, 0, 'the bot is mid-review on this exact head; a second ask costs a run and buys nothing');
   assert.equal(r.retry_recommended, true, 'a review for ccc is in flight, so one re-run WITHOUT --request is worth its wait');
 });
 
@@ -278,18 +278,18 @@ test('awaitReview --request: a legacy trigger naming no head still re-requests w
   // Codex never reviews a later push on its own, so leaving the 👀 in force
   // meant no request ever covered ccc and the wait could not end in a review.
   const acked = { user: { login: 'someone' }, body: '@codex review', created_at: T(5), reactions: { eyes: 1 } };
-  const gh = fakeGh(
+  const forge = fakeForge(
     [{ issueComments: [acked] }, { head: 'ccc', headCommittedAt: T(9), issueComments: [acked] }],
     { head: 'bbb', headCommittedAt: T(1) },
   );
   const c = clock();
-  const sleep = async (s) => { await c.sleep(s); gh.advance(); };
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { gh, now: c.now, sleep });
+  const sleep = async (s) => { await c.sleep(s); forge.advance(); };
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { forge, now: c.now, sleep });
   assert.equal(r.status, 'timed_out');
   assert.equal(r.head_sha, 'ccc');
   assert.equal(r.requested, true);
-  assert.equal(gh.posts.length, 1, 'the new head gets its own @codex review');
-  assert.equal(triggerHeadSha(gh.posts[0].fields.body), 'ccc', 'and the replacement request is SHA-bound from here on');
+  assert.equal(forge.posts.length, 1, 'the new head gets its own @codex review');
+  assert.equal(triggerHeadSha(forge.posts[0].fields.body), 'ccc', 'and the replacement request is SHA-bound from here on');
 });
 
 test('postedTriggerInstant / flooredInstant: the created comment decides the boundary, with a floored pre-POST fallback', () => {
@@ -305,33 +305,32 @@ test('postedTriggerInstant / flooredInstant: the created comment decides the bou
 });
 
 /**
- * A fake `gh` for the POST seam that `fakeGh` does not model: it actually
+ * A fake forge for the POST seam that `fakeForge` does not model: it actually
  * CREATES the comment, stamping `created_at` truncated to the whole second the
  * way GitHub does, returns the created object, and carries the bot's 👀 on it
  * by the next read. The POST also burns `postMs` of wall clock, so a test can
  * tell a pre-POST boundary from a post-POST one.
  */
-const fakeRequestGh = (c, { head = 'ccc', headCommittedAt = T(1), createdAt, postMs = 0, echoCreatedAt = true } = {}) => {
+const fakeRequestForge = (c, { head = 'ccc', headCommittedAt = T(1), createdAt, postMs = 0, echoCreatedAt = true } = {}) => {
   const issueComments = [];
   const posts = [];
   return {
     posts,
     repo: () => 'acme/notes',
-    currentPr: () => ({ number: 42 }),
-    api: (p, { method, fields } = {}) => {
-      if (method === 'POST') {
-        posts.push({ p, fields });
-        c.advance(postMs);
-        const created = { id: 1, user: { login: 'someone' }, body: fields.body, created_at: createdAt, reactions: { eyes: 1 } };
-        issueComments.push(created);
-        return echoCreatedAt ? created : {};
-      }
-      if (p.endsWith('/pulls/42')) return { draft: true, created_at: T(0), head: { sha: head } };
-      if (p.includes('/commits/')) return { commit: { committer: { date: headCommittedAt } } };
-      if (p.endsWith('/issues/42/comments')) return [...issueComments];
-      if (p.endsWith('/reviews') || p.endsWith('/pulls/42/comments') || p.endsWith('/reactions') || p.endsWith('/timeline')) return [];
-      throw new Error(`unexpected gh path ${p}`);
+    change: () => ({ number: 42 }),
+    postComment: (repo, n, body) => {
+      posts.push({ p: `repos/${repo}/issues/${n}/comments`, fields: { body } });
+      c.advance(postMs);
+      const created = { id: 1, user: { login: 'someone' }, body, created_at: createdAt, reactions: { eyes: 1 } };
+      issueComments.push(created);
+      return echoCreatedAt ? created : {};
     },
+    pull: (_repo, n) => (onPr42(n), { draft: true, created_at: T(0), head: { sha: head } }),
+    commit: () => ({ commit: { committer: { date: headCommittedAt } } }),
+    issueComments: () => [...issueComments],
+    reviews: () => [],
+    reviewComments: () => [],
+    reactions: () => [],
   };
 };
 
@@ -350,9 +349,9 @@ test('awaitReview --request: the wait is anchored to the posted comment\'s serve
   // null, and an acknowledged timeout claimed retry_recommended: false while
   // the review was still running — so the review loop moved on.
   const c = skewedClock(Date.parse(T(10)) + 412);
-  const gh = fakeRequestGh(c, { createdAt: T(10) });
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { gh, now: c.now, sleep: c.sleep });
-  assert.equal(gh.posts.length, 1, 'one trigger, for this head');
+  const forge = fakeRequestForge(c, { createdAt: T(10) });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { forge, now: c.now, sleep: c.sleep });
+  assert.equal(forge.posts.length, 1, 'one trigger, for this head');
   // The exact server string, which the floored fallback would render as
   // '…07:10:00.000Z' — so this pins the response path, not just the instant.
   assert.equal(r.trigger_at, T(10));
@@ -366,9 +365,9 @@ test('awaitReview --request: a POST response with no usable created_at falls bac
   // to 07:10:00, post-POST to 07:10:01. Only the pre-POST one still covers a
   // comment GitHub stamped 07:10:00Z.
   const c = skewedClock(Date.parse(T(10)) + 412);
-  const gh = fakeRequestGh(c, { createdAt: T(10), postMs: 900, echoCreatedAt: false });
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { gh, now: c.now, sleep: c.sleep });
-  assert.equal(gh.posts.length, 1);
+  const forge = fakeRequestForge(c, { createdAt: T(10), postMs: 900, echoCreatedAt: false });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { forge, now: c.now, sleep: c.sleep });
+  assert.equal(forge.posts.length, 1);
   assert.equal(r.trigger_at, '2026-08-23T07:10:00.000Z', 'pre-POST, floored to GitHub\'s own second granularity');
   assert.equal(r.acknowledged_at, T(10), 'so the trigger and its 👀 are still recognized');
   assert.equal(r.status, 'timed_out');
@@ -379,8 +378,8 @@ test('awaitReview: a timeout whose acknowledgement predates head is NOT retry-re
   // Retrying without --request can only wait again: the 👀 answers a head the
   // bot has already been past, and no request covers the current one.
   const acked = { user: { login: 'someone' }, body: '@codex review', created_at: T(5), reactions: { eyes: 1 } };
-  const gh = fakeGh([{ issueComments: [acked] }], { head: 'ccc', headCommittedAt: T(9) });
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 120, intervalSec: 60 }, { gh, ...clock() });
+  const forge = fakeForge([{ issueComments: [acked] }], { head: 'ccc', headCommittedAt: T(9) });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 120, intervalSec: 60 }, { forge, ...clock() });
   assert.equal(r.status, 'timed_out');
   assert.equal(r.acknowledged_at, T(5), 'the acknowledgement is still reported verbatim');
   assert.equal(r.retry_recommended, false);
@@ -388,18 +387,18 @@ test('awaitReview: a timeout whose acknowledgement predates head is NOT retry-re
   // Same shape, acknowledgement newer than the head commit: still worth one
   // re-run, because the review it acknowledged is the current head's.
   const fresh = { user: { login: 'someone' }, body: '@codex review', created_at: T(11), reactions: { eyes: 1 } };
-  const gh2 = fakeGh([{ issueComments: [fresh] }], { head: 'ccc', headCommittedAt: T(9) });
-  const r2 = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 120, intervalSec: 60 }, { gh: gh2, ...clock() });
+  const forge2 = fakeForge([{ issueComments: [fresh] }], { head: 'ccc', headCommittedAt: T(9) });
+  const r2 = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 120, intervalSec: 60 }, { forge: forge2, ...clock() });
   assert.equal(r2.status, 'timed_out');
   assert.equal(r2.retry_recommended, true);
 });
 
 test('awaitReview --request: an UNacknowledged trigger still gets one request', async () => {
-  const gh = fakeGh([{ issueComments: [{ user: { login: 'someone' }, body: '@codex review', created_at: T(5), reactions: { eyes: 0 } }] }], { head: 'bbb' });
+  const forge = fakeForge([{ issueComments: [{ user: { login: 'someone' }, body: '@codex review', created_at: T(5), reactions: { eyes: 0 } }] }], { head: 'bbb' });
   const c = clock();
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { gh, ...c });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { forge, ...c });
   assert.equal(r.requested, true);
-  assert.equal(gh.posts.length, 1);
+  assert.equal(forge.posts.length, 1);
 });
 
 test('isStale: a review of an older commit than head is stale', () => {
@@ -408,8 +407,13 @@ test('isStale: a review of an older commit than head is stale', () => {
   assert.equal(isStale(null, 'bbb'), false);
 });
 
-/** Fake gh: a scripted sequence of snapshots, plus a record of POSTs. */
-const fakeGh = (frames, { head = 'bbb', draft = false, created = T(0), headCommittedAt = T(1) } = {}) => {
+// The fakes answer for pull request 42 alone, as GitHub would 404 any other.
+const onPr42 = (n) => {
+  if (String(n) !== '42') throw new Error(`unexpected pull request ${n}`);
+};
+
+/** Fake forge: a scripted sequence of snapshots, plus a record of POSTs. */
+const fakeForge = (frames, { head = 'bbb', draft = false, created = T(0), headCommittedAt = T(1) } = {}) => {
   let tick = 0;
   const posts = [];
   const frame = () => frames[Math.min(tick, frames.length - 1)];
@@ -417,19 +421,14 @@ const fakeGh = (frames, { head = 'bbb', draft = false, created = T(0), headCommi
     posts,
     advance: () => { tick += 1; },
     repo: () => 'acme/notes',
-    currentPr: () => ({ number: 42 }),
-    api: (p, { method, fields } = {}) => {
-      if (method === 'POST') { posts.push({ p, fields }); return {}; }
-      const f = frame();
-      if (p.endsWith('/pulls/42')) return { draft, created_at: created, head: { sha: f.head ?? head, ref: 'feat', repo: { full_name: 'acme/notes' } } };
-      if (p.includes('/commits/')) return { commit: { committer: { date: f.headCommittedAt ?? headCommittedAt } } };
-      if (p.endsWith('/reviews')) return f.reviews ?? [];
-      if (p.endsWith('/pulls/42/comments')) return f.reviewComments ?? [];
-      if (p.endsWith('/issues/42/comments')) return f.issueComments ?? [];
-      if (p.endsWith('/reactions')) return f.reactions ?? [];
-      if (p.endsWith('/timeline')) return f.timeline ?? [];
-      throw new Error(`unexpected gh path ${p}`);
-    },
+    change: () => ({ number: 42 }),
+    postComment: (repo, n, body) => { posts.push({ p: `repos/${repo}/issues/${n}/comments`, fields: { body } }); return {}; },
+    pull: (_repo, n) => (onPr42(n), { draft, created_at: created, head: { sha: frame().head ?? head, ref: 'feat', repo: { full_name: 'acme/notes' } } }),
+    commit: () => ({ commit: { committer: { date: frame().headCommittedAt ?? headCommittedAt } } }),
+    reviews: (_repo, n) => (onPr42(n), frame().reviews ?? []),
+    reviewComments: (_repo, n) => (onPr42(n), frame().reviewComments ?? []),
+    issueComments: (_repo, n) => (onPr42(n), frame().issueComments ?? []),
+    reactions: (_repo, n) => (onPr42(n), frame().reactions ?? []),
   };
 };
 
@@ -442,27 +441,27 @@ test('awaitReview: a review of the head before the push never answers for it whi
   // GitHub still reports aaa, which the bot reviewed, for a poll after the push of ccc.
   const review = { id: 1, user: BOT, submitted_at: T(6), commit_id: 'aaa', state: 'COMMENTED' };
   const git = { pushedHead: (repo, ref) => (repo === 'acme/notes' && ref === 'feat' ? 'ccc' : null), behind: (a, b) => a === 'aaa' && b === 'ccc' };
-  const gh = fakeGh([{ head: 'aaa', reviews: [review] }, { head: 'ccc', reviews: [review] }]);
+  const forge = fakeForge([{ head: 'aaa', reviews: [review] }, { head: 'ccc', reviews: [review] }]);
   const c = clock();
-  const sleep = async (sec) => { await c.sleep(sec); gh.advance(); };
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { gh, git, now: c.now, sleep });
+  const sleep = async (sec) => { await c.sleep(sec); forge.advance(); };
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { forge, git, now: c.now, sleep });
   assert.equal(r.status, 'timed_out', 'the review of aaa is not already_present');
-  assert.equal(gh.posts.length, 1, 'one request, for the pushed head only');
-  assert.match(gh.posts[0].fields.body, /head=ccc/);
+  assert.equal(forge.posts.length, 1, 'one request, for the pushed head only');
+  assert.match(forge.posts[0].fields.body, /head=ccc/);
   assert.equal(r.pushed_head, 'ccc');
   assert.equal(r.head_lag, undefined);
 
-  const stuck = fakeGh([{ head: 'aaa', reviews: [review] }]);
-  const r2 = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 60, intervalSec: 60 }, { gh: stuck, git, ...clock() });
+  const stuck = fakeForge([{ head: 'aaa', reviews: [review] }]);
+  const r2 = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 60, intervalSec: 60 }, { forge: stuck, git, ...clock() });
   assert.equal(r2.status, 'timed_out');
   assert.equal(r2.head_lag, true);
   assert.equal(stuck.posts.length, 0, 'nothing is posted for a head GitHub has not caught up to');
 
   // A head past the push, or one git does not know (a collaborator's push), or --head naming GitHub's head, is no lag.
   const ahead = { pushedHead: () => 'ccc', behind: () => false };
-  const r3 = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 0, intervalSec: 60 }, { gh: fakeGh([{ head: 'aaa', reviews: [review] }]), git: ahead, ...clock() });
+  const r3 = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 0, intervalSec: 60 }, { forge: fakeForge([{ head: 'aaa', reviews: [review] }]), git: ahead, ...clock() });
   assert.equal(r3.status, 'already_present');
-  const r4 = await awaitReview({ pr: '42', repo: null, head: 'aaa', reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 0, intervalSec: 60 }, { gh: fakeGh([{ head: 'aaa', reviews: [review] }]), git, ...clock() });
+  const r4 = await awaitReview({ pr: '42', repo: null, head: 'aaa', reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 0, intervalSec: 60 }, { forge: fakeForge([{ head: 'aaa', reviews: [review] }]), git, ...clock() });
   assert.equal(r4.status, 'already_present');
   assert.throws(() => parseArgs(['42', '--head', 'main']), /--head must be a commit SHA/);
 });
@@ -470,38 +469,38 @@ test('awaitReview: a review of the head before the push never answers for it whi
 test('awaitReview: the final sleep is clamped to the remaining budget, never a full interval past it', async () => {
   // Timeout 100 s, interval 60 s: the loop sleeps 60, then 40 — not 60 + 60,
   // which with the snapshot's API calls is what overran the shell cap.
-  const gh = fakeGh([{}]);
+  const forge = fakeForge([{}]);
   const c = clock();
   const sleeps = [];
   const sleep = async (sec) => { sleeps.push(sec); await c.sleep(sec); };
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 100, intervalSec: 60 }, { gh, now: c.now, sleep });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 100, intervalSec: 60 }, { forge, now: c.now, sleep });
   assert.equal(r.status, 'timed_out');
   assert.deepEqual(sleeps, [60, 40]);
   assert.equal(r.waited_sec, 100);
 });
 
 test('awaitReview: review already on the PR → already_present, exit-0 shape, no POST', async () => {
-  const gh = fakeGh([{ reviews: [{ id: 1, user: BOT, submitted_at: T(6), commit_id: 'bbb', state: 'COMMENTED' }], reviewComments: [{ pull_request_review_id: 1 }] }]);
+  const forge = fakeForge([{ reviews: [{ id: 1, user: BOT, submitted_at: T(6), commit_id: 'bbb', state: 'COMMENTED' }], reviewComments: [{ pull_request_review_id: 1 }] }]);
   const c = clock();
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 900, intervalSec: 60 }, { gh, ...c });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 900, intervalSec: 60 }, { forge, ...c });
   assert.equal(r.status, 'already_present');
   assert.equal(r.signal.line_comments, 1);
   assert.equal(r.stale, false);
-  assert.equal(gh.posts.length, 0);
+  assert.equal(forge.posts.length, 0);
 });
 
 test('awaitReview: polls until the bot signal lands, then received; times out otherwise', async () => {
-  const gh = fakeGh([{}, {}, { reactions: [{ user: BOT, content: '+1', created_at: T(12) }] }]);
+  const forge = fakeForge([{}, {}, { reactions: [{ user: BOT, content: '+1', created_at: T(12) }] }]);
   const c = clock();
-  const sleep = async (s) => { await c.sleep(s); gh.advance(); };
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 900, intervalSec: 60 }, { gh, now: c.now, sleep });
+  const sleep = async (s) => { await c.sleep(s); forge.advance(); };
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 900, intervalSec: 60 }, { forge, now: c.now, sleep });
   assert.equal(r.status, 'received');
   assert.equal(r.signal.kind, 'thumbs_up');
   assert.equal(r.waited_sec, 120);
 
-  const gh2 = fakeGh([{}]);
+  const forge2 = fakeForge([{}]);
   const c2 = clock();
-  const r2 = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 180, intervalSec: 60 }, { gh: gh2, ...c2 });
+  const r2 = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 180, intervalSec: 60 }, { forge: forge2, ...c2 });
   assert.equal(r2.status, 'timed_out');
   assert.equal(r2.waited_sec, 180);
   assert.equal(r2.acknowledged_at, null);
@@ -513,27 +512,27 @@ test('awaitReview: an acknowledged timeout is retry-recommended, an unacknowledg
   // one re-run WITHOUT --request, and the script decides it so the caller does
   // not have to re-derive it from acknowledged_at and signal.
   const acked = { user: { login: 'someone' }, body: '@codex review', created_at: T(5), reactions: { eyes: 1 } };
-  const gh = fakeGh([{ issueComments: [acked] }], { head: 'bbb' });
+  const forge = fakeForge([{ issueComments: [acked] }], { head: 'bbb' });
   const c = clock();
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 120, intervalSec: 60 }, { gh, ...c });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 120, intervalSec: 60 }, { forge, ...c });
   assert.equal(r.status, 'timed_out');
   assert.equal(r.acknowledged_at, T(5));
   assert.equal(r.retry_recommended, true);
 
   // No 👀 anywhere: nothing is in flight, so a re-run would spend the whole
   // budget again on a review that was never started.
-  const gh2 = fakeGh([{}]);
+  const forge2 = fakeForge([{}]);
   const c2 = clock();
-  const r2 = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 120, intervalSec: 60 }, { gh: gh2, ...c2 });
+  const r2 = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 120, intervalSec: 60 }, { forge: forge2, ...c2 });
   assert.equal(r2.status, 'timed_out');
   assert.equal(r2.acknowledged_at, null);
   assert.equal(r2.retry_recommended, false);
 
   // Timeout-only: a run that got its answer keeps the exact shape it had
   // before this field existed.
-  const gh3 = fakeGh([{ reactions: [{ user: BOT, content: '+1', created_at: T(6) }] }]);
+  const forge3 = fakeForge([{ reactions: [{ user: BOT, content: '+1', created_at: T(6) }] }]);
   const c3 = clock();
-  const r3 = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 120, intervalSec: 60 }, { gh: gh3, ...c3 });
+  const r3 = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 120, intervalSec: 60 }, { forge: forge3, ...c3 });
   assert.equal(r3.status, 'already_present');
   assert.ok(!('retry_recommended' in r3), 'retry_recommended never rides a non-timeout result');
 });
@@ -541,11 +540,11 @@ test('awaitReview: an acknowledged timeout is retry-recommended, an unacknowledg
 test('awaitReview --request: a stale review (older commit than head) triggers one "@codex review" and waits from then', async () => {
   const stale = { id: 1, user: BOT, submitted_at: T(6), commit_id: 'aaa', state: 'COMMENTED' };
   const fresh = { id: 2, user: BOT, submitted_at: T(12), commit_id: 'bbb', state: 'COMMENTED' };
-  const gh = fakeGh([{ reviews: [stale] }, { reviews: [stale, fresh] }], { head: 'bbb' });
+  const forge = fakeForge([{ reviews: [stale] }, { reviews: [stale, fresh] }], { head: 'bbb' });
   const c = clock();
-  const sleep = async (s) => { await c.sleep(s); gh.advance(); };
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { gh, now: c.now, sleep });
-  assert.deepEqual(gh.posts, [{ p: 'repos/acme/notes/issues/42/comments', fields: { body: requestCommentBody('bbb') } }]);
+  const sleep = async (s) => { await c.sleep(s); forge.advance(); };
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { forge, now: c.now, sleep });
+  assert.deepEqual(forge.posts, [{ p: 'repos/acme/notes/issues/42/comments', fields: { body: requestCommentBody('bbb') } }]);
   assert.equal(r.requested, true);
   assert.equal(r.status, 'received');
   assert.equal(r.signal.commit_id, 'bbb');
@@ -555,20 +554,20 @@ test('awaitReview --request: a stale review (older commit than head) triggers on
 test('awaitReview --request: a 👍 older than the head commit re-requests', async () => {
   const thumbs = { user: BOT, content: '+1', created_at: T(6) };
   const fresh = { id: 9, user: BOT, submitted_at: T(12), commit_id: 'bbb', state: 'COMMENTED' };
-  const gh = fakeGh([{ reactions: [thumbs] }, { reactions: [thumbs], reviews: [fresh] }], { head: 'bbb', headCommittedAt: T(8) });
+  const forge = fakeForge([{ reactions: [thumbs] }, { reactions: [thumbs], reviews: [fresh] }], { head: 'bbb', headCommittedAt: T(8) });
   const c = clock();
-  const sleep = async (s) => { await c.sleep(s); gh.advance(); };
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { gh, now: c.now, sleep });
-  assert.equal(gh.posts.length, 1);
+  const sleep = async (s) => { await c.sleep(s); forge.advance(); };
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { forge, now: c.now, sleep });
+  assert.equal(forge.posts.length, 1);
   assert.equal(r.requested, true);
   assert.equal(r.status, 'received');
   assert.equal(r.head_committed_at, T(8));
 });
 
 test('awaitReview --request: a 👍 newer than the head commit does NOT re-request', async () => {
-  const gh = fakeGh([{ reactions: [{ user: BOT, content: '+1', created_at: T(6) }] }], { head: 'bbb', headCommittedAt: T(1) });
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { gh, ...clock() });
-  assert.equal(gh.posts.length, 0);
+  const forge = fakeForge([{ reactions: [{ user: BOT, content: '+1', created_at: T(6) }] }], { head: 'bbb', headCommittedAt: T(1) });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { forge, ...clock() });
+  assert.equal(forge.posts.length, 0);
   assert.equal(r.status, 'already_present');
   assert.equal(r.stale, false);
 });
@@ -619,79 +618,78 @@ test('awaitReview: a 👍 answering head A does not cover head B, committed befo
   const frames = [{ issueComments: [triggerForA], reactions: [{ user: BOT, content: '+1', created_at: T(6) }] }];
   const waited = await awaitReview(
     { pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 60, intervalSec: 60 },
-    { gh: fakeGh(frames, { head: 'ccc', headCommittedAt: T(3) }), ...clock() },
+    { forge: fakeForge(frames, { head: 'ccc', headCommittedAt: T(3) }), ...clock() },
   );
   assert.equal(waited.status, 'timed_out', 'the 👍 answers bbb, so the wait for ccc does not end on it');
   assert.equal(waited.stale, true);
 
-  const gh = fakeGh(frames, { head: 'ccc', headCommittedAt: T(3) });
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 60, intervalSec: 60 }, { gh, ...clock() });
-  assert.equal(gh.posts.length, 1, 'ccc was never reviewed, so it gets its own @codex review');
-  assert.equal(triggerHeadSha(gh.posts[0].fields.body), 'ccc');
+  const forge = fakeForge(frames, { head: 'ccc', headCommittedAt: T(3) });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 60, intervalSec: 60 }, { forge, ...clock() });
+  assert.equal(forge.posts.length, 1, 'ccc was never reviewed, so it gets its own @codex review');
+  assert.equal(triggerHeadSha(forge.posts[0].fields.body), 'ccc');
   assert.equal(r.status, 'timed_out');
 });
 
 test('awaitReview --request: a 👍 answering a trigger for the current head ends the wait, though the head is newer', async () => {
   const trigger = { user: { login: 'someone' }, body: requestCommentBody('ccc'), created_at: T(5), reactions: { eyes: 1 } };
-  const gh = fakeGh([{ issueComments: [trigger], reactions: [{ user: BOT, content: '+1', created_at: T(6) }] }], { head: 'ccc', headCommittedAt: T(9) });
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 60, intervalSec: 60 }, { gh, ...clock() });
+  const forge = fakeForge([{ issueComments: [trigger], reactions: [{ user: BOT, content: '+1', created_at: T(6) }] }], { head: 'ccc', headCommittedAt: T(9) });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 60, intervalSec: 60 }, { forge, ...clock() });
   assert.equal(r.status, 'already_present');
-  assert.equal(gh.posts.length, 0);
+  assert.equal(forge.posts.length, 0);
 });
 
 test('awaitReview: a push that lands mid-wait moves the target — a review of the old head is stale, not received', async () => {
   const oldHeadReview = { id: 1, user: BOT, submitted_at: T(12), commit_id: 'bbb', state: 'COMMENTED' };
   const newHeadReview = { id: 2, user: BOT, submitted_at: T(14), commit_id: 'ccc', state: 'COMMENTED' };
   // frame0: nothing yet (head bbb). frame1: head moved to ccc, bot reviewed bbb. frame2: bot reviewed ccc.
-  const gh = fakeGh([{}, { head: 'ccc', reviews: [oldHeadReview] }, { head: 'ccc', reviews: [oldHeadReview, newHeadReview] }], { head: 'bbb' });
+  const forge = fakeForge([{}, { head: 'ccc', reviews: [oldHeadReview] }, { head: 'ccc', reviews: [oldHeadReview, newHeadReview] }], { head: 'bbb' });
   const c = clock();
-  const sleep = async (s) => { await c.sleep(s); gh.advance(); };
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { gh, now: c.now, sleep });
+  const sleep = async (s) => { await c.sleep(s); forge.advance(); };
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { forge, now: c.now, sleep });
   assert.equal(r.status, 'received');
   assert.equal(r.head_sha, 'ccc');
   assert.equal(r.signal.commit_id, 'ccc');
   assert.equal(r.stale, false);
   // Requested once for bbb (no signal at start) and once more for ccc (old-head review was stale).
-  assert.equal(gh.posts.length, 2);
+  assert.equal(forge.posts.length, 2);
 
   // Without --request the stale old-head review is never reported as received.
-  const gh2 = fakeGh([{}, { head: 'ccc', reviews: [oldHeadReview] }], { head: 'bbb' });
+  const forge2 = fakeForge([{}, { head: 'ccc', reviews: [oldHeadReview] }], { head: 'bbb' });
   const c2 = clock();
-  const sleep2 = async (s) => { await c2.sleep(s); gh2.advance(); };
-  const r2 = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 180, intervalSec: 60 }, { gh: gh2, now: c2.now, sleep: sleep2 });
+  const sleep2 = async (s) => { await c2.sleep(s); forge2.advance(); };
+  const r2 = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 180, intervalSec: 60 }, { forge: forge2, now: c2.now, sleep: sleep2 });
   assert.equal(r2.status, 'timed_out');
   assert.equal(r2.head_sha, 'ccc');
   assert.equal(r2.stale, true);
 });
 
 test('snapshot reads the head AFTER the signals: a push landing mid-snapshot makes the gathered review stale', async () => {
-  // gh fake whose head advances the moment the reviews endpoint is read — i.e. a
+  // A forge fake whose head advances the moment the reviews are read — i.e. a
   // push lands after the signals are gathered. Head-last ordering must see it.
   const review = { id: 1, user: BOT, submitted_at: T(6), commit_id: 'bbb', state: 'COMMENTED' };
   let head = 'bbb';
   const calls = [];
-  const gh = {
+  const forge = {
     repo: () => 'acme/notes',
-    currentPr: () => ({ number: 42 }),
-    api: (p) => {
-      calls.push(p.replace(/^repos\/acme\/notes\//, ''));
-      if (p.endsWith('/reviews')) { const out = [review]; head = 'ccc'; return out; }
-      if (p.endsWith('/pulls/42')) return { draft: false, created_at: T(0), head: { sha: head } };
-      if (p.includes('/commits/')) return { commit: { committer: { date: T(7) } } };
-      return [];
-    },
+    change: () => ({ number: 42 }),
+    reviews: () => { calls.push('reviews'); const out = [review]; head = 'ccc'; return out; },
+    reviewComments: () => (calls.push('reviewComments'), []),
+    issueComments: () => (calls.push('issueComments'), []),
+    reactions: () => (calls.push('reactions'), []),
+    pull: () => (calls.push('pull'), { draft: false, created_at: T(0), head: { sha: head } }),
+    commit: () => (calls.push('commit'), { commit: { committer: { date: T(7) } } }),
   };
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 0, intervalSec: 60 }, { gh, ...clock() });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 0, intervalSec: 60 }, { forge, ...clock() });
   assert.equal(r.head_sha, 'ccc');
   assert.equal(r.stale, true);
   assert.equal(r.status, 'timed_out');
-  assert.ok(calls.indexOf('pulls/42') > calls.indexOf('pulls/42/reviews'), 'head is read after the signals');
+  assert.ok(calls.indexOf('pull') > calls.indexOf('reviews'), 'head is read after the signals');
 });
 
 test('awaitReview --request: a fresh review on head does NOT re-request', async () => {
-  const gh = fakeGh([{ reviews: [{ id: 2, user: BOT, submitted_at: T(6), commit_id: 'bbb', state: 'COMMENTED' }] }], { head: 'bbb' });
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { gh, ...clock() });
-  assert.equal(gh.posts.length, 0);
+  const forge = fakeForge([{ reviews: [{ id: 2, user: BOT, submitted_at: T(6), commit_id: 'bbb', state: 'COMMENTED' }] }], { head: 'bbb' });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { forge, ...clock() });
+  assert.equal(forge.posts.length, 0);
   assert.equal(r.status, 'already_present');
 });
 
@@ -723,15 +721,15 @@ test('awaitReview --request: the quota notice ends the wait as blocked_quota, no
   // the usage-limit notice. The wait ends at the first poll: no amount of
   // waiting turns "no credits" into a review, and a second ask buys nothing.
   const notice = { id: 1, user: BOT, created_at: T(11), body: QUOTA_BODY };
-  const gh = fakeGh([{}, { issueComments: [notice] }], { head: 'bbb' });
+  const forge = fakeForge([{}, { issueComments: [notice] }], { head: 'bbb' });
   const c = clock();
-  const sleep = async (s) => { await c.sleep(s); gh.advance(); };
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { gh, now: c.now, sleep });
+  const sleep = async (s) => { await c.sleep(s); forge.advance(); };
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { forge, now: c.now, sleep });
   assert.equal(r.status, 'blocked_quota');
   assert.equal(r.signal.kind, 'quota_exhausted');
   assert.equal(r.stale, false);
   assert.equal(r.waited_sec, 60, 'stops at the poll that saw the notice, not at the timeout');
-  assert.equal(gh.posts.length, 1);
+  assert.equal(forge.posts.length, 1);
   assert.equal(exitCodeFor(r.status), 3);
   assert.equal(exitCodeFor('timed_out'), 2);
   assert.equal(exitCodeFor('received'), 0);
@@ -741,22 +739,22 @@ test('awaitReview --request: the quota notice ends the wait as blocked_quota, no
 test('awaitReview: a quota notice already answering the trigger is blocked_quota at first look, with no POST', async () => {
   const trigger = { id: 1, user: { login: 'someone' }, created_at: T(5), body: '@codex review', reactions: { eyes: 0 } };
   const notice = { id: 2, user: BOT, created_at: T(6), body: QUOTA_BODY };
-  const gh = fakeGh([{ issueComments: [trigger, notice] }], { head: 'bbb', headCommittedAt: T(1) });
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { gh, ...clock() });
+  const forge = fakeForge([{ issueComments: [trigger, notice] }], { head: 'bbb', headCommittedAt: T(1) });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { forge, ...clock() });
   assert.equal(r.status, 'blocked_quota');
   assert.equal(r.waited_sec, 0);
-  assert.equal(gh.posts.length, 0, 'the notice already answers this trigger; asking again only produces another notice');
+  assert.equal(forge.posts.length, 0, 'the notice already answers this trigger; asking again only produces another notice');
 });
 
 test('awaitReview --request: a quota notice older than the head re-requests once, and a real review then counts (top-up recovery)', async () => {
   const trigger = { id: 1, user: { login: 'someone' }, created_at: T(5), body: '@codex review', reactions: { eyes: 0 } };
   const notice = { id: 2, user: BOT, created_at: T(6), body: QUOTA_BODY };
   const fresh = { id: 9, user: BOT, submitted_at: T(12), commit_id: 'bbb', state: 'COMMENTED' };
-  const gh = fakeGh([{ issueComments: [trigger, notice] }, { issueComments: [trigger, notice], reviews: [fresh] }], { head: 'bbb', headCommittedAt: T(8) });
+  const forge = fakeForge([{ issueComments: [trigger, notice] }, { issueComments: [trigger, notice], reviews: [fresh] }], { head: 'bbb', headCommittedAt: T(8) });
   const c = clock();
-  const sleep = async (s) => { await c.sleep(s); gh.advance(); };
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { gh, now: c.now, sleep });
-  assert.equal(gh.posts.length, 1, 'the stale notice predates the head, so the new head is asked once');
+  const sleep = async (s) => { await c.sleep(s); forge.advance(); };
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { forge, now: c.now, sleep });
+  assert.equal(forge.posts.length, 1, 'the stale notice predates the head, so the new head is asked once');
   assert.equal(r.status, 'received');
   assert.equal(r.signal.kind, 'review');
 });
@@ -808,23 +806,23 @@ test('awaitReview --request: a Running card plus 👀 keeps waiting without a se
   const card = { id: 5511518662, user: BOT, created_at: T(11), body: RUNNING_CARD_BODY };
   const eyes = { user: BOT, content: 'eyes', created_at: T(11) };
   const review = { id: 9, user: BOT, submitted_at: T(13), commit_id: 'bbb', state: 'COMMENTED' };
-  const gh = fakeGh(
+  const forge = fakeForge(
     [{}, { issueComments: [card], reactions: [eyes] }, { issueComments: [{ ...card, body: COMPLETED_CARD_BODY }], reviews: [review] }],
     { head: 'bbb' },
   );
   const c = clock();
-  const sleep = async (s) => { await c.sleep(s); gh.advance(); };
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { gh, now: c.now, sleep });
+  const sleep = async (s) => { await c.sleep(s); forge.advance(); };
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 900, intervalSec: 60 }, { forge, now: c.now, sleep });
   assert.equal(r.status, 'received');
   assert.equal(r.signal.kind, 'review');
   assert.equal(r.waited_sec, 120, 'the Running card at the first poll did not end the wait');
-  assert.equal(gh.posts.length, 1, 'the acknowledged run is not re-requested');
+  assert.equal(forge.posts.length, 1, 'the acknowledged run is not re-requested');
 
   // Without a review ever landing, the card alone times out rather than reporting received.
-  const gh2 = fakeGh([{}, { issueComments: [card], reactions: [eyes] }], { head: 'bbb' });
+  const forge2 = fakeForge([{}, { issueComments: [card], reactions: [eyes] }], { head: 'bbb' });
   const c2 = clock();
-  const sleep2 = async (s) => { await c2.sleep(s); gh2.advance(); };
-  const r2 = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 180, intervalSec: 60 }, { gh: gh2, now: c2.now, sleep: sleep2 });
+  const sleep2 = async (s) => { await c2.sleep(s); forge2.advance(); };
+  const r2 = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: false, timeoutSec: 180, intervalSec: 60 }, { forge: forge2, now: c2.now, sleep: sleep2 });
   assert.equal(r2.status, 'timed_out');
   assert.equal(r2.signal, null);
   assert.equal(r2.acknowledged_at, T(11));
@@ -869,13 +867,13 @@ test('acknowledgedAt: with NO trigger on the PR, a leftover card acknowledges no
 
 test('awaitReview --request: a leftover card with no trigger does not suppress the request', async () => {
   const card = { id: 5511518662, user: BOT, created_at: T(6), body: RUNNING_CARD_BODY };
-  const gh = fakeGh([{ issueComments: [card] }], { head: 'bbb' });
+  const forge = fakeForge([{ issueComments: [card] }], { head: 'bbb' });
   const c = clock();
-  const sleep = async (s) => { await c.sleep(s); gh.advance(); };
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { gh, now: c.now, sleep });
+  const sleep = async (s) => { await c.sleep(s); forge.advance(); };
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { forge, now: c.now, sleep });
   assert.equal(r.status, 'timed_out');
-  assert.equal(gh.posts.length, 1, 'the trigger was posted despite the leftover card');
-  assert.deepEqual(gh.posts[0].fields, { body: requestCommentBody('bbb') });
+  assert.equal(forge.posts.length, 1, 'the trigger was posted despite the leftover card');
+  assert.deepEqual(forge.posts[0].fields, { body: requestCommentBody('bbb') });
 });
 
 test('acknowledgement: a trigger naming a head outranks a NEWER status card, which decides only when nothing names one', () => {
@@ -918,17 +916,17 @@ test('awaitReview --request: a first-run card does not override the SHA-bound tr
   const card = { id: 5511518662, user: BOT, created_at: T(6), body: RUNNING_CARD_BODY };
   const triggerForA = { id: 80, user: { login: 'someone' }, created_at: T(5), body: requestCommentBody('bbb'), reactions: { eyes: 1 } };
   const comments = [triggerForA, card];
-  const gh = fakeGh(
+  const forge = fakeForge(
     [{ issueComments: comments }, { head: 'ccc', headCommittedAt: T(3), issueComments: comments }],
     { head: 'bbb', headCommittedAt: T(1) },
   );
   const c = clock();
-  const sleep = async (s) => { await c.sleep(s); gh.advance(); };
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { gh, now: c.now, sleep });
+  const sleep = async (s) => { await c.sleep(s); forge.advance(); };
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { forge, now: c.now, sleep });
   assert.equal(r.status, 'timed_out');
   assert.equal(r.head_sha, 'ccc');
-  assert.equal(gh.posts.length, 1, 'the head the bot never saw gets its own @codex review, card or no card');
-  assert.equal(gh.posts[0].fields.body, requestCommentBody('ccc'));
+  assert.equal(forge.posts.length, 1, 'the head the bot never saw gets its own @codex review, card or no card');
+  assert.equal(forge.posts[0].fields.body, requestCommentBody('ccc'));
   assert.equal(r.retry_recommended, false, 'no acknowledgement covers ccc, so a re-run without --request cannot help');
 });
 
@@ -939,10 +937,10 @@ test('awaitReview --request: a first-run card does not override a trigger naming
   // ask would only cost a run.
   const card = { id: 5511518662, user: BOT, created_at: T(6), body: RUNNING_CARD_BODY };
   const triggerForB = { id: 80, user: { login: 'someone' }, created_at: T(5), body: requestCommentBody('ccc'), reactions: { eyes: 1 } };
-  const gh = fakeGh([{ issueComments: [triggerForB, card] }], { head: 'ccc', headCommittedAt: T(9) });
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { gh, ...clock() });
+  const forge = fakeForge([{ issueComments: [triggerForB, card] }], { head: 'ccc', headCommittedAt: T(9) });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { forge, ...clock() });
   assert.equal(r.status, 'timed_out');
-  assert.equal(gh.posts.length, 0, 'the bot is mid-review on this exact head');
+  assert.equal(forge.posts.length, 0, 'the bot is mid-review on this exact head');
   assert.equal(r.acknowledged_at, T(5), 'the trigger the bot reacted to is the acknowledgement, not the card beside it');
   assert.equal(r.retry_recommended, true, 'a review for ccc is in flight, so one re-run WITHOUT --request is worth its wait');
 });
@@ -954,9 +952,9 @@ test('awaitReview: --max-rounds stops before the request that would start one ro
   assert.equal(codexRounds(undefined, DEFAULT_REVIEWER), 0);
 
   // At the limit, with head ahead of the last review: nothing is posted.
-  const atLimit = fakeGh([{ reviews: rounds(10) }], { head: 'bbb' });
+  const atLimit = fakeForge([{ reviews: rounds(10) }], { head: 'bbb' });
   const c1 = clock();
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, maxRounds: 10, timeoutSec: 120, intervalSec: 60 }, { gh: atLimit, ...c1 });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, maxRounds: 10, timeoutSec: 120, intervalSec: 60 }, { forge: atLimit, ...c1 });
   assert.equal(r.status, 'round_limit');
   assert.equal(r.codex_rounds, 10);
   assert.equal(r.max_rounds, 10);
@@ -965,25 +963,25 @@ test('awaitReview: --max-rounds stops before the request that would start one ro
   assert.equal(exitCodeFor(r.status), 4);
 
   // The default applies when the caller passes no limit.
-  const byDefault = fakeGh([{ reviews: rounds(3) }], { head: 'bbb' });
+  const byDefault = fakeForge([{ reviews: rounds(3) }], { head: 'bbb' });
   const c2 = clock();
-  const d = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { gh: byDefault, ...c2 });
+  const d = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 120, intervalSec: 60 }, { forge: byDefault, ...c2 });
   assert.equal(d.status, 'round_limit');
   assert.equal(d.max_rounds, 3);
 
   // Human raised the limit: the request goes out.
-  const raised = fakeGh([{ reviews: rounds(10) }], { head: 'bbb' });
+  const raised = fakeForge([{ reviews: rounds(10) }], { head: 'bbb' });
   const c3 = clock();
-  const up = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, maxRounds: 15, timeoutSec: 60, intervalSec: 60 }, { gh: raised, ...c3 });
+  const up = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, maxRounds: 15, timeoutSec: 60, intervalSec: 60 }, { forge: raised, ...c3 });
   assert.equal(up.status, 'timed_out');
   assert.equal(raised.posts.length, 1);
   assert.equal(up.codex_rounds, 10, 'every status reports the round count');
   assert.ok(!('max_rounds' in up), 'only round_limit names the limit');
 
   // A review that already covers head is reported, never refused: no request is needed.
-  const covered = fakeGh([{ reviews: [...rounds(9), { id: 50, user: BOT, submitted_at: T(2), commit_id: 'bbb', state: 'COMMENTED' }] }], { head: 'bbb' });
+  const covered = fakeForge([{ reviews: [...rounds(9), { id: 50, user: BOT, submitted_at: T(2), commit_id: 'bbb', state: 'COMMENTED' }] }], { head: 'bbb' });
   const c4 = clock();
-  const ok = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, maxRounds: 10, timeoutSec: 60, intervalSec: 60 }, { gh: covered, ...c4 });
+  const ok = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, maxRounds: 10, timeoutSec: 60, intervalSec: 60 }, { forge: covered, ...c4 });
   assert.equal(ok.status, 'already_present');
   assert.equal(covered.posts.length, 0);
 });
@@ -1001,18 +999,18 @@ function roundsProject(t) {
   const log = t.mock.method(console, 'log', () => {});
   const run = ({ reviews = 3, args = [], settings = config, proj = project } = {}) => {
     const rounds = Array.from({ length: reviews }, (_, i) => ({ id: i + 1, user: BOT, submitted_at: T(1), commit_id: 'aaa', state: 'COMMENTED' }));
-    return runAwaitReview(['42', '--request', ...args], settings, proj, { gh: fakeGh([{ reviews: rounds }], { head: 'bbb' }), ...clock() });
+    return runAwaitReview(['42', '--request', ...args], settings, proj, { forge: fakeForge([{ reviews: rounds }], { head: 'bbb' }), ...clock() });
   };
   return { project, config, log, run, all: () => lessons(inboxPath(project, config)) };
 }
 
 test('with no review bot, await-review ends at once as no_reviewer, exit 0, and runs no gh', async (t) => {
   const { config, log, project } = roundsProject(t);
-  const gh = { api: () => assert.fail('no gh call'), currentPr: () => assert.fail('no gh call'), repo: () => assert.fail('no gh call') };
+  const forge = new Proxy({}, { get: () => () => assert.fail('no gh call') });
   const sleep = () => assert.fail('no wait');
   const off = { ...config, github: { ...config.github, reviewer: null } };
-  assert.equal(await runAwaitReview(['42', '--request'], off, project, { gh, sleep }), 0);
-  assert.equal(await runAwaitReview(['--request', '--reviewer', 'none'], config, project, { gh, sleep }), 0);
+  assert.equal(await runAwaitReview(['42', '--request'], off, project, { forge, sleep }), 0);
+  assert.equal(await runAwaitReview(['--request', '--reviewer', 'none'], config, project, { forge, sleep }), 0);
   assert.deepEqual(log.mock.calls.map((call) => JSON.parse(call.arguments[0])), [
     { status: 'no_reviewer', pr: 42, repo: null, reviewer: null, requested: false, signal: null, waited_sec: 0 },
     { status: 'no_reviewer', pr: null, repo: null, reviewer: null, requested: false, signal: null, waited_sec: 0 },
@@ -1060,12 +1058,12 @@ test('awaitReview: a push mid-wait past the limit ends with round_limit, not rec
   const rounds = (n, commit) => Array.from({ length: n }, (_, i) => ({ id: i + 1, user: BOT, submitted_at: T(2), commit_id: commit, state: 'COMMENTED' }));
   // frame0: 9 reviews, head bbb unreviewed → one request. frame1: the 10th review
   // answers bbb, then a push moves head to ccc, which would need an 11th round.
-  const gh = fakeGh([{ reviews: rounds(9, 'aaa') }, { reviews: rounds(10, 'bbb'), head: 'ccc' }], { head: 'bbb' });
+  const forge = fakeForge([{ reviews: rounds(9, 'aaa') }, { reviews: rounds(10, 'bbb'), head: 'ccc' }], { head: 'bbb' });
   const c = clock();
-  const sleep = async (sec) => { await c.sleep(sec); gh.advance(); };
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, maxRounds: 10, timeoutSec: 300, intervalSec: 60 }, { gh, now: c.now, sleep });
+  const sleep = async (sec) => { await c.sleep(sec); forge.advance(); };
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, maxRounds: 10, timeoutSec: 300, intervalSec: 60 }, { forge, now: c.now, sleep });
   assert.equal(r.status, 'round_limit');
-  assert.equal(gh.posts.length, 1, 'only the request under the limit went out');
+  assert.equal(forge.posts.length, 1, 'only the request under the limit went out');
   assert.equal(exitCodeFor(r.status), 4);
 });
 
@@ -1079,17 +1077,17 @@ test('a raised limit is recorded in the request and kept by later runs only unde
   assert.equal(recordedMaxRounds([]), null);
 
   // Without the override, the cap the run was given holds: a recorded 15 raises nothing.
-  const held = fakeGh([{ reviews: rounds(12), issueComments: [raised] }], { head: 'bbb' });
-  const plain = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 60, intervalSec: 60 }, { gh: held, ...clock() });
+  const held = fakeForge([{ reviews: rounds(12), issueComments: [raised] }], { head: 'bbb' });
+  const plain = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, timeoutSec: 60, intervalSec: 60 }, { forge: held, ...clock() });
   assert.deepEqual([plain.status, held.posts.length], ['round_limit', 0]);
 
   // A bare --request (default 10) on a PR with 12 reviews and a recorded 15 still asks, under the Human's override.
-  const gh = fakeGh([{ reviews: rounds(12), issueComments: [raised] }], { head: 'bbb' });
+  const forge = fakeForge([{ reviews: rounds(12), issueComments: [raised] }], { head: 'bbb' });
   const c = clock();
-  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, keepRecordedCap: true, timeoutSec: 60, intervalSec: 60 }, { gh, ...c });
+  const r = await awaitReview({ pr: '42', repo: null, reviewer: DEFAULT_REVIEWER, request: true, keepRecordedCap: true, timeoutSec: 60, intervalSec: 60 }, { forge, ...c });
   assert.equal(r.status, 'timed_out');
-  assert.equal(gh.posts.length, 1);
-  assert.ok(gh.posts[0].fields.body.includes('max-rounds=15'), 'the raised limit rides on every later request');
+  assert.equal(forge.posts.length, 1);
+  assert.ok(forge.posts[0].fields.body.includes('max-rounds=15'), 'the raised limit rides on every later request');
 });
 
 test('REQUEST_INSTRUCTIONS asks for every location of a repeated mistake in one finding', () => {
@@ -1159,14 +1157,14 @@ test('raising --max-rounds past the config cap needs the Human override, whateve
   assert.match(roundCapProblem(5, 3, {}) ?? '', /AIDRIAN_ALLOW_EXTRA_ROUNDS=1 in their own shell/);
   assert.equal(roundCapProblem(5, 3, { [ROUNDS_OVERRIDE]: '1' }), null);
   const config = { github: { reviewer: 'someone[bot]', maxReviewRounds: 3, reviewGate: { enabled: false } } };
-  const gh = () => {
+  const forge = new Proxy({}, { get: () => () => {
     throw new Error('gh must not run');
-  };
+  } });
   const errors = [];
   const error = console.error;
   console.error = (line) => errors.push(line);
   try {
-    assert.equal(await runAwaitReview(['42', '--request', '--max-rounds', '9'], config, null, { gh, env: {} }), 1);
+    assert.equal(await runAwaitReview(['42', '--request', '--max-rounds', '9'], config, null, { forge, env: {} }), 1);
   } finally {
     console.error = error;
   }

@@ -6,32 +6,30 @@ import { addedLines, formatReviews, formatRounds, NO_BOT, reviewRounds } from '.
 const BOT = 'chatgpt-codex-connector[bot]';
 const LOGIN = 'chatgpt-codex-connector';
 
-// A fake gh: merged pull requests with their reviews (GraphQL logins, no [bot]), the reactions of each, the GraphQL
+// A fake forge: merged pull requests with their reviews (GraphQL logins, no [bot]), the reactions of each, the GraphQL
 // detail of each answered one, and the compares of two commits. A detail or compare that is not listed fails, as gh does.
-function fakeGh(prs, { reactions = {}, details = {}, compares = {} } = {}) {
+// The gh commands behind each method are test/forge-github.test.mjs's.
+function fakeForge(prs, { reactions = {}, details = {}, compares = {} } = {}) {
   const calls = [];
-  const gh = (args) => {
-    calls.push(args.join(' '));
-    if (args[0] === 'pr') return prs;
-    if (args[0] === 'repo') return { nameWithOwner: 'acme/notes' };
-    if (args[1] === 'graphql') {
-      const number = Number(args.find((arg) => arg.startsWith('number=')).slice('number='.length));
-      if (!details[number]) throw new Error(`gh: no detail for ${number}`);
-      return { data: { repository: { pullRequest: { reviews: details[number] } } } };
-    }
-    const compare = /compare\/(.+)$/.exec(args[1]);
-    if (compare) {
-      if (!compares[compare[1]]) throw new Error('gh: HTTP 404: No common ancestor');
-      return compares[compare[1]];
-    }
-    // gh prints one JSON array per page: one page of 1 reaction each here, which only --slurp wraps into one document.
-    const pages = (reactions[/issues\/(\d+)\/reactions/.exec(args.find((arg) => arg.includes('/reactions')))[1]] ?? []).map((r) => [r]);
-    if (args.includes('--slurp')) return pages;
-    if (pages.length > 1) throw new Error('Unexpected non-whitespace character after JSON');
-    return pages.flat();
+  const forge = {
+    mergedChanges: (limit, options) => (calls.push(['mergedChanges', limit, options]), prs),
+    repo: () => 'acme/notes',
+    reactions: (repo, n, content) => (calls.push(['reactions', repo, n, content]), reactions[n] ?? []),
+    reviewsWithComments: (repo, n) => {
+      calls.push(['reviewsWithComments', repo, n]);
+      if (!details[n]) throw new Error(`gh: no detail for ${n}`);
+      return { data: { repository: { pullRequest: { reviews: details[n] } } } };
+    },
+    compare: (repo, base, head) => {
+      calls.push(['compare', repo, `${base}...${head}`]);
+      if (!compares[`${base}...${head}`]) throw new Error('gh: HTTP 404: No common ancestor');
+      return compares[`${base}...${head}`];
+    },
   };
-  return { gh, calls };
+  return { forge, calls };
 }
+// A forge no call may reach.
+const unreachable = new Proxy({}, { get: () => () => assert.fail('no gh call') });
 
 const review = (login) => ({ author: { login } });
 // The detail of one review: its author, commit, and comments.
@@ -74,22 +72,22 @@ const COMPARES = {
 };
 
 test('the rounds are what --prs printed: the bot`s formal reviews; a bot 👍 with no review is a clean first pass; unanswered pull requests are left out', () => {
-  const { gh, calls } = fakeGh(PRS, {
+  const { forge, calls } = fakeForge(PRS, {
     reactions: { 2: [{ content: '+1', user: { login: 'someone' } }, { content: '+1', user: { login: BOT } }], 3: [{ content: '+1', user: { login: 'someone' } }] },
     details: DETAILS,
     compares: COMPARES,
   });
-  const result = reviewRounds(4, BOT, gh);
+  const result = reviewRounds(4, BOT, forge);
   const { reviewer, merged, reviewed, clean_first_pass: clean, avg_rounds: avg, five_or_more: five } = result;
   assert.deepEqual({ reviewer, merged, reviewed, clean, avg, five }, { reviewer: BOT, merged: 4, reviewed: 3, clean: 1, avg: 2.7, five: 1 });
   assert.deepEqual(result.rounds.map(({ number, rounds }) => ({ number, rounds })), [{ number: 1, rounds: 2 }, { number: 2, rounds: 0 }, { number: 4, rounds: 6 }]);
-  assert.equal(calls.filter((call) => call.includes('reactions')).length, 2, 'reactions are read only where the bot left no review');
+  assert.deepEqual(calls.filter(([name]) => name === 'reactions'), [['reactions', 'acme/notes', 2, '+1'], ['reactions', 'acme/notes', 3, '+1']], 'reactions are read only where the bot left no review, its 👍 alone');
   assert.equal(formatRounds(result), `Review rounds by ${BOT} on 3 of the last 4 merged pull requests: 33% clean on the first pass, 2.7 rounds on average, 1 needed 5 or more`);
 });
 
 test('findings per round, and late findings checked against the lines there at the first review', () => {
-  const { gh, calls } = fakeGh(PRS, { reactions: { 2: [{ content: '+1', user: { login: BOT } }] }, details: DETAILS, compares: COMPARES });
-  const result = reviewRounds(4, BOT, gh);
+  const { forge, calls } = fakeForge(PRS, { reactions: { 2: [{ content: '+1', user: { login: BOT } }] }, details: DETAILS, compares: COMPARES });
+  const result = reviewRounds(4, BOT, forge);
   assert.deepEqual(result.rounds.map((row) => [row.number, row.findings]), [[1, [1, 3]], [2, []], [4, [1, 1, 1, 1, 1, 1]]], 'a reply is no finding');
   assert.deepEqual(
     { findings: result.findings, rounds: result.findings_rounds, byRound: result.by_round, capped: result.capped, unread: result.unread, truncated: result.truncated },
@@ -100,8 +98,8 @@ test('findings per round, and late findings checked against the lines there at t
     { late: result.late_findings, checked: result.late_checked, seen: result.late_on_seen_line, unchecked: result.late_unchecked },
     { late: 8, checked: 4, seen: 3, unchecked: { file_level: 1, deleted_line: 1, rebased: 1, missing_commit: 1, too_large: 0 } },
   );
-  const compares = calls.filter((call) => call.includes('/compare/'));
-  assert.deepEqual(compares, ['api repos/acme/notes/compare/c1...c2', 'api repos/acme/notes/compare/d1...d3', 'api repos/acme/notes/compare/d1...d4', 'api repos/acme/notes/compare/d1...d6'],
+  const compares = calls.filter(([name]) => name === 'compare').map(([, repo, range]) => `${repo} ${range}`);
+  assert.deepEqual(compares, ['acme/notes c1...c2', 'acme/notes d1...d3', 'acme/notes d1...d4', 'acme/notes d1...d6'],
     'one compare per later commit; none for a finding at the first commit');
   assert.equal(formatReviews(result), [
     `Review rounds by ${BOT} on 3 of the last 4 merged pull requests: 33% clean on the first pass, 2.7 rounds on average, 1 needed 5 or more`,
@@ -114,24 +112,24 @@ test('findings per round, and late findings checked against the lines there at t
 });
 
 test('a pull request whose findings gh cannot read is left out of the finding totals, and said so', () => {
-  const { gh } = fakeGh([{ number: 7, reviews: [review(LOGIN)] }]);
-  const result = reviewRounds(1, BOT, gh);
+  const { forge } = fakeForge([{ number: 7, reviews: [review(LOGIN)] }]);
+  const result = reviewRounds(1, BOT, forge);
   assert.deepEqual([result.rounds, result.unread, result.findings], [[{ number: 7, rounds: 1, findings: null }], 1, 0]);
   assert.match(formatReviews(result), /\nPartial: gh could not read the findings of 1 pull request; the finding lines leave them out\.\nFindings: 0 in 0 rounds, - a round\n/);
 });
 
 test('--since keeps the pull requests merged since then, and says when --prs cut the list short', () => {
-  const { gh, calls } = fakeGh([{ number: 5, reviews: [] }, { number: 6, reviews: [] }], { reactions: { 5: [{ content: '+1', user: { login: BOT } }] } });
-  const result = reviewRounds(2, BOT, gh, { sinceMs: Date.parse('2026-10-22T12:00:00.500Z') });
-  assert.equal(calls[0], 'pr list --state merged --limit 2 --search merged:>=2026-10-22T12:00:00+00:00 --json number,reviews');
+  const { forge, calls } = fakeForge([{ number: 5, reviews: [] }, { number: 6, reviews: [] }], { reactions: { 5: [{ content: '+1', user: { login: BOT } }] } });
+  const result = reviewRounds(2, BOT, forge, { sinceMs: Date.parse('2026-10-22T12:00:00.500Z') });
+  assert.deepEqual(calls[0], ['mergedChanges', 2, { sinceMs: Date.parse('2026-10-22T12:00:00.500Z') }]);
   assert.equal(result.truncated, true);
   assert.match(formatReviews(result, { since: '7d' }), /\nPartial: 2 pull requests merged since 7d is the --prs limit; raise it for the rest\.\nFindings: 0 in 0 rounds/);
-  assert.equal(reviewRounds(3, BOT, fakeGh([{ number: 5, reviews: [] }]).gh, { sinceMs: 0 }).truncated, false);
-  assert.equal(reviewRounds(1, BOT, fakeGh([{ number: 5, reviews: [] }]).gh).truncated, false, 'without --since, the last N is the whole ask');
+  assert.equal(reviewRounds(3, BOT, fakeForge([{ number: 5, reviews: [] }]).forge, { sinceMs: 0 }).truncated, false);
+  assert.equal(reviewRounds(1, BOT, fakeForge([{ number: 5, reviews: [] }]).forge).truncated, false, 'without --since, the last N is the whole ask');
 });
 
 test('with no review bot set, the reviews view says so and runs no gh', () => {
-  const result = reviewRounds(20, null, () => assert.fail('no gh call'));
+  const result = reviewRounds(20, null, unreachable);
   assert.deepEqual(result, { reviewer: null, error: NO_BOT });
   assert.equal(formatReviews(result), 'Review rounds: no review bot is set (github.reviewer is null)');
 });
@@ -142,11 +140,11 @@ test('addedLines reads the new-side numbers of the added lines, across hunks', (
 });
 
 test('a gh failure is reported, not thrown, and no answered pull request says so', () => {
-  const failing = reviewRounds(5, BOT, () => {
+  const failing = reviewRounds(5, BOT, { mergedChanges: () => {
     throw new Error('gh: not logged in\nmore');
-  });
+  } });
   assert.deepEqual(failing, { reviewer: BOT, error: 'gh: not logged in' });
   assert.equal(formatRounds(failing), 'Review rounds: gh could not answer (gh: not logged in)');
   assert.equal(formatReviews(failing), 'Review rounds: gh could not answer (gh: not logged in)');
-  assert.match(formatReviews(reviewRounds(1, BOT, fakeGh([{ number: 9, reviews: [] }]).gh)), /^Review rounds: .* answered none of the last 1 merged pull requests$/);
+  assert.match(formatReviews(reviewRounds(1, BOT, fakeForge([{ number: 9, reviews: [] }]).forge)), /^Review rounds: .* answered none of the last 1 merged pull requests$/);
 });

@@ -5,7 +5,7 @@
 // the bot's answer arrives, as `aidrian pr review --with-bot` does. `aidrian pr attest` and a finished review step
 // answer a gate review.
 
-import { ghJson } from '../forges/github-cli.mjs';
+import { forgeFor } from '../forges/index.mjs';
 import { runGit } from '../git.mjs';
 import { originRepo, prNumber, repoName } from '../review-gate.mjs';
 import { isAncestor } from './diff.mjs';
@@ -45,10 +45,10 @@ export function answerOwed(project, pr, kind, { head, by, repo = null, isAncesto
   return 1;
 }
 
-// `aidrian pr request <PR> [--kind request|review] [--head SHA] [--repo OWNER/NAME]`. gh reads what is not given: the
-// head and the pull request's repository, gh's default one, which in a fork checkout is the upstream, not origin.
+// `aidrian pr request <PR> [--kind request|review] [--head SHA] [--repo OWNER/NAME]`. The forge reads what is not given:
+// the head and the pull request's repository, gh's default one, which in a fork checkout is the upstream, not origin.
 // Exit 0 recorded, 1 a usage error or a head it cannot read.
-export function runRequest(args, project, { viewPr = (pr) => ghJson(['pr', 'view', String(pr), '--json', 'headRefOid,url'], { cwd: project.root }) } = {}) {
+export function runRequest(args, project, { forge = forgeFor(project.root) } = {}) {
   const [ref, ...rest] = args;
   const pr = prNumber(ref ?? '');
   if (pr === null) throw new Error('request needs a pull request number');
@@ -66,7 +66,7 @@ export function runRequest(args, project, { viewPr = (pr) => ghJson(['pr', 'view
   let view = null;
   if (flags.head === null || flags.repo === null) {
     try {
-      view = viewPr(pr);
+      view = forge.change(pr, 'headRefOid,url');
     } catch (error) {
       if (flags.head === null) throw error;
     }

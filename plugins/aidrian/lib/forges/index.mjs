@@ -3,4 +3,5 @@
 
 import { createGithubForge } from './github.mjs';
 
-export const forgeFor = (cwd) => createGithubForge({ cwd });
+// `options` are the adapter's, such as `mediaType` (github.mjs).
+export const forgeFor = (cwd, options = {}) => createGithubForge({ ...options, cwd });

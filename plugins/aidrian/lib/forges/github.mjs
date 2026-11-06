@@ -46,13 +46,87 @@ export function repoIdentity(value) {
   return parts.length > 2 ? identity(parts[0], parts.slice(1).join('/')) : null;
 }
 
+// The REST media type `aidrian pr await-review` has always named: `forgeFor(cwd, { mediaType: GITHUB_JSON })`.
+export const GITHUB_JSON = 'application/vnd.github+json';
+
+// The review rounds of one pull request with their comments, at most PAGE of each, in one GraphQL call.
+export const REVIEWS_PAGE = 100;
+const REVIEWS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviews(first: ${REVIEWS_PAGE}) {
+        totalCount
+        nodes {
+          author { login }
+          commit { oid }
+          comments(first: ${REVIEWS_PAGE}) { totalCount nodes { path originalLine diffHunk replyTo { id } originalCommit { oid } } }
+        }
+      }
+    }
+  }
+}`;
+
 // The adapter for the repository at `cwd`. `run` is gh, the test seam: the adapter's methods call it, and it stays in
-// this closure, so no caller of the facade gets a raw gh. No method calls it yet: they move in with the later slices.
-export function createGithubForge({ cwd, run = runGh } = {}) {
+// this closure, so no caller of the facade gets a raw gh. Every method returns GitHub's payload, parsed, and throws
+// what gh throws. A method that names no `repo` reads gh's default repository for `cwd`.
+//
+// `mediaType` keeps the two ways the plugin has always called GitHub's REST routes, each gh command as it was:
+// - null, gh's default: no Accept header; a list's pages are joined, and an empty answer is an empty list.
+// - a media type, such as GITHUB_JSON: every REST call sends it as its Accept header; an empty answer is null.
+export function createGithubForge({ cwd, run = runGh, mediaType = null } = {}) {
+  const gh = (args) => run(args, { cwd });
+  const json = (args) => JSON.parse(gh(args));
+  // One REST route. `paginate` reads every page and joins them into one list; `fields` are sent as `-f key=value`.
+  const rest = (route, { paginate = false, method, fields } = {}) => {
+    const args = ['api', route, ...(mediaType === null ? [] : ['--header', `Accept: ${mediaType}`])];
+    if (paginate) args.push('--paginate', '--slurp');
+    if (method) args.push('--method', method);
+    for (const [key, value] of Object.entries(fields ?? {})) args.push('-f', `${key}=${value}`);
+    if (mediaType === null) return paginate ? JSON.parse(gh(args) || '[]').flat() : json(args);
+    const parsed = JSON.parse(gh(args) || 'null');
+    return paginate && Array.isArray(parsed) ? parsed.flat() : parsed;
+  };
+  const list = (route) => rest(route, { paginate: true });
   return Object.freeze({
     id: 'github',
     cwd,
     isTrustedCommenter,
     repoIdentity,
+    // The pull request `ref` (a number, a branch, or a URL; none: the current branch's), with the gh `fields` named.
+    change: (ref, fields) => json(['pr', 'view', ...(ref === undefined || ref === null || ref === '' ? [] : [String(ref)]), '--json', fields]),
+    // The merged pull requests, newest first, at most `limit`, each with its number and reviews; with `sinceMs`, only
+    // those merged since then.
+    mergedChanges: (limit, { sinceMs = null } = {}) => {
+      const search = sinceMs === null ? [] : ['--search', `merged:>=${new Date(sinceMs).toISOString().slice(0, 19)}+00:00`];
+      return json(['pr', 'list', '--state', 'merged', '--limit', String(limit), ...search, '--json', 'number,reviews']);
+    },
+    // `owner/name` of the default repository.
+    repo: () => json(['repo', 'view', '--json', 'nameWithOwner']).nameWithOwner,
+    // PUBLIC, PRIVATE, or INTERNAL.
+    visibility: (repo) => json(['repo', 'view', repo, '--json', 'visibility']).visibility,
+    // The login gh is signed in as.
+    viewer: () => rest('user')?.login,
+    issueComments: (repo, n) => list(`repos/${repo}/issues/${n}/comments`),
+    postComment: (repo, n, body) => rest(`repos/${repo}/issues/${n}/comments`, { method: 'POST', fields: { body } }),
+    editComment: (repo, id, body) => rest(`repos/${repo}/issues/comments/${id}`, { method: 'PATCH', fields: { body } }),
+    // The reactions on the pull request itself; `content`, such as `+1`, keeps that one kind, read as the reviews report
+    // always has: its paging flags before the route.
+    reactions: (repo, n, content = null) => {
+      const route = `repos/${repo}/issues/${n}/reactions${content === null ? '' : `?content=${encodeURIComponent(content)}`}`;
+      return content !== null && mediaType === null ? json(['api', '--paginate', '--slurp', route]).flat() : list(route);
+    },
+    pull: (repo, n) => rest(`repos/${repo}/pulls/${n}`),
+    reviews: (repo, n) => list(`repos/${repo}/pulls/${n}/reviews`),
+    reviewComments: (repo, n) => list(`repos/${repo}/pulls/${n}/comments`),
+    // The reviews with their inline comments, GitHub's GraphQL answer: `data.repository.pullRequest.reviews`, at most
+    // REVIEWS_PAGE of each, with each list's `totalCount`.
+    reviewsWithComments: (repo, n) => {
+      const [owner, name] = repo.split('/');
+      return json(['api', 'graphql', '-f', `query=${REVIEWS_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${n}`]);
+    },
+    commit: (repo, sha) => rest(`repos/${repo}/commits/${sha}`),
+    // The check runs of one commit, every page.
+    checkRuns: (repo, sha) => (list(`repos/${repo}/commits/${sha}/check-runs`) ?? []).flatMap((page) => page.check_runs ?? []),
+    compare: (repo, base, head) => rest(`repos/${repo}/compare/${base}...${head}`),
   });
 }

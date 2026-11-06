@@ -45,20 +45,20 @@ function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = 
   git('add', '-A');
   git('commit', '-q', '-m', 'change');
   const comments = [];
-  const gh = {
-    pr: () => ({ number: 7, headRefOid: git('rev-parse', 'HEAD'), baseRefName: 'main', url: 'https://github.com/o/r/pull/7' }),
+  const forge = {
+    change: () => ({ number: 7, headRefOid: git('rev-parse', 'HEAD'), baseRefName: 'main', url: 'https://github.com/o/r/pull/7' }),
     repo: () => 'o/r',
-    comments: () => comments,
-    post: (_repo, _n, body) => comments.push({ id: comments.length + 1, body, author_association: 'MEMBER' }),
-    edit: (_repo, id, body) => (comments.find((c) => c.id === id).body = body),
+    issueComments: () => comments,
+    postComment: (_repo, _n, body) => comments.push({ id: comments.length + 1, body, author_association: 'MEMBER' }),
+    editComment: (_repo, id, body) => (comments.find((c) => c.id === id).body = body),
   };
   const project = projectAt(dir);
   // A fresh project per step, so a local settings file written mid-test is read.
   const step = (deps = {}, opts = {}) => {
     const current = projectAt(dir);
-    return reviewStep({ pr: '7', ...opts }, { project: current, config: loadConfig(current).config, gh, codex: () => ({ ok: true }), ...deps });
+    return reviewStep({ pr: '7', ...opts }, { project: current, config: loadConfig(current).config, forge, codex: () => ({ ok: true }), ...deps });
   };
-  return { dir, git, write, gh, comments, project, step, commit: (msg = 'next') => (git('add', '-A'), git('commit', '-q', '-m', msg), git('rev-parse', 'HEAD')) };
+  return { dir, git, write, forge, comments, project, step, commit: (msg = 'next') => (git('add', '-A'), git('commit', '-q', '-m', msg), git('rev-parse', 'HEAD')) };
 }
 
 const clean = async () => ({ status: 'done', findings: [], verdicts: [], dropped: [] });
@@ -73,8 +73,8 @@ test('a docs-only change needs no review and posts nothing', async (t) => {
 
 test('the review step of a non-member edits their own summary comment, and it supplies no record', async (t) => {
   const r = repo(t, { change: (write) => write('src/app.js', 'export const app = 2;\n') });
-  r.gh.post = (_repo, _n, body) => r.comments.push({ id: r.comments.length + 1, body, user: { login: 'fork' }, author_association: 'CONTRIBUTOR' });
-  r.gh.viewer = () => 'fork';
+  r.forge.postComment = (_repo, _n, body) => r.comments.push({ id: r.comments.length + 1, body, user: { login: 'fork' }, author_association: 'CONTRIBUTOR' });
+  r.forge.viewer = () => 'fork';
   let ran = 0;
   const exec = async () => (ran += 1, { status: 'done', findings: [finding], verdicts: [], dropped: [] });
   await r.step({ exec });
@@ -398,8 +398,9 @@ test('flow evidence: a deleted flow test needs the Human, and the flow`s checks 
     },
   });
   const head = r.git('rev-parse', 'HEAD');
-  let rows = [{ name: 'E2E booking (shard 1)', state: 'PENDING' }];
-  r.gh.checks = () => rows;
+  // GitHub's check runs of the head: one in progress, then done with each conclusion.
+  let runs = [{ name: 'E2E booking (shard 1)', status: 'in_progress', conclusion: null }];
+  r.forge.checkRuns = (_repo, sha) => (sha === head ? runs : []);
   const first = await r.step({ exec: clean });
   for (const pass of first.dispatch) {
     recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head, reviewer: 'code-reviewer', findings: 0, fixed: 0,
@@ -410,9 +411,9 @@ test('flow evidence: a deleted flow test needs the Human, and the flow`s checks 
   assert.deepEqual(removed.tests_removed.map((each) => each.deleted), [['test/booking.test.js']]);
   recordSignoff(r.project, { pr: 7, repo: 'o/r', flow: 'booking', head, by: 'Tester' });
   assert.equal((await r.step({ exec: clean })).status, 'checks_pending');
-  rows = [{ name: 'E2E booking (shard 1)', state: 'SKIPPED' }];
+  runs = [{ name: 'E2E booking (shard 1)', status: 'completed', conclusion: 'skipped' }];
   assert.equal((await r.step({ exec: clean })).status, 'fix_required', 'a skipped required check is not a pass');
-  rows = [{ name: 'E2E booking (shard 1)', state: 'SUCCESS' }];
+  runs = [{ name: 'E2E booking (shard 1)', status: 'completed', conclusion: 'success' }];
   assert.equal((await r.step({ exec: clean })).status, 'received');
 });
 
@@ -588,8 +589,8 @@ test('a held summary comment: a machine without that record gets incomplete and 
   assert.match(other.reason, new RegExp(`at revision ${written.revision} on the machine that wrote it`, 'u'));
   assert.equal(r.comments[0].body, held, 'the comment is not edited');
   assert.equal(readLocalState(r.project, 7), null, 'no record is started over the held one');
-  assert.throws(() => recordPass(r.project, { pr: 7, repo: 'o/r', pass: 'engine:codex-local', head: other.head, reviewer: 'codex-local', findings: 0, fixed: 0, remote: remoteState('o/r', 7, r.gh) }), /on the machine that wrote it/u);
-  assert.throws(() => recordSignoff(r.project, { pr: 7, repo: 'o/r', flow: 'f', head: other.head, by: 'T', remote: remoteState('o/r', 7, r.gh) }), /on the machine that wrote it/u);
+  assert.throws(() => recordPass(r.project, { pr: 7, repo: 'o/r', pass: 'engine:codex-local', head: other.head, reviewer: 'codex-local', findings: 0, fixed: 0, remote: remoteState('o/r', 7, r.forge) }), /on the machine that wrote it/u);
+  assert.throws(() => recordSignoff(r.project, { pr: 7, repo: 'o/r', flow: 'f', head: other.head, by: 'T', remote: remoteState('o/r', 7, r.forge) }), /on the machine that wrote it/u);
 
   // A held marker at revision 0 (no write makes one) is no record to wait for: attest starts this machine's own.
   const zero = [{ id: 1, body: r.comments[0].body.replace(/aidrian-review-state-held:\d+/u, 'aidrian-review-state-held:0'), author_association: 'MEMBER' }];
@@ -689,7 +690,7 @@ test('the head`s review config comes from the head commit, even when the checkou
   const r = repo(t, { headConfig: { version: 1, review: { flows } }, change: (write) => write('src/pay/a.js', '1\n') });
   const head = r.git('rev-parse', 'HEAD');
   r.git('switch', '-q', 'main');
-  r.gh.pr = () => ({ number: 7, headRefOid: head, baseRefName: 'main', url: 'u' });
+  r.forge.change = () => ({ number: 7, headRefOid: head, baseRefName: 'main', url: 'u' });
   const result = await r.step({ exec: clean });
   assert.deepEqual(result.plan.flows.sort(), ['harness-config', 'pay']);
 });
@@ -753,7 +754,7 @@ test('the project`s engine wins over this machine`s local one, and the bot stage
 test('review.record "local": the record stays in the state folder, and nothing on the pull request is read, posted, or edited', async (t) => {
   const r = repo(t, { baseConfig: { version: 1, review: { record: 'local' } }, change: (write) => write('src/app.js', 'l\n') });
   const touched = [];
-  for (const call of ['comments', 'post', 'edit']) r.gh[call] = () => (touched.push(call), assert.fail(`gh ${call} must not run`));
+  for (const call of ['issueComments', 'postComment', 'editComment']) r.forge[call] = () => (touched.push(call), assert.fail(`gh ${call} must not run`));
   const first = await r.step({ exec: async () => ({ status: 'done', findings: [finding], verdicts: [], dropped: [] }) });
   assert.equal(first.status, 'fix_required');
   assert.equal(first.summary_error, undefined);
@@ -763,7 +764,7 @@ test('review.record "local": the record stays in the state folder, and nothing o
   assert.deepEqual(touched, []);
   assert.equal(readLocalState(r.project, 7).rounds.length, 2, 'the second step read the first one`s record from the state folder');
   const config = loadConfig(projectAt(r.dir)).config;
-  assert.equal(remoteState('o/r', 7, { comments: () => assert.fail('the pull request is not read') }, config), null);
+  assert.equal(remoteState('o/r', 7, { issueComments: () => assert.fail('the pull request is not read') }, config), null);
 });
 
 test('the round cap is the base branch\'s: an uncommitted edit to the working copy cannot raise it', async (t) => {
@@ -832,9 +833,11 @@ test('the visual capture runs before the visual reviewers, attaches on a private
     return { status: 0, stdout: JSON.stringify({ results }), stderr: '' };
   };
   const uploads = [];
-  r.gh.visibility = () => 'PRIVATE';
-  r.gh.image = (_repo, files) => (uploads.push(files.length), { status: 0, stdout: files.map((file) => `![${path.basename(file, '.png')}](https://github.com/user-attachments/assets/u-${path.basename(file, '.png')})`).join('\n') });
-  const first = await r.step({ exec: clean, captureSpawn });
+  r.forge.visibility = () => 'PRIVATE';
+  const image = (_repo, files) => (uploads.push(files.length), { status: 0, stdout: files.map((file) => `![${path.basename(file, '.png')}](https://github.com/user-attachments/assets/u-${path.basename(file, '.png')})`).join('\n') });
+  // Every step of this pull request uploads through `image`, as the gh-image extension would.
+  const step = (deps = {}) => r.step({ image, ...deps });
+  const first = await step({ exec: clean, captureSpawn });
   assert.equal(first.status, 'dispatch');
   const [pass] = first.dispatch;
   assert.equal(pass.agent, 'designer');
@@ -845,29 +848,29 @@ test('the visual capture runs before the visual reviewers, attaches on a private
   assert.match(pass.brief, /captures in `visual`/u);
   assert.deepEqual(uploads, [2]);
   assert.ok(r.comments.some((c) => c.body.startsWith('<!-- aidrian-visual-captures -->') && /Attach: \*\*auto\*\*, private repository/u.test(c.body)));
-  assert.equal((await r.step({ exec: clean, captureSpawn: () => assert.fail('captured twice') })).status, 'dispatch', 'one capture per head');
+  assert.equal((await step({ exec: clean, captureSpawn: () => assert.fail('captured twice') })).status, 'dispatch', 'one capture per head');
 
   const findings = JSON.stringify([{ title: 'Label clipped at 360px', severity: 'medium', likelihood: 'routine', affects: 'users', state: 'open' }]);
   const verdict = (evidence) => JSON.stringify([{ flow: 'ui', invariant: 'fit', verdict: 'holds', evidence }]);
   recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'designer', findingsText: findings, verdictsText: verdict('capture:dashboard-89347b--360--default--default') });
-  const blocked = await r.step({ exec: clean });
+  const blocked = await step({ exec: clean });
   assert.equal(blocked.status, 'fix_required');
   assert.equal(blocked.open[0].findings[0].title, 'Label clipped at 360px');
   assert.deepEqual(blocked.flows, [], 'a capture of this head is evidence');
   recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'designer', findingsText: '[]', verdictsText: verdict('capture:dashboard-89347b--768--default--default') });
-  const unknown = await r.step({ exec: clean });
+  const unknown = await step({ exec: clean });
   assert.deepEqual(unknown.flows, [{ flow: 'ui', violated: [], unverified: ['fit'] }], 'a capture key the manifest does not have is no evidence');
   assert.match(r.comments.find((c) => c.body.startsWith('<!-- aidrian-review-summary -->')).body, /visual capture of `[0-9a-f]{7}`: captured \(2 of 2\); attach \*\*auto\*\*, private repository/u);
 
   // A clean pass whose verdict cites a capture carries forward over a push that touches nothing of it, and still
   // counts on a machine without the images: the record holds the captured keys.
   recordPass(r.project, { pr: 7, repo: 'o/r', pass: pass.pass, head: first.head, reviewer: 'designer', findingsText: '[]', verdictsText: verdict('capture:dashboard-89347b--360--default--default') });
-  assert.equal((await r.step({ exec: clean })).status, 'received');
+  assert.equal((await step({ exec: clean })).status, 'received');
   r.write('docs/notes.md', 'notes\n');
   r.commit('docs only');
   const { captureDir } = await import('../plugins/aidrian/lib/review/visual.mjs');
   rmSync(captureDir(r.project, 7, first.head), { recursive: true, force: true });
-  const carried = await r.step({ exec: clean });
+  const carried = await step({ exec: clean });
   assert.equal(carried.status, 'received', 'the earlier head\'s capture evidence still holds');
 });
 
@@ -973,7 +976,7 @@ async function toTheCap(t, github, { first = 2, second = 1, fixFirst = false } =
 async function extend(t, r, args) {
   const log = t.mock.method(console, 'log', () => {});
   try {
-    const code = await runExtend(['7', ...args], r.project, loadConfig(r.project).config, { repo: 'o/r', gh: r.gh, env: {} });
+    const code = await runExtend(['7', ...args], r.project, loadConfig(r.project).config, { repo: 'o/r', forge: r.forge, env: {} });
     return { code, out: JSON.parse(log.mock.calls.at(-1).arguments[0]) };
   } finally {
     log.mock.restore();

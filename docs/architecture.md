@@ -21,6 +21,7 @@ plugins/aidrian/
 ├── hooks/hooks.json                the plugin's hooks, for both hosts
 ├── scripts/hook-*.mjs              the programs those hooks run
 ├── lib/                            the code behind the commands and hooks
+│   ├── forges/                     the code forge facade: forgeFor, the GitHub adapter, and github-cli.mjs, the one way gh runs
 │   ├── hosts/                      one adapter per host and their registry; what shared code calls instead of a host's names
 │   ├── trackers/                   one adapter per tracker and their registry; what expands the short tracker key
 │   └── rules/                      the rules the Bash and write hooks run; rules/github/ holds those that read only gh

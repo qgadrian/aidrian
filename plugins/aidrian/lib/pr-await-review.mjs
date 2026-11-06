@@ -41,7 +41,7 @@
 // The default timeout is 840 s: a foreground Claude Code Bash call stops at 900 s, gh calls included.
 
 import { committedConfig, DEFAULTS as CONFIG_DEFAULTS, NO_REVIEWER } from './config.mjs';
-import { runGh } from './gh.mjs';
+import { runGh } from './forges/github-cli.mjs';
 import { runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 

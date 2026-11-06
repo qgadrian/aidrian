@@ -19,7 +19,7 @@ const LOCAL = '.aidrian.local.json';
 // The changed files that keep auto-merge off, in any case (lib/pr-auto-merge.mjs): what instructs an AI session, and
 // what decides CI's verdict, and this plugin's own code that decides auto-merge, so the gate never approves a change to
 // itself: the commands that run the gate, the gate and what it reads, the rules, the review that writes its record, and the hooks that run them. Not configurable.
-export const GUARDED_PATHS = /(?:^|\/)(?:AGENTS\.md|CLAUDE\.md|SKILL\.md|CODEOWNERS|\.aidrian\.json|\.aidrian\.local\.json)$|^(?:\.claude|\.codex|\.aidrian|\.github\/workflows|\.github\/actions)(?:\/|$)|^plugins\/aidrian\/(?:bin\/|lib\/(?:cli|pr|pr-auto-merge|pr-checks|project|config|fs|git|gh|review-gate|shell-lex)\.mjs$|lib\/(?:rules|review)\/|scripts\/hook-|hooks\/)/iu;
+export const GUARDED_PATHS = /(?:^|\/)(?:AGENTS\.md|CLAUDE\.md|SKILL\.md|CODEOWNERS|\.aidrian\.json|\.aidrian\.local\.json)$|^(?:\.claude|\.codex|\.aidrian|\.github\/workflows|\.github\/actions)(?:\/|$)|^plugins\/aidrian\/(?:bin\/|lib\/(?:cli|pr|pr-auto-merge|pr-checks|project|config|fs|git|review-gate|shell-lex)\.mjs$|lib\/(?:forges|rules|review)\/|scripts\/hook-|hooks\/)/iu;
 
 // The project at or above `start`: the nearest folder that has `.aidrian.json` or `.aidrian/config.json`. Null when none.
 // In a git checkout the search stops at its top folder, so a worktree whose branch has no project folder has no project,

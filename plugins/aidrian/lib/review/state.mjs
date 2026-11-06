@@ -21,14 +21,16 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
 
+import { MEMBER_ASSOCIATIONS } from '../forges/github.mjs';
 import { isObject } from '../fs.mjs';
 import { stateDir } from '../project.mjs';
 import { summaryLines as quotaLines } from './quota.mjs';
 import { splitPasses } from './split.mjs';
 
+// The author associations GitHub gives the people who belong to a repository, kept by the GitHub forge adapter.
+export { MEMBER_ASSOCIATIONS };
+
 export const SUMMARY_MARKER = '<!-- aidrian-review-summary -->';
-// The author associations GitHub gives the people who belong to a repository.
-export const MEMBER_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 const STATE = /<!--\s*aidrian-review-state:([A-Za-z0-9+/=]+)\s*-->/u;
 const STATE_BR = /<!--\s*aidrian-review-state-br:([A-Za-z0-9+/=]+)\s*-->/u;
 const HELD = /<!--\s*aidrian-review-state-held:(\d+)\s*-->/u;

@@ -5,7 +5,7 @@
 // the bot's answer arrives, as `aidrian pr review --with-bot` does. `aidrian pr attest` and a finished review step
 // answer a gate review.
 
-import { ghJson } from '../gh.mjs';
+import { ghJson } from '../forges/github-cli.mjs';
 import { runGit } from '../git.mjs';
 import { originRepo, prNumber, repoName } from '../review-gate.mjs';
 import { isAncestor } from './diff.mjs';

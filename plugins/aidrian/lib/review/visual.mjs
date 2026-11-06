@@ -14,7 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { isObject } from '../fs.mjs';
-import { runGh } from '../gh.mjs';
+import { runGh } from '../forges/github-cli.mjs';
 import { stateDir } from '../project.mjs';
 import { pathPattern } from './plan.mjs';
 import { VISUAL_PER_RUN } from './config.mjs';

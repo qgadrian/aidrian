@@ -25,7 +25,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { committedConfig } from '../config.mjs';
-import { runGh } from '../gh.mjs';
+import { runGh } from '../forges/github-cli.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
 import { roundCapProblem, ROUNDS_OVERRIDE } from '../pr-await-review.mjs';
 import { currentRoot, runGit, showPrefix } from '../git.mjs';

@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { runGh } from '../gh.mjs';
+import { runGh } from '../forges/github-cli.mjs';
 import { runGit, showPrefix } from '../git.mjs';
 import { commandConfig } from '../config.mjs';
 import { projectAt } from '../project.mjs';

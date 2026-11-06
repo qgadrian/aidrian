@@ -4,7 +4,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { GH_EXEC_OPTIONS, GH_MAX_BUFFER_BYTES, GH_TIMEOUT_MS, ghJson, runGh } from '../plugins/aidrian/lib/gh.mjs';
+import { GH_EXEC_OPTIONS, GH_MAX_BUFFER_BYTES, GH_TIMEOUT_MS, ghJson, runGh } from '../plugins/aidrian/lib/forges/github-cli.mjs';
 
 test('runGh: gh reads carry a stdout ceiling far above the 1 MB default', () => {
   // Regression guard. `repos/{repo}/commits/{sha}` embeds every changed file's
@@ -83,12 +83,12 @@ test('runGh: a real 2 MB stdout survives the ceiling that the 1 MB default rejec
   assert.throws(() => runGh(writeStdout, { exec: viaNodeCapped }), /stdout ceiling[\s\S]*GH_MAX_BUFFER_BYTES/);
 });
 
-test('every gh call in the plugin goes through lib/gh.mjs, so none inherits the 1 MB default', () => {
+test('every gh call in the plugin goes through lib/forges/github-cli.mjs, so none inherits the 1 MB default', () => {
   const plugin = path.resolve(import.meta.dirname, '../plugins/aidrian');
   const files = (dir) => readdirSync(dir).flatMap((name) => {
     const file = path.join(dir, name);
     return statSync(file).isDirectory() ? files(file) : file.endsWith('.mjs') ? [file] : [];
   });
-  const direct = files(plugin).filter((file) => !file.endsWith(`${path.sep}lib${path.sep}gh.mjs`) && /\b(?:execFileSync|execFile|spawnSync|spawn)\(\s*'gh'/u.test(readFileSync(file, 'utf8')));
+  const direct = files(plugin).filter((file) => !file.endsWith(`${path.sep}lib${path.sep}forges${path.sep}github-cli.mjs`) && /\b(?:execFileSync|execFile|spawnSync|spawn)\(\s*'gh'/u.test(readFileSync(file, 'utf8')));
   assert.deepEqual(direct.map((file) => path.relative(plugin, file)), []);
 });

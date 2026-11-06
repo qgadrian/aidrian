@@ -5,7 +5,7 @@
 // line already reviewed when that line was there at the bot's first review. Read-only; needs gh.
 // docs/dispatch-log.md#reviews describes the view.
 
-import { ghJson } from './gh.mjs';
+import { ghJson } from './forges/github-cli.mjs';
 
 // gh, run in `cwd`: the project's root, so that `--project` reads that project's repository, not the one the shell is in.
 export const ghAt = (cwd) => (args) => ghJson(args, { cwd });

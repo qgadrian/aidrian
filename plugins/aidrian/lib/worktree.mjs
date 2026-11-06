@@ -12,7 +12,7 @@ import { spawnSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { CONFIG_ERROR, commandConfig } from './config.mjs';
-import { ghJson } from './gh.mjs';
+import { ghJson } from './forges/github-cli.mjs';
 import { checkoutRoots, isIgnored } from './git.mjs';
 import { projectAt, worktreesDir } from './project.mjs';
 import { usageLines } from './usage.mjs';

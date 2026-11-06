@@ -30,7 +30,7 @@ import { readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { loadConfig } from '../../config.mjs';
-import { runGh } from '../../gh.mjs';
+import { runGh } from '../../forges/github-cli.mjs';
 import { runGit } from '../../git.mjs';
 import { headings, sectionItems, unfencedLines } from '../../markdown-sections.mjs';
 import { findProject, stateDir } from '../../project.mjs';

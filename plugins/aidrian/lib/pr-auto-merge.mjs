@@ -34,7 +34,7 @@
 // Exit 0 on, 1 off, 3 error (an argument, a gh read, or a pull request gh describes only in part).
 
 import { configFromText, loadConfig, resolveAutoMerge } from './config.mjs';
-import { runGh } from './gh.mjs';
+import { runGh } from './forges/github-cli.mjs';
 import { runGit } from './git.mjs';
 import { configPathIn, GUARDED_PATHS, mayFollowTeamDefault } from './project.mjs';
 import { prNumber, repoName } from './review-gate.mjs';

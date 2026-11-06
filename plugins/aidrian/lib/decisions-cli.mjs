@@ -29,7 +29,7 @@ import { parseArgs } from 'node:util';
 
 import { commandConfig, committedAuthority, committedDecisions, DEFAULTS, loadConfig, localDecisions } from './config.mjs';
 import { appendEvent, stamp } from './dispatch-log.mjs';
-import { ghJson } from './gh.mjs';
+import { ghJson } from './forges/github-cli.mjs';
 import { ageDays, blockOf, classDomain, DECISION_STATUSES, isClassName, loadVocab, parseDecisions, recordAt, resolveAuthority, setDecisionStatus, unattendedAnswer, undoDecision, wordingProblems } from './decisions.mjs';
 import { checkoutRoots, runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';

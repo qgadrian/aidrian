@@ -24,7 +24,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
-import { runGh } from '../../gh.mjs';
+import { runGh } from '../../forges/github-cli.mjs';
 import { findProject } from '../../project.mjs';
 import { originRepo, prNumber, repoName } from '../../review-gate.mjs';
 import { FINISHED, owed, readLocalState, sameCommit } from '../../review/state.mjs';

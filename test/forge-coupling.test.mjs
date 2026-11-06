@@ -96,3 +96,32 @@ const one = 1; // execFileSync('gh', ['api', \`repos/\${repo}\`])
   assert.deepEqual(countIn(clean), { 'adapter import': 0, 'gh spawn': 0, 'gh literal': 0, 'REST route': 0, 'API host': 0 });
   assert.ok(walk(path.join(PLUGIN, 'bin')).length > 0, 'the commands are shared code too, and the walk reaches them');
 });
+
+// The text an agent runs: a fenced code block in a skill or an agent source. Checks are read with `aidrian pr checks`,
+// which judges them by the project's `github` policy; prose that only names gh's behavior is not a command.
+const TEXT = ['skills', 'agents-src', 'agent-addons'];
+const RAW_CHECKS = /\bgh\s+pr\s+checks\b/u;
+
+const fencedHits = (text) => {
+  const hits = [];
+  let fence = null;
+  text.split('\n').forEach((line, index) => {
+    const marker = /^\s*(`{3,}|~{3,})/u.exec(line)?.[1];
+    if (marker && (!fence || (marker[0] === fence[0] && marker.length >= fence.length))) fence = fence ? null : marker;
+    else if (fence && RAW_CHECKS.test(line)) hits.push(index + 1);
+  });
+  return hits;
+};
+
+test('skills and agent sources read checks with aidrian pr checks, never by running gh pr checks', () => {
+  const markdown = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return markdown(full);
+    return entry.name.endsWith('.md') ? [full] : [];
+  });
+  const hits = TEXT.flatMap((folder) => markdown(path.join(PLUGIN, folder)))
+    .flatMap((file) => fencedHits(readFileSync(file, 'utf8')).map((line) => `${path.relative(PLUGIN, file)}:${line}`));
+  assert.deepEqual(hits, [], 'run aidrian pr checks: it applies the project\'s check policy and prints one line');
+  assert.deepEqual(fencedHits('Never `gh pr checks` here.\n```bash\ngit status\ngh pr view && gh pr checks 7\n```\ngh pr checks in prose\n'), [4]);
+  assert.deepEqual(fencedHits('````md\n```bash\ngh pr checks\n```\n````\n'), [3], 'a nested fence stays inside the outer one');
+});

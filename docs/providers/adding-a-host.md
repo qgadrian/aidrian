@@ -170,3 +170,5 @@ and that adapter reshapes the payloads and their callers together.
 Shared code imports `lib/forges/index.mjs` alone. `test/forge-coupling.test.mjs` fails when code outside `lib/forges/`
 imports an adapter module, runs `gh`, builds a `repos/${...}` route, or names `api.github.com`, past its list of what is left.
 The rules in `lib/rules/github/` read the gh commands a session runs, and run none, so they stay out of that rule.
+It fails too on a code block in a skill or an agent source that runs `gh pr checks`: sessions read checks with
+`aidrian pr checks`, which applies the project's `github` policy. Prose that only names gh's behavior is not a command.

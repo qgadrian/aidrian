@@ -19,8 +19,9 @@ export { isTrustedCommenter };
 export { REVIEWS_PAGE };
 
 // `options` are the adapter's, such as `timeoutMs` (github.mjs), plus the facade's own:
-// - `strictJson`: every REST call names the forge's JSON media type, and an empty answer is null, not an empty list,
-//   as `aidrian pr await-review` has always read. For GitHub it is the adapter's `mediaType`, GitHub's JSON media type,
-//   which only `strictJson` sets: a `mediaType` a caller passes is dropped, so no shared code names a forge's media type.
+// - `strictJson`: an empty answer is null, not an empty list, as `aidrian pr await-review` has always read. That is
+//   the whole promise to shared code. The GitHub adapter keeps it by naming GitHub's JSON media type (`mediaType`) on
+//   every REST call, and only `strictJson` sets it: a `mediaType` a caller passes is dropped, so no shared code names a
+//   forge's media type.
 export const forgeFor = (cwd, { strictJson = false, mediaType, ...options } = {}) =>
   createGithubForge({ ...options, ...(strictJson ? { mediaType: GITHUB_JSON } : {}), cwd });

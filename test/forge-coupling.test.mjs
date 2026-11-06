@@ -2,8 +2,9 @@
 // through lib/forges/index.mjs. It imports no adapter, runs no gh, builds no GitHub REST route, and names no GitHub API
 // host. ALLOWED is the list of what is left, with why; it can only shrink, since an entry that no longer holds fails too.
 //
-// Reading a gh command a session runs, as lib/rules/github/ does (`program === 'gh'`), is not a coupling: that code judges
-// a command, and runs none. Any other 'gh' literal is, since it names the program to something that may run it.
+// A rule that compares a session's command to 'gh', as lib/rules/github/ does (`program === 'gh'`), is not a coupling:
+// the comparison judges a command, and runs none. The rules' own reads, such as merge-review's and pr-body's, go through
+// forgeFor like any shared code. Any other 'gh' literal is a coupling, since it names the program to something that may run it.
 
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -20,8 +21,8 @@ const COUPLINGS = {
   'adapter import': /['"`][^'"`\n]*\bforges\/+(?:\.\/)*(?!index\.mjs)[\w-]+\.mjs(?:\?[^'"`\n]*)?['"`]/gu,
   // gh run by a child process: the program as its own argument, or the start of a command line.
   'gh spawn': /\b(?:execFileSync|execFile|execSync|exec|spawnSync|spawn)\(\s*['"`]gh(?:\s[^'"`\n]*)?['"`]/gu,
-  // The program's name on its own, outside a comparison: a variable or a helper that later runs it. A rule that reads a
-  // command compares its program to 'gh', and runs none.
+  // The program's name on its own, outside a comparison: a variable or a helper that later runs it. A rule comparing a
+  // session's command to 'gh' is no coupling; its own forge reads go through forgeFor.
   'gh literal': /(?<![!=]==\s*)['"`]gh['"`]/gu,
   'REST route': /repos\/\$\{/gu,
   'API host': /api\.github\.com/gu,

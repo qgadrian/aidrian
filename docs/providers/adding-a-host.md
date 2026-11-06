@@ -151,7 +151,7 @@ A forge is where a pull request lives: its checks, reviews, comments, and reposi
 | File | What it holds |
 | --- | --- |
 | `plugins/aidrian/lib/forges/<id>.mjs` | The adapter: a function that takes `{ cwd, run, timeoutMs }` and returns the frozen method object below. `run` is the test seam for the forge's command |
-| `plugins/aidrian/lib/forges/index.mjs` | `forgeFor(cwd, options)`, which returns GitHub's adapter for every checkout today, and the facade's helper `repoIdentity(value)` from `identity.mjs`. A second forge makes `forgeFor` choose, such as by the host `repoIdentity` reads from the remote, and maps the facade's own options to the adapter's. `strictJson` has two effects: every REST call names the forge's JSON media type, and an empty answer is null, not an empty list. For GitHub it sets the adapter's `mediaType`, which shared code cannot pass |
+| `plugins/aidrian/lib/forges/index.mjs` | `forgeFor(cwd, options)`, which returns GitHub's adapter for every checkout today, and the facade's helper `repoIdentity(value)` from `identity.mjs`. A second forge makes `forgeFor` choose, such as by the host `repoIdentity` reads from the remote, and maps the facade's own options to the adapter's. `strictJson` promises shared code one thing: an empty answer is null, not an empty list. The GitHub adapter keeps it by naming GitHub's JSON media type on every REST call, its `mediaType`, which shared code cannot pass |
 | `test/forge-<id>.test.mjs` | The exact command or request behind each method, as `test/forge-github.test.mjs` holds gh's |
 
 The adapter implements the methods of `lib/forges/github.mjs`, each with the arguments it takes there:
@@ -169,11 +169,28 @@ It reads a host that reaches the same repositories as another, such as `ssh.gith
 and a bare `owner/repo` as a repository on the default forge's host, github.com.
 
 The payload each method returns is GitHub's, parsed, and its callers read GitHub's field names.
+The arguments are GitHub's too: the `fields` strings callers pass to `change`, `mergedChanges`, and `openChanges`
+are gh's `--json` names, such as `number,headRefOid`, and the reaction contents, such as `+1`, are GitHub's.
 That shape is provisional: it stays as it is until a second adapter shows which fields both forges share,
-and that adapter reshapes the payloads and their callers together.
+and that adapter reshapes the payloads, the `fields` and reaction names, and their callers together.
 
 Shared code imports `lib/forges/index.mjs` alone. `test/forge-coupling.test.mjs` fails when code outside `lib/forges/`
 imports an adapter module, runs `gh`, builds a `repos/${...}` route, or names `api.github.com`, past its list of what is left.
-The rules in `lib/rules/github/` read the gh commands a session runs, and run none, so they stay out of that rule.
 It fails too on a code block in a skill or an agent source that runs `gh pr checks`: sessions read checks with
 `aidrian pr checks`, which applies the project's `github` policy. Prose that only names gh's behavior is not a command.
+A rule in `lib/rules/github/` that compares a session's command to `'gh'` is not a coupling: it judges a command and runs none.
+The rules' own reads, such as merge-review's and pr-body's, go through `forgeFor` like any shared code.
+
+A second forge will be chosen by a config key, as a tracker is by `tracker.provider`, with a default read from
+the remote's hostname for the public forges. `forgeFor` will memoize that choice per `cwd`, since the hooks that call it
+answer within 3 s budgets.
+
+### The text a forge such as GitLab needs
+
+An adapter moves the calls. Some text and code still assume GitHub, so each of these needs its branch:
+
+| Where | What it needs |
+| --- | --- |
+| Skills that run gh in code blocks: `pr-merge-when-green` (10 lines), `pr-screenshot` (7), `pr-review` (3), `pr-review-loop` (3), `pr-write` (2), `knowledge` (1), `session-continue` (1) | The forge's command for each step, or an `aidrian` command that reads through `forgeFor`, as `aidrian pr checks` does. The counts are the fenced lines that run gh across each skill's folder, `references/` and `steps/` included: recount them before the work starts |
+| `lib/review-gate.mjs`: `repoName`, and the review marker `markerFor` writes | Both keep only `owner/name`, the last two parts of a path, so a namespaced path such as `a/sub/project` loses its namespace and its host. They need the full `repoIdentity` |
+| `lib/lesson-signals.mjs` | It builds `https://github.com/<owner>/<name>/pull/<n>` as a lesson's evidence; it needs the forge's own link to a pull request |

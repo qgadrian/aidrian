@@ -214,7 +214,7 @@ function botForge(answerAt = Infinity) {
     pull: (_repo, n) => (String(n) === '5' ? { head: { sha: HEAD } } : []),
     commit: () => ({ commit: { committer: { date: '2026-11-03T13:00:00Z' } } }),
     reviewComments: () => [],
-    issueComments: () => [],
+    conversationComments: () => [],
     reactions: () => [],
   };
 }
@@ -301,7 +301,7 @@ test('a review step that needs no review leaves a finished outcome the guard rea
   const forge = {
     change: () => ({ number: 8, headRefOid: head, baseRefName: 'main' }),
     repo: () => 'acme/notes',
-    issueComments: () => comments,
+    conversationComments: () => comments,
     postComment: (_repo, _n, body) => comments.push({ id: comments.length + 1, body }),
     editComment: () => {},
   };
@@ -329,7 +329,7 @@ function feature(r) {
   const forge = {
     change: () => ({ number: 9, headRefOid: head, baseRefName: 'main' }),
     repo: () => 'acme/notes',
-    issueComments: () => comments,
+    conversationComments: () => comments,
     postComment: (_repo, _n, body) => comments.push({ id: comments.length + 1, body }),
     editComment: (_repo, id, body) => (comments.find((c) => c.id === id).body = body),
   };

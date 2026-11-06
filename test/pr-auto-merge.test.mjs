@@ -50,7 +50,7 @@ const VIEW_FIELDS = 'number,headRefOid,baseRefName,author,url,files,changedFiles
 // file's text on GitHub; any other contents read is a 404, and a read whose ref is not `refs/heads/<branch>` is no call
 // the command makes. `view` overrides fields of the pull request `change` gives; `defaultBranch` is every repository's
 // default branch, or a function standing in for `repository`; `user` is the login, or a function standing in for
-// `viewer`; `comments` holds the pull request's lists, `issues` (issueComments), `reviews`, and `pulls` (reviewComments),
+// `viewer`; `comments` holds the pull request's lists, `issues` (conversationComments), `reviews`, and `pulls` (reviewComments),
 // each a list or a function standing in for the call. What gh prints and how each call reads it is the adapter's
 // (test/forge-github.test.mjs).
 function fakeForge({ files = { 'acme/notes@main:.aidrian/config.json': configText(TEAM) }, view = {}, user = 'Adrian', defaultBranch = 'main', comments = {} } = {}) {
@@ -80,7 +80,7 @@ function fakeForge({ files = { 'acme/notes@main:.aidrian/config.json': configTex
       calls.push(['viewer', host]);
       return typeof user === 'function' ? user() : user;
     },
-    issueComments: list('issueComments', 'issues'),
+    conversationComments: list('conversationComments', 'issues'),
     reviews: list('reviews', 'reviews'),
     reviewComments: list('reviewComments', 'pulls'),
   };
@@ -122,7 +122,7 @@ test('both layers on, the Human\'s own pull request, and a finished review on it
     ['contents', 'acme/notes', '.aidrian.json', 'refs/heads/main', 'github.com'],
     ['contents', 'acme/notes', '.aidrian/config.json', 'refs/heads/main', 'github.com'],
     ['viewer', 'github.com'],
-    ['issueComments', 'acme/notes', 7, 'github.com'],
+    ['conversationComments', 'acme/notes', 7, 'github.com'],
     ['reviews', 'acme/notes', 7, 'github.com'],
     ['reviewComments', 'acme/notes', 7, 'github.com'],
   ], 'the base is the default branch: its config is read once');

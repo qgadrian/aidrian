@@ -383,7 +383,7 @@ function botProject(t, config = {}) {
         return list;
       },
       reviewComments: (_repo, n) => (onPr42(n), inline),
-      issueComments: (_repo, n) => (onPr42(n), issue),
+      conversationComments: (_repo, n) => (onPr42(n), issue),
       reactions: () => [],
     };
     let t0 = Date.parse(T(30));
@@ -392,7 +392,7 @@ function botProject(t, config = {}) {
   // `aidrian pr extend` as the CLI runs it, with the review step's forge over the same comments.
   const extend = (args) => runExtend(['42', ...args], project, loadConfig(project).config, {
     repo: 'acme/notes', env: {},
-    forge: { change: () => ({ headRefOid: head }), issueComments: () => issue, postComment: (_repo, _n, body) => post(body), editComment: (_repo, id, body) => edit(id, body), viewer: () => 'someone' },
+    forge: { change: () => ({ headRefOid: head }), conversationComments: () => issue, postComment: (_repo, _n, body) => post(body), editComment: (_repo, id, body) => edit(id, body), viewer: () => 'someone' },
   });
   // Another machine: this one's state folder is gone, and only the pull request's comments remain.
   const forget = () => rmSync(path.join(base, 'state'), { recursive: true, force: true });
@@ -623,7 +623,7 @@ function gitBot(t, config, { working = null } = {}) {
     commit: () => ({ commit: { committer: { date: at() } } }),
     reviews: (_repo, n) => (onPr42(n), reviews),
     reviewComments: (_repo, n) => (onPr42(n), inline),
-    issueComments: (_repo, n) => (onPr42(n), issue),
+    conversationComments: (_repo, n) => (onPr42(n), issue),
     reactions: () => [],
   };
   const run = async (env = {}, args = []) => {
@@ -733,7 +733,7 @@ test('await-review without --request reads GitHub alone: no base branch in the c
     commit: () => ({ commit: { committer: { date: '2026-08-23T07:01:00Z' } } }),
     reviews: () => [],
     reviewComments: () => [],
-    issueComments: () => [],
+    conversationComments: () => [],
     reactions: () => [],
   };
   const log = t.mock.method(console, 'log', () => {});

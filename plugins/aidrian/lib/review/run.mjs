@@ -257,7 +257,7 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
   // the pull request is never read or written: the record is this machine's state folder only. A comment that holds
   // a record newer than this machine's stops the step before it writes anything: starting over would replace it.
   const onPr = config.review.record !== 'local';
-  const comments = onPr ? forge.issueComments(repo, n) : [];
+  const comments = onPr ? forge.conversationComments(repo, n) : [];
   const summary = summaryToEdit(comments, () => forge.viewer());
   const record = readRecord(project, n, comments, repo);
   if (record.held !== undefined) return { status: 'incomplete', pr: n, repo, head, reason: heldMessage(n, record.held), held: record.held, retry_recommended: false };
@@ -806,7 +806,7 @@ function current(project, pr, repo, remote) {
 export function remoteState(repo, pr, forge = forgeFor(undefined), config = null) {
   if (config?.review.record === 'local') return null;
   try {
-    return forge.issueComments(repo, pr);
+    return forge.conversationComments(repo, pr);
   } catch {
     return null;
   }

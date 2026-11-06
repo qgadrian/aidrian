@@ -48,7 +48,7 @@ function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = 
   const forge = {
     change: () => ({ number: 7, headRefOid: git('rev-parse', 'HEAD'), baseRefName: 'main', url: 'https://github.com/o/r/pull/7' }),
     repo: () => 'o/r',
-    issueComments: () => comments,
+    conversationComments: () => comments,
     postComment: (_repo, _n, body) => comments.push({ id: comments.length + 1, body, author_association: 'MEMBER' }),
     editComment: (_repo, id, body) => (comments.find((c) => c.id === id).body = body),
   };
@@ -112,7 +112,7 @@ test('a stranger\'s summary comment supplies no record: the reviewer still runs,
       if (file === '.aidrian/config.json') return { type: 'file', encoding: 'base64', content: Buffer.from(JSON.stringify(team)).toString('base64') };
       throw Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)' });
     },
-    issueComments: none,
+    conversationComments: none,
     reviews: none,
     reviewComments: none,
   } });
@@ -760,7 +760,7 @@ test('the project`s engine wins over this machine`s local one, and the bot stage
 test('review.record "local": the record stays in the state folder, and nothing on the pull request is read, posted, or edited', async (t) => {
   const r = repo(t, { baseConfig: { version: 1, review: { record: 'local' } }, change: (write) => write('src/app.js', 'l\n') });
   const touched = [];
-  for (const call of ['issueComments', 'postComment', 'editComment']) r.forge[call] = () => (touched.push(call), assert.fail(`gh ${call} must not run`));
+  for (const call of ['conversationComments', 'postComment', 'editComment']) r.forge[call] = () => (touched.push(call), assert.fail(`gh ${call} must not run`));
   const first = await r.step({ exec: async () => ({ status: 'done', findings: [finding], verdicts: [], dropped: [] }) });
   assert.equal(first.status, 'fix_required');
   assert.equal(first.summary_error, undefined);
@@ -770,7 +770,7 @@ test('review.record "local": the record stays in the state folder, and nothing o
   assert.deepEqual(touched, []);
   assert.equal(readLocalState(r.project, 7).rounds.length, 2, 'the second step read the first one`s record from the state folder');
   const config = loadConfig(projectAt(r.dir)).config;
-  assert.equal(remoteState('o/r', 7, { issueComments: () => assert.fail('the pull request is not read') }, config), null);
+  assert.equal(remoteState('o/r', 7, { conversationComments: () => assert.fail('the pull request is not read') }, config), null);
 });
 
 test('the round cap is the base branch\'s: an uncommitted edit to the working copy cannot raise it', async (t) => {

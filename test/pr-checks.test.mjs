@@ -66,7 +66,7 @@ test('parseCliArgs reads a number, #number, -R, and --json, and reports anything
 
 // A forge facade whose `checks` answers with `rows`, or runs `rows` when it is a function.
 const forgeWith = (rows) => ({ checks: (...given) => (typeof rows === 'function' ? rows(...given) : rows) });
-const identity = (value) => ({ host: 'github.com', path: value, fork: null });
+const identity = (value) => ({ host: 'github.com', path: value });
 
 test('runChecks exits by verdict, reads the rows of a pending check, and exits 3 on errors', (t) => {
   const lines = [];
@@ -128,7 +128,7 @@ test('-R compares the host and the whole path: a namespaced repository on anothe
   git('init', '-q');
   git('remote', 'add', 'origin', 'https://gitlab.com/a/sub/project.git');
   const remotes = checkoutRepos(dir);
-  assert.deepEqual(remotes, [{ host: 'gitlab.com', path: 'a/sub/project', fork: null }]);
+  assert.deepEqual(remotes, [{ host: 'gitlab.com', path: 'a/sub/project' }]);
   const config = { github: { ...DEFAULTS.github, requiredChecks: ['e2e'] } };
   const forge = forgeWith([row('e2e', 'SUCCESS')]);
   const checks = (repo) => runChecks(['7', '-R', repo], config, forge, () => remotes);
@@ -137,9 +137,9 @@ test('-R compares the host and the whole path: a namespaced repository on anothe
   assert.equal(checks('other.host/b/sub/project'), 3, 'another host and another namespace: another repository');
   assert.equal(checks('other.host/a/sub/project'), 3, 'the same path on another host: another repository');
   assert.equal(checks('gitlab.com/b/sub/project'), 3, 'the same host, another namespace: another repository');
-  assert.equal(namesRemote('gitlab.com/a/sub/project', [{ host: 'other.host', path: 'b/sub/project', fork: null }]), false);
-  assert.equal(namesRemote('acme/notes', [{ host: 'ghe.acme.io', path: 'acme/notes', fork: null }]), true, 'a bare owner/repo names no host');
-  assert.equal(namesRemote('github.com/acme/notes', [{ host: 'ghe.acme.io', path: 'acme/notes', fork: null }]), false, 'a named host must match');
+  assert.equal(namesRemote('gitlab.com/a/sub/project', [{ host: 'other.host', path: 'b/sub/project' }]), false);
+  assert.equal(namesRemote('acme/notes', [{ host: 'ghe.acme.io', path: 'acme/notes' }]), true, 'a bare owner/repo names no host');
+  assert.equal(namesRemote('github.com/acme/notes', [{ host: 'ghe.acme.io', path: 'acme/notes' }]), false, 'a named host must match');
   assert.match(lines.at(-1), /gitlab\.com\/b\/sub\/project is not a remote of this checkout/u);
 });
 

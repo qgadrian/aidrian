@@ -71,7 +71,7 @@ function repo(t, review = {}, github = {}) {
   for (const d of ['a', 'b', 'c', 'd']) write(`src/${d}/x.js`, '1\n2\n');
   git('add', '-A');
   git('commit', '-q', '-m', 'change');
-  const forge = { change: () => ({ number: 3, headRefOid: git('rev-parse', 'HEAD'), baseRefName: 'main' }), repo: () => 'o/r', issueComments: () => [], postComment: () => {}, editComment: () => {} };
+  const forge = { change: () => ({ number: 3, headRefOid: git('rev-parse', 'HEAD'), baseRefName: 'main' }), repo: () => 'o/r', conversationComments: () => [], postComment: () => {}, editComment: () => {} };
   const step = (exec) => {
     const project = projectAt(dir);
     return reviewStep({ pr: '3' }, { project, config: loadConfig(project).config, forge, exec, codex: () => ({ ok: true }) });
@@ -222,7 +222,7 @@ test('a plan command that raises the depth to split gets slices and a cross pass
   for (const d of ['a', 'b']) write(`src/${d}/x.js`, '1\n');
   git('add', '-A');
   git('commit', '-q', '-m', 'change');
-  const forge = { change: () => ({ number: 4, headRefOid: git('rev-parse', 'HEAD'), baseRefName: 'main' }), repo: () => 'o/r', issueComments: () => [], postComment: () => {}, editComment: () => {} };
+  const forge = { change: () => ({ number: 4, headRefOid: git('rev-parse', 'HEAD'), baseRefName: 'main' }), repo: () => 'o/r', conversationComments: () => [], postComment: () => {}, editComment: () => {} };
   const project = projectAt(dir);
   const result = await reviewStep({ pr: '4' }, { project, config: loadConfig(project).config, forge, codex: () => ({ ok: true }), exec: async () => ({ status: 'done', findings: [], verdicts: [], contracts: [], cross_notes: [], dropped: [] }) });
   assert.deepEqual(result.plan.stages[0].passes.map((id) => id.split(':')[0]), ['slice', 'slice', 'cross']);

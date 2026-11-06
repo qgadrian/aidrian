@@ -10,42 +10,6 @@ export const MEMBER_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 // Whether GitHub says the comment's author belongs to the repository. Anyone can comment on a pull request.
 export const isTrustedCommenter = (comment) => MEMBER_ASSOCIATIONS.has(comment?.author_association);
 
-const DEFAULT_HOST = 'github.com';
-// `git@host:path`, git's scp-like form: no scheme, and a colon before the first slash.
-const SCP_LIKE = /^(?:[^@/]+@)?([^:/]+):(?!\/\/)(.+)$/u;
-// A remote on this machine's disk, which names no forge: `/srv/git/x`, `./x`, `../x`, `~/x`, `C:/x`, `C:\x`.
-const LOCAL_PATH = /^(?:[/.~\\]|[a-z]:[/\\])/iu;
-
-const clean = (value) => value.toLowerCase().replace(/\/+$/u, '').replace(/\.git$/u, '').replace(/\/+$/u, '').replace(/^\/+/u, '');
-const identity = (host, rest) => {
-  const repoPath = clean(rest);
-  return host && repoPath.includes('/') && !repoPath.split('/').includes('') ? { host: host.toLowerCase(), path: repoPath, fork: null } : null;
-};
-
-// A repository's identity, `{ host, path, fork }`, from a `-R` value (`[HOST/]OWNER/REPO`), an https or ssh URL, or git's
-// `git@host:path.git`. The path keeps every namespace level, so `a/sub/project` and `b/sub/project` stay apart, and a
-// port or a user name is no part of it. A bare `owner/repo` is on github.com; three parts are `host/owner/repo`, as gh
-// reads `-R`, and a longer path is accepted for a namespaced forge, which gh itself refuses. `fork` stays null here.
-// Anything else is null: one bare name, and a local remote (an absolute, relative, or home path, a drive letter, file://).
-export function repoIdentity(value) {
-  if (typeof value !== 'string') return null;
-  const text = value.trim();
-  if (LOCAL_PATH.test(text)) return null;
-  if (/^[a-z][a-z0-9+.-]*:\/\//iu.test(text)) {
-    try {
-      const url = new URL(text);
-      return identity(url.hostname, decodeURIComponent(url.pathname));
-    } catch {
-      return null;
-    }
-  }
-  const scp = SCP_LIKE.exec(text);
-  if (scp) return identity(scp[1], scp[2]);
-  const parts = clean(text).split('/');
-  if (parts.length === 2) return identity(DEFAULT_HOST, parts.join('/'));
-  return parts.length > 2 ? identity(parts[0], parts.slice(1).join('/')) : null;
-}
-
 // The REST media type `aidrian pr await-review` has always named: index.mjs passes it as `mediaType` for `strictJson`.
 export const GITHUB_JSON = 'application/vnd.github+json';
 
@@ -100,7 +64,6 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     id: 'github',
     cwd,
     isTrustedCommenter,
-    repoIdentity,
     // The pull request `ref` (a number, a branch, or a URL; none: the current branch's), with the gh `fields` named;
     // `repo` looks in that repository instead of the default one. With a `repo`, an empty `ref` still goes to gh, as the
     // merge guard has always sent it: gh needs an argument with `--repo`, and an empty one is the current branch's.
@@ -139,7 +102,8 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     visibility: (repo) => json(['repo', 'view', repo, '--json', 'visibility']).visibility,
     // The login gh is signed in as.
     viewer: ({ host } = {}) => rest('user', { host })?.login,
-    issueComments: (repo, n, { host } = {}) => list(`repos/${repo}/issues/${n}/comments`, { host }),
+    // The comments on the pull request's conversation, not those on its diff (reviewComments).
+    conversationComments: (repo, n, { host } = {}) => list(`repos/${repo}/issues/${n}/comments`, { host }),
     postComment: (repo, n, body) => rest(`repos/${repo}/issues/${n}/comments`, { method: 'POST', fields: { body } }),
     editComment: (repo, id, body) => rest(`repos/${repo}/issues/comments/${id}`, { method: 'PATCH', fields: { body } }),
     // The reactions on the pull request itself; `content`, such as `+1`, keeps that one kind, read as the reviews report

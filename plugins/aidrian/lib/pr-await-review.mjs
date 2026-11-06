@@ -302,7 +302,7 @@ const awaitForge = () => forgeFor(undefined, { strictJson: true });
 const snapshot = (forge, repo, n) => {
   const reviews = forge.reviews(repo, n);
   const reviewComments = forge.reviewComments(repo, n);
-  const issueComments = forge.issueComments(repo, n);
+  const issueComments = forge.conversationComments(repo, n);
   const reactions = forge.reactions(repo, n);
   const pr = forge.pull(repo, n);
   const headSha = pr.head?.sha ?? null;
@@ -461,7 +461,7 @@ async function reviewRecord(project, config, forge, repo, n) {
   let comments = [];
   if (config.review.record !== 'local') {
     try {
-      comments = forge.issueComments(repo, n) ?? [];
+      comments = forge.conversationComments(repo, n) ?? [];
     } catch {}
   }
   const record = readRecord(project, Number(n), comments, repo);

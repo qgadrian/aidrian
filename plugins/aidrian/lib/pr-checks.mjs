@@ -68,19 +68,15 @@ export function parseCliArgs(argv) {
   return { repo, asJson: rest.includes('--json'), prNumber: rest.find((arg) => /^#?\d+$/.test(arg))?.replace('#', '') ?? null, unknown, usage };
 }
 
-// GitHub's SSH endpoint on port 443, for networks that block port 22: the same repositories as github.com.
-const HOST_ALIASES = { 'ssh.github.com': 'github.com' };
-const sameHost = (identity) => (identity && Object.hasOwn(HOST_ALIASES, identity.host) ? { ...identity, host: HOST_ALIASES[identity.host] } : identity);
-
-// One remote URL as `{ host, path, fork }` to match a `-R` value against, or null. `host` is null when the remote names
+// One remote URL as `{ host, path }` to match a `-R` value against, or null. `host` is null when the remote names
 // no forge host to compare: a host with no dot is an SSH config alias (`git@github-work:acme/notes.git`), and a remote on
 // this machine's disk (a path, or file://) keeps only its last two path parts, as gh's `owner/repo`.
 export function remoteRepo(url) {
-  const identity = sameHost(repoIdentity(url));
+  const identity = repoIdentity(url);
   if (identity) return identity.host.includes('.') ? identity : { ...identity, host: null };
   if (typeof url !== 'string') return null;
   const parts = url.trim().replace(/\/+$/u, '').replace(/\.git$/u, '').split(/[/:]/u).filter(Boolean);
-  return parts.length >= 2 ? { host: null, path: parts.slice(-2).join('/').toLowerCase(), fork: null } : null;
+  return parts.length >= 2 ? { host: null, path: parts.slice(-2).join('/').toLowerCase() } : null;
 }
 
 // The repositories the checkout at `cwd` has as remotes, as remoteRepo values. A fork's upstream counts: same project.
@@ -100,7 +96,7 @@ export function checkoutRepos(cwd) {
 // matches by path alone; otherwise the hosts must be equal too. A value with spaces around it names nothing.
 export function namesRemote(given, remotes) {
   if (typeof given !== 'string' || given !== given.trim()) return false;
-  const wanted = sameHost(repoIdentity(given));
+  const wanted = repoIdentity(given);
   if (!wanted) return false;
   const bare = !given.includes(':') && given.replace(/\/+$/u, '').split('/').length === 2;
   return remotes.some((remote) => remote.path === wanted.path && (bare || remote.host === null || remote.host === wanted.host));

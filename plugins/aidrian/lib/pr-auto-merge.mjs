@@ -139,7 +139,7 @@ export function pathsProblem({ files, changedFiles }, prefix = '') {
 // throws, naming the list's route.
 export function outsiderOn(forge, { repo, host, number }, reviewer) {
   const lists = [
-    [`repos/${repo}/issues/${number}/comments`, () => forge.issueComments(repo, number, { host })],
+    [`repos/${repo}/issues/${number}/comments`, () => forge.conversationComments(repo, number, { host })],
     [`repos/${repo}/pulls/${number}/reviews`, () => forge.reviews(repo, number, { host })],
     [`repos/${repo}/pulls/${number}/comments`, () => forge.reviewComments(repo, number, { host })],
   ];

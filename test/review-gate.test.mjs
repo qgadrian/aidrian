@@ -207,7 +207,7 @@ const quietForge = () => {
     commit: () => ({ commit: { committer: { date: '2026-08-23T06:00:00Z' } } }),
     reviews: () => [],
     reviewComments: () => [],
-    issueComments: () => [],
+    conversationComments: () => [],
     reactions: () => [],
   };
 };

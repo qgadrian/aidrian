@@ -2,14 +2,18 @@
 // trackers: no adapter is loaded by name. Today every checkout is served by GitHub.
 //
 // Shared code imports from this file only, never from an adapter (test/forge-coupling.test.mjs): what it needs of a forge
-// is forgeFor's methods, and the helpers below. Those helpers are GitHub's today, as the payloads are: a second forge
-// reshapes them with its adapter.
+// is forgeFor's methods, and the helpers below. repoIdentity is the facade's; the others are GitHub's today, as the
+// payloads are: a second forge reshapes them with its adapter.
 
-import { createGithubForge, GITHUB_JSON, isTrustedCommenter, repoIdentity, REVIEWS_PAGE } from './github.mjs';
+import { createGithubForge, GITHUB_JSON, isTrustedCommenter, REVIEWS_PAGE } from './github.mjs';
+import { repoIdentity } from './identity.mjs';
 
-// Whether a comment's author belongs to the repository, and a repository's `{ host, path, fork }` from a remote or a
-// `-R` value. Each forge method object carries them too.
-export { isTrustedCommenter, repoIdentity };
+// A repository's `{ host, path }` from a remote or a `-R` value: the facade's own helper (identity.mjs), which reads
+// text before any forge is chosen.
+export { repoIdentity };
+
+// Whether a comment's author belongs to the repository. Each forge method object carries it too.
+export { isTrustedCommenter };
 
 // The most reviews, and the most inline comments of one review, that one `reviewsWithComments` call reads.
 export { REVIEWS_PAGE };

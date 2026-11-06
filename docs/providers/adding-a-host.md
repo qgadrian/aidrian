@@ -151,17 +151,22 @@ A forge is where a pull request lives: its checks, reviews, comments, and reposi
 | File | What it holds |
 | --- | --- |
 | `plugins/aidrian/lib/forges/<id>.mjs` | The adapter: a function that takes `{ cwd, run, timeoutMs }` and returns the frozen method object below. `run` is the test seam for the forge's command |
-| `plugins/aidrian/lib/forges/index.mjs` | `forgeFor(cwd, options)`, which returns GitHub's adapter for every checkout today. A second forge makes it choose, such as by the host `repoIdentity` reads from the remote, and maps the facade's own options to the adapter's. `strictJson` has two effects: every REST call names the forge's JSON media type, and an empty answer is null, not an empty list. For GitHub it sets the adapter's `mediaType`, which shared code cannot pass |
+| `plugins/aidrian/lib/forges/index.mjs` | `forgeFor(cwd, options)`, which returns GitHub's adapter for every checkout today, and the facade's helper `repoIdentity(value)` from `identity.mjs`. A second forge makes `forgeFor` choose, such as by the host `repoIdentity` reads from the remote, and maps the facade's own options to the adapter's. `strictJson` has two effects: every REST call names the forge's JSON media type, and an empty answer is null, not an empty list. For GitHub it sets the adapter's `mediaType`, which shared code cannot pass |
 | `test/forge-<id>.test.mjs` | The exact command or request behind each method, as `test/forge-github.test.mjs` holds gh's |
 
 The adapter implements the methods of `lib/forges/github.mjs`, each with the arguments it takes there:
 
-- `id`, `cwd`, and the helpers `isTrustedCommenter(comment)` and `repoIdentity(value)`.
+- `id`, `cwd`, and the helper `isTrustedCommenter(comment)`.
 - Pull requests: `change`, `mergedChanges`, `openChanges`, `checks`, and `pull`.
 - The repository: `repo`, `repository`, `contents`, `visibility`, and `viewer`.
-- Conversation: `issueComments`, `postComment`, `editComment`, and `reactions`.
+- Conversation: `conversationComments`, the comments on the pull request rather than on its diff, `postComment`, `editComment`, and `reactions`.
 - Review: `reviews`, `reviewComments`, `reviewsWithComments`, and `reviewThreads`.
 - Commits: `commit`, `checkRuns`, and `compare`, and `uploadImages` for a pull request's captures.
+
+`repoIdentity(value)` is no method: it reads a remote URL or a `-R` value to `{ host, path }` before any forge is chosen,
+so it lives in `lib/forges/identity.mjs`, and an adapter neither implements nor carries it.
+It reads a host that reaches the same repositories as another, such as `ssh.github.com`, as that one,
+and a bare `owner/repo` as a repository on the default forge's host, github.com.
 
 The payload each method returns is GitHub's, parsed, and its callers read GitHub's field names.
 That shape is provisional: it stays as it is until a second adapter shows which fields both forges share,

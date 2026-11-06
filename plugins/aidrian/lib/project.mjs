@@ -18,10 +18,25 @@ const OVERRIDE = '.aidrian.json';
 const LOCAL = '.aidrian.local.json';
 // The changed files that keep auto-merge off, in any case (lib/pr-auto-merge.mjs): what instructs an AI session, and
 // what decides CI's verdict, and this plugin's own code that decides auto-merge, so the gate never approves a change to
-// itself: the commands that run the gate, the gate and what it reads, the rules, the review that writes its record, and
-// the hooks that run them, with every module and data file they load (test/auto-merge-guard.test.mjs walks the imports),
-// and the manifests that name the hooks. Not configurable.
-export const GUARDED_PATHS = /(?:^|\/)(?:AGENTS\.md|CLAUDE\.md|SKILL\.md|CODEOWNERS|\.aidrian\.json|\.aidrian\.local\.json)$|^(?:\.claude|\.codex|\.aidrian|\.github\/workflows|\.github\/actions)(?:\/|$)|^plugins\/aidrian\/(?:bin\/|lib\/(?:cli|pr|pr-auto-merge|pr-await-review|pr-checks|project|config|fs|git|gh|review-gate|shell-lex|agent-gates|decisions|dispatch-log|finding-disposition|jsonl|lesson-inbox|lesson-signals|markdown-sections|tracker-guard)\.(?:mjs|json)$|lib\/(?:rules|review|hosts|trackers)\/|(?:\.claude-plugin\/)?plugin\.json$|scripts\/hook-|hooks\/)/iu;
+// itself. Not configurable. Under plugins/aidrian/: the command, the gate, the review that writes its record, every hook
+// that hooks.json runs, and every module and data file any of them loads (test/auto-merge-guard.test.mjs walks them all
+// and fails on a load it cannot follow); the agents that review, as generated and as sources; and the plugin manifests.
+// At the repository root: the marketplace manifests that install the plugin.
+const GUARDED_LIB = [
+  'agent-gates', 'agent-models', 'attribution', 'audit-import', 'audits', 'cli', 'code-words', 'config', 'config-guard',
+  'decisions', 'dispatch-log', 'dispatch-rows', 'finding-disposition', 'fs', 'gate-snapshot', 'gh', 'git', 'hook-deny',
+  'hook-io', 'jsonl', 'knowledge', 'lesson-inbox', 'lesson-signals', 'main-commits', 'markdown-prose',
+  'markdown-sections', 'markdown-wrap', 'names', 'pr', 'pr-auto-merge', 'pr-await-review', 'pr-checks', 'project',
+  'review-gate', 'session-length', 'shell-lex', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'usage',
+].join('|');
+const GUARDED_PLUGIN = String.raw`bin/|scripts/|hooks/|lib/(?:rules|review|hosts|trackers)/|lib/(?:${GUARDED_LIB})\.(?:mjs|json)$|agents/|codex/agents/|agents-src/|providers/|agent-addons/|(?:\.claude-plugin/)?plugin\.json$`;
+export const GUARDED_PATHS = new RegExp(
+  String.raw`(?:^|/)(?:AGENTS\.md|CLAUDE\.md|SKILL\.md|CODEOWNERS|\.aidrian\.json|\.aidrian\.local\.json)$` +
+    String.raw`|^(?:\.claude|\.codex|\.aidrian|\.github/workflows|\.github/actions)(?:/|$)` +
+    String.raw`|^(?:\.claude-plugin|\.agents/plugins)/marketplace\.json$` +
+    `|^plugins/aidrian/(?:${GUARDED_PLUGIN})`,
+  'iu',
+);
 
 // The project at or above `start`: the nearest folder that has `.aidrian.json` or `.aidrian/config.json`. Null when none.
 // In a git checkout the search stops at its top folder, so a worktree whose branch has no project folder has no project,

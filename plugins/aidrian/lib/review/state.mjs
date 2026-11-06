@@ -21,7 +21,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { brotliCompressSync, brotliDecompressSync } from 'node:zlib';
 
-import { isTrustedCommenter } from '../forges/github.mjs';
+import { isTrustedCommenter } from '../forges/index.mjs';
 import { isObject } from '../fs.mjs';
 import { stateDir } from '../project.mjs';
 import { summaryLines as quotaLines } from './quota.mjs';

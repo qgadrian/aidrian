@@ -26,10 +26,11 @@ How to build, check, and release a change is in [contributing.md](contributing.m
 - `mcp__<server>__<tool>` is the standard format for naming an MCP tool in permissions and config.
   A host that names tools or events differently gets a translation layer that maps to the standard;
   the difference never spreads into shared code.
-- A host-specific behavior lives in a translation layer: one adapter a host in `lib/hosts/`, and one a tracker in `lib/trackers/`
-  ([Adding a host or a tracker](providers/adding-a-host.md)). For agents it is `providers/`, `agent-addons/`,
-  and a generator in `scripts/build.mjs` ([Adding a provider](agent-sources.md#adding-a-provider)).
-  `test/host-coupling.test.mjs` fails on shared code that reads a host's variable or branches on its tool.
+- A host-specific behavior lives in a translation layer: one adapter a host in `lib/hosts/`, one a tracker in `lib/trackers/`,
+  and one a code forge in `lib/forges/` ([Adding a host, a tracker, or a forge](providers/adding-a-host.md)).
+  For agents it is `providers/`, `agent-addons/`, and a generator in `scripts/build.mjs` ([Adding a provider](agent-sources.md#adding-a-provider)).
+  `test/host-coupling.test.mjs` fails on shared code that reads a host's variable or branches on its tool,
+  and `test/forge-coupling.test.mjs` on shared code that imports a forge adapter, runs gh, or builds a GitHub route.
   A doc states which hosts a feature is verified on, as the Host column of [hooks.md](hooks.md) and `docs/providers/` do.
 - A change to a surface updates that surface's doc in the same branch, and [agents-and-skills.md](agents-and-skills.md)
   when an agent or skill is added, renamed, or removed.

@@ -76,7 +76,7 @@
       "tags": []
     },
     "providers/adding-a-host.md": {
-      "summary": "Adding a host or a tracker: the adapter files, their fields, lib/hosts and lib/trackers registries, conformance and coupling tests, what still needs a hand.",
+      "summary": "Adding a host, tracker, or forge: adapter files, fields and methods, lib/hosts, lib/trackers, lib/forges, conformance and coupling tests, what needs a hand.",
       "tags": []
     }
   }

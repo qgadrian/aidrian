@@ -5,8 +5,7 @@
 // line already reviewed when that line was there at the bot's first review. Read-only; needs gh.
 // docs/dispatch-log.md#reviews describes the view.
 
-import { REVIEWS_PAGE as PAGE } from './forges/github.mjs';
-import { forgeFor } from './forges/index.mjs';
+import { forgeFor, REVIEWS_PAGE as PAGE } from './forges/index.mjs';
 
 // gh's GraphQL fields name a bot without the `[bot]` suffix its REST fields carry.
 const sameLogin = (login, reviewer) => typeof login === 'string' && login.replace(/\[bot\]$/u, '') === reviewer.replace(/\[bot\]$/u, '');

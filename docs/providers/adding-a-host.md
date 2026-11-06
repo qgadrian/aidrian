@@ -1,13 +1,15 @@
-# Adding a host or a tracker
+# Adding a host, a tracker, or a forge
 
 The adapter covers the differences behind the hook contract: how a host names its tools, what its payload holds, and who it says is calling.
 It does not get the plugin into a host: how a host's hooks are delivered, installed, and put on its PATH is separate work, which depends on the host.
 So a host that reads `hooks.json` as it is, as Claude Code and Codex do, is close to one adapter file.
 A host that does not needs that delivery built first, and neither host here has needed it, so none of it is proven.
 
-Shared code calls `lib/hosts/index.mjs` and `lib/trackers/index.mjs`, and never reads a host's variables or names a host's own tools.
-`test/adapters.test.mjs` iterates both registries, so an adapter added to one is checked by that alone,
+Shared code calls `lib/hosts/index.mjs`, `lib/trackers/index.mjs`, and `lib/forges/index.mjs`, and never reads a host's variables or names a host's own tools.
+`test/adapters.test.mjs` iterates the host and tracker registries, so an adapter added to one is checked by that alone,
 and `test/host-coupling.test.mjs` fails when shared code reads a host variable or branches on a host's tool or name.
+For forges, `test/forge-github.test.mjs` holds the facade's method names and the gh command behind each,
+and `test/forge-coupling.test.mjs` fails when shared code reaches a forge other than through `lib/forges/index.mjs`.
 
 ## Adding a host
 
@@ -141,3 +143,30 @@ An adapter makes the guard hold. The skills that act on a tracker are text, and 
 | `skills/issue-implement/`: `SKILL.md`, `steps/phase-0-resolve.md`, `steps/phases-1-4-implement.md` | How an issue is read and moved on it |
 | `skills/persona-audit-triage/references/issues.md`, `skills/planning-agent/references/plan-file.md`, `skills/pr-write/SKILL.md`, `skills/knowledge/SKILL.md` | The places that name Linear in passing |
 | `agents-src/planning/agent-issue-writer.md`, `agents-src/planning/initiative-agent.md` | The agents' own wording of the above |
+
+## Adding a forge
+
+A forge is where a pull request lives: its checks, reviews, comments, and repository. GitHub is the one shipped, through gh.
+
+| File | What it holds |
+| --- | --- |
+| `plugins/aidrian/lib/forges/<id>.mjs` | The adapter: a function that takes `{ cwd, run, timeoutMs }` and returns the frozen method object below. `run` is the test seam for the forge's command |
+| `plugins/aidrian/lib/forges/index.mjs` | `forgeFor(cwd, options)`, which returns GitHub's adapter for every checkout today. A second forge makes it choose, such as by the host `repoIdentity` reads from the remote, and maps the facade's own options to the adapter's. `strictJson` has two effects: every REST call names the forge's JSON media type, and an empty answer is null, not an empty list. For GitHub it sets the adapter's `mediaType`, which shared code cannot pass |
+| `test/forge-<id>.test.mjs` | The exact command or request behind each method, as `test/forge-github.test.mjs` holds gh's |
+
+The adapter implements the methods of `lib/forges/github.mjs`, each with the arguments it takes there:
+
+- `id`, `cwd`, and the helpers `isTrustedCommenter(comment)` and `repoIdentity(value)`.
+- Pull requests: `change`, `mergedChanges`, `openChanges`, `checks`, and `pull`.
+- The repository: `repo`, `repository`, `contents`, `visibility`, and `viewer`.
+- Conversation: `issueComments`, `postComment`, `editComment`, and `reactions`.
+- Review: `reviews`, `reviewComments`, `reviewsWithComments`, and `reviewThreads`.
+- Commits: `commit`, `checkRuns`, and `compare`, and `uploadImages` for a pull request's captures.
+
+The payload each method returns is GitHub's, parsed, and its callers read GitHub's field names.
+That shape is provisional: it stays as it is until a second adapter shows which fields both forges share,
+and that adapter reshapes the payloads and their callers together.
+
+Shared code imports `lib/forges/index.mjs` alone. `test/forge-coupling.test.mjs` fails when code outside `lib/forges/`
+imports an adapter module, runs `gh`, builds a `repos/${...}` route, or names `api.github.com`, past its list of what is left.
+The rules in `lib/rules/github/` read the gh commands a session runs, and run none, so they stay out of that rule.

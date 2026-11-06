@@ -89,7 +89,7 @@ a `read-only` agent that can still use `Write`, `Edit`, or `NotebookEdit`, or a 
 
 ## Adding a provider
 
-This is the agents' part of a new host; [Adding a host or a tracker](providers/adding-a-host.md) lists the rest.
+This is the agents' part of a new host; [Adding a host](providers/adding-a-host.md#adding-a-host) lists the rest.
 A host such as OpenCode needs two things here:
 
 1. `plugins/aidrian/providers/opencode.json`, with the agents' OpenCode settings.

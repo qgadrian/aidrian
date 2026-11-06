@@ -41,7 +41,6 @@
 // The default timeout is 840 s: a foreground Claude Code Bash call stops at 900 s, gh calls included.
 
 import { committedConfig, DEFAULTS as CONFIG_DEFAULTS, NO_REVIEWER } from './config.mjs';
-import { GITHUB_JSON } from './forges/github.mjs';
 import { forgeFor } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
@@ -296,8 +295,8 @@ export const acknowledgedForHead = (ack, headSha, headCommittedAt, triggerHead =
 
 // The fields of the current branch's pull request that name it.
 const CURRENT_FIELDS = 'number,headRepository,headRepositoryOwner,url';
-// The forge the wait reads and posts through: in the shell's folder, and every REST call names GitHub's JSON media type.
-const awaitForge = () => forgeFor(undefined, { mediaType: GITHUB_JSON });
+// The forge the wait reads and posts through: in the shell's folder, and every REST call names the forge's JSON media type.
+const awaitForge = () => forgeFor(undefined, { strictJson: true });
 
 // Reads the signals first and the head last: a push that lands mid-snapshot then makes the gathered signals stale.
 const snapshot = (forge, repo, n) => {

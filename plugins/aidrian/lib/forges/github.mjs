@@ -46,7 +46,7 @@ export function repoIdentity(value) {
   return parts.length > 2 ? identity(parts[0], parts.slice(1).join('/')) : null;
 }
 
-// The REST media type `aidrian pr await-review` has always named: `forgeFor(cwd, { mediaType: GITHUB_JSON })`.
+// The REST media type `aidrian pr await-review` has always named: index.mjs passes it as `mediaType` for `strictJson`.
 export const GITHUB_JSON = 'application/vnd.github+json';
 
 // The review rounds of one pull request with their comments, at most PAGE of each, in one GraphQL call.

@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { runGh } from '../plugins/aidrian/lib/forges/github-cli.mjs';
-import { createGithubForge, GITHUB_JSON, isTrustedCommenter, repoIdentity, UPLOAD_TIMEOUT_MS } from '../plugins/aidrian/lib/forges/github.mjs';
+import { createGithubForge, GITHUB_JSON, isTrustedCommenter, repoIdentity, REVIEWS_PAGE, UPLOAD_TIMEOUT_MS } from '../plugins/aidrian/lib/forges/github.mjs';
+import * as facade from '../plugins/aidrian/lib/forges/index.mjs';
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
 import * as reviewState from '../plugins/aidrian/lib/review/state.mjs';
 import { listForge, openPrBodies } from '../plugins/aidrian/lib/rules/github/pr-body.mjs';
@@ -177,6 +179,33 @@ test('await-review`s calls: GitHub`s JSON media type on every REST call, and an 
   ]);
   const empty = recorded(() => '', { mediaType: GITHUB_JSON }).forge;
   assert.deepEqual([empty.reviews('acme/notes', 42), empty.issueComments('acme/notes', 42), empty.pull('acme/notes', 42)], [null, null, null]);
+});
+
+test('forgeFor`s strictJson is the adapter`s GitHub JSON media type, the one await-review asks for', () => {
+  const sent = (options, answer) => {
+    const calls = [];
+    const forge = forgeFor('/repo', { ...options, run: (args) => (calls.push(args), answer) });
+    return { result: forge.pull('acme/notes', 42), args: calls[0] };
+  };
+  assert.deepEqual(sent({ strictJson: true }, ''), { result: null, args: ['api', 'repos/acme/notes/pulls/42', '--header', 'Accept: application/vnd.github+json'] });
+  assert.deepEqual(sent({}, '{}').args, ['api', 'repos/acme/notes/pulls/42'], 'no media type by default');
+  assert.deepEqual(sent({ mediaType: 'text/plain' }, '{}').args, ['api', 'repos/acme/notes/pulls/42'], 'only strictJson sets the media type');
+  const source = readFileSync(new URL('../plugins/aidrian/lib/pr-await-review.mjs', import.meta.url), 'utf8');
+  assert.match(source, /forgeFor\(undefined, \{ strictJson: true \}\)/u, 'await-review keeps the media type it has always sent');
+});
+
+test('docs/providers/adding-a-host.md names every method a forge adapter implements', () => {
+  const doc = readFileSync(new URL('../docs/providers/adding-a-host.md', import.meta.url), 'utf8');
+  const section = doc.slice(doc.indexOf('## Adding a forge'));
+  assert.ok(section.startsWith('## Adding a forge'));
+  assert.deepEqual(FACADE.filter((name) => !new RegExp('`' + name + '[`(]', 'u').test(section)), []);
+});
+
+test('the facade index gives shared code forgeFor and its helpers, and nothing of GitHub`s by name', () => {
+  assert.deepEqual(Object.keys(facade).sort(), ['REVIEWS_PAGE', 'forgeFor', 'isTrustedCommenter', 'repoIdentity']);
+  assert.equal(facade.isTrustedCommenter, isTrustedCommenter);
+  assert.equal(facade.repoIdentity, repoIdentity);
+  assert.equal(facade.REVIEWS_PAGE, REVIEWS_PAGE);
 });
 
 test('the reviews report`s calls: the merged list and its search string, +1 reactions with the paging flags first, and the compare', () => {

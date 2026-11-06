@@ -14,8 +14,7 @@
 // Exit 0 ready, 1 failing, 2 pending, 3 error (gh missing, no pull request, unreadable output, another repository, or a
 // config.json with errors).
 
-import { repoIdentity } from './forges/github.mjs';
-import { forgeFor } from './forges/index.mjs';
+import { forgeFor, repoIdentity } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 
 const NON_TERMINAL = new Set(['IN_PROGRESS', 'QUEUED', 'PENDING', 'WAITING', 'REQUESTED', 'EXPECTED']);

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { assignsVariable, commandLines, lexCommand, lexInputs, lexPipeline, lexSteps, lexSubstitutions, readGit, readInvocation, readShortOptions, walkCommands } from '../plugins/aidrian/lib/shell-lex.mjs';
+import { aidrianArgs, assignsVariable, commandLines, lexCommand, lexInputs, lexPipeline, lexSteps, lexSubstitutions, readGit, readInvocation, readShortOptions, walkCommands } from '../plugins/aidrian/lib/shell-lex.mjs';
 
 const texts = (line) => lexCommand(line).map((segment) => segment.map((token) => token.text));
 const programOf = (line) => readInvocation(lexCommand(line)[0]).program;
@@ -313,4 +313,50 @@ test('walkCommands reads an eval string, and names the text a shell runs that it
   let deep = 'git push';
   for (let i = 0; i < 7; i += 1) deep = `bash -c ${JSON.stringify(deep)}`;
   assert.match(walkCommands(deep, null).at(-1).unread ?? '', /git push/u);
+});
+
+test('aidrianArgs takes the first word that is the plugin among a runner\'s arguments, whatever options come before it', () => {
+  const words = (command) => aidrianArgs(readInvocation(lexCommand(command)[0]))?.map((token) => token.text) ?? null;
+  for (const [command, expected] of [
+    ['aidrian pr review', ['pr', 'review']],
+    ['/usr/local/bin/aidrian pr review', ['pr', 'review']],
+    ['node cli.mjs pr review', ['pr', 'review']],
+    ['node -r x cli.mjs pr review', ['pr', 'review']],
+    ['node --require x plugins/aidrian/lib/cli.mjs pr review', ['pr', 'review']],
+    ['bun --input-type cli.mjs pr review', ['pr', 'review']],
+    ['node --disable-warning X cli.mjs pr review', ['pr', 'review']],
+    ['nodejs --import=x bin/aidrian pr review', ['pr', 'review']],
+    ['node "$ROOT/bin/aidrian" pr review', ['pr', 'review']],
+    ['node script.js pr review', null],
+    ['node -r x', null],
+    ['node', null],
+    ['python3 cli.mjs pr review', null],
+    ['node notcli.mjs pr review', null],
+    ['node cli.mjs.bak pr review', null],
+  ]) {
+    assert.deepEqual(words(command), expected, command);
+  }
+});
+
+test('a token is marked expands when an unquoted glob character or a brace list or range is in it, whatever quotes sit around it', () => {
+  const marked = (word) => lexCommand(`x ${word}`)[0][1].expands === true;
+  for (const word of [`F{1..1}' '`, `F{1..1}" "`, `' 'F{1..1}`, `'r.md#'F{1..1}' '`, 'F{1,}', '{a,b}', 'F[1]', `'F'[1]`, 'F*', 'F?', `"a"*`]) {
+    assert.ok(marked(word), word);
+  }
+  for (const word of [`'F{1..1}'`, `"F{1,}"`, `F\\{1,\\}`, `F\\[1]`, `'F[1]'`, '{}', '{x}', 'a,b', 'a..b', `'*'`, `"?"`]) {
+    assert.ok(!marked(word), word);
+  }
+  assert.deepEqual(lexCommand('echo plain')[0][1], { text: 'plain', dynamic: false }, 'no mark on a word that does not expand');
+});
+
+test('a cd leaves the folder unknown when its word expands, it names two operands, or its own CDPATH sends a bare name', () => {
+  const folderOf = (command) => walkCommands(`${command} && aidrian x`, '/work').at(-1).folder;
+  assert.equal(folderOf('cd sub'), '/work/sub');
+  assert.equal(folderOf('cd -P sub'), '/work/sub', 'an option is no operand');
+  for (const command of ['cd s[u]b', 'cd s{u,}b', 'cd s*', 'cd a b', 'pushd a b', 'CDPATH=.. cd sub', 'CDPATH= cd sub']) {
+    assert.equal(folderOf(command), null, command);
+  }
+  for (const command of ['CDPATH=.. cd ./sub', 'CDPATH=.. cd ../sub', 'CDPATH=.. cd /abs']) assert.notEqual(folderOf(command), null, `${command}: CDPATH is not used`);
+  const chdir = walkCommands('env -C s[u]b aidrian x', '/work').at(-1).folder;
+  assert.equal(chdir, null, 'a wrapper folder that expands');
 });

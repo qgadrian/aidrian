@@ -152,6 +152,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Decision answer | `aidrian decisions set` or `undo` from a subagent, which carry out the Human's answer on a decision ([Decision markers](project-folder.md#decision-markers)) | none: the main session runs them on the Human's word |
 | Extra round approval | `aidrian pr extend <PR> --human approve` without the Human's answer in the session ([review.md](review.md#extra-rounds)) | none: the Human answers, or runs it in their own shell |
 | Quota fallback choice | `aidrian pr review <PR> --quota-fallback` without the Human's pick in the session ([review.md](review.md#out-of-quota)) | none: the Human answers, or runs it in their own shell |
+| Product feedback answer | `--by human` on a [product feedback](config.md#product-feedback) item without the Human's answer in the session | none: the Human answers, or runs it in their own shell |
 | Merge guard | Merging a pull request while a review it owes is open, or the review of its head has not finished ([Merge guard](#merge-guard)) | none: the Human answers "Merge anyway", or merges in their own shell |
 | Main checkout, when turned on | A shell write to a tracked file in the main checkout; a git call there that makes a commit or moves the branch; after a `cd` it cannot trust, a relative write or a git call that may change the main checkout; and a relative write that lands there only if a `cd` inside it fails ([After a cd](#after-a-cd)) | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
 
@@ -239,6 +240,42 @@ What each rule matches:
   that picks that exact value: an option starting "Run a critic agent" authorizes `agent:critic` only; any other agent
   needs an answer that names it, "Run a <name> agent" or `agent:<name>`; and `human` needs "The Human reviews it".
   A value or a pull request the rule cannot read is refused.
+- Product feedback answer: on only where the state folder holds `product-feedback/`, so a project that does not use the feature sees
+  nothing of it, save one case it judges anywhere: a command that also runs `record`, or an aidrian call whose subcommand it cannot
+  read, such as `aidrian $X && aidrian $Y`, beside a call that claims a human or that it cannot read (below).
+  It reads `aidrian pr product-feedback answer` with `--by human`, `--by=human`, or a word it cannot read, also as a
+  runner, such as `node`, given `…/cli.mjs` among its arguments, and `aidrian audits record` with the same, on a key a
+  [feedback record](config.md#product-feedback) lists, before and after its answer. A call with an `agent_id` is refused, whatever key
+  it names. A main session passes only when the transcript holds an AskUserQuestion answer, given after the record was written,
+  to a question naming `#<PR>`, not after a `/` or a word character, the item's id, and its title in double quotes, and no other item,
+  whose chosen option is that decision alone: `fix-now` also reads as "Fix now", and "Drop nothing, keep it open" is no drop.
+  A call whose folder or project it cannot read is refused only while this machine keeps product feedback: a `product-feedback/` folder
+  in a project's state folder under the state root, or in the current project's state folder. That is a call after a `cd` it cannot
+  follow, such as `cd "$D" &&`, `cd ~/x &&`, `(cd "$D"; …)`, `pushd "$D" &&`, or `env -C "$D"`; after a `cd` whose word the shell
+  expands, such as `cd ../proj[B] &&`, or a `cd` or `pushd` with two operands, as zsh's `cd old new`; in a folder, or with a
+  `--project`, that is no existing directory; in any folder but the current one when the command or the environment holds a `CDPATH`,
+  such as `CDPATH=.. cd projB &&`; or with a dynamic, expanding, or `~` `--project`.
+  Such a call, `--project $P` with no `--by` included, may claim no `--by human`, so its deny says only that the rule cannot read
+  which project or words it holds. Where this machine keeps none, such a call passes, a subagent's included.
+  A deny says why the transcript's answers miss, and names the question to ask. With no such transcript, as on Codex or in an unattended
+  run, the Human runs it in their own shell.
+  A `--by`, pull request, item, decision, or subcommand it cannot read is refused, and so is any word the shell expands: one holding
+  an unquoted `*`, `?`, `[`, or a brace list or range, wherever quotes sit around it, a `--reason` or other prose value included,
+  since it can become several words, one of them `--by`. A quoted brace or bracket is a character: `'F{1..1}'` is read as written.
+  So is a dynamic value that is not one quoted scalar: `--reason "$R"` runs, and `--reason $R` or `--reason "$@"` does not.
+  A report or key the shell expands, such as `F{1..1}`, `F{1..1}' '`, or `'<report>#'F{1..1}`, is a key it cannot read: refused while
+  a record lists any item, and passed when none does, since no key is held then. So is a bare number two repositories' records hold. A dynamic program whose words read as either call is judged as that call.
+  It reads the call through `sh -c`, `eval`, a substitution, and a heredoc fed to a shell. It refuses text fed to a shell that names
+  either command, and `xargs`, `parallel`, or a shell fed unread text on a line naming a call: `product-feedback` and `answer`, or
+  `audits` and `record` while a record lists a key, together with `--by` and `human`.
+  It also refuses a command it did not judge whose own words or heredoc name a call, such as `find -exec`, `npx`, an interpreter, a
+  variable's assignment, or a git global option, unless that command only handles text. So a commit message, `grep`, `rg`, `cat`, `tee`,
+  `echo`, `printf`, `git log`, or `gh pr comment` may name a call, as long as a pipe out of it ends in another such command.
+  It runs no gh, so it finds a record by the pull request's number.
+  A command that also runs `aidrian pr product-feedback record`, or an aidrian call whose subcommand it cannot read, can write the
+  record a call is judged against only after the hook ran, a first record included. There every `audits record` or `answer` that
+  claims a human, or that it cannot read, is refused whatever is on disk, a subagent's with the subagent deny, and the deny says to
+  run `record` on its own first. A command with neither call sees nothing new from this.
 - Merge guard: `gh pr merge` but `--disable-auto`, `--auto` included, and a `gh api repos/<owner>/<name>/pulls/<n>/merge`
   sent as a PUT or a POST ([Merge guard](#merge-guard)).
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
@@ -260,9 +297,43 @@ A long option it blocks also matches the shorter prefixes the program accepts, s
 `--am` for `--amend`, and `--cou` for grep's `--count`.
 Every rule also reads the command substitutions that run: `$(…)`, backticks, `<(…)`, and those in a heredoc that expands.
 The process rules also read `sh -c`, `eval`, and `xargs`. The git hook bypass, attribution, pull request body, extra round
-approval, quota fallback, and merge guard rules read `sh -c`, `eval`, and a heredoc or here-string fed to a shell; the last
-three refuse text piped or scripted into a shell that names the command they guard, such as `echo 'gh pr merge 5' | bash`.
+approval, quota fallback, product feedback answer, and merge guard rules read `sh -c`, `eval`, and a heredoc or here-string fed
+to a shell; the last four refuse text piped or scripted into a shell that names the command they guard, such as
+`echo 'gh pr merge 5' | bash`.
 A command reached only through a script or an interpreter such as `python -c` is out of their sight.
+
+The product feedback answer rule has limits it accepts, so a reader does not take it for more than it is:
+
+- A session with a shell can forge `record.json` or `triage.json` directly, the limit the review record shares.
+- A main session can write `auto: false` to the main checkout's local file, since the guard stops only subagents. The deny never
+  names the opt-out as a route, and `aidrian pr product-feedback status --json` then gives `opted_out`.
+- `recheck confirmed` is the session's word that a fix works, and it needs only a different head, so a force-push back counts.
+- A `record` of a later run copies an existing decision under the new finding's key: a copy of an answer already given, never a new one.
+  The rule holds no key before a record lists it, so a word given in an earlier command runs, and counts for nothing; one in the same
+  command as `record`, or as an aidrian call it cannot read, is refused, since it would land after adoption. Out of its sight: a word
+  started in the background before `record`, such as `sleep N && aidrian audits record … --by human &`, which lands after a `record`
+  that a later command runs. A `by: human` entry `record` finds under a key it adopts, which it did not copy there, leaves the item
+  owed until a later decision replaces it, and a verdict settled before adoption, whatever decision overwrote that entry since, still holds until the Human answers `decided --by human`
+  after adoption, which the rule asks for ([Product feedback](config.md#product-feedback)).
+- `--none-found --read-by` is the session's word that a read ran.
+- A token broken across a line passes `post`, and `<?` and similar hidden text survive neutralizing.
+- A carried finding whose item was already answered is owed again.
+- Answered feedback stays clear after later pushes, since later commits stay unwalked unless someone uses `--full`:
+  a decision, so there is no stale-head reason.
+- `answer` checks the form of `--doc`, but not, as `aidrian audits record` does, that the file and section exist.
+- `aidrian pr product-feedback status` run from a folder a session made its own project reads `off`.
+- `post` reads the `product-access` terms from the working copy, so a branch can change what it refuses.
+- On Codex, with no transcript, a `--by human` answer is the Human's to run in their own shell.
+- Out of the rule's sight: a variable set in an earlier Bash call and run as `$B` or `eval "$C"`, `$B $S`, words that `xargs` takes from its
+  input with `human` nowhere on the line, a script, an interpreter that builds the words, such as `python -c` with a joined string, and a
+  command that only handles text whose own option or environment runs one, such as `sort --compress-program` or `GH_PAGER`.
+  A dynamic program with no words to read stays out too: refusing those would stop every `$EDITOR` or `"$PYTHON"` call.
+  A call whose folder it cannot read, reaching a project whose `state.dir` keeps its state folder outside the state root, passes
+  while no other `product-feedback/` folder is in that one look.
+  A program word the shell itself expands or rewrites is not read as the call: bash's `{aidrian,} audits record …`, zsh's `=aidrian …`,
+  or a wrapper the rule does not know, such as `faketime now aidrian …`.
+  It ignores the option words of `cd` and `pushd`, so `pushd -n <dir>`, which leaves the folder as it was, and `cd -P link/..`,
+  which resolves the link first, can be read as the wrong folder.
 
 ## Recorded blocks
 
@@ -459,6 +530,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - With or without gates, a subagent may not target `.aidrian.local.json` with a Write, Edit, or apply_patch that changes the switch,
   or a Bash command that names `autoMerge`:
   the [auto-merge](config.md#auto-merge) switch is the main session's. Other writes to that file follow the rules above.
+- With or without gates, the same holds for `review.productFeedback` in that file: a Write, Edit, or apply_patch that changes it,
+  through a JSON-escaped key, a removed key, or a file left unparsable included, or a Bash command that names `productFeedback`:
+  the machine's [product feedback](config.md#product-feedback) choice is the main session's.
 - A write the rule cannot see, such as one by a script, `xargs`, or `eval`, or a file name the code builds, still runs.
   It changes the file, but lifts no gate before the session ends: see the session's gates below.
   Like the gates, the guard is for agents that cooperate, not a sandbox.

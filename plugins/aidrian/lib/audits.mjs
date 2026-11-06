@@ -321,7 +321,7 @@ export function readTriage(dir) {
 // Records one decision for every target, { report, id }, in one write: under the lock of triage.json, read to write,
 // and the file replaced in one rename, so a bulk record lands whole or not at all. A decision keeps the item's priority
 // and verdict; a priority or a verdict keeps its decision and each other: they are set apart. `decided --by human`
-// settles a verdict, keeping the decision on it, so it holds nothing back through later decisions.
+// settles a verdict, keeping the decision on it and its time, so it holds nothing back through later decisions.
 export function recordDecision(dir, targets, entry) {
   const file = path.join(dir, TRIAGE_FILE);
   mkdirSync(dir, { recursive: true });
@@ -329,7 +329,7 @@ export function recordDecision(dir, targets, entry) {
     const triage = readTriage(dir);
     for (const { report, id } of targets) {
       const before = triage.reports[report]?.[id] ?? {};
-      const settled = entry.decision === 'decided' && entry.by === 'human' && before.verdict ? { verdict: { ...before.verdict, settled: { reason: entry.reason, date: entry.date } } } : {};
+      const settled = entry.decision === 'decided' && entry.by === 'human' && before.verdict ? { verdict: { ...before.verdict, settled: { reason: entry.reason, date: entry.date, at: entry.at ?? null } } } : {};
       const kept = { ...(before.priority ? { priority: before.priority } : {}), ...(before.verdict ? { verdict: before.verdict } : {}) };
       const next = entry.decision ? { ...entry, ...kept, ...settled } : { ...before, ...entry };
       triage.reports[report] = { ...triage.reports[report], [id]: next };

@@ -247,7 +247,7 @@ function pending({ values, rest: [name], dir, triage }) {
 function record({ values, rest: [name, keys, decision], dir, root }) {
   if (!keys || !decision) return fail(usageLines('audits', commands.audits.usage, 'usage: ').join('\n'));
   const entry = {
-    decision, issue: values.issue ?? null, url: values.url ?? null, reason: values.reason ?? null, doc: values.doc ?? null, by: values.by ?? null, date: today(),
+    decision, issue: values.issue ?? null, url: values.url ?? null, reason: values.reason ?? null, doc: values.doc ?? null, by: values.by ?? null, date: today(), at: new Date().toISOString(),
   };
   const bad = decisionProblem(entry);
   if (bad) return fail(bad);

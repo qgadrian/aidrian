@@ -442,6 +442,39 @@ test('quorum.product: automatic start is off, approval comes first, and three ru
   assert.deepEqual(loadConfig(project(t, { version: 1, quorum: { product: { maxAutoRuns: 1 } } })).errors, []);
 });
 
+test('review.productFeedback.auto and files: off and null by default, each checked, and auto with no list is an error', (t) => {
+  const at = (productFeedback, more = {}) => loadConfig(project(t, { version: 1, review: { productFeedback, ...more } }));
+  const none = '.aidrian/config.json: "review.productFeedback.auto" is true, and neither review.productFeedback.files nor review.visual.targets says which files are user-facing';
+  assert.deepEqual([DEFAULTS.review.productFeedback.auto, DEFAULTS.review.productFeedback.files], [false, null]);
+  assert.deepEqual(at({ auto: true, files: ['src/**', 're:^app/'] }).errors, []);
+  assert.deepEqual(at({ auto: true, files: ['src/**'] }).config.review.productFeedback, { auto: true, files: ['src/**'], maxPersonas: 2 });
+  assert.deepEqual(at({ auto: false }).errors, []);
+  assert.deepEqual(at({ auto: true }).errors, [none]);
+  assert.equal(at({ auto: true }).config.review.productFeedback.auto, true, 'it stays true, so status reads it as clear');
+  assert.deepEqual(at({ auto: true }, { visual: { platform: 'web', viewports: [1024], targets: [{ files: ['src/**'], routes: ['/'] }] } }).errors, [], 'the visual targets are a list');
+  assert.deepEqual(at({ auto: 'yes' }).errors, ['.aidrian/config.json: "review.productFeedback.auto" must be true or false']);
+  assert.equal(at({ auto: 'yes' }).config.review.productFeedback.auto, false, 'a bad value keeps the default');
+  for (const files of ['src', [], [1]]) {
+    assert.deepEqual(at({ files }).errors, ['.aidrian/config.json: "review.productFeedback.files" must be null or a non-empty list of globs'], JSON.stringify(files));
+  }
+  assert.match(at({ files: ['re:('] }).errors[0], /"review\.productFeedback\.files" has re:\(/u);
+  assert.deepEqual(at({ files: null }).errors, []);
+});
+
+test('.aidrian.local.json review.productFeedback may set only auto', (t) => {
+  const at = (productFeedback) => {
+    const found = project(t, { version: 1 });
+    writeFileSync(path.join(found.root, '.aidrian.local.json'), JSON.stringify({ review: { productFeedback } }));
+    return loadConfig(findProject(found.root)).errors;
+  };
+  assert.deepEqual(at({ auto: true }), []);
+  assert.deepEqual(at({ auto: false }), []);
+  assert.deepEqual(at({ files: ['src/**'] }), ['.aidrian.local.json: unknown key "review.productFeedback.files"; only "review.productFeedback.auto" is a machine setting']);
+  assert.deepEqual(at({ maxPersonas: 5 }), ['.aidrian.local.json: unknown key "review.productFeedback.maxPersonas"; only "review.productFeedback.auto" is a machine setting']);
+  assert.deepEqual(at({ auto: 'on' }), ['.aidrian.local.json: "review.productFeedback.auto" must be true or false']);
+  assert.deepEqual(at(true), ['.aidrian.local.json: "review.productFeedback" must be { "auto": true } or { "auto": false }']);
+});
+
 test('review.productFeedback.maxPersonas is a whole number from 1 to 10, 2 by default', (t) => {
   const at = (productFeedback) => loadConfig(project(t, { version: 1, review: { productFeedback } }));
   assert.equal(DEFAULTS.review.productFeedback.maxPersonas, 2);

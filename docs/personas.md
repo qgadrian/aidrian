@@ -306,7 +306,7 @@ saying what was searched. It is kept in the item's entry as `verdict`, through l
 `breaks` and `conforms` cite a section that exists. After `conforms` or `silent` the item is held: `pending --json`
 marks it `held`, and prints each item's `allowed_decisions`, and `record` refuses `issue` and `fix-now`, and `documented`
 after `silent`. `record ... decided --by human`, a delegated answer included, releases the hold and keeps the decision on
-the verdict as `settled`; an agent's own `decided` releases nothing. `auto` defers a held item. Verdicts are asked for
+the verdict as `settled`, with its reason, date, and time; an agent's own `decided` releases nothing. `auto` defers a held item. Verdicts are asked for
 one question at a time, the blocker before its question and the others when their group comes up.
 
 A held item's question asks the Human for the product decision, with a recommended answer and the verdict in one plain

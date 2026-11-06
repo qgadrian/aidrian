@@ -472,7 +472,8 @@ test('aidrian audits: list, import after review, pending, and record every decis
   assert.equal(result.stdout, `recorded "the second language mixes formal and informal address": drop\n${NEW_TITLE} is fully triaged\n`);
   noIds(result.stdout);
   const triage = JSON.parse(readFileSync(path.join(audits, 'triage.json'), 'utf8'));
-  assert.deepEqual(triage.reports[NEW].F1, { decision: 'issue', issue: 'ABC-1', url: 'https://tracker.example.com/ABC-1', reason: null, doc: null, by: null, date: triage.reports[NEW].F1.date });
+  assert.deepEqual(triage.reports[NEW].F1, { decision: 'issue', issue: 'ABC-1', url: 'https://tracker.example.com/ABC-1', reason: null, doc: null, by: null, date: triage.reports[NEW].F1.date, at: triage.reports[NEW].F1.at });
+  assert.match(triage.reports[NEW].F1.at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u, 'each decision keeps the time it was written');
   assert.deepEqual(triage.reports[OLD].F3.reason, 'covered by the next second-language pass');
   assert.match(run('list').stdout, new RegExp(`- ${OLD_TITLE}: replaced by ${NEW_TITLE.toLowerCase()}; nothing of it is left to triage\n- ${NEW_TITLE}: 11 findings, fully triaged\n`, 'u'));
   assert.equal(run('pending', NEW).stdout, `${NEW_TITLE}: fully triaged\n`);

@@ -1123,6 +1123,13 @@ test('aidrian pr prints its usage for an unknown action, and await-review report
     '       aidrian pr resolve URL|NUMBER',
     '       aidrian pr disposition --severity S [--likelihood L --affects A] [--cost C]',
     '               [--source bot [--round N]] [--vocab]',
+    '       aidrian pr product-feedback status PR [--json]',
+    '       aidrian pr product-feedback record PR [--report FILE] [--items FILE]',
+    '               [--none-found --read-by product-manager]',
+    '       aidrian pr product-feedback answer PR ITEM DECISION [--by WHO] [--reason T] [--issue K]',
+    '               [--url U] [--doc D]',
+    '       aidrian pr product-feedback recheck PR ITEM confirmed|reopened [--note T]',
+    '       aidrian pr product-feedback post PR --body-file FILE',
     '',
   ].join('\n')]);
   const bad = spawnSync(cli, ['pr', 'await-review', '--bogus'], { encoding: 'utf8' });

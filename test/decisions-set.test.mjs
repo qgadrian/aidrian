@@ -24,6 +24,7 @@ test('a subagent cannot settle or undo a decision, however it runs aidrian', (t)
   for (const command of [
     'aidrian decisions undo refund-copy',
     'node plugins/aidrian/lib/cli.mjs decisions undo refund-copy',
+    'node --disable-warning X plugins/aidrian/lib/cli.mjs decisions undo refund-copy',
     'cd x && aidrian decisions undo refund-copy --project .',
     "bash -c 'aidrian decisions undo refund-copy'",
     "echo 'aidrian decisions undo refund-copy' | bash",

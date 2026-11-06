@@ -19,7 +19,8 @@
 // A command that also runs `aidrian pr product-feedback record`, or an aidrian call whose subcommand it cannot read, can write
 // the record a call is judged against after the hook ran, the first one included: there every `audits record` or `answer`
 // that claims a human or that it cannot read is refused, whatever is on disk (chainedRecord).
-// docs/hooks.md#bash-rules names what stays out of its sight, and its limits.
+// docs/hooks.md#bash-rules names what stays out of its sight, and its limits. The post rule (product-feedback-post.mjs)
+// reads its commands with the helpers exported here.
 
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
@@ -41,7 +42,7 @@ const UNKNOWN_PROJECT = 'Blocked: this runs `aidrian pr product-feedback answer`
   'to the Human\'s own word cannot read which project it runs in, or which words it holds, while this machine keeps product feedback. ' +
   'Write the folder and the words out in the command, such as a literal --project or a plain cd <folder> &&, or the Human runs it in their own shell.';
 // What projectIn gives for a folder or project the rule cannot read, while this machine keeps product feedback.
-const UNKNOWN = Symbol('unknown project');
+export const UNKNOWN = Symbol('unknown project');
 
 // Only a command holding one of these can be a call: every other Bash call pays for this one look, and reads no disk.
 const CANDIDATE = /aidrian|cli\.mjs|product-feedback|audits|[$`]/u;
@@ -62,13 +63,13 @@ const quotedScalar = ({ text, dynamic, splits }) => dynamic && !splits && /[$`]/
 
 // A word the rule cannot take as written: dynamic, or one the shell expands (shell-lex `expands`: an unquoted glob
 // character, or a brace list or range, wherever in the word, quoted parts around it included).
-const unreadable = (token) => Boolean(token?.dynamic || token?.expands);
+export const unreadable = (token) => Boolean(token?.dynamic || token?.expands);
 
 // The words of a call: { operands, by, unread, options }. `operands` lists its positional words, an unreadable one as
 // null. `by` lists each --by value, and `options` each other value, an unreadable one as null. `unread` says a word the
 // rule cannot read may hold a flag: any word the shell expands, a prose value's included, since it can become several
 // words, one of them `--by`.
-function readWords(words, values) {
+export function readWords(words, values) {
   const out = { operands: [], by: [], unread: false, options: {} };
   for (let i = 0; i < words.length; i += 1) {
     const { text, dynamic, expands } = words[i];
@@ -97,7 +98,7 @@ const claimsHuman = (read) => unreadBy(read) || read.by.includes('human');
 
 // A call's PR word as { number, repo? }, or null when it cannot read one. A hook holds a URL to no remote, since it runs
 // no git for this: the command does that.
-function pullRequestOf(word) {
+export function pullRequestOf(word) {
   if (word === null) return null;
   const bare = BARE_NUMBER.exec(word);
   if (bare) return { number: Number(bare[1]) };
@@ -109,7 +110,7 @@ function pullRequestOf(word) {
 // that claims no human; { type: 'unreadable' }, a dynamic word where the subcommand goes; { type: 'answer', pr, id,
 // decision, project, unreadBy }; or { type: 'record', keys, decision, project, unreadBy }, with null for what it cannot
 // read, and `project` undefined when it names none.
-function readCall(invocation) {
+export function readCall(invocation) {
   const { program, args } = invocation;
   const dynamicProgram = /[$`]/u.test(program) || (program === '' && args.length > 0);
   const named = aidrianArgs(invocation);
@@ -241,7 +242,7 @@ const walkedShell = ({ invocation, unread }) => unread === undefined && (invocat
 
 // Whether a walked command can write a feedback record the hook never saw: `pr product-feedback record`, or an aidrian call
 // whose subcommand it cannot read.
-const writesUnseen = (call) => call?.writesRecord === true || call?.type === 'unreadable';
+export const writesUnseen = (call) => call?.writesRecord === true || call?.type === 'unreadable';
 
 // Whether this machine keeps product feedback anywhere the rule can see in one look: a `product-feedback/` folder in a
 // project's state folder under the state root, or in the current project's, which covers a `state.dir` it moves.
@@ -254,25 +255,17 @@ function feedbackOnMachine(activeIn, cwd) {
   return names.some((name) => isDirectory(path.join(projects, name, 'product-feedback'))) || Boolean(activeIn(cwd));
 }
 
-// The reason a command the word pass did not judge is refused, or null.
-function textDenial(entries, judged, subagent, projectIn, chained) {
+// `denied` when a command the word pass did not judge names a call (`names(text, folder)`), else null.
+export function textDenial(entries, judged, denied, names) {
   const downstreamOf = pipelineReader();
-  const denied = subagent ? SUBAGENT : TEXT_ONLY;
   for (const entry of entries) {
     const downstream = downstreamOf(entry);
     if (judged.has(entry)) continue;
     const { invocation, segment, inputs, unread, line, folder } = entry;
-    const names = (text) => {
-      if (chained && (namesRecord(text) || namesAnswer(text))) return true;
-      if (!namesAnswer(text) && !namesRecord(text)) return false;
-      const project = projectIn(folder);
-      // A call of audits record holds only a key a record lists, which a project it cannot read may list.
-      return project === UNKNOWN || (Boolean(project) && (namesAnswer(text) || listedItems(project).length > 0));
-    };
-    if ((FEEDS_BLIND.has(invocation.program) || unread !== undefined) && names(line)) return denied;
+    if ((FEEDS_BLIND.has(invocation.program) || unread !== undefined) && names(line, folder)) return denied;
     if (walkedShell(entry)) continue;
     if (handlesText(invocation) && downstream.every((each) => handlesText(readInvocation(each)))) continue;
-    if (names([...segment.map((token) => token.text), ...inputs].join(' '))) return denied;
+    if (names([...segment.map((token) => token.text), ...inputs].join(' '), folder)) return denied;
   }
   return null;
 }
@@ -286,13 +279,12 @@ function callFolder(project, folder) {
   return folder === null ? null : path.resolve(folder, project);
 }
 
-// The deny reason for `command`, or null. On only inside a project whose state folder holds `product-feedback/`. `input` is
-// the hook payload, for its `agent_id` and its transcript; `env` the environment its shell inherits, for its CDPATH.
-export function check(command, { cwd = process.cwd(), input = {}, env = process.env } = {}) {
-  if (!CANDIDATE.test(command)) return null;
-  // A CDPATH in the command or the environment can send a `cd` anywhere, so every folder but cwd is unread.
+// The project a folder is in when the feature is on there, null when it is off, and UNKNOWN for a folder it cannot read
+// while this machine keeps product feedback: the one path that looks past the current project. A folder it cannot read
+// is null, one that is no existing directory (`cd ../proj[B]` as written, which the shell would expand), or any but cwd
+// under a CDPATH, in the command or the environment, which can send a `cd` anywhere.
+export function projectReader(command, cwd, env) {
   const cdpath = /\bCDPATH\b/u.test(command) || Boolean(env.CDPATH);
-  const subagent = typeof input.agent_id === 'string' && input.agent_id !== '';
   const active = new Map();
   const activeIn = (folder) => {
     if (!active.has(folder)) {
@@ -302,15 +294,19 @@ export function check(command, { cwd = process.cwd(), input = {}, env = process.
     return active.get(folder);
   };
   let onMachine;
-  // The project a folder is in when the feature is on there, null when it is off, and UNKNOWN for a folder it cannot read
-  // while this machine keeps product feedback: the one path that looks past the current project. A folder it cannot read
-  // is null, one that is no existing directory (`cd ../proj[B]` as written, which the shell would expand), or any but cwd
-  // under a CDPATH.
-  const projectIn = (folder) => {
+  return (folder) => {
     if (folder !== null && isDirectory(folder) && !(cdpath && folder !== cwd)) return activeIn(folder);
     onMachine ??= feedbackOnMachine(activeIn, cwd);
     return onMachine ? UNKNOWN : null;
   };
+}
+
+// The deny reason for `command`, or null. On only inside a project whose state folder holds `product-feedback/`. `input` is
+// the hook payload, for its `agent_id` and its transcript; `env` the environment its shell inherits, for its CDPATH.
+export function check(command, { cwd = process.cwd(), input = {}, env = process.env } = {}) {
+  if (!CANDIDATE.test(command)) return null;
+  const subagent = typeof input.agent_id === 'string' && input.agent_id !== '';
+  const projectIn = projectReader(command, cwd, env);
   const entries = walkCommands(command, cwd);
   const calls = new Map(entries.map((entry) => [entry, entry.unread === undefined ? readCall(entry.invocation) : null]));
   // chainedRecord: another call of this command may write a record after the hook, so a call here that claims a human, or
@@ -350,5 +346,12 @@ export function check(command, { cwd = process.cwd(), input = {}, env = process.
     const denied = call.type === 'answer' ? judgeAnswer(call, input, project) : judgeRecord(call, input, project);
     if (denied) return denied;
   }
-  return textDenial(entries, judged, subagent, projectIn, chained);
+  const names = (text, folder) => {
+    if (chained && (namesRecord(text) || namesAnswer(text))) return true;
+    if (!namesAnswer(text) && !namesRecord(text)) return false;
+    const project = projectIn(folder);
+    // A call of audits record holds only a key a record lists, which a project it cannot read may list.
+    return project === UNKNOWN || (Boolean(project) && (namesAnswer(text) || listedItems(project).length > 0));
+  };
+  return textDenial(entries, judged, subagent ? SUBAGENT : TEXT_ONLY, names);
 }

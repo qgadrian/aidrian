@@ -12,6 +12,7 @@ import * as gitHookBypass from '../lib/rules/git-hook-bypass.mjs';
 import * as mergeReview from '../lib/rules/github/merge-review.mjs';
 import * as prBody from '../lib/rules/github/pr-body.mjs';
 import * as productFeedbackAnswer from '../lib/rules/product-feedback-answer.mjs';
+import * as productFeedbackPost from '../lib/rules/product-feedback-post.mjs';
 import * as reviewRequest from '../lib/rules/github/review-request.mjs';
 import * as reviewRounds from '../lib/rules/github/review-rounds.mjs';
 import * as reviewExtend from '../lib/rules/review-extend.mjs';
@@ -36,6 +37,7 @@ const RULES = [
   ['review-extend', reviewExtend],
   ['review-fallback', reviewFallback],
   ['product-feedback-answer', productFeedbackAnswer],
+  ['product-feedback-post', productFeedbackPost],
   ['merge-review', mergeReview],
   ['main-checkout', mainCheckout],
 ];

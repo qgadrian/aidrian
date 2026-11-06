@@ -407,10 +407,18 @@ aidrian pr product-feedback record <PR> [--report <file>] [--items <file>] [--no
 aidrian pr product-feedback answer <PR> <item> <decision> [--by <who>] [--reason <text>] [--issue <key>] [--url <url>] [--doc <path#section>]
 aidrian pr product-feedback recheck <PR> <item> confirmed|reopened [--note <text>]
 aidrian pr product-feedback post <PR> --body-file <file>
+aidrian pr product-feedback items <PR> [--json]
+aidrian pr product-feedback diff <PR>
 ```
 
 `<PR>` is what `aidrian pr resolve` takes, held to the checkout's remotes the same way. `status` exits 0, clear, with a reason;
 2, owed, with what is owed; and 3 on an error. Each other command exits 0, or 3 with the record untouched.
+`items` lists every item of the record and where it stands, whatever `auto` says, with `recorded: false` when there is no record;
+`--json` gives `head`, gh's head now; `recorded_head`, the head the record was written at, which the comment names; `limited`; and each
+item's id, title, kind, source, `audit_key`, `found_at` head, `state`, decision, re-check with its own head, and the command that answers it.
+`diff` writes the pull request's diff, read with `--repo <host>/<owner>/<name>`, to `diff.patch` beside the record, a path held
+inside the state folder, and prints that path: the [pr-product-feedback](personas.md#product-feedback-on-a-pull-request) skill's
+product-manager read takes it, since that agent runs no shell.
 
 | `status --json` `reason` | Exit | Means |
 | --- | --- | --- |
@@ -436,8 +444,10 @@ whose `review.visual` its checks dropped, since that branch's file list is then 
 ### The record
 
 `record` writes `<state>/product-feedback/<owner>/<name>/pr-<n>/record.json`. It reads the repository, the number, and the head
-from `gh pr view`, never from an argument, and holds `version`, `pr`, `repo`, `head`, `report`, the sidecar's report file or
+from `gh pr view`, never from an argument, and holds `version`, `pr`, `repo`, `head`, `limited`, `report`, the sidecar's report file or
 `null`, `read_by`, `comment_id`, `recorded_at`, and `items`. The answer rule reads `recorded_at`, which only `record` writes.
+`limited` is whether the pull request comes from outside the team, by the reads and the rule of `aidrian pr resolve`; `record`
+exits 3 and writes nothing when gh does not say. The [product feedback post rule](hooks.md#bash-rules) reads it.
 A persona item also keeps `adopted_at`, when `record` adopted its key.
 
 `--report` names the run's report in the audits folder, and `--items` a JSON list. A persona item is `{ "audit_key": "<report>#<id>" }`,

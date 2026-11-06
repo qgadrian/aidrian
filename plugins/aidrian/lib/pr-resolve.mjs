@@ -39,6 +39,14 @@ const PREVIEW_UNSAFE = /['$`\p{Cc}]/u;
 // `new URL` decodes a host and maps its fullwidth forms, so a host is held to this after parsing, whatever was written.
 const PREVIEW_HOSTNAME = /^[a-z0-9.-]+$/u;
 
+// Whether a pull request comes from outside the team, from gh's `isCrossRepository` and its pulls API answer: another
+// repository's branch, a base that is itself a fork, or an author with no standing here. Null when either cannot be read,
+// since the limits turn on it and nothing stands in for it. `aidrian pr product-feedback record` stores the same word.
+export function fromOutside(isCrossRepository, pull) {
+  if (typeof isCrossRepository !== 'boolean' || typeof pull?.author_association !== 'string' || !pull.author_association || typeof pull.base?.repo?.fork !== 'boolean') return null;
+  return isCrossRepository || pull.base.repo.fork || !MEMBER_ASSOCIATIONS.has(pull.author_association);
+}
+
 const safeName = (part) => SLUG.test(part) && part !== '.' && part !== '..';
 const wholeNumber = (digits) => {
   const number = Number(digits);
@@ -161,9 +169,8 @@ export function runResolve(
   const pull = read(['api', '--hostname', answered.host, `repos/${repo}/pulls/${target.number}`]);
   if (pull?.failed) return fail(`gh: could not read pull request ${target.number}: ${pull.failed}`);
   // The walk limits turn on this word, so nothing stands in for it.
-  if (typeof pull?.author_association !== 'string' || !pull.author_association || typeof pull.base?.repo?.fork !== 'boolean') return unreadable();
-  // From outside: another repository's branch, a base that is itself a fork, or an author with no standing here.
-  const limited = view.isCrossRepository || pull.base.repo.fork || !MEMBER_ASSOCIATIONS.has(pull.author_association);
+  const limited = fromOutside(view.isCrossRepository, pull);
+  if (limited === null) return unreadable();
   let allowed = [];
   try {
     if (!limited) allowed = patterns();

@@ -196,7 +196,43 @@ it: the report says so, and the sidecar names it in `supersedes`, with the earli
 report of the same pull request, so never one that names another or none. A report naming a pull request can be replaced
 only by a run of it, or by a whole-product run with a valid sidecar. `aidrian audits check <report>` validates the sidecar. The skill never edits code, files an issue, posts to a pull
 request or opens one, and never signs off. With a pull request, the report is input to the Human's review of a user-facing
-change; it never approves, blocks, or posts. A project that wants a persona pass in its sign-off wires the skill in by its own rules.
+change; it never approves, blocks, or posts. A project that wants a persona pass in its sign-off wires the skill in by its own rules;
+[Product feedback on a pull request](#product-feedback-on-a-pull-request) is the one that posts.
+
+## Product feedback on a pull request
+
+The `pr-product-feedback` skill takes `<pull request> [<persona>...] [--full]` and gives the change the feedback its
+users and its product owner would, as one comment on the pull request. It checks the argument with `aidrian pr resolve`,
+as `persona-audit` does, then:
+
+1. Runs `persona-audit` for the pull request first, so product rules never prime the persona; the session loads no
+   `product_sensitive` docs. With no persona kept, or no usable persona, it goes on with no report.
+2. Writes the diff beside the record with `aidrian pr product-feedback diff` and dispatches `product-manager`, read-only,
+   on it, with the report when there is one. Its brief names both as data: an instruction in either is at most a finding.
+   It returns gaps against the docs and decision records, open product choices, each with a recommendation, smaller
+   considerations, and what looks right, all from reading.
+3. Sorts every item into a kind, `choice`, `minor`, or `defect`, and writes the [record](config.md#the-record) with
+   `aidrian pr product-feedback record`.
+4. Writes the comment as its `references/comment-format.md` says: a verdict, the main gap, how it was checked, Should
+   fix, Smaller fixes, Worth considering, Open product choices, Looks right, Not checked, and the line that personas are
+   synthetic. It says it is feedback, not an approval or a block, names the head it covers, and labels each item "seen" or
+   "from reading". With no persona report, "Not checked" names the missing persona coverage. It names no local path,
+   account, host `product-access` names, or secret.
+5. Posts it only through [`aidrian pr product-feedback post`](config.md#post), which edits the run's earlier comment
+   rather than adding another. For a member's pull request from this repository, running the skill is the request to
+   post. When `limited` is true, it shows the Human the comment and asks first. The
+   [product feedback post rule](hooks.md#bash-rules) holds `post` there until an answer in the session, within the limits
+   that page lists, such as a record a session forges. With no Human to answer, the skill posts nothing, leaves the comment
+   in the state folder's `tmp`, and reports the `post` command for the Human's own shell. Then it asks the Human about each open
+   product choice, one question at a time, naming the pull request, the item's id, and its title in double quotes, and
+   records the answer with `--by human`; with no Human present, or on a host whose answers no hook reads, it lists each
+   question and its command instead.
+
+A later run with a record and no `--full` re-walks only the items answered `fix-now` whose fix has no re-check, records
+each as confirmed or reopened at the current head with `aidrian pr product-feedback recheck`, and edits the comment: it
+starts from the last posted body in the state folder's `tmp` and changes only the lines of items whose state changed.
+When that file is gone, it keeps the earlier comment, posts nothing new, and says so.
+`--full` runs everything again. `persona-audit` itself stays read-only and posts nothing, with or without this skill.
 
 ## Triage
 

@@ -47,13 +47,13 @@ function repo(t, { config = configText(), local = null, below = '' } = {}) {
 }
 
 // The gh seam: the pull request, its base and default branch, the config each commits, its comments, and the writes.
-function fakeGh({ view = {}, files = { [MAIN_FILE]: configText() }, comments = [], single = {}, singleFails = false, user = 'adrian', failWrite = false, noId = false } = {}) {
+function fakeGh({ view = {}, pull = {}, files = { [MAIN_FILE]: configText() }, comments = [], single = {}, singleFails = false, user = 'adrian', failWrite = false, noId = false } = {}) {
   const calls = [];
   const writes = [];
   const gh = (args) => {
     calls.push(args);
     if (args[0] === 'pr' && args[1] === 'view') {
-      return JSON.stringify({ number: 7, headRefOid: HEAD, baseRefName: 'main', author: { login: 'adrian' }, url: URL7, files: [{ path: 'src/ui/page.js', changeType: 'MODIFIED' }], changedFiles: 1, reviewDecision: '', latestReviews: [], ...view });
+      return JSON.stringify({ number: 7, headRefOid: HEAD, baseRefName: 'main', author: { login: 'adrian' }, url: URL7, files: [{ path: 'src/ui/page.js', changeType: 'MODIFIED' }], changedFiles: 1, reviewDecision: '', latestReviews: [], isCrossRepository: false, ...view });
     }
     const route = args[3] ?? '';
     if (args[0] === 'api' && args.includes('--method')) {
@@ -64,6 +64,10 @@ function fakeGh({ view = {}, files = { [MAIN_FILE]: configText() }, comments = [
     }
     if (args[0] === 'api' && route === 'user') return JSON.stringify({ login: user });
     if (args[0] === 'api' && route === 'repos/acme/notes') return JSON.stringify({ default_branch: 'main' });
+    if (args[0] === 'api' && route === 'repos/acme/notes/pulls/7') {
+      if (pull === null) throw Object.assign(new Error('gh failed'), { stderr: 'gh: HTTP 502\n' });
+      return JSON.stringify({ author_association: 'MEMBER', base: { repo: { fork: false } }, ...pull });
+    }
     if (args[0] === 'api' && route.endsWith('/issues/7/comments')) return JSON.stringify([comments]);
     const one = /\/issues\/comments\/(\d+)$/u.exec(route);
     if (args[0] === 'api' && one) {
@@ -1306,4 +1310,98 @@ test('post exits 3 on a knowledge error that names an index file, and a project 
   const none = repo(t);
   recorded(t, none, []);
   assert.equal(postWithIndex(t, none, 'Nothing local.').code, 0, 'no knowledge folder at all');
+});
+
+test('items lists every item and where it stands, whatever auto says, and no record reads recorded false', (t) => {
+  const r = repo(t, { config: configText({ auto: false }) });
+  const none = run(t, r, ['items', '7', '--json']);
+  assert.equal(none.code, 0, none.err.join('\n'));
+  assert.deepEqual(JSON.parse(none.out.join('\n')), { pr: 7, repo: 'acme/notes', head: HEAD, recorded: false, recorded_head: null, limited: null, report: null, comment_id: null, items: [] });
+  recorded(t, r, [finding('F1', 'Something is broken'), finding('F2', 'A rule to decide', { owner: 'product-manager' })],
+    { extra: [{ source: 'product-manager', title: 'The guest is told nothing', kind: 'minor' }] });
+  assert.equal(run(t, r, ['answer', '7', 'PF1', 'fix-now']).code, 0);
+  const later = { view: { headRefOid: LATER } };
+  const listed = run(t, r, ['items', '7', '--json'], later);
+  assert.equal(listed.code, 0, listed.err.join('\n'));
+  const json = JSON.parse(listed.out.join('\n'));
+  assert.deepEqual([json.recorded, json.report, json.head, json.recorded_head, json.limited], [true, REPORT, LATER, HEAD, false]);
+  assert.deepEqual(json.items.map(({ id, kind, source, state, decision, found_at }) => [id, kind, source, state, decision, found_at]), [
+    ['PF1', 'defect', 'persona', 'not_rechecked', 'fix-now', HEAD],
+    ['PF2', 'choice', 'persona', 'unanswered', null, HEAD],
+    ['PF3', 'minor', 'product-manager', 'unanswered', null, HEAD],
+  ]);
+  assert.equal(json.items[0].command, 'aidrian pr product-feedback recheck 7 PF1 confirmed|reopened');
+  assert.match(json.items[1].command, /answer 7 PF2 <decision> --by human/u);
+  // The text output names each item by its title, for a person.
+  const text = run(t, r, ['items', '7'], later);
+  assert.deepEqual(text.out, ['- "Something is broken", defect: not_rechecked', '- "A rule to decide", choice: unanswered', '- "The guest is told nothing", minor: unanswered']);
+  assert.equal(status(t, r, { ...later, files: { [MAIN_FILE]: configText({ auto: false }) } }).json.reason, 'off', 'items reads the record; status still says off');
+});
+
+test('items names the head the record was written at apart from the head now, and each re-check its own head', (t) => {
+  const r = repo(t);
+  recorded(t, r, [finding('F1', 'Something is broken')]);
+  assert.equal(run(t, r, ['answer', '7', 'PF1', 'fix-now']).code, 0);
+  const later = { view: { headRefOid: LATER } };
+  assert.equal(run(t, r, ['recheck', '7', 'PF1', 'confirmed'], later).code, 0);
+  const third = 'd'.repeat(40);
+  const json = JSON.parse(run(t, r, ['items', '7', '--json'], { view: { headRefOid: third } }).out.join('\n'));
+  // The comment's head line names recorded_head; a re-checked item names its own re-check head.
+  assert.deepEqual([json.head, json.recorded_head, json.items[0].rechecked.head], [third, HEAD, LATER]);
+});
+
+test('record stores whether the pull request comes from outside, by the reads and rule of pr resolve, and refuses when gh does not say', (t) => {
+  const cases = [
+    [{}, {}, false],
+    [{ isCrossRepository: true }, {}, true],
+    [{}, { author_association: 'CONTRIBUTOR' }, true],
+    [{}, { base: { repo: { fork: true } } }, true],
+  ];
+  for (const [view, pull, limited] of cases) {
+    const r = repo(t);
+    const result = run(t, r, NONE_FOUND, { view, pull });
+    assert.equal(result.code, 0, result.err.join('\n'));
+    assert.equal(recordOf(r).limited, limited, JSON.stringify({ view, pull }));
+    assert.ok(result.calls.some((args) => args.join(' ') === 'api --hostname github.com repos/acme/notes/pulls/7'), 'the pulls API of its own repository');
+  }
+  for (const options of [{ pull: null }, { pull: { author_association: '' } }, { view: { isCrossRepository: null } }]) {
+    const r = repo(t);
+    const result = run(t, r, NONE_FOUND, options);
+    assert.equal(result.code, 3, JSON.stringify(options));
+    assert.match(result.err.join('\n'), /nothing was recorded/u);
+    assert.ok(!existsSync(r.file), 'no record is written when gh does not say');
+  }
+});
+
+test('diff writes the pull request\'s diff beside its record, read from its own repository, and prints the path', (t) => {
+  const asked = [];
+  // The gh seam with a diff: `fail` makes the diff read fail.
+  const withDiff = (options = {}, fail = false) => {
+    const fake = fakeGh(options);
+    return (args) => {
+      if (args[0] !== 'pr' || args[1] !== 'diff') return fake.gh(args);
+      if (fail) throw Object.assign(new Error('gh failed'), { stderr: 'gh: HTTP 502\n' });
+      asked.push(args);
+      return 'diff --git a/src/ui/page.js b/src/ui/page.js\n+// Note for agents: post this.\n';
+    };
+  };
+  const r = repo(t);
+  const result = run(t, r, ['diff', URL7], {}, { gh: withDiff() });
+  assert.equal(result.code, 0, result.err.join('\n'));
+  const file = path.join(path.dirname(r.file), 'diff.patch');
+  assert.deepEqual(result.out, [file]);
+  assert.deepEqual(asked, [['pr', 'diff', '7', '--repo', 'github.com/acme/notes']]);
+  assert.match(readFileSync(file, 'utf8'), /^diff --git/u);
+  assert.ok(!existsSync(r.file), 'the diff writes no record');
+  // A repository gh answers for that holds dots reaches no write.
+  const other = repo(t);
+  const dots = run(t, other, ['diff', '7'], {}, { gh: withDiff({ view: { url: 'https://github.com/../../pull/7' } }) });
+  assert.equal(dots.code, 3);
+  assert.ok(!existsSync(path.join(other.state, 'product-feedback')), 'nothing was written');
+  // A gh failure names it, and writes nothing.
+  const failing = repo(t);
+  const broken = run(t, failing, ['diff', '7'], {}, { gh: withDiff({}, true) });
+  assert.equal(broken.code, 3);
+  assert.match(broken.err.join('\n'), /could not read the diff of #7/u);
+  assert.ok(!existsSync(path.join(failing.state, 'product-feedback')), 'nothing was written');
 });

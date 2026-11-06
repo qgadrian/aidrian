@@ -153,6 +153,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Extra round approval | `aidrian pr extend <PR> --human approve` without the Human's answer in the session ([review.md](review.md#extra-rounds)) | none: the Human answers, or runs it in their own shell |
 | Quota fallback choice | `aidrian pr review <PR> --quota-fallback` without the Human's pick in the session ([review.md](review.md#out-of-quota)) | none: the Human answers, or runs it in their own shell |
 | Product feedback answer | `--by human` on a [product feedback](config.md#product-feedback) item without the Human's answer in the session | none: the Human answers, or runs it in their own shell |
+| Product feedback post | `aidrian pr product-feedback post` on a pull request from outside the team without the Human's answer in the session, and from a subagent | none: the Human answers, or runs `post` in their own shell |
 | Merge guard | Merging a pull request while a review it owes is open, or the review of its head has not finished ([Merge guard](#merge-guard)) | none: the Human answers "Merge anyway", or merges in their own shell |
 | Main checkout, when turned on | A shell write to a tracked file in the main checkout; a git call there that makes a commit or moves the branch; after a `cd` it cannot trust, a relative write or a git call that may change the main checkout; and a relative write that lands there only if a `cd` inside it fails ([After a cd](#after-a-cd)) | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
 
@@ -276,6 +277,19 @@ What each rule matches:
   record a call is judged against only after the hook ran, a first record included. There every `audits record` or `answer` that
   claims a human, or that it cannot read, is refused whatever is on disk, a subagent's with the subagent deny, and the deny says to
   run `record` on its own first. A command with neither call sees nothing new from this.
+- Product feedback post: `aidrian pr product-feedback post`, also as a runner given `…/cli.mjs`, and through `sh -c`, `eval`, and
+  a heredoc fed to a shell, read with the answer rule's helpers. `record` stores `limited` in the record, from the reads and the rule
+  of `aidrian pr resolve`: a branch from another repository, a base that is a fork, or an author with no standing in the repository.
+  The rule is on only where the state folder holds `product-feedback/`, and holds a post only when a record of that pull request
+  does not say `limited: false`, so a member's pull request posts as before. There a call with an `agent_id` is refused, and a main
+  session passes only a `post` run as its own command, with at most a plain `cd <folder> &&` before it and no redirect that writes
+  a file, from the skill's own `<state>/tmp/product-feedback-<PR>.md`, when the transcript holds an AskUserQuestion answer, given
+  after that file was last written, to a question naming `#<PR>` and posting, whose chosen option is `Post` alone. A comment
+  rewritten after that answer, in a separate command, needs a new one; a held post beside another command the rule can read, such
+  as a `sed -i`, `cp`, `tee`, or `>` on the comment, is refused, and the deny says to run `post` as its own command. A pull
+  request, body file, or subcommand it cannot read is refused while a record holds a post; so is text fed to a shell, `xargs`,
+  `parallel`, or a command it did not judge, such as `npx`, whose words name `product-feedback` and `post`, and a post in the same
+  command as `record` or an aidrian call it cannot read. The deny says the Human can run `post` in their own shell.
 - Merge guard: `gh pr merge` but `--disable-auto`, `--auto` included, and a `gh api repos/<owner>/<name>/pulls/<n>/merge`
   sent as a PUT or a POST ([Merge guard](#merge-guard)).
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
@@ -297,7 +311,7 @@ A long option it blocks also matches the shorter prefixes the program accepts, s
 `--am` for `--amend`, and `--cou` for grep's `--count`.
 Every rule also reads the command substitutions that run: `$(…)`, backticks, `<(…)`, and those in a heredoc that expands.
 The process rules also read `sh -c`, `eval`, and `xargs`. The git hook bypass, attribution, pull request body, extra round
-approval, quota fallback, product feedback answer, and merge guard rules read `sh -c`, `eval`, and a heredoc or here-string fed
+approval, quota fallback, product feedback answer and post, and merge guard rules read `sh -c`, `eval`, and a heredoc or here-string fed
 to a shell; the last four refuse text piped or scripted into a shell that names the command they guard, such as
 `echo 'gh pr merge 5' | bash`.
 A command reached only through a script or an interpreter such as `python -c` is out of their sight.
@@ -316,6 +330,7 @@ The product feedback answer rule has limits it accepts, so a reader does not tak
   owed until a later decision replaces it, and a verdict settled before adoption, whatever decision overwrote that entry since, still holds until the Human answers `decided --by human`
   after adoption, which the rule asks for ([Product feedback](config.md#product-feedback)).
 - `--none-found --read-by` is the session's word that a read ran.
+- `diff.patch` keeps the pull request's code in the state folder with default file modes, the same exposure as other local state.
 - A token broken across a line passes `post`, and `<?` and similar hidden text survive neutralizing.
 - A carried finding whose item was already answered is owed again.
 - Answered feedback stays clear after later pushes, since later commits stay unwalked unless someone uses `--full`:
@@ -324,6 +339,20 @@ The product feedback answer rule has limits it accepts, so a reader does not tak
 - `aidrian pr product-feedback status` run from a folder a session made its own project reads `off`.
 - `post` reads the `product-access` terms from the working copy, so a branch can change what it refuses.
 - On Codex, with no transcript, a `--by human` answer is the Human's to run in their own shell.
+- The post rule holds what `record` stored, so a session that forges `limited: false` in `record.json`, or posts before any record,
+  passes it; `post` itself refuses a pull request with no record. On Codex, or with no Human to answer, a post on a pull request
+  from outside is the Human's to run in their own shell.
+- The post rule dates the comment by its file's modified time, so a session that sets that time back (`touch -r`, `touch -t`) in an
+  earlier command, or moves an older file into place, passes on an earlier answer. The answer it reads names `#<PR>`, not
+  `owner/name#<PR>`, so where two repositories hold records with the same number, an answer about one counts for the other.
+  A `product-feedback/` folder the hook can enter but not list hides its records, and the post passes. A `record` that runs
+  before the post through `npx`, `xargs`, or a script, in the same command, is out of its sight, as a post with no record is.
+  A word whose expansion runs code is not read: an assignment before the post, a `<` redirect target, or the program word, using
+  zsh `${(e)…}`, a glob qualifier `(e:…:)`, or bash `$[…]` or `${…@P}`.
+  A job an earlier command started in the background can rewrite the comment after the hook passes a plain post, the limit the
+  answer rule names for a word started in the background.
+  The rule reads only `aidrian … post`: a post through `gh pr comment` or a `gh api …/comments` POST is out of its sight, and only
+  the skill text forbids it.
 - Out of the rule's sight: a variable set in an earlier Bash call and run as `$B` or `eval "$C"`, `$B $S`, words that `xargs` takes from its
   input with `human` nowhere on the line, a script, an interpreter that builds the words, such as `python -c` with a joined string, and a
   command that only handles text whose own option or environment runs one, such as `sort --compress-program` or `GH_PAGER`.

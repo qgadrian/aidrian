@@ -1,4 +1,4 @@
-// `aidrian pr product-feedback <status|record|answer|recheck|post>`: what a pull request's product feedback holds, and
+// `aidrian pr product-feedback <status|record|answer|recheck|post|items|diff>`: what a pull request's product feedback holds, and
 // whether any of it is still owed. One record per pull request lives in the state folder, at
 // `product-feedback/<owner>/<name>/pr-<n>/record.json`; feedback-record.mjs reads it. docs/config.md#product-feedback
 // describes the commands.
@@ -11,9 +11,13 @@
 //
 // `status` takes the team's values only from GitHub, at the default branch and at the base (pr-auto-merge branchConfig),
 // so a branch cannot raise or lower them, and the machine's choice only from the main checkout's local file
-// (project.localFeedbackAuto). `record` and `recheck` take the repository, the number, and the head only from gh.
+// (project.localFeedbackAuto). `record` and `recheck` take the repository, the number, and the head only from gh, and
+// `record` stores `limited` by `aidrian pr resolve`'s reads and rule, which the post rule reads.
 // `post` is the one path that posts: it refuses a body holding anything local, and nothing is ever read back from a
 // comment into the record.
+//
+// `items` lists where each item stands, whatever `auto` says, and `diff` writes the diff beside the record for the
+// product-manager read.
 //
 // Exit codes: `status` 0 clear, 2 owed, 3 error; every other action 0 done, 3 refused or failed, with the record untouched.
 
@@ -33,7 +37,7 @@ import { loadKnowledge } from './knowledge.mjs';
 import { ACCESS_DOC, parsePersona, personaDocs, previewPatterns } from './personas.mjs';
 import { branchConfig, defaultBranch, ghError, notFound, readView, VIEW_FIELDS } from './pr-auto-merge.mjs';
 import { checkoutRemotes } from './pr-checks.mjs';
-import { parseTarget } from './pr-resolve.mjs';
+import { fromOutside, parseTarget } from './pr-resolve.mjs';
 import { repoRoot, stateDir, strictConfigPathIn } from './project.mjs';
 import { FEEDBACK_NO_LIST } from './review/config.mjs';
 import { pathPattern } from './review/plan.mjs';
@@ -46,6 +50,8 @@ const USAGE = [
   '       aidrian pr product-feedback answer PR ITEM DECISION [--by WHO] [--reason T] [--issue K] [--url U] [--doc D]',
   '       aidrian pr product-feedback recheck PR ITEM confirmed|reopened [--note T]',
   '       aidrian pr product-feedback post PR --body-file FILE',
+  '       aidrian pr product-feedback items PR [--json]',
+  '       aidrian pr product-feedback diff PR',
 ].join('\n');
 // What a pull request with nothing recorded needs: the read itself, never a record of no read.
 const notRun = (number) => `nothing has read #${number}: run the persona-audit skill on it, or the product-manager read of its diff, then record what that run found`;
@@ -70,12 +76,13 @@ function tableProblem({ kind }, { decision, by, reason }) {
   return decision === 'fix-now' || human ? null : `this item is a defect, which takes fix-now from a session; ${decision} ${ask}`;
 }
 
-function writeRecord(file, record) {
+function writeAtomic(file, text) {
   mkdirSync(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(record, null, 2)}\n`);
+  writeFileSync(temporary, text);
   renameSync(temporary, file);
 }
+const writeRecord = (file, record) => writeAtomic(file, `${JSON.stringify(record, null, 2)}\n`);
 
 // Reads, changes, and writes the record under its lock. Throws when it cannot be read or is not this pull request's.
 function updateRecord(file, pr, change) {
@@ -89,9 +96,10 @@ function updateRecord(file, pr, change) {
   });
 }
 
-// The pull request as gh describes it: readView's fields, with `repo` as gh's URL spells it. As `aidrian pr resolve` holds
-// it, the argument is checked first, and gh's answer, like a URL's repository, must be a remote of this checkout.
-function pullRequest(value, { gh, remotes }) {
+// The pull request as gh describes it: readView's fields, with `repo` as gh's URL spells it, and `crossRepository` when
+// `fields` asks gh for it. As `aidrian pr resolve` holds it, the argument is checked first, and gh's answer, like a URL's
+// repository, must be a remote of this checkout.
+function pullRequest(value, { gh, remotes }, fields = VIEW_FIELDS) {
   const target = parseTarget(value);
   if (target.refusal) throw new Error(target.refusal);
   const spelled = ({ host, owner, name }) => `${host}/${owner}/${name}`;
@@ -100,7 +108,7 @@ function pullRequest(value, { gh, remotes }) {
   if (target.host && !isRemote(target)) throw notRemote(target);
   let view;
   try {
-    view = JSON.parse(gh(['pr', 'view', String(target.number), ...(target.host ? ['--repo', spelled(target)] : []), '--json', VIEW_FIELDS]));
+    view = JSON.parse(gh(['pr', 'view', String(target.number), ...(target.host ? ['--repo', spelled(target)] : []), '--json', fields]));
   } catch (error) {
     throw new Error(`could not read pull request ${target.number} with gh (${ghError(error)})`);
   }
@@ -109,7 +117,21 @@ function pullRequest(value, { gh, remotes }) {
   const answered = parseTarget(pr.number === target.number ? view.url : '');
   if (!answered.host || answered.number !== target.number) throw new Error(`gh answered for no pull request ${target.number}`);
   if (!isRemote(answered)) throw notRemote(answered);
-  return { ...pr, repo: `${answered.owner}/${answered.name}` };
+  return { ...pr, repo: `${answered.owner}/${answered.name}`, crossRepository: view.isCrossRepository };
+}
+
+// Whether the pull request comes from outside the team, by the reads and the rule of `aidrian pr resolve` (fromOutside).
+// `record` stores it, so the post rule (rules/product-feedback-post.mjs), which runs no gh, can hold a post to the Human.
+function readLimited(gh, pr) {
+  let pull;
+  try {
+    pull = JSON.parse(gh(['api', '--hostname', pr.host, `repos/${pr.repo}/pulls/${pr.number}`]));
+  } catch (error) {
+    throw new Error(`could not read who opened #${pr.number} with gh (${ghError(error)}), so nothing was recorded`);
+  }
+  const limited = fromOutside(pr.crossRepository, pull);
+  if (limited === null) throw new Error(`gh did not say whether #${pr.number} comes from outside the team, so nothing was recorded`);
+  return limited;
 }
 
 const unionOf = (lists) => [...new Set(lists.flat())];
@@ -328,8 +350,9 @@ function record({ argv: [value], values, project, gh, remotes, now }) {
   if (noneFound && values['read-by'] !== PRODUCT_MANAGER) throw new Error(`--none-found names the read: --read-by ${PRODUCT_MANAGER}`);
   if (noneFound && ran) throw new Error('--none-found says a read found nothing, so it takes no --report and no items');
   if (!noneFound && values['read-by'] !== undefined) throw new Error('--read-by goes with --none-found');
-  const pr = pullRequest(value, { gh, remotes });
+  const pr = pullRequest(value, { gh, remotes }, `${VIEW_FIELDS},isCrossRepository`);
   if (!noneFound && !ran) throw new Error(notRun(pr.number));
+  const limited = readLimited(gh, pr);
   const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
   const audits = path.join(state, 'audits');
   const sidecar = values.report ? loadSidecar(audits, values.report, pr) : null;
@@ -346,7 +369,7 @@ function record({ argv: [value], values, project, gh, remotes, now }) {
       recordDecision(audits, [{ report, id }], entry);
     }
     const next = {
-      version: RECORD_VERSION, pr: pr.number, repo: pr.repo, head: pr.head, report: sidecar?.report ?? earlier?.report ?? null, read_by: noneFound ? PRODUCT_MANAGER : earlier?.read_by ?? null, comment_id: earlier?.comment_id ?? null, recorded_at: at, items,
+      version: RECORD_VERSION, pr: pr.number, repo: pr.repo, head: pr.head, limited, report: sidecar?.report ?? earlier?.report ?? null, read_by: noneFound ? PRODUCT_MANAGER : earlier?.read_by ?? null, comment_id: earlier?.comment_id ?? null, recorded_at: at, items,
     };
     writeRecord(file, next);
     return next;
@@ -607,6 +630,52 @@ function post({ argv: [value], values, project, gh, remotes, env, access }) {
   return 0;
 }
 
+// `items`: every item of the record and where it stands, whatever `auto` says, for the skill that runs the feedback on
+// demand: which run it is, what to re-check, and what the comment says. `head` is gh's head now, and `recorded_head` the
+// head the record was written at, which the comment names. No record prints `recorded: false`, exit 0.
+function items({ argv: [value], values, project, gh, remotes }) {
+  const pr = pullRequest(value, { gh, remotes });
+  const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
+  const found = readRecord(recordPath(state, pr.repo, pr.number), pr);
+  const triage = found?.items.some((item) => item.source === PERSONA) ? readTriage(path.join(state, 'audits')) : null;
+  const listed = (found?.items ?? []).map((item) => {
+    const entry = decisionOf(item, triage);
+    const where = itemState(item, entry);
+    return {
+      id: item.id, title: item.title, kind: item.kind, source: item.source, audit_key: item.audit_key ?? null, owner: item.owner ?? null, found_at: item.head ?? null, state: where,
+      decision: entry?.decision ?? null, by: entry?.decision ? entry.by ?? null : null, rechecked: item.rechecked ?? null,
+      command: where === 'answered' ? null : commandFor(pr.number, item, where, entry),
+    };
+  });
+  const result = {
+    pr: pr.number, repo: pr.repo, head: pr.head, recorded: Boolean(found), recorded_head: found?.head ?? null, limited: found ? found.limited ?? null : null,
+    report: found?.report ?? null, comment_id: found?.comment_id ?? null, items: listed,
+  };
+  if (values.json) console.log(JSON.stringify(result));
+  else if (!found) console.log(`no product feedback recorded for #${pr.number}`);
+  else for (const each of listed) console.log(`- ${JSON.stringify(each.title)}, ${each.kind}: ${each.state}`);
+  return 0;
+}
+
+// `diff`: writes the pull request's diff beside its record, as `diff.patch`, for the product-manager read, and prints its
+// path. The diff is data an agent reads; nothing here runs it. gh reads it from the repository the pull request is in.
+function diff({ argv: [value], project, gh, remotes }) {
+  const pr = pullRequest(value, { gh, remotes });
+  const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
+  const file = path.join(path.dirname(recordPath(state, pr.repo, pr.number)), 'diff.patch');
+  if (!isWithin(path.join(state, 'product-feedback'), file)) throw new Error(`the diff of ${pr.repo}#${pr.number} would leave the state folder`);
+  let text;
+  try {
+    text = gh(['pr', 'diff', String(pr.number), '--repo', `${pr.host}/${pr.repo}`]);
+  } catch (error) {
+    throw new Error(`could not read the diff of #${pr.number} with gh (${ghError(error)})`);
+  }
+  if (typeof text !== 'string') throw new Error(`gh returned no diff for #${pr.number}`);
+  writeAtomic(file, text);
+  console.log(file);
+  return 0;
+}
+
 const TEXT = { type: 'string' };
 const ACTIONS = {
   status: { options: { json: { type: 'boolean' } }, operands: 1, run: status },
@@ -614,6 +683,8 @@ const ACTIONS = {
   answer: { options: { by: TEXT, reason: TEXT, issue: TEXT, url: TEXT, doc: TEXT }, operands: 3, run: answer },
   recheck: { options: { note: TEXT }, operands: 3, run: recheck },
   post: { options: { 'body-file': TEXT }, operands: 1, run: post },
+  items: { options: { json: { type: 'boolean' } }, operands: 1, run: items },
+  diff: { options: {}, operands: 1, run: diff },
 };
 
 // The CLI body. `gh`, `remotes`, `env`, `access`, and `now` are the test seams: (args) → stdout, () → checkoutRemotes,

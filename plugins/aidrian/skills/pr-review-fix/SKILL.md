@@ -53,7 +53,7 @@ The `pr-review` skill's `references/manifest.md` defines its fields and statuses
    In an unattended run, park each as a Decision for the Human, as the review rules say, and never fix it.
    Record the answer as the manifest's rules say; a finding that becomes `open` joins this selection.
 4. `blocked` findings are listed, and tried again only on the user's word.
-5. Everything else needs no action here: `drop_unless_cited`, `acceptable_as_is`, `needs_axis`, `pre_existing`, `fixed`, and `resolved`.
+5. Everything else needs no action here: `drop_unless_cited`, `acceptable_as_is`, `needs_axis`, `pre_existing`, `follow_up`, `fixed`, `resolved`, and `dismissed`.
 
 ## 4. Owners
 
@@ -96,7 +96,7 @@ and the next step: run the `pr-review` skill again to confirm the fixes. Only a 
 
 ## Do not
 
-- Mark a finding `resolved`, or settle a dispute. A review round resolves; the user decides.
+- Mark a finding `resolved` or `dismissed`, or settle a dispute. A review round resolves; the user decides.
 - Drop, downgrade, or reword a finding on your own judgment.
 - Give a finding a third pass.
 - Revert, reset, or delete work you did not make in this run without asking.

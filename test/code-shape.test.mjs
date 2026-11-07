@@ -85,6 +85,7 @@ test('a ?, :, or brace inside a string, template text, regular expression, or co
     '// a ? b : c ? d : e\n',
     '/* a ? b : c ? d : e { */\n',
     'const r = /[?:{]/u;\nconst q = /a?b:c?/u.test(s) ? 1 : 2;\n',
+    'const r = /[/]a ? b : c ? d : e/u;\n',
     "const a = x ? '?' : 'y ? 1 : 2';\n",
     "const s = 'it\\'s a ? b : c ? d : e';\n",
   ];

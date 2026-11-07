@@ -94,7 +94,7 @@ function readSnapshotFile(file) {
   return { file, problem: 'it is not a gate snapshot' };
 }
 
-// Whether `value` has the shape config.mjs gives `agents`, every name and pattern valid, so gateDenial can read it.
+// Whether `value` has the shape config-merge.mjs checkAgents gives `agents`, every name and pattern valid, so gateDenial can read it.
 function isGateSet(value) {
   return isObject(value) && Object.entries(value).every(([name, lists]) => agentNameProblem(name) === null && isObject(lists)
     && Object.entries(lists).every(([list, patterns]) => ['deny', 'allow'].includes(list) && Array.isArray(patterns)

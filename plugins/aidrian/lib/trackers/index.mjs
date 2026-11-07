@@ -27,7 +27,7 @@ export function expandTracker(value, adapter) {
   const expanded = { ...value };
   if (value.writeTools === undefined) expanded.writeTools = writeToolsOf(adapter, servers);
   if (isObject(value.workspace)) {
-    // A value that is no text is config.mjs's error, and must not turn a tracker with a read into one with none.
+    // A value that is no text is config-merge.mjs checkTracker's error, and must not turn a tracker with a read into one with none.
     const written = typeof value.workspaceInput === 'string' && value.workspaceInput.trim() !== '' ? value.workspaceInput : undefined;
     const input = written ?? adapter.workspaceInput;
     const field = input ?? adapter.workspaceField;

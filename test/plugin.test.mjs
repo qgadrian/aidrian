@@ -299,7 +299,7 @@ test('a skill that runs the pr-review-loop skill says when it marks the pull req
     assert.match(text, /gh pr ready <n>/, `${skill} marks the pull request ready`);
     assert.match(text, /github\.markReady/, `${skill} reads github.markReady`);
   }
-  // markReady is "auto" by default (lib/config.mjs), so every skill that marks ready names that default, and
+  // markReady is "auto" by default (lib/config-defaults.mjs), so every skill that marks ready names that default, and
   // pr-merge-when-green marks a signed-off draft ready instead of always asking.
   for (const file of ['pr-review-loop/SKILL.md', 'autopilot/references/phases.md', 'orchestration/SKILL.md', 'pr-merge-when-green/SKILL.md']) {
     const text = readFileSync(path.join(PLUGIN, 'skills', file), 'utf8').replace(/\s+/g, ' ');

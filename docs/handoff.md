@@ -18,8 +18,8 @@ On a stop where the [announce check](hooks.md#announced-work) sends the agent ba
 
 When the main session ends a turn, the Stop hook reads its transcript and computes the cost ratio `r`:
 how many times more each call costs here than it would in a fresh session.
-Once `r` reaches the next step, the hook sends the agent back for one more turn, with `r` and an estimate of `N`,
-the calls the work left must take before a handoff pays back, such as:
+Once `r` reaches `costRatio`, and again each time it doubles since the last firing, the hook sends the agent back
+for one more turn, with `r` and an estimate of `N`, the calls the work left must take before a handoff pays back, such as:
 
 > each call costs 2.1 times what it would in a fresh session started from a handoff brief, and a handoff pays back
 > after about 54 more model calls, an estimate
@@ -35,10 +35,12 @@ start it. Then the agent ends the turn without a word about it. Otherwise it act
 | `auto` | The agent writes the brief with the `session-handoff` skill and tells the Human its path. |
 | `off` | Nothing; neither hook sends the agent anything. |
 
-**Steps.** The first step is `costRatio`, 2 by default, and each step after it adds `costRatio − 1`:
-2, 3, 4 by default, or 1.5, 2, 2.5 at a `costRatio` of 1.5. So neither a "keep going" nor a quiet skip turns the
-reminder off for the rest of the session; it comes back once the next step is reached.
-The steps scale with the session's own baseline: with a 30,000-token baseline the first fires near 148,000 tokens of
+**Once, then at double.** The first firing is at `costRatio`, 2 by default. The reminder comes back only once `r`
+reaches twice the ratio at its last firing: 2, 4, 8 by default, or 1.5, 3, 6 at a `costRatio` of 1.5, and a first
+firing at 2.5 comes back at 5. It never comes back below `costRatio`, so a `costRatio` raised mid-session holds
+even where twice the last firing is lower. So neither a "keep going" nor a quiet skip turns the reminder off for the rest of the
+session, and a session that keeps going is nudged a few times at most.
+The thresholds scale with the session's own baseline: with a 30,000-token baseline the first fires near 148,000 tokens of
 context, with a 60,000-token baseline near 208,000.
 
 **Token ceiling.** `maxTokens`, off by default, is a ceiling on the context, for the quality of the answers rather than
@@ -46,14 +48,18 @@ their cost. It fires on its own, whatever `r` is, at `maxTokens` and then at eac
 `maxTokens × 2^n` after `n` firings. Its message names the context only, with no `r` or `N`.
 
 **Re-arming.** A marker in the system's temporary folder, `aidrian-session-length-<session id>`, holds
-`{"ratio": n, "tokens": n, "compactions": n}`: how often each trigger fired, and the compactions seen.
-A firing raises only the count of the trigger that fired, past every step the session already reached,
-so a jump of two steps in one turn is not reminded again at the next.
-A marker an older version wrote, a mode word or one count, counts as one firing of each. The `SessionEnd` hook deletes the marker; a new session starts fresh.
+`{"lastRatio": r, "tokens": n, "compactions": n}`: the cost ratio at the last cost firing (0 for none), how often the
+ceiling fired, and the compactions seen. A firing changes only what its own trigger holds: a cost firing records its
+ratio, and a ceiling firing raises its count past every doubling the context already reached, so a jump of two
+doublings in one turn is not reminded again at the next.
+A marker older versions wrote reads as follows. A mode word or one count is one firing of each trigger, the cost one
+at `costRatio`, at the session's current compactions. A v0.47.0 marker, `{"ratio": n, "tokens": n, "compactions": n}`,
+keeps its own `tokens` and `compactions`; a `ratio` above 0 is a cost firing at `costRatio`, and a `ratio` of 0 is none.
+The `SessionEnd` hook deletes the marker; a new session starts fresh.
 
 **Compaction.** A compaction writes a `compact_boundary` entry into the same transcript, under the same session id.
-When the transcript holds more of them than the marker's `compactions`, both counts reset to 0 first,
-so a compacted session is reminded again from the first step.
+When the transcript holds more of them than the marker's `compactions`, both triggers reset first,
+so a compacted session is reminded again once `r` climbs back to `costRatio`.
 
 ## The plan offer
 
@@ -104,7 +110,7 @@ Output tokens and subagent calls cost the same either way, so the model leaves t
 | Key | Meaning |
 | --- | --- |
 | `session.handoff.mode` | `"ask"`, `"auto"`, or `"off"`: what the reminder and the plan offer do. |
-| `session.handoff.costRatio` | The cost ratio of the first step, a number of 1.1 or more; each later step adds `costRatio − 1`. |
+| `session.handoff.costRatio` | The cost ratio of the first firing, a number of 1.1 or more; the reminder comes back once the ratio doubles since its last firing, never below `costRatio`. |
 | `session.handoff.maxTokens` | A ceiling on the context, in tokens, that fires on its own and doubles; `0`, the default, is off. |
 
 Most projects set only `mode`. A config written before these settings became a group still loads, with an error from

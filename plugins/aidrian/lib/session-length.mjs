@@ -55,38 +55,45 @@ export function handoffCost({ calls, first, last, model, oneHourCache }, { brief
   return { ratio, breakEven: cost / (read * (last - fresh)) };
 }
 
-// The ratio at which the cost trigger fires after `fired` firings: costRatio, then each step adds costRatio − 1.
-export const ratioStep = (costRatio, fired) => costRatio + fired * (costRatio - 1);
+// The ratio at which the cost trigger fires next: costRatio while it has not fired since the last reset (`lastRatio` 0),
+// then twice the ratio of its last firing, and never below costRatio, which config.json may raise mid-session.
+// Anchored on the ratio the session actually reached, so a session that keeps going is reminded a few times at most,
+// and a jump far past costRatio comes back at twice where it landed.
+export const nextRatio = (costRatio, lastRatio) => (lastRatio > 0 ? Math.max(costRatio, 2 * lastRatio) : costRatio);
 
 // The context at which the token ceiling fires after `fired` firings; 0 is off.
 export const tokenCeiling = (maxTokens, fired) => maxTokens * 2 ** fired;
 
-// The firing count after a firing at `value`: past every step `value` reached, so a ratio or context that jumped two
-// steps in one turn is not reminded again at the next turn's end. Computed, not counted step by step; the guard only
-// corrects the rounding of the division, so it runs at most a few times.
+// The ceiling's firing count after a firing at `value`: past every doubling `value` reached, so a context that jumped
+// two of them in one turn is not reminded again at the next turn's end. Computed, not counted step by step; the guard
+// only corrects the rounding of the logarithm, so it runs at most a few times.
 function passed(value, fired, estimate, at) {
   let next = Math.max(fired + 1, estimate);
   while (value >= at(next)) next += 1;
   return next;
 }
-const ratioPassed = (ratio, costRatio, fired) =>
-  passed(ratio, fired, Math.floor((ratio - costRatio) / (costRatio - 1)) + 1, (n) => ratioStep(costRatio, n));
 const tokensPassed = (context, maxTokens, fired) =>
   passed(context, fired, Math.floor(Math.log2(context / maxTokens)) + 1, (n) => tokenCeiling(maxTokens, n));
 
-// The firing counts a marker holds: { ratio, tokens, compactions }. No marker is none. A marker an older version wrote,
-// a mode word or one count, counts as one firing of each, at the session's current `compactions`.
-export function readMarker(text, compactions) {
-  if (text === null || text === undefined) return { ratio: 0, tokens: 0, compactions: 0 };
+// What a marker holds: { lastRatio, tokens, compactions }, the cost ratio at the last cost firing (0 for none), the
+// ceiling's firing count, and the compactions seen. No marker is none. A marker older versions wrote reads as follows.
+// A mode word or one count is one firing of each trigger, the cost one at `costRatio`, at the session's current
+// `compactions`. A v0.47.0 JSON marker keeps its own `tokens` and `compactions`, and its `ratio` count reads as a cost
+// firing at `costRatio` when above 0, or as no cost firing at 0. So an old marker that recorded a cost firing never
+// brings the cost reminder back sooner than twice costRatio.
+export function readMarker(text, compactions, costRatio) {
+  if (text === null || text === undefined) return { lastRatio: 0, tokens: 0, compactions: 0 };
   let marker;
   try {
     marker = JSON.parse(text);
   } catch {
     marker = null;
   }
-  if (marker === null || typeof marker !== 'object' || Array.isArray(marker)) return { ratio: 1, tokens: 1, compactions };
+  if (marker === null || typeof marker !== 'object' || Array.isArray(marker)) return { lastRatio: costRatio, tokens: 1, compactions };
   const count = (value) => (Number.isInteger(value) && value > 0 ? value : 0);
-  return { ratio: count(marker.ratio), tokens: count(marker.tokens), compactions: count(marker.compactions) };
+  const { lastRatio } = marker;
+  const last = Number.isFinite(lastRatio) && lastRatio > 0 ? lastRatio : count(marker.ratio) > 0 ? costRatio : 0;
+  return { lastRatio: last, tokens: count(marker.tokens), compactions: count(marker.compactions) };
 }
 
 const round = (value) => String(Number(value.toFixed(2)));
@@ -96,27 +103,27 @@ const costLine = ({ ratio, breakEven }) =>
   `and a handoff pays back after about ${Math.round(breakEven)} more model calls, an estimate`;
 
 // What the Stop hook does, or null: { reason, marker }. `handoff` is config.json `session.handoff`, `markerText` the
-// marker's text or null. A compaction since the marker resets both counts, so the session is reminded from the first
-// step again. A firing raises only the count of the trigger that fired, past every step it reached.
+// marker's text or null. A compaction since the marker resets both triggers, so the session is reminded from costRatio
+// again. A firing changes only what the trigger that fired holds: the cost one records its ratio, the ceiling raises its
+// count past every doubling it reached.
 export function stopReminder(text, handoff, markerText) {
   const usage = sessionUsage(text);
   if (!usage.calls) return null;
-  let counts = readMarker(markerText, usage.compactions);
-  if (usage.compactions > counts.compactions) counts = { ratio: 0, tokens: 0, compactions: usage.compactions };
+  let counts = readMarker(markerText, usage.compactions, handoff.costRatio);
+  if (usage.compactions > counts.compactions) counts = { lastRatio: 0, tokens: 0, compactions: usage.compactions };
   const cost = handoffCost(usage);
-  const step = ratioStep(handoff.costRatio, counts.ratio);
   const ceiling = tokenCeiling(handoff.maxTokens, counts.tokens);
-  const byCost = cost.breakEven !== null && cost.ratio >= step;
+  const byCost = cost.breakEven !== null && cost.ratio >= nextRatio(handoff.costRatio, counts.lastRatio);
   const byTokens = handoff.maxTokens > 0 && usage.last >= ceiling;
   if (!byCost && !byTokens) return null;
   const marker = {
-    ratio: byCost ? ratioPassed(cost.ratio, handoff.costRatio, counts.ratio) : counts.ratio,
+    lastRatio: byCost ? cost.ratio : counts.lastRatio,
     tokens: byTokens ? tokensPassed(usage.last, handoff.maxTokens, counts.tokens) : counts.tokens,
     compactions: usage.compactions,
   };
   const next = [];
   if (byTokens) next.push(`the context reaches ${Math.round(tokenCeiling(handoff.maxTokens, marker.tokens) / 1000)}k tokens`);
-  if (byCost) next.push(`each call costs ${round(ratioStep(handoff.costRatio, marker.ratio))} times what a fresh session's would`);
+  if (byCost) next.push(`each call costs ${round(nextRatio(handoff.costRatio, marker.lastRatio))} times what a fresh session's would`);
   return {
     reason: handoffReason(handoff.mode, { cost: byCost ? cost : null, tokens: byTokens ? usage.last : null, next }),
     marker,
@@ -149,9 +156,10 @@ export function handoffReason(mode, { cost = null, tokens = null, next }) {
     'If they choose to hand off, run the session-handoff skill; if they keep going, carry on.';
 }
 
-// What the plan hook adds once the Human approves a plan, or null. Half a step is enough here: the plan is on disk and
-// nothing is in flight, so a handoff costs least at this moment, and the build would carry the whole planning context.
-// It fires at r ≥ 1 + (costRatio − 1) / 2, or at half of maxTokens when the ceiling is set.
+// What the plan hook adds once the Human approves a plan, or null. Halfway to costRatio is enough here: the plan is on
+// disk and nothing is in flight, so a handoff costs least at this moment, and the build would carry the whole planning
+// context. It fires at r ≥ 1 + (costRatio − 1) / 2, halfway from a fresh session's 1 to costRatio, or at half of
+// maxTokens when the ceiling is set.
 export function planApprovedContext(handoff, usage) {
   if (handoff.mode === 'off' || !usage.calls) return null;
   const cost = handoffCost(usage);

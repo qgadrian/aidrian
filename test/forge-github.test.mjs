@@ -205,6 +205,16 @@ test('changeEvidence: a comment, review, or attachment of the pull request, each
     ['api', 'repos/acme/notes/pulls/7'],
     ['api', 'repos/acme/notes/issues/7/comments', '--paginate', '--slurp'],
   ]);
+  const before = args().length;
+  for (const url of ['https://evil.example/acme/notes/pull/7#issuecomment-11', 'https://gist.github.com/acme/notes/pull/7#issuecomment-11', 'https://evil.example/user-attachments/assets/abc-1']) {
+    assert.equal(forge.changeEvidence('acme/notes', 7, url), null, url);
+  }
+  assert.equal(args().length, before, 'a link on another host asks GitHub nothing');
+  // A pull request on a GitHub Enterprise host: its links count there, with that host named to gh, and github.com's do not.
+  const enterprise = recorded((call) => (call.includes('repos/acme/notes/issues/comments/11') ? '{"issue_url":"https://ghe.example/api/v3/repos/acme/notes/issues/7"}' : '[[]]'));
+  assert.equal(enterprise.forge.changeEvidence('acme/notes', 7, 'https://ghe.example/acme/notes/pull/7#issuecomment-11', { host: 'ghe.example' }), 'comment');
+  assert.equal(enterprise.forge.changeEvidence('acme/notes', 7, `${pr}#issuecomment-11`, { host: 'ghe.example' }), null, 'github.com is another host there');
+  assert.deepEqual(enterprise.args(), [['api', '--hostname', 'ghe.example', 'repos/acme/notes/issues/comments/11']]);
   const broken = recorded(() => { throw new Error('gh: Bad Gateway (HTTP 502)'); }).forge;
   assert.throws(() => broken.changeEvidence('acme/notes', 7, `${pr}#issuecomment-11`), /HTTP 502/u, 'any other failure throws');
 });

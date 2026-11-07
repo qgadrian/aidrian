@@ -42,6 +42,10 @@ export const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 
 // A file uploaded to GitHub, as a pull request's body or comment links it.
 const ATTACHMENT = /^https:\/\/(?:github\.com\/user-attachments\/(?:assets|files)\/|github\.com\/[^/]+\/[^/]+\/(?:assets|files)\/|(?:private-)?user-images\.githubusercontent\.com\/)\S+$/u;
+// The same upload's path on a GitHub Enterprise host.
+const ATTACHMENT_PATH = /^\/(?:user-attachments\/(?:assets|files)\/|[^/]+\/[^/]+\/(?:assets|files)\/)\S+$/u;
+// gh's default host, which a call names only when it is another.
+const DEFAULT_HOST = 'github.com';
 
 // The adapter for the repository at `cwd`. `run` is gh, the test seam: the adapter's methods call it, and it stays in
 // this closure, so no caller of the facade gets a raw gh. Every method returns GitHub's payload, parsed, and throws
@@ -126,7 +130,9 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // What `url` links of pull request `n` of `repo`: "comment", "review", or "review_comment" for a link to one of the
     // pull request's own, "attachment" for an uploaded file its body, a comment, or a review links, or null when it is
     // no part of that pull request, or GitHub finds no such item (HTTP 404). Any other failure throws as gh threw it.
-    changeEvidence: (repo, n, url) => {
+    // `host` is the GitHub host the pull request lives on, github.com unless named: a link on any other host is no
+    // part of it, and is never asked about.
+    changeEvidence: (repo, n, url, { host = DEFAULT_HOST } = {}) => {
       let parsed;
       try {
         parsed = new URL(String(url));
@@ -134,6 +140,9 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
         return null;
       }
       if (parsed.protocol !== 'https:') return null;
+      const own = parsed.hostname.toLowerCase() === String(host).toLowerCase();
+      // github.com is gh's default host, so its calls name none, as every other method's do.
+      const at = own && parsed.hostname.toLowerCase() !== DEFAULT_HOST ? { host: parsed.hostname } : {};
       const found = (read) => {
         try {
           return read();
@@ -142,17 +151,19 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
           throw error;
         }
       };
-      const link = /^\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/[^/]*)?\/?$/u.exec(parsed.pathname);
+      const link = own ? /^\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/[^/]*)?\/?$/u.exec(parsed.pathname) : null;
       if (link) {
         if (`${link[1]}/${link[2]}`.toLowerCase() !== String(repo).toLowerCase() || Number(link[3]) !== Number(n)) return null;
         const [, kind, id] = /^#(issuecomment-|pullrequestreview-|discussion_r)(\d+)$/u.exec(parsed.hash) ?? [];
-        if (kind === 'issuecomment-') return String(found(() => rest(`repos/${repo}/issues/comments/${id}`))?.issue_url ?? '').endsWith(`/issues/${n}`) ? 'comment' : null;
-        if (kind === 'pullrequestreview-') return found(() => rest(`repos/${repo}/pulls/${n}/reviews/${id}`)) ? 'review' : null;
-        if (kind === 'discussion_r') return String(found(() => rest(`repos/${repo}/pulls/comments/${id}`))?.pull_request_url ?? '').endsWith(`/pulls/${n}`) ? 'review_comment' : null;
+        if (kind === 'issuecomment-') return String(found(() => rest(`repos/${repo}/issues/comments/${id}`, at))?.issue_url ?? '').endsWith(`/issues/${n}`) ? 'comment' : null;
+        if (kind === 'pullrequestreview-') return found(() => rest(`repos/${repo}/pulls/${n}/reviews/${id}`, at)) ? 'review' : null;
+        if (kind === 'discussion_r') return String(found(() => rest(`repos/${repo}/pulls/comments/${id}`, at))?.pull_request_url ?? '').endsWith(`/pulls/${n}`) ? 'review_comment' : null;
         return null;
       }
-      if (!ATTACHMENT.test(parsed.href)) return null;
-      const bodies = [found(() => rest(`repos/${repo}/pulls/${n}`))?.body, ...[`repos/${repo}/issues/${n}/comments`, `repos/${repo}/pulls/${n}/reviews`, `repos/${repo}/pulls/${n}/comments`].flatMap((route) => list(route) ?? []).map((each) => each?.body)];
+      // An upload on github.com's own upload hosts, or under the pull request's host when it is another one.
+      const upload = String(host).toLowerCase() === DEFAULT_HOST ? ATTACHMENT.test(parsed.href) : own && ATTACHMENT_PATH.test(parsed.pathname);
+      if (!upload) return null;
+      const bodies = [found(() => rest(`repos/${repo}/pulls/${n}`, at))?.body, ...[`repos/${repo}/issues/${n}/comments`, `repos/${repo}/pulls/${n}/reviews`, `repos/${repo}/pulls/${n}/comments`].flatMap((route) => list(route, at) ?? []).map((each) => each?.body)];
       return bodies.some((body) => typeof body === 'string' && body.includes(String(url))) ? 'attachment' : null;
     },
     // The reviews with their inline comments, GitHub's GraphQL answer: `data.repository.pullRequest.reviews`, at most

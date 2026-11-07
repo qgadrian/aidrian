@@ -283,10 +283,16 @@ export async function runSignoff(args, project, config = null, { forge } = {}) {
   }
   if (flags.accept) {
     const where = forge ?? forgeFor(project.root);
+    // The host the pull request lives on, from its own link: evidence on any other host is no part of it. When the
+    // link cannot be read, the adapter's default host applies.
+    let host = null;
+    try {
+      host = new URL(where.change(pr, 'url', { repo })?.url).hostname;
+    } catch {}
     const checkEvidence = (url) => {
       let kind;
       try {
-        kind = where.changeEvidence(repo, pr, url);
+        kind = where.changeEvidence(repo, pr, url, host ? { host } : {});
       } catch (error) {
         throw new Error(`--evidence ${url} could not be checked on ${repo}#${pr}: ${String(error?.message ?? error).split('\n')[0].slice(0, 200)}`);
       }

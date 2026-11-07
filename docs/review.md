@@ -429,7 +429,11 @@ rest of the review config it is the base branch's. Unset, each machine picks its
 
 ## Rounds
 
-A round is one run of the plan on one head. The cap is `github.maxReviewRounds` as the base branch commits it, so an
+A round is one run of the plan on one head. Right after a push, GitHub can still report the commit the push built
+on. When the checkout's branch tracks the pull request's branch, its pushed commit, which that report is an ancestor
+of, is the head the step reviews, so the first step after a push opens a new round instead of re-serving the last one.
+A local commit past that head returns `incomplete`, with `local_head` and `retry_recommended: true`: push, then run
+the step again. A checkout on any other branch reviews the head GitHub reports. The cap is `github.maxReviewRounds` as the base branch commits it, so an
 edit to the working copy's config cannot raise it. At the cap, [extra rounds](#extra-rounds) may grant one more;
 raising the cap itself needs `AIDRIAN_ALLOW_EXTRA_ROUNDS=1` in the Human's own shell. The `review-rounds` rule ([hooks.md](hooks.md#bash-rules)) refuses an
 agent command that sets it, and a bot request posted any way but through `aidrian pr`. The last round runs the final stage first, so a pull request

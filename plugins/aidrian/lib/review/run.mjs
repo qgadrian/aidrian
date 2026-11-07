@@ -47,6 +47,7 @@ import { atCap, buildHistory, extensionLogger, grantedRounds, policyOf, revalida
 import { answerPending, emptyState, heldMessage, mergePending, noteOutcome, prunePasses, readLocalState, readRecord, sameCommit, summaryBody, summaryToEdit, writeSummary, writeLocalState } from './state.mjs';
 import * as quota from './quota.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, ghImage, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput, visualMatrix, visualRoutes } from './visual.mjs';
+import { headToReview } from './pushed.mjs';
 
 export const EXIT = Object.freeze({
   dispatch: 0, running: 0, fix_required: 0, received: 0, none_needed: 0, human_required: 9,
@@ -64,7 +65,7 @@ const HARNESS_INVARIANT = Object.freeze({
 });
 
 // The fields the review step reads of its pull request.
-const CHANGE_FIELDS = 'number,headRefOid,baseRefName,url,title,body';
+const CHANGE_FIELDS = 'number,headRefOid,headRefName,baseRefName,url,title,body';
 
 // The check runs of one commit as `gh pr checks` rows: the evidence must be for the head under review.
 const checkRows = (runs) => runs.map((run) => ({ name: run.name, state: run.status === 'completed' ? String(run.conclusion ?? 'unknown').toUpperCase() : 'PENDING' }));
@@ -223,7 +224,11 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
   const info = forge.change(opts.pr, CHANGE_FIELDS);
   const repo = opts.repo ?? forge.repo();
   const n = info.number;
-  const head = info.headRefOid;
+  // Right after a push the forge may still report the commit it built on: this checkout's pushed head wins, and a local
+  // commit past it is named rather than an older round re-served (lib/review/pushed.mjs).
+  const at = headToReview(root, info.headRefOid, info.headRefName);
+  const head = at.head;
+  if (at.unpushed) return { status: 'incomplete', pr: n, repo, head, local_head: at.unpushed, reason: `this checkout's HEAD ${at.unpushed.slice(0, 7)} is past ${head.slice(0, 7)}, the head of pull request #${n}: push, then run the step again`, retry_recommended: true };
   if (!resolve(root, head)) throw new Error(`the head ${head.slice(0, 7)} of pull request #${n} is not in this checkout: git fetch first`);
   const baseTip = resolve(root, `origin/${info.baseRefName}`) ?? resolve(root, info.baseRefName);
   if (!baseTip) throw new Error(`the base branch ${info.baseRefName} is not in this checkout: git fetch first`);

@@ -785,7 +785,9 @@ test('the docs say what the route does to a provisional ruling, a marker, and a 
   assert.doesNotMatch(ledger, /never resolves under another's answer/);
   assert.match(ledger, /`ruling\.domain`: optional\. The decision's domain\. The route after a ruling continues only when this matches the domain the caller names, and `resolve` judges the class/);
   assert.doesNotMatch(flat('docs/project-folder.md'), /a `ux` ruling never resolves under `product`'s answer/);
-  const code = readFileSync(path.join(PLUGIN, 'lib/quorum.mjs'), 'utf8');
+  // lib/quorum.mjs and the modules under lib/quorum/ it re-exports.
+  const quorumFiles = ['lib/quorum.mjs', ...readdirSync(path.join(PLUGIN, 'lib/quorum')).filter((name) => name.endsWith('.mjs')).sort().map((name) => `lib/quorum/${name}`)];
+  const code = quorumFiles.map((file) => readFileSync(path.join(PLUGIN, file), 'utf8')).join('\n');
   assert.doesNotMatch(code, /so it never resolves under that domain's answer/);
   assert.match(code, /the route continues only when they match, and resolve judges the class/);
   assert.match(flat('docs/personas.md'), /review later/);

@@ -174,7 +174,8 @@ The `quorum` skill runs in one of three modes, and its ledger records which in `
 A plan-mode ledger, `quorum/<name>-<plan-hash>.json`, records the objections two adversaries raised against a plan,
 the architect's ruling on each, and the Human's answers. `<name>` is the plan's file name without `.md`,
 or `<parent-folder>-plan` for a file named `plan.md`, and `<plan-hash>` is `git hash-object` of the plan.
-`lib/quorum.mjs` holds its schema, `LEDGER_SCHEMA`, and the schemas of Codex's answers, `OBJECTIONS_SCHEMA` and `REBUTTALS_SCHEMA`.
+Its schema, `LEDGER_SCHEMA`, and the schemas of Codex's answers, `OBJECTIONS_SCHEMA` and `REBUTTALS_SCHEMA`,
+are defined in `lib/quorum/*-schema.mjs` and exported by `lib/quorum.mjs`.
 Each objection, ruling, and rebuttal cites its evidence as `{kind, ref, quote}`.
 The `quorum` skill's `references/ledger.md` lists every field.
 

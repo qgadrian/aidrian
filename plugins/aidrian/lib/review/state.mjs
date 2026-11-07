@@ -27,8 +27,9 @@ import { summaryLines as quotaLines } from './quota.mjs';
 import { splitPasses } from './split.mjs';
 
 export const SUMMARY_MARKER = '<!-- aidrian-review-summary -->';
-// The author associations GitHub gives the people who belong to a repository.
-export const MEMBER_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+// The author associations GitHub gives the people who belong to a repository. Frozen, with no add, and compared by ===
+// rather than through a prototype method, so no module in the gate's process can trust another association.
+export const MEMBER_ASSOCIATIONS = Object.freeze({ has: (association) => association === 'OWNER' || association === 'MEMBER' || association === 'COLLABORATOR' });
 const STATE = /<!--\s*aidrian-review-state:([A-Za-z0-9+/=]+)\s*-->/u;
 const STATE_BR = /<!--\s*aidrian-review-state-br:([A-Za-z0-9+/=]+)\s*-->/u;
 const HELD = /<!--\s*aidrian-review-state-held:(\d+)\s*-->/u;

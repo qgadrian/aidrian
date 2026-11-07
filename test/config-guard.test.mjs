@@ -327,6 +327,17 @@ test('a glob reaches a config file that is a symlink to another folder, by the p
   assert.equal(verdict(dir, subagent(dir, 'Bash', { command: 'touch src/a.js && rm -rf out/*.js' })), null);
 });
 
+test('a link to a config file not made yet changes it: a write through the link creates the file', (t) => {
+  const { dir } = project(t);
+  mkdirSync(path.join(dir, 'out'));
+  symlinkSync('../.aidrian.local.json', path.join(dir, 'out/alias'));
+  for (const command of ["echo '{}' > out/alias", "printf x | tee out/alias", `echo x > ${path.join(dir, 'out/alias')}`]) {
+    assert.match(verdict(dir, subagent(dir, 'Bash', { command })) ?? '', /changes \.aidrian\.local\.json/, command);
+  }
+  assert.match(verdict(dir, subagent(dir, 'Write', { file_path: path.join(dir, 'out/alias') })) ?? '', /changes \.aidrian\.local\.json/);
+  assert.equal(verdict(dir, subagent(dir, 'Bash', { command: 'echo x > out/other' })), null);
+});
+
 test('ln, truncate, install, dd, git checkout --, git restore, and a glob that may name a guarded file change it', (t) => {
   const { dir } = project(t);
   for (const command of [

@@ -613,3 +613,10 @@ test('the rule loads neither gh nor the knowledge loader, so a Bash call pays fo
   assert.ok(reached.length > 1, 'the walk follows imports');
   for (const absent of ['gh.mjs', 'knowledge.mjs', 'pr-product-feedback.mjs', 'pr-auto-merge.mjs', 'pr-resolve.mjs']) assert.ok(!reached.includes(absent), `${absent} is reached: ${reached.join(', ')}`);
 });
+
+test('two items with the same title are told apart by the id alone', (t) => {
+  const g = guarded(t);
+  writeFileSync(g.file, JSON.stringify({ ...g.record, items: [g.record.items[0], { ...g.record.items[1], title: TITLE }] }));
+  g.answer(QUESTION, 'Drop');
+  assert.equal(g.run(ANSWER), null, 'the shared title is not another item\'s');
+});

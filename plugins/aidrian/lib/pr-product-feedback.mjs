@@ -404,7 +404,8 @@ function mergeItems(earlier, inputs, sidecar, pr, triage, at) {
   } else if (inputs.persona.length) throw new Error('--items names an audit_key, and no --report names its sidecar');
   for (const { title, kind } of inputs.manager) {
     const kept = items.find((item) => item.source === PRODUCT_MANAGER && item.title === title);
-    if (kept) kept.kind = higherKind(kept.kind, kind);
+    // A new read that finds the gap again needs a new confirmation, as a persona carry does.
+    if (kept) Object.assign(kept, { kind: higherKind(kept.kind, kind), head: pr.head, rechecked: null });
     else added.push({ id: null, source: PRODUCT_MANAGER, title, kind, owner: PRODUCT_MANAGER, head: pr.head, rechecked: null, answer: null });
   }
   for (const item of added) item.id = nextId();

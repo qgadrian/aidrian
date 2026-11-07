@@ -137,7 +137,7 @@ export function readCall(invocation) {
 }
 
 // What a question to the Human must name for this item of this record.
-const askOf = (record, item) => ({ pr: record.pr, id: item.id, title: item.title, others: record.items.filter((each) => each !== item).map((each) => each.title), since: record.recorded_at });
+const askOf = (record, item) => ({ pr: record.pr, id: item.id, title: item.title, others: record.items.filter((each) => each !== item && each.title !== item.title).map((each) => each.title), since: record.recorded_at });
 
 // The whole label the option must be: "fix-now" also reads as "Fix now".
 const onlyDecision = (decision) => new RegExp(`^\\s*${decision.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace('-', '[- ]')}\\s*[.!]?\\s*$`, 'iu');

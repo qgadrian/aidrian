@@ -77,7 +77,8 @@ export function decisionOf(item, triage) {
   return report ? triage?.reports?.[report]?.[id] ?? null : null;
 }
 
-// `<state>/product-feedback/<owner>/<name>/pr-<n>/record.json`.
+// `<state>/product-feedback/<owner>/<name>/pr-<n>/record.json`. Accepted residual: the GitHub host is not part of the
+// identity, so the same owner/name and number on two hosts share one record. That needs two hosts on one machine.
 export function recordPath(state, repo, number) {
   const base = path.join(state, 'product-feedback');
   const file = path.join(base, ...repo.split('/'), `pr-${number}`, 'record.json');

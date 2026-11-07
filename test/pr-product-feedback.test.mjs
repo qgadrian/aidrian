@@ -1405,3 +1405,18 @@ test('diff writes the pull request\'s diff beside its record, read from its own 
   assert.match(broken.err.join('\n'), /could not read the diff of #7/u);
   assert.ok(!existsSync(path.join(failing.state, 'product-feedback')), 'nothing was written');
 });
+
+test('a later read that reports a product-manager gap again clears its confirmed re-check', (t) => {
+  const r = repo(t);
+  recorded(t, r, [], { extra: [{ source: 'product-manager', title: 'A gap in the rules', kind: 'defect' }] });
+  assert.equal(run(t, r, ['answer', '7', 'PF1', 'fix-now', '--by', 'human']).code, 0);
+  const later = { view: { headRefOid: LATER } };
+  assert.equal(run(t, r, ['recheck', '7', 'PF1', 'confirmed'], later).code, 0);
+  assert.equal(status(t, r, later).json.reason, 'nothing_open');
+  const newer = { view: { headRefOid: 'c'.repeat(40) } };
+  const again = run(t, r, ['record', '7', '--items', itemsFile(r, [{ source: 'product-manager', title: 'A gap in the rules', kind: 'defect' }], 'again.json')], newer);
+  assert.equal(again.code, 0, again.err.join('\n'));
+  const [item] = recordOf(r).items;
+  assert.deepEqual([item.head, item.rechecked], ['c'.repeat(40), null]);
+  assert.deepEqual([status(t, r, newer).code, status(t, r, newer).json.reason], [2, 'not_rechecked']);
+});

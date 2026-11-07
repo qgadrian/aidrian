@@ -64,7 +64,7 @@ function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = 
 
 const clean = async () => ({ status: 'done', findings: [], verdicts: [], dropped: [] });
 // The `next` entry of an unverified invariant: its acceptance command, and `notes` beside it.
-const acceptCommand = (flow, id, head) => `aidrian pr signoff 7 --flow ${flow} --accept ${id} --evidence "<comment, review, or attachment URL of this pull request>" --reason "<what it shows>" --head ${head}`;
+const acceptCommand = (flow, id, head) => `aidrian pr signoff 7 --flow ${flow} --accept ${id} --evidence "<URL of a comment or review of this pull request>" --reason "<what it shows>" --head ${head}`;
 const unverifiedNext = (flow, id, head, notes = []) => ({ invariant: id, state: 'unverified', commands: [acceptCommand(flow, id, head)], notes });
 const finding = { file: 'src/app.js', line: 1, title: 'off by one', body: 'x', severity: 'high' };
 
@@ -1526,7 +1526,7 @@ test('the Human accepts an unverified invariant on outside evidence for one head
   const flows = { ...APPROVED_FLOWS, pay: { files: ['src/ui/**'], invariants: [{ id: 'cap', text: 'Does a refund stay under the charge?' }] } };
   const r = repo(t, { baseConfig: { version: 1, review: { flows } }, change: (write) => write('src/ui/a.js', 'export const screen = 1;\n') });
   const evidence = 'https://github.com/o/r/pull/7#issuecomment-99';
-  const checkEvidence = (url) => (url === evidence ? 'comment' : (() => { throw new Error(`--evidence ${url} is not a comment, review, or attachment of o/r#7 that the forge can find`); })());
+  const checkEvidence = (url) => (url === evidence ? 'comment' : (() => { throw new Error(`--evidence ${url} is not a comment, review, or review comment of o/r#7 that the forge can find`); })());
   const accept = (more = {}) => recordAccept(r.project, { pr: 7, repo: 'o/r', flow: 'look', invariant: 'matches-design', head: r.git('rev-parse', 'HEAD'), by: 'Tester', reason: 'the designer approved the screenshots', evidence, checkEvidence, ...more });
   assert.throws(() => accept(), /no review of o\/r#7 ran on/u, 'before any review of the head');
   const first = await r.step({ exec: clean });
@@ -1540,7 +1540,7 @@ test('the Human accepts an unverified invariant on outside evidence for one head
   assert.throws(() => accept({ reason: ' ' }), /--accept needs --reason/u);
   assert.throws(() => accept({ flow: 'pay', invariant: 'cap' }), /is violated on .*never clears a violated invariant/u);
   assert.throws(() => accept({ invariant: 'keeps-copy' }), /is not unverified on/u);
-  assert.throws(() => accept({ evidence: 'https://github.com/o/r/pull/8#issuecomment-1' }), /is not a comment, review, or attachment of o\/r#7/u);
+  assert.throws(() => accept({ evidence: 'https://github.com/o/r/pull/8#issuecomment-1' }), /is not a comment, review, or review comment of o\/r#7/u);
   assert.throws(() => accept({ evidence: 'not a url' }), /needs --evidence/u);
   assert.equal(accept({ dryRun: true }).kind, 'comment');
   assert.equal(readLocalState(r.project, 7).acceptances, undefined, 'a dry run records nothing');
@@ -1579,7 +1579,8 @@ test('aidrian pr signoff --check runs every refusal of --flow, --overrule, --acc
   assert.equal(await signoff('--flow', 'pay'), 0);
   assert.equal(await signoff('--flow', 'look', '--accept', 'matches-design', '--evidence', evidence, '--reason', 'the designer approved it'), 0);
   await assert.rejects(signoff('--flow', 'look'), /flow look takes no Human sign-off/u);
-  await assert.rejects(signoff('--flow', 'look', '--accept', 'matches-design', '--evidence', 'https://github.com/o/r/pull/7#issuecomment-1', '--reason', 'x'), /is not a comment, review, or attachment of o\/r#7 that the forge can find/u);
+  await assert.rejects(signoff('--flow', 'look', '--accept', 'matches-design', '--evidence', 'https://github.com/o/r/pull/7#issuecomment-1', '--reason', 'x'), /is not a comment, review, or review comment of o\/r#7 that the forge can find/u);
+  await assert.rejects(signoff('--flow', 'look', '--accept', 'matches-design', '--evidence', 'https://github.com/user-attachments/assets/shot-1', '--reason', 'x'), /cite the URL of the comment or review that holds an attachment, never the attachment's own URL/u, 'an upload is refused, with the way to cite it');
   await assert.rejects(signoff('--flow', 'look', '--accept', 'keeps-copy', '--evidence', evidence, '--reason', 'x'), /is not unverified on/u);
   await assert.rejects(signoff('--flow', 'look', '--overrule', 'matches-design', '--reason', 'x'), /is not disputed on/u);
   await assert.rejects(signoff('--stage', 'independent'), /no Human review of the independent stage is waiting/u);

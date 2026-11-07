@@ -242,7 +242,8 @@ export function attestation(project, pr, repo = null, origin = originRepo(projec
 // `--stage <name>` in place of `--flow` signs off a review stage the Human chose to review because its reviewer ran out
 // of quota on that head (lib/review/quota.mjs). `--flow <id> --overrule <invariant> --reason <text>` settles a dispute
 // between reviewers on that head. `--flow <id> --accept <invariant> --evidence <url> --reason <text>` closes, on that
-// head, an invariant no reviewer could verify, on evidence outside the tool that the forge finds on the pull request.
+// head, an invariant no reviewer could verify, on evidence outside the tool: a comment, review, or review comment of
+// the pull request that the forge finds by its id.
 // `--check` runs every refusal of the same command and records nothing: it prints `ok` and returns 0, or throws the
 // refusal, which `aidrian pr` prints before it exits 1. The review-signoff rule lets an agent run it, so a session can
 // try a command before it hands it to the Human.
@@ -296,7 +297,7 @@ export async function runSignoff(args, project, config = null, { forge } = {}) {
       } catch (error) {
         throw new Error(`--evidence ${url} could not be checked on ${repo}#${pr}: ${String(error?.message ?? error).split('\n')[0].slice(0, 200)}`);
       }
-      if (!kind) throw new Error(`--evidence ${url} is not a comment, review, or attachment of ${repo}#${pr} that the forge can find`);
+      if (!kind) throw new Error(`--evidence ${url} is not a comment, review, or review comment of ${repo}#${pr} that the forge can find: cite the URL of the comment or review that holds an attachment, never the attachment's own URL`);
       return kind;
     };
     recordAccept(project, { pr, repo, flow: flags.flow, invariant: flags.accept, head: flags.head, by, reason: flags.reason, evidence: flags.evidence, checkEvidence, remote: remoteState(repo, pr, undefined, config), dryRun });

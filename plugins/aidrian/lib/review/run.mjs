@@ -643,7 +643,7 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
       return {
         invariant: id,
         state: 'unverified',
-        commands: [`aidrian pr signoff ${n} --flow ${flow.id} --accept ${id} --evidence "<comment, review, or attachment URL of this pull request>" --reason "<what it shows>" --head ${head}`],
+        commands: [`aidrian pr signoff ${n} --flow ${flow.id} --accept ${id} --evidence "<URL of a comment or review of this pull request>" --reason "<what it shows>" --head ${head}`],
         notes: [
           ...(approvers.length && approvalPath?.on ? [`ask for an approving review of ${head} by ${approvers.join(' or ')}, whose body holds the line: ${approveLine(flow.id, id)}`] : []),
           ...(capture ? [capture] : []),
@@ -939,7 +939,7 @@ export function recordOverrule(project, { pr, repo, flow, invariant, head, by, r
 
 // `aidrian pr signoff <PR> --flow <id> --accept <invariant> --evidence <url> --reason <text> --head <sha>`: the Human
 // closes, on one head, an invariant no reviewer could verify, on evidence outside the tool, such as a designer's
-// approval of real screenshots. `evidence` is a comment, review, or attachment URL of this pull request, and
+// approval of real screenshots. `evidence` is the URL of a comment, review, or review comment of this pull request, and
 // `checkEvidence(url)` throws unless the forge finds it there. The acceptance never clears a violated invariant, and
 // holds for that head only. An audit entry, not proof, listed apart from the verdicts in the summary.
 export function recordAccept(project, { pr, repo, flow, invariant, head, by, reason, evidence, checkEvidence = null, remote = null, dryRun = false }) {
@@ -950,7 +950,7 @@ export function recordAccept(project, { pr, repo, flow, invariant, head, by, rea
   const item = known.find((each) => each.flow === flow && each.invariant === invariant);
   if (item?.state === 'violated') throw new Error(`invariant ${invariant} of flow ${flow} is violated on ${head.slice(0, 7)} of ${repo}#${pr}: an acceptance never clears a violated invariant. Fix the code, or, where reviewers disagree, settle it with the --overrule command the review prints`);
   if (!item) throw new Error(`invariant ${invariant} of flow ${flow} is not unverified on ${head.slice(0, 7)} of ${repo}#${pr}: --accept closes only an invariant the review lists as unverified on that head`);
-  if (typeof evidence !== 'string' || !/^https:\/\/\S+$/u.test(evidence)) throw new Error('--accept needs --evidence: the https URL of a comment, review, or attachment of this pull request');
+  if (typeof evidence !== 'string' || !/^https:\/\/\S+$/u.test(evidence)) throw new Error('--accept needs --evidence: the https URL of a comment, review, or review comment of this pull request');
   if (typeof checkEvidence !== 'function') throw new Error(`--evidence ${evidence} could not be checked`);
   const kind = checkEvidence(evidence);
   const entry = { flow, invariant, head, by, reason: reason.trim().slice(0, 300), evidence, kind, at: new Date().toISOString() };

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { runGh } from '../plugins/aidrian/lib/forges/github-cli.mjs';
-import { createGithubForge, GITHUB_JSON, isTrustedCommenter, linksIn, REVIEWS_PAGE, UPLOAD_TIMEOUT_MS } from '../plugins/aidrian/lib/forges/github.mjs';
+import { createGithubForge, GITHUB_JSON, isTrustedCommenter, REVIEWS_PAGE, UPLOAD_TIMEOUT_MS } from '../plugins/aidrian/lib/forges/github.mjs';
 import { repoIdentity } from '../plugins/aidrian/lib/forges/identity.mjs';
 import * as facade from '../plugins/aidrian/lib/forges/index.mjs';
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
@@ -169,100 +169,57 @@ test('the facade index gives shared code forgeFor and its helpers, and nothing o
   assert.equal(facade.REVIEWS_PAGE, REVIEWS_PAGE);
 });
 
-test('changeEvidence: a comment, review, or attachment of the pull request, each read with the call that finds it', () => {
+test('changeEvidence: a comment, review, or review comment of the pull request, each read by its id', () => {
   const notFound = () => { throw Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)' }); };
   const { forge, args } = recorded((call) => {
     const route = call[1];
     if (route === 'repos/acme/notes/issues/comments/11') return '{"issue_url":"https://api.github.com/repos/acme/notes/issues/7"}';
     if (route === 'repos/acme/notes/issues/comments/12') return '{"issue_url":"https://api.github.com/repos/acme/notes/issues/8"}';
+    if (route === 'repos/acme/notes/issues/comments/13') return notFound();
     if (route === 'repos/acme/notes/pulls/7/reviews/21') return '{"id":21}';
     if (route === 'repos/acme/notes/pulls/7/reviews/22') return notFound();
     if (route === 'repos/acme/notes/pulls/comments/31') return '{"pull_request_url":"https://api.github.com/repos/acme/notes/pulls/7"}';
-    if (route === 'repos/acme/notes/pulls/7') return '{"body":"see https://github.com/user-attachments/assets/abc-1"}';
-    if (route === 'repos/acme/notes/pulls/7/reviews') return '[[{"body":"https://github.com/user-attachments/assets/rev-2"}]]';
-    return '[[]]';
+    if (route === 'repos/acme/notes/pulls/comments/32') return notFound();
+    return assert.fail(`no call for ${route}`);
   });
   const pr = 'https://github.com/acme/notes/pull/7';
   assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#issuecomment-11`), 'comment');
   assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#issuecomment-12`), null, 'a comment of another pull request');
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#issuecomment-13`), null, 'GitHub finds no such comment');
   assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#pullrequestreview-21`), 'review');
   assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}/files#pullrequestreview-22`), null, 'GitHub finds no such review');
   assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#discussion_r31`), 'review_comment');
-  assert.equal(forge.changeEvidence('acme/notes', 7, 'https://github.com/user-attachments/assets/abc-1'), 'attachment');
-  assert.equal(forge.changeEvidence('acme/notes', 7, 'https://github.com/user-attachments/assets/rev-2'), 'attachment', 'linked from a review');
-  const calls = args().length;
-  for (const url of ['https://github.com/acme/other/pull/7#issuecomment-11', 'https://github.com/acme/notes/pull/8#issuecomment-11', `${pr}#top`, 'http://github.com/acme/notes/pull/7#issuecomment-11', 'nope', 'https://example.com/a.png']) {
-    assert.equal(forge.changeEvidence('acme/notes', 7, url), null, url);
-  }
-  assert.equal(args().length, calls, 'a URL of another repository, pull request, or kind asks GitHub nothing');
-  assert.equal(forge.changeEvidence('acme/notes', 7, 'https://github.com/user-attachments/assets/elsewhere'), null, 'an upload the pull request does not link');
-  assert.deepEqual(args().slice(0, 7), [
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#discussion_r32`), null, 'GitHub finds no such review comment');
+  assert.deepEqual(args(), [
     ['api', 'repos/acme/notes/issues/comments/11'],
     ['api', 'repos/acme/notes/issues/comments/12'],
+    ['api', 'repos/acme/notes/issues/comments/13'],
     ['api', 'repos/acme/notes/pulls/7/reviews/21'],
     ['api', 'repos/acme/notes/pulls/7/reviews/22'],
     ['api', 'repos/acme/notes/pulls/comments/31'],
-    ['api', 'repos/acme/notes/pulls/7'],
-    ['api', 'repos/acme/notes/issues/7/comments', '--paginate', '--slurp'],
+    ['api', 'repos/acme/notes/pulls/comments/32'],
   ]);
-  const before = args().length;
-  for (const url of ['https://evil.example/acme/notes/pull/7#issuecomment-11', 'https://gist.github.com/acme/notes/pull/7#issuecomment-11', 'https://evil.example/user-attachments/assets/abc-1']) {
-    assert.equal(forge.changeEvidence('acme/notes', 7, url), null, url);
-  }
-  assert.equal(args().length, before, 'a link on another host asks GitHub nothing');
+  const calls = args().length;
+  for (const url of [
+    'https://github.com/acme/other/pull/7#issuecomment-11',
+    'https://github.com/acme/notes/pull/8#issuecomment-11',
+    `${pr}#top`,
+    pr,
+    'http://github.com/acme/notes/pull/7#issuecomment-11',
+    'nope',
+    'https://github.com/user-attachments/assets/shot-1',
+    'https://github.com/user-attachments/files/123/report.txt',
+    'https://github.com/acme/notes/assets/1/shot.png',
+    'https://user-images.githubusercontent.com/1/shot.png',
+    'https://evil.example/acme/notes/pull/7#issuecomment-11',
+    'https://gist.github.com/acme/notes/pull/7#issuecomment-11',
+  ]) assert.equal(forge.changeEvidence('acme/notes', 7, url), null, url);
+  assert.equal(args().length, calls, 'an upload, another repository, pull request, host, or kind is refused without asking GitHub');
   // A pull request on a GitHub Enterprise host: its links count there, with that host named to gh, and github.com's do not.
-  const enterprise = recorded((call) => (call.includes('repos/acme/notes/issues/comments/11') ? '{"issue_url":"https://ghe.example/api/v3/repos/acme/notes/issues/7"}' : '[[]]'));
+  const enterprise = recorded((call) => (call.includes('repos/acme/notes/issues/comments/11') ? '{"issue_url":"https://ghe.example/api/v3/repos/acme/notes/issues/7"}' : assert.fail(call.join(' '))));
   assert.equal(enterprise.forge.changeEvidence('acme/notes', 7, 'https://ghe.example/acme/notes/pull/7#issuecomment-11', { host: 'ghe.example' }), 'comment');
   assert.equal(enterprise.forge.changeEvidence('acme/notes', 7, `${pr}#issuecomment-11`, { host: 'ghe.example' }), null, 'github.com is another host there');
   assert.deepEqual(enterprise.args(), [['api', '--hostname', 'ghe.example', 'repos/acme/notes/issues/comments/11']]);
-});
-
-test('changeEvidence matches an attachment as a whole URL, never as part of a longer or a shorter one', () => {
-  const body = [
-    'Screens: ![shot](https://github.com/user-attachments/assets/abcdef) and <https://github.com/user-attachments/assets/auto-1>.',
-    '<img src="https://github.com/user-attachments/assets/img-1" width="300">',
-    'Bare: https://github.com/user-attachments/assets/bare-1, then https://github.com/user-attachments/assets/paren(1)',
-  ].join('\n');
-  const { forge } = recorded((call) => (call[1] === 'repos/acme/notes/pulls/7' ? JSON.stringify({ body }) : '[[]]'));
-  const at = (id) => forge.changeEvidence('acme/notes', 7, `https://github.com/user-attachments/assets/${id}`);
-  for (const id of ['abcdef', 'auto-1', 'img-1', 'bare-1']) assert.equal(at(id), 'attachment', id);
-  assert.equal(at('abc'), null, 'a prefix of a linked URL is not linked');
-  assert.equal(at('abcdef0'), null, 'a linked URL extended past its end is not linked');
-  assert.equal(at('bare-1,'), null);
-  assert.equal(at('paren'), null, 'a URL that runs on into a parenthesis is not read as a shorter one');
-  assert.deepEqual([...linksIn('see [a](https://x.example/a.png). and https://x.example/b?c=1!')], ['https://x.example/a.png', 'https://x.example/b?c=1']);
-});
-
-test('linksIn keeps a destination its syntax delimits exactly, punctuation included; only a bare URL loses sentence punctuation', () => {
-  const file = (end) => `https://github.com/user-attachments/files/123/report.txt${end}`;
-  for (const end of ['!', '.', ',']) {
-    for (const [syntax, text] of [
-      ['inline link', `[evidence](${file(end)})`],
-      ['inline link with a title', `[evidence](${file(end)} "the report")`],
-      ['inline link in angle brackets', `[evidence](<${file(end)}>)`],
-      ['image', `![shot](${file(end)})`],
-      ['reference definition', `[evidence][r]\n\n[r]: ${file(end)}`],
-      ['autolink', `<${file(end)}>`],
-      ['src in double quotes', `<img src="${file(end)}" width="300">`],
-      ['src in single quotes', `<img src='${file(end)}'>`],
-      ['unquoted src', `<img src=${file(end)} alt=x>`],
-      ['href', `<a href="${file(end)}">report</a>`],
-    ]) assert.deepEqual([...linksIn(text)], [file(end)], `${syntax} ending in ${end}`);
-    assert.deepEqual([...linksIn(`See ${file(end)}`)], [file('')], `a bare URL ending in ${end} is linked without it`);
-  }
-  // The changeEvidence the finding names: the real upload counts, the shorter URL the body never links does not.
-  const { forge } = recorded((call) => (call[1] === 'repos/acme/notes/pulls/7' ? JSON.stringify({ body: `[evidence](${file('!')})` }) : '[[]]'));
-  assert.equal(forge.changeEvidence('acme/notes', 7, file('!')), 'attachment');
-  assert.equal(forge.changeEvidence('acme/notes', 7, file('')), null);
-  // Rendered as GitHub renders them: escapes and character references read, balanced parentheses kept, code ignored.
-  assert.deepEqual([...linksIn('[a](https://x.example/\\!x)')], ['https://x.example/!x']);
-  assert.deepEqual([...linksIn('<a href="https://x.example/q?a=1&amp;b=2">q</a>')], ['https://x.example/q?a=1&b=2']);
-  assert.deepEqual([...linksIn('<https://x.example/q?a=1&amp;b=2>')], ['https://x.example/q?a=1&amp;b=2'], 'an autolink keeps every character');
-  assert.deepEqual([...linksIn('[a](https://x.example/a(1))')], ['https://x.example/a(1)']);
-  assert.deepEqual([...linksIn('[a](https://x.example/a((1)))')], [], 'a target this cannot read whole is left out, never cut short');
-  assert.deepEqual([...linksIn('`[a](https://x.example/c)` and `https://x.example/d`')], [], 'inline code links nothing');
-  assert.deepEqual([...linksIn('```\r\n[e](https://x.example/f)\r\nhttps://x.example/g\r\n```\r\nthen https://x.example/h')], ['https://x.example/h'], 'a fence links nothing, up to its closing line');
-  assert.deepEqual([...linksIn('~~~\nhttps://x.example/never-closed')], [], 'an unclosed fence runs to the end');
 });
 
 test('changeEvidence: a comment or review comment counts only when its API URL names this pull request exactly', () => {

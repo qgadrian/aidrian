@@ -263,12 +263,10 @@ required review on the protected branch for proof.
 
 With the Human in the session, the Human may close such an invariant themselves:
 `aidrian pr signoff <PR> --flow <id> --accept <invariant> --evidence <url> --reason "<what it shows>" --head <sha>`,
-run in their own shell. `<url>` is a comment, review, review comment, or attachment of that pull request; the command
-asks GitHub that it is there, and an attachment counts when the pull request's body, a comment, a review, or a review
-comment links that whole URL, never a longer or a shorter one. A URL that a Markdown link, image, or reference, an
-autolink `<url>`, or an `src` or `href` attribute gives counts exactly as written, as GitHub renders it; only a bare
-URL loses the punctuation that ends a sentence, and a link inside code links nothing.
-A link on another host than the pull request's own is refused without asking.
+run in their own shell. `<url>` is the GitHub link of one of that pull request's own comments
+(`#issuecomment-<id>`), reviews (`#pullrequestreview-<id>`), or review comments (`#discussion_r<id>`), on the pull
+request's host. The command reads that item from GitHub by its id and checks it belongs to the pull request.
+Any other URL is refused, an uploaded screenshot or file included: cite the comment or review that holds it.
 The acceptance holds for that head only, and the review summary lists it apart from the verdicts, as
 `accepted by <name> on <sha7> on outside evidence: <url>: <reason>`. The command refuses an invariant the last review
 of that head does not list as unverified, a violated one above all, an evidence URL GitHub cannot find on the pull

@@ -204,7 +204,8 @@ The flows, rules, ignore lists, reviewers, engine, plan command, approvals switc
 pull request's own config can only add flows, rules, and reviewers under new names; its changes to the rest, and a
 plan command it adds, take effect once they are merged. The plan command runs from a temporary checkout of the base,
 so editing its script changes nothing until the merge. A flow the pull request adds reads its invariants from the
-pull request. A change to any of these triggers the built-in `harness-config` flow, which the Human signs off. A
+pull request, and takes its invariants' `approvers` from there too, so the config change that adds it waits for the
+Human's `harness-config` sign-off. A change to any of these triggers the built-in `harness-config` flow, which the Human signs off. A
 flow's deleted test stops the review even when the change touches nothing else in the flow.
 
 `aidrian lint review` fails on a flow whose globs match no tracked file, an invariants doc that is missing or has no

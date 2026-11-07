@@ -264,7 +264,8 @@ required review on the protected branch for proof.
 With the Human in the session, the Human may close such an invariant themselves:
 `aidrian pr signoff <PR> --flow <id> --accept <invariant> --evidence <url> --reason "<what it shows>" --head <sha>`,
 run in their own shell. `<url>` is a comment, review, review comment, or attachment of that pull request; the command
-asks GitHub that it is there, and an attachment counts when the pull request's body, a comment, or a review links it.
+asks GitHub that it is there, and an attachment counts when the pull request's body, a comment, a review, or a review
+comment links that whole URL, never a longer or a shorter one.
 A link on another host than the pull request's own is refused without asking.
 The acceptance holds for that head only, and the review summary lists it apart from the verdicts, as
 `accepted by <name> on <sha7> on outside evidence: <url>: <reason>`. The command refuses an invariant the last review

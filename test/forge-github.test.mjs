@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import { runGh } from '../plugins/aidrian/lib/forges/github-cli.mjs';
-import { createGithubForge, GITHUB_JSON, isTrustedCommenter, REVIEWS_PAGE, UPLOAD_TIMEOUT_MS } from '../plugins/aidrian/lib/forges/github.mjs';
+import { createGithubForge, GITHUB_JSON, isTrustedCommenter, linksIn, REVIEWS_PAGE, UPLOAD_TIMEOUT_MS } from '../plugins/aidrian/lib/forges/github.mjs';
 import { repoIdentity } from '../plugins/aidrian/lib/forges/identity.mjs';
 import * as facade from '../plugins/aidrian/lib/forges/index.mjs';
 import { forgeFor } from '../plugins/aidrian/lib/forges/index.mjs';
@@ -215,6 +215,40 @@ test('changeEvidence: a comment, review, or attachment of the pull request, each
   assert.equal(enterprise.forge.changeEvidence('acme/notes', 7, 'https://ghe.example/acme/notes/pull/7#issuecomment-11', { host: 'ghe.example' }), 'comment');
   assert.equal(enterprise.forge.changeEvidence('acme/notes', 7, `${pr}#issuecomment-11`, { host: 'ghe.example' }), null, 'github.com is another host there');
   assert.deepEqual(enterprise.args(), [['api', '--hostname', 'ghe.example', 'repos/acme/notes/issues/comments/11']]);
+});
+
+test('changeEvidence matches an attachment as a whole URL, never as part of a longer or a shorter one', () => {
+  const body = [
+    'Screens: ![shot](https://github.com/user-attachments/assets/abcdef) and <https://github.com/user-attachments/assets/auto-1>.',
+    '<img src="https://github.com/user-attachments/assets/img-1" width="300">',
+    'Bare: https://github.com/user-attachments/assets/bare-1, then https://github.com/user-attachments/assets/paren(1)',
+  ].join('\n');
+  const { forge } = recorded((call) => (call[1] === 'repos/acme/notes/pulls/7' ? JSON.stringify({ body }) : '[[]]'));
+  const at = (id) => forge.changeEvidence('acme/notes', 7, `https://github.com/user-attachments/assets/${id}`);
+  for (const id of ['abcdef', 'auto-1', 'img-1', 'bare-1']) assert.equal(at(id), 'attachment', id);
+  assert.equal(at('abc'), null, 'a prefix of a linked URL is not linked');
+  assert.equal(at('abcdef0'), null, 'a linked URL extended past its end is not linked');
+  assert.equal(at('bare-1,'), null);
+  assert.equal(at('paren'), null, 'a URL that runs on into a parenthesis is not read as a shorter one');
+  assert.deepEqual([...linksIn('see [a](https://x.example/a.png). and https://x.example/b?c=1!')], ['https://x.example/a.png', 'https://x.example/b?c=1']);
+});
+
+test('changeEvidence: a comment or review comment counts only when its API URL names this pull request exactly', () => {
+  const { forge } = recorded((call) => ({
+    'repos/acme/notes/issues/comments/1': '{"issue_url":"https://api.github.com/repos/acme/notes/issues/17"}',
+    'repos/acme/notes/issues/comments/2': '{"issue_url":"https://api.github.com/repos/acme/other/issues/7"}',
+    'repos/acme/notes/pulls/comments/3': '{"pull_request_url":"https://api.github.com/repos/acme/notes/issues/7"}',
+    'repos/acme/notes/pulls/comments/4': '{"pull_request_url":"https://api.github.com/repos/ACME/notes/pulls/7"}',
+  })[call[1]] ?? '{}');
+  const pr = 'https://github.com/acme/notes/pull/7';
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#issuecomment-1`), null, 'another number that ends the same way');
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#issuecomment-2`), null, 'another repository');
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#discussion_r3`), null, 'an issue, not the pull request');
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#discussion_r4`), 'review_comment', 'the repository compares in any case');
+});
+
+test('changeEvidence: a gh failure other than not found throws', () => {
+  const pr = 'https://github.com/acme/notes/pull/7';
   const broken = recorded(() => { throw new Error('gh: Bad Gateway (HTTP 502)'); }).forge;
   assert.throws(() => broken.changeEvidence('acme/notes', 7, `${pr}#issuecomment-11`), /HTTP 502/u, 'any other failure throws');
 });

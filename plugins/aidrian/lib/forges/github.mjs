@@ -44,6 +44,27 @@ export const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 const ATTACHMENT = /^https:\/\/(?:github\.com\/user-attachments\/(?:assets|files)\/|github\.com\/[^/]+\/[^/]+\/(?:assets|files)\/|(?:private-)?user-images\.githubusercontent\.com\/)\S+$/u;
 // The same upload's path on a GitHub Enterprise host.
 const ATTACHMENT_PATH = /^\/(?:user-attachments\/(?:assets|files)\/|[^/]+\/[^/]+\/(?:assets|files)\/)\S+$/u;
+// The URLs a Markdown or HTML text links, whole, as the URL parser spells them: in a link `[text](url)`, an autolink
+// `<url>`, an `src` or `href` attribute, or bare, with the punctuation that ends a sentence left off. A URL that runs on
+// into a character this cannot read as its end, such as `(`, is left out rather than cut short, so a link is never
+// read as a shorter one.
+export function linksIn(text) {
+  const found = new Set();
+  for (const [raw] of String(text ?? '').matchAll(/https?:\/\/[^\s<>"'`()[\]{}]+(?=$|[\s<>"'`)\]}])/gu)) {
+    try {
+      found.add(new URL(raw.replace(/[.,;:!?*_~]+$/u, '')).href);
+    } catch {}
+  }
+  return found;
+}
+
+// Whether a GitHub API URL of an issue or pull request, such as a comment's `issue_url`, names `kind` (`issues` or
+// `pulls`) number `n` of `repo` exactly, on any API host.
+const namesItem = (apiUrl, kind, repo, n) => {
+  const match = /\/repos\/([^/]+\/[^/]+)\/(issues|pulls)\/(\d+)$/u.exec(String(apiUrl ?? ''));
+  return Boolean(match) && match[1].toLowerCase() === String(repo).toLowerCase() && match[2] === kind && Number(match[3]) === Number(n);
+};
+
 // gh's default host, which a call names only when it is another.
 const DEFAULT_HOST = 'github.com';
 
@@ -155,16 +176,17 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
       if (link) {
         if (`${link[1]}/${link[2]}`.toLowerCase() !== String(repo).toLowerCase() || Number(link[3]) !== Number(n)) return null;
         const [, kind, id] = /^#(issuecomment-|pullrequestreview-|discussion_r)(\d+)$/u.exec(parsed.hash) ?? [];
-        if (kind === 'issuecomment-') return String(found(() => rest(`repos/${repo}/issues/comments/${id}`, at))?.issue_url ?? '').endsWith(`/issues/${n}`) ? 'comment' : null;
+        if (kind === 'issuecomment-') return namesItem(found(() => rest(`repos/${repo}/issues/comments/${id}`, at))?.issue_url, 'issues', repo, n) ? 'comment' : null;
         if (kind === 'pullrequestreview-') return found(() => rest(`repos/${repo}/pulls/${n}/reviews/${id}`, at)) ? 'review' : null;
-        if (kind === 'discussion_r') return String(found(() => rest(`repos/${repo}/pulls/comments/${id}`, at))?.pull_request_url ?? '').endsWith(`/pulls/${n}`) ? 'review_comment' : null;
+        if (kind === 'discussion_r') return namesItem(found(() => rest(`repos/${repo}/pulls/comments/${id}`, at))?.pull_request_url, 'pulls', repo, n) ? 'review_comment' : null;
         return null;
       }
       // An upload on github.com's own upload hosts, or under the pull request's host when it is another one.
       const upload = String(host).toLowerCase() === DEFAULT_HOST ? ATTACHMENT.test(parsed.href) : own && ATTACHMENT_PATH.test(parsed.pathname);
       if (!upload) return null;
       const bodies = [found(() => rest(`repos/${repo}/pulls/${n}`, at))?.body, ...[`repos/${repo}/issues/${n}/comments`, `repos/${repo}/pulls/${n}/reviews`, `repos/${repo}/pulls/${n}/comments`].flatMap((route) => list(route, at) ?? []).map((each) => each?.body)];
-      return bodies.some((body) => typeof body === 'string' && body.includes(String(url))) ? 'attachment' : null;
+      // The whole URL, never a part of a longer one: a body that links `.../abc-1` links no `.../abc`.
+      return bodies.some((body) => linksIn(body).has(parsed.href)) ? 'attachment' : null;
     },
     // The reviews with their inline comments, GitHub's GraphQL answer: `data.repository.pullRequest.reviews`, at most
     // REVIEWS_PAGE of each, with each list's `totalCount`.

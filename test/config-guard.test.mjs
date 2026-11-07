@@ -381,6 +381,8 @@ test('a subagent may not set the auto-merge switch, with or without gates; other
       ['Bash', { command: `echo '${on}' > .aidrian.local.json` }],
       ['Bash', { command: `cd "$d" && echo '${on}' > .aidrian.local.json` }],
       ['Bash', { command: `python3 -c "open('.aidrian.local.json','w').write('autoMerge')"` }],
+      // A patch is not applied here: the value on a line of its own, under a key on an unchanged context line.
+      ['apply_patch', { command: '*** Begin Patch\n*** Update File: .aidrian.local.json\n@@\n     "autoMerge": {\n-      "enabled": false\n+      "enabled": true\n*** End Patch\n' }],
     ]) {
       const result = run(subagent(dir, tool, toolInput));
       assert.equal(result.status, 2, JSON.stringify(toolInput));

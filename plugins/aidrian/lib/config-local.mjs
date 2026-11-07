@@ -1,4 +1,5 @@
-// The local file's settings that a team's committed value caps: `decisions`, and the machine's auto-merge switch.
+// The local file's settings that a team's committed value caps: `decisions`, and the machine's auto-merge and
+// unattended-waiver switches.
 
 import { merge } from './config-merge.mjs';
 import { DECISIONS_SCHEMA, LOCAL_DECISIONS_SCHEMA } from './config-schema.mjs';
@@ -50,5 +51,14 @@ export function resolveAutoMerge(github, local) {
   if (github?.autoMerge?.allow !== true) return { effective: false, reason: 'team' };
   const on = local === 'on' || (local === 'unset' && github.autoMerge.default === 'on');
   if (!on) return { effective: false, reason: 'local' };
+  return { effective: true, reason: null };
+}
+
+// Whether the merge guard may take a recorded judge verdict (`aidrian pr waive`) in place of the Human's answer, from a
+// `github` config and the local file's switch (`project.localUnattendedWaiver`): { effective, reason }, as
+// resolveAutoMerge. There is no team default, so "unset" is off. `reason` is "team" or "local", null when it is on.
+export function resolveUnattendedWaiver(github, local) {
+  if (github?.unattendedWaiver?.allow !== true) return { effective: false, reason: 'team' };
+  if (local !== 'on') return { effective: false, reason: 'local' };
   return { effective: true, reason: null };
 }

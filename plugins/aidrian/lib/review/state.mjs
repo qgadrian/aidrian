@@ -40,17 +40,27 @@ const MAX_RECORD = 32 * 1024 * 1024;
 const CLIP = 300;
 // The most plan reasons the visible summary lists, as a flow keeps at most 25.
 const MAX_REASONS = 25;
-export const clip = (text) => String(text).replace(/\s+/gu, ' ').slice(0, CLIP);
+// Free text as the visible summary shows it: one line, at most CLIP characters, and no HTML comment opened or closed,
+// so a reason cannot carry a record marker of its own into the comment.
+export const clip = (text) => String(text).replace(/\s+/gu, ' ').slice(0, CLIP).replaceAll('<!--', '&lt;!--').replaceAll('-->', '--&gt;');
 
 // Two spellings of one commit: equal, or one a prefix of the other, at least 7 hex long.
 export const sameCommit = (a, b) => typeof a === 'string' && typeof b === 'string' && (a === b || (Math.min(a.length, b.length) >= 7 && (a.startsWith(b) || b.startsWith(a))));
+// A commit SHA as a command takes it: 7 to 40 hex.
+export const SHA_REF = /^[0-9a-f]{7,40}$/iu;
 
-// `outcome` is the review step's last return, { status, head, at, reason? }, which the merge guard reads
-// (lib/rules/github/merge-review.mjs). `pending` holds the reviews owed: { kind: 'request' | 'review', head, at, by,
-// sent?, answered?, repo?, id }. A `request` is a bot review the Human asked for (`aidrian pr request`): `sent` once
+// `outcome` is the review step's last return, { status, head, at, reason?, carried_from?, carried_base? }, which the
+// merge guard reads (lib/rules/github/merge-review.mjs). `carried_from` is the head whose `received` review a clean
+// merge from the base branch carried to `head` (lib/review/run.mjs), and `carried_base` the base commit it merged in;
+// the summary comment shows both under **Carried review** (carriedLines). `remerge` is { head, from }: the merge head
+// whose review covers only what the merge itself changed, and the reviewed head it builds on. `pending` holds the
+// reviews owed: { kind: 'request' | 'review', head, at, by, sent?, answered?, repo?, id }. A `request` is a bot review the Human asked for (`aidrian pr request`): `sent` once
 // `aidrian pr await-review --request` posts it, `answered` once the bot's answer arrives. A `review` is a gate review
 // dispatched: `answered` once `aidrian pr attest` records it or a review step finishes. An entry is never removed, only
-// marked, so the review step can merge in what was recorded while it ran (mergePending).
+// marked, so the review step can merge in what was recorded while it ran (mergePending). `waivers`, there once
+// `aidrian pr waive` writes one, lists the judge verdicts the merge guard may take in place of the Human's answer:
+// { head, kind: 'round_cap', verdict: 'waive' | 'refuse', reason, judge, at } (lib/review/waiver.mjs). A
+// record without it has none.
 export const emptyState = (pr, repo) => ({ version: 1, revision: 0, pr, repo, rounds: [], passes: {}, signoffs: {}, overrides: [], failures: {}, outcome: null, pending: [] });
 
 // The review step's statuses after which nothing is left to review on that head.
@@ -77,12 +87,14 @@ export function answerPending(state, kind, { head, by, repo = null, isAncestor =
   return open.length;
 }
 
-// Notes the review step's return on `state`: its outcome, and, once finished, every gate review owed on that head or
-// an earlier one it descends from answered.
+// Notes the review step's return on `state`: its outcome, and, once finished by a review, every gate review owed on
+// that head or an earlier one it descends from answered.
 // `repo` is the step's repository: a gate review owed for another one stays owed.
-export function noteOutcome(state, { status, head, reason }, isAncestor = () => false, repo = null) {
-  state.outcome = { status, head, at: new Date().toISOString(), ...(reason ? { reason: clip(reason) } : {}) };
-  if (FINISHED.has(status)) answerPending(state, 'review', { head, by: status, isAncestor, repo });
+export function noteOutcome(state, { status, head, reason, carried_from, carried_base }, isAncestor = () => false, repo = null) {
+  const carried = typeof carried_from === 'string' ? { carried_from, ...(typeof carried_base === 'string' ? { carried_base } : {}) } : {};
+  state.outcome = { status, head, at: new Date().toISOString(), ...(reason ? { reason: clip(reason) } : {}), ...carried };
+  // A carried outcome ran no review, so it answers none: a review owed on the merge head stays owed.
+  if (FINISHED.has(status) && typeof carried_from !== 'string') answerPending(state, 'review', { head, by: status, isAncestor, repo });
   return state;
 }
 
@@ -141,20 +153,33 @@ function decode(data, compressed, pr) {
   }
 }
 
-// The record a summary comment carries, or null: the newer of every record marker in it, compressed or plain. An older
-// release's write keeps this release's compressed marker and appends its own plain one, so a body can hold both.
+// The lines that end `body`, last first, with the blank lines after them left out: where withRecord puts the marker.
+function endLines(body) {
+  const lines = body.split('\n').map((line) => line.trim());
+  while (lines.length && lines.at(-1) === '') lines.pop();
+  return lines.reverse();
+}
+
+const whole = (pattern) => new RegExp(`^${pattern.source}$`, 'u');
+const ENDING = [[whole(STATE_BR), true], [whole(STATE), false]];
+
+// The record a summary comment carries, or null: the newer of the record markers on the lines that end it, each a line
+// of its own, compressed or plain. An older release's write keeps this release's compressed marker and appends its own
+// plain one, so the body can end with both. A marker anywhere else, such as one quoted in free text, is not read.
 export function stateFromComment(body, pr) {
   if (typeof body !== 'string') return null;
   let found = null;
-  for (const [pattern, compressed] of [[STATE_BR, true], [STATE, false]]) {
-    for (const match of body.matchAll(new RegExp(pattern.source, 'gu'))) found = newer(found, decode(match[1], compressed, pr));
+  for (const line of endLines(body)) {
+    const [match, compressed] = ENDING.map(([pattern, br]) => [pattern.exec(line), br]).find(([each]) => each) ?? [null];
+    if (!match) break;
+    found = newer(found, decode(match[1], compressed, pr));
   }
   return found;
 }
 
-// The revision a held summary comment names, or null when it is not held.
+// The revision a held summary comment names on its last line, or null when it is not held.
 export function heldRevision(body) {
-  const match = typeof body === 'string' ? HELD.exec(body) : null;
+  const match = typeof body === 'string' ? whole(HELD).exec(endLines(body)[0] ?? '') : null;
   return match ? Number(match[1]) : null;
 }
 
@@ -209,7 +234,9 @@ export function summaryBody(state, plan, status) {
   }
   lines.push(...outsideLines(state, plan?.head));
   lines.push(...quotaLines(state));
+  lines.push(...carriedLines(state));
   lines.push(...extensionLines(state));
+  lines.push(...waiverLines(state));
   if (state.overrides.length) lines.push('', '**Overrides used:**', ...state.overrides.map((each) => `- ${clip(each)}`));
   lines.push('', 'A citation shows the cited line exists, not that it proves the invariant; the independent reviewer challenges each one.');
   return withRecord(lines, state);
@@ -305,21 +332,48 @@ function extensionLines(state) {
   return lines;
 }
 
-// A summary comment's text with `state` in place of the record it carried, and its Extra rounds list rewritten from
-// it; the rest, which only the review step can write, is kept as it was.
+export const WAIVER_HEADING = '**Merge guard waivers:**';
+
+// Every judge verdict recorded for the merge guard (`waivers`, lib/review/waiver.mjs): a blank line, the heading, and
+// one line per entry; nothing when there is none. The judge's word, so each line says it is no proof.
+export function waiverLines(state) {
+  const waivers = (Array.isArray(state?.waivers) ? state.waivers : []).filter(isObject);
+  if (!waivers.length) return [];
+  return ['', WAIVER_HEADING, ...waivers.map((entry) =>
+    `- ${clip(entry.kind)} on \`${String(entry.head).slice(0, 7)}\`: ${clip(entry.verdict)} by ${clip(entry.judge ?? 'unknown')}: ${clip(entry.reason ?? '')} (an audit entry, not proof)`)];
+}
+
+export const CARRIED_HEADING = '**Carried review:**';
+
+// The outcome a clean merge from the base branch carried (`outcome.carried_from`, lib/review/run.mjs): a blank line, the
+// heading, and one line naming the merge head, the base commit it merged in, and the reviewed head whose review it took;
+// nothing while the outcome carries none. No reviewer ran on the merge head, so the line says so.
+export function carriedLines(state) {
+  const outcome = isObject(state?.outcome) ? state.outcome : null;
+  if (typeof outcome?.carried_from !== 'string') return [];
+  const short = (sha) => clip(String(sha).slice(0, 7));
+  const merged = typeof outcome.carried_base === 'string' ? ` merges \`${short(outcome.carried_base)}\` from the base branch and` : ' is a clean merge from the base branch that';
+  return ['', CARRIED_HEADING, `- head \`${short(outcome.head)}\`${merged} carries the review of \`${short(outcome.carried_from)}\`: no reviewer ran on it`];
+}
+
+// The headings of the lists refreshSummary rewrites from the record.
+const REWRITTEN = new Set([CARRIED_HEADING, EXTRA_HEADING, WAIVER_HEADING]);
+
+// A summary comment's text with `state` in place of the record it carried, and its Carried review, Extra rounds, and
+// Merge guard waivers lists rewritten from it; the rest, which only the review step can write, is kept as it was.
 export function refreshSummary(body, state) {
   const kept = [];
   const lines = String(body).split('\n');
   for (let i = 0; i < lines.length; i += 1) {
     if (RECORD_LINE(lines[i])) continue;
-    if (lines[i] === EXTRA_HEADING) {
+    if (REWRITTEN.has(lines[i])) {
       if (kept.at(-1) === '') kept.pop();
       while (lines[i + 1]?.startsWith('- ')) i += 1;
       continue;
     }
     kept.push(lines[i]);
   }
-  const extra = extensionLines(state);
+  const extra = [...carriedLines(state), ...extensionLines(state), ...waiverLines(state)];
   const at = kept.findIndex((line) => line === '**Overrides used:**' || line.startsWith('A citation shows'));
   const before = at === -1 ? kept : kept.slice(0, at > 0 && kept[at - 1] === '' ? at - 1 : at);
   const after = at === -1 ? [] : kept.slice(before.length);

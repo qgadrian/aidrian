@@ -16,7 +16,7 @@ import { checkLocalReview, checkLocalVisual } from './review/config.mjs';
 
 export { committedAuthority, committedConfig, committedDecisions, committedQuorumProduct, configFromText, strictConfigFromText } from './config-committed.mjs';
 export { DEFAULTS } from './config-defaults.mjs';
-export { localDecisions, resolveAutoMerge } from './config-local.mjs';
+export { localDecisions, resolveAutoMerge, resolveUnattendedWaiver } from './config-local.mjs';
 export { AUDIT_LABEL_FIELDS, COMMIT_FIELDS, MAX_PLAN_OBJECTIONS, NO_REVIEWER, PR_FIELDS, VERSION } from './config-schema.mjs';
 export { pluginRepository, pluginVersion, versionProblem } from './config-version.mjs';
 

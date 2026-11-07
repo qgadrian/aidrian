@@ -26,7 +26,9 @@ import * as processKill from '../lib/rules/process-kill.mjs';
 // Which rules start a process. Every rule first reads the command alone, and most stop there. A rule that needs the
 // project finds it (findProject), which runs git once inside a project folder. Past that, only these start one, and only
 // for a command they matched: attribution, git for a commit's trailers; pr-body, gh for the open pull requests, bounded
-// at 3 s; merge-review, one gh pr view, bounded at 3 s; ready-hold, git for the committed config and then, when the
+// at 3 s; merge-review, one gh pr view, bounded at 3 s, and, only under the unattended waiver's local switch for a merge
+// it could waive, one git call and up to six gh calls, none begun 4 s after this process started (each stopped
+// at that deadline at the latest; lib/review/waiver.mjs); ready-hold, git for the committed config and then, when the
 // project may run product feedback, gh under one deadline for all its calls, which ends 4 s after this process started
 // at the latest; and main-checkout, git, which runs last. ready-hold runs after merge-review, so a command that marks a
 // pull request ready and merges it leaves the merge guard its own 3 s: the guard refuses a merge it cannot read, and the
@@ -47,6 +49,8 @@ const RULES = [
   ['review-fallback', reviewFallback],
   ['product-feedback-answer', productFeedbackAnswer],
   ['product-feedback-post', productFeedbackPost],
+  // Accepted residual: the waiver's reads in merge-review can spend the shared 4 s, so ready-hold in the same command
+  // finds no time left and lets `gh pr ready` run. It needs a waivable merge and a ready in one slow command: contrived.
   ['merge-review', mergeReview],
   ['ready-hold', readyHold],
   ['main-checkout', mainCheckout],
@@ -55,7 +59,8 @@ const RULES = [
 await runHook(async (input) => {
   const command = input.tool_input?.command;
   if (input.tool_name !== 'Bash' || typeof command !== 'string' || command === '') return;
-  // `startedAt`: when this process started, for a rule that bounds its network calls by the hook's own time (ready-hold).
+  // `startedAt`: when this process started, for a rule that bounds its network calls by the hook's own time (merge-review's
+  // unattended waiver, ready-hold).
   const context = { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), env: process.env, input, startedAt: performance.timeOrigin };
   for (const [name, rule] of RULES) {
     const reason = rule.check(command, context);

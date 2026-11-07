@@ -303,8 +303,8 @@ test('.aidrian.local.json github.autoMerge "on" where git cannot say it is untra
 
 // The local file opts one machine in; it never sets what the team decides: strategy, cleanup, or the ceiling itself.
 const localGithubCases = [
-  ['a strategy', { autoMerge: 'on', strategy: 'squash' }, ['.aidrian.local.json: unknown key "github.strategy"; only "github.autoMerge" is a machine setting']],
-  ['the ceiling', { allow: true }, ['.aidrian.local.json: unknown key "github.allow"; only "github.autoMerge" is a machine setting']],
+  ['a strategy', { autoMerge: 'on', strategy: 'squash' }, ['.aidrian.local.json: unknown key "github.strategy"; only "github.autoMerge" and "github.unattendedWaiver" are machine settings']],
+  ['the ceiling', { allow: true }, ['.aidrian.local.json: unknown key "github.allow"; only "github.autoMerge" and "github.unattendedWaiver" are machine settings']],
   ['a team group', { autoMerge: { allow: true } }, ['.aidrian.local.json: "github.autoMerge" must be { "enabled": true } or { "enabled": false }']],
   ['a boolean', { autoMerge: true }, ['.aidrian.local.json: "github.autoMerge" must be { "enabled": true } or { "enabled": false }']],
 ];

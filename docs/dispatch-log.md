@@ -382,7 +382,8 @@ Indexed docs never read since 30d, 2:
 
 ### Health
 
-`aidrian report health` puts the views above on one page and judges each signal against a threshold,
+`aidrian report health` puts the agents, docs, sessions, and reviews views and the lesson inbox on one page,
+and judges each signal against a threshold,
 so that the `harness-health` skill can say what to fix first.
 Its window is the last 30 days unless `--since` sets another, because each signal needs a sample.
 

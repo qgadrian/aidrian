@@ -24,7 +24,8 @@ plugins/aidrian/
 │   ├── forges/                     the code forge facade: forgeFor in index.mjs, the GitHub adapter, and github-cli.mjs, the one way gh runs
 │   ├── hosts/                      one adapter per host and their registry; what shared code calls instead of a host's names
 │   ├── trackers/                   one adapter per tracker and their registry; what expands the short tracker key
-│   └── rules/                      the rules the Bash and write hooks run; rules/github/ holds those that read only gh
+│   └── rules/                      the rules the Bash and write hooks run; rules/github/ holds those that read only gh,
+│                                   and rules/main-checkout/ the parts of main-checkout.mjs, the rule's entry
 └── codex/
     ├── agents/aidrian-*.toml       generated Codex roles; never edit
     └── install-agents.mjs          copies those roles into $CODEX_HOME/agents (~/.codex/agents by default)

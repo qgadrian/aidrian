@@ -12,8 +12,11 @@
 //      review record is read from `state.dir`, so a branch cannot point it at a record of its own. A working copy config
 //      that cannot be read, or has errors, is off too.
 //   3. paths: gh lists every changed file with its change type, none is a rename, whose old path gh does not give, and
-//      none is one that instructs an AI session or runs in CI (GUARDED_PATHS). `gh pr view` lists at most 100 files, so a
-//      longer pull request's list is read whole from the forge's paged list (wholeFiles), at the head the view gave.
+//      none is one that instructs an AI session or runs in CI (GUARDED_PATHS), unless both branches commit
+//      `github.autoMerge.includeGuardedPaths` true, which lifts the GUARDED_PATHS refusal alone, never for a policy
+//      file (POLICY_PATHS). None, with the key on or off, is one of the files the gate reads its policy from,
+//      including a folder the pointer file names (branchPolicies' policyFiles). `gh pr view` lists at most 100 files,
+//      so a longer pull request's list is read whole from the forge's paged list (wholeFiles), at the head the view gave.
 //   4. local: the main checkout's local file turns it on (project.localAutoMerge), or sets nothing under the default
 //      branch's `github.autoMerge.default` "on".
 //   5. author: the pull request is the gh user's own.
@@ -40,7 +43,7 @@
 import { configFromText, loadConfig, resolveAutoMerge } from './config.mjs';
 import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { runGit } from './git.mjs';
-import { configPathIn, GUARDED_PATHS, mayFollowTeamDefault } from './project.mjs';
+import { configPathIn, GUARDED_PATHS, mayFollowTeamDefault, POLICY_PATHS } from './project.mjs';
 import { prNumber, repoName } from './review-gate.mjs';
 import { owed, readLocalState } from './review/state.mjs';
 import { scoped } from './rules/github/merge-review.mjs';
@@ -103,10 +106,12 @@ export function defaultBranch(forge, { repo, host }) {
 // first, then that folder's config.json. The ref is `refs/heads/<branch>`, so a tag of the same name never answers.
 // A file GitHub does not have (404) is no file; any other failure throws. `prefix` is the project's folder from the top of the
 // repository, with its trailing slash: GitHub's paths start at the top, and config paths at the project root. `locate` and
-// `parse` find the file and read its text, for a caller that holds a broken file to stricter rules.
-export function branchConfig(forge, { repo, host }, branch, prefix = '', { locate = configPathIn, parse = configFromText } = {}) {
+// `parse` find the file and read its text, for a caller that holds a broken file to stricter rules. `seen`, when given,
+// collects every path it reads from the top of the repository: the pointer file, then the config.json it located.
+export function branchConfig(forge, { repo, host }, branch, prefix = '', { locate = configPathIn, parse = configFromText, seen = null } = {}) {
   const read = (name) => {
     const file = `${prefix}${name}`;
+    seen?.push(file);
     let body;
     try {
       body = forge.contents(repo, file, `refs/heads/${branch}`, { host });
@@ -123,20 +128,27 @@ export function branchConfig(forge, { repo, host }, branch, prefix = '', { locat
   return parse(read(file), file);
 }
 
-// The team's config at the two branches that decide a ceiling: { main, policy, basePolicy }, the default branch's name,
-// its config, and the base's config (the same object when the base is the default branch). Read in this order: the
-// default branch, its config, then the base's config, each config by branchConfig's reads. `pr` is { repo, host, base }.
-// Throws as defaultBranch and branchConfig do.
+// The team's config at the two branches that decide a ceiling: { main, policy, basePolicy, policyFiles }, the default
+// branch's name, its config, the base's config (the same object when the base is the default branch), and every path
+// read for them on either branch, each once: the files the gate reads its policy from, including a folder the pointer
+// file names. Read in this order: the default branch, its config, then the base's config, each config by branchConfig's
+// reads. `pr` is { repo, host, base }. Throws as defaultBranch and branchConfig do.
 export function branchPolicies(forge, pr, prefix = '') {
+  const seen = [];
   const main = defaultBranch(forge, pr);
-  const policy = branchConfig(forge, pr, main, prefix);
-  const basePolicy = pr.base === main ? policy : branchConfig(forge, pr, pr.base, prefix);
-  return { main, policy, basePolicy };
+  const policy = branchConfig(forge, pr, main, prefix, { seen });
+  const basePolicy = pr.base === main ? policy : branchConfig(forge, pr, pr.base, prefix, { seen });
+  return { main, policy, basePolicy, policyFiles: [...new Set(seen)] };
 }
 
 // The branches whose `github.<key>.allow` is not true, the default branch first, each once: empty when both allow it.
 export const refusingBranches = ({ main, policy, basePolicy }, base, key) =>
   [...new Set([[main, policy.github[key]], [base, basePolicy.github[key]]].filter(([, each]) => each?.allow !== true).map(([name]) => name))];
+
+// Whether the team lets a guarded path through the paths gate: true only when the default branch and the base both
+// commit `github.autoMerge.includeGuardedPaths` true, read as `allow` is, never from the working copy.
+export const includesGuardedPaths = ({ policy, basePolicy }) =>
+  policy.github.autoMerge.includeGuardedPaths === true && basePolicy.github.autoMerge.includeGuardedPaths === true;
 
 // GitHub's REST file statuses as the GraphQL change types `gh pr view` gives and pathsProblem reads. `unchanged`, a file
 // listed with no change to its content, reads as MODIFIED, so its path still meets every guard.
@@ -186,18 +198,28 @@ export function wholeFiles(forge, pr) {
 // A list shorter than the count hides files, and a rename, or a file
 // with no change type, may hide the path it replaced, so those are off too.
 // A project below the root reviews only its own folder, so a file outside it has had no review, and its own folder's files
-// are guarded by their path from the project root.
-export function pathsProblem({ files, changedFiles }, prefix = '') {
+// are guarded by their path from the project root. `policyFiles` are the paths branchPolicies read, the files the gate
+// reads its policy from, including a folder the pointer file names: a change to one, in any case, is off with the key on
+// or off, after the guarded-path refusal so that refusal keeps its message. `includeGuardedPaths` lifts only the
+// guarded-path refusal, the team having accepted that risk on both branches, and never for a policy file (POLICY_PATHS).
+export function pathsProblem({ files, changedFiles }, prefix = '', { includeGuardedPaths = false, policyFiles = [] } = {}) {
   if (prefix === null) return 'git could not give the project\'s folder in the repository';
   if (files.length !== changedFiles) return `gh listed ${files.length} of its ${changedFiles} changed files`;
   const hidden = files.find(({ changeType }) => changeType === 'RENAMED' || !changeType);
   if (hidden) return `gh lists ${JSON.stringify(hidden.path)} as ${hidden.changeType || 'no change type'}, which may hide the path it replaced`;
   const outside = files.find(({ path }) => !path.startsWith(prefix));
   if (outside) return `it changes ${JSON.stringify(outside.path)}, outside this project's folder, which its review does not cover`;
-  // Accepted residual, older than the unattended waiver: a custom project folder that the project's pointer file names
-  // is not guarded, since GUARDED_PATHS knows only the default folder.
+  const read = new Set(policyFiles.map((each) => each.toLowerCase()));
+  const policyRead = files.find(({ path }) => read.has(path.toLowerCase()));
+  const readLine = policyRead && `it changes ${JSON.stringify(policyRead.path)}, a file the gate reads its policy from`;
+  if (includeGuardedPaths) {
+    const policy = files.find(({ path }) => POLICY_PATHS.test(path));
+    if (policy) return `it changes ${JSON.stringify(policy.path)}, a policy file of aidrian, which includeGuardedPaths never lets through`;
+    return readLine || null;
+  }
   const guarded = files.find(({ path }) => GUARDED_PATHS.test(path) || GUARDED_PATHS.test(path.slice(prefix.length)));
-  return guarded ? `it changes ${JSON.stringify(guarded.path)}, which instructs AI sessions, or decides CI's verdict or auto-merge` : null;
+  if (guarded) return `it changes ${JSON.stringify(guarded.path)}, which instructs AI sessions, or decides CI's verdict or auto-merge`;
+  return readLine || null;
 }
 
 // Who keeps auto-merge off by commenting: the login of the first comment or review whose author is no member of the
@@ -276,10 +298,13 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root) } =
   let refusing;
   let main;
   let policy;
+  let includeGuarded = false;
+  let policyFiles = [];
   try {
     const policies = branchPolicies(forge, pr, prefix ?? '');
-    ({ main, policy } = policies);
+    ({ main, policy, policyFiles } = policies);
     refusing = refusingBranches(policies, pr.base, 'autoMerge');
+    includeGuarded = includesGuardedPaths(policies);
     team = { ...policy.github.autoMerge, allow: refusing.length === 0 };
   } catch (error) {
     return fail(error.message);
@@ -297,7 +322,7 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root) } =
     if (problem) [effective, reason, why] = [false, 'checks', problem];
     else {
       const listed = prefix === null ? pr : wholeFiles(forge, pr);
-      const paths = typeof listed === 'string' ? listed : pathsProblem(listed, prefix);
+      const paths = typeof listed === 'string' ? listed : pathsProblem(listed, prefix, { includeGuardedPaths: includeGuarded, policyFiles });
       if (paths) [effective, reason, why] = [false, 'paths', paths];
     }
   }

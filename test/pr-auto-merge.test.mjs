@@ -385,6 +385,133 @@ test('a changed file that instructs an AI session or decides CI, or a file list 
   assert.match(run(t, r, ['7'], over).out[0], /gh listed 2 of its 1 changed files/u, 'a longer list than the count is off too');
 });
 
+// github.autoMerge.includeGuardedPaths: the plain line of today's guarded-path refusal, and a view whose base is a
+// feature branch, so the default branch and the base are two configs.
+const GUARDED_LINE = /it changes "\.github\/workflows\/ci\.yml", which instructs AI sessions, or decides CI's verdict or auto-merge/u;
+const onStack = (files, ...changes) => ({
+  files,
+  view: { baseRefName: 'feat/stack', files: changes.map((each) => (typeof each === 'string' ? { path: each, changeType: 'MODIFIED' } : each)), changedFiles: changes.length },
+});
+const branches = (main, base) => {
+  const files = {};
+  if (main !== undefined) files['acme/notes@main:.aidrian/config.json'] = configText(main);
+  if (base !== undefined) files['acme/notes@feat/stack:.aidrian/config.json'] = configText(base);
+  return files;
+};
+const LIFTED = { ...TEAM, includeGuardedPaths: true };
+
+test('includeGuardedPaths true on the default branch and the base lets a guarded path through, but never a policy file, and every other refusal stays', (t) => {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  const both = branches(LIFTED, LIFTED);
+  for (const file of ['.github/workflows/ci.yml', 'AGENTS.md', 'plugins/aidrian/lib/pr-auto-merge.mjs']) {
+    const result = run(t, r, ['7', '--json'], onStack(both, 'src/app.js', file));
+    assert.deepEqual([result.code, json(result).reason, json(result).why], [0, null, null], file);
+  }
+  const one = { 'acme/notes@main:.aidrian/config.json': configText(LIFTED) };
+  assert.deepEqual(reasonOf(t, r, { files: one, view: { files: [{ path: '.github/workflows/ci.yml', changeType: 'MODIFIED' }] } }), [0, null], 'the base is the default branch: its one config');
+
+  // A policy file of aidrian stays off, at any depth and in any case, beside guarded files the key lets through.
+  const policyLine = (file) => `auto-merge off for #7: it changes ${JSON.stringify(file)}, a policy file of aidrian, which includeGuardedPaths never lets through`;
+  for (const file of ['.aidrian/config.json', '.aidrian.json', 'apps/web/.aidrian/config.json', '.aidrian.local.json', 'wt/.AIDRIAN.LOCAL.JSON', 'apps/web/.aidrian.json', '.aidrian']) {
+    const result = run(t, r, ['7'], onStack(both, 'AGENTS.md', '.github/workflows/ci.yml', file));
+    assert.deepEqual([result.code, result.out[0]], [1, policyLine(file)], file);
+    assert.deepEqual(reasonOf(t, r, onStack(both, file)), [1, 'paths'], file);
+  }
+  for (const file of ['.aidrian/knowledge/rules.md', 'docs/aidrian.json', '.aidrian/config.json.md']) {
+    assert.deepEqual(reasonOf(t, r, onStack(both, file)), [0, null], `${file} is no policy file`);
+  }
+  assert.match(pathsProblem({ files: [{ path: 'apps/web/.aidrian/config.json', changeType: 'MODIFIED' }], changedFiles: 1 }, 'apps/web/', { includeGuardedPaths: true }) ?? '', /a policy file of aidrian/u);
+
+  // Every other refusal of the paths check stays.
+  const renamed = run(t, r, ['7'], onStack(both, { path: 'notes.md', changeType: 'RENAMED' }));
+  assert.deepEqual([renamed.code, renamed.out[0]], [1, 'auto-merge off for #7: gh lists "notes.md" as RENAMED, which may hide the path it replaced']);
+  assert.deepEqual(reasonOf(t, r, onStack(both, { path: '.github/workflows/ci.yml', changeType: 'RENAMED' })), [1, 'paths'], 'a guarded rename');
+  const typeless = run(t, r, ['7'], onStack(both, { path: 'notes.md', changeType: '' }));
+  assert.deepEqual([typeless.code, typeless.out[0]], [1, 'auto-merge off for #7: gh lists "notes.md" as no change type, which may hide the path it replaced']);
+  const cut = { files: both, view: { baseRefName: 'feat/stack', files: [{ path: 'src/app.js', changeType: 'MODIFIED' }], changedFiles: 101 } };
+  assert.deepEqual(reasonOf(t, r, cut), [1, 'paths'], 'a view of 1 of 101 files whose paged list is a 404');
+  assert.match(run(t, r, ['7'], cut).out[0], /could not read the 101 changed files of #7 with gh \(gh: Not Found \(HTTP 404\)\)/u);
+  assert.match(pathsProblem({ files: [{ path: 'notes.md', changeType: 'RENAMED' }], changedFiles: 1 }, '', { includeGuardedPaths: true }) ?? '', /RENAMED/u);
+  assert.match(pathsProblem({ files: [{ path: 'src/a.js', changeType: 'MODIFIED' }], changedFiles: 2 }, '', { includeGuardedPaths: true }) ?? '', /gh listed 1 of its 2 changed files/u);
+  assert.match(pathsProblem({ files: [], changedFiles: 0 }, null, { includeGuardedPaths: true }) ?? '', /git could not give/u);
+  assert.equal(pathsProblem({ files: [{ path: 'AGENTS.md', changeType: 'MODIFIED' }], changedFiles: 1 }, '', { includeGuardedPaths: true }), null);
+  assert.match(pathsProblem({ files: [{ path: 'AGENTS.md', changeType: 'MODIFIED' }], changedFiles: 1 }) ?? '', /instructs AI sessions/u, 'off by default');
+});
+
+test('includeGuardedPaths false, missing, or true on only one branch keeps a guarded path off (paths), with today\'s message', (t) => {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  const off = { ...TEAM, includeGuardedPaths: false };
+  for (const [name, files] of [
+    ['false on both', branches(off, off)],
+    ['missing on both', branches(TEAM, TEAM)],
+    ['true on the default branch only', branches(LIFTED, off)],
+    ['missing on the base only', branches(LIFTED, TEAM)],
+    ['true on the base only', branches(off, LIFTED)],
+    ['missing on the default branch, true on the base', branches(TEAM, LIFTED)],
+  ]) {
+    assert.deepEqual(reasonOf(t, r, onStack(files, 'src/app.js', '.github/workflows/ci.yml')), [1, 'paths'], name);
+    const human = run(t, r, ['7'], onStack(files, 'src/app.js', '.github/workflows/ci.yml'));
+    assert.match(human.out[0], GUARDED_LINE, name);
+  }
+  const single = { 'acme/notes@main:.aidrian/config.json': configText(off) };
+  assert.match(run(t, r, ['7'], { files: single, view: { files: [{ path: '.github/workflows/ci.yml', changeType: 'MODIFIED' }] } }).out[0], GUARDED_LINE, 'false on a default branch that is the base');
+});
+
+test('includeGuardedPaths is read from GitHub, never the working copy', (t) => {
+  const raised = repo(t, { working: LIFTED });
+  raised.record((state) => finished(state));
+  const unset = { 'acme/notes@main:.aidrian/config.json': configText(TEAM) };
+  const ci = (files) => ({ files, view: { files: [{ path: '.github/workflows/ci.yml', changeType: 'MODIFIED' }] } });
+  assert.deepEqual(reasonOf(t, raised, ci(unset)), [1, 'paths'], 'a committed working copy cannot raise it');
+  assert.match(run(t, raised, ['7'], ci(unset)).out[0], GUARDED_LINE);
+  const uncommitted = repo(t);
+  uncommitted.record((state) => finished(state));
+  writeFileSync(path.join(uncommitted.dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: STATE, github: { ...CHECKS, autoMerge: LIFTED } }));
+  assert.deepEqual(reasonOf(t, uncommitted, ci(unset)), [1, 'paths'], 'nor an uncommitted one');
+
+  const lowered = repo(t, { working: { ...TEAM, includeGuardedPaths: false } });
+  lowered.record((state) => finished(state));
+  const both = branches(LIFTED, LIFTED);
+  assert.deepEqual(reasonOf(t, lowered, onStack(both, '.github/workflows/ci.yml')), [0, null], 'a working copy that sets it false does not lower it');
+});
+
+// The forge's files for a branch whose pointer file names `dir`, with that folder's config.json.
+const pointing = (branch, dir, autoMerge, root = '') => ({
+  [`acme/notes@${branch}:${root}.aidrian.json`]: JSON.stringify({ dir }),
+  [`acme/notes@${branch}:${root}${dir}/config.json`]: configText(autoMerge),
+});
+const readLine = (file) => `auto-merge off for #7: it changes ${JSON.stringify(file)}, a file the gate reads its policy from`;
+
+test('a folder the pointer file names holds policy too: a change to the config.json the gate read is off (paths), with the key on or off', (t) => {
+  const r = repo(t);
+  r.record((state) => finished(state));
+  const changing = (files, ...changes) => ({ files, view: { files: changes.map((each) => (typeof each === 'string' ? { path: each, changeType: 'MODIFIED' } : each)), changedFiles: changes.length } });
+  for (const [name, autoMerge] of [['key off', TEAM], ['key on', LIFTED]]) {
+    const files = pointing('main', 'tools/policy', autoMerge);
+    assert.deepEqual(reasonOf(t, r, changing(files, 'src/app.js')), [0, null], `${name}: the folder's config is the policy`);
+    const edit = run(t, r, ['7'], changing(files, 'src/app.js', 'tools/policy/config.json'));
+    assert.deepEqual([edit.code, edit.out[0]], [1, readLine('tools/policy/config.json')], `${name}: an edit`);
+    const swap = run(t, r, ['7'], changing(files, { path: 'tools/policy', changeType: 'ADDED' }, { path: 'tools/policy/config.json', changeType: 'DELETED' }));
+    assert.deepEqual([swap.code, swap.out[0]], [1, readLine('tools/policy/config.json')], `${name}: the folder replaced by a file`);
+    assert.deepEqual(reasonOf(t, r, changing(files, 'Tools/Policy/CONFIG.json')), [1, 'paths'], `${name}: in any case`);
+    assert.deepEqual(reasonOf(t, r, changing(files, 'tools/policy/notes.md')), [0, null], `${name}: a file beside it is no policy`);
+  }
+  const lifted = run(t, r, ['7'], changing(pointing('main', 'tools/policy', LIFTED), '.aidrian.json'));
+  assert.match(lifted.out[0], /a policy file of aidrian/u, 'the pointer file, with the key on');
+  const off = run(t, r, ['7'], changing(pointing('main', 'tools/policy', TEAM), '.aidrian.json'));
+  assert.match(off.out[0], /which instructs AI sessions, or decides CI's verdict or auto-merge/u, 'the pointer file keeps today\'s message with the key off');
+
+  // A feature base names its own folder, and both branches' reads count.
+  const stacked = { ...pointing('main', 'tools/policy', TEAM), ...pointing('feat/stack', 'ci/policy', TEAM) };
+  for (const file of ['tools/policy/config.json', 'ci/policy/config.json']) {
+    const result = run(t, r, ['7'], onStack(stacked, file));
+    assert.deepEqual([result.code, result.out[0]], [1, readLine(file)], file);
+  }
+  assert.equal(pathsProblem({ files: [{ path: 'Tools/Policy/config.json', changeType: 'MODIFIED' }], changedFiles: 1 }, '', { policyFiles: ['tools/policy/config.json'] }), 'it changes "Tools/Policy/config.json", a file the gate reads its policy from');
+});
+
 // The view of a pull request of 110 files, as gh gives it: the first 100, and the count.
 const NAMES = Array.from({ length: 110 }, (_, i) => `src/file-${String(i).padStart(3, '0')}.js`);
 const VIEW_110 = { files: NAMES.slice(0, 100).map((path) => ({ path, changeType: 'MODIFIED' })), changedFiles: 110 };
@@ -674,6 +801,18 @@ test('a project below the root reads its own auto-merge setting, and a file outs
   for (const file of ['apps/api/b.js', 'README.md', 'apps/web/.aidrian/config.json', 'apps/web/.claude/settings.json', 'apps/web/.github/workflows/ci.yml', '.github/workflows/ci.yml']) {
     assert.deepEqual(reasonOf(t, r, changing(file)), [1, 'paths'], file);
   }
+  const lifted = { 'acme/notes@main:apps/web/.aidrian/config.json': configText(LIFTED) };
+  const outside = run(t, r, ['7'], { files: lifted, view: { files: [{ path: 'apps/api/b.js', changeType: 'MODIFIED' }] } });
+  assert.deepEqual([outside.code, outside.out[0]], [1, 'auto-merge off for #7: it changes "apps/api/b.js", outside this project\'s folder, which its review does not cover'], 'includeGuardedPaths never lifts the folder');
+  assert.deepEqual(reasonOf(t, r, { files: lifted, view: { files: [{ path: 'apps/web/.github/workflows/ci.yml', changeType: 'MODIFIED' }] } }), [0, null], 'its own guarded file, with the key on');
+  assert.deepEqual(reasonOf(t, r, { files: lifted, view: { files: [{ path: 'apps/web/.aidrian/config.json', changeType: 'MODIFIED' }] } }), [1, 'paths'], 'never its own policy file');
+  const named = pointing('main', 'tools/policy', TEAM, 'apps/web/');
+  const below = (...changes) => ({ files: named, view: { files: changes, changedFiles: changes.length } });
+  assert.deepEqual(reasonOf(t, r, below({ path: 'apps/web/src/a.js', changeType: 'MODIFIED' })), [0, null], 'the folder its pointer file names holds its policy');
+  const edited = run(t, r, ['7'], below({ path: 'apps/web/tools/policy/config.json', changeType: 'MODIFIED' }));
+  assert.deepEqual([edited.code, edited.out[0]], [1, readLine('apps/web/tools/policy/config.json')], 'an edit of that config.json');
+  const swapped = run(t, r, ['7'], below({ path: 'apps/web/tools/policy', changeType: 'ADDED' }, { path: 'apps/web/tools/policy/config.json', changeType: 'DELETED' }));
+  assert.deepEqual([swapped.code, swapped.out[0]], [1, readLine('apps/web/tools/policy/config.json')], 'its folder replaced by a file');
   const rootAllows = { 'acme/notes@main:.aidrian/config.json': configText(TEAM) };
   const lost = { project: { ...project, root: path.join(dir, 'gone') } };
   assert.equal(reasonOf(t, lost, { files: rootAllows, view: changing('apps/api/a.js').view })[0], 1, 'a folder git cannot read is never taken for the root');

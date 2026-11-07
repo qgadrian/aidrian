@@ -16,7 +16,7 @@ const FACADE = [
   'id', 'cwd', 'isTrustedCommenter',
   'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'contents', 'visibility', 'viewer',
   'conversationComments', 'comment', 'postComment', 'editComment', 'reactions',
-  'pull', 'diff', 'nodeChange', 'reviews', 'reviewComments', 'reviewsWithComments', 'reviewThreads',
+  'pull', 'diff', 'nodeChange', 'changeFiles', 'reviews', 'reviewComments', 'reviewsWithComments', 'reviewThreads',
   'commit', 'checkRuns', 'compare', 'deployments', 'deploymentStatuses', 'uploadImages',
 ];
 
@@ -239,6 +239,8 @@ test('aidrian pr auto-merge`s calls: --hostname on every REST call, the contents
   forge.contents('acme/notes', 'sub dir/.aidrian/config.json', 'refs/heads/feat/stack', { host: 'ghe.acme.io' });
   assert.equal(forge.viewer({ host: 'ghe.acme.io' }), 'me');
   for (const read of [forge.conversationComments, forge.reviews, forge.reviewComments]) assert.deepEqual(read('acme/notes', 7, { host: 'ghe.acme.io' }), [{ id: 1 }, { id: 2 }]);
+  assert.deepEqual(forge.changeFiles('acme/notes', 7, { host: 'ghe.acme.io' }), [{ id: 1 }, { id: 2 }], 'every page of the file list, joined');
+  assert.equal(forge.pull('acme/notes', 7, { host: 'ghe.acme.io' }).login, 'me');
   assert.deepEqual(args(), [
     ['pr', 'view', '7', '--json', 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews'],
     ['pr', 'view', '--json', 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews'],
@@ -249,9 +251,13 @@ test('aidrian pr auto-merge`s calls: --hostname on every REST call, the contents
     ['api', ...H, 'repos/acme/notes/issues/7/comments', '--paginate', '--slurp'],
     ['api', ...H, 'repos/acme/notes/pulls/7/reviews', '--paginate', '--slurp'],
     ['api', ...H, 'repos/acme/notes/pulls/7/comments', '--paginate', '--slurp'],
+    // Past gh pr view's 100 files: the whole list, 100 a page, then the head again.
+    ['api', ...H, 'repos/acme/notes/pulls/7/files?per_page=100', '--paginate', '--slurp'],
+    ['api', ...H, 'repos/acme/notes/pulls/7'],
   ]);
   const empty = recorded(() => '').forge;
   assert.deepEqual(empty.reviews('acme/notes', 7, { host: 'ghe.acme.io' }), [], 'an empty answer is no entries');
+  assert.deepEqual(empty.changeFiles('acme/notes', 7, { host: 'ghe.acme.io' }), [], 'an empty file list is no entries, which the gate counts as short');
   assert.throws(() => recorded(() => 'not json').forge.viewer({ host: 'github.com' }), SyntaxError, 'an answer that is no JSON throws');
 });
 

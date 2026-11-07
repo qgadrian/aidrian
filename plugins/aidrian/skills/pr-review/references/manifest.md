@@ -59,10 +59,19 @@ The `pr-review` skill writes the rounds and the findings; the `pr-review-fix` sk
 | `fixed` | `pr-review-fix` | The fix is committed and waits for the next round. |
 | `blocked` | `pr-review-fix` | Two passes did not fix it, or the fix needs a decision; `note` says which. |
 | `resolved` | `pr-review` | A later round confirmed the fix. |
+| `dismissed` | the skill that asked | The user decided it is not a defect: the finding was wrong. |
+| `follow_up` | `pr-review` | A later round's new finding below high that is no regression. Reported, not fixed here. |
 
 A fix is not `resolved` until a review round says so.
 When the user settles a disputed finding, the skill that asked writes the choice into `note`,
-and sets `open` with the chosen direction in `next_step`, or `resolved` when the user decides it needs no change.
+and sets `open` with the chosen direction in `next_step`, or `dismissed` when the user decides it needs no change.
+Only the user dismisses: an agent that thinks a finding was wrong says so, and the finding stays `open` until the user decides.
+
+## Outcomes
+
+`resolved` and `dismissed` are the only settled outcomes: a confirmed fix and a finding the user judged wrong.
+`aidrian report findings` counts them per specialist, and its precision is resolved / (resolved + dismissed).
+Every other status is still unsettled, so no status may stand in for one of these two.
 
 ## Writing
 

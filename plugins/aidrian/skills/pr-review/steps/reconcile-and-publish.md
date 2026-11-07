@@ -35,7 +35,7 @@ then severity (critical to low), then likelihood (routine to contrived).
 
 ## 4. Manifest
 
-Write the round as `references/manifest.md` says: new findings with status `open` and the next free ids,
+Write the round as `references/manifest.md` says: new findings with status `open` (or `follow_up`, on a later round, as the skill's step 2 says) and the next free ids,
 the changed statuses, `round` raised by one, and this round's `head_sha` and `base_sha`.
 
 ## 5. Comment

@@ -147,11 +147,11 @@ export const REMOVED = {
 // The modes a string `session.handoff` held before the handoff settings became a group.
 export const HANDOFF_MODES = ['off', 'ask', 'auto'];
 
-// What `models` may set for one of this plugin's agents, per host; null takes any non-empty string.
 // The fields config.json `attribution` may list (lib/attribution.mjs).
 export const COMMIT_FIELDS = ['agent', 'model', 'effort', 'tool', 'env'];
 export const PR_FIELDS = ['tool', 'model', 'effort', 'env', 'agents'];
 
+// What `models` may set for one of this plugin's agents, per host; null takes any non-empty string.
 // Each host's adapter says what it takes (lib/hosts/); docs/config.md#models cites them.
 export const MODEL_CHOICES = modelChoices();
 

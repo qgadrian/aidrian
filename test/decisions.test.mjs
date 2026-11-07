@@ -31,8 +31,10 @@ test('decisions.json is the class list: floor classes first, every class and que
 });
 
 test('the code that reads the classes never spells one: decisions.json is the one list', () => {
-  for (const file of ['decisions.mjs', 'decisions-cli.mjs', 'config.mjs', 'config-committed.mjs', 'config-defaults.mjs', 'config-local.mjs', 'config-merge.mjs', 'config-schema.mjs', 'config-tracker.mjs', 'config-types.mjs', 'config-version.mjs']) {
-    const source = readFileSync(path.join(ROOT, 'plugins/aidrian/lib', file), 'utf8');
+  const lib = path.join(ROOT, 'plugins/aidrian/lib');
+  const configFiles = readdirSync(lib).filter((file) => /^config(-[\w-]+)?\.mjs$/u.test(file));
+  for (const file of ['decisions.mjs', 'decisions-cli.mjs', ...configFiles]) {
+    const source = readFileSync(path.join(lib, file), 'utf8');
     for (const kind of [...FLOOR, ...ORDINARY]) assert.doesNotMatch(source, new RegExp(`['"]${kind}['"]`, 'u'), `${file} ${kind}`);
   }
 });

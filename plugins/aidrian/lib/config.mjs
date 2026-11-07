@@ -1,8 +1,12 @@
 // Loads config.json from the project folder: the folder version and the project's settings for this plugin.
 // docs/config.md lists the keys; docs/project-folder.md gives the version rule.
 // No dependencies: this file runs from the installed plugin, which has no node_modules.
-// The public entry: every config name is importable from here. The schema, its types, the defaults, the merge, the
-// commit readers, the local caps, and the version checks live in the config-*.mjs files beside it.
+// The public entry: every config name is importable from here. The rest of the loader is in eight modules beside it:
+// config-schema.mjs, the keys and their types; config-types.mjs, each type's check; config-defaults.mjs, the defaults;
+// config-merge.mjs, one file's values over the defaults; config-tracker.mjs, the checks of the `tracker` key;
+// config-committed.mjs, the config a commit holds; config-local.mjs, the local settings a team's value caps; and
+// config-version.mjs, the plugin's manifest and the folder version. config-guard.mjs is not part of the loader: it is a
+// separate guard that keeps a gated subagent from changing the config files.
 
 import path from 'node:path';
 

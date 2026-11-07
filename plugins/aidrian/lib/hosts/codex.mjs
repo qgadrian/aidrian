@@ -24,6 +24,10 @@ const toolName = (name) => {
 // Its file edits all go through one tool (codex-rs/core/src/tools/hook_names.rs at rust-v0.166.0).
 const RAW_TOOLS = { Edit: 'apply_patch', Write: 'apply_patch', NotebookEdit: 'apply_patch' };
 
+// What its model calls a standard tool that it names otherwise: its question tool is request_user_input
+// (core/src/tools/handlers/request_user_input.rs, named in the 0.167.0 binary).
+const NATIVE_TOOLS = { AskUserQuestion: 'request_user_input' };
+
 // A connector's tool in the standard form, as the two names above undo it.
 const STANDARD_APP_TOOL = /^mcp__codex_apps_(.+?)__(.+)$/u;
 
@@ -138,6 +142,7 @@ export default {
   serverSpelling,
   // The name the model calls a tool by: the namespace and the name it sees, run together, with one underscore here.
   nativeToolName(standard) {
+    if (Object.hasOwn(NATIVE_TOOLS, standard)) return NATIVE_TOOLS[standard];
     const match = STANDARD_APP_TOOL.exec(standard);
     return match ? `mcp__codex_apps__${match[1]}_${match[2]}` : standard;
   },

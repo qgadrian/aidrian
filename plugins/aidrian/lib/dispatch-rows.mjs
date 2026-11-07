@@ -63,7 +63,7 @@ export const sendsBack = (input, delivery, children = []) =>
   (delivery.missing.length > 0 || children.length > 0) && input.stop_hook_active === false;
 
 // A task status that is no longer in flight. Claude Code lists in-flight tasks only; this guards a host that lists more.
-const ENDED = new Set(['completed', 'failed', 'killed', 'stopped', 'cancelled', 'canceled']);
+export const ENDED_STATUSES = new Set(['completed', 'failed', 'killed', 'stopped', 'cancelled', 'canceled']);
 
 // The background tasks this subagent started that still run as it stops: [{ id, type, description }].
 // Claude Code's SubagentStop payload lists `background_tasks` for the whole session, without the agent that started each,
@@ -76,7 +76,7 @@ const ENDED = new Set(['completed', 'failed', 'killed', 'stopped', 'cancelled', 
 export function runningChildren(input) {
   const tasks = Array.isArray(input.background_tasks) ? input.background_tasks : [];
   const live = tasks.filter((task) => typeof task?.id === 'string' && /^[\w-]+$/u.test(task.id) && task.id !== input.agent_id
-    && task.type !== 'teammate' && !ENDED.has(task.status));
+    && task.type !== 'teammate' && !ENDED_STATUSES.has(task.status));
   if (!live.length || typeof input.agent_transcript_path !== 'string') return [];
   const transcript = readText(input.agent_transcript_path);
   if (!transcript) return [];

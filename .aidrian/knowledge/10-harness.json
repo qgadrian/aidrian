@@ -24,7 +24,7 @@
       "tags": ["docs"]
     },
     "hooks.md": {
-      "summary": "Hooks, Bash rules: pr-body, main-checkout, commit guard, commit messages, review gate, merge guard, tracker write guard (MCP), kill, amend, terms, gates.",
+      "summary": "Hooks, Bash rules: pr-body, main-checkout, commit guard and messages, review gate, merge guard, tracker guard (MCP), kill, amend, terms, gates, announce check.",
       "tags": []
     },
     "project-folder.md": {

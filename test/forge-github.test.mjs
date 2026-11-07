@@ -16,7 +16,7 @@ const FACADE = [
   'id', 'cwd', 'isTrustedCommenter',
   'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'contents', 'visibility', 'viewer',
   'conversationComments', 'comment', 'postComment', 'editComment', 'reactions',
-  'pull', 'diff', 'nodeChange', 'changeFiles', 'reviews', 'reviewComments', 'reviewsWithComments', 'reviewThreads',
+  'pull', 'diff', 'nodeChange', 'changeFiles', 'reviews', 'reviewComments', 'changeEvidence', 'reviewsWithComments', 'reviewThreads',
   'commit', 'checkRuns', 'compare', 'deployments', 'deploymentStatuses', 'uploadImages',
 ];
 
@@ -162,10 +162,85 @@ test('docs/providers/adding-a-host.md names every method a forge adapter impleme
 });
 
 test('the facade index gives shared code forgeFor and its helpers, and nothing of GitHub`s by name', () => {
-  assert.deepEqual(Object.keys(facade).sort(), ['REVIEWS_PAGE', 'forgeFor', 'isTrustedCommenter', 'repoIdentity']);
+  assert.deepEqual(Object.keys(facade).sort(), ['REVIEWS_PAGE', 'forgeFor', 'isLogin', 'isTrustedCommenter', 'repoIdentity']);
+  assert.deepEqual(['amy', 'amy-d2', 'A'.repeat(39)].filter(facade.isLogin).length, 3);
+  assert.deepEqual(['', '-amy', 'amy-', 'a--b', 'amy d', 'A'.repeat(40), null].filter(facade.isLogin), [], 'not a login');
   assert.equal(facade.isTrustedCommenter, isTrustedCommenter);
   assert.equal(facade.repoIdentity, repoIdentity);
   assert.equal(facade.REVIEWS_PAGE, REVIEWS_PAGE);
+});
+
+test('changeEvidence: a comment, review, or review comment of the pull request, each read by its id', () => {
+  const notFound = () => { throw Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)' }); };
+  const { forge, args } = recorded((call) => {
+    const route = call[1];
+    if (route === 'repos/acme/notes/issues/comments/11') return '{"issue_url":"https://api.github.com/repos/acme/notes/issues/7"}';
+    if (route === 'repos/acme/notes/issues/comments/12') return '{"issue_url":"https://api.github.com/repos/acme/notes/issues/8"}';
+    if (route === 'repos/acme/notes/issues/comments/13') return notFound();
+    if (route === 'repos/acme/notes/pulls/7/reviews/21') return '{"id":21}';
+    if (route === 'repos/acme/notes/pulls/7/reviews/22') return notFound();
+    if (route === 'repos/acme/notes/pulls/comments/31') return '{"pull_request_url":"https://api.github.com/repos/acme/notes/pulls/7"}';
+    if (route === 'repos/acme/notes/pulls/comments/32') return notFound();
+    return assert.fail(`no call for ${route}`);
+  });
+  const pr = 'https://github.com/acme/notes/pull/7';
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#issuecomment-11`), 'comment');
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#issuecomment-12`), null, 'a comment of another pull request');
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#issuecomment-13`), null, 'GitHub finds no such comment');
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#pullrequestreview-21`), 'review');
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}/files#pullrequestreview-22`), null, 'GitHub finds no such review');
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#discussion_r31`), 'review_comment');
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#discussion_r32`), null, 'GitHub finds no such review comment');
+  assert.deepEqual(args(), [
+    ['api', 'repos/acme/notes/issues/comments/11'],
+    ['api', 'repos/acme/notes/issues/comments/12'],
+    ['api', 'repos/acme/notes/issues/comments/13'],
+    ['api', 'repos/acme/notes/pulls/7/reviews/21'],
+    ['api', 'repos/acme/notes/pulls/7/reviews/22'],
+    ['api', 'repos/acme/notes/pulls/comments/31'],
+    ['api', 'repos/acme/notes/pulls/comments/32'],
+  ]);
+  const calls = args().length;
+  for (const url of [
+    'https://github.com/acme/other/pull/7#issuecomment-11',
+    'https://github.com/acme/notes/pull/8#issuecomment-11',
+    `${pr}#top`,
+    pr,
+    'http://github.com/acme/notes/pull/7#issuecomment-11',
+    'nope',
+    'https://github.com/user-attachments/assets/shot-1',
+    'https://github.com/user-attachments/files/123/report.txt',
+    'https://github.com/acme/notes/assets/1/shot.png',
+    'https://user-images.githubusercontent.com/1/shot.png',
+    'https://evil.example/acme/notes/pull/7#issuecomment-11',
+    'https://gist.github.com/acme/notes/pull/7#issuecomment-11',
+  ]) assert.equal(forge.changeEvidence('acme/notes', 7, url), null, url);
+  assert.equal(args().length, calls, 'an upload, another repository, pull request, host, or kind is refused without asking GitHub');
+  // A pull request on a GitHub Enterprise host: its links count there, with that host named to gh, and github.com's do not.
+  const enterprise = recorded((call) => (call.includes('repos/acme/notes/issues/comments/11') ? '{"issue_url":"https://ghe.example/api/v3/repos/acme/notes/issues/7"}' : assert.fail(call.join(' '))));
+  assert.equal(enterprise.forge.changeEvidence('acme/notes', 7, 'https://ghe.example/acme/notes/pull/7#issuecomment-11', { host: 'ghe.example' }), 'comment');
+  assert.equal(enterprise.forge.changeEvidence('acme/notes', 7, `${pr}#issuecomment-11`, { host: 'ghe.example' }), null, 'github.com is another host there');
+  assert.deepEqual(enterprise.args(), [['api', '--hostname', 'ghe.example', 'repos/acme/notes/issues/comments/11']]);
+});
+
+test('changeEvidence: a comment or review comment counts only when its API URL names this pull request exactly', () => {
+  const { forge } = recorded((call) => ({
+    'repos/acme/notes/issues/comments/1': '{"issue_url":"https://api.github.com/repos/acme/notes/issues/17"}',
+    'repos/acme/notes/issues/comments/2': '{"issue_url":"https://api.github.com/repos/acme/other/issues/7"}',
+    'repos/acme/notes/pulls/comments/3': '{"pull_request_url":"https://api.github.com/repos/acme/notes/issues/7"}',
+    'repos/acme/notes/pulls/comments/4': '{"pull_request_url":"https://api.github.com/repos/ACME/notes/pulls/7"}',
+  })[call[1]] ?? '{}');
+  const pr = 'https://github.com/acme/notes/pull/7';
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#issuecomment-1`), null, 'another number that ends the same way');
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#issuecomment-2`), null, 'another repository');
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#discussion_r3`), null, 'an issue, not the pull request');
+  assert.equal(forge.changeEvidence('acme/notes', 7, `${pr}#discussion_r4`), 'review_comment', 'the repository compares in any case');
+});
+
+test('changeEvidence: a gh failure other than not found throws', () => {
+  const pr = 'https://github.com/acme/notes/pull/7';
+  const broken = recorded(() => { throw new Error('gh: Bad Gateway (HTTP 502)'); }).forge;
+  assert.throws(() => broken.changeEvidence('acme/notes', 7, `${pr}#issuecomment-11`), /HTTP 502/u, 'any other failure throws');
 });
 
 test('the reviews report`s calls: the merged list and its search string, +1 reactions with the paging flags first, and the compare', () => {

@@ -52,7 +52,7 @@ In a group such as `github`, set only the keys you change; the others keep their
     "reviewGate": { "enabled": false, "checklist": null },
     "autoMerge": { "allow": false, "default": "off", "strategy": null, "deleteBranch": false, "deleteWorktree": false }
   },
-  "review": { "engine": null, "record": "comment", "rules": [], "ignore": ["<lockfiles, snapshots, generated, vendored, minified>"], "nonBehaviour": ["<docs and assets>"], "flows": {}, "planCommand": null, "reviewers": {}, "productFeedback": { "auto": false, "files": null, "maxPersonas": 2 } },
+  "review": { "engine": null, "record": "comment", "rules": [], "ignore": ["<lockfiles, snapshots, generated, vendored, minified>"], "nonBehaviour": ["<docs and assets>"], "flows": {}, "planCommand": null, "reviewers": {}, "approvals": { "allow": false }, "productFeedback": { "auto": false, "files": null, "maxPersonas": 2 } },
   "docs": { "wrapLimit": 155 },
   "terms": { "file": null },
   "knowledge": { "budgets": { "alwaysBytes": 16384, "taggedDocBytes": 24576 } },
@@ -560,6 +560,13 @@ marker it adds itself. A later run edits the record's `comment_id` only after a 
 opens with the marker; otherwise the last comment by the gh user that opens with it; otherwise it posts a new one.
 A marker from any other author, or one a hand-written comment quotes, is ignored, and nothing is read back from a comment into the record.
 A failed or refused post leaves the record and reports the failure.
+
+`review.approvals.allow`, `false` by default and read from the base branch, lets a named approver's GitHub review of the
+head close a flow invariant no reviewer could verify: [Sign-off by the Human](review.md#sign-off-by-the-human).
+An invariant of a flow's list names its approvers, GitHub logins, in `approvers`; `aidrian lint review` fails a name
+that is not one. Each machine turns the path on too, with `"reviewApprovals": "on"` in `.aidrian.local.json`;
+`"off"` or no setting keeps it off. Like the auto-merge switch, it counts only in the main checkout's untracked file,
+and a subagent may not write it ([the config guard](hooks.md#agent-gates)).
 
 ## Review gate
 

@@ -54,6 +54,13 @@ crosses them.
   give them its `overrule` command, with their reason in place of `<why>`, alone in a code block for their own shell.
   `aidrian pr signoff --flow` without `--overrule` never clears a violated invariant, and the command refuses a flow
   the head does not ask the Human to sign.
+  Each flow's `next` lists, per open invariant, the only ways to close it on this head: `commands` for the Human's
+  shell, and `notes` for the rest. `fix the code` means fix it; an approval note is a request for the named approver
+  to post that review with its `aidrian-approve:` line; a capture note is the capture's status, not a command.
+- Offer the Human only a sign-off command the step printed: an entry of `next[].commands`, `overrule`, `command`, or
+  `tests_removed[].accept`, each starting with `aidrian pr signoff`, with its placeholders filled. Hand it over only
+  after the same command with `--check` added exits 0 in your shell; `--check` records nothing. Never write a sign-off
+  command of your own. When `--check` refuses, report the refusal instead.
 - `tests_removed[]`: a flow's test was deleted. Restore it, or the Human accepts it with the `accept` command.
 - `checks_failing[]`: a check the flow requires failed or was skipped on the head.
 
@@ -63,7 +70,8 @@ the change does not touch.
 ## Stops
 
 - `human_required`: a flow the Human signs off, or with `stage`, a stage the Human chose to review in place of a
-  reviewer out of quota. Give them `command`, alone in a code block with nothing after it on the line, to run in their own shell (`!` in the prompt, or another terminal); never
+  reviewer out of quota. Once `command` with `--check` added exits 0, give them `command`,
+  alone in a code block with nothing after it on the line, to run in their own shell (`!` in the prompt, or another terminal); never
   run it for them, and the `review-signoff` rule blocks it if you try. A flow's sign-off holds across later pushes that
   touch nothing of the flow; a stage's holds for its head only.
 - `unsatisfied`: the plan needs a reviewer this machine cannot run, such as `independent-model` with no Codex login.

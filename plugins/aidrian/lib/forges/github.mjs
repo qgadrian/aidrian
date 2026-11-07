@@ -12,6 +12,9 @@ export const MEMBER_ASSOCIATIONS = Object.freeze({ has: (association) => associa
 // Whether GitHub says the comment's author belongs to the repository. Anyone can comment on a pull request.
 export const isTrustedCommenter = (comment) => MEMBER_ASSOCIATIONS.has(comment?.author_association);
 
+// Whether `name` is shaped like a GitHub login: letters, digits, and single hyphens between them, at most 39 characters.
+export const isLogin = (name) => typeof name === 'string' && /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/u.test(name);
+
 // The REST media type `aidrian pr await-review` has always named: index.mjs passes it as `mediaType` for `strictJson`.
 export const GITHUB_JSON = 'application/vnd.github+json';
 
@@ -38,6 +41,16 @@ const THREADS_QUERY = 'query($o:String!,$r:String!,$n:Int!,$after:String){reposi
 const NODE_QUERY = 'query($id:ID!){node(id:$id){... on PullRequest{url}}}';
 // How long an upload of images may take: a pull request's captures go up in one call.
 export const UPLOAD_TIMEOUT_MS = 10 * 60_000;
+
+// Whether a GitHub API URL of an issue or pull request, such as a comment's `issue_url`, names `kind` (`issues` or
+// `pulls`) number `n` of `repo` exactly, on any API host.
+const namesItem = (apiUrl, kind, repo, n) => {
+  const match = /\/repos\/([^/]+\/[^/]+)\/(issues|pulls)\/(\d+)$/u.exec(String(apiUrl ?? ''));
+  return Boolean(match) && match[1].toLowerCase() === String(repo).toLowerCase() && match[2] === kind && Number(match[3]) === Number(n);
+};
+
+// gh's default host, which a call names only when it is another.
+const DEFAULT_HOST = 'github.com';
 
 // The adapter for the repository at `cwd`. `run` is gh, the test seam: the adapter's methods call it, and it stays in
 // this closure, so no caller of the facade gets a raw gh. Every method returns GitHub's payload, parsed, and throws
@@ -130,6 +143,36 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     changeFiles: (repo, n, { host } = {}) => list(`repos/${repo}/pulls/${n}/files?per_page=100`, { host }),
     reviews: (repo, n, { host } = {}) => list(`repos/${repo}/pulls/${n}/reviews`, { host }),
     reviewComments: (repo, n, { host } = {}) => list(`repos/${repo}/pulls/${n}/comments`, { host }),
+    // What `url` links of pull request `n` of `repo`: "comment" for its issue comment (`#issuecomment-<id>`), "review"
+    // for its review (`#pullrequestreview-<id>`), or "review_comment" for its review comment (`#discussion_r<id>`), each
+    // read by its id and held to this pull request; or null for any other URL, such as an uploaded file's, or when
+    // GitHub finds no such item (HTTP 404). Any other failure throws as gh threw it. `host` is the GitHub host the pull
+    // request lives on, github.com unless named: a link on any other host is no part of it, and is never asked about.
+    changeEvidence: (repo, n, url, { host = DEFAULT_HOST } = {}) => {
+      let parsed;
+      try {
+        parsed = new URL(String(url));
+      } catch {
+        return null;
+      }
+      if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== String(host).toLowerCase()) return null;
+      const link = /^\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/[^/]*)?\/?$/u.exec(parsed.pathname);
+      const [, kind, id] = /^#(issuecomment-|pullrequestreview-|discussion_r)(\d+)$/u.exec(parsed.hash) ?? [];
+      if (!link || !kind || `${link[1]}/${link[2]}`.toLowerCase() !== String(repo).toLowerCase() || Number(link[3]) !== Number(n)) return null;
+      // github.com is gh's default host, so its calls name none, as every other method's do.
+      const at = parsed.hostname.toLowerCase() !== DEFAULT_HOST ? { host: parsed.hostname } : {};
+      const found = (route) => {
+        try {
+          return rest(route, at);
+        } catch (error) {
+          if (/\(HTTP 404\)/u.test(`${error?.message ?? ''} ${error?.stderr ?? ''}`)) return null;
+          throw error;
+        }
+      };
+      if (kind === 'issuecomment-') return namesItem(found(`repos/${repo}/issues/comments/${id}`)?.issue_url, 'issues', repo, n) ? 'comment' : null;
+      if (kind === 'pullrequestreview-') return found(`repos/${repo}/pulls/${n}/reviews/${id}`) ? 'review' : null;
+      return namesItem(found(`repos/${repo}/pulls/comments/${id}`)?.pull_request_url, 'pulls', repo, n) ? 'review_comment' : null;
+    },
     // The reviews with their inline comments, GitHub's GraphQL answer: `data.repository.pullRequest.reviews`, at most
     // REVIEWS_PAGE of each, with each list's `totalCount`.
     reviewsWithComments: (repo, n) => {

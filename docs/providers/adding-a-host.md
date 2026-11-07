@@ -151,7 +151,7 @@ A forge is where a pull request lives: its checks, reviews, comments, and reposi
 | File | What it holds |
 | --- | --- |
 | `plugins/aidrian/lib/forges/<id>.mjs` | The adapter: a function that takes `{ cwd, run, timeoutMs, killSignal }` and returns the frozen method object below. `run` is the test seam for the forge's command, and `killSignal` the signal that stops a call at `timeoutMs`, as the ready hold asks for SIGKILL |
-| `plugins/aidrian/lib/forges/index.mjs` | `forgeFor(cwd, options)`, which returns GitHub's adapter for every checkout today, and the facade's helper `repoIdentity(value)` from `identity.mjs`. A second forge makes `forgeFor` choose, such as by the host `repoIdentity` reads from the remote, and maps the facade's own options to the adapter's. `strictJson` promises shared code one thing: an empty answer is null, not an empty list. The GitHub adapter keeps it by naming GitHub's JSON media type on every REST call, its `mediaType`, which shared code cannot pass |
+| `plugins/aidrian/lib/forges/index.mjs` | `forgeFor(cwd, options)`, which returns GitHub's adapter for every checkout today, the facade's helper `repoIdentity(value)` from `identity.mjs`, and `isLogin(name)`, whether a name is shaped like the forge's login, as an invariant's `approvers` must be. A second forge makes `forgeFor` choose, such as by the host `repoIdentity` reads from the remote, and maps the facade's own options to the adapter's. `strictJson` promises shared code one thing: an empty answer is null, not an empty list. The GitHub adapter keeps it by naming GitHub's JSON media type on every REST call, its `mediaType`, which shared code cannot pass |
 | `test/forge-<id>.test.mjs` | The exact command or request behind each method, as `test/forge-github.test.mjs` holds gh's |
 
 The adapter implements the methods of `lib/forges/github.mjs`, each with the arguments it takes there:
@@ -163,7 +163,7 @@ The adapter implements the methods of `lib/forges/github.mjs`, each with the arg
 - The repository: `repo`, `repository`, `contents`, `visibility`, and `viewer`.
 - Conversation: `conversationComments`, the comments on the pull request rather than on its diff, `comment`, one of them by id,
   `postComment`, `editComment`, and `reactions`.
-- Review: `reviews`, `reviewComments`, `reviewsWithComments`, and `reviewThreads`.
+- Review: `reviews`, `reviewComments`, `reviewsWithComments`, and `reviewThreads`, and `changeEvidence(repo, n, url, { host })`, which says whether a URL on the pull request's host is one of its comments, reviews, or review comments, found by its id.
 - Commits: `commit`, `checkRuns`, `compare`, `deployments` of one commit and `deploymentStatuses` of one deployment,
   and `uploadImages` for a pull request's captures.
 

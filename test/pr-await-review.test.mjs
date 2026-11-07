@@ -1107,7 +1107,9 @@ test('aidrian pr prints its usage for an unknown action, and await-review report
   assert.deepEqual([unknown.status, unknown.stderr], [1, [
     'usage: aidrian pr review [PR] [--with-bot] [--max-rounds N] [--quota-fallback agent:NAME|human]',
     '       aidrian pr signoff PR (--flow ID [--overrule INVARIANT --reason TEXT] | --stage NAME) --head',
-    '               SHA [--repo OWNER/NAME]',
+    '               SHA [--repo OWNER/NAME] [--check]',
+    '       aidrian pr signoff PR --flow ID --accept INVARIANT --evidence URL --reason TEXT --head SHA',
+    '               [--repo OWNER/NAME] [--check]',
     '       aidrian pr extend PR',
     '               (--verdict extend|stop --reason TEXT [--head SHA] | --human approve|deny)',
     '       aidrian pr await-review [PR] [--request] [--max-rounds N] [--head SHA]',

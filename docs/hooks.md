@@ -224,8 +224,12 @@ What each rule matches:
   and a `gh pr create` body without the configured `Authored-with:` and `Assisted-by:` lines.
 - Review gate: `gh pr comment`, `gh issue comment`, `gh pr review`, and a `gh api …/issues/<n>/comments` POST whose body
   asks `@codex review`; `gh pr create --reviewer` and `gh pr edit --add-reviewer` naming `github.reviewer`.
-- Review sign-off: `aidrian pr signoff`, with `--overrule` too, also as `node …/cli.mjs` or `node …/bin/aidrian`, and inside a substitution, `sh -c`, `eval`, or a heredoc or pipe fed to a shell. In a Claude Code session the
+- Review sign-off: `aidrian pr signoff`, with `--overrule` and `--accept` too, also as `node …/cli.mjs` or `node …/bin/aidrian`,
+  and inside a substitution, `sh -c`, `eval`, or a heredoc or pipe fed to a shell. In a Claude Code session the
   Human runs it with `!`; if a host routes `!` through the hooks too, the Human runs it from another terminal.
+  A sign-off with `--check` among its words runs: it is the dry run, which runs every refusal and records nothing,
+  so a session can try a command before it hands it to the Human. A pipe into a shell that names a sign-off stays
+  blocked, `--check` or not, since the rule cannot read it.
 - Decision answer: `aidrian decisions set` and `aidrian decisions undo`, also as `node …/cli.mjs` or `node …/bin/aidrian`,
   and in `sh -c`, `eval`, or a heredoc fed to a shell,
   in a call with an `agent_id`. The main session has none, so it stays allowed. A subagent on a host that sends no `agent_id` passes too.
@@ -663,9 +667,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - A write to a folder that holds one of the files, such as `rm -rf .aidrian`, counts; one to the project root, such as `cp notes.md .`, does not.
 - A call without `agent_id` is the main session's, which may still change them.
 - A block is [recorded](#recorded-blocks) as `config-guard`, with the file it changes as its reason.
-- With or without gates, a subagent may not target `.aidrian.local.json` with a Write, Edit, or apply_patch that changes the switch,
-  or a Bash command that names `autoMerge`:
-  the [auto-merge](config.md#auto-merge) switch is the main session's. Other writes to that file follow the rules above.
+- With or without gates, a subagent may not target `.aidrian.local.json` with a Write, Edit, or apply_patch that changes a machine switch,
+  or a Bash command that names `autoMerge` or `reviewApprovals`:
+  the [auto-merge](config.md#auto-merge) and review-approvals switches are the main session's. Other writes to that file follow the rules above.
 - With or without gates, the same holds for `review.productFeedback` in that file: a Write, Edit, or apply_patch that changes it,
   through a JSON-escaped key, a removed key, or a file left unparsable included, or a Bash command that names `productFeedback`:
   the machine's [product feedback](config.md#product-feedback) choice is the main session's.

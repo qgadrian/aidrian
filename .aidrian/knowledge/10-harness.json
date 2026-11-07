@@ -36,7 +36,7 @@
       "tags": []
     },
     "review.md": {
-      "summary": "aidrian pr review: plan, splits, flows, visual review, reviewers, quota fallbacks, rounds, sign-off, record, owed reviews, product feedback in the rounds.",
+      "summary": "pr review: plan, splits, flows, invariants, approvers, approvals, visual, reviewers, quota, rounds, sign-off, --accept, record, owed reviews, product feedback.",
       "tags": []
     },
     "knowledge.md": {

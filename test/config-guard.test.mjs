@@ -390,6 +390,34 @@ test('a subagent may not set the auto-merge switch, with or without gates; other
   }
 });
 
+test('a subagent may not set the review approvals switch, with or without gates; other local writes and the main session stay allowed', (t) => {
+  const { dir } = project(t, { version: 1 });
+  const local = path.join(dir, '.aidrian.local.json');
+  writeFileSync(local, `${JSON.stringify({ names: { human: 'x' }, reviewApprovals: 'off' }, null, 2)}\n`);
+  const on = JSON.stringify({ reviewApprovals: 'on' });
+  const run = (input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
+  for (const [tool, toolInput] of [
+    ['Write', { file_path: '.aidrian.local.json', content: on }],
+    ['Edit', { file_path: '.aidrian.local.json', old_string: '"off"', new_string: '"on"' }],
+    ['Write', { file_path: '.aidrian.local.json', content: '{ "review\\u0041pprovals": "on" }' }],
+    ['apply_patch', { command: '*** Begin Patch\n*** Update File: .aidrian.local.json\n@@\n-  "reviewApprovals": "off"\n+  "reviewApprovals": "on"\n*** End Patch\n' }],
+    ['Bash', { command: `echo '${on}' > .aidrian.local.json` }],
+  ]) {
+    const result = run(subagent(dir, tool, toolInput));
+    assert.equal(result.status, 2, JSON.stringify(toolInput));
+    assert.match(result.stderr, /sets reviewApprovals in \.aidrian\.local\.json/u, JSON.stringify(toolInput));
+  }
+  for (const [tool, toolInput] of [
+    ['Edit', { file_path: '.aidrian.local.json', old_string: '"human": "x"', new_string: '"human": "y"' }],
+    ['Bash', { command: 'jq .reviewApprovals .aidrian.local.json' }],
+    ['Write', { file_path: 'docs/notes.md', content: 'reviewApprovals is a key of .aidrian.local.json' }],
+  ]) {
+    assert.equal(run(subagent(dir, tool, toolInput)).status, 0, JSON.stringify(toolInput));
+  }
+  const { agent_id: _ignored, agent_type: _alsoIgnored, ...main } = subagent(dir, 'Write', { file_path: '.aidrian.local.json', content: on });
+  assert.equal(run(main).status, 0, 'the main session may');
+});
+
 test('a subagent may not change the machine\'s product feedback choice, by any spelling; other local writes and the main session stay allowed', (t) => {
   const { dir } = project(t, { version: 1 });
   const local = path.join(dir, '.aidrian.local.json');

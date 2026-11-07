@@ -50,6 +50,22 @@ test('a sign-off inside a shell wrapper is denied', (t) => {
   }
 });
 
+test('an agent may dry-run a sign-off with --check, and every other sign-off is still denied', (t) => {
+  const cwd = project(t);
+  for (const command of [
+    'aidrian pr signoff 9 --flow look --head abc1234 --check',
+    'aidrian pr signoff 9 --flow look --accept matches-design --evidence https://github.com/o/r/pull/9#issuecomment-1 --reason "approved" --head abc1234 --check',
+    'node plugins/aidrian/lib/cli.mjs pr signoff 9 --check --stage independent --head abc1234',
+    'bash -c "aidrian pr signoff 9 --flow x --head abc1234 --check"',
+  ]) assert.equal(check(command, { cwd }), null, command);
+  for (const command of [
+    'aidrian pr signoff 9 --flow look --accept matches-design --evidence https://x --reason "y" --head abc1234',
+    'aidrian pr signoff 9 --flow x --head abc1234 --check-in',
+    'aidrian pr signoff 9 --flow x --head abc1234 --check && aidrian pr signoff 9 --flow x --head abc1234',
+    'echo "aidrian pr signoff 9 --check" | bash',
+  ]) assert.equal(check(command, { cwd }), REASON, command);
+});
+
 test('outside a project the rule is off', (t) => {
   const bare = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-signoff-bare-')));
   t.after(() => rmSync(bare, { recursive: true, force: true }));

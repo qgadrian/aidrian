@@ -27,7 +27,9 @@ repository describes the plan itself.
 - `visual` (the visual reviewers, designer and ux-specialist by default): the screenshots this head was captured in,
   per route, width, locale, and variant, each with its `file`, its upload `url` when attached, and measured `facts`
   (horizontal overflow, clipped text, controls under 44 px), plus the project's checklist. Hand the agent `brief`,
-  and have it open the files. `status` other than `captured` (no base URL, no Playwright) means review from code.
+  and have it open the files. `status` other than `captured` (no base URL, no Playwright) means review from code,
+  except that entries with `ingested: true` (images taken outside the tool, with a `source` and no facts) are opened
+  and may be cited as `capture:<key>` too.
 - `record`: the command that records the pass. `--findings` is what the agent found, `--fixed` what was fixed in a
   pushed commit, `--accepted` what was dispositioned another way (step 3). `--verdicts` takes the file above.
   When `record` asks for `--findings-file` instead, the agent writes each finding with its axes and state, and the

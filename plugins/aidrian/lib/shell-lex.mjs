@@ -752,11 +752,13 @@ export function walkCommands(command, cwd) {
       walk(body, folder, depth + 1, chainFolder);
       return true;
     };
-    // Segment `index` with the segments that pipe into it, as written.
+    // Segment `index` with the segments that pipe into it, as written, then the heredoc bodies those segments read:
+    // a body sits past its segment's span, and `cat <<'EOF' | bash` feeds the shell that body.
     const piped = (index) => {
       let first = index;
       while (first > 0 && (separators[first - 1] === '|' || separators[first - 1] === '|&')) first -= 1;
-      return line.slice(spans[first][0], spans[index][1]);
+      const bodies = heredocs.filter((each) => each.segment >= first && each.segment < index).map((each) => each.body);
+      return [line.slice(spans[first][0], spans[index][1]), ...bodies].join('\n');
     };
     let here = start;
     let chain = chainStart;

@@ -234,6 +234,10 @@ starts from the last posted body in the state folder's `tmp` and changes only th
 When that file is gone, it keeps the earlier comment, posts nothing new, and says so.
 `--full` runs everything again. `persona-audit` itself stays read-only and posts nothing, with or without this skill.
 
+With `review.productFeedback.auto` on, the flows run this skill themselves, after a draft opens and again before marking it
+ready, as [review.md](review.md#product-feedback-in-the-rounds) says, and the [ready hold](hooks.md#ready-hold) keeps the draft
+a draft while feedback is owed. With it off, the default, nothing runs it unasked.
+
 ## Triage
 
 The `persona-audit-triage` skill takes each item of a report to a decision with the Human: each finding, each

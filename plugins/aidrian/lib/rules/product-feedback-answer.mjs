@@ -279,25 +279,30 @@ function callFolder(project, folder) {
   return folder === null ? null : path.resolve(folder, project);
 }
 
+// Whether a project keeps product feedback: its state folder holds `product-feedback/`.
+const keepsFeedback = (project) => isDirectory(path.join(stateDir(project), 'product-feedback'));
+
 // The project a folder is in when the feature is on there, null when it is off, and UNKNOWN for a folder it cannot read
 // while this machine keeps product feedback: the one path that looks past the current project. A folder it cannot read
 // is null, one that is no existing directory (`cd ../proj[B]` as written, which the shell would expand), or any but cwd
 // under a CDPATH, in the command or the environment, which can send a `cd` anywhere.
-export function projectReader(command, cwd, env) {
+// `on` says whether the feature is on in a project, and `unknownWhen` whether a folder it cannot read is UNKNOWN rather
+// than null; the ready hold (github/ready-hold.mjs) reads folders by these same rules with its own two.
+export function projectReader(command, cwd, env, { on = keepsFeedback, unknownWhen = feedbackOnMachine } = {}) {
   const cdpath = /\bCDPATH\b/u.test(command) || Boolean(env.CDPATH);
   const active = new Map();
   const activeIn = (folder) => {
     if (!active.has(folder)) {
       const project = findProject(folder);
-      active.set(folder, project && isDirectory(path.join(stateDir(project), 'product-feedback')) ? project : null);
+      active.set(folder, project && on(project) ? project : null);
     }
     return active.get(folder);
   };
-  let onMachine;
+  let unknown;
   return (folder) => {
     if (folder !== null && isDirectory(folder) && !(cdpath && folder !== cwd)) return activeIn(folder);
-    onMachine ??= feedbackOnMachine(activeIn, cwd);
-    return onMachine ? UNKNOWN : null;
+    unknown ??= unknownWhen(activeIn, cwd);
+    return unknown ? UNKNOWN : null;
   };
 }
 

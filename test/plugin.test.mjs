@@ -1170,6 +1170,73 @@ test('every agent that pushes, and the orchestration skill, says to wait in the 
   assert.match(skill, /every brief to an agent that pushes, waits on CI, or starts a reviewer says to wait in the foreground/);
 });
 
+test('each flow runs product feedback after its draft opens, and status and its re-check before each gh pr ready', () => {
+  // The hook holds a ready while feedback is owed (rules/github/ready-hold.mjs); without these steps a flow would only hit the deny.
+  const skill = (file) => readFileSync(path.join(PLUGIN, 'skills', file), 'utf8').replace(/\s+/g, ' ');
+  const between = (text, start, end) => {
+    const from = text.indexOf(start);
+    assert.notEqual(from, -1, `missing ${start}`);
+    const to = end ? text.indexOf(end, from) : text.length;
+    assert.notEqual(to, -1, `missing ${end}`);
+    return text.slice(from, to);
+  };
+  const readySteps = {
+    'pr-review-loop': between(skill('pr-review-loop/SKILL.md'), '## 7. Summary'),
+    orchestration: between(skill('orchestration/SKILL.md'), '7. **Ready.**', '8. **Merge.**'),
+    autopilot: between(skill('autopilot/references/phases.md'), '## 4. Stop at sign-off'),
+    'pr-merge-when-green': between(skill('pr-merge-when-green/SKILL.md'), '`isDraft` is true and this is an unattended run', '## 1. Wait'),
+  };
+  for (const [name, step] of Object.entries(readySteps)) {
+    const ready = step.search(/gh pr ready <n>/u);
+    const status = step.indexOf('aidrian pr product-feedback status <n>');
+    const recheck = step.indexOf('re-check when only that is owed');
+    assert.ok(status !== -1 && status < ready, `${name} runs status before gh pr ready`);
+    assert.ok(recheck > status && recheck < ready, `${name} names the re-check, then marks ready`);
+    assert.match(step, /§ Before `gh pr ready`/u, `${name} follows the flow reference`);
+    assert.match(step, /On exit 0, mark it ready|on exit 0, mark it ready/u, `${name} marks ready only on exit 0`);
+  }
+  const afterDraft = {
+    'pr-review-loop': [between(skill('pr-review-loop/SKILL.md'), '## 0. Preflight', '## 1. Run'), null],
+    orchestration: [between(skill('orchestration/SKILL.md'), '2. Open a draft', '4. After each push'), null],
+    autopilot: [between(skill('autopilot/references/phases.md'), '## 2. The draft pull request', '## 3. Review rounds'), /Ask the Human nothing/u],
+  };
+  for (const [name, [step, extra]] of Object.entries(afterDraft)) {
+    assert.match(step, /`pr-product-feedback` skill's `references\/in-a-flow\.md` § After the draft opens/u, `${name} runs the step after the draft opens`);
+    if (extra) assert.match(step, extra, name);
+  }
+  const flow = skill('pr-product-feedback/references/in-a-flow.md');
+  const drafted = between(flow, '## After the draft opens', '## Before');
+  assert.match(drafted, /before the first bot round/u);
+  // Only a pull request nothing has read runs the skill here: a re-check mid-round would walk fixes not yet pushed.
+  assert.match(drafted, /Exit 2 with `reason` `not_run`: run the `pr-product-feedback` skill on `<n>`/u);
+  assert.match(drafted, /Exit 2 with any other `reason`: go on\. Nothing is re-checked here, mid-round: the ready step owns the re-check\./u);
+  assert.doesNotMatch(drafted, /Exit 2: run/u);
+  assert.match(between(skill('pr-review-loop/SKILL.md'), '## 0. Preflight', '## 1. Run'), /only on `not_run`: step 7's ready step owns the re-check/u);
+  // What the skill found is answered by the flow, with the commands status prints, before the fix-now items are routed.
+  const answers = ['After the skill runs, run `status <n> --json` again', 'with the command it prints in `owed`', 'each `defect` with `fix-now`',
+    'each `minor` with `defer` and a `--reason`, or as a question to the Human', 'Then route each `fix-now` item to its owner'].map((part) => drafted.indexOf(part));
+  assert.ok(answers.every((at, i) => at !== -1 && (i === 0 || at > answers[i - 1])), `the answering step's order: ${answers}`);
+  assert.match(drafted, /`pr-review-loop` run as a step of another skill leaves this to its caller/u);
+  // pr-merge-when-green's read-only rule names the one write its ready step adds.
+  const rules = between(skill('pr-merge-when-green/SKILL.md'), '## Hard rules', '## Project setup');
+  assert.match(rules, /4\. Never push.*step 0's product feedback re-check with the comment it edits.*every command here only reads/u);
+  const before = between(flow, '## Before `gh pr ready`');
+  const order = ['status <n> --json', '`not_rechecked`', 'with no `--full`', 'Then run `status` again', 'leave the draft'].map((part) => before.indexOf(part));
+  assert.ok(order.every((at, i) => at !== -1 && (i === 0 || at > order[i - 1])), `the ready step's order: ${order}`);
+  assert.match(before, /In an unattended run, ask nothing: the draft stays a draft, and the report lists each question/u);
+  assert.match(before, /`opted_out`/u);
+  assert.match(skill('pr-product-feedback/SKILL.md'), /\[references\/in-a-flow\.md\]\(references\/in-a-flow\.md\)/u);
+  assert.match(skill('autopilot/SKILL.md'), /each open product choice of the pull request's product feedback, with its command, and that this machine opted out/u);
+});
+
+test('pr-review-loop skips the product feedback comment the gh user wrote, by the marker post writes', () => {
+  const loop = readFileSync(path.join(PLUGIN, 'skills/pr-review-loop/SKILL.md'), 'utf8').replace(/\s+/g, ' ');
+  const collect = loop.slice(loop.indexOf('## 2. Collect'), loop.indexOf('## 3. Triage'));
+  assert.match(collect, /Skip a conversation comment the gh user wrote that carries the `aidrian-product-feedback` marker/u);
+  const lib = readFileSync(path.join(PLUGIN, 'lib/pr-product-feedback.mjs'), 'utf8');
+  assert.match(lib, /<!-- aidrian-product-feedback: pr=/u, 'the marker name the loop skips is the one post writes');
+});
+
 test('pr-product-feedback walks before the product read, posts only through its command, and asks first when the change is from outside', () => {
   const skill = flat('plugins/aidrian/skills/pr-product-feedback/SKILL.md');
   const format = flat('plugins/aidrian/skills/pr-product-feedback/references/comment-format.md');

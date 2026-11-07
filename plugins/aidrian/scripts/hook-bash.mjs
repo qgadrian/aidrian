@@ -13,6 +13,7 @@ import * as mergeReview from '../lib/rules/github/merge-review.mjs';
 import * as prBody from '../lib/rules/github/pr-body.mjs';
 import * as productFeedbackAnswer from '../lib/rules/product-feedback-answer.mjs';
 import * as productFeedbackPost from '../lib/rules/product-feedback-post.mjs';
+import * as readyHold from '../lib/rules/github/ready-hold.mjs';
 import * as reviewRequest from '../lib/rules/github/review-request.mjs';
 import * as reviewRounds from '../lib/rules/github/review-rounds.mjs';
 import * as reviewExtend from '../lib/rules/review-extend.mjs';
@@ -22,7 +23,15 @@ import * as grepExitChain from '../lib/rules/grep-exit-chain.mjs';
 import * as mainCheckout from '../lib/rules/main-checkout.mjs';
 import * as processKill from '../lib/rules/process-kill.mjs';
 
-// The main-checkout rule runs last: it is the only one that may start git. Each rule's name keys its rows and its lesson.
+// Which rules start a process. Every rule first reads the command alone, and most stop there. A rule that needs the
+// project finds it (findProject), which runs git once inside a project folder. Past that, only these start one, and only
+// for a command they matched: attribution, git for a commit's trailers; pr-body, gh for the open pull requests, bounded
+// at 3 s; merge-review, one gh pr view, bounded at 3 s; ready-hold, git for the committed config and then, when the
+// project may run product feedback, gh under one deadline for all its calls, which ends 4 s after this process started
+// at the latest; and main-checkout, git, which runs last. ready-hold runs after merge-review, so a command that marks a
+// pull request ready and merges it leaves the merge guard its own 3 s: the guard refuses a merge it cannot read, and the
+// hold lets the command run when its time is gone. A command none of them matched starts nothing beyond findProject.
+// Each rule's name keys its rows and its lesson.
 const RULES = [
   ['git-hook-bypass', gitHookBypass],
   ['git-amend', gitAmend],
@@ -39,13 +48,15 @@ const RULES = [
   ['product-feedback-answer', productFeedbackAnswer],
   ['product-feedback-post', productFeedbackPost],
   ['merge-review', mergeReview],
+  ['ready-hold', readyHold],
   ['main-checkout', mainCheckout],
 ];
 
 await runHook(async (input) => {
   const command = input.tool_input?.command;
   if (input.tool_name !== 'Bash' || typeof command !== 'string' || command === '') return;
-  const context = { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), env: process.env, input };
+  // `startedAt`: when this process started, for a rule that bounds its network calls by the hook's own time (ready-hold).
+  const context = { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), env: process.env, input, startedAt: performance.timeOrigin };
   for (const [name, rule] of RULES) {
     const reason = rule.check(command, context);
     if (reason) await block(input, name, reason);

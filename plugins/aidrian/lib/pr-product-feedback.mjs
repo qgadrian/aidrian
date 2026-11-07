@@ -11,7 +11,8 @@
 //
 // `status` takes the team's values only from GitHub, at the default branch and at the base (pr-auto-merge branchConfig),
 // so a branch cannot raise or lower them, and the machine's choice only from the main checkout's local file
-// (project.localFeedbackAuto). `record` and `recheck` take the repository, the number, and the head only from gh, and
+// (project.localFeedbackAuto). Before any gh call it reads git alone (localFeedback): when that says off, it is clear
+// with no gh call, so a project without the feature pays none; anything else goes to GitHub, which decides. `record` and `recheck` take the repository, the number, and the head only from gh, and
 // `record` stores `limited` by `aidrian pr resolve`'s reads and rule, which the post rule reads.
 // `post` is the one path that posts: it refuses a body holding anything local, and nothing is ever read back from a
 // comment into the record.
@@ -27,9 +28,9 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 
 import { decisionProblem, readTriage, recordDecision, reportName, sidecarName, sidecarProblems, today } from './audits.mjs';
-import { commandConfig, loadConfig, strictConfigFromText } from './config.mjs';
+import { commandConfig, DEFAULTS, loadConfig, strictConfigFromText } from './config.mjs';
 import { AUDIT_KEY, cleanTitle, decisionFields, decisionOf, heldFor, itemState, openDecisions, KINDS, PERSONA, PRODUCT_MANAGER, readRecord, RECORD_VERSION, recordPath } from './feedback-record.mjs';
-import { isFile, isObject, isWithin } from './fs.mjs';
+import { isDirectory, isFile, isObject, isWithin } from './fs.mjs';
 import { runGh } from './gh.mjs';
 import { runGit } from './git.mjs';
 import { withLocks } from './jsonl.mjs';
@@ -38,7 +39,7 @@ import { ACCESS_DOC, parsePersona, personaDocs, previewPatterns } from './person
 import { branchConfig, defaultBranch, ghError, notFound, readView, VIEW_FIELDS } from './pr-auto-merge.mjs';
 import { checkoutRemotes } from './pr-checks.mjs';
 import { fromOutside, parseTarget } from './pr-resolve.mjs';
-import { repoRoot, stateDir, strictConfigPathIn } from './project.mjs';
+import { committedConfigFile, repoRoot, stateDir, strictConfigPathIn } from './project.mjs';
 import { FEEDBACK_NO_LIST } from './review/config.mjs';
 import { pathPattern } from './review/plan.mjs';
 
@@ -99,16 +100,17 @@ function updateRecord(file, pr, change) {
 // The pull request as gh describes it: readView's fields, with `repo` as gh's URL spells it, and `crossRepository` when
 // `fields` asks gh for it. As `aidrian pr resolve` holds it, the argument is checked first, and gh's answer, like a URL's
 // repository, must be a remote of this checkout.
-function pullRequest(value, { gh, remotes }, fields = VIEW_FIELDS) {
+// `viewed` is gh's answer to that same view when the caller already has it, as the ready hold does: it is held to the same checks.
+function pullRequest(value, { gh, remotes }, fields = VIEW_FIELDS, viewed = null) {
   const target = parseTarget(value);
   if (target.refusal) throw new Error(target.refusal);
   const spelled = ({ host, owner, name }) => `${host}/${owner}/${name}`;
   const notRemote = (where) => new Error(`not a remote: ${spelled(where)} is not a remote of this checkout`);
   const isRemote = (where) => remotes().includes(spelled(where).toLowerCase());
   if (target.host && !isRemote(target)) throw notRemote(target);
-  let view;
+  let view = viewed;
   try {
-    view = JSON.parse(gh(['pr', 'view', String(target.number), ...(target.host ? ['--repo', spelled(target)] : []), '--json', fields]));
+    view ??= JSON.parse(gh(['pr', 'view', String(target.number), ...(target.host ? ['--repo', spelled(target)] : []), '--json', fields]));
   } catch (error) {
     throw new Error(`could not read pull request ${target.number} with gh (${ghError(error)})`);
   }
@@ -167,32 +169,90 @@ const CLEAR_WORDS = {
   not_user_facing: 'no changed file is user-facing',
   nothing_open: 'nothing is open',
 };
+const LOCAL_OFF_WORDS = 'git\'s origin refs say product feedback is off; a fetch reads the team\'s current choice';
 
-// `status`: exit 0 clear, 2 owed. Everything it reads of the team, it reads from GitHub.
-function status({ argv: [value], values, project, gh, remotes }) {
-  const pr = pullRequest(value, { gh, remotes });
+// `review.productFeedback.auto` as `ref` commits it, found as committedConfig finds the file at that commit: true, false, or
+// undefined when it cannot be read: a folder override at the ref that cannot be read (committedConfigFile null), a config
+// file missing at the ref, or text that is no JSON.
+function committedAuto(project, ref) {
+  let file;
+  try {
+    file = committedConfigFile(project, ref);
+  } catch {
+    return undefined;
+  }
+  if (file === null) return undefined;
+  const shown = runGit(['show', `${ref}:./${file}`], project.root);
+  if (shown.status !== 0) return undefined;
+  try {
+    return JSON.parse(shown.stdout)?.review?.productFeedback?.auto === true;
+  } catch {
+    return undefined;
+  }
+}
+
+// What git alone says of whether `project` may run product feedback, before any gh call, as { state, team }. A session can
+// rewrite every ref it reads, so this read only ever sends the decision to GitHub, and off needs every source off:
+//   - `on`: the main checkout's local `auto` is true, a ref commits `auto: true`, or the state folder holds `product-feedback/`;
+//   - `maybe`: no source says on, and a ref's config cannot be read (committedAuto undefined): GitHub decides;
+//   - `off`: the local `auto` is false, or every ref says off, and git names the default branch on origin;
+//   - `unknown`: no source says on, and git names no default branch on origin, so only GitHub can say off.
+// The default branch is origin/HEAD, origin/<git.defaultBranch> of the working copy, or origin/main. HEAD, the branch itself,
+// can only raise: it never says off alone. `team` says an origin ref commits `auto: true`, for the reason `status` gives
+// a machine that opted out.
+export function localFeedback(project) {
+  if (project.localFeedbackAuto === true) return { state: 'on', team: false };
+  let config = DEFAULTS;
+  try {
+    config = loadConfig(project).config;
+  } catch {}
+  const origin = [...new Set(['refs/remotes/origin/HEAD', `refs/remotes/origin/${config.git.defaultBranch}`, `refs/remotes/origin/${DEFAULTS.git.defaultBranch}`])];
+  const exists = (ref) => runGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], project.root).status === 0;
+  const onOrigin = origin.filter(exists).map((ref) => committedAuto(project, ref));
+  const onHead = exists('HEAD') ? committedAuto(project, 'HEAD') : false;
+  const team = onOrigin.includes(true);
+  if (project.localFeedbackAuto === false) return { state: onOrigin.length ? 'off' : 'unknown', team };
+  let kept = false;
+  try {
+    kept = isDirectory(path.join(stateDir(project, { config }), 'product-feedback'));
+  } catch {}
+  if (team || onHead === true || kept) return { state: 'on', team };
+  if (!onOrigin.length) return { state: 'unknown', team };
+  if (onOrigin.includes(undefined) || onHead === undefined) return { state: 'maybe', team };
+  return { state: 'off', team };
+}
+
+// What `status` says of pull request `value`, as { exit, result }: exit 0 clear, 2 owed, and an error thrown. Everything it
+// reads of the team, it reads from GitHub, once localFeedback has not said off. It prints nothing, so the ready hold
+// (rules/github/ready-hold.mjs) runs it in its own process, at the project root it found, with the gh seam it bounds.
+// The hold's seams: `view`, gh's answer to the pull request's view, so it is viewed once; `local`, localFeedback's answer
+// it already read; and `mainBranch(pr)`, the default branch's name when git already names it, or null to ask GitHub.
+export function feedbackStatus(value, project, { gh, remotes = () => checkoutRemotes(project.root), view = null, local = localFeedback(project), mainBranch = () => null }) {
+  if (local.state === 'off') {
+    const target = parseTarget(value);
+    if (target.refusal) throw new Error(target.refusal);
+    const reason = project.localFeedbackAuto === false && local.team ? 'opted_out' : 'off';
+    const repo = target.host ? `${target.owner}/${target.name}` : null;
+    // Read from git alone, which may lag GitHub until a fetch: say what was read, not what the team chose. A local `auto` of
+    // false says off whatever the refs say, so its words name the machine's opt-out.
+    const why = reason === 'off' && project.localFeedbackAuto !== false ? LOCAL_OFF_WORDS : CLEAR_WORDS.opted_out;
+    return { exit: 0, result: { state: 'clear', reason, why, pr: target.number, repo, head: null, owed: [] } };
+  }
+  const pr = pullRequest(value, { gh, remotes }, VIEW_FIELDS, view);
   const shown = runGit(['rev-parse', '--show-prefix'], project.root);
   if (shown.status !== 0) throw new Error('git could not give the project\'s folder in the repository');
   const prefix = shown.stdout.trim();
-  const main = defaultBranch(gh, pr);
+  const main = mainBranch(pr) ?? defaultBranch(gh, pr);
   const onMain = readBranch(gh, pr, main, prefix);
   const onBase = pr.base === main ? onMain : readBranch(gh, pr, pr.base, prefix);
   const read = [onMain, onBase];
   const branches = read.map(({ config }) => config);
-  const say = (exit, state, reason, why, owed = []) => {
-    const result = { state, reason, why, pr: pr.number, repo: pr.repo, head: pr.head, owed };
-    if (values.json) console.log(JSON.stringify(result));
-    else {
-      console.log(`product feedback ${state} for #${pr.number}: ${why}`);
-      for (const each of owed) console.log(`- ${JSON.stringify(each.title)}: ${each.command}`);
-    }
-    return exit;
-  };
+  const say = (exit, state, reason, why, owed = []) => ({ exit, result: { state, reason, why, pr: pr.number, repo: pr.repo, head: pr.head, owed } });
   const clear = (reason) => say(0, 'clear', reason, CLEAR_WORDS[reason]);
 
   const team = branches.some((config) => feedbackOf(config).auto === true);
-  const local = project.localFeedbackAuto;
-  if (!(local ?? team)) return clear(local === false && team ? 'opted_out' : 'off');
+  const machine = project.localFeedbackAuto;
+  if (!(machine ?? team)) return clear(machine === false && team ? 'opted_out' : 'off');
   const unlisted = read.find(({ config, visualBroken }) => feedbackOf(config).files === null && visualBroken);
   if (unlisted) throw new Error(`review.visual on ${unlisted.branch} has errors, and its targets are that branch's file list`);
   const lists = unionOf(branches.map((config) => feedbackOf(config).files ?? targetFilesOf(config)));
@@ -215,6 +275,17 @@ function status({ argv: [value], values, project, gh, remotes }) {
   const reason = owed.some((each) => each.state === 'unanswered') ? 'unanswered' : 'not_rechecked';
   const count = `${owed.length} item${owed.length === 1 ? '' : 's'}`;
   return say(2, 'owed', reason, reason === 'unanswered' ? `${count} still owed an answer or a re-check` : `${count} waiting for a re-check of the fix`, owed);
+}
+
+// `status`: prints what feedbackStatus says, and exits with it.
+function status({ argv: [value], values, project, gh, remotes }) {
+  const { exit, result } = feedbackStatus(value, project, { gh, remotes });
+  if (values.json) console.log(JSON.stringify(result));
+  else {
+    console.log(`product feedback ${result.state} for #${result.pr}: ${result.why}`);
+    for (const each of result.owed) console.log(`- ${JSON.stringify(each.title)}: ${each.command}`);
+  }
+  return exit;
 }
 
 // The command that answers an owed item, for what it counts to be given. A held item takes the Human's decision first.

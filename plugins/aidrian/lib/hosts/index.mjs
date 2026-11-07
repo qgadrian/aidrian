@@ -45,13 +45,15 @@ export const normalizeHookInput = (raw, env = process.env) => detectHost({ env, 
 export const toolNames = ({ tool_name: name, raw_tool_name: raw }) => [name, raw].filter((each) => typeof each === 'string' && each !== '');
 
 // A GitHub tool call as { tool, given }, in the terms of the GitHub MCP server's tool: what a host's connector stands for, from the
-// adapter's `githubTools`, with its repository split into `owner` and `repo`. `name` is the standard name; any other call stays as it is.
+// adapter's `githubTools`, with its repository split into `owner` and `repo`, and the adapter's `fixed` values, the inputs its
+// tool implies without taking them, such as `draft: false` for a tool that only marks ready. `name` is the standard name; any
+// other call stays as it is.
 export function githubCall(name, given) {
   const tool = HOSTS.map((host) => host.githubTools?.[name]).find(Boolean);
   if (!tool) return { tool: name, given };
   const [, owner, repo] = /^([^/]+)\/([^/]+)$/u.exec(given[tool.repo]) ?? [];
   const fields = Object.entries(tool.fields).map(([standard, own]) => [standard, given[own]]);
-  return { tool: tool.as, given: { owner, repo, ...Object.fromEntries(fields) } };
+  return { tool: tool.as, given: { owner, repo, ...Object.fromEntries(fields), ...tool.fixed } };
 }
 
 // The forms the tool `name` reaches a hook in: the standard one, and as each host sends it.

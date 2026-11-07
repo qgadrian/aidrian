@@ -309,6 +309,8 @@ test('walkCommands reads an eval string, and names the text a shell runs that it
   assert.deepEqual(programs('bash build.sh'), [['bash', 'bash build.sh']], 'a script');
   assert.deepEqual(programs("bash -c 'git push'"), [['bash', undefined], ['git', undefined]], 'a shell string it reads');
   assert.deepEqual(programs("bash <<'EOF'\ngit push\nEOF"), [['bash', undefined], ['git', undefined]], 'a heredoc fed to a shell');
+  assert.deepEqual(programs("cat <<'EOF' | bash\ngit push\nEOF"), [['cat', undefined], ['bash', "cat <<'EOF' | bash\ngit push\n"]], 'a heredoc piped into a shell, with its body');
+  assert.deepEqual(programs("cat > f <<'EOF'\ngit push\nEOF\nls | bash"), [['cat', undefined], ['ls', undefined], ['bash', 'ls | bash']], 'only the bodies of the segments that pipe in');
   // Seven shells deep, past the depth limit, the innermost string goes unread.
   let deep = 'git push';
   for (let i = 0; i < 7; i += 1) deep = `bash -c ${JSON.stringify(deep)}`;

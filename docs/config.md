@@ -381,8 +381,11 @@ the visual capture's base URL, `review.visual.baseUrl`, and `review.productFeedb
 ## Product feedback
 
 `aidrian pr product-feedback` keeps one record per pull request of what its product feedback found, and says what a script
-can check: whether any of it is still owed. It holds nothing by itself: no approval, no sign-off, and no merge block, so
-`pr-auto-merge` and `aidrian pr checks` read nothing of it.
+can check: whether any of it is still owed. It gives no approval, no sign-off, and no merge block, so `pr-auto-merge` and
+`aidrian pr checks` read nothing of it. What it holds is marking a draft ready while feedback is owed: with `auto` on, the flows
+run it after a draft opens and check it before marking ready ([review.md](review.md#product-feedback-in-the-rounds)), and the
+[ready hold](hooks.md#ready-hold) refuses a ready while `status` exits 2. `AIDRIAN_ALLOW_UNHELD_READY=1`, set by a person in
+their own shell before the session, lifts that hold.
 
 ```json
 "review": { "productFeedback": { "auto": false, "files": null, "maxPersonas": 2 } }
@@ -440,6 +443,18 @@ version, or has an error under `review.productFeedback`, other than `auto` with 
 that does not parse, names no usable folder, or names a folder with no config, and, once on, on a branch whose `files` is null and
 whose `review.visual` its checks dropped, since that branch's file list is then unknown.
 `status` reads a record whose `report` is null like any other, once it holds items or names its read.
+
+Before any gh call, `status` reads git alone, as the [ready hold](hooks.md#ready-hold) does: the main checkout's local `auto`,
+then `review.productFeedback.auto` committed at `origin/HEAD`, `origin/<git.defaultBranch>`, and `origin/main`, each found through
+its own `.aidrian.json`, and at `HEAD`, which can only raise. When the local `auto` is false, or every one of those refs says off,
+no ref's config is missing, and the state folder holds no `product-feedback/`, it is clear with `off`, or `opted_out` when the
+local `auto` is false and a ref says on, with no gh call, so a project without the feature pays none; `head` is then null.
+Anything else, a default branch git does not name on origin included, goes to GitHub, which decides as above. Off is the one
+answer that does not go to GitHub, which is why it needs every one of those refs off and no record folder. Two limits follow:
+origin refs fetched before the team turned `auto` on read as off, with no gh call, until a fetch, and so do a fork's stale
+`main` and a clone that never fetched; and a session that rewrites those refs and `HEAD` to say off turns `status` and the
+ready hold off. Its `why` then says git's origin refs say off, not that the team chose it, or, when the local `auto` is
+false, that this machine opted out.
 
 ### The record
 

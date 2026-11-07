@@ -12,6 +12,8 @@ The comment is feedback: it never approves, blocks, or signs off, and its person
 Before you start, follow the `knowledge` skill. Load no `product_sensitive` docs in this session: the walk comes first
 so product rules never prime the persona, and `product-manager` reads them itself.
 Name both parties as the start hook's `Names:` line does.
+A flow that opens a draft or marks one ready runs this skill by [references/in-a-flow.md](references/in-a-flow.md):
+read it when this run is a step of such a flow.
 
 ## Arguments
 

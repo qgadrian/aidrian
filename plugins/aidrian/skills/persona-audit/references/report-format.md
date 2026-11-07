@@ -56,13 +56,17 @@ A product gap is a finding only from a walk.
 
 ## The report
 
+The report goes to `<state>/audits/<personas>-<date>.md`, where `<state>` is the folder `aidrian state` prints,
+`<personas>` the ids joined by `+`, or `all` when the run was given `all`, and `<date>` today as `YYYY-MM-DD`.
+When the file exists, add `-2`, `-3`.
+
 Keep the headings and their order; leave out a section only where it says so.
 
 ```markdown
 # Persona audit: floor-manager, owner, 2026-11-03
 
 Scope: pull request #123, the tasks its diff touches (or: the whole product; or: the tasks named).
-Reached: walked at the pull request's head, http://localhost:3000, with the demo account from product-access (or what stopped a walk).
+Reached: walked at the pull request's head, <head>, http://localhost:3000, with the demo account from product-access (or what stopped a walk).
 Personas are synthetic: this report is a lead for the Human, not a substitute for real users.
 
 ## Tasks
@@ -100,6 +104,8 @@ Personas are synthetic: this report is a lead for the Human, not a substitute fo
 - At `seen` or `read`: `no screen, route, endpoint, or command found for <task>`, what was searched, and
   `product-manager` to ask.
 - A task behind a plan or feature the demo account lacks, with that reason.
+- A persona a pull request picked over the cap: `<persona id>, over the cap of <max_personas>: <kept task>; <kept task>`,
+  so nothing drops silently.
 
 ## Persona doc gaps
 
@@ -118,8 +124,9 @@ Personas are synthetic: this report is a lead for the Human, not a substitute fo
 - A screenshot the run saves goes in `<state>/audits/<report name>/`, beside the report, and the report cites its path.
 - An outcome other than `not walked` or `out of scope` needs `walked` in the Evidence column.
   An `out of scope` task was not looked at, so its Evidence is `-`.
-- A suggested task is an idea that came up in character during the walk, beyond the tasks in scope. It was not walked
-  and has no finding. Its shape: `Suggested task for <persona id>: <title>: <the job, one line>; from <the Goals or
+- The walk stays within the tasks in scope. A suggested task is an idea that came up in character during the walk, such
+  as "as this person I would now try to...", beyond those tasks. It was not walked and has no finding.
+  It goes under `## Persona doc gaps`. Its shape: `Suggested task for <persona id>: <title>: <the job, one line>; from <the Goals or
   Cares about line it comes from>`. The author adds the ones worth walking, with a `Success:` line, and the next run walks them.
 
 ## A run that replaces a report
@@ -136,11 +143,16 @@ one of its findings for this: its key is `<that run's file>#<key>`, and left uns
 second-language findings stand unverified". In the sidecar, name the earlier report in `supersedes`, and list the same findings, by the keys
 the earlier sidecar gives them, in `carried_forward` and `not_rechecked`.
 
+A run with a pull request replaces only a report of the same pull request, so never one that names another or none. A
+report naming a pull request can be replaced only by a run of it, or by a whole-product run with a valid sidecar.
+`aidrian audits check` reports a sidecar that breaks this.
+
 ## The sidecar
 
 Beside each report `<name>.md`, write `<name>.json`, the same run for the triage to read. `aidrian audits check
 <name>.md` validates it against the report: its findings are the report's finding headings, by title and in order,
-and every evidence path names a file. Every key is required except `other_owners`, `cited`, and `likely_cause`.
+and every evidence path names a file. Every key is required except `other_owners`, `cited`, and `likely_cause`, and
+`pr` and `head`, which a run with a pull request writes together and any other run leaves out.
 
 ```json
 {
@@ -148,6 +160,8 @@ and every evidence path names a file. Every key is required except `other_owners
   "report": "floor-manager-2026-11-03.md",
   "personas": ["floor-manager"],
   "date": "2026-11-03",
+  "pr": "acme/bookings#123",
+  "head": "9fceb02d0ae598e95dc970b74767f19372d61af8",
   "supersedes": null,
   "carried_forward": [],
   "not_rechecked": [],
@@ -172,6 +186,7 @@ and every evidence path names a file. Every key is required except `other_owners
 }
 ```
 
+- `pr` is `<repo>#<number>`, and `head` the pull request's head at the walk's start, both from `aidrian pr resolve` then.
 - `owner` is the agent role; `owner_description` says in plain words what that owner looks after, for the Human who
   triages: "how the product flows and what its words say" (`ux-specialist`), "how the screens look" (`designer`),
   "the screens and their code" (`frontend-developer`), "the server and the answers it gives" (`backend-developer`),

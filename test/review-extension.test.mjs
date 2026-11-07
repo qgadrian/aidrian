@@ -252,6 +252,7 @@ test('the review-extend rule: an agent records the Human`s approval only after t
   for (const command of ['aidrian pr extend 12 --human approve', 'aidrian pr extend #12 --human=approve', 'node plugins/aidrian/lib/cli.mjs pr extend 12 --human approve']) {
     assert.equal(g.run(command), null, command);
   }
+  assert.ok(check('node --disable-warning X plugins/aidrian/lib/cli.mjs pr extend 12 --human approve', { cwd: g.dir, input: {} }), 'a runner\'s option with a value hides no call');
   assert.ok(check('aidrian pr extend 12 --human approve', { cwd: g.dir, input: {} }), 'no transcript, no approval: the Human runs it in their own shell');
   assert.ok(g.run('aidrian pr extend "$PR" --human approve'), 'a pull request the rule cannot read');
   assert.ok(g.run('echo ok && aidrian pr extend 12 --human "$ANSWER"') === null, 'the approval is in the transcript, whatever the variable holds');

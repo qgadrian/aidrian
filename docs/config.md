@@ -52,7 +52,7 @@ In a group such as `github`, set only the keys you change; the others keep their
     "reviewGate": { "enabled": false, "checklist": null },
     "autoMerge": { "allow": false, "default": "off", "strategy": null, "deleteBranch": false, "deleteWorktree": false }
   },
-  "review": { "engine": null, "record": "comment", "rules": [], "ignore": ["<lockfiles, snapshots, generated, vendored, minified>"], "nonBehaviour": ["<docs and assets>"], "flows": {}, "planCommand": null, "reviewers": {}, "approvals": { "allow": false } },
+  "review": { "engine": null, "record": "comment", "rules": [], "ignore": ["<lockfiles, snapshots, generated, vendored, minified>"], "nonBehaviour": ["<docs and assets>"], "flows": {}, "planCommand": null, "reviewers": {}, "approvals": { "allow": false }, "productFeedback": { "auto": false, "files": null, "maxPersonas": 2 } },
   "docs": { "wrapLimit": 155 },
   "terms": { "file": null },
   "knowledge": { "budgets": { "alwaysBytes": 16384, "taggedDocBytes": 24576 } },
@@ -158,6 +158,10 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.autoMerge` in `.aidrian.local.json` | This machine's choice, the same key with one field: `{ "enabled": true }` opts in under the team's `allow`, and `{ "enabled": false }` stays out. Unset follows `github.autoMerge.default`. The older `"on"` and `"off"` still work. |
 | `review.engine` | The project's [review engine](review.md#the-engine); it wins over the machine's. `null` leaves the choice to each machine. |
 | `review.record` | Where the [review record](review.md#the-record) goes: `"comment"` also writes a summary comment on the pull request; `"local"` keeps it in the state folder only. |
+| `review.productFeedback.maxPersonas` | How many personas `persona-audit` [picks for a pull request](personas.md#a-pull-request-link-alone): a whole number from 1 to 10, 2 by default. A run that names personas, or `all`, has no cap. |
+| `review.productFeedback.auto` | `true` makes a pull request that changes a user-facing file owe [product feedback](#product-feedback). `false`, the default. Read from the default branch and the base, never the working copy: it is on when either says true. With neither list below, it is an error here, and `status` reads it as clear. |
+| `review.productFeedback.files` | The globs, or `re:` patterns, of the user-facing files. `null`, the default, uses `review.visual.targets[].files`. Read from the default branch and the base, as their union. |
+| `review.productFeedback` in `.aidrian.local.json` | This machine's choice: `{ "auto": true }` or `{ "auto": false }`, and no other key. Read only from the main checkout's file. It wins over the branches both ways: [Product feedback](#product-feedback). |
 | `terms.file` | The [terms file](#terms) of banned terms and their replacements, relative to the project root; `null` turns the rule off. |
 | `docs.wrapLimit` | The longest line, in characters, allowed in a Markdown file an agent writes; `0` turns the check off. |
 | `knowledge.budgets.alwaysBytes` | The bytes all `always` knowledge docs may add up to: [Knowledge budgets](#knowledge-budgets). |
@@ -280,7 +284,7 @@ With `--json`, `reason` names the first that fails and `why` says it in a senten
 | --- | --- |
 | `team` | `github.autoMerge.allow` is true on both the repository's default branch and the pull request's base. Both are read from GitHub as each branch commits them now, never from the checkout. So a branch cannot raise it, and the pull request that turns it on does not merge itself. |
 | `checks` | The default branch names `github.requiredChecks`: a named check that has not reported is pending, so a draft's partial set of checks cannot read as ready. This checkout's `requiredChecks`, `conditionalChecks`, and `ignoreCancelledChecks` equal the default branch's as sets, committed or not: `aidrian pr checks` reads this checkout, so a branch cannot relax the lists, and a branch that changes workflows stays off (`paths`). This checkout's `state.dir` equals the default branch's, since the review record is read from it. A working-copy config that cannot be read, or has errors, is off too. |
-| `paths` | gh lists every changed file (`files` matches `changedFiles`) with its `changeType`, none is `RENAMED`, since gh does not give the old path, and none is on this fixed list, in any case: `AGENTS.md`, `CLAUDE.md`, `SKILL.md`, `CODEOWNERS`, `.aidrian.json`, and `.aidrian.local.json` at any depth, and `.claude`, `.codex`, `.aidrian`, `.github/workflows`, or `.github/actions` at the repository root or the project root, or anything under them. These instruct AI sessions or decide CI, and a review of the change may not read them as behavior. The plugin's own code that decides auto-merge is on the list too, so the gate never approves a change to itself. Under `plugins/aidrian/`: `bin/`, `scripts/`, `hooks/`, `lib/forges/`, `lib/rules/`, `lib/review/`, `lib/hosts/`, `lib/trackers/`, and every other module in `lib/` loaded by the module each `bin/` script starts, by `aidrian pr`, by the gate, by its review, or by a hook, such as `cli.mjs`, `knowledge-cli.mjs`, `pr.mjs`, `pr-auto-merge.mjs`, `project.mjs`, `config.mjs`, `hook-io.mjs`, `usage.mjs`, and `transcript.mjs`, with the `.json` table of the same name, such as `finding-disposition.json` (`GUARDED_PATHS` in `lib/project.mjs` lists them all). The agents that review are on it too, generated and as sources: `agents/`, `codex/`, `agents-src/`, `providers/`, and `agent-addons/`. So is `skills/`, whole, since a `SKILL.md` sends a session to its `references/` and `steps/` files. So are the plugin manifests `plugin.json` and `.claude-plugin/plugin.json`, and the marketplace manifests `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json` at the repository root. A test walks from the module each `bin/` script starts (`cli.mjs` and `knowledge-cli.mjs`), `pr.mjs`, the gate, its review, and the scripts in `hooks.json`, and fails on a file off the list or a load it cannot follow, so a new import, `bin/` script, or hook cannot fall outside it. The modules behind the other `aidrian` subcommands, such as `check.mjs`, `lint.mjs`, `worktree.mjs`, and `report-*.mjs`, are not on the list. For a project below the repository root, the setting is read from its own folder, and no file may be outside that folder, since [its review does not cover those](review.md#paths). |
+| `paths` | gh lists every changed file with its `changeType`: `gh pr view` lists at most 100, so past that the gate reads the whole list through the paged files route, which GitHub caps at 3000, maps each REST `status` to its `changeType` (`unchanged` reads as `MODIFIED`), and reads the head again after it. A list whose count is not `changedFiles`, that fails, holds an entry with no path or no known status, lists a path twice, leaves out a file the view gave, or was read while the head moved keeps it off, with that reason. None is `RENAMED`, since gh does not give the old path, and none is on this fixed list, in any case: `AGENTS.md`, `CLAUDE.md`, `SKILL.md`, `CODEOWNERS`, `.aidrian.json`, and `.aidrian.local.json` at any depth, and `.claude`, `.codex`, `.aidrian`, `.github/workflows`, or `.github/actions` at the repository root or the project root, or anything under them. These instruct AI sessions or decide CI, and a review of the change may not read them as behavior. The plugin's own code that decides auto-merge is on the list too, so the gate never approves a change to itself. Under `plugins/aidrian/`: `bin/`, `scripts/`, `hooks/`, `lib/forges/`, `lib/rules/`, `lib/review/`, `lib/hosts/`, `lib/trackers/`, and every other module in `lib/` loaded by the module each `bin/` script starts, by `aidrian pr`, by the gate, by its review, or by a hook, such as `cli.mjs`, `knowledge-cli.mjs`, `pr.mjs`, `pr-auto-merge.mjs`, `project.mjs`, `config.mjs`, `hook-io.mjs`, `usage.mjs`, and `transcript.mjs`, with the `.json` table of the same name, such as `finding-disposition.json` (`GUARDED_PATHS` in `lib/project.mjs` lists them all). The agents that review are on it too, generated and as sources: `agents/`, `codex/`, `agents-src/`, `providers/`, and `agent-addons/`. So is `skills/`, whole, since a `SKILL.md` sends a session to its `references/` and `steps/` files. So are the plugin manifests `plugin.json` and `.claude-plugin/plugin.json`, and the marketplace manifests `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json` at the repository root. A test walks from the module each `bin/` script starts (`cli.mjs` and `knowledge-cli.mjs`), `pr.mjs`, the gate, its review, and the scripts in `hooks.json`, and fails on a file off the list or a load it cannot follow, so a new import, `bin/` script, or hook cannot fall outside it. The modules behind the other `aidrian` subcommands, such as `check.mjs`, `lint.mjs`, `worktree.mjs`, and `report-*.mjs`, are not on the list. For a project below the repository root, the setting is read from its own folder, and no file may be outside that folder, since [its review does not cover those](review.md#paths). |
 | `local` | This machine's setting is on, or it has none and the default branch's `github.autoMerge.default` is `"on"`. |
 | `author` | The pull request's author is the gh user. |
 | `outsider` | Every issue comment, review, and inline comment on the pull request has the author association `OWNER`, `MEMBER`, or `COLLABORATOR`, or is by the default branch's `github.reviewer` bot. Any other bot, such as a CI or preview bot that comments, counts as an outsider. |
@@ -369,8 +373,193 @@ In `neverValid`, a `<word>` stands for any one word, so `needs <specialist> over
 
 `review` decides how `aidrian pr review` reviews a pull request: its depth, its stages, the critical flows it holds
 to their invariants, the reviewers a project adds, and the [visual capture](review.md#visual-review).
-[review.md](review.md) describes every key. Two machine settings live in `.aidrian.local.json`: the engine,
-`review.engine`, unless the project sets it here, and the visual capture's base URL, `review.visual.baseUrl`.
+[review.md](review.md) describes every key but `review.productFeedback`,
+which [personas.md](personas.md#a-pull-request-link-alone) and [Product feedback](#product-feedback) do.
+Three machine settings live in `.aidrian.local.json`: the engine, `review.engine`, unless the project sets it here,
+the visual capture's base URL, `review.visual.baseUrl`, and `review.productFeedback.auto`.
+
+## Product feedback
+
+`aidrian pr product-feedback` keeps one record per pull request of what its product feedback found, and says what a script
+can check: whether any of it is still owed. It gives no approval, no sign-off, and no merge block, so `pr-auto-merge` and
+`aidrian pr checks` read nothing of it. What it holds is marking a draft ready while feedback is owed: with `auto` on, the flows
+run it after a draft opens and check it before marking ready ([review.md](review.md#product-feedback-in-the-rounds)), and the
+[ready hold](hooks.md#ready-hold) refuses a ready while `status` exits 2. `AIDRIAN_ALLOW_UNHELD_READY=1`, set by a person in
+their own shell before the session, lifts that hold.
+
+```json
+"review": { "productFeedback": { "auto": false, "files": null, "maxPersonas": 2 } }
+```
+
+and, in `.aidrian.local.json`:
+
+```json
+{ "review": { "productFeedback": { "auto": false } } }
+```
+
+The second block may set only `auto`. Local wins both ways, so one person can opt in or out, as `github.autoMerge` lets a
+machine choose. It comes only from the main checkout's file: a worktree's copy is not read, a copy git tracks is ignored with
+an error, and a broken file or an invalid value reads as unset, so the team's value holds, never `false`. A subagent may not
+change it: [the config guard](hooks.md#agent-gates).
+
+### The commands
+
+```sh
+aidrian pr product-feedback status <PR> [--json]
+aidrian pr product-feedback record <PR> [--report <file>] [--items <file>] [--none-found --read-by product-manager]
+aidrian pr product-feedback answer <PR> <item> <decision> [--by <who>] [--reason <text>] [--issue <key>] [--url <url>] [--doc <path#section>]
+aidrian pr product-feedback recheck <PR> <item> confirmed|reopened [--note <text>]
+aidrian pr product-feedback post <PR> --body-file <file>
+aidrian pr product-feedback items <PR> [--json]
+aidrian pr product-feedback diff <PR>
+```
+
+`<PR>` is what `aidrian pr resolve` takes, held to the checkout's remotes the same way. `status` exits 0, clear, with a reason;
+2, owed, with what is owed; and 3 on an error. Each other command exits 0, or 3 with the record untouched.
+`items` lists every item of the record and where it stands, whatever `auto` says, with `recorded: false` when there is no record;
+`--json` gives `head`, gh's head now; `recorded_head`, the head the record was written at, which the comment names; `limited`; and each
+item's id, title, kind, source, `audit_key`, `found_at` head, `state`, decision, re-check with its own head, and the command that answers it.
+`diff` writes the pull request's diff, read with `--repo <host>/<owner>/<name>`, to `diff.patch` beside the record, a path held
+inside the state folder, and prints that path: the [pr-product-feedback](personas.md#product-feedback-on-a-pull-request) skill's
+product-manager read takes it, since that agent runs no shell.
+
+| `status --json` `reason` | Exit | Means |
+| --- | --- | --- |
+| `off` | 0 | Neither branch turns it on, and this machine does not. |
+| `opted_out` | 0 | A branch turns it on, and this machine's `auto` is `false`. |
+| `no_file_lists` | 0 | `auto` is on with neither list, which is a config error too. |
+| `not_user_facing` | 0 | No changed file matches a branch's `review.productFeedback.files`, else its `review.visual.targets[].files`. A file list shorter than `changedFiles`, or one holding a rename or a file with no change type, counts as user-facing. |
+| `nothing_open` | 0 | The record holds nothing owed. |
+| `state_dir` | 2 | The working copy's `state.dir` differs from the default branch's, and the record is read from it. |
+| `not_run` | 2 | No record, one whose `repo`, `pr`, or `version` does not match, or an empty one with no report and no read named. An unparsable one exits 3. |
+| `unanswered` | 2 | An item has no answer that counts. `owed` lists each item's id, title, and the command that answers it. |
+| `not_rechecked` | 2 | What is left is a fix-now with no re-check confirmed at a different head. |
+
+`status` takes `auto`, `files`, and `review.visual.targets` only from GitHub, at the default branch and at the base, with the
+project's folder as its prefix: `auto` is on when either says true, and the file lists are the union of what each branch gives,
+its `files`, else its targets' files. No working copy value counts, so a branch cannot raise or lower the team's value or
+narrow its lists. A branch with no config file has none to give, but `status` exits 3 on one that does not parse, has another
+version, or has an error under `review.productFeedback`, other than `auto` with neither list. It also exits 3 on an `.aidrian.json`
+that does not parse, names no usable folder, or names a folder with no config, and, once on, on a branch whose `files` is null and
+whose `review.visual` its checks dropped, since that branch's file list is then unknown.
+`status` reads a record whose `report` is null like any other, once it holds items or names its read.
+
+Before any gh call, `status` reads git alone, as the [ready hold](hooks.md#ready-hold) does: the main checkout's local `auto`,
+then `review.productFeedback.auto` committed at `origin/HEAD`, `origin/<git.defaultBranch>`, and `origin/main`, each found through
+its own `.aidrian.json`, and at `HEAD`, which can only raise. When the local `auto` is false, or every one of those refs says off,
+no ref's config is missing, and the state folder holds no `product-feedback/`, it is clear with `off`, or `opted_out` when the
+local `auto` is false and a ref says on, with no gh call; `head` is then null.
+Anything else, a default branch git does not name on origin included, goes to GitHub, which decides as above. Off is the one
+answer that does not go to GitHub, which is why it needs every one of those refs off and no record folder.
+Its `why` then says git's origin refs say off, not that the team chose it, or, when the local `auto` is false, that this
+machine opted out. Two limits follow, for `status` and the ready hold alike:
+
+- Origin refs fetched before the team turned `auto` on read as off, with no gh call, until a fetch, and so do a fork's stale
+  `main` and a clone that never fetched.
+- A session that rewrites those refs and `HEAD` to say off turns `status` and the ready hold off. A follow-up keeps the
+  session-start answer instead, as the session's gates do.
+
+### With the key off
+
+A project without `review.productFeedback.auto` runs nothing of the feature unasked, and its hooks cost it nothing, save in
+two cases it keeps as limits:
+
+- A project that once ran the `pr-product-feedback` skill on demand keeps `<state>/product-feedback/`, so git no longer reads
+  off there. Each ready call then pays the [ready hold](hooks.md#ready-hold)'s gh calls, up to its 3.5-second deadline, and
+  two readies in one command, or a ready fed to a shell, are refused.
+- While another project on this machine keeps product feedback, the [answer rule](hooks.md#bash-rules) refuses a `--by human`
+  call whose folder or project it cannot read, such as `cd "$D" && aidrian audits record … --by human` or one with
+  `--project "$P"`. It refuses an aidrian call it cannot read beside another, such as `aidrian $X && aidrian $Y`, in every
+  project.
+
+### The record
+
+`record` writes `<state>/product-feedback/<owner>/<name>/pr-<n>/record.json`. It reads the repository, the number, and the head
+from `gh pr view`, never from an argument, and holds `version`, `pr`, `repo`, `head`, `limited`, `report`, the sidecar's report file or
+`null`, `read_by`, `comment_id`, `recorded_at`, and `items`. The answer rule reads `recorded_at`, which only `record` writes.
+`limited` is whether the pull request comes from outside the team, by the reads and the rule of `aidrian pr resolve`; `record`
+exits 3 and writes nothing when gh does not say. The [product feedback post rule](hooks.md#bash-rules) reads it.
+A persona item also keeps `adopted_at`, when `record` adopted its key.
+
+`--report` names the run's report in the audits folder, and `--items` a JSON list. A persona item is `{ "audit_key": "<report>#<id>" }`,
+as `aidrian audits pending --json` prints it; a product-manager item is `{ "source": "product-manager", "title": "...", "kind": "..." }`.
+A run names itself: with no report and no items, `record` refuses, and names the read to run, unless the run says so with
+`--none-found --read-by product-manager`, which the record keeps as `read_by`. A report with no findings counts as a run.
+A title is kept on one line, with no control or format character, at most 200 characters, and `record` refuses one under 8,
+which a question to the Human could not name apart from its other words.
+An item is sorted into a kind, taking the first that fits:
+
+- `choice`: anything the docs do not settle, or any persona finding whose owner is `product-manager`.
+- `minor`: `polish`, an `opinion`, or a consideration.
+- `defect`: an observed persona finding of severity `blocker` or `friction`, or a `product-manager` gap where the docs do settle the behaviour.
+
+`record` derives a persona item's kind from the sidecar, and the session supplies it only for a `product-manager` item. It refuses
+an `audit_key` the sidecar lacks, a sidecar finding left out, a sidecar of another pull request, and a sidecar whose `head` is
+not the head gh reports now. It keeps every earlier item, and never lowers a kind. Each item keeps the `head` it was found at,
+which a re-check's head must differ from. `Not reached` lines and doc gaps are no items, and never hold.
+
+A later run matches a new finding to an open item through its sidecar's `carried_forward`: by `carried_from`, the earlier
+key, on the persona item, or else by the same title. A carried key no finding takes is refused, never a duplicate. The item keeps
+its id, takes the higher of its kind and the new finding's, loses any re-check, and points its `audit_key` at the new finding.
+Its decision is copied under that key through the triage record, so the Audit inbox and `status` read the same decision, unless
+the key already holds one, which is never overwritten.
+
+A decision recorded before `record` adopts its key needs asking again: a `by: human` entry already there, which `record` did not
+copy, leaves the item owed, as `unasked_decision`, a copy of its fields with the time it was written, the `at` that `answer` and
+`aidrian audits record` set. Any later write has another time, so it replaces the old one and the item can count, and a carry's copy
+keeps the time, so a copy of such an entry stays owed.
+A settled verdict keeps the time of the `decided --by human` that settled it. One settled with no time, or at a time not after the
+item's `adopted_at`, still holds, whatever decision overwrote the entry since: `answer` refuses a fix-now on it, `recheck` refuses to
+re-check one, a session's fix-now written to `triage.json` does not count, and `status` names `decided --by human` until the Human
+gives one after adoption. A carry that copies the item's own decision keeps the item's `adopted_at`, since the copy is that decision;
+one onto a key that already holds a decision takes the time of the carry. `answer` stamps its time after `adopted_at`, by a
+millisecond when the clock reads the same or earlier. An item of an older record, with no `adopted_at`, is held by a settle whose time
+is that of its `unasked_decision`.
+
+### Answers
+
+A persona item's decision lives in `triage.json` under its `audit_key`, with its `by`, so one recorded through `aidrian audits record`
+after `record` counts the same. The Audit inbox reads that file alone, so it can read triaged meanwhile for an item `status` still owes.
+A `product-manager` item keeps its own `answer`.
+An item is answered when it has a final decision from the [triage vocabulary](personas.md#triage), plus one more rule, applied when it is read:
+
+| Kind | What counts | Extra rule |
+| --- | --- | --- |
+| `defect` | `fix-now` from anyone; any other final decision only with `by: human` | `fix-now` counts only once re-checked as confirmed at a different head |
+| `choice` | a final decision with `by: human`; `decided` alone is not final and stays owed | `fix-now` counts only once re-checked as confirmed at a different head |
+| `minor` | `defer` from anyone, with a reason; any other final decision only with `by: human` | none |
+
+A decision with no `by` is the session's. `answer` checks this table and refuses what would not count; a held item takes the
+Human's `decided` first, and `status` names that command for it. A `fix-now` re-checked as `reopened` keeps its decision and is owed
+through its re-check. `--by human` is held to the Human's own word by the [answer rule](hooks.md#bash-rules).
+
+### Post
+
+`post` is the only path that posts, and a pull request body or comment never receives a local path. Its `--body-file` must really be
+inside `<state>/tmp/`, a symlink resolved. The comment opens with a marker, `<!-- aidrian-product-feedback: pr=<n> repo=<owner/name> -->`.
+
+Before any write, `post` exits 3, naming the kind of match and never the value, on the body as written, and on a copy with format
+characters stripped and numeric entities and `%xx` decoded. It refuses:
+
+- A path in the state folder, the home folder, or the checkout, and `~/`, `~\`, `$HOME`, or `%USERPROFILE%`.
+- An absolute local path: one that starts at a root a machine or runner holds, such as `/Users/`, `/home/`, `/tmp/`, or
+  `/github/workspace`, a drive letter, `file:`, `//home`, `/c/Users`, `/cygdrive`, `\\server`, or `\Users`.
+  A product route such as `/settings/team` or `/app/bookings` passes. A checkout that sits at such a path is still caught by its value.
+- `localhost`, and a loopback, link-local, or private address: `[::1]`, `127.x`, short forms such as `127.1`, `169.254.`, `*.localhost`,
+  `host.docker.internal`, `*.local`, `10.x`, `172.16-31.x`, and `192.168.x`.
+- A host or account `product-access` names, a named host's subdomains included, a templated first label such as `<pr>`, `{pr}`, or
+  `pr-*` read as a pattern, and the value of any variable it names.
+- An email address, a secret shape (`gh[pousr]_`, `github_pat_`, `sk-`, `sk_live_`, `sk_test_`, `AKIA`, `ASIA`, `xox[abprs]-`, a JWT,
+  a private key block), and a report or screenshot path.
+
+It also exits 3 on any knowledge error that names an index file, since a `product-access` doc may be behind it. A project with no such
+doc still posts.
+
+It neutralizes `@` mentions, in any spelling but the `/@name` of a plain `http` or `https` URL, images, and any `<!--` but the one
+marker it adds itself. A later run edits the record's `comment_id` only after a read confirms the gh user wrote it and it still
+opens with the marker; otherwise the last comment by the gh user that opens with it; otherwise it posts a new one.
+A marker from any other author, or one a hand-written comment quotes, is ignored, and nothing is read back from a comment into the record.
+A failed or refused post leaves the record and reports the failure.
 
 `review.approvals.allow`, `false` by default and read from the base branch, lets a named approver's GitHub review of the
 head close a flow invariant no reviewer could verify: [Sign-off by the Human](review.md#sign-off-by-the-human).

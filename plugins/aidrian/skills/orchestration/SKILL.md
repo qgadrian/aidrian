@@ -52,6 +52,8 @@ The stop hook sends a subagent back once when it stops with one still running.
    A missing commit goes back to the agent that made it. Never force-push.
 2. Open a draft with the `pr-write` skill, unless the implementing skill already opened it: its integration review was step 3.
    Name each `decided_provisional` the run's agents returned, with its reason, revisit trigger, and how it reverts, so `pr-write` can check its marker.
+   Then, before the first bot round, run its product feedback step: the `pr-product-feedback` skill's `references/in-a-flow.md`
+   § After the draft opens. Its `fix-now` items go to their owners by § 4.
 3. With more than one slice, run the `pr-review` skill on the assembled branch: it rechecks earlier slices' stubs and
    defaults against the later slices. Its findings go through the `pr-review-fix` skill and § 4.
 4. After each push, run the `pr-review-loop` skill, with `--await-codex` unless the review bot is out, as step 5 says.
@@ -65,9 +67,10 @@ The stop hook sends a subagent back once when it stops with one still running.
    (default 3) and any extra round granted at the cap; `aidrian pr await-review` exit 4, `round_limit`, means that cap.
    Exit 10, `extension_check`, or 11, `extension_ask`, is the check at the cap: handle it as `references/review-rules.md`
    § A review round says. At the cap, report the open `fix_now` findings and ask the Human.
-7. **Ready.** Stopped by a clean round, not the cap, mark it ready with `gh pr ready <n>` when config.json `github.markReady`
-   is `"auto"`, the default, or the Human asked for that, and `aidrian pr checks <n>` says ready; then push nothing more.
-   Otherwise it stays a draft.
+7. **Ready.** Stopped by a clean round, not the cap, when config.json `github.markReady` is `"auto"`, the default, or the
+   Human asked for that, and `aidrian pr checks <n>` says ready: run `aidrian pr product-feedback status <n>`, and the
+   re-check when only that is owed, by that file's § Before `gh pr ready`. On exit 0, mark it ready with `gh pr ready <n>`;
+   then push nothing more. Otherwise, or on any other exit, it stays a draft, and the report names what is owed.
 8. **Merge.** Once step 7 marked it ready in this run, run the `pr-auto-merge` skill, and report the line it stops on.
    Merge only through this step, never otherwise.
 

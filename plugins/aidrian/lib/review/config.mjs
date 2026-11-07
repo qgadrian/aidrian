@@ -30,7 +30,10 @@ export const REVIEW_DEFAULTS = Object.freeze({
   // Whether a named approver's review on the forge may close an invariant no reviewer could verify
   // (lib/review/approvals.mjs). The base branch's value is the one in force, and the machine must turn it on too.
   approvals: Object.freeze({ allow: false }),
+  productFeedback: Object.freeze({ auto: false, files: null, maxPersonas: 2 }),
 });
+
+export const FEEDBACK_NO_LIST = '"review.productFeedback.auto" is true, and neither review.productFeedback.files nor review.visual.targets says which files are user-facing';
 
 // The visual review's limits: images one route may ask for across viewports, locales, and variants (a config error
 // past it), and images one review may capture (the review stops past it and names the routes).
@@ -89,6 +92,33 @@ export function checkReview(value, file, errors) {
   if (Object.hasOwn(value, 'approvals')) {
     if (isObject(value.approvals) && Object.keys(value.approvals).every((key) => key === 'allow') && typeof (value.approvals.allow ?? false) === 'boolean') out.approvals = { allow: value.approvals.allow === true };
     else bad('"review.approvals" must be { "allow": true } or { "allow": false }');
+  }
+  if (Object.hasOwn(value, 'productFeedback')) out.productFeedback = checkProductFeedback(value.productFeedback, bad);
+  // Nothing says what is user-facing. `auto` stays true, so `aidrian pr product-feedback status` reads it as clear.
+  if (out.productFeedback.auto === true && !out.productFeedback.files && !out.visual) bad(FEEDBACK_NO_LIST);
+  return out;
+}
+
+// `review.productFeedback`: how many personas persona-audit picks for a pull request, whether a pull request owes
+// product feedback, and the files that make it owe it. A bad value keeps the default.
+function checkProductFeedback(feedback, bad) {
+  const out = { ...REVIEW_DEFAULTS.productFeedback };
+  if (!isObject(feedback)) {
+    bad('"review.productFeedback" must be an object');
+    return out;
+  }
+  for (const [key, value] of Object.entries(feedback)) {
+    if (key === 'maxPersonas') {
+      if (Number.isInteger(value) && value >= 1 && value <= 10) out.maxPersonas = value;
+      else bad('"review.productFeedback.maxPersonas" must be a whole number from 1 to 10');
+    } else if (key === 'auto') {
+      if (typeof value === 'boolean') out.auto = value;
+      else bad('"review.productFeedback.auto" must be true or false');
+    } else if (key === 'files') {
+      if (value === null || (someTexts(value) && !pathsProblem(value))) out.files = value;
+      else if (someTexts(value)) bad(`"review.productFeedback.files" ${pathsProblem(value)}`);
+      else bad('"review.productFeedback.files" must be null or a non-empty list of globs');
+    } else bad(`unknown key "review.productFeedback.${key}"`);
   }
   return out;
 }
@@ -313,17 +343,29 @@ function checkReviewers(reviewers, bad) {
 }
 
 // `review.engine` from the local settings file: a built-in engine or a reviewer the project defines. Unknown names are
-// checked when the engine resolves, against the project's reviewers.
+// checked when the engine resolves, against the project's reviewers. It also checks the shape of the machine's
+// `review.productFeedback`, whose value is read only from the main checkout's file (project.mjs localFeedbackAuto).
 export function checkLocalReview(value, file, errors) {
   if (!isObject(value)) {
     errors.push(`${file}: "review" must be an object`);
     return 'auto';
   }
-  for (const key of Object.keys(value)) if (key !== 'engine' && key !== 'visual') errors.push(`${file}: unknown key "review.${key}"; only "review.engine" and "review.visual" are machine settings`);
+  for (const key of Object.keys(value)) if (!['engine', 'visual', 'productFeedback'].includes(key)) errors.push(`${file}: unknown key "review.${key}"; only "review.engine", "review.visual", and "review.productFeedback.auto" are machine settings`);
+  if (Object.hasOwn(value, 'productFeedback')) checkLocalFeedback(value.productFeedback, file, errors);
   if (value.engine === undefined) return 'auto';
   if (engineName(value.engine)) return value.engine;
   errors.push(`${file}: ${ENGINE_PROBLEM}`);
   return 'auto';
+}
+
+// `review.productFeedback` of the local settings file may set only `auto`, true or false.
+function checkLocalFeedback(feedback, file, errors) {
+  if (!isObject(feedback)) {
+    errors.push(`${file}: "review.productFeedback" must be { "auto": true } or { "auto": false }`);
+    return;
+  }
+  for (const key of Object.keys(feedback)) if (key !== 'auto') errors.push(`${file}: unknown key "review.productFeedback.${key}"; only "review.productFeedback.auto" is a machine setting`);
+  if (Object.hasOwn(feedback, 'auto') && typeof feedback.auto !== 'boolean') errors.push(`${file}: "review.productFeedback.auto" must be true or false`);
 }
 
 // An engine is a built-in or a reviewer the project defines; unknown names are checked when the engine resolves.

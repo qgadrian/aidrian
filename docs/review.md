@@ -442,6 +442,23 @@ the change does not touch carries forward.
 earlier pass has a result, with the review gate's marker, under the plan's round cap; an answer for a commit other
 than the one under review counts for nothing. A flow's required checks are read for that commit too.
 
+### Product feedback in the rounds
+
+[Product feedback](config.md#product-feedback) is no stage of the plan: its walk needs the session's browser tool and a
+running app, and it returns feedback, never a verdict. In a project that turns it on, the flows that open a draft,
+`pr-review-loop`, `orchestration`, and `autopilot`, run `aidrian pr product-feedback status` once after the draft opens and
+before the first bot round, and the `pr-product-feedback` skill when it says `not_run`. After that run, or when `status`
+says `unanswered` because an earlier run left items unanswered, the flow answers each unanswered item with the command
+`status` prints, each defect `fix-now` and each minor `defer` with a reason or a question to the Human, and routes the
+`fix-now` items, so its fixes go through these rounds like any other change. Any other owed reason waits for the
+ready step, which owns the re-check, so nothing is re-checked mid-round.
+The loop skips the feedback comment the gh user wrote, by its `aidrian-product-feedback` marker: its items are answered
+through `aidrian pr product-feedback answer`, never in the triage table, and a later run's edit of it is no new review item.
+Before marking the draft ready, each flow, `pr-merge-when-green` included, runs `status` again; when only fixes not re-checked are
+owed, the skill's re-check run, then `status` once more. On any other exit the draft stays a draft. The
+[ready hold](hooks.md#ready-hold) refuses marking it ready while `status` says owed, and the steps are in the skill's
+`references/in-a-flow.md`.
+
 ### Out of quota
 
 When a reviewer runs out of quota, `codex-local` on this machine or the review bot's usage-limit notice, the step

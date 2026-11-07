@@ -4,6 +4,9 @@
 // through `aidrian pr`, which counts rounds first, never through a comment tool.
 // It also holds the merge guard (lib/rules/github/merge-review.mjs) for `mcp__github__merge_pull_request`, which refuses
 // a merge whose head it cannot read rather than let it run unchecked.
+// It also holds the ready hold (lib/rules/github/ready-hold.mjs) for `mcp__github__update_pull_request` and
+// `mcp__github__update_pull_request_draft_state` with a `draft` that is not true: no draft is marked ready while its
+// product feedback is owed.
 // A host's own GitHub connector reaches this hook too: `githubCall` gives its call in the terms of the tool it stands for,
 // so this file reads one shape. Anything else this hook cannot read lets the call run.
 
@@ -13,6 +16,7 @@ import { githubCall } from '../lib/hosts/index.mjs';
 import { findProject } from '../lib/project.mjs';
 import { asksForReview, judgeRequests, markersIn } from '../lib/review-gate.mjs';
 import { checkMcp } from '../lib/rules/github/merge-review.mjs';
+import { checkMcp as checkReady } from '../lib/rules/github/ready-hold.mjs';
 import { botNamed, REQUEST_REASON } from '../lib/rules/github/review-rounds.mjs';
 
 // Each tool, and the field that names the pull request.
@@ -22,11 +26,19 @@ const PR_FIELD = {
   mcp__github__pull_request_review_write: 'pullNumber',
 };
 
+// The GitHub MCP server's tools that can mark a draft ready, through their `draft` input.
+const READY_TOOLS = new Set(['mcp__github__update_pull_request', 'mcp__github__update_pull_request_draft_state']);
+
 await runHook(async (input) => {
   const { tool, given: toolInput } = githubCall(input.tool_name, input.tool_input ?? {});
   if (tool === 'mcp__github__merge_pull_request') {
     const reason = checkMcp(toolInput, { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), input });
     if (reason) await block(input, 'merge-review', reason);
+    return;
+  }
+  if (READY_TOOLS.has(tool)) {
+    const reason = checkReady(toolInput, { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), startedAt: performance.timeOrigin });
+    if (reason) await block(input, 'ready-hold', reason);
     return;
   }
   const field = PR_FIELD[tool];

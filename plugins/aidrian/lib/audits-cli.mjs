@@ -64,8 +64,8 @@ export const commands = {
 function list({ values, dir }) {
   const reports = listAudits(dir);
   if (values.json) {
-    console.log(JSON.stringify(reports.map(({ report, title, status, problems, findings, items, untriaged, awaiting_sort: awaitingSort = 0, supersedes, replaced_by: replacedBy }) => ({
-      report, title, status, problems, findings: findings.length, items: items.length, untriaged, awaiting_sort: awaitingSort, supersedes, replaced_by: replacedBy,
+    console.log(JSON.stringify(reports.map(({ report, title, status, problems, findings, items, untriaged, awaiting_sort: awaitingSort = 0, supersedes, replaced_by: replacedBy, pr }) => ({
+      report, title, status, problems, findings: findings.length, items: items.length, untriaged, awaiting_sort: awaitingSort, supersedes, replaced_by: replacedBy, pr: pr ?? null,
     }))));
     return 0;
   }
@@ -76,7 +76,7 @@ function list({ values, dir }) {
   // Words for a person: each report by its title, never its file name; --json gives the names the commands take.
   console.log(`Persona audits in ${dir}`);
   const titles = new Map(reports.map((each) => [each.report, each.title]));
-  for (const each of reports) console.log(`- ${capital(each.title)}: ${statusText(each, titles, reports)}`);
+  for (const each of reports) console.log(`- ${capital(each.title)}${typeof each.pr === 'string' ? `, of pull request ${each.pr}` : ''}: ${statusText(each, titles, reports)}`);
   console.log('`aidrian audits list --json` gives the file name each other command takes.');
   return 0;
 }
@@ -247,7 +247,7 @@ function pending({ values, rest: [name], dir, triage }) {
 function record({ values, rest: [name, keys, decision], dir, root }) {
   if (!keys || !decision) return fail(usageLines('audits', commands.audits.usage, 'usage: ').join('\n'));
   const entry = {
-    decision, issue: values.issue ?? null, url: values.url ?? null, reason: values.reason ?? null, doc: values.doc ?? null, by: values.by ?? null, date: today(),
+    decision, issue: values.issue ?? null, url: values.url ?? null, reason: values.reason ?? null, doc: values.doc ?? null, by: values.by ?? null, date: today(), at: new Date().toISOString(),
   };
   const bad = decisionProblem(entry);
   if (bad) return fail(bad);

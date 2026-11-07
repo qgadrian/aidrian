@@ -2,7 +2,7 @@
 // `.aidrian.json` names. This is the only file that knows those names; every other file asks it for paths.
 // docs/project-folder.md describes the folder, the git-ignored `.aidrian.local.json` that adds local knowledge sources,
 // personal model choices, personal names, personal telemetry settings, personal decision settings, and the machine's
-// auto-merge opt-in, and the machine-local state folder outside the repository.
+// auto-merge and product feedback choices, and the machine-local state folder outside the repository.
 
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
@@ -27,10 +27,11 @@ const LOCAL = '.aidrian.local.json';
 // At the repository root: the marketplace manifests that install the plugin.
 const GUARDED_LIB = [
   'agent-gates', 'agent-models', 'attribution', 'audit-import', 'audits', 'cli', 'code-words', 'config', 'config-guard',
-  'decisions', 'dispatch-log', 'dispatch-rows', 'finding-disposition', 'fs', 'gate-snapshot', 'git', 'hook-deny',
-  'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits', 'markdown-prose',
-  'markdown-sections', 'markdown-wrap', 'names', 'pr', 'pr-auto-merge', 'pr-await-review', 'pr-checks', 'project',
-  'review-gate', 'session-length', 'shell-lex', 'terms', 'tracker-check', 'tracker-guard', 'transcript', 'usage',
+  'decisions', 'dispatch-log', 'dispatch-rows', 'feedback-record', 'finding-disposition', 'fs', 'gate-snapshot', 'git',
+  'hook-deny', 'hook-io', 'jsonl', 'knowledge', 'knowledge-cli', 'lesson-inbox', 'lesson-signals', 'main-commits',
+  'markdown-prose', 'markdown-sections', 'markdown-wrap', 'names', 'personas', 'pr', 'pr-auto-merge', 'pr-await-review',
+  'pr-checks', 'pr-product-feedback', 'pr-resolve', 'project', 'review-gate', 'session-length', 'shell-lex', 'terms',
+  'tracker-check', 'tracker-guard', 'transcript', 'usage',
 ].join('|');
 const GUARDED_PLUGIN = String.raw`bin/|scripts/|hooks/|lib/(?:forges|rules|review|hosts|trackers)/|lib/(?:${GUARDED_LIB})\.(?:mjs|json)$|agents/|codex/|agents-src/|providers/|agent-addons/|skills/|(?:\.claude-plugin/)?plugin\.json$`;
 export const GUARDED_PATHS = new RegExp(
@@ -108,7 +109,7 @@ export function projectAt(start) {
 
 // The project rooted at `root`, whether or not its folder exists yet:
 // { root, dir, paths, sources, checkouts, localModels, localNames, localTelemetry, localAgents, localReview, localDecisions,
-// localAutoMerge, localReviewApprovals, errors, unreadable }.
+// localAutoMerge, localReviewApprovals, localFeedbackAuto, errors, unreadable }.
 // `dir` and every path are POSIX-style and relative to `root`. `sources` lists where knowledge indexes are read from:
 // the project folder first, then each local source. `checkouts` is `root`, then, when it is in a git worktree, the same
 // folder in the main checkout. `localModels`, `localNames`, `localTelemetry`, `localAgents`, `localReview`, and
@@ -116,7 +117,9 @@ export function projectAt(start) {
 // `.aidrian.local.json`, as written; config.mjs checks them. `localAutoMerge`
 // is its `github.autoMerge`: "on" or "off", checked here, "unset" when no file sets it, and "off" for a file with an error; the team's
 // ceiling still decides (resolveAutoMerge). `localReviewApprovals` is its `reviewApprovals`, read the same way: "on" or
-// "off", "unset" when no file sets it; the team's `review.approvals.allow` still decides (lib/review/approvals.mjs). `errors` lists the problems in the root files; a broken
+// "off", "unset" when no file sets it; the team's `review.approvals.allow` still decides (lib/review/approvals.mjs).
+// `localFeedbackAuto` is the main checkout's `review.productFeedback.auto`: true or false, or undefined when unset or
+// unusable (mainFeedbackAuto), so the team's value holds. `errors` lists the problems in the root files; a broken
 // `.aidrian.json` leaves the default folder in place, and a broken local source is left out.
 // `unreadable` names each of `.aidrian.json` and `.aidrian.local.json` that is there but whose settings are not in force,
 // because it could not be read or names no usable folder: from `root`, or absolute when it is in the main checkout.
@@ -143,6 +146,7 @@ export function openProject(root, roots) {
     localDecisions: local.decisions,
     localAutoMerge: local.autoMerge,
     localReviewApprovals: local.reviewApprovals,
+    localFeedbackAuto: local.feedbackAuto,
     errors,
     unreadable,
   };
@@ -216,6 +220,24 @@ export function configPathIn(read) {
   return `${(isObject(raw) ? joinedInside('', raw.dir) : null) ?? DEFAULT_DIR}/config.json`;
 }
 
+// configPathIn for a reader that must not fall back to the default folder: an `.aidrian.json` that is there but does not
+// parse, names no usable folder, or names one with no config.json throws. No `.aidrian.json` is still the default folder.
+export function strictConfigPathIn(read) {
+  const text = read(OVERRIDE);
+  if (text === null) return `${DEFAULT_DIR}/config.json`;
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`${OVERRIDE}: invalid JSON (${error.message})`);
+  }
+  const dir = isObject(raw) ? joinedInside('', raw.dir) : null;
+  if (!dir) throw new Error(`${OVERRIDE}: "dir" must be a relative folder inside the project`);
+  const file = `${dir}/config.json`;
+  if (read(file) === null) throw new Error(`${OVERRIDE}: it names ${dir}, which holds no config.json`);
+  return file;
+}
+
 // `root`, then, when it is in a git worktree, the same folder in the main checkout.
 function checkoutsOf(root, roots) {
   const main = inMainCheckout(root, roots);
@@ -224,11 +246,11 @@ function checkoutsOf(root, roots) {
 
 const LOCAL_KEYS = ['sources', 'models', 'names', 'telemetry', 'agents', 'review', 'decisions', 'github', 'reviewApprovals'];
 
-// `.aidrian.local.json`: { sources, models, names, telemetry, agents, review, decisions, autoMerge, reviewApprovals }. A git worktree has no copy of that git-ignored file, so it is read
+// `.aidrian.local.json`: { sources, models, names, telemetry, agents, review, decisions, autoMerge, reviewApprovals, feedbackAuto }. A git worktree has no copy of that git-ignored file, so it is read
 // from the main checkout then: from the first of `checkouts` that has it. Each source is a folder with its own knowledge/
-// and, optionally, a config.json with `version`. `decisions` and the two machine switches, auto-merge and review
-// approvals, come only from the main checkout's
-// file (checkouts.at(-1)): a copy a session writes in its own worktree raises nothing and never turns merging on.
+// and, optionally, a config.json with `version`. `decisions`, the two machine switches, auto-merge and review approvals,
+// and `review.productFeedback.auto` come only from the main checkout's file (checkouts.at(-1)): a copy a session writes
+// in its own worktree raises nothing, lowers nothing, and never turns merging on.
 function readLocal(checkouts, errors, unreadable) {
   const none = { sources: [], models: undefined, names: undefined, telemetry: undefined, agents: undefined, autoMerge: 'unset', reviewApprovals: 'unset' };
   const holder = checkouts.find((dir) => isFile(path.join(dir, LOCAL)));
@@ -237,7 +259,10 @@ function readLocal(checkouts, errors, unreadable) {
   const main = checkouts.at(-1);
   if (!raw) {
     unreadable.push(holder === checkouts[0] ? LOCAL : path.join(holder, LOCAL));
-    return { ...none, autoMerge: machineSwitch(raw, holder, main, errors), reviewApprovals: machineSwitch(raw, holder, main, errors, APPROVALS_SWITCH) };
+    return {
+      ...none, autoMerge: machineSwitch(raw, holder, main, errors), reviewApprovals: machineSwitch(raw, holder, main, errors, APPROVALS_SWITCH),
+      feedbackAuto: mainFeedbackAuto(raw, holder, main, errors),
+    };
   }
   for (const key of Object.keys(raw)) {
     if (!LOCAL_KEYS.includes(key)) errors.push(`${LOCAL}: unknown key "${key}"`);
@@ -248,7 +273,26 @@ function readLocal(checkouts, errors, unreadable) {
   const reviewApprovals = machineSwitch(raw, holder, main, errors, APPROVALS_SWITCH);
   // A main-checkout file with any error never follows a team default of "on": a wrong local file never turns merging on.
   const broken = holder === main && autoMerge === 'unset' && errors.some((each) => each.startsWith(`${LOCAL}:`));
-  return { sources, models, names, telemetry, agents, review, decisions: mainDecisions(main, holder, decisions), autoMerge: broken ? 'off' : autoMerge, reviewApprovals };
+  return {
+    sources, models, names, telemetry, agents, review, decisions: mainDecisions(main, holder, decisions), autoMerge: broken ? 'off' : autoMerge,
+    reviewApprovals, feedbackAuto: mainFeedbackAuto(raw, holder, main, errors),
+  };
+}
+
+// This machine's `review.productFeedback.auto`: the main checkout's. `raw` is the file read from `holder`, null when that
+// could not be read. Unset, a value that is no boolean, a broken file, and no file all read as undefined, so the team's
+// value holds, never false. A file git tracks travels with a branch, so it is no machine's own: only git's answer
+// "untracked" (exit 1) keeps the value. Asked only when a value is set, so a hook pays no git call for a file with none.
+function mainFeedbackAuto(raw, holder, main, errors) {
+  const file = main === holder ? raw : isFile(path.join(main, LOCAL)) ? readJson(main, LOCAL, []) : null;
+  const auto = file?.review?.productFeedback?.auto;
+  if (typeof auto !== 'boolean') return undefined;
+  const { status } = runGit(['ls-files', '--error-unmatch', '--', `:(icase)${LOCAL}`], main);
+  if (status === 1) return auto;
+  errors.push(status === 0
+    ? `${LOCAL}: git tracks it, so a branch could carry it; "review.productFeedback.auto" is ignored until it is untracked (git rm --cached ${LOCAL})`
+    : `${LOCAL}: git could not say whether it tracks it, so "review.productFeedback.auto" is ignored`);
+  return undefined;
 }
 
 // The `decisions` of the local file in `main`, the main checkout; `held` when that file is the one already read. A main

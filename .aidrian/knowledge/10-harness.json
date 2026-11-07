@@ -20,11 +20,11 @@
       "tags": ["harness_engineering"]
     },
     "agents-and-skills.md": {
-      "summary": "The catalog of every agent and skill the plugin ships, grouped; tests hold it in sync with agents-src folders.",
+      "summary": "The catalog of every agent and skill the plugin ships, grouped, with pr-product-feedback; tests hold it in sync with agents-src folders.",
       "tags": ["docs"]
     },
     "hooks.md": {
-      "summary": "Hooks, Bash rules: pr-body, main-checkout, commit guard, commit messages, review gate, merge guard, tracker write guard (MCP), kill, amend, terms, gates.",
+      "summary": "Bash rules: pr-body, main-checkout, commit messages, amend, terms, gates, merge guard, product feedback answer and post, ready hold, AIDRIAN_ALLOW_UNHELD_READY.",
       "tags": []
     },
     "project-folder.md": {
@@ -32,11 +32,11 @@
       "tags": []
     },
     "personas.md": {
-      "summary": "Personas: contract, lint, product-access, persona-audit runs, report sidecars, aidrian audits list, import, record, and triage.json, the audit inbox line.",
+      "summary": "Personas: contract, lint, product-access, persona-audit runs, aidrian pr resolve (a pull request link alone), product feedback, audits list, import, triage.",
       "tags": []
     },
     "review.md": {
-      "summary": "aidrian pr review: plan, splits, flows, invariants, approvers, approvals, visual, reviewers, quota, rounds, sign-off, --accept, --check, record, owed reviews.",
+      "summary": "pr review: plan, splits, flows, invariants, approvers, approvals, visual, reviewers, quota, rounds, sign-off, --accept, record, owed reviews, product feedback.",
       "tags": []
     },
     "knowledge.md": {
@@ -52,7 +52,7 @@
       "tags": []
     },
     "config.md": {
-      "summary": "config.json: pull request body, names, review gate, auto-merge, terms, models, attribution, quorum roles/autoStart, decisions, authority, tracker write guard.",
+      "summary": "config.json: auto-merge, quorum roles/autoStart, decisions, authority, review.productFeedback.maxPersonas, product feedback items and diff, PR body, gate.",
       "tags": []
     },
     "dispatch-log.md": {

@@ -4,8 +4,11 @@ The plugin's hooks are in [`plugins/aidrian/hooks/hooks.json`](../plugins/aidria
 How each host runs them: [Claude Code](providers/claude-code.md#hooks), [Codex](providers/codex.md#hooks).
 
 Every hook lets the action run when it cannot read its input, so a hook never breaks a session.
-The one exception is the [merge guard](#merge-guard): a merge whose pull request or head it cannot read is refused,
-as the review gate refuses a request whose pull request it cannot read, and the reason says how to name both.
+Two exceptions: the [merge guard](#merge-guard) refuses a merge whose pull request or head it cannot read,
+as the review gate refuses a request whose pull request it cannot read, and the reason says how to name both;
+and the [ready hold](#ready-hold), in a project that runs product feedback, refuses text fed to a shell that names a ready,
+such as `echo 'gh pr ready 7' | bash`. Every other ready it cannot read, such as `gh pr ready "$PR"`, runs.
+It also refuses a command that marks more than one pull request ready, since one deadline cannot check them all.
 A git call a hook makes is stopped after 2 seconds and counts as git not answering; the hook's later git calls then do not wait.
 A blocking hook exits 2 and tells the agent why on stderr.
 The Bash rules, the main-checkout rule, the terms rule, the GitHub MCP hook, the agent gates, the config guard,
@@ -22,6 +25,7 @@ the tracker write guard, and the question names check also record each block: se
 | Before `AskUserQuestion` | A block when a question or option says "I", "me", "my", "you", or "your" (or a form of them, such as "I'm" or "yourself") outside code and quotes: [Names](config.md#names) | Claude Code | yes |
 | Before a GitHub MCP comment | The [review gate](config.md#review-gate), when the project turns it on, and the review-round rule | Claude Code, Codex (its [GitHub connector is not live](providers/codex.md#github-through-the-app-connector)) | yes |
 | Before a GitHub MCP merge | The [merge guard](#merge-guard) | Claude Code, Codex (its [GitHub connector is not live](providers/codex.md#github-through-the-app-connector)) | yes |
+| Before a GitHub MCP call that marks a draft ready | The [ready hold](#ready-hold), in a project that runs product feedback | Claude Code, Codex ([not live](#where-the-ready-hold-is-verified)) | yes |
 | Before any MCP tool call | The [tracker write guard](config.md#tracker), when the project turns it on, on a tool in `tracker.writeTools` | Claude Code, Codex ([not live](#where-the-tracker-guard-is-verified)) | yes |
 | After any MCP tool call | The tracker write guard's record of the connected workspace, on a tool in `tracker.readTools`, and its note of a [tool neither list names](config.md#how-a-write-is-judged) | Claude Code, Codex ([not live](#where-the-tracker-guard-is-verified)) | no |
 | Before an Agent tool call | The project's [model and effort](config.md#models) for that agent | Claude Code | no |
@@ -152,6 +156,9 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Decision answer | `aidrian decisions set` or `undo` from a subagent, which carry out the Human's answer on a decision ([Decision markers](project-folder.md#decision-markers)) | none: the main session runs them on the Human's word |
 | Extra round approval | `aidrian pr extend <PR> --human approve` without the Human's answer in the session ([review.md](review.md#extra-rounds)) | none: the Human answers, or runs it in their own shell |
 | Quota fallback choice | `aidrian pr review <PR> --quota-fallback` without the Human's pick in the session ([review.md](review.md#out-of-quota)) | none: the Human answers, or runs it in their own shell |
+| Product feedback answer | `--by human` on a [product feedback](config.md#product-feedback) item without the Human's answer in the session | none: the Human answers, or runs it in their own shell |
+| Product feedback post | `aidrian pr product-feedback post` on a pull request from outside the team without the Human's answer in the session, and from a subagent | none: the Human answers, or runs `post` in their own shell |
+| Ready hold, in a project that runs product feedback | Marking a draft ready while its [product feedback](config.md#product-feedback) is owed ([Ready hold](#ready-hold)) | `AIDRIAN_ALLOW_UNHELD_READY=1`, set by a person in their own shell before the session |
 | Merge guard | Merging a pull request while a review it owes is open, or the review of its head has not finished ([Merge guard](#merge-guard)) | none: the Human answers "Merge anyway", or merges in their own shell |
 | Main checkout, when turned on | A shell write to a tracked file in the main checkout; a git call there that makes a commit or moves the branch; after a `cd` it cannot trust, a relative write or a git call that may change the main checkout; and a relative write that lands there only if a `cd` inside it fails ([After a cd](#after-a-cd)) | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
 
@@ -243,6 +250,59 @@ What each rule matches:
   that picks that exact value: an option starting "Run a critic agent" authorizes `agent:critic` only; any other agent
   needs an answer that names it, "Run a <name> agent" or `agent:<name>`; and `human` needs "The Human reviews it".
   A value or a pull request the rule cannot read is refused.
+- Product feedback answer: on only where the state folder holds `product-feedback/`, save two cases that also reach a project
+  without the feature, as [With the key off](config.md#with-the-key-off) says. One is a call whose folder or project it cannot
+  read (below); the other it judges anywhere: a command that also runs `record`, or an aidrian call whose subcommand it cannot
+  read, such as `aidrian $X && aidrian $Y`, beside a call that claims a human or that it cannot read (below).
+  It reads `aidrian pr product-feedback answer` with `--by human`, `--by=human`, or a word it cannot read, also as a
+  runner, such as `node`, given `…/cli.mjs` among its arguments, and `aidrian audits record` with the same, on a key a
+  [feedback record](config.md#product-feedback) lists, before and after its answer. A call with an `agent_id` is refused, whatever key
+  it names. A main session passes only when the transcript holds an AskUserQuestion answer, given after the record was written,
+  to a question naming `#<PR>`, not after a `/` or a word character, the item's id, and its title in double quotes, and no other item,
+  whose chosen option is that decision alone: `fix-now` also reads as "Fix now", and "Drop nothing, keep it open" is no drop.
+  A call whose folder or project it cannot read is refused only while this machine keeps product feedback: a `product-feedback/` folder
+  in a project's state folder under the state root, or in the current project's state folder. That is a call after a `cd` it cannot
+  follow, such as `cd "$D" &&`, `cd ~/x &&`, `(cd "$D"; …)`, `pushd "$D" &&`, or `env -C "$D"`; after a `cd` whose word the shell
+  expands, such as `cd ../proj[B] &&`, or a `cd` or `pushd` with two operands, as zsh's `cd old new`; in a folder, or with a
+  `--project`, that is no existing directory; in any folder but the current one when the command or the environment holds a `CDPATH`,
+  such as `CDPATH=.. cd projB &&`; or with a dynamic, expanding, or `~` `--project`.
+  Such a call, `--project $P` with no `--by` included, may claim no `--by human`, so its deny says only that the rule cannot read
+  which project or words it holds. Where this machine keeps none, such a call passes, a subagent's included.
+  A deny says why the transcript's answers miss, and names the question to ask. With no such transcript, as on Codex or in an unattended
+  run, the Human runs it in their own shell.
+  A `--by`, pull request, item, decision, or subcommand it cannot read is refused, and so is any word the shell expands: one holding
+  an unquoted `*`, `?`, `[`, or a brace list or range, wherever quotes sit around it, a `--reason` or other prose value included,
+  since it can become several words, one of them `--by`. A quoted brace or bracket is a character: `'F{1..1}'` is read as written.
+  So is a dynamic value that is not one quoted scalar: `--reason "$R"` runs, and `--reason $R` or `--reason "$@"` does not.
+  A report or key the shell expands, such as `F{1..1}`, `F{1..1}' '`, or `'<report>#'F{1..1}`, is a key it cannot read: refused while
+  a record lists any item, and passed when none does, since no key is held then. So is a bare number two repositories' records hold. A dynamic program whose words read as either call is judged as that call.
+  It reads the call through `sh -c`, `eval`, a substitution, and a heredoc fed to a shell. It refuses text fed to a shell that names
+  either command, and `xargs`, `parallel`, or a shell fed unread text on a line naming a call: `product-feedback` and `answer`, or
+  `audits` and `record` while a record lists a key, together with `--by` and `human`.
+  It also refuses a command it did not judge whose own words or heredoc name a call, such as `find -exec`, `npx`, an interpreter, a
+  variable's assignment, or a git global option, unless that command only handles text. So a commit message, `grep`, `rg`, `cat`, `tee`,
+  `echo`, `printf`, `git log`, or `gh pr comment` may name a call, as long as a pipe out of it ends in another such command.
+  It runs no gh, so it finds a record by the pull request's number.
+  A command that also runs `aidrian pr product-feedback record`, or an aidrian call whose subcommand it cannot read, can write the
+  record a call is judged against only after the hook ran, a first record included. There every `audits record` or `answer` that
+  claims a human, or that it cannot read, is refused whatever is on disk, a subagent's with the subagent deny, and the deny says to
+  run `record` on its own first. A command with neither call sees nothing new from this.
+- Product feedback post: `aidrian pr product-feedback post`, also as a runner given `…/cli.mjs`, and through `sh -c`, `eval`, and
+  a heredoc fed to a shell, read with the answer rule's helpers. `record` stores `limited` in the record, from the reads and the rule
+  of `aidrian pr resolve`: a branch from another repository, a base that is a fork, or an author with no standing in the repository.
+  The rule is on only where the state folder holds `product-feedback/`, and holds a post only when a record of that pull request
+  does not say `limited: false`, so a member's pull request posts as before. There a call with an `agent_id` is refused, and a main
+  session passes only a `post` run as its own command, with at most a plain `cd <folder> &&` before it and no redirect that writes
+  a file, from the skill's own `<state>/tmp/product-feedback-<PR>.md`, when the transcript holds an AskUserQuestion answer, given
+  after that file was last written, to a question naming `#<PR>` and posting, whose chosen option is `Post` alone. A comment
+  rewritten after that answer, in a separate command, needs a new one; a held post beside another command the rule can read, such
+  as a `sed -i`, `cp`, `tee`, or `>` on the comment, is refused, and the deny says to run `post` as its own command. A pull
+  request, body file, or subcommand it cannot read is refused while a record holds a post; so is text fed to a shell, `xargs`,
+  `parallel`, or a command it did not judge, such as `npx`, whose words name `product-feedback` and `post`, and a post in the same
+  command as `record` or an aidrian call it cannot read. The deny says the Human can run `post` in their own shell.
+- Ready hold: `gh pr ready` with a number, a URL, a branch, or none, with `-R`, `--repo`, or `GH_REPO`, but `--undo` with no
+  value or a true one, and a `gh api` call to any spelling of the graphql endpoint that names `markPullRequestReadyForReview`
+  ([Ready hold](#ready-hold)).
 - Merge guard: `gh pr merge` but `--disable-auto`, `--auto` included, and a `gh api repos/<owner>/<name>/pulls/<n>/merge`
   sent as a PUT or a POST ([Merge guard](#merge-guard)).
 - Main checkout: `>`, `>>`, `tee`, `sed -i`, `perl -i`, `ruby -i`, `cp`, `mv` and `git mv` (sources and destination), `rm`, `git rm`, `unlink`,
@@ -264,9 +324,61 @@ A long option it blocks also matches the shorter prefixes the program accepts, s
 `--am` for `--amend`, and `--cou` for grep's `--count`.
 Every rule also reads the command substitutions that run: `$(…)`, backticks, `<(…)`, and those in a heredoc that expands.
 The process rules also read `sh -c`, `eval`, and `xargs`. The git hook bypass, attribution, pull request body, extra round
-approval, quota fallback, and merge guard rules read `sh -c`, `eval`, and a heredoc or here-string fed to a shell; the last
-three refuse text piped or scripted into a shell that names the command they guard, such as `echo 'gh pr merge 5' | bash`.
+approval, quota fallback, product feedback answer and post, and merge guard rules read `sh -c`, `eval`, and a heredoc or here-string fed
+to a shell; the last four refuse text piped or scripted into a shell that names the command they guard, such as
+`echo 'gh pr merge 5' | bash`.
+The ready hold reads them too, and refuses text fed to a shell, or a shell's `-c` string or `eval` words built by a command
+substitution, that holds the word `gh` and a word close to `ready` (`"ready"`, `re""ady`, printf's `re%sdy`), or names
+`markPullRequestReadyForReview`, in a project where git says product feedback is on.
 A command reached only through a script or an interpreter such as `python -c` is out of their sight.
+
+The product feedback answer rule has limits it accepts, so a reader does not take it for more than it is:
+
+- A session with a shell can forge `record.json` or `triage.json` directly, the limit the review record shares.
+- A main session can write `auto: false` to the main checkout's local file, since the guard stops only subagents. The deny never
+  names the opt-out as a route, and `aidrian pr product-feedback status --json` then gives `opted_out`.
+- `recheck confirmed` is the session's word that a fix works, and it needs only a different head, so a force-push back counts.
+- A `record` of a later run copies an existing decision under the new finding's key: a copy of an answer already given, never a new one.
+  The rule holds no key before a record lists it, so a word given in an earlier command runs, and counts for nothing; one in the same
+  command as `record`, or as an aidrian call it cannot read, is refused, since it would land after adoption. Out of its sight: a word
+  started in the background before `record`, such as `sleep N && aidrian audits record … --by human &`, which lands after a `record`
+  that a later command runs. A `by: human` entry `record` finds under a key it adopts, which it did not copy there, leaves the item
+  owed until a later decision replaces it, and a verdict settled before adoption, whatever decision overwrote that entry since, still holds until the Human answers `decided --by human`
+  after adoption, which the rule asks for ([Product feedback](config.md#product-feedback)).
+- `--none-found --read-by` is the session's word that a read ran.
+- `diff.patch` keeps the pull request's code in the state folder with default file modes, the same exposure as other local state.
+- A token broken across a line passes `post`, and `<?` and similar hidden text survive neutralizing.
+- A carried finding whose item was already answered is owed again.
+- Answered feedback stays clear after later pushes, since later commits stay unwalked unless someone uses `--full`:
+  a decision, so there is no stale-head reason.
+- `answer` checks the form of `--doc`, but not, as `aidrian audits record` does, that the file and section exist.
+- `aidrian pr product-feedback status` run from a folder a session made its own project reads `off`.
+- `post` reads the `product-access` terms from the working copy, so a branch can change what it refuses.
+- On Codex, with no transcript, a `--by human` answer is the Human's to run in their own shell.
+- The post rule holds what `record` stored, so a session that forges `limited: false` in `record.json`, or posts before any record,
+  passes it; `post` itself refuses a pull request with no record. On Codex, or with no Human to answer, a post on a pull request
+  from outside is the Human's to run in their own shell.
+- The post rule dates the comment by its file's modified time, so a session that sets that time back (`touch -r`, `touch -t`) in an
+  earlier command, or moves an older file into place, passes on an earlier answer. The answer it reads names `#<PR>`, not
+  `owner/name#<PR>`, so where two repositories hold records with the same number, an answer about one counts for the other.
+  A `product-feedback/` folder the hook can enter but not list hides its records, and the post passes. A `record` that runs
+  before the post through `npx`, `xargs`, or a script, in the same command, is out of its sight, as a post with no record is.
+  A word whose expansion runs code is not read: an assignment before the post, a `<` redirect target, or the program word, using
+  zsh `${(e)…}`, a glob qualifier `(e:…:)`, or bash `$[…]` or `${…@P}`.
+  A job an earlier command started in the background can rewrite the comment after the hook passes a plain post, the limit the
+  answer rule names for a word started in the background.
+  The rule reads only `aidrian … post`: a post through `gh pr comment` or a `gh api …/comments` POST is out of its sight, and only
+  the skill text forbids it.
+- Out of the rule's sight: a variable set in an earlier Bash call and run as `$B` or `eval "$C"`, `$B $S`, words that `xargs` takes from its
+  input with `human` nowhere on the line, a script, an interpreter that builds the words, such as `python -c` with a joined string, and a
+  command that only handles text whose own option or environment runs one, such as `sort --compress-program` or `GH_PAGER`.
+  A dynamic program with no words to read stays out too: refusing those would stop every `$EDITOR` or `"$PYTHON"` call.
+  A call whose folder it cannot read, reaching a project whose `state.dir` keeps its state folder outside the state root, passes
+  while no other `product-feedback/` folder is in that one look.
+  A program word the shell itself expands or rewrites is not read as the call: bash's `{aidrian,} audits record …`, zsh's `=aidrian …`,
+  or a wrapper the rule does not know, such as `faketime now aidrian …`.
+  It ignores the option words of `cd` and `pushd`, so `pushd -n <dir>`, which leaves the folder as it was, and `cd -P link/..`,
+  which resolves the link first, can be read as the wrong folder.
 
 ## Recorded blocks
 
@@ -339,6 +451,101 @@ Limits:
 - In a fork checkout with gh offline, `aidrian pr request`, `attest`, and `signoff` fall back to origin, and a merge
   that names the upstream is then not guarded: pass `--repo` when gh cannot answer.
 - A record written before this release has rounds but no outcome: a merge waits until `aidrian pr review` runs again.
+- Three heredoc forms, which the [ready hold](#ready-hold) shares:
+  - A heredoc piped into a shell from a group or a subshell, such as `{ cat <<'EOF'; } | bash` or `( cat <<'EOF' … ) | bash`,
+    is not read, so a merge or a ready in it is not refused.
+  - A shell's own heredoc that it runs as a script, such as `bash /dev/stdin <<'EOF'`, is not read either.
+  - The other way: `cat <<'EOF' | bash script.sh`, whose body only mentions `gh pr merge` or `gh pr ready`, is refused, as
+    `echo '…' | bash script.sh` already is.
+
+## Ready hold
+
+A session must not mark a draft ready while its [product feedback](config.md#product-feedback) is owed: the flows run
+`aidrian pr product-feedback status` before each `gh pr ready`, and this rule holds the step, so the hold does not rest on a
+sentence in a skill. The rule, `plugins/aidrian/lib/rules/github/ready-hold.mjs`, reads `gh pr ready` and a `gh api` call
+naming `markPullRequestReadyForReview`, whatever its endpoint (`graphql`, `/graphql`, or the full URL), in the Bash hook, and
+in the GitHub MCP hook the server's `update_pull_request` and `update_pull_request_draft_state` with a `draft` that is not
+`true`, and on Codex the GitHub connector's `mark_pull_request_ready_for_review`
+([its tools](providers/codex.md#github-through-the-app-connector)). It approves nothing and blocks no merge: `pr-auto-merge`
+and `aidrian pr checks` read nothing of it. In the Bash hook it runs after the merge guard, so a command that marks ready
+and merges leaves the guard its own time. It decides in this order:
+
+1. `AIDRIAN_ALLOW_UNHELD_READY=1` in the hook's own environment lets it run. Only this rule reads it, so a setter in the
+   command, `AIDRIAN_ALLOW_UNHELD_READY=1 gh pr ready 7` or an `export` before it, lifts nothing. `gh pr ready --undo` runs
+   when its last `--undo` has no value or one gh reads as true; `--undo=false` and `--undo=0` are held.
+2. Each call is judged in the project of the folder gh runs in, read by the product feedback answer rule's folder rules.
+   A folder it cannot read, as after `cd "$PWD"`, is the session's project: gh resolves the branch there. A folder in no
+   project lets a call run unless it names its repository. A call that names its repository (a URL, `-R`, `GH_REPO`, a
+   graphql id, or the MCP call's owner and repo) is judged in the session's project as well, whenever that repository is
+   one of its remotes, so a `cd` to another project does not steer it away. Either project saying owed holds it.
+3. From git alone (`localFeedback` in `lib/pr-product-feedback.mjs`), it reads whether that project may run product feedback.
+   Off is the one answer that does not go to GitHub, so off needs every origin default ref and `HEAD` to say off, and the state
+   folder to hold no `product-feedback/` record folder; every other answer sends the decision to GitHub.
+   It is on when the main checkout's local `auto` is true, `review.productFeedback.auto` is true at `origin/HEAD`, `origin/<git.defaultBranch>`, `origin/main`,
+   or `HEAD`, or the state folder holds `product-feedback/`; maybe when a ref's config cannot be read, such as a config file
+   missing at the ref; off when the local `auto` is false, or every ref says off. Each ref's config is found through that
+   ref's own `.aidrian.json`, so a branch that moves the project folder moves nothing. `HEAD` can only raise: with no default
+   branch git names on origin, and nothing saying on, the read is unsure and the command runs. Off, or unsure: it runs, with
+   no gh call. `status` takes the same off path, before any gh call. [With the key off](config.md#with-the-key-off) names
+   where a project without the key still pays.
+4. Where git says on, two forms are refused with no network call: text fed to a shell that names a ready, as
+   [Bash rules](#bash-rules) describes, and a command that marks more than one pull request ready, whose deny says to run one
+   `gh pr ready <n>` per command, since one deadline cannot check them all. The second also holds where git says maybe.
+5. Otherwise it runs `status` for each pull request the call marks, in its own process, at each project's root, and refuses
+   on exit 2, naming each owed item with the command that answers it. A bare number with no repository goes to `status` as it
+   is; any other target is viewed once with `gh pr view <target as written> [-R <value as written>]`, so every spelling gh
+   reads, such as `http://`, `www.`, a URL's tail, `-R` as a URL or `git@`, is read as gh reads it, and with a URL `-R` is
+   ignored as gh ignores it. `status` takes that view and asks for the pull request no more. Each literal graphql id is read
+   through a `node` query. When `origin/HEAD` names the default branch and the pull request is on origin's repository, `status`
+   reads that name and skips the GitHub call for it.
+
+Every gh call of one check shares one deadline: 3.5 seconds from its first gh call, and never later than 4 seconds after
+the hook started, so another rule's lookups in the same command leave the hook inside its 5. A ready on origin's repository
+costs three gh calls: the view and the default branch's two config reads. A pull request stacked on a branch other than the
+default one costs two more, for the base's config, and a ready on another remote, such as a fork's upstream, one more for
+its default branch; on a slow network those can pass the deadline, and the command then runs.
+A gh call that fails, one past the deadline, `status` exiting 3, or anything else it cannot read about the state lets the
+command run. The deny never names the override or the local opt-out as a route. A choice is the Human's, so an unattended
+run leaves the draft.
+
+What it cannot read runs, by the Human's decision, and is out of its sight:
+
+- A word the shell fills in or expands where gh's program, `pr`, `ready`, or the pull request goes: `"$GH" pr ready 7`,
+  `gh pr {ready,} 7`, `gh pr ready "$PR"`, `gh pr ready {7,}`, a loop such as `for n in 7 8; do gh pr ready $n; done`.
+  A repository the shell fills in or expands (`-R "$REPO"`) counts as the session's own, as the merge guard reads it.
+- A graphql call with no literal pull request id (`$id` from `-f id="$ID"`, `@file`, or `--input`), and an id that resolves to
+  no pull request.
+- A script, an interpreter, `xargs`, a variable set in an earlier Bash call, a `gh alias` such as `gh rd 7`, and `curl` to the
+  GraphQL endpoint.
+- The three heredoc forms the [merge guard](#merge-guard)'s limits list, which both rules share.
+- A GitHub MCP server installed under another name, such as a plugin's `mcp__plugin_<name>_github__…`, or a connector Codex
+  suffixes with a hash: the merge guard and the review gate share this gap, and a follow-up covers all three.
+- An `AIDRIAN_ALLOW_UNHELD_READY` entry in a host's settings `env` reaches every later session, as it does for every override;
+  a follow-up covers them all.
+- `origin/HEAD` names the default branch for the call `status` skips: a session that rewrites it, on a pull request stacked
+  on its own branch, chooses both branches whose config is read.
+- An off read from stale or rewritten git refs: [The commands](config.md#the-commands) names both limits, which the hold
+  shares with `status`.
+- A pull request opened as no draft is never held. A person's own shell outside a session is never held.
+
+### Where the ready hold is verified
+
+| On | Verified | Not verified |
+| --- | --- | --- |
+| Claude Code | The Bash form, through the real hook, in `test/ready-hold.test.mjs`, with a fake gh | The MCP form with a live GitHub MCP server: the tests run its documented input through the real hook |
+| Codex | Nothing live: the Bash hook payload is the standard one, as for every Bash rule | The connector's `mark_pull_request_ready_for_review`, from the catalog a Codex 0.167.0 install cached on 2026-11-06, run through the real hook from `test/fixtures/hosts/codex/github.json` |
+
+The GitHub MCP server's input, read from its source at `pkg/github/pullrequests.go` and `pullrequests_granular.go`:
+`update_pull_request` takes `draft`, a boolean, "ready for review (false)", from v0.10.0 to v2.1.0, the latest on 2026-11-06,
+and v0.9.0 and earlier take none; `update_pull_request_draft_state` takes `owner`, `repo`, `pullNumber`, and a required
+`draft` from v1.0.0. In v2.x, `update_pull_request` may hand the edit to an interactive form the person submits; that
+submit is the person's, and no hook is known to see it. Codex's connector `update_pull_request` takes no `draft`.
+Only these names are read: the [Ready hold](#ready-hold) list above names the ones that pass unchecked.
+
+A host that stops a hook at its timeout may let the command run. On Codex `rust-v0.167.0` the source says so: a timed-out
+`PreToolUse` hook is recorded as failed and blocks nothing (`codex-rs/hooks/src/engine/command_runner.rs` and
+`events/pre_tool_use.rs`). On Claude Code it is not verified. The rule's own deadline ends first and lets the command run,
+so it fails open either way, and the test of a stalled gh checks that the hook ends inside 5 seconds.
 
 ## Main checkout
 
@@ -463,6 +670,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - With or without gates, a subagent may not target `.aidrian.local.json` with a Write, Edit, or apply_patch that changes a machine switch,
   or a Bash command that names `autoMerge` or `reviewApprovals`:
   the [auto-merge](config.md#auto-merge) and review-approvals switches are the main session's. Other writes to that file follow the rules above.
+- With or without gates, the same holds for `review.productFeedback` in that file: a Write, Edit, or apply_patch that changes it,
+  through a JSON-escaped key, a removed key, or a file left unparsable included, or a Bash command that names `productFeedback`:
+  the machine's [product feedback](config.md#product-feedback) choice is the main session's.
 - A write the rule cannot see, such as one by a script, `xargs`, or `eval`, or a file name the code builds, still runs.
   It changes the file, but lifts no gate before the session ends: see the session's gates below.
   Like the gates, the guard is for agents that cooperate, not a sandbox.
@@ -558,7 +768,7 @@ Both read Claude Code transcripts only: a transcript with no Claude Code usage, 
 
 ## Overrides
 
-An override is for a human, and agents must never set one.
+An override is for a human, and agents must never set one, `AIDRIAN_ALLOW_UNHELD_READY` of the [ready hold](#ready-hold) included.
 A Bash rule's override is read by the hook, which runs in the session's environment,
 so the Human sets it in their own shell before they start the session.
 

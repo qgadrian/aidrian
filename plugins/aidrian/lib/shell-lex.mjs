@@ -1,8 +1,9 @@
 // The one shell lexer behind the Bash rules. It reads a command line the way bash splits it, without running anything:
 // quotes, escapes, comments, operators, redirections, heredocs, and command substitutions.
 //
-// A token is { text, dynamic, operator?, fd?, fdDup? }: `text` without its quotes; `dynamic` when it holds `$`, a
-// backtick, or a glob, so a rule never guesses at its value; `operator` for a redirection (`>`, `>>`, `<`); `fd` for the
+// A token is { text, dynamic, expands?, operator?, fd?, fdDup? }: `text` without its quotes; `dynamic` when it holds `$`, a
+// backtick, or a glob, so a rule never guesses at its value; `expands` when an unquoted `*`, `?`, `[`, or a brace list or
+// range (`{a,b}`, `{1..3}`) in it makes the shell turn it into other words, or several; `operator` for a redirection (`>`, `>>`, `<`); `fd` for the
 // descriptor a redirection names before it, as written (`2` of `2>`, `{x}` of `{x}<`), absent when it names none;
 // `fdDup` for the `&1` of `2>&1`. Everything a rule cannot read is meant to fail open: an unknown shape yields no match, never a deny.
 
@@ -10,6 +11,8 @@ import { realpathSync } from 'node:fs';
 import path from 'node:path';
 
 const CONTINUATION = '\n';
+// What makes a token's shape (lexSegments) expand: a glob character, or a brace list or range.
+const EXPANDS = /[*?[]|\{[^{}]*(?:,|\.\.)[^{}]*\}/u;
 // Command substitutions nest no deeper than this in what commandLines returns; a deeper body goes unread.
 export const SUBSTITUTION_DEPTH_LIMIT = 6;
 
@@ -124,8 +127,14 @@ function lexSegments(command) {
   };
   // Tokens a quote or a backslash wrote any of: `'2'>` and `\{x\}>` pass an argument, so their text is never a descriptor.
   const quoted = new WeakSet();
+  // Each token's text as the shell globs and brace-expands it: its unquoted characters, and `_` for each quoted one.
+  const shapes = new WeakMap();
+  const shape = (token, text) => shapes.set(token, (shapes.get(token) ?? '') + text);
   const endToken = () => {
-    if (current) tokens.push(current);
+    if (current) {
+      if (EXPANDS.test(shapes.get(current) ?? '')) current.expands = true;
+      tokens.push(current);
+    }
     current = null;
   };
   const endSegment = (separator = null, at = heredocAt ?? command.length) => {
@@ -200,6 +209,7 @@ function lexSegments(command) {
       }
       const token = start();
       token.text += body;
+      shape(token, '_'.repeat(body.length));
       quoted.add(token);
       if (ch === '"' && /[$`]/u.test(body)) {
         token.dynamic = true;
@@ -225,6 +235,7 @@ function lexSegments(command) {
       const j = closingParen(command, i + 1, command.length);
       substitutions.push(command.slice(i + 2, j));
       token.text += '$';
+      shape(token, '_');
       i = j >= command.length ? command.length : j;
       continue;
     }
@@ -233,6 +244,7 @@ function lexSegments(command) {
       if (i + 1 < command.length) {
         if (command[i + 1] !== '\n') {
           start().text += command[i + 1];
+          shape(current, '_');
           quoted.add(current);
         }
         i += 1;
@@ -322,6 +334,7 @@ function lexSegments(command) {
 
     const token = start();
     token.text += ch;
+    shape(token, ch);
     // An unquoted parenthesis is syntax, such as a subshell's; a quoted one reached the word through the branches above.
     if (ch === '(' || ch === ')') token.paren = true;
     if (ch === '$' || ch === '`' || ch === '*' || ch === '?') token.dynamic = true;
@@ -653,12 +666,13 @@ const SCRIPT_RUNNERS = new Set(['node', 'nodejs', 'bun']);
 const AIDRIAN_SCRIPT = /(?:^|\/)(?:cli\.mjs|aidrian)$/u;
 
 // The words after the program that make an aidrian command, from readInvocation's { program, args }, or null when the
-// invocation is not aidrian: run as `aidrian` by any path, or as a node script that is the plugin's cli.mjs or bin/aidrian.
+// invocation is not aidrian: run as `aidrian` by any path, or by a runner, whose options may take values, with the plugin's
+// cli.mjs or bin/aidrian among its arguments.
 export function aidrianArgs({ program, args }) {
   if (program === 'aidrian') return args;
   if (!SCRIPT_RUNNERS.has(program)) return null;
-  const script = args.findIndex((token) => !token.text.startsWith('-'));
-  return script !== -1 && AIDRIAN_SCRIPT.test(args[script].text) ? args.slice(script + 1) : null;
+  const script = args.findIndex((token) => AIDRIAN_SCRIPT.test(token.text));
+  return script === -1 ? null : args.slice(script + 1);
 }
 
 // Git global options that take the next token as their value.
@@ -738,11 +752,13 @@ export function walkCommands(command, cwd) {
       walk(body, folder, depth + 1, chainFolder);
       return true;
     };
-    // Segment `index` with the segments that pipe into it, as written.
+    // Segment `index` with the segments that pipe into it, as written, then the heredoc bodies those segments read:
+    // a body sits past its segment's span, and `cat <<'EOF' | bash` feeds the shell that body.
     const piped = (index) => {
       let first = index;
       while (first > 0 && (separators[first - 1] === '|' || separators[first - 1] === '|&')) first -= 1;
-      return line.slice(spans[first][0], spans[index][1]);
+      const bodies = heredocs.filter((each) => each.segment >= first && each.segment < index).map((each) => each.body);
+      return [line.slice(spans[first][0], spans[index][1]), ...bodies].join('\n');
     };
     let here = start;
     let chain = chainStart;
@@ -814,12 +830,17 @@ function runsInOwnProcess(segment) {
   return segment.slice(0, at).some(({ text }) => WRAPPERS.has(path.basename(text)) && text !== 'command' && text !== 'time');
 }
 
-// The folder a `cd`, `pushd`, or `popd` invocation reaches from `here`, or null when it cannot be known. It is the
-// physical folder, as the kernel resolves a file's `..` from it: `cd link && cat ../f` reads beside the link's target.
-function folderAfter(here, { program, args }) {
+// The folder a `cd`, `pushd`, or `popd` invocation reaches from `here`, or null when it cannot be known: a word the shell
+// expands, more than one operand (zsh's `cd old new` replaces old with new), or a relative name under its own `CDPATH=`.
+// It is the physical folder, as the kernel resolves a file's `..` from it: `cd link && cat ../f` reads beside the link's
+// target. A folder that does not exist is returned as written; a rule that needs it to exist checks.
+function folderAfter(here, { program, args, environment = [] }) {
   if (program === 'popd') return null;
-  const to = args.find((token) => !token || token.dynamic || !token.text.startsWith('-'));
-  if (!to || to.dynamic || to.text === '-' || to.text.startsWith('~')) return null;
+  const operands = args.filter((token) => !token || token.dynamic || !token.text.startsWith('-'));
+  if (operands.length !== 1) return null;
+  const [to] = operands;
+  if (!to || to.dynamic || to.expands || to.text.startsWith('~')) return null;
+  if (environment.some((each) => each.name === 'CDPATH') && !/^(?:\/|\.\.?(?:\/|$))/u.test(to.text)) return null;
   if (!path.isAbsolute(to.text) && here === null) return null;
   const reached = path.resolve(here ?? '/', to.text);
   try {

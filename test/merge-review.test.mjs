@@ -636,6 +636,11 @@ test('a merge fed to a shell as text the rule cannot read is refused; other text
     assert.match(r.run(command) ?? '', /feeds a shell text the merge guard cannot read as commands/u, command);
   }
   assert.equal(r.run('cat setup.sh | bash'), null, 'a pipe into a shell naming no merge');
+  for (const command of ["cat <<'EOF' | bash\ngh pr merge 5\nEOF", "cat <<'EOF' | tee x | bash\ngh pr merge 5 --squash\nEOF"]) {
+    assert.match(r.run(command) ?? '', /feeds a shell text the merge guard cannot read as commands/u, `a heredoc piped into a shell: ${command}`);
+  }
+  assert.equal(r.run("cat <<'EOF' | bash\nnpm test\nEOF"), null, 'a heredoc piped into a shell naming no merge');
+  assert.equal(r.run("cat > notes.md <<'EOF'\ngh pr merge 5\nEOF"), null, 'a heredoc that only feeds a file');
   assert.equal(r.run('bash scripts/build.sh'), null, 'a script');
   assert.equal(r.run('echo "gh pr merge 5"'), null, 'a merge named as text, run by no shell');
 });

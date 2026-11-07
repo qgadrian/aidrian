@@ -418,6 +418,50 @@ test('a subagent may not set the review approvals switch, with or without gates;
   assert.equal(run(main).status, 0, 'the main session may');
 });
 
+test('a subagent may not change the machine\'s product feedback choice, by any spelling; other local writes and the main session stay allowed', (t) => {
+  const { dir } = project(t, { version: 1 });
+  const local = path.join(dir, '.aidrian.local.json');
+  const run = (input) => spawnSync(process.execPath, [HOOK], { input: JSON.stringify(input), cwd: dir, encoding: 'utf8' });
+  writeFileSync(local, `${JSON.stringify({ names: { human: 'off' }, review: { productFeedback: { auto: true } } }, null, 2)}\n`);
+  const edit = (from, to) => ['Edit', { file_path: local, old_string: from, new_string: to }];
+  const patch = (file, ...lines) => ({ command: `*** Begin Patch\n*** Update File: ${file}\n@@\n${lines.join('\n')}\n*** End Patch\n` });
+  for (const [tool, toolInput] of [
+    ['Write', { file_path: local, content: JSON.stringify({ review: { productFeedback: { auto: false } } }) }],
+    ['Write', { file_path: local, content: '{ "review": { "product\\u0046eedback": { "auto": false } } }' }],
+    ['Write', { file_path: local, content: JSON.stringify({ names: { human: 'off' } }) }],
+    ['Write', { file_path: local, content: '{ not json' }],
+    edit('"auto": true', '"auto": false'),
+    edit('"productFeedback": {\n      "auto": true', '"product\\u0046eedback": {\n      "auto": false'),
+    edit('"auto": true', '"no longer JSON'),
+    edit('"productFeedback": {\n      "auto": true\n    }', '"other": 1'),
+    ['apply_patch', patch('.aidrian.local.json', '+    "productFeedback": { "auto": false }')],
+    ['apply_patch', patch(local, '-    "productFeedback": { "auto": true }')],
+    // Pretty-printed, the value sits on its own line, and the patch's context names the key or nothing.
+    ['apply_patch', patch(local, '     "productFeedback": {', '-      "auto": true', '+      "auto": false')],
+    ['apply_patch', patch('.aidrian.local.json', '-      "auto"  : true')],
+    ['apply_patch', patch(local, '+    "productFeedback": {')],
+    ['Bash', { command: `echo '{"review":{"productFeedback":{"auto":false}}}' > .aidrian.local.json` }],
+    ['Bash', { command: `python3 -c "open('.aidrian.local.json','w').write('productFeedback')"` }],
+  ]) {
+    const result = run(subagent(dir, tool, toolInput));
+    assert.equal(result.status, 2, JSON.stringify(toolInput));
+    assert.match(result.stderr, /review\.productFeedback/u, JSON.stringify(toolInput));
+  }
+  for (const [tool, toolInput] of [
+    edit('"human": "off"', '"human": "on"'),
+    ['apply_patch', patch(local, '-  "names": {}', '+  "names": { "human": "x" }')],
+    ['apply_patch', patch('docs/settings.json', '-      "auto": true', '+      "auto": false')],
+    ['apply_patch', patch(local, '     "auto": true', '-  "names": {}')],
+    ['Bash', { command: 'jq .review.productFeedback .aidrian.local.json' }],
+    ['Bash', { command: 'echo productFeedback > docs/notes.md' }],
+    ['Write', { file_path: 'docs/notes.md', content: 'productFeedback is a key' }],
+  ]) {
+    assert.equal(run(subagent(dir, tool, toolInput)).status, 0, JSON.stringify(toolInput));
+  }
+  const { agent_id: _ignored, agent_type: _alsoIgnored, ...main } = subagent(dir, 'Write', { file_path: local, content: JSON.stringify({ review: { productFeedback: { auto: false } } }) });
+  assert.equal(run(main).status, 0, 'the main session may');
+});
+
 test('a subagent may not change the auto-merge switch without naming it: the guard reads what an Edit, Write, or apply_patch leaves', (t) => {
   const { dir } = project(t, { version: 1 });
   const local = path.join(dir, '.aidrian.local.json');

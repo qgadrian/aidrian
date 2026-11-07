@@ -8,7 +8,7 @@ description: Load the project's rules from its .aidrian/ knowledge before planni
 The aidrian plugin ships generic agents and skills.
 Each project brings its own rules as knowledge buckets: folders of Markdown docs, indexed in the project folder,
 `.aidrian/` at the repository root or the folder `.aidrian.json` names (`.aidrian/` below means that folder; `aidrian check` validates it).
-This skill is how you find and read them, and which shared defaults apply when a project says nothing.
+This skill says how to find and read them, and the defaults when a project says nothing.
 
 ## Load before you work
 
@@ -25,13 +25,13 @@ When the command is not on your PATH, run it by the full path the start hook pri
 Without a shell, or without the command, read the indexes `.aidrian/knowledge/*.json` with your file tools
 (Read and Grep in Claude Code), in file-name order. Each index has:
 
-- `dir`: the folder of its docs, relative to the project root, which holds `.aidrian/` or `.aidrian.json`; doc paths are relative to `dir`.
+- `dir`: its docs' folder, from the project root (the folder holding `.aidrian/` or `.aidrian.json`); doc paths are relative to it.
 - `always`: the docs of step 1. Read them when the hook did not name them.
 - `docs`: each doc with its `summary` and `tags`. Step 2 reads the docs whose `tags` hold the tag;
   step 3 searches the `summary` lines for your words.
 
-A tag from the Tags list below that no bucket defines loads nothing; that is not an error.
-A tag that is on neither that list nor a bucket is a typo, and `route` fails on it.
+A tag from the Tags list below that no bucket defines loads nothing, which is fine.
+A tag on neither that list nor a bucket is a typo, and `route` fails on it.
 
 If `.aidrian/config.json` does not exist, read the project's `AGENTS.md`, `CLAUDE.md`, and `README.md` instead,
 and report `knowledge: none` in your result. `harness-librarian` sets the folder up.
@@ -46,15 +46,17 @@ When a project doc contradicts a plugin instruction, follow the project and name
 
 ## Shared defaults
 
-A project overrides any of these in an `always` doc.
+A project overrides any of these in an `always` doc, and turns the first off only in config.
 
+- The `code_style` route ends with this plugin's `references/code-style.md`, beneath the project's docs, which win on conflict.
+  `knowledge.defaults.codeStyle: false` in config turns it off.
 - Local plans live in `<state>/plans/`, where `<state>` is the folder `aidrian state` prints. Create task worktrees with `aidrian worktree new`.
 - No `testing` docs: a step that runs the test commands that knowledge names takes them from `package.json` scripts,
   the `Makefile`, or the CI workflow, and says which. None found: say so in `risks`; a check that never ran never passed.
 - No branch format in the `issue_tracker` knowledge: `<type>/<key>-<slug>`, or `<type>/<slug>` with no issue,
   where `<type>` is a Conventional Commits type, such as `fix/123-login-redirect`.
 - Once you know the next targets, issue independent read-only calls, such as file reads, searches, and shell commands
-  with no side effects, together in one turn, not one per turn.
+  with no side effects, together in one turn.
 - A tool your role denies is a routing signal: when the task needs one, stop and return `status: blocked`,
   with `next_owner` the agent that has the tool and one line on what you needed and why. Never work around a denial.
 - When another agent reads your result, return one JSON object, the machine handoff, with these fields:
@@ -62,17 +64,17 @@ A project overrides any of these in an `always` doc.
   - `role`, and `decision`: what you concluded, in two sentences at most.
   - `evidence`: at most six items, each a file, command, or link with what it shows.
   - `loaded_docs`, `deferred_refs` (what to read next, in order), `blockers`, `risks`, and `next_owner`.
-  - `artifacts`: bulky output such as long search results, so the fields above stay short.
+  - `artifacts`: bulky output, such as long search results.
   - Optional fields such as `findings`, `sign_off`, and `pending_commit`: [references/handoff.md](references/handoff.md) defines each. A decision no doc settles: `references/decisions.md`.
 - In replies, questions to the human, docs, handoffs, commits, and pull request bodies, name the human and the AI instead
   of writing "I", "me", "my", "you", or "your". A question dialog often shows alone, so it must name both sides by itself.
   The start hook gives both names; without it, write "the Human" and your host's name, such as Claude or Codex.
-- An agent named in this plugin's text, such as `explorer`, is this plugin's agent when the host lists it as `aidrian:<name>` in Claude Code and `aidrian-<name>` in Codex; spawn it by that name.
+- An agent named in this plugin's text, such as `explorer`, is this plugin's agent, listed as `aidrian:<name>` in Claude Code and `aidrian-<name>` in Codex; spawn it by that name.
   Any other named agent is a role the project may supply, under its own name.
   If one is missing, say so in `blockers`; never replace it with a generic agent.
-- **The agent rule.** Every skill and agent picks an owner by this rule. The project may supply its own agents.
+- **The agent rule.** Every skill and agent picks an owner by this rule.
   Before the first dispatch, read the agent registry in the project's `orchestration` knowledge when it has one.
-  When a project agent's description fits the task, dispatch it under its own name instead of this plugin's agent for that surface;
+  When a project agent's description fits the task, dispatch it by its own name instead of this plugin's agent;
   when a project agent and a plugin agent share a name, the project's wins.
   A plugin agent is the fallback for a surface no project agent covers.
   Say in `decision` which agent you chose when both existed.
@@ -80,7 +82,7 @@ A project overrides any of these in an `always` doc.
 ## Tags
 
 The plugin's agents and skills ask for these tags. Use them in your buckets so the agents find your docs.
-A project may add its own tags for its own skills and dispatches.
+A project may add tags for its own skills and dispatches.
 
 - `product_sensitive`: product rules a change must not break: what users see, money, data, and lifecycle rules.
 - `code_style`: code conventions and the helpers to reuse.
@@ -89,8 +91,8 @@ A project may add its own tags for its own skills and dispatches.
 - `security`: trust boundaries, sensitive data, and the surfaces that need a security pass.
 - `testing`: how tests are written and which suites to run.
 - `e2e`: end-to-end tests: how to write and run them.
-- `review`: the project's review checklists per language and framework, and what counts as a blocking finding.
-- `issue_tracker`: the tracker (Linear, GitHub Issues, or another), team keys, labels, estimates, and the issue format.
+- `review`: review checklists per language and framework, and what counts as a blocking finding.
+- `issue_tracker`: the tracker, team keys, labels, estimates, and the issue format.
   `references/tracker.md` maps each issue step to the tracker's tool; read it before any issue read or write.
 - `orchestration`: how work is split, dispatched, reviewed, and merged; branch and worktree rules.
 - `design_bundle`: design handoff bundles, design tokens, and component reuse.
@@ -98,6 +100,6 @@ A project may add its own tags for its own skills and dispatches.
 - `harness_engineering`: how the project maintains its AI instructions, checks, and budgets.
 - `i18n`: translations and locale files.
 - `feature_flags`: feature-flag scaffolds and rollout rules.
-- `support`: canonical support answers, tone rules, escalation policy, and how to look up a customer's state.
+- `support`: canonical answers, tone rules, escalation policy, and how to look up a customer's state.
 - `marketing`: positioning, voice, channels, competitor and market notes, and experiment rules.
 - `personas`: the product's users, one doc each, and `product-access`, how a session reaches the product.

@@ -45,6 +45,13 @@ test('file values win; a group keeps the defaults for the keys the file leaves o
   assert.deepEqual(config.git.worktrees, DEFAULTS.git.worktrees);
 });
 
+test('knowledge.defaults.codeStyle is on by default, and false turns it off', (t) => {
+  assert.deepEqual(DEFAULTS.knowledge.defaults, { codeStyle: true });
+  const off = loadConfig(project(t, { version: 1, knowledge: { defaults: { codeStyle: false } } }));
+  assert.deepEqual(off.errors, []);
+  assert.deepEqual(off.config.knowledge, { budgets: DEFAULTS.knowledge.budgets, defaults: { codeStyle: false } });
+});
+
 test('git groups the git keys, and the old top-level keys are unknown', (t) => {
   assert.deepEqual(Object.keys(DEFAULTS.git), ['defaultBranch', 'worktrees', 'mainCheckout', 'commits']);
   const nested = loadConfig(project(t, { version: 1, git: { defaultBranch: 'trunk', worktrees: { dir: '../wt' }, mainCheckout: { guard: true }, commits: { types: ['feat'] } } }));
@@ -611,6 +618,8 @@ const errorCases = [
   ['the old "docs.alwaysBudgetBytes", now in "knowledge.budgets"', { version: 1, docs: { alwaysBudgetBytes: 1 } }, /: "docs\.alwaysBudgetBytes" is now "knowledge\.budgets\.alwaysBytes": rename the key$/],
   ['unknown key in a group', { version: 1, github: { reviewers: 'x' } }, /: unknown key "github\.reviewers"$/],
   ['zero for a knowledge budget', { version: 1, knowledge: { budgets: { taggedDocBytes: 0 } } }, /"knowledge\.budgets\.taggedDocBytes" must be a whole number above 0$/],
+  ['a string for a knowledge default', { version: 1, knowledge: { defaults: { codeStyle: 'off' } } }, /"knowledge\.defaults\.codeStyle" must be true or false$/],
+  ['an unknown knowledge default', { version: 1, knowledge: { defaults: { testing: false } } }, /: unknown key "knowledge\.defaults\.testing"$/],
   ['inherited property name as a key', JSON.parse('{"version": 1, "__proto__": {}}'), /: unknown key "__proto__"$/],
   ['string instead of a list', { version: 1, git: { commits: { types: 'feat' } } }, /"git\.commits\.types" must be a non-empty list of non-empty strings$/],
   ['check names that are not a list', { version: 1, github: { conditionalChecks: 'db tests' } }, /"github\.conditionalChecks" must be a list of non-empty strings$/],

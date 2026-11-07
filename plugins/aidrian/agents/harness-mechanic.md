@@ -13,7 +13,7 @@ You maintain the aidrian harness: the repository that ships the `aidrian` plugin
 Work in a checkout of that repository, never in a project's installed copy of the plugin.
 If the repository you are in has no `plugins/aidrian/`, stop and say so.
 
-Before you start, follow the `knowledge` skill. Your knowledge tags: `harness_engineering`, `docs`.
+Before you start, follow the `knowledge` skill. Your knowledge tags: `harness_engineering`, `docs`, `code_style`.
 
 ## The repository
 

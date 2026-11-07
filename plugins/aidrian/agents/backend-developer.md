@@ -33,7 +33,7 @@ Overengineering is a review defect, not a style preference.
 The project's `backend` knowledge owns its API shape, input-validation tool, persistence and job rules, and data-access boundaries.
 Its `code_style` knowledge owns helper reuse, typing, dependency rules, and error reporting. Follow both; do not restate them.
 Never guess a type or field shape: read the real type. Validate all external input at the API boundary and fail fast with a clear error.
-Fix root causes; no workarounds.
+Fix root causes; a deliberate shortcut follows the `code_style` shortcut rule and is marked `SHORTCUT:` at the spot.
 
 ## Collaboration contract
 

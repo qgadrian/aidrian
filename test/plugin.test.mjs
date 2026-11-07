@@ -1349,3 +1349,17 @@ test('the pr-product-feedback evals seed their run folder, with a gh that posts 
     assert.equal(spawnSync('gh', args, { cwd: dir, env, encoding: 'utf8' }).status, 1, `the fixture answers github.invalid alone: ${args.join(' ')}`);
   }
 });
+
+test('a review finding\'s proposed fix is checked against approval conditions and earlier decisions before dispatch', () => {
+  // A true premise with a harmful fix was dispatched as fix_now: the fix broke a product approval condition and undid an
+  // earlier round's decision, and the bot finding's affects axis was set from the finding, not from what the fix risked.
+  const read = (rel) => readFileSync(path.join(PLUGIN, rel), 'utf8').replace(/\s+/g, ' ');
+  const rules = read('skills/orchestration/references/review-rules.md');
+  assert.match(rules, /## Check the proposed fix/);
+  assert.match(rules, /each condition an approval or sign-off on this pull request set, and each flow invariant/);
+  assert.match(rules, /each fix brief, verdict, and decision of an earlier round/);
+  assert.match(rules, /a suggested test change must still fail on the mistake the test catches/);
+  assert.match(rules, /is a conflict, not a `fix_now`/);
+  assert.match(rules, /Set `affects` from what the fix puts at risk/);
+  assert.match(read('skills/orchestration/SKILL.md'), /§ Check the proposed fix/);
+});

@@ -157,7 +157,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.autoMerge.deleteBranch` | `true` deletes the remote head branch with the merge. Read from the default branch. |
 | `github.autoMerge.deleteWorktree` | `true` removes the head branch's worktree after the merge, but never a session's own: [Cleanup](#cleanup-after-the-merge). Read from the default branch. |
 | `github.autoMerge` in `.aidrian.local.json` | This machine's choice, the same key with one field: `{ "enabled": true }` opts in under the team's `allow`, and `{ "enabled": false }` stays out. Unset follows `github.autoMerge.default`. The older `"on"` and `"off"` still work. |
-| `github.unattendedWaiver.allow` | `true` lets a machine opt in to the [unattended waiver](#unattended-waiver): the merge guard may take a judge's recorded verdict in place of the Human's "Merge anyway", at the round cap or on a moved head. `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. |
+| `github.unattendedWaiver.allow` | `true` lets a machine opt in to the [unattended waiver](#unattended-waiver): the merge guard may take a judge's recorded verdict in place of the Human's "Merge anyway", at the round cap. `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. |
 | `github.unattendedWaiver` in `.aidrian.local.json` | This machine's choice, the same shape as `github.autoMerge` there: `{ "enabled": true }` or `{ "enabled": false }`, or the older `"on"` and `"off"`. Unset is off: there is no team default. |
 | `review.engine` | The project's [review engine](review.md#the-engine); it wins over the machine's. `null` leaves the choice to each machine. |
 | `review.record` | Where the [review record](review.md#the-record) goes: `"comment"` also writes a summary comment on the pull request; `"local"` keeps it in the state folder only. |
@@ -342,9 +342,16 @@ It does not reach a fork: gh never deletes a head branch in another repository.
 ## Unattended waiver
 
 An unattended run stalls where the [merge guard](hooks.md#merge-guard) waits for the Human's "Merge anyway": when the
-review stopped at the round cap (`round_limit`), and when a push moved the head past the last review step's head.
-The unattended waiver lets a judge's recorded verdict stand in for that answer, in those two cases only.
+review stopped at the round cap (`round_limit`) on the head it would merge.
+The unattended waiver lets a judge's recorded verdict stand in for that answer, in that case only.
 It lifts the guard's denial; it merges nothing, and it is off unless the team allows it and the machine takes part.
+A head pushed after the last review step, whatever that step's outcome, gets no waiver: the review can still run on it,
+so `aidrian pr review` is the way on.
+
+The waiver is for a session the Human told to merge. `aidrian pr auto-merge`'s review gate does not read waivers: it
+still needs `received` on the head, so a verdict never opens [auto-merge](#auto-merge) or the run that merges through it.
+The judge is a fresh read-only agent the session dispatches, as the `pr-review-loop` skill's
+`references/review-plan.md` § At the cap says; the session records only the verdict that judge gave.
 
 The team commits this in config.json, on the default branch and on any other branch pull requests target:
 
@@ -366,15 +373,13 @@ write it ([the config guard](hooks.md#agent-gates)). `aidrian check` warns
 
 The verdict is recorded with `aidrian pr waive <PR> --verdict waive|refuse --reason "<evidence>" [--head <sha>]`.
 It writes `{ head, kind, verdict, reason, judge, at }` under `waivers` in the [review record](review.md#the-record),
-shown under **Merge guard waivers** in the summary comment. `kind` is:
-
-- `round_cap`: the review of the current head is `round_limit`;
-- `moved_head`: the current head descends from the one the last review step covered, and that step's outcome was finished
-  (`received`, `none_needed`) or `round_limit`. A head that does not descend from it, such as a force-push, needs a review.
+shown under **Merge guard waivers** in the summary comment. `kind` is `round_cap`: the review of the current head is
+`round_limit`.
 
 The command records `waive` only while this machine's switch is on; `refuse` it records always.
 It refuses an empty reason, one over 2,000 characters, another verdict, a `--head` that is not the pull request's
-current head, a head it cannot read, a review still owed, and any other outcome. It merges this machine's owed reviews
+current head, a head it cannot read, a review still owed, a head the last review step did not cover, and any other
+outcome. It merges this machine's owed reviews
 into the record it read, so a newer record from the comment never hides one, and writes nothing when this machine's
 record changed while it ran. A verdict binds to one head: a later push needs a new one.
 The last verdict for a head and kind is the one that counts, so a `refuse` withdraws an earlier `waive`.

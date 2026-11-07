@@ -194,6 +194,8 @@ export function pathsProblem({ files, changedFiles }, prefix = '') {
   if (hidden) return `gh lists ${JSON.stringify(hidden.path)} as ${hidden.changeType || 'no change type'}, which may hide the path it replaced`;
   const outside = files.find(({ path }) => !path.startsWith(prefix));
   if (outside) return `it changes ${JSON.stringify(outside.path)}, outside this project's folder, which its review does not cover`;
+  // Accepted residual, older than the unattended waiver: a custom project folder that the project's pointer file names
+  // is not guarded, since GUARDED_PATHS knows only the default folder.
   const guarded = files.find(({ path }) => GUARDED_PATHS.test(path) || GUARDED_PATHS.test(path.slice(prefix.length)));
   return guarded ? `it changes ${JSON.stringify(guarded.path)}, which instructs AI sessions, or decides CI's verdict or auto-merge` : null;
 }

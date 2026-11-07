@@ -2,11 +2,14 @@
 // record (lib/review/state.mjs) under `waivers`, that the merge guard (lib/rules/github/merge-review.mjs) may take in place
 // of the Human's "Merge anyway" answer, so an unattended run can finish. docs/config.md#unattended-waiver.
 //
-// It covers two denials only, each bound to one head:
-//   - `round_cap`: the review of the head stopped at the round cap (`round_limit`);
-//   - `moved_head`: the head moved past the last review step's head, whose outcome was finished or `round_limit`.
-// Never an owed review, an outcome on the head with any other status (`blocked_quota`, `error`, `stuck`, `running`,
-// `fix_required`, ...), a head or merge text the guard cannot read, or a record with no outcome.
+// It covers one denial only, `round_cap`: the review step's outcome on the merge's own head is `round_limit`, the round
+// cap. Never a head the last review step did not cover, whatever that step's outcome (after `received` or `none_needed`
+// on an earlier head, the review can still run on this one), an owed review, an outcome on the head with any other
+// status (`blocked_quota`, `error`, `stuck`, `running`, `fix_required`, ...), a head or merge text the guard cannot
+// read, or a record with no outcome. An entry of any other kind counts for nothing.
+//
+// `aidrian pr auto-merge`'s review gate reads no verdict: it still needs `received` on the head. The waiver is for a
+// session the Human told to merge, not for the auto-merge path.
 //
 // The guard honors a verdict only while both switches are on: `github.unattendedWaiver.allow` true in config.json on both
 // the repository's default branch and the pull request's base, read from GitHub as each branch commits it now, never
@@ -28,18 +31,20 @@ import { sessionIdentity } from '../hosts/index.mjs';
 // other's exports only inside functions, never while it loads: keep it that way.
 import { branchPolicies, refusingBranches } from '../pr-auto-merge.mjs';
 import { originRepo, repoName } from '../review-gate.mjs';
-import { FINISHED, heldMessage, mergePending, owed, publishState, readLocalState, readRecord, sameCommit, SHA_REF, writeLocalState } from './state.mjs';
+import { heldMessage, mergePending, owed, publishState, readLocalState, readRecord, sameCommit, SHA_REF, writeLocalState } from './state.mjs';
 
 export const VERDICTS = Object.freeze(['waive', 'refuse']);
-// The outcomes past which a moved head may be waived: the last step finished, or stopped at the cap.
-const MOVABLE = new Set([...FINISHED, 'round_limit']);
 // The longest reason a verdict keeps: the summary comment shows the first 300 characters of it.
 export const MAX_REASON = 2000;
 
 // The guard's budget inside the hook's 5 s, counted from when the hook's process started (`startedAt`), one for the whole
-// command: the waiver's reads begin only when at most GATE_START_MS has gone, none begins at or after WAIVER_DEADLINE_MS,
-// and each is stopped with SIGKILL after READ_TIMEOUT_MS (VIEW_TIMEOUT_MS for the view), or at that deadline if sooner.
+// command. guardWaiver checks GATE_START_MS once, before its first read, so the waiver starts reading (the view, git's
+// project folder, the forge reads) only when at most that much has gone; its later reads, and the guard's own head
+// lookup, are held to the deadline alone. None begins at or after WAIVER_DEADLINE_MS, and each is stopped with SIGKILL after READ_TIMEOUT_MS
+// (VIEW_TIMEOUT_MS for the view), or at that deadline if sooner.
 export const GATE_START_MS = 1500;
+// Accepted residual: a denial reached at the deadline is then logged by the hook's block(), with about 1 s left of the
+// host's 5 s. A log slow enough to spend it is contrived; the host then lets the command run.
 export const WAIVER_DEADLINE_MS = 4000;
 export const READ_TIMEOUT_MS = 1000;
 export const VIEW_TIMEOUT_MS = 3000;
@@ -65,40 +70,25 @@ export function parseWaive(args) {
   return { pr: Number(match[1]), verdict: flags.verdict, reason: flags.reason.trim(), head: flags.head ?? null };
 }
 
-// Whether commit `b` descends from `a` in the checkout at `root`: true, false, or null when git cannot tell, such as for
-// a commit the checkout lacks. `timeout` bounds git, in milliseconds.
-export function descendsAt(root, timeout) {
-  return (a, b) => {
-    const { status } = runGit(['merge-base', '--is-ancestor', a, b], root, timeout === undefined ? {} : { timeout });
-    return status === 0 ? true : status === 1 ? false : null;
-  };
-}
-
-// The kind of denial a verdict may waive for a merge of `head`, or null when none may: nothing owed and an outcome on
-// record, then `round_cap` for `round_limit` on that head, or `moved_head` for a head that descends from a finished or
-// `round_limit` one. `descends(a, b)` is descendsAt's: a head git cannot place, or a force-push that dropped the reviewed
-// head, is no moved head.
-export function waiverKind(state, head, descends) {
+// The kind of denial a verdict may waive for a merge of `head`, or null when none may: `round_cap` when nothing is owed
+// and the outcome on record is `round_limit` on that very head. A head the outcome does not cover is never waived.
+export function waiverKind(state, head) {
   if (!state || owed(state).length) return null;
   const outcome = state.outcome ?? null;
   if (!outcome || typeof outcome.head !== 'string' || typeof head !== 'string') return null;
-  if (sameCommit(outcome.head, head)) return outcome.status === 'round_limit' ? 'round_cap' : null;
-  return MOVABLE.has(outcome.status) && descends(outcome.head, head) === true ? 'moved_head' : null;
+  return sameCommit(outcome.head, head) && outcome.status === 'round_limit' ? 'round_cap' : null;
 }
 
 // Why no verdict may be recorded for `head`, for runWaive's error.
-function notWaivable(state, head, pr, descends) {
+function notWaivable(state, head, pr) {
   const sha7 = String(head).slice(0, 7);
   const owing = owed(state);
   if (owing.length) return `${owing.length} review ${owing.length === 1 ? 'entry is' : 'entries are'} still owed on #${pr}: a verdict never covers an owed review`;
   const outcome = state.outcome ?? null;
   if (!outcome) return `the review record of #${pr} holds no outcome: run \`aidrian pr review ${pr}\` first`;
   const prior = String(outcome.head).slice(0, 7);
-  if (sameCommit(outcome.head, head)) return `the review of head ${sha7} is ${outcome.status}: a verdict covers only round_limit, or a head the last review step did not cover`;
-  if (!MOVABLE.has(outcome.status)) return `the last review step covered ${prior} and is ${outcome.status}: a moved head is waived only past a finished or round_limit review`;
-  return descends(outcome.head, head) === false
-    ? `head ${sha7} does not descend from ${prior}, the head the last review step covered: a rewritten history needs a review, not a verdict`
-    : `git cannot tell whether head ${sha7} descends from ${prior}, the head the last review step covered: fetch the pull request's head, then run again`;
+  if (sameCommit(outcome.head, head)) return `the review of head ${sha7} is ${outcome.status}: a verdict covers only round_limit on the current head`;
+  return `the last review step covered ${prior}, not head ${sha7}: a verdict covers only round_limit on the current head, so run \`aidrian pr review ${pr}\` on it`;
 }
 
 // The verdict that stands for a merge of `head` under `kind`: the last entry of `state.waivers` for that head and kind,
@@ -165,15 +155,24 @@ const UNREAD_NOTE = ', and the team\'s github.unattendedWaiver could not be read
 // `sha`), the only merge a verdict counts for, since gh would otherwise merge whatever head the branch has by then.
 // `view` is the guard's earlier view, null when it made none. `forge` is budgetedForge's `make`, the test seam;
 // `startedAt` when the hook's process started, by `now`, the one clock for every merge of one command.
-export function guardWaiver({ project, state, pr, head, named = false, repo = null, view = null, forge = null, startedAt, now = Date.now }) {
+// Any throw, from a read or the clock, is the `unread` denial: the hook's own catch would let the merge run.
+export function guardWaiver(args) {
+  try {
+    return readWaiver(args);
+  } catch {
+    return { allow: false, note: UNREAD_NOTE, route: '' };
+  }
+}
+
+function readWaiver({ project, state, pr, head, named = false, repo = null, view = null, forge = null, startedAt, now = Date.now }) {
   const none = { allow: false, note: '', route: '' };
   if (project.localUnattendedWaiver !== 'on' || !state?.outcome || owed(state).length) return none;
-  const deadline = startedAt + WAIVER_DEADLINE_MS;
-  const left = () => Math.floor(Math.min(READ_TIMEOUT_MS, deadline - now()));
-  const kind = waiverKind(state, head, (a, b) => (left() > 0 ? descendsAt(project.root, left())(a, b) : null));
+  const kind = waiverKind(state, head);
   if (kind === null) return none;
   const unread = { ...none, note: UNREAD_NOTE };
+  // The one start check, before the first read: every waiver read follows it.
   if (now() - startedAt > GATE_START_MS) return unread;
+  const deadline = startedAt + WAIVER_DEADLINE_MS;
   const reads = budgetedForge(forge ?? ((options) => forgeFor(project.root, options)), deadline, now);
   let seen = view?.baseRefName && view?.url ? view : null;
   if (!seen) {
@@ -198,7 +197,7 @@ export function guardWaiver({ project, state, pr, head, named = false, repo = nu
   }
   return {
     ...none,
-    route: ` Or an unattended run records the judge's verdict with \`aidrian pr waive ${pr} --verdict waive|refuse --reason "<evidence>" --head ${head}\`, which this repository allows (github.unattendedWaiver), then merges naming that head.`,
+    route: ` Or an unattended run the Human told to merge records the verdict of a fresh judge, as the pr-review-loop skill's references/review-plan.md § At the cap says, with \`aidrian pr waive ${pr} --verdict waive|refuse --reason "<evidence>" --head ${head}\`, which this repository allows (github.unattendedWaiver), then merges naming that head.`,
   };
 }
 
@@ -211,8 +210,7 @@ const nextStep = (entry, pr, local) => (entry.verdict === 'waive'
 // config.json `review.record` is "local", the pull request's summary comment. The entries owed on this machine are
 // merged in first, as the review step does, so a newer record from the comment never hides one; and when this machine's
 // record changes before the write, nothing is written. `deps.forge` replaces the forge (change, conversationComments,
-// postComment, editComment, viewer), `deps.repo` the origin, `deps.env` the environment, and `deps.descends` git's
-// ancestry (descendsAt), in tests.
+// postComment, editComment, viewer), `deps.repo` the origin, and `deps.env` the environment, in tests.
 export async function runWaive(args, project, config, deps = {}) {
   const opts = parseWaive(args);
   if (opts.verdict === 'waive' && project.localUnattendedWaiver !== 'on') {
@@ -220,7 +218,6 @@ export async function runWaive(args, project, config, deps = {}) {
   }
   const forge = deps.forge ?? forgeFor(project.root);
   const repo = deps.repo ?? originRepo(project);
-  const descends = deps.descends ?? descendsAt(project.root);
   const onPr = config.review.record !== 'local';
   let comments = [];
   if (onPr) {
@@ -240,8 +237,8 @@ export async function runWaive(args, project, config, deps = {}) {
   if (typeof current !== 'string' || !SHA_REF.test(current)) throw new Error('cannot read the pull request\'s head: a verdict binds to one head');
   const head = opts.head ?? current;
   if (!sameCommit(head, current)) throw new Error(`the pull request's head is ${current.slice(0, 7)}, not ${head.slice(0, 7)}: the verdict binds to the current head`);
-  const kind = waiverKind(state, current, descends);
-  if (kind === null) throw new Error(notWaivable(state, current, opts.pr, descends));
+  const kind = waiverKind(state, current);
+  if (kind === null) throw new Error(notWaivable(state, current, opts.pr));
   const env = deps.env ?? process.env;
   const entry = { head: current, kind, verdict: opts.verdict, reason: opts.reason, judge: sessionIdentity(env).agent ?? 'unknown', at: new Date().toISOString() };
   state.waivers = [...(Array.isArray(state.waivers) ? state.waivers : []), entry];

@@ -25,7 +25,8 @@ const ALLOW = { version: 1, github: { unattendedWaiver: { allow: true } } };
 
 // A git repository of its own (never GIT_DIR, never a real repository) with an origin and one commit, holding a project
 // whose state folder is inside it, a transcript file, and an untracked local file when `local` is given. It also holds
-// three commits no ref names: `A`, `B` a child of A, and `C` a sibling of A, so a moved head can descend or not.
+// three commits no ref names: `A`, `B` a child of A, and `C` a sibling of A, so a head the review did not cover can
+// descend from the reviewed one or not: neither is waived.
 function repo(t, { config = {}, local = null } = {}) {
   const dir = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-waiver-')));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -195,14 +196,22 @@ test('a second verdict rewrites the waiver list in the summary comment, not a se
   assert.match(issue[0].body, /: refuse by unknown: judged refuse[^\n]*\n- round_cap on `abcdef1`: waive by unknown: judged waive/u);
 });
 
-test('aidrian pr waive records moved_head only for a head that descends from the reviewed one', async (t) => {
+test('aidrian pr waive refuses a head the last review step did not cover, whatever its outcome or ancestry', async (t) => {
+  for (const [name, edit] of [['received', received], ['none_needed', (state, head) => (state.outcome = { status: 'none_needed', head, at: T0 })], ['round_limit', roundLimit]]) {
+    const r = repo(t, { local: ON });
+    r.record(5, (state) => edit(state, r.A));
+    for (const head of [r.B, r.C, NEXT]) {
+      for (const verdict of ['waive', 'refuse']) {
+        await assert.rejects(waive(t, r, ['--verdict', verdict, '--reason', 'the push only renames a local'], { head }), /the last review step covered [0-9a-f]{7}, not head [0-9a-f]{7}: a verdict covers only round_limit on the current head, so run `aidrian pr review 5` on it/u, `${name}, ${verdict}`);
+      }
+    }
+    assert.equal(readLocalState(r.project(), 5).waivers, undefined, `${name}: nothing written`);
+  }
+  // The --head spelling still binds to the full current head.
   const r = repo(t, { local: ON });
-  r.record(5, (state) => received(state, r.A));
-  const { out } = await waive(t, r, ['--verdict', 'waive', '--reason', 'the push only renames a local', '--head', r.B.slice(0, 7)], { head: r.B });
-  assert.equal(out.waiver.kind, 'moved_head');
-  assert.equal(out.waiver.head, r.B, 'the full current head, whatever --head spelled');
-  await assert.rejects(waive(t, r, ['--verdict', 'waive', '--reason', 'x'], { head: r.C }), /head [0-9a-f]{7} does not descend from [0-9a-f]{7}, the head the last review step covered: a rewritten history needs a review/u, 'a force-push');
-  await assert.rejects(waive(t, r, ['--verdict', 'waive', '--reason', 'x'], { head: NEXT }), /git cannot tell whether head 1234567 descends from/u, 'a head the checkout lacks');
+  r.record(5, roundLimit);
+  const { out } = await waive(t, r, ['--verdict', 'waive', '--reason', 'nits', '--head', HEAD.slice(0, 7)]);
+  assert.deepEqual([out.waiver.kind, out.waiver.head], ['round_cap', HEAD], 'the full current head, whatever --head spelled');
 });
 
 test('aidrian pr waive refuses what a verdict may not cover, and every bad argument', async (t) => {
@@ -221,10 +230,10 @@ test('aidrian pr waive refuses what a verdict may not cover, and every bad argum
     ['a head that is no SHA', (state) => roundLimit(state), { change: () => ({ headRefOid: 'main' }) }, /cannot read the pull request's head/u],
     ['an owed review', (state) => (roundLimit(state), state.pending.push({ kind: 'request', head: HEAD, at: T0, by: 'the Human' })), {}, /1 review entry is still owed/u],
     ['no outcome', () => {}, {}, /holds no outcome/u],
-    ['fix_required on the head', (state) => (state.outcome = { status: 'fix_required', head: HEAD, at: T0 }), {}, /is fix_required: a verdict covers only round_limit/u],
+    ['fix_required on the head', (state) => (state.outcome = { status: 'fix_required', head: HEAD, at: T0 }), {}, /is fix_required: a verdict covers only round_limit on the current head/u],
     ['blocked_quota on the head', (state) => (state.outcome = { status: 'blocked_quota', head: HEAD, at: T0 }), {}, /is blocked_quota/u],
     ['received on the head', (state) => received(state), {}, /is received/u],
-    ['a moved head past an error', (state) => (state.outcome = { status: 'error', head: NEXT, at: T0 }), {}, /covered 1234567 and is error/u],
+    ['a moved head past an error', (state) => (state.outcome = { status: 'error', head: NEXT, at: T0 }), {}, /covered 1234567, not head abcdef1/u],
   ];
   for (const [name, edit, { args = [], change = null }, pattern] of cases) {
     const r = repo(t, { local: ON });
@@ -298,7 +307,7 @@ test('aidrian --help lists the waive action', () => {
 
 // ---- the guard (AC8, AC9, AC10)
 
-test('both switches on and a waive entry: the merge guard lets round_limit and a descending moved head merge', (t) => {
+test('both switches on and a waive entry: the merge guard lets round_limit on the head merge', (t) => {
   const r = repo(t, { local: ON });
   r.record(5, (state) => (roundLimit(state), waiver(state)));
   const forge = teamForge();
@@ -311,22 +320,50 @@ test('both switches on and a waive entry: the merge guard lets round_limit and a
   ], 'the view, then the default branch, which is the base: read once');
   assert.ok(forge.calls.slice(1).every((call) => call.at(-1) === 'github.com'), 'every team read names the pull request\'s host');
   assert.ok(forge.options.every((each) => each.killSignal === 'SIGKILL' && Number.isInteger(each.timeoutMs)), 'every call is bounded and killed');
-  const moved = repo(t, { local: ON });
-  moved.record(5, (state) => (received(state, moved.A), waiver(state, { head: moved.B, kind: 'moved_head' })));
-  assert.equal(merge(moved, `gh pr merge 5 --squash --match-head-commit ${moved.B}`, { forge: teamForge(undefined, { head: moved.B }) }), null, 'moved head');
-  assert.equal(merge(moved, `gh api -X PUT repos/acme/notes/pulls/5/merge -f sha=${moved.B}`, { forge: teamForge(undefined, { head: moved.B }) }), null, 'gh api naming the head');
+  assert.equal(merge(r, `gh api -X PUT repos/acme/notes/pulls/5/merge -f sha=${HEAD}`), null, 'gh api naming the head');
   // The MCP merge tool takes it the same way.
   assert.equal(checkMcp({ owner: 'acme', repo: 'notes', pullNumber: 5, sha: HEAD }, { cwd: r.dir, input: { transcript_path: r.transcript }, viewPr: viewer([]), waiverForge: teamForge() }), null);
 });
 
-test('a head that does not descend from the reviewed one, such as a force-push, is no moved head: denied, nothing read', (t) => {
+test('a head the last review step did not cover is never waived: after received, none_needed, or round_limit, denied with no route, nothing read', (t) => {
+  for (const [name, edit] of [['received', received], ['none_needed', (state, head) => (state.outcome = { status: 'none_needed', head, at: T0 })], ['round_limit', roundLimit]]) {
+    const r = repo(t, { local: ON });
+    // A routine fix push after the review (B descends from A) and a force-push (C does not), each with a waive entry
+    // for its head, of another kind and of the round cap's: neither lets it merge.
+    for (const head of [r.B, r.C]) {
+      r.record(5, (state) => (edit(state, r.A), waiver(state, { head, kind: 'moved_head' }), waiver(state, { head })));
+      const forge = teamForge(undefined, { head });
+      const reason = merge(r, `gh pr merge 5 --match-head-commit ${head}`, { forge });
+      assert.match(reason ?? '', /the last review step covered [0-9a-f]{7}, not head [0-9a-f]{7}: run `aidrian pr review 5` until it returns `received` or `none_needed`/u, `${name} ${head === r.B ? 'push' : 'force-push'}`);
+      assert.doesNotMatch(reason, /aidrian pr waive|could not be read|recorded verdict/u, name);
+      assert.deepEqual(forge.calls, [], `${name}: not waivable, so nothing is read`);
+    }
+  }
+});
+
+test('a clock that crosses the deadline, or a read that throws outside the forge, is a denial, never a throw', (t) => {
   const r = repo(t, { local: ON });
-  r.record(5, (state) => (received(state, r.A), waiver(state, { head: r.C, kind: 'moved_head' })));
-  const forge = teamForge(undefined, { head: r.C });
-  const reason = merge(r, `gh pr merge 5 --match-head-commit ${r.C}`, { forge });
-  assert.match(reason ?? '', /the last review step covered [0-9a-f]{7}, not head [0-9a-f]{7}/u);
-  assert.doesNotMatch(reason, /aidrian pr waive|could not be read/u);
-  assert.deepEqual(forge.calls, []);
+  r.record(5, (state) => (roundLimit(state), waiver(state)));
+  const project = r.project();
+  const state = readLocalState(project, 5);
+  // Each reading of the clock moves it 900 ms: the start check passes, and the deadline falls between the reads.
+  let tick = 0;
+  const advancing = () => (tick += 900) - 900;
+  const out = guardWaiver({ project, state, pr: 5, head: HEAD, named: true, forge: teamForge(), startedAt: 0, now: advancing });
+  assert.deepEqual([out.allow, out.note, out.route], [false, ', and the team\'s github.unattendedWaiver could not be read in time', '']);
+  // A clock that fails on its third reading, the time left after the view, where no forge call's catch is: the throw is
+  // the unread denial, not the hook's catch, which would let the merge run.
+  let reads = 0;
+  const failing = () => {
+    reads += 1;
+    if (reads === 3) throw new RangeError('the clock passed the deadline');
+    return 0;
+  };
+  assert.deepEqual(guardWaiver({ project, state, pr: 5, head: HEAD, named: true, forge: teamForge(), startedAt: 0, now: failing }), { allow: false, note: ', and the team\'s github.unattendedWaiver could not be read in time', route: '' });
+  // Through the guard: a denial reason, and the merge does not run.
+  reads = 0;
+  const reason = merge(r, `gh pr merge 5 --match-head-commit ${HEAD}`, { startedAt: 0, now: failing });
+  assert.match(reason ?? '', /is `round_limit`.*could not be read in time/su);
 });
 
 test('a verdict counts only for a merge that names its head', (t) => {
@@ -344,11 +381,11 @@ test('a verdict counts only for a merge that names its head', (t) => {
 test('without a verdict that stands for this head and kind, the denial is today\'s, plus the route under both switches', (t) => {
   const r = repo(t, { local: ON });
   const command = `gh pr merge 5 --match-head-commit ${HEAD}`;
-  const route = /Or the Human merges in their own shell\. Or an unattended run records the judge's verdict with `aidrian pr waive 5 --verdict waive\|refuse --reason "<evidence>" --head abcdef1234567890abcdef1234567890abcdef12`, which this repository allows \(github\.unattendedWaiver\), then merges naming that head\.$/u;
+  const route = /Or the Human merges in their own shell\. Or an unattended run the Human told to merge records the verdict of a fresh judge, as the pr-review-loop skill's references\/review-plan\.md § At the cap says, with `aidrian pr waive 5 --verdict waive\|refuse --reason "<evidence>" --head abcdef1234567890abcdef1234567890abcdef12`, which this repository allows \(github\.unattendedWaiver\), then merges naming that head\.$/u;
   for (const [name, edit] of [
     ['no entry', (state) => roundLimit(state)],
     ['an entry for another head', (state) => (roundLimit(state), waiver(state, { head: NEXT }))],
-    ['an entry of the other kind', (state) => (roundLimit(state), waiver(state, { kind: 'moved_head' }))],
+    ['an entry of another kind', (state) => (roundLimit(state), waiver(state, { kind: 'moved_head' }))],
     ['a refuse verdict', (state) => (roundLimit(state), waiver(state, { verdict: 'refuse' }))],
     ['a refuse after a waive', (state) => (roundLimit(state), waiver(state), waiver(state, { verdict: 'refuse' }))],
     ['a verdict older than the outcome', (state) => (roundLimit(state), waiver(state, { at: '2026-11-03T13:00:00.000Z' }))],
@@ -359,9 +396,12 @@ test('without a verdict that stands for this head and kind, the denial is today\
     assert.match(reason ?? '', /the review of head abcdef1 is `round_limit`: run `aidrian pr review 5`/u, name);
     assert.match(reason, route, name);
   }
+  // A head past a finished review has no waiver route: the review can still run on it.
   const moved = repo(t, { local: ON });
-  moved.record(5, (state) => (received(state, moved.A), waiver(state, { head: moved.A, kind: 'round_cap' })));
-  assert.match(merge(moved, `gh pr merge 5 --match-head-commit ${moved.B}`, { forge: teamForge(undefined, { head: moved.B }) }) ?? '', /the last review step covered [0-9a-f]{7}, not head [0-9a-f]{7}.*aidrian pr waive 5/su);
+  moved.record(5, (state) => received(state, moved.A));
+  const movedReason = merge(moved, `gh pr merge 5 --match-head-commit ${moved.B}`, { forge: teamForge(undefined, { head: moved.B }) }) ?? '';
+  assert.match(movedReason, /the last review step covered [0-9a-f]{7}, not head [0-9a-f]{7}: run `aidrian pr review 5`/u);
+  assert.doesNotMatch(movedReason, /aidrian pr waive/u);
 });
 
 test('the local switch off: today\'s denial, no route, and no forge read at all', (t) => {
@@ -485,28 +525,25 @@ test('what a verdict never waives: an owed review, any other outcome on the head
   assert.match(mcp({ owner: 'acme', repo: 'notes', pullNumber: 5, sha: HEAD }) ?? '', /is `blocked_quota`/u);
 });
 
-test('waiverKind and waiverFor: the kinds a verdict covers, and the entry that stands', () => {
-  const yes = () => true;
+test('waiverKind and waiverFor: the one kind a verdict covers, and the entry that stands', () => {
   const state = emptyState(5, 'acme/notes');
-  assert.equal(waiverKind(state, HEAD, yes), null, 'no outcome');
+  assert.equal(waiverKind(state, HEAD), null, 'no outcome');
   roundLimit(state);
-  assert.equal(waiverKind(state, HEAD, yes), 'round_cap');
-  assert.equal(waiverKind(state, HEAD.slice(0, 7), yes), 'round_cap', 'a short spelling of the head');
-  assert.equal(waiverKind(state, NEXT, yes), 'moved_head');
-  assert.equal(waiverKind(state, NEXT, () => false), null, 'a head that does not descend');
-  assert.equal(waiverKind(state, NEXT, () => null), null, 'a head git cannot place');
+  assert.equal(waiverKind(state, HEAD), 'round_cap');
+  assert.equal(waiverKind(state, HEAD.slice(0, 7)), 'round_cap', 'a short spelling of the head');
+  assert.equal(waiverKind(state, NEXT), null, 'a head past the cap\'s head');
   received(state);
-  assert.equal(waiverKind(state, HEAD, yes), null, 'a finished review needs no waiver');
-  assert.equal(waiverKind(state, NEXT, yes), 'moved_head');
+  assert.equal(waiverKind(state, HEAD), null, 'a finished review needs no waiver');
+  assert.equal(waiverKind(state, NEXT), null, 'a head past a finished review: the review can still run');
   state.outcome = { status: 'running', head: HEAD, at: T0 };
-  assert.equal(waiverKind(state, NEXT, yes), null, 'past a step still running');
-  received(state);
+  assert.equal(waiverKind(state, NEXT), null, 'past a step still running');
+  roundLimit(state);
+  waiver(state);
   waiver(state, { head: NEXT, kind: 'moved_head' });
-  assert.equal(waiverFor(state, NEXT, 'moved_head')?.verdict, 'waive');
-  assert.equal(waiverFor(state, NEXT, 'round_cap'), null);
-  assert.equal(waiverFor(state, HEAD, 'moved_head'), null);
+  assert.equal(waiverFor(state, HEAD, 'round_cap')?.verdict, 'waive');
+  assert.equal(waiverFor(state, NEXT, 'round_cap'), null, 'an entry for another head');
   state.outcome.at = 'not a time';
-  assert.equal(waiverFor(state, NEXT, 'moved_head'), null, 'an outcome time that cannot be read lets none stand');
+  assert.equal(waiverFor(state, HEAD, 'round_cap'), null, 'an outcome time that cannot be read lets none stand');
 });
 
 // ---- the config guard and aidrian check (AC12)

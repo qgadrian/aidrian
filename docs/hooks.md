@@ -439,18 +439,21 @@ with "Merge anyway", given at or after the head's outcome and every owed review.
 (Codex), the Human merges in their own shell.
 
 Under the [unattended waiver](config.md#unattended-waiver), a judge's verdict recorded with `aidrian pr waive` stands in
-for that answer, for two denials only: `round_limit` on the head, and a head that descends from the last review step's
-finished or `round_limit` one (`git merge-base --is-ancestor`; a force-push that dropped the reviewed head, or a head
-git cannot place, is no moved head), with nothing owed. Every other denial keeps its reason. A verdict counts only for
+for that answer, for one denial only: `round_limit` on the merge's own head, with nothing owed. A head pushed after the
+last review step, whatever its outcome, is never waived, and its denial names no `aidrian pr waive` route: the review
+can still run on it. Every other denial keeps its reason. A verdict counts only for
 a merge that names its head, `--match-head-commit <sha>`, `sha=` in a `gh api` merge, or the merge tool's `sha`; for
-any other, the denial says to name it. The guard reads the waiver only when the denial is one of those two and this
+any other, the denial says to name it. The waiver is for a session the Human told to merge: `aidrian pr auto-merge`'s
+review gate does not read waivers. The guard reads the waiver only when the denial is that one and this
 machine's `github.unattendedWaiver` switch is on, so with the switch off it makes no network call it did not make
 before. It then reads `github.unattendedWaiver.allow` at the default branch and the pull request's base on GitHub,
-after the pull request's view: its own when it made one with the base, else one more. Every one of these calls, the
-git ancestry check included, shares one deadline for the whole command, counted from when the hook's process started:
-none begins once 4 seconds have gone, the first only within 1.5 seconds, and each is stopped with SIGKILL after
-1 second (3 for the view), or at the deadline if that comes first. The guard's own head lookup above shares that
-deadline: once it has passed, the lookup is not made, and a merge that names no head is refused and told to name it.
+after the pull request's view: its own when it made one with the base, else one more, and git's project folder.
+Every one of these calls shares one deadline for the whole command, counted from when the hook's process started:
+none begins once 4 seconds have gone, and each is stopped with SIGKILL after 1 second (3 for the view), or at the
+deadline if that comes first. The waiver starts reading only when at most 1.5 seconds have gone: it checks that once,
+before its first read, and its later reads are held to the deadline alone. The guard's own head lookup above is not
+held to 1.5 seconds, only to the deadline: once it has passed, the lookup is not made, and a merge that names no head
+is refused and told to name it.
 So every call the guard makes, its own view included, ends within 4 seconds of the hook's start, however many merges
 one command holds, inside the hook's 5 seconds.
 A read that fails or would begin too late keeps the denial, which then says the team's value could not be read in time.

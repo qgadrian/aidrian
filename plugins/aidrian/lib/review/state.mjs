@@ -59,7 +59,7 @@ export const SHA_REF = /^[0-9a-f]{7,40}$/iu;
 // dispatched: `answered` once `aidrian pr attest` records it or a review step finishes. An entry is never removed, only
 // marked, so the review step can merge in what was recorded while it ran (mergePending). `waivers`, there once
 // `aidrian pr waive` writes one, lists the judge verdicts the merge guard may take in place of the Human's answer:
-// { head, kind: 'round_cap' | 'moved_head', verdict: 'waive' | 'refuse', reason, judge, at } (lib/review/waiver.mjs). A
+// { head, kind: 'round_cap', verdict: 'waive' | 'refuse', reason, judge, at } (lib/review/waiver.mjs). A
 // record without it has none.
 export const emptyState = (pr, repo) => ({ version: 1, revision: 0, pr, repo, rounds: [], passes: {}, signoffs: {}, overrides: [], failures: {}, outcome: null, pending: [] });
 

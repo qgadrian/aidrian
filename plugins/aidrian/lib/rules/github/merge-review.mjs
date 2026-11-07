@@ -21,13 +21,13 @@
 // a question naming `#<PR>` and the head's first 7 characters, whose chosen option starts with "Merge anyway". Without a
 // transcript the host writes in that shape (Codex), the Human merges in their own shell.
 // An unattended run's judge verdict (`aidrian pr waive`, lib/review/waiver.mjs) waives it in that answer's place, only
-// for `round_limit` on the head or a head past a finished one, nothing owed, and only under both switches:
+// for `round_limit` on the merge's own head, nothing owed, and only under both switches:
 // `github.unattendedWaiver.allow` on the default and base branches, read from GitHub, and the main checkout's local switch.
 // A verdict counts only for a merge that names its head. Those reads are made only when the switch is on and the denial
-// is waivable: a git ancestry check for a moved head, the view when the guard's own lacks the base, then up to five
-// forge reads. All share one clock from the hook's start (`startedAt`, for the whole command), the guard's own head
-// lookup included: none begins after 1.5 s for the first waiver read or at 4 s for any, and each is stopped with SIGKILL
-// at 1 s (3 s for a view) or at 4 s if sooner.
+// is waivable: the view when the guard's own lacks the base, git's project folder, then up to five forge reads.
+// All share one clock from the hook's start (`startedAt`, for the whole command), the guard's own head lookup included:
+// none begins at 4 s, the waiver's first only within 1.5 s (checked once, before it; its later reads and the head lookup
+// have only the 4 s), and each is stopped with SIGKILL at 1 s (3 s for a view) or at 4 s if sooner.
 // A read that fails or would begin too late keeps the denial.
 
 import { readFileSync } from 'node:fs';
@@ -207,7 +207,7 @@ export function judgeMerge({ project, pr = null, head = null, target = null, rep
   }
   const since = [onHead ? outcome.at : null, ...owing.map((entry) => entry.at)].filter((at) => typeof at === 'string').sort().at(-1) ?? null;
   if (mergeApproved(answers, { pr, head, since })) return null;
-  // A judge's recorded verdict, under both switches, for a round cap or a moved head only (waiverKind).
+  // A judge's recorded verdict, under both switches, for the round cap on this head only (waiverKind).
   const waiver = guardWaiver({ project, state, pr, head, named, repo, view, forge: waiverForge, startedAt, now });
   if (waiver.allow) return null;
   const question = `Merge pull request #${pr} at ${sha7} before its review is finished?`;

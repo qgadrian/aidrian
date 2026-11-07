@@ -695,7 +695,7 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   writes, so a request recorded while a reviewer ran survives the step's write. Both live in the state folder: another
   machine does not see them.
 - **Waivers.** `waivers` lists the judge verdicts `aidrian pr waive` recorded, each `{ head, kind, verdict, reason, judge, at }`,
-  where `kind` is `round_cap` or `moved_head` and `verdict` is `waive` or `refuse`. Each binds to one head and one kind.
+  where `kind` is `round_cap` and `verdict` is `waive` or `refuse`. Each binds to one head and one kind.
   The summary comment shows them under **Merge guard waivers**, each marked an audit entry, not proof.
   A record without the list has none. The [merge guard](hooks.md#merge-guard) reads them only while the team's
   `github.unattendedWaiver.allow` and this machine's switch are both on: [Unattended waiver](config.md#unattended-waiver).

@@ -15,9 +15,9 @@
 //   route   says what happens to one product decision, from the base branch's `quorum.product` and `decisions resolve`'s
 //           answer, or, with `--ledger`, what happens after a product ruling, as one JSON line; docs/config.md has the table
 //   provisional records that work continues on a product ruling, only on a ledger that passes `check` with no exemption
-// The schemas in quorum/*-schema.mjs are the one source of truth for these files, and this file re-exports every name
-// the modules under quorum/ export for its callers. `check` runs no command but `git ls-files`, and never executes
-// what a citation names.
+// The schemas in quorum/*-schema.mjs are the one source of truth for these files. For its callers, this file re-exports
+// every name it exported before the split; the modules' other exports are shared only among themselves. `check` runs no
+// command but `git ls-files`, and never executes what a citation names.
 
 import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';

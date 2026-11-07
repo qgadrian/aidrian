@@ -44,10 +44,14 @@ export const clip = (text) => String(text).replace(/\s+/gu, ' ').slice(0, CLIP);
 
 // Two spellings of one commit: equal, or one a prefix of the other, at least 7 hex long.
 export const sameCommit = (a, b) => typeof a === 'string' && typeof b === 'string' && (a === b || (Math.min(a.length, b.length) >= 7 && (a.startsWith(b) || b.startsWith(a))));
+// A commit SHA as a command takes it: 7 to 40 hex.
+export const SHA_REF = /^[0-9a-f]{7,40}$/iu;
 
-// `outcome` is the review step's last return, { status, head, at, reason? }, which the merge guard reads
-// (lib/rules/github/merge-review.mjs). `pending` holds the reviews owed: { kind: 'request' | 'review', head, at, by,
-// sent?, answered?, repo?, id }. A `request` is a bot review the Human asked for (`aidrian pr request`): `sent` once
+// `outcome` is the review step's last return, { status, head, at, reason?, carried_from? }, which the merge guard reads
+// (lib/rules/github/merge-review.mjs). `carried_from` is the head whose `received` review a clean merge from the base
+// branch carried to `head` (lib/review/run.mjs). `remerge` is { head, from }: the merge head whose review covers only
+// what the merge itself changed, and the reviewed head it builds on. `pending` holds the reviews owed: { kind:
+// 'request' | 'review', head, at, by, sent?, answered?, repo?, id }. A `request` is a bot review the Human asked for (`aidrian pr request`): `sent` once
 // `aidrian pr await-review --request` posts it, `answered` once the bot's answer arrives. A `review` is a gate review
 // dispatched: `answered` once `aidrian pr attest` records it or a review step finishes. An entry is never removed, only
 // marked, so the review step can merge in what was recorded while it ran (mergePending).
@@ -77,12 +81,13 @@ export function answerPending(state, kind, { head, by, repo = null, isAncestor =
   return open.length;
 }
 
-// Notes the review step's return on `state`: its outcome, and, once finished, every gate review owed on that head or
-// an earlier one it descends from answered.
+// Notes the review step's return on `state`: its outcome, and, once finished by a review, every gate review owed on
+// that head or an earlier one it descends from answered.
 // `repo` is the step's repository: a gate review owed for another one stays owed.
-export function noteOutcome(state, { status, head, reason }, isAncestor = () => false, repo = null) {
-  state.outcome = { status, head, at: new Date().toISOString(), ...(reason ? { reason: clip(reason) } : {}) };
-  if (FINISHED.has(status)) answerPending(state, 'review', { head, by: status, isAncestor, repo });
+export function noteOutcome(state, { status, head, reason, carried_from }, isAncestor = () => false, repo = null) {
+  state.outcome = { status, head, at: new Date().toISOString(), ...(reason ? { reason: clip(reason) } : {}), ...(typeof carried_from === 'string' ? { carried_from } : {}) };
+  // A carried outcome ran no review, so it answers none: a review owed on the merge head stays owed.
+  if (FINISHED.has(status) && typeof carried_from !== 'string') answerPending(state, 'review', { head, by: status, isAncestor, repo });
   return state;
 }
 

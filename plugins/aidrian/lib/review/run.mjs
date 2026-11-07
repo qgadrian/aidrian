@@ -17,6 +17,12 @@
 //   extension_check  at the round cap: run the listed judge, then record its verdict with `aidrian pr extend`
 //   extension_ask    the judge says one more round; ask the Human, then `aidrian pr extend <PR> --human approve|deny`
 //
+// A two-parent merge from the base branch onto the head whose review last came back `received` is not reviewed again:
+// when it changes nothing git's own merge would not, it carries that review to its head (`received`, with
+// `carried_from`), with no reviewer and no round, and answers no owed review; otherwise the round reviews only the
+// changes the merge commit itself made, `git show --remerge-diff` (lib/review/diff.mjs baseMergeOf). A merge git
+// cannot read this way is reviewed as before, and the plan's reasons say why.
+//
 // docs/review.md describes the plan, the stages, and the record.
 
 import { spawnSync } from 'node:child_process';
@@ -31,7 +37,7 @@ import { roundCapProblem, ROUNDS_OVERRIDE } from '../pr-await-review.mjs';
 import { currentRoot, runGit, showPrefix } from '../git.mjs';
 import { markerFor } from '../review-gate.mjs';
 import { isolate } from './env.mjs';
-import { changedFiles, diffLines, fileAt, isAncestor, isClean, mergeBase, resolve } from './diff.mjs';
+import { baseMergeOf, changedFiles, diffLines, fileAt, isAncestor, isClean, mergeBase, resolve } from './diff.mjs';
 import { checkReview, REVIEW_DEFAULTS } from './config.mjs';
 import { blocks, parseFindings } from './findings.mjs';
 import { citationProblem, flowState, invariantsOf, parseVerdicts } from './flows.mjs';
@@ -42,9 +48,9 @@ import { dedupe, packageRoots } from './split.mjs';
 import { contentFlows } from './content.mjs';
 import { touchedCitations } from './cited.mjs';
 import { buildPlan, classify, detectFlows, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, pathPattern, validatePlan } from './plan.mjs';
-import { belowRootBrief, BUILT_IN, flowBaseBrief, resolveEngine, reviewerMap, runExec, satisfies, VERDICT_MEANING } from './reviewers.mjs';
+import { belowRootBrief, BUILT_IN, flowBaseBrief, remergeBrief, resolveEngine, reviewerMap, runExec, satisfies, VERDICT_MEANING } from './reviewers.mjs';
 import { atCap, buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
-import { answerPending, emptyState, heldMessage, mergePending, noteOutcome, prunePasses, readLocalState, readRecord, sameCommit, summaryBody, summaryToEdit, writeSummary, writeLocalState } from './state.mjs';
+import { answerPending, emptyState, heldMessage, mergePending, noteOutcome, prunePasses, publishState, readLocalState, readRecord, sameCommit, summaryBody, summaryToEdit, writeSummary, writeLocalState } from './state.mjs';
 import * as quota from './quota.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, ghImage, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput, visualMatrix, visualRoutes } from './visual.mjs';
 
@@ -243,7 +249,46 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
   const headReview = baseReviewAt(project, head) ?? checkReview({}, project.paths.config, []);
   const { review, changed } = reviewInForce(baseReview, headReview);
   const effective = { ...config, review };
-  const changes = changedFiles(root, base, head);
+
+  // The record so far: the newer of this machine's and the pull request's. With config.json `review.record: "local"`
+  // the pull request is never read or written: the record is this machine's state folder only. A comment that holds
+  // a record newer than this machine's stops the step before it writes anything: starting over would replace it.
+  const onPr = config.review.record !== 'local';
+  const comments = onPr ? forge.conversationComments(repo, n) : [];
+  const summary = summaryToEdit(comments, () => forge.viewer());
+  const record = readRecord(project, n, comments, repo);
+  if (record.held !== undefined) return { status: 'incomplete', pr: n, repo, head, reason: heldMessage(n, record.held), held: record.held, retry_recommended: false };
+  let state = record.state;
+
+  // A merge from the base branch onto the head whose review last came back `received` (diff.mjs baseMergeOf). That
+  // head is the outcome's while it is on another head; on a later step for the same merge head, the one a carried
+  // outcome or the first step on it named. A clean merge carries the review: no reviewer, no round, nothing marked
+  // running. Any other reviews only the changes the merge commit made; `base` stays the merge base for everything
+  // else. A merge git cannot read (an older git, a broken config) is reviewed as any head is, never refused for it.
+  const last = state.outcome ?? null;
+  const reviewedHead = last?.status === 'received' && typeof last.head === 'string' && !sameCommit(last.head, head) ? last.head
+    : sameCommit(last?.head, head) && typeof last?.carried_from === 'string' ? last.carried_from
+      : sameCommit(state.remerge?.head, head) && typeof state.remerge?.from === 'string' ? state.remerge.from : null;
+  let baseMerge = null;
+  let mergeNote = null;
+  try {
+    baseMerge = reviewedHead ? baseMergeOf(root, head, { priorHead: reviewedHead, base: baseTip }) : null;
+  } catch (error) {
+    mergeNote = `the merge from ${info.baseRefName} could not be read (${stderrTail(error.message, { chars: 200 })}): the whole change is reviewed`;
+  }
+  if (baseMerge?.clean) {
+    const carried = settle({
+      status: 'received', pr: n, repo, head, base, carried_from: reviewedHead, round: state.rounds.length, depth: 'none',
+      max_rounds: roundCap({ baseline: opts.maxRounds ?? cap, granted: grantedRounds(state, 'plan', policy) }).maxRounds,
+      plan: { depth: 'none', reasons: [`a clean merge from ${info.baseRefName}: the review of ${reviewedHead.slice(0, 7)} carries to this head`], flows: [], stages: [] },
+    });
+    // Published as the review step publishes, so another machine's merge guard reads the same record.
+    const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => forge.postComment(repo, n, body), edit: (id, body) => forge.editComment(repo, id, body), viewer: () => forge.viewer() }, 'received') : null;
+    return summaryError ? { ...carried, summary_error: summaryError } : carried;
+  }
+  const scope = baseMerge ? baseMerge.scope : null;
+  if (scope) state.remerge = { head, from: reviewedHead };
+  const changes = scope?.changes ?? changedFiles(root, base, head);
   const changedPaths = new Set(changes.map((change) => change.file));
   const harnessChanged = [];
   if (changed.length && changedPaths.has(project.paths.config)) harnessChanged.push(project.paths.config);
@@ -256,17 +301,8 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
   for (const reviewer of Object.values(baseReview?.reviewers ?? {})) {
     for (const file of commandFiles(root, (reviewer.command ?? []).join(' '), baseTip)) if (changedPaths.has(file)) harnessChanged.push(file);
   }
-  const { addedLines, removedFiles } = diffLines(root, base, head);
+  const { addedLines, removedFiles } = scope ?? diffLines(root, base, head);
 
-  // The record so far: the newer of this machine's and the pull request's. With config.json `review.record: "local"`
-  // the pull request is never read or written: the record is this machine's state folder only. A comment that holds
-  // a record newer than this machine's stops the step before it writes anything: starting over would replace it.
-  const onPr = config.review.record !== 'local';
-  const comments = onPr ? forge.conversationComments(repo, n) : [];
-  const summary = summaryToEdit(comments, () => forge.viewer());
-  const record = readRecord(project, n, comments, repo);
-  if (record.held !== undefined) return { status: 'incomplete', pr: n, repo, head, reason: heldMessage(n, record.held), held: record.held, retry_recommended: false };
-  let state = record.state;
   // The step is open on this head before any reviewer, the plan command, or the bot runs: a merge meanwhile is refused.
   // The mark is this machine's alone and posts nothing, so it is no revision of its own: the step's next write takes
   // the one it raised. Two steps on one pull request share this one mark; the last write wins.
@@ -295,6 +331,7 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
   }
   // Agent passes merge per reviewer only now, after the plan command's passes joined, so one agent reads the diff once.
   plan = mergeStages(plan);
+  if (mergeNote) plan.reasons = [...plan.reasons, mergeNote];
   // --with-bot (the skill's --await-codex): the review bot runs as the last stage too, after this machine's engine.
   if (opts.withBot && plan.depth !== 'none' && config.github.reviewer !== null && !plan.stages.some((stage) => stage.passes.some((pass) => pass.reviewer === 'pr-bot'))) {
     plan.stages = [...plan.stages.filter((stage) => stage.name !== 'remote'), { name: 'remote', passes: [...(plan.stages.find((stage) => stage.name === 'remote')?.passes ?? []), { id: 'engine:pr-bot', reviewer: 'pr-bot', kind: 'remote', files: null, context: 'full' }] }];
@@ -313,8 +350,17 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
   // A pass's result counts for this head when it is for this head, or for an earlier one the change since does not
   // touch and that left nothing open.
   const deltaCache = new Map();
+  // On a merge from the base branch, what the base brought in was reviewed there: since the reviewed head the change is
+  // the merge's own, and since an earlier head, that head's change to the reviewed one plus the merge's own. A merge
+  // that drops what the base brought (`-s ours`) is a change of its own then, though its tree equals the reviewed head's.
+  const sinceFor = (from) => {
+    if (!isAncestor(root, from, head)) return null;
+    if (!scope || !isAncestor(root, from, reviewedHead)) return changedFiles(root, from, head);
+    const since = changedFiles(root, from, reviewedHead);
+    return [...since, ...scope.changes.filter((change) => !since.some((each) => each.file === change.file))];
+  };
   const delta = (from) => {
-    if (!deltaCache.has(from)) deltaCache.set(from, isAncestor(root, from, head) ? changedFiles(root, from, head) : null);
+    if (!deltaCache.has(from)) deltaCache.set(from, sinceFor(from));
     return deltaCache.get(from);
   };
   // A pass with a file list (a slice, a flow pass) keeps its history only while it covers the same files: when a fix
@@ -718,7 +764,9 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
     const visualChecklist = visual?.checklist ? { path: visual.checklist, text: fileAt(root, baseTip, visual.checklist.split('#')[0]) } : null;
     return {
       ...split,
-      pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files, flows, priorFindings: [...(prior?.list ?? []), ...keptFindings(pass)],
+      // A merge's resolutions are the whole review: a pass of every changed file reads only the resolved ones.
+      pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files ?? (scope ? scope.changes.map((change) => change.file) : null), flows, priorFindings: [...(prior?.list ?? []), ...keptFindings(pass)],
+      ...(scope ? { remerge: head } : {}),
       // An invariant is a claim about the whole change, so a delta pass still judges its flows from the merge base:
       // judged on the delta, a narrowing an earlier push made reads as a weakening, and a new head hides a violation.
       ...(flows.length && from !== base ? { flowBase: base } : {}),
@@ -745,6 +793,7 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
       input.flows.some((flow) => (flow.invariants ?? []).some((invariant) => invariant.source)) ? 'Judge each invariant against its `source`, the section of the project doc it cites; `text` is only the question.' : null,
       input.flows.length ? VERDICT_MEANING : null,
       input.flowBase ? flowBaseBrief(input) : null,
+      input.remerge ? remergeBrief(input) : null,
       input.visual ? 'Review the captures in `visual` (open each `file`), with their measured facts, as well as the diff.' : null,
       pass.fallback ? `${quota.owner(pass.fallback.replaces)} is out of quota, and the Human chose this pass as the second look in its place: review the whole change through your own lens. It is recorded as a fallback, not as an independent review.` : null,
     ].filter(Boolean);

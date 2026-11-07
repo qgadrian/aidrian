@@ -442,6 +442,28 @@ the change does not touch carries forward.
 earlier pass has a result, with the review gate's marker, under the plan's round cap; an answer for a commit other
 than the one under review counts for nothing. A flow's required checks are read for that commit too.
 
+**Merge from the base branch.** A head is a clean merge from the base branch when all four hold: it is a two-parent
+merge commit; its first parent is the head of the last `received` outcome; its other parent is an ancestor of the
+base branch tip; and git's own merge of the two parents (`git merge-tree --write-tree`) has no conflict and gives the
+merge commit's tree exactly. A clean merge dispatches no reviewer and opens no round: the step records `received` on
+the merge head, with `carried_from` naming the head whose review it carries, and publishes the record, so the
+[merge guard](hooks.md#merge-guard) and `aidrian pr auto-merge` read a finished review on that head. It answers no owed
+review: a gate review or a bot review owed for the merge head still stops the merge until it is recorded.
+
+Any other merge from the base branch onto that head reviews only the changes the merge commit itself made: its
+conflict resolutions and any other edit, `git show --remerge-diff`. The round's changed files and lines are that diff's,
+plus every path git's merge conflicts on, with no lines when the resolution shows none (a binary file, or the kept side
+of a modify/delete). A pass of every changed file reads only those files, the pass input carries `remerge` with the
+head, and the reviewer is told to review that diff alone; a pass the merge does not touch carries forward, and one that
+dropped what the base brought, as `git merge -s ours` does, is touched. It counts as a round. Later steps on the same
+merge head keep that scope, through the `remerge` entry of the record.
+
+An octopus merge, the merge of a side branch, a merge with no `received` review before it, and every head that is not a
+merge review as before. So does a merge git cannot read this way, such as under a git older than 2.38, which has no
+`git merge-tree --write-tree`: the step reviews the whole change and says why in the plan's reasons. The limit: two
+sides that each passed review can still break together with no textual conflict, and no reviewer sees that; CI still
+runs on the merge head.
+
 ### Product feedback in the rounds
 
 [Product feedback](config.md#product-feedback) is no stage of the plan: its walk needs the session's browser tool and a
@@ -636,10 +658,14 @@ keeps the compressed marker and appends a plain one, so a comment it touched can
   here then takes the newer of the two.
 
 - **Outcome.** Every return of the step writes its status to this machine's record as `outcome`: `{ status, head, at,
-  reason }`. The early returns, `none_needed`, `unsatisfied`, and `too_large`, write it to the state folder only and
-  post nothing; a `held` return writes nothing. Before any reviewer, the plan command, or the bot runs, the step
-  writes `running` for its head, so a merge during the first step is refused too. A step that throws after that, such
-  as a plan command that fails, writes `error`, which is not finished. The [merge guard](hooks.md#merge-guard) reads it.
+  reason, carried_from }`, where `carried_from` is set only on a `received` that a [clean merge from the base
+  branch](#rounds) carried, and names the head that was reviewed. The early returns, `none_needed`, `unsatisfied`,
+  and `too_large`, write it to the state folder only and post nothing; a `held` return writes nothing. Before any
+  reviewer, the plan command, or the bot runs, the step writes `running` for its head, so a merge during the first step
+  is refused too. A step that throws after that, such as a plan command that fails, writes `error`, which is not
+  finished. A carried `received` runs none of them and writes no `running`: it posts the record, and answers no owed
+  review. A merge git cannot read is no error: the step reviews it as before. The
+  [merge guard](hooks.md#merge-guard) reads the outcome.
 - **Owed reviews.** `pending` lists the reviews asked for, each `{ id, kind, head, repo, at, by, sent, answered }`;
   one is owed until it is `answered`, and only an answer for its own `repo` counts. `aidrian pr request <PR>` records a
   bot review the Human asked for, the moment they ask, before any review the project requires first. It reads the head

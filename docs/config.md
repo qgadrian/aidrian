@@ -272,6 +272,8 @@ A local file with an error, or one git tracks, counts as `enabled: false`.
 `aidrian check` warns when the machine opts in and the team does not allow it.
 It fails when git tracks the file, in any case, and the switch then reads `"off"`: [Setting up](project-folder.md#setting-up-and-checking).
 The switch counts only in the main checkout's file: a task worktree's own copy never turns it on or off, though its other keys apply as usual.
+Read from a worktree, the main checkout's file gets every check it gets when read there, and its errors are reported the same:
+an error anywhere in it reads an unset switch `"off"`, so it never follows a team default of on, whatever the worktree's copy holds.
 A subagent may not write `autoMerge` into that file: [the config guard](hooks.md#agent-gates).
 
 A project that adopts `github.autoMerge` sets [`requires.aidrian`](#plugin-version) to the release that ships it,
@@ -361,7 +363,8 @@ Each machine that takes part opts in with `.aidrian.local.json` in its main chec
 ```
 
 The team value is read from GitHub, never from the working copy, so a pull request cannot turn it on.
-The machine switch reads off when git tracks the local file or the file has any error, even with `enabled: true`.
+The machine switch reads off when git tracks the local file or the file has any error, even with `enabled: true`,
+read from a task worktree too: there the main checkout's file gets every check, whatever the worktree's own copy holds.
 A subagent may not write it ([the config guard](hooks.md#agent-gates)).
 `aidrian check` warns when the machine switch is on and the team's is not.
 Set [`requires.aidrian`](#plugin-version) to the release that ships the key: an older plugin rejects it.

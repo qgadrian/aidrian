@@ -25,205 +25,35 @@
 // merge git cannot read this way, are reviewed as before, and the plan's reasons say why.
 //
 // docs/review.md describes the plan, the stages, and the record.
+//
+// This file is the public entry and the step's outcome: what every result holds, records, and publishes. A step plans
+// in lib/review/step.mjs and runs its stages in lib/review/stages.mjs, both on one step context `s`, which carries the
+// outcome writers below. The record commands live in lib/review/record.mjs; this file re-exports them.
 
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import path from 'node:path';
-
-import { committedConfig } from '../config.mjs';
 import { forgeFor } from '../forges/index.mjs';
 import { sessionIdentity } from '../hosts/index.mjs';
-import { roundCapProblem, ROUNDS_OVERRIDE } from '../pr-await-review.mjs';
-import { currentRoot, runGit, showPrefix } from '../git.mjs';
-import { markerFor } from '../review-gate.mjs';
-import { isolate } from './env.mjs';
-import { baseMergeOf, changedFiles, diffLines, fileAt, isAncestor, isClean, mergeBase, parents, resolve } from './diff.mjs';
-import { checkReview, REVIEW_DEFAULTS } from './config.mjs';
-import { blocks, parseFindings } from './findings.mjs';
-import { citationProblem, flowState, invariantsOf, parseVerdicts } from './flows.mjs';
-import { approveLine, approvalsSwitch, hasApprovers, overruleRefusal, readApprovals } from './approvals.mjs';
-import { computeVerdict } from '../pr-checks.mjs';
-import { isDirectory } from '../fs.mjs';
-import { dedupe, packageRoots } from './split.mjs';
-import { contentFlows } from './content.mjs';
-import { touchedCitations } from './cited.mjs';
-import { buildPlan, classify, detectFlows, flowsInForce, HARNESS_FLOW, mergePlans, mergeStages, pathPattern, validatePlan } from './plan.mjs';
-import { belowRootBrief, BUILT_IN, flowBaseBrief, remergeBrief, resolveEngine, reviewerMap, runExec, satisfies, VERDICT_MEANING } from './reviewers.mjs';
-import { atCap, buildHistory, extensionLogger, grantedRounds, policyOf, revalidate, roundCap } from './extension.mjs';
-import { answerPending, emptyState, heldMessage, mergePending, noteOutcome, prunePasses, publishState, readLocalState, readRecord, sameCommit, summaryBody, summaryToEdit, writeSummary, writeLocalState } from './state.mjs';
+import { isAncestor } from './diff.mjs';
+import { blocks } from './findings.mjs';
+import { dedupe } from './split.mjs';
+import { runExec } from './reviewers.mjs';
+import { atCap } from './extension.mjs';
+import { answerPending, emptyState, mergePending, noteOutcome, prunePasses, readLocalState, summaryBody, writeSummary, writeLocalState } from './state.mjs';
 import * as quota from './quota.mjs';
-import { attachMode, captureKeys, captureVisual, capturesBody, ghImage, keepUploaded, readManifest, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput, visualMatrix, visualRoutes } from './visual.mjs';
-import { headToReview } from './pushed.mjs';
+import { ghImage } from './visual.mjs';
+import { prepareStep } from './step.mjs';
+import { runStages } from './stages.mjs';
+
+export { DEPENDENCY_DIRS, stderrTail } from './base-worktree.mjs';
+export { reviewInForce } from './in-force.mjs';
+export { recordAccept, recordOverrule, recordPass, recordSignoff, recordStageSignoff, remoteState } from './record.mjs';
+export { MAX_LINES } from './step.mjs';
+export { MAX_ATTEMPTS } from './stages.mjs';
 
 export const EXIT = Object.freeze({
   dispatch: 0, running: 0, fix_required: 0, received: 0, none_needed: 0, human_required: 9,
   timed_out: 2, checks_pending: 2, blocked_quota: 3, round_limit: 4, unsatisfied: 6, incomplete: 7, stuck: 8, too_large: 8,
   extension_check: 10, extension_ask: 11,
 });
-export const MAX_ATTEMPTS = 3;
-// The folders of installed dependencies linked into a base worktree.
-export const DEPENDENCY_DIRS = Object.freeze(['node_modules', 'vendor', '.venv', 'venv']);
-export const MAX_LINES = 20000;
-
-const HARNESS_INVARIANT = Object.freeze({
-  id: 'review-not-weakened',
-  text: 'The change does not weaken how this project is reviewed: no flow, rule, required reviewer, ignore pattern, plan command, or invariant is removed or loosened.',
-});
-
-// The fields the review step reads of its pull request.
-const CHANGE_FIELDS = 'number,headRefOid,headRefName,baseRefName,url,title,body';
-
-// The check runs of one commit as `gh pr checks` rows: the evidence must be for the head under review.
-const checkRows = (runs) => runs.map((run) => ({ name: run.name, state: run.status === 'completed' ? String(run.conclusion ?? 'unknown').toUpperCase() : 'PENDING' }));
-
-// The `review` config in force: the base branch's, which a pull request cannot weaken, plus what the head adds.
-// `changed` lists the review settings the head changes, which trigger the harness-config flow.
-export function reviewInForce(baseReview, headReview) {
-  if (!baseReview) {
-    const pending = Object.fromEntries(Object.entries(headReview.reviewers).map(([name, reviewer]) => [name, { ...reviewer, pending: true }]));
-    const none = { reviewers: {}, approvals: REVIEW_DEFAULTS.approvals };
-    return { review: { ...headReview, engine: null, planCommand: null, visual: null, approvals: REVIEW_DEFAULTS.approvals, reviewers: pending }, changed: ['engine', 'planCommand', 'reviewers', 'visual', 'approvals'].filter((key) => JSON.stringify(headReview[key] ?? none[key] ?? null) !== JSON.stringify(none[key] ?? null)) };
-  }
-  const changed = [];
-  for (const key of ['engine', 'rules', 'ignore', 'nonBehaviour', 'flows', 'planCommand', 'reviewers', 'split', 'visual', 'approvals']) {
-    if (JSON.stringify(baseReview[key] ?? null) !== JSON.stringify(headReview[key] ?? null)) changed.push(key);
-  }
-  return {
-    review: {
-      ...headReview,
-      rules: [...baseReview.rules, ...headReview.rules.filter((rule) => !baseReview.rules.some((each) => JSON.stringify(each) === JSON.stringify(rule)))],
-      ignore: baseReview.ignore,
-      nonBehaviour: baseReview.nonBehaviour,
-      split: baseReview.split,
-      // The project's engine is policy, like the plan command: a pull request's own pick runs once it is merged.
-      engine: baseReview.engine ?? null,
-      flows: flowsInForce(baseReview.flows, headReview.flows),
-      // The plan command and the reviewers a project defines are code: only the base branch's run. A head may add a
-      // reviewer under a new name, never redefine one, and a plan command it adds runs once it is merged.
-      planCommand: baseReview.planCommand,
-      // The visual capture's policy (what it attaches, where it signs in) and its hooks are the base branch's too, so
-      // a pull request cannot switch itself to attaching, or point the capture somewhere else.
-      visual: baseReview.visual ?? null,
-      // Whether an approver's review may close an invariant is the base branch's too: a pull request cannot let
-      // approvals close its own invariants.
-      approvals: baseReview.approvals ?? REVIEW_DEFAULTS.approvals,
-      reviewers: {
-        ...Object.fromEntries(Object.entries(headReview.reviewers).filter(([name]) => !Object.hasOwn(baseReview.reviewers, name)).map(([name, reviewer]) => [name, { ...reviewer, pending: true }])),
-        ...baseReview.reviewers,
-      },
-    },
-    changed,
-  };
-}
-
-// The `review` group of the project config at `commit`, or null when that commit has no config.
-function baseReviewAt(project, commit) {
-  const text = fileAt(project.root, commit, project.paths.config);
-  if (text === null) return null;
-  try {
-    const raw = JSON.parse(text);
-    return raw?.review === undefined ? checkReview({}, project.paths.config, []) : checkReview(raw.review, project.paths.config, []);
-  } catch {
-    return null;
-  }
-}
-
-// The files a plan command line names that exist in the repository: a change to them is a change to the review.
-function commandFiles(root, command, commit) {
-  return (command ?? '').split(/\s+/u).filter((word) => /[./]/u.test(word) && !word.startsWith('-') && fileAt(root, commit, word) !== null);
-}
-
-// What the base branch changed in how the project is reviewed from `from` (the old merge base of the reviewed head) to
-// `to` (the base tip, whose rules the step reviews under, so a rule main gains after the merged commit counts too): the
-// config's `review` group (a flow, rule, reviewer, or plan command), a file a review command names (`harnessFiles`), and
-// a flow's invariants doc or a doc an invariant cites. The reviewed head was judged without it, so its review cannot
-// carry and the merge's own diff is not the whole question.
-function baseReviewMoved(project, { from, to, flows, harnessFiles }) {
-  const root = project.root;
-  const changes = changedFiles(root, from, to);
-  const paths = new Set(changes.map((change) => change.file));
-  const moved = [];
-  if (paths.has(project.paths.config) && JSON.stringify(baseReviewAt(project, from)) !== JSON.stringify(baseReviewAt(project, to))) moved.push(`${project.paths.config} review`);
-  for (const file of harnessFiles) if (file !== project.paths.config && paths.has(file)) moved.push(file);
-  moved.push(...touchedCitations(root, from, to, flows, paths));
-  return [...new Set(moved)];
-}
-
-// A temporary worktree of the base tip, for running the project's own review code (a plan command, an exec
-// reviewer) as the base branch has it: a pull request that edits that code cannot run its own version. The worktree
-// shares the repository's objects, so the code can still read the head with git. `use(dir)` runs inside it, with `dir`
-// the project's folder in that checkout, as the project's config paths start there.
-async function inBaseWorktree(root, baseTip, use) {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-base-'));
-  const tree = path.join(dir, 'base');
-  const added = runGit(['worktree', 'add', '--detach', '--quiet', tree, baseTip], root, { timeout: 60_000 });
-  if (added.status !== 0) {
-    rmSync(dir, { recursive: true, force: true });
-    throw new Error(`could not check out the base to run the project's review code: ${(added.stderr || '').trim()}`);
-  }
-  // The checkout's installed dependencies, linked in, so base code that imports them runs. They are the checkout's
-  // install, not the base's: the code is pinned to the base, its packages to what this machine has. A project below the
-  // repository root gets its own folder's and the checkout top's, for packages a monorepo hoists.
-  const projectTree = path.join(tree, showPrefix(root));
-  const top = currentRoot(root) ?? root;
-  for (const [from, to] of [[root, projectTree], ...(top === root ? [] : [[top, tree]])]) {
-    for (const name of DEPENDENCY_DIRS) {
-      if (isDirectory(path.join(from, name)) && !existsSync(path.join(to, name))) symlinkSync(path.join(from, name), path.join(to, name));
-    }
-  }
-  try {
-    return await use(projectTree);
-  } finally {
-    runGit(['worktree', 'remove', '--force', tree], root, { timeout: 60_000 });
-    rmSync(dir, { recursive: true, force: true });
-  }
-}
-
-// The part of a failed command's stderr worth showing: its last few non-empty lines, cut to a length, with anything
-// shaped like a token masked. A runtime's own last line (Node prints its version) would otherwise hide the cause.
-export function stderrTail(stderr, { lines = 6, chars = 800 } = {}) {
-  const kept = String(stderr ?? '').split('\n').map((line) => line.trimEnd()).filter((line) => line.trim() !== '').slice(-lines).join(' | ');
-  const masked = kept
-    .replace(/\b(?:gh[pousr]_|github_pat_|sk-|xox[abpr]-|AKIA)[A-Za-z0-9_-]{8,}/gu, '[redacted]')
-    .replace(/\b(?:eyJ[A-Za-z0-9_-]{10,}\.){2}[A-Za-z0-9_-]{10,}/gu, '[redacted]');
-  return masked.length > chars ? `...${masked.slice(-chars)}` : masked;
-}
-
-// A planCommand's plan: it reads { base, head, changes } on stdin and prints a plan. It runs in a worktree of the
-// base, with an env isolated like a reviewer's.
-function runPlanCommand(command, input, { root, env, baseTip }) {
-  return inBaseWorktree(root, baseTip, (tree) => {
-    const result = spawnSync('sh', ['-c', command], { cwd: tree, env, input: JSON.stringify(input), encoding: 'utf8', timeout: 120_000, maxBuffer: 64 * 1024 * 1024 });
-    if (result.status !== 0) throw new Error(`review.planCommand failed: ${stderrTail(result.stderr) || (result.signal ? `killed by ${result.signal}` : `exit ${result.status}`)}`);
-    let plan;
-    try {
-      plan = JSON.parse(result.stdout);
-    } catch {
-      throw new Error('review.planCommand did not print a JSON plan');
-    }
-    const problems = validatePlan(plan);
-    if (problems.length) throw new Error(`review.planCommand printed a bad plan: ${problems.join('; ')}`);
-    return plan;
-  });
-}
-
-// A review.visual hook (login, preview) run in the base checkout `tree`: `input` on stdin, stdout returned. A failure
-// throws with the tail of its stderr.
-function runHook(tree, command, input, env) {
-  const result = spawnSync('sh', ['-c', command], { cwd: tree, env, input: JSON.stringify(input), encoding: 'utf8', timeout: 120_000, maxBuffer: 16 * 1024 * 1024 });
-  if (result.status !== 0) throw new Error(stderrTail(result.stderr) || (result.signal ? `killed by ${result.signal}` : `exit ${result.status}`));
-  return result.stdout;
-}
-
-// The files tracked at `commit`.
-function trackedAt(root, commit) {
-  const result = runGit(['ls-tree', '-r', '--name-only', '-z', commit], root, { timeout: 30_000, maxBuffer: 256 * 1024 * 1024 });
-  return result.status === 0 ? result.stdout.split('\0').filter(Boolean) : [];
-}
-
-// Whether the change from `from` to `to` touches `files` (null: any reviewed file).
-const touches = (changes, files) => (files === null ? changes.length > 0 : changes.some((change) => files.includes(change.file)));
 
 // The whole step. `deps` replaces the forge, the image upload, the engine check, the reviewers, and the bot wait in tests.
 // A step that throws after it marked its head `running`, such as a plan command that fails or a bot wait that errs,
@@ -241,821 +71,118 @@ export async function reviewStep(opts, deps = {}) {
   }
 }
 
+// One step on the context `s`: the deps, then what lib/review/step.mjs reads and plans, and the outcome writers.
 async function stepOnce(opts, { project, config, env = process.env, forge = forgeFor(undefined), image = (repo, files) => ghImage(repo, files, forge), exec = runExec, awaitBot = null, codex, captureSpawn } = {}, run) {
-  const root = project.root;
-  const cleanEnv = isolate({ ...env });
-  const info = forge.change(opts.pr, CHANGE_FIELDS);
-  const repo = opts.repo ?? forge.repo();
-  const n = info.number;
-  // Right after a push the forge may still report the commit it built on: this checkout's pushed head wins, and a local
-  // commit past it is named rather than an older round re-served (lib/review/pushed.mjs).
-  const at = headToReview(root, info.headRefOid, info.headRefName);
-  const head = at.head;
-  if (at.unpushed) return { status: 'incomplete', pr: n, repo, head, local_head: at.unpushed, reason: `this checkout's HEAD ${at.unpushed.slice(0, 7)} is past ${head.slice(0, 7)}, the head of pull request #${n}: push, then run the step again`, retry_recommended: true };
-  if (!resolve(root, head)) throw new Error(`the head ${head.slice(0, 7)} of pull request #${n} is not in this checkout: git fetch first`);
-  const baseTip = resolve(root, `origin/${info.baseRefName}`) ?? resolve(root, info.baseRefName);
-  if (!baseTip) throw new Error(`the base branch ${info.baseRefName} is not in this checkout: git fetch first`);
-  const base = mergeBase(root, baseTip, head);
-  // The round cap is the base branch's: an edit to the working copy's config, committed or not, cannot raise it. So is
-  // what happens at it: github.extraRounds and its ceiling, github.maxExtraRounds.
-  const committed = committedConfig(project, baseTip);
-  const cap = committed.github.maxReviewRounds;
-  const policy = policyOf(committed.github);
-  const capped = opts.maxRounds === undefined ? null : roundCapProblem(opts.maxRounds, cap, env);
-  if (capped) throw new Error(capped);
-
-  // The config in force, and what in the change touches how the project is reviewed.
-  // The head's review config is read from the head commit, not this checkout, which may be on another branch; only
-  // machine settings (the engine) come from the checkout.
-  const baseReview = baseReviewAt(project, baseTip);
-  const headReview = baseReviewAt(project, head) ?? checkReview({}, project.paths.config, []);
-  const { review, changed } = reviewInForce(baseReview, headReview);
-  const effective = { ...config, review };
-  // The files that decide how the project is reviewed besides the config: the plan command's, the visual hooks', and
-  // every reviewer command's, as the base branch has them.
-  const reviewCommands = [review.planCommand, review.visual?.login, review.visual?.preview, ...Object.values(baseReview?.reviewers ?? {}).map((reviewer) => (reviewer.command ?? []).join(' '))];
-  const harnessFiles = new Set([project.paths.config, ...reviewCommands.flatMap((command) => commandFiles(root, command, baseTip))]);
-
-  // The record so far: the newer of this machine's and the pull request's. With config.json `review.record: "local"`
-  // the pull request is never read or written: the record is this machine's state folder only. A comment that holds
-  // a record newer than this machine's stops the step before it writes anything: starting over would replace it.
-  const onPr = config.review.record !== 'local';
-  const comments = onPr ? forge.conversationComments(repo, n) : [];
-  const summary = summaryToEdit(comments, () => forge.viewer());
-  const record = readRecord(project, n, comments, repo);
-  if (record.held !== undefined) return { status: 'incomplete', pr: n, repo, head, reason: heldMessage(n, record.held), held: record.held, retry_recommended: false };
-  let state = record.state;
-
-  // A merge from the base branch onto the head whose review last came back `received` (diff.mjs baseMergeOf). That
-  // head is the outcome's while it is on another head; on a later step for the same merge head, the one a carried
-  // outcome or the first step on it named. A clean merge carries the review: no reviewer, no round, nothing marked
-  // running. Any other reviews only the changes the merge commit made; `base` stays the merge base for everything
-  // else. A merge git cannot read (an older git, a broken config) is reviewed as any head is, never refused for it, and
-  // so is one where the base branch, up to its tip, changes how the project is reviewed (baseReviewMoved): the reviewed
-  // head never met that rule, whether it came with the merge or landed on the base after it.
-  const last = state.outcome ?? null;
-  const reviewedHead = last?.status === 'received' && typeof last.head === 'string' && !sameCommit(last.head, head) ? last.head
-    : sameCommit(last?.head, head) && typeof last?.carried_from === 'string' ? last.carried_from
-      : sameCommit(state.remerge?.head, head) && typeof state.remerge?.from === 'string' ? state.remerge.from : null;
-  let baseMerge = null;
-  let mergeNote = null;
-  let mergedBase = null;
-  try {
-    baseMerge = reviewedHead ? baseMergeOf(root, head, { priorHead: reviewedHead, base: baseTip }) : null;
-    if (baseMerge) {
-      mergedBase = parents(root, head)[1];
-      const moved = baseReviewMoved(project, { from: mergeBase(root, reviewedHead, mergedBase), to: baseTip, flows: review.flows, harnessFiles });
-      if (moved.length) {
-        baseMerge = null;
-        mergeNote = `the merge from ${info.baseRefName} changes how the project is reviewed (${moved.join(', ')}): the whole change is reviewed`;
-      }
-    }
-  } catch (error) {
-    baseMerge = null;
-    mergeNote = `the merge from ${info.baseRefName} could not be read (${stderrTail(error.message, { chars: 200 })}): the whole change is reviewed`;
-  }
-  if (baseMerge?.clean) {
-    const carried = settle({
-      status: 'received', pr: n, repo, head, base, carried_from: reviewedHead, carried_base: mergedBase, round: state.rounds.length, depth: 'none',
-      max_rounds: roundCap({ baseline: opts.maxRounds ?? cap, granted: grantedRounds(state, 'plan', policy) }).maxRounds,
-      plan: { depth: 'none', reasons: [`a clean merge from ${info.baseRefName}: the review of ${reviewedHead.slice(0, 7)} carries to this head`], flows: [], stages: [] },
-    });
-    // Published as the review step publishes, so another machine's merge guard reads the same record.
-    const summaryError = onPr ? publishState(state, { comments: () => comments, post: (body) => forge.postComment(repo, n, body), edit: (id, body) => forge.editComment(repo, id, body), viewer: () => forge.viewer() }, 'received') : null;
-    return summaryError ? { ...carried, summary_error: summaryError } : carried;
-  }
-  const scope = baseMerge ? baseMerge.scope : null;
-  if (scope) state.remerge = { head, from: reviewedHead };
-  const changes = scope?.changes ?? changedFiles(root, base, head);
-  const changedPaths = new Set(changes.map((change) => change.file));
-  const harnessChanged = [];
-  if (changed.length && changedPaths.has(project.paths.config)) harnessChanged.push(project.paths.config);
-  for (const command of [review.planCommand, baseReview?.visual?.login, baseReview?.visual?.preview]) {
-    for (const file of commandFiles(root, command, baseTip)) if (changedPaths.has(file)) harnessChanged.push(file);
-  }
-  // A flow's invariants doc, and every doc section an invariant cites, is part of how the project is reviewed: a
-  // change to one is the Human's to sign off. An edit elsewhere in a doc that is cited only by section is not.
-  harnessChanged.push(...touchedCitations(root, base, head, baseReview?.flows, changedPaths));
-  for (const reviewer of Object.values(baseReview?.reviewers ?? {})) {
-    for (const file of commandFiles(root, (reviewer.command ?? []).join(' '), baseTip)) if (changedPaths.has(file)) harnessChanged.push(file);
-  }
-  const { addedLines, removedFiles } = scope ?? diffLines(root, base, head);
-
-  // The step is open on this head before any reviewer, the plan command, or the bot runs: a merge meanwhile is refused.
-  // The mark is this machine's alone and posts nothing, so it is no revision of its own: the step's next write takes
-  // the one it raised. Two steps on one pull request share this one mark; the last write wins.
-  settle({ status: 'running', head });
-  state.revision -= 1;
-  Object.assign(run, { pr: n, head, repo });
-
-  const engine = resolveEngine(effective, codex ? { codex } : {});
-  if (engine.problem) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: engine.problem });
-  // Flows whose files the globs miss: a changed file whose whole head content, or whose callers, hand it the flow's
-  // privileged value (review.flows.<id>.content). A git failure stops the review rather than plan less.
-  const traced = contentFlows({ root, head, changes, addedLines, flows: review.flows });
-  const planFor = (minDepth) => buildPlan({
-    head, base, changes, addedLines, removedFiles, config: effective, harnessChanged: [...new Set(harnessChanged)], extraFlows: traced,
-    roots: packageRoots(trackedAt(root, head)), halved: state.halved ?? {},
-    engine: { name: engine.reviewer.name, kind: engine.reviewer.kind, stage: engine.reviewer.stage, agent: engine.reviewer.agent, builtIn: Boolean(BUILT_IN[engine.reviewer.name]) },
-    minDepth,
-    merge: false,
+  const s = { opts, project, config, env, forge, image, exec, awaitBot, codex, captureSpawn, run };
+  Object.assign(s, {
+    settle: (result) => settle(s, result),
+    finish: (status, extra) => finish(s, status, extra),
+    capReached: (extra) => capReached(s, extra),
+    quotaStop: (pass, stage, reason, extra) => quotaStop(s, pass, stage, reason, extra),
   });
-  let plan = planFor('none');
-  if (review.planCommand) {
-    const project_ = await runPlanCommand(review.planCommand, { base, head, changes }, { root, env: cleanEnv, baseTip });
-    // A plan command that raises the depth to split gets the slices too: the built-in plan is rebuilt at that depth.
-    if (project_.depth === 'split' && plan.depth !== 'split') plan = planFor('split');
-    plan = mergePlans(plan, project_);
-  }
-  // Agent passes merge per reviewer only now, after the plan command's passes joined, so one agent reads the diff once.
-  plan = mergeStages(plan);
-  if (mergeNote) plan.reasons = [...plan.reasons, mergeNote];
-  // --with-bot (the skill's --await-codex): the review bot runs as the last stage too, after this machine's engine.
-  if (opts.withBot && plan.depth !== 'none' && config.github.reviewer !== null && !plan.stages.some((stage) => stage.passes.some((pass) => pass.reviewer === 'pr-bot'))) {
-    plan.stages = [...plan.stages.filter((stage) => stage.name !== 'remote'), { name: 'remote', passes: [...(plan.stages.find((stage) => stage.name === 'remote')?.passes ?? []), { id: 'engine:pr-bot', reviewer: 'pr-bot', kind: 'remote', files: null, context: 'full' }] }];
-  }
-  plan.engine = { name: engine.reviewer.name, reason: engine.reason };
-  const map = reviewerMap(effective);
-  // A reviewer out of quota on this head, and the Human's choice of what replaces it (lib/review/quota.mjs). The flag
-  // answers a stop on this head only, and is refused where the plan requires an independent model.
-  if (opts.quotaFallback) {
-    const stop = (state.quotaStops ?? []).filter((each) => each.head === head).at(-1);
-    if (!stop) throw new Error(`no quota stop is on record for head ${head.slice(0, 7)} of #${n}: --quota-fallback answers a blocked_quota on the current head only`);
-    const refused = quota.refusal(plan, stop, plan.stages.flatMap((stage) => stage.passes), map);
-    if (refused) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: refused, plan });
-    if (stop.choice !== opts.quotaFallback) Object.assign(stop, { choice: opts.quotaFallback, chosen_at: new Date().toISOString(), signoff: null });
-  }
-  // A pass's result counts for this head when it is for this head, or for an earlier one the change since does not
-  // touch and that left nothing open.
-  const deltaCache = new Map();
-  // On a merge from the base branch, what the base brought in was reviewed there: since the reviewed head the change is
-  // the merge's own, and since an earlier head, that head's change to the reviewed one plus the merge's own. A merge
-  // that drops what the base brought (`-s ours`) is a change of its own then, though its tree equals the reviewed head's.
-  const sinceFor = (from) => {
-    if (!isAncestor(root, from, head)) return null;
-    if (!scope || !isAncestor(root, from, reviewedHead)) return changedFiles(root, from, head);
-    const since = changedFiles(root, from, reviewedHead);
-    return [...since, ...scope.changes.filter((change) => !since.some((each) => each.file === change.file))];
-  };
-  const delta = (from) => {
-    if (!deltaCache.has(from)) deltaCache.set(from, sinceFor(from));
-    return deltaCache.get(from);
-  };
-  // A pass with a file list (a slice, a flow pass) keeps its history only while it covers the same files: when a fix
-  // repacks slices, a slice's earlier result and findings are another set of files' and count for nothing.
-  const sameFiles = (pass, result) => !Array.isArray(pass.files) || JSON.stringify([...pass.files].sort()) === JSON.stringify(result.files ?? null);
-  const resultFor = (pass) => {
-    const result = state.passes[pass.id];
-    if (!result || !sameFiles(pass, result)) return null;
-    if (result.head === head) return result;
-    const since = delta(result.head);
-    return since && !touches(since, pass.files) && result.open === 0 ? result : null;
-  };
-  const fallbacks = quota.applyChoices(plan, state.quotaStops, head, resultFor);
-  const { lines } = classify(changes, review);
-  if (plan.depth !== 'none' && lines > MAX_LINES) return settle({ status: 'too_large', pr: n, repo, head, lines, reason: `${lines} changed lines is past ${MAX_LINES}: split the pull request` });
+  const ended = await prepareStep(s);
+  if (ended) return ended;
+  return runStages(s);
+}
 
-  // The flows' invariants: a flow the base defines reads its doc from the base, so the change under review cannot
-  // rewrite it; a flow the change adds reads it from the head, the only place it exists.
-  const readAt = (commit) => (file) => fileAt(root, commit, file);
-  for (const flow of plan.flows) {
-    if (flow.id === HARNESS_FLOW) Object.assign(flow, { invariants: [HARNESS_INVARIANT], unspecified: false, signoff: 'human' });
-    else Object.assign(flow, invariantsOf(review.flows[flow.id] ?? {}, readAt(baseReview?.flows?.[flow.id] ? baseTip : head)));
-  }
+// The current round's open findings, kept on its entry in the record, so the check at the cap can read each round's
+// findings after the passes have moved on to later heads.
+function noteFindings({ state, head }, extra) {
+  const round = state.rounds.at(-1);
+  if (!round || round.head !== head || !(Array.isArray(extra.open) || Array.isArray(extra.flows))) return;
+  const violated = (extra.flows ?? []).flatMap((flow) => (flow.violated ?? []).map((id) => ({ title: `flow ${flow.flow}: invariant ${id} violated`, file: null, line: null, severity: null })));
+  const passes = extra.open ?? [];
+  // Only what still blocks: an itemized list (attest --findings-file, an exec reviewer) keeps its fixed and accepted
+  // findings too, and a fixed finding read as open would come back as a loop in the next round. A mistake that a
+  // slice and the cross-cutting pass both report is one finding, as findings_merged lists it. A pass recorded with
+  // counts only adds its count.
+  const itemized = passes.filter((each) => Array.isArray(each.findings));
+  const merged = dedupe(itemized.map((each) => [each.pass, each.findings.filter(blocks)]));
+  const counted = passes.filter((each) => !Array.isArray(each.findings)).reduce((total, each) => total + (each.open ?? 0), 0);
+  round.open = merged.length + counted + violated.length;
+  round.findings = itemized.length === passes.length
+    ? [...merged.map((each) => ({ title: each.title ?? null, file: each.file ?? null, line: Number.isInteger(each.line) ? each.line : null, severity: each.severity ?? null })), ...violated].slice(0, 50)
+    : null;
+}
 
-  // A Human sign-off on an earlier head still holds when that head is an ancestor of this one and the change since
-  // selects nothing of the flow, run through the same selection as the plan: its globs, added-line patterns, content
-  // tracing, plan command, tests, and invariants doc. Accepting a deleted test stays exact to the head.
-  const reselected = new Map();
-  const selectedSince = async (from) => {
-    if (reselected.has(from)) return reselected.get(from);
-    const since = changedFiles(root, from, head);
-    const lines = diffLines(root, from, head);
-    const ids = new Set(detectFlows(review.flows, { sorted: classify(since, review), addedLines: lines.addedLines, removedFiles: lines.removedFiles }).map((flow) => flow.id));
-    for (const flow of contentFlows({ root, head, changes: since, addedLines: lines.addedLines, flows: review.flows })) ids.add(flow.id);
-    const sincePaths = new Set(since.map((change) => change.file));
-    for (const [id, definition] of Object.entries(review.flows)) {
-      const tests = (definition.tests ?? []).map(pathPattern);
-      if (since.some((change) => tests.some((pattern) => pattern.test(change.file))) || touchedCitations(root, from, head, { [id]: definition }, sincePaths).length) ids.add(id);
-    }
-    if (since.some((change) => harnessFiles.has(change.file)) || touchedCitations(root, from, head, review.flows, sincePaths).length) ids.add(HARNESS_FLOW);
-    if (review.planCommand && since.length) {
-      const extra = await runPlanCommand(review.planCommand, { base: from, head, changes: since }, { root, env: cleanEnv, baseTip });
-      for (const flow of extra.flows ?? []) ids.add(flow.id);
-    }
-    reselected.set(from, ids);
-    return ids;
-  };
-  const keptSignoffs = new Set();
-  for (const flow of plan.flows) {
-    const signed = state.signoffs[flow.id]?.head;
-    if (flow.signoff !== 'human' || !signed) continue;
-    if (signed === head || (isAncestor(root, signed, head) && !(await selectedSince(signed)).has(flow.id))) keptSignoffs.add(flow.id);
-  }
-
-  // The visual capture: the routes the change touches, and their matrix. A matrix past the limit stops the review here,
-  // naming the routes, rather than capture part of it. The capture itself runs once per head, when a visual reviewer
-  // is dispatched.
-  const visual = review.visual;
-  const visualRoutesHere = visualRoutes(visual, changes);
-  let visualEntries = [];
-  if (visualRoutesHere.length) {
-    try {
-      visualEntries = visualMatrix(visual, visualRoutesHere);
-    } catch (error) {
-      return settle({ status: 'too_large', pr: n, repo, head, reason: error.message });
-    }
-  }
-  let manifest = visual ? readManifest(project, n, head) : null;
-  const isVisual = (pass) => Boolean(visual) && visual.reviewers.includes(map[pass.reviewer]?.agent ?? pass.reviewer);
-
-  const passes = plan.stages.flatMap((stage) => stage.passes);
-  // A pass nobody can run would never finish and never block: refuse the plan instead.
-  const orphan = passes.find((pass) => pass.kind !== 'agent' && !map[pass.reviewer]);
-  if (orphan) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `pass ${orphan.id} names reviewer "${orphan.reviewer}", which is not an agent pass or a reviewer of review.reviewers`, plan });
-  // Every pass after the local stage answers for every flow: a violated from any reviewer blocks the flow, and a flow
-  // only the independent model reviews is signed by it. The review bot gives no verdicts, so a flow needs another
-  // pass that can answer for it.
-  for (const stage of plan.stages) if (stage.name !== 'local') for (const pass of stage.passes) pass.flows = plan.flows.map((flow) => flow.id);
-  for (const word of plan.require) {
-    if (!satisfies(word, passes, map) && word === 'independent-model' && fallbacks.length) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: quota.refusal(plan, fallbacks[0], [], map), plan });
-    if (!satisfies(word, passes, map)) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `the plan requires ${word}, and the engine here is ${engine.reviewer.name} (${engine.reason})`, plan });
-  }
-  // A flow's deleted test stops the review whatever else the change does, even when nothing else needs a review.
-  const removedTests = [];
-  for (const [id, definition] of Object.entries(review.flows)) {
-    const tests = (definition.tests ?? []).map(pathPattern);
-    const gone = changes.filter((each) => each.status === 'D' && tests.some((pattern) => pattern.test(each.file))).map((each) => each.file);
-    if (gone.length) removedTests.push({ flow: id, deleted: gone, accept: `aidrian pr signoff ${n} --flow ${id} --head ${head}` });
-  }
-  // The flows the Human may sign off on this head: one the project marks for the Human's sign-off, the built-in
-  // harness-config, or one whose test the change deletes. `aidrian pr signoff` refuses any other, since its sign-off
-  // would count for nothing: a violated invariant is fixed, never signed away.
-  state.signoffable = { head, flows: [...new Set([...plan.flows.filter((flow) => flow.signoff === 'human').map((flow) => flow.id), ...removedTests.map((each) => each.flow)])].sort() };
-  const answerless = plan.flows.find((flow) => !passes.some((pass) => (pass.flows ?? []).includes(flow.id) && map[pass.reviewer]?.kind !== 'remote'));
-  if (answerless) return settle({ status: 'unsatisfied', pr: n, repo, head, reason: `flow ${answerless.id} needs a reviewer that answers its invariants, and the review bot does not: run codex-local, or require an agent for the flow`, plan });
-  if (!passes.length && !removedTests.length && !fallbacks.length) return settle({ status: 'none_needed', pr: n, repo, head, base, depth: plan.depth, engine: plan.engine, plan: { depth: plan.depth, reasons: plan.reasons, flows: [], stages: [] } });
-
-  // Each extra round the base branch's policy grants (lib/review/extension.mjs) raises the cap by one. A decision still
-  // open at the cap (a check, or a grant whose round has not opened) is read again when the head has moved since.
-  const planHistory = () => buildHistory({ root, rounds: state.rounds.map((round, i) => ({ round: i + 1, head: round.head, open: round.open ?? null, findings: round.findings ?? null })), baseTip, head, review });
-  const extensionLog = extensionLogger(project, config, { pr: n, repo, env });
-  if (policy.mode !== 'off') revalidate({ state, source: 'plan', round: state.rounds.length, head, history: planHistory, log: extensionLog });
-  const { maxRounds, grantFloor } = roundCap({ baseline: opts.maxRounds ?? cap, granted: grantedRounds(state, 'plan', policy) });
-
-  const verdictsFor = (flowId) => passes.filter((pass) => (pass.flows ?? []).includes(flowId)).flatMap((pass) => {
-    const result = resultFor(pass);
-    return (result?.verdicts ?? []).filter((verdict) => verdict.flow === flowId).map((verdict) => ({ ...verdict, at: result.head, reviewer: pass.reviewer }));
+// The round cap: round_limit, unless the base branch's github.extraRounds lets the check at the cap run
+// (lib/review/extension.mjs), which may return extension_check or extension_ask instead.
+function capReached(s, extra) {
+  const { state, head, policy, n, info, planHistory, extensionLog } = s;
+  noteFindings(s, extra);
+  const decision = atCap({
+    state, source: 'plan', round: state.rounds.length, head, policy, pr: n, goal: { title: info.title ?? null, body: info.body ?? null },
+    command: `aidrian pr review ${n}`,
+    history: planHistory,
+    lastReviewed: () => state.rounds.at(-1)?.head ?? null,
+    log: extensionLog,
   });
-  // A capture is evidence for the head it was taken of: a verdict carried forward from an earlier head cites that
-  // head's captures. The keys live in the review record too, so another machine without the images can check them.
-  const capturesOf = (at) => new Set([...(state.captured?.[at] ?? []), ...captureKeys(at === head ? manifest : readManifest(project, n, at))]);
-  // The invariants the Human overruled on this head: a violated verdict another reviewer disputes with evidence.
-  const overruledOn = (flowId) => new Set((state.overrulings ?? []).filter((each) => each.flow === flowId && sameCommit(each.head, head)).map((each) => each.invariant));
-  // Evidence outside the tool (lib/review/approvals.mjs): a named approver's review of this head, read once per step,
-  // and only when an invariant names approvers and both switches are on. A failed read closes nothing.
-  const approvalPath = hasApprovers(plan.flows) ? approvalsSwitch(review, project) : null;
-  let approvalRead = null;
-  const approvals = () => (approvalRead ??= approvalPath?.on ? readApprovals(forge, repo, n, { head, flows: plan.flows }) : { approvals: [], error: null });
-  // The Human's acceptances on this head (`aidrian pr signoff --accept`), each on outside evidence they named.
-  const acceptedOn = (flowId) => (state.acceptances ?? []).filter((each) => each.flow === flowId && sameCommit(each.head, head));
-  const approvedOn = (flowId) => new Set([...approvals().approvals.filter((each) => each.flow === flowId), ...acceptedOn(flowId)].map((each) => each.invariant));
-  const flowStatus = (flow, { outside = true } = {}) => flowState(flow.invariants, verdictsFor(flow.id), (evidence, verdict) => citationProblem(evidence, { root, head, captures: capturesOf(verdict?.at ?? head) }), overruledOn(flow.id), outside ? approvedOn(flow.id) : new Set());
-  // The outside evidence that closed an invariant on this head, of the ones the reviewers left unverified: the approvals,
-  // and the Human's acceptances.
-  const outsideClosed = () => {
-    const left = new Map(plan.flows.map((flow) => [flow.id, new Set(flowStatus(flow, { outside: false }).unverified)]));
-    const closes = (each) => left.get(each.flow)?.has(each.invariant) ?? false;
-    return {
-      approvals: approvals().approvals.filter(closes).map(({ flow, invariant, login, url, at }) => ({ flow, invariant, login, url, at })),
-      acceptances: plan.flows.flatMap((flow) => acceptedOn(flow.id)).filter(closes).map(({ flow, invariant, by, evidence, reason, at }) => ({ flow, invariant, by, evidence, reason, at })),
-    };
-  };
-
-
-  // The stage the last round runs first: the last one that needs no earlier result, so never the review bot, which
-  // waits for every earlier pass.
-  const finalStage = [...plan.stages].reverse().find((stage) => stage.passes.every((pass) => map[pass.reviewer]?.kind !== 'remote')) ?? null;
-  const current = state.rounds.at(-1);
-  const newRound = current?.head !== head;
-  // The last round runs the final stage first, so an independent review always happens before the cap. A round that
-  // started as the last one stays the last one on every later call for the same head, unless an extra round was
-  // granted since: then a fix may have a new head again.
-  const lastRound = newRound ? state.rounds.length + 1 === maxRounds : Boolean(current?.final) && state.rounds.length >= maxRounds;
-  const roundsBefore = state.rounds.length;
-  let opened = !newRound;
-  let recorded = false;
-  const openRound = () => {
-    if (opened) return null;
-    if (state.rounds.length >= maxRounds) return 'round_limit';
-    state.rounds.push({ head, at: new Date().toISOString(), ...(lastRound ? { final: true } : {}) });
-    if (lastRound && plan.stages.length > 1 && finalStage) state.overrides = [...new Set([...state.overrides, `round ${maxRounds} ran the ${finalStage.name} stage first`])];
-    opened = true;
-    return null;
-  };
-  // A run that produced nothing (a failure, a quota stop) gives its round back.
-  const undoRound = () => {
-    if (newRound && !recorded) state.rounds.length = roundsBefore;
-  };
-
-  // In the last round the final stage runs first and is judged last, once the earlier stages' verdicts are in.
-  const order = lastRound && plan.stages.length > 1 && finalStage ? [{ stage: finalStage, runOnly: true }, ...plan.stages.map((stage) => ({ stage }))] : plan.stages.map((stage) => ({ stage }));
-  for (const { stage, runOnly } of order) {
-    const unfinished = stage.passes.filter((pass) => !resultFor(pass));
-    // A pass runs once the passes it comes after have results: the cross-cutting pass waits for every slice.
-    const pending = unfinished.filter((pass) => (pass.after ?? []).every((id) => resultFor(stage.passes.find((each) => each.id === id) ?? { id })));
-    if (unfinished.length && !pending.length) return finish('incomplete', { reason: `${unfinished.map((pass) => pass.id).join(', ')} wait for passes that cannot finish`, retry_recommended: false });
-    if (pending.length) {
-      if (openRound() === 'round_limit') return capReached({ max_rounds: maxRounds });
-      // At most `parallel` local reviewers per step: each runs up to its time limit, and a step must end inside one
-      // shell call. The rest run on the next step, which `running` asks for.
-      const ready = pending.filter((pass) => map[pass.reviewer]?.kind === 'exec');
-      const execs = ready.slice(0, review.split?.parallel ?? 4);
-      if (execs.length) {
-        if (resolve(root, 'HEAD') !== head || !isClean(root)) {
-          undoRound();
-          return finish('incomplete', { reason: `a local reviewer reads the checkout: check out ${head.slice(0, 7)} with a clean working tree first`, retry_recommended: true });
-        }
-        // Codex reads the checkout at the head; a project's own reviewer runs as the base has it, and reads the head
-        // through git (its input names both commits).
-        const run = (tree) => Promise.all(execs.map((pass) => {
-          const reviewer = map[pass.reviewer];
-          return exec(reviewer, passInput(pass, stage), { root: reviewer.builtIn ? root : tree, env: cleanEnv }).then((outcome) => [pass, outcome]);
-        }));
-        const outcomes = execs.some((pass) => !map[pass.reviewer].builtIn) ? await inBaseWorktree(root, baseTip, run) : await run(root);
-        for (const [pass, outcome] of outcomes) {
-          if (outcome.status !== 'done') continue;
-          state.passes[pass.id] = {
-            head, reviewer: pass.reviewer, files: Array.isArray(pass.files) ? [...pass.files].sort() : null, findings: outcome.findings.length, open: outcome.findings.length, list: outcome.findings, verdicts: outcome.verdicts,
-            ...(pass.role ? { contracts: outcome.contracts ?? [], cross_notes: outcome.cross_notes ?? [] } : {}), dropped: outcome.dropped,
-          };
-          recorded = true;
-        }
-        const outOfQuota = outcomes.find(([, outcome]) => outcome.status === 'quota');
-        if (outOfQuota) {
-          undoRound();
-          return quotaStop(outOfQuota[0], stage, outOfQuota[1].reason);
-        }
-        const failed = outcomes.find(([, outcome]) => outcome.status !== 'done');
-        if (failed) {
-          const key = `${head}:${failed[0].id}`;
-          state.failures[key] = (state.failures[key] ?? 0) + 1;
-          // A slice that fails twice is cut in half on the next step: a smaller slice is likelier to fit.
-          const halve = failed[0].role === 'slice' && state.failures[key] === 2 && (failed[0].files?.length ?? 0) > 1 && !failed[0].id.match(/\.[ab]$/u);
-          if (halve) state.halved = { ...(state.halved ?? {}), [failed[0].id]: true };
-          const stuck = state.failures[key] >= MAX_ATTEMPTS && !halve;
-          undoRound();
-          return finish(stuck ? 'stuck' : 'incomplete', { reason: `${failed[0].id}: ${failed[1].reason}${halve ? '; it runs as two halves next' : ''}`, attempts: state.failures[key], retry_recommended: !stuck });
-        }
-        // Passes still without a result, a cross pass included, keep the stage open: a partial review never passes.
-        const left = stage.passes.filter((pass) => !resultFor(pass) && map[pass.reviewer]?.kind === 'exec');
-        if (left.length) return finish('running', { stage: stage.name, done: stage.passes.filter((pass) => resultFor(pass)).length, total: stage.passes.length });
-      }
-      const remote = pending.find((pass) => map[pass.reviewer]?.kind === 'remote');
-      if (remote) {
-        // The bot is asked only after every earlier pass has a result, with the review-gate marker from the
-        // code-reviewer's pass, and under the plan's own cap: nothing here raises the cap the request records.
-        const waiting = plan.stages.slice(0, plan.stages.indexOf(stage)).flatMap((each) => each.passes).filter((pass) => !resultFor(pass));
-        if (waiting.length) return finish('incomplete', { reason: `the review bot waits for ${waiting.map((pass) => pass.id).join(', ')}`, retry_recommended: true });
-        // The marker sums every code-reviewer pass that counts for this head (a carried-forward one too); with the gate
-        // on and none on record, nothing is posted.
-        const reviewed = passes.filter((pass) => pass.kind === 'agent' && pass.reviewer === 'code-reviewer').map(resultFor).filter(Boolean);
-        const gate = () => {
-          if (!config.github.reviewGate.enabled) return {};
-          if (!reviewed.length) return { reason: 'the review gate needs the code-reviewer pass on record before the bot is asked' };
-          const findings = reviewed.reduce((total, result) => total + result.findings, 0);
-          const open = reviewed.reduce((total, result) => total + result.open, 0);
-          return { marker: markerFor({ pr: n, repo, head, reviewer: 'code-reviewer', findings, fixed: findings - open }) };
-        };
-        const wait = awaitBot ?? (await import('../pr-await-review.mjs')).awaitReview;
-        // The plan's cap (the base branch's, plus valid extra rounds) is the bot's too: a cap an earlier request recorded
-        // counts only under the Human's override.
-        // A request past the base branch's cap uses an extra round, granted on the signals of this head: the wait posts
-        // nothing for another head (head_moved), and the next step reads the grant again on it.
-        const bot = await wait({ pr: String(n), repo, head, request: true, reviewer: config.github.reviewer, timeoutSec: opts.timeoutSec ?? 840, intervalSec: 60, maxRounds, keepRecordedCap: env[ROUNDS_OVERRIDE] === '1', validHead: head, grantFloor }, { gate });
-        if (bot.status === 'head_moved') {
-          undoRound();
-          return finish('incomplete', { reason: `the pull request moved to ${String(bot.head_sha).slice(0, 7)} before the request on an extra round: run the step again, which reads the grant on the new head`, retry_recommended: true });
-        }
-        if (bot.status === 'review_required') {
-          undoRound();
-          return finish('incomplete', { reason: bot.reason, retry_recommended: false });
-        }
-        if (bot.status === 'timed_out' || bot.status === 'blocked_quota' || bot.status === 'round_limit') {
-          if (!bot.requested) undoRound();
-          if (bot.status === 'blocked_quota') return quotaStop(remote, stage, bot.reason ?? 'the review bot posted a usage-limit notice', { bot });
-          return bot.status === 'round_limit' ? capReached({ bot }) : finish(bot.status, { bot });
-        }
-        // A push during the wait: the bot's answer is for another commit, so it counts for nothing here.
-        if (bot.head_sha && bot.head_sha !== head) return finish('incomplete', { reason: `the pull request moved to ${String(bot.head_sha).slice(0, 7)} during the wait: run the step again`, retry_recommended: true });
-        const open = bot.signal?.kind === 'thumbs_up' ? 0 : Math.max(1, bot.signal?.line_comments ?? 0);
-        state.passes[remote.id] = { head, reviewer: remote.reviewer, findings: open, open, bot: { kind: bot.signal?.kind ?? null, review_id: bot.signal?.review_id ?? null } };
-        recorded = true;
-      }
-      const agents = pending.filter((pass) => map[pass.reviewer]?.kind === 'agent' || pass.kind === 'agent');
-      if (agents.length) {
-        recorded = true;
-        if (visualEntries.length && agents.some(isVisual) && manifest?.status !== 'captured') await captureAndAttach();
-        // What each dispatched pass covers, so its attest records the same files.
-        state.dispatched = { ...(state.dispatched ?? {}), ...Object.fromEntries(agents.map((pass) => [pass.id, { head, files: Array.isArray(pass.files) ? [...pass.files].sort() : null }])) };
-        return finish('dispatch', { stage: stage.name, dispatch: agents.map((pass) => dispatchFor(pass, stage)) });
-      }
-    }
-    if (runOnly) continue;
-    const open = stage.passes.map((pass) => [pass, resultFor(pass)]).filter(([, result]) => result?.open > 0);
-    const unsigned = plan.flows.filter((flow) => stage.passes.some((pass) => (pass.flows ?? []).includes(flow.id))).map((flow) => [flow, flowStatus(flow)]).filter(([, status]) => !status.signed);
-    if (open.length || unsigned.length) {
-      // A fix needs a new head, and in the last round there is none left: that is the cap, with the work named.
-      return (lastRound ? capReached : (extra) => finish('fix_required', extra))({
-        stage: stage.name,
-        open: open.map(([pass, result]) => ({ pass: pass.id, reviewer: pass.reviewer, head: result.head, open: result.open, findings: result.list ?? null })),
-        // One entry per mistake when slices and the cross pass report the same one.
-        ...(stage.passes.some((pass) => pass.role) ? { findings_merged: dedupe(open.map(([pass, result]) => [pass.id, result.list ?? []])) } : {}),
-        flows: unsigned.map(([flow, status]) => ({
-          flow: flow.id, violated: status.open, unverified: status.unverified,
-          // Reviewers disagree: the Human decides, in their own shell, and the invariant then passes on the evidence.
-          ...(status.disputed.some((id) => status.open.includes(id)) ? { disputed: status.disputed.filter((id) => status.open.includes(id)), overrule: status.disputed.filter((id) => status.open.includes(id)).map((id) => overruleCommand(flow, id)) } : {}),
-          next: nextSteps(flow, status),
-        })),
-      });
-    }
-    // A stage the Human chose to review in place of an out-of-quota reviewer waits for their sign-off before the next.
-    const unsignedStage = fallbacks.find((stop) => stop.stage === stage.name && stop.choice === quota.HUMAN && !stop.signoff);
-    if (unsignedStage) return finish('human_required', { stage: stage.name, flows: [], command: [quota.signoffCommand(n, unsignedStage)] });
-  }
-  // Evidence beyond the reviewers: no flow test deleted without the Human's word, and the required checks of the
-  // flows the change touches passed on this head.
-  const unaccepted = removedTests.filter((each) => state.signoffs[each.flow]?.head !== head);
-  if (unaccepted.length) return lastRound ? capReached({ stage: 'evidence', tests_removed: unaccepted }) : finish('fix_required', { stage: 'evidence', tests_removed: unaccepted });
-  const wanted = [...new Set(plan.flows.flatMap((flow) => review.flows[flow.id]?.checks ?? []))];
-  if (wanted.length) {
-    const rows = checkRows(forge.checkRuns(repo, head)).filter((row) => wanted.some((part) => row.name.includes(part)));
-    const verdict = computeVerdict(rows, { requiredChecks: wanted });
-    if (verdict.verdict === 'pending') return finish('checks_pending', { checks: verdict.pending });
-    if (verdict.verdict === 'failing') {
-      const extra = { stage: 'evidence', checks_failing: [...verdict.failing, ...(verdict.unexpected_skips ?? [])] };
-      return lastRound ? capReached(extra) : finish('fix_required', extra);
-    }
-  }
-  const human = plan.flows.filter((flow) => flow.signoff === 'human' && !keptSignoffs.has(flow.id));
-  if (human.length) return finish('human_required', { flows: human.map((flow) => flow.id), command: human.map((flow) => `aidrian pr signoff ${n} --flow ${flow.id} --head ${head}`) });
-  return finish('received', {});
-
-  // The Human's way out of a dispute on this head.
-  function overruleCommand(flow, id) {
-    return `aidrian pr signoff ${n} --flow ${flow.id} --overrule ${id} --head ${head} --reason "<why>"`;
-  }
-
-  // What closes each open invariant of a flow on this head, so no session has to invent a command: a violated one is
-  // fixed in the code, or, when another reviewer disputes it, overruled by the Human. An unverified one closes on
-  // evidence: an approver's review when the invariant names approvers and both switches are on, the Human's
-  // acceptance, and, for a flow a visual reviewer judges with no capture of this head, the capture's own status line.
-  // `commands` holds only `aidrian pr signoff` commands, for the Human's shell once `--check` passes; `notes` holds
-  // the rest: the fix to make, the approval to ask for, the capture's status.
-  function nextSteps(flow, status) {
-    const violated = status.open.map((id) => (status.disputed.includes(id)
-      ? { invariant: id, state: 'disputed', commands: [overruleCommand(flow, id)], notes: [] }
-      : { invariant: id, state: 'violated', commands: [], notes: ['fix the code'] }));
-    const visualFlow = visualEntries.length > 0 && passes.some((pass) => isVisual(pass) && (pass.flows ?? []).includes(flow.id));
-    const capture = visualFlow && captureKeys(manifest).size === 0
-      ? (manifest ? `the visual capture of ${head.slice(0, 7)} is ${manifest.status}${manifest.reason ? `: ${manifest.reason}` : ''}` : `no visual capture of ${head.slice(0, 7)} ran`)
-      : null;
-    const unverified = status.unverified.map((id) => {
-      const approvers = flow.invariants.find((each) => each.id === id)?.approvers ?? [];
-      return {
-        invariant: id,
-        state: 'unverified',
-        commands: [`aidrian pr signoff ${n} --flow ${flow.id} --accept ${id} --evidence "<URL of a comment or review of this pull request>" --reason "<what it shows>" --head ${head}`],
-        notes: [
-          ...(approvers.length && approvalPath?.on ? [`ask for an approving review of ${head} by ${approvers.join(' or ')}, whose body holds the line: ${approveLine(flow.id, id)}`] : []),
-          ...(capture ? [capture] : []),
-        ],
-      };
-    });
-    return [...violated, ...unverified];
-  }
-
-  // Captures this head once, then attaches the images as the attach mode allows and writes the captures comment. The
-  // repository's visibility is read now, at upload time: a repository made public since the config was written stops
-  // uploading by itself. The mode and the visibility go in the review record, which the summary shows.
-  async function captureAndAttach() {
-    manifest = await captureVisual({
-      project, pr: n, head, visual, entries: visualEntries, baseUrl: config.reviewVisual?.baseUrl ?? null, env: cleanEnv,
-      // A base checkout only when a hook runs: a public capture on a set base URL needs none.
-      withBase: (use) => ((visual.preview && !config.reviewVisual?.baseUrl) || signedVariants(visual, visualEntries).length
-        ? inBaseWorktree(root, baseTip, (tree) => use(async (command, input) => runHook(tree, command, input, cleanEnv)))
-        : use(async () => { throw new Error('no hook runs here'); })),
-      ...(captureSpawn ? { spawn: captureSpawn } : {}),
-    });
-    let visibility = null;
-    try {
-      visibility = forge.visibility(repo);
-    } catch {}
-    const mode = attachMode(visual, visibility);
-    let uploadError = null;
-    // The captured keys of the last few heads go in the review record, which the summary comment carries.
-    state.captured = Object.fromEntries([...Object.entries(state.captured ?? {}).filter(([at]) => at !== head), [head, [...captureKeys(manifest)]]].slice(-5));
-    if (mode === 'auto' && ['captured', 'partial'].includes(manifest.status)) {
-      const up = uploadCaptures({ project, pr: n, manifest, uploaded: state.captures ?? {}, repo, image });
-      state.captures = keepUploaded(state.captures ?? {}, up.uploaded);
-      uploadError = up.error;
-    }
-    if (mode !== 'off' && onPr) {
-      const body = capturesBody(manifest, state.captures ?? {}, { mode, visibility, error: uploadError });
-      try {
-        const known = comments.find((comment) => typeof comment.body === 'string' && comment.body.startsWith(VISUAL_MARKER));
-        if (known) forge.editComment(repo, known.id, body);
-        else forge.postComment(repo, n, body);
-      } catch (error) {
-        uploadError = uploadError ?? `the captures comment was not written: ${error.message}`;
-      }
-    }
-    state.visual = { head, status: manifest.status, mode, visibility, captured: manifest.entries.filter((entry) => entry.sha256).length, of: manifest.entries.length, ...(manifest.reason ? { reason: manifest.reason } : {}), ...(uploadError ? { error: uploadError } : {}) };
-  }
-
-  // The input every reviewer of a pass reads.
-  function passInput(pass, stage) {
-    const recorded = state.passes[pass.id];
-    const prior = resultFor(pass) ?? (recorded && sameFiles(pass, recorded) ? recorded : null);
-    const from = prior && prior.head !== head && isAncestor(root, prior.head, head) ? prior.head : base;
-    const flows = plan.flows.filter((flow) => (pass.flows ?? []).includes(flow.id) || stage.name !== 'local').map((flow) => ({
-      id: flow.id,
-      invariants: flow.invariants,
-      files: flow.files,
-      ...(stage.name !== 'local' ? { earlierVerdicts: verdictsFor(flow.id) } : {}),
-    }));
-    const checklist = config.github.reviewGate.enabled ? config.github.reviewGate.checklist : null;
-    const split = pass.role ? {
-      role: pass.role,
-      manifest: changes.map((change) => ({ file: change.file, status: change.status, added: change.added, removed: change.removed })),
-      ...(pass.role === 'slice' ? { slice: pass.slice } : {}),
-      ...(pass.role === 'cross' ? {
-        slices: stage.passes.filter((each) => each.role === 'slice').map((each) => {
-          const result = resultFor(each);
-          return { id: each.id, slice: each.slice, files: each.files, contracts: result?.contracts ?? [], cross_notes: result?.cross_notes ?? [], findings: result?.list ?? [] };
-        }),
-        interfaceFiles: plan.interfaceFiles ?? [],
-      } : {}),
-    } : {};
-    const visualChecklist = visual?.checklist ? { path: visual.checklist, text: fileAt(root, baseTip, visual.checklist.split('#')[0]) } : null;
-    return {
-      ...split,
-      // A merge's resolutions are the whole review: a pass of every changed file reads only the resolved ones.
-      pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files ?? (scope ? scope.changes.map((change) => change.file) : null), flows, priorFindings: [...(prior?.list ?? []), ...keptFindings(pass)],
-      ...(scope ? { remerge: head } : {}),
-      // An invariant is a claim about the whole change, so a delta pass still judges its flows from the merge base:
-      // judged on the delta, a narrowing an earlier push made reads as a weakening, and a new head hides a violation.
-      ...(flows.length && from !== base ? { flowBase: base } : {}),
-      ...(checklist ? { checklist: { path: checklist, text: fileAt(root, baseTip, checklist) } } : {}),
-      ...(manifest && isVisual(pass) ? { visual: visualInput(manifest, state.captures ?? {}, visualChecklist) } : {}),
-    };
-  }
-
-  // A fallback pass reads the open findings of the stopped reviewer's passes that finished before the stop, each with
-  // the pass it came from: they still block, and the fallback reviews the change knowing them.
-  function keptFindings(pass) {
-    return (pass.fallback?.kept ?? []).flatMap((id) => {
-      const result = state.passes[id];
-      return result?.open > 0 ? (result.list ?? []).filter(blocks).map((finding) => ({ ...finding, pass: id })) : [];
-    });
-  }
-
-  function dispatchFor(pass, stage) {
-    const input = passInput(pass, stage);
-    const prefix = showPrefix(root);
-    const briefs = [
-      prefix ? belowRootBrief(prefix) : null,
-      input.checklist ? `Review the diff against the checklist in ${input.checklist.path} as well as for bugs.` : null,
-      input.flows.some((flow) => (flow.invariants ?? []).some((invariant) => invariant.source)) ? 'Judge each invariant against its `source`, the section of the project doc it cites; `text` is only the question.' : null,
-      input.flows.length ? VERDICT_MEANING : null,
-      input.flowBase ? flowBaseBrief(input) : null,
-      input.remerge ? remergeBrief(input) : null,
-      input.visual ? 'Review the captures in `visual` (open each `file`), with their measured facts, as well as the diff.' : null,
-      pass.fallback ? `${quota.owner(pass.fallback.replaces)} is out of quota, and the Human chose this pass as the second look in its place: review the whole change through your own lens. It is recorded as a fallback, not as an independent review.` : null,
-    ].filter(Boolean);
-    return {
-      pass: pass.id,
-      agent: pass.fallback ? pass.reviewer : map[pass.reviewer]?.agent ?? pass.reviewer,
-      ...(pass.fallback ? { fallback: { replaces: pass.fallback.replaces, reason: pass.fallback.reason } } : {}),
-      ...(briefs.length ? { brief: briefs.join(' ') } : {}),
-      ...input,
-      // A visual reviewer reports its findings one by one, so the disposition table decides what blocks.
-      record: isVisual(pass)
-        ? `aidrian pr attest ${n} --pass ${pass.id} --head ${head} --reviewer ${pass.reviewer} --findings-file <findings.json>${input.flows.length ? ' --verdicts <file.json>' : ''}`
-        : `aidrian pr attest ${n} --pass ${pass.id} --head ${head} --reviewer ${pass.reviewer} --findings <n> --fixed <n> [--accepted <n>]${input.flows.length ? ' --verdicts <file.json>' : ''}`,
-    };
-  }
-
-  // The current round's open findings, kept on its entry in the record, so the check at the cap can read each round's
-  // findings after the passes have moved on to later heads.
-  function noteFindings(extra) {
-    const round = state.rounds.at(-1);
-    if (!round || round.head !== head || !(Array.isArray(extra.open) || Array.isArray(extra.flows))) return;
-    const violated = (extra.flows ?? []).flatMap((flow) => (flow.violated ?? []).map((id) => ({ title: `flow ${flow.flow}: invariant ${id} violated`, file: null, line: null, severity: null })));
-    const passes = extra.open ?? [];
-    // Only what still blocks: an itemized list (attest --findings-file, an exec reviewer) keeps its fixed and accepted
-    // findings too, and a fixed finding read as open would come back as a loop in the next round. A mistake that a
-    // slice and the cross-cutting pass both report is one finding, as findings_merged lists it. A pass recorded with
-    // counts only adds its count.
-    const itemized = passes.filter((each) => Array.isArray(each.findings));
-    const merged = dedupe(itemized.map((each) => [each.pass, each.findings.filter(blocks)]));
-    const counted = passes.filter((each) => !Array.isArray(each.findings)).reduce((total, each) => total + (each.open ?? 0), 0);
-    round.open = merged.length + counted + violated.length;
-    round.findings = itemized.length === passes.length
-      ? [...merged.map((each) => ({ title: each.title ?? null, file: each.file ?? null, line: Number.isInteger(each.line) ? each.line : null, severity: each.severity ?? null })), ...violated].slice(0, 50)
-      : null;
-  }
-
-  // The round cap: round_limit, unless the base branch's github.extraRounds lets the check at the cap run
-  // (lib/review/extension.mjs), which may return extension_check or extension_ask instead.
-  function capReached(extra) {
-    noteFindings(extra);
-    const decision = atCap({
-      state, source: 'plan', round: state.rounds.length, head, policy, pr: n, goal: { title: info.title ?? null, body: info.body ?? null },
-      command: `aidrian pr review ${n}`,
-      history: planHistory,
-      lastReviewed: () => state.rounds.at(-1)?.head ?? null,
-      log: extensionLog,
-    });
-    const { status, ...carried } = decision;
-    return finish(status, { ...extra, ...carried });
-  }
-
-  // A reviewer out of quota: the stop goes on the record for this head, and the Human is asked what replaces it, unless
-  // the plan requires an independent model, which no fallback gives.
-  function quotaStop(pass, stage, reason, extra = {}) {
-    const stop = quota.recordStop(state, { head, stage, pass, reason });
-    const refused = quota.refusal(plan, stop, passes, map);
-    return finish('blocked_quota', { reason, pass: pass.id, ...extra, ...(refused ? { fallback_refused: refused } : quota.question({ pr: n, stop, withBot: opts.withBot })) });
-  }
-
-  // The one writer of every return after the record is read, but `held`, which must write nothing: the step's outcome
-  // goes into this machine's record, for the merge guard (lib/rules/github/merge-review.mjs). Only `finish` also
-  // publishes the record to the pull request.
-  function settle(result) {
-    // A gate review recorded while the step ran is on disk only: merge it in before a finished outcome answers it.
-    state.pending = mergePending(readLocalState(project, n)?.pending, state.pending);
-    noteOutcome(state, result, (a, b) => isAncestor(root, a, b), repo);
-    writeLocalState(project, state);
-    return result;
-  }
-
-  // Every bot answer that counts for this head, fresh or reused, answers the reviews the Human asked for
-  // (`aidrian pr request`), recorded while the step ran included. A reused answer counts with its own head.
-  function answerRequests() {
-    const answers = passes.filter((pass) => map[pass.reviewer]?.kind === 'remote').map(resultFor).filter((result) => result?.bot);
-    if (!answers.length) return;
-    state.pending = mergePending(readLocalState(project, n)?.pending, state.pending);
-    for (const result of answers) answerPending(state, 'request', { head: result.head, by: result.reviewer, repo, isAncestor: (a, b) => isAncestor(root, a, b) });
-  }
-
-  function finish(status, extra) {
-    answerRequests();
-    noteFindings(extra);
-    const result = { status, pr: n, repo, head, base, depth: plan.depth, round: state.rounds.length, max_rounds: maxRounds, engine: plan.engine, ...extra };
-    // Every result on a head whose review a fallback replaced says so.
-    if (fallbacks.length) result.quota_fallback = fallbacks.map((stop) => ({ stage: stop.stage, replaces: stop.reviewer, choice: stop.choice, signed_off_by: stop.signoff?.by ?? null, note: quota.describe(stop) }));
-    // Slice results of packings this head no longer makes count for nothing again: they leave the record. A pass of
-    // this plan always stays.
-    prunePasses(state, plan.slices, new Set(plan.stages.flatMap((stage) => stage.passes.map((pass) => pass.id))));
-    // The disputes the Human may settle on this head: `aidrian pr signoff --overrule` refuses any other invariant.
-    state.disputes = { head, items: plan.flows.flatMap((flow) => flowStatus(flow).disputed.map((invariant) => ({ flow: flow.id, invariant }))) };
-    // The approvals that closed an invariant, kept for the summary, and the path's state when an invariant names
-    // approvers: which switch is off, or why the approvals could not be read.
-    state.outside = { head, ...outsideClosed() };
-    // The invariants the reviewers left open on this head, before any outside evidence: `aidrian pr signoff --accept`
-    // closes only an unverified one of these, and refuses a violated one.
-    state.invariants = { head, items: plan.flows.flatMap((flow) => {
-      const status = flowStatus(flow, { outside: false });
-      return [...status.open.map((invariant) => ({ flow: flow.id, invariant, state: 'violated' })), ...status.unverified.map((invariant) => ({ flow: flow.id, invariant, state: 'unverified' }))];
-    }) };
-    if (approvalPath) result.approvals = { on: approvalPath.on, ...(approvalPath.off ? { off: approvalPath.off } : {}), ...(approvals().error ? { error: approvals().error } : {}), closed: state.outside.approvals };
-    settle(result);
-    if (onPr) {
-      const body = summaryBody(state, { ...plan, flows: plan.flows.map((flow) => ({ ...flow, signed: flowStatus(flow).signed, humanSigned: keptSignoffs.has(flow.id) })) }, status);
-      try {
-        writeSummary(summary, (id) => forge.editComment(repo, id, body), () => forge.postComment(repo, n, body));
-      } catch (error) {
-        result.summary_error = error.message;
-      }
-    }
-    result.plan = { depth: plan.depth, reasons: plan.reasons, flows: plan.flows.map((flow) => flow.id), stages: plan.stages.map((stage) => ({ name: stage.name, passes: stage.passes.map((pass) => pass.id) })) };
-    return result;
-  }
+  const { status, ...carried } = decision;
+  return finish(s, status, { ...extra, ...carried });
 }
 
-// The record to change, as readRecord gives it: the newer of this machine's and the one in the pull request's
-// comments (`remote`, as remoteState read them), so a write never builds on a stale copy. A held comment newer than
-// this machine's record is refused, never started over.
-function current(project, pr, repo, remote) {
-  const record = readRecord(project, pr, remote ?? [], repo);
-  if (record.held !== undefined) throw new Error(heldMessage(pr, record.held));
-  return record.state;
+// A reviewer out of quota: the stop goes on the record for this head, and the Human is asked what replaces it, unless
+// the plan requires an independent model, which no fallback gives.
+function quotaStop(s, pass, stage, reason, extra = {}) {
+  const { opts, state, head, plan, passes, map, n } = s;
+  const stop = quota.recordStop(state, { head, stage, pass, reason });
+  const refused = quota.refusal(plan, stop, passes, map);
+  return finish(s, 'blocked_quota', { reason, pass: pass.id, ...extra, ...(refused ? { fallback_refused: refused } : quota.question({ pr: n, stop, withBot: opts.withBot })) });
 }
 
-// The pull request's comments, where its summary comment carries the record, or null when they cannot be read
-// (offline: the local record). With config.json `review.record: "local"` there is no summary comment, and the pull
-// request is not read.
-export function remoteState(repo, pr, forge = forgeFor(undefined), config = null) {
-  if (config?.review.record === 'local') return null;
-  try {
-    return forge.conversationComments(repo, pr);
-  } catch {
-    return null;
-  }
-}
-
-// `aidrian pr attest <PR> --pass <id> ...`: one pass's result, for this head, into the review record.
-// With `findingsText` (--findings-file), the counts come from the findings one by one, and the disposition table
-// decides which stay open (lib/review/findings.mjs).
-export function recordPass(project, { pr, repo, pass, head, reviewer, findings, fixed, accepted = 0, verdictsText = null, findingsText = null, remote = null }) {
-  const itemized = findingsText === null ? null : parseFindings(findingsText);
-  if (itemized) ({ findings, fixed, accepted } = itemized);
-  if (fixed + accepted > findings) throw new Error('--fixed and --accepted together cannot exceed --findings');
-  const verdicts = verdictsText === null ? [] : parseVerdicts(verdictsText);
-  // An agent slice writes its report to the cross pass in the same file: { verdicts, contracts, cross_notes }.
-  let report = {};
-  try {
-    const raw = verdictsText === null ? null : JSON.parse(verdictsText);
-    const strings = (list) => (Array.isArray(list) ? list.filter((each) => typeof each === 'string').slice(0, 50) : []);
-    if (raw && !Array.isArray(raw)) report = { contracts: strings(raw.contracts), cross_notes: strings(raw.cross_notes) };
-  } catch {}
-  const state = current(project, pr, repo, remote);
-  const before = state.passes[pass];
-  const files = state.dispatched?.[pass]?.files ?? null;
-  state.passes[pass] = { head, reviewer, files, findings, open: findings - fixed - accepted, verdicts, ...report, list: itemized?.list ?? (before?.head === head ? before.list : null) };
+// The one writer of every return after the record is read, but `held`, which must write nothing: the step's outcome
+// goes into this machine's record, for the merge guard (lib/rules/github/merge-review.mjs). Only `finish` also
+// publishes the record to the pull request.
+function settle({ project, root, repo, n, state }, result) {
+  // A gate review recorded while the step ran is on disk only: merge it in before a finished outcome answers it.
+  state.pending = mergePending(readLocalState(project, n)?.pending, state.pending);
+  noteOutcome(state, result, (a, b) => isAncestor(root, a, b), repo);
   writeLocalState(project, state);
-  return state.passes[pass];
+  return result;
 }
 
-// `aidrian pr signoff <PR> --flow <id> --head <sha>`: the Human's sign-off of a flow on a head. An audit entry, not
-// proof: the summary comment shows it, and who ran it.
-// With `dryRun`, every refusal runs and nothing is written: `aidrian pr signoff --check`.
-export function recordSignoff(project, { pr, repo, flow, head, by, remote = null, dryRun = false }) {
-  const state = current(project, pr, repo, remote);
-  const asked = state.signoffable;
-  if (!asked || !sameCommit(asked.head, head)) throw new Error(`no review of ${repo}#${pr} ran on ${head.slice(0, 7)}: run \`aidrian pr review ${pr}\` on that head first, and sign off only a flow it names`);
-  if (!asked.flows.includes(flow)) {
-    const which = asked.flows.length ? `only ${asked.flows.join(', ')} can be` : 'no flow is';
-    throw new Error(`flow ${flow} takes no Human sign-off on ${head.slice(0, 7)} of ${repo}#${pr}: ${which} signed off there. A sign-off never clears a violated invariant: fix the code, or, where reviewers disagree, settle it with the --overrule command the review prints`);
+// Every bot answer that counts for this head, fresh or reused, answers the reviews the Human asked for
+// (`aidrian pr request`), recorded while the step ran included. A reused answer counts with its own head.
+function answerRequests({ project, root, repo, n, state, passes, map, resultFor }) {
+  const answers = passes.filter((pass) => map[pass.reviewer]?.kind === 'remote').map(resultFor).filter((result) => result?.bot);
+  if (!answers.length) return;
+  state.pending = mergePending(readLocalState(project, n)?.pending, state.pending);
+  for (const result of answers) answerPending(state, 'request', { head: result.head, by: result.reviewer, repo, isAncestor: (a, b) => isAncestor(root, a, b) });
+}
+
+function finish(s, status, extra) {
+  const { forge, repo, n, head, base, onPr, summary, state, plan, fallbacks, keptSignoffs, maxRounds, flowStatus, outsideClosed, approvalPath, approvals } = s;
+  answerRequests(s);
+  noteFindings(s, extra);
+  const result = { status, pr: n, repo, head, base, depth: plan.depth, round: state.rounds.length, max_rounds: maxRounds, engine: plan.engine, ...extra };
+  // Every result on a head whose review a fallback replaced says so.
+  if (fallbacks.length) result.quota_fallback = fallbacks.map((stop) => ({ stage: stop.stage, replaces: stop.reviewer, choice: stop.choice, signed_off_by: stop.signoff?.by ?? null, note: quota.describe(stop) }));
+  // Slice results of packings this head no longer makes count for nothing again: they leave the record. A pass of
+  // this plan always stays.
+  prunePasses(state, plan.slices, new Set(plan.stages.flatMap((stage) => stage.passes.map((pass) => pass.id))));
+  // The disputes the Human may settle on this head: `aidrian pr signoff --overrule` refuses any other invariant.
+  state.disputes = { head, items: plan.flows.flatMap((flow) => flowStatus(flow).disputed.map((invariant) => ({ flow: flow.id, invariant }))) };
+  // The approvals that closed an invariant, kept for the summary, and the path's state when an invariant names
+  // approvers: which switch is off, or why the approvals could not be read.
+  state.outside = { head, ...outsideClosed() };
+  // The invariants the reviewers left open on this head, before any outside evidence: `aidrian pr signoff --accept`
+  // closes only an unverified one of these, and refuses a violated one.
+  state.invariants = { head, items: plan.flows.flatMap((flow) => {
+    const status = flowStatus(flow, { outside: false });
+    return [...status.open.map((invariant) => ({ flow: flow.id, invariant, state: 'violated' })), ...status.unverified.map((invariant) => ({ flow: flow.id, invariant, state: 'unverified' }))];
+  }) };
+  if (approvalPath) result.approvals = { on: approvalPath.on, ...(approvalPath.off ? { off: approvalPath.off } : {}), ...(approvals().error ? { error: approvals().error } : {}), closed: state.outside.approvals };
+  settle(s, result);
+  if (onPr) {
+    const body = summaryBody(state, { ...plan, flows: plan.flows.map((flow) => ({ ...flow, signed: flowStatus(flow).signed, humanSigned: keptSignoffs.has(flow.id) })) }, status);
+    try {
+      writeSummary(summary, (id) => forge.editComment(repo, id, body), () => forge.postComment(repo, n, body));
+    } catch (error) {
+      result.summary_error = error.message;
+    }
   }
-  state.signoffs[flow] = { head, by, at: new Date().toISOString() };
-  if (!dryRun) writeLocalState(project, state);
-  return state.signoffs[flow];
-}
-
-// `aidrian pr signoff <PR> --flow <id> --overrule <invariant> --head <sha> --reason <text>`: the Human settles a
-// dispute on one head, where one reviewer answered violated and another answered holds or not_affected with evidence.
-// The invariant then passes on that evidence. An audit entry, not proof, listed with the overrides in the summary.
-export function recordOverrule(project, { pr, repo, flow, invariant, head, by, reason, remote = null, dryRun = false }) {
-  const state = current(project, pr, repo, remote);
-  if (!String(reason ?? '').trim()) throw new Error('--overrule needs --reason: say why the violated verdict is wrong');
-  const disputes = state.disputes && sameCommit(state.disputes.head, head) ? state.disputes.items : null;
-  if (!disputes) throw new Error(`no review of ${repo}#${pr} ran on ${head.slice(0, 7)}: run \`aidrian pr review ${pr}\` on that head first`);
-  if (!disputes.some((each) => each.flow === flow && each.invariant === invariant)) {
-    throw new Error(overruleRefusal({ pr, repo, flow, invariant, head, invariants: state.invariants }));
-  }
-  const entry = { flow, invariant, head, by, reason: reason.trim().slice(0, 300), at: new Date().toISOString() };
-  state.overrulings = [...(state.overrulings ?? []).filter((each) => !(each.flow === flow && each.invariant === invariant && sameCommit(each.head, head))), entry];
-  state.overrides = [...state.overrides, `${by} overruled the violated verdict on ${flow}/${invariant} at ${head.slice(0, 7)}: ${entry.reason}`];
-  if (!dryRun) writeLocalState(project, state);
-  return entry;
-}
-
-// `aidrian pr signoff <PR> --flow <id> --accept <invariant> --evidence <url> --reason <text> --head <sha>`: the Human
-// closes, on one head, an invariant no reviewer could verify, on evidence outside the tool, such as a designer's
-// approval of real screenshots. `evidence` is the URL of a comment, review, or review comment of this pull request, and
-// `checkEvidence(url)` throws unless the forge finds it there. The acceptance never clears a violated invariant, and
-// holds for that head only. An audit entry, not proof, listed apart from the verdicts in the summary.
-export function recordAccept(project, { pr, repo, flow, invariant, head, by, reason, evidence, checkEvidence = null, remote = null, dryRun = false }) {
-  const state = current(project, pr, repo, remote);
-  if (!String(reason ?? '').trim()) throw new Error('--accept needs --reason: say what the outside evidence shows');
-  const known = state.invariants && sameCommit(state.invariants.head, head) ? state.invariants.items : null;
-  if (!known) throw new Error(`no review of ${repo}#${pr} ran on ${head.slice(0, 7)}: run \`aidrian pr review ${pr}\` on that head first, and accept only an invariant it lists as unverified`);
-  const item = known.find((each) => each.flow === flow && each.invariant === invariant);
-  if (item?.state === 'violated') throw new Error(`invariant ${invariant} of flow ${flow} is violated on ${head.slice(0, 7)} of ${repo}#${pr}: an acceptance never clears a violated invariant. Fix the code, or, where reviewers disagree, settle it with the --overrule command the review prints`);
-  if (!item) throw new Error(`invariant ${invariant} of flow ${flow} is not unverified on ${head.slice(0, 7)} of ${repo}#${pr}: --accept closes only an invariant the review lists as unverified on that head`);
-  if (typeof evidence !== 'string' || !/^https:\/\/\S+$/u.test(evidence)) throw new Error('--accept needs --evidence: the https URL of a comment, review, or review comment of this pull request');
-  if (typeof checkEvidence !== 'function') throw new Error(`--evidence ${evidence} could not be checked`);
-  const kind = checkEvidence(evidence);
-  const entry = { flow, invariant, head, by, reason: reason.trim().slice(0, 300), evidence, kind, at: new Date().toISOString() };
-  state.acceptances = [...(state.acceptances ?? []).filter((each) => !(each.flow === flow && each.invariant === invariant && sameCommit(each.head, head))), entry];
-  if (!dryRun) writeLocalState(project, state);
-  return entry;
-}
-
-// `aidrian pr signoff <PR> --stage <name> --head <sha>`: the Human's sign-off of a stage they chose to review in place of
-// a reviewer out of quota on that head (lib/review/quota.mjs). Like a flow's, an audit entry, not proof. It signs only a
-// stage the Human chose to review, so it never skips a reviewer that has its quota.
-export function recordStageSignoff(project, { pr, repo, stage, head, by, remote = null, dryRun = false }) {
-  const state = current(project, pr, repo, remote);
-  // One sign-off covers the stage: every reviewer of it the Human chose to replace on that head.
-  const stops = (state.quotaStops ?? []).filter((each) => each.stage === stage && sameCommit(each.head, head) && each.choice === quota.HUMAN);
-  if (!stops.length) throw new Error(`no Human review of the ${stage} stage is waiting on ${head.slice(0, 7)} of #${pr}: --stage signs off only a stage the Human chose to review after its reviewer ran out of quota`);
-  const signoff = { by, at: new Date().toISOString() };
-  for (const stop of stops) stop.signoff = signoff;
-  if (!dryRun) writeLocalState(project, state);
-  return signoff;
+  result.plan = { depth: plan.depth, reasons: plan.reasons, flows: plan.flows.map((flow) => flow.id), stages: plan.stages.map((stage) => ({ name: stage.name, passes: stage.passes.map((pass) => pass.id) })) };
+  return result;
 }
 
 // The CLI body of `aidrian pr review [PR] [--with-bot] [--max-rounds N] [--timeout-sec S] [--quota-fallback agent:NAME|human]`:

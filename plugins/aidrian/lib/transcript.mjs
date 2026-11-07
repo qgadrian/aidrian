@@ -257,8 +257,8 @@ const isPluginSkill = (name) => {
 };
 const PR_URL = /\/pull\/\d+/u;
 // What shows a review command ran: the one JSON object `aidrian pr review` and `aidrian pr await-review` print, which
-// opens with its `status`, one of these, and the pull request's `pr` (lib/review/run.mjs EXIT and `finish`,
-// lib/pr-await-review.mjs `result`; test/transcript.test.mjs holds the list to their source). An exit code cannot show
+// opens with its `status`, one of these, and the pull request's `pr` (lib/review/run.mjs EXIT and `finish`, which
+// lib/review/step.mjs and lib/review/stages.mjs call, and lib/pr-await-review.mjs `result`; test/transcript.test.mjs holds the list to their source). An exit code cannot show
 // it: it is the whole line's, and `false && aidrian pr review 12` ends `Exit code 1` with no review run.
 export const REVIEW_OUTPUT_STATUSES = Object.freeze([
   'dispatch', 'running', 'fix_required', 'received', 'none_needed', 'human_required', 'timed_out', 'checks_pending',

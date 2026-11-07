@@ -50,7 +50,8 @@ In a group such as `github`, set only the keys you change; the others keep their
       "duplicateBody": false
     },
     "reviewGate": { "enabled": false, "checklist": null },
-    "autoMerge": { "allow": false, "default": "off", "strategy": null, "deleteBranch": false, "deleteWorktree": false }
+    "autoMerge": { "allow": false, "default": "off", "strategy": null, "deleteBranch": false, "deleteWorktree": false },
+    "unattendedWaiver": { "allow": false }
   },
   "review": { "engine": null, "record": "comment", "rules": [], "ignore": ["<lockfiles, snapshots, generated, vendored, minified>"], "nonBehaviour": ["<docs and assets>"], "flows": {}, "planCommand": null, "reviewers": {}, "approvals": { "allow": false }, "productFeedback": { "auto": false, "files": null, "maxPersonas": 2 } },
   "docs": { "wrapLimit": 155 },
@@ -156,6 +157,8 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `github.autoMerge.deleteBranch` | `true` deletes the remote head branch with the merge. Read from the default branch. |
 | `github.autoMerge.deleteWorktree` | `true` removes the head branch's worktree after the merge, but never a session's own: [Cleanup](#cleanup-after-the-merge). Read from the default branch. |
 | `github.autoMerge` in `.aidrian.local.json` | This machine's choice, the same key with one field: `{ "enabled": true }` opts in under the team's `allow`, and `{ "enabled": false }` stays out. Unset follows `github.autoMerge.default`. The older `"on"` and `"off"` still work. |
+| `github.unattendedWaiver.allow` | `true` lets a machine opt in to the [unattended waiver](#unattended-waiver): the merge guard may take a judge's recorded verdict in place of the Human's "Merge anyway", at the round cap. `false`, the default, keeps it off. It counts only when the repository's default branch and the pull request's base both allow it, read from GitHub, so a branch cannot raise it. |
+| `github.unattendedWaiver` in `.aidrian.local.json` | This machine's choice, the same shape as `github.autoMerge` there: `{ "enabled": true }` or `{ "enabled": false }`, or the older `"on"` and `"off"`. Unset is off: there is no team default. |
 | `review.engine` | The project's [review engine](review.md#the-engine); it wins over the machine's. `null` leaves the choice to each machine. |
 | `review.record` | Where the [review record](review.md#the-record) goes: `"comment"` also writes a summary comment on the pull request; `"local"` keeps it in the state folder only. |
 | `review.productFeedback.maxPersonas` | How many personas `persona-audit` [picks for a pull request](personas.md#a-pull-request-link-alone): a whole number from 1 to 10, 2 by default. A run that names personas, or `all`, has no cap. |
@@ -254,7 +257,8 @@ Each machine opts in with this in `.aidrian.local.json`:
 { "github": { "autoMerge": { "enabled": true } } }
 ```
 
-`enabled` is the only field, and `autoMerge` the only `github` key, that file takes. A machine never goes past `allow`,
+`enabled` is the only field, and `autoMerge` and [`unattendedWaiver`](#unattended-waiver) the only `github` keys,
+that file takes. A machine never goes past `allow`,
 and `strategy` and the cleanup stay the team's. The older `"on"` and `"off"` still work.
 
 | Team | No local setting | `enabled: true` | `enabled: false` |
@@ -335,6 +339,68 @@ That run reports the worktree kept: run the `worktree-cleanup` skill from the ma
 
 `deleteBranch` means the remote branch; removing the worktree takes the local one with it.
 It does not reach a fork: gh never deletes a head branch in another repository.
+
+## Unattended waiver
+
+It lets a session that runs without the Human merge a pull request whose review stopped at the round cap,
+on the word of a fresh judge instead of the Human's "Merge anyway".
+
+### Turn it on
+
+Both switches must be on. The team allows it in `.aidrian/config.json`, committed on the default branch
+and on the pull request's base branch:
+
+```json
+{ "version": 1, "github": { "unattendedWaiver": { "allow": true } } }
+```
+
+Each machine that takes part opts in with `.aidrian.local.json` in its main checkout:
+
+```json
+{ "github": { "unattendedWaiver": { "enabled": true } } }
+```
+
+The team value is read from GitHub, never from the working copy, so a pull request cannot turn it on.
+The machine switch reads off when git tracks the local file or the file has any error, even with `enabled: true`.
+A subagent may not write it ([the config guard](hooks.md#agent-gates)).
+`aidrian check` warns when the machine switch is on and the team's is not.
+Set [`requires.aidrian`](#plugin-version) to the release that ships the key: an older plugin rejects it.
+
+### What it covers
+
+One case only: the review step stopped at the round cap (`round_limit`) on the very head being merged, with no
+review owed. And only for a merge that names that head: `gh pr merge <PR> --match-head-commit <sha>`.
+The waiver lifts the [merge guard](hooks.md#merge-guard)'s denial; it merges nothing itself.
+
+### What it never covers
+
+- A review still owed, such as a bot review that was asked for and has not answered.
+- Any other outcome on the head: `blocked_quota`, `error`, `stuck`, `running`, `fix_required`, and the rest.
+- A head pushed after the last review step. Run `aidrian pr review` on it instead.
+- [Auto-merge](#auto-merge): `aidrian pr auto-merge` reads no waiver and still needs `received` on the head.
+
+### Example
+
+1. The review of pull request #151 stops with `round_limit` on head `abc1234`.
+2. The session runs `gh pr merge 151`. The merge guard denies it and names `aidrian pr waive` as a second route.
+3. The session dispatches a fresh read-only judge, as the `pr-review-loop` skill's `references/review-plan.md`
+   § At the cap says. The judge rules that the change may merge.
+4. The session records that verdict:
+   `aidrian pr waive 151 --verdict waive --reason "<the judge's evidence>"`.
+5. `gh pr merge 151 --squash --match-head-commit abc1234` passes the guard. Give the full SHA, as the denial prints it.
+
+When the judge says no, the session records `aidrian pr waive 151 --verdict refuse --reason "<why>"` and stops.
+The last verdict for a head counts, so a `refuse` withdraws an earlier `waive`, and a new push needs a new verdict.
+The command records `waive` only while this machine's switch is on.
+The verdicts are kept in the [review record](review.md#the-record), and shown in the pull request's summary comment
+when `review.record` posts the record there.
+
+### Trust
+
+A verdict is the session's word, not proof: a session with a shell can record one and merge under both switches.
+Only the team switch, read from GitHub, is out of a session's reach.
+For proof, protect the default and base branches with a required review from a second account,
+as [Sign-off by the Human](review.md#sign-off-by-the-human) says.
 
 ## Pull request contract
 
@@ -755,7 +821,8 @@ version and the folder of the copy that runs, so the stale install shows at the 
 A project that adopts the `session.handoff` group (`mode`, `costRatio`, `maxTokens`) sets `requires.aidrian` to the
 release that ships it: an older plugin reads only a string `session.handoff` and rejects the group.
 [handoff.md](handoff.md#config) lists the old keys and where each went.
-A project that adopts [`github.autoMerge`](#auto-merge) or [`tracker`](#tracker) does the same, since an older plugin rejects the key.
+A project that adopts [`github.autoMerge`](#auto-merge), [`github.unattendedWaiver`](#unattended-waiver), or [`tracker`](#tracker) does the same,
+since an older plugin rejects the key.
 
 ## Attribution
 

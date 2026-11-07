@@ -159,7 +159,7 @@ The compaction checklist steps aside whenever instructions are typed after `/com
 | Product feedback answer | `--by human` on a [product feedback](config.md#product-feedback) item without the Human's answer in the session | none: the Human answers, or runs it in their own shell |
 | Product feedback post | `aidrian pr product-feedback post` on a pull request from outside the team without the Human's answer in the session, and from a subagent | none: the Human answers, or runs `post` in their own shell |
 | Ready hold, in a project that runs product feedback | Marking a draft ready while its [product feedback](config.md#product-feedback) is owed ([Ready hold](#ready-hold)) | `AIDRIAN_ALLOW_UNHELD_READY=1`, set by a person in their own shell before the session |
-| Merge guard | Merging a pull request while a review it owes is open, or the review of its head has not finished ([Merge guard](#merge-guard)) | none: the Human answers "Merge anyway", or merges in their own shell |
+| Merge guard | Merging a pull request while a review it owes is open, or the review of its head has not finished ([Merge guard](#merge-guard)) | none: the Human answers "Merge anyway", or merges in their own shell; under `github.unattendedWaiver`, a verdict recorded with `aidrian pr waive` |
 | Main checkout, when turned on | A shell write to a tracked file in the main checkout; a git call there that makes a commit or moves the branch; after a `cd` it cannot trust, a relative write or a git call that may change the main checkout; and a relative write that lands there only if a `cd` inside it fails ([After a cd](#after-a-cd)) | `AIDRIAN_ALLOW_MAIN_WRITE=1` |
 
 What each rule matches:
@@ -424,8 +424,10 @@ reads only this machine's [review record](review.md#the-record), and decides in 
 3. Otherwise the head needs an `outcome` of `received` or `none_needed` on that very head. An outcome on an earlier
    head, or any other status, `running` and `error` included, refuses it.
 
-It never reads pull request comments. Its one network call is `gh pr view --json number,headRefOid`, made only when the
-command names no head or no pull request and a record may apply, and stopped after 3 seconds. A merge whose head it then
+It never reads pull request comments. Outside the unattended waiver below, its one network call is
+`gh pr view --json number,headRefOid,baseRefName,url`, made only when the
+command names no head or no pull request and a record may apply, and stopped after 3 seconds, or sooner at the
+deadline the unattended waiver's paragraph below states. A merge whose head it then
 cannot read is refused with a reason that says to pass `gh pr merge <PR> --match-head-commit <sha>`; so is one whose
 pull request number it cannot read, such as `gh pr merge "$PR"`, or a `gh api` merge path whose number or repository
 part is a variable; a method it cannot read, `-X "$M"`, counts as a merge.
@@ -439,6 +441,27 @@ The Human waives it. The reason prints a question naming `#<PR>` and the head's 
 the session transcript holds the Human's AskUserQuestion answer to a question naming both, whose chosen option starts
 with "Merge anyway", given at or after the head's outcome and every owed review. Without a transcript in that shape
 (Codex), the Human merges in their own shell.
+
+Under the [unattended waiver](config.md#unattended-waiver), a judge's verdict recorded with `aidrian pr waive` stands in
+for that answer, for one denial only: `round_limit` on the merge's own head, with nothing owed. A head pushed after the
+last review step, whatever its outcome, is never waived, and its denial names no `aidrian pr waive` route: the review
+can still run on it. Every other denial keeps its reason. A verdict counts only for
+a merge that names its head, `--match-head-commit <sha>`, `sha=` in a `gh api` merge, or the merge tool's `sha`; for
+any other, the denial says to name it. The waiver is for a session the Human told to merge: `aidrian pr auto-merge`'s
+review gate does not read waivers. The guard reads the waiver only when the denial is that one and this
+machine's `github.unattendedWaiver` switch is on, so with the switch off it makes no network call it did not make
+before. It then reads `github.unattendedWaiver.allow` at the default branch and the pull request's base on GitHub,
+after the pull request's view: its own when it made one with the base, else one more, and git's project folder.
+Every one of these calls shares one deadline for the whole command, counted from when the hook's process started:
+none begins once 4 seconds have gone, and each is stopped with SIGKILL after 1 second (3 for the view), or at the
+deadline if that comes first. The waiver starts reading only when at most 1.5 seconds have gone: it checks that once,
+before its first read, and its later reads are held to the deadline alone. The guard's own head lookup above is not
+held to 1.5 seconds, only to the deadline: once it has passed, the lookup is not made, and a merge that names no head
+is refused and told to name it.
+So every call the guard makes, its own view included, ends within 4 seconds of the hook's start, however many merges
+one command holds, inside the hook's 5 seconds.
+A read that fails or would begin too late keeps the denial, which then says the team's value could not be read in time.
+With both switches on, the denial names `aidrian pr waive` as a second route.
 
 [Auto-merge](config.md#auto-merge) goes through this guard: the rule reads its `gh pr merge` like any other.
 The guard is not proof that a review happened, because no record lets a merge run (step 2 above).
@@ -693,8 +716,9 @@ config.json, `.aidrian.json`, and `.aidrian.local.json`, also the main checkout'
 - A call without `agent_id` is the main session's, which may still change them.
 - A block is [recorded](#recorded-blocks) as `config-guard`, with the file it changes as its reason.
 - With or without gates, a subagent may not target `.aidrian.local.json` with a Write, Edit, or apply_patch that changes a machine switch,
-  or a Bash command that names `autoMerge` or `reviewApprovals`:
-  the [auto-merge](config.md#auto-merge) and review-approvals switches are the main session's. Other writes to that file follow the rules above.
+  or a Bash command that names `autoMerge`, `unattendedWaiver`, or `reviewApprovals`:
+  the [auto-merge](config.md#auto-merge), [unattended waiver](config.md#unattended-waiver), and review-approvals switches
+  are the main session's. Other writes to that file follow the rules above.
 - With or without gates, the same holds for `review.productFeedback` in that file: a Write, Edit, or apply_patch that changes it,
   through a JSON-escaped key, a removed key, or a file left unparsable included, or a Bash command that names `productFeedback`:
   the machine's [product feedback](config.md#product-feedback) choice is the main session's.

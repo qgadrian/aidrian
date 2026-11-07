@@ -145,7 +145,11 @@ export function cleanOutput(raw) {
 export const VERDICT_MEANING = 'A verdict says whether the change keeps the rule, not how the question is worded: holds means the change keeps the rule (its `source`, or the invariant), violated means the change breaks it, whichever answer, yes or no, the question would take.';
 
 // How a pass that reviews only the change since an earlier head judges its flows: from the merge base.
-export const flowBaseBrief = (input) => `Find bugs in ${input.base}..${input.head}, but judge every flow invariant on the whole change, \`git diff ${input.flowBase} ${input.head}\`: an invariant compares the head with the base branch, so a change an earlier push of this pull request made counts as much as a new one, and narrowing something this pull request itself added weakens nothing the base had.`;
+export const flowBaseBrief = (input) => `Find bugs in ${input.remerge ? `\`git show --remerge-diff ${input.head}\`` : `${input.base}..${input.head}`}, but judge every flow invariant on the whole change, \`git diff ${input.flowBase} ${input.head}\`: an invariant compares the head with the base branch, so a change an earlier push of this pull request made counts as much as a new one, and narrowing something this pull request itself added weakens nothing the base had.`;
+
+// What a reviewer of a merge from the base branch reads when the merge changed more than git's own merge would
+// (lib/review/run.mjs): those changes are the review, and the rest of the diff was reviewed before.
+export const remergeBrief = (input) => `This head is a merge from the base branch: review only the changes the merge commit itself made, its conflict resolutions and any other edit, \`git show --remerge-diff ${input.head}\`. A file listed with no lines there had a conflict whose resolution shows no lines, such as a binary file or a kept side of a modify/delete: check that side was the right one. The rest of \`git diff ${input.base} ${input.head}\` was reviewed before, on this pull request's earlier heads or on the base branch.`;
 
 // What a reviewer of a project below the repository root reads, with `prefix` the project's folder from the top: a plain
 // `git diff` lists repository-root paths and files outside the project, and a citation of one is refused.
@@ -169,6 +173,7 @@ export function reviewPrompt(input, prefix = '') {
     input.checklist ? `Also review the change against the project's checklist (${input.checklist.path}), included in the input.` : '',
     input.flows.length ? `For each critical flow below, give one verdict per invariant: holds, violated, not_affected, or cannot_verify. Evidence for holds or not_affected must cite file:line at the head commit, or a test name. Earlier reviewers' verdicts are listed: challenge every "holds" you cannot confirm yourself. Where an invariant has a \`source\`, the section of the project doc it cites, judge against that source: \`text\` is only the question. ${VERDICT_MEANING}` : '',
     input.flowBase ? flowBaseBrief(input) : '',
+    input.remerge ? remergeBrief(input) : '',
     'Answer with JSON only, in the schema you were given.',
     '',
     'Input (JSON):',

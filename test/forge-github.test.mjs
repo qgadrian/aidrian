@@ -349,10 +349,10 @@ test('the hooks` calls: the merge guard`s view and the pull request body rule`s 
   assert.deepEqual(bodies(null), [{ number: 1, body: 'b' }]);
   bodies('acme/notes');
   assert.deepEqual(calls.map((call) => call.args), [
-    ['pr', 'view', '--json', 'number,headRefOid'],
-    ['pr', 'view', '5', '--json', 'number,headRefOid', '--repo', 'acme/notes'],
-    ['pr', 'view', 'feat/x', '--json', 'number,headRefOid'],
-    ['pr', 'view', '', '--json', 'number,headRefOid', '--repo', 'acme/notes'],
+    ['pr', 'view', '--json', 'number,headRefOid,baseRefName,url'],
+    ['pr', 'view', '5', '--json', 'number,headRefOid,baseRefName,url', '--repo', 'acme/notes'],
+    ['pr', 'view', 'feat/x', '--json', 'number,headRefOid,baseRefName,url'],
+    ['pr', 'view', '', '--json', 'number,headRefOid,baseRefName,url', '--repo', 'acme/notes'],
     ['pr', 'list', '--state', 'open', '--limit', '200', '--json', 'number,body'],
     ['pr', 'list', '--state', 'open', '--limit', '200', '--json', 'number,body', '--repo', 'acme/notes'],
   ]);

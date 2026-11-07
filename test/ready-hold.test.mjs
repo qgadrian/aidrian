@@ -1,6 +1,7 @@
 // The ready hold: no draft is marked ready while its product feedback is owed (lib/rules/github/ready-hold.mjs). Every
-// gh here is test/fixtures/ready-hold/gh.mjs, in-process through the exec seam or as a program on PATH: nothing reaches
-// GitHub, and no real pull request is marked ready. Each repository is a temporary one, with no GIT_DIR.
+// gh here is test/fixtures/ready-hold/gh.mjs, in-process through gh's exec seam under the real forge adapter, or as a
+// program on PATH: nothing reaches GitHub, and no real pull request is marked ready. Each repository is a temporary one,
+// with no GIT_DIR.
 
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -9,6 +10,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import { runGh } from '../plugins/aidrian/lib/forges/github-cli.mjs';
+import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
 import { runProductFeedback } from '../plugins/aidrian/lib/pr-product-feedback.mjs';
 import { findProject, projectAt } from '../plugins/aidrian/lib/project.mjs';
 import { emptyState, writeLocalState } from '../plugins/aidrian/lib/review/state.mjs';
@@ -50,11 +53,19 @@ function repo(t, { feedback = ON, local = null, refs = 'main', extra = {} } = {}
 
 const gitIn = (dir) => (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' }).trim();
 
+// The hold's forge seam over gh's exec seam: the real forge adapter and gh runner, with only gh's process replaced, so the
+// hold's calls reach `exec` as the gh commands they run.
+const forgeOver = (exec) => (cwd, options) => createGithubForge({ ...options, cwd, run: (args, given) => runGh(args, { ...given, exec }) });
+// A forge over the fake gh's `answer`, for the product feedback commands.
+const answering = (gh) => createGithubForge({ run: (args) => gh(args) });
+
 // The exec seam over the fake gh: each call's arguments and the time it was given. `spec` may change between calls.
+// Every call is stopped with SIGKILL at its time: a gh that ignores the default signal would outlive the hook.
 function seam(spec) {
   const calls = [];
   const exec = (file, args, options) => {
     assert.equal(file, 'gh');
+    assert.equal(options.killSignal, 'SIGKILL');
     calls.push({ args, timeout: options.timeout });
     return answer(args, { head: HEAD, config: configText(ON), ...spec });
   };
@@ -67,7 +78,7 @@ function feedback(dir, head, ...argv) {
   const saved = console.log;
   console.log = () => {};
   try {
-    return runProductFeedback(argv, findProject(dir), { gh, remotes: () => ['github.com/acme/notes'] });
+    return runProductFeedback(argv, findProject(dir), { forge: answering(gh), remotes: () => ['github.com/acme/notes'] });
   } finally {
     console.log = saved;
   }
@@ -82,7 +93,7 @@ function recordDefect(dir) {
 
 const owedNow = (dir, spec = { head: HEAD }, more = {}) => {
   const { calls, exec } = seam(spec);
-  return { calls, reason: (command) => check(command, { cwd: dir, env: {}, exec, ...more }) };
+  return { calls, reason: (command) => check(command, { cwd: dir, env: {}, forge: forgeOver(exec), ...more }) };
 };
 
 test('with nothing recorded, every way of marking ready is held, and the deny names the skill and status', (t) => {
@@ -144,7 +155,7 @@ test('with nothing recorded, every way of marking ready is held, and the deny na
     assert.doesNotMatch(denied, new RegExp(`${OVERRIDE}|opt|auto`, 'u'), 'the deny names neither the override nor the opt-out');
   }
   const { reason: inEnv } = owedNow(dir);
-  assert.match(check('gh pr ready 7', { cwd: dir, env: { GH_REPO: 'acme/notes' }, exec: seam({ head: HEAD }).exec }) ?? '', /#7 ready/u);
+  assert.match(check('gh pr ready 7', { cwd: dir, env: { GH_REPO: 'acme/notes' }, forge: forgeOver(seam({ head: HEAD }).exec) }) ?? '', /#7 ready/u);
   for (const command of ['gh pr ready 7 --undo', 'gh pr ready 7 --undo=true', 'gh pr ready 7 --undo=1', 'gh pr ready 7 --undo=false --undo']) assert.equal(inEnv(command), null, command);
 });
 
@@ -268,14 +279,14 @@ test('the hold lets the command run when clear, when a read fails, for another r
   const failing = () => {
     throw Object.assign(new Error('gh failed'), { stderr: 'gh: HTTP 502\n', status: 1 });
   };
-  assert.equal(check('gh pr ready 7', { cwd: fresh, env: {}, exec: failing }), null, 'gh failing lets it run');
+  assert.equal(check('gh pr ready 7', { cwd: fresh, env: {}, forge: forgeOver(failing) }), null, 'gh failing lets it run');
   assert.equal(owedNow(fresh).reason('gh pr ready 7 -R someone/else'), null, 'a repository no remote holds');
   assert.equal(owedNow(fresh).reason(`gh pr ready https://github.com/someone/else/pull/7`), null);
   const { calls, exec } = seam({ head: HEAD });
-  assert.equal(check('gh pr ready 7', { cwd: fresh, env: { [OVERRIDE]: '1' }, exec }), null, 'the override in the hook environment');
+  assert.equal(check('gh pr ready 7', { cwd: fresh, env: { [OVERRIDE]: '1' }, forge: forgeOver(exec) }), null, 'the override in the hook environment');
   assert.equal(calls.length, 0);
-  assert.match(check(`${OVERRIDE}=1 gh pr ready 7`, { cwd: fresh, env: {}, exec }) ?? '', /still owed/u, 'an inline setter lifts nothing');
-  assert.match(check(`export ${OVERRIDE}=1; gh pr ready 7`, { cwd: fresh, env: {}, exec }) ?? '', /still owed/u);
+  assert.match(check(`${OVERRIDE}=1 gh pr ready 7`, { cwd: fresh, env: {}, forge: forgeOver(exec) }) ?? '', /still owed/u, 'an inline setter lifts nothing');
+  assert.match(check(`export ${OVERRIDE}=1; gh pr ready 7`, { cwd: fresh, env: {}, forge: forgeOver(exec) }) ?? '', /still owed/u);
 });
 
 test('every gh call shares one deadline, and a gh that stalls past it lets the command run', (t) => {
@@ -293,7 +304,7 @@ test('every gh call shares one deadline, and a gh that stalls past it lets the c
     clock += 1500;
     return answer(args, { head: HEAD, config: configText(ON) });
   };
-  assert.equal(check('gh pr ready 7', { cwd: dir, env: {}, exec, now: () => clock }), null);
+  assert.equal(check('gh pr ready 7', { cwd: dir, env: {}, forge: forgeOver(exec), now: () => clock }), null);
   assert.ok(given.length >= 2, `${given}`);
   assert.equal(given[0], DEADLINE_MS);
   for (let i = 1; i < given.length; i += 1) assert.equal(given[i], DEADLINE_MS - 1500 * i, 'each call gets what is left');
@@ -305,7 +316,7 @@ test('every gh call shares one deadline, and a gh that stalls past it lets the c
     late.push(options.timeout);
     throw Object.assign(new Error('spawnSync gh ETIMEDOUT'), { code: 'ETIMEDOUT' });
   };
-  assert.equal(check('gh pr ready 7', { cwd: dir, env: {}, exec: lateExec, now: () => 5_000, startedAt: 1_100 }), null);
+  assert.equal(check('gh pr ready 7', { cwd: dir, env: {}, forge: forgeOver(lateExec), now: () => 5_000, startedAt: 1_100 }), null);
   assert.deepEqual(late, [HOOK_BUDGET_MS - 3_900]);
   // performance.timeOrigin, the hook's `startedAt`, has a fraction; execFileSync takes whole milliseconds only.
   const whole = [];
@@ -314,7 +325,7 @@ test('every gh call shares one deadline, and a gh that stalls past it lets the c
     if (!Number.isInteger(options.timeout)) throw new RangeError('The value of "timeout" is out of range. It must be an unsigned integer.');
     return answer(args, { head: HEAD, config: configText(ON) });
   };
-  assert.match(check('gh pr ready 7', { cwd: dir, env: {}, exec: strict, now: () => 5_000, startedAt: 2_000.6 }) ?? '', /still owed/u);
+  assert.match(check('gh pr ready 7', { cwd: dir, env: {}, forge: forgeOver(strict), now: () => 5_000, startedAt: 2_000.6 }) ?? '', /still owed/u);
   assert.ok(whole.length && whole.every(Number.isInteger), `${whole}`);
 });
 
@@ -345,14 +356,14 @@ test('the MCP form holds draft false through the server\'s two tools, and passes
   const dir = repo(t);
   const { exec } = seam({ head: HEAD });
   const given = { owner: 'acme', repo: 'notes', pullNumber: 7 };
-  assert.match(checkMcp({ ...given, draft: false }, { cwd: dir, env: {}, exec }) ?? '', /#7 ready/u);
-  assert.equal(checkMcp({ ...given, draft: true }, { cwd: dir, env: {}, exec }), null);
-  assert.equal(checkMcp({ ...given, title: 'x' }, { cwd: dir, env: {}, exec }), null, 'an edit with no draft');
-  assert.equal(checkMcp({ ...given, draft: false }, { cwd: dir, env: { [OVERRIDE]: '1' }, exec }), null);
-  assert.equal(checkMcp({ ...given, pullNumber: 'seven', draft: false }, { cwd: dir, env: {}, exec }), null, 'a number it cannot read runs');
-  assert.equal(checkMcp({ ...given, owner: 'someone', draft: false }, { cwd: dir, env: {}, exec }), null, 'another repository');
+  assert.match(checkMcp({ ...given, draft: false }, { cwd: dir, env: {}, forge: forgeOver(exec) }) ?? '', /#7 ready/u);
+  assert.equal(checkMcp({ ...given, draft: true }, { cwd: dir, env: {}, forge: forgeOver(exec) }), null);
+  assert.equal(checkMcp({ ...given, title: 'x' }, { cwd: dir, env: {}, forge: forgeOver(exec) }), null, 'an edit with no draft');
+  assert.equal(checkMcp({ ...given, draft: false }, { cwd: dir, env: { [OVERRIDE]: '1' }, forge: forgeOver(exec) }), null);
+  assert.equal(checkMcp({ ...given, pullNumber: 'seven', draft: false }, { cwd: dir, env: {}, forge: forgeOver(exec) }), null, 'a number it cannot read runs');
+  assert.equal(checkMcp({ ...given, owner: 'someone', draft: false }, { cwd: dir, env: {}, forge: forgeOver(exec) }), null, 'another repository');
   // The repository as the call spells it, read by gh: any case is this repository.
-  assert.match(checkMcp({ owner: 'ACME', repo: 'Notes', pullNumber: 7, draft: false }, { cwd: dir, env: {}, exec }) ?? '', /#7 ready/u);
+  assert.match(checkMcp({ owner: 'ACME', repo: 'Notes', pullNumber: 7, draft: false }, { cwd: dir, env: {}, forge: forgeOver(exec) }) ?? '', /#7 ready/u);
 });
 
 test('a call that names its repository is judged in the session\'s project as well, whatever folder it runs in', (t) => {
@@ -418,7 +429,7 @@ test('status of a project without the feature, or a machine that opted out, make
     const saved = console.log;
     console.log = (line) => out.push(line);
     try {
-      const code = runProductFeedback(['status', '7', '--json'], findProject(dir), { gh: (args) => calls.push(args) && answer(args, { head: HEAD, config: configText(ON) }), remotes: () => ['github.com/acme/notes'] });
+      const code = runProductFeedback(['status', '7', '--json'], findProject(dir), { forge: answering((args) => calls.push(args) && answer(args, { head: HEAD, config: configText(ON) })), remotes: () => ['github.com/acme/notes'] });
       return { code, calls, json: JSON.parse(out.join('\n')) };
     } finally {
       console.log = saved;

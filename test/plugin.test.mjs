@@ -11,7 +11,6 @@ import { decisionClasses, VOCAB_PATH } from '../plugins/aidrian/lib/decisions.mj
 import { pluginTags } from '../plugins/aidrian/lib/knowledge.mjs';
 import { runAutoMerge } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
 import { projectAt } from '../plugins/aidrian/lib/project.mjs';
-import { MEMBER_ASSOCIATIONS } from '../plugins/aidrian/lib/review/state.mjs';
 import { bannedPatterns } from '../scripts/banned-terms.mjs';
 import { CLAUDE_AGENTS, GROUPS, readAgents } from '../scripts/build.mjs';
 

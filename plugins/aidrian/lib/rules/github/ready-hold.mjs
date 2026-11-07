@@ -15,8 +15,8 @@
 //
 // Cost, in this order: a command that names no ready starts no process. A matched one reads, from git alone, whether the
 // project may run product feedback (localFeedback): a project without the key pays no gh call. Only then does it ask
-// GitHub, every gh call under one shared deadline (DEADLINE_MS and HOOK_BUDGET_MS, inside the hook's 5 s) through the
-// exec seam, and the pull request is viewed once.
+// GitHub, every forge call under one shared deadline (DEADLINE_MS and HOOK_BUDGET_MS, inside the hook's 5 s) through the
+// forge facade (lib/forges), and the pull request is viewed once.
 // It lets the command run when it cannot read the call or the state: a word the shell fills in or expands as the program,
 // `pr`, `ready`, or the target (a repository the shell fills in counts as the session's, as the merge guard reads it), a
 // graphql call with no literal id or one that names no pull request, gh failing or past the deadline, status exiting 3,
@@ -26,9 +26,7 @@
 // `AIDRIAN_ALLOW_UNHELD_READY=1` in the hook's own environment, set by a person before the session, lets every one run. Only
 // this rule reads it, from `env`, so an inline setter in a command lifts nothing.
 
-import { execFileSync } from 'node:child_process';
-
-import { runGh } from '../../gh.mjs';
+import { forgeFor } from '../../forges/index.mjs';
 import { runGit } from '../../git.mjs';
 import { VIEW_FIELDS } from '../../pr-auto-merge.mjs';
 import { feedbackStatus, localFeedback } from '../../pr-product-feedback.mjs';
@@ -56,7 +54,6 @@ const READY_VALUES = new Set(['-R', '--repo']);
 const TRUE_WORDS = new Set(['1', 't', 'T', 'TRUE', 'true', 'True']);
 // Pull request node ids: the current `PR_…`, and the legacy base64 of `011:PullRequest…`.
 const NODE_IDS = /\bPR_[A-Za-z0-9_-]{4,}|\bMDExOlB1bGxSZXF1ZXN0[A-Za-z0-9+/=]+|(?<=pullRequestId\s*:\s*\\?")[^"\\\s]+/gu;
-const NODE_QUERY = 'query($id:ID!){node(id:$id){... on PullRequest{url}}}';
 const URL_TARGET = /^https?:\/\//iu;
 const BARE = /^#?(\d+)$/u;
 
@@ -113,19 +110,23 @@ const namesReady = (text) => {
   return plain.includes(MUTATION) || (/\bgh\b/u.test(plain) && READY_LIKE.test(plain));
 };
 
-// A gh runner bounded by one deadline, at a folder: each call gets the time left, and none starts past it. A call with the
-// same arguments runs once: an `api` route is the same from any folder.
-function deadlineGh({ exec = execFileSync, now = Date.now, deadlineMs = DEADLINE_MS, startedAt = Infinity } = {}) {
+// The forge methods whose answer is the same from any folder: each names its repository or node, as an `api` route does.
+const ANY_FOLDER = new Set(['nodeChange', 'repository', 'contents', 'pull', 'viewer', 'comment']);
+
+// The forge (lib/forges), bounded by one deadline, at a folder: each call gets the time left, is stopped with SIGKILL at
+// it, and none starts past it. A call with the same arguments runs once, from any folder when ANY_FOLDER holds its method.
+// `forge` is the test seam: forgeFor's signature, (cwd, options) → the facade.
+function deadlineForge({ forge = forgeFor, now = Date.now, deadlineMs = DEADLINE_MS, startedAt = Infinity } = {}) {
   const deadline = Math.min(now() + deadlineMs, startedAt + HOOK_BUDGET_MS);
   const seen = new Map();
-  return (cwd) => (args) => {
-    const key = `${args[0] === 'api' ? '' : cwd}\0${args.join('\0')}`;
+  const call = (cwd, method, args) => {
+    const key = JSON.stringify([ANY_FOLDER.has(method) ? '' : cwd, method, args]);
     if (!seen.has(key)) {
       // Whole milliseconds: execFileSync refuses a fractional timeout, and `startedAt` (performance.timeOrigin) is one.
       const left = Math.floor(deadline - now());
       try {
         if (left <= 0) throw new Error('the ready hold ran out of time');
-        seen.set(key, { out: runGh(args, { cwd, timeoutMs: left, exec: (file, argv, options) => exec(file, argv, { ...options, killSignal: 'SIGKILL' }) }) });
+        seen.set(key, { out: forge(cwd, { timeoutMs: left, killSignal: 'SIGKILL' })[method](...args) });
       } catch (error) {
         seen.set(key, { error });
       }
@@ -134,17 +135,21 @@ function deadlineGh({ exec = execFileSync, now = Date.now, deadlineMs = DEADLINE
     if (error) throw error;
     return out;
   };
+  return (cwd) => {
+    const methods = Object.entries(forge(cwd)).filter(([name, value]) => typeof value === 'function' && name !== 'isTrustedCommenter');
+    return Object.freeze(Object.fromEntries(methods.map(([name]) => [name, (...args) => call(cwd, name, args)])));
+  };
 }
 
 // The pull requests one ready call marks, each { value, view }: `value` what status takes, a number or a URL, and `view`
 // gh's answer when the rule viewed it, so status views it once. A bare number with no repository goes to status as it is;
 // any other target is viewed as written, with `-R` as written, so gh reads every spelling it accepts. An id that names no
 // pull request marks none the rule can check.
-function marked(call, gh) {
+function marked(call, forge) {
   if (call.ids) {
     return call.ids.flatMap((id) => {
       try {
-        const url = JSON.parse(gh(['api', 'graphql', '-f', `query=${NODE_QUERY}`, '-f', `id=${id}`]))?.data?.node?.url;
+        const url = forge.nodeChange(id)?.data?.node?.url;
         return typeof url === 'string' ? [{ value: url, view: null }] : [];
       } catch {
         return [];
@@ -153,7 +158,7 @@ function marked(call, gh) {
   }
   const bare = call.target === null ? null : BARE.exec(call.target);
   if (bare && call.repo === null) return [{ value: String(Number(bare[1])), view: null }];
-  const view = JSON.parse(gh(['pr', 'view', ...(call.target === null ? [] : [call.target]), ...(call.repo === null ? [] : ['--repo', call.repo]), '--json', VIEW_FIELDS]));
+  const view = forge.change(call.target, VIEW_FIELDS, { repo: call.repo });
   return typeof view?.url === 'string' ? [{ value: view.url, view }] : [];
 }
 
@@ -196,22 +201,22 @@ function judgeCalls(calls, seams) {
   if (calls.some(({ call, projects }) => call.fed && projects.some((project) => localOf(project).state === 'on'))) return FED_REASON;
   const marks = calls.filter(({ call }) => !call.fed).reduce((sum, { call }) => sum + (call.ids?.length || 1), 0);
   if (marks > 1 && calls.some(({ projects }) => projects.some(may))) return MANY_REASON;
-  let ghAt = null;
+  let forgeAt = null;
   for (const { call, projects } of calls) {
     if (call.fed || call.unreadable) continue;
     const judged = projects.filter(may);
     if (!judged.length) continue;
-    ghAt ??= deadlineGh(seams);
+    forgeAt ??= deadlineForge(seams);
     let pulls;
     try {
-      pulls = marked(call, ghAt(judged[0].root));
+      pulls = marked(call, forgeAt(judged[0].root));
     } catch {
       continue;
     }
     for (const project of judged) {
       for (const { value, view } of pulls) {
         try {
-          const { exit, result } = feedbackStatus(value, project, { gh: ghAt(project.root), view, local: localOf(project), mainBranch: mainBranchOf(project) });
+          const { exit, result } = feedbackStatus(value, project, { forge: forgeAt(project.root), view, local: localOf(project), mainBranch: mainBranchOf(project) });
           if (exit === 2) return owedReason(result);
         } catch {}
       }
@@ -223,7 +228,7 @@ function judgeCalls(calls, seams) {
 const named = (call) => Boolean(call.ids || call.repo || call.url);
 
 // The deny reason for `command`, or null. `cwd` is the session's folder, `env` the hook's own environment; the rest are the
-// seams of deadlineGh.
+// seams of deadlineForge.
 export function check(command, { cwd = process.cwd(), env = process.env, ...seams } = {}) {
   if (env[OVERRIDE] === '1' || !CANDIDATE.test(command)) return null;
   const found = walkCommands(command, cwd).flatMap((entry) => {

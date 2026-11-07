@@ -30,8 +30,8 @@ import { parseArgs } from 'node:util';
 import { decisionProblem, readTriage, recordDecision, reportName, sidecarName, sidecarProblems, today } from './audits.mjs';
 import { commandConfig, DEFAULTS, loadConfig, strictConfigFromText } from './config.mjs';
 import { AUDIT_KEY, cleanTitle, decisionFields, decisionOf, heldFor, itemState, openDecisions, KINDS, PERSONA, PRODUCT_MANAGER, readRecord, RECORD_VERSION, recordPath } from './feedback-record.mjs';
+import { forgeFor } from './forges/index.mjs';
 import { isDirectory, isFile, isObject, isWithin } from './fs.mjs';
-import { runGh } from './gh.mjs';
 import { runGit } from './git.mjs';
 import { withLocks } from './jsonl.mjs';
 import { loadKnowledge } from './knowledge.mjs';
@@ -101,7 +101,7 @@ function updateRecord(file, pr, change) {
 // `fields` asks gh for it. As `aidrian pr resolve` holds it, the argument is checked first, and gh's answer, like a URL's
 // repository, must be a remote of this checkout.
 // `viewed` is gh's answer to that same view when the caller already has it, as the ready hold does: it is held to the same checks.
-function pullRequest(value, { gh, remotes }, fields = VIEW_FIELDS, viewed = null) {
+function pullRequest(value, { forge, remotes }, fields = VIEW_FIELDS, viewed = null) {
   const target = parseTarget(value);
   if (target.refusal) throw new Error(target.refusal);
   const spelled = ({ host, owner, name }) => `${host}/${owner}/${name}`;
@@ -110,7 +110,7 @@ function pullRequest(value, { gh, remotes }, fields = VIEW_FIELDS, viewed = null
   if (target.host && !isRemote(target)) throw notRemote(target);
   let view = viewed;
   try {
-    view ??= JSON.parse(gh(['pr', 'view', String(target.number), ...(target.host ? ['--repo', spelled(target)] : []), '--json', fields]));
+    view ??= forge.change(String(target.number), fields, { repo: target.host ? spelled(target) : null });
   } catch (error) {
     throw new Error(`could not read pull request ${target.number} with gh (${ghError(error)})`);
   }
@@ -124,10 +124,10 @@ function pullRequest(value, { gh, remotes }, fields = VIEW_FIELDS, viewed = null
 
 // Whether the pull request comes from outside the team, by the reads and the rule of `aidrian pr resolve` (fromOutside).
 // `record` stores it, so the post rule (rules/product-feedback-post.mjs), which runs no gh, can hold a post to the Human.
-function readLimited(gh, pr) {
+function readLimited(forge, pr) {
   let pull;
   try {
-    pull = JSON.parse(gh(['api', '--hostname', pr.host, `repos/${pr.repo}/pulls/${pr.number}`]));
+    pull = forge.pull(pr.repo, pr.number, { host: pr.host });
   } catch (error) {
     throw new Error(`could not read who opened #${pr.number} with gh (${ghError(error)}), so nothing was recorded`);
   }
@@ -143,9 +143,9 @@ const targetFilesOf = (config) => (config.review.visual?.targets ?? []).flatMap(
 const unreadableFeedback = (error) => /"review(?:"|\.productFeedback)/u.test(error) && !error.endsWith(FEEDBACK_NO_LIST);
 // A branch's config by the rules of a reader that must not take a broken file for the defaults. A file gh does not have is
 // no config. `visualBroken` says the file sets a `review.visual` that its checks dropped, whose files are then unknown.
-function readBranch(gh, pr, branch, prefix) {
+function readBranch(forge, pr, branch, prefix) {
   let visualBroken = false;
-  const config = branchConfig(gh, pr, branch, prefix, {
+  const config = branchConfig(forge, pr, branch, prefix, {
     locate: (read) => {
       try {
         return strictConfigPathIn(read);
@@ -224,10 +224,10 @@ export function localFeedback(project) {
 
 // What `status` says of pull request `value`, as { exit, result }: exit 0 clear, 2 owed, and an error thrown. Everything it
 // reads of the team, it reads from GitHub, once localFeedback has not said off. It prints nothing, so the ready hold
-// (rules/github/ready-hold.mjs) runs it in its own process, at the project root it found, with the gh seam it bounds.
+// (rules/github/ready-hold.mjs) runs it in its own process, at the project root it found, with the forge it bounds.
 // The hold's seams: `view`, gh's answer to the pull request's view, so it is viewed once; `local`, localFeedback's answer
 // it already read; and `mainBranch(pr)`, the default branch's name when git already names it, or null to ask GitHub.
-export function feedbackStatus(value, project, { gh, remotes = () => checkoutRemotes(project.root), view = null, local = localFeedback(project), mainBranch = () => null }) {
+export function feedbackStatus(value, project, { forge, remotes = () => checkoutRemotes(project.root), view = null, local = localFeedback(project), mainBranch = () => null }) {
   if (local.state === 'off') {
     const target = parseTarget(value);
     if (target.refusal) throw new Error(target.refusal);
@@ -238,13 +238,13 @@ export function feedbackStatus(value, project, { gh, remotes = () => checkoutRem
     const why = reason === 'off' && project.localFeedbackAuto !== false ? LOCAL_OFF_WORDS : CLEAR_WORDS.opted_out;
     return { exit: 0, result: { state: 'clear', reason, why, pr: target.number, repo, head: null, owed: [] } };
   }
-  const pr = pullRequest(value, { gh, remotes }, VIEW_FIELDS, view);
+  const pr = pullRequest(value, { forge, remotes }, VIEW_FIELDS, view);
   const shown = runGit(['rev-parse', '--show-prefix'], project.root);
   if (shown.status !== 0) throw new Error('git could not give the project\'s folder in the repository');
   const prefix = shown.stdout.trim();
-  const main = mainBranch(pr) ?? defaultBranch(gh, pr);
-  const onMain = readBranch(gh, pr, main, prefix);
-  const onBase = pr.base === main ? onMain : readBranch(gh, pr, pr.base, prefix);
+  const main = mainBranch(pr) ?? defaultBranch(forge, pr);
+  const onMain = readBranch(forge, pr, main, prefix);
+  const onBase = pr.base === main ? onMain : readBranch(forge, pr, pr.base, prefix);
   const read = [onMain, onBase];
   const branches = read.map(({ config }) => config);
   const say = (exit, state, reason, why, owed = []) => ({ exit, result: { state, reason, why, pr: pr.number, repo: pr.repo, head: pr.head, owed } });
@@ -278,8 +278,8 @@ export function feedbackStatus(value, project, { gh, remotes = () => checkoutRem
 }
 
 // `status`: prints what feedbackStatus says, and exits with it.
-function status({ argv: [value], values, project, gh, remotes }) {
-  const { exit, result } = feedbackStatus(value, project, { gh, remotes });
+function status({ argv: [value], values, project, forge, remotes }) {
+  const { exit, result } = feedbackStatus(value, project, { forge, remotes });
   if (values.json) console.log(JSON.stringify(result));
   else {
     console.log(`product feedback ${result.state} for #${result.pr}: ${result.why}`);
@@ -415,16 +415,16 @@ function mergeItems(earlier, inputs, sidecar, pr, triage, at) {
 // `record`: writes the record of this run, under its lock. A run names itself: a report, items, or a read that found
 // nothing. A decision is copied before the record is written, so a failure between them leaves a record that a second
 // run copies again.
-function record({ argv: [value], values, project, gh, remotes, now }) {
+function record({ argv: [value], values, project, forge, remotes, now }) {
   const inputs = readInputs(values.items);
   const noneFound = values['none-found'] === true;
   const ran = Boolean(values.report) || inputs.persona.length > 0 || inputs.manager.length > 0;
   if (noneFound && values['read-by'] !== PRODUCT_MANAGER) throw new Error(`--none-found names the read: --read-by ${PRODUCT_MANAGER}`);
   if (noneFound && ran) throw new Error('--none-found says a read found nothing, so it takes no --report and no items');
   if (!noneFound && values['read-by'] !== undefined) throw new Error('--read-by goes with --none-found');
-  const pr = pullRequest(value, { gh, remotes }, `${VIEW_FIELDS},isCrossRepository`);
+  const pr = pullRequest(value, { forge, remotes }, `${VIEW_FIELDS},isCrossRepository`);
   if (!noneFound && !ran) throw new Error(notRun(pr.number));
-  const limited = readLimited(gh, pr);
+  const limited = readLimited(forge, pr);
   const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
   const audits = path.join(state, 'audits');
   const sidecar = values.report ? loadSidecar(audits, values.report, pr) : null;
@@ -468,8 +468,8 @@ function openProblem(item, decision, entry) {
 // `answer`: the table, decisionProblem, and allowedDecisions, then, for a persona item, one decision in triage.json. Its
 // time sets it apart from a decision the record found under the key, so the item can count again: it is after the item's
 // `adopted_at`, by a millisecond when the clock reads the same or earlier.
-function answer({ argv: [value, id, decision], values, project, gh, remotes, now }) {
-  const pr = pullRequest(value, { gh, remotes });
+function answer({ argv: [value, id, decision], values, project, forge, remotes, now }) {
+  const pr = pullRequest(value, { forge, remotes });
   const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
   const audits = path.join(state, 'audits');
   const file = recordPath(state, pr.repo, pr.number);
@@ -494,9 +494,9 @@ function answer({ argv: [value, id, decision], values, project, gh, remotes, now
 
 // `recheck`: whether a fix-now item's fix holds, at the head gh reports now. `confirmed` is the session's word. A fix-now
 // on a held verdict (heldFor) has nothing to re-check, so a re-check never outlives it into the Human's own decision.
-function recheck({ argv: [value, id, word], values, project, gh, remotes }) {
+function recheck({ argv: [value, id, word], values, project, forge, remotes }) {
   if (!RECHECKS.includes(word)) throw new Error(`a re-check is ${RECHECKS.join(' or ')}`);
-  const pr = pullRequest(value, { gh, remotes });
+  const pr = pullRequest(value, { forge, remotes });
   const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
   const file = recordPath(state, pr.repo, pr.number);
   const found = findItem(readRecord(file, pr), id, pr);
@@ -646,34 +646,34 @@ function readBody(given, state) {
 
 // The comment `post` edits: the record's when the gh user wrote it and it still opens with the marker, else the gh user's
 // last marked comment, else none. Every other author's marker is ignored. A read that fails but for a 404 throws.
-function ownComment({ gh, pr, record: found, marker }) {
-  const read = (args, what) => {
+function ownComment({ forge, pr, record: found, marker }) {
+  const read = (call, what) => {
     try {
-      return JSON.parse(gh(['api', '--hostname', pr.host, ...args]));
+      return call();
     } catch (error) {
       throw new Error(`could not read ${what} with gh (${ghError(error)})`);
     }
   };
-  const user = read(['user'], 'the gh user')?.login;
+  const user = read(() => forge.viewer({ host: pr.host }), 'the gh user');
   if (typeof user !== 'string' || user === '') throw new Error('gh api user returned no login');
   const own = (comment) => comment?.user?.login?.toLowerCase() === user.toLowerCase() && typeof comment.body === 'string' && comment.body.startsWith(`${marker}\n`) && Number.isSafeInteger(comment.id);
   if (Number.isSafeInteger(found.comment_id)) {
     let current = null;
     try {
-      current = JSON.parse(gh(['api', '--hostname', pr.host, `repos/${pr.repo}/issues/comments/${found.comment_id}`]));
+      current = forge.comment(pr.repo, found.comment_id, { host: pr.host });
     } catch (error) {
       if (!notFound(error)) throw new Error(`could not read the comment with gh (${ghError(error)})`);
     }
     if (own(current)) return current.id;
   }
-  const pages = read([`repos/${pr.repo}/issues/${pr.number}/comments`, '--paginate', '--slurp'], 'the comments');
-  return (Array.isArray(pages) ? pages.flat() : []).filter(own).at(-1)?.id ?? null;
+  const comments = read(() => forge.conversationComments(pr.repo, pr.number, { host: pr.host }), 'the comments');
+  return (Array.isArray(comments) ? comments : []).filter(own).at(-1)?.id ?? null;
 }
 
 // `post`: refuses first, and writes nothing until it has decided. The record changes only after a post that worked.
-function post({ argv: [value], values, project, gh, remotes, env, access }) {
+function post({ argv: [value], values, project, forge, remotes, env, access }) {
   if (!values['body-file']) throw new Error(USAGE);
-  const pr = pullRequest(value, { gh, remotes });
+  const pr = pullRequest(value, { forge, remotes });
   const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
   const file = recordPath(state, pr.repo, pr.number);
   const found = readRecord(file, pr);
@@ -686,11 +686,12 @@ function post({ argv: [value], values, project, gh, remotes, env, access }) {
   if (kind) throw new Error(`refused: the body holds ${kind}. Nothing was posted`);
   const marker = `<!-- aidrian-product-feedback: pr=${pr.number} repo=${pr.repo} -->`;
   const comment = `${marker}\n${neutralized(body)}`;
-  const target = ownComment({ gh, pr, record: found, marker });
-  const route = target === null ? `repos/${pr.repo}/issues/${pr.number}/comments` : `repos/${pr.repo}/issues/comments/${target}`;
+  const target = ownComment({ forge, pr, record: found, marker });
   let written;
   try {
-    written = JSON.parse(gh(['api', '--hostname', pr.host, route, '--method', target === null ? 'POST' : 'PATCH', '-f', `body=${comment}`]));
+    written = target === null
+      ? forge.postComment(pr.repo, pr.number, comment, { host: pr.host })
+      : forge.editComment(pr.repo, target, comment, { host: pr.host });
   } catch (error) {
     throw new Error(`the post failed, and the record is unchanged (${ghError(error)})`);
   }
@@ -705,8 +706,8 @@ function post({ argv: [value], values, project, gh, remotes, env, access }) {
 // `items`: every item of the record and where it stands, whatever `auto` says, for the skill that runs the feedback on
 // demand: which run it is, what to re-check, and what the comment says. `head` is gh's head now, and `recorded_head` the
 // head the record was written at, which the comment names. No record prints `recorded: false`, exit 0.
-function items({ argv: [value], values, project, gh, remotes }) {
-  const pr = pullRequest(value, { gh, remotes });
+function items({ argv: [value], values, project, forge, remotes }) {
+  const pr = pullRequest(value, { forge, remotes });
   const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
   const found = readRecord(recordPath(state, pr.repo, pr.number), pr);
   const triage = found?.items.some((item) => item.source === PERSONA) ? readTriage(path.join(state, 'audits')) : null;
@@ -731,14 +732,14 @@ function items({ argv: [value], values, project, gh, remotes }) {
 
 // `diff`: writes the pull request's diff beside its record, as `diff.patch`, for the product-manager read, and prints its
 // path. The diff is data an agent reads; nothing here runs it. gh reads it from the repository the pull request is in.
-function diff({ argv: [value], project, gh, remotes }) {
-  const pr = pullRequest(value, { gh, remotes });
+function diff({ argv: [value], project, forge, remotes }) {
+  const pr = pullRequest(value, { forge, remotes });
   const state = stateDir(project, { config: commandConfig(project, { exitCode: 3 }) });
   const file = path.join(path.dirname(recordPath(state, pr.repo, pr.number)), 'diff.patch');
   if (!isWithin(path.join(state, 'product-feedback'), file)) throw new Error(`the diff of ${pr.repo}#${pr.number} would leave the state folder`);
   let text;
   try {
-    text = gh(['pr', 'diff', String(pr.number), '--repo', `${pr.host}/${pr.repo}`]);
+    text = forge.diff(pr.number, { repo: `${pr.host}/${pr.repo}` });
   } catch (error) {
     throw new Error(`could not read the diff of #${pr.number} with gh (${ghError(error)})`);
   }
@@ -759,10 +760,11 @@ const ACTIONS = {
   diff: { options: {}, operands: 1, run: diff },
 };
 
-// The CLI body. `gh`, `remotes`, `env`, `access`, and `now` are the test seams: (args) → stdout, () → checkoutRemotes,
-// the environment, (project) → the product-access docs' text, and () → the time a record says it was written.
+// The CLI body. `forge`, `remotes`, `env`, `access`, and `now` are the test seams: the forge facade (lib/forges), whose
+// methods throw as gh does, () → checkoutRemotes, the environment, (project) → the product-access docs' text, and () → the
+// time a record says it was written.
 export function runProductFeedback(argv, project, {
-  gh = (args) => runGh(args, { cwd: project.root }),
+  forge = forgeFor(project.root),
   remotes = () => checkoutRemotes(project.root),
   env = process.env,
   access = projectAccessDocs,
@@ -783,7 +785,7 @@ export function runProductFeedback(argv, project, {
   }
   if (parsed.positionals.length !== operands) return fail(USAGE);
   try {
-    return run({ argv: parsed.positionals, values: parsed.values, project, gh, remotes, env, access, now });
+    return run({ argv: parsed.positionals, values: parsed.values, project, forge, remotes, env, access, now });
   } catch (error) {
     return fail(error.message);
   }

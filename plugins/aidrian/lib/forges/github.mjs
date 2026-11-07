@@ -34,6 +34,8 @@ const REVIEWS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
 
 // The review threads of one pull request, a page of 100 after the cursor `$after`, as `aidrian review bench` reads them.
 const THREADS_QUERY = 'query($o:String!,$r:String!,$n:Int!,$after:String){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:1){nodes{path line originalLine originalCommit{oid} author{login}}}}}}}}';
+// The pull request one GraphQL node id names, as the ready hold looks up an id a ready call names.
+const NODE_QUERY = 'query($id:ID!){node(id:$id){... on PullRequest{url}}}';
 // How long an upload of images may take: a pull request's captures go up in one call.
 export const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 
@@ -45,10 +47,12 @@ export const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 // - null, gh's default: no Accept header; a list's pages are joined, and an empty answer is an empty list.
 // - a media type, such as GITHUB_JSON: every REST call sends it as its Accept header; an empty answer is null.
 // `timeoutMs` bounds every call, for a hook that must answer inside its own limit; null keeps gh's (github-cli.mjs).
+// `killSignal` stops a call at that bound with another signal, such as SIGKILL; null keeps gh's runner's default.
 // A method that takes `{ host }` names that host to every REST call it makes (`--hostname`), as `aidrian pr auto-merge`
 // does with the host of the pull request's URL; without one, gh picks its default host.
-export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutMs = null } = {}) {
-  const gh = (args, { timeoutMs: limit = timeoutMs } = {}) => run(args, { cwd, ...(limit === null ? {} : { timeoutMs: limit }) });
+export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutMs = null, killSignal = null } = {}) {
+  const gh = (args, { timeoutMs: limit = timeoutMs } = {}) =>
+    run(args, { cwd, ...(limit === null ? {} : { timeoutMs: limit }), ...(killSignal === null ? {} : { killSignal }) });
   const json = (args) => JSON.parse(gh(args));
   const given = (ref) => ref !== undefined && ref !== null && ref !== '';
   // One REST route. `paginate` reads every page and joins them into one list; `fields` are sent as `-f key=value`.
@@ -106,15 +110,21 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     viewer: ({ host } = {}) => rest('user', { host })?.login,
     // The comments on the pull request's conversation, not those on its diff (reviewComments).
     conversationComments: (repo, n, { host } = {}) => list(`repos/${repo}/issues/${n}/comments`, { host }),
-    postComment: (repo, n, body) => rest(`repos/${repo}/issues/${n}/comments`, { method: 'POST', fields: { body } }),
-    editComment: (repo, id, body) => rest(`repos/${repo}/issues/comments/${id}`, { method: 'PATCH', fields: { body } }),
+    // One comment of a conversation, by its id.
+    comment: (repo, id, { host } = {}) => rest(`repos/${repo}/issues/comments/${id}`, { host }),
+    postComment: (repo, n, body, { host } = {}) => rest(`repos/${repo}/issues/${n}/comments`, { method: 'POST', fields: { body }, host }),
+    editComment: (repo, id, body, { host } = {}) => rest(`repos/${repo}/issues/comments/${id}`, { method: 'PATCH', fields: { body }, host }),
     // The reactions on the pull request itself; `content`, such as `+1`, keeps that one kind, read as the reviews report
     // always has: its paging flags before the route.
     reactions: (repo, n, content = null) => {
       const route = `repos/${repo}/issues/${n}/reactions${content === null ? '' : `?content=${encodeURIComponent(content)}`}`;
       return content !== null && mediaType === null ? json(['api', '--paginate', '--slurp', route]).flat() : list(route);
     },
-    pull: (repo, n) => rest(`repos/${repo}/pulls/${n}`),
+    pull: (repo, n, { host } = {}) => rest(`repos/${repo}/pulls/${n}`, { host }),
+    // The pull request `ref`'s diff, as gh prints it: text, not JSON. `repo` reads it from that repository.
+    diff: (ref, { repo = null } = {}) => gh(['pr', 'diff', String(ref), ...(repo ? ['--repo', repo] : [])]),
+    // The pull request a GraphQL node id names: GitHub's answer, `data.node.url`, whose node is null for any other id.
+    nodeChange: (id) => json(['api', 'graphql', '-f', `query=${NODE_QUERY}`, '-f', `id=${id}`]),
     reviews: (repo, n, { host } = {}) => list(`repos/${repo}/pulls/${n}/reviews`, { host }),
     reviewComments: (repo, n, { host } = {}) => list(`repos/${repo}/pulls/${n}/comments`, { host }),
     // The reviews with their inline comments, GitHub's GraphQL answer: `data.repository.pullRequest.reviews`, at most
@@ -133,6 +143,9 @@ export function createGithubForge({ cwd, run = runGh, mediaType = null, timeoutM
     // The check runs of one commit, every page.
     checkRuns: (repo, sha) => (list(`repos/${repo}/commits/${sha}/check-runs`) ?? []).flatMap((page) => page.check_runs ?? []),
     compare: (repo, base, head) => rest(`repos/${repo}/compare/${base}...${head}`),
+    // The deployments of exactly the commit `sha`, the first page, and the statuses of one deployment, the first page.
+    deployments: (repo, sha, { host } = {}) => rest(`repos/${repo}/deployments?sha=${encodeURIComponent(sha)}`, { host }),
+    deploymentStatuses: (repo, id, { host } = {}) => rest(`repos/${repo}/deployments/${id}/statuses`, { host }),
     // Uploads image files to `repo` through the gh-image extension and returns what it prints: one Markdown image a file.
     // It may take UPLOAD_TIMEOUT_MS.
     uploadImages: (repo, files) => gh(['image', '--repo', repo, ...files], { timeoutMs: UPLOAD_TIMEOUT_MS }),

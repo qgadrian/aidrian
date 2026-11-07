@@ -600,18 +600,26 @@ test('the Bash hook runs the rule and blocks with exit 2', (t) => {
   assert.match(result.stderr, /product-feedback answer/u);
 });
 
-test('the rule loads neither gh nor the knowledge loader, so a Bash call pays for neither', () => {
+test('the rule loads no knowledge loader, and the forge only through review/state.mjs, so a Bash call pays for no gh', () => {
   const lib = path.resolve(import.meta.dirname, '../plugins/aidrian/lib');
   const seen = new Set();
+  const forgeImporters = new Set();
   const walk = (file) => {
     if (seen.has(file)) return;
     seen.add(file);
-    for (const [, target] of readFileSync(file, 'utf8').matchAll(/^(?:import|export)[^'"\n]*from '(\.[^']+)'/gmu)) walk(path.resolve(path.dirname(file), target));
+    for (const [, target] of readFileSync(file, 'utf8').matchAll(/^(?:import|export)[^'"\n]*from '(\.[^']+)'/gmu)) {
+      const next = path.resolve(path.dirname(file), target);
+      if (path.relative(lib, next).startsWith(`forges${path.sep}`) && !path.relative(lib, file).startsWith(`forges${path.sep}`)) forgeImporters.add(path.relative(lib, file));
+      walk(next);
+    }
   };
   walk(path.join(lib, 'rules/product-feedback-answer.mjs'));
   const reached = [...seen].map((file) => path.relative(lib, file));
+  // The forge facade loads only for review/state.mjs, which asks it who belongs to a repository: nothing the rule reads
+  // runs gh, and nothing of the rule's own reaches for the forge.
+  assert.deepEqual([...forgeImporters], [path.join('review', 'state.mjs')]);
   assert.ok(reached.length > 1, 'the walk follows imports');
-  for (const absent of ['gh.mjs', 'knowledge.mjs', 'pr-product-feedback.mjs', 'pr-auto-merge.mjs', 'pr-resolve.mjs']) assert.ok(!reached.includes(absent), `${absent} is reached: ${reached.join(', ')}`);
+  for (const absent of ['knowledge.mjs', 'pr-product-feedback.mjs', 'pr-auto-merge.mjs', 'pr-resolve.mjs']) assert.ok(!reached.includes(absent), `${absent} is reached: ${reached.join(', ')}`);
 });
 
 test('two items with the same title are told apart by the id alone', (t) => {

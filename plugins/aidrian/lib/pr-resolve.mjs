@@ -16,12 +16,11 @@
 
 import { readFileSync } from 'node:fs';
 
-import { runGh } from './gh.mjs';
+import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { loadKnowledge } from './knowledge.mjs';
 import { ACCESS_DOC, personaDocs, previewPatterns } from './personas.mjs';
 import { checkoutRemotes } from './pr-checks.mjs';
 import { projectAt } from './project.mjs';
-import { MEMBER_ASSOCIATIONS } from './review/state.mjs';
 
 const NUMBER = /^#?(\d+)$/u;
 const SCHEME = /^([A-Za-z][A-Za-z0-9+.-]*):\/\//u;
@@ -44,7 +43,7 @@ const PREVIEW_HOSTNAME = /^[a-z0-9.-]+$/u;
 // since the limits turn on it and nothing stands in for it. `aidrian pr product-feedback record` stores the same word.
 export function fromOutside(isCrossRepository, pull) {
   if (typeof isCrossRepository !== 'boolean' || typeof pull?.author_association !== 'string' || !pull.author_association || typeof pull.base?.repo?.fork !== 'boolean') return null;
-  return isCrossRepository || pull.base.repo.fork || !MEMBER_ASSOCIATIONS.has(pull.author_association);
+  return isCrossRepository || pull.base.repo.fork || !isTrustedCommenter(pull);
 }
 
 const safeName = (part) => SLUG.test(part) && part !== '.' && part !== '..';
@@ -110,19 +109,19 @@ export function previewFrom(value, patterns) {
 // The first deployment of exactly this head, on no production environment, whose newest status, by id, is a success with
 // a URL that passes, or null. A later status overrides an earlier success; a newer failed deployment does not void an
 // older one still at success. A read that fails ends the lookup at null.
-function deploymentPreview({ host, repo, head }, patterns, gh) {
-  const read = (route) => {
+function deploymentPreview({ host, repo, head }, patterns, forge) {
+  const read = (call) => {
     try {
-      const list = JSON.parse(gh(['api', '--hostname', host, route]));
+      const list = call();
       return Array.isArray(list) ? list : null;
     } catch {
       return null;
     }
   };
-  for (const deployment of read(`repos/${repo}/deployments?sha=${head}`) ?? []) {
+  for (const deployment of read(() => forge.deployments(repo, head, { host })) ?? []) {
     if (deployment?.sha !== head || !Number.isSafeInteger(deployment?.id)) continue;
     if (deployment.production_environment === true || (typeof deployment.environment === 'string' && /production/iu.test(deployment.environment))) continue;
-    const statuses = read(`repos/${repo}/deployments/${deployment.id}/statuses`);
+    const statuses = read(() => forge.deploymentStatuses(repo, deployment.id, { host }));
     if (!statuses) return null;
     const newest = statuses.filter((status) => Number.isSafeInteger(status?.id)).reduce((best, status) => (!best || status.id > best.id ? status : best), null);
     const url = newest?.state === 'success' ? previewFrom(newest.environment_url, patterns) : null;
@@ -131,12 +130,13 @@ function deploymentPreview({ host, repo, head }, patterns, gh) {
   return null;
 }
 
-// The CLI body. `gh`, `remotes`, and `patterns` are the test seams: (args) → stdout, () → checkoutRemotes, and () → the
-// Preview patterns, which may throw when the doc cannot be read: no patterns, so no preview.
+// The CLI body. `forge`, `remotes`, and `patterns` are the test seams: the forge facade (lib/forges), whose methods throw
+// as gh does, () → checkoutRemotes, and () → the Preview patterns, which may throw when the doc cannot be read: no
+// patterns, so no preview.
 export function runResolve(
   argv,
   config,
-  gh = (args) => runGh(args),
+  forge = forgeFor(undefined),
   remotes = () => checkoutRemotes(process.cwd()),
   patterns = () => projectPreviewPatterns(projectAt(process.cwd())),
 ) {
@@ -150,14 +150,14 @@ export function runResolve(
   const isRemote = (where) => remotes().includes(repository(where).toLowerCase());
   const notRemote = (where) => `not a remote: ${repository(where)} is not a remote of this checkout: compared host ${where.host}, owner, and name with each remote, and an SSH host alias is not matched`;
   if (target.host && !isRemote(target)) return fail(notRemote(target));
-  const read = (args) => {
+  const read = (call) => {
     try {
-      return JSON.parse(gh(args));
+      return call();
     } catch (error) {
       return { failed: String(error?.stderr || error?.message || error).trim().split('\n')[0] };
     }
   };
-  const view = read(['pr', 'view', String(target.number), ...(target.host ? ['--repo', repository(target)] : []), '--json', VIEW_FIELDS]);
+  const view = read(() => forge.change(String(target.number), VIEW_FIELDS, { repo: target.host ? repository(target) : null }));
   if (view?.failed) return fail(`gh: could not read pull request ${target.number}: ${view.failed}`);
   const unreadable = () => fail(`gh: could not read pull request ${target.number}: its answer is not what gh prints`);
   // The repository gh answered for, by the URL it gave, under the same rules as an argument.
@@ -166,7 +166,7 @@ export function runResolve(
   if (!isRemote(answered)) return fail(notRemote(answered));
   if (typeof view.headRefOid !== 'string' || !SHA.test(view.headRefOid) || !view.baseRefName || !view.state || typeof view.isCrossRepository !== 'boolean') return unreadable();
   const repo = `${answered.owner}/${answered.name}`;
-  const pull = read(['api', '--hostname', answered.host, `repos/${repo}/pulls/${target.number}`]);
+  const pull = read(() => forge.pull(repo, target.number, { host: answered.host }));
   if (pull?.failed) return fail(`gh: could not read pull request ${target.number}: ${pull.failed}`);
   // The walk limits turn on this word, so nothing stands in for it.
   const limited = fromOutside(view.isCrossRepository, pull);
@@ -177,7 +177,7 @@ export function runResolve(
   } catch {
     allowed = [];
   }
-  const previewUrl = allowed.length ? deploymentPreview({ host: answered.host, repo, head: view.headRefOid }, allowed, gh) : null;
+  const previewUrl = allowed.length ? deploymentPreview({ host: answered.host, repo, head: view.headRefOid }, allowed, forge) : null;
   console.log(JSON.stringify({
     number: target.number,
     host: answered.host,

@@ -7,10 +7,10 @@ import test from 'node:test';
 
 import { parse } from 'yaml';
 
+import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
 import { previewPatterns } from '../plugins/aidrian/lib/personas.mjs';
 import { checkoutRemotes, remoteKey } from '../plugins/aidrian/lib/pr-checks.mjs';
 import { parseTarget, previewFrom, runResolve } from '../plugins/aidrian/lib/pr-resolve.mjs';
-import { MEMBER_ASSOCIATIONS } from '../plugins/aidrian/lib/review/state.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const AIDRIAN = path.join(ROOT, 'plugins/aidrian/bin/aidrian');
@@ -45,7 +45,7 @@ function resolve(t, args, gh = fakeGh().gh, remotes = REMOTES, config = CONFIG, 
   const err = [];
   const log = t.mock.method(console, 'log', (line) => out.push(line));
   const error = t.mock.method(console, 'error', (line) => err.push(line));
-  const code = runResolve(args, config, gh, remotes, patterns);
+  const code = runResolve(args, config, createGithubForge({ run: (argv) => gh(argv) }), remotes, patterns);
   log.mock.restore();
   error.mock.restore();
   return { code, out: out.join('\n'), err: err.join('\n') };
@@ -66,7 +66,7 @@ test('gh is called with <n> --repo <host>/<owner>/<name>, never with the raw URL
   const { calls, gh } = fakeGh();
   const url = 'https://github.com/acme/notes/pull/123/files?secret=1';
   assert.equal(resolve(t, [url], gh).code, 0);
-  assert.deepEqual(calls[0].slice(0, 5), ['pr', 'view', '123', '--repo', 'github.com/acme/notes']);
+  assert.deepEqual(calls[0], ['pr', 'view', '123', '--json', 'number,url,headRefOid,baseRefName,state,isCrossRepository', '--repo', 'github.com/acme/notes']);
   assert.deepEqual(calls[1], ['api', '--hostname', 'github.com', 'repos/acme/notes/pulls/123']);
   assert.ok(!calls.flat().some((arg) => arg.includes('https://') || arg.includes('secret')), 'no call holds the raw URL');
 });
@@ -138,7 +138,7 @@ test('a remote compares by host, owner, and name, in any case', (t) => {
   const { code, out } = resolve(t, ['https://git.corp.example/acme/notes/pull/123'], enterprise.gh, remotes);
   assert.equal(code, 0);
   assert.equal(JSON.parse(out).host, 'git.corp.example', 'later gh calls need the host: owner/name alone reaches the default host');
-  assert.deepEqual(enterprise.calls[0].slice(2, 5), ['123', '--repo', 'git.corp.example/acme/notes']);
+  assert.deepEqual(enterprise.calls[0].slice(2), ['123', '--json', 'number,url,headRefOid,baseRefName,state,isCrossRepository', '--repo', 'git.corp.example/acme/notes']);
   assert.deepEqual(enterprise.calls[1], ['api', '--hostname', 'git.corp.example', 'repos/acme/notes/pulls/123']);
   assert.equal(resolve(t, ['https://github.com/acme/notes/pull/123'], enterprise.gh, remotes).code, 3, 'the same owner and name on another host is another repository');
 });

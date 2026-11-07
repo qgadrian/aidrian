@@ -7,6 +7,7 @@ import test from 'node:test';
 
 import { auditNudge, readTriage, recordDecision, today } from '../plugins/aidrian/lib/audits.mjs';
 import { itemState } from '../plugins/aidrian/lib/feedback-record.mjs';
+import { createGithubForge } from '../plugins/aidrian/lib/forges/github.mjs';
 import { accessTerms, deriveKind, neutralized, refusedKind, runProductFeedback } from '../plugins/aidrian/lib/pr-product-feedback.mjs';
 import { configPathIn, projectAt, strictConfigPathIn } from '../plugins/aidrian/lib/project.mjs';
 import { check } from '../plugins/aidrian/lib/rules/product-feedback-answer.mjs';
@@ -93,7 +94,9 @@ function run(t, r, argv, options = {}, seams = {}) {
   t.mock.method(console, 'log', (line) => out.push(line));
   t.mock.method(console, 'error', (line) => err.push(line));
   const fake = fakeGh(options);
-  const code = runProductFeedback(argv, projectAt(r.dir), { gh: fake.gh, remotes: REMOTES, access: () => [], ...seams });
+  const { gh = fake.gh, ...rest } = seams;
+  const forge = createGithubForge({ cwd: r.dir, run: (args) => gh(args) });
+  const code = runProductFeedback(argv, projectAt(r.dir), { forge, remotes: REMOTES, access: () => [], ...rest });
   t.mock.restoreAll();
   return { code, out, err, calls: fake.calls, writes: fake.writes };
 }
@@ -423,7 +426,7 @@ test('record and recheck read the repository, the number, and the head from gh, 
   assert.equal(moved.code, 3);
   // A URL reaches gh with its host, so a GitHub Enterprise checkout reads the right one.
   const viaUrl = run(t, r, ['status', URL7, '--json']);
-  assert.deepEqual(viaUrl.calls[0].slice(0, 5), ['pr', 'view', '7', '--repo', 'github.com/acme/notes']);
+  assert.deepEqual([...viaUrl.calls[0].slice(0, 3), ...viaUrl.calls[0].slice(-2)], ['pr', 'view', '7', '--repo', 'github.com/acme/notes']);
   assert.ok(viaUrl.calls.slice(1).every((args) => args.slice(0, 3).join(' ') === 'api --hostname github.com'));
 });
 

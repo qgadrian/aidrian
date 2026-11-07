@@ -14,10 +14,16 @@ export const GH_EXEC_OPTIONS = Object.freeze({ encoding: 'utf8', stdio: ['ignore
 
 // gh's stdout, so no call site inherits the 1 MB default or waits forever. An overflow names the command and the limit;
 // a timeout names the command and how long it waited.
-// `timeoutMs` raises the limit for a call that is long by nature, such as an upload of many files.
-export function runGh(args, { cwd, exec = execFileSync, timeoutMs = GH_TIMEOUT_MS } = {}) {
+// `timeoutMs` raises the limit for a call that is long by nature, such as an upload of many files. `killSignal` is the
+// signal that stops gh at the limit, such as SIGKILL for a hook that cannot wait on a gh that ignores the default.
+export function runGh(args, { cwd, exec = execFileSync, timeoutMs = GH_TIMEOUT_MS, killSignal = null } = {}) {
   try {
-    return exec('gh', args, { ...GH_EXEC_OPTIONS, ...(cwd === undefined ? {} : { cwd }), ...(timeoutMs === GH_TIMEOUT_MS ? {} : { timeout: timeoutMs }) });
+    return exec('gh', args, {
+      ...GH_EXEC_OPTIONS,
+      ...(cwd === undefined ? {} : { cwd }),
+      ...(timeoutMs === GH_TIMEOUT_MS ? {} : { timeout: timeoutMs }),
+      ...(killSignal === null ? {} : { killSignal }),
+    });
   } catch (err) {
     if (err?.code === 'ETIMEDOUT') {
       throw new Error(`gh ${args.join(' ')} did not finish in ${timeoutMs / 1000} s and was stopped. Check the network and \`gh auth status\`.`);

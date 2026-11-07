@@ -26,15 +26,14 @@ Wait for every check on a pull request to finish, judge them with `aidrian pr ch
 2. Never `gh pr merge --auto`.
 3. Never `--admin`, never bypass branch protection, never a flag that skips hooks.
 4. Never push, least of all to the default branch. Apart from the one `gh pr merge`, the `gh pr ready` step 0 allows,
-   and step 5's cleanup, every command here only reads.
+   step 0's product feedback re-check with the comment it edits, and step 5's cleanup, every command here only reads.
 5. A failing verdict ends the run: report it. Never rerun checks, and never merge around one.
 6. This skill cancels no earlier request of the Human's: on a conflict, ask. Step 1 runs every time.
 
 ## Project setup
 
-Run this skill from a checkout of the pull request's repository: `aidrian pr checks` reads its `github` policy there.
-Read `references/project-setup.md` when a verdict surprises you or `aidrian pr auto-merge` says off.
-Never add an entry on your own during a merge run.
+Run this skill from a checkout of the pull request's repository. Read `references/project-setup.md`, which says why,
+when a verdict surprises you or `aidrian pr auto-merge` says off. Never add an entry on your own during a merge run.
 
 ## 0. Preflight
 
@@ -53,9 +52,7 @@ Keep `baseRefName` for step 2. The auto-merge JSON's `strategy`, `deleteBranch`,
   its `repo` is `<owner>/<repo>`, ignoring case, and its `base` is `baseRefName`.
 - The Human's run: they fill only the choices the Human left out. On exit 3, report its stderr; those choices keep the branch and worktree.
 
-Read the allowed strategies with `gh repo view <owner>/<repo> --json squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed`.
-Stop when the chosen strategy is not allowed. With none chosen, or a null `strategy`, use the one allowed strategy,
-or with several, `squash`, then `merge`, then `rebase`.
+Then pick the strategy as `references/strategy.md` says, and stop when the chosen one is not allowed.
 
 Pass `<owner>/<repo>` on every later call, or `gh` may read `<n>` of another repository. Stop and report when:
 
@@ -63,8 +60,10 @@ Pass `<owner>/<repo>` on every later call, or `gh` may read `<n>` of another rep
 - a label says not to merge: `do-not-merge`, `WIP`, `blocked`, or the project's own.
 - `mergeable` is `CONFLICTING`: the branch needs a rebase first.
 - `isDraft` is true and this is an unattended run. In the Human's run, when config.json `github.markReady` is `"auto"`, the default,
-  and a review of the current head signed off with no blocked row, as this session's review loop reported, mark it ready now,
-  with `gh pr ready <n> --repo <owner>/<repo>` (not under `--dry-run`), before step 1: some checks start only then.
+  and a review of the current head signed off with no blocked row, as this session's review loop reported, run
+  `aidrian pr product-feedback status <n>`, and the re-check when only that is owed, by
+  `../pr-product-feedback/references/in-a-flow.md` § Before `gh pr ready`. On exit 0, mark it ready now, with
+  `gh pr ready <n> --repo <owner>/<repo>` (not under `--dry-run`), before step 1: some checks start only then. Else stop, naming what is owed.
   Otherwise ask whether to mark it ready, never unasked.
 
 ## 1. Wait for a verdict
@@ -82,13 +81,12 @@ echo "exit $code head $head now $(gh pr view <n> --repo <owner>/<repo> --json he
 
 | Exit | Verdict | Next |
 | --- | --- | --- |
-| 0 | `ready` | step 2 with `<sha>`, the `head` value, when `now` is the same; when it differs, run the call again, at most 3 times |
+| 0 | `ready` | step 2 with `<sha>`, the `head` value, when `now` is the same; when it differs, run the call again, at most 3 times, then stop: the branch is still moving |
 | 1 | `failing` | stop with the line it printed (step 4) |
 | 2 | `pending` | run the call again; past the deadline, stop and name the checks still pending |
 | 3 | error | stop with the error |
 
-A required check that has not reported yet keeps the verdict pending. A `now` that differs from `head` means a commit
-arrived during the wait. After 3 such re-runs, stop: the branch is still moving.
+A required check that has not reported yet keeps the verdict pending.
 
 ## 2. Merge
 
@@ -105,7 +103,6 @@ Then run this once:
 gh pr merge <n> --repo <owner>/<repo> --<strategy> --match-head-commit <sha>   # add --delete-branch when the run's choice deletes it
 ```
 
-`--match-head-commit` makes GitHub refuse the merge when the head is no longer `<sha>`.
 With `--dry-run`, print the command and stop.
 A strategy-not-allowed error ends the run. If the merge fails for a new commit, a race, or a branch-protection mismatch,
 run step 1 once more, and retry once with the `<sha>` it printed when the verdict is still ready; otherwise stop and report.
@@ -118,7 +115,7 @@ Once `gh pr merge` succeeded, run § Confirm of `references/after-merge.md`: it 
 
 Report the `aidrian pr checks` line as printed, the detail from `aidrian pr checks <n> -R <owner>/<repo> --json`,
 `mergeStateStatus`, and one suggestion: rerun a failed job with `gh run rerun <run-id>`, fix the test, or rebase.
-Then end the run, with no merge and no rerun.
+Then end the run.
 
 ## 5. Cleanup
 

@@ -10,3 +10,9 @@ Already handled in <sha>.
 Conflicts with <doc path>: <one-line citation>. Open to discussion.
 Accepted residual: <why the fix is not worth it now>; marked in <path>.
 ```
+
+## Where each reply goes
+
+- Inline thread: reply through `gh api repos/{owner}/{repo}/pulls/<n>/comments/<id>/replies -f body=...`.
+  Resolve a bot's thread with the `resolveReviewThread` GraphQL mutation when the fix addressed it.
+- Review summary or conversation comment: one conversation comment that names the SHA.

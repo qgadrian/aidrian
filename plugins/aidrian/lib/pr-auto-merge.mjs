@@ -41,7 +41,7 @@ import { prNumber, repoName } from './review-gate.mjs';
 import { owed, readLocalState } from './review/state.mjs';
 import { scoped } from './rules/github/merge-review.mjs';
 
-const VIEW_FIELDS = 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews';
+export const VIEW_FIELDS = 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews';
 const SHA = /^[0-9a-f]{40}$/iu;
 // The `github` keys `aidrian pr checks` judges by (pr-checks.mjs computeVerdict).
 const CHECK_LISTS = ['requiredChecks', 'conditionalChecks', 'ignoreCancelledChecks'];
@@ -49,7 +49,7 @@ const CHECK_LISTS = ['requiredChecks', 'conditionalChecks', 'ignoreCancelledChec
 // What a failed gh call says: its last non-empty line of stderr, else the first line of the error's message.
 export const ghError = (error) => String(error?.stderr ?? '').split('\n').map((line) => line.trim()).filter(Boolean).at(-1) ??
   String(error?.message ?? error).split('\n')[0];
-const notFound = (error) => /HTTP 404/u.test(`${error?.stderr ?? ''}\n${error?.message ?? ''}`);
+export const notFound = (error) => /HTTP 404/u.test(`${error?.stderr ?? ''}\n${error?.message ?? ''}`);
 
 // [PR] [--json], where PR is a number, `#number`, or a pull request URL: { target, asJson, unknown }.
 export function parseArgs(argv) {
@@ -98,8 +98,9 @@ export function defaultBranch(forge, { repo, host }) {
 // The config the branch `branch` of `repo` commits on GitHub now, by committedConfig's rules: its folder override
 // first, then that folder's config.json. The ref is `refs/heads/<branch>`, so a tag of the same name never answers.
 // A file GitHub does not have (404) is no file; any other failure throws. `prefix` is the project's folder from the top of the
-// repository, with its trailing slash: GitHub's paths start at the top, and config paths at the project root.
-export function branchConfig(forge, { repo, host }, branch, prefix = '') {
+// repository, with its trailing slash: GitHub's paths start at the top, and config paths at the project root. `locate` and
+// `parse` find the file and read its text, for a caller that holds a broken file to stricter rules.
+export function branchConfig(forge, { repo, host }, branch, prefix = '', { locate = configPathIn, parse = configFromText } = {}) {
   const read = (name) => {
     const file = `${prefix}${name}`;
     let body;
@@ -114,8 +115,8 @@ export function branchConfig(forge, { repo, host }, branch, prefix = '') {
     }
     return Buffer.from(body.content, 'base64').toString('utf8');
   };
-  const file = configPathIn(read);
-  return configFromText(read(file), file);
+  const file = locate(read);
+  return parse(read(file), file);
 }
 
 // Why the changed files keep auto-merge off, or null. A path is the branch's text, so it is quoted: it cannot break the line.

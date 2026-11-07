@@ -15,8 +15,9 @@ import { viewForge, viewPrAt } from '../plugins/aidrian/lib/rules/github/merge-r
 const FACADE = [
   'id', 'cwd', 'isTrustedCommenter',
   'change', 'mergedChanges', 'openChanges', 'checks', 'repo', 'repository', 'contents', 'visibility', 'viewer',
-  'conversationComments', 'postComment', 'editComment', 'reactions',
-  'pull', 'reviews', 'reviewComments', 'reviewsWithComments', 'reviewThreads', 'commit', 'checkRuns', 'compare', 'uploadImages',
+  'conversationComments', 'comment', 'postComment', 'editComment', 'reactions',
+  'pull', 'diff', 'nodeChange', 'reviews', 'reviewComments', 'reviewsWithComments', 'reviewThreads',
+  'commit', 'checkRuns', 'compare', 'deployments', 'deploymentStatuses', 'uploadImages',
 ];
 
 // The adapter over a recording gh: `answer(args)` is what gh prints for one call. Each call is kept with its options.
@@ -312,4 +313,62 @@ test('uploadImages: gh image for the captures, with ten minutes to finish, and w
   const bounded = recorded(() => '', { timeoutMs: 3000 });
   bounded.forge.uploadImages('acme/notes', ['/c/a.png']);
   assert.equal(bounded.calls[0].options.timeoutMs, UPLOAD_TIMEOUT_MS, 'the upload`s own limit, over the adapter`s');
+});
+
+test('the product feedback commands` calls: the pull request, its comment, the post or edit, and the diff, each on its host', () => {
+  const H = ['--hostname', 'ghe.acme.io'];
+  const { forge, calls } = recorded((call) => (call[1] === 'diff' ? 'diff --git a/x b/x\n' : '{"id":9}'));
+  const fields = 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews,isCrossRepository';
+  forge.change('7', fields, { repo: 'ghe.acme.io/acme/notes' });
+  assert.deepEqual(forge.pull('acme/notes', 7, { host: 'ghe.acme.io' }), { id: 9 });
+  forge.pull('acme/notes', 7);
+  assert.deepEqual(forge.comment('acme/notes', 41, { host: 'ghe.acme.io' }), { id: 9 });
+  assert.deepEqual(forge.postComment('acme/notes', 7, '<!-- m -->\nbody', { host: 'ghe.acme.io' }), { id: 9 });
+  forge.editComment('acme/notes', 41, '<!-- m -->\nbody', { host: 'ghe.acme.io' });
+  forge.postComment('acme/notes', 7, 'b');
+  assert.equal(forge.diff(7, { repo: 'ghe.acme.io/acme/notes' }), 'diff --git a/x b/x\n', 'the diff is text, not JSON');
+  forge.diff('7');
+  assert.deepEqual(calls.map((call) => call.args), [
+    ['pr', 'view', '7', '--json', fields, '--repo', 'ghe.acme.io/acme/notes'],
+    ['api', ...H, 'repos/acme/notes/pulls/7'],
+    ['api', 'repos/acme/notes/pulls/7'],
+    ['api', ...H, 'repos/acme/notes/issues/comments/41'],
+    ['api', ...H, 'repos/acme/notes/issues/7/comments', '--method', 'POST', '-f', 'body=<!-- m -->\nbody'],
+    ['api', ...H, 'repos/acme/notes/issues/comments/41', '--method', 'PATCH', '-f', 'body=<!-- m -->\nbody'],
+    ['api', 'repos/acme/notes/issues/7/comments', '--method', 'POST', '-f', 'body=b'],
+    ['pr', 'diff', '7', '--repo', 'ghe.acme.io/acme/notes'],
+    ['pr', 'diff', '7'],
+  ]);
+});
+
+test('aidrian pr resolve`s deployment reads: the head`s deployments and one deployment`s statuses, a first page each, on the host', () => {
+  const { forge, args } = recorded(() => '[{"id":3}]');
+  const sha = 'a'.repeat(40);
+  assert.deepEqual(forge.deployments('acme/notes', sha, { host: 'github.com' }), [{ id: 3 }]);
+  assert.deepEqual(forge.deploymentStatuses('acme/notes', 3, { host: 'github.com' }), [{ id: 3 }]);
+  assert.deepEqual(args(), [
+    ['api', '--hostname', 'github.com', `repos/acme/notes/deployments?sha=${sha}`],
+    ['api', '--hostname', 'github.com', 'repos/acme/notes/deployments/3/statuses'],
+  ]);
+});
+
+test('the ready hold`s calls: a node id`s pull request through GraphQL, and SIGKILL at each call`s bound', () => {
+  const { forge, calls } = recorded(() => '{"data":{"node":{"url":"https://github.com/acme/notes/pull/7"}}}', { timeoutMs: 1200, killSignal: 'SIGKILL' });
+  assert.equal(forge.nodeChange('PR_kwDOabc123').data.node.url, 'https://github.com/acme/notes/pull/7');
+  forge.change(null, 'url', { repo: 'acme/notes' });
+  assert.deepEqual(calls, [
+    { args: ['api', 'graphql', '-f', 'query=query($id:ID!){node(id:$id){... on PullRequest{url}}}', '-f', 'id=PR_kwDOabc123'], options: { cwd: '/repo', timeoutMs: 1200, killSignal: 'SIGKILL' } },
+    { args: ['pr', 'view', '--json', 'url', '--repo', 'acme/notes'], options: { cwd: '/repo', timeoutMs: 1200, killSignal: 'SIGKILL' } },
+  ]);
+  // The signal reaches gh's process through the runner, and no signal is named when none is asked for.
+  const given = [];
+  const exec = (_file, _args, options) => (given.push(options), '{}');
+  runGh(['api', 'user'], { exec, timeoutMs: 1200, killSignal: 'SIGKILL' });
+  runGh(['api', 'user'], { exec });
+  assert.deepEqual([given[0].killSignal, given[0].timeout], ['SIGKILL', 1200]);
+  assert.ok(!('killSignal' in given[1]), 'gh`s runner keeps execFileSync`s default signal');
+  assert.ok(!('killSignal' in recorded().calls), 'no option, no signal');
+  const plain = recorded(() => '{}');
+  plain.forge.pull('acme/notes', 7);
+  assert.deepEqual(plain.calls[0].options, { cwd: '/repo' });
 });

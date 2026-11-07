@@ -102,6 +102,26 @@ export function namesRemote(given, remotes) {
   return remotes.some((remote) => remote.path === wanted.path && (bare || remote.host === null || remote.host === wanted.host));
 }
 
+// `host/owner/repo`, lowercased, from a remote URL: https, ssh, or `git@host:owner/repo.git`, with or without a slash
+// after the colon; null for anything else, such as a folder on disk, which names no host. `ssh.github.com`, GitHub's ssh
+// over port 443, is github.com. No other alias is resolved: `ssh -G` would read this machine's config, so a refusal says so.
+export function remoteKey(url) {
+  const match = /^[a-z][a-z0-9+.-]*:\/\/(?:[^/@]*@)?([^/:@]+)(?::\d+)?\/(.+)$/iu.exec(url) ?? /^(?:[^/@:]*@)?([^/:@]+):\/?(?!\/)(.+)$/u.exec(url);
+  if (!match) return null;
+  const parts = match[2].replace(/\/+$/u, '').replace(/\.git$/u, '').split('/');
+  if (parts.length !== 2) return null;
+  const host = match[1].toLowerCase();
+  return `${host === 'ssh.github.com' ? 'github.com' : host}/${parts.join('/')}`.toLowerCase();
+}
+
+// The checkout's remotes as remoteKey values, `host/owner/repo`: the same owner and name on another host is another
+// repository.
+export function checkoutRemotes(cwd) {
+  const { status, stdout } = runGit(['remote', '-v'], cwd);
+  if (status !== 0) return [];
+  return [...new Set(stdout.split('\n').filter(Boolean).map((line) => remoteKey(line.split(/\s+/)[1] ?? '')).filter(Boolean))];
+}
+
 // The CLI body. `forge` and `remotes` are the test seams: the forge facade, and () → checkoutRepos.
 export function runChecks(
   argv,

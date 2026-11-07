@@ -46,6 +46,12 @@ test('the tracker hooks run on every MCP tool, and on nothing else', () => {
   }
 });
 
+test('the GitHub MCP hook runs on the server\'s tools that mark a draft ready, so the ready hold reads them', () => {
+  const group = HOOKS.PreToolUse.find((each) => each.hooks.some(({ command }) => command.includes('hook-mcp-github.mjs')));
+  const names = group.matcher.split('|');
+  for (const name of ['mcp__github__update_pull_request', 'mcp__github__update_pull_request_draft_state']) assert.ok(names.includes(name), name);
+});
+
 test('the tracker hooks, with the tracker on, let input they cannot use run and write no file', (t) => {
   const base = realpathSync(mkdtempSync(path.join(tmpdir(), 'aidrian-hooks-tracker-')));
   t.after(() => rmSync(base, { recursive: true, force: true }));

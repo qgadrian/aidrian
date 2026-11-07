@@ -247,6 +247,50 @@ test('.aidrian.local.json takes github and decisions together, read from the mai
   }
 });
 
+test('review.productFeedback.auto comes only from the main checkout\'s local file: a worktree\'s copy is not read, a tracked copy is ignored with an error', (t) => {
+  const dir = tempDir(t);
+  const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' });
+  git('init', '-q', '-b', 'main');
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}');
+  writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n');
+  git('add', '.');
+  git('-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init');
+  const worktree = path.join(dir, 'wt/task');
+  git('worktree', 'add', '-q', '-b', 'task', worktree);
+  const local = (auto) => JSON.stringify({ review: { productFeedback: { auto } } });
+  const main = path.join(dir, '.aidrian.local.json');
+  const own = path.join(worktree, '.aidrian.local.json');
+  const read = (at) => findProject(at).localFeedbackAuto;
+
+  assert.equal(read(dir), undefined, 'no file');
+  writeFileSync(own, local(true));
+  assert.equal(read(worktree), undefined, 'a worktree\'s own copy is not read: the main checkout has no file');
+  for (const value of [true, false]) {
+    writeFileSync(main, local(value));
+    assert.equal(read(dir), value);
+    assert.equal(read(worktree), value, 'the main checkout says so, whatever the worktree\'s copy says');
+  }
+  writeFileSync(own, '{');
+  assert.equal(read(worktree), false, 'a worktree\'s broken copy changes nothing');
+  writeFileSync(own, local(true));
+  writeFileSync(main, '{');
+  assert.equal(read(dir), undefined, 'a broken file reads as unset, so the team\'s value holds, never false');
+  assert.equal(read(worktree), undefined);
+  writeFileSync(main, local('no'));
+  assert.equal(read(dir), undefined, 'an invalid value reads as unset');
+  writeFileSync(main, '{}');
+  assert.equal(read(dir), undefined);
+
+  writeFileSync(main, local(false));
+  writeFileSync(path.join(dir, '.gitignore'), '');
+  git('add', '.aidrian.local.json');
+  const tracked = findProject(dir);
+  assert.equal(tracked.localFeedbackAuto, undefined, 'a tracked copy is ignored');
+  assert.match(tracked.errors.join('\n'), /\.aidrian\.local\.json: git tracks it.*review\.productFeedback\.auto/u);
+  assert.equal(read(worktree), undefined, 'from a worktree too');
+});
+
 test('.aidrian.local.json github.autoMerge "on" where git cannot say it is untracked reads "off" with an error', (t) => {
   // No repository: git ls-files fails, which is no answer "untracked".
   const dir = tempDir(t);

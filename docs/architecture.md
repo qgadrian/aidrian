@@ -54,7 +54,7 @@ test/                               node --test suites
   file runs gh. Shared code imports `lib/forges/index.mjs` alone, never an adapter: it gives `forgeFor` and the
   helpers `repoIdentity` (`identity.mjs`), the facade's own, which reads a repository to its canonical host and full
   path before any forge is chosen, `isTrustedCommenter`, which says who belongs to it, and `REVIEWS_PAGE`. The last two
-  are GitHub's today, as the payloads are, until a second forge reshapes them. An option bounds a hook's calls (`timeoutMs`), `strictJson` reads an empty answer as null, as
+  are GitHub's today, as the payloads are, until a second forge reshapes them. An option bounds a hook's calls (`timeoutMs`, and `killSignal`, which stops one at that bound), `strictJson` reads an empty answer as null, as
   `aidrian pr await-review` always has, and `{ host }` names the host of a pull request's URL.
   Callers' tests stub those methods; `test/forge-github.test.mjs` holds the gh command behind each one, and
   `test/forge-coupling.test.mjs` fails on shared code that imports an adapter, runs gh, or builds a GitHub route.

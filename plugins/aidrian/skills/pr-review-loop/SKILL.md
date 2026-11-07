@@ -15,9 +15,10 @@ and `product_sensitive` docs when a comment touches what users see, money, or da
 
 - `git rev-parse --is-inside-work-tree` and `gh auth status` must pass; otherwise stop and say which.
 - Run the branch preflight of the `orchestration` skill's `references/review-rules.md`.
-  Its § A ready pull request says when a ready pull request stops after the triage in step 3.
-  Follow its other sections too: fix passes, proportion, dispositions, the bot out, a review round.
+  Follow it whole: its § A ready pull request says when a ready pull request stops after step 3's triage.
 - The Human asks for a bot review: run `aidrian pr request <n>` at once (`references/review-plan.md`).
+- Alone on a draft, before step 1: the `pr-product-feedback` skill's `references/in-a-flow.md` § After the draft opens.
+  It runs that skill only on `not_run`: step 7's ready step owns the re-check.
 
 ## 1. Run the review plan
 
@@ -30,7 +31,7 @@ Act on `status`, then run it again, until it stops:
 
 | Status | Do |
 | --- | --- |
-| `dispatch` | run each `dispatch[]` entry as its read-only `agent`, briefed with the entry; record each with its `record` command |
+| `dispatch` | run each `dispatch[]` entry as its read-only `agent`, briefed with the entry as `references/review-plan.md` says; record each with its `record` command |
 | `fix_required` | triage `open`, `flows`, `tests_removed`, and `checks_failing` in step 3, fix, push |
 | `running`, `checks_pending`, `timed_out` | run it again; `incomplete` with `retry_recommended`: once more |
 | `received`, `none_needed` | go to step 2 for comments people or the bot left, then step 7 |
@@ -39,8 +40,6 @@ Act on `status`, then run it again, until it stops:
 | `blocked_quota` | ask `question` with AskUserQuestion and `options`; run the pick's `run` |
 | `human_required`, `stuck`, `too_large`, `unsatisfied`, `round_limit` | stop: report it and ask the Human |
 
-A flow pass answers every invariant it is given with a verdict and evidence, as `references/review-plan.md` says,
-with what each status carries.
 With `--await-codex`, run `aidrian pr review <n> --with-bot`: the review bot then runs as the last stage.
 
 ## 2. Collect every review surface
@@ -55,7 +54,8 @@ aidrian pr checks <n>                                        # one line: ready, 
 ```
 
 For thread state, query `reviewThreads` with `isResolved` and `isOutdated` through `gh api graphql`, and skip
-resolved threads. A failing check is a review item too.
+resolved threads. A failing check is a review item too. Skip a conversation comment the gh user wrote that carries the
+`aidrian-product-feedback` marker: `aidrian pr product-feedback answer` answers its items.
 
 ## 3. Triage
 
@@ -84,7 +84,6 @@ One row per item:
 
 ## 4. Fix every copy of the mistake
 
-A comment names one place; the bot reports the other copies one round at a time.
 For each finding, search the pull request's changed files, and the code they call or are called by, for the same
 mistake, and fix every copy in the same commit. A copy outside the pull request's scope becomes a follow-up note.
 
@@ -104,12 +103,9 @@ The agent that made the fix verifies, commits, and pushes it, then returns the S
 
 ## 6. Reply
 
-- Inline thread: reply through `gh api repos/{owner}/{repo}/pulls/<n>/comments/<id>/replies -f body=...`.
-  Resolve a bot's thread with the `resolveReviewThread` GraphQL mutation when the fix addressed it.
-  A person's thread gets the reply and stays open: its author resolves it.
-- Review summary or conversation comment: one conversation comment that names the SHA.
+- Before the first post, read `references/replies.md`: one shape per verdict, and where each reply goes.
+- Resolve a bot's thread the fix addressed. A person's thread gets the reply and stays open: its author resolves it.
 - Check the response of every post. A failed post means the thread is not addressed; say so in the summary.
-- Before the first post, read `references/replies.md`: one shape per verdict.
 
 ## 7. Summary
 
@@ -117,8 +113,9 @@ Report, in this order: the triage table; what changed per file with its triage n
 commands with pass or fail; the replies posted, and any that failed; and a sign-off naming the addressed,
 not applicable, accepted, and blocked rows, the residual risks, and whether the pull request is ready for another review.
 On a draft, when config.json `github.markReady` is `"auto"`, the default, or the Human asked in this session,
-mark it ready with `gh pr ready <n>` once a review of the current head signed off with no blocked row,
-and `aidrian pr checks <n>` says ready. With `"ask"` and no such request, report convergence; the author marks it ready.
-A fix pushed after that review sends the loop back to step 1. Pending or failing: leave it a draft and say why.
+once a review of the current head signed off with no blocked row and `aidrian pr checks <n>` says ready, run
+`aidrian pr product-feedback status <n>`, and the re-check when only that is owed, by step 0's file
+§ Before `gh pr ready`; on exit 0, mark it ready with `gh pr ready <n>`. With `"ask"` and no such request, report convergence; the author marks it ready.
+A fix pushed after that review sends the loop back to step 1. Pending, failing, or feedback owed: leave it a draft and say why.
 After `gh pr ready`, push nothing more. Then run the `pr-auto-merge` skill. Merge only through that step, and only after this run marked the draft ready.
 Run as a step of another skill or agent, never mark it ready or merge: those are the caller's steps, after all its reviews.

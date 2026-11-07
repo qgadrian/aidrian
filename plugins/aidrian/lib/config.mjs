@@ -467,6 +467,26 @@ export function configFromText(text, file, errors = []) {
   return deepFreeze(config);
 }
 
+// configFromText for a reader that must not take a broken file for the defaults: text that does not parse, is no object,
+// or has another version throws, and so does an error `fatal` picks out. Null, no file, is still the defaults.
+export function strictConfigFromText(text, file, fatal = () => false) {
+  if (typeof text !== 'string') return DEFAULTS;
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch (error) {
+    throw new Error(`${file}: invalid JSON (${error.message})`);
+  }
+  if (!isObject(raw)) throw new Error(`${file}: must be a JSON object`);
+  const problem = versionProblem(file, raw.version);
+  if (problem) throw new Error(problem);
+  const errors = [];
+  const config = configFromText(text, file, errors);
+  const broken = errors.find(fatal);
+  if (broken) throw new Error(broken);
+  return config;
+}
+
 // `team`, the `decisions` of config.json, with the local file's `decisions` over it, as `project.localDecisions` holds
 // it. The local file may set `mode` and `domains`, each held to the team's `maxMode`; `unreviewed.remind`; and
 // `unreviewed.pauseDomainAt`, of which only a value lower than the team's applies, one limit at a time. Any other key

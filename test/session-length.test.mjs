@@ -100,8 +100,8 @@ test('the cost trigger fires first at costRatio, then at twice the ratio of its 
 test('a marker holds the last cost ratio and the ceiling count; one an older version wrote counts as one firing of each', () => {
   assert.deepEqual(readMarker(null, 2, 2), { lastRatio: 0, tokens: 0, compactions: 0 });
   assert.deepEqual(readMarker('{"lastRatio": 2.5, "tokens": 1, "compactions": 1}\n', 3, 2), { lastRatio: 2.5, tokens: 1, compactions: 1 });
-  assert.deepEqual(readMarker('{"ratio": 2, "tokens": 1, "compactions": 1}\n', 3, 2), { lastRatio: 2, tokens: 1, compactions: 1 }, 'a v0.47.0 count: a firing at costRatio');
-  assert.deepEqual(readMarker('{"ratio": 0, "tokens": 0, "compactions": 0}\n', 0, 2), { lastRatio: 0, tokens: 0, compactions: 0 }, 'a v0.47.0 marker with no cost firing');
+  assert.deepEqual(readMarker('{"ratio": 2, "tokens": 1, "compactions": 1}\n', 3, 2), { lastRatio: 2, tokens: 1, compactions: 1 }, 'a count from v0.28.0 to v0.47.0: a firing at costRatio');
+  assert.deepEqual(readMarker('{"ratio": 0, "tokens": 0, "compactions": 0}\n', 0, 2), { lastRatio: 0, tokens: 0, compactions: 0 }, 'a marker from v0.28.0 to v0.47.0 with no cost firing');
   for (const old of ['ask\n', 'remind\n', '1\n', '3\n']) assert.deepEqual(readMarker(old, 2, 2), { lastRatio: 2, tokens: 1, compactions: 2 }, old);
 });
 
@@ -256,7 +256,7 @@ test('auto mode, and a legacy "auto" string, send the agent back to write the br
   }
 });
 
-test('nothing happens when off, under the step, on the stop it caused, on another host, or outside a project', (t) => {
+test('nothing happens when off, under costRatio, on the stop it caused, on another host, or outside a project', (t) => {
   for (const handoff of [{ mode: 'off' }, 'off']) {
     const off = setup(t, { handoff });
     off.reach(400_000);
@@ -264,7 +264,7 @@ test('nothing happens when off, under the step, on the stop it caused, on anothe
     assert.equal(off.plan(), '', `the plan offer, off as ${JSON.stringify(handoff)}`);
   }
   const { stop, reach, temp, transcript } = setup(t);
-  assert.deepEqual(stop(), QUIET, 'under the default step');
+  assert.deepEqual(stop(), QUIET, 'under the default costRatio');
   reach(205_352);
   assert.deepEqual(stop({ stop_hook_active: true }), QUIET, 'the stop this hook caused');
   assert.deepEqual(stop({ stop_hook_active: undefined }), QUIET, 'a payload without stop_hook_active');

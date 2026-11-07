@@ -53,8 +53,9 @@ ceiling fired, and the compactions seen. A firing changes only what its own trig
 ratio, and a ceiling firing raises its count past every doubling the context already reached, so a jump of two
 doublings in one turn is not reminded again at the next.
 A marker older versions wrote reads as follows. A mode word or one count is one firing of each trigger, the cost one
-at `costRatio`, at the session's current compactions. A v0.47.0 marker, `{"ratio": n, "tokens": n, "compactions": n}`,
-keeps its own `tokens` and `compactions`; a `ratio` above 0 is a cost firing at `costRatio`, and a `ratio` of 0 is none.
+at `costRatio`, at the session's current compactions. A marker from v0.28.0 to v0.47.0,
+`{"ratio": n, "tokens": n, "compactions": n}`, keeps its own `tokens` and `compactions`; a `ratio` above 0 is a cost
+firing at `costRatio`, and a `ratio` of 0 is none.
 The `SessionEnd` hook deletes the marker; a new session starts fresh.
 
 **Compaction.** A compaction writes a `compact_boundary` entry into the same transcript, under the same session id.

@@ -78,9 +78,9 @@ const tokensPassed = (context, maxTokens, fired) =>
 // What a marker holds: { lastRatio, tokens, compactions }, the cost ratio at the last cost firing (0 for none), the
 // ceiling's firing count, and the compactions seen. No marker is none. A marker older versions wrote reads as follows.
 // A mode word or one count is one firing of each trigger, the cost one at `costRatio`, at the session's current
-// `compactions`. A v0.47.0 JSON marker keeps its own `tokens` and `compactions`, and its `ratio` count reads as a cost
-// firing at `costRatio` when above 0, or as no cost firing at 0. So an old marker that recorded a cost firing never
-// brings the cost reminder back sooner than twice costRatio.
+// `compactions`. A JSON marker from v0.28.0 to v0.47.0 keeps its own `tokens` and `compactions`, and its `ratio`
+// count reads as a cost firing at `costRatio` when above 0, or as no cost firing at 0. So an old marker that recorded a
+// cost firing never brings the cost reminder back sooner than twice costRatio.
 export function readMarker(text, compactions, costRatio) {
   if (text === null || text === undefined) return { lastRatio: 0, tokens: 0, compactions: 0 };
   let marker;

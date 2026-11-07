@@ -218,7 +218,8 @@ const TYPES = {
   positive: [(value) => Number.isInteger(value) && value > 0, 'a whole number above 0'],
   percent: [(value) => Number.isInteger(value) && value > 0 && value <= 100, 'a whole number from 1 to 100'],
   zeroOrMore: [(value) => Number.isInteger(value) && value >= 0, 'a whole number, 0 or more'],
-  // A step under a tenth of a fresh call's cost means nothing, and rounds away in the step arithmetic.
+  // At 1 a call costs what it would in a fresh session, so a handoff saves nothing; under 1.1 the saving per call is
+  // too small for a handoff to pay back its own calls.
   costRatio: [(value) => typeof value === 'number' && Number.isFinite(value) && value >= 1.1, 'a number of 1.1 or more'],
   commitFields: [(value) => Array.isArray(value) && value.every((f) => COMMIT_FIELDS.includes(f)), `a list of ${COMMIT_FIELDS.map((f) => `"${f}"`).join(', ')}`],
   prFields: [(value) => Array.isArray(value) && value.every((f) => PR_FIELDS.includes(f)), `a list of ${PR_FIELDS.map((f) => `"${f}"`).join(', ')}`],

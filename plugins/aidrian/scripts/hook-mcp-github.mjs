@@ -32,7 +32,8 @@ const READY_TOOLS = new Set(['mcp__github__update_pull_request', 'mcp__github__u
 await runHook(async (input) => {
   const { tool, given: toolInput } = githubCall(input.tool_name, input.tool_input ?? {});
   if (tool === 'mcp__github__merge_pull_request') {
-    const reason = checkMcp(toolInput, { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), input });
+    // `startedAt`: the merge guard bounds the unattended waiver's reads by the hook's own time.
+    const reason = checkMcp(toolInput, { cwd: typeof input.cwd === 'string' ? input.cwd : process.cwd(), input, startedAt: performance.timeOrigin });
     if (reason) await block(input, 'merge-review', reason);
     return;
   }

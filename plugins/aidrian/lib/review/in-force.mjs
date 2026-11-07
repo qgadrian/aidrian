@@ -1,10 +1,12 @@
 // The review config a step runs by: the base branch's `review` group, which a pull request cannot weaken, plus what the
-// head adds, and the files a review command line names, whose change is a change to how the project is reviewed.
+// head adds; the files a review command line names, whose change is a change to how the project is reviewed; and what
+// the base branch itself changed in how the project is reviewed.
 // lib/review/run.mjs re-exports reviewInForce.
 
 import { checkReview, REVIEW_DEFAULTS } from './config.mjs';
-import { fileAt } from './diff.mjs';
+import { changedFiles, fileAt } from './diff.mjs';
 import { flowsInForce } from './plan.mjs';
+import { touchedCitations } from './cited.mjs';
 
 // The `review` config in force: the base branch's, which a pull request cannot weaken, plus what the head adds.
 // `changed` lists the review settings the head changes, which trigger the harness-config flow.
@@ -61,4 +63,20 @@ export function baseReviewAt(project, commit) {
 // The files a plan command line names that exist in the repository: a change to them is a change to the review.
 export function commandFiles(root, command, commit) {
   return (command ?? '').split(/\s+/u).filter((word) => /[./]/u.test(word) && !word.startsWith('-') && fileAt(root, commit, word) !== null);
+}
+
+// What the base branch changed in how the project is reviewed from `from` (the old merge base of the reviewed head) to
+// `to` (the base tip, whose rules the step reviews under, so a rule main gains after the merged commit counts too): the
+// config's `review` group (a flow, rule, reviewer, or plan command), a file a review command names (`harnessFiles`), and
+// a flow's invariants doc or a doc an invariant cites. The reviewed head was judged without it, so its review cannot
+// carry and the merge's own diff is not the whole question.
+export function baseReviewMoved(project, { from, to, flows, harnessFiles }) {
+  const root = project.root;
+  const changes = changedFiles(root, from, to);
+  const paths = new Set(changes.map((change) => change.file));
+  const moved = [];
+  if (paths.has(project.paths.config) && JSON.stringify(baseReviewAt(project, from)) !== JSON.stringify(baseReviewAt(project, to))) moved.push(`${project.paths.config} review`);
+  for (const file of harnessFiles) if (file !== project.paths.config && paths.has(file)) moved.push(file);
+  moved.push(...touchedCitations(root, from, to, flows, paths));
+  return [...new Set(moved)];
 }

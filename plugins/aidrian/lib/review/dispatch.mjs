@@ -5,7 +5,7 @@
 import { showPrefix } from '../git.mjs';
 import { fileAt, isAncestor } from './diff.mjs';
 import { blocks } from './findings.mjs';
-import { belowRootBrief, flowBaseBrief, VERDICT_MEANING } from './reviewers.mjs';
+import { belowRootBrief, flowBaseBrief, remergeBrief, VERDICT_MEANING } from './reviewers.mjs';
 import * as quota from './quota.mjs';
 import { attachMode, captureKeys, captureVisual, capturesBody, keepUploaded, uploadCaptures, VISUAL_MARKER, signedVariants, visualInput } from './visual.mjs';
 import { inBaseWorktree, runHook } from './base-worktree.mjs';
@@ -52,7 +52,7 @@ export async function captureAndAttach(s) {
 
 // The input every reviewer of a pass reads.
 export function passInput(s, pass, stage) {
-  const { config, root, repo, n, head, base, baseTip, changes, state, plan, resultFor, sameFiles, verdictsFor, visual, manifest, isVisual } = s;
+  const { config, root, repo, n, head, base, baseTip, changes, scope, state, plan, resultFor, sameFiles, verdictsFor, visual, manifest, isVisual } = s;
   const recorded = state.passes[pass.id];
   const prior = resultFor(pass) ?? (recorded && sameFiles(pass, recorded) ? recorded : null);
   const from = prior && prior.head !== head && isAncestor(root, prior.head, head) ? prior.head : base;
@@ -78,7 +78,9 @@ export function passInput(s, pass, stage) {
   const visualChecklist = visual?.checklist ? { path: visual.checklist, text: fileAt(root, baseTip, visual.checklist.split('#')[0]) } : null;
   return {
     ...split,
-    pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files, flows, priorFindings: [...(prior?.list ?? []), ...keptFindings(state, pass)],
+    // A merge's resolutions are the whole review: a pass of every changed file reads only the resolved ones.
+    pr: n, repo, base: from, head, context: from === base ? 'full' : 'delta', files: pass.files ?? (scope ? scope.changes.map((change) => change.file) : null), flows, priorFindings: [...(prior?.list ?? []), ...keptFindings(state, pass)],
+    ...(scope ? { remerge: head } : {}),
     // An invariant is a claim about the whole change, so a delta pass still judges its flows from the merge base:
     // judged on the delta, a narrowing an earlier push made reads as a weakening, and a new head hides a violation.
     ...(flows.length && from !== base ? { flowBase: base } : {}),
@@ -107,6 +109,7 @@ export function dispatchFor(s, pass, stage) {
     input.flows.some((flow) => (flow.invariants ?? []).some((invariant) => invariant.source)) ? 'Judge each invariant against its `source`, the section of the project doc it cites; `text` is only the question.' : null,
     input.flows.length ? VERDICT_MEANING : null,
     input.flowBase ? flowBaseBrief(input) : null,
+    input.remerge ? remergeBrief(input) : null,
     input.visual ? 'Review the captures in `visual` (open each `file`), with their measured facts, as well as the diff.' : null,
     pass.fallback ? `${quota.owner(pass.fallback.replaces)} is out of quota, and the Human chose this pass as the second look in its place: review the whole change through your own lens. It is recorded as a fallback, not as an independent review.` : null,
   ].filter(Boolean);

@@ -17,6 +17,13 @@
 //   extension_check  at the round cap: run the listed judge, then record its verdict with `aidrian pr extend`
 //   extension_ask    the judge says one more round; ask the Human, then `aidrian pr extend <PR> --human approve|deny`
 //
+// A two-parent merge from the base branch onto the head whose review last came back `received` is not reviewed again:
+// when it changes nothing git's own merge would not, it carries that review to its head (`received`, with
+// `carried_from` and `carried_base`), with no reviewer and no round, and answers no owed review; otherwise the round
+// reviews only the changes the merge commit itself made, `git show --remerge-diff` (lib/review/diff.mjs baseMergeOf).
+// A merge where the base branch, up to its current tip, changes how the project is reviewed (baseReviewMoved), and a
+// merge git cannot read this way, are reviewed as before, and the plan's reasons say why.
+//
 // docs/review.md describes the plan, the stages, and the record.
 //
 // This file is the public entry and the step's outcome: what every result holds, records, and publishes. A step plans

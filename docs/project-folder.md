@@ -80,12 +80,17 @@ It writes nothing at all when a symlink would take a write outside the project, 
 - Every knowledge index, as [knowledge.md](knowledge.md#checks) describes.
 - `.aidrian.local.json`, when present: every source, as [Local knowledge sources](#local-knowledge-sources) describes,
   `models`, as [config.md](config.md#models) describes, `names`, as [config.md](config.md#names) describes,
-  and `github.autoMerge`, the machine's auto-merge choice: `{ "enabled": true }` or `{ "enabled": false }`, or the older `"on"` or `"off"`, and the only `github` key it takes.
+  and `github.autoMerge`, the machine's auto-merge choice: `{ "enabled": true }` or `{ "enabled": false }`, or the older `"on"` or `"off"`.
   Unset follows the team's `github.autoMerge.default`. When it turns auto-merge on and config.json `github.autoMerge.allow` is false, check prints
   `warning: auto-merge is on locally but the team does not allow it`, and does not fail.
+  `github.unattendedWaiver`, the machine's [unattended waiver](config.md#unattended-waiver) choice, takes the same shapes, and unset is off.
+  When it is on and config.json `github.unattendedWaiver.allow` is false, check prints
+  `warning: unattended waiver is on locally but the team does not allow it`, and does not fail.
+  These two are the only `github` keys the file takes; an error in that group reads both `"off"`.
   `reviewApprovals`, the machine's [review approvals](review.md#sign-off-by-the-human) choice, must be `"on"` or `"off"`;
   anything else is an error, and it reads `"off"`.
-  When git tracks `.aidrian.local.json`, in any case, a branch could carry it, so `github.autoMerge` and `reviewApprovals` read `"off"` and check names the
+  When git tracks `.aidrian.local.json`, in any case, a branch could carry it,
+  so `github.autoMerge`, `github.unattendedWaiver`, and `reviewApprovals` read `"off"` and check names the
   error, with the fix `git rm --cached .aidrian.local.json`. So does a checkout where git cannot say whether it tracks the file.
   `review.productFeedback` takes only `auto`, true or false. In the main checkout's file, a tracked copy, or a checkout where git
   cannot say, has its value ignored and the same error: [Product feedback](config.md#product-feedback).
@@ -169,7 +174,8 @@ The `quorum` skill runs in one of three modes, and its ledger records which in `
 A plan-mode ledger, `quorum/<name>-<plan-hash>.json`, records the objections two adversaries raised against a plan,
 the architect's ruling on each, and the Human's answers. `<name>` is the plan's file name without `.md`,
 or `<parent-folder>-plan` for a file named `plan.md`, and `<plan-hash>` is `git hash-object` of the plan.
-`lib/quorum.mjs` holds its schema, `LEDGER_SCHEMA`, and the schemas of Codex's answers, `OBJECTIONS_SCHEMA` and `REBUTTALS_SCHEMA`.
+Its schema, `LEDGER_SCHEMA`, and the schemas of Codex's answers, `OBJECTIONS_SCHEMA` and `REBUTTALS_SCHEMA`,
+are defined in `lib/quorum/*-schema.mjs` and exported by `lib/quorum.mjs`.
 Each objection, ruling, and rebuttal cites its evidence as `{kind, ref, quote}`.
 The `quorum` skill's `references/ledger.md` lists every field.
 

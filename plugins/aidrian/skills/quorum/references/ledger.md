@@ -17,7 +17,8 @@ A product ledger is named the same way, under `<state>/quorum/product/`.
 
 ## Schemas
 
-The plugin's `lib/quorum.mjs` is the one source of truth, and this page keeps no copy of it:
+The plugin's `lib/quorum/*-schema.mjs` files define them, and `lib/quorum.mjs` exports them.
+They are the one source of truth, and this page keeps no copy of them:
 
 - `LEDGER_SCHEMA`: the plan-mode ledger.
 - `OBJECTIONS_SCHEMA`: an adversary's objections, `{objections: [{severity, claim, citations}]}`.

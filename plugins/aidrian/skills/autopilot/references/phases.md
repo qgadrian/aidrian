@@ -108,7 +108,9 @@ The loop ends at the first of these:
   A round that pushes a fix moves the head, and no review has seen the new one: run the next round on it.
   The code comment an `accepted_residual` gets is not a fix.
 - **The cap**: the last round ends with `fix_now` findings open, or with fixes pushed that no review has seen.
-  List both in the report, and start no further round.
+  List both in the report, and start no further round. Dispatch no waiver judge: the loop's `references/review-plan.md`
+  § At the cap: a judge's waiver is for a session told to merge, and this run merges only through the auto-merge step
+  below, whose `aidrian pr auto-merge` reads no verdict.
 - **A stop** from `SKILL.md` § Stop.
 
 Then:

@@ -100,6 +100,7 @@ const SCHEMA = {
     },
     reviewGate: { enabled: 'boolean', checklist: 'textOrNull' },
     autoMerge: { allow: 'boolean', default: 'onOff', strategy: 'mergeStrategy', deleteBranch: 'boolean', deleteWorktree: 'boolean' },
+    unattendedWaiver: { allow: 'boolean' },
   },
   review: 'review',
   docs: { wrapLimit: 'zeroOrMore' },
@@ -315,6 +316,9 @@ export const DEFAULTS = deepFreeze({
     // the choice to pr-merge-when-green's order: squash, then merge, then rebase, among those the repository allows.
     // A machine opts in under it from the local file (resolveAutoMerge).
     autoMerge: { allow: false, default: 'off', strategy: null, deleteBranch: false, deleteWorktree: false },
+    // The team's ceiling on a recorded judge verdict standing in for the Human's "Merge anyway" at the merge guard
+    // (lib/review/waiver.mjs). A machine opts in under it from the local file (resolveUnattendedWaiver); no team default.
+    unattendedWaiver: { allow: false },
   },
   // How a pull request is reviewed (lib/review/, docs/review.md).
   review: REVIEW_DEFAULTS,
@@ -565,6 +569,15 @@ export function resolveAutoMerge(github, local) {
   if (github?.autoMerge?.allow !== true) return { effective: false, reason: 'team' };
   const on = local === 'on' || (local === 'unset' && github.autoMerge.default === 'on');
   if (!on) return { effective: false, reason: 'local' };
+  return { effective: true, reason: null };
+}
+
+// Whether the merge guard may take a recorded judge verdict (`aidrian pr waive`) in place of the Human's answer, from a
+// `github` config and the local file's switch (`project.localUnattendedWaiver`): { effective, reason }, as
+// resolveAutoMerge. There is no team default, so "unset" is off. `reason` is "team" or "local", null when it is on.
+export function resolveUnattendedWaiver(github, local) {
+  if (github?.unattendedWaiver?.allow !== true) return { effective: false, reason: 'team' };
+  if (local !== 'on') return { effective: false, reason: 'local' };
   return { effective: true, reason: null };
 }
 

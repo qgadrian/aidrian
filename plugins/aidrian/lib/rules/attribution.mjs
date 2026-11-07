@@ -85,7 +85,7 @@ export function check(command, { cwd = process.cwd(), env = process.env, input, 
     const expected = expectedTrailers(fields, who());
     const carried = commitTrailers(messages.length ? messages.join('\n\n') : null, trailers, dir, config, cleanup);
     const missing = expected.filter((trailer) => !carried.has(trailer));
-    if (missing.length) return commitReason(expected, missing);
+    if (missing.length) return commitReason(expected, missing, carried);
   }
   for (const { call, dir, at, environment, written } of prCreates) {
     const found = settings(at);
@@ -303,9 +303,27 @@ const hint = (problem) =>
   `To override for an explicit, user-confirmed reason, set ${OVERRIDE}=1 in your own shell before starting the session ` +
   "(agents must never set it on the user's behalf).";
 
-function commitReason(expected, missing) {
-  return hint(`the commit lacks the attribution trailer(s) ${missing.map((line) => `\`${line}\``).join(', ')}. ` +
-    `Add them to the message's last paragraph, or pass: ${expected.map((line) => `--trailer '${line}'`).join(' ')}`);
+// A trailer line's key, which git matches in any case.
+const trailerKey = (line) => line.slice(0, line.indexOf(':')).toLowerCase();
+
+// Each missing trailer is different when the commit carries a line of its key, in any case, and absent when it does
+// not. `carried` holds the commit's trailers as `Key: value` (commitTrailers).
+function commitReason(expected, missing, carried) {
+  const different = [];
+  const absent = [];
+  for (const line of missing) {
+    const found = [...carried].filter((each) => each.includes(':') && trailerKey(each) === trailerKey(line));
+    if (found.length) different.push(`found ${found.map((each) => `"${each}"`).join(' and ')}, expected "${line}"`);
+    else absent.push(line);
+  }
+  const absentList = absent.map((line) => `\`${line}\``).join(', ');
+  const fix = expected.map((line) => `--trailer '${line}'`).join(' ');
+  if (!different.length) {
+    return hint(`the commit lacks the attribution trailer(s) ${absentList}. Add them to the message's last paragraph, or pass: ${fix}`);
+  }
+  const alsoLacks = absent.length ? ` It also lacks the attribution trailer(s) ${absentList}.` : '';
+  return hint(`the commit carries different attribution trailer line(s): ${different.join('; ')}.${alsoLacks} ` +
+    `Delete the found lines and put the expected ones in the message's last paragraph, or delete them and pass: ${fix}`);
 }
 
 function prReason(expected) {

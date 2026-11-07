@@ -14,11 +14,12 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { forgeFor } from './forges/index.mjs';
+import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { unfencedLines } from './markdown-sections.mjs';
 import { normalizeRemote, stateDir } from './project.mjs';
-import { readLocalState } from './review/state.mjs';
+import { HUMAN } from './review/quota.mjs';
+import { heldMessage, readLocalState, readRecord as readReviewRecord, sameCommit } from './review/state.mjs';
 
 export const OVERRIDE = 'AIDRIAN_ALLOW_UNREVIEWED_REQUEST';
 
@@ -171,7 +172,8 @@ export function prRepo(project, pr, given, forge = forgeFor(project.root)) {
 }
 
 // `aidrian pr attest <PR> --head <sha> --reviewer <who> --findings <n> --fixed <n> [--note <text>] [--repo OWNER/NAME]`, or `--check`.
-// With --pass, `--findings-file <file>` replaces the counts with the findings one by one (lib/review/findings.mjs).
+// With --pass, `--findings-file <file>` replaces the counts with the findings one by one (lib/review/findings.mjs), and
+// `--verdicts FILE|-` records the pass's verdicts: `-` reads them from stdin, so an agent's final JSON is piped as it is.
 // Exit 0 recorded, 3 not recorded (--check), 1 a usage error.
 export async function runAttest(args, project, config = null, { forge } = {}) {
   const [ref, ...rest] = args;
@@ -194,6 +196,7 @@ export async function runAttest(args, project, config = null, { forge } = {}) {
   }
   if (flags['findings-file'] !== undefined) {
     if (flags.pass === undefined) throw new Error('--findings-file needs --pass');
+    if (flags['findings-file'] === '-') throw new Error('--findings-file - is not supported: stdin is read once, by --verdicts -; write the findings to a file');
     if (['findings', 'fixed', 'accepted'].some((key) => flags[key] !== undefined)) throw new Error('--findings-file replaces --findings, --fixed, and --accepted: pass one or the other');
     Object.assign(flags, { findings: '0', fixed: '0' });
   }
@@ -212,7 +215,7 @@ export async function runAttest(args, project, config = null, { forge } = {}) {
   const repo = prRepo(project, pr, flags.repo, forge);
   if (flags.pass !== undefined) {
     const { recordPass, remoteState } = await import('./review/run.mjs');
-    const verdictsText = flags.verdicts === undefined ? null : readFileSync(flags.verdicts, 'utf8');
+    const verdictsText = flags.verdicts === undefined ? null : readFileSync(flags.verdicts === '-' ? 0 : flags.verdicts, 'utf8');
     const findingsText = flags['findings-file'] === undefined ? null : readFileSync(flags['findings-file'], 'utf8');
     const result = recordPass(project, { pr, repo, pass: flags.pass, head: flags.head, reviewer: flags.reviewer, findings, fixed, accepted, verdictsText, findingsText, remote: remoteState(repo, pr, undefined, config) });
     console.log(`recorded pass ${flags.pass} of pull request #${pr} at ${flags.head.slice(0, 7)}: ${result.open} open`);
@@ -237,6 +240,59 @@ export function attestation(project, pr, repo = null, origin = originRepo(projec
   return record?.head && record?.repo ? markerFor(record) : null;
 }
 
+// The one flow `aidrian pr signoff <PR> --last` signs off, from the review record `state` and the pull request's current
+// `head`: { flow, head }, with the head the last review ran on, as recorded. It serves one stop only: the last review
+// on that head stopped at human_required for a flow (`outcome`), and the Human took over no stage there (`quotaStops`
+// with the Human's choice, a stage sign-off --last never records). A flow is pending when the last review left it to
+// the Human (`signoffable`) and no sign-off on that head holds it. The record keeps no order among flows, so two
+// pending flows are refused, each listed with its long command, and so is a flow that still owes an overrule or an
+// accept, which --last never records. A violated invariant no reviewer disputes is no refusal: the long form
+// records that sign-off too, and it counts for nothing until the fix lands.
+export function lastSignoff(state, { pr, repo, head }) {
+  const asked = state?.signoffable;
+  if (!asked || typeof asked.head !== 'string') throw new Error(`no review of ${repo}#${pr} ran: run \`aidrian pr review ${pr}\` first, then sign off`);
+  const h7 = asked.head.slice(0, 7);
+  if (!sameCommit(asked.head, head)) throw new Error(`the last review of ${repo}#${pr} ran on ${h7}, and the pull request is at ${head.slice(0, 7)}: run \`aidrian pr review ${pr}\` on ${head.slice(0, 7)} first, then sign off`);
+  const outcome = state.outcome;
+  if (outcome?.status !== 'human_required' || !sameCommit(outcome.head, asked.head)) {
+    const status = typeof outcome?.status !== 'string' ? null : sameCommit(outcome.head, asked.head) ? outcome.status : `${outcome.status} on ${String(outcome.head).slice(0, 7)}`;
+    throw new Error(`the last review of ${repo}#${pr} on ${h7} ${status ? `stopped at ${status}` : 'recorded no stop'}, not at a flow's human_required: run \`aidrian pr review ${pr}\` for the next step`);
+  }
+  const pending = (Array.isArray(asked.flows) ? asked.flows : []).filter((flow) => !sameCommit(state.signoffs?.[flow]?.head, asked.head));
+  // A head where the Human took over a stage is never --last's, signed or not: an unsigned stage is signed with
+  // --stage, and once it is, each flow still waiting takes its long command.
+  const takeovers = (Array.isArray(state.quotaStops) ? state.quotaStops : []).filter((stop) => sameCommit(stop?.head, asked.head) && stop?.choice === HUMAN);
+  if (takeovers.length) {
+    const stagesOf = (stops) => [...new Set(stops.map((stop) => stop.stage))];
+    const unsigned = stagesOf(takeovers.filter((stop) => !stop.signoff));
+    if (unsigned.length) {
+      const commands = unsigned.map((stage) => `aidrian pr signoff ${pr} --stage ${stage} --head ${asked.head}`).join('; ');
+      throw new Error(`the Human took over the ${unsigned.join(', ')} stage of ${repo}#${pr} on ${h7}, which --last never signs off: use the long form, ${commands}, then run \`aidrian pr review ${pr}\``);
+    }
+    const next = pending.length ? `run ${pending.map((flow) => `aidrian pr signoff ${pr} --flow ${flow} --head ${asked.head}`).join('; ')}` : `run \`aidrian pr review ${pr}\` for the next step`;
+    throw new Error(`the Human took over the ${stagesOf(takeovers).join(', ')} stage of ${repo}#${pr} on ${h7}, so --last does not sign off this head: ${next}`);
+  }
+  if (pending.length === 0) throw new Error(`no flow of ${repo}#${pr} waits for a sign-off on ${h7}: every flow the last review named is signed off there, or none needed one. Run \`aidrian pr review ${pr}\` for the next step`);
+  if (pending.length > 1) {
+    const commands = pending.map((flow) => `aidrian pr signoff ${pr} --flow ${flow} --head ${asked.head}`).join('; ');
+    throw new Error(`${pending.length} flows of ${repo}#${pr} wait for a sign-off on ${h7}: ${pending.join(', ')}. --last signs off one flow only: run one of ${commands}`);
+  }
+  const [flow] = pending;
+  const listOf = (value) => (Array.isArray(value) ? value : []);
+  const overruled = (invariant) => listOf(state.overrulings).some((each) => each?.flow === flow && each?.invariant === invariant && sameCommit(each?.head, asked.head));
+  const disputed = sameCommit(state.disputes?.head, asked.head) ? listOf(state.disputes.items).filter((each) => each?.flow === flow && !overruled(each.invariant)).map((each) => each.invariant) : [];
+  if (disputed.length) throw new Error(`flow ${flow} has a disputed invariant on ${h7} of ${repo}#${pr}: ${disputed.join(', ')}. --last never overrules: the Human settles it first with aidrian pr signoff ${pr} --flow ${flow} --overrule <invariant> --head ${asked.head} --reason "<why>"`);
+  const outside = sameCommit(state.outside?.head, asked.head) ? [...listOf(state.outside.approvals), ...listOf(state.outside.acceptances)] : [];
+  const closed = (invariant) =>
+    listOf(state.acceptances).some((each) => each?.flow === flow && each?.invariant === invariant && sameCommit(each?.head, asked.head)) ||
+    outside.some((each) => each?.flow === flow && each?.invariant === invariant);
+  const unverified = sameCommit(state.invariants?.head, asked.head)
+    ? listOf(state.invariants.items).filter((each) => each?.flow === flow && each?.state === 'unverified' && !closed(each.invariant)).map((each) => each.invariant)
+    : [];
+  if (unverified.length) throw new Error(`flow ${flow} has an unverified invariant on ${h7} of ${repo}#${pr}: ${unverified.join(', ')}. --last never accepts: run the --accept command the review printed first, aidrian pr signoff ${pr} --flow ${flow} --accept <invariant> --evidence <url> --reason "<what it shows>" --head ${asked.head}`);
+  return { flow, head: asked.head };
+}
+
 // `aidrian pr signoff <PR> --flow <id> --head <sha>`: the Human's sign-off of a critical flow on one head. It is an audit
 // entry, not proof: an agent holds the same shell. The review summary on the pull request shows every sign-off.
 // `--stage <name>` in place of `--flow` signs off a review stage the Human chose to review because its reviewer ran out
@@ -244,6 +300,8 @@ export function attestation(project, pr, repo = null, origin = originRepo(projec
 // between reviewers on that head. `--flow <id> --accept <invariant> --evidence <url> --reason <text>` closes, on that
 // head, an invariant no reviewer could verify, on evidence outside the tool: a comment, review, or review comment of
 // the pull request that the forge finds by its id.
+// `--last`, alone or with `--repo` and `--check`, is the short form: it signs off the one flow the last review left
+// waiting, on the head that review ran on, exactly as `--flow <id> --head <sha>` would (lastSignoff).
 // `--check` runs every refusal of the same command and records nothing: it prints `ok` and returns 0, or throws the
 // refusal, which `aidrian pr` prints before it exits 1. The review-signoff rule lets an agent run it, so a session can
 // try a command before it hands it to the Human.
@@ -259,13 +317,23 @@ export async function runSignoff(args, project, config = null, { forge } = {}) {
       dryRun = true;
       continue;
     }
+    if (flag === '--last') {
+      flags.last = true;
+      continue;
+    }
     if (!['--flow', '--stage', '--head', '--repo', '--overrule', '--accept', '--evidence', '--reason'].includes(flag)) throw new Error(`unknown argument: ${flag}`);
     const value = rest[++i];
     if (value === undefined || value.startsWith('--')) throw new Error(`${flag} needs a value`);
     flags[flag.slice(2)] = value;
   }
-  if (!flags.head || Boolean(flags.flow) === Boolean(flags.stage)) throw new Error('--head and one of --flow or --stage are required');
-  if (!SHA.test(flags.head) || runGit(['cat-file', '-e', `${flags.head}^{commit}`], project.root).status !== 0) throw new Error(`--head ${flags.head} is not a commit in this repository`);
+  if (flags.last) {
+    const given = ['flow', 'stage', 'head', 'overrule', 'accept', 'evidence', 'reason'].filter((key) => flags[key] !== undefined);
+    if (given.length) throw new Error(`--last takes no ${given.map((key) => `--${key}`).join(', ')}: it signs off the one flow the last review left waiting, on the head that review ran on. Give --last alone, or the long form with --flow and --head`);
+  } else {
+    if (!flags.head || Boolean(flags.flow) === Boolean(flags.stage)) throw new Error('--head and one of --flow or --stage are required');
+    // The --last head comes from the record the review step wrote, so only a typed head must be a local commit.
+    if (!SHA.test(flags.head) || runGit(['cat-file', '-e', `${flags.head}^{commit}`], project.root).status !== 0) throw new Error(`--head ${flags.head} is not a commit in this repository`);
+  }
   const repo = prRepo(project, pr, flags.repo, forge);
   const by = runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown';
   if (flags.overrule && flags.accept) throw new Error('--overrule and --accept are two rulings: give one');
@@ -278,6 +346,28 @@ export async function runSignoff(args, project, config = null, { forge } = {}) {
     console.log(dryRun ? `ok: the command would record ${recorded}; --check recorded nothing` : line);
     return 0;
   };
+  if (flags.last) {
+    // --repo steers the sign-off to another pull request's record: --last takes only this checkout's repository, a
+    // fork's parent included, so a short command typed on a phone cannot sign off a pull request of another repository.
+    const remotes = remoteRepos(project);
+    if (remotes.length && !remotes.includes(repo)) throw new Error(`--last signs off a pull request of this checkout's repositories only (${[...new Set(remotes)].join(', ')}), not ${repo}: give the long form, aidrian pr signoff ${pr} --flow <id> --head <sha> --repo ${repo}`);
+    const where = forge ?? forgeFor(project.root);
+    let current = null;
+    try {
+      current = where.change(pr, 'headRefOid', { repo })?.headRefOid ?? null;
+    } catch {}
+    if (typeof current !== 'string' || !SHA.test(current)) throw new Error(`could not read the head of ${repo}#${pr} from the forge: give the long form, aidrian pr signoff ${pr} --flow <id> --head <sha>`);
+    const remote = remoteState(repo, pr, forge, config);
+    const record = readReviewRecord(project, pr, remote ?? [], repo);
+    if (record.held !== undefined) throw new Error(heldMessage(pr, record.held));
+    if (record.state.repo && repoName(record.state.repo) !== repo) throw new Error(`the review record of #${pr} is for ${repoName(record.state.repo) ?? record.state.repo}, not ${repo}: --last signs off the pull request that record names. Give --repo ${repoName(record.state.repo) ?? record.state.repo}, or the long form`);
+    const { flow, head } = lastSignoff(record.state, { pr, repo, head: current });
+    // The choice reads the record once, and recordSignoff reads it again and re-runs the long form's refusals before it
+    // writes. A record written between the two reads is checked by those refusals, not by lastSignoff's: deciding and
+    // writing on one read belongs with run.mjs, which #124 changes.
+    recordSignoff(project, { pr, repo, flow, head, by, remote, dryRun });
+    return done(`${by}'s sign-off of flow ${flow} on ${head.slice(0, 7)}`, `recorded ${by}'s sign-off of flow ${flow} on ${head.slice(0, 7)}. Run \`aidrian pr review\` again.`);
+  }
   if (flags.overrule) {
     recordOverrule(project, { pr, repo, flow: flags.flow, invariant: flags.overrule, head: flags.head, by, reason: flags.reason, remote: remoteState(repo, pr, undefined, config), dryRun });
     return done(`${by}'s ruling on invariant ${flags.overrule} of flow ${flags.flow} on ${flags.head.slice(0, 7)}`, `recorded ${by}'s ruling: invariant ${flags.overrule} of flow ${flags.flow} passes on ${flags.head.slice(0, 7)} on the reviewer evidence that it holds. Run \`aidrian pr review\` again.`);
@@ -309,4 +399,107 @@ export async function runSignoff(args, project, config = null, { forge } = {}) {
   }
   recordSignoff(project, { pr, repo, flow: flags.flow, head: flags.head, by, remote: remoteState(repo, pr, undefined, config), dryRun });
   return done(`${by}'s sign-off of flow ${flags.flow} on ${flags.head.slice(0, 7)}`, `recorded ${by}'s sign-off of flow ${flags.flow} on ${flags.head.slice(0, 7)}. Run \`aidrian pr review\` again.`);
+}
+
+// `aidrian pr ingest <PR> --head <sha> --source <text> [--repo OWNER/NAME] [--check] <file>...`: images taken outside
+// the tool, such as an end-to-end run's screenshots, ingested as captures of one head (lib/review/visual.mjs
+// ingestCaptures), so a reviewer may cite one as `capture:<key>`. The Human or an agent runs it, and the manifest names
+// who: `by` is the git user, `session` whether the host layer detects an AI session, and `agent` the host's agent name
+// when it gives one. Like a sign-off, an audit entry, not
+// proof. `--check` runs every refusal and records nothing. Every argument after the pull request that is not a flag
+// is a file.
+export async function runIngest(args, project, config = null, { forge, env = process.env } = {}) {
+  const [ref, ...rest] = args;
+  const pr = prNumber(ref);
+  if (pr === null) throw new Error('ingest needs a pull request number');
+  const flags = {};
+  const files = [];
+  let dryRun = false;
+  for (let i = 0; i < rest.length; i += 1) {
+    const arg = rest[i];
+    if (arg === '--check') {
+      dryRun = true;
+      continue;
+    }
+    if (!arg.startsWith('--')) {
+      files.push(arg);
+      continue;
+    }
+    if (!['--head', '--source', '--repo'].includes(arg)) throw new Error(`unknown argument: ${arg}`);
+    const value = rest[++i];
+    if (value === undefined || value.startsWith('--')) throw new Error(`${arg} needs a value`);
+    flags[arg.slice(2)] = value;
+  }
+  if (!flags.head || flags.source === undefined || !files.length) throw new Error('--head, --source, and at least one image file are required');
+  if (!SHA.test(flags.head) || runGit(['cat-file', '-e', `${flags.head}^{commit}`], project.root).status !== 0) throw new Error(`--head ${flags.head} is not a commit in this repository`);
+  // The review step reads a head's manifest by its full SHA.
+  const head = runGit(['rev-parse', '--verify', `${flags.head}^{commit}`], project.root).stdout.trim();
+  // The repository is not stored, since the capture folder is per pull request; it names where the captures comment is.
+  const repo = prRepo(project, pr, flags.repo, forge);
+  const by = runGit(['config', 'user.name'], project.root).stdout.trim() || 'unknown';
+  // The session kind, from the host layer: an AI session when it detects a host, so an agent's ingest is never
+  // recorded as the Human's own; the agent when the host names one.
+  const hosts = await import('./hosts/index.mjs');
+  const session = hosts.detectHost({ env }).id === hosts.UNKNOWN_HOST.id ? 'shell' : 'ai';
+  const { agent } = hosts.sessionIdentity(env);
+  const visual = await import('./review/visual.mjs');
+  const { manifest, ingested } = visual.ingestCaptures({ project, pr, head, files, source: flags.source, by, agent, session, dryRun });
+  const sha = head.slice(0, 7);
+  if (dryRun) {
+    console.log(`ok: the command would ingest ${ingested.length} image(s) as captures of ${sha}; --check recorded nothing`);
+    return 0;
+  }
+  for (const entry of ingested) {
+    const given = files.find((file) => path.resolve(file) === entry.source.path) ?? entry.source.path;
+    console.log(`ingested ${given} as capture:${entry.key} of ${sha} from ${entry.source.origin} by ${entry.source.by}${entry.source.session === 'ai' ? (entry.source.agent ? ` via ${entry.source.agent}` : ' in an AI session, agent unknown') : ''}`);
+  }
+  // With the review record local, the review posts no captures comment, so the pull request is not read.
+  if (config?.review?.record === 'local') console.log('the review record is local, so no captures comment shows the ingest');
+  else await showIngest({ project, pr, repo, manifest, forge: forge ?? forgeFor(project.root), visual });
+  console.log('Run `aidrian pr review` again.');
+  return 0;
+}
+
+// Rewrites the pull request's captures comment with the manifest an ingest wrote, so an ingest made after the review
+// captured the head still leaves its trace on the pull request. The comment counts only when a member wrote it, or the
+// account of the session's forge token, as the review summary does; only a comment whose heading names this head is
+// edited, and only from a manifest this machine's capture wrote (it names its `platform`), with the attach mode,
+// visibility, and uploads the review record kept for it. A forge failure is a warning: the ingest is recorded.
+async function showIngest({ project, pr, repo, manifest, forge, visual }) {
+  const where = `${repo}#${pr}`;
+  const sha = manifest.head.slice(0, 7);
+  try {
+    let viewer;
+    const own = (comment) => {
+      if (isTrustedCommenter(comment)) return true;
+      if (viewer === undefined) {
+        try {
+          viewer = forge.viewer() ?? null;
+        } catch {
+          viewer = null;
+        }
+      }
+      return viewer !== null && typeof comment?.user?.login === 'string' && comment.user.login.toLowerCase() === String(viewer).toLowerCase();
+    };
+    const comment = (forge.conversationComments(repo, pr) ?? []).find((each) => typeof each?.body === 'string' && each.body.startsWith(visual.VISUAL_MARKER) && own(each));
+    if (!comment) {
+      console.log(`no captures comment on ${where} yet: the review posts one when it captures this head`);
+      return;
+    }
+    if (comment.body.split(/\r?\n/u)[1] !== `### Visual capture: \`${sha}\``) {
+      console.log(`the captures comment on ${where} shows another head; it was not edited`);
+      return;
+    }
+    if (typeof manifest.platform !== 'string') {
+      // The ingest lives only in this machine's state folder, so only an ingest on the capturing machine can reach it.
+      console.log(`the captures comment of ${sha} came from another machine's capture: this ingest counts only on this machine; ingest the same images on the machine that captured the head to show them on the pull request`);
+      return;
+    }
+    const state = readLocalState(project, pr);
+    const kept = state?.visual?.head === manifest.head ? state.visual : null;
+    forge.editComment(repo, comment.id, visual.capturesBody(manifest, state?.captures ?? {}, { mode: kept?.mode ?? 'local', visibility: kept?.visibility ?? null, error: kept?.error ?? null }));
+    console.log(`updated the captures comment on ${where} with the ingest`);
+  } catch (error) {
+    console.error(`warning: the captures comment on ${where} was not updated (${String(error?.message ?? error).split('\n')[0].slice(0, 200)}); the ingest is recorded`);
+  }
 }

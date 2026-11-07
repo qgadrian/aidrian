@@ -13,8 +13,6 @@ Before you start, follow the `knowledge` skill. Load your `issue_tracker` docs f
 
 ## Read the branch, not your memory
 
-Derive everything from the branch as it is now.
-
 ```bash
 git fetch origin <base>
 git log --oneline origin/<base>..HEAD
@@ -32,14 +30,14 @@ git diff --stat origin/<base>...HEAD
 
 A plain Conventional Commits title: `<type>(<scope>): <subject>`.
 Only when config.json `github.titleIssuePrefix` is `true`, prefix the issue key: `[<issue key>] <type>(<scope>): <subject>`,
-or `[NOISSUE] <type>: <subject>` when no issue exists. The key format comes from the project's `issue_tracker` knowledge. The type is a Conventional Commits type from config.json
+or `[NOISSUE] <type>: <subject>` when no issue exists. The type is a Conventional Commits type from config.json
 `git.commits.types`. The subject names the real scope of the branch.
-When config.json `github.pullRequest.title` is set, the title matches that pattern; the Bash hook refuses one that does not.
+When config.json `github.pullRequest.title` is set, the title matches that pattern, as the Bash hook checks.
 
 ## Body
 
 Every section in config.json `github.requiredSections` (default `Summary`, `Tests run`), as `## ` headings, in that order.
-`aidrian check` validates the config; the Bash hook refuses a body that lacks a required section.
+The Bash hook refuses a body that lacks a required section.
 Add an optional section only when it carries something: [references/body-template.md](references/body-template.md)
 lists the sections and what goes in each.
 When config.json `github.pullRequest` sets them, use only the `sections` it lists, give each `deferrals` item a reason
@@ -64,12 +62,13 @@ from its list and the issue it went to, and each `residuals` item every field it
   what would flip it, any settled fact's result, and that winners have varied between runs.
   When `github.pullRequest.sections` is set without `Decisions`, that closed list refuses the heading: the same list goes under `## Summary`,
   or the first section on the closed list when Summary is not on it, as a `Decisions:` sub-list.
+- **Residuals.** With accepted residuals, run [references/residuals.md](references/residuals.md) before gh; ship only on exit 0.
 
 ## Publish
 
 Write the body to `<state>/tmp/pr-body-<branch>.md`, where `<state>` is the folder `aidrian state` prints and
-`<branch>` is the branch name with each `/` replaced by `-`. It sits outside the repository, one file per branch, so no
-other session overwrites it; a path under `.git/` fails in a worktree, where `.git` is a file.
+`<branch>` is the branch name with each `/` replaced by `-`. One file per branch, outside the repository, so no other
+session overwrites it; a path under `.git/` fails in a worktree.
 Not the host's scratchpad or the system temp folder: sessions share those, and the Bash hook refuses a body file there.
 Write it with the file tool, or with `cat > <file> <<'EOF'` (quoted delimiter) in the same command as gh: the Bash hook
 reads that heredoc. Give gh that path written out, or through a variable the same command sets to it, never
@@ -82,7 +81,7 @@ gh pr edit <n> --title "<title>" --body-file <file>                       # exis
 ```
 
 - Draft by default: the review loop runs on the draft, and marks it ready as config.json `github.markReady` says. Open it ready only when asked.
-- Before an edit, read the live body again (`gh pr view <n> --json body`) and keep what is still true.
+- Before an edit, reread the live body (`gh pr view <n> --json body`) and keep what is still true.
 - After publishing, read it back and confirm each closing line is plain text on its own line.
 - When one of its `decisions` has `pr` null, have `doc-updater` replace `pr=none` on that marker line with the pull request's number, commit, and push only that.
   Never on a `settled` entry.
@@ -104,6 +103,7 @@ Return the drafted title and body, the reason, and the next step, instead of pub
 
 - the branch is not pushed, or `gh auth status` fails;
 - the branch has no diff against the base, or the base is unclear;
+- `aidrian decisions residuals` does not exit 0 after one fix round;
 - a doc the branch makes wrong is not updated in the branch: route it back to the owner of the change first;
 - a `decided_provisional` the caller names has no marker in the branch: route it back to its writer (the `knowledge` skill's `references/decisions.md`);
 - that list reports a problem in a marker the branch added, other than the `pr=none` Publish fixes: route it back to the same writer.

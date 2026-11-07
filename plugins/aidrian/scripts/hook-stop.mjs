@@ -7,8 +7,9 @@
 // - The session-length reminder. Once continuing the main session costs config.json `session.handoff.costRatio` times
 //   what a fresh session started from a handoff brief would, or its context passes the optional `maxTokens` ceiling, the
 //   agent is sent back for one more turn to judge whether a handoff is worth it: in `ask` mode to ask the user, in `auto`
-//   mode to write the brief, or in either to do nothing (lib/session-length.mjs). A marker in the temporary folder counts
-//   the firings of each trigger, so each comes back only at its next step. It reads Claude Code transcripts only.
+//   mode to write the brief, or in either to do nothing (lib/session-length.mjs). A marker in the temporary folder holds
+//   the ratio at the last cost firing and the ceiling's firings, so the cost reminder comes back once the ratio doubles
+//   and the ceiling once the context does. It reads Claude Code transcripts only.
 // `stop_hook_active` is true on the stop this hook caused, and a payload without it (a host that does not send it) is never
 // sent back, so nothing can loop: each stop sends back at most once, for one of the two.
 

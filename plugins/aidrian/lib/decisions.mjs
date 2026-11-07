@@ -4,12 +4,13 @@
 // rule that matches wins, so no prompt weighs these by hand.
 // A decision an agent made alone stays on record as a marker line in the doc that governs it (parseDecisions,
 // docs/project-folder.md#decision-markers); decisions-cli.mjs scans the docs for them.
+// A pull request body's accepted residuals are set against those markers and the ADR consequences here too (pairResiduals).
 // config.mjs reads this file from every hook, so of the plugin's files it imports only markdown-sections.mjs, which imports nothing.
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { fencedIn, slug } from './markdown-sections.mjs';
+import { fencedIn, fencedLines, headingOf, sectionItems, slug } from './markdown-sections.mjs';
 
 export const VOCAB_PATH = path.join(import.meta.dirname, 'decisions.json');
 
@@ -515,3 +516,108 @@ function closeGap(lines, at) {
 
 // Whole days since a marker's `date`; a date ahead of the clock is zero.
 export const ageDays = (date, now = new Date()) => Math.max(0, Math.floor((now - Date.parse(date)) / 86_400_000));
+
+// A pull request body's accepted residuals, checked against the decisions on record: each item is set beside every decision
+// marker and every `## Consequences` line of the project's ADRs, `product-manager` judges whether one contradicts any, and
+// judgeResiduals validates that judgment. decisions-cli.mjs (`aidrian decisions residuals`) reads the files; these stay pure.
+
+// The `## <section>` items of a body, as sectionItems gives them: null with no such section, [] with an empty one. An item's
+// `text` is the residual's identity in pairResiduals and judgeResiduals.
+export const residualItems = (bodyText, section = 'Accepted residuals') => sectionItems(String(bodyText), section);
+
+// Every line of an ADR under a `## Consequences` heading, up to the next `## ` heading: [{ line, text }], 1-based and trimmed,
+// with blank and fenced lines left out. Each Consequences section counts; none gives [].
+export function consequenceLines(adrText) {
+  const lines = String(adrText).split(/\r?\n/u);
+  const fenced = fencedLines(adrText);
+  const found = [];
+  let inside = false;
+  lines.forEach((raw, at) => {
+    if (fenced[at]) return;
+    const title = headingOf(raw);
+    if (title !== null) inside = title === 'Consequences';
+    else if (inside && raw.trim()) found.push({ line: at + 1, text: raw.trim() });
+  });
+  return found;
+}
+
+// Whether an ADR is superseded: the first line of its `## Status` section, outside fences, starts with "Superseded", as the
+// adr-writer skill writes `Superseded by [NNNN](...)`. A superseded ADR's consequences no longer hold, so nothing pairs with them.
+export function supersededAdr(adrText) {
+  const lines = String(adrText).split(/\r?\n/u);
+  const fenced = fencedLines(adrText);
+  let inside = false;
+  for (let at = 0; at < lines.length; at += 1) {
+    if (fenced[at]) continue;
+    const title = headingOf(lines[at]);
+    if (title !== null) inside = title === 'Status';
+    else if (inside && lines[at].trim()) return /^superseded\b/iu.test(lines[at].trim());
+  }
+  return false;
+}
+
+// One pair per residual item, in body order: { residual, decisions: [{ id, status, wording, doc, line }], adrs: [{ path, line, text }] }.
+// Every pair carries the whole record, so a judge reads one block per residual. `decisions` are scanDecisions' (each with `doc`),
+// and `adrs` [{ path, lines }] with `lines` from consequenceLines. A wording that did not parse, or none, reads `wording at
+// <doc>:<line>`, where the judge reads it. A `rejected` decision is no rule, so it is not on the record a residual can contradict.
+export function pairResiduals(items, decisions, adrs) {
+  const record = decisions.filter(({ status }) => status !== 'rejected')
+    .map(({ id, status, newWording, doc, line }) => ({ id, status, wording: typeof newWording === 'string' ? newWording : `wording at ${doc}:${line}`, doc, line }));
+  const lines = adrs.flatMap(({ path: file, lines: found }) => found.map(({ line, text }) => ({ path: file, line, text })));
+  return items.map(({ text }) => ({ residual: text, decisions: record.map((each) => ({ ...each })), adrs: lines.map((each) => ({ ...each })) }));
+}
+
+// The first 60 characters of a residual, for a message.
+const excerpt = (text) => (text.length > 60 ? `${text.slice(0, 60)}…` : text);
+
+// The judgment on `pairs`: `rows` the judged file's rows, each { residual, contradicts, evidence }, with `contradicts` null or a
+// decision id or ADR `path:line` the pair listed, and `evidence` the wording it contradicts. Returns { contradictions, invalid }:
+// each contradiction { residual, contradicts, evidence, place }, and each invalid row as a reason. Residuals and `contradicts`
+// compare trimmed. An item the body holds twice is invalid: one row per residual cannot tell the two apart.
+export function judgeResiduals(pairs, rows) {
+  if (!Array.isArray(rows)) return { contradictions: [], invalid: ['the judged file is not a JSON array of rows'] };
+  const contradictions = [];
+  const invalid = [];
+  const named = (each) => (each !== null && typeof each === 'object' && typeof each.residual === 'string' ? each.residual.trim() : null);
+  const known = new Set(pairs.map(({ residual }) => residual.trim()));
+  const wellFormed = (each) => each.contradicts === null || (typeof each.contradicts === 'string' && each.contradicts.trim() !== '');
+  for (const each of rows) {
+    const residual = named(each);
+    if (residual === null || !known.has(residual)) invalid.push(`row "${excerpt(residual ?? '')}" names no residual of the body`);
+    else if (!wellFormed(each)) invalid.push(`row "${excerpt(residual)}": contradicts is null or the id of a decision or ADR line`);
+  }
+  const told = new Set();
+  for (const pair of pairs) {
+    const key = pair.residual.trim();
+    const short = excerpt(pair.residual);
+    const times = pairs.filter(({ residual }) => residual.trim() === key).length;
+    if (times > 1) {
+      if (!told.has(key)) invalid.push(`residual "${short}" is in the body ${times} times: merge them, or tell them apart`);
+      told.add(key);
+      continue;
+    }
+    const own = rows.filter((each) => named(each) === key);
+    if (own.length === 0) invalid.push(`residual "${short}" has no row`);
+    if (own.length > 1) invalid.push(`residual "${short}" has ${own.length} rows: one is owed`);
+    if (own.length !== 1 || !wellFormed(own[0]) || own[0].contradicts === null) continue;
+    const contradicts = own[0].contradicts.trim();
+    const { evidence } = own[0];
+    const holders = pair.decisions.filter(({ id }) => id === contradicts);
+    if (holders.length > 1) {
+      invalid.push(`residual "${short}" contradicts "${contradicts}", an ambiguous id: ${holders.length} markers hold it`);
+      continue;
+    }
+    const [decision] = holders;
+    const adr = pair.adrs.find(({ path: file, line }) => `${file}:${line}` === contradicts);
+    if (!decision && !adr) {
+      invalid.push(`residual "${short}" contradicts "${contradicts}", which is no decision id and no ADR path:line on record`);
+      continue;
+    }
+    if (typeof evidence !== 'string' || evidence.trim() === '') {
+      invalid.push(`residual "${short}" contradicts "${contradicts}" with no quoted evidence`);
+      continue;
+    }
+    contradictions.push({ residual: pair.residual, contradicts, evidence, place: decision ? `${decision.doc}:${decision.line}` : contradicts });
+  }
+  return { contradictions, invalid };
+}

@@ -225,7 +225,45 @@ test('a worktree\'s own .aidrian.local.json never sets the auto-merge switch: on
   assert.deepEqual([findProject(worktree).localAutoMerge, findProject(worktree).unreadable], ['on', ['.aidrian.local.json']], 'a worktree\'s broken copy does not turn it off, and is still reported');
   writeFileSync(path.join(worktree, '.aidrian.local.json'), local('off'));
   writeFileSync(path.join(dir, '.aidrian.local.json'), '{');
-  assert.deepEqual([findProject(worktree).localAutoMerge, findProject(worktree).errors], ['off', []], 'a main file that cannot be read reads off here, and is that checkout\'s error');
+  assert.deepEqual([findProject(worktree).localAutoMerge, findProject(worktree).errors], ['off', findProject(dir).errors], 'a main file that cannot be read reads off here, with the error it has there');
+  assert.equal(findProject(worktree).errors.length, 1);
+});
+
+test('a worktree with its own .aidrian.local.json reads the main checkout\'s switches with every check that checkout runs, and reports its errors', (t) => {
+  const dir = tempDir(t);
+  const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' });
+  git('init', '-q', '-b', 'main');
+  mkdirSync(path.join(dir, '.aidrian'));
+  writeFileSync(path.join(dir, '.aidrian/config.json'), '{"version": 1}');
+  writeFileSync(path.join(dir, '.gitignore'), '.aidrian.local.json\n');
+  git('add', '.');
+  git('-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init');
+  const worktree = path.join(dir, 'wt/task');
+  git('worktree', 'add', '-q', '-b', 'task', worktree);
+  writeFileSync(path.join(worktree, '.aidrian.local.json'), JSON.stringify({ names: { human: 'Own' } }));
+  const read = (at) => {
+    const project = findProject(at);
+    return [project.localAutoMerge, project.localUnattendedWaiver, project.localReviewApprovals, project.errors];
+  };
+  const approvals = '.aidrian.local.json: "reviewApprovals" must be "on" or "off"';
+  writeFileSync(path.join(dir, '.aidrian.local.json'), JSON.stringify({ github: { unattendedWaiver: 'on' }, reviewApprovals: 'invalid' }));
+  assert.deepEqual(read(worktree), ['off', 'off', 'off', [approvals]], 'an invalid reviewApprovals reads both switches off, with its error');
+  assert.deepEqual(read(dir), ['off', 'off', 'off', [approvals]], 'as it does in the main checkout');
+  const mains = [
+    { reviewApprovals: 'invalid' },
+    { reviewApprovals: 'invalid', github: { autoMerge: 'on' } },
+    { stray: 1, github: { unattendedWaiver: 'on' } },
+    { sources: 'no-list', github: { unattendedWaiver: { enabled: true } } },
+    { github: { unattendedWaiver: 'on', strategy: 'squash' } },
+    '{',
+    { github: { unattendedWaiver: 'on' }, reviewApprovals: 'on' },
+    { github: { autoMerge: 'off' }, reviewApprovals: 'off' },
+    {},
+  ];
+  for (const main of mains) {
+    writeFileSync(path.join(dir, '.aidrian.local.json'), typeof main === 'string' ? main : JSON.stringify(main));
+    assert.deepEqual(read(worktree), read(dir), `the worktree reads what the main checkout reads: ${JSON.stringify(main)}`);
+  }
 });
 
 test('.aidrian.local.json takes github and decisions together, read from the main checkout in a worktree too', (t) => {

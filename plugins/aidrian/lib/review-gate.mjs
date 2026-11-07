@@ -171,7 +171,8 @@ export function prRepo(project, pr, given, forge = forgeFor(project.root)) {
 }
 
 // `aidrian pr attest <PR> --head <sha> --reviewer <who> --findings <n> --fixed <n> [--note <text>] [--repo OWNER/NAME]`, or `--check`.
-// With --pass, `--findings-file <file>` replaces the counts with the findings one by one (lib/review/findings.mjs).
+// With --pass, `--findings-file <file>` replaces the counts with the findings one by one (lib/review/findings.mjs), and
+// `--verdicts FILE|-` records the pass's verdicts: `-` reads them from stdin, so an agent's final JSON is piped as it is.
 // Exit 0 recorded, 3 not recorded (--check), 1 a usage error.
 export async function runAttest(args, project, config = null, { forge } = {}) {
   const [ref, ...rest] = args;
@@ -194,6 +195,7 @@ export async function runAttest(args, project, config = null, { forge } = {}) {
   }
   if (flags['findings-file'] !== undefined) {
     if (flags.pass === undefined) throw new Error('--findings-file needs --pass');
+    if (flags['findings-file'] === '-') throw new Error('--findings-file - is not supported: stdin is read once, by --verdicts -; write the findings to a file');
     if (['findings', 'fixed', 'accepted'].some((key) => flags[key] !== undefined)) throw new Error('--findings-file replaces --findings, --fixed, and --accepted: pass one or the other');
     Object.assign(flags, { findings: '0', fixed: '0' });
   }
@@ -212,7 +214,7 @@ export async function runAttest(args, project, config = null, { forge } = {}) {
   const repo = prRepo(project, pr, flags.repo, forge);
   if (flags.pass !== undefined) {
     const { recordPass, remoteState } = await import('./review/run.mjs');
-    const verdictsText = flags.verdicts === undefined ? null : readFileSync(flags.verdicts, 'utf8');
+    const verdictsText = flags.verdicts === undefined ? null : readFileSync(flags.verdicts === '-' ? 0 : flags.verdicts, 'utf8');
     const findingsText = flags['findings-file'] === undefined ? null : readFileSync(flags['findings-file'], 'utf8');
     const result = recordPass(project, { pr, repo, pass: flags.pass, head: flags.head, reviewer: flags.reviewer, findings, fixed, accepted, verdictsText, findingsText, remote: remoteState(repo, pr, undefined, config) });
     console.log(`recorded pass ${flags.pass} of pull request #${pr} at ${flags.head.slice(0, 7)}: ${result.open} open`);

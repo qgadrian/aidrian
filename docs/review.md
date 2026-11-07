@@ -127,6 +127,10 @@ citation proves the line is there, not that it proves the point, so the independ
 invariants and the earlier verdicts and is asked to challenge each `holds`. A flow with no invariants is held to one
 generic invariant, that nothing in it is removed or weakened, and is marked unspecified.
 
+The record stores each verdict's evidence as the reviewer wrote it, prose included. Only a citation of the three forms
+above signs a `holds` or `not_affected`: prose evidence on either leaves the invariant unverified until a cited verdict
+or an outside approval closes it. The verdict schema is unchanged.
+
 An invariant in a list that cites a heading, `{ "id": "no-double", "cite": "docs/product/booking.md#no-double-booking" }`,
 reaches its reviewer with that section as `source`: the heading and its text up to the next heading of the same or a
 higher level, read from the base branch. The anchor may be copied from GitHub, as the heading's link gives it.
@@ -414,7 +418,10 @@ A project adds its own in `review.reviewers`:
   `harness-config`. The checkout's installed dependency folders (`node_modules`, `vendor`, `.venv`) are linked in, so
   the base code runs with this machine's packages. A reviewer the pull request adds runs once it is merged.
   `codex-local` reads the checkout at the head.
-- `agent`: the command cannot start an agent, so it returns `dispatch` and the skill runs it and records the result.
+- `agent`: the command cannot start an agent, so it returns `dispatch` and the skill runs it and records the result with
+  `aidrian pr attest <PR> --pass <id> --head <sha> --reviewer <who> --findings <n> --fixed <n> --verdicts -`, the
+  agent's final JSON on stdin: either the bare verdicts array or the whole `{ findings, verdicts, contracts, cross_notes }`
+  object. `--verdicts FILE` reads a file instead; `--findings-file` takes a file only.
 
 ### The engine
 

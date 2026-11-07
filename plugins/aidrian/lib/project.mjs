@@ -43,6 +43,13 @@ export const GUARDED_PATHS = new RegExp(
   'iu',
 );
 
+// The files the gate reads its policy from, as names at any depth and in any case: config.json in a default project
+// folder, the pointer file, the local switch, and the default project folder's own entry. pr-auto-merge.mjs refuses them
+// even under `github.autoMerge.includeGuardedPaths`, so no pull request edits the policy that judges the next one; with
+// the key off, GUARDED_PATHS decides. A folder `.aidrian.json` names is no fixed name, so the gate also refuses the exact
+// paths it read on each branch (pr-auto-merge.mjs branchPolicies). Not configurable.
+export const POLICY_PATHS = /(?:^|\/)(?:\.aidrian\/config\.json|\.aidrian\.json|\.aidrian\.local\.json|\.aidrian)$/iu;
+
 // The project at or above `start`: the nearest folder that has `.aidrian.json` or `.aidrian/config.json`. Null when none.
 // In a git checkout the search stops at its top folder, so a worktree whose branch has no project folder has no project,
 // even inside a main checkout that has one. Outside git it goes on to the file-system root.

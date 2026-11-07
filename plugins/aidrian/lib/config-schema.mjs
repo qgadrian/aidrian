@@ -88,7 +88,7 @@ export const SCHEMA = {
       duplicateBody: 'boolean',
     },
     reviewGate: { enabled: 'boolean', checklist: 'textOrNull' },
-    autoMerge: { allow: 'boolean', default: 'onOff', strategy: 'mergeStrategy', deleteBranch: 'boolean', deleteWorktree: 'boolean' },
+    autoMerge: { allow: 'boolean', default: 'onOff', strategy: 'mergeStrategy', deleteBranch: 'boolean', deleteWorktree: 'boolean', includeGuardedPaths: 'boolean' },
     unattendedWaiver: { allow: 'boolean' },
   },
   review: 'review',

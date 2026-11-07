@@ -163,17 +163,22 @@ test('sessionActions counts a review run or a skill only by its result: a refuse
 test('the statuses a review run is read by are every status aidrian pr review and aidrian pr await-review print, status then pr', async () => {
   const lib = new URL('../plugins/aidrian/lib/', import.meta.url);
   const literals = (text) => [...text.matchAll(/'([a-z_]+)'/gu)].map((match) => match[1]);
+  // A builder may take the review step's context `s` first, as run.mjs's finish(s, status, extra) does.
   const statuses = (source, builder) => [
     ...[...source.matchAll(/\{ status: '([a-z_]+)', pr:/gu)].map((match) => match[1]),
-    ...[...source.matchAll(new RegExp(`\\b${builder}\\(([^,)]*)`, 'gu'))].flatMap((match) => literals(match[1])),
+    ...[...source.matchAll(new RegExp(`\\b${builder}\\((?:s, )?([^,)]*)`, 'gu'))].flatMap((match) => literals(match[1])),
   ];
-  const run = readFileSync(new URL('review/run.mjs', lib), 'utf8');
+  // aidrian pr review writes its statuses from the step's three modules: run.mjs, step.mjs, and stages.mjs.
+  const run = ['review/run.mjs', 'review/step.mjs', 'review/stages.mjs'].map((file) => readFileSync(new URL(file, lib), 'utf8')).join('\n');
   const wait = readFileSync(new URL('pr-await-review.mjs', lib), 'utf8');
   // Every object either command prints puts `status` first and `pr` next, which is what the reader matches.
   assert.match(run, /const result = \{ status, pr: n,/u, 'aidrian pr review builds its result status, then pr');
   assert.match(wait, /return \{\n\s+status,\n\s+pr: Number\(n\),/u, 'aidrian pr await-review builds its result status, then pr');
   const exitCodes = [...wait.matchAll(/if \(status === '([a-z_]+)'\) return \d+;/gu)].map((match) => match[1]);
-  const printed = new Set([...Object.keys(EXIT), ...statuses(run, 'finish'), ...statuses(wait, 'result'), ...exitCodes]);
+  // The scan reads the statuses the step writes, not only the EXIT table: a move that hid them would pass on EXIT alone.
+  const written = new Set(statuses(run, 'finish'));
+  for (const status of ['dispatch', 'blocked_quota', 'unsatisfied', 'stuck']) assert.ok(written.has(status), `the scan finds ${status} where aidrian pr review writes it`);
+  const printed = new Set([...Object.keys(EXIT), ...written, ...statuses(wait, 'result'), ...exitCodes]);
   assert.deepEqual([...REVIEW_OUTPUT_STATUSES].sort(), [...printed].sort());
 
   // The real output of one of them reads as a run.

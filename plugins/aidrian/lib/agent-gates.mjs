@@ -1,12 +1,12 @@
 // Per-agent tool gates: which tools each agent may use in a project, from `agents` in config.json and the local file.
-// config.mjs checks the patterns with patternProblem; scripts/hook-agent-gates.mjs asks gateDenial before every tool
+// config-merge.mjs checks the patterns with patternProblem; scripts/hook-agent-gates.mjs asks gateDenial before every tool
 // call. docs/config.md#agents gives the rules.
 
 import { agentAliases, toolNames } from './hosts/index.mjs';
 import { commandLines, inlineShellCommand, lexInputs, readGit, readInvocation, readsShellInput, SUBSTITUTION_DEPTH_LIMIT } from './shell-lex.mjs';
 
 // The entry that applies to every agent, and the one for the main session, which has no `agent_id`. Both select gates;
-// neither is an agent a dispatch can name (config.mjs `agentName`).
+// neither is an agent a dispatch can name (config-types.mjs `agentName`).
 export const ALL = '*';
 export const MAIN = 'main';
 

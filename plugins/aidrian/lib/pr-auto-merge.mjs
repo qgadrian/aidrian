@@ -12,7 +12,8 @@
 //      review record is read from `state.dir`, so a branch cannot point it at a record of its own. A working copy config
 //      that cannot be read, or has errors, is off too.
 //   3. paths: gh lists every changed file with its change type, none is a rename, whose old path gh does not give, and
-//      none is one that instructs an AI session or runs in CI (GUARDED_PATHS).
+//      none is one that instructs an AI session or runs in CI (GUARDED_PATHS). `gh pr view` lists at most 100 files, so a
+//      longer pull request's list is read whole from the forge's paged list (wholeFiles), at the head the view gave.
 //   4. local: the main checkout's local file turns it on (project.localAutoMerge), or sets nothing under the default
 //      branch's `github.autoMerge.default` "on".
 //   5. author: the pull request is the gh user's own.
@@ -26,12 +27,15 @@
 // and reviews; `gh api repos/<repo>` for the default branch; each branch's folder override and config.json through the
 // contents API, at `refs/heads/<branch>` (once when the base is the default branch); and, only when the team, the checks,
 // the paths, and the machine all allow it, `gh api user` for the login, then the pull request's three comment lists.
+// When the view lists fewer files than it counts, and the team and the checks allow it, the paged file list and then the
+// pull request's head again, before the login.
 // Every `gh api` call names the host of the pull request's URL. A gh failure prints gh's last line of stderr.
 // stdout: one line, or with --json { effective, reason, why, allow, local, strategy, deleteBranch, deleteWorktree, pr, head,
 // repo, base }: `why` is the off line's sentence, null when on; `allow` is true only when both branches allow it, and the
 // other team values are the default branch's.
 // When the reason is local and the local file has errors, they go to stderr.
 // Exit 0 on, 1 off, 3 error (an argument, a gh read, or a pull request gh describes only in part).
+// A failed read of the full file list, or of the head after it, is off (paths): the paths check names it.
 
 import { configFromText, loadConfig, resolveAutoMerge } from './config.mjs';
 import { forgeFor, isTrustedCommenter } from './forges/index.mjs';
@@ -41,7 +45,7 @@ import { prNumber, repoName } from './review-gate.mjs';
 import { owed, readLocalState } from './review/state.mjs';
 import { scoped } from './rules/github/merge-review.mjs';
 
-const VIEW_FIELDS = 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews';
+export const VIEW_FIELDS = 'number,headRefOid,baseRefName,author,url,files,changedFiles,reviewDecision,latestReviews';
 const SHA = /^[0-9a-f]{40}$/iu;
 // The `github` keys `aidrian pr checks` judges by (pr-checks.mjs computeVerdict).
 const CHECK_LISTS = ['requiredChecks', 'conditionalChecks', 'ignoreCancelledChecks'];
@@ -49,7 +53,7 @@ const CHECK_LISTS = ['requiredChecks', 'conditionalChecks', 'ignoreCancelledChec
 // What a failed gh call says: its last non-empty line of stderr, else the first line of the error's message.
 export const ghError = (error) => String(error?.stderr ?? '').split('\n').map((line) => line.trim()).filter(Boolean).at(-1) ??
   String(error?.message ?? error).split('\n')[0];
-const notFound = (error) => /HTTP 404/u.test(`${error?.stderr ?? ''}\n${error?.message ?? ''}`);
+export const notFound = (error) => /HTTP 404/u.test(`${error?.stderr ?? ''}\n${error?.message ?? ''}`);
 
 // [PR] [--json], where PR is a number, `#number`, or a pull request URL: { target, asJson, unknown }.
 export function parseArgs(argv) {
@@ -98,8 +102,9 @@ export function defaultBranch(forge, { repo, host }) {
 // The config the branch `branch` of `repo` commits on GitHub now, by committedConfig's rules: its folder override
 // first, then that folder's config.json. The ref is `refs/heads/<branch>`, so a tag of the same name never answers.
 // A file GitHub does not have (404) is no file; any other failure throws. `prefix` is the project's folder from the top of the
-// repository, with its trailing slash: GitHub's paths start at the top, and config paths at the project root.
-export function branchConfig(forge, { repo, host }, branch, prefix = '') {
+// repository, with its trailing slash: GitHub's paths start at the top, and config paths at the project root. `locate` and
+// `parse` find the file and read its text, for a caller that holds a broken file to stricter rules.
+export function branchConfig(forge, { repo, host }, branch, prefix = '', { locate = configPathIn, parse = configFromText } = {}) {
   const read = (name) => {
     const file = `${prefix}${name}`;
     let body;
@@ -114,8 +119,52 @@ export function branchConfig(forge, { repo, host }, branch, prefix = '') {
     }
     return Buffer.from(body.content, 'base64').toString('utf8');
   };
-  const file = configPathIn(read);
-  return configFromText(read(file), file);
+  const file = locate(read);
+  return parse(read(file), file);
+}
+
+// GitHub's REST file statuses as the GraphQL change types `gh pr view` gives and pathsProblem reads. `unchanged`, a file
+// listed with no change to its content, reads as MODIFIED, so its path still meets every guard.
+const REST_CHANGE_TYPES = Object.freeze({
+  added: 'ADDED', removed: 'DELETED', modified: 'MODIFIED', renamed: 'RENAMED', copied: 'COPIED', changed: 'CHANGED', unchanged: 'MODIFIED',
+});
+
+// The pull request with every changed file, or a string saying why its list is not whole. `gh pr view` lists at most 100
+// files of `changedFiles`; past that, the forge's paged list gives up to 3000. That list names no commit, so the head is
+// read again after it, and a head other than the view's means a file may come from a newer push: refused. A failed call,
+// an entry with no path or no known status, a path listed twice, a count other than `changedFiles`, or a list that leaves
+// out a file the view gave is refused too. A view that lists as many files as it counts, or more, is returned as it is.
+export function wholeFiles(forge, pr) {
+  const { repo, host, number, head, changedFiles } = pr;
+  if (pr.files.length >= changedFiles) return pr;
+  let entries;
+  try {
+    entries = forge.changeFiles(repo, number, { host });
+  } catch (error) {
+    return `could not read the ${changedFiles} changed files of #${number} with gh (${ghError(error)})`;
+  }
+  if (!Array.isArray(entries)) return `gh returned no list of the changed files of #${number}`;
+  const files = [];
+  for (const [index, entry] of entries.entries()) {
+    const { filename: path, status } = entry ?? {};
+    if (typeof path !== 'string' || path === '' || typeof status !== 'string' || !Object.hasOwn(REST_CHANGE_TYPES, status)) {
+      return `gh listed changed file ${index + 1} of #${number} with no path or no known status (${JSON.stringify(status ?? null)})`;
+    }
+    files.push({ path, changeType: REST_CHANGE_TYPES[status] });
+  }
+  const paths = new Set(files.map(({ path }) => path));
+  if (paths.size !== files.length) return `gh listed a changed file of #${number} twice`;
+  if (files.length !== changedFiles) return `gh listed ${files.length} of its ${changedFiles} changed files, and GitHub lists at most 3000`;
+  const missing = pr.files.find(({ path }) => !paths.has(path));
+  if (missing) return `the paged file list leaves out ${JSON.stringify(missing.path)}, which the view lists`;
+  let now;
+  try {
+    now = forge.pull(repo, number, { host })?.head?.sha;
+  } catch (error) {
+    return `could not read the head of #${number} again with gh (${ghError(error)})`;
+  }
+  if (now !== head) return `the head moved from ${head.slice(0, 7)} to ${String(now ?? 'none').slice(0, 7)} while gh listed its files`;
+  return { ...pr, files };
 }
 
 // Why the changed files keep auto-merge off, or null. A path is the branch's text, so it is quoted: it cannot break the line.
@@ -230,9 +279,12 @@ export function runAutoMerge(argv, project, { forge = forgeFor(project.root) } =
     : reason === 'local' ? `this machine has not opted in (github.autoMerge in ${project.paths.local})` : null;
   if (reason !== 'team') {
     const problem = checksProblem(policy, loadConfig(project), `${pr.repo} ${main}`);
-    const paths = pathsProblem(pr, prefix);
     if (problem) [effective, reason, why] = [false, 'checks', problem];
-    else if (paths) [effective, reason, why] = [false, 'paths', paths];
+    else {
+      const listed = prefix === null ? pr : wholeFiles(forge, pr);
+      const paths = typeof listed === 'string' ? listed : pathsProblem(listed, prefix);
+      if (paths) [effective, reason, why] = [false, 'paths', paths];
+    }
   }
   if (effective) {
     let user;

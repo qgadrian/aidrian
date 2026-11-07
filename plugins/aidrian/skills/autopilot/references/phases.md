@@ -64,6 +64,9 @@ The engine's last phase opens it through the `pr-write` skill. Ask for a draft, 
 An engine that stops before that phase leaves no pull request, because its gates refuse one with a slice missing.
 Report what is committed, and stop.
 Record the pull request's number, link, and head commit.
+Then, before round 1, run its product feedback step: the `pr-product-feedback` skill's `references/in-a-flow.md`
+§ After the draft opens. Its `fix-now` items are findings of round 1, and step 3 routes them. Ask the Human nothing:
+each open product choice is a Decision for the Human.
 
 ## 3. Review rounds
 
@@ -110,9 +113,12 @@ The loop ends at the first of these:
 
 Then:
 
-1. Leave the pull request a draft. Mark it ready with `gh pr ready <n>` only when config.json `github.markReady` is `"auto"`,
+1. Leave the pull request a draft. Mark it ready only when config.json `github.markReady` is `"auto"`,
    the default, or the Human asked for that at launch, the loop ended at sign-off, and `aidrian pr checks <n>` says ready.
-   Pending or failing: leave it a draft and say why.
+   Then run `aidrian pr product-feedback status <n>`, and the re-check when only that is owed, by that file's
+   § Before `gh pr ready`. On exit 0, mark it ready with `gh pr ready <n>`.
+   Pending, failing, or any other exit: leave it a draft and say why. The report lists each owed item with its command,
+   and each open product choice as a Decision for the Human.
    After `gh pr ready`, push nothing more: a later finding belongs in a new pull request.
 2. Once step 1 marked it ready in this run, run the `pr-auto-merge` skill.
    Keep the line it stops on for the report. Merge only through that step, never otherwise.

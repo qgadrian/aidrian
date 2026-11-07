@@ -186,6 +186,28 @@ test('aidrian lint personas prints a warning on stderr and still passes, and fai
   assert.deepEqual([failed.status, failed.stderr], [1, 'personas: personas/cook.md: 2 tasks are titled "Mark a dish ready": --task and the report key on the title\n']);
 });
 
+test('aidrian lint personas warns on a Preview line that names no usable host, and still passes', (t) => {
+  const access = (...lines) => `# Product access\n\n## Environments\n\n${lines.join('\n')}\n`;
+  const warned = (...lines) => {
+    const result = lint(project(t, { 'cook.md': PERSONA, 'product-access.md': access(...lines) }));
+    assert.equal(result.status, 0, result.stderr);
+    return result.stderr;
+  };
+  for (const line of ['- Preview: https://pr-1.preview.example.com/app', '- Preview: preview.example.com/app', '- Preview: `pr-*.example.com`', '- **Preview:** `*.preview.example.com`', '- *Preview*: `*.preview.example.com`', '- preview: staging.example.com', 'Preview: staging.example.com', '- Preview: *.com', '- Preview:']) {
+    const text = warned(line);
+    assert.match(text, /^personas: warning: personas\/product-access\.md: a Preview line under ## Environments names no usable host: /u, line);
+    assert.ok(text.includes(line.trim()), `${line}: the warning quotes the line`);
+  }
+  for (const line of ['- Preview: `*.preview.example.com`, one per pull request.', '- Preview: staging.example.com', '- Preview: *.vercel.app', '- Staging: `https://staging.example.com`.', '- Previews are not used here.']) {
+    assert.equal(warned(line), '', line);
+  }
+  assert.equal(lint(project(t, { 'product-access.md': '# Product access\n\n## Off limits\n\n- Preview: https://example.com/app\n' })).stderr, '', 'another section');
+  assert.equal(lint(project(t, { 'product-access.md': access('```text', '- Preview: https://example.com/app', '```') })).stderr, '', 'a fence');
+  assert.equal(lint(project(t, { 'cook.md': PERSONA.replace('## Who', '## Environments\n\n- Preview: https://example.com/app\n\n## Who') })).stderr, '', 'only product-access has Preview lines');
+  const template = readFileSync(path.join(ROOT, 'plugins/aidrian/skills/persona-audit/references/product-access-template.md'), 'utf8');
+  assert.equal(lint(project(t, { 'product-access.md': template })).stderr, '', 'the template\'s own line passes');
+});
+
 test('aidrian lint personas fails a persona id two docs share, two product-access docs, and the id all', (t) => {
   const dir = project(t, { 'cook.md': PERSONA, 'all.md': PERSONA, 'product-access.md': '# Product access\n' });
   mkdirSync(path.join(dir, 'more'));

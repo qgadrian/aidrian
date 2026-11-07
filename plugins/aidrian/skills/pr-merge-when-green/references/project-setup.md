@@ -30,7 +30,7 @@ Never add an entry on your own during a merge run.
   branch's, as sets, and its `state.dir` too. A named check that has not registered is pending, not passed;
   `aidrian pr checks` reads this checkout, so equal lists make its verdict the default branch's policy.
   A config this checkout cannot read is off too.
-- `paths`: gh lists every changed file with its change type, none is a rename, and none instructs an AI session or decides CI: `AGENTS.md`, `CLAUDE.md`, `SKILL.md`,
+- `paths`: gh lists every changed file with its change type, past `gh pr view`'s 100 through the paged files route at the same head, none is a rename, and none instructs an AI session or decides CI: `AGENTS.md`, `CLAUDE.md`, `SKILL.md`,
   `CODEOWNERS`, `.aidrian.json`, or a file under `.claude/`, `.codex/`, `.aidrian/`, `.github/workflows/`, or `.github/actions/`.
   The plugin's own code that decides auto-merge also keeps it off, so the gate never approves a change to itself.
 - `local`: this machine opted in, with `"github": { "autoMerge": { "enabled": true } }` in the main checkout's `.aidrian.local.json`, which git must not track, or it has no setting and the default branch's `github.autoMerge.default` is `"on"`.

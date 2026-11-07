@@ -104,8 +104,9 @@ and a collision between two connectors of one name, which Codex suffixes with a 
 
 ## GitHub through the app connector
 
-GitHub's app connector merges and comments under names and inputs of its own, so the [merge guard](../hooks.md#merge-guard)
-and the [review gate](../config.md#review-gate) read these five tools. `hooks.json` lists each as Codex sends it and in the
+GitHub's app connector merges, comments, and marks a draft ready under names and inputs of its own, so the
+[merge guard](../hooks.md#merge-guard), the [review gate](../config.md#review-gate), and the [ready hold](../hooks.md#ready-hold)
+read these six tools. `hooks.json` lists each as Codex sends it and in the
 model's flat form, and `githubTools` of the [adapter](../../plugins/aidrian/lib/hosts/codex.mjs) maps its inputs:
 
 | `mcp__codex_apps__github__<tool>` | Read as | Pull request, repository, and text or head |
@@ -115,11 +116,13 @@ model's flat form, and `githubTools` of the [adapter](../../plugins/aidrian/lib/
 | `add_comment_to_issue` | a comment | `pr_number`, `repo_full_name`, `comment` |
 | `reply_to_review_comment` | a comment | `pr_number`, `repo_full_name`, `comment` |
 | `add_review_to_pr` | a comment | `pr_number`, `repo_full_name`, `review` |
+| `mark_pull_request_ready_for_review` | a ready, as `update_pull_request_draft_state` with `draft: false` is | `pr_number`, `repository_full_name` |
 
 This is not proven live. No hook on Codex has received these calls, and no merge went through the connector to test it:
 the tests run a recorded shape, `test/fixtures/hosts/codex/github.json`, through the real hook.
 How the name is joined comes from the source at `rust-v0.166.0`, as for [Linear](../hooks.md#where-the-tracker-guard-is-verified).
-The tool names and inputs come from the connector catalog a Codex 0.166.0 install cached on 2026-11-05.
+The tool names and inputs come from the connector catalog a Codex 0.166.0 install cached on 2026-11-05, and the ready tool's
+from the one a 0.167.0 install cached on 2026-11-06, whose own `update_pull_request` takes no `draft`.
 
 - OpenAI's servers serve that catalog, so no Codex version pins it. A tool renamed or added there passes these two rules unchecked.
 - The text the gate reads is the body of the comment, reply, or review. The inline `file_comments` of `add_review_to_pr`,

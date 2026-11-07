@@ -110,6 +110,7 @@ by the names the start hook gives, never "you" or "I". In this order:
 2. **Checks**: verification and CI status, and the bot review state of each round:
    `received`, `already_present`, `timed_out`, `blocked_quota`, `round_limit`, `extension_ask`, or `no_reviewer`.
 3. **Decisions for the Human**: each parked decision, with its options and the safest recommendation; each quorum recommendation left waiting;
+   each open product choice of the pull request's product feedback, with its command, and that this machine opted out when `status` said so;
    then each `decided_provisional`, with its reason, revisit trigger, and how it reverts.
 4. **Left open**: findings closed as rare edge cases, each with its reason, findings still open at the cap,
    and fixes the last round pushed that no review has seen.

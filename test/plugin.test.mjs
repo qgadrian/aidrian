@@ -1211,6 +1211,10 @@ test('each flow runs product feedback after its draft opens, and status and its 
   assert.match(drafted, /Exit 2 with `reason` `not_run`: run the `pr-product-feedback` skill on `<n>`/u);
   assert.match(drafted, /Exit 2 with any other `reason`: go on\. Nothing is re-checked here, mid-round: the ready step owns the re-check\./u);
   assert.doesNotMatch(drafted, /Exit 2: run/u);
+  // A pull request an earlier run left unanswered is answered here, not skipped to the ready step.
+  const unanswered = drafted.search(/Exit 2 with `reason` `unanswered`: [^\n]*Do not go on: answer them, as below\./u);
+  assert.ok(unanswered !== -1 && unanswered < drafted.indexOf('Exit 2 with any other `reason`'), 'unanswered is answered, before the go-on line');
+  assert.match(drafted, /on `unanswered`, use the output already in hand\. Answer each\s+`unanswered` item with the command it prints in `owed`/u);
   assert.match(between(skill('pr-review-loop/SKILL.md'), '## 0. Preflight', '## 1. Run'), /only on `not_run`: step 7's ready step owns the re-check/u);
   // What the skill found is answered by the flow, with the commands status prints, before the fix-now items are routed.
   const answers = ['After the skill runs, run `status <n> --json` again', 'with the command it prints in `owed`', 'each `defect` with `fix-now`',

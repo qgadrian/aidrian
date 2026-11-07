@@ -16,10 +16,12 @@ aidrian pr product-feedback status <n> --json   # 0 clear, 2 owed, 3 error
 
 - Exit 0: go on.
 - Exit 2 with `reason` `not_run`: run the `pr-product-feedback` skill on `<n>`, then answer what it found, as below.
+- Exit 2 with `reason` `unanswered`: an earlier run left items unanswered. Do not go on: answer them, as below.
 - Exit 2 with any other `reason`: go on. Nothing is re-checked here, mid-round: the ready step owns the re-check.
 - Exit 3: report its line and go on. The ready step leaves the draft.
 
-After the skill runs, run `status <n> --json` again, and answer each owed item with the command it prints in `owed`:
+After the skill runs, run `status <n> --json` again; on `unanswered`, use the output already in hand. Answer each
+`unanswered` item with the command it prints in `owed`:
 each `defect` with `fix-now`, and each `minor` with `defer` and a `--reason`, or as a question to the Human.
 A `choice` is the Human's, as § Before `gh pr ready` says. Then route each `fix-now` item to its owner as any other
 finding, by the `orchestration` skill's § 4, and push the fix with the next round.

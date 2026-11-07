@@ -246,8 +246,9 @@ What each rule matches:
   that picks that exact value: an option starting "Run a critic agent" authorizes `agent:critic` only; any other agent
   needs an answer that names it, "Run a <name> agent" or `agent:<name>`; and `human` needs "The Human reviews it".
   A value or a pull request the rule cannot read is refused.
-- Product feedback answer: on only where the state folder holds `product-feedback/`, so a project that does not use the feature sees
-  nothing of it, save one case it judges anywhere: a command that also runs `record`, or an aidrian call whose subcommand it cannot
+- Product feedback answer: on only where the state folder holds `product-feedback/`, save two cases that also reach a project
+  without the feature, as [With the key off](config.md#with-the-key-off) says. One is a call whose folder or project it cannot
+  read (below); the other it judges anywhere: a command that also runs `record`, or an aidrian call whose subcommand it cannot
   read, such as `aidrian $X && aidrian $Y`, beside a call that claims a human or that it cannot read (below).
   It reads `aidrian pr product-feedback answer` with `--by human`, `--by=human`, or a word it cannot read, also as a
   runner, such as `node`, given `…/cli.mjs` among its arguments, and `aidrian audits record` with the same, on a key a
@@ -446,11 +447,12 @@ Limits:
 - In a fork checkout with gh offline, `aidrian pr request`, `attest`, and `signoff` fall back to origin, and a merge
   that names the upstream is then not guarded: pass `--repo` when gh cannot answer.
 - A record written before this release has rounds but no outcome: a merge waits until `aidrian pr review` runs again.
-- A heredoc piped into a shell from a group or a subshell, such as `{ cat <<'EOF'; } | bash` or `( cat <<'EOF' … ) | bash`,
-  is not read, so a merge in it is not refused; the [ready hold](#ready-hold) shares the gap.
-- A shell's own heredoc that it runs as a script, such as `bash /dev/stdin <<'EOF'`, is not read either.
-- The other way: `cat <<'EOF' | bash script.sh`, whose body only mentions `gh pr merge`, is refused, as
-  `echo '…' | bash script.sh` already is.
+- Three heredoc forms, which the [ready hold](#ready-hold) shares:
+  - A heredoc piped into a shell from a group or a subshell, such as `{ cat <<'EOF'; } | bash` or `( cat <<'EOF' … ) | bash`,
+    is not read, so a merge or a ready in it is not refused.
+  - A shell's own heredoc that it runs as a script, such as `bash /dev/stdin <<'EOF'`, is not read either.
+  - The other way: `cat <<'EOF' | bash script.sh`, whose body only mentions `gh pr merge` or `gh pr ready`, is refused, as
+    `echo '…' | bash script.sh` already is.
 
 ## Ready hold
 
@@ -480,7 +482,8 @@ and merges leaves the guard its own time. It decides in this order:
    missing at the ref; off when the local `auto` is false, or every ref says off. Each ref's config is found through that
    ref's own `.aidrian.json`, so a branch that moves the project folder moves nothing. `HEAD` can only raise: with no default
    branch git names on origin, and nothing saying on, the read is unsure and the command runs. Off, or unsure: it runs, with
-   no gh call, so a project without the key pays none. `status` takes the same off path, before any gh call.
+   no gh call. `status` takes the same off path, before any gh call. [With the key off](config.md#with-the-key-off) names
+   where a project without the key still pays.
 4. Where git says on, two forms are refused with no network call: text fed to a shell that names a ready, as
    [Bash rules](#bash-rules) describes, and a command that marks more than one pull request ready, whose deny says to run one
    `gh pr ready <n>` per command, since one deadline cannot check them all. The second also holds where git says maybe.
@@ -510,22 +513,15 @@ What it cannot read runs, by the Human's decision, and is out of its sight:
   no pull request.
 - A script, an interpreter, `xargs`, a variable set in an earlier Bash call, a `gh alias` such as `gh rd 7`, and `curl` to the
   GraphQL endpoint.
-- A heredoc piped into a shell from a group or a subshell, such as `{ cat <<'EOF'; } | bash` or `( cat <<'EOF' … ) | bash`,
-  is not read: the ready hold lets it run, and the merge guard does not refuse it.
-- A shell's own heredoc that it runs as a script, such as `bash /dev/stdin <<'EOF'`, is not read either, by this rule or the
-  merge guard.
-- The other way: `cat <<'EOF' | bash script.sh`, whose body only mentions `gh pr ready`, is refused, as
-  `echo '…' | bash script.sh` already is.
-- A GitHub MCP server installed through a plugin under another name, such as `mcp__plugin_<name>_github__…`: the merge guard
-  and the review gate share this gap, and a follow-up covers all three.
+- The three heredoc forms the [merge guard](#merge-guard)'s limits list, which both rules share.
+- A GitHub MCP server installed under another name, such as a plugin's `mcp__plugin_<name>_github__…`, or a connector Codex
+  suffixes with a hash: the merge guard and the review gate share this gap, and a follow-up covers all three.
 - An `AIDRIAN_ALLOW_UNHELD_READY` entry in a host's settings `env` reaches every later session, as it does for every override;
   a follow-up covers them all.
 - `origin/HEAD` names the default branch for the call `status` skips: a session that rewrites it, on a pull request stacked
   on its own branch, chooses both branches whose config is read.
-- Off read from git lags GitHub: origin refs fetched before the team turned `auto` on read as off, with no gh call, until a
-  fetch, and so do a fork's stale `main` and a clone that never fetched.
-- A session that rewrites those origin refs and `HEAD` to say off turns the hold and `status` off. A follow-up keeps the
-  session-start answer instead, as the session's gates do.
+- An off read from stale or rewritten git refs: [The commands](config.md#the-commands) names both limits, which the hold
+  shares with `status`.
 - A pull request opened as no draft is never held. A person's own shell outside a session is never held.
 
 ### Where the ready hold is verified
@@ -540,8 +536,7 @@ The GitHub MCP server's input, read from its source at `pkg/github/pullrequests.
 and v0.9.0 and earlier take none; `update_pull_request_draft_state` takes `owner`, `repo`, `pullNumber`, and a required
 `draft` from v1.0.0. In v2.x, `update_pull_request` may hand the edit to an interactive form the person submits; that
 submit is the person's, and no hook is known to see it. Codex's connector `update_pull_request` takes no `draft`.
-Only these names are read: a GitHub MCP server installed under another name, such as a plugin's
-`mcp__plugin_<name>_github__…`, or a connector Codex suffixes with a hash, passes unchecked (see the list above).
+Only these names are read: the [Ready hold](#ready-hold) list above names the ones that pass unchecked.
 
 A host that stops a hook at its timeout may let the command run. On Codex `rust-v0.167.0` the source says so: a timed-out
 `PreToolUse` hook is recorded as failed and blocks nothing (`codex-rs/hooks/src/engine/command_runner.rs` and

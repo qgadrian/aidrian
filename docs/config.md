@@ -448,13 +448,29 @@ Before any gh call, `status` reads git alone, as the [ready hold](hooks.md#ready
 then `review.productFeedback.auto` committed at `origin/HEAD`, `origin/<git.defaultBranch>`, and `origin/main`, each found through
 its own `.aidrian.json`, and at `HEAD`, which can only raise. When the local `auto` is false, or every one of those refs says off,
 no ref's config is missing, and the state folder holds no `product-feedback/`, it is clear with `off`, or `opted_out` when the
-local `auto` is false and a ref says on, with no gh call, so a project without the feature pays none; `head` is then null.
+local `auto` is false and a ref says on, with no gh call; `head` is then null.
 Anything else, a default branch git does not name on origin included, goes to GitHub, which decides as above. Off is the one
-answer that does not go to GitHub, which is why it needs every one of those refs off and no record folder. Two limits follow:
-origin refs fetched before the team turned `auto` on read as off, with no gh call, until a fetch, and so do a fork's stale
-`main` and a clone that never fetched; and a session that rewrites those refs and `HEAD` to say off turns `status` and the
-ready hold off. Its `why` then says git's origin refs say off, not that the team chose it, or, when the local `auto` is
-false, that this machine opted out.
+answer that does not go to GitHub, which is why it needs every one of those refs off and no record folder.
+Its `why` then says git's origin refs say off, not that the team chose it, or, when the local `auto` is false, that this
+machine opted out. Two limits follow, for `status` and the ready hold alike:
+
+- Origin refs fetched before the team turned `auto` on read as off, with no gh call, until a fetch, and so do a fork's stale
+  `main` and a clone that never fetched.
+- A session that rewrites those refs and `HEAD` to say off turns `status` and the ready hold off. A follow-up keeps the
+  session-start answer instead, as the session's gates do.
+
+### With the key off
+
+A project without `review.productFeedback.auto` runs nothing of the feature unasked, and its hooks cost it nothing, save in
+two cases it keeps as limits:
+
+- A project that once ran the `pr-product-feedback` skill on demand keeps `<state>/product-feedback/`, so git no longer reads
+  off there. Each ready call then pays the [ready hold](hooks.md#ready-hold)'s gh calls, up to its 3.5-second deadline, and
+  two readies in one command, or a ready fed to a shell, are refused.
+- While another project on this machine keeps product feedback, the [answer rule](hooks.md#bash-rules) refuses a `--by human`
+  call whose folder or project it cannot read, such as `cd "$D" && aidrian audits record … --by human` or one with
+  `--project "$P"`. It refuses an aidrian call it cannot read beside another, such as `aidrian $X && aidrian $Y`, in every
+  project.
 
 ### The record
 

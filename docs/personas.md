@@ -236,7 +236,8 @@ When that file is gone, it keeps the earlier comment, posts nothing new, and say
 
 With `review.productFeedback.auto` on, the flows run this skill themselves, after a draft opens and again before marking it
 ready, as [review.md](review.md#product-feedback-in-the-rounds) says, and the [ready hold](hooks.md#ready-hold) keeps the draft
-a draft while feedback is owed. With it off, the default, nothing runs it unasked.
+a draft while feedback is owed. With it off, the default, no flow runs it, and
+[With the key off](config.md#with-the-key-off) names the two cases where its hooks still reach a project.
 
 ## Triage
 

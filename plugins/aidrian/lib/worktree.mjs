@@ -12,7 +12,7 @@ import { spawnSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 
 import { CONFIG_ERROR, commandConfig } from './config.mjs';
-import { ghJson } from './gh.mjs';
+import { forgeFor } from './forges/index.mjs';
 import { checkoutRoots, isIgnored } from './git.mjs';
 import { projectAt, worktreesDir } from './project.mjs';
 import { usageLines } from './usage.mjs';
@@ -198,7 +198,7 @@ export function parseDuration(text) {
 export function mergedHeads(main) {
   try {
     const heads = new Map();
-    for (const { headRefName, headRefOid } of ghJson(['pr', 'list', '--state', 'merged', '--limit', String(GH_PR_LIMIT), '--json', 'headRefName,headRefOid'], { cwd: main })) {
+    for (const { headRefName, headRefOid } of forgeFor(main).mergedChanges(GH_PR_LIMIT, { fields: 'headRefName,headRefOid' })) {
       if (headRefName && headRefOid) heads.set(headRefName, [...(heads.get(headRefName) ?? []), headRefOid]);
     }
     return heads;

@@ -32,7 +32,7 @@ When several match, take the newest and say which one you picked.
    git branch --show-current     # must be the brief's branch
    git status --porcelain        # changes in progress to account for
    git log --oneline -3          # new commits beyond Done
-   gh pr view --json number,url,state && gh pr checks   # only when the brief names a pull request
+   gh pr view --json number,url,state && aidrian pr checks   # only when the brief names a pull request
    ```
 
    When the brief says an agent was still running, check whether it still is before you start the same work again.

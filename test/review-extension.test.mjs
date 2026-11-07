@@ -338,6 +338,11 @@ test('transcriptAnswers reads only the host`s AskUserQuestion results', () => {
   assert.equal(approved([{ question: 'Q #1 round 20?', answer: 'Approve', at: null }], { pr: 1, round: 2 }), false);
 });
 
+// The fakes answer for pull request 42 alone, as GitHub would 404 any other.
+const onPr42 = (n) => {
+  if (String(n) !== '42') throw new Error(`unexpected pull request ${n}`);
+};
+
 // The bot's rounds at the cap of 3, as `aidrian pr await-review --request` reads them: `comments` per review. The pull
 // request's conversation comments live in `issue` across runs, as on GitHub, so a summary comment one run writes is the
 // record the next run, or another machine, reads.
@@ -360,34 +365,34 @@ function botProject(t, config = {}) {
     const list = Array.from({ length: reviews }, (_, i) => ({ id: i + 1, user: { login: DEFAULT_REVIEWER }, submitted_at: T(i + 1), commit_id: `c${i}`, state: 'COMMENTED' }));
     const inline = comments.flatMap((each, i) => each.map(([file, line, title]) => ({ pull_request_review_id: i + 1, path: file, line, body: title })));
     const requests = [];
-    const gh = {
+    const forge = {
       repo: () => 'acme/notes',
-      currentPr: () => ({ number: 42 }),
-      api: (p, { method, fields } = {}) => {
-        if (p === 'user') return { login: 'someone' };
-        if (method === 'POST' && fields.body.startsWith('@codex review')) return (requests.push(fields), {});
-        if (method === 'POST' && p.endsWith('/issues/42/comments')) return post(fields.body);
-        if (method === 'PATCH' && /\/issues\/comments\/\d+$/u.test(p)) return edit(Number(p.split('/').at(-1)), fields.body);
-        if (p.endsWith('/pulls/42')) return { title: 'Cap refunds', body: 'Refunds never exceed the charge.', head: { sha: head, ref: 'feat', repo: { full_name: 'acme/notes' } } };
-        if (p.includes('/commits/')) return { commit: { committer: { date: T(1) } } };
-        if (p.endsWith('/reviews')) {
-          reviewReads += 1;
-          if (reviewReads === failRead) throw new Error('HTTP 502: GitHub is unavailable');
-          return list;
-        }
-        if (p.endsWith('/pulls/42/comments')) return inline;
-        if (p.endsWith('/issues/42/comments')) return issue;
-        if (p.endsWith('/reactions')) return [];
-        throw new Error(`unexpected gh path ${p}`);
+      change: () => ({ number: 42 }),
+      viewer: () => 'someone',
+      postComment: (_repo, n, body) => {
+        onPr42(n);
+        return body.startsWith('@codex review') ? (requests.push({ body }), {}) : post(body);
       },
+      editComment: (_repo, id, body) => edit(Number(id), body),
+      pull: (_repo, n) => (onPr42(n), { title: 'Cap refunds', body: 'Refunds never exceed the charge.', head: { sha: head, ref: 'feat', repo: { full_name: 'acme/notes' } } }),
+      commit: () => ({ commit: { committer: { date: T(1) } } }),
+      reviews: (_repo, n) => {
+        onPr42(n);
+        reviewReads += 1;
+        if (reviewReads === failRead) throw new Error('HTTP 502: GitHub is unavailable');
+        return list;
+      },
+      reviewComments: (_repo, n) => (onPr42(n), inline),
+      conversationComments: (_repo, n) => (onPr42(n), issue),
+      reactions: () => [],
     };
     let t0 = Date.parse(T(30));
-    return runAwaitReview(['42', '--request', '--timeout-sec', '0'], loadConfig(project).config, project, { gh, now: () => t0, sleep: async (s) => { t0 += s * 1000; } }).then((code) => ({ code, out: JSON.parse(log.mock.calls.at(-1).arguments[0]), requests, reviewReads }));
+    return runAwaitReview(['42', '--request', '--timeout-sec', '0'], loadConfig(project).config, project, { forge, now: () => t0, sleep: async (s) => { t0 += s * 1000; } }).then((code) => ({ code, out: JSON.parse(log.mock.calls.at(-1).arguments[0]), requests, reviewReads }));
   };
-  // `aidrian pr extend` as the CLI runs it, with the review step's gh over the same comments.
+  // `aidrian pr extend` as the CLI runs it, with the review step's forge over the same comments.
   const extend = (args) => runExtend(['42', ...args], project, loadConfig(project).config, {
     repo: 'acme/notes', env: {},
-    gh: { pr: () => ({ headRefOid: head }), comments: () => issue, post: (_repo, _n, body) => post(body), edit: (_repo, id, body) => edit(id, body), viewer: () => 'someone' },
+    forge: { change: () => ({ headRefOid: head }), conversationComments: () => issue, postComment: (_repo, _n, body) => post(body), editComment: (_repo, id, body) => edit(id, body), viewer: () => 'someone' },
   });
   // Another machine: this one's state folder is gone, and only the pull request's comments remain.
   const forget = () => rmSync(path.join(base, 'state'), { recursive: true, force: true });
@@ -598,36 +603,35 @@ function gitBot(t, config, { working = null } = {}) {
   const findings = [[['src/a.js', 1, 'One'], ['src/a.js', 40, 'Two'], ['src/a.js', 120, 'Three']], [['src/a.js', 80, 'Four'], ['src/a.js', 160, 'Five']], [['src/a.js', 200, 'Six']]];
   const reviews = heads.map((sha, i) => ({ id: i + 1, user: { login: DEFAULT_REVIEWER }, submitted_at: at(), commit_id: sha, state: 'COMMENTED' }));
   const inline = findings.flatMap((each, i) => each.map(([file, line, title]) => ({ pull_request_review_id: i + 1, path: file, line, body: title })));
-  const gh = {
+  const forge = {
     repo: () => 'acme/notes',
-    currentPr: () => ({ number: 42 }),
-    api: (p, { method, fields } = {}) => {
-      if (method === 'POST' && p.endsWith('/issues/42/comments')) {
-        const comment = { id: issue.length + 1, user: { login: 'someone' }, author_association: 'MEMBER', created_at: at(), body: fields.body };
-        issue.push(comment);
-        if (fields.body.startsWith('@codex review')) requests.push(comment);
-        return comment;
-      }
-      if (method === 'PATCH') return (issue.find((comment) => comment.id === Number(p.split('/').at(-1))).body = fields.body);
-      if (p.endsWith('/pulls/42')) {
-        pulls += 1;
-        hooks.beforePull?.(pulls);
-        return { title: 'Cap refunds', body: 'goal', base: { ref: 'main' }, head: { sha: git('rev-parse', 'HEAD'), ref: 'feat', repo: { full_name: 'acme/notes' } } };
-      }
-      if (p.includes('/commits/')) return { commit: { committer: { date: at() } } };
-      if (p.endsWith('/reviews')) return reviews;
-      if (p.endsWith('/pulls/42/comments')) return inline;
-      if (p.endsWith('/issues/42/comments')) return issue;
-      if (p.endsWith('/reactions')) return [];
-      throw new Error(`unexpected gh path ${p}`);
+    change: () => ({ number: 42 }),
+    postComment: (_repo, n, body) => {
+      onPr42(n);
+      const comment = { id: issue.length + 1, user: { login: 'someone' }, author_association: 'MEMBER', created_at: at(), body };
+      issue.push(comment);
+      if (body.startsWith('@codex review')) requests.push(comment);
+      return comment;
     },
+    editComment: (_repo, id, body) => (issue.find((comment) => comment.id === Number(id)).body = body),
+    pull: (_repo, n) => {
+      onPr42(n);
+      pulls += 1;
+      hooks.beforePull?.(pulls);
+      return { title: 'Cap refunds', body: 'goal', base: { ref: 'main' }, head: { sha: git('rev-parse', 'HEAD'), ref: 'feat', repo: { full_name: 'acme/notes' } } };
+    },
+    commit: () => ({ commit: { committer: { date: at() } } }),
+    reviews: (_repo, n) => (onPr42(n), reviews),
+    reviewComments: (_repo, n) => (onPr42(n), inline),
+    conversationComments: (_repo, n) => (onPr42(n), issue),
+    reactions: () => [],
   };
   const run = async (env = {}, args = []) => {
     pulls = 0;
     const start = Date.parse('2026-08-23T09:00:00Z');
     let now = start;
     const git_ = { pushedHead: () => null, behind: () => false };
-    const code = await runAwaitReview(['42', '--request', '--timeout-sec', '0', ...args], loadConfig(project).config, project, { gh, git: git_, env, now: () => now, sleep: async (s) => { now += s * 1000; } });
+    const code = await runAwaitReview(['42', '--request', '--timeout-sec', '0', ...args], loadConfig(project).config, project, { forge, git: git_, env, now: () => now, sleep: async (s) => { now += s * 1000; } });
     return { code, out: code === 1 ? null : JSON.parse(log.mock.calls.at(-1).arguments[0]), elapsed: (now - start) / 1000 };
   };
   return { project, run, requests, commit, fix, hooks, git };
@@ -717,20 +721,24 @@ test('await-review without --request reads GitHub alone: no base branch in the c
   mkdirSync(path.join(dir, '.aidrian'));
   writeFileSync(path.join(dir, '.aidrian/config.json'), JSON.stringify({ version: 1, state: { dir: 'state' } }));
   const project = projectAt(dir);
-  const gh = {
+  const nothingPosted = () => {
+    throw new Error('nothing is posted');
+  };
+  const forge = {
     repo: () => 'acme/notes',
-    currentPr: () => ({ number: 42 }),
-    api: (p, { method } = {}) => {
-      if (method) throw new Error('nothing is posted');
-      if (p.endsWith('/pulls/42')) return { base: { ref: 'main' }, head: { sha: 'abc1234', ref: 'feat', repo: { full_name: 'acme/notes' } } };
-      if (p.includes('/commits/')) return { commit: { committer: { date: '2026-08-23T07:01:00Z' } } };
-      if (/\/(reviews|comments|reactions)$/u.test(p)) return [];
-      throw new Error(`unexpected gh path ${p}`);
-    },
+    change: () => ({ number: 42 }),
+    postComment: nothingPosted,
+    editComment: nothingPosted,
+    pull: () => ({ base: { ref: 'main' }, head: { sha: 'abc1234', ref: 'feat', repo: { full_name: 'acme/notes' } } }),
+    commit: () => ({ commit: { committer: { date: '2026-08-23T07:01:00Z' } } }),
+    reviews: () => [],
+    reviewComments: () => [],
+    conversationComments: () => [],
+    reactions: () => [],
   };
   const log = t.mock.method(console, 'log', () => {});
   const error = t.mock.method(console, 'error', () => {});
-  const deps = { gh, git: { pushedHead: () => null, behind: () => false }, now: () => 0, sleep: async () => {} };
+  const deps = { forge, git: { pushedHead: () => null, behind: () => false }, now: () => 0, sleep: async () => {} };
   assert.equal(await runAwaitReview(['42', '--timeout-sec', '0'], loadConfig(project).config, project, deps), 2);
   assert.equal(JSON.parse(log.mock.calls.at(-1).arguments[0]).status, 'timed_out');
   assert.equal(await runAwaitReview(['42', '--request', '--timeout-sec', '0'], loadConfig(project).config, project, deps), 1);

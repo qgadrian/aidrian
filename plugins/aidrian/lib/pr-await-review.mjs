@@ -41,7 +41,7 @@
 // The default timeout is 840 s: a foreground Claude Code Bash call stops at 900 s, gh calls included.
 
 import { committedConfig, DEFAULTS as CONFIG_DEFAULTS, NO_REVIEWER } from './config.mjs';
-import { runGh } from './gh.mjs';
+import { forgeFor } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 import { sessionIdentity } from './hosts/index.mjs';
 
@@ -293,28 +293,20 @@ export const isStale = (signal, headSha, headCommittedAt = null, triggerHead = n
 export const acknowledgedForHead = (ack, headSha, headCommittedAt, triggerHead = null) =>
   Boolean(ack) && coversHeadCommit(ack.headSha ?? triggerHead, ack.at, headSha, headCommittedAt);
 
-const defaultGh = {
-  api: (p, { paginate = false, method, fields } = {}) => {
-    const args = ['api', p, '--header', 'Accept: application/vnd.github+json'];
-    if (paginate) args.push('--paginate', '--slurp');
-    if (method) args.push('--method', method);
-    for (const [k, v] of Object.entries(fields ?? {})) args.push('-f', `${k}=${v}`);
-    const parsed = JSON.parse(runGh(args) || 'null');
-    return paginate && Array.isArray(parsed) ? parsed.flat() : parsed;
-  },
-  currentPr: () => JSON.parse(runGh(['pr', 'view', '--json', 'number,headRepository,headRepositoryOwner,url'])),
-  repo: () => JSON.parse(runGh(['repo', 'view', '--json', 'nameWithOwner'])).nameWithOwner,
-};
+// The fields of the current branch's pull request that name it.
+const CURRENT_FIELDS = 'number,headRepository,headRepositoryOwner,url';
+// The forge the wait reads and posts through: in the shell's folder, and every REST call names the forge's JSON media type.
+const awaitForge = () => forgeFor(undefined, { strictJson: true });
 
 // Reads the signals first and the head last: a push that lands mid-snapshot then makes the gathered signals stale.
-const snapshot = (gh, repo, n) => {
-  const reviews = gh.api(`repos/${repo}/pulls/${n}/reviews`, { paginate: true });
-  const reviewComments = gh.api(`repos/${repo}/pulls/${n}/comments`, { paginate: true });
-  const issueComments = gh.api(`repos/${repo}/issues/${n}/comments`, { paginate: true });
-  const reactions = gh.api(`repos/${repo}/issues/${n}/reactions`, { paginate: true });
-  const pr = gh.api(`repos/${repo}/pulls/${n}`);
+const snapshot = (forge, repo, n) => {
+  const reviews = forge.reviews(repo, n);
+  const reviewComments = forge.reviewComments(repo, n);
+  const issueComments = forge.conversationComments(repo, n);
+  const reactions = forge.reactions(repo, n);
+  const pr = forge.pull(repo, n);
   const headSha = pr.head?.sha ?? null;
-  const headCommit = headSha ? gh.api(`repos/${repo}/commits/${headSha}`) : null;
+  const headCommit = headSha ? forge.commit(repo, headSha) : null;
   return { pr, reviews, reviewComments, issueComments, reactions, headCommittedAt: headCommit?.commit?.committer?.date ?? null };
 };
 
@@ -340,18 +332,18 @@ export const localGit = (cwd = process.cwd()) => {
   };
 };
 
-// The whole wait. `gh` (api, currentPr, repo), `git` (localGit), `sleep`, and `now` are the only side-effect seams. `gate(repo, n)`, with
+// The whole wait. `forge` (lib/forges), `git` (localGit), `sleep`, and `now` are the only side-effect seams. `gate(repo, n)`, with
 // --request, returns { reason } to post nothing, or { marker } to carry in the request (lib/review-gate.mjs).
-export const awaitReview = async (opts, { gh = defaultGh, git = localGit(), sleep = (s) => new Promise((r) => setTimeout(r, s * 1000)), now = () => Date.now(), gate = null } = {}) => {
+export const awaitReview = async (opts, { forge = awaitForge(), git = localGit(), sleep = (s) => new Promise((r) => setTimeout(r, s * 1000)), now = () => Date.now(), gate = null } = {}) => {
   if (opts.reviewer === null) {
     return { status: 'no_reviewer', pr: opts.pr === null ? null : Number(opts.pr), repo: opts.repo, reviewer: null, requested: false, signal: null, waited_sec: 0 };
   }
-  const repo = opts.repo ?? gh.repo();
-  const n = opts.pr ?? String(gh.currentPr().number);
+  const repo = opts.repo ?? forge.repo();
+  const n = opts.pr ?? String(forge.change(null, CURRENT_FIELDS).number);
   const review = opts.request && gate ? gate(repo, n) : {};
   if (review.reason) return { status: 'review_required', pr: Number(n), repo, reviewer: opts.reviewer, requested: false, reason: review.reason, signal: null, waited_sec: 0 };
   const started = now();
-  let s = snapshot(gh, repo, n);
+  let s = snapshot(forge, repo, n);
   let head = s.pr.head?.sha ?? null;
   // The head the push left behind, when known. GitHub lags only when it reports a commit the push built on; a head git
   // does not know, or one past the push, is someone else's newer work and counts as the pull request's state.
@@ -383,7 +375,7 @@ export const awaitReview = async (opts, { gh = defaultGh, git = localGit(), slee
       // nothing and hand back `head_moved`, so the caller reads the signals on this head first (lib/review/extension.mjs).
       if (opts.validHead && Number.isInteger(opts.grantFloor) && codexRounds(s.reviews, opts.reviewer) >= opts.grantFloor && !sameCommit(head ?? '', opts.validHead)) return 'head_moved';
       const beforePost = flooredInstant(now());
-      const posted = gh.api(`repos/${repo}/issues/${n}/comments`, { method: 'POST', fields: { body: requestCommentBody(head, maxRounds, review.marker ?? null) } });
+      const posted = forge.postComment(repo, n, requestCommentBody(head, maxRounds, review.marker ?? null));
       requested = true;
       requestedForHead = head;
       since = postedTriggerInstant(posted) ?? beforePost;
@@ -428,7 +420,7 @@ export const awaitReview = async (opts, { gh = defaultGh, git = localGit(), slee
     const remainingMs = opts.timeoutSec * 1000 - (now() - started);
     if (remainingMs <= 0) break;
     await sleep(Math.min(opts.intervalSec, Math.ceil(remainingMs / 1000)));
-    s = snapshot(gh, repo, n);
+    s = snapshot(forge, repo, n);
     const verdict = evaluate();
     if (verdict === 'blocked_quota' || verdict === 'round_limit' || verdict === 'head_moved') return result(verdict);
     if (verdict) return result('received');
@@ -450,10 +442,10 @@ async function reviewGate(project, config) {
 // config cannot raise the round cap, loosen what happens at it, or hide files from the extra-rounds signals through
 // review.ignore, as `aidrian pr review` reads them: { github, review, repo, n, baseTip, pr }. GitHub always names the
 // base; a response without one keeps the loaded config, with no base tip.
-function committedBase(project, opts, gh, config) {
-  const repo = opts.repo ?? gh.repo();
-  const n = opts.pr ?? String(gh.currentPr().number);
-  const pr = gh.api(`repos/${repo}/pulls/${n}`);
+function committedBase(project, opts, forge, config) {
+  const repo = opts.repo ?? forge.repo();
+  const n = opts.pr ?? String(forge.change(null, CURRENT_FIELDS).number);
+  const pr = forge.pull(repo, n);
   const ref = pr?.base?.ref;
   if (typeof ref !== 'string' || ref === '') return { github: config.github, review: config.review, repo, n, baseTip: null, pr };
   const tip = [`origin/${ref}`, ref].map((each) => runGit(['rev-parse', '--verify', '--quiet', `${each}^{commit}`], project.root)).find((r) => r.status === 0)?.stdout.trim();
@@ -464,12 +456,12 @@ function committedBase(project, opts, gh, config) {
 
 // The pull request's review record: the newer of this machine's and its summary comment's (lib/review/state.mjs),
 // with `comments`, the pull request's comments as read, for the write back.
-async function reviewRecord(project, config, gh, repo, n) {
+async function reviewRecord(project, config, forge, repo, n) {
   const { heldMessage, readRecord } = await import('./review/state.mjs');
   let comments = [];
   if (config.review.record !== 'local') {
     try {
-      comments = gh.api(`repos/${repo}/issues/${n}/comments`, { paginate: true }) ?? [];
+      comments = forge.conversationComments(repo, n) ?? [];
     } catch {}
   }
   const record = readRecord(project, Number(n), comments, repo);
@@ -479,84 +471,84 @@ async function reviewRecord(project, config, gh, repo, n) {
 
 // Writes the record where the review step does: the state folder and, unless config.json `review.record` is "local",
 // the pull request's summary comment, so another machine continues from the same checks and grants.
-async function saveRecord(record, { project, config, gh, base, status }) {
+async function saveRecord(record, { project, config, forge, base, status }) {
   const { publishState, writeLocalState } = await import('./review/state.mjs');
   writeLocalState(project, record.state);
   if (config.review.record === 'local') return null;
   return publishState(record.state, {
     comments: () => record.comments,
-    post: (body) => gh.api(`repos/${base.repo}/issues/${base.n}/comments`, { method: 'POST', fields: { body } }),
-    edit: (id, body) => gh.api(`repos/${base.repo}/issues/comments/${id}`, { method: 'PATCH', fields: { body } }),
-    viewer: () => gh.api('user')?.login,
+    post: (body) => forge.postComment(base.repo, base.n, body),
+    edit: (id, body) => forge.editComment(base.repo, id, body),
+    viewer: () => forge.viewer(),
   }, status);
 }
 
 // The bot's rounds as the history the signals read: its reviews and their inline comments, up to `head`.
-function botHistory(extension, { project, gh, base, reviewer, head }) {
+function botHistory(extension, { project, forge, base, reviewer, head }) {
   return () => {
-    const reviews = gh.api(`repos/${base.repo}/pulls/${base.n}/reviews`, { paginate: true }) ?? [];
-    const comments = gh.api(`repos/${base.repo}/pulls/${base.n}/comments`, { paginate: true }) ?? [];
+    const reviews = forge.reviews(base.repo, base.n) ?? [];
+    const comments = forge.reviewComments(base.repo, base.n) ?? [];
     return extension.buildHistory({ root: project.root, rounds: extension.botRounds(reviews, comments, reviewer), baseTip: base.baseTip, head, review: base.review });
   };
 }
 
 // The check at the cap for the bot's rounds.
-async function botAtCap(result, { project, config, gh, base, record, policy, env }) {
+async function botAtCap(result, { project, config, forge, base, record, policy, env }) {
   const extension = await import('./review/extension.mjs');
   const n = Number(base.n);
   const decision = extension.atCap({
     state: record.state, source: 'bot', round: result.codex_rounds, head: result.head_sha, policy, pr: n,
     goal: { title: base.pr?.title ?? null, body: base.pr?.body ?? null },
     command: `aidrian pr await-review ${n} --request`,
-    history: botHistory(extension, { project, config, gh, base, reviewer: result.reviewer, head: result.head_sha }),
+    history: botHistory(extension, { project, config, forge, base, reviewer: result.reviewer, head: result.head_sha }),
     // The head of the bot's last review: one read of its reviews, no git. A read that fails says nothing: the cap
     // stands, and no head is named unreviewed.
     lastReviewed: () => {
       try {
-        return extension.botRounds(gh.api(`repos/${base.repo}/pulls/${base.n}/reviews`, { paginate: true }) ?? [], [], result.reviewer).at(-1)?.head ?? null;
+        return extension.botRounds(forge.reviews(base.repo, base.n) ?? [], [], result.reviewer).at(-1)?.head ?? null;
       } catch {
         return null;
       }
     },
     log: extension.extensionLogger(project, config, { pr: n, repo: base.repo, env }),
   });
-  const summaryError = await saveRecord(record, { project, config, gh, base, status: decision.status });
+  const summaryError = await saveRecord(record, { project, config, forge, base, status: decision.status });
   return { ...result, ...decision, ...(summaryError ? { summary_error: summaryError } : {}) };
 }
 
 // A decision still open for the bot (a check, or a grant whose round has not been asked for) when the pull request has
 // moved past the head it was made on: read again on the new head before the cap counts it. Returns whether it changed.
-async function botRevalidate({ project, config, gh, base, record, reviewer, env, head }) {
+async function botRevalidate({ project, config, forge, base, record, reviewer, env, head }) {
   const extension = await import('./review/extension.mjs');
   const open = (record.state.extensions ?? []).filter((entry) => entry.source === 'bot' && ['judging', 'asking', 'granted'].includes(entry.status));
   if (!head || !open.some((entry) => entry.head !== head)) return false;
-  const round = codexRounds(gh.api(`repos/${base.repo}/pulls/${base.n}/reviews`, { paginate: true }) ?? [], reviewer);
+  const round = codexRounds(forge.reviews(base.repo, base.n) ?? [], reviewer);
   const entry = open.find((each) => each.round === round);
   if (!entry || entry.head === head) return false;
   extension.revalidate({
     state: record.state, source: 'bot', round, head,
-    history: botHistory(extension, { project, config, gh, base, reviewer, head }),
+    history: botHistory(extension, { project, config, forge, base, reviewer, head }),
     log: extension.extensionLogger(project, config, { pr: Number(base.n), repo: base.repo, env }),
   });
   return true;
 }
 
 // The CLI body: prints the result JSON and returns its exit code; a usage or gh error prints one line and returns 1.
-// At round_limit, `project` gets a lesson; `deps` replaces awaitReview's gh, clock, and sleep, and `env`, in tests.
+// At round_limit, `project` gets a lesson; `deps` replaces awaitReview's forge, clock, and sleep, and `env`, in tests.
 export async function runAwaitReview(args, config, project = null, deps = {}) {
   try {
     const gate = project && config.github.reviewGate.enabled ? await reviewGate(project, config) : null;
     const opts = parseArgs(args, { reviewer: config.github.reviewer, maxRounds: config.github.maxReviewRounds });
-    const gh = deps.gh ?? defaultGh;
+    const forge = deps.forge ?? awaitForge();
     const env = deps.env ?? process.env;
     // The base branch's policy decides only what a request may do: the round cap, and the check at it. A wait that posts
     // nothing reads GitHub alone, so it needs no base branch in this checkout.
-    const base = project && opts.reviewer !== null && opts.request ? committedBase(project, opts, gh, config) : null;
+    const base = project && opts.reviewer !== null && opts.request ? committedBase(project, opts, forge, config) : null;
     const cap = (base?.github ?? config.github).maxReviewRounds;
     // Each extra round the base branch's github.extraRounds granted the bot raises the cap by one.
     const { grantedRounds, policyOf, roundCap } = await import('./review/extension.mjs');
     const policy = policyOf(base?.github ?? config.github);
-    const record = base && opts.request && policy.mode !== 'off' ? await reviewRecord(project, config, gh, base.repo, base.n) : null;
+    const record = base && opts.request && policy.mode !== 'off' ? await reviewRecord(project, config, forge, base.repo, base.n) : null;
     // The baseline: an explicit --max-rounds, held to the base branch's cap unless the Human set the override, else that
     // cap. Grants add to it either way, as in `aidrian pr review`.
     const baseline = args.includes('--max-rounds') ? opts.maxRounds : cap;
@@ -565,7 +557,7 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
     // The extra rounds still valid on `head`: a decision made on another head is read again on it first.
     let moved = false;
     const allowFor = async (head) => {
-      if (record && (await botRevalidate({ project, config, gh, base, record, reviewer: opts.reviewer, env, head }))) moved = true;
+      if (record && (await botRevalidate({ project, config, forge, base, record, reviewer: opts.reviewer, env, head }))) moved = true;
       const granted = grantedRounds(record?.state, 'bot', policy);
       // A request past grantFloor uses a grant, and only for the head the grant was read on.
       ({ maxRounds: opts.maxRounds, grantFloor: opts.grantFloor } = roundCap({ baseline, granted }));
@@ -593,8 +585,8 @@ export async function runAwaitReview(args, config, project = null, deps = {}) {
       result = await awaitReview(opts, { gate, ...deps });
     }
     result = { ...result, waited_sec: Math.round((clock() - started) / 1000) };
-    if (result.status === 'round_limit' && record) result = await botAtCap(result, { project, config, gh, base, record, policy, env });
-    else if (moved) await saveRecord(record, { project, config, gh, base, status: result.status });
+    if (result.status === 'round_limit' && record) result = await botAtCap(result, { project, config, forge, base, record, policy, env });
+    else if (moved) await saveRecord(record, { project, config, forge, base, status: result.status });
     else if (result.status === 'round_limit' && base && policy.mode === 'off') result = { ...result, extension: { status: 'off', mode: 'off' } };
     if (result.status === 'review_required') console.error(result.reason);
     // The bot review the Human asked for (`aidrian pr request`): sent once this run posted it, and answered once the

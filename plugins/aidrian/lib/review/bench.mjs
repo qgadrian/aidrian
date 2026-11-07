@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { runGh } from '../gh.mjs';
+import { forgeFor } from '../forges/index.mjs';
 import { runGit, showPrefix } from '../git.mjs';
 import { commandConfig } from '../config.mjs';
 import { projectAt } from '../project.mjs';
@@ -55,15 +55,13 @@ export function verdict(results, tolerance = 1) {
   return { single, split, total, passes: split >= single - tolerance };
 }
 
-// The known problems of one merged pull request.
-function knownProblems(root, repo, n, bot, info) {
-  const [owner, name] = repo.split('/');
-  const query = `query($o:String!,$r:String!,$n:Int!,$after:String){repository(owner:$o,name:$r){pullRequest(number:$n){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{isResolved comments(first:1){nodes{path line originalLine originalCommit{oid} author{login}}}}}}}}`;
+// The known problems of one merged pull request, its review threads read through the forge facade.
+function knownProblems(root, repo, n, bot, info, forge) {
   // Every page of threads: a pull request with more than 100 would otherwise lose problems from the denominator.
   const threads = [];
   let after = null;
   do {
-    const page = JSON.parse(runGh(['api', 'graphql', '-f', `query=${query}`, '-F', `o=${owner}`, '-F', `r=${name}`, '-F', `n=${n}`, ...(after ? ['-f', `after=${after}`] : [])])).data.repository.pullRequest.reviewThreads;
+    const page = forge.reviewThreads(repo, n, after).data.repository.pullRequest.reviewThreads;
     threads.push(...page.nodes);
     after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
   } while (after);
@@ -145,7 +143,8 @@ export const commands = {
       const project = projectAt(process.cwd());
       const config = commandConfig(project);
       const root = project.root;
-      const repo = values.R ?? JSON.parse(runGh(['repo', 'view', '--json', 'nameWithOwner'])).nameWithOwner;
+      const forge = forgeFor(undefined);
+      const repo = values.R ?? forge.repo();
       const reviewer = reviewerMap(config)[values.engine ?? 'codex-local'];
       if (!reviewer || reviewer.kind !== 'exec') {
         console.error(`aidrian review bench: --engine must name an exec reviewer, such as codex-local`);
@@ -155,13 +154,13 @@ export const commands = {
       const results = [];
       const incomplete = [];
       for (const n of values.prs.split(',').map((each) => Number(each.trim()))) {
-        const info = JSON.parse(runGh(['pr', 'view', String(n), '-R', repo, '--json', 'headRefOid,baseRefName,mergedAt']));
+        const info = forge.change(n, 'headRefOid,baseRefName,mergedAt', { repo });
         // The base the pull request was opened against, not today's base tip: once merged, its head is an ancestor of
         // the base branch, and a merge base with the tip would be the head itself.
-        const baseSha = JSON.parse(runGh(['api', `repos/${repo}/pulls/${n}`])).base.sha;
+        const baseSha = forge.pull(repo, n).base.sha;
         runGit(['fetch', '-q', 'origin', `pull/${n}/head`, info.baseRefName, baseSha], root, { timeout: 120_000 });
         const base = mergeBase(root, baseSha, info.headRefOid);
-        const { problems, reviewedAt } = knownProblems(root, repo, n, config.github.reviewer ?? '', { ...info, base, head: info.headRefOid });
+        const { problems, reviewedAt } = knownProblems(root, repo, n, config.github.reviewer ?? '', { ...info, base, head: info.headRefOid }, forge);
         const at = mergeBase(root, base, reviewedAt) === base ? reviewedAt : info.headRefOid;
         const dir = mkdtempSync(path.join(tmpdir(), 'aidrian-bench-'));
         const tree = path.join(dir, 'tree');

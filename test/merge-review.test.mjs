@@ -196,25 +196,30 @@ test('the MCP merge tool is guarded too', (t) => {
 });
 
 const REVIEWER = 'chatgpt-codex-connector[bot]';
-// A gh for pull request 5 at HEAD that records its posts; the bot's review of HEAD shows up from the `answerAt`-th
+// A forge for pull request 5 at HEAD that records its posts; the bot's review of HEAD shows up from the `answerAt`-th
 // snapshot on (never with Infinity).
-function botGh(answerAt = Infinity) {
+function botForge(answerAt = Infinity) {
   const posts = [];
   let snapshots = 0;
   return {
     posts,
     repo: () => 'acme/notes',
-    currentPr: () => ({ number: 5 }),
-    api: (p, { method, fields } = {}) => {
-      if (method === 'POST') return posts.push(fields.body) && { created_at: '2026-11-03T14:00:00Z' };
-      if (p.endsWith('/pulls/5/reviews')) snapshots += 1;
-      if (p.endsWith('/pulls/5/reviews') && snapshots >= answerAt) return [{ user: { login: REVIEWER }, submitted_at: '2026-11-03T14:30:00Z', commit_id: HEAD, state: 'COMMENTED' }];
-      if (p.endsWith('/pulls/5')) return { head: { sha: HEAD } };
-      if (p.includes('/commits/')) return { commit: { committer: { date: '2026-11-03T13:00:00Z' } } };
-      return [];
+    change: () => ({ number: 5 }),
+    postComment: (_repo, _n, body) => posts.push(body) && { created_at: '2026-11-03T14:00:00Z' },
+    reviews: (_repo, n) => {
+      if (String(n) !== '5') return [];
+      snapshots += 1;
+      return snapshots >= answerAt ? [{ user: { login: REVIEWER }, submitted_at: '2026-11-03T14:30:00Z', commit_id: HEAD, state: 'COMMENTED' }] : [];
     },
+    pull: (_repo, n) => (String(n) === '5' ? { head: { sha: HEAD } } : []),
+    commit: () => ({ commit: { committer: { date: '2026-11-03T13:00:00Z' } } }),
+    reviewComments: () => [],
+    conversationComments: () => [],
+    reactions: () => [],
   };
 }
+// A forge whose only read is the pull request `view` returns, as `gh pr view` answers it.
+const viewing = (view) => ({ change: view });
 
 const marks = (project, pr) => readLocalState(project, pr).pending.map((entry) => [entry.kind, Boolean(entry.sent), Boolean(entry.answered)]);
 
@@ -223,20 +228,20 @@ test('aidrian pr request records a request; it stays owed once sent, until the b
   const quiet = { log: console.log, error: console.error };
   console.log = console.error = () => {};
   t.after(() => Object.assign(console, quiet));
-  assert.equal(runRequest(['5', '--head', HEAD, '--repo', 'acme/notes'], r.project, { viewPr: () => assert.fail('head and repository given: no gh') }), 0);
+  assert.equal(runRequest(['5', '--head', HEAD, '--repo', 'acme/notes'], r.project, { forge: viewing(() => assert.fail('head and repository given: no gh')) }), 0);
   assert.throws(() => runRequest(['5', '--kind', 'bot'], r.project), /--kind must be one of/u);
-  assert.throws(() => runRequest(['5'], r.project, { viewPr: () => null }), /pass --head/u);
+  assert.throws(() => runRequest(['5'], r.project, { forge: viewing(() => null) }), /pass --head/u);
   assert.deepEqual(marks(r.project, 5), [['request', false, false]]);
   assert.match(r.run(`gh pr merge 5 --match-head-commit ${HEAD}`) ?? '', /never sent/u);
   const config = loadConfig(r.project).config;
-  const silent = botGh();
-  await runAwaitReview(['5', '--request', '--timeout-sec', '0'], config, r.project, { gh: silent });
+  const silent = botForge();
+  await runAwaitReview(['5', '--request', '--timeout-sec', '0'], config, r.project, { forge: silent });
   assert.equal(silent.posts.length, 1);
   assert.deepEqual(marks(r.project, 5), [['request', true, false]], 'posted, and no answer yet');
   assert.match(r.run(`gh pr merge 5 --match-head-commit ${HEAD}`) ?? '', /has no answer yet/u);
   // Waiting without --request posts nothing; the answer that arrives during the wait answers the request.
-  const later = botGh(2);
-  const result = await runAwaitReview(['5', '--timeout-sec', '120', '--interval-sec', '5'], config, r.project, { gh: later, sleep: async () => {} });
+  const later = botForge(2);
+  const result = await runAwaitReview(['5', '--timeout-sec', '120', '--interval-sec', '5'], config, r.project, { forge: later, sleep: async () => {} });
   assert.deepEqual([result, later.posts.length], [0, 0]);
   assert.deepEqual(marks(r.project, 5), [['request', true, true]]);
   assert.equal(r.run(`gh pr merge 5 --match-head-commit ${HEAD}`), null);
@@ -248,8 +253,8 @@ test('an answer already there answers the request', async (t) => {
   console.log = console.error = () => {};
   t.after(() => Object.assign(console, quiet));
   recordPending(r.project, { pr: 5, repo: 'acme/notes', kind: 'request', head: HEAD, by: 't' });
-  const there = botGh(1);
-  assert.equal(await runAwaitReview(['5', '--request', '--timeout-sec', '0'], loadConfig(r.project).config, r.project, { gh: there }), 0);
+  const there = botForge(1);
+  assert.equal(await runAwaitReview(['5', '--request', '--timeout-sec', '0'], loadConfig(r.project).config, r.project, { forge: there }), 0);
   assert.equal(there.posts.length, 0, 'already present: nothing to post');
   assert.deepEqual(marks(r.project, 5), [['request', false, true]]);
 });
@@ -259,7 +264,7 @@ test('attest and a finished review step answer a gate review; an open step does 
   const quiet = { log: console.log, error: console.error };
   console.log = console.error = () => {};
   t.after(() => Object.assign(console, quiet));
-  assert.equal(runRequest(['5', '--kind', 'review'], r.project, { viewPr: () => ({ headRefOid: r.commit, url: 'https://github.com/acme/notes/pull/5' }) }), 0);
+  assert.equal(runRequest(['5', '--kind', 'review'], r.project, { forge: viewing(() => ({ headRefOid: r.commit, url: 'https://github.com/acme/notes/pull/5' })) }), 0);
   assert.match(r.run(`gh pr merge 5 --match-head-commit ${r.commit}`) ?? '', /no result on record/u);
   const commit = (file) => {
     writeFileSync(path.join(r.dir, file), `${file}\n`);
@@ -293,16 +298,16 @@ test('a review step that needs no review leaves a finished outcome the guard rea
   r.git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'docs');
   const head = r.git('rev-parse', 'HEAD');
   const comments = [];
-  const gh = {
-    pr: () => ({ number: 8, headRefOid: head, baseRefName: 'main' }),
+  const forge = {
+    change: () => ({ number: 8, headRefOid: head, baseRefName: 'main' }),
     repo: () => 'acme/notes',
-    comments: () => comments,
-    post: (_repo, _n, body) => comments.push({ id: comments.length + 1, body }),
-    edit: () => {},
+    conversationComments: () => comments,
+    postComment: (_repo, _n, body) => comments.push({ id: comments.length + 1, body }),
+    editComment: () => {},
   };
   const project = projectAt(r.dir);
   const exec = async () => assert.fail('a docs-only change runs no reviewer');
-  const result = await reviewStep({ pr: '8' }, { project, config: loadConfig(project).config, gh, exec, codex: () => ({ ok: true }) });
+  const result = await reviewStep({ pr: '8' }, { project, config: loadConfig(project).config, forge, exec, codex: () => ({ ok: true }) });
   assert.equal(result.status, 'none_needed');
   assert.equal(comments.length, 0, 'an early return still posts nothing');
   const { outcome } = readLocalState(project, 8);
@@ -321,15 +326,15 @@ function feature(r) {
   r.git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'change');
   const head = r.git('rev-parse', 'HEAD');
   const comments = [];
-  const gh = {
-    pr: () => ({ number: 9, headRefOid: head, baseRefName: 'main' }),
+  const forge = {
+    change: () => ({ number: 9, headRefOid: head, baseRefName: 'main' }),
     repo: () => 'acme/notes',
-    comments: () => comments,
-    post: (_repo, _n, body) => comments.push({ id: comments.length + 1, body }),
-    edit: (_repo, id, body) => (comments.find((c) => c.id === id).body = body),
+    conversationComments: () => comments,
+    postComment: (_repo, _n, body) => comments.push({ id: comments.length + 1, body }),
+    editComment: (_repo, id, body) => (comments.find((c) => c.id === id).body = body),
   };
   const project = projectAt(r.dir);
-  const step = (deps, opts = {}) => reviewStep({ pr: '9', ...opts }, { project, config: loadConfig(project).config, gh, codex: () => ({ ok: true }), ...deps });
+  const step = (deps, opts = {}) => reviewStep({ pr: '9', ...opts }, { project, config: loadConfig(project).config, forge, codex: () => ({ ok: true }), ...deps });
   return { head, project, step };
 }
 
@@ -397,7 +402,7 @@ test('await-review answers only the requests its answer covers', async (t) => {
     { kind: 'request', head: HEAD, at: '2026-11-03T15:00:00.000Z', by: 't' },
     { kind: 'request', head: OLD, at: '2026-11-03T14:00:00.000Z', by: 't' },
   ));
-  assert.equal(await runAwaitReview(['5', '--timeout-sec', '0'], loadConfig(r.project).config, r.project, { gh: botGh(1) }), 0);
+  assert.equal(await runAwaitReview(['5', '--timeout-sec', '0'], loadConfig(r.project).config, r.project, { forge: botForge(1) }), 0);
   assert.deepEqual(marks(r.project, 5), [['request', false, true], ['request', false, false]]);
 });
 
@@ -438,9 +443,9 @@ test('await-review for the same number in another repository leaves this record 
   t.after(() => Object.assign(console, quiet));
   recordPending(r.project, { pr: 5, repo: 'acme/notes', kind: 'request', head: HEAD, by: 't' });
   const config = loadConfig(r.project).config;
-  assert.equal(await runAwaitReview(['5', '--repo', 'other/fork', '--timeout-sec', '0'], config, r.project, { gh: botGh(1) }), 0);
+  assert.equal(await runAwaitReview(['5', '--repo', 'other/fork', '--timeout-sec', '0'], config, r.project, { forge: botForge(1) }), 0);
   assert.deepEqual(marks(r.project, 5), [['request', false, false]], 'other/fork#5 answered, at the same commit: not this pull request');
-  assert.equal(await runAwaitReview(['5', '--repo', 'Acme/Notes', '--timeout-sec', '0'], config, r.project, { gh: botGh(1) }), 0);
+  assert.equal(await runAwaitReview(['5', '--repo', 'Acme/Notes', '--timeout-sec', '0'], config, r.project, { forge: botForge(1) }), 0);
   assert.deepEqual(marks(r.project, 5), [['request', false, true]]);
 });
 
@@ -471,13 +476,13 @@ test('every request records the pull request`s own repository, and attest resolv
   t.after(() => Object.assign(console, quiet));
   // origin is acme/notes, the fork; gh's default repository is the upstream.
   const upstream = () => ({ headRefOid: r.commit, url: 'https://github.com/Upstream/Notes/pull/5' });
-  assert.equal(runRequest(['5'], r.project, { viewPr: upstream }), 0);
-  assert.equal(runRequest(['5', '--kind', 'review'], r.project, { viewPr: upstream }), 0);
+  assert.equal(runRequest(['5'], r.project, { forge: viewing(upstream) }), 0);
+  assert.equal(runRequest(['5', '--kind', 'review'], r.project, { forge: viewing(upstream) }), 0);
   assert.deepEqual(readLocalState(r.project, 5).pending.map((entry) => [entry.kind, entry.repo]), [['request', 'upstream/notes'], ['review', 'upstream/notes']]);
   // Offline, attest falls back to origin, a stated limit: origin's #5 is not the upstream's.
-  assert.equal(await runAttest(['5', '--head', r.commit, '--reviewer', 'code-reviewer', '--findings', '0', '--fixed', '0'], r.project, null, { viewPr: () => null }), 0);
+  assert.equal(await runAttest(['5', '--head', r.commit, '--reviewer', 'code-reviewer', '--findings', '0', '--fixed', '0'], r.project, null, { forge: viewing(() => null) }), 0);
   assert.deepEqual(marks(r.project, 5), [['request', false, false], ['review', false, false]], 'an attest of origin`s #5 is not the upstream`s');
-  assert.equal(await runAttest(['5', '--head', r.commit, '--reviewer', 'code-reviewer', '--findings', '0', '--fixed', '0'], r.project, null, { viewPr: upstream }), 0);
+  assert.equal(await runAttest(['5', '--head', r.commit, '--reviewer', 'code-reviewer', '--findings', '0', '--fixed', '0'], r.project, null, { forge: viewing(upstream) }), 0);
   assert.deepEqual(marks(r.project, 5), [['request', false, false], ['review', false, true]], 'attest resolves the upstream, as the request did');
   assert.equal(answerOwed(r.project, 5, 'request', { head: r.commit, by: 't', repo: 'acme/notes' }), 0, 'an answer on origin`s #5 is not the upstream`s');
   assert.equal(answerOwed(r.project, 5, 'request', { head: r.commit, by: 't', repo: 'UPSTREAM/notes' }), 1);
@@ -504,8 +509,8 @@ function commentRecord(project) {
   const record = { ...readRecord(project, 5, comments, 'acme/notes'), comments };
   record.state.extensions = [{ source: 'bot', round: 3, status: 'asking' }];
   let edited = null;
-  const gh = { api: (_url, opts) => ((edited = opts.fields.body), {}) };
-  return { record, gh, published: () => stateFromComment(edited, 5) };
+  const forge = { editComment: (_repo, _id, body) => ((edited = body), {}) };
+  return { record, forge, published: () => stateFromComment(edited, 5) };
 }
 
 test('an owed entry`s repository is this record`s too: a merge there is guarded', (t) => {
@@ -532,7 +537,7 @@ test('fork: a gate review owed with no run yet refuses the upstream merge', (t) 
   const quiet = console.log;
   console.log = () => {};
   t.after(() => (console.log = quiet));
-  runRequest(['5', '--kind', 'review'], r.project, { viewPr: () => ({ headRefOid: r.commit, url: UPSTREAM }) });
+  runRequest(['5', '--kind', 'review'], r.project, { forge: viewing(() => ({ headRefOid: r.commit, url: UPSTREAM })) });
   assert.match(checkMcp({ owner: 'Upstream', repo: 'Notes', pullNumber: 5, sha: r.commit }, { cwd: r.dir, input: {}, viewPr: () => null }) ?? '', /no result on record/u);
 });
 
@@ -552,11 +557,11 @@ test('fork: received on H1, attest, then a merge of the upstream at H2 is refuse
   console.log = console.error = () => {};
   t.after(() => Object.assign(console, quiet));
   const view = () => ({ headRefOid: r.commit, url: UPSTREAM });
-  runRequest(['5', '--kind', 'review'], r.project, { viewPr: view });
+  runRequest(['5', '--kind', 'review'], r.project, { forge: viewing(view) });
   const state = readLocalState(r.project, 5);
   noteOutcome(state, { status: 'received', head: r.commit }, () => false, 'Upstream/Notes');
   writeLocalState(r.project, state);
-  assert.equal(await runAttest(['5', '--head', r.commit, '--reviewer', 'cr', '--findings', '0', '--fixed', '0'], r.project, null, { viewPr: view }), 0);
+  assert.equal(await runAttest(['5', '--head', r.commit, '--reviewer', 'cr', '--findings', '0', '--fixed', '0'], r.project, null, { forge: viewing(view) }), 0);
   const h2 = 'b'.repeat(40);
   assert.match(checkMcp({ owner: 'Upstream', repo: 'Notes', pullNumber: 5, sha: h2 }, { cwd: r.dir, input: {}, viewPr: () => null }) ?? '', /not head bbbbbbb/u);
   assert.match(r.run(`gh pr merge 5 --match-head-commit ${h2}`) ?? '', /not head bbbbbbb/u);
@@ -568,8 +573,8 @@ test('signoff resolves the pull request`s repository, and falls back to origin o
   console.log = () => {};
   t.after(() => (console.log = quiet));
   // No review ran on the head, so the sign-off is refused, naming the repository it resolved.
-  await assert.rejects(runSignoff(['5', '--flow', 'f', '--head', r.commit], r.project, loadConfig(r.project).config, { viewPr: () => ({ url: UPSTREAM }) }), /no review of upstream\/notes#5 ran on/u);
-  await assert.rejects(runSignoff(['6', '--flow', 'f', '--head', r.commit], r.project, loadConfig(r.project).config, { viewPr: () => { throw new Error('offline'); } }), /no review of acme\/notes#6 ran on/u, 'offline: origin, a stated limit');
+  await assert.rejects(runSignoff(['5', '--flow', 'f', '--head', r.commit], r.project, loadConfig(r.project).config, { forge: viewing(() => ({ url: UPSTREAM })) }), /no review of upstream\/notes#5 ran on/u);
+  await assert.rejects(runSignoff(['6', '--flow', 'f', '--head', r.commit], r.project, loadConfig(r.project).config, { forge: viewing(() => { throw new Error('offline'); }) }), /no review of acme\/notes#6 ran on/u, 'offline: origin, a stated limit');
 });
 
 test('recordPass builds on a newer comment record, keeping its rounds and passes', (t) => {

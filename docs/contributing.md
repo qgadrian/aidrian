@@ -130,5 +130,5 @@ A repository that starts releasing this way tags the commit that set the current
 
 ## Not included
 
-- OpenCode support, or a tracker other than Linear. [Adding a host or a tracker](providers/adding-a-host.md) says what each needs.
+- OpenCode support, or a tracker other than Linear. [Adding a host, a tracker, or a forge](providers/adding-a-host.md) says what each needs.
 - The optional cockpit pane. It lives on the `parked/cockpit` branch and is not reviewed.

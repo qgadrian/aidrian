@@ -5,6 +5,7 @@ Read when a check verdict surprises you, when `aidrian pr auto-merge` says off, 
 `aidrian pr checks` takes its policy from the `github` group in the `config.json` of the checkout it runs in.
 So run this skill from a checkout of the pull request's repository: `aidrian pr checks -R` refuses any repository that is
 not a remote of the current checkout.
+A host-qualified `-R`, such as `github.com/acme/notes`, must match the remote's host; an SSH alias remote or a local remote matches by path, and a bare `owner/repo` matches any host.
 Each entry is part of a check name and matches any check whose name contains it, so pick parts that match only the checks meant.
 
 - `requiredChecks`: put the end-to-end check family here (`["e2e"]`, say).

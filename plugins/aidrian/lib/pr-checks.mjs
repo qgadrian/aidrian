@@ -8,12 +8,13 @@
 //     is an unexpected skip, listed under `unexpected_skips`, and failing.
 //   - `requiredChecks`: every check whose name contains an entry must be SUCCESS, and at least one must exist. Checks
 //     register over time, so a required entry with no check yet is pending, never ready.
-// The policy is this checkout's, so `-R` may name only a repository that is a remote of this checkout: for a pull
-// request in another repository, run the command from that repository's checkout.
+// The policy is this checkout's, so `-R` may name only a repository that is a remote of this checkout, by its host and
+// full path (namesRemote; a bare `owner/repo`, an SSH alias remote, or a local remote compares the path alone): for a
+// pull request in another repository, run the command from that repository's checkout.
 // Exit 0 ready, 1 failing, 2 pending, 3 error (gh missing, no pull request, unreadable output, another repository, or a
 // config.json with errors).
 
-import { runGh } from './gh.mjs';
+import { forgeFor, repoIdentity } from './forges/index.mjs';
 import { runGit } from './git.mjs';
 
 const NON_TERMINAL = new Set(['IN_PROGRESS', 'QUEUED', 'PENDING', 'WAITING', 'REQUESTED', 'EXPECTED']);
@@ -67,21 +68,45 @@ export function parseCliArgs(argv) {
   return { repo, asJson: rest.includes('--json'), prNumber: rest.find((arg) => /^#?\d+$/.test(arg))?.replace('#', '') ?? null, unknown, usage };
 }
 
-// `owner/repo`, lowercased, from `[HOST/]OWNER/REPO` or a remote URL: https, ssh, or `git@host:owner/repo.git`.
-export const repoKey = (value) => value.replace(/\/+$/, '').replace(/\.git$/, '').split(/[/:]/).slice(-2).join('/').toLowerCase();
+// One remote URL as `{ host, path }` to match a `-R` value against, or null. `host` is null when the remote names
+// no forge host to compare: a host with no dot is an SSH config alias (`git@github-work:acme/notes.git`), and a remote on
+// this machine's disk (a path, or file://) keeps only its last two path parts, as gh's `owner/repo`.
+export function remoteRepo(url) {
+  const identity = repoIdentity(url);
+  if (identity) return identity.host.includes('.') ? identity : { ...identity, host: null };
+  if (typeof url !== 'string') return null;
+  const parts = url.trim().replace(/\/+$/u, '').replace(/\.git$/u, '').split(/[/:]/u).filter(Boolean);
+  return parts.length >= 2 ? { host: null, path: parts.slice(-2).join('/').toLowerCase() } : null;
+}
 
-// The repositories the checkout at `cwd` has as remotes, as repoKey values. A fork's upstream counts: same project.
+// The repositories the checkout at `cwd` has as remotes, as remoteRepo values. A fork's upstream counts: same project.
 export function checkoutRepos(cwd) {
   const { status, stdout } = runGit(['remote', '-v'], cwd);
   if (status !== 0) return [];
-  return [...new Set(stdout.split('\n').filter(Boolean).map((line) => repoKey(line.split(/\s+/)[1] ?? '')))];
+  const found = new Map();
+  for (const line of stdout.split('\n').filter(Boolean)) {
+    const remote = remoteRepo(line.split(/\s+/)[1] ?? '');
+    if (remote) found.set(`${remote.host ?? ''}/${remote.path}`, remote);
+  }
+  return [...found.values()];
 }
 
-// The CLI body. `gh` and `remotes` are the test seams: (args) → stdout, and () → checkoutRepos.
+// Whether the `-R` value `given` names one of the `remotes` (remoteRepo values). The paths must be equal. A bare
+// `owner/repo` names no host, and a remote with no host (an SSH alias, a local remote) has none to compare, so either
+// matches by path alone; otherwise the hosts must be equal too. A value with spaces around it names nothing.
+export function namesRemote(given, remotes) {
+  if (typeof given !== 'string' || given !== given.trim()) return false;
+  const wanted = repoIdentity(given);
+  if (!wanted) return false;
+  const bare = !given.includes(':') && given.replace(/\/+$/u, '').split('/').length === 2;
+  return remotes.some((remote) => remote.path === wanted.path && (bare || remote.host === null || remote.host === wanted.host));
+}
+
+// The CLI body. `forge` and `remotes` are the test seams: the forge facade, and () → checkoutRepos.
 export function runChecks(
   argv,
   config,
-  gh = (args) => runGh(args),
+  forge = forgeFor(undefined),
   remotes = () => checkoutRepos(process.cwd()),
 ) {
   const { prNumber, repo, asJson, unknown, usage } = parseCliArgs(argv);
@@ -92,20 +117,15 @@ export function runChecks(
   if (usage) return fail(usage);
   if (unknown) return fail(`unknown argument: ${unknown}`);
   if (repo && !prNumber) return fail('-R/--repo needs an explicit pull request number');
-  if (repo && !remotes().includes(repoKey(repo))) {
+  if (repo && !namesRemote(repo, remotes())) {
     return fail(`${repo} is not a remote of this checkout, and the check policy comes from this checkout's config.json: ` +
       `run aidrian pr checks from a checkout of ${repo}`);
   }
   let rows;
   try {
-    rows = JSON.parse(gh(['pr', 'checks', ...(prNumber ? [prNumber] : []), ...(repo ? ['--repo', repo] : []), '--json', 'name,state']));
+    rows = forge.checks(prNumber, { repo });
   } catch (error) {
-    // gh pr checks exits 8 while checks are pending, with the JSON on stdout.
-    try {
-      rows = JSON.parse(error.stdout ?? '');
-    } catch {
-      return fail(`could not read the checks with gh (${String(error?.message ?? error).split('\n')[0]})`);
-    }
+    return fail(`could not read the checks with gh (${String(error?.message ?? error).split('\n')[0]})`);
   }
   if (!Array.isArray(rows) || rows.length === 0) return fail('gh returned no checks for this pull request');
   const result = computeVerdict(rows, config.github);

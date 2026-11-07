@@ -1,13 +1,15 @@
-# Adding a host or a tracker
+# Adding a host, a tracker, or a forge
 
 The adapter covers the differences behind the hook contract: how a host names its tools, what its payload holds, and who it says is calling.
 It does not get the plugin into a host: how a host's hooks are delivered, installed, and put on its PATH is separate work, which depends on the host.
 So a host that reads `hooks.json` as it is, as Claude Code and Codex do, is close to one adapter file.
 A host that does not needs that delivery built first, and neither host here has needed it, so none of it is proven.
 
-Shared code calls `lib/hosts/index.mjs` and `lib/trackers/index.mjs`, and never reads a host's variables or names a host's own tools.
-`test/adapters.test.mjs` iterates both registries, so an adapter added to one is checked by that alone,
+Shared code calls `lib/hosts/index.mjs`, `lib/trackers/index.mjs`, and `lib/forges/index.mjs`, and never reads a host's variables or names a host's own tools.
+`test/adapters.test.mjs` iterates the host and tracker registries, so an adapter added to one is checked by that alone,
 and `test/host-coupling.test.mjs` fails when shared code reads a host variable or branches on a host's tool or name.
+For forges, `test/forge-github.test.mjs` holds the facade's method names and the gh command behind each,
+and `test/forge-coupling.test.mjs` fails when shared code reaches a forge other than through `lib/forges/index.mjs`.
 
 ## Adding a host
 
@@ -141,3 +143,54 @@ An adapter makes the guard hold. The skills that act on a tracker are text, and 
 | `skills/issue-implement/`: `SKILL.md`, `steps/phase-0-resolve.md`, `steps/phases-1-4-implement.md` | How an issue is read and moved on it |
 | `skills/persona-audit-triage/references/issues.md`, `skills/planning-agent/references/plan-file.md`, `skills/pr-write/SKILL.md`, `skills/knowledge/SKILL.md` | The places that name Linear in passing |
 | `agents-src/planning/agent-issue-writer.md`, `agents-src/planning/initiative-agent.md` | The agents' own wording of the above |
+
+## Adding a forge
+
+A forge is where a pull request lives: its checks, reviews, comments, and repository. GitHub is the one shipped, through gh.
+
+| File | What it holds |
+| --- | --- |
+| `plugins/aidrian/lib/forges/<id>.mjs` | The adapter: a function that takes `{ cwd, run, timeoutMs }` and returns the frozen method object below. `run` is the test seam for the forge's command |
+| `plugins/aidrian/lib/forges/index.mjs` | `forgeFor(cwd, options)`, which returns GitHub's adapter for every checkout today, and the facade's helper `repoIdentity(value)` from `identity.mjs`. A second forge makes `forgeFor` choose, such as by the host `repoIdentity` reads from the remote, and maps the facade's own options to the adapter's. `strictJson` promises shared code one thing: an empty answer is null, not an empty list. The GitHub adapter keeps it by naming GitHub's JSON media type on every REST call, its `mediaType`, which shared code cannot pass |
+| `test/forge-<id>.test.mjs` | The exact command or request behind each method, as `test/forge-github.test.mjs` holds gh's |
+
+The adapter implements the methods of `lib/forges/github.mjs`, each with the arguments it takes there:
+
+- `id`, `cwd`, and the helper `isTrustedCommenter(comment)`.
+- Pull requests: `change`, `mergedChanges`, `openChanges`, `checks`, and `pull`.
+- The repository: `repo`, `repository`, `contents`, `visibility`, and `viewer`.
+- Conversation: `conversationComments`, the comments on the pull request rather than on its diff, `postComment`, `editComment`, and `reactions`.
+- Review: `reviews`, `reviewComments`, `reviewsWithComments`, and `reviewThreads`.
+- Commits: `commit`, `checkRuns`, and `compare`, and `uploadImages` for a pull request's captures.
+
+`repoIdentity(value)` is no method: it reads a remote URL or a `-R` value to `{ host, path }` before any forge is chosen,
+so it lives in `lib/forges/identity.mjs`, and an adapter neither implements nor carries it.
+It reads a host that reaches the same repositories as another, such as `ssh.github.com`, as that one,
+and a bare `owner/repo` as a repository on the default forge's host, github.com.
+
+The payload each method returns is GitHub's, parsed, and its callers read GitHub's field names.
+The arguments are GitHub's too: the `fields` strings callers pass to `change`, `mergedChanges`, and `openChanges`
+are gh's `--json` names, such as `number,headRefOid`, and the reaction contents, such as `+1`, are GitHub's.
+That shape is provisional: it stays as it is until a second adapter shows which fields both forges share,
+and that adapter reshapes the payloads, the `fields` and reaction names, and their callers together.
+
+Shared code imports `lib/forges/index.mjs` alone. `test/forge-coupling.test.mjs` fails when code outside `lib/forges/`
+imports an adapter module, runs `gh`, builds a `repos/${...}` route, or names `api.github.com`, past its list of what is left.
+It fails too on a code block in a skill or an agent source that runs `gh pr checks`: sessions read checks with
+`aidrian pr checks`, which applies the project's `github` policy. Prose that only names gh's behavior is not a command.
+A rule in `lib/rules/github/` that compares a session's command to `'gh'` is not a coupling: it judges a command and runs none.
+The rules' own reads, such as merge-review's and pr-body's, go through `forgeFor` like any shared code.
+
+A second forge will be chosen by a config key, as a tracker is by `tracker.provider`, with a default read from
+the remote's hostname for the public forges. `forgeFor` will memoize that choice per `cwd`, since the hooks that call it
+answer within 3 s budgets.
+
+### The text a forge such as GitLab needs
+
+An adapter moves the calls. Some text and code still assume GitHub, so each of these needs its branch:
+
+| Where | What it needs |
+| --- | --- |
+| Skills that run gh in code blocks: `pr-merge-when-green` (10 lines), `pr-screenshot` (7), `pr-review` (3), `pr-review-loop` (3), `pr-write` (2), `knowledge` (1), `session-continue` (1) | The forge's command for each step, or an `aidrian` command that reads through `forgeFor`, as `aidrian pr checks` does. The counts are the fenced lines that run gh across each skill's folder, `references/` and `steps/` included: recount them before the work starts |
+| `lib/review-gate.mjs`: `repoName`, and the review marker `markerFor` writes | Both keep only `owner/name`, the last two parts of a path, so a namespaced path such as `a/sub/project` loses its namespace and its host. They need the full `repoIdentity` |
+| `lib/lesson-signals.mjs` | It builds `https://github.com/<owner>/<name>/pull/<n>` as a lesson's evidence; it needs the forge's own link to a pull request |

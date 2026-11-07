@@ -187,46 +187,47 @@ test('a full-diff agent pass the review step recorded counts as the gate`s revie
   const check = spawnSync(process.execPath, [CLI, 'pr', 'attest', '5', '--check'], { cwd: dir, encoding: 'utf8', env: process.env });
   assert.equal(check.status, 0, 'attest --check reads the same review');
   const config = loadConfig(project).config;
-  const gh = quietGh();
+  const forge = quietForge();
   const quiet = { log: console.log, error: console.error };
   console.log = console.error = () => {};
   t.after(() => Object.assign(console, quiet));
-  assert.equal(await runAwaitReview(['5', '--request', '--timeout-sec', '0'], config, project, { gh }), 2, 'await-review --request posts, not review_required');
-  assert.match(gh.posts[0], /<!-- aidrian-review: pr=5 repo=acme\/notes head=abcdef1 reviewer=code-reviewer findings=3 fixed=2 -->$/, 'with the pass`s marker');
+  assert.equal(await runAwaitReview(['5', '--request', '--timeout-sec', '0'], config, project, { forge }), 2, 'await-review --request posts, not review_required');
+  assert.match(forge.posts[0], /<!-- aidrian-review: pr=5 repo=acme\/notes head=abcdef1 reviewer=code-reviewer findings=3 fixed=2 -->$/, 'with the pass`s marker');
 });
 
-// A gh that answers the reads of one pull request with nothing, and records its posts.
-const quietGh = () => {
+// A forge that answers the reads of one pull request with nothing, and records its posts.
+const quietForge = () => {
   const posts = [];
   return {
     posts,
     repo: () => 'acme/notes',
-    currentPr: () => ({ number: 5 }),
-    api: (p, { method, fields } = {}) => {
-      if (method === 'POST') return posts.push(fields.body) && { created_at: '2026-08-23T07:00:00Z' };
-      if (p.endsWith('/pulls/5')) return { head: { sha: 'abcdef1234' } };
-      if (p.includes('/commits/')) return { commit: { committer: { date: '2026-08-23T06:00:00Z' } } };
-      return [];
-    },
+    change: () => ({ number: 5 }),
+    postComment: (_repo, _n, body) => posts.push(body) && { created_at: '2026-08-23T07:00:00Z' },
+    pull: () => ({ head: { sha: 'abcdef1234' } }),
+    commit: () => ({ commit: { committer: { date: '2026-08-23T06:00:00Z' } } }),
+    reviews: () => [],
+    reviewComments: () => [],
+    conversationComments: () => [],
+    reactions: () => [],
   };
 };
 
 test('aidrian pr await-review --request posts nothing without a review, and carries the marker with one', async (t) => {
   const { project } = repo(t);
   const config = loadConfig(project).config;
-  const gh = quietGh();
+  const forge = quietForge();
   const quiet = { log: console.log, error: console.error };
   console.log = console.error = () => {};
   t.after(() => Object.assign(console, quiet));
   const opts = ['5', '--request', '--timeout-sec', '0'];
-  assert.equal(await runAwaitReview(opts, config, project, { gh }), 5);
-  assert.deepEqual(gh.posts, []);
+  assert.equal(await runAwaitReview(opts, config, project, { forge }), 5);
+  assert.deepEqual(forge.posts, []);
   reviewed(project, 5);
-  assert.equal(await runAwaitReview(opts, config, project, { gh }), 2);
-  assert.equal(gh.posts.length, 1);
-  assert.match(gh.posts[0], /^@codex review/);
-  assert.match(gh.posts[0], /<!-- aidrian-review: pr=5 repo=acme\/notes head=abcdef1 reviewer=code-reviewer findings=1 fixed=1 -->$/);
-  const plain = await awaitReview({ pr: '5', repo: null, reviewer: 'bot', request: true, timeoutSec: 0, intervalSec: 60 }, { gh: quietGh() });
+  assert.equal(await runAwaitReview(opts, config, project, { forge }), 2);
+  assert.equal(forge.posts.length, 1);
+  assert.match(forge.posts[0], /^@codex review/);
+  assert.match(forge.posts[0], /<!-- aidrian-review: pr=5 repo=acme\/notes head=abcdef1 reviewer=code-reviewer findings=1 fixed=1 -->$/);
+  const plain = await awaitReview({ pr: '5', repo: null, reviewer: 'bot', request: true, timeoutSec: 0, intervalSec: 60 }, { forge: quietForge() });
   assert.equal(plain.status, 'timed_out', 'without a gate the request posts as before');
 });
 

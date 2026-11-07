@@ -25,12 +25,11 @@
 // its second sentence, right after the cause, as the two steps that pass (`twoSteps`). The first sentence stays the
 // cause, since the dispatch log records it.
 
-import { execFileSync } from 'node:child_process';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 import { loadConfig } from '../../config.mjs';
-import { runGh } from '../../gh.mjs';
+import { forgeFor } from '../../forges/index.mjs';
 import { runGit } from '../../git.mjs';
 import { headings, sectionItems, unfencedLines } from '../../markdown-sections.mjs';
 import { findProject, stateDir } from '../../project.mjs';
@@ -539,12 +538,15 @@ function twoSteps({ file, note }, call) {
     `earlier in this command; 2. run \`gh pr ${call.subcommand}${target} --body-file ${file}\`, the path written out (the pr-write skill).`;
 }
 
-// The open pull requests' bodies through gh, or null when gh cannot answer in time.
-function openPrBodies(cwd) {
+// The forge the open pull request lookup reads through: every call bounded at LIST_TIMEOUT_MS. `options` are the
+// adapter's, such as its `run` in a test.
+export const listForge = (cwd, options = {}) => forgeFor(cwd, { ...options, timeoutMs: LIST_TIMEOUT_MS });
+
+// The open pull requests' bodies through the forge facade, or null when gh cannot answer in time.
+export function openPrBodies(cwd, forge = listForge(cwd)) {
   return (repo) => {
-    const args = ['pr', 'list', '--state', 'open', '--limit', '200', '--json', 'number,body', ...(repo ? ['--repo', repo] : [])];
     try {
-      return JSON.parse(runGh(args, { cwd, exec: (file, argv, options) => execFileSync(file, argv, { ...options, timeout: LIST_TIMEOUT_MS }) }));
+      return forge.openChanges(200, 'number,body', { repo });
     } catch {
       return null;
     }

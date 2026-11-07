@@ -64,17 +64,17 @@ function repo(t, { baseConfig = { version: 1 }, change, headConfig, baseFiles = 
   git('add', '-A');
   git('commit', '-q', '-m', 'change');
   const comments = [];
-  const gh = {
-    pr: () => ({ number: 7, headRefOid: git('rev-parse', 'HEAD'), baseRefName: 'main', url: 'https://github.com/o/r/pull/7' }),
+  const forge = {
+    change: () => ({ number: 7, headRefOid: git('rev-parse', 'HEAD'), baseRefName: 'main', url: 'https://github.com/o/r/pull/7' }),
     repo: () => 'o/r',
-    comments: () => comments,
-    post: (_repo, _n, body) => comments.push({ id: comments.length + 1, body, author_association: 'MEMBER' }),
-    edit: (_repo, id, body) => (comments.find((c) => c.id === id).body = body),
+    conversationComments: () => comments,
+    postComment: (_repo, _n, body) => comments.push({ id: comments.length + 1, body, author_association: 'MEMBER' }),
+    editComment: (_repo, id, body) => (comments.find((c) => c.id === id).body = body),
   };
   // A fresh project per step, so a local settings file written mid-test is read.
   const step = (deps = {}) => {
     const current = projectAt(below);
-    return reviewStep({ pr: '7' }, { project: current, config: loadConfig(current).config, gh, codex: () => ({ ok: true }), ...deps });
+    return reviewStep({ pr: '7' }, { project: current, config: loadConfig(current).config, forge, codex: () => ({ ok: true }), ...deps });
   };
   return { dir, below, git, write, writeTop, comments, project: projectAt(below), step };
 }

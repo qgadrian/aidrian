@@ -9,7 +9,8 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { pathsProblem } from '../plugins/aidrian/lib/pr-auto-merge.mjs';
-import { MEMBER_ASSOCIATIONS, summaryComment, SUMMARY_MARKER } from '../plugins/aidrian/lib/review/state.mjs';
+import { MEMBER_ASSOCIATIONS } from '../plugins/aidrian/lib/forges/github.mjs';
+import { summaryComment, SUMMARY_MARKER } from '../plugins/aidrian/lib/review/state.mjs';
 
 const ROOT = path.join(import.meta.dirname, '..');
 const PLUGIN = 'plugins/aidrian';

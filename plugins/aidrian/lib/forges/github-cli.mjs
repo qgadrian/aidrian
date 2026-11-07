@@ -24,7 +24,7 @@ export function runGh(args, { cwd, exec = execFileSync, timeoutMs = GH_TIMEOUT_M
     }
     if (err?.code !== 'ENOBUFS') throw err;
     const mb = Math.round(GH_MAX_BUFFER_BYTES / 1024 / 1024);
-    throw new Error(`gh ${args.join(' ')} wrote more than the ${mb} MB stdout ceiling. Raise GH_MAX_BUFFER_BYTES in lib/gh.mjs, or narrow the request.`);
+    throw new Error(`gh ${args.join(' ')} wrote more than the ${mb} MB stdout ceiling. Raise GH_MAX_BUFFER_BYTES in lib/forges/github-cli.mjs, or narrow the request.`);
   }
 }
 

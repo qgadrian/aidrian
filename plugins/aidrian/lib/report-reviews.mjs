@@ -5,30 +5,11 @@
 // line already reviewed when that line was there at the bot's first review. Read-only; needs gh.
 // docs/dispatch-log.md#reviews describes the view.
 
-import { ghJson } from './gh.mjs';
-
-// gh, run in `cwd`: the project's root, so that `--project` reads that project's repository, not the one the shell is in.
-export const ghAt = (cwd) => (args) => ghJson(args, { cwd });
+import { forgeFor, REVIEWS_PAGE as PAGE } from './forges/index.mjs';
 
 // gh's GraphQL fields name a bot without the `[bot]` suffix its REST fields carry.
 const sameLogin = (login, reviewer) => typeof login === 'string' && login.replace(/\[bot\]$/u, '') === reviewer.replace(/\[bot\]$/u, '');
 
-// One GraphQL call per answered pull request reads its reviews with their comments, at most PAGE of each.
-const PAGE = 100;
-const REVIEWS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) {
-      reviews(first: ${PAGE}) {
-        totalCount
-        nodes {
-          author { login }
-          commit { oid }
-          comments(first: ${PAGE}) { totalCount nodes { path originalLine diffHunk replyTo { id } originalCommit { oid } } }
-        }
-      }
-    }
-  }
-}`;
 // GitHub's compare of two commits lists at most this many files.
 const COMPARE_FILES = 300;
 // The view lists this many pull requests, most rounds first.
@@ -42,18 +23,18 @@ const UNCHECKED = { file_level: 'file-level', deleted_line: 'on a deleted line',
 // { reviewer, merged, reviewed, clean_first_pass, avg_rounds, five_or_more, rounds: [{ number, rounds, findings }], ... },
 // or { reviewer, error } when gh cannot answer. The first seven fields are the review rounds alone; `findings` lists a
 // pull request's findings per round, and is null when gh could not read them. `sinceMs`, when set, keeps the pull
-// requests merged since then; `truncated` says the limit cut that list short.
-export function reviewRounds(limit, reviewer, gh = ghAt(undefined), { sinceMs = null } = {}) {
+// requests merged since then; `truncated` says the limit cut that list short. `forge` reads the repository: pass the
+// project root's (forgeFor), so that `--project` reads that project's repository, not the one the shell is in.
+export function reviewRounds(limit, reviewer, forge = forgeFor(undefined), { sinceMs = null } = {}) {
   if (reviewer === null) return { reviewer, error: NO_BOT };
   try {
-    const search = sinceMs === null ? [] : ['--search', `merged:>=${new Date(sinceMs).toISOString().slice(0, 19)}+00:00`];
-    const prs = gh(['pr', 'list', '--state', 'merged', '--limit', String(limit), ...search, '--json', 'number,reviews']);
-    const repo = gh(['repo', 'view', '--json', 'nameWithOwner']).nameWithOwner;
+    const prs = forge.mergedChanges(limit, { sinceMs });
+    const repo = forge.repo();
     const rounds = [];
     for (const pr of prs) {
       const count = (pr.reviews ?? []).filter((review) => sameLogin(review.author?.login, reviewer)).length;
       if (count > 0) rounds.push({ number: pr.number, rounds: count });
-      else if (gh(['api', '--paginate', '--slurp', `repos/${repo}/issues/${pr.number}/reactions?content=%2B1`]).flat().some((r) => r.content === '+1' && sameLogin(r.user?.login, reviewer))) {
+      else if (forge.reactions(repo, pr.number, '+1').some((r) => r.content === '+1' && sameLogin(r.user?.login, reviewer))) {
         rounds.push({ number: pr.number, rounds: 0 });
       }
     }
@@ -66,7 +47,7 @@ export function reviewRounds(limit, reviewer, gh = ghAt(undefined), { sinceMs = 
       avg_rounds: rounds.length ? Math.round((total / rounds.length) * 10) / 10 : null,
       five_or_more: rounds.filter((row) => row.rounds >= 5).length,
       rounds,
-      ...findingsOf(rounds, repo, reviewer, gh),
+      ...findingsOf(rounds, repo, reviewer, forge),
       truncated: sinceMs !== null && prs.length >= limit,
     };
   } catch (error) {
@@ -78,7 +59,7 @@ export function reviewRounds(limit, reviewer, gh = ghAt(undefined), { sinceMs = 
 // { findings, findings_rounds, by_round, late_findings, late_checked, late_on_seen_line, late_unchecked, capped, unread }.
 // `by_round` buckets rounds 4 and later as `4+`; `capped` counts pull requests whose lists stopped at PAGE, and `unread`
 // those gh could not read, which the finding totals leave out.
-function findingsOf(rounds, repo, reviewer, gh) {
+function findingsOf(rounds, repo, reviewer, forge) {
   const totals = {
     findings: 0, findings_rounds: 0, by_round: {}, late_findings: 0, late_checked: 0, late_on_seen_line: 0,
     late_unchecked: Object.fromEntries(Object.keys(UNCHECKED).map((key) => [key, 0])), capped: 0, unread: 0,
@@ -90,7 +71,7 @@ function findingsOf(rounds, repo, reviewer, gh) {
     }
     let detail;
     try {
-      detail = botReviews(repo, row.number, reviewer, gh);
+      detail = botReviews(repo, row.number, reviewer, forge);
     } catch {
       row.findings = null;
       totals.unread += 1;
@@ -99,7 +80,7 @@ function findingsOf(rounds, repo, reviewer, gh) {
     if (detail.capped) totals.capped += 1;
     row.findings = detail.reviews.map((review) => review.findings.length);
     const first = detail.reviews[0]?.commit ?? null;
-    const compare = comparer(repo, first, gh);
+    const compare = comparer(repo, first, forge);
     detail.reviews.forEach((review, index) => {
       const bucket = index >= 3 ? '4+' : String(index + 1);
       totals.by_round[bucket] = (totals.by_round[bucket] ?? 0) + review.findings.length;
@@ -123,9 +104,8 @@ function findingsOf(rounds, repo, reviewer, gh) {
 // The bot's reviews on pull request `number`, oldest first, each with its commit and findings, and whether a list
 // stopped at PAGE: { reviews: [{ commit, findings: [{ path, line, commit, deleted }] }], capped }. A finding's `line` and
 // `commit` are where the bot left it; `line` is null for a comment on the whole file.
-function botReviews(repo, number, reviewer, gh) {
-  const [owner, name] = repo.split('/');
-  const response = gh(['api', 'graphql', '-f', `query=${REVIEWS_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${number}`]);
+function botReviews(repo, number, reviewer, forge) {
+  const response = forge.reviewsWithComments(repo, number);
   const list = response?.data?.repository?.pullRequest?.reviews;
   if (!list || !Array.isArray(list.nodes)) throw new Error(`no reviews for pull request ${number}`);
   let capped = list.totalCount > list.nodes.length;
@@ -147,12 +127,12 @@ function botReviews(repo, number, reviewer, gh) {
 }
 
 // compare(head): GitHub's compare of `first` with `head`, read once per head, or null when gh cannot read it.
-function comparer(repo, first, gh) {
+function comparer(repo, first, forge) {
   const diffs = new Map();
   return (head) => {
     if (!diffs.has(head)) {
       try {
-        diffs.set(head, gh(['api', `repos/${repo}/compare/${first}...${head}`]));
+        diffs.set(head, forge.compare(repo, first, head));
       } catch {
         diffs.set(head, null);
       }

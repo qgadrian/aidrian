@@ -1584,6 +1584,17 @@ test('aidrian pr signoff --check runs every refusal of --flow, --overrule, --acc
   await assert.rejects(signoff('--flow', 'look', '--overrule', 'matches-design', '--reason', 'x'), /is not disputed on/u);
   await assert.rejects(signoff('--stage', 'independent'), /no Human review of the independent stage is waiting/u);
   await assert.rejects(signoff('--flow', 'look', '--accept', 'matches-design', '--reason', 'x'), /--accept needs --flow, --evidence, and --reason/u);
+  // The review-signoff rule lets any command with a word `--check` run, so the parser must never read that word as a
+  // value or skip it: each of these is refused, and records nothing, where it would otherwise sign off flow pay.
+  const real = (...args) => runSignoff(args, projectAt(r.dir), loadConfig(projectAt(r.dir)).config, { forge });
+  const tail = ['--head', first.head, '--repo', 'o/r'];
+  for (const [args, refusal] of [
+    [['7', '--flow', 'pay', ...tail, '--reason', '--check'], /--reason needs a value/u],
+    [['7', '--flow', '--check', ...tail], /--flow needs a value/u],
+    [['7', '--flow', 'pay', ...tail, '--', '--check'], /unknown argument: --$/u],
+    [['7', '--flow', 'pay', ...tail, '--reason=--check'], /unknown argument: --reason=--check/u],
+    [['--check', '--flow', 'pay', ...tail], /signoff needs a pull request number/u],
+  ]) await assert.rejects(real(...args), refusal, args.join(' '));
   t.mock.restoreAll();
   assert.deepEqual(lines.map((line) => line.split(';')[0]), [
     `ok: the command would record Tester's sign-off of flow pay on ${first.head.slice(0, 7)}`,

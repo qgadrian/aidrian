@@ -567,11 +567,13 @@ the branch ships on purpose. Before the body ships, `pr-write` sets each one aga
 doc and line), a marker whose class no list holds included and a `rejected` one left out, since it is no rule, and the
 `## Consequences` lines of each ADR in `docs/adr/`, or the folder `--adr` names, an ADR whose Status starts `Superseded` skipped
 with a note; no `docs/adr/` is an empty list, an `--adr` that is no folder fails, and with no project folder the record is the ADR
-lines alone. It reads the branch's working copy, so a marker or wording the branch changes must already show in the body's
+lines alone. An ADR, or an ADR folder, that is there but does not read is a problem of the record, never an empty list.
+It reads the branch's working copy, so a marker or wording the branch changes must already show in the body's
 Decisions. That part is deterministic. When the list holds no decision and no ADR line, it ends
 `nothing on record: no judgment owed` and exits 0, `--judged` or not, unless part of the record did not read (an index problem, a
-doc that does not read, a failed git scan): then it prints those problems and exits 1. Otherwise whether a residual contradicts a
-decision is a judgment, so `product-manager` returns one row per residual, `{ residual, contradicts, evidence }`, with
+doc or an ADR that does not read, a failed git scan): then it prints those problems and exits 1, and `--json` gives them as
+`problems`, each `{ doc, line, problem }` with a null `line`. With lines on record, each problem is a note.
+Otherwise whether a residual contradicts a decision is a judgment, so `product-manager` returns one row per residual, `{ residual, contradicts, evidence }`, with
 `contradicts` a decision id or ADR `path:line` from that list, or null, and `evidence` the wording it contradicts.
 `--judged <file>` validates the rows: a residual with no row or two, an item the body holds twice, a `contradicts` that names
 nothing listed or an id two markers hold, or one with no evidence is invalid. The command prints each contradiction as

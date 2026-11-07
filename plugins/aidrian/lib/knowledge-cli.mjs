@@ -2,12 +2,12 @@
 
 import path from 'node:path';
 
-import { indexRows, initBucket, listTags, loadKnowledge, pluginTags, routeKnowledge, searchKnowledge } from './knowledge.mjs';
+import { defaultDocs, indexRows, initBucket, listTags, loadKnowledge, pluginTags, routeKnowledge, searchKnowledge } from './knowledge.mjs';
 import { findProject, noProjectMessage } from './project.mjs';
 
 const USAGE = `usage: aidrian-knowledge <command> [--project DIR] [args]
 
-  route TAG...     print the docs to read for these tags, "always" docs first
+  route TAG...     print the docs to read for these tags, "always" docs first, the plugin's defaults last
   tags             print each tag and how many docs it loads
   search WORD...   print the best 8 docs whose tags, path, or summary hold these words; --all prints every match
   index            print every doc: path, tags, and summary, separated by tabs
@@ -50,7 +50,7 @@ const project = findProject(start);
 if (!project) fail(noProjectMessage(path.resolve(start)));
 if (command === 'init') init(project, rest[0]);
 
-const { buckets, errors } = loadKnowledge(project);
+const { buckets, config, errors } = loadKnowledge(project);
 if (errors.length) fail(errors.join('\n'));
 
 // One output line: the doc path, `columns`, and the source when the doc comes from a local source.
@@ -62,11 +62,12 @@ if (command === 'route') {
   const known = [...new Set([...pluginTags(), ...listTags(buckets).map(([tag]) => tag)])].sort();
   const unknown = rest.filter((tag) => !known.includes(tag));
   if (unknown.length) fail(`unknown tag: ${unknown.join(', ')}\nknown tags: ${known.join(', ')}`);
-  const docs = routeKnowledge(buckets, rest);
+  const docs = routeKnowledge(buckets, rest, config.knowledge.defaults);
   for (const doc of docs) console.log(line(doc));
   // A tag no doc carries yet still routes: to the "always" docs alone. Say so on stderr, which a script reading the
-  // paths does not read.
-  const tagged = buckets.some((bucket) => rest.some((tag) => Object.hasOwn(bucket.tags, tag) && bucket.tags[tag].length > 0));
+  // paths does not read. A plugin default doc for the tag counts as a doc that carries it.
+  const projectTagged = buckets.some((bucket) => rest.some((tag) => Object.hasOwn(bucket.tags, tag) && bucket.tags[tag].length > 0));
+  const tagged = projectTagged || defaultDocs(rest, config.knowledge.defaults).length > 0;
   if (!tagged) console.error(`no docs tagged ${rest.join(', ')}${docs.length ? '; printed only the "always" docs' : ', and no "always" docs'}`);
 } else if (command === 'tags') {
   const tags = listTags(buckets);

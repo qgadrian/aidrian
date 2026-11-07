@@ -104,7 +104,7 @@ const SCHEMA = {
   review: 'review',
   docs: { wrapLimit: 'zeroOrMore' },
   terms: { file: 'textOrNull' },
-  knowledge: { budgets: { alwaysBytes: 'positive', taggedDocBytes: 'positive' } },
+  knowledge: { budgets: { alwaysBytes: 'positive', taggedDocBytes: 'positive' }, defaults: { codeStyle: 'boolean' } },
   skills: { descriptionChars: 'positive', listingBytes: 'positive' },
   session: { handoff: { mode: 'handoffMode', costRatio: 'costRatio', maxTokens: 'zeroOrMore' } },
   lessons: { auto: 'boolean', maxOpen: 'zeroOrMore', maxAgeDays: 'zeroOrMore' },
@@ -320,7 +320,8 @@ export const DEFAULTS = deepFreeze({
   docs: { wrapLimit: 155 },
   // The terms file (lib/terms.mjs); null turns the terms rule off.
   terms: { file: null },
-  knowledge: { budgets: { alwaysBytes: 16384, taggedDocBytes: 24576 } },
+  // The docs this plugin ships under a project's own knowledge, each on unless set to false (DEFAULT_DOCS in lib/knowledge.mjs).
+  knowledge: { budgets: { alwaysBytes: 16384, taggedDocBytes: 24576 }, defaults: { codeStyle: true } },
   skills: { descriptionChars: 160, listingBytes: 9216 },
   // The session-length reminder (lib/session-length.mjs, docs/handoff.md): it fires once a call costs `costRatio` times
   // what it would in a fresh session; `maxTokens` is an optional ceiling on the context, 0 for off.

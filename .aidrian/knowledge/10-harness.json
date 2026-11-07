@@ -40,7 +40,7 @@
       "tags": []
     },
     "knowledge.md": {
-      "summary": "Knowledge buckets: index file format, tags, shaping buckets, overrides, project agents, aidrian-knowledge commands, checks.",
+      "summary": "Knowledge buckets: index file format, tags, shaping buckets, overrides, default code style, project agents, aidrian-knowledge commands, checks.",
       "tags": ["harness_engineering"]
     },
     "lessons.md": {

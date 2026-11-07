@@ -55,7 +55,7 @@ In a group such as `github`, set only the keys you change; the others keep their
   "review": { "engine": null, "record": "comment", "rules": [], "ignore": ["<lockfiles, snapshots, generated, vendored, minified>"], "nonBehaviour": ["<docs and assets>"], "flows": {}, "planCommand": null, "reviewers": {}, "approvals": { "allow": false }, "productFeedback": { "auto": false, "files": null, "maxPersonas": 2 } },
   "docs": { "wrapLimit": 155 },
   "terms": { "file": null },
-  "knowledge": { "budgets": { "alwaysBytes": 16384, "taggedDocBytes": 24576 } },
+  "knowledge": { "budgets": { "alwaysBytes": 16384, "taggedDocBytes": 24576 }, "defaults": { "codeStyle": true } },
   "skills": { "descriptionChars": 160, "listingBytes": 9216 },
   "session": { "handoff": { "mode": "ask", "costRatio": 2, "maxTokens": 0 } },
   "lessons": { "auto": true, "maxOpen": 20, "maxAgeDays": 14 },
@@ -166,6 +166,7 @@ In a group such as `github`, set only the keys you change; the others keep their
 | `docs.wrapLimit` | The longest line, in characters, allowed in a Markdown file an agent writes; `0` turns the check off. |
 | `knowledge.budgets.alwaysBytes` | The bytes all `always` knowledge docs may add up to: [Knowledge budgets](#knowledge-budgets). |
 | `knowledge.budgets.taggedDocBytes` | The bytes one tagged knowledge doc may have: [Knowledge budgets](#knowledge-budgets). |
+| `knowledge.defaults.codeStyle` | `false` takes the plugin's [default code-style doc](knowledge.md#default-code-style) out of every `code_style` route. `true`, the default, lists it after the project's own `code_style` docs, which win where they conflict. |
 | `skills.descriptionChars` | The longest skill or agent description, in characters (`aidrian lint skills` and `agents`). |
 | `skills.listingBytes` | The most bytes all skill names and descriptions may add up to (`aidrian lint skills`). |
 | `session.handoff.mode` | What the [session-length reminder](handoff.md#the-reminder) and the plan handoff offer do: `"ask"`, `"auto"`, or `"off"`. |

@@ -93,6 +93,20 @@ Project knowledge wins over the plugin.
 The `knowledge` skill lists the defaults a project can change, such as where plans go and the shape of a machine handoff.
 To change one, say so in an `always` doc.
 
+## Default code style
+
+The plugin ships one default knowledge doc, the
+[code-style rules](../plugins/aidrian/skills/knowledge/references/code-style.md): the simplest sufficient solution, reuse
+before writing, one concern per file and function, flat control flow, interfaces only at a real extension point,
+reading the facts before deciding, marked `SHORTCUT:` comments, and docs that state the contract.
+
+`aidrian-knowledge route code_style` lists it last, by its absolute path in the installed plugin, after every project doc
+tagged `code_style`. The project's docs win where the two conflict, so a project layers its own rules over the defaults,
+such as other size guidelines, without repeating the rest. A project with no `code_style` docs routes to the default alone.
+
+To turn it off, set [`knowledge.defaults.codeStyle`](config.md#keys) to `false` in `config.json`.
+That flag is the way to opt out: an `always` doc that says to ignore the defaults still leaves them in the route.
+
 ## Project agents
 
 A project may keep its own agents beside the plugin's, such as a reviewer that knows its stack.

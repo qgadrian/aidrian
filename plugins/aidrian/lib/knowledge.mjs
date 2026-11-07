@@ -4,7 +4,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { loadConfig, VERSION, versionProblem } from './config.mjs';
+import { DEFAULTS, loadConfig, VERSION, versionProblem } from './config.mjs';
 import { fileBytes, insidePath, isDirectory, isFile, isObject, linksOutside, readJson } from './fs.mjs';
 
 const BUCKET_ID = /^[a-z0-9][a-z0-9-]*$/;
@@ -220,16 +220,30 @@ function docEntry(entry, where, errors) {
   return { summary, tags };
 }
 
-// The docs to read for `tags`, in bucket order: each bucket's "always" docs, then its docs per tag.
+// The docs this plugin ships beneath a project's own knowledge, keyed by their flag in config.json `knowledge.defaults`:
+// the tag that routes to each, and its absolute path. A new shipped default is a new row here and in the config schema.
+const DEFAULT_DOCS = {
+  codeStyle: { tag: 'code_style', path: path.join(import.meta.dirname, '../skills/knowledge/references/code-style.md') },
+};
+
+// The absolute paths of the default docs `tags` route to, leaving out each one whose flag in `defaults` is false.
+export function defaultDocs(tags, defaults = DEFAULTS.knowledge.defaults) {
+  const routed = Object.entries(DEFAULT_DOCS).filter(([name, row]) => tags.includes(row.tag) && defaults[name] !== false);
+  return routed.map(([, row]) => row.path);
+}
+
+// The docs to read for `tags`, in bucket order: each bucket's "always" docs, then its docs per tag; then the plugin's
+// default docs for those tags, last, since the project's docs win over them. `defaults` is config.json `knowledge.defaults`.
 // Object.hasOwn: a tag named like an inherited property, such as `constructor`, must not read Object.prototype.
-export function routeKnowledge(buckets, tags) {
+export function routeKnowledge(buckets, tags, defaults = DEFAULTS.knowledge.defaults) {
   const out = [];
   for (const bucket of buckets) {
-    for (const doc of [...bucket.always, ...tags.flatMap((tag) => (Object.hasOwn(bucket.tags, tag) ? bucket.tags[tag] : []))]) {
+    const tagged = tags.flatMap((tag) => (Object.hasOwn(bucket.tags, tag) ? bucket.tags[tag] : []));
+    for (const doc of [...bucket.always, ...tagged]) {
       if (!out.includes(doc)) out.push(doc);
     }
   }
-  return out;
+  return [...out, ...defaultDocs(tags, defaults)];
 }
 
 export function listTags(buckets) {

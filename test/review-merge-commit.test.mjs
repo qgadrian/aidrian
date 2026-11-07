@@ -137,6 +137,70 @@ test('a clean merge from the base branch carries the received review: no reviewe
 
   const repeat = await r.step({ exec: again.exec });
   assert.deepEqual([repeat.status, repeat.carried_from, again.inputs.length], ['received', r.first, 0], 'calling again on the same head carries again');
+
+  // The summary comment says so where a person reads it: the merge head, the base commit, and the head reviewed.
+  const main = r.git('rev-parse', 'main');
+  assert.deepEqual([state.outcome.carried_base, result.carried_base], [main, main]);
+  const carried = `- head \`${merge.slice(0, 7)}\` merges \`${main.slice(0, 7)}\` from the base branch and carries the review of \`${r.first.slice(0, 7)}\`: no reviewer ran on it`;
+  const body = r.comments[0].body.split('\n');
+  assert.deepEqual(body.slice(body.indexOf('**Carried review:**'), body.indexOf('**Carried review:**') + 2), ['**Carried review:**', carried]);
+  assert.equal(body.filter((line) => line === '**Carried review:**').length, 1, 'a second carry rewrites the line, never adds one');
+
+  // A head reviewed after it carries nothing, and the comment stops saying it does.
+  r.write('src/app.js', 'export const app = 3;\n');
+  r.commit('another change');
+  const next = await r.step({ exec: again.exec });
+  assert.deepEqual([next.status, next.carried_from], ['received', undefined]);
+  assert.equal(r.comments[0].body.includes('**Carried review:**'), false);
+});
+
+test('a clean merge that brings in a new flow over the change reviews the merge head against it', async (t) => {
+  const r = repo(t);
+  assert.equal((await r.step({ exec: recorder().exec })).status, 'received');
+  const merge = r.mergeMain({ '.aidrian/config.json': JSON.stringify({ version: 1, review: { flows: { app: { files: ['src/**'] } } } }) });
+  assert.equal(cleanBaseMerge(r.dir, merge, { priorHead: r.first, base: 'main' }), true, 'git resolved nothing');
+  const seen = recorder();
+  const result = await r.step({ exec: seen.exec });
+  assert.deepEqual([result.status, result.carried_from], ['dispatch', undefined], 'the reviewed head was never judged against the flow');
+  assert.ok(result.plan.flows.includes('app'), JSON.stringify(result.plan.flows));
+  assert.ok(result.dispatch.some((pass) => (pass.flows ?? []).some((flow) => flow.id === 'app')), 'the flow pass is dispatched');
+  assert.ok(result.plan.reasons.includes('the merge from main changes how the project is reviewed (.aidrian/config.json review): the whole change is reviewed'), result.plan.reasons.join('; '));
+  assert.notEqual(r.guard(merge), null, 'the merge guard refuses the merge head until its review finishes');
+  const again = await r.step({ exec: seen.exec });
+  assert.deepEqual([again.status, again.carried_from], ['dispatch', undefined], 'a later step on the merge head reviews it whole too');
+});
+
+test('a merge that brings in a resolution and a new review rule reviews the whole change, not the resolution alone', async (t) => {
+  const r = repo(t);
+  await r.step({ exec: recorder().exec });
+  const merge = r.mergeMain({ ...CONFLICT, '.aidrian/config.json': JSON.stringify({ version: 1, review: { rules: [{ when: { lines: { over: 1 } }, depth: 'single' }] } }) }, RESOLVED);
+  const seen = recorder();
+  const result = await r.step({ exec: seen.exec });
+  assert.equal(result.status, 'received');
+  assert.deepEqual([seen.inputs[0].remerge, seen.inputs[0].files], [undefined, null], 'no remerge scope: the pass reads the whole change');
+  assert.equal(readLocalState(r.project(), 7).remerge, undefined);
+  assert.equal(merge, result.head);
+});
+
+test('a clean merge that edits a flow\'s invariants doc reviews the merge head; one that changes only other config carries', async (t) => {
+  const flows = { app: { files: ['src/**'], invariants: 'docs/flows/app.md' } };
+  const doc = '# App\n\n## Invariants\n\n### app-stays-one\n\nThe app is one module.\n';
+  const reviewed = (t) => {
+    const r = repo(t, { baseConfig: { version: 1, review: { flows } }, baseFiles: { 'docs/flows/app.md': doc } });
+    // The flow's agent pass has no result yet: the record says the head was reviewed, as a received outcome.
+    writeLocalState(r.project(), noteOutcome(emptyState(7, 'o/r'), { status: 'received', head: r.first }));
+    return r;
+  };
+  const docs = reviewed(t);
+  docs.mergeMain({ 'docs/flows/app.md': `${doc}\n### app-has-no-globals\n\nThe app keeps no global state.\n` });
+  const result = await docs.step({ exec: recorder().exec });
+  assert.deepEqual([result.status, result.carried_from], ['dispatch', undefined]);
+  assert.ok(result.plan.reasons.includes('the merge from main changes how the project is reviewed (docs/flows/app.md): the whole change is reviewed'), result.plan.reasons.join('; '));
+
+  const other = reviewed(t);
+  other.mergeMain({ '.aidrian/config.json': JSON.stringify({ version: 1, review: { flows }, github: { maxReviewRounds: 4 } }) });
+  const carried = await other.step({ exec: recorder().exec });
+  assert.deepEqual([carried.status, carried.carried_from], ['received', other.first], 'a config change outside review changes no rule');
 });
 
 test('a merge with a conflict resolution opens a round that reviews only the resolution', async (t) => {

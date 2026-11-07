@@ -446,9 +446,11 @@ than the one under review counts for nothing. A flow's required checks are read 
 merge commit; its first parent is the head of the last `received` outcome; its other parent is an ancestor of the
 base branch tip; and git's own merge of the two parents (`git merge-tree --write-tree`) has no conflict and gives the
 merge commit's tree exactly. A clean merge dispatches no reviewer and opens no round: the step records `received` on
-the merge head, with `carried_from` naming the head whose review it carries, and publishes the record, so the
-[merge guard](hooks.md#merge-guard) and `aidrian pr auto-merge` read a finished review on that head. It answers no owed
-review: a gate review or a bot review owed for the merge head still stops the merge until it is recorded.
+the merge head, with `carried_from` naming the head whose review it carries and `carried_base` the base commit it
+merged in, and publishes the record, so the [merge guard](hooks.md#merge-guard) and `aidrian pr auto-merge` read a
+finished review on that head. The summary comment shows it under **Carried review**: the merge head, the base commit,
+and the head reviewed. It answers no owed review: a gate review or a bot review owed for the merge head still stops the
+merge until it is recorded.
 
 Any other merge from the base branch onto that head reviews only the changes the merge commit itself made: its
 conflict resolutions and any other edit, `git show --remerge-diff`. The round's changed files and lines are that diff's,
@@ -457,6 +459,12 @@ of a modify/delete). A pass of every changed file reads only those files, the pa
 head, and the reviewer is told to review that diff alone; a pass the merge does not touch carries forward, and one that
 dropped what the base brought, as `git merge -s ours` does, is touched. It counts as a round. Later steps on the same
 merge head keep that scope, through the `remerge` entry of the record.
+
+Neither the carry nor the resolution-only round applies when the base side of the merge, from the merge base of the
+reviewed head and the merge's base parent to that parent, changes how the project is reviewed: the config's `review`
+group (a flow, a rule, a reviewer, the plan command), a file the plan command, a visual hook, or a reviewer command
+names, or a flow's invariants doc or a doc an invariant cites. The reviewed head was never judged against those rules, so the merge head is reviewed as before, and
+the plan's reasons name what changed. A change elsewhere in the config, outside `review`, does not count.
 
 An octopus merge, the merge of a side branch, a merge with no `received` review before it, and every head that is not a
 merge review as before. So does a merge git cannot read this way, such as under a git older than 2.38, which has no
@@ -660,8 +668,9 @@ shows, such as a waiver's reason, has `<!--` and `-->` escaped, so no text can c
   here then takes the newer of the two.
 
 - **Outcome.** Every return of the step writes its status to this machine's record as `outcome`: `{ status, head, at,
-  reason, carried_from }`, where `carried_from` is set only on a `received` that a [clean merge from the base
-  branch](#rounds) carried, and names the head that was reviewed. The early returns, `none_needed`, `unsatisfied`,
+  reason, carried_from, carried_base }`, where `carried_from` and `carried_base` are set only on a `received` that a
+  [clean merge from the base branch](#rounds) carried, and name the head that was reviewed and the base commit merged
+  in. The summary comment shows that outcome under **Carried review**, rewritten from the record on every write. The early returns, `none_needed`, `unsatisfied`,
   and `too_large`, write it to the state folder only and post nothing; a `held` return writes nothing. Before any
   reviewer, the plan command, or the bot runs, the step writes `running` for its head, so a merge during the first step
   is refused too. A step that throws after that, such as a plan command that fails, writes `error`, which is not

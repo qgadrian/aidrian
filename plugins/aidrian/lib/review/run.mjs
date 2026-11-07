@@ -19,9 +19,10 @@
 //
 // A two-parent merge from the base branch onto the head whose review last came back `received` is not reviewed again:
 // when it changes nothing git's own merge would not, it carries that review to its head (`received`, with
-// `carried_from`), with no reviewer and no round, and answers no owed review; otherwise the round reviews only the
-// changes the merge commit itself made, `git show --remerge-diff` (lib/review/diff.mjs baseMergeOf). A merge git
-// cannot read this way is reviewed as before, and the plan's reasons say why.
+// `carried_from` and `carried_base`), with no reviewer and no round, and answers no owed review; otherwise the round
+// reviews only the changes the merge commit itself made, `git show --remerge-diff` (lib/review/diff.mjs baseMergeOf).
+// A merge whose base side changes how the project is reviewed (baseReviewMoved), and a merge git cannot read this way,
+// are reviewed as before, and the plan's reasons say why.
 //
 // docs/review.md describes the plan, the stages, and the record.
 
@@ -37,7 +38,7 @@ import { roundCapProblem, ROUNDS_OVERRIDE } from '../pr-await-review.mjs';
 import { currentRoot, runGit, showPrefix } from '../git.mjs';
 import { markerFor } from '../review-gate.mjs';
 import { isolate } from './env.mjs';
-import { baseMergeOf, changedFiles, diffLines, fileAt, isAncestor, isClean, mergeBase, resolve } from './diff.mjs';
+import { baseMergeOf, changedFiles, diffLines, fileAt, isAncestor, isClean, mergeBase, parents, resolve } from './diff.mjs';
 import { checkReview, REVIEW_DEFAULTS } from './config.mjs';
 import { blocks, parseFindings } from './findings.mjs';
 import { citationProblem, flowState, invariantsOf, parseVerdicts } from './flows.mjs';
@@ -130,6 +131,21 @@ function baseReviewAt(project, commit) {
 // The files a plan command line names that exist in the repository: a change to them is a change to the review.
 function commandFiles(root, command, commit) {
   return (command ?? '').split(/\s+/u).filter((word) => /[./]/u.test(word) && !word.startsWith('-') && fileAt(root, commit, word) !== null);
+}
+
+// What the base side of a merge from the base branch, `from` (the old merge base of the reviewed head) to `to` (the
+// merge's base parent), changes in how the project is reviewed: the config's `review` group (a flow, rule, reviewer, or
+// plan command), a file a review command names (`harnessFiles`), and a flow's invariants doc or a doc an invariant cites.
+// The reviewed head was judged without it, so its review cannot carry and the merge's own diff is not the whole question.
+function baseReviewMoved(project, { from, to, flows, harnessFiles }) {
+  const root = project.root;
+  const changes = changedFiles(root, from, to);
+  const paths = new Set(changes.map((change) => change.file));
+  const moved = [];
+  if (paths.has(project.paths.config) && JSON.stringify(baseReviewAt(project, from)) !== JSON.stringify(baseReviewAt(project, to))) moved.push(`${project.paths.config} review`);
+  for (const file of harnessFiles) if (file !== project.paths.config && paths.has(file)) moved.push(file);
+  moved.push(...touchedCitations(root, from, to, flows, paths));
+  return [...new Set(moved)];
 }
 
 // A temporary worktree of the base tip, for running the project's own review code (a plan command, an exec
@@ -249,6 +265,10 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
   const headReview = baseReviewAt(project, head) ?? checkReview({}, project.paths.config, []);
   const { review, changed } = reviewInForce(baseReview, headReview);
   const effective = { ...config, review };
+  // The files that decide how the project is reviewed besides the config: the plan command's, the visual hooks', and
+  // every reviewer command's, as the base branch has them.
+  const reviewCommands = [review.planCommand, review.visual?.login, review.visual?.preview, ...Object.values(baseReview?.reviewers ?? {}).map((reviewer) => (reviewer.command ?? []).join(' '))];
+  const harnessFiles = new Set([project.paths.config, ...reviewCommands.flatMap((command) => commandFiles(root, command, baseTip))]);
 
   // The record so far: the newer of this machine's and the pull request's. With config.json `review.record: "local"`
   // the pull request is never read or written: the record is this machine's state folder only. A comment that holds
@@ -264,21 +284,32 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
   // head is the outcome's while it is on another head; on a later step for the same merge head, the one a carried
   // outcome or the first step on it named. A clean merge carries the review: no reviewer, no round, nothing marked
   // running. Any other reviews only the changes the merge commit made; `base` stays the merge base for everything
-  // else. A merge git cannot read (an older git, a broken config) is reviewed as any head is, never refused for it.
+  // else. A merge git cannot read (an older git, a broken config) is reviewed as any head is, never refused for it, and
+  // so is one whose base side changes how the project is reviewed (baseReviewMoved): the reviewed head never met it.
   const last = state.outcome ?? null;
   const reviewedHead = last?.status === 'received' && typeof last.head === 'string' && !sameCommit(last.head, head) ? last.head
     : sameCommit(last?.head, head) && typeof last?.carried_from === 'string' ? last.carried_from
       : sameCommit(state.remerge?.head, head) && typeof state.remerge?.from === 'string' ? state.remerge.from : null;
   let baseMerge = null;
   let mergeNote = null;
+  let mergedBase = null;
   try {
     baseMerge = reviewedHead ? baseMergeOf(root, head, { priorHead: reviewedHead, base: baseTip }) : null;
+    if (baseMerge) {
+      mergedBase = parents(root, head)[1];
+      const moved = baseReviewMoved(project, { from: mergeBase(root, reviewedHead, mergedBase), to: mergedBase, flows: review.flows, harnessFiles });
+      if (moved.length) {
+        baseMerge = null;
+        mergeNote = `the merge from ${info.baseRefName} changes how the project is reviewed (${moved.join(', ')}): the whole change is reviewed`;
+      }
+    }
   } catch (error) {
+    baseMerge = null;
     mergeNote = `the merge from ${info.baseRefName} could not be read (${stderrTail(error.message, { chars: 200 })}): the whole change is reviewed`;
   }
   if (baseMerge?.clean) {
     const carried = settle({
-      status: 'received', pr: n, repo, head, base, carried_from: reviewedHead, round: state.rounds.length, depth: 'none',
+      status: 'received', pr: n, repo, head, base, carried_from: reviewedHead, carried_base: mergedBase, round: state.rounds.length, depth: 'none',
       max_rounds: roundCap({ baseline: opts.maxRounds ?? cap, granted: grantedRounds(state, 'plan', policy) }).maxRounds,
       plan: { depth: 'none', reasons: [`a clean merge from ${info.baseRefName}: the review of ${reviewedHead.slice(0, 7)} carries to this head`], flows: [], stages: [] },
     });
@@ -388,8 +419,6 @@ async function stepOnce(opts, { project, config, env = process.env, forge = forg
   // A Human sign-off on an earlier head still holds when that head is an ancestor of this one and the change since
   // selects nothing of the flow, run through the same selection as the plan: its globs, added-line patterns, content
   // tracing, plan command, tests, and invariants doc. Accepting a deleted test stays exact to the head.
-  const reviewCommands = [review.planCommand, review.visual?.login, review.visual?.preview, ...Object.values(baseReview?.reviewers ?? {}).map((reviewer) => (reviewer.command ?? []).join(' '))];
-  const harnessFiles = new Set([project.paths.config, ...reviewCommands.flatMap((command) => commandFiles(root, command, baseTip))]);
   const reselected = new Map();
   const selectedSince = async (from) => {
     if (reselected.has(from)) return reselected.get(from);

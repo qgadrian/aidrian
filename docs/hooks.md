@@ -559,6 +559,7 @@ Then task work has to happen in a git worktree, so the main checkout stays clean
 The deny reason names `aidrian worktree new <branch>`, which creates one.
 The rule blocks a write to a file git tracks, or would track, in the main checkout.
 It allows a git-ignored path, a path in `git.mainCheckout.allowWrites`, and anything in a worktree or outside the repository.
+A target that is a link is judged as itself too, wherever it points ([The state folder](#the-state-folder)).
 [config.md](config.md) lists both keys.
 When git cannot answer, an Edit or Write is blocked to be safe, and a Bash command runs.
 
@@ -636,6 +637,26 @@ What it does not stop:
 
 From a guarded main checkout, `cd <other repository> && git pull` is blocked as well; `git -C <other repository> pull`
 is the way.
+
+### The state folder
+
+Agents write plans and handoffs to the project's state folder by its absolute path, the one `aidrian state` prints:
+`cat > <state>/plans/x.md`, a heredoc included, passes from a guarded main checkout, as any write outside the
+repository does. A `cd` into it is still untrusted: `cd <state> && cat > x.md` is blocked, as [After a cd](#after-a-cd)
+says, because the write lands in the main checkout if the `cd` fails.
+
+The state folder gets no trust of its own. A target that is a link is judged both as itself and where it leads, a link
+whose target does not exist yet included, so a link in the state folder into the repository (`<state>/src -> <repo>/src`)
+blocks a tracked or new file there, and `rm` of a tracked link in the main checkout is blocked wherever it points.
+A state folder that is, holds, or sits in the main checkout (config.json `state.dir` set to `.`, `..`, or `~` around
+the repository) is judged as the main checkout and the folders around it are.
+
+Not covered: a target held in an expansion (`cat > "$S/x.md"`) is not read, so it passes, wherever it points; a state
+folder inside the git folder (`state.dir` under `.git`) takes writes, since a write inside the git folder is not judged,
+and after `cd <state>` there, a relative write that climbs back (`../../src/app.js`) is judged from the folder before
+the `cd` and passes. A link whose text climbs out of another link (`<state>/inner -> <repo>/src`, then
+`<state>/x -> inner/../src/app.js`) is read with `..` taken from the text, not after the link, so its target may be
+misjudged. A chain of links not made yet is followed for 40 links at most, as Linux does.
 
 ## Agent gates
 
